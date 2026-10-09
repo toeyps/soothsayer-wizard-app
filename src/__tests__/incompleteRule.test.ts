@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { mk } from './helpers/failureModelFixture';
 import type { FailureGroupStateSlice, FailureModel, TestPeriod, WorkspaceState } from '../types';
-import { applyIncompleteRule, modelsWithChangedInputs, modelsWithChangedTests } from '../utils/incompleteRule';
+import { applyIncompleteRule, applyRecipeRule, modelsWithChangedInputs, modelsWithChangedTests, recipesDiffer } from '../utils/incompleteRule';
 import { isModelComplete, isModelStale, modelDotState, modelSetPointFlag, NOT_TRAINED_BLOCK_REASON } from '../utils/modelStatus';
 import { computeTrainFingerprint } from '../utils/trainFingerprint';
 
@@ -441,5 +441,49 @@ describe('applyIncompleteRule - Train/Test validation: changing ONLY test period
         const prev = ws(slice([m]));
         const next = ws(slice([{ ...m, customTestPeriods: [] }], { runningConditionTestPeriods: [] }));
         expect(applyIncompleteRule(prev, next)).toBe(next);
+    });
+});
+
+// Customer batch 2026-10, item 6 (user decision): a special sensor's recipe is
+// a training input too. Full coverage in specialSensorSignature.test.ts.
+describe('applyIncompleteRule - special-sensor recipes', () => {
+    const withRecipes = (fg: FailureGroupStateSlice, formula: string): WorkspaceState =>
+        ({ ...ws(fg), specialSensorRecipes: [{ kind: 'formula', tag: 'T', formula }] } as WorkspaceState);
+    const trainedOnT = () => {
+        const m = individual();
+        return { ...m, lastTrainedAt: '2026-10-01T00:00:00.000Z', trainedFingerprint: computeTrainFingerprint(m, slice([m])) };
+    };
+
+    it('changing the recipe of a sensor a Complete model trains on demotes it in the same write (out of date: fingerprint dropped)', () => {
+        const m = trainedOnT();
+        const out = applyIncompleteRule(withRecipes(slice([m]), '$RAW * 2'), withRecipes(slice([m]), '$RAW * 3')).failureGroupState!.models[0];
+        expect(out.status).toBe(false);
+        expect(out.trainedFingerprint).toBeUndefined();
+        expect(out.lastTrainedAt).toBe(m.lastTrainedAt);
+        expect(isModelStale(out, slice([out]))).toBe(true);
+    });
+
+    it('a write that leaves the recipes alone changes nothing (no upgrade-time demotion)', () => {
+        const m = trainedOnT();
+        const prev = withRecipes(slice([m]), '$RAW * 2');
+        const next = { ...prev, name: 'Renamed' };
+        expect(applyIncompleteRule(prev, next)).toBe(next);
+    });
+
+    it('compares recipes by CONTENT: a re-built list with the same recipes is no change', () => {
+        const m = trainedOnT();
+        const prev = withRecipes(slice([m]), '$RAW * 2');
+        const next = withRecipes(slice([m]), '$RAW * 2'); // a new array, same content
+        expect(prev.specialSensorRecipes).not.toBe(next.specialSensorRecipes);
+        expect(recipesDiffer(prev.specialSensorRecipes, next.specialSensorRecipes)).toBe(false);
+        expect(applyRecipeRule(prev, next)).toBe(next);
+        expect(applyIncompleteRule(prev, next)).toBe(next);
+    });
+
+    it('recipesDiffer: missing lists read as empty; any content change counts', () => {
+        expect(recipesDiffer(undefined, [])).toBe(false);
+        expect(recipesDiffer(undefined, undefined)).toBe(false);
+        expect(recipesDiffer([], [{ kind: 'formula', tag: 'T', formula: '$A' }])).toBe(true);
+        expect(recipesDiffer([{ kind: 'formula', tag: 'T', formula: '$A' }], [{ kind: 'formula', tag: 'T', formula: '$B' }])).toBe(true);
     });
 });

@@ -92,7 +92,7 @@ export async function commitHealthVerdict(
     const next = await updateWorkspaceData(workspaceId, prev => {
         const fg = prev.failureGroupState;
         const target = fg?.models?.find(m => m.id === modelId);
-        if (!fg || !target || target.healthVerdict === verdict || !isModelTrainedFresh(target, fg)) return prev;
+        if (!fg || !target || target.healthVerdict === verdict || !isModelTrainedFresh(target, fg, prev.specialSensorRecipes)) return prev;
         changed = true;
         return withFailureGroupState(prev, {
             models: fg.models.map(m => (m.id === modelId ? { ...m, healthVerdict: verdict } : m)),
@@ -183,7 +183,9 @@ export async function persistModelComplete(
         res.reason = getBuildBlockReason(target, fg, headers);
         // Train/Test validation (SPEC rule 2): at least one valid test period.
         if (res.reason === null) res.reason = markCompleteBlockReason(target, fg);
-        if (res.reason === null && !isModelTrainedFresh(target, fg)) res.reason = NOT_TRAINED_BLOCK_REASON;
+        // A special sensor it was trained on changed its recipe since (customer
+        // batch 2026-10, item 6): not fresh either -- judged against DISK.
+        if (res.reason === null && !isModelTrainedFresh(target, fg, prev.specialSensorRecipes)) res.reason = NOT_TRAINED_BLOCK_REASON;
         if (res.reason === null && race
             && (computeTrainFingerprint(target, fg) !== race.fingerprint || target.trainedFingerprint !== race.fingerprint)) {
             res.reason = SETTINGS_CHANGED_DURING_EXPORT_REASON;

@@ -5,7 +5,7 @@ import { emit } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { subscribe } from "../../utils/tauriEvents";
 import { X, Check, ChevronRight, Lock, CircleAlert, TriangleAlert, Search, Loader2 } from "lucide-react";
-import { FailureGroup, FailureModel, ModelKind, ModelCategory, SensorMetadata, CsvMetadata, WorkspaceSensorFilter, CategoryChange, TimePeriod, TestPeriod, TimeHighlight, FailureGroupStateSlice, FailureGroupStateChangedPayload, HealthSetPoints, HealthVerdictValue } from "../../types";
+import { FailureGroup, FailureModel, ModelKind, ModelCategory, SensorMetadata, CsvMetadata, WorkspaceSensorFilter, CategoryChange, TimePeriod, TestPeriod, TimeHighlight, FailureGroupStateSlice, FailureGroupStateChangedPayload, HealthSetPoints, HealthVerdictValue, SpecialSensorRecipe, WorkspaceState } from "../../types";
 import type { HealthIssue } from "../../types/health";
 import type { RelationshipPreviewResult, ClusteringPreview } from "../../types/commands";
 import { loadWorkspaceData, updateWorkspaceData } from "../../workspaceManager";
@@ -391,6 +391,11 @@ export default function BuildModelWindow() {
     // the amber train-overlap warning (never drawn on Workbench charts). Read from
     // the workspace file at hydration and again whenever they are about to be used.
     const [dashHighlights, setDashHighlights] = useState<TimeHighlight[]>([]);
+    // The workspace's special-sensor recipes, read from disk (customer batch 2026-10, item 6):
+    // a model trained on a special sensor whose formula changed since reads as out of date in
+    // every status (`isModelStale` & co. take them). Kept as ONE array per read, so the recipe
+    // signatures (memoised per array) are computed once, not per render.
+    const [specialRecipes, setSpecialRecipes] = useState<SpecialSensorRecipe[] | null>(null);
     const { bounds: datasetBounds } = useDatasetTimeBounds();
     // Drives the Workbench's Running condition settings modal (opened from the
     // Step-1 card's Edit / Set running condition / Fix period button; was an inline
@@ -612,6 +617,7 @@ export default function BuildModelWindow() {
     // could be in flight at once and whichever load finished last won).
     const workspaceIdRef = useRef<string | null>(null);
     const loadSeq = useRef(0);
+    const recipeSeq = useRef(0);
 
     // 🆕 2026-09-29 [data-loss fix]: the most recent in-flight
     // `updateWorkspaceData` write from ANY persist path in this window
@@ -643,6 +649,18 @@ export default function BuildModelWindow() {
         setCategoryNotice(fg?.categoryNormalisationNotice ?? null);
     }, []);
 
+    /** Adopts what one of THIS window's writes put on disk: the slice and the
+     *  special-sensor recipes the write read (review 2026-10-09: a Train after a
+     *  Repair stamps `trainedFormulas` from the recipes on disk, so this window
+     *  must judge freshness against those same recipes, not an older copy). Any
+     *  recipe read still in flight is older than this write. */
+    const applyWritten = useCallback((ws: WorkspaceState | null | undefined) => {
+        if (!ws?.failureGroupState) return;
+        applyFg(ws.failureGroupState);
+        recipeSeq.current++;
+        setSpecialRecipes(ws.specialSensorRecipes ?? null);
+    }, [applyFg]);
+
     /** Re-reads the workspace's Dashboard time highlights from disk (the Dashboard
      *  may have changed them since this window opened). Never touches anything
      *  else; a failure keeps the last list. */
@@ -653,6 +671,7 @@ export default function BuildModelWindow() {
             const data = await loadWorkspaceData(ws);
             if (workspaceIdRef.current !== ws) return;
             setDashHighlights(data?.timeHighlights ?? []);
+            setSpecialRecipes(data?.specialSensorRecipes ?? null);
         } catch {
             // keep the last list
         }
@@ -683,7 +702,7 @@ export default function BuildModelWindow() {
                     // the remaining drafts still belong to `ws` and are still written
                     // there; only this window's own state is left alone.
                     if (workspaceIdRef.current !== ws) continue;
-                    if (next?.failureGroupState) applyFg(next.failureGroupState);
+                    applyWritten(next);
                     if (spDraftsRef.current[id] === sp) {
                         const rest = { ...spDraftsRef.current };
                         delete rest[id];
@@ -697,7 +716,7 @@ export default function BuildModelWindow() {
         entry.promise = promise;
         spInflightRef.current = entry as { drafts: Record<string, HealthSetPoints>; promise: Promise<void> };
         return promise;
-    }, [trackPending, applyFg, writeSpDrafts]);
+    }, [trackPending, applyWritten, writeSpDrafts]);
 
     /** Awaits this window's own pending write (and any running Mark complete),
      *  so no path off this window can drop an edit made just before closing. A set-point draft that was typed
@@ -865,6 +884,8 @@ export default function BuildModelWindow() {
                 const ws = await loadWorkspaceData(d.workspaceId);
                 if (seq !== loadSeq.current || workspaceIdRef.current !== d.workspaceId) return;
                 setDashHighlights(ws?.timeHighlights ?? []);
+                recipeSeq.current++;
+                setSpecialRecipes(ws?.specialSensorRecipes ?? null);
                 // One-time legacy cleanup (Feature 4-A): a sensor whose models
                 // disagree on category is made consistent. When that changed
                 // something, the result + notice are WRITTEN BACK here so the
@@ -890,7 +911,7 @@ export default function BuildModelWindow() {
                         const written = await updateWorkspaceData(d.workspaceId, prev => flagLegacyGate(normalizeCategories(migratePeriods(prev, { dropLegacyKeys: true }))));
                         if (seq !== loadSeq.current || workspaceIdRef.current !== d.workspaceId) return;
                         if (written?.failureGroupState) {
-                            applyFg(written.failureGroupState);
+                            applyWritten(written);
                             await emit('failure-group-state-changed', { ...written.failureGroupState, workspaceId: d.workspaceId, origin: 'build-model' });
                         }
                     })());
@@ -912,6 +933,19 @@ export default function BuildModelWindow() {
             // A load already in flight is now older than this broadcast.
             loadSeq.current++;
             applyFg(event.payload);
+            // The Dashboard's autosave WROTE a special-sensor recipe change (`recipesChanged`):
+            // re-read the recipes from disk -- never carried in a payload. Any other broadcast
+            // costs no disk read.
+            if (event.payload.recipesChanged === true) {
+                const ws = event.payload.workspaceId;
+                const mySeq = ++recipeSeq.current;
+                loadWorkspaceData(ws)
+                    .then(data => {
+                        if (mySeq !== recipeSeq.current || workspaceIdRef.current !== ws) return;
+                        setSpecialRecipes(data?.specialSensorRecipes ?? null);
+                    })
+                    .catch(() => { /* keep the last recipes */ });
+            }
         });
 
         // Register both before asking, so the reply can't be missed.
@@ -921,7 +955,7 @@ export default function BuildModelWindow() {
             offData();
             offChanged();
         };
-    }, [applyFg, trackPending, writeSpDrafts, commitSetPointDrafts, queueReset]);
+    }, [applyFg, applyWritten, trackPending, writeSpDrafts, commitSetPointDrafts, queueReset]);
 
     // Returns the write's promise (also tracked via `trackPending`, so a
     // window close can await it) rather than being fire-and-forget itself.
@@ -944,11 +978,11 @@ export default function BuildModelWindow() {
             // workspace; this window now shows another one — touch nothing here.
             if (workspaceIdRef.current !== workspaceId) return;
             if (next?.failureGroupState) {
-                applyFg(next.failureGroupState);
+                applyWritten(next);
                 await emit('failure-group-state-changed', { ...next.failureGroupState, workspaceId, origin: 'build-model' });
             }
         })());
-    }, [workspaceId, applyFg, trackPending]);
+    }, [workspaceId, applyWritten, trackPending]);
 
     // The one path that actually changes the workspace-wide running
     // condition — edited entirely from the "Running Condition Filter" modal
@@ -984,11 +1018,11 @@ export default function BuildModelWindow() {
                 return applyIncompleteRule(prev, withFailureGroupState(applied, { rcLegacyNotice: stillPending ? 'pending' : null }));
             });
             if (next?.failureGroupState) {
-                applyFg(next.failureGroupState);
+                applyWritten(next);
                 await emit('failure-group-state-changed', { ...next.failureGroupState, workspaceId, origin: 'build-model' });
             }
         })());
-    }, [workspaceId, applyFg, trackPending]);
+    }, [workspaceId, applyWritten, trackPending]);
 
     // ---- Running Condition modal: local draft + explicit Apply (2026-10-03) ----
     // Every edit in the modal lands in `rcDraft` only. Nothing is written to
@@ -1327,7 +1361,7 @@ export default function BuildModelWindow() {
         return trackPending((async () => {
             const next = await updateWorkspaceData(workspaceId, prev => withFailureGroupState(prev, { categoryNormalisationNotice: null }));
             if (next?.failureGroupState) {
-                applyFg(next.failureGroupState);
+                applyWritten(next);
                 await emit('failure-group-state-changed', { ...next.failureGroupState, workspaceId, origin: 'build-model' });
             }
         })());
@@ -1352,14 +1386,14 @@ export default function BuildModelWindow() {
      *  `src/utils/trainFingerprint.ts` and the SPEC FINAL entry in
      *  `docs/PROJECT_HANDOVER.md`. */
     const isModelTrainedFresh = (m: FailureModel): boolean =>
-        !m.status && trainedFreshFor(effectiveModelFor(m), gateFg);
+        !m.status && trainedFreshFor(effectiveModelFor(m), gateFg, specialRecipes);
     /** Was trained at some point, but the model's inputs (or the effective
      *  running condition) changed since — "Settings changed — re-train". */
     // 🆕 2026-10-03 (health score): NOT gated on `status` any more — a Complete
     // model whose inputs changed since it was trained is out of date too (the
     // write side already set it Incomplete; this is the read side, for old data
     // and for a pending draft). See `utils/modelStatus.ts`.
-    const isModelStale = (m: FailureModel): boolean => isModelStaleFor(effectiveModelFor(m), gateFg);
+    const isModelStale = (m: FailureModel): boolean => isModelStaleFor(effectiveModelFor(m), gateFg, specialRecipes);
     /** Complete AND still up to date — what every "Complete" display reads
      *  (never `m.status` alone). */
     const isModelDone = (m: FailureModel): boolean => m.status && !isModelStale(m);
@@ -1633,7 +1667,7 @@ export default function BuildModelWindow() {
             ? { kind: 'missing', reason: BEING_SAVED_REASON, fix: 'settings' }
             : classifyTrainPlan({
                 blockReason: buildBlockReason(m),
-                dotState: modelDotState(effectiveModelFor(m), gateFg, gateHeaders),
+                dotState: modelDotState(effectiveModelFor(m), gateFg, gateHeaders, specialRecipes),
                 // A failed run this session, or a Relation-model fit Rust no longer holds: ready again.
                 hasSessionError: !!trainError[m.id] || notFittedIds.has(m.id)
                     || (activeModel?.id === m.id && healthPreview.notFitted),
@@ -1702,7 +1736,7 @@ export default function BuildModelWindow() {
         const notAllowed = getBuildBlockReason(model, fg, gateHeaders)
             // At least one valid test period (SPEC rule 2).
             ?? markCompleteBlockReason(model, fg)
-            ?? (trainedFreshFor(model, fg) ? null : (isModelStaleFor(model, fg) ? 'Settings changed — re-train first.' : NOT_TRAINED_BLOCK_REASON));
+            ?? (trainedFreshFor(model, fg, specialRecipes) ? null : (isModelStaleFor(model, fg, specialRecipes) ? 'Settings changed — re-train first.' : NOT_TRAINED_BLOCK_REASON));
         if (notAllowed !== null) return fail(notAllowed);
         if (queueRef.current.isRunningNow()) return fail(TRAIN_RUN_ACTIVE_REASON);
         // Unsaved Model-settings edits (e.g. a Custom model's test periods) are SAVED
@@ -1756,7 +1790,7 @@ export default function BuildModelWindow() {
                 await trackPending((async () => {
                     const r = await persistModelComplete(ws, id, res.setPoints, gateHeaders, 'build-model', record, race);
                     persisted.reason = r.reason;
-                    if (stillHere() && r.next?.failureGroupState) applyFg(r.next.failureGroupState);
+                    if (stillHere()) applyWritten(r.next);
                 })());
                 if (persisted.reason !== null) return fail(`The files were written, but the model was not marked complete: ${persisted.reason}`);
                 // Re-pointed meanwhile: A's Complete is on disk (and was broadcast with A's
@@ -1951,7 +1985,7 @@ export default function BuildModelWindow() {
     // while the last data stays on screen under the "Out of date" overlay.
     const activeEffective = activeModel ? effectiveModelFor(activeModel) : null;
     const activeFingerprint = activeEffective ? computeTrainFingerprint(activeEffective, gateFg) : null;
-    const activeStale = activeEffective ? isModelStaleFor(activeEffective, gateFg) : false;
+    const activeStale = activeEffective ? isModelStaleFor(activeEffective, gateFg, specialRecipes) : false;
     const activeTrainEntry = activeModel ? trainResults[activeModel.id] : undefined;
     const activeFitKey = activeEffective
         && activeEffective.kind === 'relationship'
@@ -2038,7 +2072,7 @@ export default function BuildModelWindow() {
         if (!sameSetPoints(activeModel.healthSetPoints, persistedSetPointsOf(activeModel))) return;
         void trackPending((async () => {
             const next = await commitHealthVerdict(ws, activeModel.id, verdictToPersist, 'build-model');
-            if (next?.failureGroupState && workspaceIdRef.current === ws) applyFg(next.failureGroupState);
+            if (workspaceIdRef.current === ws) applyWritten(next);
         })());
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [loading, activeModel?.id, activeModel?.healthVerdict, activeModel?.healthSetPoints, verdictToPersist, healthReady, healthPreview.loading, healthPreview.error, activeHasDraft]);
@@ -2315,7 +2349,7 @@ export default function BuildModelWindow() {
     /** The status of one model for the left list's dot / the tab pill. A failed
      *  run of this session overrides an otherwise "trained" model. */
     const dotStateOf = (m: FailureModel): ModelDotState => {
-        const st = modelDotState(effectiveModelFor(m), gateFg, gateHeaders);
+        const st = modelDotState(effectiveModelFor(m), gateFg, gateHeaders, specialRecipes);
         return st === 'trained' && trainError[m.id] ? 'stale' : st;
     };
 
@@ -3038,7 +3072,7 @@ export default function BuildModelWindow() {
         if (activeModel && m.id === activeModel.id && activeVerdict !== null) {
             return activeVerdict === 'bad' ? 'fix' : activeVerdict === 'needs' ? 'needed' : null;
         }
-        return modelSetPointFlag(effectiveModelFor(m), gateFg, gateHeaders, st);
+        return modelSetPointFlag(effectiveModelFor(m), gateFg, gateHeaders, st, specialRecipes);
     };
 
     /** The pill on a kind tab: the central status (`modelDotState`), refined for a
@@ -3277,7 +3311,7 @@ export default function BuildModelWindow() {
         // At least one valid test period (SPEC rule 2) — Train does not need one.
         const noTest = markCompleteBlockReason(effectiveModelFor(m), gateFg);
         if (noTest !== null) return noTest;
-        if (!trainedFreshFor(effectiveModelFor(m), gateFg)) return NOT_TRAINED_BLOCK_REASON;
+        if (!trainedFreshFor(effectiveModelFor(m), gateFg, specialRecipes)) return NOT_TRAINED_BLOCK_REASON;
         if (trainError[m.id]) return "Couldn't refresh the result — fix the problem, then re-train.";
         if (healthPreview.notFitted) return 'Re-train first — the fitted Relation model is no longer in memory.';
         const data = healthPreview.data;

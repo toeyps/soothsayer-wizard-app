@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { nameProblem, sameTag, sensorRef } from '../utils/specialSensorNaming';
-import { useCalculationEngine } from '../hooks/useCalculationEngine';
-import { renderHook } from '@testing-library/react';
+import { quickMulti } from '../utils/quickBuild';
 
 /**
  * `sensorRef` is the TypeScript twin of Rust's `sensor_ref_token`
@@ -52,12 +51,11 @@ describe('sensorRef (twin of Rust sensor_ref_token)', () => {
         expect(sensorRef('11PT1214A.PV')).toBe('${11PT1214A.PV}');
     });
 
-    it('is what the button builder actually writes into a formula (one implementation, not two)', () => {
-        const names = ['Total-Power', 'A/B', 'plain_1'];
-        const { result } = renderHook(() => useCalculationEngine(names));
-        expect(result.current.build()).toEqual({
+    it('is what Quick build actually writes into a formula (one implementation, not two)', () => {
+        const names = ['Total-Power', 'A/B', 'plain_1', 'อุณหภูมิ'];
+        expect(quickMulti(names, { combine: null })).toMatchObject({
             kind: 'formula',
-            expression: '${Total-Power} + ${A/B} + $plain_1',
+            formula: '${Total-Power} + ${A/B} + $plain_1 + $อุณหภูมิ',
         });
     });
 });

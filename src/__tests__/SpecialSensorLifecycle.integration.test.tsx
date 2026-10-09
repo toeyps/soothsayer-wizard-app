@@ -2,8 +2,8 @@
  * Special sensors, end to end across windows (qa-agent, 2026-10-03).
  *
  * Mounts the REAL Dashboard and the REAL Add Special Sensor window (with the
- * real SensorExplorer / SensorTooling / ManageSpecialSensors /
- * SpecialSensorEditor, and the real DataUploadPage for workspace-reopen
+ * real SensorExplorer / Formula editor + Quick build / ManageSpecialSensors
+ * -- customer batch 2026-10, item 6 -- and the real DataUploadPage for workspace-reopen
  * replay) side by side in one document, connected by a shared fake Tauri
  * event bus (every payload is structured-cloned, like real IPC), against a
  * fake Rust session that holds real column VALUES and enforces the same rules
@@ -330,12 +330,21 @@ async function pick(...tags: string[]) {
     await flush();
 }
 
-function opCard(label: string): HTMLButtonElement {
-    const cards = Array.from(createBody().querySelectorAll('.special-sensor-op-card')) as HTMLButtonElement[];
-    const card = cards.find(c => c.querySelector('b')?.textContent === label);
-    if (!card) throw new Error(`no op card ${label}`);
-    return card;
+/** Quick build (the card above the formula): its option pills and its Use / Replace buttons. */
+const quickBuild = () => within(createBody()).getByTestId('quick-build');
+async function quick(label: string) {
+    await act(async () => { fireEvent.click(within(quickBuild()).getByRole('button', { name: label })); });
+    await flush();
 }
+/** Write Quick build's generated formula / block into the editor. */
+async function useQuick() {
+    const qb = within(quickBuild());
+    const btn = qb.queryByRole('button', { name: /^Use this (formula|block)$/ })
+        ?? qb.getByRole('button', { name: /^Replace (formula|with this block)$/ });
+    await act(async () => { fireEvent.click(btn); });
+    await flush();
+}
+const nameField = () => createBody().querySelector('#fx-name') as HTMLInputElement;
 
 function labelledInput(labelText: string): HTMLInputElement {
     const labels = Array.from(createBody().querySelectorAll('label'));
@@ -344,14 +353,13 @@ function labelledInput(labelText: string): HTMLInputElement {
     return label.parentElement!.querySelector('input, select') as HTMLInputElement;
 }
 
-// SensorTooling keeps showing the previous sensor's Description/Unit after an
-// Add (see the 1c bugs) and React ignores a change event that sets an input to
-// the value it already shows -- so each fill uses fresh text.
+// React ignores a change event that sets an input to the value it already
+// shows -- so each fill uses fresh text.
 let fillSeq = 0;
 async function fillCreate(name: string, opts: { description?: string; unit?: string; component?: string } = {}) {
     fillSeq++;
-    const nameInput = createBody().querySelector('input[placeholder="e.g. Total Power"]') as HTMLInputElement;
-    if (!nameInput) throw new Error('Name field not shown -- nothing is being created');
+    const nameInput = nameField();
+    if (!nameInput) throw new Error('Name field not shown');
     await act(async () => { fireEvent.change(nameInput, { target: { value: name } }); });
     await act(async () => { fireEvent.change(labelledInput('Description'), { target: { value: opts.description ?? `${name.trim()} desc ${fillSeq}` } }); });
     await act(async () => { fireEvent.change(labelledInput('Unit'), { target: { value: opts.unit ?? `u${fillSeq}` } }); });
@@ -360,9 +368,7 @@ async function fillCreate(name: string, opts: { description?: string; unit?: str
 }
 
 async function typeFormula(formula: string) {
-    const toggle = W().queryByText('Edit as text instead');
-    if (toggle) await act(async () => { fireEvent.click(toggle); });
-    const ta = createBody().querySelector('textarea') as HTMLTextAreaElement;
+    const ta = createBody().querySelector('textarea[aria-label="Formula"]') as HTMLTextAreaElement;
     await act(async () => { fireEvent.change(ta, { target: { value: formula, selectionStart: formula.length } }); });
     await flush();
 }
@@ -433,10 +439,9 @@ async function saveEditor() {
     await tick(300);
 }
 
-const editorError = () => {
-    const editor = W().queryByLabelText('Name')?.closest('.rounded') as HTMLElement | null;
-    return editor ? Array.from(editor.querySelectorAll('[role="alert"]')).map(a => a.textContent).join(' / ') : '';
-};
+/** Why the last Edit save was refused (the footer's alert) and a Name problem, if any. */
+const editorError = () => Array.from(win!.container.querySelectorAll('.special-sensor-footer [role="alert"], .fx-namerr'))
+    .map(a => a.textContent).join(' / ');
 
 /** Recipes as the Dashboard currently holds them (= what autosave persists). */
 async function persistedRecipes(): Promise<SpecialSensorRecipe[]> {
@@ -539,32 +544,32 @@ const SUM = (tag: string, sources: string[]): SpecialSensorRecipe =>
     ({ kind: 'operation', tag, sourceSensors: sources, operationConfig: { mode: 'multi', multiOp: { type: 'sum' }, customName: tag } });
 
 describe('1b. create via operation, Sum vs Mean with a missing source, Pair Plot cap', () => {
-    it('Sum all of two picked sources: only the new sensor is plotted, a row with a missing source is EMPTY, and the card says so', async () => {
+    it('Quick build Sum of two picked sources: written as A + B (a formula), only the new sensor is plotted, and a row with a missing source is EMPTY', async () => {
         await openDashboard(baseState({ selectedSensors: ['TAG3'], visibleSensors: ['TAG3'] }));
         await openWindow();
         await pick('TAG1', 'TAG2');
-        await act(async () => { fireEvent.click(opCard('Sum all')); });
-        await flush();
-        expect(W().getAllByText('Rows where any source is missing are left empty').length).toBeGreaterThan(0);
-        expect(opCard('Sum all').getAttribute('title')).toBe('Rows where any source is missing are left empty');
+        await quick('Sum');
+        expect(within(quickBuild()).getByRole('button', { name: 'Sum' }).getAttribute('title')).toBe('A + B + C — a row is missing if any source is missing');
+        await useQuick();
         await fillCreate('S');
         await clickAdd();
 
-        expect(rust.cmds('calculate_new_sensor')).toHaveLength(1);
+        expect(lastOf(rust.cmds('evaluate_formula'))!.args).toEqual({ formula: '$TAG1 + $TAG2', customName: 'S' });
         expect(dashSelected()).toEqual(['TAG3', 'S']);
         expect(chartSeriesFor('S')).toEqual([11, 22, null, 44]);
         await expectConsistent(await persistedRecipes());
     });
 
-    it('Average all skips the missing source instead (and shows no "left empty" hint)', async () => {
+    it('Quick build Average is a BLOCK that skips the missing source instead (calculate_new_sensor)', async () => {
         await openDashboard(baseState());
         await openWindow();
         await pick('TAG1', 'TAG2');
-        await act(async () => { fireEvent.click(opCard('Average all')); });
-        await flush();
-        expect(W().queryByText('Rows where any source is missing are left empty')).toBeNull();
+        await quick('Average');
+        expect(within(quickBuild()).getByTestId('quick-build-output').textContent).toBe('Average of 2 sensors · missing values skipped');
+        await useQuick();
         await fillCreate('M');
         await clickAdd();
+        expect(rust.cmds('calculate_new_sensor')).toHaveLength(1);
         expect(dashSelected()).toEqual(['M']);
         expect(chartSeriesFor('M')).toEqual([5.5, 11, 3, 22]);
     });
@@ -573,6 +578,7 @@ describe('1b. create via operation, Sum vs Mean with a missing source, Pair Plot
         await openDashboard(baseState());
         await openWindow();
         await pick('TAG1', 'TAG2');
+        await useQuick();
         await fillCreate('Chain');
         await clickAdd();
         expect(lastOf(rust.cmds('evaluate_formula'))!.args).toEqual({ formula: '$TAG1 + $TAG2', customName: 'Chain' });
@@ -604,13 +610,13 @@ describe('1b. create via operation, Sum vs Mean with a missing source, Pair Plot
         expect(within(row).queryByText('on chart')).toBeNull();
     });
 
-    it('"add as-is" (one raw sensor, no calculation) adds it to the Dashboard current plot and creates nothing', async () => {
+    it('picking one raw sensor builds nothing by itself: Add stays off until Quick build (or typing) puts something in the editor', async () => {
         await openDashboard(baseState({ selectedSensors: ['TAG3'], visibleSensors: ['TAG3'] }));
         await openWindow();
         await pick('TAG4');
-        expect(createBody().querySelector('input[placeholder="e.g. Total Power"]')).toBeNull();
+        expect(addBtn().disabled).toBe(true);
         await clickAdd();
-        expect(dashSelected()).toEqual(['TAG3', 'TAG4']);
+        expect(dashSelected()).toEqual(['TAG3']);
         expect(rust.derivedNames()).toEqual([]);
         expect(await persistedRecipes()).toEqual([]);
     });
@@ -649,7 +655,7 @@ describe('1c. the Create form after a successful Add', () => {
         expect(rust.cmds('evaluate_formula')).toHaveLength(1);
         const ta = createBody().querySelector('textarea') as HTMLTextAreaElement | null;
         expect(ta?.value ?? '').toBe('');
-        expect(createBody().querySelector('input[placeholder="e.g. Total Power"]')).toBeNull();
+        expect(nameField().value).toBe('');
         expect(W().queryByText(/already exists/)).toBeNull();
         expect(W().queryByText('Fix the name before adding.')).toBeNull();
     });
@@ -672,8 +678,7 @@ describe('1c. the Create form after a successful Add', () => {
         await fillCreate('Once', { description: 'Same desc', unit: 'kPa' });
         await clickAdd();
         await typeFormula('$TAG3 * 3');
-        const nameInput = createBody().querySelector('input[placeholder="e.g. Total Power"]') as HTMLInputElement;
-        await act(async () => { fireEvent.change(nameInput, { target: { value: 'Twice' } }); });
+        await act(async () => { fireEvent.change(nameField(), { target: { value: 'Twice' } }); });
         await flush();
         expect(labelledInput('Description').value).toBe('');
         expect(labelledInput('Unit').value).toBe('');
@@ -699,11 +704,12 @@ describe('1c. the Create form after a successful Add', () => {
         await openDashboard(baseState());
         await openWindow();
         await pick('TAG1', 'TAG2');
+        await useQuick();
         await fillCreate('First');
         await clickAdd();
         await pick('TAG3', 'TAG4');
-        const nameInput = createBody().querySelector('input[placeholder="e.g. Total Power"]') as HTMLInputElement;
-        expect(nameInput.value).toBe('');
+        await useQuick();
+        expect(nameField().value).toBe('');
         expect(W().queryByText(/already exists/)).toBeNull();
     });
 });
@@ -1281,11 +1287,10 @@ describe('6. names: the TS brace rule matches the Rust tokenizer', () => {
         await createFormula(name, '$TAG1 * 2');
         expect(rust.chartValues(name)).toEqual([2, 4, 6, 8]);
 
-        // D from the Explorer + default "+" chain (TS writes the reference).
+        // D from the Explorer + Quick build's default "+" chain (TS writes the reference).
         await goCreate();
-        const toButtons = W().queryByText('Use buttons instead');
-        if (toButtons) await act(async () => { fireEvent.click(toButtons); });
         await pick(name, 'TAG3');
+        await useQuick();
         await fillCreate('D');
         await clickAdd();
         const dRecipe = (await persistedRecipes()).find(r => r.tag === 'D') as { formula: string };
@@ -1339,7 +1344,7 @@ describe('6. names: the TS brace rule matches the Rust tokenizer', () => {
         await setEditor({ name: to });
         expect(W().getByText('Save changes').closest('button')!.disabled).toBe(true);
         expect(editorError()).not.toBe('');
-        expect(rust.calls.filter(c => c.args?.replace)).toHaveLength(0);
+        expect(rust.calls.filter(c => c.cmd !== 'preview_formula' && c.args?.replace)).toHaveLength(0);
     });
 });
 
@@ -1410,7 +1415,7 @@ describe('8. interleavings', () => {
         await renameViaEditor('A', 'N');
         // The rename has not started: it waits behind the create.
         expect(rust.cmds('rename_formula_refs')).toHaveLength(0);
-        expect(rust.calls.filter(c => c.args?.replace)).toHaveLength(0);
+        expect(rust.calls.filter(c => c.cmd !== 'preview_formula' && c.args?.replace)).toHaveLength(0);
         await act(async () => { g.release(); });
         await flush(30);
         await tick(300);
@@ -1428,7 +1433,7 @@ describe('8. interleavings', () => {
     // does not know a rename to that name is in flight. The rename's
     // `replace: true` recompute then OVERWRITES the freshly created sensor's
     // column in place, and both recipes end up under one tag.
-    it('regression: rename A -> N is recomputing (slow) -> meanwhile Create makes a NEW sensor N ($TAG3 * 1) -> the rename overwrites N\'s column with A\'s values and two recipes are named N', async () => {
+    it('regression: rename A -> N is recomputing (slow) -> the Create tab shows that edit (no Add) until it finishes -> then a NEW sensor N is refused as taken: one recipe named N, no overwrite', async () => {
         await openWorkspace([F('A', '$TAG1 * 2')]);
         const g = rust.gate('evaluate_formula', a => a.customName === 'N' && a.replace === true);
         await openEditor('A');
@@ -1436,12 +1441,16 @@ describe('8. interleavings', () => {
         await act(async () => { fireEvent.click(W().getByText('Save changes').closest('button')!); });
         await flush();
         await goCreate();
-        await typeFormula('$TAG3 * 1');
-        await fillCreate('N');
-        await clickAdd();
+        // While the edit is applying, Create is that edit: nothing new can be added meanwhile.
+        expect(W().queryByText('Add sensor')).toBeNull();
         await act(async () => { g.release(); });
         await flush(30);
         await tick(400);
+        await goCreate();
+        await typeFormula('$TAG3 * 1');
+        await fillCreate('N');
+        expect(W().getByText(/already exists/)).toBeTruthy();
+        expect(addBtn().disabled).toBe(true);
         const recipes = await persistedRecipes();
         expect(recipes.filter(r => r.tag.toLowerCase() === 'n')).toHaveLength(1);
         await expectConsistent(recipes);
@@ -1478,7 +1487,7 @@ describe('8. interleavings', () => {
         await setEditor({ formula: '$TAG1 * 3' });
         await saveEditor();
         expect(editorError()).toMatch(/Could not recompute "C"/);
-        await act(async () => { fireEvent.click(W().getByText('Cancel')); });
+        await act(async () => { fireEvent.click(W().getByText('Cancel edit')); });
         await expectConsistent(await persistedRecipes());
     });
 
@@ -1501,7 +1510,7 @@ describe('8. interleavings', () => {
     // downstream set when it STARTS; a sensor created on top of the edited
     // one while its recompute is still running reads the OLD values and is
     // never recomputed.
-    it('regression: edit A ($TAG1 * 2 -> $TAG1 * 3) is recomputing (slow) -> meanwhile Create builds B = $A + 1 -> B keeps old-A values (3,5,7,9) instead of (4,7,10,13)', async () => {
+    it('regression: edit A ($TAG1 * 2 -> $TAG1 * 3) is recomputing (slow) -> Create waits for it (it shows the edit) -> B = $A + 1 built afterwards reads the NEW A (4,7,10,13)', async () => {
         await openWorkspace([F('A', '$TAG1 * 2')]);
         const g = rust.gate('evaluate_formula', a => a.customName === 'A' && a.replace === true);
         await openEditor('A');
@@ -1509,12 +1518,15 @@ describe('8. interleavings', () => {
         await act(async () => { fireEvent.click(W().getByText('Save changes').closest('button')!); });
         await flush();
         await goCreate();
-        await typeFormula('$A + 1');
-        await fillCreate('B');
-        await clickAdd();
+        expect(W().queryByText('Add sensor')).toBeNull();
         await act(async () => { g.release(); });
         await flush(30);
         await tick(400);
+        await goCreate();
+        await typeFormula('$A + 1');
+        await fillCreate('B');
+        await clickAdd();
+        expect(rust.chartValues('B')).toEqual([4, 7, 10, 13]);
         await expectConsistent(await persistedRecipes());
     });
 
@@ -1531,6 +1543,7 @@ describe('8. interleavings', () => {
         await setEditor({ formula: '$TAG1 * 3' });
         await act(async () => { fireEvent.click(W().getByText('Save changes').closest('button')!); });
         await flush();
+        await goManage(); // the edit is still applying; Manage stays reachable
         await act(async () => { fireEvent.click(deleteBtn('B')); });
         await tick(8100);
         // Note (fix pass): the original asserted here that the delete had ALREADY
@@ -1559,7 +1572,7 @@ describe('8. interleavings', () => {
 
 describe('9. edit lock: a sensor a model uses', () => {
     const WRITES = ['evaluate_formula', 'calculate_new_sensor', 'remove_sensor_columns', 'rename_formula_refs'];
-    const sessionWrites = (from: number) => rust.calls.slice(from).filter(c => WRITES.includes(c.cmd) || c.args?.replace);
+    const sessionWrites = (from: number) => rust.calls.slice(from).filter(c => WRITES.includes(c.cmd) || (c.cmd !== 'preview_formula' && c.args?.replace));
     const modelOn = (tag: string, over: Record<string, unknown> = {}) =>
         mk({ id: 'm1', name: 'Pump model', kind: 'relationship', targetSensor: tag, ...over });
     const withModel = (m: any, extra: Record<string, unknown> = {}) =>
@@ -1590,7 +1603,8 @@ describe('9. edit lock: a sensor a model uses', () => {
         await writerPersistsThenBroadcasts([modelOn('TAG3')]);
         await tick(400);
         expect(deleteBtn('A').disabled).toBe(true); // B is still built on it -- an unrelated, existing rule
-        // The editor is still open on A and simply unlocks in place.
+        // The editor is still open on A (the Create tab holds the edit) and simply unlocks in place.
+        await goCreate();
         expect(banner()).toBeNull();
         expect((W().getByLabelText('Name') as HTMLInputElement).readOnly).toBe(false);
         await setEditor({ formula: '$TAG1 * 3' });

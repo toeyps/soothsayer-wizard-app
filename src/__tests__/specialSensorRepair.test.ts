@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { FailureModel, WorkspaceSensorFilter } from '../types';
-import { demoteModelsTrainedOnSensors, modelTrainsOnSensors } from '../utils/specialSensorRepair';
+import { demoteModelsTrainedOnSensors, modelTrainsOnSensors, trainingSensorsOf } from '../utils/specialSensorRepair';
 import { isModelComplete, isModelStale } from '../utils/modelStatus';
 import { isModelTrainedFresh, computeTrainFingerprint } from '../utils/trainFingerprint';
 import { mk } from './helpers/failureModelFixture';
@@ -90,5 +90,14 @@ describe('demoteModelsTrainedOnSensors', () => {
         const once = demoteModelsTrainedOnSensors([complete({ id: 'm1', targetSensor: 'A' })], fg, ['A']).models;
         const twice = demoteModelsTrainedOnSensors(once, fg, ['A']);
         expect(twice.models).toBe(once);
+    });
+});
+
+// 2026-10-09: the "trains on" list is shared with specialSensorSignature.ts.
+describe('trainingSensorsOf', () => {
+    it('lists target, predictors, X / Y / criteria and the effective running condition (blanks dropped, scatter X excluded)', () => {
+        const m = mk({ id: 'r', targetSensor: 'T', predictorSensors: ['P1', ' '], xSensor: 'X', ySensor: '', criteriaSensor: 'C', scatterXSensor: 'SX' });
+        expect(trainingSensorsOf(m, fg)).toEqual(['T', 'P1', 'X', 'C', 'RC_SENSOR']);
+        expect(trainingSensorsOf({ ...m, predictorSensors: undefined as never }, {})).toEqual(['T', 'X', 'C']);
     });
 });

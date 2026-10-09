@@ -33,10 +33,10 @@ import { effectiveRunningCondition, isCompleteCondition, type RunningConditionFg
 
 const key = (tag: string) => tag.trim().toLowerCase();
 
-/** Does `model` train on any of `tags` (compared trimmed, case-insensitively)? */
-export function modelTrainsOnSensors(model: FailureModel, fg: RunningConditionFg, tags: Iterable<string>): boolean {
-    const wanted = new Set([...tags].map(key));
-    if (wanted.size === 0) return false;
+/** Every sensor name `model` trains on (the "trains on" fields above, as
+ *  written -- may repeat; blanks dropped). Shared with
+ *  `specialSensorSignature.ts` so the two can never disagree on the list. */
+export function trainingSensorsOf(model: FailureModel, fg: RunningConditionFg): string[] {
     const named = [
         model.targetSensor,
         ...(Array.isArray(model.predictorSensors) ? model.predictorSensors : []),
@@ -45,7 +45,14 @@ export function modelTrainsOnSensors(model: FailureModel, fg: RunningConditionFg
         model.criteriaSensor,
         ...effectiveRunningCondition(model, fg).filters.filter(f => isCompleteCondition(f)).map(f => f.sensor),
     ];
-    return named.some(s => typeof s === 'string' && s.trim() !== '' && wanted.has(key(s)));
+    return named.filter((s): s is string => typeof s === 'string' && s.trim() !== '');
+}
+
+/** Does `model` train on any of `tags` (compared trimmed, case-insensitively)? */
+export function modelTrainsOnSensors(model: FailureModel, fg: RunningConditionFg, tags: Iterable<string>): boolean {
+    const wanted = new Set([...tags].map(key));
+    if (wanted.size === 0) return false;
+    return trainingSensorsOf(model, fg).some(s => wanted.has(key(s)));
 }
 
 export interface SensorRepairDemotion {

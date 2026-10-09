@@ -8,6 +8,8 @@ import { applyIncompleteRule } from './utils/incompleteRule';
 import { withFailureGroupState } from './utils/failureGroupState';
 import { failureGroupMetaFields } from './utils/failureGroupSummary';
 import { logToFile } from './errorReporter';
+import { applyLegacyConversion, legacyConversionMessage } from './utils/legacyFormulaConversion';
+import type { LegacyFormulaConversion } from './types/formula';
 
 const STORE_FILE = 'settings.json';
 
@@ -218,6 +220,49 @@ export async function updateWorkspaceData(
         await writeWorkspaceFile(next);
         return next;
     });
+}
+
+/** What `saveLegacyFormulaConversion` wrote. */
+export interface LegacyConversionNotice {
+    /** The state now on disk -- hand THIS (its recipes and models) to the
+     *  Dashboard, or its full-overwrite autosave writes the old text back. */
+    state: WorkspaceState;
+    /** Conversions actually applied (a recipe edited meanwhile is skipped). */
+    converted: LegacyFormulaConversion[];
+    /** Ids of the models set back to Incomplete that must be trained again. */
+    retrainModelIds: string[];
+    /** User-facing text (`legacyConversionMessage`). */
+    message: string;
+}
+
+/**
+ * Persist the legacy `round(x, n)` conversion of a workspace open (customer
+ * batch 2026-10, item 6; see `utils/legacyFormulaConversion.ts`): the new
+ * formula text and the demotion of every model trained on a converted sensor
+ * (or one built on it), in ONE write, computed against what is on disk.
+ * Nothing to convert = no write at all (returns null), so this is safe to
+ * call on every open. Null too when the file could not be read.
+ */
+export async function saveLegacyFormulaConversion(
+    id: string,
+    converted: LegacyFormulaConversion[],
+): Promise<LegacyConversionNotice | null> {
+    if (converted.length === 0) return null;
+    let applied: LegacyFormulaConversion[] = [];
+    let retrain: string[] = [];
+    const written = await updateWorkspaceData(id, prev => {
+        const res = applyLegacyConversion(prev, converted);
+        applied = res.applied;
+        retrain = res.retrain;
+        return res.state;
+    });
+    if (!written || applied.length === 0) return null;
+    return {
+        state: written,
+        converted: applied,
+        retrainModelIds: retrain,
+        message: legacyConversionMessage(applied, retrain.length),
+    };
 }
 
 // Default PM build config for a model that never had one — mirrors

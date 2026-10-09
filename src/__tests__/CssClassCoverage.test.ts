@@ -136,7 +136,7 @@ function stripTsComments(src: string): string {
 }
 
 /** String literal contexts that are never class names. */
-const NON_CLASS_CONTEXT = /(data-[\w-]+|testid|testId|key|id|htmlFor|name|aria-[\w-]+|role|type|label|title|placeholder)\s*[=:]\s*\{?\s*$|(getByTestId|queryByTestId|emit|emitTo|listen|once|subscribe|invoke|reportError)\s*(<[^()]*>)?\(\s*$/;
+const NON_CLASS_CONTEXT = /(data-[\w-]+|testid|testId|key|id|htmlFor|name|aria-[\w-]+|role|type|label|title|placeholder)\s*[=:]\s*\{?\s*$|(getByTestId|queryByTestId|emit|emitTo|listen|once|subscribe|invoke|reportError|logToFile)\s*(<[^()]*>)?\(\s*$/;
 
 interface Lit { file: string; line: number; text: string; template: boolean }
 

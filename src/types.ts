@@ -44,6 +44,13 @@ export interface SensorOperationConfig {
     };
     multiOp?: {
         type: MultiOperationType;
+        /** Round every result row to this many decimal places (customer batch
+         *  2026-10, item 6): a rounded Average / Median block keeps its own
+         *  decimals instead of a `round()` wrap. A whole number 0..10 (Rust's
+         *  `MAX_OPERATION_DECIMALS`); absent = no rounding, so every recipe
+         *  saved before this field existed computes exactly as before. Same
+         *  rounding as `round(X * 100) / 100` in a formula (half away from 0). */
+        decimals?: number;
     };
     customName?: string;
 }
@@ -271,6 +278,20 @@ export interface FailureModel extends PredictiveModelStateSlice {
      *  Produced by `computeTrainFingerprint` in `src/utils/trainFingerprint.ts`
      *  — treat the string's shape as an implementation detail, never parse it. */
     trainedFingerprint?: string;
+    /** The recipes of the SPECIAL sensors this model was trained on, as they
+     *  were at that train (customer batch 2026-10, item 6 -- user decision:
+     *  editing a special sensor's formula makes the models trained on it
+     *  stale). Keyed by the sensor's tag trimmed + lower-cased; the value is a
+     *  deep, rename-proof signature of its recipe (and of every special sensor
+     *  it is built on) -- see `utils/specialSensorSignature.ts`, never parse it.
+     *
+     *  Stamped centrally in the write that records a train (`lastTrainedAt`
+     *  changes): `applyIncompleteRule` -> `stampTrainedFormulas`, against the
+     *  recipes on DISK in that write. Absent on a model trained before this
+     *  field existed, or one that uses no special sensor: such a model is
+     *  never judged stale by it (backward compatible -- an upgrade does not
+     *  turn every trained model stale). Not part of `computeTrainFingerprint`. */
+    trainedFormulas?: Record<string, string>;
     /** Health score set points the USER enters for this model (phase 1 of the
      *  Health score work, 2026-10-03 -- data model only, no UI or score
      *  computation yet). Stored ON THE MODEL and never written back to master
@@ -456,6 +477,10 @@ export interface CategoryChange {
 export interface FailureGroupStateChangedPayload extends FailureGroupStateSlice {
     workspaceId?: string;
     origin?: string;
+    /** Set by the Dashboard autosave when the write it just made changed the
+     *  special-sensor recipes: a listener that judges freshness against them
+     *  (Build Model) re-reads them from disk. Never the recipes themselves. */
+    recipesChanged?: boolean;
 }
 
 /** Payload of the cross-window 'update-special-sensor' event (Add Sensor

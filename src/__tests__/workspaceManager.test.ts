@@ -1142,3 +1142,53 @@ describe('recent-project Failure Group fields (customer batch 2026-10, item 5)',
         expect(recent().find(w => w.id === copy!.id)).toMatchObject({ failureGroupCount: 2, failureGroupNos: [1, 2] });
     });
 });
+
+// Customer batch 2026-10, item 6: the legacy `round($A, 2)` auto-conversion
+// on workspace open is persisted in ONE write (new text + model demotion), and
+// writes nothing at all when there was nothing to convert.
+describe('saveLegacyFormulaConversion', () => {
+    const conversions = [{ tag: 'A', from: 'round($RAW, 2)', to: 'round($RAW * 100) / 100' }];
+
+    function fakeDisk(initial: unknown) {
+        let disk = JSON.stringify(initial);
+        mockStoreGet.mockResolvedValue([{ id: 'ws1', name: 'W', description: '', lastModified: 1, filePath: 'workspaces/ws1.json' }]);
+        mockExists.mockResolvedValue(true);
+        mockReadTextFile.mockImplementation(async () => disk);
+        mockWriteTextFile.mockImplementation(async (_p: string, json: string) => { disk = json; });
+        return () => JSON.parse(disk);
+    }
+
+    it('nothing converted: no read, no write, null', async () => {
+        const { saveLegacyFormulaConversion } = await freshModule();
+        expect(await saveLegacyFormulaConversion('ws1', [])).toBeNull();
+        expect(mockReadTextFile).not.toHaveBeenCalled();
+        expect(mockWriteTextFile).not.toHaveBeenCalled();
+    });
+
+    it('writes the converted text and demotes the models trained on it in the same write, and returns the written state + notice', async () => {
+        const model = {
+            id: 'm1', groupNos: [1], name: 'm1', kind: 'individual', category: 'condition', notes: '', status: true,
+            xSensor: '', ySensor: '', targetSensor: 'A', predictorSensors: [], individualChecked: true, rcMode: null,
+            scatterXSensor: '', relModelName: '', relStiffness: 0, clusterModelName: '', numClusters: 1, criteriaSensor: '',
+            clusterRanges: [], filterTimePeriods: [], runningConditionMode: 'workspace', customRunningConditionFilters: [],
+            customRunningConditionCombine: 'and', lastTrainedAt: '2026-01-01T00:00:00.000Z', trainedFingerprint: 'fp',
+        };
+        const read = fakeDisk({
+            id: 'ws1', name: 'W',
+            specialSensorRecipes: [{ kind: 'formula', tag: 'A', formula: 'round($RAW, 2)' }],
+            failureGroupState: { groups: [], models: [model], runningConditionFilters: [] },
+        });
+        const { saveLegacyFormulaConversion } = await freshModule();
+        const notice = await saveLegacyFormulaConversion('ws1', conversions);
+        expect(notice).not.toBeNull();
+        expect(notice!.converted).toEqual(conversions);
+        expect(notice!.retrainModelIds).toEqual(['m1']);
+        expect(notice!.message).toContain('1 model set back to Incomplete');
+        const disk = read();
+        expect(disk.specialSensorRecipes).toEqual([{ kind: 'formula', tag: 'A', formula: 'round($RAW * 100) / 100' }]);
+        expect(disk.failureGroupState.models[0].status).toBe(false);
+        expect(disk.failureGroupState.models[0].trainedFingerprint).toBeUndefined();
+        expect(notice!.state.specialSensorRecipes).toEqual(disk.specialSensorRecipes);
+        expect(savedFiles().filter(([p]) => p === 'workspaces/ws1.json')).toHaveLength(1);
+    });
+});

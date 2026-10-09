@@ -1,5 +1,6 @@
-import type { FailureModel, TimePeriod, WorkspaceSensorFilter } from '../types';
+import type { FailureModel, SpecialSensorRecipe, TimePeriod, WorkspaceSensorFilter } from '../types';
 import { effectiveRunningCondition, isCompleteCondition, type RunningConditionFg } from './runningCondition';
+import { trainedFormulasChanged } from './specialSensorSignature';
 
 /** Only the parts of a filter row that actually change what training rows get
  *  selected — `id` is a React key, not an input to the computation. */
@@ -100,6 +101,14 @@ export function computeTrainFingerprint(model: FailureModel, fg: RunningConditio
  * only answers the fingerprint-equality question, the same narrow scope it
  * had as `trainedFreshFor`.
  */
-export function isModelTrainedFresh(model: FailureModel, fg: RunningConditionFg): boolean {
-    return !!model.lastTrainedAt && model.trainedFingerprint === computeTrainFingerprint(model, fg);
+export function isModelTrainedFresh(
+    model: FailureModel,
+    fg: RunningConditionFg,
+    /** Special-sensor recipes: when given, a changed recipe of a sensor the
+     *  model was trained on (`trainedFormulas`) also makes it not fresh --
+     *  see `isModelStale` in `modelStatus.ts`. */
+    recipes?: SpecialSensorRecipe[] | null,
+): boolean {
+    return !!model.lastTrainedAt && model.trainedFingerprint === computeTrainFingerprint(model, fg)
+        && !(recipes && trainedFormulasChanged(model, recipes));
 }

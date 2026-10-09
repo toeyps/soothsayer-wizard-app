@@ -12,16 +12,25 @@ import type { UseDataUploadReturn } from '../hooks/useDataUpload';
 import type { UseMappingDataReturn } from '../hooks/useMappingData';
 import { getErrors, dismissAllErrors } from '../errorReporter';
 
+// The legacy-rounding trace goes to the log file (`logToFile`); the rest of the
+// real error reporter (toasts, getErrors) stays real.
+const mockLogToFile = vi.fn();
+vi.mock('../errorReporter', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../errorReporter')>();
+  return { ...actual, logToFile: (...args: Parameters<typeof actual.logToFile>) => mockLogToFile(...args) };
+});
+
 // ─────────────────────────────────────────────────────────────────────────
 // Mocks
 // ─────────────────────────────────────────────────────────────────────────
 
 // 2026-10-04: deleting a project confirms IN THE ROW now, not through a Tauri
 // `ask` dialog -- so no `ask` mock here (A6/A6b assert the in-row flow).
+const mockDialogMessage = vi.fn();
 vi.mock('@tauri-apps/plugin-dialog', () => ({
   open: vi.fn(),
   save: vi.fn(),
-  message: vi.fn(),
+  message: (...args: unknown[]) => mockDialogMessage(...args),
 }));
 
 const mockInvoke = vi.fn();
@@ -71,6 +80,7 @@ const mockLoadWorkspace = vi.fn();
 const mockSaveWorkspace = vi.fn();
 const mockDeleteWorkspace = vi.fn();
 const mockRenameWorkspaceFile = vi.fn();
+const mockSaveLegacyConversion = vi.fn();
 
 vi.mock('../workspaceManager', () => ({
   getRecentWorkspaces: (...args: unknown[]) => mockGetRecent(...args),
@@ -78,6 +88,7 @@ vi.mock('../workspaceManager', () => ({
   saveWorkspaceData: (...args: unknown[]) => mockSaveWorkspace(...args),
   deleteWorkspace: (...args: unknown[]) => mockDeleteWorkspace(...args),
   renameWorkspaceFile: (...args: unknown[]) => mockRenameWorkspaceFile(...args),
+  saveLegacyFormulaConversion: (...args: unknown[]) => mockSaveLegacyConversion(...args),
 }));
 
 // Stub both hooks so we drive page state via mock return values. The hooks
@@ -1116,6 +1127,123 @@ describe('F. Load workspace flow', () => {
   describe('special sensor recipe replay (2026-09-01: rebuilds "Add Special Sensor" columns in the Rust backend\'s in-memory session right after load_csv — see WorkspaceState.specialSensorRecipes)', () => {
     beforeEach(() => {
       dismissAllErrors();
+    });
+
+    // Customer batch 2026-10 (item 6), user decision 2026-10-09: a legacy spreadsheet-style
+    // `round($A, 2)` is converted on open, BEFORE the replay; the conversion is saved in one
+    // write (models trained on it back to Incomplete) and the Dashboard gets the WRITTEN state.
+    it('F-legacy. round($A, 2) is converted before the replay, the replay runs the converted text, the conversion is saved, the Dashboard gets the written state and the user is told why the values changed', async () => {
+      const original = { kind: 'formula' as const, tag: 'R', formula: 'round($sensor_a, 2)' };
+      const converted = { kind: 'formula' as const, tag: 'R', formula: 'round($sensor_a * 100) / 100' };
+      const untouched = { kind: 'formula' as const, tag: 'T', formula: '$sensor_a * 2' };
+      mockLoadWorkspace.mockResolvedValue({ ...baseLoadedWs, specialSensorRecipes: [original, untouched] });
+      const written: WorkspaceState = { ...baseLoadedWs, specialSensorRecipes: [converted, untouched] };
+      const message = 'Updated the rounding in 1 special sensor (R): the old spreadsheet form round(x, n) is now written round(x * 10ⁿ) / 10ⁿ. Its values differ from what was shown before, because the old form computed them wrongly. 2 models set back to Incomplete — train them again.';
+      mockSaveLegacyConversion.mockResolvedValue({
+        state: written,
+        converted: [{ tag: 'R', from: original.formula, to: converted.formula }],
+        retrainModelIds: ['m1', 'm2'],
+        message,
+      });
+      const order: string[] = [];
+      mockInvoke.mockImplementation((cmd: string, args?: any) => {
+        order.push(cmd);
+        if (cmd === 'convert_legacy_formula') {
+          return Promise.resolve(args.formula === original.formula
+            ? { formula: converted.formula, changed: true }
+            : { formula: args.formula, changed: false });
+        }
+        if (cmd === 'load_csv') return Promise.resolve({ headers: ['timestamp', 'sensor_a'], total_rows: 100 });
+        if (cmd === 'evaluate_formula') return Promise.resolve(args.customName);
+        return Promise.resolve(null);
+      });
+
+      render(<DataUploadPage onDataReady={onDataReady} />);
+      await waitFor(() => screen.getByText('Engine pressure run'));
+      fireEvent.click(screen.getByText('Engine pressure run'));
+      await waitFor(() => expect(onDataReady).toHaveBeenCalledTimes(1));
+
+      // Only a formula that may hold a round( call is sent; converted before the replay.
+      expect(mockInvoke.mock.calls.filter(c => c[0] === 'convert_legacy_formula').map(c => c[1])).toEqual([{ formula: original.formula }]);
+      expect(order.indexOf('convert_legacy_formula')).toBeLessThan(order.indexOf('load_csv'));
+      expect(mockInvoke).toHaveBeenCalledWith('evaluate_formula', { formula: converted.formula, customName: 'R', replace: true });
+      expect(mockInvoke).not.toHaveBeenCalledWith('evaluate_formula', expect.objectContaining({ formula: original.formula }));
+      expect(mockSaveLegacyConversion).toHaveBeenCalledWith('ws_1', [{ tag: 'R', from: original.formula, to: converted.formula }]);
+      // The Dashboard starts from what was WRITTEN (its autosave would otherwise write the old text back).
+      const stateArg = onDataReady.mock.calls[0][1] as WorkspaceState;
+      expect(stateArg.specialSensorRecipes).toEqual([converted, untouched]);
+      // One INFORMATION message (not an error toast), shown after the Dashboard is handed the
+      // state, saying the values changed and how many models must be trained again.
+      await waitFor(() => expect(mockDialogMessage).toHaveBeenCalledTimes(1));
+      expect(mockDialogMessage).toHaveBeenCalledWith(message, { title: 'Rounding updated', kind: 'info' });
+      expect(mockDialogMessage.mock.invocationCallOrder[0]).toBeGreaterThan(onDataReady.mock.invocationCallOrder[0]);
+      expect(String(mockDialogMessage.mock.calls[0][0])).toMatch(/values differ from what was shown before/);
+      expect(String(mockDialogMessage.mock.calls[0][0])).toMatch(/2 models set back to Incomplete/);
+      expect(getErrors().find(e => e.source === 'special-sensor-rounding')).toBeUndefined();
+      // The from -> to trace goes to the log file.
+      expect(mockLogToFile).toHaveBeenCalledWith('special-sensor-rounding', message, expect.stringContaining(`R: ${original.formula} → ${converted.formula}`));
+    });
+
+    it('F-legacy-none. nothing to convert: no conversion save, no notice, the stored recipes go to the Dashboard', async () => {
+      mockLoadWorkspace.mockResolvedValue({ ...baseLoadedWs, specialSensorRecipes: [{ kind: 'formula', tag: 'T', formula: 'round($sensor_a * 10) / 10' }] });
+      mockInvoke.mockImplementation((cmd: string, args?: any) => {
+        if (cmd === 'convert_legacy_formula') return Promise.resolve({ formula: args.formula, changed: false });
+        if (cmd === 'load_csv') return Promise.resolve({ headers: ['timestamp', 'sensor_a'], total_rows: 100 });
+        if (cmd === 'evaluate_formula') return Promise.resolve(args.customName);
+        return Promise.resolve(null);
+      });
+      render(<DataUploadPage onDataReady={onDataReady} />);
+      await waitFor(() => screen.getByText('Engine pressure run'));
+      fireEvent.click(screen.getByText('Engine pressure run'));
+      await waitFor(() => expect(onDataReady).toHaveBeenCalledTimes(1));
+      expect(mockSaveLegacyConversion).not.toHaveBeenCalled();
+      // An already-converted formula is not even sent to Rust.
+      expect(mockInvoke).not.toHaveBeenCalledWith('convert_legacy_formula', expect.anything());
+      expect(mockDialogMessage).not.toHaveBeenCalled();
+      expect(getErrors().find(e => e.source === 'special-sensor-rounding')).toBeUndefined();
+      expect((onDataReady.mock.calls[0][1] as WorkspaceState).specialSensorRecipes).toEqual([{ kind: 'formula', tag: 'T', formula: 'round($sensor_a * 10) / 10' }]);
+    });
+
+    it('F-legacy-unsaved. the conversion could not be written: the Dashboard still holds the converted text (its autosave then saves it)', async () => {
+      mockLoadWorkspace.mockResolvedValue({ ...baseLoadedWs, specialSensorRecipes: [{ kind: 'formula', tag: 'R', formula: 'round($sensor_a, 2)' }] });
+      mockSaveLegacyConversion.mockRejectedValue(new Error('disk full'));
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      mockInvoke.mockImplementation((cmd: string, args?: any) => {
+        if (cmd === 'convert_legacy_formula') return Promise.resolve({ formula: 'round($sensor_a * 100) / 100', changed: true });
+        if (cmd === 'load_csv') return Promise.resolve({ headers: ['timestamp', 'sensor_a'], total_rows: 100 });
+        if (cmd === 'evaluate_formula') return Promise.resolve(args.customName);
+        return Promise.resolve(null);
+      });
+      render(<DataUploadPage onDataReady={onDataReady} />);
+      await waitFor(() => screen.getByText('Engine pressure run'));
+      fireEvent.click(screen.getByText('Engine pressure run'));
+      await waitFor(() => expect(onDataReady).toHaveBeenCalledTimes(1));
+      expect((onDataReady.mock.calls[0][1] as WorkspaceState).specialSensorRecipes).toEqual([{ kind: 'formula', tag: 'R', formula: 'round($sensor_a * 100) / 100' }]);
+      // The user is still told (the values changed either way), with wording that fits.
+      await waitFor(() => expect(mockDialogMessage).toHaveBeenCalledTimes(1));
+      const [text, opts] = mockDialogMessage.mock.calls[0];
+      expect(opts).toEqual({ title: 'Rounding updated', kind: 'info' });
+      expect(String(text)).toMatch(/Updated the rounding in 1 special sensor \(R\)/);
+      expect(String(text)).toMatch(/The change will be saved with the project\./);
+      warn.mockRestore();
+    });
+
+    it('F-legacy-null. the conversion write applied nothing (null): the notice is still shown', async () => {
+      mockLoadWorkspace.mockResolvedValue({ ...baseLoadedWs, specialSensorRecipes: [{ kind: 'formula', tag: 'R', formula: 'round($sensor_a, 2)' }] });
+      mockSaveLegacyConversion.mockResolvedValue(null);
+      mockInvoke.mockImplementation((cmd: string, args?: any) => {
+        if (cmd === 'convert_legacy_formula') return Promise.resolve({ formula: 'round($sensor_a * 100) / 100', changed: true });
+        if (cmd === 'load_csv') return Promise.resolve({ headers: ['timestamp', 'sensor_a'], total_rows: 100 });
+        if (cmd === 'evaluate_formula') return Promise.resolve(args.customName);
+        return Promise.resolve(null);
+      });
+      render(<DataUploadPage onDataReady={onDataReady} />);
+      await waitFor(() => screen.getByText('Engine pressure run'));
+      fireEvent.click(screen.getByText('Engine pressure run'));
+      await waitFor(() => expect(onDataReady).toHaveBeenCalledTimes(1));
+      await waitFor(() => expect(mockDialogMessage).toHaveBeenCalledTimes(1));
+      expect(String(mockDialogMessage.mock.calls[0][0])).toMatch(/The change will be saved with the project\./);
+      expect(mockLogToFile).toHaveBeenCalledWith('special-sensor-rounding', expect.any(String), expect.stringContaining('round($sensor_a, 2) → round($sensor_a * 100) / 100'));
     });
 
     it("F32. replays a formula recipe via evaluate_formula, forcing customName to the recipe's own tag, before onDataReady fires", async () => {

@@ -257,9 +257,21 @@ const dropBuildModelBroadcasts = () => {
 async function trainTag1() {
     selectTag1();
     await act(async () => { fireEvent.click(bmw().getByTestId('train-sensor')); });
-    await settle(30);
-    expect(diskFresh('i1')).toBe(true);
-    expect(pill()).toBe('Trained');
+    await waitFor(() => expect(diskFresh('i1')).toBe(true), { timeout: 3000 });
+    await waitFor(() => expect(pill()).toBe('Trained'), { timeout: 3000 });
+}
+
+/** A Dashboard sensor pick, waited on until its debounced autosave is on disk. */
+async function dashSelectTag1Saved() {
+    await act(async () => { fireEvent.click(screen.getByText('dash-select-tag1')); });
+    await waitFor(() => expect(readDisk().selectedSensors).toEqual(['TAG1']), { timeout: 3000 });
+}
+
+/** Apply in the Running condition modal, waited on until the value is on disk. */
+async function applyRcValueSaved(modal: ReturnType<typeof within>, value: string) {
+    await act(async () => { fireEvent.change(modal.getByPlaceholderText('value'), { target: { value } }); });
+    await act(async () => { fireEvent.click(modal.getByTestId('rc-apply')); }); // 2026-10-03: edits land only on Apply
+    await waitFor(() => expect(readDisk().failureGroupState.runningConditionFilters[0].value1).toBe(value), { timeout: 3000 });
 }
 
 /** A Dashboard-owned FG write that goes through `persistFailureGroupStateFrom`
@@ -267,10 +279,13 @@ async function trainTag1() {
 async function dashboardEditsFgDescription(text: string) {
     fireEvent.click(dash().getAllByText('Edit details')[0]);
     fireEvent.change(dash().getByPlaceholderText('What failure mode does this group track?'), { target: { value: text } });
-    await settle(300);
-    await settle(30);
-    expect(readDisk().failureGroupState.groups.find((g: any) => g.no === 1).description).toBe(text);
+    await waitFor(() => expect(readDisk().failureGroupState.groups.find((g: any) => g.no === 1).description).toBe(text), { timeout: 3000 });
 }
+
+// These cross-window flows wait on the disk (waitFor), not fixed sleeps; a whole
+// train -> complete -> edit flow can exceed the 5 s default when the full suite
+// runs in parallel, so the per-test budget is larger here.
+vi.setConfig({ testTimeout: 20_000 });
 
 beforeEach(() => {
     for (const k of Object.keys(h.listeners)) delete h.listeners[k];
@@ -313,10 +328,7 @@ describe('Train in Build Model -> Dashboard Failure Groups status dot (broadcast
         // Workspace running-condition edit in Build Model -> the model is stale.
         fireEvent.click(bmw().getByTestId('rc-card-open'));
         const modal = within(bmw().getByRole('dialog', { name: 'Running condition' }));
-        await act(async () => { fireEvent.change(modal.getByPlaceholderText('value'), { target: { value: '20' } }); });
-        await settle(30);
-        await act(async () => { fireEvent.click(modal.getByTestId('rc-apply')); }); // 2026-10-03: edits land only on Apply
-        await settle(30);
+        await applyRcValueSaved(modal, '20');
         expect(diskFresh('i1')).toBe(false);
         expect(pill()).toBe('Incomplete');
         expect(bmwDot('i1')).toBe('none');
@@ -325,8 +337,7 @@ describe('Train in Build Model -> Dashboard Failure Groups status dot (broadcast
 
         // A Dashboard autosave after all that doesn't resurrect anything.
         openDashSensorTab();
-        await act(async () => { fireEvent.click(screen.getByText('dash-select-tag1')); });
-        await settle(350);
+        await dashSelectTag1Saved();
         openDashFgTab();
         expect(dashDot(1)).toBe('none');
         expect(diskFresh('i1')).toBe(false);
@@ -362,8 +373,7 @@ describe('Train in Build Model with the broadcast LOST (stale Dashboard mirror)'
         // Unrelated Dashboard interaction -> full-state autosave: must not
         // erase the training stamp (it re-reads failureGroupState from disk).
         openDashSensorTab();
-        await act(async () => { fireEvent.click(screen.getByText('dash-select-tag1')); });
-        await settle(350);
+        await dashSelectTag1Saved();
         openDashFgTab();
         expect(diskFresh('i1')).toBe(true);
 
@@ -399,8 +409,7 @@ describe('Train in Build Model with the broadcast LOST (stale Dashboard mirror)'
         dropBuildModelBroadcasts();
         await trainTag1();
         openDashSensorTab();
-        await act(async () => { fireEvent.click(screen.getByText('dash-select-tag1')); });
-        await settle(350);
+        await dashSelectTag1Saved();
         openDashFgTab();
         expect(diskFresh('i1')).toBe(true);
         expect(bmwDot('i1')).toBe('trained');
@@ -424,10 +433,7 @@ describe('Train in Build Model with the broadcast LOST (stale Dashboard mirror)'
         dropBuildModelBroadcasts();
         fireEvent.click(bmw().getByTestId('rc-card-open'));
         const modal = within(bmw().getByRole('dialog', { name: 'Running condition' }));
-        await act(async () => { fireEvent.change(modal.getByPlaceholderText('value'), { target: { value: '20' } }); });
-        await settle(30);
-        await act(async () => { fireEvent.click(modal.getByTestId('rc-apply')); }); // 2026-10-03: edits land only on Apply
-        await settle(30);
+        await applyRcValueSaved(modal, '20');
         expect(readDisk().failureGroupState.runningConditionFilters[0].value1).toBe('20');
         expect(diskFresh('i1')).toBe(false);
         expect(pill()).toBe('Incomplete');
@@ -522,8 +528,7 @@ describe('gate-blocked but fingerprint-fresh: Build Model pill, Build Model dot 
 
         // Category is saved instantly from the detail header (not fingerprinted).
         await act(async () => { fireEvent.click(bmw().getByRole('button', { name: /Performance/i })); });
-        await settle(30);
-        expect(readDisk().failureGroupState.models[0].category).toBe('performance');
+        await waitFor(() => expect(readDisk().failureGroupState.models[0].category).toBe('performance'), { timeout: 3000 });
         expect(diskFresh('i1')).toBe(true);
         await waitFor(() => expect(pill()).toBe('Trained'));
         expect(bmwDot('i1')).toBe('trained');
@@ -550,10 +555,7 @@ describe('Complete -> Incomplete immediately (health score SPEC FINAL), seen fro
     async function applyWorkspaceValue(value: string) {
         fireEvent.click(bmw().getByTestId('rc-card-open'));
         const modal = within(bmw().getByRole('dialog', { name: 'Running condition' }));
-        await act(async () => { fireEvent.change(modal.getByPlaceholderText('value'), { target: { value } }); });
-        await settle(30);
-        await act(async () => { fireEvent.click(modal.getByTestId('rc-apply')); });
-        await settle(30);
+        await applyRcValueSaved(modal, value);
     }
 
     it('a workspace Running Condition Apply sets every Complete Workspace-mode model Incomplete (set points + train record kept) and the Dashboard dot drops; a Custom-mode model stays Complete', async () => {
@@ -598,9 +600,8 @@ describe('Complete -> Incomplete immediately (health score SPEC FINAL), seen fro
         fireEvent.click(bmw().getByText('Model settings', { selector: 'b' }));
         fireEvent.change(bmw().getByPlaceholderText('e.g. Bearing vibration model'), { target: { value: 'Renamed only' } });
         await act(async () => { fireEvent.click(bmw().getByText('Save changes')); });
-        await settle(30);
+        await waitFor(() => expect(readDisk().failureGroupState.models[0].name).toBe('Renamed only'), { timeout: 3000 });
         const m = readDisk().failureGroupState.models[0];
-        expect(m.name).toBe('Renamed only');
         expect(m.status).toBe(true);
         expect(pill()).toBe('Complete');
         expect(dashDot(1)).toBe('complete');
@@ -619,11 +620,10 @@ describe('Complete -> Incomplete immediately (health score SPEC FINAL), seen fro
         expect(dashDot(1)).toBe('none');
 
         await act(async () => { fireEvent.click(bmw().getByTestId('train-sensor')); });
-        await settle(30);
+        await waitFor(() => expect(diskFresh('i1')).toBe(true), { timeout: 3000 });
         const m = readDisk().failureGroupState.models[0];
         expect(m.status).toBe(false); // a re-train never leaves a model Complete
-        expect(diskFresh('i1')).toBe(true);
-        expect(pill()).toBe('Trained');
+        await waitFor(() => expect(pill()).toBe('Trained'), { timeout: 3000 });
         await waitFor(() => expect(dashDot(1)).toBe('trained'));
     });
 });

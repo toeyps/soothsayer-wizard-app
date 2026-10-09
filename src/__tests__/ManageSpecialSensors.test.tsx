@@ -38,12 +38,9 @@ function renderList(overrides: Partial<React.ComponentProps<typeof ManageSpecial
         onDelete: vi.fn(),
         pendingDelete: null,
         onUndo: vi.fn(),
-        availableSensors: ['11PT1214A.PV', '11FT1601.PV', '11FT1602.PV'],
         editingTag: null,
         onEdit: vi.fn(),
-        onSaveEdit: vi.fn(),
         savingEdit: false,
-        editError: null,
         ...overrides,
     };
     return { ...render(<ManageSpecialSensors {...props} />), props };
@@ -65,9 +62,19 @@ describe('ManageSpecialSensors', () => {
         expect(screen.getByText(/Doubled pressure/)).toBeTruthy();
     });
 
-    it('spells an operation recipe out instead of showing raw config', () => {
-        renderList({ recipes: [totalFlow], formulaRefs: new Map() });
-        expect(screen.getByText('sum(11FT1601.PV, 11FT1602.PV)')).toBeTruthy();
+    it('spells an operation recipe out in words (describeSpecialSensor), sources by their description', () => {
+        renderList({
+            recipes: [totalFlow, {
+                kind: 'operation', tag: 'Avg', sourceSensors: ['special A', '11FT1602.PV'],
+                operationConfig: { mode: 'multi', multiOp: { type: 'mean', decimals: 2 }, customName: 'Avg' },
+            }],
+            formulaRefs: new Map(),
+        });
+        expect(screen.getByTestId('recipe-summary-Boiler total flow').textContent).toBe('Sum of 11FT1601.PV, 11FT1602.PV');
+        expect(screen.getByTestId('recipe-summary-Boiler total flow').getAttribute('title')).toBe('sum(11FT1601.PV, 11FT1602.PV)');
+        expect(screen.getByTestId('recipe-summary-Avg').textContent)
+            .toBe('Average of Doubled pressure, 11FT1602.PV · missing values skipped · rounded to 2 decimals');
+        expect(screen.getByTitle('Average block')).toBeTruthy();
     });
 
     it('deletes an unused sensor on the first click', () => {
@@ -78,12 +85,13 @@ describe('ManageSpecialSensors', () => {
         expect(props.onDelete).toHaveBeenCalledWith('special A');
     });
 
-    it('disables deletion of a sensor another special sensor is built on', () => {
+    it('disables deletion of a sensor another special sensor is built on: "Used by <name> — remove it there first"', () => {
         renderList({
             recipes: [specialA, specialB],
             formulaRefs: new Map([['special a', ['11PT1214A.PV']], ['special b', ['special A']]]),
         });
         expect(deleteButton('special A').disabled).toBe(true);
+        expect(deleteButton('special A').getAttribute('title')).toBe('Used by special B — remove it there first');
         // The one built on top is the end of the chain — it can go.
         expect(deleteButton('special B').disabled).toBe(false);
     });
@@ -103,6 +111,7 @@ describe('ManageSpecialSensors', () => {
     it('disables deletion of a sensor a Failure Group model uses, and names the field', () => {
         renderList({ models: [makeModel({ targetSensor: 'special A' })] });
         expect(deleteButton('special A').disabled).toBe(true);
+        expect(deleteButton('special A').getAttribute('title')).toBe('Used by 1 model — remove it there first');
         fireEvent.click(screen.getByText('Used by 1 model'));
         const item = screen.getByRole('listitem');
         expect(within(item).getByText(/Boiler efficiency/)).toBeTruthy();
@@ -136,26 +145,35 @@ describe('ManageSpecialSensors', () => {
         expect(props.onUndo).toHaveBeenCalled();
     });
 
-    it('opens the editor for the row whose pencil was clicked', () => {
-        const { props } = renderList();
+    it('the pencil opens the sensor in the Formula editor (the window owns it), and marks the row being edited', () => {
+        const { props, rerender } = renderList();
         fireEvent.click(screen.getByLabelText('Edit special A'));
         expect(props.onEdit).toHaveBeenCalledWith('special A');
-    });
-
-    it('clicking the pencil again closes the editor', () => {
-        const { props } = renderList({ editingTag: 'special A' });
+        rerender(<ManageSpecialSensors {...props} editingTag="special A" />);
+        // Clicking it again re-opens it (no toggle); no editor is expanded inside the list any more.
+        expect(screen.getByLabelText('Edit special A').getAttribute('aria-pressed')).toBe('true');
         fireEvent.click(screen.getByLabelText('Edit special A'));
-        expect(props.onEdit).toHaveBeenCalledWith(null);
+        expect(props.onEdit).toHaveBeenLastCalledWith('special A');
+        expect(screen.queryByLabelText('Formula')).toBeNull();
+        expect(screen.queryByText('Save changes')).toBeNull();
     });
 
-    it('shows the editor inline under the row being edited, and only that row', () => {
-        renderList({
+    it('the sensor open in the editor cannot be deleted under it: "Close the edit first"; the other rows can', () => {
+        const { props } = renderList({
             recipes: [specialA, totalFlow],
-            formulaRefs: new Map([['special a', ['11PT1214A.PV']]]),
-            editingTag: 'special A',
+            formulaRefs: new Map([['special a', ['11PT1214A.PV']], ['boiler total flow', []]]),
+            editingTag: 'SPECIAL A', // matched case-insensitively
         });
-        expect(screen.getByLabelText('Formula')).toBeTruthy();
-        expect(screen.getAllByText('Save changes')).toHaveLength(1);
+        expect(deleteButton('special A').disabled).toBe(true);
+        expect(deleteButton('special A').getAttribute('title')).toBe('Close the edit first');
+        fireEvent.click(deleteButton('special A'));
+        expect(props.onDelete).not.toHaveBeenCalled();
+        expect(deleteButton('Boiler total flow').disabled).toBe(false);
+    });
+
+    it('while a save is applied the pencils wait', () => {
+        renderList({ savingEdit: true });
+        expect((screen.getByLabelText('Edit special A') as HTMLButtonElement).disabled).toBe(true);
     });
 
     it('a sensor that cannot be deleted can still be edited — that is what the downstream recompute is for', () => {
@@ -178,92 +196,51 @@ describe('ManageSpecialSensors', () => {
     });
 });
 
-describe('ManageSpecialSensors -- edit lock', () => {
+describe('ManageSpecialSensors -- edit lock (the expanded row)', () => {
     const chain = { recipes: [specialA, specialB], formulaRefs: new Map([['special a', ['11PT1214A.PV']], ['special b', ['special A']]]) };
 
-    it('an unused sensor opens an unlocked editor', () => {
-        renderList({ editingTag: 'special A' });
-        expect(screen.queryByTestId('edit-lock-banner')).toBeNull();
-        expect((screen.getByLabelText('Name') as HTMLInputElement).readOnly).toBe(false);
-    });
-
-    it('a sensor a model uses opens a locked editor naming the model, and the expanded row repeats the reason', () => {
-        renderList({ models: [makeModel({ targetSensor: 'special A' })], editingTag: 'special A' });
-        expect((screen.getByLabelText('Name') as HTMLInputElement).readOnly).toBe(true);
-        expect(screen.getByTestId('edit-lock-banner').textContent)
-            .toContain('Used by 1 model: Boiler efficiency (Individual). Remove it from those models first, then you can edit it.');
+    it('a sensor a model uses: the expanded row says the name and formula are locked, and why', () => {
+        renderList({ models: [makeModel({ targetSensor: 'special A' })] });
         // The Edit button itself stays usable (description / unit / component are editable).
         expect((screen.getByLabelText('Edit special A') as HTMLButtonElement).disabled).toBe(false);
         fireEvent.click(screen.getByText('Used by 1 model'));
-        expect(screen.getByTestId('edit-lock-special A').textContent).toContain('Name and formula are locked:');
+        expect(screen.getByTestId('edit-lock-special A').textContent)
+            .toContain('Name and formula are locked: Used by 1 model: Boiler efficiency (Individual).');
     });
 
-    it('the Running condition locks it: "Used by the running condition"', () => {
-        renderList({ runningConditionFilters: [{ sensor: 'special A' }], editingTag: 'special A' });
-        expect(screen.getByTestId('edit-lock-banner').textContent).toContain('Used by the running condition.');
-    });
-
-    it('TRANSITIVE: B is built on A and a model uses B -> A is locked, B is locked, and the message names B', () => {
-        renderList({ ...chain, models: [makeModel({ targetSensor: 'special B' })], editingTag: 'special A' });
-        expect(screen.getByTestId('edit-lock-banner').textContent)
+    it('TRANSITIVE: B is built on A and a model uses B -> A is locked and the message names B', () => {
+        renderList({ ...chain, models: [makeModel({ targetSensor: 'special B' })] });
+        fireEvent.click(screen.getByText('Used by 1 sensor'));
+        expect(screen.getByTestId('edit-lock-special A').textContent)
             .toContain('Built on by "special B", which is used by 1 model: Boiler efficiency (Individual).');
-    });
-
-    it('a used source does not lock the sensor built on it', () => {
-        renderList({ ...chain, models: [makeModel({ targetSensor: 'special A' })], editingTag: 'special B' });
-        expect(screen.queryByTestId('edit-lock-banner')).toBeNull();
-    });
-
-    it('while the models / references are not known yet, the editor is held back ("Still checking")', () => {
-        renderList({ usageKnown: false, editingTag: 'special A' });
-        expect(screen.getByTestId('edit-lock-banner').textContent).toContain('Still checking what uses this sensor');
-        expect((screen.getByLabelText('Name') as HTMLInputElement).readOnly).toBe(true);
-    });
-
-    it('formulaRefs still null (lookup in flight) is treated the same way', () => {
-        renderList({ formulaRefs: null, editingTag: 'special A' });
-        expect(screen.getByTestId('edit-lock-banner')).toBeTruthy();
-    });
-
-    it('unlocks when the models change (re-render with the model gone)', () => {
-        const { rerender, props } = renderList({ models: [makeModel({ targetSensor: 'special A' })], editingTag: 'special A' });
-        expect((screen.getByLabelText('Name') as HTMLInputElement).readOnly).toBe(true);
-        rerender(<ManageSpecialSensors {...props} models={[]} />);
-        expect((screen.getByLabelText('Name') as HTMLInputElement).readOnly).toBe(false);
-        expect(screen.queryByTestId('edit-lock-banner')).toBeNull();
     });
 });
 
 // 2026-10-08 (review S1): a sensor whose recipe could not be rebuilt this
-// session is flagged on its row, and its editor unlocks the formula even under
-// a lock (only the name stays locked). A healthy locked one is unchanged.
+// session is flagged on its row with an amber note (its editor -- now the
+// Formula editor on the Create tab -- unlocks the formula even under a lock;
+// covered in AddSensorWindow.test).
 describe('ManageSpecialSensors -- not restored', () => {
-    const usesA = makeModel({ targetSensor: 'special A' });
     const usesC = makeModel({ id: 'm2', name: 'Pump model', targetSensor: 'special C' });
     const specialC: SpecialSensorRecipe = { kind: 'formula', tag: 'special C', formula: 'round($11PT1214A.PV, 2)' };
     const REASON = 'Formula error: round($11PT1214A.PV, 2) does not round to 2 decimal places.';
     const refs = new Map([['special a', ['11PT1214A.PV']], ['special c', ['11PT1214A.PV']]]);
 
-    it('flags ONLY the not-restored row, with the reason in its tooltip', () => {
+    it('flags ONLY the not-restored row, with the reason in its tooltip and an amber note under it', () => {
         renderList({ recipes: [specialA, specialC], formulaRefs: refs, unrestored: new Map([['special c', REASON]]) });
         const badge = screen.getByTestId('not-restored-special C');
         expect(badge.textContent).toContain('No data — fix formula');
         expect(badge.getAttribute('title')).toContain(REASON);
+        expect(screen.getByTestId('not-restored-note-special C').textContent)
+            .toBe(`No data this session. ${REASON.replace(/\.$/, '')}. Edit it to fix the formula.`);
         expect(screen.queryByTestId('not-restored-special A')).toBeNull();
+        expect(screen.queryByTestId('not-restored-note-special A')).toBeNull();
     });
 
-    it('both locked by models: the not-restored one opens with an editable formula and the note; the healthy one keeps the full lock', () => {
-        const props = { recipes: [specialA, specialC], formulaRefs: refs, models: [usesA, usesC], unrestored: new Map([['special c', REASON]]) };
-        const { rerender, props: full } = renderList({ ...props, editingTag: 'special C' });
-        expect(screen.getByTestId('restore-note').textContent).toContain(REASON);
-        expect((screen.getByLabelText('Formula') as HTMLTextAreaElement).readOnly).toBe(false);
-        expect((screen.getByLabelText('Name') as HTMLInputElement).readOnly).toBe(true);
-        expect(screen.queryByTestId('edit-lock-banner')).toBeNull();
-
-        rerender(<ManageSpecialSensors {...full} editingTag="special A" />);
-        expect(screen.getByTestId('edit-lock-banner')).toBeTruthy();
-        expect(screen.queryByTestId('restore-note')).toBeNull();
-        expect((screen.getByLabelText('Formula') as HTMLTextAreaElement).readOnly).toBe(true);
+    it('a not-restored sensor a model uses: the note says the formula is unlocked for the fix, the name stays locked', () => {
+        renderList({ recipes: [specialC], formulaRefs: refs, models: [usesC], unrestored: new Map([['special c', REASON]]) });
+        expect(screen.getByTestId('not-restored-note-special C').textContent)
+            .toContain('the formula is unlocked for the fix; the name stays locked');
     });
 
     it('the expanded row says only the NAME is locked for a not-restored sensor, and Delete stays off while a model uses it', () => {
@@ -273,9 +250,9 @@ describe('ManageSpecialSensors -- not restored', () => {
         expect(deleteButton('special C').disabled).toBe(true);
     });
 
-    it('unknown (null) unlocks nothing', () => {
-        renderList({ recipes: [specialC], formulaRefs: refs, models: [usesC], unrestored: null, editingTag: 'special C' });
+    it('unknown (null) flags nothing', () => {
+        renderList({ recipes: [specialC], formulaRefs: refs, models: [usesC], unrestored: null });
         expect(screen.queryByTestId('not-restored-special C')).toBeNull();
-        expect(screen.getByTestId('edit-lock-banner')).toBeTruthy();
+        expect(screen.queryByTestId('not-restored-note-special C')).toBeNull();
     });
 });

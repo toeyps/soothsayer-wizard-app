@@ -43,6 +43,7 @@ import { renameTagInArray, renameTagInRecord, renameTagInModels, renameTagInRunn
 import { mergeIntoPlot, type AddSensorSelectionPayload } from '../../utils/specialSensorPlot';
 import { reorderRecipesByTags } from '../../utils/specialSensorDeps';
 import { demoteModelsTrainedOnSensors } from '../../utils/specialSensorRepair';
+import { applyRecipeRule, recipesDiffer } from '../../utils/incompleteRule';
 
 import { WebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { message } from '@tauri-apps/plugin-dialog';
@@ -2117,8 +2118,9 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         // render's state.
         const runAutosave = async () => {
             let freshFailureGroupState: FailureGroupStateSlice = { ...fgExtra, groups: fgGroups, models: fgModels };
+            let onDisk: WorkspaceState | null;
             try {
-                const onDisk = await loadWorkspaceData(initialState.id);
+                onDisk = await loadWorkspaceData(initialState.id);
                 if (onDisk?.failureGroupState) {
                     // The whole slice as it is on disk — never a field list.
                     freshFailureGroupState = onDisk.failureGroupState;
@@ -2137,7 +2139,16 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                 autosaveDirtyRef.current = true;
                 return;
             }
-            const next = buildWorkspaceState({ failureGroupState: freshFailureGroupState });
+            const built = buildWorkspaceState({ failureGroupState: freshFailureGroupState });
+            // Customer batch 2026-10 (item 6), user decision 2026-10-09: a
+            // special-sensor recipe change that reaches disk THROUGH this
+            // autosave sends the models trained on it back to Incomplete (and
+            // out of date) in the SAME write. Only the recipe rule, and only
+            // when this write really changes the recipes (by content) -- the
+            // slice itself is the one on disk, so nothing else can need it, and
+            // an ordinary autosave does no fingerprinting at all.
+            const recipesChanged = !!onDisk && recipesDiffer(onDisk.specialSensorRecipes, built.specialSensorRecipes);
+            const next = recipesChanged && onDisk ? applyRecipeRule(onDisk, built) : built;
             const payload = JSON.stringify(next);
             // 2026-09-03: skip the write when the state is byte-identical
             // to what is already on disk. Primarily this removes the
@@ -2147,9 +2158,43 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
             // then this autosave rewrote the exact same content 250ms
             // later — but it also covers any other path that reschedules
             // an autosave without actually changing anything.
-            if (payload !== lastSavedPayloadRef.current) {
+            // Review 2026-10-09: adopting / broadcasting happens ONLY when this
+            // run wrote. `saveWorkspaceData` never rejects (a failed write is only
+            // logged), so a run that merely re-computes the same payload must do
+            // nothing -- otherwise adopting re-arms this effect every 250 ms.
+            if (payload === lastSavedPayloadRef.current) return;
+            try {
                 await saveWorkspaceData(next);
-                lastSavedPayloadRef.current = payload;
+            } catch (e) {
+                // Nothing reached disk: adopt nothing, tell nobody; the next change
+                // (or leaving the Dashboard) tries again.
+                console.warn('Autosave failed, nothing adopted or broadcast:', e);
+                autosaveDirtyRef.current = true;
+                return;
+            }
+            lastSavedPayloadRef.current = payload;
+            if (!recipesChanged) return;
+            // Models were demoted in that write: adopt them (the mirror would
+            // otherwise show them as before until the next broadcast).
+            const demoted = next.failureGroupState?.models !== built.failureGroupState?.models ? next.failureGroupState : undefined;
+            if (demoted) {
+                const { groups, models, ...rest } = demoted;
+                setFgGroups(groups);
+                setFgModels(models);
+                setFgExtra(rest);
+            }
+            // Tell any open Build Model window the recipes on disk changed (it
+            // re-reads them; never sent in the payload) -- scoped to this
+            // workspace, tagged so this window's own listener skips the echo.
+            const fgNow = next.failureGroupState ?? built.failureGroupState;
+            if (fgNow) {
+                const changed: FailureGroupStateChangedPayload = {
+                    ...fgNow,
+                    workspaceId: initialState.id,
+                    origin: 'dashboard',
+                    recipesChanged: true,
+                };
+                emit('failure-group-state-changed', changed).catch(e => console.warn('Failed to broadcast failure-group state:', e));
             }
         };
         autosaveDirtyRef.current = true;
@@ -2925,6 +2970,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                         sensorMetadata={sensorMetadata}
                         runningConditionFg={fgExtra}
                         datasetHeaders={allSensorTags.length ? allSensorTags : null}
+                        specialSensorRecipes={specialSensorRecipes}
                         getGroupColor={getFgGroupColor}
                         onUpdateGroupDetails={updateGroupDetails}
                         onDeleteGroup={deleteGroup}

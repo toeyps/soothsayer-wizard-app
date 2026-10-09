@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { memo, useState, useMemo } from 'react';
 import { ChevronRight, ChevronDown, Search, Plus, Check } from 'lucide-react';
 import { SensorMetadata } from '../../types';
 import { SensorLabel } from '../sensor/SensorLabel';
@@ -9,13 +9,22 @@ interface SensorExplorerProps {
     sensorMetadata: SensorMetadata[] | null;
     selectedSensors: string[];
     onToggleSensor: (sensor: string) => void;
+    /** Formula editor (customer batch 2026-10, item 6): the row's small `$` button inserts `$TAG`
+     *  at the editor's caret instead of picking the row. Omitted = no button. */
+    onInsertSensor?: (sensor: string) => void;
     searchTerm: string;
     onSearchChange: (term: string) => void;
 }
 
 /**
  * Left column of the Create tab — search + a flat-per-component list of
- * every sensor, each row toggled as a source with a click (an "Added" pill
+ * every sensor. Customer batch 2026-10 (item 6): a click PICKS the row for
+ * Quick build (a "Picked" pill, the group header counts the picks); the small
+ * `$` button on the row inserts `$TAG` at the formula editor's caret instead.
+ * Memoised: the window re-renders on every keystroke in the editor, and the
+ * list only needs to when its own props change.
+ *
+ * History: each row used to toggle a source (an "Added" pill
  * when picked, a bare + icon otherwise). Visual refresh Phase 5
  * (2026-10-02): this used to render in a hardcoded VS Code-dark palette
  * (#18181b/#27272a/#3f3f46/#eab308/#007fd4) that never read any of the
@@ -32,11 +41,12 @@ interface SensorExplorerProps {
  * than flattened to match the prototype literally; every prop/handler is
  * unchanged.
  */
-export default function SensorExplorer({
+function SensorExplorer({
     sensors,
     sensorMetadata,
     selectedSensors,
     onToggleSensor,
+    onInsertSensor,
     searchTerm,
     onSearchChange
 }: SensorExplorerProps) {
@@ -88,16 +98,29 @@ export default function SensorExplorer({
         return (
             <div
                 key={sensor}
-                className="special-sensor-row"
+                className={`special-sensor-row${isSelected ? ' is-picked' : ''}`}
                 onClick={() => onToggleSensor(sensor)}
+                title={isSelected ? 'Picked for Quick build — click to un-pick' : 'Click to pick for Quick build'}
             >
                 <div className="special-sensor-row-main">
                     <SensorLabel tag={sensor} />
                 </div>
+                {onInsertSensor && (
+                    <button
+                        type="button"
+                        className="special-sensor-row-ins"
+                        title="Insert at the cursor in the formula"
+                        aria-label={`Insert ${sensor} in the formula`}
+                        onMouseDown={e => e.preventDefault()}
+                        onClick={(e) => { e.stopPropagation(); onInsertSensor(sensor); }}
+                    >
+                        $
+                    </button>
+                )}
                 {isSelected ? (
-                    <span className="special-sensor-added-pill"><Check size={10} /> Added</span>
+                    <span className="special-sensor-added-pill"><Check size={10} /> Picked</span>
                 ) : (
-                    <span className="special-sensor-add-icon" title="Add as a source"><Plus size={13} /></span>
+                    <span className="special-sensor-add-icon" title="Pick for Quick build"><Plus size={13} /></span>
                 )}
             </div>
         );
@@ -149,3 +172,5 @@ export default function SensorExplorer({
         </SensorMetaContext.Provider>
     );
 }
+
+export default memo(SensorExplorer);

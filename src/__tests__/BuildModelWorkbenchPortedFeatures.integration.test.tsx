@@ -222,6 +222,20 @@ async function settle(ms = 0) {
     await act(async () => { await new Promise(r => setTimeout(r, ms)); });
 }
 
+/** Waits until the Dashboard's debounced autosave has written `selectedSensors`. */
+async function dashSelectTag1Saved() {
+    await act(async () => { fireEvent.click(screen.getByText('dash-select-tag1')); });
+    await waitFor(() => expect(readDisk().selectedSensors).toEqual(['TAG1']), { timeout: 3000 });
+}
+async function dashRenameFg1Saved() {
+    await act(async () => { fireEvent.click(screen.getByText('dash-rename-fg1')); });
+    await waitFor(() => expect(readDisk().failureGroupState.groups.find((g: any) => g.no === 1).name).toBe('FG-A renamed'), { timeout: 3000 });
+}
+async function dashToggleTag2Saved() {
+    await act(async () => { fireEvent.click(screen.getByText('dash-toggle-tag2-individual-fg1')); });
+    await waitFor(() => expect(readDisk().failureGroupState.models.some((m: any) => m.targetSensor === 'TAG2' && m.kind === 'individual')).toBe(true), { timeout: 3000 });
+}
+
 async function mountBuildModel() {
     render(<div data-testid="build-model-window"><BuildModelWindow /></div>);
     await waitFor(() => expect(screen.getByTestId('rc-card')).toBeTruthy());
@@ -288,6 +302,11 @@ async function pickSingleSensor(triggerText: string, tag: string) {
     await settle(30);
 }
 
+// These cross-window flows wait on the disk (waitFor), not fixed sleeps; a whole
+// train -> complete -> edit flow can exceed the 5 s default when the full suite
+// runs in parallel, so the per-test budget is larger here.
+vi.setConfig({ testTimeout: 20_000 });
+
 beforeEach(() => {
     for (const k of Object.keys(h.listeners)) delete h.listeners[k];
     h.files.clear();
@@ -335,12 +354,9 @@ describe('(1) the X-axis switcher\'s IMMEDIATE scatterXSensor write vs. Dashboar
             expect(diskFresh('r1')).toBe(true);
 
             // Dashboard, whose mirror (in the lost case) still has scatterXSensor ''.
-            await act(async () => { fireEvent.click(screen.getByText('dash-select-tag1')); });
-            await settle(350);
-            await act(async () => { fireEvent.click(screen.getByText('dash-rename-fg1')); });
-            await settle(20);
-            await act(async () => { fireEvent.click(screen.getByText('dash-toggle-tag2-individual-fg1')); });
-            await settle(350);
+            await dashSelectTag1Saved();
+            await dashRenameFg1Saved();
+            await dashToggleTag2Saved();
 
             expect(readDisk().failureGroupState.models).toHaveLength(2);
             expect(diskModel('r1').scatterXSensor).toBe('TAG3');
@@ -384,10 +400,8 @@ describe('(1) a Custom running condition saved from the Workbench vs. Dashboard\
             expect(diskModel('i1').customRunningConditionFilters).toEqual([expect.objectContaining({ sensor: 'TAG1', operation: 'greater_than', value1: '42' })]);
 
             // Dashboard autosave + a disk-derived FG write afterwards.
-            await act(async () => { fireEvent.click(screen.getByText('dash-select-tag1')); });
-            await settle(350);
-            await act(async () => { fireEvent.click(screen.getByText('dash-toggle-tag2-individual-fg1')); });
-            await settle(350);
+            await dashSelectTag1Saved();
+            await dashToggleTag2Saved();
             expect(readDisk().failureGroupState.groups.find((g: any) => g.no === 1).name).toBe('FG-A renamed');
             expect(diskModel('i1').runningConditionMode).toBe('custom');
             expect(diskModel('i1').customRunningConditionFilters).toHaveLength(1);

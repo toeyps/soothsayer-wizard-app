@@ -330,11 +330,9 @@ function labelledInput(labelText: string): HTMLInputElement {
 
 async function createFormulaSensor(name: string, formula: string, description: string) {
     await act(async () => { fireEvent.click(ASW().getByRole('tab', { name: /Create/ })); });
-    const toggle = ASW().queryByText('Edit as text instead');
-    if (toggle) await act(async () => { fireEvent.click(toggle); });
-    const ta = aswBody().querySelector('textarea') as HTMLTextAreaElement;
+    const ta = aswBody().querySelector('textarea[aria-label="Formula"]') as HTMLTextAreaElement;
     await act(async () => { fireEvent.change(ta, { target: { value: formula, selectionStart: formula.length } }); });
-    await act(async () => { fireEvent.change(aswBody().querySelector('input[placeholder="e.g. Total Power"]')!, { target: { value: name } }); });
+    await act(async () => { fireEvent.change(aswBody().querySelector('#fx-name')!, { target: { value: name } }); });
     await act(async () => { fireEvent.change(labelledInput('Description'), { target: { value: description } }); });
     await act(async () => { fireEvent.change(labelledInput('Unit'), { target: { value: 'u' } }); });
     await act(async () => { fireEvent.change(aswBody().querySelector('select[aria-label="Component"]')!, { target: { value: 'Uncategorized' } }); });

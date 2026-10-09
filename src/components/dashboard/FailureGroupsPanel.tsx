@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { Plus, Trash2, Play, ChevronRight, Check, FolderPlus } from 'lucide-react';
-import { FailureGroup, FailureModel, FailureGroupStateSlice, ModelKind, SensorMetadata } from '../../types';
+import { FailureGroup, FailureModel, FailureGroupStateSlice, ModelKind, SensorMetadata, SpecialSensorRecipe } from '../../types';
 import { SensorLabel } from '../sensor/SensorLabel';
 import { SensorMetaContext, sensorHaystack, sensorTitle, useLayeredSensorLookup } from '../sensor/sensorInfo';
 import { groupModelsBySensor, type SensorModelGroup } from '../../utils/modelGrouping';
@@ -33,6 +33,10 @@ interface FailureGroupsPanelProps {
      *  needed so `getBuildBlockReason` can tell a configured-but-now-missing
      *  running-condition sensor apart from a merely-unconfigured one. */
     datasetHeaders: string[] | null;
+    /** The workspace's special-sensor recipes (customer batch 2026-10, item 6): a model trained
+     *  on a special sensor whose formula changed since reads as out of date here too. Pass the
+     *  Dashboard's state array (stable identity — the signatures are memoised per array). */
+    specialSensorRecipes?: SpecialSensorRecipe[] | null;
     getGroupColor: (groupNo: number) => string;
     /** Saves Name + Description + Recommendation together — 2026-08-31:
      *  moved here from Build Model window entirely, per explicit user
@@ -98,7 +102,7 @@ const isDuplicateName = isDuplicateFailureGroupName;
  * Sensor tab, not this panel).
  */
 export default function FailureGroupsPanel({
-    fgGroups, fgModels, sensorMetadata, runningConditionFg, datasetHeaders, getGroupColor,
+    fgGroups, fgModels, sensorMetadata, runningConditionFg, datasetHeaders, specialSensorRecipes, getGroupColor,
     onUpdateGroupDetails, onDeleteGroup, onCreateEmptyGroup, onDeleteModel, onOpenBuildModel, onAssignSensors,
 }: FailureGroupsPanelProps) {
     // "Edit details" panel — Name + Description + Recommendation together,
@@ -164,14 +168,14 @@ export default function FailureGroupsPanel({
     // (`healthVerdict`), the same value the Build Model list dot and tab pill read,
     // so the two windows can no longer disagree ("Fix set point").
     const dotStatusFor = (m: FailureModel): 'none' | 'trained' | 'complete' | 'need' | 'bad' => {
-        const s = modelDotState(m, fg, datasetHeaders);
+        const s = modelDotState(m, fg, datasetHeaders, specialSensorRecipes);
         if (s === 'trained') {
-            const flag = modelSetPointFlag(m, fg, datasetHeaders, s);
+            const flag = modelSetPointFlag(m, fg, datasetHeaders, s, specialSensorRecipes);
             return flag === 'fix' ? 'bad' : flag === 'needed' ? 'need' : 'trained';
         }
         return s === 'complete' ? s : 'none';
     };
-    const isDone = (m: FailureModel): boolean => isModelComplete(m, fg);
+    const isDone = (m: FailureModel): boolean => isModelComplete(m, fg, specialSensorRecipes);
     // Model name if the user set one; otherwise the target sensor's
     // description (clustering's "target" is its Y sensor, same convention
     // as component derivation elsewhere); falls back to the raw tag, then a

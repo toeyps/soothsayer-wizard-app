@@ -53,22 +53,34 @@ describe('SensorExplorer', () => {
         expect(onToggleSensor).toHaveBeenCalledWith('TAG1');
     });
 
-    // Visual refresh Phase 5 (2026-10-02): a selected source sensor now
-    // shows an "Added" pill instead of a checked native checkbox, and an
-    // unselected one shows a + icon instead -- matches the approved
-    // prototype's `.sens` row (`added` pill vs. a bare + button). Same
-    // underlying `selectedSensors` prop/`onToggleSensor` handler, just a
-    // different render of the same state.
-    it('shows an "Added" pill for a selected sensor, and a + icon for one that is not', () => {
+    // Customer batch 2026-10 (item 6): a click PICKS the row for Quick build — a "Picked" pill
+    // (was "Added" while rows were sources), a + icon otherwise; the group header counts picks.
+    it('shows a "Picked" pill for a picked sensor and a + icon for one that is not; the group counts the picks', () => {
         render(<SensorExplorer {...makeProps({ selectedSensors: ['TAG1'] })} />);
         fireEvent.click(screen.getByText('Pump'));
         const tag1Row = screen.getByText('Pump Pressure').closest('.special-sensor-row')!;
-        expect(tag1Row.querySelector('.special-sensor-added-pill')).toBeTruthy();
+        expect(tag1Row.querySelector('.special-sensor-added-pill')?.textContent).toContain('Picked');
+        expect(tag1Row.classList.contains('is-picked')).toBe(true);
         expect(tag1Row.querySelector('.special-sensor-add-icon')).toBeNull();
 
         const tag2Row = screen.getByText('Pump Temp').closest('.special-sensor-row')!;
         expect(tag2Row.querySelector('.special-sensor-added-pill')).toBeNull();
         expect(tag2Row.querySelector('.special-sensor-add-icon')).toBeTruthy();
+        expect(screen.getByText('Pump').parentElement!.textContent).toContain('1 / 2');
+    });
+
+    it('the `$` button inserts the sensor at the caret instead of picking the row', () => {
+        const onToggleSensor = vi.fn();
+        const onInsertSensor = vi.fn();
+        render(<SensorExplorer {...makeProps({ onToggleSensor, onInsertSensor })} />);
+        fireEvent.click(screen.getByLabelText('Insert TAG3 in the formula'));
+        expect(onInsertSensor).toHaveBeenCalledWith('TAG3');
+        expect(onToggleSensor).not.toHaveBeenCalled();
+    });
+
+    it('without an insert handler there is no `$` button', () => {
+        render(<SensorExplorer {...makeProps()} />);
+        expect(screen.queryByLabelText('Insert TAG3 in the formula')).toBeNull();
     });
 
     it('falls back to the raw tag for a sensor with no metadata', () => {

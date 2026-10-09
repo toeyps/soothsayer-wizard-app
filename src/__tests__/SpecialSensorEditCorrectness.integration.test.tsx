@@ -7,12 +7,13 @@
  *
  * Cross-zone seams covered here (each worker's own tests cover their half):
  *
- *  1. Engine -> Rust formula contract: the formula strings `useCalculationEngine`
- *     BUILDS for shortcuts / operator chains / "then apply" wraps must be exactly
- *     the ones `src-tauri/tests/fixtures/special_sensor_formulas.json` lists —
- *     the Rust side (`tests/internal/qa_special_sensor_internal.rs` e01) proves
- *     each of those evaluates to the intended math on every row.
- *  2. SpecialSensorEditor (fe-ui) -> runSpecialSensorEdit (fe-logic) -> the fake
+ *  1. Quick build -> Rust formula contract (2026-10-09: the Formula editor's Quick
+ *     build replaced `useCalculationEngine`): the formula strings `quickMulti`
+ *     BUILDS for combinations / chains / "then wrap" must be exactly the ones
+ *     `src-tauri/tests/fixtures/special_sensor_formulas.json` lists — the Rust
+ *     side (`tests/internal/qa_special_sensor_internal.rs` e01) proves each of
+ *     those evaluates to the intended math on every row.
+ *  2. The Formula editor (fe-ui) -> runSpecialSensorEdit (fe-logic) -> the fake
  *     Rust session that holds real column values (`helpers/fakeRustSession.ts`):
  *     an edit typed into the real editor recomputes the sensor AND everything
  *     built on it, checked row by row against an independent JS calculation;
@@ -23,11 +24,11 @@
  *     (fe-logic-agent) and flipped to `it` ("regression:").
  */
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent, renderHook, act } from '@testing-library/react';
+import { render, screen, fireEvent, within } from '@testing-library/react';
 import type { SensorMetadata, SpecialSensorRecipe } from '../types';
-import SpecialSensorEditor from '../components/windows/SpecialSensorEditor';
-import { useCalculationEngine } from '../hooks/useCalculationEngine';
-import { useFormulaEditor } from '../hooks/useFormulaEditor';
+import SpecialSensorFormulaEditor, { type FormulaEditorReport } from '../components/windows/SpecialSensorFormulaEditor';
+import { SensorMetaProvider } from '../components/sensor/SensorLabel';
+import { quickMulti, editorStateToRecipe, type QuickCombine, type QuickNumberOp, type QuickTransform } from '../utils/quickBuild';
 import { runSpecialSensorEdit, SpecialSensorEditError } from '../utils/specialSensorEdit';
 import { recomputeSpecialSensors } from '../utils/specialSensorRecompute';
 import { replaySpecialSensorRecipes } from '../utils/specialSensorReplay';
@@ -36,22 +37,26 @@ import { createFakeRust, type FakeRust } from './helpers/fakeRustSession';
 import fixture from '../../src-tauri/tests/fixtures/special_sensor_formulas.json';
 import { pickMulti } from './helpers/sensorPicker';
 
-vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(async () => ({ valid: true, error: null, referenced_sensors: [] })) }));
+// The editor's preview is not what these tests look at: no answer = "no information".
+vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(async () => null) }));
 
-// ── 1. Engine -> Rust formula contract ───────────────────────────────────
+// ── 1. Quick build -> Rust formula contract ───────────────────────────────
 
-describe('useCalculationEngine builds exactly the formulas the Rust engine is verified against', () => {
+/** The fixture speaks the old builder's ids; Quick build has the same option sets. */
+const COMBINE: Record<string, QuickCombine> = { abs_diff: 'absdiff', temp_spread: 'spread', efficiency_pct: 'efficiency' };
+const SIGN: Record<string, QuickNumberOp> = { '+': '+', '−': '-', '×': '*', '÷': '/' };
+
+describe('Quick build builds exactly the formulas the Rust engine is verified against', () => {
     for (const c of fixture.cases) {
         it(`${c.ref}: ${c.expression}`, () => {
-            const { result } = renderHook(() => useCalculationEngine(c.sensors));
-            act(() => { c.chainOps.forEach((sym, i) => result.current.setChainOp(i, sym)); });
-            if (c.operationId) act(() => result.current.setOperationId(c.operationId));
-            if (c.wrapFunc) {
-                act(() => result.current.setWrapFunc(c.wrapFunc));
-                act(() => result.current.setWrapValue(c.wrapValue));
-            }
-            const built = result.current.build();
-            expect(built).toEqual({ kind: 'formula', expression: c.expression });
+            const built = quickMulti(c.sensors, {
+                combine: c.operationId ? COMBINE[c.operationId] : null,
+                signs: c.chainOps.map(sym => SIGN[sym]),
+                // The old builder's "starting value" (the input = 100 %) was the first sensor.
+                inputTag: c.operationId === 'efficiency_pct' ? c.sensors[0] : null,
+                wrap: c.wrapFunc ? { fn: c.wrapFunc as QuickTransform, decimals: c.wrapValue } : null,
+            });
+            expect(built).toMatchObject({ kind: 'formula', formula: c.expression, ready: true });
         });
     }
 });
@@ -120,25 +125,44 @@ async function sessionWithChain(): Promise<FakeRust> {
     return rust;
 }
 
-/** Open the REAL editor on `recipe`, apply `edit`, press Save, return what it hands the window. */
-function editInEditor(recipe: SpecialSensorRecipe, edit: () => void, availableSensors: string[]) {
-    const onSave = vi.fn();
+/**
+ * Open the REAL Formula editor on `recipe`, apply `edit`, and build the recipe to save the way
+ * the window does (`AddSensorWindow.handleSaveFromEditor`): the maths untouched -> the stored
+ * recipe (under `newTag` on a rename); changed -> `editorStateToRecipe(state, tag)`.
+ */
+function editInEditor(
+    recipe: SpecialSensorRecipe,
+    edit: () => void,
+    availableSensors: string[],
+    opts: { newTag?: string; quickSelected?: string[] } = {},
+) {
+    const reports: FormulaEditorReport[] = [];
     const view = render(
-        <SpecialSensorEditor
-            recipe={recipe}
-            sensorMetadata={META}
-            availableSensors={availableSensors}
-            onCancel={vi.fn()}
-            onSave={onSave}
-            saving={false}
-            error={null}
-        />,
+        <SensorMetaProvider metadata={META}>
+            <SpecialSensorFormulaEditor
+                sensors={availableSensors}
+                knownSensors={availableSensors}
+                initialRecipe={recipe}
+                locked={null}
+                repair={null}
+                quickSelected={opts.quickSelected ?? []}
+                onQuickClear={() => {}}
+                unit=""
+                onReport={r => reports.push(r)}
+            />
+        </SensorMetaProvider>,
     );
     edit();
-    fireEvent.click(screen.getByText('Save changes'));
     view.unmount();
-    expect(onSave).toHaveBeenCalledTimes(1);
-    return onSave.mock.calls[0][0] as { recipe: SpecialSensorRecipe; metadata: SensorMetadata; renamedFrom?: string };
+    const last = reports[reports.length - 1];
+    expect(last.issue).toBeNull();
+    const tag = opts.newTag ?? recipe.tag;
+    const next: SpecialSensorRecipe = last.edited && last.state
+        ? editorStateToRecipe(last.state, tag)
+        : recipe.kind === 'operation'
+            ? { ...recipe, tag, operationConfig: { ...recipe.operationConfig, customName: tag } }
+            : { ...recipe, tag };
+    return { recipe: next, renamedFrom: tag !== recipe.tag ? recipe.tag : undefined };
 }
 
 const ALL = ['A', 'B', 'C', 'Flow (m3/h)', 'S1', 'S2', 'S3', 'S4'];
@@ -180,13 +204,14 @@ describe('editing a special sensor after creation: every value equals a fresh ca
         expect(describeRecipe(saved.find(r => r.tag === 'S1')!)).toBe('($A - ${Flow (m3/h)}) / 2');
     });
 
-    it('edit the operation S3 (mean -> median of three) through the real editor and S3 is recomputed correctly', async () => {
+    it('edit the block S3 (mean -> median of three, through Quick build) in the real editor and S3 is recomputed correctly', async () => {
         const rust = await sessionWithChain();
         const invoker = (cmd: string, args: Record<string, unknown>) => rust.invoke(cmd, args);
         const payload = editInEditor(CHAIN[2], () => {
-            pickMulti(screen.getByRole('button', { name: 'Add source sensors…' }), ['A']);
-            fireEvent.click(screen.getByText('Median')); // Average (kept for the 3 sources) -> Median
-        }, ALL);
+            const qb = screen.getByTestId('quick-build');
+            fireEvent.click(within(qb).getByRole('button', { name: 'Median' }));
+            fireEvent.click(within(qb).getByRole('button', { name: 'Replace with this block' }));
+        }, ALL, { quickSelected: ['S1', 'C', 'A'] });
         expect(payload.recipe).toMatchObject({ kind: 'operation', sourceSensors: ['S1', 'C', 'A'], operationConfig: { mode: 'multi', multiOp: { type: 'median' } } });
         await runSpecialSensorEdit({ recipes: CHAIN, next: payload.recipe, invoker });
 
@@ -205,9 +230,8 @@ describe('editing a special sensor after creation: every value equals a fresh ca
         const rust = await sessionWithChain();
         const invoker = (cmd: string, args: Record<string, unknown>) => rust.invoke(cmd, args);
         const before = Object.fromEntries(['S1', 'S2', 'S3', 'S4'].map(t => [t, rust.chartValues(t)]));
-        const payload = editInEditor(CHAIN[0], () => {
-            fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'ความเร็ว รวม' } });
-        }, ALL);
+        // The Name field is the window's (`SensorFieldsCard`); the maths stay untouched.
+        const payload = editInEditor(CHAIN[0], () => {}, ALL, { newTag: 'ความเร็ว รวม' });
         expect(payload.renamedFrom).toBe('S1');
         const outcome = await runSpecialSensorEdit({ recipes: CHAIN, next: payload.recipe, oldTag: payload.renamedFrom, invoker });
         await invoker('remove_sensor_columns', { names: ['S1'] }); // the window's LAST step
@@ -252,6 +276,7 @@ describe('editing a special sensor after creation: every value equals a fresh ca
 
 describe('known bugs, fixed 2026-10-08 (were it.fails)', () => {
     /**
+     * (History: the old SpecialSensorEditor; the Formula editor keeps a block a block.)
      * BUG (MEDIUM, fe-ui-agent — SpecialSensorEditor.tsx, the `prevSourcesKey`
      * effect that calls `engine.setOperationId(null)` on ANY source change):
      * open an "Average all" sensor, add one more source, Save. The Average
@@ -269,10 +294,7 @@ describe('known bugs, fixed 2026-10-08 (were it.fails)', () => {
             operationConfig: { mode: 'multi', multiOp: { type: 'mean' }, customName: 'Avg' },
         };
         const payload = editInEditor(avg, () => {
-            pickMulti(screen.getByRole('button', { name: 'Add source sensors…' }), ['C']);
-            fireEvent.change(screen.getByLabelText('Description'), { target: { value: 'avg' } });
-            fireEvent.change(screen.getByLabelText('Unit'), { target: { value: 'u' } });
-            fireEvent.change(screen.getByLabelText('Component'), { target: { value: 'Uncategorized' } });
+            pickMulti(screen.getByRole('button', { name: 'Add…' }), ['C']);
         }, ['A', 'B', 'C']);
         expect(payload.recipe).toEqual({
             kind: 'operation', tag: 'Avg', sourceSensors: ['A', 'B', 'C'],
@@ -291,10 +313,16 @@ describe('known bugs, fixed 2026-10-08 (were it.fails)', () => {
      * Unicode `PARTIAL_REF` class already in this file, plus `.`), or from the
      * `referenced_sensors` the `validate_formula` reply already carries.
      */
-    it('regression: the "Referenced sensors" list follows the Rust grammar (dotted and Thai bare names)', () => {
-        const { result } = renderHook(() => useFormulaEditor([]));
-        act(() => result.current.setFormula('$11PT1214A.PV - $อุณหภูมิ'));
-        expect(result.current.referencedSensors).toEqual(['11PT1214A.PV', 'อุณหภูมิ']);
+    it('regression: the Sensors row under the formula follows the Rust grammar (dotted and Thai bare names)', () => {
+        render(
+            <SpecialSensorFormulaEditor
+                sensors={['11PT1214A.PV', 'อุณหภูมิ']} knownSensors={['11PT1214A.PV', 'อุณหภูมิ']}
+                initialRecipe={F('X', '$11PT1214A.PV - $อุณหภูมิ')} locked={null} repair={null}
+                quickSelected={[]} onQuickClear={() => {}} unit="" onReport={() => {}}
+            />,
+        );
+        const chips = within(screen.getByTestId('formula-sensors')).getAllByRole('button');
+        expect(chips.map(c => c.textContent)).toEqual(['11PT1214A.PV', 'อุณหภูมิ']);
     });
 
     /**

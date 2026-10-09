@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { Check, Loader2, AlertTriangle } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { message } from "@tauri-apps/plugin-dialog";
 import { subscribe } from "../../utils/tauriEvents";
 import { useDataUpload } from "../../hooks/useDataUpload";
 import { useMappingData, buildSensorMetadataFromMapping } from "../../hooks/useMappingData";
@@ -12,10 +13,12 @@ import {
   getRecentWorkspaces,
   deleteWorkspace,
   renameWorkspaceFile,
+  saveLegacyFormulaConversion,
 } from "../../workspaceManager";
 import { formatDateTime } from "../../utils/dateFormat";
-import { reportError } from "../../errorReporter";
+import { logToFile, reportError } from "../../errorReporter";
 import { replaySpecialSensorRecipes } from "../../utils/specialSensorReplay";
+import { convertLegacyFormulaRecipes, legacyConversionMessage } from "../../utils/legacyFormulaConversion";
 import { bindToGeneration, StaleSessionError } from "../../utils/staleSession";
 import { withFailureGroupState } from "../../utils/failureGroupState";
 import { buildInitialFailureGroups } from "../dashboard/failureGroupOps";
@@ -336,6 +339,18 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
 
       backendPhaseRef.current += 1;
       inBackendPhase = true;
+
+      // Customer batch 2026-10 (item 6), user decision 2026-10-09: a legacy
+      // spreadsheet-style `round($A, 2)` is rewritten to the engine form
+      // `round($A * 100) / 100` BEFORE the replay (pure text, no dataset --
+      // once per open, outside the retry loop), so the sensor restores instead
+      // of being refused. The rewrite (and the models it sends back to
+      // Incomplete) is saved after the loop, in one write.
+      const { recipes: recipesToReplay, converted } = await convertLegacyFormulaRecipes(
+        state.specialSensorRecipes,
+        (c, a) => invoke<unknown>(c, a),
+      );
+      if (!isLatest()) return;
       const olderLoads = () =>
         [...loadCsvInFlightRef.current.entries()].filter(([k]) => k < seq).map(([, p]) => p);
 
@@ -371,9 +386,9 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
         // very first chart render already has real data for every special
         // sensor instead of a "ghost" entry that only gets fixed on the next
         // manual refresh (see `replaySpecialSensorRecipes`'s own comment).
-        if (state.specialSensorRecipes?.length) {
+        if (recipesToReplay.length) {
           try {
-            noData = await restoreSpecialSensors(state.specialSensorRecipes, loaded.generation);
+            noData = await restoreSpecialSensors(recipesToReplay, loaded.generation);
           } catch (err) {
             // The session was replaced mid-replay: reload and rebuild.
             if (err instanceof StaleSessionError) continue;
@@ -394,8 +409,44 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
       }
       if (!isLatest()) return;
 
-      let stateForDashboard = state;
-      if (state.specialSensorRecipes?.length) {
+      // Persist the conversion (new formula text + the demotion of every model
+      // trained on a converted sensor, in ONE write against disk), and hand the
+      // Dashboard the WRITTEN state -- its full-overwrite autosave would
+      // otherwise write the old `round($A, 2)` text straight back. Nothing
+      // converted = no write.
+      let opened: WorkspaceState = state;
+      let notice: Awaited<ReturnType<typeof saveLegacyFormulaConversion>> = null;
+      if (converted.length > 0) {
+        try {
+          notice = await saveLegacyFormulaConversion(id, converted);
+        } catch (err) {
+          console.warn("Could not save the converted special-sensor rounding:", err);
+        }
+        if (!isLatest()) return;
+      }
+      // What to tell the user (shown once the Dashboard is up, below). An
+      // information message, not an error: nothing failed, the values changed.
+      let roundingNotice: { text: string; trace: string } | null = null;
+      if (notice) {
+        opened = notice.state;
+        roundingNotice = {
+          text: notice.message,
+          trace: `Converted: ${notice.converted.map(c => `${c.tag}: ${c.from} → ${c.to}`).join('; ')}`
+            + (notice.retrainModelIds.length > 0 ? `. Models set back to Incomplete: ${notice.retrainModelIds.length}.` : '.'),
+        };
+      } else if (converted.length > 0) {
+        // The file could not be written: the replay used the converted text, so
+        // the Dashboard must hold it too (its autosave then saves it -- and
+        // sends the models trained on these sensors back to Incomplete).
+        opened = { ...state, specialSensorRecipes: recipesToReplay };
+        roundingNotice = {
+          text: `${legacyConversionMessage(converted, 0)} The change will be saved with the project.`,
+          trace: `Converted (not written yet, saved by the Dashboard): ${converted.map(c => `${c.tag}: ${c.from} → ${c.to}`).join('; ')}.`,
+        };
+      }
+
+      let stateForDashboard = opened;
+      if (opened.specialSensorRecipes?.length) {
         if (noData.length > 0) {
           // A sensor with no column behind it must not stay plotted: its chart
           // series would be empty (or the scatter/pair cell blank). Its recipe
@@ -404,9 +455,9 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
           const keep = (tags: string[] | undefined) =>
             tags?.filter(t => !gone.has(t.trim().toLowerCase()));
           stateForDashboard = {
-            ...state,
-            selectedSensors: keep(state.selectedSensors) ?? [],
-            visibleSensors: keep(state.visibleSensors) ?? [],
+            ...opened,
+            selectedSensors: keep(opened.selectedSensors) ?? [],
+            visibleSensors: keep(opened.visibleSensors) ?? [],
           };
         }
       }
@@ -451,6 +502,14 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
       // long enough for another workspace to be clicked).
       if (!isLatest()) return;
       onDataReady(dataMetadata, stateForDashboard, sm);
+      if (roundingNotice) {
+        logToFile('special-sensor-rounding', roundingNotice.text, roundingNotice.trace);
+        // Not awaited: the Dashboard opens behind it.
+        const text = roundingNotice.text;
+        void Promise.resolve()
+          .then(() => message(text, { title: 'Rounding updated', kind: 'info' }))
+          .catch(e => console.warn('Could not show the rounding notice:', e));
+      }
     } catch (err) {
       // An older load's failure is not the user's concern any more.
       if (!isLatest()) return;

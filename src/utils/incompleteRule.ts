@@ -5,6 +5,7 @@ import { effectiveRunningCondition } from './runningCondition';
 import { testPeriodsKey } from './timePeriods';
 import { computeTrainFingerprint } from './trainFingerprint';
 import { migratePeriods } from './workspaceMigrations';
+import { demoteModelsForRecipeChange, stampTrainedFormulas } from './specialSensorSignature';
 
 /**
  * "Incomplete immediately" (health score SPEC FINAL, 2026-10-03).
@@ -123,8 +124,23 @@ export interface IncompleteRuleOptions {
  *    `healthVerdict` is kept (the set points still describe the same fit).
  *    Not-Complete models are left alone (nothing to mark again).
  * Idempotent: a second pass finds no Complete model to demote.
+ *
+ * Special-sensor recipes (customer batch 2026-10, item 6 -- user decision:
+ * editing a special sensor's formula makes the models trained on it stale).
+ * Two steps run first, in the same write:
+ *  1. `stampTrainedFormulas`: a model whose train record this write changes
+ *     (a Train) gets `trainedFormulas` -- the signatures of the special
+ *     sensors it trains on, from the recipes on disk in this write;
+ *  2. `applyRecipeRule`: a model that trains on a special sensor whose recipe
+ *     (or the recipe of anything it is built on) differs between `prev` and
+ *     `next`, or whose `trainedFormulas` no longer match `next`'s recipes, goes
+ *     back to Incomplete AND out of date (`demoteModelsForRecipeChange`: like
+ *     a repair -- the fingerprint cannot see a recipe, so it is dropped).
+ * A model trained before step 1 existed has no snapshot and is only affected
+ * by a real recipe change in a write -- never by the upgrade itself.
  */
-export function applyIncompleteRule(prev: WorkspaceState, next: WorkspaceState, opts: IncompleteRuleOptions = {}): WorkspaceState {
+export function applyIncompleteRule(prev: WorkspaceState, prevNext: WorkspaceState, opts: IncompleteRuleOptions = {}): WorkspaceState {
+    const next = applyRecipeRule(prev, stampTrainedFormulas(prev, prevNext));
     const fg = next.failureGroupState;
     // A model also needs the pass when it only carries a saved set-point verdict:
     // that verdict describes the OLD fit and is dropped with the change (QA fix,
@@ -165,4 +181,32 @@ export function applyIncompleteRule(prev: WorkspaceState, next: WorkspaceState, 
         return m;
     });
     return demoted ? withFailureGroupState(next, { models }) : next;
+}
+
+/** Do two recipe lists differ in CONTENT? (A write that re-built the same list
+ *  is a new array, not a change.) Missing lists read as empty. */
+export function recipesDiffer(
+    a: WorkspaceState['specialSensorRecipes'],
+    b: WorkspaceState['specialSensorRecipes'],
+): boolean {
+    if (a === b) return false;
+    return JSON.stringify(a ?? []) !== JSON.stringify(b ?? []);
+}
+
+/** Step 2 of `applyIncompleteRule` (see there). Returns `next` itself when
+ *  nothing is demoted. Never makes a write fail. */
+export function applyRecipeRule(prev: WorkspaceState, next: WorkspaceState): WorkspaceState {
+    const fg = next.failureGroupState;
+    if (!fg || !Array.isArray(fg.models)) return next;
+    const anyTrained = fg.models.some(m => m.status || m.trainedFingerprint !== undefined || m.healthVerdict !== undefined || m.testsChangedAt !== undefined);
+    if (!anyTrained) return next;
+    const recipesChanged = recipesDiffer(prev.specialSensorRecipes, next.specialSensorRecipes);
+    if (!recipesChanged && !fg.models.some(m => m.trainedFormulas)) return next;
+    try {
+        const { models } = demoteModelsForRecipeChange(fg.models, fg, prev.specialSensorRecipes, next.specialSensorRecipes);
+        return models === fg.models ? next : withFailureGroupState(next, { models });
+    } catch (e) {
+        console.warn('applyIncompleteRule: could not compare special-sensor recipes, leaving statuses alone:', e);
+        return next;
+    }
 }

@@ -5,16 +5,18 @@ import { invoke } from "@tauri-apps/api/core";
 import { emit } from "@tauri-apps/api/event";
 import { subscribe } from "../../utils/tauriEvents";
 import {
-    FailureModel, FailureGroupStateChangedPayload, SensorMetadata, SensorOperationConfig,
+    FailureModel, FailureGroupStateChangedPayload, SensorMetadata,
     SpecialSensorRecipe, UpdateSpecialSensorPayload, WorkspaceSensorFilter,
 } from "../../types";
 import SensorExplorer from "./SensorExplorer";
-import SensorTooling from "./SensorTooling";
+import SpecialSensorFormulaEditor, {
+    SensorFieldsCard, type FormulaEditorHandle, type FormulaEditorLock, type FormulaEditorReport,
+} from "./SpecialSensorFormulaEditor";
 import ManageSpecialSensors from "./ManageSpecialSensors";
 import { debugLog } from "../../utils/debugLog";
 import {
-    buildSpecialSensorUsage, findUnrestoredSpecialSensors, reorderRecipesByTags, usageFor, SpecialSensorUsage,
-    UnrestoredSpecialSensors,
+    buildSpecialSensorUsage, describeEditLock, findUnrestoredSpecialSensors, reorderRecipesByTags, usageFor,
+    SpecialSensorUsage, UnrestoredSpecialSensors,
 } from "../../utils/specialSensorDeps";
 import {
     EditFailureState, EditOutcome, recipesEquivalent, runSpecialSensorEdit, SpecialSensorEditError,
@@ -31,10 +33,15 @@ import {
 } from "../../utils/staleSession";
 import type { Invoker } from "../../utils/specialSensorRecompute";
 import { SensorMetaProvider } from '../sensor/SensorLabel';
+import {
+    blockOperationConfig, editorStateFormula, editorStateToRecipe, type FormulaEditorState,
+} from "../../utils/quickBuild";
 
 /** How long a deleted special sensor can still be brought back. Nothing has
  *  left this window yet during that time -- see `commitDeleteRaw`. */
 const UNDO_WINDOW_MS = 8000;
+
+const tagKey = (tag: string) => tag.trim().toLowerCase();
 
 /** What a rejected `invoke` carries, as text for the user. Tauri rejects with
  *  the command's `Err(String)` itself, not an `Error`. */
@@ -72,19 +79,65 @@ interface Deletion {
 }
 
 /** Everything the Create form held when "Add sensor" was clicked. The task is
- *  queued, so it must not read the form later -- the user may have moved on. */
+ *  queued, so it must not read the form later -- the user may have moved on.
+ *  Customer batch 2026-10 (item 6): what to build is the Formula editor's state
+ *  (a formula, or an Average / Median block); "add the picked sensors as-is"
+ *  is gone from this window -- the Dashboard does that. */
 interface CreateSnapshot {
-    formulaMode: boolean;
-    formulaExpression: string;
-    formulaCustomName: string;
-    operationConfig: SensorOperationConfig | null;
-    selectedSensors: string[];
+    state: FormulaEditorState;
     description: string;
     unit: string;
     component: string;
-    /** Would this create a new derived sensor (vs. adding raw sensors as-is)? */
-    creating: boolean;
     name: string;
+}
+
+/** One Edit session of the Formula editor (Manage › pencil). `repair` is latched when the
+ *  session opens: a sensor with no data this session stays unlocked for the fix even if the
+ *  "which sensors have data" check briefly cannot answer while the editor is open (the save
+ *  decides again inside the queue). */
+interface EditSession {
+    id: number;
+    recipe: SpecialSensorRecipe;
+    repair: { reason: string | null } | null;
+}
+
+const EMPTY_REPORT: FormulaEditorReport = { state: null, issue: null, edited: false };
+
+/** The recipe under a new name, its calculation untouched (a rename that does not change the maths). */
+function retagRecipe(recipe: SpecialSensorRecipe, tag: string): SpecialSensorRecipe {
+    return recipe.kind === 'operation'
+        ? { ...recipe, tag, operationConfig: { ...recipe.operationConfig, customName: tag } }
+        : { ...recipe, tag };
+}
+
+/** Every special sensor built on `tag`, directly or through others (`dependentSensors` is one level). */
+function transitiveDependents(usage: Map<string, SpecialSensorUsage>, tag: string): string[] {
+    const out: string[] = [];
+    const seen = new Set<string>([tagKey(tag)]);
+    const queue = [tag];
+    while (queue.length > 0) {
+        const cur = queue.shift()!;
+        for (const d of usageFor(usage, cur)?.dependentSensors ?? []) {
+            if (seen.has(tagKey(d))) continue;
+            seen.add(tagKey(d));
+            out.push(d);
+            queue.push(d);
+        }
+    }
+    return out;
+}
+
+/** The lock pill: "Used by 2 models and the running condition". */
+function shortLock(usage: SpecialSensorUsage): string {
+    const lock = usage.editLock;
+    if (lock.unknown) return 'Checking what uses it';
+    const models = new Set(usage.modelReferences.map(r => r.modelId)).size;
+    const parts = [
+        models > 0 ? `${models} model${models === 1 ? '' : 's'}` : '',
+        usage.runningCondition ? 'the running condition' : '',
+        lock.via.length > 0 ? lock.via.map(v => v.tag).join(', ') : '',
+    ].filter(Boolean);
+    return parts.length > 0 ? `Used by ${parts.join(' and ')}` : 'Locked';
 }
 
 /**
@@ -118,8 +171,6 @@ function describeUsage(usages: SpecialSensorUsage[]): string {
     }
     return parts.join('; ');
 }
-
-const tagKey = (tag: string) => tag.trim().toLowerCase();
 
 /**
  * Which special sensors have no column in the Rust session right now -- asked
@@ -186,9 +237,12 @@ export default function AddSensorWindow() {
     // the state drives rendering, the ref is what a task reads (always the
     // value the PREVIOUS task left behind, never a stale render's copy).
     const [sensors, setSensors, sensorsRef] = useRefState<string[]>([]);
-    const [selectedSensors, setSelectedSensors] = useState<string[]>([]);
+    // Sensors PICKED in the left list for Quick build (customer batch 2026-10, item 6). They
+    // drive the editor's option sets only; nothing is built from them until the user commits
+    // Quick build's text into the formula. Cleared on Add, on Edit and with "Clear picks".
+    const [quickSel, setQuickSel] = useState<string[]>([]);
     // What the dashboard chart is currently plotting. Distinct from
-    // `selectedSensors` above, which is this window's own picker (deliberately
+    // `quickSel` above, which is this window's own picks (deliberately
     // left empty on open -- see the sensors-data handler).
     // A MIRROR of the Dashboard's selection, used only for the Manage tab's
     // "on chart" badge. It is seeded by `sensors-data` and then set from what
@@ -199,26 +253,25 @@ export default function AddSensorWindow() {
     const [plottedSensors, setPlottedSensors] = useState<string[]>([]);
     const [sensorMetadata, setSensorMetadata] = useRefState<SensorMetadata[] | null>(null);
     const [loading, setLoading] = useState(true);
-    const [operationConfig, setOperationConfig] = useState<SensorOperationConfig | null>(null);
+    // The sensor's own fields (Create and Edit share them; Edit seeds them).
+    const [name, setName] = useState('');
     const [description, setDescription] = useState('');
     const [unit, setUnit] = useState('');
     const [component, setComponent] = useState('');
-    // Bumped after a successful Add: SensorTooling is remounted with it, which
-    // clears ALL of its own state (mode, picked operation / chain, formula
-    // text, Name, Description/Unit/Component). Resetting only this window's
-    // copy left the tooling still showing -- and re-submitting -- the old
-    // formula and name ("A sensor named 'Once' already exists" right after a
-    // successful add).
-    const [formKey, setFormKey] = useState(0);
-
-    // Formula mode state
-    const [formulaMode, setFormulaMode] = useState(false);
-    // Why the formula typed in the tooling's "Edit as text" box can't be used
-    // (its own `validate_formula` check said so) -- reported up by
-    // SensorTooling, which shows the message inline under the box.
-    const [formulaIssue, setFormulaIssue] = useState<string | null>(null);
-    const [formulaExpression, setFormulaExpression] = useState('');
-    const [formulaCustomName, setFormulaCustomName] = useState('');
+    // What the Formula editor holds (its own report: the formula / block, the
+    // issue that blocks Add / Save, and whether Edit changed the maths).
+    const [draft, setDraft] = useState<FormulaEditorReport>(EMPTY_REPORT);
+    // Bumped to remount the editor with a clean slate: after a successful Add,
+    // on Edit / Cancel edit, and when the window is re-pointed. (Resetting only
+    // this window's copy once left the old formula in the editor and re-submitted
+    // it -- "A sensor named 'Once' already exists" right after a successful add.)
+    const [editorKey, setEditorKey] = useState(0);
+    const editorRef = useRef<FormulaEditorHandle>(null);
+    // Manage › pencil: the sensor open in the editor ("Edit sensor"), or null (Create).
+    const [editSession, setEditSession] = useState<EditSession | null>(null);
+    const editSessionRef = useRef<EditSession | null>(null);
+    editSessionRef.current = editSession;
+    const editSeq = useRef(0);
 
     // "Add sensor" creates immediately and keeps the window open (see
     // handleAdd). `adding` is its own flag -- NOT `loading`, which swaps the
@@ -330,8 +383,7 @@ export default function AddSensorWindow() {
     const [hiddenTags, setHiddenTags] = useState<string[]>([]);
     const [pendingDelete, setPendingDelete] = useState<{ tags: string[]; label: string } | null>(null);
 
-    // Which row has its editor open, and how the last save attempt went.
-    const [editingTag, setEditingTag] = useState<string | null>(null);
+    // How the last save of an Edit session went.
     const [savingEdit, setSavingEdit] = useState(false);
     const [editError, setEditError] = useState<string | null>(null);
 
@@ -416,20 +468,18 @@ export default function AddSensorWindow() {
         sessionLostRef.current = false;
         lostAtGenerationRef.current = undefined;
         setSessionLost(null);
-        setSelectedSensors([]);
-        setOperationConfig(null);
-        setFormulaMode(false);
-        setFormulaExpression('');
-        setFormulaCustomName('');
+        setQuickSel([]);
+        setName('');
         setDescription('');
         setUnit('');
         setComponent('');
-        setFormKey(k => k + 1);
+        setDraft(EMPTY_REPORT);
+        setEditorKey(k => k + 1);
         setRejectedNames([]);
         setAddError(null);
         setSearchTerm('');
         setActiveTab('create');
-        setEditingTag(null);
+        setEditSession(null);
         setEditError(null);
         setFormulaRefs(null);
         setUnrestored(null);
@@ -532,12 +582,11 @@ export default function AddSensorWindow() {
                 // (whatever's currently plotted on the Dashboard chart) --
                 // this window always starts with a clean, empty picker.
                 // Pre-checking used to be harmless, but combined with the
-                // default "+" chain (see useCalculationEngine), reopening
-                // this window right after adding a sensor would pre-check
-                // the same inputs AND show an already-active calculation
-                // ready to submit -- indistinguishable from the screen right
-                // before the previous "Add sensor" click, which read as "did
-                // my sensor not get added?".
+                // old builder's default "+" chain, reopening this window right
+                // after adding a sensor would pre-check the same inputs AND
+                // show an already-active calculation ready to submit --
+                // indistinguishable from the screen right before the previous
+                // "Add sensor" click, which read as "did my sensor not get added?".
                 setSensorMetadata(event.payload.sensorMetadata);
                 setPlottedSensors(event.payload.selectedSensors ?? []);
                 setRecipes(event.payload.specialSensorRecipes ?? []);
@@ -787,7 +836,7 @@ export default function AddSensorWindow() {
         setRecipes(prev => prev.filter(r => !gone(r.tag)));
         setSensors(prev => prev.filter(t => !gone(t)));
         setSensorMetadata(prev => (prev ? prev.filter(m => !gone(m.tag)) : prev));
-        setSelectedSensors(prev => prev.filter(t => !gone(t)));
+        setQuickSel(prev => prev.filter(t => !gone(t)));
         setPlottedSensors(prev => prev.filter(t => !gone(t)));
         setRejectedNames(prev => prev.filter(n => !gone(n)));
         // Drop the computed column(s) from the Rust session FIRST. Without
@@ -862,8 +911,8 @@ export default function AddSensorWindow() {
         deletionsRef.current = [...deletionsRef.current, d];
         slotRef.current = d;
         setPendingDelete({ tags: d.tags, label: d.label });
-        // A hidden sensor must not stay a source of the form being filled in.
-        setSelectedSensors(prev => prev.filter(t => !sameTag(t, tag)));
+        // A hidden sensor must not stay picked for the form being filled in.
+        setQuickSel(prev => prev.filter(t => !sameTag(t, tag)));
         syncHidden();
         deleteTimer.current = setTimeout(() => {
             deleteTimer.current = null;
@@ -943,7 +992,7 @@ export default function AddSensorWindow() {
      * is touched. A model that starts using the sensor WHILE a task is already
      * past that check is not stopped (it can only have picked the new values).
      */
-    const saveEditTask = async (next: { recipe: SpecialSensorRecipe; metadata: SensorMetadata; renamedFrom?: string }, ctx: TaskCtx) => {
+    const saveEditTask = async (next: { recipe: SpecialSensorRecipe; metadata: SensorMetadata; renamedFrom?: string }, ctx: TaskCtx, sessionId: number | null) => {
         const oldTag = next.renamedFrom;
         const newTag = next.recipe.tag;
         const removesOldColumn = !!oldTag && !sameTag(oldTag, newTag);
@@ -1069,7 +1118,7 @@ export default function AddSensorWindow() {
 
             if (oldTag) {
                 setSensors(prev => renameTagInArray(prev, oldTag, newTag));
-                setSelectedSensors(prev => renameTagInArray(prev, oldTag, newTag));
+                setQuickSel(prev => renameTagInArray(prev, oldTag, newTag));
                 setPlottedSensors(prev => renameTagInArray(prev, oldTag, newTag));
                 // This window's own copies follow at once (the Dashboard
                 // re-keys the persisted ones and broadcasts, but that lands
@@ -1122,7 +1171,8 @@ export default function AddSensorWindow() {
                 }
             }
 
-            setEditingTag(null);
+            // The Edit session that saved closes (a newer one the user opened meanwhile stays).
+            if (sessionId !== null && editSessionRef.current?.id === sessionId) closeEdit();
             if (cleanupWarning) {
                 showToast(cleanupWarning, 'error');
             } else {
@@ -1169,9 +1219,10 @@ export default function AddSensorWindow() {
     const handleSaveEdit = (next: { recipe: SpecialSensorRecipe; metadata: SensorMetadata; renamedFrom?: string }) => {
         if (sessionLostRef.current) { setEditError(STALE_SESSION_MESSAGE); return; }
         const epoch = epochRef.current;
+        const sessionId = editSessionRef.current?.id ?? null;
         setSavingEdit(true);
         setEditError(null);
-        void runTask(ctx => saveEditTask(next, ctx))
+        void runTask(ctx => saveEditTask(next, ctx, sessionId))
             .catch(err => {
                 if (isSessionLostError(err)) return;
                 console.error('Edit failed:', err);
@@ -1196,13 +1247,11 @@ export default function AddSensorWindow() {
         await getCurrentWindow().close();
     };
 
-    // Whether the current selection/operation would actually create a new
-    // derived sensor (needs a name) vs. just adding the raw sensor(s)
-    // through as-is (nothing to name). Mirrors SensorTooling's own
-    // `creatingSomething`, computed here from the same config/formula state
-    // it reports up via onConfigChange/onFormulaSubmit.
-    const isCreatingSomething = (formulaMode && formulaExpression.trim() !== '') || operationConfig !== null;
-    const currentName = formulaMode ? formulaCustomName : (operationConfig?.customName ?? '');
+    // Customer batch 2026-10 (item 6): Create builds what the Formula editor
+    // holds -- a formula or an Average / Median block. An empty editor builds
+    // nothing (adding raw sensors to the chart as-is is the Dashboard's job).
+    const isCreatingSomething = !editSession && draft.state !== null;
+    const currentName = name;
 
     // Every tag a NEW sensor's name must not equal: imported columns and
     // existing special sensors (both are in `liveSensors`; the recipes are
@@ -1216,12 +1265,8 @@ export default function AddSensorWindow() {
     const nameError = isCreatingSomething ? nameProblem(currentName, takenTags) : null;
 
     // Name + Description + Unit + Component must all be filled in before a
-    // new sensor can be added -- previously only Name was checked (and only
-    // on click, via a flash message), so "Add sensor" stayed clickable with
-    // Unit/Component left blank; the sensor was then silently created with
-    // an empty unit and "Uncategorized" as its component. Blank when nothing
-    // is actually being created (adding raw sensor(s) through as-is has
-    // nothing to name).
+    // new sensor can be added (an empty unit / "Uncategorized" component used
+    // to slip through).
     const missingCreateFields = isCreatingSomething
         ? [
             !currentName.trim() && 'a name',
@@ -1230,25 +1275,27 @@ export default function AddSensorWindow() {
             !component.trim() && 'a component',
         ].filter((f): f is string => !!f)
         : [];
-    // A typed formula whose own check failed blocks Add (2026-10-08: it used
-    // to be ignored here, so a bad formula could still be "added").
-    const formulaBlocked = formulaMode && !!formulaIssue;
-    const canAdd = missingCreateFields.length === 0 && !nameError && !formulaBlocked;
+    // While the formula has an issue, Add stays disabled and the footer repeats
+    // the message (the check line under the field shows it with its fix).
+    const formulaBlocked = !!draft.issue;
+    const canAdd = isCreatingSomething && missingCreateFields.length === 0 && !nameError && !formulaBlocked;
     // The one line the footer shows in the Create tab, most actionable first:
-    // a bad formula, a bad name, then what's still blank, then why the last
-    // attempt failed.
-    const footerIssue = formulaBlocked
-        ? 'Fix the formula before adding.'
-        : nameError
-        ? 'Fix the name before adding.'
-        : (missingCreateFields.length > 0 ? `Fill in ${missingCreateFields.join(', ')} before adding.` : addError);
+    // the formula's issue, a bad name, then what's still blank, then why the
+    // last attempt failed.
+    const footerIssue = !isCreatingSomething
+        ? addError
+        : formulaBlocked
+            ? draft.issue!.message
+            : nameError
+                ? 'Fix the name before adding.'
+                : (missingCreateFields.length > 0 ? `Fill in ${missingCreateFields.join(', ')} before adding.` : addError);
 
     // A failed Add's message belongs to THAT attempt: once anything the user
     // could change to fix it changes, it no longer applies. Keyed on the
     // serialized inputs (not object identity) so a re-render that merely
-    // re-reports an identical config can't wipe the message the instant it
+    // re-reports an identical state can't wipe the message the instant it
     // appears.
-    const attemptKey = JSON.stringify([selectedSensors, formulaMode, formulaExpression, formulaCustomName, operationConfig]);
+    const attemptKey = JSON.stringify([draft.state, name]);
     useEffect(() => {
         setAddError(null);
     }, [attemptKey]);
@@ -1277,39 +1324,32 @@ export default function AddSensorWindow() {
      * reopen -- see `WorkspaceState.specialSensorRecipes`.
      */
     const computeRound = async (snap: CreateSnapshot, inv: Invoker): Promise<{ plotSensors: string[]; newMetadata: SensorMetadata[]; newRecipes: SpecialSensorRecipe[] }> => {
-        if (snap.formulaMode && snap.formulaExpression.trim()) {
-            const newSensorName = await inv('evaluate_formula', {
-                formula: snap.formulaExpression,
-                customName: snap.formulaCustomName.trim() || null,
-            }) as string;
+        const customName = snap.name.trim();
+        const metadataFor = (tag: string): SensorMetadata => ({
+            tag,
+            description: snap.description.trim() || customName,
+            unit: snap.unit.trim(),
+            component: snap.component.trim() || 'Uncategorized',
+        });
+        if (snap.state.mode === 'formula') {
+            // The stored text: the field's own text with "Round the result" applied.
+            const formula = editorStateFormula(snap.state);
+            const newSensorName = await inv('evaluate_formula', { formula, customName: customName || null }) as string;
             return {
                 plotSensors: [newSensorName],
-                newMetadata: [{
-                    tag: newSensorName,
-                    description: snap.description.trim() || snap.formulaCustomName.trim(),
-                    unit: snap.unit.trim(),
-                    component: snap.component.trim() || 'Uncategorized',
-                }],
-                newRecipes: [{ kind: 'formula', tag: newSensorName, formula: snap.formulaExpression }],
+                newMetadata: [metadataFor(newSensorName)],
+                newRecipes: [{ kind: 'formula', tag: newSensorName, formula }],
             };
         }
-        if (snap.operationConfig) {
-            const newSensorName = await inv('calculate_new_sensor', {
-                sensors: snap.selectedSensors,
-                config: snap.operationConfig,
-            }) as string;
-            return {
-                plotSensors: [newSensorName],
-                newMetadata: [{
-                    tag: newSensorName,
-                    description: snap.description.trim() || (snap.operationConfig.customName ?? '').trim(),
-                    unit: snap.unit.trim(),
-                    component: snap.component.trim() || 'Uncategorized',
-                }],
-                newRecipes: [{ kind: 'operation', tag: newSensorName, sourceSensors: snap.selectedSensors, operationConfig: snap.operationConfig }],
-            };
-        }
-        return { plotSensors: snap.selectedSensors, newMetadata: [], newRecipes: [] };
+        // An Average / Median block: the aggregate path, rounding in `multiOp.decimals`.
+        const config = blockOperationConfig(snap.state.type, snap.state.decimals, customName);
+        const sources = [...snap.state.sources];
+        const newSensorName = await inv('calculate_new_sensor', { sensors: sources, config }) as string;
+        return {
+            plotSensors: [newSensorName],
+            newMetadata: [metadataFor(newSensorName)],
+            newRecipes: [{ kind: 'operation', tag: newSensorName, sourceSensors: sources, operationConfig: config }],
+        };
     };
 
     const createSensor = async (snap: CreateSnapshot, ctx: TaskCtx) => {
@@ -1324,7 +1364,7 @@ export default function AddSensorWindow() {
         // Re-check the name against FRESH state: while this waited its turn, an
         // edit/rename may have taken it (a rename would otherwise be
         // overwritten by this create, leaving two recipes with one name).
-        if (snap.creating) {
+        {
             const taken = [
                 ...sensorsRef.current.filter(s => !isHidden(s)),
                 ...recipesRef.current.filter(r => !isHidden(r.tag)).map(r => r.tag),
@@ -1338,9 +1378,9 @@ export default function AddSensorWindow() {
         // hand -- the pickers do not offer it) would be built on, then have its
         // column dropped from under the new sensor.
         if (deletionsRef.current.length > 0) {
-            let used: string[] = snap.selectedSensors;
-            if (snap.creating && snap.formulaMode) {
-                const out = await inv('extract_formula_refs', { formulas: [snap.formulaExpression] }) as string[][];
+            let used: string[] = snap.state.mode === 'block' ? snap.state.sources : [];
+            if (snap.state.mode === 'formula') {
+                const out = await inv('extract_formula_refs', { formulas: [editorStateFormula(snap.state)] }) as string[][];
                 used = out?.[0] ?? [];
             }
             const hiddenSource = used.find(isHidden);
@@ -1389,16 +1429,18 @@ export default function AddSensorWindow() {
         showToast(createdName ? `Added: ${newMetadata[0].description || createdName}` : `Added ${plotSensors.length} sensor(s)`);
 
         // Reset the form for the next round -- this window's copy AND the
-        // tooling's (remounted through `formKey`).
-        setSelectedSensors([]);
-        setOperationConfig(null);
-        setFormulaMode(false);
-        setFormulaExpression('');
-        setFormulaCustomName('');
+        // editor's (remounted through `editorKey`); the picks clear too. Not
+        // while an Edit session holds the form (it was opened while this create
+        // was still computing): its fields are the edit's, and closing the edit
+        // resets them anyway.
+        if (editSessionRef.current) return;
+        setQuickSel([]);
+        setName('');
         setDescription('');
         setUnit('');
         setComponent('');
-        setFormKey(k => k + 1);
+        setDraft(EMPTY_REPORT);
+        setEditorKey(k => k + 1);
     };
 
     // Queues the sensor currently configured, tells Dashboard about it as soon
@@ -1411,17 +1453,11 @@ export default function AddSensorWindow() {
         // which would otherwise create twice (or hit the new duplicate-name
         // error on a sensor that was in fact created fine).
         if (sessionLostRef.current) { setAddError(STALE_SESSION_MESSAGE); return; }
-        if (addingRef.current || !canAdd) return;
+        if (addingRef.current || !canAdd || !draft.state) return;
         addingRef.current = true;
         setAdding(true);
         setAddError(null);
-        const snap: CreateSnapshot = {
-            formulaMode, formulaExpression, formulaCustomName, operationConfig,
-            selectedSensors: selectedSensors.filter(t => !isHidden(t)),
-            description, unit, component,
-            creating: isCreatingSomething,
-            name: currentName,
-        };
+        const snap: CreateSnapshot = { state: draft.state, description, unit, component, name: currentName };
         const attemptedName = currentName.trim();
         const epoch = epochRef.current;
         void runTask(ctx => createSensor(snap, ctx))
@@ -1453,38 +1489,192 @@ export default function AddSensorWindow() {
             });
     };
 
-    const handleSensorToggle = (sensor: string) => {
-        setSelectedSensors(prev => {
-            if (prev.includes(sensor)) {
-                return prev.filter(s => s !== sensor);
-            } else {
-                return [...prev, sensor];
-            }
+    // ---- Quick build picks / the left list --------------------------------------
+    const toggleQuick = useCallback((sensor: string) => {
+        setQuickSel(prev => (prev.some(t => sameTag(t, sensor)) ? prev.filter(t => !sameTag(t, sensor)) : [...prev, sensor]));
+    }, []);
+    const clearQuick = useCallback(() => setQuickSel([]), []);
+    const insertIntoFormula = useCallback((sensor: string) => editorRef.current?.insertSensor(sensor), []);
+    const handleReport = useCallback((r: FormulaEditorReport) => setDraft(r), []);
+
+    // ---- Edit (Manage › pencil): the same editor, titled "Edit sensor" ----------
+    /** Close the Edit session: back to an empty Create form, on the Manage tab it came from. */
+    const closeEdit = () => {
+        setEditSession(null);
+        setName('');
+        setDescription('');
+        setUnit('');
+        setComponent('');
+        setDraft(EMPTY_REPORT);
+        setQuickSel([]);
+        setEditError(null);
+        setEditorKey(k => k + 1);
+        setActiveTab('manage');
+    };
+    const startEdit = (tag: string) => {
+        const recipe = recipesRef.current.find(r => sameTag(r.tag, tag));
+        if (!recipe) return;
+        const meta = sensorMetadata?.find(m => sameTag(m.tag, tag));
+        const listed = unrestored?.get(tagKey(tag));
+        setEditSession({
+            id: ++editSeq.current,
+            recipe,
+            repair: unrestored?.has(tagKey(tag)) ? { reason: listed ?? null } : null,
+        });
+        setQuickSel([]);
+        setEditError(null);
+        setName(recipe.tag);
+        setDescription(meta?.description ?? '');
+        setUnit(meta?.unit ?? '');
+        setComponent(meta?.component ?? '');
+        setDraft(EMPTY_REPORT);
+        setEditorKey(k => k + 1);
+        setActiveTab('create');
+    };
+
+    // The "which sensors have data" check can answer AFTER the Edit opened (it was still
+    // running, or it re-ran): a sensor found to have no data is unlocked for the fix from then
+    // on (latched -- a later "unknown" never re-locks typed changes; the save decides again).
+    useEffect(() => {
+        if (!editSession || editSession.repair || !unrestored) return;
+        const key = tagKey(editSession.recipe.tag);
+        if (!unrestored.has(key)) return;
+        setEditSession(s => (s && s.id === editSession.id ? { ...s, repair: { reason: unrestored.get(key) ?? null } } : s));
+    }, [editSession, unrestored]);
+
+    // What uses the sensor being edited -- the same rule Manage shows (only computed while editing).
+    const editUsageAll = useMemo(() => (editSession ? buildSpecialSensorUsage({
+        recipes: manageRecipes,
+        formulaRefs: formulaRefs ?? new Map(),
+        models,
+        runningConditionFilters,
+        selectedSensors: plottedSensors,
+        failureKnown: failureKnown && formulaRefs !== null,
+    }) : null), [editSession, manageRecipes, formulaRefs, models, runningConditionFilters, plottedSensors, failureKnown]);
+    const editUsage = editSession && editUsageAll ? usageFor(editUsageAll, editSession.recipe.tag) : undefined;
+    const editDependents = useMemo(
+        () => (editSession && editUsageAll ? transitiveDependents(editUsageAll, editSession.recipe.tag) : []),
+        [editSession, editUsageAll],
+    );
+    const repairing = !!editSession?.repair;
+    const lockNow = !!editUsage?.editLock.locked;
+    // A lock on a sensor that HAS data freezes the maths -- unless the user had
+    // already changed it before the lock showed up: the typed values then stay,
+    // and Save is refused with the reason (Cancel edit discards them).
+    const editLocked = !!editSession && lockNow && !repairing && !draft.edited;
+    const lockedAfterEdit = !!editSession && lockNow && !repairing && draft.edited;
+    const editNameLocked = !!editSession && (lockNow || repairing);
+    const editorLock = useMemo<FormulaEditorLock | null>(
+        () => (editLocked && editUsage ? { short: shortLock(editUsage), detail: describeEditLock(editUsage.editLock) } : null),
+        [editLocked, editUsage],
+    );
+    // Repair: how many models go back to Incomplete (the real rule, on the models this window knows).
+    const repairRetrain = useMemo(() => {
+        if (!editSession?.repair) return null;
+        if (!failureKnown) return null;
+        const tags = [editSession.recipe.tag, ...editDependents];
+        return demoteModelsTrainedOnSensors(models, { runningConditionFilters }, tags).retrain.length;
+    }, [editSession, editDependents, failureKnown, models, runningConditionFilters]);
+    const editorRepair = useMemo(
+        () => (editSession?.repair ? { reason: editSession.repair.reason, retrain: repairRetrain } : null),
+        [editSession, repairRetrain],
+    );
+
+    const editName = name.trim();
+    const editRenamed = !!editSession && !editNameLocked && editName !== editSession.recipe.tag;
+    const editNameError = !editSession || editNameLocked ? null
+        : !editName ? 'Name is required'
+            : editRenamed && liveSensors.some(s => !sameTag(s, editSession.recipe.tag) && sameTag(s, editName))
+                ? `"${editName}" is already in use by another sensor`
+                : editRenamed ? nameProblem(editName, []) : null;
+    const editMissing = editSession ? [
+        !editNameLocked && !editName && 'a name',
+        !description.trim() && 'a description',
+        !unit.trim() && 'a unit',
+        !component.trim() && 'a component',
+    ].filter((f): f is string => !!f) : [];
+    // What blocks Save, most actionable first (the footer repeats it).
+    const editBlock = !editSession ? null
+        : lockedAfterEdit
+            ? `This sensor is now locked: ${editUsage ? describeEditLock(editUsage.editLock) : ''} Your change to its calculation can't be saved — Cancel edit to discard it.`
+            // The stored calculation, untouched, never blocks a save (a description-only save of a
+            // sensor whose recipe Rust now refuses must go through -- 2026-10-08).
+            : !editLocked && draft.edited && !draft.state ? 'The formula is empty.'
+                : !editLocked && draft.edited && draft.issue ? draft.issue.message
+                    : editNameError ? 'Fix the name before saving.'
+                        : editMissing.length > 0 ? `Fill in ${editMissing.join(', ')} before saving.`
+                            : null;
+    // Why the last save was refused wins the footer until the user changes something.
+    const editIssue = editError ?? editBlock;
+    const editHint = editLocked ? 'Saves the description, unit and component.'
+        : repairing
+            ? (repairRetrain === null
+                ? 'Saving restores the data; models trained on it go back to Incomplete (set points kept).'
+                : repairRetrain > 0
+                    ? `Saving restores the data; ${repairRetrain} model${repairRetrain === 1 ? '' : 's'} go${repairRetrain === 1 ? 'es' : ''} back to Incomplete (set points kept).`
+                    : 'Saving restores the data.')
+            : 'Saves the changes; the chart updates.';
+    // (A lost session is not a reason to grey Save out: the click answers with the banner's message.)
+    const canSaveEdit = !!editSession && !savingEdit && !editBlock;
+    // A refused save's message belongs to THAT attempt: a change to the maths or the name clears it.
+    const editAttemptKey = editSession ? JSON.stringify([editSession.id, draft.state, name]) : '';
+    useEffect(() => {
+        setEditError(null);
+    }, [editAttemptKey]);
+
+    const handleSaveFromEditor = () => {
+        const session = editSession;
+        if (!session || !canSaveEdit) return;
+        const savedTag = editNameLocked ? session.recipe.tag : editName;
+        let recipe: SpecialSensorRecipe;
+        if (editLocked || !draft.state || !draft.edited) {
+            // The calculation was not touched: send what is stored (under the new
+            // name on a rename), never a re-derivation of it.
+            recipe = savedTag === session.recipe.tag ? session.recipe : retagRecipe(session.recipe, savedTag);
+        } else {
+            recipe = editorStateToRecipe(draft.state, savedTag);
+        }
+        const meta = sensorMetadata?.find(m => sameTag(m.tag, session.recipe.tag));
+        handleSaveEdit({
+            recipe,
+            metadata: {
+                ...(meta ?? { tag: savedTag, description: '', unit: '', component: '' }),
+                tag: savedTag,
+                description: description.trim(),
+                unit: unit.trim(),
+                component: component.trim() || 'Uncategorized',
+            },
+            renamedFrom: editRenamed ? session.recipe.tag : undefined,
         });
     };
 
-    const handleFormulaSubmit = useCallback((formula: string, customName?: string) => {
-        setFormulaMode(true);
-        setFormulaExpression(formula);
-        setFormulaCustomName(customName || '');
-    }, []);
-
-    const handleConfigChange = useCallback((config: SensorOperationConfig | null) => {
-        setFormulaMode(false);
-        setOperationConfig(config);
-    }, []);
+    // What the editor may use: everything, minus (while editing) the sensor itself
+    // and everything built on it -- a formula must never depend on itself.
+    const editorSensors = useMemo(() => {
+        if (!editSession) return liveSensors;
+        const skip = new Set([editSession.recipe.tag, ...editDependents].map(tagKey));
+        return liveSensors.filter(t => !skip.has(tagKey(t)));
+    }, [liveSensors, editSession, editDependents]);
+    // Every name a formula may reference without being painted "unknown": the
+    // dataset's columns plus every special sensor (a recipe's column may be
+    // missing this session -- Rust then says why; the cheap check stays quiet).
+    const knownSensors = useMemo(() => [...sensors, ...recipes.map(r => r.tag)], [sensors, recipes]);
+    const componentOptions = useMemo(
+        () => Array.from(new Set((sensorMetadata ?? []).map(m => m.component).filter((c): c is string => !!c))).sort(),
+        [sensorMetadata],
+    );
 
     const filteredSensors = useMemo(() => {
-        if (!searchTerm) return liveSensors;
+        if (!searchTerm) return editorSensors;
         const lowerTerm = searchTerm.toLowerCase();
-        return liveSensors.filter(s => {
+        return editorSensors.filter(s => {
             const meta = sensorMetadata?.find(m => m.tag === s);
             const searchStr = meta
                 ? `${s} ${meta.description} ${meta.component} ${meta.unit}`.toLowerCase()
                 : s.toLowerCase();
             return searchStr.includes(lowerTerm);
         });
-    }, [liveSensors, searchTerm, sensorMetadata]);
+    }, [editorSensors, searchTerm, sensorMetadata]);
 
 
     return (
@@ -1555,38 +1745,61 @@ export default function AddSensorWindow() {
                 aria-busy={adding || undefined}
                 style={{ display: activeTab === 'create' ? 'grid' : 'none', ...(adding ? { pointerEvents: 'none', opacity: 0.7 } : null) }}
             >
-                {/* Left: Explorer */}
-                <div className="special-sensor-left">
+                {/* Left: the sensor list -- a click PICKS a sensor for Quick build, `$` inserts it at the caret. */}
+                <div className={`special-sensor-left${editLocked ? ' is-off' : ''}`}>
                     {loading ? (
                         <div className="flex items-center justify-center h-full" style={{ color: 'var(--text-secondary)' }}>Loading...</div>
                     ) : (
                         <SensorExplorer
                             sensors={filteredSensors}
                             sensorMetadata={sensorMetadata}
-                            selectedSensors={selectedSensors}
-                            onToggleSensor={handleSensorToggle}
+                            selectedSensors={quickSel}
+                            onToggleSensor={toggleQuick}
+                            onInsertSensor={insertIntoFormula}
                             searchTerm={searchTerm}
                             onSearchChange={setSearchTerm}
                         />
                     )}
+                    <div className="special-sensor-left-hint">
+                        {editLocked
+                            ? 'The formula is locked, so sensors cannot be added.'
+                            : 'Click a sensor to pick it for Quick build · $ inserts it at the cursor.'}
+                    </div>
                 </div>
 
-                {/* Right: Tooling */}
+                {/* Right: the Formula editor (Quick build, the formula, preview) and the sensor's fields */}
                 <div className="special-sensor-right custom-scrollbar">
-                    <SensorTooling
-                        key={formKey}
-                        selectedSensors={selectedSensors}
-                        sensorMetadata={sensorMetadata}
-                        onConfigChange={handleConfigChange}
-                        onRemoveSensor={handleSensorToggle}
-                        onFormulaSubmit={handleFormulaSubmit}
-                        onDescriptionChange={setDescription}
-                        onUnitChange={setUnit}
-                        onComponentChange={setComponent}
-                        nameError={nameError}
-                        onFormulaIssueChange={setFormulaIssue}
-                        generation={generationRef.current}
-                    />
+                    <div className="fx">
+                        <SpecialSensorFormulaEditor
+                            key={editorKey}
+                            ref={editorRef}
+                            sensors={editorSensors}
+                            knownSensors={knownSensors}
+                            generation={generationRef.current}
+                            initialRecipe={editSession?.recipe ?? null}
+                            locked={editorLock}
+                            repair={editorRepair}
+                            quickSelected={quickSel}
+                            onQuickClear={clearQuick}
+                            unit={unit.trim()}
+                            onReport={handleReport}
+                        />
+                        <SensorFieldsCard
+                            title={editSession ? 'Edit sensor' : 'New sensor'}
+                            name={name}
+                            setName={setName}
+                            nameLocked={editNameLocked}
+                            nameLockReason={repairing ? 'The name stays locked while the formula is being fixed.' : editUsage ? describeEditLock(editUsage.editLock) : undefined}
+                            nameError={editSession ? editNameError : nameError}
+                            description={description}
+                            setDescription={setDescription}
+                            unit={unit}
+                            setUnit={setUnit}
+                            component={component}
+                            setComponent={setComponent}
+                            components={componentOptions}
+                        />
+                    </div>
                 </div>
             </div>
 
@@ -1603,14 +1816,10 @@ export default function AddSensorWindow() {
                         onDelete={handleDeleteSensor}
                         pendingDelete={pendingDelete}
                         onUndo={handleUndoDelete}
-                        availableSensors={liveSensors}
-                        editingTag={editingTag}
-                        onEdit={tag => { setEditError(null); setEditingTag(tag); }}
-                        onSaveEdit={handleSaveEdit}
+                        editingTag={editSession?.recipe.tag ?? null}
+                        onEdit={startEdit}
                         savingEdit={savingEdit}
-                        editError={editError}
                         unrestored={unrestored}
-                        generation={generationRef.current}
                     />
                 </div>
             )}
@@ -1619,19 +1828,43 @@ export default function AddSensorWindow() {
                 contextual hint (what's missing, or a plain "ready" message)
                 plus the action buttons on the right, one row. */}
             <div className="special-sensor-footer">
-                {activeTab === 'create' ? (
+                {activeTab === 'create' && editSession ? (
+                    <>
+                        <span
+                            role={editError ? 'alert' : undefined}
+                            data-testid="edit-footer-hint"
+                            className={`special-sensor-footer-hint${editIssue ? ' is-danger' : ''}`}
+                        >
+                            {editIssue ?? editHint}
+                        </span>
+                        <span className="special-sensor-spacer" />
+                        {savingEdit && <span style={{ fontSize: '11.5px', color: 'var(--text-secondary)' }}>Recomputing…</span>}
+                        <button onClick={closeEdit} disabled={savingEdit} className="special-sensor-btn">Cancel edit</button>
+                        <button
+                            onClick={handleSaveFromEditor}
+                            disabled={!canSaveEdit}
+                            title={canSaveEdit ? undefined : editBlock ?? undefined}
+                            className="special-sensor-btn special-sensor-btn--primary"
+                        >
+                            Save changes
+                        </button>
+                    </>
+                ) : activeTab === 'create' ? (
                     <>
                         <span
                             role={addError && footerIssue === addError ? 'alert' : undefined}
+                            data-testid="create-footer-hint"
                             className={`special-sensor-footer-hint${footerIssue ? ' is-danger' : ''}`}
                         >
-                            {footerIssue ?? 'Adds a computed sensor to this workspace.'}
+                            {footerIssue ?? (isCreatingSomething
+                                ? 'Adds a computed sensor to this workspace.'
+                                : 'Pick sensors on the left for Quick build, or type a formula.')}
                         </span>
                         <span className="special-sensor-spacer" />
                         <button onClick={handleClose} className="special-sensor-btn">Cancel</button>
                         <button
                             onClick={handleAdd}
-                            disabled={!canAdd || adding || !!sessionLost}
+                            disabled={!canAdd || adding || !!sessionLost || !!editSession}
                             title={canAdd ? undefined : footerIssue ?? undefined}
                             className="special-sensor-btn special-sensor-btn--primary"
                         >

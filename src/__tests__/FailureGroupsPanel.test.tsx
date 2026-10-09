@@ -10,6 +10,7 @@ vi.mock('../utils/failureGroupSummary', async (importOriginal) => {
 });
 import type { FailureGroup, FailureModel, FailureGroupStateSlice, SensorMetadata } from '../types';
 import { computeTrainFingerprint } from '../utils/trainFingerprint';
+import { snapshotTrainedFormulas } from '../utils/specialSensorSignature';
 import { ALL_TIME_TRAIN } from './helpers/trainTestFixture';
 
 function makeModel(overrides: Partial<FailureModel> = {}): FailureModel {
@@ -255,6 +256,21 @@ describe('FailureGroupsPanel', () => {
                 expect(dotOn(badgeFor('I'))).toBeNull();
                 expect(container.querySelector('.fg-summary-chip')!.textContent?.replace(/\s+/g, ' ').trim()).toMatch(/· 0 of 1 models complete$/);
                 expect(screen.getByText('FG-1').closest('.fg-row')!.querySelector('.fg-row-count')!.textContent).toBe('0 / 1');
+            });
+
+            // Customer batch 2026-10 (item 6): a special sensor the model was trained on changed
+            // its formula since -> out of date here too, once the panel is given the recipes.
+            it('a special sensor the model was trained on changed its formula -> no green dot (the recipes are passed in)', () => {
+                const trainedOn = [{ kind: 'formula' as const, tag: 'TAG1', formula: '$RAW * 2' }];
+                const snapshot = snapshotTrainedFormulas(complete(), trainedOn, { ...rc, models: [complete()] });
+                const model = { ...complete(), trainedFormulas: snapshot };
+                const { rerender } = render(<FailureGroupsPanel {...makeProps({ fgModels: [model], runningConditionFg: rc, specialSensorRecipes: trainedOn })} />);
+                expect(dotOn(badgeFor('I'))!.className).toContain('f4-kb-dot--complete');
+                rerender(<FailureGroupsPanel {...makeProps({
+                    fgModels: [model], runningConditionFg: rc,
+                    specialSensorRecipes: [{ kind: 'formula', tag: 'TAG1', formula: '$RAW * 3' }],
+                })} />);
+                expect(dotOn(badgeFor('I'))).toBeNull();
             });
 
             it('the WORKSPACE running condition changing makes a Workspace-mode Complete model stale, but not a Custom-mode one', () => {

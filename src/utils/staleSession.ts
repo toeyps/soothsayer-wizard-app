@@ -56,8 +56,13 @@ export function isSessionLostError(err: unknown): boolean {
 
 /** The commands that take `expectedGeneration`. `validate_formula` joined them
  *  on 2026-10-08: read-only, but a window bound to an older dataset would
- *  otherwise check a formula against ANOTHER project's columns. */
-const GENERATION_GUARDED = new Set(['evaluate_formula', 'calculate_new_sensor', 'remove_sensor_columns', 'validate_formula']);
+ *  otherwise check a formula against ANOTHER project's columns.
+ *  `preview_formula` (the Formula editor's live check + preview, customer
+ *  batch 2026-10 item 6) joined for the same reason: it must never answer
+ *  with another project's values. */
+const GENERATION_GUARDED = new Set([
+    'evaluate_formula', 'calculate_new_sensor', 'remove_sensor_columns', 'validate_formula', 'preview_formula',
+]);
 
 /**
  * Wrap `invoker` so every guarded command carries `expectedGeneration`, and a

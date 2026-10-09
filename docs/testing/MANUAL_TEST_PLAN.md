@@ -1,6 +1,6 @@
 # Wizard — Manual Test Plan
 
-> 374 ข้อ · **อัปเดต 2026-10-09 (customer batch phase 4: Train sensor / Train all พร้อมคิว)** — ปุ่ม "▶ Train model" ที่ footer ถูกเอาออก: ข้อใหม่ BMW-102 (แทน BMW-33), BMW-103 (แทน BMW-83), BMW-104 – BMW-113 · BMW-59 / BMW-62 / BMW-84 / BMW-107 ปรับข้อความ (id เดิม) · **อัปเดต 2026-10-09 (customer batch phase 3: Failure groups เป็น step 3 ของหน้า Import)** — ข้อใหม่ IMP-45 (แทน IMP-33), IMP-46 (แทน IMP-39), IMP-48, IMP-49, IMP-50, IMP-51, FG-16 (แทน FG-5), FG-17, FG-18 · ตัด IMP-17 (กด Open Dashboard ที่ step 2 — ย้ายไป step 3, ดู IMP-49) · IMP-19 / IMP-30 / IMP-32 / FG-9 ปรับข้อความ (id เดิม) · **อัปเดต 2026-10-09 (customer batch phase 2: แถบ cluster ของ Pair Plot + เปลี่ยนชื่อ cluster)** — PAIR-4 เขียนใหม่ (id เดิม), PAIR-11 / PAIR-9 ได้ id ใหม่ (PAIR-13 / PAIR-14), ตัด PAIR-6 / PAIR-7 (View Table + CSV ถูกเอาออก), ข้อใหม่ PAIR-15, PAIR-16, PAIR-17 · **อัปเดต 2026-10-09 รอบแก้ตาม code review** — EDT-5 ได้ id ใหม่ (EDT-53), EDT-43 ปรับข้อความ (id เดิม), ข้อใหม่ HL-12, FIL-8, BMW-101, VIS-16 · id ซ้ำ: เดิมมี **SPC-30 สองข้อ** — ข้อหลัง (ชิป Referenced sensors) เปลี่ยนเป็น **SPC-32** (ไม่นับเป็นข้อที่ตัดออก เพราะไม่ได้เปลี่ยนความหมาย; ผล SPC-30 ที่เคยกรอกไว้อาจเป็นของข้อไหนก็ได้ ให้ตรวจทั้ง SPC-30 และ SPC-32 ใหม่) · EDT-4 / LINE-3 ไม่ได้ซ้ำ (EDT-4b / LINE-3b เป็นคนละ id) · **อัปเดต 2026-10-09 (customer items 3+4: ชื่อ sensor / ตัวเลือก sensor / ตัวเลือกสีแบบเดียวทั้งแอป)** — SEL-1/4, FIL-5, HL-1/5/6, LINE-2, SCAT-3, PAIR-5, BMW-9/13/14 ได้ id ใหม่ และข้อใหม่ FIL-7, LINE-11, SCAT-11, PAIR-12, SEN-22, FG-15, BMW-99/100, SPC-31, MNG-26, EDT-52, VIS-15 · เขียนไว้ 2026-09-07 หลังทำ Manage Special Sensors (ลบ + แก้ไข) เสร็จ · อัปเดต 2026-09-09 (rename special sensor, บังคับกรอกครบ 4 ช่อง, Group by Model Type, ย้ายปุ่ม Build Model) · **อัปเดต 2026-09-21 ให้ตรงกับ v0.5.0** — เพิ่มหมวด MULTI (หลายโปรเจกต์) และ VIS (กวาดหน้าตาหลังล้าง CSS), เปลี่ยนเมนู Zoom, Running Condition Filter, ปุ่ม Finish, ช่อง predictor แบบค้นหา/จัดกลุ่ม, Component เป็น dropdown, และ**ตัดข้อของฟีเจอร์ที่ถูกเอาออก** (Preview / Save Model / Confirm Save / Report PNG / Saving overlay / แถบเลื่อน dataZoom) · **อัปเดต 2026-09-23** — Running Condition Filter เพิ่ม AND/OR (BMW-11) และ per-model Workspace/Custom override (PM-21 ใหม่) · **อัปเดต 2026-09-24 (Feature 4 Phase 2)** — Build Model / Failure Groups จัดเป็น**หนึ่งแถวต่อ sensor** และ Category ตั้งที่หัว sensor ครั้งเดียว (BMW-3 → BMW-15, BMW-12 → BMW-16, BMW-7 → BMW-17, FG-3 → FG-8 และข้อใหม่ BMW-19/20/21/22, FG-9) · **อัปเดต 2026-09-24 (Feature 4 Phase 3)** — Running Condition บังคับตั้งก่อน Build/Finish (BMW-11 → BMW-18, PM-14 → PM-22, ขยาย BMW-17 และข้อใหม่ BMW-23/24, PM-23) · **อัปเดต 2026-09-24 (Feature 4 Phase 4)** — Training time เป็น**หลายช่วงเวลา (periods)** แทน Time start/end ช่วงเดียว (PM-8 → PM-26, PM-21 → PM-27, ข้อใหม่ BMW-25, PER-10; BMW-18/PM-18/PER-9 ปรับข้อความ) · **อัปเดต 2026-09-24 (แก้บั๊ก QA)** — เพิ่ม FG-10, BMW-26, PM-28/29/30 · **อัปเดต 2026-09-24 (ปรับหน้าตาให้ตรงมอคอัปที่อนุมัติ)** — แผง Running Condition / Training periods / แถว sensor / แท็บ / แบนเนอร์ / ป้าย ปรับข้อความและหน้าตาในข้อ BMW-15/16/18/19/20/21/23/24/25 และ PM-23/26/27/29 (ไม่เพิ่ม id ใหม่ — ความหมายของข้อไม่เปลี่ยน) · **อัปเดต 2026-09-29 (แก้บั๊ก PER)** — เพิ่ม PER-11 (แก้บั๊กค่าที่แก้ใน Running Condition Filter หายเมื่อปิดหน้าต่าง Build Model/PM ทันที) · **อัปเดต 2026-09-29 (Build Model Workbench, Phase A)** — เขียนหมวด BMW ใหม่ทั้งหมดให้ตรงกับ layout ใหม่ (ลิสต์ sensor ซ้าย + detail pane ขวา แทน accordion เดิม): **ตัด BMW-6** (Group by Model Type — ฟีเจอร์นี้ถูกลบออกจากแอปแล้ว), เปลี่ยนความหมาย/ตั้ง id ใหม่ให้ BMW-15→BMW-28, BMW-16→BMW-30, BMW-17→รวมเข้า BMW-42, BMW-18→BMW-34, BMW-19→BMW-31, BMW-20→BMW-32, BMW-23→BMW-33, เพิ่มข้อใหม่ BMW-36/37/38/40/41/42 (ลิสต์ซ้าย ค้นหา/filter/group-by, sidebar toggle, Model settings พับได้, ผลลัพธ์ placeholder, footer ใหม่) — ข้ออื่น (BMW-1/2/4/5/8/9/10/13/14/21/22/24/25/26/27) เนื้อหาเดิม ปรับแค่คำอธิบายตำแหน่ง/ปุ่มให้ตรง UI ใหม่ · **อัปเดต 2026-09-29 (Build Model Workbench, Phase B — Train in place)** — พื้นที่ผลลัพธ์ไม่ใช่ placeholder แล้ว: BMW-41 → BMW-43 (กราฟ+ตัวเลขจริงหลัง Train, ลิสต์ "N items to fix"), BMW-42 → BMW-44 (ป้ายสถานะ 3 แบบ Incomplete/Trained/Complete + ปุ่ม Train/Re-train + Mark complete ต้อง Trained ก่อน), เพิ่มข้อใหม่ BMW-45 (auto-recompute ตอนเปิดโมเดลที่เคย Train ซ้ำ) และ BMW-46 (จุดสถานะที่ป้าย I/R/C ในลิสต์ซ้าย) · **อัปเดต 2026-09-30 (Build Model Workbench, Phase C — จุดสถานะในแท็บ Failure Groups)** — เพิ่มข้อใหม่ FG-13 (จุดสถานะที่มุมป้าย I/R/C ในแท็บ Failure Groups ของ Dashboard — ไม่มีสี/ฟ้า/เขียว ตรงกับหน้า Build Model เป๊ะ รวมถึงกรณี gate บล็อกด้วย) — ปิด Feature 4 (Build Model Workbench) ทั้ง Phase A/B/C ครบตาม SPEC FINAL · **อัปเดต 2026-09-30 (แก้บั๊กจากทดสอบแอปจริงรอบแรก, 4 ข้อ)** — เพิ่ม **PER-12** (ค่าที่แก้ใน Training periods หายเมื่อปิดแค่ popup "Edit…" โดยไม่ blur ก่อน — บั๊กเดิมที่ PER-11 ไม่ครอบ, รายงานซ้ำเป็นครั้งที่ 2) — BMW-28/BMW-40 (Model settings row) ปรับข้อความให้ตรงกับ CSS ที่จัดใหม่ (Model name กว้างขึ้นไม่ตัดคำ, Training data กว้างคงที่ทุกชนิด, ฟิลด์เฉพาะชนิดรวมกลุ่มแยกบรรทัด) ไม่เพิ่ม id ใหม่ · **อัปเดต 2026-09-30 (พอร์ตฟีเจอร์จากหน้า PM เต็มเข้า Workbench รอบสอง)** — เพิ่มข้อใหม่ **BMW-47** (Custom running-condition editor แก้ได้ในหน้า Workbench เอง ผ่านสวิตช์ Training data — เดิมทำไม่ได้ต้องไปหน้า PM เต็ม), **BMW-48** (Cluster ranges เป็นแถบเลื่อนลากได้ตามช่วงค่าจริง แสดงตลอดเวลาแทนที่จะซ่อนจนกว่าจะเลือก criteria sensor), **BMW-49** (แกน X ของกราฟผลลัพธ์ Relationship เลือกได้ทันทีไม่ต้อง Save) — แก้ข้อความ BMW-40 ที่เคยบอกว่า Custom "ยังไม่มีที่แก้ที่นี่" (ไม่จริงแล้ว ดู BMW-47) · **อัปเดต 2026-10-03 (ปุ่ม Apply ใน popup Running Condition Filter)** — popup แก้เป็น "แบบร่าง + กด Apply": แก้อะไรก็ตามในนั้นยังไม่มีผลจนกว่าจะกด **Apply** (ปิดโดยไม่ Apply = ทิ้งแบบร่าง) · เพิ่ม **BMW-50** (Apply / Cancel / ข้อความ "Changes not applied yet" / ถามก่อนทิ้งแบบร่างเมื่อกด X) · PER-11 → **PER-13** และ PER-12 → **PER-14** (ความหมายเปลี่ยน: ต้อง Apply ก่อนค่าจึงถูกบันทึก — id เก่าถูกลบเพื่อไม่ให้ผล pass/fail ที่เคยบันทึกไว้ทำให้เข้าใจผิด) · BMW-25/BMW-34 ปรับขั้นตอนให้ใส่การกด Apply (ไม่เพิ่ม id) · **อัปเดต 2026-10-03 (แผง Failure Group Assignment)** — ตัวเลือก Failure Group ที่เปิดจากปุ่ม 📁 ในแท็บ Sensor เปลี่ยนจาก popup เล็กเป็นแผงสูงเต็มความสูงติดขอบซ้ายของแผง Sensor (ตาราง กลุ่ม × ชนิดโมเดล) และเอาโมเดลออกจากกลุ่มสุดท้ายแล้วมี Undo 7 วินาที: **ตัด SEN-5 ถึง SEN-10** (อธิบาย popup เดิมที่ไม่มีแล้ว) แล้วเพิ่ม **SEN-12 ถึง SEN-21** (เปิดแผง, ตาราง, ติ๊กหลายชนิด, แถวไม่กระโดด/All|Assigned/ค้นหา, สลับ sensor + ‹ ›, สิ่งที่ปิดแผงได้, ลบโมเดลแล้ว Undo — SEN-8 เดิมมาเป็น SEN-18, Undo ข้ามหน้าต่าง Build Model, สร้างกลุ่ม, เปลี่ยนชื่อ/ลบกลุ่ม) — id เดิมที่ความหมายเปลี่ยนจึงไม่ถูกนำกลับมาใช้ · **อัปเดต 2026-10-03 (Running condition ใหม่)** — แถบ "Running condition" บรรทัดเดียวใน Build Model เปลี่ยนเป็นการ์ด "Step 1" 3 สถานะ + แถบขั้นตอนที่หัวหน้าต่าง และ popup Edit… ถูกออกแบบใหม่เป็น 2 คอลัมน์ (ช่วงเวลาเป็นการ์ด P1..Pn, การ์ดเลือก "Only when running" / "Use all rows", ปุ่ม operator, ปุ่ม AND/OR คั่นระหว่างแถว, จำนวนแถวที่ใช้ train แบบสด, ปิดด้วย Esc): **ตัด BMW-34 และ BMW-25** (อธิบายแถบ/หน้าตาเดิมที่ไม่มีแล้ว) แล้วเพิ่ม **BMW-51 ถึง BMW-55** — BMW-50 (ต้องกด Apply), BMW-33, BMW-24, BMW-26 และ PER-9/10/13/14 แก้แค่ชื่อปุ่ม/หัวข้อให้ตรงหน้าตาใหม่ (ความหมายเดิม จึงไม่เปลี่ยน id) · **อัปเดต 2026-10-03 (แก้บั๊ก Add Special Sensor — ค่าไม่ตรง / กราฟปักเกิน)** — คอลัมน์ของ special sensor ที่ลบหรือถูกเปลี่ยนชื่อ ถูกทิ้งจากหน่วยความจำจริงแล้ว (สร้างชื่อเดิมใหม่ไม่ได้ค่าเก่าอีกต่อไป), สร้างแล้ว**ปักเฉพาะตัวใหม่** และไม่ทับสิ่งที่เลือกใน Dashboard, ตรวจชื่อซ้ำที่ช่อง Name, กันกดซ้ำ, ชื่อมีอักขระพิเศษ/ภาษาไทยใช้ในสูตรได้, Sum ว่างเมื่อ source หาย, กู้ workspace ที่มี recipe พังได้อย่างปลอดภัย: **ตัด SPC-8 และ SPC-12** (ความหมายเปลี่ยน — SPC-12 เดิมคือ "ชื่อซ้ำให้จดพฤติกรรม" ตอนนี้ถูกบล็อกแล้ว, SPC-8 เดิมบอกว่ากราฟอัปเดตโดยไม่ระบุว่าปักอะไร) แล้วเพิ่ม **SPC-15 ถึง SPC-21, MNG-16 ถึง MNG-18, EDT-27 ถึง EDT-29, PER-15** (SPC-4 เพิ่มแค่ลิงก์ไป SPC-15) · **อัปเดต 2026-10-03 (Special sensor รอบสอง — แก้ 14 ข้อที่ QA เจอ)** — ฟอร์ม Create ว่างทั้งหมดหลัง Add (SPC-22), ป้าย on chart ตามที่ Dashboard ปักจริง (SPC-23), sensor ที่กำลัง Undo ไม่ถูกเสนอเป็น source (SPC-24), สร้าง/แก้/ลบเป็นคิวทีละงาน (SPC-25, MNG-24), ลบถูกตรวจซ้ำตอนยืนยันจริงรวม Running condition (MNG-19/20/21/22), ลบแล้วเงื่อนไขในแท็บ Filter ของ Dashboard หายตาม (MNG-23), rename ตามไปถึงแท็บ Filter + Running condition (EDT-30), แก้ไม่สำเร็จย้อนกลับ (EDT-31), ลำดับคำนวณตามการพึ่งพา (EDT-32), ตรวจวงกลมสดใหม่ (EDT-33) — **ตัด MNG-10** (ช่อง "PM filter" ถูกยกเลิกไปแล้ว) แทนด้วย **MNG-25** · **อัปเดต 2026-10-03 (ล็อก special sensor ที่โมเดลใช้อยู่)** — sensor ที่โมเดล (ทุกช่อง รวม Custom running condition) หรือ Running condition ของ workspace ใช้อยู่ — รวมถึงโดยอ้อมผ่าน sensor ที่สร้างต่อ — **เปลี่ยนชื่อ / แก้สูตร / แก้ source ไม่ได้ และลบไม่ได้** (แก้ได้แค่ Description / Unit / Component): **ตัด EDT-16, EDT-18, EDT-24, EDT-30** (ความหมายเปลี่ยน — เดิมบอกว่า sensor ที่ถูกใช้ยังแก้ได้ และ rename ตามไปถึงโมเดล / Running condition) แล้วเพิ่ม **EDT-35 ถึง EDT-41** (EDT-2/25 แก้แค่ข้อความอ้างอิง) · **อัปเดต 2026-10-03 (ผูกหน้าต่าง Add Special Sensor กับ dataset + latest-click-wins)** — special sensor ของ A ไม่โผล่/ไม่โดนแตะตอนทำงานใน B แม้หน้าต่างลูกของ A ค้าง (ทุกคำสั่งที่เขียนคอลัมน์ผูกกับ generation ของ dataset, ถูกปฏิเสธเมื่อ dataset เปลี่ยน), หน้าต่างที่ถูกดึงไปโปรเจกต์ใหม่ล้างฟอร์ม/ตัวแก้ไข/งานค้างทั้งหมด, คลิกเปิดโปรเจกต์ซ้อนกัน "คลิกหลังสุดชนะ", ออกจาก Dashboard แล้วบันทึกอัตโนมัติที่ค้างอยู่ทันที — เพิ่ม **MULTI-8 ถึง MULTI-13** (ไม่ตัด id ใดเลย) · **อัปเดต 2026-10-03 (Visual refresh)** — เพิ่ม **VIS-4 ถึง VIS-14** (popover ไม่ปิดเอง/ไม่ล้นจอ/ไม่ลอยค้าง, แถบ Time range แถวเดียว, แท็บ Filter/Highlights/Sensor/Failure Groups หน้าตาใหม่, สีกราฟ Build Model/PM โทนเดียวกับ Dashboard, หน้าต่าง Add Special Sensor หน้าตาใหม่) — ไม่ตัด id ใดเลย · **อัปเดต 2026-10-04 (Health score 3b-1 — Workbench 2 หน้า ต่อ model: Model fit + Health score)** — หัวหน้าต่างเป็นแถบขั้นตอน 5 ขั้นที่กดได้ (Running condition → Model settings → Train → Health set points → Complete), มีสวิตช์ "1 Model fit / 2 Health score" ที่หัว detail pane (หน้า Health score ยังเป็นกรอบว่างไว้ก่อน — มาในเฟสถัดไป), แถบเตือน stale + ฟิล์ม "Out of date" บนกราฟ, จุดสถานะ 3 สี (เหลือง/แดง/เขียว) + legend, กราฟของหน้า Model fit เป็นกราฟใหม่ทั้งหมดที่ดึงจากข้อมูลย่อของ Rust (Individual: ค่าตามเวลา + Distribution ใหม่ + การ์ดสถิติ; Relationship: แถบสถิติ + Fit + Target vs predicted + Residual เต็มกว้าง ไม่มี distribution ของ residual; Clustering: scatter + วง SD ทุก cluster + การ์ดสรุป), ทุกกราฟมีปุ่มขยาย, "Compare predictors" เปิด Sub-models เป็น modal, โมเดล Complete เห็นกราฟเมื่อเปิดซ้ำ, และแก้บั๊ก detail pane หดหายเมื่อซ่อนลิสต์ซ้าย: **ตัด BMW-38, BMW-43, BMW-45, BMW-46, BMW-49, BMW-51** (ความหมายเปลี่ยน) แล้วเพิ่ม **BMW-56 ถึง BMW-68** — BMW-56 คือการ์ด Step 1 เดิม (BMW-51) ที่ตัดส่วนแถบขั้นตอนออก · **อัปเดต 2026-10-04 (Health score 3b-2)** — หน้า "2 Health score" เป็นหน้าจริงแล้ว: **ตัด BMW-58 และ BMW-44** (หน้า placeholder / Mark complete ที่ footer หน้า Model fit — ความหมายเปลี่ยน) แล้วเพิ่ม **BMW-69 ถึง BMW-79** (สวิตช์ 2 หน้า, set point ของ Individual/Relationship/Clustering, Checks, กราฟคะแนน + ซิงก์เมาส์, Mark complete เขียนไฟล์จริง, Mark incomplete + "Changed after saving", การบันทึก set point/ปิดหน้าต่าง, ป้าย "Set points needed"/"Fix set point", Finish ของหน้า PM) และแก้ข้อความ FG-13, BMW-4, BMW-30, BMW-33, BMW-56 ที่อ้างปุ่ม Mark complete เดิม · **อัปเดต 2026-10-04 (Health score เฟส 4 — ตัดหน้าเต็ม)** — ถอดหน้า Predictive Model (ปุ่ม "Open full view ↗", ปุ่ม Finish, Back, Sub-models บนหน้านั้น) ออกจากแอปทั้งหมด: **ตัดทั้งหมวด PM (22 ข้อ), BMW-8, BMW-10, BMW-79, VIS-12** แล้วเพิ่ม **BMW-83** (ไม่มีทางเปิดหน้า full view แล้ว) กับ **BMW-84** (ทุกโมเดลเข้าถึงและ Complete ได้จากสองหน้าของ Workbench เท่านั้น) และแก้ข้อความของ BMW-27, BMW-30, BMW-33, BMW-40, BMW-47, BMW-50, BMW-53, BMW-54, BMW-56, BMW-57, BMW-66, BMW-69, PER-9, PER-10, PER-13, VIS-1 ที่อ้างปุ่ม/หน้านั้น — Sub-models เหลือเป็น modal ใน Workbench เท่านั้น (BMW-66) · **อัปเดต 2026-10-04 (เก็บกวาด id หลัง QA)** — FG-13 → **FG-14** และ BMW-80 → **BMW-85** (ความหมายเปลี่ยนแต่เคยใช้ id เดิมซ้ำ — id เก่าถูกเพิ่มเข้ารายการที่ตัดแล้ว), ย้ายป้าย 🆕 ของ FG-14/BMW-85/BMW-81/BMW-82 ออกมาหลัง `**` ให้ตัวสร้าง HTML อ่านป้ายได้, และเติม id ที่เคยถูกตัดแต่ตกหล่นจากรายการ (BMW-3/7/12/78, FG-3/11, MNG-10, PER-11/12, SPC-8/12, EDT-16/18/24/30) · **อัปเดต 2026-10-04 (หน้าแรก "Get started" ใหม่ — Import เฟส B)** — step 0 ของหน้า Import เปลี่ยนเป็น 2 คอลัมน์: ซ้ายคือแบรนด์ + headline + ปุ่ม **New project** (Ctrl+N) + ช่องค้นหา + การ์ด Recent projects (hover/โฟกัสแล้วมี Rename / Delete, ลบยืนยัน**ในแถว**แทนหน้าต่าง dialog), ขวาคือภาพเครื่องจักรจากกลุ่มจุดที่เปลี่ยนรูปไปเรื่อย ๆ, ท้ายหน้ามีเวอร์ชันแอป + "Data stays on this machine": **ตัด IMP-1 และ IMP-21** (ความหมายเปลี่ยน) แล้วเพิ่ม **IMP-22 ถึง IMP-29** (IMP-22 คือ IMP-21 เดิมที่ปรับเป็นยืนยันในแถว) — IMP-2/IMP-18 แก้แค่คำอธิบายตำแหน่ง/วิธีกด (ความหมายเดิม จึงไม่เปลี่ยน id) · step 1–2 ยังเป็นหน้าเดิม (sidebar เดิม) จนกว่าเฟสถัดไป · **อัปเดต 2026-10-04 (Import เฟส C — step 1–2 ใหม่)** — sidebar "Find workspace / Recent" ของ step 1–2 ถูกแทนด้วยแถบขั้นตอนทางซ้าย (rail) · Step 1 "Name your project" (ตัวนับ /80, เตือนชื่อซ้ำแบบไม่บล็อก, การ์ดตัวอย่าง, การ์ด Next) · Step 2 "Add your sensor data" (ซ้าย "Sensor data": dropzone + ชิปเงื่อนไข, แถบความคืบหน้าตอนอ่าน, การ์ดสรุป Rows/Sensors/Period/Interval/% empty, Time coverage, กล่อง "Fixed while reading" · ขวา "Tag names" ที่เดิมชื่อ Sensor mapping) · ปุ่ม Continue ของ step 2 เปลี่ยนเป็น "Open Dashboard": **ตัด IMP-6, IMP-7, IMP-8, IMP-9, IMP-10, IMP-11, IMP-12** (ความหมายเปลี่ยน) แล้วเพิ่ม **IMP-30 ถึง IMP-39** — IMP-14/16/17/18/19/22 และ VIS-1/VIS-3 แก้แค่ชื่อปุ่ม/หัวข้อให้ตรง UI ใหม่ (ความหมายเดิม จึงไม่เปลี่ยน id) · **อัปเดต 2026-10-07 (Train/Test model validation)** — ช่วงเวลาแบ่งเป็น **Train periods** (บังคับต้องมีอย่างน้อย 1 ช่วง ไม่มีช่วง = ไม่ใช่ "ทั้งชุดข้อมูล" อีกต่อไป) กับ **Test periods** (Normal / Known problem + event time, ต้องมีอย่างน้อย 1 ช่วงก่อน Mark complete) · ผลทดสอบเป็นข้อมูลเท่านั้น (เขียว/เหลือง ไม่บล็อก): **ตัด BMW-47, BMW-53, BMW-56** (ความหมายเปลี่ยน) แล้วเพิ่ม **BMW-86 ถึง BMW-92** · **อัปเดต 2026-10-07 (แก้ตาม code review)** — เพิ่ม **BMW-93** (Custom: Test period ผิด = Save ไม่ได้, Mark complete ตอนมีค่าที่ยังไม่ Save บันทึกให้ก่อน, เตือน Train < 30 วันของ Custom) และ **BMW-94** (Relation model: Train คำนวณ Test ไปด้วย, ข้อความรอ ~15 วินาที, ให้คะแนน Test ไม่ได้ = กล่องเหลือง) · **อัปเดต 2026-10-07 (code review รอบ 3)** — เพิ่ม **BMW-95** (จำความล้มเหลว, Try again, engine เก่าไม่มีปุ่ม Try again, ช่วงใหญ่เกิน) · BMW-94 ย้ายกรณี engine เก่าไปที่ BMW-95 (ข้อใหม่วันเดียวกัน ยังไม่มีผลทดสอบ จึงไม่เปลี่ยน id) · BMW-88 ชิป "No train period" เปลี่ยนจากแดงเป็นเหลือง และ BMW-75 ข้อความเวลาของ Relationship (แก้ข้อความในข้อเดิม ความหมายไม่เปลี่ยน จึงไม่เปลี่ยน id) · **อัปเดต 2026-10-08 (คำขอลูกค้า)** — เอาสวิตช์ Band / Line colour ในแท็บ Highlights ออก (highlight แบบ By time บนกราฟ Line เป็นแถบเสมอ): **ตัด HL-4** แล้วเพิ่ม **HL-8** (ไม่มีสวิตช์แล้ว + workspace เก่าที่เคยตั้ง Line colour เปิดแล้วเป็นแถบ) · ลบ tag ทีละอันได้: เพิ่ม **LINE-9** และ **SCAT-9** (รายการ tag ใต้แถบเครื่องมือ มีปุ่ม × ต่ออัน) · VIS-8 ตัดประโยคเรื่องสวิตช์ Band / Line colour ออก (ความหมายของข้อไม่เปลี่ยน จึงไม่เปลี่ยน id) · **อัปเดต 2026-10-08 (แก้บั๊ก special sensor จาก QA)** — สูตรที่ไม่ผ่านการตรวจขึ้นสีแดงใต้ช่องสูตรและกด Add/Save ไม่ได้ (SPC-26, EDT-13 → EDT-42), เปลี่ยน source แล้ว Average/Sum/Median ไม่กลายเป็นผลบวก (SPC-29, EDT-43), Formula Syntax Help (SPC-27), ปัดทศนิยมแบบ "Then apply" (SPC-28), ชิป Referenced sensors (SPC-30), Rust ปฏิเสธฟังก์ชันที่ไม่รู้จัก (EDT-44), รายการ Manage บอกจำนวนทศนิยม (EDT-45), เปิด workspace เก่าที่มีสูตรซึ่งตอนนี้ไม่ผ่าน (EDT-46)
+> 379 ข้อ · **อัปเดต 2026-10-09 (customer batch phase 5: Formula editor + Quick build แทนปุ่มคำนวณเดิม)** — ข้อใหม่ MNG-29, SPC-33 (แทน SPC-2), SPC-34 (แทน SPC-3), SPC-35 (แทน SPC-4), SPC-36 (แทน SPC-5), SPC-37 (แทน SPC-11 + SPC-26), SPC-38 (แทน SPC-13), SPC-39 (แทน SPC-15), SPC-40 (แทน SPC-16), SPC-41 (แทน SPC-22), SPC-42 (แทน SPC-25), SPC-43 (แทน SPC-30), SPC-44 (แทน SPC-27), SPC-45 (แทน SPC-28), SPC-46 (แทน SPC-29), SPC-47 (แทน SPC-32), SPC-48 – SPC-54, MNG-27 (แทน MNG-2), MNG-28, EDT-54 (แทน EDT-1), EDT-55 (แทน EDT-52, EDT-53, EDT-7, EDT-43), EDT-56 (แทน EDT-6), EDT-57 (แทน EDT-35), EDT-59 (แทน EDT-45), EDT-60 (แทน EDT-49), EDT-61 (แทน EDT-50), EDT-62 · ตัด SPC-14 · SPC-6 / SPC-20 / SPC-24 / MNG-8 / EDT-17 / EDT-20 / EDT-37 / EDT-48 ปรับข้อความ (id เดิม) · **อัปเดต 2026-10-09 (customer batch phase 4: Train sensor / Train all พร้อมคิว)** — ปุ่ม "▶ Train model" ที่ footer ถูกเอาออก: ข้อใหม่ BMW-102 (แทน BMW-33), BMW-103 (แทน BMW-83), BMW-104 – BMW-113 · BMW-59 / BMW-62 / BMW-84 / BMW-107 ปรับข้อความ (id เดิม) · **อัปเดต 2026-10-09 (customer batch phase 3: Failure groups เป็น step 3 ของหน้า Import)** — ข้อใหม่ IMP-45 (แทน IMP-33), IMP-46 (แทน IMP-39), IMP-48, IMP-49, IMP-50, IMP-51, FG-16 (แทน FG-5), FG-17, FG-18 · ตัด IMP-17 (กด Open Dashboard ที่ step 2 — ย้ายไป step 3, ดู IMP-49) · IMP-19 / IMP-30 / IMP-32 / FG-9 ปรับข้อความ (id เดิม) · **อัปเดต 2026-10-09 (customer batch phase 2: แถบ cluster ของ Pair Plot + เปลี่ยนชื่อ cluster)** — PAIR-4 เขียนใหม่ (id เดิม), PAIR-11 / PAIR-9 ได้ id ใหม่ (PAIR-13 / PAIR-14), ตัด PAIR-6 / PAIR-7 (View Table + CSV ถูกเอาออก), ข้อใหม่ PAIR-15, PAIR-16, PAIR-17 · **อัปเดต 2026-10-09 รอบแก้ตาม code review** — EDT-5 ได้ id ใหม่ (EDT-53), EDT-43 ปรับข้อความ (id เดิม), ข้อใหม่ HL-12, FIL-8, BMW-101, VIS-16 · id ซ้ำ: เดิมมี **SPC-30 สองข้อ** — ข้อหลัง (ชิป Referenced sensors) เปลี่ยนเป็น **SPC-32** (ไม่นับเป็นข้อที่ตัดออก เพราะไม่ได้เปลี่ยนความหมาย; ผล SPC-30 ที่เคยกรอกไว้อาจเป็นของข้อไหนก็ได้ ให้ตรวจทั้ง SPC-30 และ SPC-32 ใหม่) · EDT-4 / LINE-3 ไม่ได้ซ้ำ (EDT-4b / LINE-3b เป็นคนละ id) · **อัปเดต 2026-10-09 (customer items 3+4: ชื่อ sensor / ตัวเลือก sensor / ตัวเลือกสีแบบเดียวทั้งแอป)** — SEL-1/4, FIL-5, HL-1/5/6, LINE-2, SCAT-3, PAIR-5, BMW-9/13/14 ได้ id ใหม่ และข้อใหม่ FIL-7, LINE-11, SCAT-11, PAIR-12, SEN-22, FG-15, BMW-99/100, SPC-31, MNG-26, EDT-52, VIS-15 · เขียนไว้ 2026-09-07 หลังทำ Manage Special Sensors (ลบ + แก้ไข) เสร็จ · อัปเดต 2026-09-09 (rename special sensor, บังคับกรอกครบ 4 ช่อง, Group by Model Type, ย้ายปุ่ม Build Model) · **อัปเดต 2026-09-21 ให้ตรงกับ v0.5.0** — เพิ่มหมวด MULTI (หลายโปรเจกต์) และ VIS (กวาดหน้าตาหลังล้าง CSS), เปลี่ยนเมนู Zoom, Running Condition Filter, ปุ่ม Finish, ช่อง predictor แบบค้นหา/จัดกลุ่ม, Component เป็น dropdown, และ**ตัดข้อของฟีเจอร์ที่ถูกเอาออก** (Preview / Save Model / Confirm Save / Report PNG / Saving overlay / แถบเลื่อน dataZoom) · **อัปเดต 2026-09-23** — Running Condition Filter เพิ่ม AND/OR (BMW-11) และ per-model Workspace/Custom override (PM-21 ใหม่) · **อัปเดต 2026-09-24 (Feature 4 Phase 2)** — Build Model / Failure Groups จัดเป็น**หนึ่งแถวต่อ sensor** และ Category ตั้งที่หัว sensor ครั้งเดียว (BMW-3 → BMW-15, BMW-12 → BMW-16, BMW-7 → BMW-17, FG-3 → FG-8 และข้อใหม่ BMW-19/20/21/22, FG-9) · **อัปเดต 2026-09-24 (Feature 4 Phase 3)** — Running Condition บังคับตั้งก่อน Build/Finish (BMW-11 → BMW-18, PM-14 → PM-22, ขยาย BMW-17 และข้อใหม่ BMW-23/24, PM-23) · **อัปเดต 2026-09-24 (Feature 4 Phase 4)** — Training time เป็น**หลายช่วงเวลา (periods)** แทน Time start/end ช่วงเดียว (PM-8 → PM-26, PM-21 → PM-27, ข้อใหม่ BMW-25, PER-10; BMW-18/PM-18/PER-9 ปรับข้อความ) · **อัปเดต 2026-09-24 (แก้บั๊ก QA)** — เพิ่ม FG-10, BMW-26, PM-28/29/30 · **อัปเดต 2026-09-24 (ปรับหน้าตาให้ตรงมอคอัปที่อนุมัติ)** — แผง Running Condition / Training periods / แถว sensor / แท็บ / แบนเนอร์ / ป้าย ปรับข้อความและหน้าตาในข้อ BMW-15/16/18/19/20/21/23/24/25 และ PM-23/26/27/29 (ไม่เพิ่ม id ใหม่ — ความหมายของข้อไม่เปลี่ยน) · **อัปเดต 2026-09-29 (แก้บั๊ก PER)** — เพิ่ม PER-11 (แก้บั๊กค่าที่แก้ใน Running Condition Filter หายเมื่อปิดหน้าต่าง Build Model/PM ทันที) · **อัปเดต 2026-09-29 (Build Model Workbench, Phase A)** — เขียนหมวด BMW ใหม่ทั้งหมดให้ตรงกับ layout ใหม่ (ลิสต์ sensor ซ้าย + detail pane ขวา แทน accordion เดิม): **ตัด BMW-6** (Group by Model Type — ฟีเจอร์นี้ถูกลบออกจากแอปแล้ว), เปลี่ยนความหมาย/ตั้ง id ใหม่ให้ BMW-15→BMW-28, BMW-16→BMW-30, BMW-17→รวมเข้า BMW-42, BMW-18→BMW-34, BMW-19→BMW-31, BMW-20→BMW-32, BMW-23→BMW-33, เพิ่มข้อใหม่ BMW-36/37/38/40/41/42 (ลิสต์ซ้าย ค้นหา/filter/group-by, sidebar toggle, Model settings พับได้, ผลลัพธ์ placeholder, footer ใหม่) — ข้ออื่น (BMW-1/2/4/5/8/9/10/13/14/21/22/24/25/26/27) เนื้อหาเดิม ปรับแค่คำอธิบายตำแหน่ง/ปุ่มให้ตรง UI ใหม่ · **อัปเดต 2026-09-29 (Build Model Workbench, Phase B — Train in place)** — พื้นที่ผลลัพธ์ไม่ใช่ placeholder แล้ว: BMW-41 → BMW-43 (กราฟ+ตัวเลขจริงหลัง Train, ลิสต์ "N items to fix"), BMW-42 → BMW-44 (ป้ายสถานะ 3 แบบ Incomplete/Trained/Complete + ปุ่ม Train/Re-train + Mark complete ต้อง Trained ก่อน), เพิ่มข้อใหม่ BMW-45 (auto-recompute ตอนเปิดโมเดลที่เคย Train ซ้ำ) และ BMW-46 (จุดสถานะที่ป้าย I/R/C ในลิสต์ซ้าย) · **อัปเดต 2026-09-30 (Build Model Workbench, Phase C — จุดสถานะในแท็บ Failure Groups)** — เพิ่มข้อใหม่ FG-13 (จุดสถานะที่มุมป้าย I/R/C ในแท็บ Failure Groups ของ Dashboard — ไม่มีสี/ฟ้า/เขียว ตรงกับหน้า Build Model เป๊ะ รวมถึงกรณี gate บล็อกด้วย) — ปิด Feature 4 (Build Model Workbench) ทั้ง Phase A/B/C ครบตาม SPEC FINAL · **อัปเดต 2026-09-30 (แก้บั๊กจากทดสอบแอปจริงรอบแรก, 4 ข้อ)** — เพิ่ม **PER-12** (ค่าที่แก้ใน Training periods หายเมื่อปิดแค่ popup "Edit…" โดยไม่ blur ก่อน — บั๊กเดิมที่ PER-11 ไม่ครอบ, รายงานซ้ำเป็นครั้งที่ 2) — BMW-28/BMW-40 (Model settings row) ปรับข้อความให้ตรงกับ CSS ที่จัดใหม่ (Model name กว้างขึ้นไม่ตัดคำ, Training data กว้างคงที่ทุกชนิด, ฟิลด์เฉพาะชนิดรวมกลุ่มแยกบรรทัด) ไม่เพิ่ม id ใหม่ · **อัปเดต 2026-09-30 (พอร์ตฟีเจอร์จากหน้า PM เต็มเข้า Workbench รอบสอง)** — เพิ่มข้อใหม่ **BMW-47** (Custom running-condition editor แก้ได้ในหน้า Workbench เอง ผ่านสวิตช์ Training data — เดิมทำไม่ได้ต้องไปหน้า PM เต็ม), **BMW-48** (Cluster ranges เป็นแถบเลื่อนลากได้ตามช่วงค่าจริง แสดงตลอดเวลาแทนที่จะซ่อนจนกว่าจะเลือก criteria sensor), **BMW-49** (แกน X ของกราฟผลลัพธ์ Relationship เลือกได้ทันทีไม่ต้อง Save) — แก้ข้อความ BMW-40 ที่เคยบอกว่า Custom "ยังไม่มีที่แก้ที่นี่" (ไม่จริงแล้ว ดู BMW-47) · **อัปเดต 2026-10-03 (ปุ่ม Apply ใน popup Running Condition Filter)** — popup แก้เป็น "แบบร่าง + กด Apply": แก้อะไรก็ตามในนั้นยังไม่มีผลจนกว่าจะกด **Apply** (ปิดโดยไม่ Apply = ทิ้งแบบร่าง) · เพิ่ม **BMW-50** (Apply / Cancel / ข้อความ "Changes not applied yet" / ถามก่อนทิ้งแบบร่างเมื่อกด X) · PER-11 → **PER-13** และ PER-12 → **PER-14** (ความหมายเปลี่ยน: ต้อง Apply ก่อนค่าจึงถูกบันทึก — id เก่าถูกลบเพื่อไม่ให้ผล pass/fail ที่เคยบันทึกไว้ทำให้เข้าใจผิด) · BMW-25/BMW-34 ปรับขั้นตอนให้ใส่การกด Apply (ไม่เพิ่ม id) · **อัปเดต 2026-10-03 (แผง Failure Group Assignment)** — ตัวเลือก Failure Group ที่เปิดจากปุ่ม 📁 ในแท็บ Sensor เปลี่ยนจาก popup เล็กเป็นแผงสูงเต็มความสูงติดขอบซ้ายของแผง Sensor (ตาราง กลุ่ม × ชนิดโมเดล) และเอาโมเดลออกจากกลุ่มสุดท้ายแล้วมี Undo 7 วินาที: **ตัด SEN-5 ถึง SEN-10** (อธิบาย popup เดิมที่ไม่มีแล้ว) แล้วเพิ่ม **SEN-12 ถึง SEN-21** (เปิดแผง, ตาราง, ติ๊กหลายชนิด, แถวไม่กระโดด/All|Assigned/ค้นหา, สลับ sensor + ‹ ›, สิ่งที่ปิดแผงได้, ลบโมเดลแล้ว Undo — SEN-8 เดิมมาเป็น SEN-18, Undo ข้ามหน้าต่าง Build Model, สร้างกลุ่ม, เปลี่ยนชื่อ/ลบกลุ่ม) — id เดิมที่ความหมายเปลี่ยนจึงไม่ถูกนำกลับมาใช้ · **อัปเดต 2026-10-03 (Running condition ใหม่)** — แถบ "Running condition" บรรทัดเดียวใน Build Model เปลี่ยนเป็นการ์ด "Step 1" 3 สถานะ + แถบขั้นตอนที่หัวหน้าต่าง และ popup Edit… ถูกออกแบบใหม่เป็น 2 คอลัมน์ (ช่วงเวลาเป็นการ์ด P1..Pn, การ์ดเลือก "Only when running" / "Use all rows", ปุ่ม operator, ปุ่ม AND/OR คั่นระหว่างแถว, จำนวนแถวที่ใช้ train แบบสด, ปิดด้วย Esc): **ตัด BMW-34 และ BMW-25** (อธิบายแถบ/หน้าตาเดิมที่ไม่มีแล้ว) แล้วเพิ่ม **BMW-51 ถึง BMW-55** — BMW-50 (ต้องกด Apply), BMW-33, BMW-24, BMW-26 และ PER-9/10/13/14 แก้แค่ชื่อปุ่ม/หัวข้อให้ตรงหน้าตาใหม่ (ความหมายเดิม จึงไม่เปลี่ยน id) · **อัปเดต 2026-10-03 (แก้บั๊ก Add Special Sensor — ค่าไม่ตรง / กราฟปักเกิน)** — คอลัมน์ของ special sensor ที่ลบหรือถูกเปลี่ยนชื่อ ถูกทิ้งจากหน่วยความจำจริงแล้ว (สร้างชื่อเดิมใหม่ไม่ได้ค่าเก่าอีกต่อไป), สร้างแล้ว**ปักเฉพาะตัวใหม่** และไม่ทับสิ่งที่เลือกใน Dashboard, ตรวจชื่อซ้ำที่ช่อง Name, กันกดซ้ำ, ชื่อมีอักขระพิเศษ/ภาษาไทยใช้ในสูตรได้, Sum ว่างเมื่อ source หาย, กู้ workspace ที่มี recipe พังได้อย่างปลอดภัย: **ตัด SPC-8 และ SPC-12** (ความหมายเปลี่ยน — SPC-12 เดิมคือ "ชื่อซ้ำให้จดพฤติกรรม" ตอนนี้ถูกบล็อกแล้ว, SPC-8 เดิมบอกว่ากราฟอัปเดตโดยไม่ระบุว่าปักอะไร) แล้วเพิ่ม **SPC-15 ถึง SPC-21, MNG-16 ถึง MNG-18, EDT-27 ถึง EDT-29, PER-15** (SPC-4 เพิ่มแค่ลิงก์ไป SPC-15) · **อัปเดต 2026-10-03 (Special sensor รอบสอง — แก้ 14 ข้อที่ QA เจอ)** — ฟอร์ม Create ว่างทั้งหมดหลัง Add (SPC-22), ป้าย on chart ตามที่ Dashboard ปักจริง (SPC-23), sensor ที่กำลัง Undo ไม่ถูกเสนอเป็น source (SPC-24), สร้าง/แก้/ลบเป็นคิวทีละงาน (SPC-25, MNG-24), ลบถูกตรวจซ้ำตอนยืนยันจริงรวม Running condition (MNG-19/20/21/22), ลบแล้วเงื่อนไขในแท็บ Filter ของ Dashboard หายตาม (MNG-23), rename ตามไปถึงแท็บ Filter + Running condition (EDT-30), แก้ไม่สำเร็จย้อนกลับ (EDT-31), ลำดับคำนวณตามการพึ่งพา (EDT-32), ตรวจวงกลมสดใหม่ (EDT-33) — **ตัด MNG-10** (ช่อง "PM filter" ถูกยกเลิกไปแล้ว) แทนด้วย **MNG-25** · **อัปเดต 2026-10-03 (ล็อก special sensor ที่โมเดลใช้อยู่)** — sensor ที่โมเดล (ทุกช่อง รวม Custom running condition) หรือ Running condition ของ workspace ใช้อยู่ — รวมถึงโดยอ้อมผ่าน sensor ที่สร้างต่อ — **เปลี่ยนชื่อ / แก้สูตร / แก้ source ไม่ได้ และลบไม่ได้** (แก้ได้แค่ Description / Unit / Component): **ตัด EDT-16, EDT-18, EDT-24, EDT-30** (ความหมายเปลี่ยน — เดิมบอกว่า sensor ที่ถูกใช้ยังแก้ได้ และ rename ตามไปถึงโมเดล / Running condition) แล้วเพิ่ม **EDT-35 ถึง EDT-41** (EDT-2/25 แก้แค่ข้อความอ้างอิง) · **อัปเดต 2026-10-03 (ผูกหน้าต่าง Add Special Sensor กับ dataset + latest-click-wins)** — special sensor ของ A ไม่โผล่/ไม่โดนแตะตอนทำงานใน B แม้หน้าต่างลูกของ A ค้าง (ทุกคำสั่งที่เขียนคอลัมน์ผูกกับ generation ของ dataset, ถูกปฏิเสธเมื่อ dataset เปลี่ยน), หน้าต่างที่ถูกดึงไปโปรเจกต์ใหม่ล้างฟอร์ม/ตัวแก้ไข/งานค้างทั้งหมด, คลิกเปิดโปรเจกต์ซ้อนกัน "คลิกหลังสุดชนะ", ออกจาก Dashboard แล้วบันทึกอัตโนมัติที่ค้างอยู่ทันที — เพิ่ม **MULTI-8 ถึง MULTI-13** (ไม่ตัด id ใดเลย) · **อัปเดต 2026-10-03 (Visual refresh)** — เพิ่ม **VIS-4 ถึง VIS-14** (popover ไม่ปิดเอง/ไม่ล้นจอ/ไม่ลอยค้าง, แถบ Time range แถวเดียว, แท็บ Filter/Highlights/Sensor/Failure Groups หน้าตาใหม่, สีกราฟ Build Model/PM โทนเดียวกับ Dashboard, หน้าต่าง Add Special Sensor หน้าตาใหม่) — ไม่ตัด id ใดเลย · **อัปเดต 2026-10-04 (Health score 3b-1 — Workbench 2 หน้า ต่อ model: Model fit + Health score)** — หัวหน้าต่างเป็นแถบขั้นตอน 5 ขั้นที่กดได้ (Running condition → Model settings → Train → Health set points → Complete), มีสวิตช์ "1 Model fit / 2 Health score" ที่หัว detail pane (หน้า Health score ยังเป็นกรอบว่างไว้ก่อน — มาในเฟสถัดไป), แถบเตือน stale + ฟิล์ม "Out of date" บนกราฟ, จุดสถานะ 3 สี (เหลือง/แดง/เขียว) + legend, กราฟของหน้า Model fit เป็นกราฟใหม่ทั้งหมดที่ดึงจากข้อมูลย่อของ Rust (Individual: ค่าตามเวลา + Distribution ใหม่ + การ์ดสถิติ; Relationship: แถบสถิติ + Fit + Target vs predicted + Residual เต็มกว้าง ไม่มี distribution ของ residual; Clustering: scatter + วง SD ทุก cluster + การ์ดสรุป), ทุกกราฟมีปุ่มขยาย, "Compare predictors" เปิด Sub-models เป็น modal, โมเดล Complete เห็นกราฟเมื่อเปิดซ้ำ, และแก้บั๊ก detail pane หดหายเมื่อซ่อนลิสต์ซ้าย: **ตัด BMW-38, BMW-43, BMW-45, BMW-46, BMW-49, BMW-51** (ความหมายเปลี่ยน) แล้วเพิ่ม **BMW-56 ถึง BMW-68** — BMW-56 คือการ์ด Step 1 เดิม (BMW-51) ที่ตัดส่วนแถบขั้นตอนออก · **อัปเดต 2026-10-04 (Health score 3b-2)** — หน้า "2 Health score" เป็นหน้าจริงแล้ว: **ตัด BMW-58 และ BMW-44** (หน้า placeholder / Mark complete ที่ footer หน้า Model fit — ความหมายเปลี่ยน) แล้วเพิ่ม **BMW-69 ถึง BMW-79** (สวิตช์ 2 หน้า, set point ของ Individual/Relationship/Clustering, Checks, กราฟคะแนน + ซิงก์เมาส์, Mark complete เขียนไฟล์จริง, Mark incomplete + "Changed after saving", การบันทึก set point/ปิดหน้าต่าง, ป้าย "Set points needed"/"Fix set point", Finish ของหน้า PM) และแก้ข้อความ FG-13, BMW-4, BMW-30, BMW-33, BMW-56 ที่อ้างปุ่ม Mark complete เดิม · **อัปเดต 2026-10-04 (Health score เฟส 4 — ตัดหน้าเต็ม)** — ถอดหน้า Predictive Model (ปุ่ม "Open full view ↗", ปุ่ม Finish, Back, Sub-models บนหน้านั้น) ออกจากแอปทั้งหมด: **ตัดทั้งหมวด PM (22 ข้อ), BMW-8, BMW-10, BMW-79, VIS-12** แล้วเพิ่ม **BMW-83** (ไม่มีทางเปิดหน้า full view แล้ว) กับ **BMW-84** (ทุกโมเดลเข้าถึงและ Complete ได้จากสองหน้าของ Workbench เท่านั้น) และแก้ข้อความของ BMW-27, BMW-30, BMW-33, BMW-40, BMW-47, BMW-50, BMW-53, BMW-54, BMW-56, BMW-57, BMW-66, BMW-69, PER-9, PER-10, PER-13, VIS-1 ที่อ้างปุ่ม/หน้านั้น — Sub-models เหลือเป็น modal ใน Workbench เท่านั้น (BMW-66) · **อัปเดต 2026-10-04 (เก็บกวาด id หลัง QA)** — FG-13 → **FG-14** และ BMW-80 → **BMW-85** (ความหมายเปลี่ยนแต่เคยใช้ id เดิมซ้ำ — id เก่าถูกเพิ่มเข้ารายการที่ตัดแล้ว), ย้ายป้าย 🆕 ของ FG-14/BMW-85/BMW-81/BMW-82 ออกมาหลัง `**` ให้ตัวสร้าง HTML อ่านป้ายได้, และเติม id ที่เคยถูกตัดแต่ตกหล่นจากรายการ (BMW-3/7/12/78, FG-3/11, MNG-10, PER-11/12, SPC-8/12, EDT-16/18/24/30) · **อัปเดต 2026-10-04 (หน้าแรก "Get started" ใหม่ — Import เฟส B)** — step 0 ของหน้า Import เปลี่ยนเป็น 2 คอลัมน์: ซ้ายคือแบรนด์ + headline + ปุ่ม **New project** (Ctrl+N) + ช่องค้นหา + การ์ด Recent projects (hover/โฟกัสแล้วมี Rename / Delete, ลบยืนยัน**ในแถว**แทนหน้าต่าง dialog), ขวาคือภาพเครื่องจักรจากกลุ่มจุดที่เปลี่ยนรูปไปเรื่อย ๆ, ท้ายหน้ามีเวอร์ชันแอป + "Data stays on this machine": **ตัด IMP-1 และ IMP-21** (ความหมายเปลี่ยน) แล้วเพิ่ม **IMP-22 ถึง IMP-29** (IMP-22 คือ IMP-21 เดิมที่ปรับเป็นยืนยันในแถว) — IMP-2/IMP-18 แก้แค่คำอธิบายตำแหน่ง/วิธีกด (ความหมายเดิม จึงไม่เปลี่ยน id) · step 1–2 ยังเป็นหน้าเดิม (sidebar เดิม) จนกว่าเฟสถัดไป · **อัปเดต 2026-10-04 (Import เฟส C — step 1–2 ใหม่)** — sidebar "Find workspace / Recent" ของ step 1–2 ถูกแทนด้วยแถบขั้นตอนทางซ้าย (rail) · Step 1 "Name your project" (ตัวนับ /80, เตือนชื่อซ้ำแบบไม่บล็อก, การ์ดตัวอย่าง, การ์ด Next) · Step 2 "Add your sensor data" (ซ้าย "Sensor data": dropzone + ชิปเงื่อนไข, แถบความคืบหน้าตอนอ่าน, การ์ดสรุป Rows/Sensors/Period/Interval/% empty, Time coverage, กล่อง "Fixed while reading" · ขวา "Tag names" ที่เดิมชื่อ Sensor mapping) · ปุ่ม Continue ของ step 2 เปลี่ยนเป็น "Open Dashboard": **ตัด IMP-6, IMP-7, IMP-8, IMP-9, IMP-10, IMP-11, IMP-12** (ความหมายเปลี่ยน) แล้วเพิ่ม **IMP-30 ถึง IMP-39** — IMP-14/16/17/18/19/22 และ VIS-1/VIS-3 แก้แค่ชื่อปุ่ม/หัวข้อให้ตรง UI ใหม่ (ความหมายเดิม จึงไม่เปลี่ยน id) · **อัปเดต 2026-10-07 (Train/Test model validation)** — ช่วงเวลาแบ่งเป็น **Train periods** (บังคับต้องมีอย่างน้อย 1 ช่วง ไม่มีช่วง = ไม่ใช่ "ทั้งชุดข้อมูล" อีกต่อไป) กับ **Test periods** (Normal / Known problem + event time, ต้องมีอย่างน้อย 1 ช่วงก่อน Mark complete) · ผลทดสอบเป็นข้อมูลเท่านั้น (เขียว/เหลือง ไม่บล็อก): **ตัด BMW-47, BMW-53, BMW-56** (ความหมายเปลี่ยน) แล้วเพิ่ม **BMW-86 ถึง BMW-92** · **อัปเดต 2026-10-07 (แก้ตาม code review)** — เพิ่ม **BMW-93** (Custom: Test period ผิด = Save ไม่ได้, Mark complete ตอนมีค่าที่ยังไม่ Save บันทึกให้ก่อน, เตือน Train < 30 วันของ Custom) และ **BMW-94** (Relation model: Train คำนวณ Test ไปด้วย, ข้อความรอ ~15 วินาที, ให้คะแนน Test ไม่ได้ = กล่องเหลือง) · **อัปเดต 2026-10-07 (code review รอบ 3)** — เพิ่ม **BMW-95** (จำความล้มเหลว, Try again, engine เก่าไม่มีปุ่ม Try again, ช่วงใหญ่เกิน) · BMW-94 ย้ายกรณี engine เก่าไปที่ BMW-95 (ข้อใหม่วันเดียวกัน ยังไม่มีผลทดสอบ จึงไม่เปลี่ยน id) · BMW-88 ชิป "No train period" เปลี่ยนจากแดงเป็นเหลือง และ BMW-75 ข้อความเวลาของ Relationship (แก้ข้อความในข้อเดิม ความหมายไม่เปลี่ยน จึงไม่เปลี่ยน id) · **อัปเดต 2026-10-08 (คำขอลูกค้า)** — เอาสวิตช์ Band / Line colour ในแท็บ Highlights ออก (highlight แบบ By time บนกราฟ Line เป็นแถบเสมอ): **ตัด HL-4** แล้วเพิ่ม **HL-8** (ไม่มีสวิตช์แล้ว + workspace เก่าที่เคยตั้ง Line colour เปิดแล้วเป็นแถบ) · ลบ tag ทีละอันได้: เพิ่ม **LINE-9** และ **SCAT-9** (รายการ tag ใต้แถบเครื่องมือ มีปุ่ม × ต่ออัน) · VIS-8 ตัดประโยคเรื่องสวิตช์ Band / Line colour ออก (ความหมายของข้อไม่เปลี่ยน จึงไม่เปลี่ยน id) · **อัปเดต 2026-10-08 (แก้บั๊ก special sensor จาก QA)** — สูตรที่ไม่ผ่านการตรวจขึ้นสีแดงใต้ช่องสูตรและกด Add/Save ไม่ได้ (SPC-26, EDT-13 → EDT-42), เปลี่ยน source แล้ว Average/Sum/Median ไม่กลายเป็นผลบวก (SPC-29, EDT-43), Formula Syntax Help (SPC-27), ปัดทศนิยมแบบ "Then apply" (SPC-28), ชิป Referenced sensors (SPC-30), Rust ปฏิเสธฟังก์ชันที่ไม่รู้จัก (EDT-44), รายการ Manage บอกจำนวนทศนิยม (EDT-45), เปิด workspace เก่าที่มีสูตรซึ่งตอนนี้ไม่ผ่าน (EDT-46)
 >
 > **ต้องทดสอบบน installer ที่ติดตั้งแล้ว ไม่ใช่ `npm run tauri dev`** — CSP และ path ของ Python sidecar เป็นคนละกลไกกันระหว่าง dev กับ build จริง บั๊กหลายตัวที่เจอมาเห็นเฉพาะในตัวติดตั้ง
 >
@@ -22,9 +22,9 @@
 - [LINE — Line chart](#line) (9 ข้อ)
 - [SCAT — Scatter plot](#scat) (8 ข้อ)
 - [PAIR — Pair Plot](#pair) (10 ข้อ)
-- [SPC — Add Special Sensor — แท็บ Create](#spc) (28 ข้อ)
-- [MNG — Manage — ลบ special sensor](#mng) (24 ข้อ)
-- [EDT — Manage — แก้ไข special sensor](#edt) (41 ข้อ)
+- [SPC — Add Special Sensor — แท็บ Create](#spc) (35 ข้อ)
+- [MNG — Manage — ลบ special sensor](#mng) (26 ข้อ)
+- [EDT — Manage — แก้ไข special sensor](#edt) (44 ข้อ)
 - [FG — แท็บ Failure Groups](#fg) (14 ข้อ)
 - [BMW — หน้าต่าง Build Model](#bmw) (53 ข้อ)
 - [MULTI — เปิดมากกว่า 1 โปรเจกต์ (ข้อมูลต้องไม่ปนกัน)](#multi) (13 ข้อ)
@@ -866,40 +866,44 @@ _โหมดนี้คือตัวที่เคยพังทั้ง�
   - เปิดหน้าต่าง
   - **คาดหวัง:** หัวหน้าต่างเขียน "Special Sensors" และมีแท็บ Create กับ Manage
 
-- [ ] **SPC-2 — Explorer ฝั่งซ้าย**
-  - ค้นหา
-  - ติ๊กเลือก sensor
-  - ลากเส้นแบ่งกลาง
-  - **คาดหวัง:** ค้นได้ ติ๊กได้ ลากปรับความกว้างได้ (split.js)
+- [ ] **SPC-33 — Explorer ฝั่งซ้าย: คลิกแถว = "Pick" ให้ Quick build (แทน SPC-2)** 🆕
+  - ค้นหา sensor ในช่องค้นหา
+  - คลิกแถว sensor 1 ตัว แล้วคลิกอีกตัว แล้วคลิกตัวแรกซ้ำ
+  - ชี้เมาส์ที่แถว แล้วดูปุ่ม `$` เล็ก ๆ ท้ายแถว
+  - **คาดหวัง:** แถวที่คลิกขึ้นป้าย **"Picked"** และหัวกลุ่ม component นับ `x / y` · คลิกซ้ำแล้วหายจากการ pick · การ pick **ไม่ได้สร้างอะไร** แค่เปลี่ยนตัวเลือกในการ์ด Quick build ด้านขวา · บรรทัดใต้รายการเขียน "Click a sensor to pick it for Quick build · $ inserts it at the cursor." · ไม่มีเส้นแบ่งให้ลากแล้ว (คอลัมน์ซ้ายกว้างคงที่)
 
 - [ ] **SPC-31 — Explorer ฝั่งซ้าย: แถวเป็นชื่อแบบมาตรฐาน (description + หน่วย / tag)** 🆕
   - เปิด Add Special Sensor → Create กางกลุ่ม component
   - ค้นหาด้วยหน่วย และด้วยชื่อ component
   - **คาดหวัง:** แต่ละแถว 2 บรรทัด description + ป้ายหน่วย / tag · ตัวไม่มี description แสดง tag บรรทัดเดียว · special sensor ที่สร้างไว้มีป้าย ƒ / Σ · ช่องค้นหาเขียน "Search description, tag, unit or component…" และค้นเจอทั้ง 4 แบบ
 
-- [ ] **SPC-3 — Operation แบบ single**
-  - เลือก sensor 1 ตัว
-  - ลอง add / subtract / multiply / divide / power (ต้องใส่ค่า)
-  - ลอง abs / sqrt / log10 / exp / ceil / floor (ไม่ต้องใส่ค่า)
-  - **คาดหวัง:** คำนวณถูกทุกแบบ — เทียบค่าสัก 2-3 จุดกับที่คิดเอง
+- [ ] **SPC-34 — Quick build เมื่อ pick 1 ตัว: Combine with a number / Transform (แทน SPC-3)** 🆕
+  - pick sensor 1 ตัว ดูการ์ด Quick build เหนือช่องสูตร
+  - กด `+` (ยังไม่พิมพ์ตัวเลข) ดูบรรทัด Formula ท้ายการ์ด แล้วพิมพ์ `5`
+  - ลอง `−` `×` `÷` `^` และ Transform `abs` `√` `log₁₀` `exp` `ceil` `floor` `round` (round ลองเปลี่ยน decimals เป็น 1 และ 0)
+  - กด **Use this formula** แล้วสร้าง sensor เทียบค่าสัก 2-3 จุดกับที่คิดเอง
+  - **คาดหวัง:** ไม่เลือกอะไร = "As-is" (`$TAG`) · กด `+` แล้วบรรทัด Formula จาง มีข้อความ "Enter the number." ปุ่มกดไม่ได้จนกว่าจะพิมพ์ตัวเลข · round 2 ตำแหน่งเขียนเป็น **`round($TAG * 100) / 100`** (1 ตำแหน่ง `round($TAG * 10) / 10`, 0 ตำแหน่ง `round($TAG)`) — ไม่ใช่ `round(0.01, …)` และไม่ใช่ `round($TAG, 2)` · Use แล้วข้อความเข้าไปอยู่ในช่องสูตรให้แก้ต่อได้ · ค่าถูกทุกแบบ
 
-- [ ] **SPC-4 — Operation แบบ multi**
-  - เลือก 2-3 sensor
-  - ลอง sum / mean / median
-  - ลอง temp_spread / abs_diff / efficiency_pct
-  - **คาดหวัง:** ได้ผลถูกต้อง (3 ตัวหลังเป็น formula เบื้องหลัง จะไปโผล่ในแท็บ Manage เป็นชนิดสูตร) — กรณีมีค่าหายในบางแถว ดู SPC-15
+- [ ] **SPC-35 — Quick build เมื่อ pick 2 ตัวขึ้นไป: Chain / Combine all / Compare one against the rest / Then wrap (แทน SPC-4)** 🆕
+  - pick 2 ตัว ดู Chain (มีปุ่ม `+` คั่น) กดปุ่มเครื่องหมายแล้วเลือก `−` `×` `÷` `^`
+  - ลอง Combine all: **Sum**, **Spread**, **|A − B|** และ Compare: **Efficiency %** (ต้องเลือก "input = …" ก่อน)
+  - ลอง Then wrap ทับผลลัพธ์ (เช่น `abs` หรือ `round` 2 ตำแหน่ง)
+  - pick ตัวที่ 3 เพิ่ม ดูว่า |A − B| / Efficiency % ยังอยู่ไหม
+  - สร้างจริง 2-3 แบบ เทียบค่ากับที่คิดเอง
+  - **คาดหวัง:** Sum เขียนเป็นข้อความ `$A + $B` (แถวที่ source ตัวไหนว่าง ผลว่าง), Spread = `max($A, $B) - min($A, $B)`, |A − B| = `abs($A - $B)`, Efficiency % = `($B / $A) * 100` (A = input) — Efficiency จางจนกว่าจะเลือก input · พอเลือก Combine all ปุ่มเครื่องหมายใน Chain จางกดไม่ได้ · |A − B| และ Efficiency % มีเฉพาะตอน pick 2 ตัวพอดี · บรรทัด Formula ท้ายการ์ดแสดงข้อความที่จะเขียนเสมอก่อนกดอะไร
 
-- [ ] **SPC-5 — Formula mode**
-  - พิมพ์ `$TagName * 2`
-  - พิมพ์ `${Tag With Space} + 1`
-  - ลองใช้ autocomplete
-  - **คาดหวัง:** ทั้งสอง syntax ใช้ได้ และ autocomplete เสนอเฉพาะ sensor ที่ติ๊กไว้
+- [ ] **SPC-36 — ช่องสูตรแบบพิมพ์อิสระ + autocomplete (แทน SPC-5)** 🆕
+  - คลิกช่อง Formula พิมพ์ `$` แล้วดูรายการที่ขึ้นใต้เคอร์เซอร์ ใช้ ↑↓ แล้ว Enter
+  - พิมพ์ชื่อฟังก์ชัน 2 ตัวอักษร (เช่น `sq`) แล้วเลือก `sqrt(` ด้วย Tab
+  - กด Ctrl+Space ที่ตำแหน่งว่าง แล้วกด Esc
+  - พิมพ์ชื่อที่มีช่องว่าง/วงเล็บ เช่น `${Flow (m3/h)}` และชื่อไทย
+  - **คาดหวัง:** รายการเสนอ sensor (description + tag + หน่วย) ก่อน แล้วตามด้วยฟังก์ชันพร้อมความหมายสั้น ๆ · Enter/Tab ใส่ให้ (ชื่อมีช่องว่าง/สัญลักษณ์ใส่เป็น `${…}`, ชื่อไทยล้วนใส่เป็น `$ชื่อ` ไม่มีปีกกา) ฟังก์ชันใส่ `sqrt()` แล้วเคอร์เซอร์อยู่ในวงเล็บ · Esc ปิดรายการ · Enter ตอนไม่มีรายการ**ไม่ขึ้นบรรทัดใหม่** · ค้นเจอทั้ง description / tag / หน่วย / component
 
 - [ ] **SPC-6 — บังคับกรอกครบ 4 ช่องก่อนกด Add sensor ได้** 🆕
-  - ตั้งสูตรหรือ operation ไว้ (ทำให้ปรากฏช่อง Name/Description/Unit/Component)
+  - ใส่สูตรในช่อง Formula (หรือใช้ Quick build) ช่อง Name/Description/Unit/Component อยู่ในการ์ด "New sensor" ด้านล่างเสมอ
   - กรอกแค่บางช่อง เว้นที่เหลือว่างไว้ทีละช่อง แล้วดูปุ่ม Add sensor
   - กรอกครบทั้ง 4 ช่อง
-  - **คาดหวัง:** ปุ่ม **Add sensor จางลงกดไม่ได้** ตราบใดที่ยังขาดช่องใดช่องหนึ่งจาก Name/Description/Unit/Component ข้อความใต้ปุ่มบอกชัดว่าขาดช่องไหนบ้าง (เช่น "Fill in a description, a unit, a component before adding.") และอัปเดตสดตามที่กรอก — พอครบทั้ง 4 ปุ่มถึงจะกดได้ **(เดิมเช็คแค่ Name และเช็คแบบ error หลังกดไปแล้ว ตอนนี้เช็คครบ 4 ช่องแบบ disable ปุ่มไว้ก่อน)**
+  - **คาดหวัง:** ปุ่ม **Add sensor จางลงกดไม่ได้** ตราบใดที่ยังขาดช่องใดช่องหนึ่งจาก Name/Description/Unit/Component ข้อความท้ายหน้าต่างบอกชัดว่าขาดช่องไหนบ้าง (เช่น "Fill in a description, a unit, a component before adding.") และอัปเดตสดตามที่กรอก — พอครบทั้ง 4 ปุ่มถึงจะกดได้ · ถ้าช่องสูตรยังว่าง ท้ายหน้าต่างเขียน "Pick sensors on the left for Quick build, or type a formula." และกด Add ไม่ได้
 
 - [ ] **SPC-7 — ใส่ description / unit / component (บังคับทั้ง 3 ช่อง) — Component เลือกจากรายการ**
   - ดูว่าทั้ง 4 label (Name/Description/Unit/Component) มีเครื่องหมาย * สีแดงกำกับ
@@ -916,39 +920,29 @@ _โหมดนี้คือตัวที่เคยพังทั้ง�
   - ปิดหน้าต่าง แล้วดูแผง Sensor
   - **คาดหวัง:** มีอยู่ในรายการและค้นหาเจอ
 
-- [ ] **SPC-11 — สูตรผิด**
-  - พิมพ์สูตรที่ syntax เสีย
-  - พิมพ์สูตรอ้าง sensor ที่ไม่มี
-  - พิมพ์สูตรที่ซ้อนวงเล็บลึกมาก
-  - **คาดหวัง:** ทุกกรณีขึ้น error อ่านรู้เรื่อง ไม่ crash หน้าต่าง
+- [ ] **SPC-37 — สูตรผิด: บรรทัดตรวจ "✕ ข้อความ" + ปุ่มแก้ให้ทันที, Add กดไม่ได้และท้ายหน้าต่างพูดซ้ำข้อความเดียวกัน (แทน SPC-11, SPC-26)** 🆕
+  - พิมพ์แต่ละอัน แล้วดูบรรทัดใต้ช่องสูตร: `$TAG1 $TAG2`, `abs($TAG1`, `$TAG1 )`, `sqr($TAG1)` (หลังจากเคยมีสูตรถูกสักครั้ง), `round($TAG1, 2)`, `pi`, `$NOPE + 1`, `42`
+  - กดที่ข้อความ ✕ แล้วกดปุ่มแก้ที่อยู่ข้าง ๆ (ถ้ามี)
+  - ซ้อนวงเล็บลึกมาก ๆ (65 ชั้น)
+  - **คาดหวัง:** ส่วนที่ผิดในช่องมี**เส้นหยักแดง + พื้นแดงจาง** · กดข้อความ ✕ แล้วเลือกช่วงที่ผิดให้ · ปุ่มแก้: `Insert ×` → `$TAG1 * $TAG2`, `Add )` → `abs($TAG1)`, `Remove it` → ลบ `)` ที่เกิน, `Use sqrt`, `Use round(… * 100) / 100` → `round($TAG1 * 100) / 100`, `Add ( )` (สำหรับ `pi`), `Replace…` (sensor ที่ไม่มี) · `42` ขึ้นว่าไม่มี sensor อ้างอิง · Add sensor จางลง ท้ายหน้าต่าง**พูดซ้ำข้อความเดียวกับบรรทัดตรวจ** · ซ้อนลึกเกินขึ้นว่าเกิน 64 ชั้น · ไม่มีอะไร crash
 
-- [ ] **SPC-13 — ปุ่มเครื่องหมาย (+/−/×/÷) ต้องปิดจริงตอนเลือก shortcut ไว้** 🆕
-  - เลือก sensor ตั้งแต่ 2 ตัวขึ้นไป
-  - เลือก shortcut เช่น "Sum all" หรือ "Compare one against the rest"
-  - ดูแถบ "Combine with operators" (เครื่องหมาย +/−/×/÷ ระหว่างแต่ละคู่ sensor)
-  - ลองกดเครื่องหมายตัวใดตัวหนึ่ง
-  - เลิกเลือก shortcut (กดซ้ำ) แล้วลองกดเครื่องหมายอีกที
-  - **คาดหวัง:** ตอนเลือก shortcut ไว้ แถบเครื่องหมายต้องจางลง กดแล้ว**ไม่มีอะไรเกิดขึ้นเลย** (ไม่เปิด popover เลือกเครื่องหมายใหม่ ไม่เผลอไปยกเลิก shortcut) มีข้อความอธิบายว่า "A shortcut below is selected..." — พอเลิกเลือก shortcut แถบต้องสว่างขึ้นและกดได้ปกติทันที (ก่อนหน้านี้กดได้ตลอดแม้เลือก shortcut ไว้ ซึ่งเผลอไปยกเลิก shortcut แบบไม่มีอะไรโชว์ให้เห็น)
+- [ ] **SPC-38 — Quick build: เลือก Combine all แล้วเครื่องหมายใน Chain ต้องจางและกดไม่ได้ (แทน SPC-13)** 🆕
+  - pick 2-3 ตัว กดเครื่องหมายใน Chain ให้เป็น `−` ก่อน
+  - เลือก **Spread** (หรือ Sum/Average)
+  - ลองกดเครื่องหมายใน Chain อีกที แล้วกด Spread ซ้ำเพื่อยกเลิก
+  - **คาดหวัง:** ตอนเลือก Combine all แถว Chain จาง ปุ่มเครื่องหมายกดไม่ได้ (tooltip "Signs are off while a combination is chosen") บรรทัด Formula ท้ายการ์ดเป็นของ Spread — ยกเลิกแล้วกลับมาเป็น Chain พร้อมเครื่องหมาย `−` ที่เลือกไว้
 
-- [ ] **SPC-14 — แก้ไขตัวเลือก sensor ระหว่างตั้งค่า ไม่ทำให้ Description/Unit/Component หาย** 🆕
-  - เลือก sensor ไว้ 1 ตัว
-  - กรอก Description, Unit, Component ไว้ (ยังไม่กด Add sensor)
-  - เพิ่มหรือลด sensor อีกตัวหนึ่งในการเลือก (เช่น ติ๊กเพิ่มอีกตัว หรือเอาตัวหนึ่งออกแต่ไม่ให้เหลือ 0 ตัว)
-  - **คาดหวัง:** **ค่าที่กรอกไว้ทั้ง 3 ช่องต้องยังอยู่ครบ ไม่หายไปเงียบ ๆ** — ช่องพวกนี้อธิบาย sensor ใหม่ที่กำลังจะสร้าง ไม่ใช่ตัวที่เลือกไว้เป็น input จึงไม่ควรถูกล้างตามการปรับตัวเลือก (ช่องจะถูกล้างเฉพาะตอนเอา sensor ออกจนเหลือ 0 ตัวเท่านั้น — นั่นคือ "เริ่มใหม่")
+- [ ] **SPC-39 — Sum (ข้อความ A + B) แถวที่ source หายผลว่าง ส่วน Average/Median (บล็อก) ข้ามค่าที่หาย (แทน SPC-15)** 🆕
+  - ใช้ sensor 2 ตัวที่ **มีบางแถวที่ตัวใดตัวหนึ่งว่าง**
+  - pick ทั้งสอง → Combine all **Sum** → Use this formula → สร้าง แล้วดูกราฟช่วงที่ตัวหนึ่งหาย
+  - ทำซ้ำด้วย **Average** และ **Median** (Use this block)
+  - **คาดหวัง:** Sum = `$A + $B` กราฟ**ขาดเป็นช่วงว่าง**ตรงแถวที่ source หาย · Average/Median เป็น **บล็อก** (การ์ดเขียน "Average block", บรรทัด "Average of 2 sensors · missing values skipped") กราฟใช้ค่าตัวที่เหลือคำนวณต่อ ไม่ขาด · Preview ใต้ช่องบอกจำนวนแถวที่ไม่มีผลเป็นสีส้ม
 
-- [ ] **SPC-15 — Sum all: แถวที่ source ตัวไหนหายไป ผลต้องว่าง (Average/Median ข้ามค่าที่หาย)** 🆕
-  - ใช้ sensor 2 ตัวที่ **มีบางแถวที่ตัวใดตัวหนึ่งว่าง** (ไม่มีค่า)
-  - เลือกทั้งสองตัว กด **Sum all** — เมาส์ชี้ที่การ์ดและดูข้อความที่โผล่ใต้กลุ่มปุ่ม
-  - สร้าง sensor แล้วดูกราฟตรงช่วงที่ตัวหนึ่งหาย
-  - ทำซ้ำด้วย **Average all** และ **Median**
-  - **คาดหวัง:** การ์ด Sum all มี hint **"Rows where any source is missing are left empty"** (tooltip + ข้อความเล็กใต้กลุ่มปุ่มตอนเลือกอยู่) — กราฟของ Sum **ขาดเป็นช่วงว่าง** ตรงแถวที่มี source ใด source หนึ่งหาย (ไม่ได้ลดลงมาเป็นค่าของตัวที่เหลืออยู่) ส่วน Average/Median ใช้ค่าตัวที่เหลือคำนวณต่อ — ปุ่มเครื่องหมาย `+` ที่ต่อ sensor ก็ให้ผลว่างแบบเดียวกับ Sum
-
-- [ ] **SPC-16 — ⭐ สร้างแล้วกราฟแสดง "เฉพาะ sensor ใหม่" และไม่ทับสิ่งที่เลือกไว้ใน Dashboard** 🆕
+- [ ] **SPC-40 — ⭐ สร้างแล้วกราฟแสดง "เฉพาะ sensor ใหม่" และไม่ทับสิ่งที่เลือกไว้ใน Dashboard (แทน SPC-16 — ไม่มี "Add as-is" แล้ว)** 🆕
   - ที่ Dashboard ปัก sensor บางตัวไว้ (เช่น X, Y)
-  - เปิด Add Special Sensor สร้าง sensor ใหม่จาก source 2 ตัว (A, B) → กด Add sensor
-  - **ก่อนกด Add** ให้สลับกลับมาที่หน้าต่างหลัก ติ๊กเพิ่ม sensor อีกตัว (Z) หรือเอา X ออก แล้วค่อยกลับไปกด Add sensor
-  - ทำอีกรอบแบบ "Add as-is" (ติ๊ก sensor ดิบแล้วกด Add sensor โดยไม่เลือก operation)
-  - **คาดหวัง:** บนกราฟ **มี sensor ใหม่เพิ่มเข้ามาตัวเดียว** — source (A, B) **ไม่ถูกปักตามมา** และสิ่งที่ปักไว้ก่อนหน้า (รวมที่เพิ่งติ๊กเพิ่ม/เอาออกใน Dashboard ระหว่างเปิดหน้าต่างค้างไว้) **ต้องอยู่ตามเดิม ไม่ถูกทับกลับเป็นของตอนเปิดหน้าต่าง** — ส่วน "Add as-is" ปัก sensor ดิบที่ติ๊กเข้าไปต่อท้ายการเลือกเดิม
+  - เปิด Add Special Sensor สร้าง sensor ใหม่จาก source 2 ตัว (A, B) ผ่าน Quick build
+  - **ก่อนกด Add** สลับกลับมาที่หน้าต่างหลัก ติ๊กเพิ่ม sensor อีกตัว (Z) หรือเอา X ออก แล้วค่อยกลับไปกด Add sensor
+  - **คาดหวัง:** บนกราฟ **มี sensor ใหม่เพิ่มเข้ามาตัวเดียว** — source (A, B) **ไม่ถูกปักตามมา** และสิ่งที่ปักไว้ก่อนหน้า (รวมที่เพิ่งติ๊กเพิ่ม/เอาออก) **อยู่ตามเดิม** — การ pick sensor ดิบเฉย ๆ แล้วกด Add **ทำไม่ได้แล้ว** (ปุ่มจาง) เพราะการปัก sensor ดิบทำที่ Dashboard
 
 - [ ] **SPC-17 — Pair Plot เต็ม 4 ตัวแล้วสร้าง sensor ใหม่ → ต้องมีข้อความบอก ไม่ใช่เงียบ** 🆕
   - ที่ Dashboard เลือก Pair Plot และปัก sensor ครบ 4 ตัว
@@ -968,20 +962,20 @@ _โหมดนี้คือตัวที่เคยพังทั้ง�
 
 - [ ] **SPC-20 — ชื่อที่มีเครื่องหมายพิเศษและภาษาไทย ใช้ในสูตรได้ถูกต้อง** 🆕
   - สร้าง special sensor ชื่อ `Total-Power`, `A/B`, `Eff%`, `Flow (m3)` และชื่อภาษาไทย (เช่น `อุณหภูมิรวม`) — ตัวละตัว
-  - สร้าง sensor ใหม่ที่ใช้ตัวพวกนี้เป็น source ผ่านปุ่มเครื่องหมาย (+) และผ่านการพิมพ์สูตรเอง (พิมพ์ `$` แล้วเลือกจาก autocomplete)
+  - สร้าง sensor ใหม่ที่ใช้ตัวพวกนี้เป็น source ผ่าน Quick build (pick แล้ว Use this formula) และผ่านการพิมพ์สูตรเอง (พิมพ์ `$` แล้วเลือกจาก autocomplete) และปุ่ม `$` ท้ายแถวใน Explorer
   - ดูสูตรที่ปรากฏในแท็บ Manage
-  - **คาดหวัง:** คำนวณได้ค่าถูกต้องทุกชื่อ ไม่มี error ว่าหา sensor ไม่เจอ — สูตรเขียนชื่อพิเศษเป็น `${Total-Power}` (มีปีกกา) ส่วนชื่อตัวอักษร/ตัวเลข/ขีดล่างล้วนเขียนเป็น `$Name` ตรง ๆ — autocomplete ใส่รูปแบบให้ถูกเอง และชื่อที่ขึ้นต้นด้วยตัวเลข (เช่น `11PT1214A`) กับชื่อที่เป็นส่วนหน้าของอีกชื่อ (`11PT1214A.PV`) ไม่ปนกัน
+  - **คาดหวัง:** คำนวณได้ค่าถูกต้องทุกชื่อ ไม่มี error ว่าหา sensor ไม่เจอ — ชื่อที่มีเครื่องหมาย/ช่องว่างเขียนเป็น `${Total-Power}` (มีปีกกา) ส่วนชื่อตัวอักษร/ตัวเลข/ขีดล่างล้วน (รวมชื่อไทยล้วน) เขียนเป็น `$Name` ตรง ๆ — autocomplete ใส่รูปแบบให้ถูกเอง และชื่อที่ขึ้นต้นด้วยตัวเลข (เช่น `11PT1214A`) กับชื่อที่เป็นส่วนหน้าของอีกชื่อ (`11PT1214A.PV`) ไม่ปนกัน
 
 - [ ] **SPC-21 — Error จาก backend แสดงในหน้าต่าง ไม่ใช่ popup บล็อก** 🆕
   - ทำให้การสร้างล้มเหลว (เช่น สูตรอ้าง sensor ที่ถูกลบจากข้อมูลไปแล้ว หรือชื่อที่ชนกับคอลัมน์ที่หน้าต่างไม่รู้จัก)
   - กด Add sensor
   - **คาดหวัง:** **ไม่มี popup alert** — ข้อความผิดพลาดขึ้นเป็นบรรทัดสีแดงที่ท้ายหน้าต่าง (ถ้าเป็นเรื่องชื่อซ้ำจะไปแสดงที่ช่อง Name ด้วย) ปุ่ม Add sensor กลับมากดได้ และข้อความหายเองเมื่อแก้ฟอร์ม/เปลี่ยนตัวเลือก — ไม่มี sensor ใหม่โผล่ที่ Dashboard
 
-- [ ] **SPC-22 — ⭐ กด Add sensor สำเร็จแล้ว ฟอร์มต้องว่างทั้งหมด พร้อมสร้างตัวต่อไป** 🆕
-  - **แบบที่ 1 (พิมพ์สูตรเอง):** กด "Edit as text instead" พิมพ์สูตร เช่น `$TAG1 * 3` ตั้งชื่อ `Once` กรอก Description/Unit/Component ครบ → Add sensor
-  - **แบบที่ 2 (ปุ่มเครื่องหมาย +):** เลือก source 2 ตัว ตั้งชื่อ `First` กรอกครบ → Add sensor แล้วเลือก source 2 ตัวนั้นซ้ำอีกรอบ
-  - **แบบที่ 3:** เลือก shortcut เช่น "Sum all" สร้างหนึ่งตัว แล้วเลือก source ใหม่
-  - **คาดหวัง:** หลัง Add สำเร็จ **ช่องสูตร, Name, Description, Unit, Component ว่างหมด** และกลับเป็นโหมดปุ่ม ไม่มีตัวเลือก operation/shortcut ค้าง — **ช่อง Name ต้องไม่ขึ้น "A sensor named ... already exists" ทั้งที่เพิ่งสร้างสำเร็จ** และข้อความท้ายหน้าต่างต้องตรงกับสิ่งที่ช่องแสดง (ช่องว่างก็บอก "Fill in a description, a unit, a component before adding.") — พิมพ์ชื่อใหม่ + กรอกครบแล้วปุ่ม Add sensor กดได้ทันทีและสร้างตัวที่สองได้ (เดิมสูตร+ชื่อเก่าค้างในช่อง/ค้างในใจของฟอร์ม ทำให้ดูเหมือน "สร้างไม่สำเร็จ" ทั้งที่สำเร็จแล้ว) — ถ้า Add **ล้มเหลว** ฟอร์มต้องคงค่าที่กรอกไว้ทั้งหมด
+- [ ] **SPC-41 — ⭐ กด Add sensor สำเร็จแล้ว ฟอร์มต้องว่างทั้งหมด (สูตร, picks, 4 ช่อง) พร้อมสร้างตัวต่อไป (แทน SPC-22)** 🆕
+  - **แบบที่ 1 (พิมพ์สูตรเอง):** พิมพ์ `$TAG1 * 3` ตั้งชื่อ `Once` กรอก Description/Unit/Component ครบ → Add sensor
+  - **แบบที่ 2 (Quick build):** pick 2 ตัว → Use this formula → ตั้งชื่อ `First` กรอกครบ → Add sensor แล้ว pick 2 ตัวนั้นซ้ำ
+  - **แบบที่ 3:** Average → Use this block สร้างหนึ่งตัว
+  - **คาดหวัง:** หลัง Add สำเร็จ **ช่องสูตร, picks (ไม่มีป้าย Picked), Name, Description, Unit, Component ว่างหมด** การ์ด Quick build กลับเป็นข้อความเริ่มต้น บล็อกไม่ค้าง — **ช่อง Name ต้องไม่ขึ้น "A sensor named ... already exists"** และข้อความท้ายหน้าต่างตรงกับสิ่งที่ช่องแสดง — ถ้า Add **ล้มเหลว** ฟอร์มต้องคงค่าที่กรอกไว้ทั้งหมด (รวม picks และสูตร)
 
 - [ ] **SPC-23 — Pair Plot เต็ม 4 ตัว: ตัวใหม่ต้องไม่ขึ้นป้าย "on chart" ในแท็บ Manage** 🆕
   - ทำตาม SPC-17 (Pair Plot ปัก 4 ตัวแล้ว สร้าง sensor ใหม่)
@@ -991,53 +985,85 @@ _โหมดนี้คือตัวที่เคยพังทั้ง�
 
 - [ ] **SPC-24 — sensor ที่เพิ่งกดลบ (ยังอยู่ในช่วง Undo) ต้องไม่ถูกเสนอให้เป็น source** 🆕
   - สร้าง `A` แล้วไปแท็บ Manage กดลบ `A` (อย่าเพิ่งรอ 8 วินาที)
-  - กลับแท็บ Create ดูรายการ Explorer ด้านซ้าย และลองพิมพ์ `$A` ในสูตร ("Edit as text instead") ให้ autocomplete เสนอ
+  - กลับแท็บ Create ดูรายการ Explorer ด้านซ้าย และลองพิมพ์ `$A` ในช่องสูตรให้ autocomplete เสนอ
   - ลองพิมพ์ `${A} + $TAG1` ด้วยมือเองแล้วสร้างเป็นตัวใหม่
   - กลับไปกด Undo แล้วดูรายการอีกที
-  - **คาดหวัง:** ระหว่าง Undo `A` **ไม่อยู่ใน Explorer และ autocomplete** และถ้าเลือกไว้เป็น source อยู่แล้วจะถูกถอดออกจากช่อง Source — การสร้างด้วยสูตรที่พิมพ์ `A` เอง **ถูกปฏิเสธ** ("A" is being deleted. Undo that first, or pick another sensor.) ไม่สร้าง sensor ที่ตั้งอยู่บนคอลัมน์ที่กำลังจะหาย — กด Undo แล้ว `A` กลับมาเลือกได้ (เดิมเลือก A มาสร้าง B ได้ แล้ว A ถูกทิ้งคอลัมน์ B เลยพัง)
+  - **คาดหวัง:** ระหว่าง Undo `A` **ไม่อยู่ใน Explorer และ autocomplete** และถ้า pick ไว้อยู่แล้วจะถูกถอดออก — การสร้างด้วยสูตรที่พิมพ์ `A` เอง **ถูกปฏิเสธ** ("A" is being deleted. Undo that first, or pick another sensor.) — กด Undo แล้ว `A` กลับมาเลือกได้
 
-- [ ] **SPC-25 — ทำทีละงาน: สร้างระหว่างที่แก้/เปลี่ยนชื่อยังคำนวณอยู่ ต้องรอคิว ไม่ทับกัน** 🆕
+- [ ] **SPC-42 — ทำทีละงาน: ระหว่างที่การแก้ไขยังคำนวณอยู่ แท็บ Create คือหน้าแก้ไขนั้น สร้างใหม่ได้หลังมันเสร็จ (แทน SPC-25)** 🆕
   - ใช้ข้อมูลใหญ่ที่การคำนวณใช้เวลาหลายวินาที (ถ้าไม่มี ให้เทียบแบบเร็ว ๆ ดูเท่าที่เห็น)
-  - ในแท็บ Manage แก้สูตร `A` (ที่มี `B` สร้างต่อ) แล้ว Save ค้างไว้ ระหว่างนั้นรีบไปแท็บ Create สร้าง `C` = `${A} + 1` กด Add
-  - ทำอีกแบบ: เปลี่ยนชื่อ `A` เป็น `N` แล้วระหว่างคำนวณรีบสร้าง sensor ใหม่ชื่อ `N`
-  - **คาดหวัง:** ที่หัวหน้าต่างมีข้อความ "Applying changes…" ปุ่ม Add sensor จางลงรอ แล้วงานรันตามลำดับที่กด — `C` ได้ค่าจาก `A` **ที่แก้แล้ว** (ไม่ใช่ค่าเก่า) ส่วนกรณีชื่อ `N` ตัวที่กดก่อนชนะ ตัวหลังถูกปฏิเสธที่ช่อง/ข้อความว่าชื่อซ้ำ ไม่มีสอง sensor ชื่อเดียวกัน และค่าไม่ถูกทับ
+  - ในแท็บ Manage แก้สูตร `A` (ที่มี `B` สร้างต่อ) แล้ว Save ค้างไว้ ระหว่างนั้นกดแท็บ Create
+  - หลังเสร็จ สร้าง `C` = `${A} + 1`
+  - อีกแบบ: กด Add sensor ชื่อ `N` (ใช้เวลาคำนวณ) แล้วรีบไปแท็บ Manage เปลี่ยนชื่อ `A` เป็น `N` แล้ว Save
+  - **คาดหวัง:** ที่หัวหน้าต่างมี "Applying changes…" · ระหว่างแก้ไข แท็บ Create แสดงฟอร์ม "Edit sensor" (ไม่มีปุ่ม Add sensor) · `C` ได้ค่าจาก `A` **ที่แก้แล้ว** · กรณีชื่อ `N` ตัวที่กดก่อน (สร้าง) ชนะ การเปลี่ยนชื่อถูกปฏิเสธที่ฟอร์มว่าชื่อซ้ำ ไม่มีสอง sensor ชื่อเดียวกัน
 
+- [ ] **SPC-43 — ผลตรวจสูตรเป็นของข้อความที่อยู่ในช่องตอนนี้ และไม่กะพริบแดงระหว่างพิมพ์ชื่อ (แทน SPC-30)** 🆕
+  - พิมพ์ `$TAG1 * 2` รอจนบรรทัดตรวจเป็นสีเขียว "✓ Valid · uses 1 sensor · computed on N rows"
+  - พิมพ์ต่อเป็น `$TAG1 * 2 + $TA` ช้า ๆ (ระหว่างที่รายการ autocomplete ยังเปิด)
+  - พิมพ์ต่อเป็น `foo($TAG1)`
+  - **คาดหวัง:** พอแก้ข้อความ บรรทัดเขียวของข้อความเก่าไม่ค้าง · ระหว่างพิมพ์ชื่อ `$TA` ที่ยังไม่จบ **ไม่ขึ้นแดง** (แต่ Add sensor ยังกดไม่ได้) · `foo(` ขึ้นแดงหลังพิมพ์จบ
 
-- [ ] **SPC-26 — สูตรที่พิมพ์เองแล้วไม่ผ่านการตรวจ → ข้อความแดงใต้ช่องสูตร และกด Add sensor ไม่ได้** 🆕
-  - เลือก sensor 1-2 ตัว กด "Edit as text instead"
-  - พิมพ์สูตรที่อ้าง sensor ที่ไม่มี (เช่น `$NOPE + 1`) รอครึ่งวินาที
-  - พิมพ์สูตรที่ใช้ฟังก์ชันที่ไม่มี (เช่น `foo($TAG1)`) และสูตร syntax เสีย (เช่น `$TAG1 +`)
-  - กรอก Name/Description/Unit/Component ให้ครบ แล้วดูปุ่ม Add sensor
-  - แก้สูตรให้ถูก (เช่น `$TAG1 * 2`) รอครึ่งวินาที
-  - **คาดหวัง:** สูตรที่ผิดขึ้นกล่อง**สีแดงใต้ช่องสูตร**บอกเหตุผลที่อ่านรู้เรื่อง ปุ่ม **Add sensor จางลงกดไม่ได้** และข้อความท้ายหน้าต่างเป็น "Fix the formula before adding." — พอแก้สูตรให้ถูก กล่องเปลี่ยนเป็นสีเขียว "Valid formula" และกด Add sensor ได้ (ระหว่างที่ยังตรวจไม่เสร็จกดได้ แต่ถ้าสูตรผิดจะขึ้น error สีแดงท้ายหน้าต่าง ไม่มีการสร้าง sensor)
+- [ ] **SPC-44 — "All functions ▾" บอกทุกฟังก์ชันของ engine และกติกา round / log / ln / pi() / 5k / เครื่องหมายลบ (แทน SPC-27)** 🆕
+  - ใส่สูตรถูกสักอันก่อน (เพื่อให้รายการฟังก์ชันโหลดจาก engine) แล้วกด **All functions ▾** ในแถบเครื่องมือใต้ช่องสูตร
+  - กดฟังก์ชันหนึ่งในรายการ (ลองตอนเลือกข้อความบางส่วนไว้ด้วย)
+  - ลองสร้าง sensor ด้วย `round($TAG1)`, `round($TAG1 * 100) / 100`, `ln($TAG1)`, `log($TAG1)`, `$TAG1 * pi()`, `$TAG1 * 5k`, `-$TAG1 ^ 2` เทียบค่า 2-3 จุด
+  - **คาดหวัง:** รายการมีทุกฟังก์ชัน (abs, sqrt, pow, exp, ln, log, log10, round, min, max, ceil, floor, sin, cos, tan, …, pi, e) พร้อมความหมาย · บรรทัดล่างบอก log = ฐาน 10, ln = ธรรมชาติ, `round(x)` = จำนวนเต็ม / ทศนิยมใช้ `round(x * 100) / 100`, 5k = 5000, −A ^ 2 = (−A)² · กดฟังก์ชันแล้วครอบส่วนที่เลือกไว้ (หรือใส่ `fn()` ที่เคอร์เซอร์) · ค่าที่คำนวณตรงตามกติกา
 
-- [ ] **SPC-30 — ผลตรวจสูตร ("Valid formula" สีเขียว / กล่องแดง) แสดงเฉพาะของข้อความที่อยู่ในช่องตอนนี้** 🆕
-  - กด "Edit as text instead" พิมพ์ `$TAG1 * 2` รอจนขึ้น "Valid formula"
-  - พิมพ์ต่อเป็น `foo($TAG1)` แล้วดูกล่องผลตรวจทันทีระหว่างพิมพ์
-  - **คาดหวัง:** พอแก้ข้อความ กล่องเขียวของข้อความเก่า**หายทันที** (ไม่ค้างโชว์ "Valid formula" ข้างสูตรใหม่ที่ยังไม่ได้ตรวจ) แล้วราวครึ่งวินาทีขึ้นกล่องแดงของสูตรใหม่ — แก้ต่อจากกล่องแดงก็หายทันทีเช่นกัน
+- [ ] **SPC-45 — "Round the result" ตั้งที่เดียว แสดงรูปที่เก็บจริง และค่าเป็นทศนิยมเป๊ะ (แทน SPC-28)** 🆕
+  - พิมพ์ `$A + $B` แล้วเลือก Round the result = **2**
+  - ดูข้อความข้าง ๆ แล้วสร้าง sensor ชี้เมาส์ดูค่าบนกราฟ และ export CSV ของกราฟ
+  - ไปแท็บ Manage ดูสูตร แล้วกดดินสอเปิดแก้
+  - **คาดหวัง:** ข้างปุ่มเขียน "stored as round(… * 100) / 100" · ค่าเป็น `1.13` ไม่ใช่ `1.1300000000000001` · Manage เขียน `$A + $B · rounded to 2 decimals` (ชี้เมาส์เห็น `round(($A + $B) * 100) / 100`) · เปิดแก้แล้วช่องสูตรแสดง `$A + $B` และปุ่ม Round = 2 ถูกเลือกอยู่ (ไม่ใช่ข้อความ round ซ้อน)
 
-- [ ] **SPC-27 — Formula Syntax Help บอกวิธีใช้ round / log / ln / pi() / ตัวย่อตัวเลข / เครื่องหมายลบ** 🆕
-  - กด "Edit as text instead" แล้วเปิด "Formula Syntax Help"
-  - ลองสร้าง sensor ด้วย `round($TAG1)`, `round($TAG1 * 100) / 100`, `ln($TAG1)`, `log($TAG1)`, `$TAG1 * pi()`, `$TAG1 * 5k`, `-$TAG1 ^ 2` แล้วเทียบค่ากับที่คิดเอง 2-3 จุด
-  - ลองพิมพ์ `round($TAG1, 2)` และ `$TAG1 * pi` (ไม่มีวงเล็บ)
-  - **คาดหวัง:** หน้า help มีบรรทัด `round(x)` = ปัดเป็นจำนวนเต็ม, `round(x * 100) / 100` = ปัด x เป็นทศนิยม 2 ตำแหน่ง (บอกว่า `round(x, 2)` ใช้ไม่ได้), `log(x)`/`log10(x)` เป็นฐาน 10, `ln(x)` เป็น log ธรรมชาติ, ค่าคงที่ `pi()` / `e()` (ต้องมีวงเล็บ), `5k` = 5000 (และตัวย่ออื่น เช่น m = ÷1000), `-$A ^ 2` = (−A)² — ค่าที่คำนวณได้ตรงกับที่ help บอกทุกข้อ; `round($TAG1, 2)` และ `$TAG1 * pi` ขึ้นข้อความแดงที่บอกวิธีเขียนที่ถูก (เช่น "Write round($TAG1 * 100) / 100 instead." / "Write pi() for π.") และกด Add ไม่ได้
+- [ ] **SPC-46 — Quick build ล้างตัวเลือกเมื่อจำนวนที่ pick เปลี่ยนกลุ่ม (0 / 1 / 2+) (แทน SPC-29)** 🆕
+  - pick 1 ตัว เลือก Transform `abs`
+  - pick เพิ่มอีกตัว (เป็น 2) แล้วเลือก |A − B|
+  - pick ตัวที่ 3 แล้วเอาออกจนเหลือ 1
+  - **คาดหวัง:** ไป 2 ตัวแล้ว `abs` ไม่ค้าง (เริ่มที่ Chain `+`) · มี 3 ตัวแล้ว |A − B| หายไปเอง · กลับเหลือ 1 ตัว ตัวเลือกเริ่มใหม่เป็น As-is · "Clear picks" ล้าง pick ทั้งหมด
 
-- [ ] **SPC-28 — "Then apply → Round to decimals" เก็บค่าเป็นทศนิยมเป๊ะ ไม่มีหางยาว** 🆕
-  - เลือก 2 sensor (รวมด้วย +) แล้วใน "Then apply to the result" เลือก Round to decimals ใส่ 2
-  - สร้าง sensor แล้วชี้เมาส์ดูค่าบนกราฟ และ export CSV ของกราฟ
-  - ไปแท็บ Manage ดูสูตรของ sensor นี้
-  - **คาดหวัง:** ค่าที่เห็น/ที่ export เป็นแบบ `1.13` ไม่ใช่ `1.1300000000000001` — สูตรใน Manage เขียนเป็น `round(($A + $B) * 100) / 100`
-
-- [ ] **SPC-29 — เลือก "Average all" แล้วเพิ่ม sensor ตัวที่ 3 → ยังเป็น Average ไม่กลายเป็นผลบวก** 🆕
-  - เลือก 2 sensor แล้วกด **Average all**
-  - ติ๊กเพิ่ม sensor ตัวที่ 3 (หรือเลือก 3 ตัวแล้วเอาออก 1 ตัว)
-  - ทำซ้ำด้วย **Sum all** และ **Median**; และลองกับ **Absolute difference** (ใช้ได้แค่ 2 ตัว)
-  - **คาดหวัง:** Average/Sum/Median **ยังถูกเลือกอยู่** และ preview ยังบอกว่าเป็นค่าเฉลี่ย/ผลรวม/มัธยฐาน — ส่วน Absolute difference ถูกยกเลิกเอง (กลับไปเป็นการรวมด้วย + ตามที่ preview แสดง) เพราะใช้กับ 3 ตัวไม่ได้; ถ้าเหลือ sensor 1 ตัว ตัวเลือกจะล้างทั้งหมด
-
-- [ ] **SPC-32 — ชิป "Referenced sensors" ใต้ช่องสูตรบอกชื่อ sensor ถูกตัว (มีจุด / ภาษาไทย)** 🆕
+- [ ] **SPC-47 — แถว "Sensors" ใต้ช่องสูตรบอก sensor ถูกตัว (มีจุด / ภาษาไทย) และคลิกแล้วเลือกในสูตร (แทน SPC-32)** 🆕
   - ใช้ข้อมูลที่มี sensor ชื่อมีจุด (เช่น `11PT1214A.PV`) และชื่อภาษาไทย
-  - กด "Edit as text instead" แล้วพิมพ์ `$11PT1214A.PV - $อุณหภูมิ` (ใช้ชื่อจริงในข้อมูล)
-  - **คาดหวัง:** ชิปใต้สูตรแสดง **`11PT1214A.PV`** (ไม่ใช่ `11PT1214A` ซึ่งเป็น sensor อีกตัว) และแสดงชื่อภาษาไทยด้วย
+  - พิมพ์ `$11PT1214A.PV - $อุณหภูมิ` (ใช้ชื่อจริงในข้อมูล) แล้วคลิกชิปในแถว Sensors
+  - **คาดหวัง:** ชิปแสดง description + tag **`11PT1214A.PV`** (ไม่ใช่ `11PT1214A`) และชื่อภาษาไทย · คลิกชิปแล้วข้อความของ sensor นั้นในช่องสูตรถูกเลือก (ไฮไลต์)
+
+- [ ] **SPC-48 — ช่องสูตร "ลงสี" ตามโครงสร้าง: sensor เป็นชิป, ฟังก์ชันสีเขียวอมฟ้า, วงเล็บตามชั้น, คู่วงเล็บไฮไลต์** 🆕
+  - พิมพ์ `abs(($TAG1 + ${Flow (m3/h)}) * 2) + $NOPE`
+  - เลื่อนเคอร์เซอร์ไปชิดวงเล็บแต่ละตัว และชี้เมาส์ที่ `$TAG1` / `abs`
+  - ลองเลือกข้อความด้วยเมาส์, ตัด/วาง, ภาษาไทย
+  - **คาดหวัง:** sensor เป็นชิปพื้นฟ้าอ่อน (ตัวอักษรไม่เลื่อน ตรงกับเคอร์เซอร์ทุกตัว), `abs` สีเขียวอมฟ้า, วงเล็บชั้นนอกขาว ชั้นในเขียวอมฟ้า (ชั้นต่อไปม่วง เขียว วนไป) · วางเคอร์เซอร์ชิดวงเล็บแล้ว**คู่ของมันถูกไฮไลต์ทั้งสองตัว** · `$NOPE` เป็นแดงขีดเส้นประ · ชี้เมาส์ที่ sensor เห็น "DESCRIPTION · TAG · UNIT · Component" ชี้ที่ฟังก์ชันเห็นความหมาย · การเลือก/ตัด/วาง/ภาษาไทยทำงานแบบช่องข้อความปกติ
+
+- [ ] **SPC-49 — ครอบ / แกะวงเล็บ และ Ctrl+Z ย้อนได้ทุกอย่าง** 🆕
+  - พิมพ์ `$A + $B * 2` เลือก `$A + $B` แล้วกดปุ่ม `(` บนคีย์บอร์ด
+  - วางเคอร์เซอร์ชิดวงเล็บ กด **Unwrap**; เลือกข้อความแล้วกด **( ) Wrap**; ใส่ `abs` จากแถบเครื่องมือ
+  - กดปุ่มแก้บนบรรทัดตรวจ (เช่น Insert ×) แล้วกด Ctrl+Z, Ctrl+Shift+Z
+  - **คาดหวัง:** ข้อความที่เลือกถูกครอบเป็น `($A + $B) * 2` และข้างในยังถูกเลือกอยู่ · Unwrap เอาคู่วงเล็บออก (ถ้าเป็น `abs(…)` เอาชื่อฟังก์ชันออกด้วย) · ปุ่ม `+ − × ÷ ^` ใส่เว้นวรรคให้เอง · **Ctrl+Z ย้อนการครอบ/แกะ/ปุ่มแก้/autocomplete ได้เหมือนพิมพ์เอง** และ Ctrl+Shift+Z ทำซ้ำได้
+
+- [ ] **SPC-50 — Average / Median เป็นบล็อก: แก้ source ด้วย "Add…", Round the result เก็บเป็นทศนิยมของบล็อกเอง** 🆕
+  - pick 2 ตัว → Average → Use this block
+  - กด **Add…** เพิ่ม source ตัวที่ 3 (หน้าต่างเลือกหลายตัว กด OK) และกด × ที่ชิปเพื่อเอาออก
+  - เลือก Round the result = 1 แล้วสร้าง
+  - ดูแท็บ Manage
+  - **คาดหวัง:** การ์ดเขียน "Average block" มีบรรทัด "An Average block stands alone — it skips missing values…" · ข้าง Round เขียน "stored with the Average’s own decimals" · ค่าบนกราฟปัด 1 ตำแหน่ง · Manage เขียน "Average of … · missing values skipped · rounded to 1 decimal" และป้าย Σ · Clear กลับเป็นช่องสูตรว่าง
+
+- [ ] **SPC-51 — Preview ใต้ช่องสูตร: เส้นทั้งชุดข้อมูล + Min/Max/Mean/Rows + จำนวนแถวที่ไม่มีผลเป็นสีส้ม** 🆕
+  - พิมพ์สูตรที่ถูก (เช่น `$TAG1 / $TAG2`) รอครึ่งวินาที
+  - เปลี่ยนสูตรเร็ว ๆ หลายครั้ง
+  - **คาดหวัง:** การ์ด Preview วาดเส้นของผลลัพธ์ (ย่อจุด) ช่วงวันที่ "Downsampled · … → …" มี Min/Max/Mean (หน่วยตามช่อง Unit) และ Rows · ถ้ามีแถวที่คำนวณไม่ได้ (input ว่าง หรือ ÷ 0) ขึ้น "⚠ N rows have no result" สีส้ม · พิมพ์เร็ว ๆ แล้ว**หน้าต่างไม่หน่วง** และผลเป็นของข้อความล่าสุด
+
+- [ ] **SPC-52 — sensor ที่ไม่มีในข้อมูล: ชิปแดง "Replace…" เปลี่ยนทุกจุดในสูตรในครั้งเดียว** 🆕
+  - พิมพ์ `$GONE * 2 + $GONE`
+  - กด **Replace…** (ที่ชิปแดงในแถว Sensors หรือปุ่มบนบรรทัดตรวจ) แล้วเลือก sensor จากรายการ
+  - **คาดหวัง:** ชิปแดงเส้นประเขียน "GONE · not in this dataset · Replace…" · รายการเลือก sensor เปิดใต้ปุ่ม (ค้นหาได้ จัดกลุ่มตาม component) · เลือกแล้ว `$GONE` **ทั้งสองจุด**เปลี่ยนเป็นตัวใหม่
+
+- [ ] **SPC-53 — หน้าต่างแคบ (~900 px): รายการซ้ายแคบลง แถบเครื่องมือขึ้นบรรทัดใหม่ ช่อง 4 ช่องเป็น 2 คอลัมน์** 🆕
+  - ย่อหน้าต่าง Add Special Sensor ให้กว้างราว 900 px (และแคบกว่านั้นอีกนิด)
+  - **คาดหวัง:** รายการ sensor ซ้ายกว้างราว 230 px · แถบปุ่ม `( ) Wrap · Unwrap | + − × ÷ ^ | abs √ …` ขึ้นบรรทัดใหม่ได้ไม่ล้น · การ์ด Name/Description/Unit/Component เป็น 2 คอลัมน์ · ไม่มี scroll แนวนอน ปุ่มท้ายหน้าต่างเห็นครบ
+
+- [ ] **SPC-54 — ปุ่ม `$` ท้ายแถวใน Explorer ใส่ sensor ที่เคอร์เซอร์ (ไม่ pick)** 🆕
+  - พิมพ์ `$TAG1 + ` ในช่องสูตร (เคอร์เซอร์ท้าย)
+  - ชี้แถว sensor ในรายการซ้ายแล้วกดปุ่ม `$`
+  - **คาดหวัง:** ได้ `$TAG1 + $TAG2` (ชื่อมีช่องว่างใส่เป็น `${…}`) · แถวนั้น**ไม่**ขึ้นป้าย Picked · ถ้าช่องเป็นบล็อก Average/Median sensor ถูกเพิ่มเป็น source ของบล็อกแทน
+
 ---
 
 ## MNG
@@ -1055,9 +1081,20 @@ _ของใหม่ทั้งหมด ยังไม่เคยมีค
   - เปิดแท็บ Manage ที่มี special sensor ทั้งแบบมี description และไม่มี และตัวที่โมเดลใช้อยู่ (ล็อก)
   - **คาดหวัง:** บรรทัดแรก description + ป้ายหน่วย, บรรทัดสอง tag · ตัวที่ไม่มี description แสดง tag อย่างเดียว — **ไม่มีข้อความ "— no description —" แล้ว** · ป้าย "Used by …" (ไอคอนกุญแจ) เป็น**สีเทา** ไม่ใช่สีเหลือง · ป้าย "No data — fix formula" ของตัวที่กู้ไม่ได้ยังเป็นสีเหลืองเหมือนเดิม
 
-- [ ] **MNG-2 — สูตร/operation อ่านออก** 🆕
-  - ดูคอลัมน์ขวาของแต่ละแถว
-  - **คาดหวัง:** สูตรแสดงตามที่พิมพ์, operation แสดงเป็น `sum(a, b)` หรือ `a + 10` ไม่ใช่ JSON ดิบ
+- [ ] **MNG-28 — แถวของ sensor ที่กู้ไม่ได้: ป้ายส้ม + กล่องเหตุผลใต้แถว** 🆕
+  - เปิด workspace ที่มี special sensor สูตรที่ engine ปฏิเสธตอนเปิด (เช่น `$TAG1 ($TAG2)` — แก้ไฟล์ workspace JSON เอง) ทั้งแบบมีโมเดลใช้และไม่มี
+  - เปิดแท็บ Manage
+  - **คาดหวัง:** แถวมีป้ายส้ม "No data — fix formula" และใต้แถวมีกล่องส้ม "No data this session. <เหตุผลจาก Rust>. Edit it to fix the formula" (ถ้ามีโมเดลใช้ ต่อท้าย "— the formula is unlocked for the fix; the name stays locked") · ปุ่มลบยังกดไม่ได้ถ้ามีโมเดลใช้
+
+- [ ] **MNG-29 — sensor ที่กำลังเปิดแก้อยู่ ลบไม่ได้จนกว่าจะปิดการแก้** 🆕
+  - แท็บ Manage → กดดินสอ (Edit) ที่ sensor ที่ไม่มีอะไรใช้ (หน้าต่างสลับไปแท็บ Create ที่เป็นหน้าแก้) → กดแท็บ **Manage** กลับมาดูแถวนั้นในรายการ
+  - ชี้เมาส์ที่ปุ่มถังขยะของแถวนั้น แล้วลองกด · ดูปุ่มถังขยะของแถวอื่น
+  - กลับไปแท็บ **Create** กด **Cancel edit** (อย่ากดปุ่ม Close ท้ายแท็บ Manage — ปุ่มนั้นปิดทั้งหน้าต่าง) แล้วดูปุ่มถังขยะของแถวเดิมอีกครั้ง
+  - **คาดหวัง:** ระหว่างแก้ ปุ่มถังขยะของแถวที่เปิดแก้เป็นสีจาง กดไม่ได้ ชี้เมาส์ขึ้น "Close the edit first" · แถวอื่นที่ไม่มีอะไรใช้ยังลบได้ · ปิดการแก้แล้วแถวเดิมลบได้ตามปกติ
+
+- [ ] **MNG-27 — สูตร/operation อ่านออกเป็นภาษาคน (แทน MNG-2)** 🆕
+  - ดูคอลัมน์ขวาของแต่ละแถว และชี้เมาส์ค้าง
+  - **คาดหวัง:** สูตรแสดงตามที่พิมพ์ (ถ้า Round the result ไว้ ต่อท้าย "· rounded to N decimals") · Sum เก่าเขียน "Sum of …" · บล็อกเขียน "Average of … · missing values skipped" (ชื่อ source เป็น description) · operation ตัวเดียวเขียนเช่น "TAG + 10" / "TAG rounded to 2 decimals" · ชี้เมาส์เห็นรูปที่เก็บจริง (เช่น `sum(a, b)`) · ป้าย ƒ/Σ ชี้เมาส์บอกชนิด (Formula / Average block / Sum / Operation)
 
 - [ ] **MNG-3 — ช่องค้นหา** 🆕
   - พิมพ์ชื่อ
@@ -1087,8 +1124,8 @@ _ของใหม่ทั้งหมด ยังไม่เคยมีค
 - [ ] **MNG-8 — ลบตัวที่มี special sensor อื่นสร้างต่อ → ต้องกดไม่ได้** 🆕
   - สร้าง A
   - สร้าง B โดยใช้ A
-  - ไปลบ A
-  - **คาดหวัง:** ปุ่มลบของ A ถูกปิด, มี chip 🔒 "Used by 1 sensor" กดแล้วกางบอกว่า B ใช้อยู่ และบอกให้ลบ B ก่อน
+  - ไปลบ A (ชี้เมาส์ที่ถังขยะด้วย)
+  - **คาดหวัง:** ปุ่มลบของ A ถูกปิด ชี้เมาส์เห็น **"Used by B — remove it there first"**, มี chip 🔒 "Used by 1 sensor" กดแล้วกางบอกว่า B ใช้อยู่ และบอกให้ลบ B ก่อน
 
 - [ ] **MNG-9 — ลบตัวที่โมเดลใน Failure Group ใช้อยู่ → ต้องกดไม่ได้** 🆕
   - เอา special sensor ไปเป็น target ของโมเดลหนึ่ง
@@ -1189,10 +1226,11 @@ _ของใหม่ทั้งหมด ยังไม่เคยมีค
 
 _ของใหม่ทั้งหมด และเป็นส่วนที่ซับซ้อนที่สุดที่ทำไป_
 
-- [ ] **EDT-1 — กดดินสอเปิดฟอร์มแก้ไข** 🆕
-  - กดไอคอนดินสอที่แถวหนึ่ง
-  - กดซ้ำอีกที
-  - **คาดหวัง:** ฟอร์มกางออกใต้แถวนั้น กดซ้ำแล้วปิด และเปิดได้ทีละแถวเท่านั้น
+- [ ] **EDT-54 — กดดินสอแล้วเปิด Formula editor ตัวเดียวกับ Create ในหัวการ์ด "Edit sensor" (แทน EDT-1)** 🆕
+  - pick sensor ไว้ในแท็บ Create 1-2 ตัว แล้วไปแท็บ Manage กดดินสอที่แถวหนึ่ง
+  - กด **Cancel edit**
+  - กดดินสอแถวหนึ่งอีกครั้ง แก้อะไรสักอย่าง Save changes
+  - **คาดหวัง:** สลับไปแท็บ Create แสดงช่องสูตรที่โหลด recipe ไว้ การ์ดล่างเขียน **"Edit sensor"** ท้ายหน้าต่างมี **Cancel edit / Save changes** (ไม่มี Add sensor) · picks ถูกล้างตอนเปิดแก้ · Cancel edit และ Save สำเร็จพากลับแท็บ Manage · แถวที่กำลังแก้ ปุ่มดินสอเป็นสีฟ้า
 
 - [ ] **EDT-2 — เปลี่ยนชื่อ (rename) ได้แล้ว — กรณีพื้นฐานไม่มีอะไรอ้างถึง** 🆕
   - เปิดแก้ special sensor ที่ไม่มีตัวอื่นสร้างต่อและไม่มีโมเดลใช้อยู่
@@ -1212,35 +1250,23 @@ _ของใหม่ทั้งหมด และเป็นส่วนท
   - ไปดูแท็บ Selected Sensor
   - **คาดหวัง:** ข้อความใหม่ขึ้นทั้งในแท็บ Manage และในรายการ Selected Sensor
 
-- [ ] **EDT-52 — แก้ sensor แบบ operation: เพิ่ม source ด้วยปุ่ม "Add source sensors…" (หน้าต่างเลือกหลายตัว) แทน dropdown** 🆕
-  - Manage → Edit sensor แบบ Sum / Average ที่ยังไม่ถูกล็อก
-  - กด "Add source sensors…" ดูบรรทัด scope แล้วติ๊ก 2 ตัว กด OK
-  - เปิดอีกครั้งแล้วกด Cancel
-  - **คาดหวัง:** ไม่มี dropdown ของ Windows แล้ว · รายการไม่มีตัวมันเองและตัวที่เลือกไว้แล้ว (บรรทัด scope บอก "All sensors except this one and the ones already picked · N") · OK แล้ว source เพิ่มเป็นชิป description + tag ครบทั้ง 2 ตัวในครั้งเดียว · Cancel ไม่เพิ่มอะไร · ชนิด operation เดิม (Sum / Average) ยังอยู่
+- [ ] **EDT-55 — แก้บล็อก Average / Median: เพิ่ม/ลบ source ด้วย "Add…" แล้วยังเป็นบล็อกเดิม (แทน EDT-52, EDT-53, EDT-7, EDT-43)** 🆕
+  - สร้างบล็อก **Average** จาก 2 sensor จดค่า 2-3 จุด
+  - เปิดแก้ กด **Add…** ติ๊กตัวที่ 3 กด OK แล้ว Save; เปิดอีกครั้ง กด × เอาออก 1 ตัว แล้ว Save (ลอง Cancel ในหน้าต่างเลือกด้วย)
+  - ทำซ้ำกับ Median; ลองเอา source ออกจนเหลือ 1 ตัวแล้วดูปุ่ม Save
+  - **คาดหวัง:** การ์ดยังเขียน "Average block" ค่าเป็น**ค่าเฉลี่ย**ของชุดใหม่ (ไม่ใช่ผลรวมที่ใหญ่ขึ้น) Manage เขียน "Average of … · missing values skipped" · รายการในหน้าต่างเลือกไม่มีตัวมันเองและตัวที่สร้างต่อจากมัน · Cancel ไม่เปลี่ยนอะไร · เหลือ 1 ตัวแล้ว Rust/บรรทัดตรวจบอกเหตุผลถ้าไม่รับ
+
+- [ ] **EDT-56 — sensor แบบปุ่มเก่า (Sum / Add 10 / Round to decimals) เปิดเป็นสูตรพร้อมหมายเหตุ บันทึกโดยไม่แก้คณิตแล้วเก็บแบบเดิม (แทน EDT-6)** 🆕
+  - เตรียม special sensor ที่สร้างด้วยเวอร์ชันเก่าแบบ Sum all, แบบ `TAG + 10` และแบบ Round to decimals
+  - กดดินสอแต่ละตัว ดูช่องสูตร แล้วแก้แค่ Description กด Save
+  - เปิด Sum อีกครั้ง แก้เป็น `$A + $B * 2` แล้ว Save
+  - **คาดหวัง:** Sum เปิดเป็น `$A + $B + $C` มีหมายเหตุ "Opened from a Sum recipe as A + B + C. Saving keeps the same result…" · Add 10 เปิดเป็น `$TAG + 10` · Round เปิดเป็น `$TAG` กับปุ่ม Round = N · แก้แค่คำอธิบายแล้ว**ไม่มีการคำนวณใหม่** และใน Manage ยังเป็นแบบเดิม · แก้คณิตแล้วกลายเป็นสูตร (ƒ) ค่าถูก
 
 - [ ] **EDT-4b — บังคับกรอกครบ 4 ช่องในฟอร์มแก้ไข (เหมือน Create) — Component เลือกจากรายการ** 🆕
   - เปิดแก้ special sensor ที่มีข้อมูลครบอยู่แล้ว
   - ลบ Name / Description / Unit ออกทีละช่องให้ว่าง
   - ดูช่อง Component
   - **คาดหวัง:** ปุ่ม **Save changes จางลงกดไม่ได้ทันที** พร้อมข้อความบอกว่าขาดช่องไหน — Component เป็น dropdown เลือกจากรายการที่มีอยู่ (รวม "Uncategorized") จึงเว้นว่างไม่ได้ ไม่มี fallback เงียบ ๆ อีกต่อไป
-
-- [ ] **EDT-53 — แก้ operation — เปลี่ยน source sensors ผ่านหน้าต่างเลือก sensor (แทน EDT-5)** 🆕
-  - เปิดแก้ตัวที่เป็น operation
-  - กด X ลบ chip ของ sensor หนึ่งออก
-  - กดปุ่ม **Add source sensors…** → หน้าต่างเลือก sensor (ช่องค้นหา + กลุ่มตาม component) ติ๊กตัวใหม่ 1 ตัวแล้วกด **OK** (ลองอีกรอบแล้วกด Cancel / Esc ด้วย)
-  - Save
-  - **คาดหวัง:** ค่าคำนวณใหม่ตาม input ชุดใหม่ · รายการในหน้าต่าง**ไม่มีชื่อตัวมันเอง และไม่มีตัวที่เลือกไปแล้ว** (บรรทัดบนรายการเขียน "All sensors except this one and the ones already picked · N") · Cancel / Esc ไม่เปลี่ยนอะไร · ไม่มี dropdown ของ Windows แบบเดิม
-
-- [ ] **EDT-6 — แก้ operation — เปลี่ยนชนิดและค่า** 🆕
-  - เปลี่ยน operation จาก Add เป็น Multiply
-  - เปลี่ยนตัวเลข Value
-  - เปลี่ยนไปเป็น Square root
-  - **คาดหวัง:** คำนวณถูก และพอเลือก op ที่ไม่ต้องใช้ค่า (sqrt/abs/...) ช่อง Value ต้องหายไปเอง
-
-- [ ] **EDT-7 — จำนวน source sensor ต้องถูกต้อง** 🆕
-  - operation แบบ single: ลองเพิ่มเป็น 2 ตัว
-  - operation แบบ multi: ลองลดเหลือ 1 ตัว
-  - **คาดหวัง:** ปุ่ม Save ถูกปิด และขึ้นข้อความบอกว่าต้องเลือกกี่ตัว
 
 - [ ] **EDT-8 — ⭐ แก้ตัวต้นน้ำแล้วตัวปลายน้ำต้องเปลี่ยนตาม** 🆕
   - สร้าง A = `$TAG * 2`
@@ -1285,8 +1311,8 @@ _ของใหม่ทั้งหมด และเป็นส่วนท
   - กลับมาดู Scatter
   - **คาดหวัง:** จุดขยับตามสูตรใหม่โดยไม่ต้องสลับ chart type ไป-กลับ
 
-- [ ] **EDT-17 — Cancel ไม่บันทึกอะไร** 🆕
-  - แก้สูตรมั่ว ๆ แล้วกด Cancel
+- [ ] **EDT-17 — Cancel edit ไม่บันทึกอะไร** 🆕
+  - แก้สูตรมั่ว ๆ แล้วกด Cancel edit
   - เปิดฟอร์มใหม่
   - **คาดหวัง:** ค่ากลับเป็นของเดิม ไม่มีอะไรถูกคำนวณใหม่
 
@@ -1299,11 +1325,11 @@ _ของใหม่ทั้งหมด และเป็นส่วนท
   - **คาดหวัง:** บันทึกสำเร็จ, แถวของ A เปลี่ยนชื่อเป็น A2 ทันที, **ค่าของ B ต้องไม่เปลี่ยนเลย** (ข้อมูลเบื้องหลังไม่ได้เปลี่ยน แค่ชื่ออ้างอิงเปลี่ยน), เปิดดูสูตรของ B ต้องอ่านว่า `${A2} + 10` — **ไม่ใช่ `${A} + 10` ที่ค้างชี้ไปชื่อที่ไม่มีอยู่แล้ว**
 
 - [ ] **EDT-20 — Rename ตัวที่เป็น operation (ไม่ใช่ formula) ที่มีตัวอื่นสร้างต่อ** 🆕
-  - สร้าง A ด้วย operation เช่น sum ของ 2 sensor
-  - สร้าง B ที่มี A เป็นหนึ่งใน source sensors (ผ่านปุ่ม combine)
+  - สร้าง A เป็นบล็อก Average ของ 2 sensor
+  - สร้าง B เป็นบล็อก Average ที่มี A เป็นหนึ่งใน source
   - เปิดแก้ A เปลี่ยนชื่อเป็น `A2`
   - Save changes
-  - **คาดหวัง:** เปิดแก้ B อีกที — ชิป source sensor ที่เคยเป็น A ต้องเปลี่ยนเป็น A2 อัตโนมัติ (ไม่ใช่แค่ formula-kind ที่ต้องอัปเดตตาม operation-kind ก็ต้องเหมือนกัน)
+  - **คาดหวัง:** เปิดแก้ B อีกที — ชิป source ที่เคยเป็น A เปลี่ยนเป็น A2 อัตโนมัติ
 
 - [ ] **EDT-21 — Rename ชื่อซ้ำ → ต้องกดไม่ได้** 🆕
   - เปิดแก้ special sensor ตัวหนึ่ง
@@ -1368,10 +1394,10 @@ _ของใหม่ทั้งหมด และเป็นส่วนท
   - แก้ `A` เป็น `$C * 2` กด Save แล้ว **รีบ** เปิดแก้ `C` เป็น `$A + 1` กด Save ทันที
   - **คาดหวัง:** การ Save ตัวที่สองถูกปฏิเสธว่าจะทำให้ sensor พึ่งตัวเอง ("... would make it depend on itself") ไม่มี recipe วนกันเข้า workspace — ระบบอ่านการอ้างอิงสดใหม่จาก backend ทุกครั้งก่อนตรวจ ไม่ใช้ค่าที่จำไว้
 
-- [ ] **EDT-35 — ⭐ special sensor ที่โมเดลใช้อยู่ → เปลี่ยนชื่อ / แก้สูตร / แก้ source ไม่ได้ (ล็อก)** 🆕
-  - สร้าง special sensor `A` แล้วเอาไปเป็น target ของโมเดลหนึ่งใน Build Model (ลองซ้ำกับ predictor / X / Y / criteria sensor / เงื่อนไขใน Custom running condition ของโมเดล)
-  - กลับมาที่ Add Special Sensor → Manage กดดินสอที่ `A`
-  - **คาดหวัง:** ฟอร์มเปิดขึ้นพร้อมแบนเนอร์ "Name and formula are locked." บอกชื่อโมเดลและชนิด เช่น "Used by 1 model: GENERATOR ACTIVE POWER (Individual, Relationship). Remove it from those models first, then you can edit it." — ช่อง Name และ Formula (หรือ Calculation ถ้าเป็น operation) **อ่านอย่างเดียว พิมพ์ไม่ได้ ไม่มีที่เลือก source เพิ่ม/ลบ**; ช่อง Description / Unit / Component ยังแก้ได้; ปุ่มถังขยะของแถวนั้นกดไม่ได้เหมือนเดิม และแถวที่กางออกอธิบายเหตุผลเดียวกัน (กดป้าย "Used by …")
+- [ ] **EDT-57 — ⭐ special sensor ที่โมเดลใช้อยู่ → ล็อก: ช่องสูตรเส้นประอ่านอย่างเดียว ป้ายกุญแจสีเทา ประโยคเดียว (แทน EDT-35)** 🆕
+  - สร้าง special sensor `A` แล้วเอาไปเป็น target ของโมเดลหนึ่งใน Build Model (ลองซ้ำกับ predictor / X / Y / criteria / Custom running condition)
+  - กลับมาที่ Manage กดดินสอที่ `A`
+  - **คาดหวัง:** หัวการ์ดมีป้ายกุญแจสีเทา เช่น "Used by 1 model" · บรรทัดใต้ช่อง: "Name and formula are locked. Used by 1 model: … Remove it from those models first, then you can edit it. Description, unit and component below can still change…" (ขึ้นครั้งเดียว) · ช่องสูตรขอบเส้นประ พิมพ์ไม่ได้ · **ไม่มีการ์ด Quick build และแถบเครื่องมือ** · Name อ่านอย่างเดียว · รายการซ้ายจาง มีข้อความ "The formula is locked, so sensors cannot be added." · Description / Unit / Component แก้ได้ ท้ายหน้าต่างเขียน "Saves the description, unit and component." · ถังขยะของแถวยังกดไม่ได้
 
 - [ ] **EDT-36 — sensor ที่ล็อกอยู่ แก้แค่ Description / Unit / Component ได้ และค่าไม่ถูกแตะ** 🆕
   - ใช้ `A` จาก EDT-35 (ปักบนกราฟและจดรูปเส้น/ค่าไว้)
@@ -1382,7 +1408,7 @@ _ของใหม่ทั้งหมด และเป็นส่วนท
 - [ ] **EDT-37 — Running condition ของ workspace ก็ล็อกด้วย ("Used by the running condition")** 🆕
   - ใน Build Model → Running condition ตั้งเงื่อนไขที่ใช้ special sensor `A` แล้ว Apply (ยังไม่มีโมเดลไหนใช้ `A` โดยตรงก็ได้)
   - เปิดดินสอที่ `A` ใน Manage
-  - **คาดหวัง:** แบนเนอร์เขียนว่า "Used by the running condition." Name/Formula อ่านอย่างเดียว (การแก้ค่าของ `A` จะเปลี่ยนว่าทุกโมเดลเทรนบนแถวไหน) — เอาเงื่อนไขนั้นออกแล้ว Apply แบนเนอร์หายและแก้ได้ตามปกติโดยไม่ต้องปิด-เปิดหน้าต่าง
+  - **คาดหวัง:** ป้ายและบรรทัดล็อกบอก "Used by the running condition." Name/Formula อ่านอย่างเดียว — เอาเงื่อนไขนั้นออกแล้ว Apply ล็อกหายและแก้ได้ตามปกติโดยไม่ต้องปิด-เปิดหน้าต่าง
 
 - [ ] **EDT-38 — ล็อกส่งต่อไปยัง sensor ที่ถูกใช้สร้างต่อ (transitive)** 🆕
   - สร้าง `A` = `$TAG1 * 2`, `B` = `${A} + 10`, `C` = `$B * 10` และ `Z` = `$TAG3 + 1` (ไม่เกี่ยวกัน)
@@ -1415,21 +1441,14 @@ _ของใหม่ทั้งหมด และเป็นส่วนท
   - แก้กลับให้ถูก
   - **คาดหวัง:** ใต้ช่องสูตรขึ้น**ข้อความสีแดง**บอกเหตุผล (เช่น "Sensor not found: NOPE") ขอบช่องเป็นสีแดง ปุ่ม **Save changes จางลงกดไม่ได้** — แก้กลับให้ถูกแล้วข้อความแดงหาย กด Save ได้ (เปิดฟอร์มเฉย ๆ โดยไม่แก้สูตร ต้องไม่ขึ้นข้อความแดง)
 
-- [ ] **EDT-43 — ⭐ แก้ source ของ Average/Sum/Median แล้วต้องยังเป็น Average/Sum/Median (ไม่กลายเป็น A + B + C)** 🆕
-  - สร้าง sensor แบบ **Average all** จาก 2 sensor จดค่าไว้ 2-3 จุด
-  - เปิดแก้ใน Manage เพิ่ม source ตัวที่ 3 ผ่านปุ่ม **Add source sensors…** (ติ๊กในหน้าต่างเลือก sensor แล้วกด OK) แล้ว Save
-  - เปิดแก้อีกที เอา source ออก 1 ตัว (ให้เหลือ 2) แล้ว Save
-  - ทำซ้ำกับ Sum all และ Median
-  - **คาดหวัง:** ปุ่ม Average all **ยังถูกเลือกอยู่**หลังเพิ่ม/ลด source, ค่าเป็น**ค่าเฉลี่ย**ของ source ชุดใหม่ (ไม่ใช่ผลรวมที่ใหญ่ขึ้นราว 3 เท่า) และใน Manage ยังเขียนเป็น `mean(...)` ไม่ใช่สูตร `$A + $B + $C`
-
 - [ ] **EDT-44 — Rust ปฏิเสธสูตรตอนคำนวณ → ข้อความแดงในฟอร์ม ไม่มี toast "Updated"** 🆕
   - เปิดแก้สูตร พิมพ์สูตรที่ใช้ฟังก์ชันที่ไม่มี (เช่น `foo($TAG1)`) แล้วรีบกด Save changes ทันทีก่อนข้อความแดงใต้ช่องสูตรจะขึ้น
   - **คาดหวัง:** ขึ้นข้อความสีแดงในฟอร์มบอกว่าคำนวณไม่ได้เพราะอะไร (ชื่อฟังก์ชันที่ไม่รู้จัก) ฟอร์มยังเปิดอยู่ **ไม่มี toast สีเขียว "Updated …"** และค่าเดิมของ sensor บนกราฟไม่ถูกแตะ
 
-- [ ] **EDT-45 — รายการ Manage (และฟอร์มที่ล็อก) บอกจำนวนทศนิยมของ "Round to decimals"** 🆕
-  - สร้าง sensor จาก 1 sensor ด้วย Round to decimals = 0 และอีกตัว = 3
-  - ดูแท็บ Manage และ (ถ้าล็อกได้) เปิดฟอร์มแก้ของตัวที่ถูกโมเดลใช้อยู่
-  - **คาดหวัง:** แสดงเป็น `round(TAG) to 0 decimals` และ `round(TAG) to 3 decimals` — แยกสองตัวออกจากกันได้ (เดิมเห็นเป็น `round(TAG)` เหมือนกันทั้งคู่)
+- [ ] **EDT-59 — รายการ Manage บอกจำนวนทศนิยมของ sensor ที่ปัด (แทน EDT-45)** 🆕
+  - มี sensor แบบ Round to decimals = 0 และ = 3 (จากเวอร์ชันเก่า) และสูตรที่ตั้ง Round the result = 2
+  - ดูแท็บ Manage
+  - **คาดหวัง:** แสดงเป็น "TAG rounded to 0 decimals", "TAG rounded to 3 decimals" และ "… · rounded to 2 decimals" — แยกกันออกได้ชัด
 
 - [ ] **EDT-46 — workspace เก่าที่มีสูตรซึ่งตอนนี้ไม่ผ่านแล้ว (เช่น `$A * pi`) เปิดได้ปกติ และบอกเหตุผล** 🆕
   - ใช้ workspace ที่บันทึกด้วยเวอร์ชันก่อน 2026-10-08 ซึ่งมี special sensor สูตร `$TAG1 * pi` (เดิมสร้างได้แต่ค่าว่างทั้งเส้น) — ถ้าไม่มี ให้แก้ไฟล์ workspace JSON ใส่ recipe นี้เอง
@@ -1437,30 +1456,35 @@ _ของใหม่ทั้งหมด และเป็นส่วนท
   - เปิดหน้าต่าง Special Sensors แท็บ Manage
   - **คาดหวัง:** workspace **เปิดได้** มี toast เดียวบอกว่า sensor นั้น "couldn't be restored" **พร้อมเหตุผลจาก Rust** (เช่น "unknown name 'pi'. Write pi() for π.") และบอกวิธีแก้ ("To fix: on the Dashboard open Add Special Sensor > Manage and edit it (pencil) to correct the formula.") sensor นั้นไม่ถูกปักบนกราฟ แต่ยัง**อยู่ในแท็บ Manage ให้แก้สูตร**ได้ และ sensor อื่นคำนวณครบ
 
-- [ ] **EDT-49 — ⭐ sensor ที่กู้ไม่ได้ตอนเปิด workspace และมีโมเดลใช้อยู่ (ล็อก) → แก้สูตรให้ถูกได้ ชื่อยังล็อก และโมเดลที่ใช้กลับเป็น Incomplete ให้ train ใหม่ (แทน EDT-47 เดิม)** 🆕
-  - เตรียม workspace ที่มี special sensor `A` สูตร `round($TAG1, 2)` (บันทึกด้วยเวอร์ชันก่อน 2026-10-08 หรือแก้ไฟล์ workspace JSON ใส่ recipe นี้เอง) และมีโมเดลใน Build Model ที่ใช้ `A` เป็น target ซึ่ง **Mark complete แล้ว** (จุดเขียว) และโมเดลอีกตัวที่ไม่ได้ใช้ `A` ซึ่ง Complete อยู่เช่นกัน
-  - เปิด workspace จาก Recent Workspaces → Dashboard → Add Special Sensor → แท็บ Manage
-  - ดูแถวของ `A` แล้วกดดินสอ (Edit A)
-  - แก้สูตรเป็น `round($TAG1 * 100) / 100` แล้ว Save changes
-  - เปิดแท็บ Failure Groups บน Dashboard และหน้าต่าง Build Model
-  - เปิดแก้ `A` อีกครั้ง
-  - **คาดหวัง:** แถว `A` มีป้ายสีส้ม "No data — fix formula" (ชี้เมาส์เห็นเหตุผลจาก Rust); ฟอร์มขึ้นกล่องสีส้ม "This sensor could not be restored: … Fix the formula to restore it. Models that use it are set back to Incomplete and must be trained again." ช่อง **Name ล็อก** แต่ช่อง **Formula แก้ได้** (ไม่มีแถบ "Name and formula are locked") — Save แล้วขึ้น toast เขียว "Restored A. 1 model(s) set back to Incomplete — train them again." ป้ายส้มหาย `A` มีข้อมูลบนกราฟได้; โมเดลที่ใช้ `A` **ไม่เป็น Complete แล้ว** (จุดเขียวหายทั้งใน Failure Groups และใน Build Model) และใน Build Model ขึ้นว่าต้อง train ใหม่ (Mark complete กดผ่านไม่ได้จนกว่าจะกด Train ใหม่) — set point ที่เคยใส่ยังอยู่ครบ; โมเดลที่**ไม่ได้**ใช้ `A` ยัง Complete เหมือนเดิม; เมื่อเปิดแก้ `A` อีกครั้งกลับเป็น**ล็อกปกติ**ทั้งชื่อและสูตร; ปุ่มลบของ `A` ยังกดไม่ได้ตลอด (โมเดลใช้อยู่)
+- [ ] **EDT-60 — ⭐ sensor ที่กู้ไม่ได้ตอนเปิด workspace และมีโมเดลใช้อยู่ → โหมดซ่อม: สูตรแก้ได้ ชื่อล็อก ปุ่มแก้อยู่ในข้อความ ท้ายหน้าต่างบอกจำนวนโมเดล (แทน EDT-49)** 🆕
+  - เตรียม workspace ที่มี special sensor `A` สูตร `$TAG1 ($TAG2)` (ขาดเครื่องหมายคูณ — แก้ไฟล์ workspace JSON เอง) และโมเดลที่ใช้ `A` เป็น target ซึ่ง **Mark complete แล้ว** และโมเดลอีกตัวที่ไม่ใช้ `A` ซึ่ง Complete อยู่
+  - เปิด workspace → Add Special Sensor → Manage → ดินสอที่ `A`
+  - กดปุ่ม **Insert ×** บนบรรทัดตรวจ แล้ว Save changes
+  - เปิดแท็บ Failure Groups และหน้าต่าง Build Model แล้วเปิดแก้ `A` อีกครั้ง
+  - **คาดหวัง:** หัวการ์ดมีป้ายส้ม "No data — fix formula" และกล่องส้ม "This sensor has no data this session — its formula was refused when the project opened: <เหตุผล>. Fix the formula and save. The name stays locked; 1 model trained on it will need training again (set points are kept)." · ช่องสูตร**แก้ได้** (ไม่มีแถบล็อก) จุดที่ผิดขีดเส้นหยักแดง · ท้ายหน้าต่าง "Saving restores the data; 1 model goes back to Incomplete (set points kept)." · Save แล้ว toast "Restored A. 1 model(s) set back to Incomplete — train them again." · โมเดลที่ใช้ `A` ไม่เป็น Complete แล้ว (ทั้ง Failure Groups และ Build Model) set point ยังอยู่ · โมเดลที่ไม่ใช้ `A` ยัง Complete · เปิดแก้ `A` อีกครั้งกลับเป็นล็อกปกติ
 
 - [ ] **EDT-48 — sensor ที่กู้ไม่ได้: แก้แค่ Description/Unit/Component แล้ว Save ได้ ไม่ขึ้น error** 🆕
-  - ใช้ workspace แบบ EDT-49 (ยังไม่ต้องแก้สูตร) ทั้งกรณีที่มีโมเดลใช้ `A` และกรณีไม่มีโมเดลใช้
+  - ใช้ workspace แบบ EDT-60 (ยังไม่ต้องแก้สูตร) ทั้งกรณีที่มีโมเดลใช้ `A` และกรณีไม่มีโมเดลใช้
   - เปิดแก้ `A` แก้แค่ Description แล้ว Save changes
-  - **คาดหวัง:** บันทึกได้ ไม่มีข้อความแดง ("does not round to 2 decimal places" ต้อง**ไม่**ขึ้น) Description ใหม่ขึ้นในรายการ Manage และบน Dashboard; ป้าย "No data — fix formula" ยังอยู่ (เพราะยังไม่ได้แก้สูตร); โมเดลที่ใช้ `A` ยัง Complete เหมือนเดิม (แก้แค่คำอธิบาย ไม่ทำให้โมเดลกลับเป็น Incomplete)
+  - **คาดหวัง:** บันทึกได้ (ปุ่ม Save กดได้แม้บรรทัดตรวจยังแดงที่สูตรเดิม เพราะไม่ได้แก้คณิต) ไม่มีข้อความแดงที่ท้ายหน้าต่าง Description ใหม่ขึ้นในรายการ Manage และบน Dashboard; ป้าย "No data — fix formula" ยังอยู่; โมเดลที่ใช้ `A` ยัง Complete เหมือนเดิม
 
-- [ ] **EDT-50 — ⭐ sensor ที่กู้ไม่ได้สองตัวต่อกัน (ตัวหลังสร้างจากตัวแรก และสูตรของตัวหลังก็ไม่ผ่านด้วย) → แก้ตัวแรกแล้วบันทึกได้ ตัวหลังขึ้นว่าต้องแก้ต่อ** 🆕
-  - เตรียม workspace (แก้ไฟล์ workspace JSON) ที่มี `A` = `round($TAG1, 2)` และ `B` = `round(${A}, 2)` และมีโมเดลที่ใช้ `B` เป็น target (Complete)
+- [ ] **EDT-61 — sensor ที่กู้ไม่ได้สองตัวต่อกัน → แก้ตัวแรกแล้วบันทึกได้ ตัวหลังขึ้นว่าต้องแก้ต่อ (แทน EDT-50)** 🆕
+  - เตรียม workspace (แก้ไฟล์ JSON) ที่มี `A` = `$TAG1 ($TAG2)` และ `B` = `${A} (2)` และมีโมเดลที่ใช้ `B` เป็น target (Complete)
   - เปิด workspace → ดู toast ตอนเปิด แล้วไป Add Special Sensor → Manage
   - แก้ `A` เป็น `$TAG1 * 3` แล้ว Save changes
-  - **คาดหวัง:** toast ตอนเปิดบอกว่า `B` ถูกข้าม (Skipped) และ**ไม่**สัญญาว่า B จะกลับมาเอง (บอกว่าตัวที่สูตรของตัวเองยังใช้ได้จะกลับมา ส่วนที่ไม่ได้จะถูกทำเครื่องหมายใน Manage ให้แก้ต่อ); ตอนแรกมีป้ายส้มที่ `A` เท่านั้น; หลัง Save ขึ้น toast "Restored A. B still needs fixing: … does not round to 2 decimal places … 1 model(s) set back to Incomplete — train them again." **ไม่มีข้อความแดง** สูตรใหม่ของ `A` ถูกเก็บไว้ (เปิดแก้ดูได้ / A มีข้อมูลบนกราฟ) ป้ายส้มย้ายไปอยู่ที่ `B` แทน แล้วแก้ `B` เป็น `round(${A} * 100) / 100` ได้ตามปกติ — ป้ายส้มหายหมด
+  - **คาดหวัง:** ตอนแรกป้ายส้มที่ `A` เท่านั้น (`B` ถูกข้าม) · หลัง Save toast "Restored A. B still needs fixing: … 1 model(s) set back to Incomplete — train them again." ไม่มีข้อความแดง สูตรใหม่ของ `A` ถูกเก็บ ป้ายส้มย้ายไปที่ `B` แล้วแก้ `B` ได้ตามปกติ — ป้ายส้มหายหมด
 
 - [ ] **EDT-51 — sensor แบบปุ่ม (operation เช่น Add / Sum) ที่กู้ไม่ได้: แก้แค่ Unit แล้ว Save ได้ ไม่ขึ้น error** 🆕
   - เตรียม workspace ที่มี special sensor แบบปุ่ม (เช่น `TAG1 + 10`) ซึ่ง source sensor ไม่มีใน CSV แล้ว (แก้ไฟล์ workspace JSON เปลี่ยน `sourceSensors` เป็นชื่อที่ไม่มี) และมีโมเดลใช้ sensor นี้
   - เปิด workspace → Add Special Sensor → Manage → เปิดแก้ sensor นั้น → แก้แค่ Unit แล้ว Save changes
   - **คาดหวัง:** ป้ายส้ม "No data — fix formula" ชี้เมาส์เห็น "Sensor not found: …"; Save แค่ Unit แล้ว**บันทึกได้ ไม่มีข้อความแดง** Unit ใหม่ขึ้นในรายการ; โมเดลที่ใช้ยัง Complete เหมือนเดิม; ป้ายส้มยังอยู่
+
+- [ ] **EDT-62 — ⭐ workspace เก่าที่มี `round($TAG1, 2)` แปลงให้อัตโนมัติตอนเปิด และบอกว่าค่าเปลี่ยน + โมเดลกลับเป็น Incomplete** 🆕
+  - เตรียม workspace (บันทึกด้วยเวอร์ชันก่อน 2026-10-09 หรือแก้ JSON) ที่มี `A` = `round($TAG1, 2)` (และ/หรือ `round(${A}, 1)` ในอีกตัว) และมีโมเดลที่ใช้ `A` ซึ่ง Complete อยู่ ปักค่าเดิมจดไว้ถ้าทำได้
+  - เปิด workspace จาก Recent Workspaces
+  - ดูกล่องข้อความที่เด้งขึ้น, แท็บ Manage, กราฟ, Failure Groups และ Build Model · ปิดโปรแกรมแล้วเปิด workspace เดิมอีกครั้ง
+  - **คาดหวัง:** Dashboard เปิดขึ้นตามปกติ แล้วมี**หน้าต่างข้อความแบบแจ้งข้อมูล (ไม่ใช่ error สีแดง/toast) ชื่อ "Rounding updated"** หนึ่งหน้าต่างเขียนว่าแก้การปัดใน 1 special sensor (`A`) จาก `round(x, n)` เป็น `round(x * 10ⁿ) / 10ⁿ` · **บอกชัดว่าค่าต่างจากที่เคยเห็นเพราะรูปแบบเก่าคำนวณผิด** · บอกจำนวนโมเดลที่ถูกตั้งกลับเป็น Incomplete ให้ train ใหม่ · Manage เขียน `$TAG1 · rounded to 2 decimals` (ไม่มีป้ายส้ม "No data") · กราฟมีค่า (ปัด 2 ตำแหน่งจริง) · โมเดลที่ใช้ `A` ไม่เป็น Complete แล้ว · เปิดครั้งที่สอง**ไม่มี**กล่องข้อความนี้อีก (แปลงไปแล้ว)
+
 ---
 
 ## FG

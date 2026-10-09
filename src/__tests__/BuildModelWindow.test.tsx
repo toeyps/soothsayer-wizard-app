@@ -95,6 +95,7 @@ import BuildModelWindow from '../components/windows/BuildModelWindow';
 import { makeHealthPreview, makeSetPointAwarePreview } from './helpers/healthPreviewFixture';
 import { makeTestResult, makeValidation } from './helpers/validationFixture';
 import { computeTrainFingerprint } from '../utils/trainFingerprint';
+import { snapshotTrainedFormulas } from '../utils/specialSensorSignature';
 import { ALL_TIME_TRAIN, ONE_TEST } from './helpers/trainTestFixture';
 import { MARK_COMPLETE_CLOSE_WAIT } from '../utils/healthPersist';
 import { ADD_TRAIN_PERIOD_HINT, NO_TEST_PERIOD_REASON } from '../utils/runningCondition';
@@ -2859,6 +2860,32 @@ describe('Incomplete immediately + Relationship fit cache key (health score phas
         expect(mockUpdateWorkspaceData).not.toHaveBeenCalled();
     });
 
+    // Customer batch 2026-10 (item 6): the recipes come from the workspace FILE (never a payload);
+    // a special sensor the model was trained on whose formula changed since makes it stale.
+    it('READ side: a Complete model trained on a special sensor whose formula changed since is stale (recipes read from disk)', async () => {
+        const fresh = withTrained(makeModel({ id: 'sp', status: true, targetSensor: 'TAG1' }));
+        const trainedFormulas = { tag1: 'sig-at-train' };
+        render(<BuildModelWindow />);
+        await deliverData({
+            specialSensorRecipes: [{ kind: 'formula', tag: 'TAG1', formula: '$RAW * 3' }],
+            failureGroupState: { groups: [makeGroup()], models: [{ ...fresh, trainedFormulas }] },
+        });
+        await flush();
+        expect(screen.getByTestId('sensor-kind-badge-dot-sp').className).not.toMatch(/f4-kb-dot--complete/);
+        expect(screen.getByText(/of 1 complete/).textContent).toBe('0 of 1 complete');
+        expect(mockUpdateWorkspaceData).not.toHaveBeenCalled();
+    });
+
+    it('READ side: the same model with its snapshot still matching the recipes stays Complete', async () => {
+        const recipes = [{ kind: 'formula' as const, tag: 'TAG1', formula: '$RAW * 3' }];
+        const model = withTrained(makeModel({ id: 'sp', status: true, targetSensor: 'TAG1' }));
+        const trainedFormulas = snapshotTrainedFormulas(model as any, recipes, { models: [model as any], runningConditionTimePeriods: ALL_TIME_TRAIN, runningConditionNoneConfirmed: true } as any);
+        render(<BuildModelWindow />);
+        await deliverData({ specialSensorRecipes: recipes, failureGroupState: { groups: [makeGroup()], models: [{ ...model, trainedFormulas }] } });
+        await flush();
+        expect(screen.getByTestId('sensor-kind-badge-dot-sp').className).toMatch(/f4-kb-dot--complete/);
+    });
+
     it('READ side: a legacy Complete model with NO train record at all stays Complete (nothing to be out of date against)', async () => {
         render(<BuildModelWindow />);
         await deliverData({ failureGroupState: { groups: [makeGroup()], models: [makeModel({ id: 'legacy', status: true })] } });
@@ -2876,6 +2903,78 @@ describe('Incomplete immediately + Relationship fit cache key (health score phas
         expect(saved.status).toBe(false);
         expect(saved.trainedFingerprint).not.toBe('written-before-this-rule');
         expect(screen.getByText('Trained', { selector: '.model-status-pill' })).toBeTruthy();
+    });
+
+    // Review 2026-10-09 (MUST-FIX 2): the recipes this window judges freshness against.
+    describe('special-sensor recipes: when this window reads them', () => {
+        const R1 = [{ kind: 'formula' as const, tag: 'TAG1', formula: '$RAW * 3' }];
+        const fgBase = (models: any[]) => ({
+            groups: [makeGroup()], models,
+            runningConditionTimePeriods: ALL_TIME_TRAIN, runningConditionTestPeriods: ONE_TEST,
+            runningConditionNoneConfirmed: true, rcLegacyNotice: null,
+        });
+        const trainedOn = (recipes: typeof R1) => {
+            const model = withTrained(makeModel({ id: 'sp', status: true, targetSensor: 'TAG1' }));
+            return { ...model, trainedFormulas: snapshotTrainedFormulas(model as any, recipes, fgBase([model]) as any) };
+        };
+        const broadcast = (fg: any, extra: Record<string, unknown>) => act(async () => {
+            for (const cb of listenCallbacks['failure-group-state-changed'] ?? []) {
+                cb({ payload: { ...fg, workspaceId: 'ws1', origin: 'dashboard', ...extra } });
+            }
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+
+        it('an ordinary Dashboard broadcast costs no disk read; only recipesChanged re-reads the recipes', async () => {
+            const model = trainedOn(R1);
+            render(<BuildModelWindow />);
+            await deliverData({ specialSensorRecipes: R1, failureGroupState: fgBase([model]) });
+            await flush();
+            expect(screen.getByTestId('sensor-kind-badge-dot-sp').className).toMatch(/f4-kb-dot--complete/);
+            mockLoadWorkspaceData.mockClear();
+
+            await broadcast(fgBase([model]), {});
+            await flush();
+            expect(mockLoadWorkspaceData).not.toHaveBeenCalled();
+
+            // The Dashboard's autosave wrote a new formula for TAG1: only now is disk read.
+            mockLoadWorkspaceData.mockResolvedValue({ id: 'ws1', specialSensorRecipes: [{ ...R1[0], formula: '$RAW * 4' }], failureGroupState: fgBase([model]) });
+            await broadcast(fgBase([model]), { recipesChanged: true });
+            await flush();
+            expect(mockLoadWorkspaceData).toHaveBeenCalledTimes(1);
+            expect(screen.getByTestId('sensor-kind-badge-dot-sp').className).not.toMatch(/f4-kb-dot--complete/);
+        });
+
+        // The reported bug: Repair -> the Dashboard writes the demotion and broadcasts -> this
+        // window reads disk BEFORE the autosave writes the new recipe -> no later broadcast ->
+        // a freshly trained model showed "Settings changed -- re-train" forever. The Train's own
+        // write result now carries the recipes it stamped against, and this window adopts them.
+        for (const [label, diskRecipes] of [
+            ['Repair (the trained-on sensor gets a new formula)', [{ ...R1[0], formula: '$RAW * 5' }]],
+            ['an unused sensor edited', [...R1, { kind: 'formula' as const, tag: 'TAG3', formula: '$RAW + 2' }]],
+        ] as const) {
+            it(`after ${label} with no recipesChanged broadcast reaching this window, a Train reads Trained and fresh`, async () => {
+                const demoted = { ...trainedOn(R1), status: false, trainedFingerprint: undefined };
+                render(<BuildModelWindow />);
+                await deliverData({ specialSensorRecipes: R1, failureGroupState: fgBase([demoted]) });
+                await flush();
+                // Disk moved on without this window hearing about it.
+                let ws: any = { id: 'ws1', specialSensorRecipes: diskRecipes, failureGroupState: fgBase([demoted]) };
+                mockUpdateWorkspaceData.mockImplementation(async (_id: string, patch: (st: any) => any) => { ws = patch(ws); return ws; });
+                mockLoadWorkspaceData.mockClear();
+                await act(async () => { fireEvent.click(trainSensorBtn()); await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+                await waitFor(() => expect(screen.getByText('Trained', { selector: '.model-status-pill' })).toBeTruthy());
+                const saved = ws.failureGroupState.models[0];
+                expect(saved.trainedFingerprint).toBeTruthy();
+                expect(saved.trainedFormulas).toBeTruthy();
+                // Fresh: no "Settings changed" banner, and Mark complete is not blocked by it.
+                expect(screen.queryByTestId('results-stale')).toBeNull();
+                expect(screen.queryByText('Settings changed — re-train first.')).toBeNull();
+                expect(screen.getByTestId('sensor-kind-badge-dot-sp').getAttribute('data-state')).toBe('trained');
+                // Adopted from the write result, not by an extra disk read.
+                expect(mockLoadWorkspaceData).not.toHaveBeenCalled();
+            });
+        }
     });
 
     describe('Relationship Train asks Rust to cache the fit under a fingerprint-based key', () => {

@@ -26,7 +26,7 @@
  * a later fix pass flips it to `it`.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, act, cleanup, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, act, cleanup, waitFor, within } from '@testing-library/react';
 // @ts-expect-error - @types/node is not installed; vitest runs in Node so this resolves at runtime
 import { readFileSync } from 'node:fs';
 import contract from '../../src-tauri/tests/fixtures/filter_contract.json';
@@ -327,15 +327,20 @@ describe('2. Add Special Sensor window layout at small window sizes', () => {
         expect(css('.special-sensor-row-main')['min-width']).toBe('0');
     });
 
-    it('opens at 1000px wide, leaving the Tooling pane 680px — well above what one op card needs (100px card + 2x16px pane padding + 2x16px SensorTooling padding)', async () => {
+    it('opens at 1000px wide, leaving the Formula editor pane wide enough for its four sensor fields in one row (the fields go 2-column only below 600 px)', async () => {
         renderDashboard();
         fireEvent.click(screen.getByText('Add Special Sensor'));
         await waitFor(() => expect(webviewWindowCalls.find(c => c.label === 'add-sensor')).toBeTruthy());
         const { opts } = webviewWindowCalls.find(c => c.label === 'add-sensor')!;
         expect(opts.width).toBe(1000);
         const left = parseFloat(tracks().split(' ')[0]);
-        const opCardMin = parseFloat(/minmax\((\d+)px/.exec(css('.special-sensor-opgrid')['grid-template-columns'])![1]);
-        expect(opts.width - left).toBeGreaterThanOrEqual(opCardMin + 32 + 32);
+        const narrowFields = parseFloat(/max-width:\s*(\d+)px/.exec(/@container fx \([^)]*\)/.exec(CSS_SRC)![0])![1]);
+        expect(opts.width - left - 2 * 16).toBeGreaterThanOrEqual(narrowFields);
+    });
+
+    it('narrow window (~900 px): the left list is 230 px (customer batch 2026-10, item 6)', () => {
+        const narrow = /@media \(max-width: 860px\)\s*\{\s*\.special-sensor-body\s*\{([^}]*)\}/.exec(CSS_SRC);
+        expect(narrow?.[1]).toContain('grid-template-columns: 230px minmax(0, 1fr)');
     });
 
     // LOW, regression of an old guarantee: Split.js used `minSize: [300, 150]`
@@ -376,27 +381,35 @@ describe('2. Add Special Sensor window layout at small window sizes', () => {
             expect(body.contains(screen.getByText('Add sensor'))).toBe(false);
             expect(body.contains(screen.getByText('Cancel'))).toBe(false);
             expect(body.contains(screen.getByRole('tab', { name: 'Create' }))).toBe(false);
-            // Explorer is in the fixed left track, Tooling in the right one.
+            // Explorer is in the fixed left track, the Formula editor in the right one.
             expect(document.querySelector('.special-sensor-left .special-sensor-explorer')).toBeTruthy();
-            expect(document.querySelector('.special-sensor-right .special-sensor-srcs')).toBeTruthy();
+            expect(document.querySelector('.special-sensor-right textarea[aria-label="Formula"]')).toBeTruthy();
         });
 
-        it('pick a sensor on the left, an op card on the right, fill master data -> footer gate opens -> Add emits to Dashboard', async () => {
+        it('pick a sensor on the left, Quick build "√" on the right, fill master data -> footer gate opens -> Add emits to Dashboard', async () => {
+            mockInvoke.mockImplementation(async (cmd: string) => {
+                switch (cmd) {
+                    case 'get_all_sensors': return ['timestamp', 'TAG1', 'TAG2'];
+                    case 'evaluate_formula': return 'RootTag';
+                    case 'extract_formula_refs': return [];
+                    default: return undefined;
+                }
+            });
             render(<AddSensorWindow />);
             fireEvent.click(await screen.findByText('TAG1'));
-            // Chip lands in the right pane's Source sensors box; row shows "Added".
-            expect(document.querySelector('.special-sensor-srcs')!.textContent).toContain('TAG1');
-            expect(screen.getByText('Added')).toBeTruthy();
-
-            fireEvent.click(screen.getByText('Square root'));
-            expect(screen.getByText('Square root').closest('.special-sensor-op-card')!.className).toContain('is-on');
+            // The row shows "Picked"; Quick build offers the one-sensor set.
+            expect(screen.getByText('Picked')).toBeTruthy();
+            const qb = screen.getByTestId('quick-build');
+            fireEvent.click(within(within(qb).getByRole('group', { name: 'Transform' })).getByRole('button', { name: '√' }));
+            expect(within(qb).getByTestId('quick-build-output').textContent).toBe('sqrt($TAG1)');
+            fireEvent.click(within(qb).getByRole('button', { name: 'Use this formula' }));
             expect(screen.getByText(/Fill in a name, a description, a unit, a component before adding\./)).toBeTruthy();
             const addBtn = screen.getByText('Add sensor').closest('button')!;
             expect(addBtn.disabled).toBe(true);
 
-            fireEvent.change(screen.getByPlaceholderText('e.g. Total Power'), { target: { value: 'RootTag' } });
-            fireEvent.change(screen.getByPlaceholderText('RootTag'), { target: { value: 'Root of pressure' } });
-            fireEvent.change(screen.getByPlaceholderText('e.g. kW'), { target: { value: 'bar' } });
+            fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'RootTag' } });
+            fireEvent.change(screen.getByLabelText('Description'), { target: { value: 'Root of pressure' } });
+            fireEvent.change(screen.getByLabelText('Unit'), { target: { value: 'bar' } });
             fireEvent.change(screen.getByLabelText('Component'), { target: { value: 'Uncategorized' } });
             expect(addBtn.disabled).toBe(false);
             expect(screen.getByText('Adds a computed sensor to this workspace.')).toBeTruthy();
@@ -405,7 +418,7 @@ describe('2. Add Special Sensor window layout at small window sizes', () => {
             await waitFor(() => expect(mockEmit).toHaveBeenCalledWith('add-sensor-selection', expect.objectContaining({
                 newMetadata: [expect.objectContaining({ tag: 'RootTag', description: 'Root of pressure', unit: 'bar' })],
             })));
-            expect(mockInvoke).toHaveBeenCalledWith('calculate_new_sensor', expect.objectContaining({ sensors: ['TAG1'] }));
+            expect(mockInvoke).toHaveBeenCalledWith('evaluate_formula', expect.objectContaining({ formula: 'sqrt($TAG1)', customName: 'RootTag' }));
         });
     });
 });

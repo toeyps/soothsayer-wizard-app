@@ -414,10 +414,10 @@ function labelledInput(labelText: string): HTMLInputElement {
     if (!label) throw new Error(`no label ${labelText}`);
     return label.parentElement!.querySelector('input, select') as HTMLInputElement;
 }
-const nameField = () => createBody().querySelector('input[placeholder="e.g. Total Power"]') as HTMLInputElement | null;
+const nameField = () => createBody().querySelector('#fx-name') as HTMLInputElement | null;
 async function fillCreate(name: string, opts: { description?: string; unit?: string; component?: string } = {}) {
     const nameInput = nameField();
-    if (!nameInput) throw new Error('Name field not shown -- nothing is being created');
+    if (!nameInput) throw new Error('Name field not shown');
     await act(async () => { fireEvent.change(nameInput, { target: { value: name } }); });
     await act(async () => { fireEvent.change(labelledInput('Description'), { target: { value: opts.description ?? `${name} desc` } }); });
     await act(async () => { fireEvent.change(labelledInput('Unit'), { target: { value: opts.unit ?? 'u' } }); });
@@ -425,9 +425,7 @@ async function fillCreate(name: string, opts: { description?: string; unit?: str
     await flush();
 }
 async function typeFormula(formula: string) {
-    const toggle = W().queryByText('Edit as text instead');
-    if (toggle) await act(async () => { fireEvent.click(toggle); });
-    const ta = createBody().querySelector('textarea') as HTMLTextAreaElement;
+    const ta = createBody().querySelector('textarea[aria-label="Formula"]') as HTMLTextAreaElement;
     await act(async () => { fireEvent.change(ta, { target: { value: formula, selectionStart: formula.length } }); });
     await flush();
 }
@@ -841,7 +839,8 @@ describe('2c. A\'s still-alive window RE-POINTED to B (B\'s "Add special sensor"
         });
         await clickAddSpecialSensor();
         await goCreate();
-        expect(nameField()).toBeNull();
+        expect(nameField()!.value).toBe('');
+        expect(createBody().querySelectorAll('.special-sensor-row.is-picked')).toHaveLength(0);
         expect(createBody().textContent ?? '').not.toContain('Alpha draft');
         expect(Array.from(createBody().querySelectorAll('input')).map(i => (i as HTMLInputElement).value)).not.toContain('Draft');
     });
@@ -870,25 +869,25 @@ describe('2c. A\'s still-alive window RE-POINTED to B (B\'s "Add special sensor"
     // in A runs after the re-point against B's session and is announced with
     // B's id -- B's Dashboard adopts A's sensor (recipe + metadata) into B's
     // file.
-    it('A\'s window: an edit of S2 is computing (held in Rust) and "N" is created behind it in the queue -> switch to B, re-point the window, the edit finishes -> the queued create of A\'s "N" runs in B\'s session and lands in B\'s file with B\'s workspace id', async () => {
+    it('A\'s window: a create of "N" is computing (held in Rust) and an edit of S2 is queued behind it -> switch to B, re-point the window, the create finishes -> neither lands in B: the create is refused as stale, the queued edit never runs', async () => {
         let g!: ReturnType<FakeRust['gate']>;
         await switchWithWindowsLeftOpen(wsB(), async () => {
-            g = rust.gate('evaluate_formula', a => a.replace === true && a.customName === 'S2');
+            g = rust.gate('evaluate_formula', a => !a.replace && a.customName === 'N');
+            await createFormula('N', '$TAG3 + 5', { settle: false, description: 'Alpha N' });
             await openEditor('S2');
             await setEditor({ formula: '$TAG1 * 7' });
             await clickSaveEditor({ settle: false });
-            await createFormula('N', '$TAG3 + 5', { settle: false, description: 'Alpha N' });
         });
         await clickAddSpecialSensor(); // re-point to B
         g.release();
         await flush(40);
         await tick(400);
         // The held computation itself is refused: it was pinned to A's generation
-        // (`expectedGeneration`) and `load_csv` replaced the session (Rust checks
-        // the pinned generation first at commit, so this is STALE_SESSION, not the
-        // un-pinned "dataset changed while computing" text).
+        // (`expectedGeneration`) and `load_csv` replaced the session.
         expect(rust.cmds('evaluate_formula').some(c => c.error === STALE_SESSION_ERROR)).toBe(true);
+        expect(rust.cmds('evaluate_formula').filter(c => c.args.formula === '$TAG1 * 7')).toHaveLength(0);
         expect((ws(B_ID).specialSensorRecipes ?? []).map(r => r.tag)).toEqual(['S1', 'S2']);
+        expect(ws(B_ID).specialSensorRecipes).toEqual(B_RECIPES);
         expect(dashListed()).not.toContain('N');
         expect(rust.has('N')).toBe(false);
     });

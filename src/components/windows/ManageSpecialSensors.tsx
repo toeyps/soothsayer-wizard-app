@@ -2,8 +2,7 @@ import { useMemo, useState } from "react";
 import { Trash2, Lock, Search, Undo2, Pencil, AlertTriangle } from "lucide-react";
 import { FailureModel, SensorMetadata, SpecialSensorRecipe } from "../../types";
 import { buildSpecialSensorUsage, describeEditLock, usageFor, SpecialSensorUsage } from "../../utils/specialSensorDeps";
-import { describeRecipe } from "../../utils/specialSensorDescribe";
-import SpecialSensorEditor from "./SpecialSensorEditor";
+import { describeSpecialSensor } from "../../utils/specialSensorDescribe";
 import { SensorLabel } from '../sensor/SensorLabel';
 
 interface Props {
@@ -33,16 +32,13 @@ interface Props {
     /** Set while a deletion is inside its undo window. */
     pendingDelete: { tags: string[]; label: string } | null;
     onUndo: () => void;
-    /** Every tag that can be used as an input when editing an operation. */
-    availableSensors: string[];
-    /** Which row has its editor open, if any. Owned by the caller so the
-     *  editor's save state and error live next to the recompute that
-     *  produces them. */
+    /** The sensor open in the Formula editor (Create tab, titled "Edit sensor"), if any. */
     editingTag: string | null;
-    onEdit: (tag: string | null) => void;
-    onSaveEdit: (next: { recipe: SpecialSensorRecipe; metadata: SensorMetadata; renamedFrom?: string }) => void;
+    /** The pencil opens the sensor in the Formula editor (customer batch 2026-10, item 6 — the
+     *  inline editor this list used to expand is gone). */
+    onEdit: (tag: string) => void;
+    /** A save is being applied: the pencil buttons wait. */
     savingEdit: boolean;
-    editError: string | null;
     /** Special sensors whose recipe could not be rebuilt this session (no
      *  column): tag key (trimmed, lower-case) -> why, or null for "no specific
      *  reason". Their formula / sources stay editable even when a model uses
@@ -50,9 +46,6 @@ interface Props {
      *  refused recipe could never be fixed. Null / omitted = unknown (nothing
      *  is unlocked). */
     unrestored?: Map<string, string | null> | null;
-    /** The Rust dataset generation the window is bound to -- pins the editor's
-     *  live formula check (`validate_formula`'s `expectedGeneration`). */
-    generation?: number;
 }
 
 /** One line saying why the delete button is off — the short version that fits
@@ -73,7 +66,7 @@ function blockedSummary(usage: SpecialSensorUsage): string | null {
 export default function ManageSpecialSensors({
     recipes, sensorMetadata, models, usageKnown = true, runningConditionFilters,
     selectedSensors, formulaRefs, onDelete, pendingDelete, onUndo,
-    availableSensors, editingTag, onEdit, onSaveEdit, savingEdit, editError, unrestored, generation,
+    editingTag, onEdit, savingEdit, unrestored,
 }: Props) {
     const [searchTerm, setSearchTerm] = useState('');
     const [expandedTag, setExpandedTag] = useState<string | null>(null);
@@ -94,16 +87,24 @@ export default function ManageSpecialSensors({
 
     const metaFor = (tag: string) => sensorMetadata?.find(m => m.tag.toLowerCase() === tag.toLowerCase());
 
+    // One human line per recipe (customer batch 2026-10, item 6): sources read by their
+    // description in a block / operation; a formula keeps its own `$TAG` text.
+    const descriptions = useMemo(() => {
+        const label = (tag: string) => sensorMetadata?.find(m => m.tag.toLowerCase() === tag.toLowerCase())?.description?.trim() || tag;
+        return new Map(recipes.map(r => [r.tag, describeSpecialSensor(r, { label })]));
+    }, [recipes, sensorMetadata]);
+
     const visible = useMemo(() => {
         const term = searchTerm.trim().toLowerCase();
         if (!term) return recipes;
         return recipes.filter(r => {
             const meta = metaFor(r.tag);
-            const haystack = `${r.tag} ${meta?.description ?? ''} ${meta?.component ?? ''} ${describeRecipe(r)}`.toLowerCase();
+            const d = descriptions.get(r.tag);
+            const haystack = `${r.tag} ${meta?.description ?? ''} ${meta?.component ?? ''} ${d?.summary ?? ''} ${d?.expression ?? ''}`.toLowerCase();
             return haystack.includes(term);
         });
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [recipes, searchTerm, sensorMetadata]);
+    }, [recipes, searchTerm, sensorMetadata, descriptions]);
 
     if (recipes.length === 0 && !pendingDelete) {
         return (
@@ -159,15 +160,24 @@ export default function ManageSpecialSensors({
                     // Deletion stays off until the reference lookup has
                     // actually answered — see `formulaRefs` above — and until
                     // the models / running condition are known fresh.
-                    const canDelete = info.deletable && formulaRefs !== null && usageKnown;
+                    // The sensor open in the editor cannot be deleted under it (review
+                    // 2026-10-09): close the edit first.
+                    const isEditing = editingTag !== null && editingTag.toLowerCase() === recipe.tag.toLowerCase();
+                    const canDelete = info.deletable && formulaRefs !== null && usageKnown && !isEditing;
+                    // Why Delete is off, in one line (its tooltip): "Used by X — remove it there first".
+                    const deleteReason = canDelete ? `Delete ${recipe.tag}`
+                        : isEditing ? 'Close the edit first'
+                        : info.deletable ? 'Still checking what uses this sensor'
+                            : info.dependentSensors.length > 0 ? `Used by ${info.dependentSensors.join(', ')} — remove it there first`
+                                : `${summary ?? 'Something still uses this sensor'} — remove it there first`;
                     const expanded = expandedTag === recipe.tag;
-                    const expandedEditor = editingTag === recipe.tag;
+                    const desc = descriptions.get(recipe.tag);
                     return (
                         <div key={recipe.tag} className="rounded" style={{ backgroundColor: 'var(--card-bg)', border: '1px solid var(--border)' }}>
                             <div className="flex items-center gap-3 px-3 py-2.5">
                                 <span
                                     className="flex items-center justify-center shrink-0 rounded"
-                                    title={recipe.kind === 'formula' ? 'Formula' : 'Operation'}
+                                    title={desc?.kindLabel ?? (recipe.kind === 'formula' ? 'Formula' : 'Operation')}
                                     style={{
                                         width: 22, height: 22, fontSize: '12px', fontWeight: 700,
                                         backgroundColor: 'var(--surface-hi)',
@@ -189,10 +199,11 @@ export default function ManageSpecialSensors({
 
                                 <div
                                     className="hidden md:block truncate"
-                                    title={describeRecipe(recipe)}
-                                    style={{ flex: '0 1 240px', fontFamily: 'var(--mono)', fontSize: '11px', color: 'var(--text-secondary)' }}
+                                    title={desc?.expression}
+                                    data-testid={`recipe-summary-${recipe.tag}`}
+                                    style={{ flex: '0 1 260px', fontFamily: recipe.kind === 'formula' ? 'var(--mono)' : undefined, fontSize: '11px', color: 'var(--text-secondary)' }}
                                 >
-                                    {describeRecipe(recipe)}
+                                    {desc?.summary}
                                 </div>
 
                                 <div className="flex items-center gap-1.5 shrink-0">
@@ -202,8 +213,7 @@ export default function ManageSpecialSensors({
                                             title={notRestoredReason
                                                 ? `No data: ${notRestoredReason}. Edit it to fix the formula.`
                                                 : 'No data: it could not be rebuilt. Edit it to fix the formula.'}
-                                            className="flex items-center gap-1 px-1.5 py-0.5 rounded"
-                                            style={{ fontSize: '10px', color: 'var(--warn)', border: '1px solid var(--warn)' }}
+                                            className="special-sensor-nodata"
                                         >
                                             <AlertTriangle size={9} />
                                             No data — fix formula
@@ -231,16 +241,16 @@ export default function ManageSpecialSensors({
 
                                 <button
                                     type="button"
-                                    onClick={() => onEdit(expandedEditor ? null : recipe.tag)}
+                                    onClick={() => onEdit(recipe.tag)}
                                     disabled={savingEdit}
                                     title={`Edit ${recipe.tag}`}
                                     aria-label={`Edit ${recipe.tag}`}
-                                    aria-expanded={expandedEditor}
+                                    aria-pressed={isEditing}
                                     className="flex items-center justify-center shrink-0 rounded"
                                     style={{
                                         width: 26, height: 26,
-                                        color: expandedEditor ? 'var(--accent-color)' : 'var(--text-secondary)',
-                                        border: `1px solid ${expandedEditor ? 'var(--accent-color)' : 'var(--border)'}`,
+                                        color: isEditing ? 'var(--accent-color)' : 'var(--text-secondary)',
+                                        border: `1px solid ${isEditing ? 'var(--accent-color)' : 'var(--border)'}`,
                                     }}
                                 >
                                     <Pencil size={13} />
@@ -250,9 +260,7 @@ export default function ManageSpecialSensors({
                                     type="button"
                                     onClick={() => onDelete(recipe.tag)}
                                     disabled={!canDelete}
-                                    title={canDelete
-                                        ? `Delete ${recipe.tag}`
-                                        : (info.deletable ? 'Still checking what uses this sensor' : 'Something still uses this sensor')}
+                                    title={deleteReason}
                                     aria-label={`Delete ${recipe.tag}`}
                                     className="flex items-center justify-center shrink-0 rounded"
                                     style={{
@@ -267,6 +275,13 @@ export default function ManageSpecialSensors({
                                 </button>
                             </div>
 
+                            {notRestored && (
+                                <div className="special-sensor-nodata-note" data-testid={`not-restored-note-${recipe.tag}`}>
+                                    <b>No data this session.</b>{' '}
+                                    {notRestoredReason ? `${notRestoredReason.replace(/[.\s]+$/, '')}. ` : 'Its formula could not be rebuilt. '}
+                                    Edit it to fix the formula{lockMessage ? ' — the formula is unlocked for the fix; the name stays locked' : ''}.
+                                </div>
+                            )}
                             {expanded && summary && (
                                 <div className="px-3 pb-3 pt-0.5" style={{ fontSize: '11.5px', color: 'var(--text-secondary)' }}>
                                     <div className="rounded px-3 py-2.5 flex flex-col gap-1.5" style={{ backgroundColor: 'var(--surface-hi)', border: '1px solid var(--border)' }}>
@@ -310,24 +325,6 @@ export default function ManageSpecialSensors({
                                 </div>
                             )}
 
-                            {expandedEditor && (
-                                <SpecialSensorEditor
-                                    // Remount on tag change so the form never
-                                    // shows one sensor's values under another's
-                                    // name (the fields are seeded from props).
-                                    key={recipe.tag}
-                                    recipe={recipe}
-                                    sensorMetadata={sensorMetadata}
-                                    availableSensors={availableSensors}
-                                    onCancel={() => onEdit(null)}
-                                    onSave={onSaveEdit}
-                                    saving={savingEdit}
-                                    error={editError}
-                                    lockMessage={lockMessage}
-                                    restore={notRestored ? { reason: notRestoredReason } : null}
-                                    generation={generation}
-                                />
-                            )}
                         </div>
                     );
                 })}

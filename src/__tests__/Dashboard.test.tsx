@@ -217,6 +217,26 @@ vi.mock('../errorReporter', () => ({
     reportError: (source: string, err: unknown) => mockReportError(source, err),
 }));
 
+// Review 2026-10-09: an ordinary autosave does no recipe / fingerprint work.
+// These wrap the real functions (behaviour unchanged) so a test can count calls.
+const ruleSpies = vi.hoisted(() => ({ applyRecipeRule: vi.fn(), recipeSignatures: vi.fn(), demote: vi.fn(), fingerprint: vi.fn() }));
+vi.mock('../utils/incompleteRule', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('../utils/incompleteRule')>();
+    return { ...actual, applyRecipeRule: (...a: Parameters<typeof actual.applyRecipeRule>) => { ruleSpies.applyRecipeRule(); return actual.applyRecipeRule(...a); } };
+});
+vi.mock('../utils/specialSensorSignature', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('../utils/specialSensorSignature')>();
+    return {
+        ...actual,
+        recipeSignatures: (...a: Parameters<typeof actual.recipeSignatures>) => { ruleSpies.recipeSignatures(); return actual.recipeSignatures(...a); },
+        demoteModelsForRecipeChange: (...a: Parameters<typeof actual.demoteModelsForRecipeChange>) => { ruleSpies.demote(); return actual.demoteModelsForRecipeChange(...a); },
+    };
+});
+vi.mock('../utils/trainFingerprint', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('../utils/trainFingerprint')>();
+    return { ...actual, computeTrainFingerprint: (...a: Parameters<typeof actual.computeTrainFingerprint>) => { ruleSpies.fingerprint(); return actual.computeTrainFingerprint(...a); } };
+});
+
 import Dashboard from '../components/dashboard/Dashboard';
 
 function last<T>(arr: T[]): T {
@@ -2420,6 +2440,140 @@ describe('Dashboard', () => {
                 expect(saved.specialSensorRecipes).toEqual([kept]);
                 expect(saved.extraSensorMetadata).toEqual([{ tag: 'CALC2', description: 'Kept', unit: '', component: '' }]);
                 expect(saved.selectedSensors).toEqual(['TAG1']);
+            });
+        });
+
+        // Customer batch 2026-10 (item 6), decision 2026-10-09: a recipe change that reaches
+        // disk THROUGH the autosave demotes the models trained on it in that SAME write
+        // (`applyIncompleteRule` against what is on disk), the mirror adopts them and the
+        // change is broadcast -- an unrelated autosave changes no model and sends nothing.
+        describe('autosave + a special-sensor recipe change', () => {
+            const baseModel = {
+                groupNos: [1], kind: 'individual' as const, category: 'performance' as const, notes: '', predictorSensors: [],
+                xSensor: '', ySensor: '', individualChecked: true, rcMode: null, scatterXSensor: '', relModelName: '', relStiffness: 100_000,
+                clusterModelName: '', numClusters: 3, criteriaSensor: '', clusterRanges: [], filterTimePeriods: [],
+                runningConditionMode: 'workspace' as const, customRunningConditionFilters: [], customRunningConditionCombine: 'and' as const,
+            };
+            const onCalc = { ...baseModel, id: 'm-calc', name: 'On CALC1', targetSensor: 'CALC1', status: true,
+                lastTrainedAt: '2026-10-01T00:00:00Z', trainedFingerprint: 'fp-old' };
+            const other = { ...baseModel, id: 'm-other', name: 'On TAG1', targetSensor: 'TAG1', status: true,
+                lastTrainedAt: '2026-10-01T00:00:00Z', trainedFingerprint: 'fp-other' };
+            const before = { kind: 'formula' as const, tag: 'CALC1', formula: '$TAG1 * 2' };
+            const after = { kind: 'formula' as const, tag: 'CALC1', formula: '$TAG1 * 5' };
+            const unused = { kind: 'formula' as const, tag: 'CALC9', formula: '$TAG2 + 1' };
+            const open = async (recipes: Array<typeof before> = [before]) => {
+                vi.useFakeTimers();
+                let disk: any = makeInitialState({
+                    specialSensorRecipes: recipes,
+                    failureGroupState: { groups: [{ no: 1, name: 'Group A' }], models: [onCalc, other] },
+                });
+                mockLoadWorkspaceData.mockImplementation(async () => structuredClone(disk));
+                mockSaveWorkspaceData.mockImplementation(async (st: any) => { disk = structuredClone(st); });
+                renderDashboard({ initialState: structuredClone(disk) });
+                await act(async () => { await vi.advanceTimersByTimeAsync(300); }); // the on-mount autosave settles
+                mockSaveWorkspaceData.mockClear();
+                mockEmit.mockClear();
+                return { disk: () => disk };
+            };
+
+            it('a recipe change saved by the autosave sends the models trained on it back to Incomplete in that write, adopts them, and broadcasts', async () => {
+                const { disk } = await open();
+                await act(async () => {
+                    for (const cb of listenCallbacks['update-special-sensor'] ?? []) {
+                        cb({ payload: { workspaceId: 'ws1', recipe: after, metadata: { tag: 'CALC1', description: 'x5', unit: '', component: '' }, recomputed: ['CALC1'] } });
+                    }
+                });
+                await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+
+                expect(mockSaveWorkspaceData).toHaveBeenCalledTimes(1);
+                const saved = last(mockSaveWorkspaceData.mock.calls)[0];
+                expect(saved.specialSensorRecipes).toEqual([after]);
+                const byId = Object.fromEntries(saved.failureGroupState.models.map((m: any) => [m.id, m]));
+                expect(byId['m-calc'].status).toBe(false);
+                expect(byId['m-calc'].trainedFingerprint).toBeUndefined();
+                expect(byId['m-calc'].lastTrainedAt).toBe('2026-10-01T00:00:00Z');
+                expect(byId['m-other']).toEqual(other);
+                expect(mockEmit).toHaveBeenCalledWith('failure-group-state-changed', expect.objectContaining({
+                    workspaceId: 'ws1', origin: 'dashboard', recipesChanged: true,
+                    models: expect.arrayContaining([expect.objectContaining({ id: 'm-calc', status: false })]),
+                }));
+                // The recipes themselves never travel in the payload.
+                expect(mockEmit.mock.calls.find(c => c[0] === 'failure-group-state-changed')![1]).not.toHaveProperty('specialSensorRecipes');
+                // The Dashboard's own mirror shows it at once (the FG dots read it).
+                fireEvent.click(screen.getByText('Failure Groups'));
+                expect(last(fgPanelProps).fgModels.find((m: any) => m.id === 'm-calc').status).toBe(false);
+                expect(disk().failureGroupState.models.find((m: any) => m.id === 'm-calc').status).toBe(false);
+
+                // Settled: the next autosave finds nothing more to demote and writes nothing new.
+                mockSaveWorkspaceData.mockClear();
+                mockEmit.mockClear();
+                await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+                expect(mockEmit).not.toHaveBeenCalledWith('failure-group-state-changed', expect.anything());
+            });
+
+            it('an unrelated autosave (no recipe change) changes no model, sends no broadcast and does no recipe or fingerprint work', async () => {
+                await open();
+                for (const f of Object.values(ruleSpies)) f.mockClear();
+                act(() => { fireEvent.click(screen.getByText('select-tag1')); });
+                await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+                expect(mockSaveWorkspaceData).toHaveBeenCalledTimes(1);
+                const saved = last(mockSaveWorkspaceData.mock.calls)[0];
+                expect(saved.failureGroupState.models).toEqual([onCalc, other]);
+                expect(mockEmit).not.toHaveBeenCalledWith('failure-group-state-changed', expect.anything());
+                expect(ruleSpies.applyRecipeRule).not.toHaveBeenCalled();
+                expect(ruleSpies.recipeSignatures).not.toHaveBeenCalled();
+                expect(ruleSpies.demote).not.toHaveBeenCalled();
+                expect(ruleSpies.fingerprint).not.toHaveBeenCalled();
+            });
+
+            it('editing a sensor NO model uses still broadcasts recipesChanged (Build Model re-reads the recipes) and demotes nothing', async () => {
+                const { disk } = await open([before, unused]);
+                await act(async () => {
+                    for (const cb of listenCallbacks['update-special-sensor'] ?? []) {
+                        cb({ payload: { workspaceId: 'ws1', recipe: { ...unused, formula: '$TAG2 + 2' }, metadata: { tag: 'CALC9', description: '', unit: '', component: '' }, recomputed: ['CALC9'] } });
+                    }
+                });
+                await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+                expect(disk().specialSensorRecipes).toEqual([before, { ...unused, formula: '$TAG2 + 2' }]);
+                expect(disk().failureGroupState.models).toEqual([onCalc, other]);
+                expect(mockEmit).toHaveBeenCalledWith('failure-group-state-changed', expect.objectContaining({ workspaceId: 'ws1', origin: 'dashboard', recipesChanged: true }));
+            });
+
+            it('a write that THROWS adopts nothing and broadcasts nothing; it does not loop', async () => {
+                await open();
+                mockSaveWorkspaceData.mockImplementation(async () => { throw new Error('disk full'); });
+                const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+                await act(async () => {
+                    for (const cb of listenCallbacks['update-special-sensor'] ?? []) {
+                        cb({ payload: { workspaceId: 'ws1', recipe: after, metadata: { tag: 'CALC1', description: 'x5', unit: '', component: '' }, recomputed: ['CALC1'] } });
+                    }
+                });
+                await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+                expect(mockSaveWorkspaceData).toHaveBeenCalledTimes(1);
+                expect(mockEmit).not.toHaveBeenCalledWith('failure-group-state-changed', expect.anything());
+                fireEvent.click(screen.getByText('Failure Groups'));
+                expect(last(fgPanelProps).fgModels.find((m: any) => m.id === 'm-calc').status).toBe(true);
+                warn.mockRestore();
+            });
+
+            it('a write that fails SILENTLY (saveWorkspaceData only logs) re-arms nothing: one write, at most one broadcast', async () => {
+                await open();
+                // The real saveWorkspaceData swallows a failed write: it resolves, disk is unchanged.
+                mockSaveWorkspaceData.mockImplementation(async () => {});
+                await act(async () => {
+                    for (const cb of listenCallbacks['update-special-sensor'] ?? []) {
+                        cb({ payload: { workspaceId: 'ws1', recipe: after, metadata: { tag: 'CALC1', description: 'x5', unit: '', component: '' }, recomputed: ['CALC1'] } });
+                    }
+                });
+                await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
+                expect(mockSaveWorkspaceData).toHaveBeenCalledTimes(1);
+                expect(mockEmit.mock.calls.filter(c => c[0] === 'failure-group-state-changed').length).toBeLessThanOrEqual(1);
+            });
+
+            it('passes the recipes to the Failure Groups panel (its status dots judge a changed formula as out of date)', async () => {
+                await open();
+                fireEvent.click(screen.getByText('Failure Groups'));
+                expect(last(fgPanelProps).specialSensorRecipes).toEqual([before]);
             });
         });
 
