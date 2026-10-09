@@ -9,7 +9,7 @@ vi.mock('../components/charts/ResponsiveECharts', () => ({
     default: (props: any) => { charts.push(props); return <div data-testid="echarts-mock" data-y-name={props.option?.yAxis?.name ?? ''} />; },
 }));
 
-import HealthScorePage from '../components/windows/workbench/HealthScorePage';
+import HealthScorePage, { sameHealthScoreProps } from '../components/windows/workbench/HealthScorePage';
 import type { HealthScorePageProps, SaveInfo } from '../components/windows/workbench/workbenchTypes';
 import type { HealthSetPoints } from '../types';
 import type { HealthIssue, HealthPreview } from '../types/health';
@@ -515,6 +515,23 @@ describe('states of the preview', () => {
         expect(screen.getByTestId('set-points-card')).toBeTruthy();
     });
 
+    it('Re-train is disabled with its reason while the window cannot train (a training run is active / data out of date)', () => {
+        onRetrain.mockClear();
+        const nf = { loading: false, error: 'no fit', errorCode: 'NOT_FITTED' as const, notFitted: true, needsRetrain: true, idle: null };
+        const { unmount } = mount({ data: null, preview: { data: null, ...nf }, retrainDisabledReason: 'Wait for the training run to finish' });
+        const btn = screen.getByTestId('health-not-fitted-retrain') as HTMLButtonElement;
+        expect(btn.disabled).toBe(true);
+        expect(btn.title).toBe('Wait for the training run to finish');
+        fireEvent.click(btn);
+        expect(onRetrain).not.toHaveBeenCalled();
+        unmount();
+        const d = previewFor('individual', IND_VALID);
+        mount({ sp: IND_VALID, preview: { data: d, ...nf }, retrainDisabledReason: 'Wait for the training run to finish' });
+        const bannerBtn = within(screen.getByTestId('health-not-fitted-banner')).getByRole('button', { name: /Re-train/ }) as HTMLButtonElement;
+        expect(bannerBtn.disabled).toBe(true);
+        expect(bannerBtn.title).toBe('Wait for the training run to finish');
+    });
+
     it('another error with nothing to show: the message', () => {
         mount({ data: null, preview: { data: null, loading: false, error: 'No rows in the training scope', errorCode: 'NO_DATA', notFitted: false, needsRetrain: false, idle: null } });
         expect(screen.getByTestId('health-error').textContent).toMatch(/No rows in the training scope/);
@@ -806,5 +823,40 @@ describe('Train / Test validation (2026-10-07)', () => {
         cleanup();
         mount({ sp: IND_VALID });
         expect(screen.queryByTestId('tests-changed-banner')).toBeNull();
+    });
+});
+
+describe('memo (customer items 8 + 9: a training run must not redraw these charts)', () => {
+    const props = (over: Partial<HealthScorePageProps> = {}): HealthScorePageProps => {
+        const sp: HealthSetPoints = { ...IND_VALID };
+        return {
+            model: { id: 'm1', kind: 'individual', targetSensor: 'TAG1' } as any,
+            stale: false,
+            preview: { data: previewFor('individual', sp), loading: false, error: null, errorCode: null, notFitted: false, needsRetrain: false, idle: null } as any,
+            unit: 'bar', sensorLabel: (t: string) => t, getDesc: (t: string) => t,
+            setPoints: sp, onSetPointsChange: onChange, onSetPointsCommit: onCommit, attemptIssues: null,
+            save: { phase: 'idle' }, filesOutOfDate: false, onRetrain,
+            ...over,
+        };
+    };
+
+    it('a window re-render with equal props (fresh-but-equal model / set points / save / preview objects) draws no chart again; a real change does', () => {
+        const a = props();
+        const { rerender } = render(<HealthScorePage {...a} />);
+        const drawn = charts.length;
+        expect(drawn).toBeGreaterThan(0);
+        rerender(<HealthScorePage {...a} model={{ ...(a.model as any) }} setPoints={{ ...a.setPoints } as HealthSetPoints} save={{ phase: 'idle' }} preview={{ ...a.preview }} />);
+        expect(charts.length).toBe(drawn);
+        rerender(<HealthScorePage {...a} stale />);
+        expect(charts.length).toBeGreaterThan(drawn);
+    });
+
+    it('the comparator covers every prop: a new callback, a new reason or a changed preview field is a change', () => {
+        const a = props();
+        expect(sameHealthScoreProps(a, { ...a })).toBe(true);
+        expect(sameHealthScoreProps(a, { ...a, onRetrain: () => {} })).toBe(false);
+        expect(sameHealthScoreProps(a, { ...a, retrainDisabledReason: 'Wait for the training run to finish' })).toBe(false);
+        expect(sameHealthScoreProps(a, { ...a, preview: { ...a.preview, loading: true } })).toBe(false);
+        expect(sameHealthScoreProps(a, { ...a, setPoints: { ...IND_VALID, lower: 2 } as HealthSetPoints })).toBe(false);
     });
 });

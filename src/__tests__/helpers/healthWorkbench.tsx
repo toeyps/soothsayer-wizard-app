@@ -153,10 +153,17 @@ export async function waitForCharts() {
     await waitFor(() => expect(bmw().getByTestId('results-chart')).toBeTruthy(), { timeout: 4000 });
 }
 
+/** Train exactly the ACTIVE model (the old per-model Train / Re-train): the header's
+ *  Train sensor ▾ menu → "Train only the <kind> model" (customer batch 2026-10,
+ *  items 8 + 9 — the footer button is gone; every train goes through the queue). */
 export async function train() {
-    const btn = bmw().queryByText('▶ Train model') ?? bmw().queryByText('↻ Re-train');
-    expect(btn, 'a Train / Re-train button').toBeTruthy();
-    await act(async () => { fireEvent.click(btn!); });
+    const tab = bmw().getAllByRole('tab').find(t => t.getAttribute('aria-selected') === 'true');
+    const kind = (['individual', 'relationship', 'clustering'] as const).find(k => tab?.textContent?.toLowerCase().includes(k));
+    expect(kind, 'an active kind tab').toBeTruthy();
+    fireEvent.click(bmw().getByTestId('train-sensor-menu-toggle'));
+    const item = bmw().getByTestId(`train-menu-only-${kind}`) as HTMLButtonElement;
+    expect(item.disabled, `Train only the ${kind} model is disabled`).toBe(false);
+    await act(async () => { fireEvent.click(item); });
     await settle(30);
     await settle(300); // health preview debounce
 }

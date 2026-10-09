@@ -46,6 +46,9 @@ describe('RunningConditionCard — Not set', () => {
         expect(c.className).toContain('rcc-card--req');
         expect(c.querySelector('.rcc-num')!.textContent).toBe('1');
         expect(c.textContent).toContain('Step 1 · Required before training');
+        // Customer items 8 + 9: an amber "Not set" pill (both Train buttons are disabled until it is set).
+        expect(screen.getByTestId('rc-card-pill').textContent).toBe('Not set');
+        expect(screen.getByTestId('rc-card-pill').className).toContain('f4-pill--warn');
         expect(within(c).getByRole('heading', { name: 'Set the running condition' })).toBeTruthy();
         expect(c.textContent).toContain('Tell Wizard which healthy time to learn from (train periods) and when the plant is running');
         const btn = screen.getByTestId('rc-card-open');

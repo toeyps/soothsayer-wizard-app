@@ -256,7 +256,7 @@ const dropBuildModelBroadcasts = () => {
 
 async function trainTag1() {
     selectTag1();
-    await act(async () => { fireEvent.click(bmw().getByText('▶ Train model')); });
+    await act(async () => { fireEvent.click(bmw().getByTestId('train-sensor')); });
     await settle(30);
     expect(diskFresh('i1')).toBe(true);
     expect(pill()).toBe('Trained');
@@ -573,9 +573,9 @@ describe('Complete -> Incomplete immediately (health score SPEC FINAL), seen fro
         expect(after[0].lastTrainedAt).toBe(before[0].lastTrainedAt);
         expect(after[0].trainedFingerprint).toBe(before[0].trainedFingerprint);
         expect(after[1].status).toBe(true); // Custom mode: unaffected
-        // Build Model: Incomplete + "Settings changed — re-train".
+        // Build Model: Incomplete + "Settings changed · re-train with Train sensor ↑".
         expect(pill()).toBe('Incomplete');
-        expect(bmw().getByText('↻ Re-train')).toBeTruthy();
+        expect((bmw().getByTestId('train-sensor') as HTMLButtonElement).disabled).toBe(false); // stale = ready to re-train
         expect(bmwDot('i1')).toBe('none');
         // Dashboard (broadcast delivered): the workspace-mode model's dot is gone, the Custom one stays green.
         await waitFor(() => expect(dashDot(1)).toBe('none'));
@@ -618,7 +618,7 @@ describe('Complete -> Incomplete immediately (health score SPEC FINAL), seen fro
         expect(bmwDot('i1')).toBe('none');
         expect(dashDot(1)).toBe('none');
 
-        await act(async () => { fireEvent.click(bmw().getByText('↻ Re-train')); });
+        await act(async () => { fireEvent.click(bmw().getByTestId('train-sensor')); });
         await settle(30);
         const m = readDisk().failureGroupState.models[0];
         expect(m.status).toBe(false); // a re-train never leaves a model Complete

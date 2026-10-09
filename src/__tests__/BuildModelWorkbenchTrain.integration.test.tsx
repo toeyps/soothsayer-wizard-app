@@ -209,7 +209,7 @@ const footerStatus = () => screen.getByTestId('footer-status').textContent;
 const markCompleteBtn = () => healthPageButton();
 
 async function clickTrain() {
-    await act(async () => { fireEvent.click(screen.getByText('▶ Train model')); });
+    await act(async () => { fireEvent.click(screen.getByTestId('train-sensor')); });
     await settle(30);
 }
 
@@ -276,8 +276,8 @@ describe('(1) models whose record carries an empty clusterRanges list stay Train
         expect(diskModel('r1').trainedFingerprint).toBe(fp); // not rewritten - it is the evidence of staleness
         expect(screen.getByTestId('stale-banner')).toBeTruthy();
         expect(pill()).toBe('Incomplete');
-        expect(footerStatus()).toBe('Settings changed — re-train');
-        expect(screen.getByText('↻ Re-train')).toBeTruthy();
+        expect(footerStatus()).toBe('Settings changed · re-train with Train sensor ↑');
+        expect((screen.getByTestId('train-sensor') as HTMLButtonElement).disabled).toBe(false); // ready to (re-)train
         expect(markCompleteBtn().disabled).toBe(true);
     });
 });
@@ -287,12 +287,12 @@ describe('(1) models whose record carries an empty clusterRanges list stay Train
 // ─────────────────────────────────────────────────────────────────────────
 
 describe('(2) a successful Train with no pending draft leaves the model Trained-and-fresh', () => {
-    // FIXED (qa 2026-09-29). `runTrainClick` used to ALWAYS fingerprint
+    // FIXED (qa 2026-09-29). the old `runTrainClick` (now `trainForQueue`) used to ALWAYS fingerprint
     // `{ ...m, ...draftFields(m, draftOf(m)) }`, even when there was no draft
     // (so nothing was committed) — for a clustering model with no criteria
     // sensor `draftFields` yields `clusterRanges: []`, but the stored record
     // keeps its 3 default ranges (Dashboard's `makeDefaultModelForKind`, or
-    // the PM page's persist when Y was picked there). `runTrainClick` now
+    // the PM page's persist when Y was picked there). `trainForQueue` now
     // only merges draft fields when a draft is actually pending for that
     // model id (`effectiveModelFor`) — with no draft, it trains against the
     // persisted `m` directly, unmodified.
@@ -310,7 +310,7 @@ describe('(2) a successful Train with no pending draft leaves the model Trained-
     // legacy stiffness (e.g. the old default `1`) to 100 000, so the no-draft
     // Train used to fingerprint 100 000 while the stored record (never
     // committed) still said 1 -> stale immediately. Fixed by the same
-    // `runTrainClick`/`effectiveModelFor` change above.
+    // `trainForQueue`/`effectiveModelFor` change above.
     it('Relationship with a legacy (non-preset) stiffness', async () => {
         writeDisk(wsState(currentFg([dashModel({ id: 'r1', kind: 'relationship', predictorSensors: ['TAG2'], relStiffness: 1 })])));
         await mountBuildModel();
@@ -374,7 +374,7 @@ describe('(3) lastTrainedAt / trainedFingerprint survive a save + reload', () =>
         await mountBuildModel();
         expect(diskFresh('i1')).toBe(false);
         expect(screen.getByTestId('results-stale')).toBeTruthy();
-        expect(footerStatus()).toBe('Settings changed — re-train');
+        expect(footerStatus()).toBe('Settings changed · re-train with Train sensor ↑');
         expect(screen.queryByTestId('results-chart')).toBeNull();
         // Only the Step-1 card's row count (filtered + unfiltered = 2 queries) — no model auto-recompute.
         expect(h.invokes.filter(c => c.cmd === 'compute_sensor_stats')).toHaveLength(2);
@@ -433,8 +433,8 @@ describe('(4) a slow Train that lands after its model or workspace is gone', () 
         writeDisk(wsState(currentFg([dashModel({ id: 'i1' }), dashModel({ id: 'i2', tag: 'TAG2' })])));
         await mountBuildModel();
         holdPreview();
-        await act(async () => { fireEvent.click(screen.getByText('▶ Train model')); });
-        expect(screen.getByText('Training…')).toBeTruthy();
+        await act(async () => { fireEvent.click(screen.getByTestId('train-sensor')); });
+        expect(screen.getByTestId('train-sensor').textContent).toContain('Training…');
 
         await act(async () => {
             const next = await updateWorkspaceData('ws1', prev => withFailureGroupState(prev, {
@@ -465,7 +465,7 @@ describe('(4) a slow Train that lands after its model or workspace is gone', () 
         writeDisk(wsState(currentFg([dashModel({ id: 'w2', tag: 'TAG3' })]), 'ws2'), WS2_FILE);
         await mountBuildModel();
         holdPreview();
-        await act(async () => { fireEvent.click(screen.getByText('▶ Train model')); });
+        await act(async () => { fireEvent.click(screen.getByTestId('train-sensor')); });
 
         await act(async () => { await emit('build-model-data', { ...BUILD_DATA, workspaceId: 'ws2' }); });
         await settle(30);
@@ -486,7 +486,7 @@ describe('(4) a slow Train that lands after its model or workspace is gone', () 
         writeDisk(wsState(currentFg([dashModel({ id: 'w2', tag: 'TAG3' })]), 'ws2'), WS2_FILE);
         await mountBuildModel();
         holdPreview();
-        await act(async () => { fireEvent.click(screen.getByText('▶ Train model')); });
+        await act(async () => { fireEvent.click(screen.getByTestId('train-sensor')); });
         await act(async () => { await emit('build-model-data', { ...BUILD_DATA, workspaceId: 'ws2' }); });
         await settle(30);
         await act(async () => { release(); });
@@ -539,7 +539,7 @@ describe('(5) pill / footer / Mark complete agree with the results area', () => 
         h.failStats = 'dataset not loaded';
         await mountBuildModel();
         expect(screen.getByTestId('results-error').textContent).toMatch(/dataset not loaded/);
-        expect(screen.getByText('↻ Re-train')).toBeTruthy();
+        expect((screen.getByTestId('train-sensor') as HTMLButtonElement).disabled).toBe(false); // ready to (re-)train
         expect(footerStatus()).not.toBe('Check the chart, then mark it complete');
         expect(markCompleteBtn().disabled).toBe(true);
     });
@@ -575,7 +575,7 @@ describe('(5) pill / footer / Mark complete agree with the results area', () => 
         await markCompleteFromHealthPage('relationship');
         expect(pill()).toBe('Complete');
         expect(screen.queryByText('▶ Train model')).toBeNull();
-        expect(screen.queryByText('↻ Re-train')).toBeNull();
+        expect((screen.getByTestId('train-sensor') as HTMLButtonElement).disabled).toBe(true); // Complete = up to date
 
         await markIncompleteFromHealthPage();
         expect(pill()).toBe('Trained');
@@ -589,7 +589,7 @@ describe('(5) pill / footer / Mark complete agree with the results area', () => 
         expect(document.querySelector('[data-testid="results-stale"], [data-testid="results-chart"][data-stale="true"]')).toBeTruthy();
         expect(pill()).toBe('Incomplete');
         expect(markCompleteBtn().disabled).toBe(true);
-        await act(async () => { fireEvent.click(screen.getByText('↻ Re-train')); });
+        await act(async () => { fireEvent.click(screen.getByTestId('train-sensor')); });
         await settle(30);
         expect(diskFresh('r1')).toBe(true);
         expect(markCompleteBtn().disabled).toBe(false);

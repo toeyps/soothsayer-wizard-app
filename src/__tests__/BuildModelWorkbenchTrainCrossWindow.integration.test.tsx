@@ -191,7 +191,7 @@ const dropBuildModelBroadcasts = () => {
 
 async function trainTag1() {
     selectTag1();
-    await act(async () => { fireEvent.click(bmw().getByText('▶ Train model')); });
+    await act(async () => { fireEvent.click(bmw().getByTestId('train-sensor')); });
     await settle(30);
     expect(diskFresh('i1')).toBe(true);
     expect(pill()).toBe('Trained');
@@ -283,7 +283,7 @@ describe('Workbench training metadata vs. a stale Dashboard mirror', () => {
         await mountBoth();
         selectTag1();
         expect(bmw().getByTestId('results-stale')).toBeTruthy();
-        expect(bmw().getByText('↻ Re-train')).toBeTruthy();
+        expect((bmw().getByTestId('train-sensor') as HTMLButtonElement).disabled).toBe(false); // stale = ready to re-train
     });
 
     it('a running-condition change broadcast by ANOTHER window reaches the Workbench\'s fingerprint immediately (no stale in-memory condition)', async () => {

@@ -75,6 +75,9 @@ export interface HealthScorePageProps extends WorkbenchPageProps {
     filesOutOfDate: boolean;
     /** "Re-train to recompute" (Relationship fit gone from memory). */
     onRetrain: () => void;
+    /** Why the Re-train buttons cannot train now (a training run is active, or
+     *  the data is out of date); absent = enabled. */
+    retrainDisabledReason?: string;
     /** The error banner's Retry: ask `compute_health_preview` again. */
     onRetryPreview?: () => void;
     /** The `test_scoring_failed` notice's "Try again": same, but also tells Rust to

@@ -246,16 +246,30 @@ describe('compute_health_preview traffic', () => {
 // ---------------------------------------------------------------------------
 
 describe('errors from Rust', () => {
-    it('NOT_FITTED (Relationship fit dropped from Rust memory) -> "Re-train to recompute" on both pages; Re-train recovers', async () => {
+    // Phase 4 review: a NOT_FITTED fit (e.g. evicted from Rust's fit cache during a long Train all) is
+    // re-fitted automatically ONCE per model + fingerprint; losing the same fit again offers Re-train.
+    it('NOT_FITTED (Relationship fit dropped from Rust memory): re-fitted once automatically; a second loss -> "Re-train to recompute" on both pages; Re-train recovers', async () => {
         writeDisk(trainedWs());
         await mountWindows();
         selectSensor('tag1');
         selectKindTab('Relationship');
         await waitForCharts();
         await openHealth();
-        env.backend!.clearRelCache(); // e.g. a special sensor it used was replaced
+        const fits = () => env.backend!.cmds('preview_relationship_model').filter(c => c.args.cache_key).length;
+        const before = fits();
+        env.backend!.clearRelCache(); // e.g. evicted, or a special sensor it used was replaced
         await enterSp({ 'sp-residual_at_0_upper': '11' });
+        await settle(400);
+        await settle(400);
+        await waitFor(() => expect(bmw().getByTestId('check-valid')).toBeTruthy());
+        expect(fits()).toBe(before + 1); // the automatic re-fit (nothing persisted, status untouched)
+        expect(bmw().queryByTestId('health-not-fitted')).toBeNull();
+        // The same fit lost again: no automatic loop — the user is offered Re-train.
+        env.backend!.clearRelCache();
+        await enterSp({ 'sp-residual_at_0_upper': '12' });
         await waitFor(() => expect(bmw().getByTestId('health-not-fitted')).toBeTruthy());
+        await settle(400);
+        expect(fits()).toBe(before + 1);
         expect(markBtn().disabled).toBe(true);
         expect(bmw().getByTestId('mark-block-reason').textContent).toMatch(/Re-train first/);
         // the Model fit page says the same
@@ -449,7 +463,9 @@ describe('Mark complete: races and failures', () => {
     // only checks "trained and fresh" against the disk (healthPersist.ts), not that the
     // disk model still has the fingerprint that was exported, so a re-train during the
     // ~15 s Relationship export (the Model fit page and Re-train stay usable) passes.
-    it('BUG: a Relationship model re-configured and re-trained during its export does NOT end up Complete with the old files', async () => {
+    // Phase 4 review (coordinator decision): a model whose Mark complete is writing its files cannot be
+    // trained meanwhile ("being saved") — so the re-train half of this race is now refused up front.
+    it('BUG: a Relationship model re-configured during its export does NOT end up Complete with the old files, and cannot be re-trained until the export ends', async () => {
         writeDisk(trainedWs());
         await mountWindows();
         selectSensor('tag1');
@@ -466,14 +482,18 @@ describe('Mark complete: races and failures', () => {
         openSettings();
         fireEvent.click(bmw().getByRole('button', { name: 'Strict' }));
         await saveChanges();
-        await train();
-        expect(pill()).toBe('Trained');
+        // Train is refused while the files are being written (one sidecar call at a time).
+        fireEvent.click(bmw().getByTestId('train-sensor-menu-toggle'));
+        const only = bmw().getByTestId('train-menu-only-relationship') as HTMLButtonElement;
+        expect(only.disabled).toBe(true);
+        expect(only.textContent).toContain("Can't train — being saved");
         await act(async () => { g.release(); });
         await settle(150);
         const m = diskModel('r1');
-        expect(`r1::${m.trainedFingerprint}`).not.toBe(exportedKey); // the model really changed
+        expect(`r1::${m.trainedFingerprint}`).toBe(exportedKey); // not re-trained meanwhile
+        expect(m.relStiffness).toBe(1_000_000); // the Strict edit was saved (the model really changed)
         expect(m.status).toBe(false); // the files carry the OLD settings
-        expect(bmwEl().textContent).toMatch(/settings changed while its files were being written/);
+        expect(bmwEl().textContent).toMatch(/not marked complete/);
     });
 
     // FIXED 2026-10-04 (was `it.fails`): the WHOLE Mark-complete run is registered (`markRunsRef`) and both close paths wait for it.

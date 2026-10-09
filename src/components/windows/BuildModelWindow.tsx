@@ -49,6 +49,10 @@ import { buildCheckLines, healthVerdict, sameSetPoints, verdictOfIssues, type He
 import type { SaveInfo, WorkbenchPage } from "./workbench/workbenchTypes";
 import { TestedPill } from "./workbench/ValidationCards";
 import { isPickerSurfaceOpen } from "../sensor/SensorPicker";
+import { CloseRunDialog, LockedSettingsHeader, QueuedCard, RunSetPointsBanner, RunStrip, SensorTrainButton, TrainAllBar, TrainAllModal, type TrainGroupInfo, type TrainMenuItem, type TrainReasonTone, type TrainRowModel } from "./workbench/TrainQueueParts";
+import { useTrainQueue } from "../../hooks/useTrainQueue";
+import type { TrainCandidate, TrainFixTarget, TrainOutcome } from "../../types/trainQueue";
+import { classifyTrainPlan, countTrainPlans, formatTrainSeconds, isStaleTrainError, preflightReason, ROUGH_TRAIN_SECONDS, roughTrainSeconds, trainButtonsBlockedReason, TRAIN_NEEDS_RUNNING_CONDITION, TRAIN_STALE_MESSAGE } from "../../utils/trainQueue";
 
 /** How long a test-scoring Relation-model preview must have been loading before
  *  the "this can take up to ~15 s" hint shows (cached re-scores finish sooner). */
@@ -122,9 +126,14 @@ function allSensorGroups(models: FailureModel[]): SensorModelGroup[] {
 }
 
 type LeftGroupBy = 'fg' | 'component';
-type SidebarFilter = 'all' | 'attn' | 'done';
+type SidebarFilter = 'all' | 'attn' | 'done' | 'sp';
 
 const LEGACY_BADGE = 'Legacy · all data';
+
+/** The sensor a model belongs to (its Target, or X for Clustering). */
+const modelTagOf = (m: FailureModel): string => (m.kind === 'clustering' ? m.xSensor : m.targetSensor) ?? '';
+/** Placeholder plan for rows the run strip / close dialog only label (they never read it). */
+const LABEL_ONLY_PLAN = { kind: 'ready' } as const;
 
 /** Gate badge (approved mockup rc-gate.html): "Legacy · all data" is a neutral
  *  grey pill (the model stays Complete, nothing is wrong); every blocking
@@ -217,6 +226,14 @@ const NO_PREDICTORS: string[] = [];
 /** Shown when a Train finds the dataset replaced since this window opened. */
 const DATASET_CHANGED_MESSAGE = 'The dataset changed since this window was opened — close it and reopen Build Model from the Dashboard.';
 const DUPLICATE_NAME_BLOCK_REASON = 'Model name is already used by another model of this sensor';
+/** Mark complete, Compare predictors and the Re-train buttons while a training
+ *  run is active: one Relation-model sidecar call at a time (coordinator
+ *  decision, phase 4 review). */
+const TRAIN_RUN_ACTIVE_REASON = 'Wait for the training run to finish';
+/** A model whose Mark complete is writing its files is not trained meanwhile. */
+const BEING_SAVED_REASON = 'being saved';
+/** The close notice when "Stop after this model and close" gave up waiting. */
+const RUN_CLOSE_WAIT_NOTICE = 'Still training a model — the window stays open so nothing is cut off half-way. Close it again to leave without waiting.';
 const KIND_LABEL: Record<ModelKind, string> = {
     individual: 'Individual',
     relationship: 'Relationship',
@@ -492,6 +509,42 @@ export default function BuildModelWindow() {
      *  close attempt does not wait for it again. */
     const closeWaitGivenUpRef = useRef(false);
     const [closeNotice, setCloseNotice] = useState<string | null>(null);
+
+    // ---- Train sensor / Train all with a queue (customer batch 2026-10, items 8 + 9) ----
+    // `useTrainQueue` runs models strictly one at a time through `trainForQueue`
+    // (defined further down, it needs the window's train rules). The hook reads
+    // `train` through its own ref, so this indirection only exists because the
+    // hook has to be called before those functions are defined.
+    const queueTrainRef = useRef<(id: string) => Promise<TrainOutcome>>(async () => ({ ok: false, abandoned: true }));
+    const queue = useTrainQueue({ train: id => queueTrainRef.current(id), scopeKey: workspaceId });
+    /** For handlers registered once (the native close). */
+    const queueRef = useRef(queue);
+    queueRef.current = queue;
+    /** Stable (useCallback inside the hook) — safe in the once-registered listeners below. */
+    const queueReset = queue.reset;
+    /** Train all modal: `preflight`, or the current / last run's details (`run`). */
+    const [trainAllView, setTrainAllView] = useState<null | 'preflight' | 'run'>(null);
+    const [includeUpToDate, setIncludeUpToDate] = useState(false);
+    /** The close-during-a-run dialog is open. */
+    const [closeAsk, setCloseAsk] = useState(false);
+    /** The silent auto-recompute in flight (a run waits for it: one sidecar call at a time). */
+    const autoRecomputeRef = useRef<Promise<unknown> | null>(null);
+    /** The header's Train sensor button (the footer's "Train sensor ↑" focuses it). */
+    const trainSensorBtnRef = useRef<HTMLButtonElement>(null);
+    /** Close WITHOUT the run dialog: the Dashboard said this workspace is closing
+     *  (`workspace-closing`), or "Stop after this model and close" gave up waiting. */
+    const closeBypassRef = useRef(false);
+    /** "Stop after this model and close" is already waiting (double-click guard). */
+    const stopClosingRef = useRef(false);
+    /** Mirror of `closeAsk` for the once-registered `workspace-closing` listener. */
+    const closeAskRef = useRef(false);
+    closeAskRef.current = closeAsk;
+    /** Relationship models whose fit Rust no longer holds (NOT_FITTED seen this
+     *  session, e.g. evicted from the fit cache during a long run): planned as
+     *  ready again until a train of them succeeds. */
+    const [notFittedIds, setNotFittedIds] = useState<ReadonlySet<string>>(() => new Set());
+    /** `id::fingerprint` already re-fitted automatically after a NOT_FITTED (once each). */
+    const refitTriedRef = useRef<Set<string>>(new Set());
     /** Models whose first-open set-point snapshot was already written (once per model). */
     const setPointsSeededRef = useRef<Set<string>>(new Set());
 
@@ -790,7 +843,19 @@ export default function BuildModelWindow() {
                 // wait for it (`flushAllPending`); model ids are unique across workspaces, so
                 // keeping them cannot block a model of the new one.
                 closeWaitGivenUpRef.current = false;
+                // A `workspace-closing` for the old workspace set the bypass; the new
+                // workspace's runs must ask before closing again.
+                closeBypassRef.current = false;
+                stopClosingRef.current = false;
                 setCloseNotice(null);
+                // The run belonged to the old workspace: drop it (a train still in
+                // flight finishes, but its result is ignored — see `executeTrain`).
+                queueReset();
+                setNotFittedIds(new Set());
+                refitTriedRef.current = new Set();
+                setTrainAllView(null);
+                setIncludeUpToDate(false);
+                setCloseAsk(false);
             }
             setGeneration(d.metadata?.generation);
             setAllSensors(d.sensorHeaders);
@@ -856,7 +921,7 @@ export default function BuildModelWindow() {
             offData();
             offChanged();
         };
-    }, [applyFg, trackPending, writeSpDrafts, commitSetPointDrafts]);
+    }, [applyFg, trackPending, writeSpDrafts, commitSetPointDrafts, queueReset]);
 
     // Returns the write's promise (also tracked via `trackPending`, so a
     // window close can await it) rather than being fire-and-forget itself.
@@ -875,6 +940,9 @@ export default function BuildModelWindow() {
                 // write changed goes back to Incomplete in the SAME write.
                 return applyIncompleteRule(prev, withFailureGroupState(prev, { groups: result.groups, models: result.models }));
             });
+            // Re-pointed at another workspace meanwhile: the write landed in ITS
+            // workspace; this window now shows another one — touch nothing here.
+            if (workspaceIdRef.current !== workspaceId) return;
             if (next?.failureGroupState) {
                 applyFg(next.failureGroupState);
                 await emit('failure-group-state-changed', { ...next.failureGroupState, workspaceId, origin: 'build-model' });
@@ -1160,9 +1228,9 @@ export default function BuildModelWindow() {
     };
 
     // `commitModel` returns the `persist()` promise (rather than firing it and
-    // forgetting) so `runTrainClick` can await the write landing on disk first.
+    // forgetting) so `trainForQueue` can await the write landing on disk first.
     /** The persistable fields a model's draft would write on Save — factored
-     *  out of `commitModel` so `runTrainClick` (Phase B) can compute the exact
+     *  out of `commitModel` so `trainForQueue` (Phase B) can compute the exact
      *  same merged-with-draft model to train against, without waiting for a
      *  `persist()` round-trip + re-render to see the fresh values.
      *  🆕 2026-09-30: the custom running-condition editor fields are common
@@ -1267,14 +1335,14 @@ export default function BuildModelWindow() {
 
     /** The model Train/staleness checks should actually judge RIGHT NOW: the
      *  persisted model, merged with any pending (unsaved) draft edit for it —
-     *  same merge `runTrainClick` commits on an actual Train. A draft change
+     *  same merge `trainForQueue` commits on an actual Train. A draft change
      *  to a fingerprinted field (stiffness, predictors, Y, cluster settings,
      *  Workspace/Custom, …) must make the results area go stale and disable
      *  Mark complete IMMEDIATELY, not only after Save/Train (QA fix,
      *  2026-09-29 — "an unsaved draft edit after training leaves the old
      *  chart up and Mark complete enabled"). The persisted
      *  `trainedFingerprint` write itself only ever happens through
-     *  `runTrainClick`/`executeTrain`, never from this. */
+     *  `trainForQueue`/`executeTrain`, never from this. */
     const effectiveModelFor = (m: FailureModel): FailureModel =>
         m.id in drafts ? { ...m, ...draftFields(m, draftOf(m)) } : m;
 
@@ -1354,7 +1422,7 @@ export default function BuildModelWindow() {
      *  model (session-only — nothing to persist, the fingerprint hasn't
      *  changed). `merged` carries the exact inputs used, so a Train click can
      *  pass the just-committed draft values without waiting for this
-     *  window's state to re-render first (see `runTrainClick`). */
+     *  window's state to re-render first (see `trainForQueue`). */
     /** `true` when the Rust dataset is no longer the one this window was opened on. */
     const datasetChangedSinceOpen = async (): Promise<boolean> => {
         if (generation === undefined) return false;
@@ -1365,7 +1433,12 @@ export default function BuildModelWindow() {
             return false;
         }
     };
-    const executeTrain = async (merged: FailureModel, fingerprint: string, opts: { persistMeta: boolean }): Promise<void> => {
+    /** Returns its outcome for the train queue (`useTrainQueue`) while still
+     *  setting `trainError` for the window's own UI: `{ ok: true }`, a failure
+     *  (`stale` when the dataset is no longer this window's — the run then
+     *  stops), or `abandoned` when the window was re-pointed at another
+     *  workspace meanwhile. */
+    const executeTrain = async (merged: FailureModel, fingerprint: string, opts: { persistMeta: boolean }): Promise<TrainOutcome> => {
         const id = merged.id;
         // 🆕 QA fix (2026-09-29): a Train can still be running when this
         // window gets re-pointed at a different workspace (`build-model-data`
@@ -1396,6 +1469,7 @@ export default function BuildModelWindow() {
             // before AND after (diagnostic `get_session_generation`; unavailable /
             // unknown = no check).
             if (await datasetChangedSinceOpen()) throw new Error(DATASET_CHANGED_MESSAGE);
+            if (workspaceIdRef.current !== capturedWorkspaceId) return { ok: false, abandoned: true };
             const eff = effectiveRunningCondition(merged, gateFg);
             const filter = buildPreviewFilterPayload(eff, gateHeaders);
             let result: TrainResult;
@@ -1437,9 +1511,9 @@ export default function BuildModelWindow() {
                 });
                 result = { kind: 'clustering', preview: r };
             }
-            if (workspaceIdRef.current !== capturedWorkspaceId) return; // abandoned — see comment above
+            if (workspaceIdRef.current !== capturedWorkspaceId) return { ok: false, abandoned: true }; // abandoned — see comment above
             if (await datasetChangedSinceOpen()) throw new Error(DATASET_CHANGED_MESSAGE);
-            if (workspaceIdRef.current !== capturedWorkspaceId) return;
+            if (workspaceIdRef.current !== capturedWorkspaceId) return { ok: false, abandoned: true };
             setTrainResults(prev => ({ ...prev, [id]: { fingerprint, result } }));
             setTrainStatus(prev => {
                 const rest = { ...prev };
@@ -1447,9 +1521,21 @@ export default function BuildModelWindow() {
                 return rest;
             });
             // The Relationship fit is now in Rust's cache under this key: make the
-            // health preview (re)fetch even if its request is byte-identical.
-            setHealthRevision(r => r + 1);
+            // health preview (re)fetch even if its request is byte-identical. Only
+            // for the model on screen (the one preview there is): a training run
+            // must not refetch the open model's charts after every OTHER model.
+            if (activeModelIdRef.current === id) setHealthRevision(r => r + 1);
             if (opts.persistMeta) {
+                // An explicit train re-filled the fit: no longer "fit gone", and a later
+                // NOT_FITTED of this model may be re-fitted automatically again. (A silent
+                // re-fit clears the mark only once its preview loads — see the effect below.)
+                setNotFittedIds(prev => {
+                    if (!prev.has(id)) return prev;
+                    const rest = new Set(prev);
+                    rest.delete(id);
+                    return rest;
+                });
+                for (const k of [...refitTriedRef.current]) if (k.startsWith(`${id}::`)) refitTriedRef.current.delete(k);
                 await persist((models, groups) => ({
                     groups,
                     // `status: false` too: a (re-)train always lands the model in
@@ -1466,8 +1552,9 @@ export default function BuildModelWindow() {
                     }),
                 }));
             }
+            return { ok: true };
         } catch (e) {
-            if (workspaceIdRef.current !== capturedWorkspaceId) return; // abandoned — see comment above
+            if (workspaceIdRef.current !== capturedWorkspaceId) return { ok: false, abandoned: true }; // abandoned — see comment above
             setTrainStatus(prev => {
                 const rest = { ...prev };
                 delete rest[id];
@@ -1477,6 +1564,11 @@ export default function BuildModelWindow() {
             const parsed = parseHealthError(e);
             const message = parsed.code === 'SIDECAR_OUTDATED' ? parsed.message : (e instanceof Error ? e.message : String(e));
             setTrainError(prev => ({ ...prev, [id]: message }));
+            // The train commands never answer STALE_SESSION themselves: the real
+            // "this data is not ours any more" signal is the generation check above
+            // (DATASET_CHANGED_MESSAGE). Either one stops a run.
+            const stale = message === DATASET_CHANGED_MESSAGE || parsed.code === 'STALE_SESSION' || isStaleTrainError(message);
+            return stale ? { ok: false, error: message, stale: true } : { ok: false, error: message };
         }
     };
 
@@ -1500,16 +1592,57 @@ export default function BuildModelWindow() {
         delete rest[modelId];
         return rest;
     });
-    const runTrainClick = async (m: FailureModel) => {
-        if (buildBlockReason(m) !== null) return;
-        if (trainStatus[m.id] === 'loading') return;
+    /** The ONE per-model train every Train control goes through — called by the
+     *  train queue (`useTrainQueue`), one model at a time, never two at once
+     *  (one shared Rust session, one sidecar). Looks the model up fresh (it may
+     *  have been deleted, or its settings / the gate changed since the run
+     *  started: then it is SKIPPED, not failed). Commits a pending draft FIRST
+     *  (`commitModel`), so what gets trained and fingerprinted is exactly what
+     *  is saved; with no draft pending, the persisted model is trained
+     *  untouched (QA fix 2026-09-29: re-deriving fields from an empty draft
+     *  could fingerprint a value that is not what is stored). */
+    const trainForQueue = async (id: string): Promise<TrainOutcome> => {
+        // Captured BEFORE any await: a re-point while waiting abandons this model.
+        const ws = workspaceIdRef.current;
+        // The silent auto-recompute may still be running: wait, never two sidecar calls at once.
+        if (autoRecomputeRef.current) await autoRecomputeRef.current.catch(() => undefined);
+        if (workspaceIdRef.current !== ws) return { ok: false, abandoned: true };
+        const m = allModels.find(x => x.id === id);
+        if (!m) return { ok: false, skip: 'the model no longer exists' };
+        if (completeRunningRef.current.has(id)) return { ok: false, skip: BEING_SAVED_REASON };
+        const block = buildBlockReason(m);
+        if (block !== null) {
+            return { ok: false, skip: preflightReason(block, { missing: missingItems(m), customMode: draftOf(m).runningConditionMode === 'custom' }).text };
+        }
         if (saveInfo[m.id]?.phase === 'error') dismissSaveInfo(m.id);
         const hasDraft = m.id in drafts;
         const merged = effectiveModelFor(m); // = m untouched when no draft is pending
         if (hasDraft) await commitModel(m);
-        const fingerprint = computeTrainFingerprint(merged, gateFg);
-        await executeTrain(merged, fingerprint, { persistMeta: true });
+        if (workspaceIdRef.current !== ws) return { ok: false, abandoned: true };
+        return executeTrain(merged, computeTrainFingerprint(merged, gateFg), { persistMeta: true });
     };
+    queueTrainRef.current = trainForQueue;
+
+    /** A model's plan for a run right now (`classifyTrainPlan`: the window's own
+     *  block rule + the ONE status rule; a failed run this session = ready again). */
+    const candidateOf = (m: FailureModel): TrainCandidate => ({
+        id: m.id,
+        kind: m.kind,
+        // Mark complete is writing this model's files (a Relation model re-runs the sidecar): skipped.
+        plan: saveInfo[m.id]?.phase === 'running'
+            ? { kind: 'missing', reason: BEING_SAVED_REASON, fix: 'settings' }
+            : classifyTrainPlan({
+                blockReason: buildBlockReason(m),
+                dotState: modelDotState(effectiveModelFor(m), gateFg, gateHeaders),
+                // A failed run this session, or a Relation-model fit Rust no longer holds: ready again.
+                hasSessionError: !!trainError[m.id] || notFittedIds.has(m.id)
+                    || (activeModel?.id === m.id && healthPreview.notFitted),
+                missing: missingItems(m),
+                customMode: draftOf(m).runningConditionMode === 'custom',
+            }),
+    });
+    /** Re-train / Try again / the ▾ menu's "Train only…": exactly this model, up to date or not. */
+    const trainOnly = (m: FailureModel) => { queue.start([candidateOf(m)], { includeUpToDate: true, source: 'subset' }); };
 
     // (`NOT_TRAINED_BLOCK_REASON` — the text shown, and the reason
     // `runMarkComplete` blocks on, when the gate passes but the model is not
@@ -1571,8 +1704,9 @@ export default function BuildModelWindow() {
             ?? markCompleteBlockReason(model, fg)
             ?? (trainedFreshFor(model, fg) ? null : (isModelStaleFor(model, fg) ? 'Settings changed — re-train first.' : NOT_TRAINED_BLOCK_REASON));
         if (notAllowed !== null) return fail(notAllowed);
+        if (queueRef.current.isRunningNow()) return fail(TRAIN_RUN_ACTIVE_REASON);
         // Unsaved Model-settings edits (e.g. a Custom model's test periods) are SAVED
-        // first, like Train does (`runTrainClick`): the files describe `model` (the
+        // first, like Train does (`trainForQueue`): the files describe `model` (the
         // draft-merged one) and the save below re-checks the test periods and the
         // fingerprint against the DISK, so exporting a draft that never reached the
         // disk would write the files and then refuse the save on every retry. A
@@ -1659,11 +1793,51 @@ export default function BuildModelWindow() {
     // Condition period date (blur/Enter-committed only, see that function's
     // own comment) is forced to commit — and lands in `pendingSaveRef` below
     // — even if this button click didn't happen to blur it naturally first.
-    const handleClose = async () => {
+    /** The close itself: flush every pending write (and wait for a running Mark
+     *  complete, capped), then close. */
+    const closeNow = async () => {
         flushFocusedInput();
         // `false` = a running save did not finish in time: the window stays open (notice shown).
         if (!(await flushAllPending())) return;
-        await getCurrentWindow().close();
+        try {
+            await getCurrentWindow().close();
+        } catch {
+            // A second close of a window that is already closing: nothing to do.
+        }
+    };
+    const closeNowRef = useRef(closeNow);
+    closeNowRef.current = closeNow;
+    /** A training run is active and nothing allows closing past it: ask first. */
+    const mustAskBeforeClose = (): boolean => queueRef.current.isRunningNow() && !closeBypassRef.current;
+    const handleClose = async () => {
+        // In-window dialog, "Keep training" is the default.
+        if (mustAskBeforeClose()) { setCloseAsk(true); return; }
+        await closeNow();
+    };
+    /** The close dialog's "Stop after this model and close": the run ends after the
+     *  model in training (a sidecar call is never cut off), then the usual close.
+     *  The wait is capped like the Mark complete wait: a hung sidecar gives up with
+     *  a notice, and the NEXT close goes through without the dialog. */
+    const stopRunAndClose = async () => {
+        setCloseAsk(false);
+        if (stopClosingRef.current) return;
+        stopClosingRef.current = true;
+        try {
+            queue.stopAfterCurrent('close');
+            let timer: ReturnType<typeof setTimeout> | undefined;
+            const idle = queue.whenIdle().then(() => true);
+            const gaveUp = new Promise<boolean>(resolve => { timer = setTimeout(() => resolve(false), MARK_COMPLETE_CLOSE_WAIT.ms); });
+            const finished = await Promise.race([idle, gaveUp]);
+            if (timer) clearTimeout(timer);
+            if (!finished) {
+                closeBypassRef.current = true;
+                setCloseNotice(RUN_CLOSE_WAIT_NOTICE);
+                return;
+            }
+            await closeNow();
+        } finally {
+            stopClosingRef.current = false;
+        }
     };
 
     // 🆕 2026-09-29 [data-loss fix]: a native close (the window's own X
@@ -1680,6 +1854,13 @@ export default function BuildModelWindow() {
             // bypass a period edit that never naturally blurred. Read
             // `pending` AFTER this, not before, so a write this
             // call itself just kicked off is included below.
+            // A training run is active: keep the window and ask (in-window alertdialog) —
+            // unless the workspace is closing or an earlier "stop and close" gave up.
+            if (queueRef.current.isRunningNow() && !closeBypassRef.current) {
+                event.preventDefault();
+                setCloseAsk(true);
+                return;
+            }
             flushFocusedInput();
             // A set-point draft typed but never blurred is a pending write too.
             void commitSetPointDrafts();
@@ -1693,6 +1874,28 @@ export default function BuildModelWindow() {
         return () => { disposed = true; if (unlisten) unlisten(); };
     }, [flushAllPending, commitSetPointDrafts]);
 
+    // The Dashboard that opened this window is going away (Back to Import / another
+    // project): it closes this window right after. A run would hold that close
+    // (the dialog above), so the window would outlive its project. Drop the run and
+    // close without asking. Scoped to this window's workspace and dataset — a late
+    // copy for an earlier project must not close a window already re-pointed.
+    const generationRef = useRef<number | undefined>(undefined);
+    generationRef.current = generation;
+    useEffect(() => {
+        const off = subscribe<{ workspaceId?: string; generation?: number }>('workspace-closing', (event) => {
+            if (!workspaceIdRef.current || event.payload?.workspaceId !== workspaceIdRef.current) return;
+            const g = event.payload?.generation;
+            if (typeof g === 'number' && generationRef.current !== undefined && g !== generationRef.current) return;
+            const wasHeld = queueRef.current.isRunningNow() || closeAskRef.current;
+            closeBypassRef.current = true;
+            queueReset();
+            setCloseAsk(false);
+            // A close that already arrived was held by the dialog: close now.
+            if (wasHeld) void closeNowRef.current();
+        });
+        return () => off();
+    }, [queueReset]);
+
     // Hoisted above the `if (loading)` guard (and therefore above every hook
     // below it) so `individualChartQuery`/the auto-recompute effect can read
     // `activeModel` — every hook in this component must run unconditionally
@@ -1705,6 +1908,9 @@ export default function BuildModelWindow() {
     const detailModels = selectedSensorKey !== null ? (fullSensorMap.get(selectedSensorKey)?.models ?? []) : [];
     const orderedDetail = KIND_ORDER.flatMap(k => detailModels.filter(m => m.kind === k));
     const activeModel = orderedDetail.find(m => m.id === activeTab[selectedSensorKey ?? '']) ?? orderedDetail[0];
+    /** The model on screen, for code that finishes after an await (`executeTrain`). */
+    const activeModelIdRef = useRef<string | null>(null);
+    activeModelIdRef.current = activeModel?.id ?? null;
 
     // ---- Auto-recompute on reopen (Phase B, per explicit user decision) ---
     // A model that is already Trained-and-fresh (per the WORKSPACE'S
@@ -1728,9 +1934,14 @@ export default function BuildModelWindow() {
         const cached = trainResults[activeModel.id];
         if (cached && cached.fingerprint === fp) return;
         if (trainStatus[activeModel.id] === 'loading') return;
-        void executeTrain(activeModel, fp, { persistMeta: false });
+        // A training run owns the sidecar: two calls must never run at once. The
+        // effect runs again when the run ends (`queue.isRunning` is a dependency).
+        if (queue.isRunning) return;
+        const p = executeTrain(activeModel, fp, { persistMeta: false });
+        autoRecomputeRef.current = p;
+        void p.finally(() => { if (autoRecomputeRef.current === p) autoRecomputeRef.current = null; });
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [activeModel?.id, activeModel?.trainedFingerprint, activeModel?.lastTrainedAt, activeModel?.status, activeModel?.category, runningConditionFilters, runningConditionCombine, runningConditionTimePeriods, runningConditionNoneConfirmed]);
+    }, [activeModel?.id, activeModel?.trainedFingerprint, activeModel?.lastTrainedAt, activeModel?.status, activeModel?.category, runningConditionFilters, runningConditionCombine, runningConditionTimePeriods, runningConditionNoneConfirmed, queue.isRunning, activeModel ? trainResults[activeModel.id]?.fingerprint : undefined]);
 
     // ---- Health preview + Sub-models for the ACTIVE model (health score 3b-1) ----
     // ONE `useHealthPreview` call feeds both pages of the detail pane: the bounded
@@ -1775,6 +1986,37 @@ export default function BuildModelWindow() {
     // periods changed) — say so, but only once it has been loading for a moment:
     // set-point typing re-scores from Rust's cache in well under a second and must
     // not flash the hint.
+    // The Relation-model fit is no longer in Rust's cache (NOT_FITTED — e.g. evicted
+    // during a long Train all): forget the session result, so the auto-recompute
+    // above re-fits it once no run is active (once per model and fingerprint), and
+    // plan it as ready for Train sensor / Train all meanwhile.
+    useEffect(() => {
+        if (!activeModel || !healthPreview.notFitted) return;
+        const id = activeModel.id;
+        setNotFittedIds(prev => (prev.has(id) ? prev : new Set(prev).add(id)));
+        const key = `${id}::${activeFingerprint}`;
+        if (refitTriedRef.current.has(key)) return;
+        refitTriedRef.current.add(key);
+        setTrainResults(prev => {
+            if (!(id in prev)) return prev;
+            const rest = { ...prev };
+            delete rest[id];
+            return rest;
+        });
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [activeModel?.id, healthPreview.notFitted, activeFingerprint]);
+    // ...and the mark goes once the preview of that model loads again.
+    useEffect(() => {
+        if (!activeModel || !healthPreview.data || healthPreview.notFitted || healthPreview.loading) return;
+        const id = activeModel.id;
+        setNotFittedIds(prev => {
+            if (!prev.has(id)) return prev;
+            const rest = new Set(prev);
+            rest.delete(id);
+            return rest;
+        });
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [activeModel?.id, healthPreview.data, healthPreview.notFitted, healthPreview.loading]);
     const scoringTestsNow = !!activeEffective && activeEffective.kind === 'relationship' && healthPreview.loading
         && testPeriodsWireFor(activeEffective, gateFg) !== undefined;
     const slowScoring = useDelayedFlag(scoringTestsNow, SLOW_SCORING_HINT_DELAY_MS);
@@ -2025,18 +2267,135 @@ export default function BuildModelWindow() {
         return () => window.removeEventListener('keydown', onKey, true);
     }, [rcFilterOpen, requestCloseRc]);
 
+    // ---- Train queue: stable props for the memoised parts ----
+    // A run updates the window ~3 times per model. The run strip (`RunStrip`) and
+    // the Model fit charts (`ModelFitPage`) are memoised, so their props must not
+    // change identity on those renders: labels come from a memo over `allModels`,
+    // and the callbacks forward to `actionsRef`, refreshed on every render.
+    const runRowsById = useMemo(
+        () => new Map<string, TrainRowModel>(allModels.map(m => [m.id, { id: m.id, kind: m.kind, tag: modelTagOf(m), groupNos: m.groupNos, plan: LABEL_ONLY_PLAN }])),
+        [allModels],
+    );
+    const actionsRef = useRef<{
+        runDetails: () => void;
+        runCancel: () => void;
+        runDismiss: () => void;
+        runCloseWindow: () => void;
+        runNotStarted: () => void;
+        fitX: (tag: string) => void;
+        compare: () => void;
+        spChange: (next: HealthSetPoints, commit?: boolean) => void;
+        spCommit: () => void;
+        retrain: () => void;
+    } | null>(null);
+    const onRunDetails = useCallback(() => actionsRef.current?.runDetails(), []);
+    const onRunCancel = useCallback(() => actionsRef.current?.runCancel(), []);
+    const onRunDismiss = useCallback(() => actionsRef.current?.runDismiss(), []);
+    const onRunCloseWindow = useCallback(() => actionsRef.current?.runCloseWindow(), []);
+    const onRunNotStarted = useCallback(() => actionsRef.current?.runNotStarted(), []);
+    const onFitX = useCallback((tag: string) => actionsRef.current?.fitX(tag), []);
+    const onCompare = useCallback(() => actionsRef.current?.compare(), []);
+    const onSpChange = useCallback((next: HealthSetPoints, commit?: boolean) => actionsRef.current?.spChange(next, commit), []);
+    const onSpCommit = useCallback(() => actionsRef.current?.spCommit(), []);
+    const onRetrainActive = useCallback(() => actionsRef.current?.retrain(), []);
+
     if (loading) {
         return <div style={{ background: 'var(--card-bg)', height: '100vh' }} />;
     }
+
+    const periodStatus = validatePeriods(runningConditionTimePeriods);
+    // Step-1 card / step bar / lock message / Train buttons all read the PERSISTED condition.
+    const rcPersistedInvalid = periodStatus.some(st => st.invalid);
+    const rcStepState: RcStepState = !rcConfigured ? 'unset' : rcPersistedInvalid ? 'invalid' : 'set';
 
     const realGroups = [...allGroups].filter(g => g.no !== 0).sort((a, b) => a.no - b.no);
     const totalModelsCount = allModels.length;
     const completeModelsCount = allModels.filter(isModelDone).length;
 
+    /** The status of one model for the left list's dot / the tab pill. A failed
+     *  run of this session overrides an otherwise "trained" model. */
+    const dotStateOf = (m: FailureModel): ModelDotState => {
+        const st = modelDotState(effectiveModelFor(m), gateFg, gateHeaders);
+        return st === 'trained' && trainError[m.id] ? 'stale' : st;
+    };
+
+    // ---- Train queue (customer batch items 8 + 9) ----
+    /** Trained and up to date, not Complete yet: set points (then Mark complete) are next. */
+    const needSetPoints = (m: FailureModel): boolean => dotStateOf(m) === 'trained';
+    /** Every model in run order: by sensor, I → R → C within a sensor. */
+    const runOrder = sensorGroupsAll.flatMap(sg => KIND_ORDER.flatMap(k => sg.models.filter(m => m.kind === k)));
+    const allCandidates = runOrder.map(candidateOf);
+    const allCounts = countTrainPlans(allCandidates);
+    const trainRows: TrainRowModel[] = runOrder.map((m, i) => ({
+        id: m.id, kind: m.kind, tag: modelTagOf(m), groupNos: m.groupNos.length ? m.groupNos : [0], plan: allCandidates[i].plan,
+    }));
+    const trainGroups: TrainGroupInfo[] = [
+        ...realGroups.map(g => ({ no: g.no, name: g.name, color: FG_ACCENT[getFgGroupColor(g.no)] })),
+        { no: 0, name: '', color: FG_ACCENT[getFgGroupColor(0)] },
+    ];
+    /** Why BOTH Train buttons are disabled (shared rule). A workspace without a
+     *  running condition only blocks when nothing can train anyway (a Custom
+     *  model with its own condition can still train). */
+    const trainAllReason = trainButtonsBlockedReason({
+        stale: queue.stale,
+        runningConditionSet: rcStepState !== 'unset' || allCounts.ready > 0,
+        running: queue.isRunning,
+        readyCount: allCounts.ready,
+    });
+    const reasonToneOf = (reason: string | null): TrainReasonTone =>
+        reason === TRAIN_STALE_MESSAGE ? 'danger' : reason === TRAIN_NEEDS_RUNNING_CONDITION ? 'warn' : 'neutral';
+    /** Show a model (sensor + kind tab + page); used by Fix → / Open → / Next needing set points. */
+    const focusModel = (id: string, page: WorkbenchPage = 'model') => {
+        const m = allModels.find(x => x.id === id);
+        if (!m) return;
+        const key = modelSensorKey(m);
+        setSelectedSensorKey(key);
+        setActiveTab(prev => ({ ...prev, [key]: m.id }));
+        setPage(m, page);
+    };
+    const fixModel = (id: string, fix: TrainFixTarget) => {
+        setTrainAllView(null);
+        focusModel(id, 'model');
+        if (fix === 'settings') setSettingsOpenOverride(prev => ({ ...prev, [id]: true }));
+        else if (fix === 'runningCondition') setRcFilterOpen(true);
+    };
+    const closeTrainAll = () => setTrainAllView(null);
+    const keepTraining = () => setCloseAsk(false);
+    const startTrainAll = () => {
+        if (queue.start(allCandidates, { includeUpToDate, source: 'all' })) setTrainAllView('run');
+    };
+    const retryModels = (ids: string[]) => {
+        const ms = ids.map(id => allModels.find(m => m.id === id)).filter((m): m is FailureModel => !!m);
+        queue.start(ms.map(candidateOf), { includeUpToDate: true, source: 'retry' });
+    };
+    actionsRef.current = {
+        runDetails: () => setTrainAllView('run'),
+        runCancel: () => queue.stopAfterCurrent('cancel'),
+        runDismiss: () => { queue.dismiss(); setTrainAllView(v => (v === 'run' ? null : v)); },
+        runCloseWindow: () => { void closeNow(); },
+        runNotStarted: () => retryModels(queue.summary?.notStartedIds ?? []),
+        fitX: (tag: string) => { if (activeModel) changeScatterX(activeModel.id, tag); },
+        // One sidecar call at a time: no Sub-models comparison while a run is active.
+        compare: () => { if (!queueRef.current.isRunningNow()) openCompare(); },
+        spChange: (next: HealthSetPoints, commit?: boolean) => { if (activeModel) changeSetPoints(activeModel, next, commit); },
+        spCommit: () => { void commitSetPointDrafts(); },
+        retrain: () => { if (activeModel) trainOnly(activeModel); },
+    };
+    /** Why a Re-train button cannot train now (the model's own block, out-of-date data, a run), else undefined. */
+    const retrainBlockOf = (m: FailureModel): string | undefined =>
+        buildBlockReason(m) ?? (queue.stale ? TRAIN_STALE_MESSAGE : queue.isRunning ? TRAIN_RUN_ACTIVE_REASON : undefined);
+    /** "Set points needed" list chip: only after a run trained something here. */
+    const spCount = sensorGroupsAll.filter(sg => sg.models.some(needSetPoints)).length;
+    const showSpChip = !!queue.lastTrained && queue.lastTrained.ids.length > 0 && spCount > 0;
+    const listFilter: SidebarFilter = sidebarFilter === 'sp' && !showSpChip ? 'all' : sidebarFilter;
+
     const sensorBuildBlocked = (sg: SensorModelGroup) => sg.models.some(m => buildBlockReason(m) !== null);
     const sensorAllComplete = (sg: SensorModelGroup) => sg.models.length > 0 && sg.models.every(isModelDone);
     const matchesSidebarFilter = (sg: SensorModelGroup) =>
-        sidebarFilter === 'all' || (sidebarFilter === 'attn' ? sensorBuildBlocked(sg) : sensorAllComplete(sg));
+        listFilter === 'all' ? true
+            : listFilter === 'attn' ? sensorBuildBlocked(sg)
+            : listFilter === 'sp' ? sg.models.some(needSetPoints)
+            : sensorAllComplete(sg);
     const matchesSearch = (sg: SensorModelGroup) => {
         const q = searchQuery.trim().toLowerCase();
         if (!q) return true;
@@ -2048,13 +2407,6 @@ export default function BuildModelWindow() {
     };
     const attnCount = sensorGroupsAll.filter(sensorBuildBlocked).length;
     const doneCount = sensorGroupsAll.filter(sensorAllComplete).length;
-
-    /** The status of one model for the left list's dot / the tab pill. A failed
-     *  run of this session overrides an otherwise "trained" model. */
-    const dotStateOf = (m: FailureModel): ModelDotState => {
-        const st = modelDotState(effectiveModelFor(m), gateFg, gateHeaders);
-        return st === 'trained' && trainError[m.id] ? 'stale' : st;
-    };
 
     // One left-list row for one sensor (within one grouping bucket — the same
     // sensor can render under several Failure Group buckets when it belongs
@@ -2108,6 +2460,13 @@ export default function BuildModelWindow() {
                             >
                                 {KIND_ABBREV[m.kind]}
                                 {dot && <span data-testid={`sensor-kind-badge-dot-${m.id}`} data-state={st} className={`f4-kb-dot f4-kb-dot--${dot}`} aria-hidden="true" />}
+                                {/* Train queue: dashed ring = queued, spinner = training now. */}
+                                {queue.isRunning && queue.itemOf(m.id)?.state === 'queued' && (
+                                    <span className="tq-qring" data-testid={`sensor-kind-badge-queued-${m.id}`} title="Queued in the run" />
+                                )}
+                                {queue.isRunning && queue.itemOf(m.id)?.state === 'running' && (
+                                    <span className="tq-busy" data-testid={`sensor-kind-badge-running-${m.id}`} title="Training now"><Loader2 size={11} className="pm-spin" aria-hidden="true" /></span>
+                                )}
                             </span>
                         );
                     })}
@@ -2637,6 +2996,16 @@ export default function BuildModelWindow() {
 
     const renderModelSettings = (m: FailureModel) => {
         const d = draftOf(m);
+        // Queued or training in the run: read-only until it has trained.
+        if (queue.isLocked(m.id)) {
+            return (
+                <LockedSettingsHeader
+                    summary={settingsSummaryLine(m, d)}
+                    queued={queue.itemOf(m.id)?.state === 'queued'}
+                    onRemove={() => { queue.removeFromRun(m.id); }}
+                />
+            );
+        }
         const missing = missingItems(m);
         const isOpen = settingsOpenOverride[m.id] ?? (missing.length > 0);
         const toggle = () => setSettingsOpenOverride(prev => ({ ...prev, [m.id]: !isOpen }));
@@ -2728,6 +3097,23 @@ export default function BuildModelWindow() {
      *  otherwise the charts. */
     const renderModelFitBody = (m: FailureModel) => {
         const reason = buildBlockReason(m);
+        const qItem = queue.isRunning ? queue.itemOf(m.id) : undefined;
+        if (qItem?.state === 'queued' && queue.run) {
+            // Rough wait: the model in training + every model queued before this one.
+            const ahead: ModelKind[] = [];
+            for (const it of queue.run.items) {
+                if (it.id === m.id) break;
+                if (it.state === 'running' || it.state === 'queued') ahead.push(it.kind);
+            }
+            return (
+                <QueuedCard
+                    kind={m.kind}
+                    position={queue.queuePositionOf(m.id)}
+                    waitSeconds={roughTrainSeconds(ahead)}
+                    current={queue.run.currentId ? runRowsById.get(queue.run.currentId) : undefined}
+                />
+            );
+        }
         if (isModelDone(m) && (reason !== null || !m.lastTrainedAt)) {
             return (
                 <div className="bmw-stage">
@@ -2810,7 +3196,7 @@ export default function BuildModelWindow() {
             // The last charts of this session (if any) stay up under "Out of date".
             return healthPreview.data ? (
                 <div data-testid="results-chart" data-stale="true">
-                    <ModelFitPage {...props} data={healthPreview.data} onXPredictorChange={xSensor => changeScatterX(m.id, xSensor)} onCompare={openCompare} trainDaysEstimate={trainDaysEstimateFor(m)} />
+                    <ModelFitPage {...props} data={healthPreview.data} onXPredictorChange={onFitX} onCompare={onCompare} compareDisabledReason={queue.isRunning ? TRAIN_RUN_ACTIVE_REASON : undefined} trainDaysEstimate={trainDaysEstimateFor(m)} />
                 </div>
             ) : (
                 <div className="bmw-stage">
@@ -2826,7 +3212,7 @@ export default function BuildModelWindow() {
                             <b style={{ color: 'var(--text-primary)', display: 'block', marginBottom: '4px' }}>Re-train to recompute</b>
                             The fitted Relation model is no longer in memory (the data was reloaded or a special sensor changed).
                             <div style={{ marginTop: '10px' }}>
-                                <button type="button" className="bmw-btn-retrain bmw-btn-retrain--stale" data-testid="results-not-fitted-retrain" onClick={() => runTrainClick(m)}>↻ Re-train</button>
+                                <button type="button" className="bmw-btn-retrain bmw-btn-retrain--stale" data-testid="results-not-fitted-retrain" disabled={retrainBlockOf(m) !== undefined} title={retrainBlockOf(m)} onClick={() => trainOnly(m)}>↻ Re-train</button>
                             </div>
                         </div>
                     </div>
@@ -2857,7 +3243,7 @@ export default function BuildModelWindow() {
         }
         return (
             <div data-testid="results-chart">
-                <ModelFitPage {...props} data={healthPreview.data} onXPredictorChange={xSensor => changeScatterX(m.id, xSensor)} onCompare={openCompare} trainDaysEstimate={trainDaysEstimateFor(m)} />
+                <ModelFitPage {...props} data={healthPreview.data} onXPredictorChange={onFitX} onCompare={onCompare} compareDisabledReason={queue.isRunning ? TRAIN_RUN_ACTIVE_REASON : undefined} trainDaysEstimate={trainDaysEstimateFor(m)} />
             </div>
         );
     };
@@ -2880,6 +3266,8 @@ export default function BuildModelWindow() {
      *  null. Only the active model has a health preview, so this is for the active
      *  model. Rust's validation is the source of "set points not valid". */
     const markCompleteBlock = (m: FailureModel): string | null => {
+        // A training run owns the sidecar (a Relation-model export re-runs it): wait for the run.
+        if (queue.isRunning) return TRAIN_RUN_ACTIVE_REASON;
         if (isModelStale(m)) return 'Settings changed — re-train first.';
         // Unsaved settings are saved by Mark complete first; ones that cannot be saved block it.
         const draftBlock = m.id in drafts ? modelBlockReason(m) : null;
@@ -2947,6 +3335,16 @@ export default function BuildModelWindow() {
         const saving = saveInfo[m.id]?.phase === 'running';
         const outOfDate = page === 'health' && filesOutOfDateFor(m);
         const testedCount = toTestPeriodsWire(effectiveRunningCondition(effectiveModelFor(m), gateFg).testPeriods).length;
+        // Train queue: queued or training in the run = settings locked (Save disabled).
+        const qItem = queue.isRunning ? queue.itemOf(m.id) : undefined;
+        const locked = queue.isLocked(m.id);
+        // The per-model Train button left this footer (customer items 8 + 9): the
+        // header's Train sensor is the one place. This link focuses it.
+        const goTrainSensor = (
+            <button type="button" className="tq-inline-link" data-testid="footer-train-sensor" onClick={() => trainSensorBtnRef.current?.focus()}>
+                Train sensor ↑
+            </button>
+        );
         return (
             <div className="f4-foot">
                 {page === 'health' && (
@@ -2971,6 +3369,12 @@ export default function BuildModelWindow() {
                     </span>
                 ) : page === 'health' && !isModelDone(m) ? (
                     <span data-testid="footer-status" className="f4-foot-reason">Set points valid — check the score, then mark complete</span>
+                ) : page === 'model' && qItem && locked ? (
+                    <span data-testid="footer-status" className="f4-foot-reason">
+                        {qItem.state === 'running'
+                            ? <><Loader2 size={11} className="pm-spin" aria-hidden="true" /> Training now · about {formatTrainSeconds(ROUGH_TRAIN_SECONDS[m.kind])}</>
+                            : `Queued in the run · ${queue.queuePositionOf(m.id) === 1 ? 'next' : `#${queue.queuePositionOf(m.id)}`}`}
+                    </span>
                 ) : reason ? (
                     <span data-testid="build-block-reason" className="f4-foot-reason f4-foot-reason--block">
                         <CircleAlert size={11} aria-hidden="true" />
@@ -2983,38 +3387,34 @@ export default function BuildModelWindow() {
                         {m.lastTrainedAt ? `Last trained ${formatTrainedAt(m.lastTrainedAt)}` : `${KIND_LABEL[m.kind]}${cat ? ` · ${CATEGORY_LABELS[cat]}` : ''}`}
                     </span>
                 ) : hasSessionError ? (
-                    <span data-testid="footer-status" className="f4-foot-reason">Couldn't refresh the result — fix the problem, then re-train</span>
+                    <span data-testid="footer-status" className="f4-foot-reason f4-foot-reason--block">
+                        <CircleAlert size={11} aria-hidden="true" />
+                        Training failed · fix the problem, then {goTrainSensor}
+                    </span>
                 ) : trainedFresh ? (
                     <span data-testid="footer-status" className="f4-foot-reason">Check the chart, then mark it complete</span>
                 ) : stale ? (
-                    <span data-testid="footer-status" className="f4-foot-reason">Settings changed — re-train</span>
+                    <span data-testid="footer-status" className="f4-foot-reason f4-foot-reason--block">
+                        <CircleAlert size={11} aria-hidden="true" />
+                        Settings changed · re-train with {goTrainSensor}
+                    </span>
+                ) : !m.lastTrainedAt ? (
+                    // Also why "Next: Health score →" is disabled.
+                    <span data-testid="footer-status" className="f4-foot-reason">
+                        Not trained · {goTrainSensor} — train first, then set the health set points
+                    </span>
                 ) : (
                     <span data-testid="footer-status" className="f4-foot-reason">{KIND_LABEL[m.kind]}{cat ? ` · ${CATEGORY_LABELS[cat]}` : ''}</span>
                 )}
                 {page === 'model' && (
-                    <>
-                        <button className="f4-btn-save" disabled={saveReason !== null} onClick={() => commitModel(m)}>
-                            Save changes
-                        </button>
-                        {/* Train/Re-train — fixed position (SPEC FINAL footer rule 6): always
-                            this same slot, never moves around based on state. Nothing renders
-                            here at all once the model is Complete or Trained-and-fresh with no
-                            error — there is nothing further to do until settings change. A
-                            failed preview run (this session) still shows the button even
-                            though the persisted fields still say "fresh", so there's always a
-                            way to retry. */}
-                        {!isModelDone(m) && !(reason === null && trainedFresh && !training && !trainError[m.id]) && (
-                            <button
-                                type="button"
-                                className={reason !== null ? 'f4-btn f4-btn--plain f4-btn--small' : (stale || trainError[m.id]) ? 'bmw-btn-retrain bmw-btn-retrain--stale' : 'bmw-btn-retrain'}
-                                disabled={reason !== null || training}
-                                title={reason ?? undefined}
-                                onClick={() => runTrainClick(m)}
-                            >
-                                {training ? 'Training…' : (stale || trainError[m.id]) ? '↻ Re-train' : '▶ Train model'}
-                            </button>
-                        )}
-                    </>
+                    <button
+                        className="f4-btn-save"
+                        disabled={saveReason !== null || locked}
+                        title={locked ? 'Settings are locked while this model is in the run' : undefined}
+                        onClick={() => commitModel(m)}
+                    >
+                        Save changes
+                    </button>
                 )}
                 {page === 'health' && (
                     <>
@@ -3075,9 +3475,103 @@ export default function BuildModelWindow() {
             setSettingsOpenOverride(prev => ({ ...prev, [activeModel.id]: true }));
             return;
         }
-        if (key === 'train') { setPage(activeModel, 'model'); return; }
+        if (key === 'train') { setPage(activeModel, 'model'); trainSensorBtnRef.current?.focus(); return; }
         // 'health-set-points' and 'complete' both live on the Health score page.
         if (healthPageBlock(activeModel) === null) setPage(activeModel, 'health');
+    };
+
+    /** The detail header's sensor-level Train (customer items 8 + 9): one primary
+     *  "▶ Train sensor · n of m" that trains every model of the sensor that needs
+     *  it (I → R → C, up-to-date ones skipped), a ▾ menu (Re-train all / Train
+     *  only the … model) and the line under it saying what it will do or why not. */
+    const renderSensorTrain = () => {
+        const cands = orderedDetail.map(candidateOf);
+        const plans = new Map(cands.map(c => [c.id, c.plan]));
+        const ready = orderedDetail.filter(m => plans.get(m.id)?.kind === 'ready');
+        const up = orderedDetail.filter(m => plans.get(m.id)?.kind === 'upToDate');
+        const cant = orderedDetail.filter(m => plans.get(m.id)?.kind === 'missing');
+        const whyOf = (m: FailureModel): string => {
+            const p = plans.get(m.id);
+            return p && p.kind !== 'ready' ? p.reason : '';
+        };
+        const letter = (m: FailureModel) => KIND_ABBREV[m.kind];
+        const thisRunning = queue.isRunning && orderedDetail.some(m => queue.itemOf(m.id)?.state === 'running');
+        const inRun = orderedDetail.filter(m => queue.isLocked(m.id));
+        // No workspace running condition at all (an invalid period has its own, more specific reason per model).
+        const rcBlocks = rcStepState === 'unset' && ready.length === 0;
+        let why: string;
+        let tone: TrainReasonTone = 'neutral';
+        if (queue.stale) { why = TRAIN_STALE_MESSAGE; tone = 'danger'; }
+        else if (thisRunning) why = 'Training this sensor…';
+        else if (inRun.length) why = `${inRun.length} model${inRun.length === 1 ? '' : 's'} of this sensor queued in the run`;
+        else if (rcBlocks) { why = TRAIN_NEEDS_RUNNING_CONDITION; tone = 'warn'; }
+        else if (ready.length === 0 && cant.length === 0) why = `${up.length} model${up.length === 1 ? '' : 's'} up to date — nothing to train`;
+        else if (ready.length === 0) { why = `Can't train: ${cant.map(m => `${KIND_LABEL[m.kind]} — ${whyOf(m)}`).join(' · ')}`; tone = 'warn'; }
+        else if (cant.length) { why = `Trains ${ready.map(letter).join(' + ')} · skips ${cant.map(m => `${letter(m)} (${whyOf(m)})`).join(', ')}`; tone = 'warn'; }
+        else if (up.length) why = `Trains ${ready.map(letter).join(' + ')} · ${up.map(letter).join(', ')} up to date, skipped`;
+        else why = `Trains ${ready.map(m => KIND_LABEL[m.kind]).join(' + ')} · ≈ ${formatTrainSeconds(roughTrainSeconds(ready.map(m => m.kind)))}`;
+        const busy = !queue.canStart;
+        const title = queue.stale ? TRAIN_STALE_MESSAGE
+            : queue.isRunning ? TRAIN_RUN_ACTIVE_REASON
+            : rcBlocks ? TRAIN_NEEDS_RUNNING_CONDITION
+            : ready.length === 0 ? why
+            : undefined;
+        const hasComplete = cands.some(c => c.plan.kind === 'upToDate' && c.plan.complete);
+        const menu: TrainMenuItem[] = [
+            {
+                key: 'retrain-all',
+                label: 'Re-train all models of this sensor',
+                small: `Includes up-to-date ones${hasComplete ? ' · a Complete model becomes Incomplete and needs Mark complete again' : ''}`,
+                disabled: busy || ready.length + up.length === 0,
+                onClick: () => { queue.start(cands, { includeUpToDate: true, source: 'sensor-all' }); },
+            },
+            ...orderedDetail.map((m): TrainMenuItem => {
+                const p = plans.get(m.id);
+                return {
+                    key: `only-${m.kind}`,
+                    label: `Train only the ${KIND_LABEL[m.kind]} model`,
+                    small: p?.kind === 'missing' ? `Can't train — ${p.reason}`
+                        : p?.kind === 'upToDate' ? `Re-trains it even though it is up to date${p.complete ? ' · it becomes Incomplete' : ''}`
+                        : `≈ ${formatTrainSeconds(ROUGH_TRAIN_SECONDS[m.kind])}`,
+                    disabled: busy || p?.kind === 'missing',
+                    onClick: () => trainOnly(m),
+                };
+            }),
+        ];
+        return (
+            <SensorTrainButton
+                buttonRef={trainSensorBtnRef}
+                label={thisRunning ? <><Loader2 size={12} className="pm-spin" aria-hidden="true" /> Training…</> : `▶ Train sensor · ${ready.length} of ${orderedDetail.length}`}
+                disabled={busy || ready.length === 0}
+                title={title}
+                why={why}
+                whyTone={tone}
+                onTrain={() => { queue.start(cands, { includeUpToDate: false, source: 'sensor' }); }}
+                menu={menu}
+            />
+        );
+    };
+
+    /** Health score page after a run: how many trained in it still need set points. */
+    const renderRunSetPointsBanner = (m: FailureModel) => {
+        const last = queue.lastTrained;
+        if (!last || last.ids.length === 0) return null;
+        const inRun = last.ids
+            .map(id => allModels.find(x => x.id === id))
+            .filter((x): x is FailureModel => !!x && needSetPoints(x));
+        if (inRun.length === 0) return null;
+        const k = inRun.findIndex(x => x.id === m.id);
+        const next = [...inRun.slice(k + 1), ...inRun.slice(0, Math.max(k, 0))].find(x => x.id !== m.id);
+        return (
+            <RunSetPointsBanner
+                at={last.finishedAt}
+                inRun={inRun.length}
+                total={allModels.filter(needSetPoints).length}
+                position={k + 1}
+                nextDisabled={!next}
+                onNext={() => { if (next) focusModel(next.id, 'health'); }}
+            />
+        );
     };
 
     const renderDetailPane = () => {
@@ -3159,6 +3653,7 @@ export default function BuildModelWindow() {
                         healthDisabledTitle={healthBlock ?? undefined}
                         onPage={p => setPage(activeModel, p)}
                     />
+                    {renderSensorTrain()}
                 </div>
 
                 {categoryWarn?.key === selectedSensorKey && (
@@ -3205,9 +3700,10 @@ export default function BuildModelWindow() {
                         {stale && (
                             <StaleBanner
                                 training={training}
-                                disabled={buildBlockReason(activeModel) !== null}
-                                disabledTitle={buildBlockReason(activeModel) ?? undefined}
-                                onRetrain={() => runTrainClick(activeModel)}
+                                queued={queue.isRunning && queue.itemOf(activeModel.id)?.state === 'queued'}
+                                disabled={buildBlockReason(activeModel) !== null || !queue.canStart}
+                                disabledTitle={buildBlockReason(activeModel) ?? (queue.stale ? TRAIN_STALE_MESSAGE : queue.isRunning ? TRAIN_RUN_ACTIVE_REASON : undefined)}
+                                onRetrain={() => trainOnly(activeModel)}
                             />
                         )}
                         {page === 'model' && saveInfo[activeModel.id]?.phase === 'error' && (
@@ -3216,17 +3712,19 @@ export default function BuildModelWindow() {
                                 onDismiss={() => dismissSaveInfo(activeModel.id)}
                             />
                         )}
+                        {page === 'health' && renderRunSetPointsBanner(activeModel)}
                         {page === 'model' ? renderModelFitBody(activeModel) : (
                             <HealthScorePage
                                 key={activeModel.id}
                                 {...pagePropsFor(activeModel)}
                                 setPoints={setPointsOf(activeModel)}
-                                onSetPointsChange={(next, commit) => changeSetPoints(activeModel, next, commit)}
-                                onSetPointsCommit={() => { void commitSetPointDrafts(); }}
+                                onSetPointsChange={onSpChange}
+                                onSetPointsCommit={onSpCommit}
                                 attemptIssues={attemptIssues[activeModel.id] ?? null}
                                 save={saveInfoFor(activeModel)}
                                 filesOutOfDate={filesOutOfDateFor(activeModel)}
-                                onRetrain={() => runTrainClick(activeModel)}
+                                onRetrain={onRetrainActive}
+                                retrainDisabledReason={retrainBlockOf(activeModel)}
                                 onRetryPreview={healthPreview.retry}
                                 onRetryTestScoring={healthPreview.retryTestScoring}
                                 testsChanged={testsChangedState(activeModel, gateFg)}
@@ -3239,10 +3737,6 @@ export default function BuildModelWindow() {
         );
     };
 
-    const periodStatus = validatePeriods(runningConditionTimePeriods);
-    // Step-1 card / step bar / lock message all read the PERSISTED condition.
-    const rcPersistedInvalid = periodStatus.some(st => st.invalid);
-    const rcStepState: RcStepState = !rcConfigured ? 'unset' : rcPersistedInvalid ? 'invalid' : 'set';
 
     // Header step bar: looks from the ONE status rule, jumps via `goToStep`.
     const activeDetailPage = activeModel ? pageOf(activeModel) : 'model';
@@ -3335,6 +3829,21 @@ export default function BuildModelWindow() {
                     onOpen={() => setRcFilterOpen(true)}
                     testPeriods={runningConditionTestPeriods}
                 />
+                {/* Train queue run strip (its own memoised component): progress never
+                    re-renders the Model fit charts. */}
+                {queue.run && queue.summary && (
+                    <RunStrip
+                        run={queue.run}
+                        summary={queue.summary}
+                        timeLeftMs={queue.timeLeftMs}
+                        rows={runRowsById}
+                        onDetails={onRunDetails}
+                        onCancel={onRunCancel}
+                        onDismiss={onRunDismiss}
+                        onCloseWindow={onRunCloseWindow}
+                        onTrainNotStarted={onRunNotStarted}
+                    />
+                )}
                 {rcTestsNotice && (
                     <div className="wb2-stale vt-rcnotice" role="status" data-testid="tests-changed-notice">
                         <span>
@@ -3431,6 +3940,13 @@ export default function BuildModelWindow() {
                     {!sidebarCollapsed && (
                         <aside className="bmw-side">
                             <div className="bmw-side-top">
+                                <TrainAllBar
+                                    counts={allCounts}
+                                    running={queue.isRunning}
+                                    reason={trainAllReason}
+                                    reasonTone={reasonToneOf(trainAllReason)}
+                                    onOpen={() => { setIncludeUpToDate(false); setTrainAllView('preflight'); }}
+                                />
                                 <div className="bmw-prog">
                                     <div className="bmw-prog-row">
                                         <span><b style={{ color: 'var(--text-primary)' }}>{completeModelsCount}</b> of {totalModelsCount} complete</span>
@@ -3450,9 +3966,12 @@ export default function BuildModelWindow() {
                                     />
                                 </div>
                                 <div className="bmw-chips">
-                                    <button type="button" className={`bmw-chip${sidebarFilter === 'all' ? ' bmw-chip--on' : ''}`} onClick={() => setSidebarFilter('all')}>All <b>{sensorGroupsAll.length}</b></button>
-                                    <button type="button" className={`bmw-chip${sidebarFilter === 'attn' ? ' bmw-chip--on' : ''}`} onClick={() => setSidebarFilter('attn')}>Needs setup <b>{attnCount}</b></button>
-                                    <button type="button" className={`bmw-chip${sidebarFilter === 'done' ? ' bmw-chip--on' : ''}`} onClick={() => setSidebarFilter('done')}>Complete <b>{doneCount}</b></button>
+                                    <button type="button" className={`bmw-chip${listFilter === 'all' ? ' bmw-chip--on' : ''}`} onClick={() => setSidebarFilter('all')}>All <b>{sensorGroupsAll.length}</b></button>
+                                    <button type="button" className={`bmw-chip${listFilter === 'attn' ? ' bmw-chip--on' : ''}`} onClick={() => setSidebarFilter('attn')}>Needs setup <b>{attnCount}</b></button>
+                                    {showSpChip && (
+                                        <button type="button" data-testid="chip-set-points-needed" className={`bmw-chip${listFilter === 'sp' ? ' bmw-chip--on' : ''}`} onClick={() => setSidebarFilter('sp')}>Set points needed <b>{spCount}</b></button>
+                                    )}
+                                    <button type="button" className={`bmw-chip${listFilter === 'done' ? ' bmw-chip--on' : ''}`} onClick={() => setSidebarFilter('done')}>Complete <b>{doneCount}</b></button>
                                 </div>
                                 <div className="bmw-groupby">
                                     <span>Group by</span>
@@ -3566,6 +4085,38 @@ export default function BuildModelWindow() {
                         </div>
                     </div>
                 </div>
+            )}
+
+            {/* Train all: the pre-flight list, then the run's details (also the strip's Details). */}
+            {trainAllView && (
+                <TrainAllModal
+                    view={trainAllView === 'run' && queue.run ? 'run' : 'preflight'}
+                    run={queue.run}
+                    summary={queue.summary}
+                    rows={trainRows}
+                    groups={trainGroups}
+                    includeUpToDate={includeUpToDate}
+                    onIncludeUpToDate={setIncludeUpToDate}
+                    onClose={closeTrainAll}
+                    onStart={startTrainAll}
+                    onCancelRun={() => queue.stopAfterCurrent('cancel')}
+                    onFix={fixModel}
+                    onOpenModel={id => { setTrainAllView(null); focusModel(id, 'health'); }}
+                    onRetry={id => retryModels([id])}
+                    onTrainNotStarted={() => retryModels(queue.summary?.notStartedIds ?? [])}
+                    onRemoveFromRun={id => { queue.removeFromRun(id); }}
+                />
+            )}
+            {/* Close while a run is active (toolbar X and the native close). */}
+            {closeAsk && queue.run && queue.summary && (
+                <CloseRunDialog
+                    run={queue.run}
+                    summary={queue.summary}
+                    current={queue.run.currentId ? runRowsById.get(queue.run.currentId) : undefined}
+                    onKeep={keepTraining}
+                    onStopAndClose={() => { void stopRunAndClose(); }}
+                    onClose={() => { setCloseAsk(false); void closeNow(); }}
+                />
             )}
 
             {/* "Compare predictors": the shared Sub-models comparison (one fit per

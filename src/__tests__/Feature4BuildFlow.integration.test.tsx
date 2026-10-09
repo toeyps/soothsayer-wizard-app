@@ -96,6 +96,7 @@ import { emit } from '@tauri-apps/api/event';
 import { updateWorkspaceData } from '../workspaceManager';
 import { withFailureGroupState } from '../utils/failureGroupState';
 import { getBuildBlockReason } from '../utils/runningCondition';
+import { preflightReason, TRAIN_NEEDS_RUNNING_CONDITION } from '../utils/trainQueue';
 // Train/Test validation (2026-10-07): train period required to Train, test period to Mark complete.
 import { ALL_TIME_TRAIN, ONE_TEST } from './helpers/trainTestFixture';
 
@@ -198,7 +199,13 @@ async function otherWindowWrites(patch: Record<string, unknown>, origin = 'dashb
  *  its first model tab — Individual when it has one). */
 const selectSensorRow = (rowIndex = 0) => fireEvent.click(screen.getAllByTestId('sensor-row-label')[rowIndex]);
 const openFirstRow = () => { closeRcModal(); selectSensorRow(0); };
-const trainBtn = () => screen.getByText('▶ Train model') as HTMLButtonElement;
+/** The detail header's Train sensor (customer batch 2026-10, items 8 + 9) — replaced the footer's "▶ Train model". */
+const trainBtn = () => screen.getByTestId('train-sensor') as HTMLButtonElement;
+/** Train sensor's title for a sensor whose one model the gate blocks: the "set the running condition"
+ *  reason while Step 1 is not set at all, else the model's reason in the preflight wording. */
+const blockedTitle = (reason: string) => screen.getByTestId('rc-card').getAttribute('data-state') === 'unset'
+    ? TRAIN_NEEDS_RUNNING_CONDITION
+    : `Can't train: Individual — ${preflightReason(reason).text}`;
 
 /** Select a row and press Train (the Workbench's only path that sends the training scope to Rust). */
 async function trainRow(rowIndex = 0) {
@@ -347,7 +354,7 @@ describe('(2) the Workbench footer reason and the Train button agree with the sh
             const reason = screen.getByTestId('build-block-reason').textContent;
             expect(reason).toBeTruthy();
             expect(trainBtn().disabled).toBe(true);
-            expect(trainBtn().title).toBe(reason);
+            expect(trainBtn().title).toBe(blockedTitle(reason!));
             // ... and it is the shared helper's answer for what is on disk.
             const disk = readDisk().failureGroupState;
             expect(reason).toBe(getBuildBlockReason(disk.models[0], disk, HEADERS));
@@ -569,12 +576,13 @@ describe('reason text consistency', () => {
         openFirstRow();
         const footer = screen.getByTestId('build-block-reason').textContent;
         // Mark complete is not on this page (health score 3b-2) and the Health score page stays
-        // locked; the Train button carries the same gate reason as the footer.
+        // locked; the Train sensor carries the same gate reason as the footer (preflight wording).
         expect(screen.queryByText('✓ Mark complete')).toBeNull();
         expect((screen.getByTestId('page-health') as HTMLButtonElement).disabled).toBe(true);
-        const train = screen.getByText('▶ Train model') as HTMLButtonElement;
+        const train = trainBtn();
         expect(train.disabled).toBe(true);
-        expect(train.title).toBe(footer);
+        // Same reason, in the preflight wording (customer items 8 + 9: "above" reads wrong there).
+        expect(train.title).toBe(blockedTitle(footer!));
         // The results area lists the same single blocker, not "Not trained yet".
         expect(within(screen.getByTestId('results-incomplete')).getByText('Pick a category')).toBeTruthy();
         expect(screen.queryByText('Not trained yet')).toBeNull();

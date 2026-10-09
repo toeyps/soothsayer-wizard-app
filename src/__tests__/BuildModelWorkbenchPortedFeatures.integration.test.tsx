@@ -261,7 +261,7 @@ function openSettings() {
 }
 
 async function clickTrain() {
-    await act(async () => { fireEvent.click(bmw().getByText('▶ Train model')); });
+    await act(async () => { fireEvent.click(bmw().getByTestId('train-sensor')); });
     await settle(30);
 }
 
@@ -400,7 +400,7 @@ describe('(1) a Custom running condition saved from the Workbench vs. Dashboard\
 // (2) Custom condition + period edited live, SAVED, window closed, reopened,
 //     THEN trained separately — the (6) tests in
 //     BuildModelWorkbenchTrain.integration.test.tsx only cover
-//     edit-then-Train-in-one-go (commit inside runTrainClick).
+//     edit-then-Train-in-one-go (commit inside trainForQueue).
 // ─────────────────────────────────────────────────────────────────────────
 
 describe('(2) Custom condition/period: Save changes -> close -> reopen -> Train separately', () => {
@@ -506,7 +506,7 @@ describe('(3) immediate X-axis write and the pending draft do not cross-contamin
         expect(diskModel('r1').relStiffness).toBe(1_000_000);
         expect(diskModel('r1').scatterXSensor).toBe('TAG3');
 
-        await act(async () => { fireEvent.click(bmw().getByText('↻ Re-train')); });
+        await act(async () => { fireEvent.click(bmw().getByTestId('train-sensor')); });
         await settle(30);
         expect(diskFresh('r1')).toBe(true);
         expect(diskModel('r1').scatterXSensor).toBe('TAG3');
@@ -681,7 +681,7 @@ describe('(5a) cluster-range slider: ranges are never re-divided to the criteria
 
 describe('(5b) the running-condition gate judges the PERSISTED model, not the pending Custom draft', () => {
     it('FIXED (2026-09-30): with the Custom editor showing "Required" (no condition, not confirmed), Train is blocked — nothing runs', async () => {
-        // Was: `runTrainClick`/the footer gate on `buildBlockReason(m)` ->
+        // Was: the old `runTrainClick`/the footer gate on `buildBlockReason(m)` ->
         // `gateReasonOf(m)` read the persisted model (Workspace mode,
         // configured) instead of the draft. The pending draft switched to
         // Custom with nothing set; Train committed it and trained with
@@ -696,7 +696,7 @@ describe('(5b) the running-condition gate judges the PERSISTED model, not the pe
         expect(bmw().getByTestId('custom-condition-required')).toBeTruthy();
 
         const before = statsCalls('TAG1').length; // the Step-1 card's own row count is already in here
-        await act(async () => { fireEvent.click(bmw().getByText('▶ Train model')); });
+        await act(async () => { fireEvent.click(bmw().getByTestId('train-sensor')); });
         await settle(30);
         expect(statsCalls('TAG1')).toHaveLength(before); // Train added nothing
     });
@@ -709,7 +709,7 @@ describe('(5b) the running-condition gate judges the PERSISTED model, not the pe
         fireEvent.click(bmw().getByText('+ Add condition'));
         fireEvent.change(bmw().getByPlaceholderText('val'), { target: { value: '42' } });
         expect(bmw().queryByTestId('custom-condition-required')).toBeNull();
-        expect((bmw().getByText('▶ Train model') as HTMLButtonElement).disabled).toBe(false);
+        expect((bmw().getByTestId('train-sensor') as HTMLButtonElement).disabled).toBe(false);
     });
 
     it('FIXED (2026-09-30): for a Custom-mode model, the results area\'s "fix" link opens this model\'s OWN Model settings / Custom editor, not the workspace modal', async () => {

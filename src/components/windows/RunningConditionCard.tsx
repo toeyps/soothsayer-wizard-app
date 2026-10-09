@@ -105,7 +105,9 @@ export function RunningConditionCard({ state, periods, filters, combine, noneCon
             <section className="rcc-card rcc-card--req" data-testid="rc-card" data-state="unset">
                 <div className="rcc-num">1</div>
                 <div className="rcc-main">
-                    <div className="rcc-kicker">Step 1 · Required before training</div>
+                    <div className="rcc-kicker">
+                        Step 1 · Required before training <span className="f4-pill f4-pill--warn" data-testid="rc-card-pill">Not set</span>
+                    </div>
                     <h3>Set the running condition</h3>
                     <p>Tell Wizard which healthy time to learn from (train periods) and when the plant is running, so models learn from normal operation — not from problems, shutdowns or idle time. It applies to every model.</p>
                 </div>

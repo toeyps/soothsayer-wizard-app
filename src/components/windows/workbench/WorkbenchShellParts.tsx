@@ -52,6 +52,8 @@ export function PageSwitch({ page, modelFitDone, healthDone, healthDisabled, hea
 interface StaleBannerProps {
     /** A (re-)train is already running. */
     training?: boolean;
+    /** The model is waiting in a training run (customer items 8 + 9). */
+    queued?: boolean;
     /** Re-train is not possible (the model's gate blocks it). */
     disabled?: boolean;
     disabledTitle?: string;
@@ -59,7 +61,7 @@ interface StaleBannerProps {
 }
 
 /** "Settings changed — this model is Incomplete again. Re-train…" (mockup `.stale`). */
-export function StaleBanner({ training, disabled, disabledTitle, onRetrain }: StaleBannerProps) {
+export function StaleBanner({ training, queued, disabled, disabledTitle, onRetrain }: StaleBannerProps) {
     return (
         <div className="wb2-stale" role="status" data-testid="stale-banner">
             <span>
@@ -71,12 +73,12 @@ export function StaleBanner({ training, disabled, disabledTitle, onRetrain }: St
                 type="button"
                 className="rcx-btn rcx-btn--pri rcx-btn--sm"
                 data-testid="stale-retrain"
-                disabled={disabled || training}
+                disabled={disabled || training || queued}
                 title={disabled ? disabledTitle : undefined}
                 onClick={onRetrain}
             >
                 <RotateCw size={12} aria-hidden="true" />
-                {training ? 'Training…' : 'Re-train'}
+                {training ? 'Training…' : queued ? 'Queued' : 'Re-train'}
             </button>
         </div>
     );

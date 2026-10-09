@@ -243,22 +243,20 @@ describe('Relationship specifics', () => {
         expect(diskModel('r1').trainedFingerprint).toBe(keys[3].slice('r1::'.length));
     });
 
-    it('the same workspace re-opened on a NEW session (CSV reloaded) -> NOT_FITTED "Re-train to recompute"; Re-train fills the cache again', async () => {
+    it('the same workspace re-opened on a NEW session (CSV reloaded) -> NOT_FITTED; the fit is re-filled automatically (phase 4 review), nothing to click', async () => {
         writeDisk(wsTrained({}, [model({ id: 'r1', kind: 'relationship', predictorSensors: ['TAG3'], healthSetPoints: REL_SP })]));
         await mountWindows({ dashboard: false });
         selectSensor('tag1');
         await waitForCharts();
+        const statusBefore = diskModel('r1').status;
         env.backend!.loadDataset('plant');
         await sendBuildModelData(WS); // new generation, same workspace
         await openHealth().catch(() => {});
         await settle(400);
-        const health = bmwEl().querySelector('[data-testid="health-not-fitted"], [data-testid="results-not-fitted"]');
-        expect(health, 'Re-train to recompute is offered').toBeTruthy();
-        const retrain = (bmwEl().querySelector('[data-testid="health-not-fitted-retrain"], [data-testid="results-not-fitted-retrain"]') as HTMLElement);
-        await act(async () => { fireEvent.click(retrain); });
         await settle(500);
         await settle(400);
         expect(env.backend!.relCacheKeys().length).toBe(1);
+        expect(diskModel('r1').status).toBe(statusBefore); // a silent re-fit never changes the status
         expect(bmwEl().querySelector('[data-testid="health-not-fitted"], [data-testid="results-not-fitted"]')).toBeNull();
     });
 

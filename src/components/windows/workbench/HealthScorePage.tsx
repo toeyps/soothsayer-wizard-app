@@ -1,4 +1,5 @@
-import { useMemo, useState, type ComponentProps } from 'react';
+import { memo, useMemo, useState, type ComponentProps } from 'react';
+import { samePageProps } from './pageMemo';
 import { connect } from 'echarts';
 import { Loader2 } from 'lucide-react';
 import ResponsiveECharts from '../../charts/ResponsiveECharts';
@@ -45,7 +46,14 @@ import type { HealthScorePageProps, SaveInfo } from './workbenchTypes';
  * a point there (or the score chart) highlights the same row on the other.
  */
 
-export default function HealthScorePage(props: HealthScorePageProps) {
+/** Memo comparison (see `samePageProps`): the small data the window rebuilds per
+ *  render (model, set points, save record, tests-changed state, test numbers)
+ *  by value, everything else by identity — the callbacks must be stable. */
+export function sameHealthScoreProps(a: HealthScorePageProps, b: HealthScorePageProps): boolean {
+    return samePageProps(a, b, ['model', 'setPoints', 'save', 'testsChanged', 'testNumbers', 'attemptIssues']);
+}
+
+function HealthScorePage(props: HealthScorePageProps) {
     const { model, stale, preview, unit, sensorLabel, setPoints, attemptIssues, save, filesOutOfDate } = props;
     const [hoverIdx, setHoverIdx] = useState<number | null>(null);
     // A failed request leaves `preview.data` null, but when an earlier answer for this
@@ -86,7 +94,7 @@ export default function HealthScorePage(props: HealthScorePageProps) {
                             <b>Re-train to recompute</b>
                             The fitted Relation model is no longer in memory (the data was reloaded or a special sensor changed).
                             <div style={{ marginTop: '10px' }}>
-                                <button type="button" className="bmw-btn-retrain bmw-btn-retrain--stale" data-testid="health-not-fitted-retrain" onClick={props.onRetrain}>↻ Re-train</button>
+                                <button type="button" className="bmw-btn-retrain bmw-btn-retrain--stale" data-testid="health-not-fitted-retrain" disabled={!!props.retrainDisabledReason} title={props.retrainDisabledReason} onClick={props.onRetrain}>↻ Re-train</button>
                             </div>
                         </div>
                     ) : preview.error ? (
@@ -122,7 +130,7 @@ export default function HealthScorePage(props: HealthScorePageProps) {
                 <div className="wb2-stale hs-full" role="status" data-testid="health-not-fitted-banner">
                     <span><b>Re-train to recompute.</b> The fitted Relation model is no longer in memory; the chart below is the last result.</span>
                     <span className="wb2-sp" />
-                    <button type="button" className="bmw-btn-retrain bmw-btn-retrain--stale" onClick={props.onRetrain}>↻ Re-train</button>
+                    <button type="button" className="bmw-btn-retrain bmw-btn-retrain--stale" disabled={!!props.retrainDisabledReason} title={props.retrainDisabledReason} onClick={props.onRetrain}>↻ Re-train</button>
                 </div>
             )}
             <SetPointChart
@@ -413,3 +421,5 @@ function ScoreChart({ data, score, summary, unit, hoverIdx, onHover, stale, scop
         />
     );
 }
+
+export default memo(HealthScorePage, sameHealthScoreProps);

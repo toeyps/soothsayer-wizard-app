@@ -101,6 +101,7 @@ import { ADD_TRAIN_PERIOD_HINT, NO_TEST_PERIOD_REASON } from '../utils/runningCo
 // @ts-expect-error - @types/node is not installed; vitest runs in Node so this resolves at runtime
 import { readFileSync } from 'node:fs';
 import { pickSingle, rowTag } from './helpers/sensorPicker';
+import { TRAIN_NEEDS_RUNNING_CONDITION } from '../utils/trainQueue';
 
 // jsdom does not load App.css (vitest also stubs `?raw` CSS imports to ''; cwd is the repo root), so layout
 // rules that used to be inline styles are asserted against the stylesheet source itself.
@@ -111,6 +112,12 @@ const cssBlock = (selector: string): string => {
     if (!m) throw new Error(`no CSS rule for ${selector}`);
     return m[1];
 };
+
+/** The detail header's sensor-level "▶ Train sensor · n of m" (customer batch 2026-10,
+ *  items 8 + 9) — it replaced the footer's per-model "▶ Train model" / "↻ Re-train". It
+ *  trains every model of the sensor that needs it through the train queue. */
+const trainSensorBtn = () => screen.getByTestId('train-sensor') as HTMLButtonElement;
+const trainSensorWhy = () => screen.getByTestId('train-sensor-why').textContent;
 
 function makeGroup(overrides: Record<string, any> = {}) {
     return { no: 1, name: 'Group A', description: '', recommendation: '', ...overrides };
@@ -152,7 +159,7 @@ function withTrained(model: Record<string, any>, fg: Record<string, any> = {
  *  always patches the SAME hard-coded, unchanging `prev` snapshot — fine for
  *  tests that only inspect ONE write's return value, but wrong for a test
  *  whose model id/kind doesn't match that hard-coded default AND that then
- *  re-renders off a SECOND write (e.g. runTrainClick's commit-then-train,
+ *  re-renders off a SECOND write (e.g. trainForQueue's commit-then-train,
  *  two persist calls back to back): each call would independently start
  *  from the same stale snapshot instead of building on the previous write.
  *  This variant threads real state through repeated calls, like the
@@ -813,11 +820,11 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             expect(screen.queryByTestId('results-rc-locked')).toBeNull();
         });
 
-        it('runs compute_sensor_stats on "▶ Train model", shows the chart+toolbar, and persists lastTrainedAt/trainedFingerprint', async () => {
+        it('runs compute_sensor_stats on "▶ Train sensor", shows the chart+toolbar, and persists lastTrainedAt/trainedFingerprint', async () => {
             render(<BuildModelWindow />);
             await deliverData();
             await act(async () => {
-                fireEvent.click(screen.getByText('▶ Train model'));
+                fireEvent.click(trainSensorBtn());
                 await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
             });
             expect(mockInvoke).toHaveBeenCalledWith('compute_sensor_stats', expect.objectContaining({ sensor: 'TAG1', filter: null }));
@@ -830,7 +837,9 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             expect(screen.getByTestId('chart-card-ts')).toBeTruthy();
             expect(screen.getByTestId('chart-card-dist')).toBeTruthy();
             expect(within(screen.getByTestId('stats-card')).getByTestId('stat-rows').textContent).toBe('1,000');
-            // Nothing further to do here - no Train button; the next step is the Health score page.
+            // Nothing further to train here (Train sensor has nothing ready); the next step is the Health score page.
+            await waitFor(() => expect(trainSensorWhy()).toBe('1 model up to date — nothing to train'));
+            expect(trainSensorBtn().disabled).toBe(true);
             expect(screen.queryByText('▶ Train model')).toBeNull();
             expect(screen.queryByText('✓ Mark complete')).toBeNull();
             expect((screen.getByTestId('next-health-score') as HTMLButtonElement).disabled).toBe(false);
@@ -843,7 +852,7 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             await deliverData({ failureGroupState: { groups: [makeGroup()], models: [rel] } });
             statefulUpdateMock([rel]);
             await act(async () => {
-                fireEvent.click(screen.getByText('▶ Train model'));
+                fireEvent.click(trainSensorBtn());
                 await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
             });
             expect(mockInvoke).toHaveBeenCalledWith('preview_relationship_model', expect.objectContaining({ predictors: ['TAG2'], target: 'TAG1', lambda: 10_000 }));
@@ -862,7 +871,7 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             await deliverData({ failureGroupState: { groups: [makeGroup()], models: [clu] } });
             statefulUpdateMock([clu]);
             await act(async () => {
-                fireEvent.click(screen.getByText('▶ Train model'));
+                fireEvent.click(trainSensorBtn());
                 await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
             });
             expect(mockInvoke).toHaveBeenCalledWith('compute_clustering_preview', expect.objectContaining({ first_sensor: 'TAG1', second_sensor: 'TAG2' }));
@@ -880,7 +889,7 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             openSettings();
             fireEvent.change(screen.getByPlaceholderText('e.g. Bearing vibration model'), { target: { value: 'Edited before Train' } });
             await act(async () => {
-                fireEvent.click(screen.getByText('▶ Train model'));
+                fireEvent.click(trainSensorBtn());
                 await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
             });
             const results = mockUpdateWorkspaceData.mock.results;
@@ -889,16 +898,18 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             expect(last.lastTrainedAt).toBeTruthy();
         });
 
-        it('going stale after a settings change: hides the chart, shows "Settings changed", and the footer button becomes "↻ Re-train"', async () => {
+        it('going stale after a settings change: hides the chart, shows "Settings changed", the footer points at Train sensor, and Train sensor re-trains it', async () => {
             const trained = withTrained(makeModel());
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: { groups: [makeGroup()], models: [{ ...trained, trainedFingerprint: 'stale-fingerprint-does-not-match' }] } });
             await flush();
             expect(screen.getByTestId('results-stale').textContent).toMatch(/Settings changed/);
             expect(screen.getByText('Incomplete', { selector: '.model-status-pill' })).toBeTruthy(); // pill reverts, "Trained" is only for fresh
-            expect(screen.getByText('↻ Re-train')).toBeTruthy();
-            expect(screen.getByText('Settings changed — re-train')).toBeTruthy(); // footer message
-            fireEvent.click(screen.getByText('↻ Re-train'));
+            expect(trainSensorBtn().disabled).toBe(false);
+            expect(trainSensorBtn().textContent).toBe('▶ Train sensor · 1 of 1');
+            expect(screen.getByTestId('footer-status').textContent).toBe('Settings changed · re-train with Train sensor ↑'); // footer message
+            expect(screen.queryByText('↻ Re-train')).toBeNull(); // the per-model footer button is gone
+            fireEvent.click(trainSensorBtn());
             await flush();
             expect(mockInvoke).toHaveBeenCalledWith('compute_sensor_stats', expect.anything());
         });
@@ -913,11 +924,13 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             render(<BuildModelWindow />);
             await deliverData();
             await act(async () => {
-                fireEvent.click(screen.getByText('▶ Train model'));
+                fireEvent.click(trainSensorBtn());
                 await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
             });
             expect(screen.getByTestId('results-error').textContent).toMatch(/sidecar exploded/);
-            expect(screen.getByText('↻ Re-train')).toBeTruthy();
+            // A failed run makes the model ready again: Train sensor offers it, the footer says so.
+            await waitFor(() => expect(trainSensorBtn().disabled).toBe(false));
+            expect(screen.getByTestId('footer-status').textContent).toBe('Training failed · fix the problem, then Train sensor ↑');
         });
 
         it('reopening an already-Trained-and-fresh model auto-recomputes and shows the chart with no click', async () => {
@@ -928,9 +941,9 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             expect(mockInvoke).toHaveBeenCalledWith('compute_sensor_stats', expect.anything());
             await waitFor(() => expect(screen.getByTestId('results-chart')).toBeTruthy());
             expect(screen.getByText('Trained', { selector: '.model-status-pill' })).toBeTruthy();
-            // Nothing further to click — no Train button while fresh.
-            expect(screen.queryByText('▶ Train model')).toBeNull();
-            expect(screen.queryByText('↻ Re-train')).toBeNull();
+            // Nothing further to click — Train sensor has nothing ready while fresh.
+            expect(trainSensorBtn().disabled).toBe(true);
+            expect(trainSensorWhy()).toBe('1 model up to date — nothing to train');
         });
 
         it('a Complete model (fingerprint still matches) ALSO auto-recomputes and shows its charts — health score 3b-1 (it used to show only a placeholder)', async () => {
@@ -979,24 +992,33 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
     });
 
     describe('footer', () => {
-        it('shows a read-only status pill, "Save changes" and "▶ Train model" - and NO "Open full view" control (health score phase 4: the full-view page is gone)', async () => {
+        it('shows a read-only status pill and "Save changes" - NO per-model Train (it moved to the header, customer items 8 + 9) and NO "Open full view" control (health score phase 4: the full-view page is gone)', async () => {
             render(<BuildModelWindow />);
             await deliverData();
             expect(screen.getByText('Incomplete')).toBeTruthy();
             expect(screen.queryByText(/Open full view/)).toBeNull();
             expect(screen.getByText('Save changes')).toBeTruthy();
-            expect(screen.getByText('▶ Train model')).toBeTruthy();
+            expect(screen.queryByText('▶ Train model')).toBeNull();
+            expect(screen.queryByText('↻ Re-train')).toBeNull();
+            expect(trainSensorBtn().textContent).toBe('▶ Train sensor · 1 of 1');
+            // The footer says "not trained yet" and links to the header button (which it focuses).
+            expect(screen.getByTestId('footer-status').textContent).toBe('Not trained · Train sensor ↑ — train first, then set the health set points');
+            fireEvent.click(screen.getByTestId('footer-train-sensor'));
+            expect(document.activeElement).toBe(trainSensorBtn());
             // 3b-2: a model is completed ONLY from the Health score page - never from this footer.
             expect(screen.queryByText('✓ Mark complete')).toBeNull();
             expect(screen.queryByText('Mark incomplete')).toBeNull();
         });
 
-        it('"▶ Train model" is disabled until settings are valid, and shows why', async () => {
+        it('Train sensor is disabled until settings are valid, and shows why (the preflight wording, not "above")', async () => {
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: { groups: [makeGroup()], models: [makeModel({ name: '' })] } });
-            const train = screen.getByText('▶ Train model') as HTMLButtonElement;
+            const train = trainSensorBtn();
             expect(train.disabled).toBe(true);
-            expect(train.title).toMatch(/Fill in the required fields/);
+            expect(trainSensorWhy()).toBe("Can't train: Individual — no model name");
+            expect(train.title).toBe("Can't train: Individual — no model name");
+            // The footer keeps the shipped Save reason.
+            expect(screen.getByTestId('build-block-reason').textContent).toMatch(/Fill in the required fields/);
         });
 
         it('"Save changes" persists the edit and clears the draft', async () => {
@@ -1103,7 +1125,7 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
                 render(<BuildModelWindow />);
                 await deliverData({ failureGroupState: { groups: [makeGroup()], models: [model] } });
                 await act(async () => {
-                    fireEvent.click(screen.getByText('▶ Train model'));
+                    fireEvent.click(trainSensorBtn());
                     await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
                 });
                 let written = (await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value).failureGroupState.models[0];
@@ -1163,16 +1185,16 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             mockUpdateWorkspaceData.mockImplementation(async (_id: string, patch: (s: any) => any) => { disk = patch(disk); return disk; });
             await deliverData({ failureGroupState: disk.failureGroupState });
         }
-        // Since the Predictive Model page was removed (health score phase 4) the footer's
-        // "▶ Train model" button is the control the running-condition gate blocks.
-        const trainButton = () => screen.getByText('▶ Train model') as HTMLButtonElement;
+        // The header's Train sensor (customer items 8 + 9) is the control the running-condition gate blocks.
+        const trainButton = trainSensorBtn;
 
-        it('"Train model" is disabled with the gate reason while nothing is configured', async () => {
+        it('Train sensor is disabled with the "set the running condition" reason while nothing is configured', async () => {
             render(<BuildModelWindow />);
             await deliverGate([makeModel()]);
             const train = trainButton();
             expect(train.disabled).toBe(true);
-            expect(train.title).toBe(REASON);
+            expect(train.title).toBe(TRAIN_NEEDS_RUNNING_CONDITION);
+            expect(trainSensorWhy()).toBe(TRAIN_NEEDS_RUNNING_CONDITION);
             expect(screen.getByTestId('build-block-reason').textContent).toBe(REASON);
         });
 
@@ -1750,7 +1772,7 @@ describe('Relationship X-axis switcher (2026-09-30 port)', () => {
         await deliverData({ failureGroupState: { groups: [makeGroup()], models: [rel] } });
         statefulUpdateMock([rel]);
         await act(async () => {
-            fireEvent.click(screen.getByText('▶ Train model'));
+            fireEvent.click(trainSensorBtn());
             await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
         });
         await waitFor(() => expect(screen.getByTestId('results-chart')).toBeTruthy());
@@ -1787,7 +1809,7 @@ describe('Relationship X-axis switcher (2026-09-30 port)', () => {
         await deliverData({ failureGroupState: { groups: [makeGroup()], models: [rel] } });
         statefulUpdateMock([rel]);
         await act(async () => {
-            fireEvent.click(screen.getByText('▶ Train model'));
+            fireEvent.click(trainSensorBtn());
             await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
         });
         await waitFor(() => expect(screen.getByTestId('results-chart')).toBeTruthy());
@@ -2403,7 +2425,7 @@ describe('Running condition Step 1 — step bar, card, settings modal preview (2
             await deliverData({ failureGroupState: setFg() });
             await waitFor(() => expect(screen.getByTestId('rc-card-rows-error').textContent).toBe('— rows'));
             expect(state()).toBe('set');
-            expect((screen.getByText('▶ Train model') as HTMLButtonElement).disabled).toBe(false);
+            expect(trainSensorBtn().disabled).toBe(false);
             warn.mockRestore();
         });
 
@@ -2468,9 +2490,10 @@ describe('Running condition Step 1 — step bar, card, settings modal preview (2
             expect(screen.getByTestId('results-rc-locked').textContent).toContain('Set the running condition first');
             expect(screen.getByTestId('results-rc-locked').textContent).toContain('Training is locked until Step 1 is done.');
             const REASON = 'Set a running condition first, or choose "No condition — use all rows".';
-            const train = screen.getByText('▶ Train model') as HTMLButtonElement;
+            const train = trainSensorBtn();
             expect(train.disabled).toBe(true);
-            expect(train.title).toBe(REASON);
+            expect(train.title).toBe(TRAIN_NEEDS_RUNNING_CONDITION);
+            expect(screen.getByTestId('build-block-reason').textContent).toBe(REASON);
             expect(screen.queryByText('✓ Mark complete')).toBeNull(); // Mark complete lives on the Health score page
             expect((screen.getByTestId('page-health') as HTMLButtonElement).disabled).toBe(true);
         });
@@ -2479,8 +2502,8 @@ describe('Running condition Step 1 — step bar, card, settings modal preview (2
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: setFg({ runningConditionTimePeriods: [{ id: 'x', start: '2026-02-01T00:00', end: '2026-01-05T00:00' }] }) });
             expect(screen.getByTestId('results-rc-locked').textContent).toContain('Fix the running condition first');
-            expect((screen.getByText('▶ Train model') as HTMLButtonElement).disabled).toBe(true);
-            expect((screen.getByText('▶ Train model') as HTMLButtonElement).title).toBe('Period 1 ends before it starts.');
+            expect(trainSensorBtn().disabled).toBe(true);
+            expect(trainSensorBtn().title).toBe("Can't train: Individual — train period 1 ends before it starts");
             expect(screen.getByTestId('results-rc-locked-open').textContent).toBe('Fix period');
         });
 
@@ -2488,7 +2511,7 @@ describe('Running condition Step 1 — step bar, card, settings modal preview (2
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: setFg() });
             expect(screen.queryByTestId('results-rc-locked')).toBeNull();
-            expect((screen.getByText('▶ Train model') as HTMLButtonElement).disabled).toBe(false);
+            expect(trainSensorBtn().disabled).toBe(false);
         });
     });
 
@@ -2778,7 +2801,7 @@ describe('Incomplete immediately + Relationship fit cache key (health score phas
         expect(emitted.models[0].status).toBe(false);
         // The window now shows it as out of date, ready to re-train.
         expect(screen.getByText('Incomplete', { selector: '.model-status-pill' })).toBeTruthy();
-        expect(screen.getByText('↻ Re-train')).toBeTruthy();
+        expect(trainSensorBtn().disabled).toBe(false); // stale = ready to train again
     });
 
     it('"Save changes" of only the NAME keeps it Complete (stiffness/cluster defaults a draft re-derives are not a change)', async () => {
@@ -2826,7 +2849,7 @@ describe('Incomplete immediately + Relationship fit cache key (health score phas
         await flush();
         expect(screen.getByText('Incomplete', { selector: '.model-status-pill' })).toBeTruthy();
         expect(screen.getByTestId('results-stale').textContent).toMatch(/Settings changed/);
-        expect(screen.getByText('↻ Re-train')).toBeTruthy();
+        expect(trainSensorBtn().disabled).toBe(false); // stale = ready to train again
         expect(screen.queryByText('Mark incomplete')).toBeNull();
         // Yellow ("needs re-train"), never the green Complete dot.
         expect(screen.getByTestId('sensor-kind-badge-dot-old').className).toMatch(/f4-kb-dot--need/);
@@ -2848,7 +2871,7 @@ describe('Incomplete immediately + Relationship fit cache key (health score phas
         statefulUpdateMock([stale]);
         render(<BuildModelWindow />);
         await deliverData({ failureGroupState: { groups: [makeGroup()], models: [stale] } });
-        await act(async () => { fireEvent.click(screen.getByText('↻ Re-train')); await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+        await act(async () => { fireEvent.click(trainSensorBtn()); await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
         const saved = (await lastWritten()).models[0];
         expect(saved.status).toBe(false);
         expect(saved.trainedFingerprint).not.toBe('written-before-this-rule');
@@ -2858,7 +2881,7 @@ describe('Incomplete immediately + Relationship fit cache key (health score phas
     describe('Relationship Train asks Rust to cache the fit under a fingerprint-based key', () => {
         const relModel = () => makeModel({ id: 'r1', kind: 'relationship', targetSensor: 'TAG1', predictorSensors: ['TAG2'], relStiffness: 10_000 });
         const train = async () => {
-            await act(async () => { fireEvent.click(screen.getByText('▶ Train model')); await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+            await act(async () => { fireEvent.click(trainSensorBtn()); await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
         };
 
         it('passes cache_key = model id + trainedFingerprint, and max_points', async () => {
@@ -4021,7 +4044,7 @@ describe('Health score - QA fixes 2026-10-04', () => {
         it('a new Train drops the old verdict in the same write that stamps the new fit', async () => {
             await hsMount([makeModel({ healthVerdict: 'invalid' })]); // untrained, with a leftover verdict
             await act(async () => {
-                fireEvent.click(screen.getByText('▶ Train model'));
+                fireEvent.click(trainSensorBtn());
                 await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
             });
             const stamped = (await Promise.all(mockUpdateWorkspaceData.mock.results.map(r => r.value))).find(s => s.failureGroupState.models[0].lastTrainedAt)!;
@@ -4045,7 +4068,7 @@ describe('Health score - QA fixes 2026-10-04', () => {
                 return g === 'reject' ? Promise.reject(new Error('no such command')) : Promise.resolve(g);
             });
         };
-        const clickTrain = () => { mockInvoke.mockClear(); return act(async () => { fireEvent.click(screen.getByText('▶ Train model')); await flush(); await flush(); }); };
+        const clickTrain = () => { mockInvoke.mockClear(); return act(async () => { fireEvent.click(trainSensorBtn()); await flush(); await flush(); }); };
         const stats = () => mockInvoke.mock.calls.filter(c => c[0] === 'compute_sensor_stats');
         const stamped = async () => (await Promise.all(mockUpdateWorkspaceData.mock.results.map(r => r.value))).some(s => s.failureGroupState.models[0].lastTrainedAt);
 
@@ -4519,7 +4542,7 @@ describe('Train / Test validation — review fixes (2026-10-07)', () => {
             statefulUpdateMock([model], fgOver);
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: { groups: [makeGroup()], models: [model], ...fgOver } });
-            await act(async () => { fireEvent.click(screen.getByText('▶ Train model')); await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+            await act(async () => { fireEvent.click(trainSensorBtn()); await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
             return mockInvoke.mock.calls.find(c => c[0] === 'preview_relationship_model')![1] as any;
         };
 
@@ -4568,7 +4591,7 @@ describe('Train / Test validation — review fixes (2026-10-07)', () => {
             statefulUpdateMock([rel]);
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: { groups: [makeGroup()], models: [rel] } });
-            await act(async () => { fireEvent.click(screen.getByText('▶ Train model')); await Promise.resolve(); await Promise.resolve(); });
+            await act(async () => { fireEvent.click(trainSensorBtn()); await Promise.resolve(); await Promise.resolve(); });
             await waitFor(() => expect(screen.getByTestId('results-error').textContent).toContain('reinstall or update the app'));
             expect(screen.getByTestId('results-error').textContent).not.toContain('SIDECAR_OUTDATED');
         });
@@ -4624,5 +4647,460 @@ describe('Train / Test validation — review fixes (2026-10-07)', () => {
             expect(dlg.queryByTestId('test-row-1')).toBeNull();
             expect((dlg.getByTestId('test-from-hl') as HTMLButtonElement).disabled).toBe(true);
         });
+    });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// Train sensor / Train all with a queue (customer batch 2026-10, items 8 + 9):
+// the WIRING of `useTrainQueue` into this window. The parts themselves are
+// tested in TrainQueueParts.test.tsx, the queue rules in useTrainQueue.test.ts.
+// ─────────────────────────────────────────────────────────────────────────
+describe('train queue wiring (customer items 8 + 9)', () => {
+    const IND2 = (over: Record<string, any> = {}) => makeModel({ id: 'i2', name: 'Temp I', targetSensor: 'TAG2', ...over });
+    const REL2 = (over: Record<string, any> = {}) => makeModel({ id: 'r2', name: 'Temp R', kind: 'relationship', targetSensor: 'TAG2', predictorSensors: ['TAG1'], ...over });
+    /** Holds every `compute_sensor_stats` of `sensor` (the Individual train) until `release()`.
+     *  The Step-1 row count asks for TAG1, so TAG2 / TAG3 are only ever a model's train. */
+    function holdStats(sensor = 'TAG2', base: (cmd: string, args?: any) => Promise<unknown> = defaultInvoke) {
+        let release: () => void = () => {};
+        const gate = new Promise<void>(r => { release = r; });
+        mockInvoke.mockImplementation((cmd: string, args?: any) =>
+            cmd === 'compute_sensor_stats' && args?.sensor === sensor ? gate.then(() => base(cmd, args)) : base(cmd, args));
+        return () => act(async () => { release(); await Promise.resolve(); await Promise.resolve(); });
+    }
+    async function mountModels(models: any[], extra: Record<string, any> = {}, payloadOver: Record<string, any> = {}) {
+        statefulUpdateMock(models, extra);
+        render(<BuildModelWindow />);
+        await deliverData({ failureGroupState: { groups: [makeGroup()], models, ...extra } }, payloadOver);
+    }
+    const clickTrainSensor = () => act(async () => { fireEvent.click(trainSensorBtn()); await Promise.resolve(); await Promise.resolve(); });
+    const strip = () => screen.getByTestId('train-run-strip');
+    const lastDisk = async () => (await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value).failureGroupState;
+    const calls = (cmd: string, sensor?: string) => mockInvoke.mock.calls.filter(c => c[0] === cmd && (sensor === undefined || (c[1] as any)?.sensor === sensor));
+    const selectRow = (text: string) => fireEvent.click(screen.getAllByTestId('sensor-row-label').find(e => e.textContent?.includes(text))!);
+
+    it('Train sensor runs every model of the sensor one at a time (I then R), with list badges and a run strip', async () => {
+        const release = holdStats();
+        await mountModels([IND2(), REL2()]);
+        expect(trainSensorBtn().textContent).toBe('▶ Train sensor · 2 of 2');
+        expect(screen.getByTestId('train-sensor-why').textContent).toBe('Trains Individual + Relationship · ≈ 16 s');
+        await clickTrainSensor();
+        expect(screen.getByTestId('sensor-kind-badge-running-i2')).toBeTruthy();
+        expect(screen.getByTestId('sensor-kind-badge-queued-r2')).toBeTruthy();
+        expect(screen.getByTestId('train-run-text').textContent).toBe('Training 1 of 2');
+        expect(trainSensorBtn().disabled).toBe(true);
+        expect((screen.getByTestId('train-all') as HTMLButtonElement).disabled).toBe(true);
+        // Strictly one at a time: the Relation model has not started while the Individual one trains.
+        expect(calls('preview_relationship_model')).toHaveLength(0);
+        await release();
+        await waitFor(() => expect(strip().getAttribute('data-phase')).toBe('done'));
+        expect(calls('preview_relationship_model')).toHaveLength(1);
+        expect(screen.getByTestId('train-run-text').textContent).toBe('Done · 2 trained');
+        const models = (await lastDisk()).models;
+        expect(models.every((m: any) => m.lastTrainedAt && m.status === false)).toBe(true);
+    });
+
+    it('a queued model is locked ("Remove from run", Save disabled); removing it leaves it untrained', async () => {
+        const release = holdStats();
+        await mountModels([IND2(), REL2()]);
+        await clickTrainSensor();
+        fireEvent.click(screen.getAllByRole('tab').find(t => t.textContent?.includes('Relationship'))!);
+        expect(screen.getByTestId('settings-locked').textContent).toContain('Locked while this model is in the run');
+        expect(screen.getByTestId('queued-card').textContent).toContain('Queued · next');
+        expect(screen.getByTestId('footer-status').textContent).toBe('Queued in the run · next');
+        const save = screen.getByText('Save changes') as HTMLButtonElement;
+        expect(save.disabled).toBe(true);
+        expect(save.title).toBe('Settings are locked while this model is in the run');
+        expect(screen.queryByTestId('add-model-form')).toBeNull();
+        await act(async () => { fireEvent.click(screen.getByTestId('remove-from-run')); });
+        expect(screen.queryByTestId('settings-locked')).toBeNull();
+        expect(screen.queryByTestId('queued-card')).toBeNull();
+        await release();
+        await waitFor(() => expect(strip().getAttribute('data-phase')).toBe('done'));
+        expect(calls('preview_relationship_model')).toHaveLength(0);
+        expect(screen.getByTestId('train-run-text').textContent).toBe('Done · 1 trained · 1 removed');
+        const r2 = (await lastDisk()).models.find((m: any) => m.id === 'r2');
+        expect(r2.lastTrainedAt).toBeFalsy();
+        expect(r2.status).toBe(false);
+    });
+
+    it('STALE (the dataset changed): the run stops at once, strip / sidebar line / Train-sensor reason are red with the shipped wording, both Train buttons disabled', async () => {
+        mockInvoke.mockImplementation((cmd: string, args?: any) => cmd === 'get_session_generation' ? Promise.resolve(6) : defaultInvoke(cmd, args));
+        await mountModels([IND2(), REL2()], {}, { metadata: { headers: ['timestamp', 'TAG1', 'TAG2', 'TAG3'], total_rows: 100, generation: 5 } });
+        await clickTrainSensor();
+        await waitFor(() => expect(strip().getAttribute('data-phase')).toBe('stale'));
+        expect(strip().getAttribute('data-tone')).toBe('danger');
+        expect(screen.getByTestId('train-run-text').textContent).toBe('Run stopped: the data changed');
+        expect(screen.getByTestId('train-run-stale').textContent).toContain('The data in this window is out of date. Close it and open Build Model again from the Dashboard.');
+        // Nothing trained, the Relation model never started.
+        expect(calls('compute_sensor_stats', 'TAG2')).toHaveLength(0);
+        expect(calls('preview_relationship_model')).toHaveLength(0);
+        expect(trainSensorBtn().disabled).toBe(true);
+        expect(screen.getByTestId('train-sensor-why').textContent).toBe('The data in this window is out of date. Close it and open Build Model again from the Dashboard.');
+        expect(screen.getByTestId('train-sensor-why').className).toContain('tq-why--danger');
+        expect((screen.getByTestId('train-all') as HTMLButtonElement).disabled).toBe(true);
+        expect(screen.getByTestId('train-all-reason').className).toContain('tq-why--danger');
+        await act(async () => { fireEvent.click(screen.getByTestId('train-run-close-window')); await Promise.resolve(); await Promise.resolve(); });
+        expect(mockClose).toHaveBeenCalled();
+    });
+
+    it('the silent auto-recompute is skipped while a run is active, and runs once it ends (never two trains at once)', async () => {
+        const release = holdStats('TAG2');
+        await mountModels([IND2(), withTrained(makeModel({ id: 'i3', name: 'Other', targetSensor: 'TAG3' }))]);
+        await flush();
+        expect(calls('compute_sensor_stats', 'TAG3')).toHaveLength(0); // TAG2 is the selected sensor
+        await clickTrainSensor();
+        selectRow('TAG3');
+        await flush();
+        expect(calls('compute_sensor_stats', 'TAG3')).toHaveLength(0);
+        await release();
+        await waitFor(() => expect(calls('compute_sensor_stats', 'TAG3')).toHaveLength(1));
+    });
+
+    it('closing during a run asks first (toolbar X and native close); "Keep training" is the default; "Stop after this model and close" closes once it is done', async () => {
+        const release = holdStats();
+        await mountModels([IND2(), REL2()]);
+        await clickTrainSensor();
+        await act(async () => { fireEvent.click(screen.getByTitle('Close')); await Promise.resolve(); });
+        expect(screen.getByRole('alertdialog').textContent).toContain('Training is still running');
+        expect(document.activeElement).toBe(screen.getByTestId('close-run-keep'));
+        expect(mockClose).not.toHaveBeenCalled();
+        fireEvent.click(screen.getByTestId('close-run-keep'));
+        expect(screen.queryByRole('alertdialog')).toBeNull();
+        // The native close (titlebar X / Alt+F4) is held the same way.
+        const preventDefault = vi.fn();
+        await act(async () => { await mockCloseRequestedHandler!({ preventDefault }); });
+        expect(preventDefault).toHaveBeenCalled();
+        expect(screen.getByRole('alertdialog')).toBeTruthy();
+        await act(async () => { fireEvent.click(screen.getByTestId('close-run-stop')); await Promise.resolve(); });
+        expect(screen.queryByRole('alertdialog')).toBeNull();
+        expect(screen.getByTestId('train-run-text').textContent).toBe('Closing after this model…');
+        expect(mockClose).not.toHaveBeenCalled();
+        await release();
+        await waitFor(() => expect(mockClose).toHaveBeenCalled());
+        // Stopped after the Individual model: the Relation model never started.
+        expect(calls('preview_relationship_model')).toHaveLength(0);
+    });
+
+    it('the close dialog turns into "Run finished — close?" when the run ends while it is open', async () => {
+        const release = holdStats();
+        await mountModels([IND2()]);
+        await clickTrainSensor();
+        await act(async () => { fireEvent.click(screen.getByTitle('Close')); await Promise.resolve(); });
+        expect(screen.getByRole('alertdialog').textContent).toContain('Training is still running');
+        await release();
+        await waitFor(() => expect(screen.getByRole('alertdialog').textContent).toContain('Run finished — close?'));
+        expect(screen.getByTestId('close-run-numbers').textContent).toBe('1 trained. Trained models keep their results.');
+        await act(async () => { fireEvent.click(screen.getByTestId('close-run-close')); await Promise.resolve(); await Promise.resolve(); });
+        expect(mockClose).toHaveBeenCalled();
+    });
+
+    it('after a run: a "Set points needed" list chip and the Health score banner with "Next needing set points"', async () => {
+        mockInvoke.mockImplementation(healthInvoke);
+        await mountModels([IND2(), makeModel({ id: 'i3', name: 'Other', targetSensor: 'TAG3' })]);
+        expect(screen.queryByTestId('chip-set-points-needed')).toBeNull();
+        await act(async () => { fireEvent.click(screen.getByTestId('train-all')); });
+        expect(screen.getByTestId('train-all-modal').getAttribute('data-view')).toBe('preflight');
+        await act(async () => { fireEvent.click(screen.getByTestId('train-all-start')); await Promise.resolve(); });
+        await waitFor(() => expect(screen.getByTestId('train-all-modal').getAttribute('data-view')).toBe('done'));
+        expect(screen.getByTestId('train-row-status-i2').textContent).toBe('✓ Trained · set points needed');
+        fireEvent.click(screen.getByTestId('train-open-i2'));
+        expect(screen.queryByTestId('train-all-modal')).toBeNull();
+        expect(screen.getByTestId('chip-set-points-needed').textContent).toBe('Set points needed 2');
+        await waitFor(() => expect(screen.getByTestId('set-points-card')).toBeTruthy());
+        expect(screen.getByTestId('run-setpoints-text').textContent).toBe('2 trained in this run need set points (2 in total)');
+        expect(screen.getByTestId('run-setpoints-banner').textContent).toContain('this is 1 of 2');
+        fireEvent.click(screen.getByTestId('next-needing-set-points'));
+        expect(screen.getByRole('heading', { level: 3 }).textContent).toContain('TAG3');
+        // The chip filters the list to the sensors still needing set points.
+        fireEvent.click(screen.getByTestId('chip-set-points-needed'));
+        expect(screen.getAllByTestId('sensor-row-label')).toHaveLength(2);
+    });
+
+    it('Train all preflight: Fix → jumps to the model settings', async () => {
+        const noPred = makeModel({ id: 'r3', name: 'No pred', kind: 'relationship', targetSensor: 'TAG3', predictorSensors: [] });
+        await mountModels([IND2(), noPred]);
+        expect(screen.getByTestId('train-all-counts').textContent).toBe("1 ready0 up to date1 can't train");
+        await act(async () => { fireEvent.click(screen.getByTestId('train-all')); });
+        expect(screen.getByTestId('train-row-status-r3').textContent).toBe("Can't train — no predictor sensor");
+        fireEvent.click(screen.getByTestId('train-fix-r3'));
+        expect(screen.queryByTestId('train-all-modal')).toBeNull();
+        expect(screen.getByRole('heading', { level: 3 }).textContent).toContain('TAG3');
+        expect(screen.getByTestId('add-model-form')).toBeTruthy();
+    });
+
+    it('no running condition: Train all and Train sensor are disabled with the reason as text, and the Step-1 card says Not set', async () => {
+        await mountModels([IND2()], { runningConditionNoneConfirmed: false, rcLegacyNotice: null });
+        fireEvent.click(screen.getByLabelText('Close')); // the auto-opened settings modal
+        expect(screen.getByTestId('rc-card-pill').textContent).toBe('Not set');
+        expect((screen.getByTestId('train-all') as HTMLButtonElement).disabled).toBe(true);
+        expect(screen.getByTestId('train-all-reason').textContent).toBe(TRAIN_NEEDS_RUNNING_CONDITION);
+        expect(screen.getByTestId('train-all-reason').className).toContain('tq-why--warn');
+        expect(trainSensorBtn().disabled).toBe(true);
+        expect(screen.getByTestId('train-sensor-why').textContent).toBe(TRAIN_NEEDS_RUNNING_CONDITION);
+    });
+
+    it('a run that trains OTHER models does not refetch the open model\'s charts (performance)', async () => {
+        await mountModels([withTrained(makeModel({ id: 'i3', name: 'Other', targetSensor: 'TAG3' })), IND2()]);
+        await waitFor(() => expect(screen.getByTestId('results-chart')).toBeTruthy());
+        await new Promise(r => setTimeout(r, 400)); // the preview's debounce settles
+        const before = healthCalls().length;
+        await act(async () => { fireEvent.click(screen.getByTestId('train-all')); });
+        await act(async () => { fireEvent.click(screen.getByTestId('train-all-start')); await Promise.resolve(); });
+        await waitFor(() => expect(screen.getByTestId('train-all-modal').getAttribute('data-view')).toBe('done'));
+        expect(screen.getByTestId('train-row-status-i2').textContent).toBe('✓ Trained · set points needed');
+        await new Promise(r => setTimeout(r, 400));
+        expect(healthCalls().length).toBe(before);
+    });
+
+    it('re-pointed at another workspace mid-run: the run is dropped (no strip, Train buttons free again)', async () => {
+        holdStats();
+        await mountModels([IND2()]);
+        await clickTrainSensor();
+        expect(strip()).toBeTruthy();
+        mockLoadWorkspaceData.mockResolvedValue({ id: 'ws2', failureGroupState: { groups: [makeGroup()], models: [makeModel({ id: 'w2', targetSensor: 'TAG1' })], runningConditionNoneConfirmed: true, rcLegacyNotice: null, runningConditionTimePeriods: ALL_TIME_TRAIN, runningConditionTestPeriods: ONE_TEST } });
+        await act(async () => {
+            for (const cb of listenCallbacks['build-model-data'] ?? []) cb({ payload: { workspaceId: 'ws2', sensorHeaders: ['TAG1', 'TAG2'], sensorMetadata: [], metadata: { headers: ['timestamp', 'TAG1', 'TAG2'], total_rows: 1 } } });
+            await Promise.resolve(); await Promise.resolve();
+        });
+        await flush();
+        expect(screen.queryByTestId('train-run-strip')).toBeNull();
+        expect(trainSensorBtn().disabled).toBe(false);
+    });
+});
+
+// Phase 4 code-review fixes: workspace-closing, a hung train at close, re-points
+// during waits, the sidecar overlap rules (Mark complete / Compare predictors /
+// Re-train while a run is active), and the NOT_FITTED re-fit plan.
+describe('train queue wiring — review fixes (phase 4)', () => {
+    const IND2 = (over: Record<string, any> = {}) => makeModel({ id: 'i2', name: 'Temp I', targetSensor: 'TAG2', ...over });
+    const IND3T = (over: Record<string, any> = {}) => withTrained(makeModel({ id: 'i3', name: 'Other', targetSensor: 'TAG3', ...over }));
+    /** Holds `compute_sensor_stats` of `sensor` until the returned release is called. */
+    function hold(sensor: string, base: (cmd: string, args?: any) => Promise<unknown> = defaultInvoke) {
+        let release: () => void = () => {};
+        const gate = new Promise<void>(r => { release = r; });
+        mockInvoke.mockImplementation((cmd: string, args?: any) =>
+            cmd === 'compute_sensor_stats' && args?.sensor === sensor ? gate.then(() => base(cmd, args)) : base(cmd, args));
+        return () => act(async () => { release(); await Promise.resolve(); await Promise.resolve(); });
+    }
+    async function mountModels(models: any[], extra: Record<string, any> = {}) {
+        statefulUpdateMock(models, extra);
+        render(<BuildModelWindow />);
+        await deliverData({ failureGroupState: { groups: [makeGroup()], models, ...extra } });
+    }
+    const statsFor = (sensor: string) => mockInvoke.mock.calls.filter(c => c[0] === 'compute_sensor_stats' && (c[1] as any)?.sensor === sensor);
+    const clickTrainAll = async () => {
+        await act(async () => { fireEvent.click(screen.getByTestId('train-all')); });
+        await act(async () => { fireEvent.click(screen.getByTestId('train-all-start')); await Promise.resolve(); await Promise.resolve(); });
+    };
+    const emitEvent = (name: string, payload: unknown) => act(async () => {
+        for (const cb of listenCallbacks[name] ?? []) cb({ payload });
+        await Promise.resolve(); await Promise.resolve();
+    });
+    const repoint = async () => {
+        mockLoadWorkspaceData.mockResolvedValue({ id: 'ws2', failureGroupState: { groups: [makeGroup()], models: [makeModel({ id: 'w2', targetSensor: 'TAG1' })], runningConditionNoneConfirmed: true, rcLegacyNotice: null, runningConditionTimePeriods: ALL_TIME_TRAIN, runningConditionTestPeriods: ONE_TEST } });
+        await emitEvent('build-model-data', { workspaceId: 'ws2', sensorHeaders: ['TAG1', 'TAG2'], sensorMetadata: [], metadata: { headers: ['timestamp', 'TAG1', 'TAG2'], total_rows: 1 } });
+        await flush();
+    };
+    const stamped = async () => (await Promise.all(mockUpdateWorkspaceData.mock.results.map(r => r.value)))
+        .flatMap((w: any) => w?.failureGroupState?.models ?? []).filter((m: any) => m.lastTrainedAt && m.id !== 'i3');
+
+    it('workspace-closing for THIS workspace during a run: the run is dropped and the window closes without asking (a foreign one is ignored)', async () => {
+        hold('TAG2');
+        await mountModels([IND2()]);
+        await act(async () => { fireEvent.click(trainSensorBtn()); await Promise.resolve(); });
+        await act(async () => { fireEvent.click(screen.getByTitle('Close')); await Promise.resolve(); });
+        expect(screen.getByRole('alertdialog')).toBeTruthy();
+        await emitEvent('workspace-closing', { workspaceId: 'other-ws' });
+        expect(screen.getByTestId('train-run-strip')).toBeTruthy();
+        expect(mockClose).not.toHaveBeenCalled();
+        await emitEvent('workspace-closing', { workspaceId: 'ws1' });
+        await flush();
+        expect(screen.queryByTestId('train-run-strip')).toBeNull();
+        expect(screen.queryByRole('alertdialog')).toBeNull();
+        expect(mockClose).toHaveBeenCalledTimes(1);
+        // The Dashboard's own close that follows is not held either.
+        const preventDefault = vi.fn();
+        await act(async () => { await mockCloseRequestedHandler!({ preventDefault }); });
+        expect(preventDefault).not.toHaveBeenCalled();
+    });
+
+    it('a hung train at close: "Stop after this model and close" gives up after the cap with a notice; the next close goes through; a second Stop does not wait twice', async () => {
+        const wait = MARK_COMPLETE_CLOSE_WAIT.ms;
+        MARK_COMPLETE_CLOSE_WAIT.ms = 30;
+        try {
+            hold('TAG2'); // never released: the sidecar "hangs"
+            await mountModels([IND2(), makeModel({ id: 'i4', targetSensor: 'TAG3' })]);
+            await clickTrainAll();
+            await act(async () => { fireEvent.click(screen.getByTitle('Close')); await Promise.resolve(); });
+            await act(async () => { fireEvent.click(screen.getByTestId('close-run-stop')); await Promise.resolve(); });
+            // A second attempt while the first still waits: the dialog again, Stop again — ignored.
+            await act(async () => { fireEvent.click(screen.getByTitle('Close')); await Promise.resolve(); });
+            await act(async () => { fireEvent.click(screen.getByTestId('close-run-stop')); await Promise.resolve(); });
+            await waitFor(() => expect(screen.getByTestId('close-wait-notice').textContent).toContain('Still training a model'));
+            expect(mockClose).not.toHaveBeenCalled();
+            // The next close goes through (no dialog), and a rejected close() is caught.
+            mockClose.mockRejectedValueOnce(new Error('window already closing'));
+            await act(async () => { fireEvent.click(screen.getByTitle('Close')); await Promise.resolve(); await Promise.resolve(); });
+            expect(screen.queryByRole('alertdialog')).toBeNull();
+            expect(mockClose).toHaveBeenCalledTimes(1);
+            const preventDefault = vi.fn();
+            await act(async () => { await mockCloseRequestedHandler!({ preventDefault }); });
+            expect(screen.queryByRole('alertdialog')).toBeNull();
+        } finally {
+            MARK_COMPLETE_CLOSE_WAIT.ms = wait;
+        }
+    });
+
+    it('re-pointed mid-train: releasing the held train writes nothing to either workspace and leaves the new one alone', async () => {
+        const release = hold('TAG2');
+        await mountModels([IND2()]);
+        await act(async () => { fireEvent.click(trainSensorBtn()); await Promise.resolve(); });
+        await repoint();
+        mockUpdateWorkspaceData.mockClear();
+        await release();
+        await flush();
+        await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+        expect(mockUpdateWorkspaceData).not.toHaveBeenCalled();
+        expect(screen.queryByTestId('train-run-strip')).toBeNull();
+        expect(screen.getAllByTestId('sensor-row-label').map(e => e.textContent)).toEqual(['TAG1']);
+        expect(screen.queryByTestId('results-error')).toBeNull();
+    });
+
+    it('a run started while the silent auto-recompute runs waits for it (never two trains at once)', async () => {
+        const release = hold('TAG3'); // the auto-recompute of the open, trained i3
+        await mountModels([IND3T(), IND2()]);
+        await flush();
+        expect(statsFor('TAG3')).toHaveLength(1);
+        await clickTrainAll(); // i3 is up to date: the run trains only i2
+        await flush();
+        expect(statsFor('TAG2')).toHaveLength(0);
+        await release();
+        await waitFor(() => expect(statsFor('TAG2')).toHaveLength(1));
+        await waitFor(() => expect(screen.getByTestId('train-run-strip').getAttribute('data-phase')).toBe('done'));
+    });
+
+    it('re-pointed while the run waits for the auto-recompute: the waiting model is abandoned, nothing is trained or written', async () => {
+        const release = hold('TAG3');
+        await mountModels([IND3T(), IND2()]);
+        await flush();
+        await clickTrainAll();
+        await repoint();
+        await release();
+        await flush();
+        await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+        expect(statsFor('TAG2')).toHaveLength(0);
+        expect(await stamped()).toEqual([]);
+        expect(screen.queryByTestId('train-run-strip')).toBeNull();
+    });
+
+    it('while ANY run is active Mark complete is disabled for every model ("Wait for the training run to finish"), Compare predictors too', async () => {
+        mockInvoke.mockImplementation(healthInvoke);
+        const release = hold('TAG2', healthInvoke);
+        await mountModels([IND3T({ healthSetPoints: VALID_IND }), IND2()]);
+        await openHealthPage();
+        await waitFor(() => expect((screen.getByTestId('mark-complete') as HTMLButtonElement).disabled).toBe(false));
+        await clickTrainAll(); // trains i2 only (i3 is up to date and not in the run)
+        expect((screen.getByTestId('mark-complete') as HTMLButtonElement).disabled).toBe(true);
+        expect(screen.getByTestId('mark-block-reason').textContent).toBe('Wait for the training run to finish');
+        await release();
+        await waitFor(() => expect(screen.getByTestId('train-run-strip').getAttribute('data-phase')).toBe('done'));
+        await waitFor(() => expect((screen.getByTestId('mark-complete') as HTMLButtonElement).disabled).toBe(false));
+    });
+
+    it('a QUEUED model: locked, and its Mark complete is blocked with the run reason', async () => {
+        mockInvoke.mockImplementation(healthInvoke);
+        hold('TAG2', healthInvoke);
+        await mountModels([IND2(), IND3T({ healthSetPoints: VALID_IND })]);
+        fireEvent.click(screen.getAllByTestId('sensor-row-label').find(e => e.textContent?.includes('TAG3'))!);
+        await waitFor(() => expect(screen.getByTestId('results-chart')).toBeTruthy());
+        // Train all with the up-to-date checkbox: i2 trains first (held), i3 waits in the queue.
+        await act(async () => { fireEvent.click(screen.getByTestId('train-all')); });
+        fireEvent.click(screen.getByTestId('train-include-up-to-date'));
+        await act(async () => { fireEvent.click(screen.getByTestId('train-all-start')); await Promise.resolve(); });
+        fireEvent.click(screen.getByTestId('train-all-close'));
+        expect(screen.getByTestId('queued-card')).toBeTruthy();
+        expect(screen.getByTestId('settings-locked')).toBeTruthy();
+        fireEvent.click(screen.getByTestId('page-health'));
+        await waitFor(() => expect(screen.getByTestId('mark-complete')).toBeTruthy());
+        expect((screen.getByTestId('mark-complete') as HTMLButtonElement).disabled).toBe(true);
+        expect(screen.getByTestId('mark-block-reason').textContent).toBe('Wait for the training run to finish');
+    });
+
+    it('Compare predictors is disabled with the reason while a run of ANOTHER sensor is active', async () => {
+        mockInvoke.mockImplementation(healthInvoke);
+        const rel = withTrained(makeModel({ id: 'r3', name: 'Rel', kind: 'relationship', targetSensor: 'TAG3', predictorSensors: ['TAG1'] }));
+        const release = hold('TAG2', healthInvoke);
+        await mountModels([rel, IND2()]);
+        await waitFor(() => expect(screen.getByTestId('results-chart')).toBeTruthy());
+        await clickTrainAll(); // r3 is up to date: only i2 runs
+        const compare = screen.getByTestId('compare-predictors') as HTMLButtonElement;
+        expect(compare.disabled).toBe(true);
+        expect(compare.title).toBe('Wait for the training run to finish');
+        await release();
+        await waitFor(() => expect((screen.getByTestId('compare-predictors') as HTMLButtonElement).disabled).toBe(false));
+    });
+
+    it('Health score Re-train (NOT_FITTED) is disabled with the reason during a run', async () => {
+        const base = (cmd: string, args?: any) => cmd === 'compute_health_preview'
+            ? Promise.reject('NOT_FITTED: no fitted model for this key') : healthInvoke(cmd, args);
+        mockInvoke.mockImplementation(base);
+        const rel = withTrained(makeModel({ id: 'r3', name: 'Rel', kind: 'relationship', targetSensor: 'TAG3', predictorSensors: ['TAG1'] }));
+        const release = hold('TAG2', base);
+        await mountModels([IND2(), rel]);
+        fireEvent.click(screen.getAllByTestId('sensor-row-label').find(e => e.textContent?.includes('TAG3'))!);
+        await waitFor(() => expect(screen.getByTestId('results-not-fitted')).toBeTruthy());
+        expect((screen.getByTestId('results-not-fitted-retrain') as HTMLButtonElement).disabled).toBe(false);
+        // A run (i2 first, held); r3 — planned ready because its fit is gone — is taken out of it again.
+        await act(async () => { fireEvent.click(screen.getByTestId('train-all')); });
+        await act(async () => { fireEvent.click(screen.getByTestId('train-all-start')); await Promise.resolve(); });
+        fireEvent.click(screen.getByTestId('train-remove-r3'));
+        fireEvent.click(screen.getByTestId('train-all-close'));
+        await flush();
+        await waitFor(() => expect(screen.getByTestId('results-not-fitted-retrain')).toBeTruthy());
+        const btn = screen.getByTestId('results-not-fitted-retrain') as HTMLButtonElement;
+        expect(btn.disabled).toBe(true);
+        expect(btn.title).toBe('Wait for the training run to finish');
+        // The Health score page's Re-train gets the same reason.
+        fireEvent.click(screen.getByTestId('page-health'));
+        await flush();
+        await waitFor(() => expect(screen.getByTestId('health-not-fitted-retrain')).toBeTruthy());
+        const hs = screen.getByTestId('health-not-fitted-retrain') as HTMLButtonElement;
+        expect(hs.disabled).toBe(true);
+        expect(hs.title).toBe('Wait for the training run to finish');
+        await release();
+    });
+
+    it('NOT_FITTED: the fit is re-filled once automatically (after the run), and the model is planned as ready meanwhile', async () => {
+        let notFitted = true;
+        const base = (cmd: string, args?: any) => cmd === 'compute_health_preview' && notFitted
+            ? Promise.reject('NOT_FITTED: no fitted model for this key') : healthInvoke(cmd, args);
+        mockInvoke.mockImplementation(base);
+        const rel = withTrained(makeModel({ id: 'r3', name: 'Rel', kind: 'relationship', targetSensor: 'TAG3', predictorSensors: ['TAG1'] }));
+        await mountModels([rel]);
+        const fits = () => mockInvoke.mock.calls.filter(c => c[0] === 'preview_relationship_model').length;
+        // the reopen fit, then ONE automatic re-fit after NOT_FITTED — no loop
+        await waitFor(() => expect(fits()).toBe(2));
+        await act(async () => { await new Promise(r => setTimeout(r, 400)); });
+        expect(fits()).toBe(2);
+        // Train sensor offers it again (ready, not "up to date") while the fit is gone.
+        expect(trainSensorBtn().textContent).toBe('▶ Train sensor · 1 of 1');
+        expect(screen.getByTestId('train-all-counts').textContent).toBe("1 ready0 up to date0 can't train");
+        // A successful train makes it up to date again.
+        notFitted = false;
+        await act(async () => { fireEvent.click(trainSensorBtn()); await Promise.resolve(); });
+        await waitFor(() => expect(screen.getByTestId('train-run-strip').getAttribute('data-phase')).toBe('done'));
+        await waitFor(() => expect(trainSensorBtn().textContent).toBe('▶ Train sensor · 0 of 1'));
+    });
+
+    it('a model being saved (Mark complete running) is planned as "Can\'t train — being saved"', async () => {
+        mockInvoke.mockImplementation((cmd: string, args?: any) => cmd === 'export_model_files' ? new Promise(() => {}) : healthInvoke(cmd, args));
+        await mountModels([IND3T({ healthSetPoints: VALID_IND })]);
+        await openHealthPage();
+        await waitFor(() => expect((screen.getByTestId('mark-complete') as HTMLButtonElement).disabled).toBe(false));
+        await act(async () => { fireEvent.click(screen.getByTestId('mark-complete')); await Promise.resolve(); });
+        expect(screen.getByTestId('train-sensor-why').textContent).toBe("Can't train: Individual — being saved");
+        expect(trainSensorBtn().disabled).toBe(true);
+        // every menu item is disabled too, so the ▾ toggle is
+        expect((screen.getByTestId('train-sensor-menu-toggle') as HTMLButtonElement).disabled).toBe(true);
     });
 });

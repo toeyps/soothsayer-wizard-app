@@ -143,6 +143,16 @@ describe('StaleBanner', () => {
         rerender(<StaleBanner disabled disabledTitle="Needs condition" onRetrain={() => {}} />);
         expect((screen.getByTestId('stale-retrain') as HTMLButtonElement).title).toBe('Needs condition');
     });
+
+    it('while the model waits in a training run the button reads "Queued" and is disabled (customer items 8 + 9)', () => {
+        const onRetrain = vi.fn();
+        render(<StaleBanner queued onRetrain={onRetrain} />);
+        const btn = screen.getByTestId('stale-retrain') as HTMLButtonElement;
+        expect(btn.textContent).toBe('Queued');
+        expect(btn.disabled).toBe(true);
+        fireEvent.click(btn);
+        expect(onRetrain).not.toHaveBeenCalled();
+    });
 });
 
 describe('ChartCard', () => {

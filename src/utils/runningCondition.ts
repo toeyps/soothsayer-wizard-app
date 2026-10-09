@@ -81,6 +81,10 @@ export function isRunningConditionConfigured(model: FailureModel, fg: RunningCon
 /** Single source for the missing-category reason (Overview footer, pill, Finish). */
 export const CATEGORY_BLOCK_REASON = 'Pick a category on the sensor header.';
 
+/** The effective running condition is not configured (no condition and no
+ *  explicit "No condition — use all rows"). */
+export const NO_RUNNING_CONDITION_REASON = 'Set a running condition first, or choose "No condition — use all rows".';
+
 /** No train period, Workspace-mode model (SPEC rule 1). */
 export const NO_TRAIN_PERIOD_REASON =
     'Add a train period — models learn only from the train periods, so pick times the machine was healthy (Running condition → Edit).';
@@ -103,7 +107,7 @@ export function getBuildBlockReason(model: FailureModel, fg: RunningConditionFg,
     const category = model.category ?? sensorCategory(fg?.models ?? [], modelSensorKey(model));
     if (category == null) return CATEGORY_BLOCK_REASON;
     if (!isRunningConditionConfigured(model, fg, headers)) {
-        return 'Set a running condition first, or choose "No condition — use all rows".';
+        return NO_RUNNING_CONDITION_REASON;
     }
     const eff = effectiveRunningCondition(model, fg);
     const bad = validatePeriods(eff.periods).find((s) => s.invalid);

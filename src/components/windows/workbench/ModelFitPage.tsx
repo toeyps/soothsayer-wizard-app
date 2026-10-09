@@ -1,3 +1,5 @@
+import { memo } from 'react';
+import { samePageProps } from './pageMemo';
 import { LayoutGrid } from 'lucide-react';
 import { SensorPickerSingle } from '../../sensor/SensorPicker';
 import { SensorInline } from '../../sensor/SensorLabel';
@@ -50,6 +52,9 @@ export interface ModelFitPageProps extends WorkbenchPageProps {
     onXPredictorChange: (tag: string) => void;
     /** Relationship: open the Sub-models comparison modal. */
     onCompare: () => void;
+    /** Why "Compare predictors" cannot run now (a training run is active: one
+     *  Relation-model sidecar call at a time); absent = enabled. */
+    compareDisabledReason?: string;
     /** Train running days known before Rust answers with `test_validation`
      *  (estimated from the Step-1 row count); `null`/absent = unknown. Drives
      *  only the amber "below the recommended train time" note — never a block. */
@@ -60,7 +65,14 @@ const Stat = ({ label, value, testId }: { label: string; value: string; testId?:
     <span data-testid={testId}>{label}<b>{value}</b></span>
 );
 
-export default function ModelFitPage(props: ModelFitPageProps) {
+/** Memo comparison (see `samePageProps`): small data the window rebuilds per
+ *  render is compared by value — the model (re-read from disk after every
+ *  write), the test numbers; everything else by identity. */
+export function sameModelFitProps(a: ModelFitPageProps, b: ModelFitPageProps): boolean {
+    return samePageProps(a, b, ['model', 'testNumbers']);
+}
+
+function ModelFitPage(props: ModelFitPageProps) {
     const { data, model, stale, unit } = props;
     const stats = data.stats;
     // Train / test scopes on every time chart (null = the preview carried no test periods).
@@ -179,7 +191,14 @@ export default function ModelFitPage(props: ModelFitPageProps) {
                                 </span>
                             </span>
                         )}
-                        <button type="button" className="rcx-btn rcx-btn--sm" data-testid="compare-predictors" onClick={props.onCompare}>
+                        <button
+                            type="button"
+                            className="rcx-btn rcx-btn--sm"
+                            data-testid="compare-predictors"
+                            disabled={!!props.compareDisabledReason}
+                            title={props.compareDisabledReason}
+                            onClick={props.onCompare}
+                        >
                             <LayoutGrid size={12} aria-hidden="true" />Compare predictors
                         </button>
                     </>}
@@ -280,3 +299,5 @@ function ClusterRows({ c }: { c: ClusterStat }) {
         </>
     );
 }
+
+export default memo(ModelFitPage, sameModelFitProps);
