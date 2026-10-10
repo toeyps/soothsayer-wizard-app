@@ -450,8 +450,8 @@ describe('(b) Train all over two failure groups with one failure and one skip', 
         expect(healthBtn.disabled).toBe(false);
         fireEvent.click(healthBtn);
         await waitFor(() => expect(bmw().getByTestId('run-setpoints-banner')).toBeTruthy());
-        expect(bmw().getByTestId('run-setpoints-text').textContent).toBe('3 trained in this run need set points (3 in total)');
-        expect(bmw().getByTestId('run-setpoints-banner').textContent).toContain('this is 1 of 3');
+        // ONE line: "Trained in the run 22:41 · 3 need set points · this is 1 of 3"
+        expect(bmw().getByTestId('run-setpoints-line').textContent).toMatch(/^Trained in the run \d{2}:\d{2} · 3 need set points · this is 1 of 3$/);
         fireEvent.click(bmw().getByTestId('next-needing-set-points'));
         await settle(50);
         expect(bmw().getByTestId('run-setpoints-banner').textContent).toContain('this is 2 of 3');

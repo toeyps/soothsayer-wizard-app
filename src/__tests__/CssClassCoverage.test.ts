@@ -47,6 +47,7 @@ const STYLED_PREFIXES = [
     'kind-badge', 'model-kind-icon', 'model-status-pill', 'pair-regl', 'scatter-regl',
     'special-sensor', 'highlights', 'timebar', 'line-chart',
     'tpe', 'vt',                       // Train/Test validation (TestPeriodsEditor, ValidationCards)
+    'hsx',                             // Health set points table (SetPointsCard, workbench-redesign §4)
     'sl', 'pk', 'cp', 'tt',            // shared SensorLabel / SensorPicker / ColourPicker / tooltip rows (customer items 3+4)
 ];
 
@@ -75,7 +76,7 @@ const DYNAMIC_ENUMS: Record<string, readonly string[]> = {
     'f4-cmsg--': ['bad', 'ovl'],                                                 // TimePeriodsEditor message(…, 'cmsg')
     'wb2-card--': ['tall', 'xtall', 'hs'],                                       // ChartCardSize minus 'normal'
     'hs-chk--': ['ok', 'need', 'bad'],
-    'hs-sc--': ['ok', 'warn', 'danger'],
+    'hsx-row--': ['ok', 'warn', 'danger'],                                       // SetPointsCard Row tone
     'gutter-': ['horizontal', 'vertical'],                                       // split.js
 };
 

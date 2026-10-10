@@ -175,6 +175,26 @@ describe('hover: nearestIndex / hoverIndexFromAxisEvent / readout', () => {
         expect(readoutAt(ind, 99)).toBeNull();
     });
 
+    // Review of 452d5c2, item 6: the hover read-out lost the seconds, so the points of
+    // sub-minute data all read as the same time; and the time went through `new Date`.
+    it('readoutAt shows seconds when the stamp has them (sub-minute data), and only then', () => {
+        const base = makeSetPointAwarePreview({ kind: 'individual', set_points: { lower: 1, upper: 9 } }).series;
+        const sub = { ...base, timestamps: ['2026-01-01 03:00:00', '2026-01-01 03:00:10', '2026-01-01 03:00:20', '2026-01-01 03:00:30.500', '2026-01-01 03:01:00'] } as typeof base;
+        expect([0, 1, 2, 3, 4].map(i => readoutAt(sub, i)!.time)).toEqual([
+            '1 Jan 2026 03:00', '1 Jan 2026 03:00:10', '1 Jan 2026 03:00:20', '1 Jan 2026 03:00:30', '1 Jan 2026 03:01',
+        ]);
+        expect(new Set([0, 1, 2, 3].map(i => readoutAt(sub, i)!.time)).size).toBe(4); // neighbours are told apart
+        expect(readoutText(readoutAt(sub, 1), 'bar')).toMatch(/^1 Jan 2026 03:00:10 · value /);
+    });
+
+    it('readoutAt prints the row\'s own wall clock: an explicit offset or Z never shifts the time (any PC time zone)', () => {
+        const base = makeSetPointAwarePreview({ kind: 'individual', set_points: { lower: 1, upper: 9 } }).series;
+        const tz = { ...base, timestamps: ['2026-02-09T23:50:00+07:00', '2026-02-09T23:50:05-11:00', '2026-02-09T00:10:00Z', '2026-02-09 23:59:59+0530', '2026/02/09 01:02'] } as typeof base;
+        expect([0, 1, 2, 3, 4].map(i => readoutAt(tz, i)!.time)).toEqual([
+            '9 Feb 2026 23:50', '9 Feb 2026 23:50:05', '9 Feb 2026 00:10', '9 Feb 2026 23:59:59', '9 Feb 2026 01:02',
+        ]);
+    });
+
     it('readoutText: "time · value · score", "not running" for a row without a score, "" for nothing', () => {
         const ind = makeSetPointAwarePreview({ kind: 'individual', set_points: { lower: 1, upper: 9 } }).series;
         expect(readoutText(readoutAt(ind, 3), 'bar')).toBe('1 Jan 2026 03:00 · value 6.20 bar · score 60');

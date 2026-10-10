@@ -1,12 +1,52 @@
 import { useLayoutEffect, useRef, type ReactNode } from 'react';
-import { RotateCw } from 'lucide-react';
+import { Loader2, RotateCw } from 'lucide-react';
 import type { WorkbenchPage } from './workbenchTypes';
 
 /*
  * Small shared pieces of the Workbench shell that both pages sit under:
  * the "Model fit | Health score" page switch (detail header, right side),
- * the scroll area of the page body and the stale banner. Presentational only.
+ * the scroll area of the page body, the stale banner, and the ONE board shape of
+ * every chart-less state with its "Train sensor ↑" text link. Presentational only.
  */
+
+/** "Train sensor ↑": the text link every sentence uses to point at the ONE place
+ *  to train — `onClick` moves the focus to the header's Train sensor button. Never
+ *  a train button of its own. */
+export function TrainSensorLink({ testId, onClick }: { testId: string; onClick: () => void }) {
+    return (
+        <button type="button" className="tq-inline-link" data-testid={testId} onClick={onClick}>
+            Train sensor ↑
+        </button>
+    );
+}
+
+/**
+ * The ONE board shape of every chart-less state (SPEC workbench-redesign §1): a
+ * title, one sentence and an optional mono line. Its actions are text links to
+ * the one place for them ("Train sensor ↑", "Model settings", "Running
+ * condition ↑") — never a button of its own.
+ */
+export function StateBoard({ testId, tone = 'plain', title, text, detail, className }: {
+    testId: string;
+    tone?: 'plain' | 'bad' | 'run';
+    title: ReactNode;
+    text?: ReactNode;
+    detail?: ReactNode;
+    className?: string;
+}) {
+    return (
+        <div className={`bmw-stage-empty wbx-msg${tone === 'plain' ? '' : ` wbx-msg--${tone}`}${className ? ` ${className}` : ''}`} data-testid={testId}>
+            <div className="wbx-msg-in">
+                <b className="wbx-msg-t">
+                    {tone === 'run' && <Loader2 size={14} className="pm-spin" aria-hidden="true" />}
+                    {title}
+                </b>
+                {text && <span className="wbx-msg-s">{text}</span>}
+                {detail && <span className="wbx-msg-d">{detail}</span>}
+            </div>
+        </div>
+    );
+}
 
 interface PageSwitchProps {
     page: WorkbenchPage;

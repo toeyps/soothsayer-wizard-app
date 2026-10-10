@@ -6,11 +6,48 @@ vi.mock('../components/charts/ResponsiveECharts', () => ({
     default: (props: any) => <div data-testid="echarts-mock" data-series={props.option?.series?.length ?? 0} />,
 }));
 
-import { PageSwitch, StaleBanner, WorkbenchScroll } from '../components/windows/workbench/WorkbenchShellParts';
+import { PageSwitch, StaleBanner, StateBoard, TrainSensorLink, WorkbenchScroll } from '../components/windows/workbench/WorkbenchShellParts';
 import ChartCard, { LegendItem } from '../components/windows/workbench/ChartCard';
 import { SensorPickerSingle } from '../components/sensor/SensorPicker';
 
 afterEach(cleanup);
+
+// workbench-redesign SPEC §1: chart-less states use ONE board shape; their actions are text links.
+describe('StateBoard + TrainSensorLink', () => {
+    it('a title, one sentence and an optional mono line; never a button of its own', () => {
+        render(<StateBoard testId="b" title="Not trained yet" text="Train it first." detail="Individual · ≈ 1 s" />);
+        const b = screen.getByTestId('b');
+        expect(b.className).toBe('bmw-stage-empty wbx-msg');
+        expect(b.querySelector('.wbx-msg-t')!.textContent).toBe('Not trained yet');
+        expect(b.querySelector('.wbx-msg-s')!.textContent).toBe('Train it first.');
+        expect(b.querySelector('.wbx-msg-d')!.textContent).toBe('Individual · ≈ 1 s');
+        expect(b.querySelector('button')).toBeNull();
+        expect(b.querySelector('.pm-spin')).toBeNull();
+    });
+
+    it('tones: "bad" is red, "run" carries the spinner; the sentence and the mono line are optional; an extra class is kept', () => {
+        const { rerender } = render(<StateBoard testId="b" tone="bad" title="Training failed" />);
+        expect(screen.getByTestId('b').className).toBe('bmw-stage-empty wbx-msg wbx-msg--bad');
+        expect(screen.getByTestId('b').querySelector('.wbx-msg-s')).toBeNull();
+        expect(screen.getByTestId('b').querySelector('.wbx-msg-d')).toBeNull();
+        rerender(<StateBoard testId="b" tone="run" title="Loading the Relation model…" className="hs-full" />);
+        expect(screen.getByTestId('b').className).toBe('bmw-stage-empty wbx-msg wbx-msg--run hs-full');
+        expect(screen.getByTestId('b').querySelector('.wbx-msg-t .pm-spin')).not.toBeNull();
+    });
+
+    it('"Train sensor ↑" is a text link that only asks to be taken there', () => {
+        const go = vi.fn();
+        render(<StateBoard testId="b" title="Fit no longer in memory" text={<>Re-train it with <TrainSensorLink testId="go" onClick={go} />.</>} />);
+        const link = screen.getByTestId('go');
+        expect(link.tagName).toBe('BUTTON');
+        expect(link.getAttribute('type')).toBe('button');
+        expect(link.className).toBe('tq-inline-link');
+        expect(link.textContent).toBe('Train sensor ↑');
+        expect(screen.getByTestId('b').querySelector('.wbx-msg-s')!.textContent).toBe('Re-train it with Train sensor ↑.');
+        fireEvent.click(link);
+        expect(go).toHaveBeenCalledTimes(1);
+    });
+});
 
 describe('PageSwitch', () => {
     const base = { page: 'model' as const, healthDisabled: false, onPage: () => {} };

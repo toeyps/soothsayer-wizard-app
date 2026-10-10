@@ -102,6 +102,39 @@ export function formatStamp(v: string | number | null | undefined): string {
     return `${dateTxt(ms, true)} ${hhmm(ms)}`;
 }
 
+/** `YYYY-MM-DD[ T]HH:MM[:SS[.fff]]` with an optional `Z` / `+07:00` offset. */
+const DATA_STAMP_RE = /^(\d{4})[-/](\d{1,2})[-/](\d{1,2})(?:[T ]+(\d{1,2}):(\d{2})(?::(\d{2})(?:[.,]\d+)?)?)?\s*(?:Z|[+-]\d{2}(?::?\d{2})?)?$/i;
+
+/**
+ * `formatStamp` for a timestamp that is DATA (a CSV row's time, as Rust hands it
+ * back: the lowest-score time, the hover read-out, a scoring period's lowest).
+ * Formatted from the text's OWN wall-clock parts — it is never passed through a
+ * `Date`, so an explicit offset ("2026-02-09T23:50:00+07:00") reads "9 Feb 2026
+ * 23:50" on a PC in any time zone (review of 452d5c2, item 6b). `formatStamp`
+ * stays for instants the APP recorded in UTC ("Trained …", "Files saved …"), which
+ * must show in local time.
+ *
+ * `seconds: true` (hover read-outs) adds ":SS" when the stamp's seconds are not
+ * zero, so neighbouring points of sub-minute data do not read as the same time.
+ * Text in another shape goes through `formatStamp` (read as local time, which
+ * also shows its own clock); text that is not a date is returned as it is.
+ */
+export function formatDataStamp(text: string | null | undefined, opts: { seconds?: boolean } = {}): string {
+    if (text == null) return '—';
+    const t = text.trim();
+    if (!t) return text;
+    const m = DATA_STAMP_RE.exec(t);
+    const month = m ? Number(m[2]) : 0;
+    if (!m || month < 1 || month > 12) {
+        const ms = parseLocal(t);
+        if (ms === null) return t;
+        const sec = new Date(ms).getSeconds();
+        return `${dateTxt(ms, true)} ${hhmm(ms)}${opts.seconds && sec !== 0 ? `:${pad(sec)}` : ''}`;
+    }
+    const sec = Number(m[6] ?? 0);
+    return `${Number(m[3])} ${MONTHS[month - 1]} ${m[1]} ${pad(Number(m[4] ?? 0))}:${m[5] ?? '00'}${opts.seconds && sec !== 0 ? `:${pad(sec)}` : ''}`;
+}
+
 /** Whole days a period spans (open ends resolve to the dataset bounds); null if unknowable or reversed. */
 export function periodDays(p: TimePeriod, bounds: DataBounds | null | undefined): number | null {
     const b = boundsMs(bounds);

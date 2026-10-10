@@ -214,6 +214,42 @@ describe('RunningConditionCard — Set: ONE line (workbench redesign §1)', () =
         // the numbers on the line are the same ones the Details view showed (same props, nothing re-asked)
         expect(screen.getByTestId('rc-card-rows').textContent).toBe('11,066');
     });
+
+    // Review of 452d5c2 (accessibility): "Details" / "Hide details" are two elements in two
+    // trees, so the focus used to drop to <body> on every toggle.
+    it('"Details" is ONE control to the keyboard: after each toggle the focus is on it, with aria-expanded flipped', () => {
+        card({ bounds: B });
+        const details = screen.getByTestId('rc-card-details') as HTMLButtonElement;
+        details.focus();
+        fireEvent.click(details);
+        const hide = screen.getByTestId('rc-card-details');
+        expect(hide.getAttribute('aria-expanded')).toBe('true');
+        expect(document.activeElement).toBe(hide);
+        expect(document.activeElement).not.toBe(document.body);
+        fireEvent.click(hide);
+        const again = screen.getByTestId('rc-card-details');
+        expect(again.getAttribute('aria-expanded')).toBe('false');
+        expect(document.activeElement).toBe(again);
+        expect(screen.getAllByTestId('rc-card-details')).toHaveLength(1);
+    });
+
+    it('opening the card does not steal the focus by itself (only a toggle moves it)', () => {
+        const outside = document.createElement('button');
+        document.body.appendChild(outside);
+        outside.focus();
+        card({ bounds: B });
+        expect(document.activeElement).toBe(outside);
+        outside.remove();
+    });
+
+    it('the tick of the one-line view has words for a screen reader (not tooltip-only)', () => {
+        card();
+        const tick = screen.getByTestId('rc-card-tick');
+        expect(tick.getAttribute('role')).toBe('img');
+        expect(tick.getAttribute('aria-label')).toBe('Set · applies to every model');
+        expect(screen.getByRole('img', { name: 'Set · applies to every model' })).toBe(tick);
+        expect(tick.querySelector('svg')!.getAttribute('aria-hidden')).toBe('true');
+    });
 });
 
 describe('RunningConditionCard — Set', () => {

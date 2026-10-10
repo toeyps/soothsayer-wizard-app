@@ -70,14 +70,13 @@ export interface HealthScorePageProps extends WorkbenchPageProps {
     /** Issues Rust returned when the last Mark complete was refused (shown in
      *  Checks until the set points change); `null` = show the live preview's. */
     attemptIssues: HealthIssue[] | null;
-    /** Only the save IN PROGRESS / a FAILED save show on the page; a successful one
-     *  is the footer sentence. */
+    /** Only a FAILED save (and a save that is taking long) shows on the page; a save in
+     *  progress and a successful one are the footer sentence. */
     save: SaveInfo;
-    /** "Re-train to recompute" (Relationship fit gone from memory). */
-    onRetrain: () => void;
-    /** Why the Re-train buttons cannot train now (a training run is active, or
-     *  the data is out of date); absent = enabled. */
-    retrainDisabledReason?: string;
+    /** "Train sensor ↑" (the Relation-model fit is no longer in memory): move the
+     *  focus to the header's Train sensor button — the ONE place to train. The page
+     *  has no Re-train button of its own. Must be stable (the page is memoised). */
+    onGoTrainSensor: () => void;
     /** The error banner's Retry: ask `compute_health_preview` again. */
     onRetryPreview?: () => void;
     /** The `test_scoring_failed` notice's "Try again": same, but also tells Rust to

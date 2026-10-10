@@ -262,6 +262,19 @@ function defaultInvoke(cmd: string, args?: any): Promise<unknown> {
     return Promise.resolve({});
 }
 const healthCalls = () => mockInvoke.mock.calls.filter(c => c[0] === 'compute_health_preview').map(c => (c[1] as any).request);
+/** A Relation model whose preview keeps answering NOT_FITTED: the window re-fits it silently ONCE and
+ *  only then settles on the "Fit no longer in memory" state. Waits until that board is on screen and
+ *  the fake Rust has been quiet for a moment (longer than the preview's debounce), so nothing is
+ *  asserted in the moment between the first answer and the re-fit. */
+const fitGoneSettled = async () => {
+    for (let i = 0; i < 12; i++) {
+        await waitFor(() => expect(screen.getByTestId('results-not-fitted')).toBeTruthy(), { timeout: 3000 });
+        const calls = mockInvoke.mock.calls.length;
+        await act(async () => { await new Promise(r => setTimeout(r, 400)); });
+        if (mockInvoke.mock.calls.length === calls && screen.queryByTestId('results-not-fitted')) return;
+    }
+    throw new Error('the "Fit no longer in memory" state never settled');
+};
 
 /** Health score page (3b-2): `defaultInvoke` + a health preview that FOLLOWS the request's set points
  *  (empty -> `required` issues, filled -> valid with a score) + a successful `export_model_files`. */
@@ -795,6 +808,44 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: { groups: [makeGroup()], models: [makeModel({ status: true })] } });
             expect(screen.getByTestId('results-placeholder').textContent).toMatch(/Marked complete/);
+        });
+
+        // Review of 452d5c2: Train sensor never trains an up-to-date Complete model (and is
+        // disabled when nothing else needs training) — only the ▾ menu's "<Kind> only" does.
+        it('a Complete model with no train record: the board points at the Train sensor ▾ menu (not at the disabled Train sensor), and the link opens it', async () => {
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: { groups: [makeGroup()], models: [makeModel({ status: true })] } });
+            const b = screen.getByTestId('results-placeholder');
+            expect(b.querySelector('.wbx-msg-t')!.textContent).toBe('Marked complete');
+            expect(b.querySelector('.wbx-msg-s')!.textContent).toBe('To see its charts, train it from the Train sensor ▾ menu (“Individual only”). It then needs Mark complete again.');
+            expect(within(b).queryByTestId('board-train-sensor')).toBeNull();
+            expect(trainSensorBtn().disabled).toBe(true); // why "Train sensor ↑" would lead nowhere
+            const link = within(b).getByTestId('board-train-menu');
+            expect(link.className).toBe('tq-inline-link');
+            expect(link.textContent).toBe('Train sensor ▾');
+            expect(screen.queryByTestId('train-sensor-menu')).toBeNull();
+            fireEvent.click(link);
+            const caret = screen.getByTestId('train-sensor-menu-toggle');
+            expect(document.activeElement).toBe(caret);
+            expect(caret.getAttribute('aria-expanded')).toBe('true');
+            // the row the sentence names is there and usable
+            const only = within(screen.getByTestId('train-sensor-menu')).getByTestId('train-menu-only-individual') as HTMLButtonElement;
+            expect(only.textContent).toMatch(/^Individual only/);
+            expect(only.disabled).toBe(false);
+            // a second click leaves the menu open (it never toggles it shut)
+            fireEvent.click(link);
+            expect(screen.getByTestId('train-sensor-menu')).toBeTruthy();
+        });
+
+        it('a Complete model that cannot train at all: no link that would do nothing — the board gives the reason', async () => {
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: { groups: [makeGroup()], models: [makeModel({ status: true, kind: 'relationship', predictorSensors: [] })] } });
+            const b = screen.getByTestId('results-placeholder');
+            expect(b.querySelector('.wbx-msg-t')!.textContent).toBe('Marked complete');
+            expect(b.querySelector('.wbx-msg-s')!.textContent).toBe("It has no charts to show, and it can't be trained yet.");
+            expect(b.querySelector('.wbx-msg-d')!.textContent).toBe(screen.getByTestId('build-block-reason').textContent);
+            expect(b.querySelector('.wbx-msg-d')!.textContent!.length).toBeGreaterThan(5);
+            expect(b.querySelectorAll('button')).toHaveLength(0);
         });
 
         it('shows an "N items to fix" list for a model missing its own settings, with a link that opens Model settings', async () => {
@@ -3842,17 +3893,38 @@ describe('Workbench two pages — shell + Model fit page (health score 3b-1)', (
             expect(screen.queryByTestId('chart-overlay-ts')).toBeNull();
         });
 
-        it('a Relationship whose fit is gone from Rust (NOT_FITTED) says "Re-train to recompute", and its button trains again', async () => {
+        // SPEC §4 NOT_FITTED: no in-pane Re-train button — ONE board with "Train sensor ↑", and the
+        // model counts as "needs training" (Train sensor filled, footer, pill, tab words).
+        it('a Relationship whose fit is gone from Rust (NOT_FITTED): one board with a "Train sensor ↑" link, no Re-train button; it counts as needing training and Train sensor trains it again', async () => {
             mockInvoke.mockImplementation((cmd: string, args?: any) =>
                 cmd === 'compute_health_preview' ? Promise.reject('NOT_FITTED: no fitted model for this key') : defaultInvoke(cmd, args));
             const rel = trainedRel();
             statefulUpdateMock([rel]);
             await mount([rel]);
-            await waitFor(() => expect(screen.getByTestId('results-not-fitted')).toBeTruthy());
-            expect(screen.getByTestId('results-not-fitted').textContent).toMatch(/Re-train to recompute/);
+            await fitGoneSettled();
+            const b = screen.getByTestId('results-not-fitted');
+            expect(b.className).toContain('wbx-msg');
+            expect(b.querySelector('.wbx-msg-t')!.textContent).toBe('Fit no longer in memory');
+            expect(b.querySelector('.wbx-msg-s')!.textContent).toBe('The fitted Relation model is no longer in memory (the data was reloaded or a special sensor changed). Re-train it with Train sensor ↑ — the charts come back when it finishes.');
+            expect(screen.queryByTestId('results-not-fitted-retrain')).toBeNull();
+            expect(b.querySelectorAll('button')).toHaveLength(1);
             expect(screen.queryByTestId('results-chart')).toBeNull();
+            // "needs training" everywhere it is said
+            expect(screen.getByTestId('wb-footer').getAttribute('data-primary')).toBe('train');
+            expect(trainSensorBtn().className).toContain('rcx-btn--pri');
+            expect(trainSensorBtn().textContent).toBe('▶ Train sensor · 1 of 1');
+            const line = screen.getByTestId('footer-status');
+            expect(line.textContent).toBe('Fit no longer in memory · re-train with Train sensor ↑');
+            expect(line.getAttribute('data-tone')).toBe('warn');
+            expect(screen.getByTestId('footer-pill').textContent).toBe('Incomplete'); // not "Trained"
+            expect(screen.getByRole('tab', { name: /Relation model/ }).getAttribute('aria-label')).toBe('Relation model, Fit no longer in memory');
+            expect(screen.getByTestId('tab-status-r1').className).toContain('f4-sdot--need');
+            expect(screen.getByTestId('next-health-score').className).toBe('rcx-btn'); // a ghost: training comes first
+            // the link goes to the ONE place to train, and that place trains it
+            fireEvent.click(within(b).getByTestId('board-train-sensor'));
+            expect(document.activeElement).toBe(trainSensorBtn());
             mockInvoke.mockClear();
-            await act(async () => { fireEvent.click(screen.getByTestId('results-not-fitted-retrain')); await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+            await act(async () => { fireEvent.click(trainSensorBtn()); await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
             expect(mockInvoke).toHaveBeenCalledWith('preview_relationship_model', expect.objectContaining({ cache_key: expect.stringContaining('r1::') }));
         });
 
@@ -4167,7 +4239,8 @@ describe('Health score page - draft set points and when they are persisted (heal
             await flush();
             expect(await hsSetPointWrites(undefined)).toBe(1);
             expect((await hsLastModel()).healthSetPoints).toEqual({ kind: 'individual', lower: 1, upper: 90, masterLower: 1, masterUpper: 90 });
-            expect(screen.getByTestId('sp-lower-source').textContent).toBe('master data');
+            expect(screen.getByTestId('master-origin').textContent).toBe('L and H come from the master data alarm limits.');
+            expect(screen.queryByTestId('sp-lower-reset')).toBeNull();
             expect(hsInput('sp-upper').value).toBe('90');
             expect((await hsLastModel()).lastTrainedAt).toBeTruthy();
             expect((await hsLastModel()).status).toBe(false);
@@ -4191,8 +4264,10 @@ describe('Health score page - draft set points and when they are persisted (heal
             await openHealthPage();
             await flush();
             expect((await hsLastModel()).healthSetPoints).toEqual({ kind: 'individual', lower: 7, upper: 90, masterLower: 1, masterUpper: 90 });
-            expect(screen.getByTestId('sp-lower-source').textContent).toBe('this model');
-            expect(screen.getByTestId('sp-lower-reset').textContent).toBe('use 1.00');
+            expect(screen.getByTestId('master-origin').textContent).toBe('L is set on this model · H comes from the master data.');
+            // the master value as typed in the master data: "1", never "1.00"
+            expect(screen.getByTestId('sp-lower-reset').textContent).toBe('Use master L 1');
+            expect(screen.queryByTestId('sp-upper-reset')).toBeNull();
         });
 
         it('a snapshot that already exists is left alone: no write at all', async () => {
@@ -4209,7 +4284,7 @@ describe('Health score page - draft set points and when they are persisted (heal
             await openHealthPage();
             await flush();
             expect((await hsLastModel()).healthSetPoints).toEqual({ kind: 'individual', lower: null, upper: null, masterLower: null, masterUpper: null });
-            expect(screen.getByTestId('sp-lower-source').textContent).toBe('not in master');
+            expect(screen.getByTestId('master-origin').textContent).toBe('The master data has no alarm limits for this sensor — type L and H.');
             expect(hsInput('sp-lower').value).toBe('');
             expect(screen.getByTestId('hs-verdict').getAttribute('title')).toBe('Set points still empty');
         });
@@ -4352,7 +4427,7 @@ describe('Health score page - Mark complete (the ONLY way a model becomes Comple
         expect(hsMarkBtn().disabled).toBe(false); // can retry
     });
 
-    it('a double click starts ONE export (guarded), disables the button and shows "Saving results…" until it finishes', async () => {
+    it('a double click starts ONE export (guarded), disables the button and says "Saving the model files…" in the FOOTER only (no card on the page) until it finishes', async () => {
         let release!: () => void;
         mockInvoke.mockImplementation((cmd: string, args?: any) => cmd === 'export_model_files'
             ? new Promise(res => { release = () => res(EXPORT_OK); })
@@ -4366,14 +4441,16 @@ describe('Health score page - Mark complete (the ONLY way a model becomes Comple
         expect(exportCalls()).toHaveLength(1);
         expect(hsMarkBtn().disabled).toBe(true);
         expect(hsMarkBtn().textContent).toBe('Saving…');
-        expect(screen.getByTestId('save-running').textContent).toBe('Saving results…');
+        expect(screen.queryByTestId('save-running')).toBeNull();
+        expect(screen.getByTestId('health-page').querySelector('.hs-save')).toBeNull();
+        expect(screen.getByTestId('health-page').textContent).not.toMatch(/Saving/);
         expect(screen.getByTestId('footer-status').textContent).toMatch(/Saving the model files…/);
         await act(async () => { release(); await Promise.resolve(); await Promise.resolve(); });
         await waitFor(() => expect(screen.getByTestId('save-ok')).toBeTruthy());
         expect(exportCalls()).toHaveLength(1);
     });
 
-    it('Relationship: the progress note says it can take longer than 15 seconds (especially the first time), and the page stays usable meanwhile', async () => {
+    it('Relationship: saving is the footer sentence too (the "can take longer than 15 seconds" line only once it IS slow), and the page stays usable meanwhile', async () => {
         let release!: () => void;
         const rel = HS_REL({ healthSetPoints: { kind: 'relationship', residualAt80Lower: -1.5, residualAt80Upper: 1.5, residualAt0Lower: -3, residualAt0Upper: 3 } });
         mockInvoke.mockImplementation((cmd: string, args?: any) => cmd === 'export_model_files'
@@ -4385,8 +4462,12 @@ describe('Health score page - Mark complete (the ONLY way a model becomes Comple
         await openHealthPage();
         await waitFor(() => expect(hsMarkBtn().disabled).toBe(false));
         await hsClickMark();
-        expect(screen.getByTestId('save-running').textContent).toMatch(/15 seconds/);
+        expect(screen.queryByTestId('save-running')).toBeNull();
+        expect(screen.getByTestId('footer-status').textContent).toMatch(/Saving the model files…/);
+        // (the "can take longer than 15 seconds" line shows only once the save IS slow — HealthScorePage.test.tsx)
         hsType('sp-residual_at_0_upper', '3.5');
+        expect(screen.getByTestId('footer-status').textContent).toMatch(/Saving the model files…/); // typing does not end the save
+        expect(hsMarkBtn().disabled).toBe(true);
         expect(hsInput('sp-residual_at_0_upper').value).toBe('3.5');
         expect((screen.getByTestId('footer-back-to-fit') as HTMLButtonElement).disabled).toBe(false);
         await act(async () => { release(); await Promise.resolve(); await Promise.resolve(); });
@@ -4547,21 +4628,37 @@ describe('Health score page - edge cases', () => {
         expect((screen.getByTestId('page-health') as HTMLButtonElement).title).toBe('Re-train first');
     });
 
-    it('NOT_FITTED (Relationship fit gone from Rust\'s memory): "Re-train to recompute"; the Health score page is not offered until re-trained', async () => {
+    it('NOT_FITTED (Relationship fit gone from Rust\'s memory) on the Health score page: the board with "Train sensor ↑", Mark complete disabled with that reason, Train sensor filled and Mark complete a ghost', async () => {
         mockInvoke.mockImplementation((cmd: string, args?: any) => cmd === 'compute_health_preview'
             ? Promise.reject('NOT_FITTED: no fitted model for this key') : healthInvoke(cmd, args));
         const rel = HS_REL();
         statefulUpdateMock([rel]);
         render(<BuildModelWindow />);
         await deliverData({ failureGroupState: { groups: [makeGroup()], models: [rel] } });
-        await waitFor(() => expect(screen.getByTestId('results-not-fitted')).toBeTruthy());
+        await fitGoneSettled(); // (the fit is re-filled once automatically first; the mock keeps answering NOT_FITTED)
         fireEvent.click(screen.getByTestId('page-health'));
-        // The page, if opened, is the same "Re-train to recompute" and Mark complete stays blocked with that reason.
-        if (screen.queryByTestId('health-page')) {
-            expect(screen.getByTestId('health-not-fitted')).toBeTruthy();
-            expect(screen.getByTestId('mark-block-reason').textContent).toMatch(/Re-train first/);
-            expect((screen.getByTestId('mark-complete') as HTMLButtonElement).disabled).toBe(true);
-        }
+        await waitFor(() => expect(screen.getByTestId('health-not-fitted')).toBeTruthy());
+        await waitFor(() => expect(screen.getByTestId('mark-block-reason').textContent).toBe('Fit no longer in memory · re-train with Train sensor ↑'));
+        const board = screen.getByTestId('health-not-fitted');
+        expect(board.querySelector('.wbx-msg-t')!.textContent).toBe('Fit no longer in memory');
+        expect(screen.queryByTestId('health-not-fitted-retrain')).toBeNull();
+        expect(within(screen.getByTestId('health-page')).queryByRole('button', { name: /Re-train/ })).toBeNull();
+        // the reason is in the footer, with the link to the one place to train
+        const why = screen.getByTestId('mark-block-reason');
+        const mark = screen.getByTestId('mark-complete') as HTMLButtonElement;
+        expect(mark.disabled).toBe(true);
+        expect(mark.title).toBe('Fit no longer in memory · re-train with Train sensor ↑');
+        // ONE filled button: this model must train again -> Train sensor; Mark complete is a ghost
+        expect(screen.getByTestId('wb-footer').getAttribute('data-primary')).toBe('train');
+        expect(trainSensorBtn().className).toContain('rcx-btn--pri');
+        expect(mark.className).toBe('rcx-btn');
+        expect(screen.getByTestId('footer-pill').textContent).toBe('Incomplete');
+        // both links lead to Train sensor
+        fireEvent.click(within(board).getByTestId('health-go-train-sensor'));
+        expect(document.activeElement).toBe(trainSensorBtn());
+        (document.activeElement as HTMLElement).blur();
+        fireEvent.click(within(why).getByTestId('footer-train-sensor'));
+        expect(document.activeElement).toBe(trainSensorBtn());
     });
 });
 
@@ -5698,8 +5795,9 @@ describe('train queue wiring (customer items 8 + 9)', () => {
         expect(screen.queryByTestId('train-all-modal')).toBeNull();
         expect(screen.getByTestId('chip-set-points-needed').textContent).toBe('Set points needed 2');
         await waitFor(() => expect(screen.getByTestId('set-points-card')).toBeTruthy());
-        expect(screen.getByTestId('run-setpoints-text').textContent).toBe('2 trained in this run need set points (2 in total)');
-        expect(screen.getByTestId('run-setpoints-banner').textContent).toContain('this is 1 of 2');
+        // ONE line: "Trained in the run 22:41 · 2 need set points · this is 1 of 2" + the Next link
+        expect(screen.getByTestId('run-setpoints-line').textContent).toMatch(/^Trained in the run \d{2}:\d{2} · 2 need set points · this is 1 of 2$/);
+        expect(screen.getByTestId('run-setpoints-banner').textContent).not.toMatch(/in total|Set them here/);
         fireEvent.click(screen.getByTestId('next-needing-set-points'));
         expect(screen.getByRole('heading', { level: 3 }).textContent).toContain('TAG3');
         // The chip filters the list to the sensors still needing set points.
@@ -5967,7 +6065,7 @@ describe('train queue wiring — review fixes (phase 4)', () => {
         await waitFor(() => expect((screen.getByTestId('compare-predictors') as HTMLButtonElement).disabled).toBe(false));
     });
 
-    it('Health score Re-train (NOT_FITTED) is disabled with the reason during a run', async () => {
+    it('NOT_FITTED during a run: no Re-train button on either page — the boards point at Train sensor, which is disabled with the run\'s reason', async () => {
         const base = (cmd: string, args?: any) => cmd === 'compute_health_preview'
             ? Promise.reject('NOT_FITTED: no fitted model for this key') : healthInvoke(cmd, args);
         mockInvoke.mockImplementation(base);
@@ -5976,24 +6074,25 @@ describe('train queue wiring — review fixes (phase 4)', () => {
         await mountModels([IND2(), rel]);
         fireEvent.click(screen.getAllByTestId('sensor-row-label').find(e => e.textContent?.includes('TAG3'))!);
         await waitFor(() => expect(screen.getByTestId('results-not-fitted')).toBeTruthy());
-        expect((screen.getByTestId('results-not-fitted-retrain') as HTMLButtonElement).disabled).toBe(false);
+        expect(screen.queryByTestId('results-not-fitted-retrain')).toBeNull();
+        expect(trainSensorBtn().disabled).toBe(false);
         // A run (i2 first, held); r3 — planned ready because its fit is gone — is taken out of it again.
         await act(async () => { fireEvent.click(screen.getByTestId('train-all')); });
         await act(async () => { fireEvent.click(screen.getByTestId('train-all-start')); await Promise.resolve(); });
         fireEvent.click(screen.getByTestId('train-remove-r3'));
         fireEvent.click(screen.getByTestId('train-all-close'));
         await flush();
-        await waitFor(() => expect(screen.getByTestId('results-not-fitted-retrain')).toBeTruthy());
-        const btn = screen.getByTestId('results-not-fitted-retrain') as HTMLButtonElement;
-        expect(btn.disabled).toBe(true);
-        expect(btn.title).toBe('Wait for the training run to finish');
-        // The Health score page's Re-train gets the same reason.
+        await waitFor(() => expect(screen.getByTestId('results-not-fitted')).toBeTruthy());
+        expect(screen.getByTestId('results-not-fitted').querySelectorAll('button')).toHaveLength(1); // only the text link
+        expect(trainSensorBtn().disabled).toBe(true);
+        expect(trainSensorBtn().title).toBe('Wait for the training run to finish');
+        // The Health score page: the same board, and Mark complete waits for the run.
         fireEvent.click(screen.getByTestId('page-health'));
         await flush();
-        await waitFor(() => expect(screen.getByTestId('health-not-fitted-retrain')).toBeTruthy());
-        const hs = screen.getByTestId('health-not-fitted-retrain') as HTMLButtonElement;
-        expect(hs.disabled).toBe(true);
-        expect(hs.title).toBe('Wait for the training run to finish');
+        await waitFor(() => expect(screen.getByTestId('health-not-fitted')).toBeTruthy());
+        expect(screen.queryByTestId('health-not-fitted-retrain')).toBeNull();
+        expect((screen.getByTestId('mark-complete') as HTMLButtonElement).disabled).toBe(true);
+        expect(screen.getByTestId('mark-block-reason').textContent).toBe('Wait for the training run to finish');
         await release();
     });
 
@@ -6041,7 +6140,7 @@ describe('train queue wiring — review fixes (phase 4)', () => {
 describe('Workbench redesign §1 — the page spine', () => {
     const record = { at: '2026-10-04T01:00:00.000Z', outputDir: 'C:/data/workspaces/ws1/output', setPoints: HS_SNAP };
     /** Every FILLED button in the window (a split button's ▾ half belongs to its main half; dialogs are not the page). */
-    const filled = () => Array.from(document.querySelectorAll<HTMLElement>('.rcx-btn--pri, .rcx-btn--danger, .f4-btn-save, .bmw-btn-ok, .bmw-btn-retrain'))
+    const filled = () => Array.from(document.querySelectorAll<HTMLElement>('.rcx-btn--pri, .rcx-btn--danger, .f4-btn-save, .bmw-btn-ok'))
         .filter(b => !b.classList.contains('tq-split-caret') && !b.closest('[role="dialog"]'))
         .map(b => b.getAttribute('data-testid'));
     const primary = () => screen.getByTestId('wb-footer').getAttribute('data-primary');
@@ -6172,6 +6271,9 @@ describe('Workbench redesign §1 — the page spine', () => {
             expect(dot.textContent).toBe('');
             const tab = screen.getByRole('tab');
             expect(tab.getAttribute('title')).toBe('Individual · Training failed');
+            // not tooltip-only: the state is part of the tab's accessible name
+            expect(tab.getAttribute('aria-label')).toBe('Individual, Training failed');
+            expect(screen.getByRole('tab', { name: 'Individual, Training failed' })).toBe(tab);
             expect(tab.querySelector('.f4-pill')).toBeNull();
             expect(tab.textContent).toBe('IIndividual'); // kind badge + name — no status word on the tab
             // the same red dot in the sensor list
@@ -6197,6 +6299,224 @@ describe('Workbench redesign §1 — the page spine', () => {
             expect(screen.getByTestId('tab-status-i1').getAttribute('title')).toBe('Complete');
             expect(screen.getByTestId('tab-status-r1').className).toContain('f4-sdot--need');
             for (const tab of screen.getAllByRole('tab')) expect(tab.querySelector('.f4-pill')).toBeNull();
+            expect(screen.getAllByRole('tab').map(tab => tab.getAttribute('aria-label'))).toEqual(['Individual, Complete', 'Relation model, Trained']);
+            // the kind name still finds its tab
+            expect(screen.getByRole('tab', { name: /Relation model/ }).getAttribute('aria-selected')).toBe('false');
+        });
+
+        // The words of the gate, per reason (review of 452d5c2, test gaps).
+        it.each([
+            ['Needs category', { models: [makeModel({ category: null })] }],
+            ['Needs train period', { models: [makeModel()], runningConditionTimePeriods: [] }],
+            ['Fix periods', { models: [makeModel()], runningConditionTimePeriods: [{ id: 'x', start: '2026-02-01T00:00', end: '2026-01-05T00:00' }] }],
+        ])('a model the gate blocks says why on its tab: "%s"', async (words, fg) => {
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: { groups: [makeGroup()], ...fg } });
+            const modal = screen.queryByLabelText('Close');
+            if (modal) fireEvent.click(modal); // the settings modal opens by itself when the condition is not set
+            const tab = screen.getByRole('tab');
+            expect(tab.getAttribute('aria-label')).toBe(`Individual, ${words}`);
+            expect(tab.getAttribute('title')).toBe(`Individual · ${words}`);
+            expect(screen.getByTestId('tab-status-m1').getAttribute('title')).toBe(words);
+            expect(screen.getByTestId('tab-status-m1').className).toContain('f4-sdot--bad');
+        });
+
+        // An unsaved draft is said in the footer of the OPEN tab only: on another tab the tooltip must carry it.
+        it('unsaved Model settings on a tab that is not open: its tooltip words end with "· unsaved changes"', async () => {
+            await hsMount([HS_IND(), HS_REL()]);
+            const label = (name: RegExp) => screen.getByRole('tab', { name }).getAttribute('aria-label');
+            expect(label(/Individual/)).toBe('Individual, Trained');
+            rename(); // a draft on the Individual model
+            expect(screen.getByTestId('footer-status').textContent).toBe('Unsaved changes to the Individual model');
+            fireEvent.click(screen.getByRole('tab', { name: /Relation model/ }));
+            expect(screen.getByTestId('wb-footer').textContent).not.toMatch(/Unsaved/); // this tab has none
+            expect(label(/Individual/)).toBe('Individual, Trained · unsaved changes');
+            expect(label(/Relation model/)).not.toMatch(/unsaved/);
+            expect(screen.getByRole('tab', { name: /Individual/ }).getAttribute('title')).toBe('Individual · Trained · unsaved changes');
+            expect(screen.getByTestId('tab-status-m1').getAttribute('title')).toBe('Trained · unsaved changes');
+            // saved: the words go back
+            fireEvent.click(screen.getByRole('tab', { name: /Individual/ }));
+            await act(async () => { fireEvent.click(screen.getByTestId('save-changes')); await Promise.resolve(); await Promise.resolve(); });
+            await waitFor(() => expect(label(/Individual/)).toBe('Individual, Trained'));
+        });
+    });
+
+    describe('Train sensor: where the reason is (the line under the button stays short)', () => {
+        it('the blocked model is on ANOTHER tab: "Relation model can\'t train · see its tab"; on its own tab: "Can\'t train · see below"', async () => {
+            await hsMount([HS_IND(), makeModel({ id: 'r1', kind: 'relationship', targetSensor: 'TAG1', predictorSensors: [] })]);
+            const why = () => screen.getByTestId('train-sensor-why').textContent;
+            expect(screen.getAllByRole('tab').find(tab => tab.getAttribute('aria-selected') === 'true')!.textContent).toContain('Individual');
+            expect(why()).toBe("Relation model can't train · see its tab");
+            expect(trainSensorBtn().disabled).toBe(true);
+            expect(trainSensorBtn().title).toMatch(/^Can't train: Relation model — /); // the full reason stays in the tooltip
+            fireEvent.click(screen.getByRole('tab', { name: /Relation model/ }));
+            expect(why()).toBe("Can't train · see below");
+        });
+    });
+
+    describe('Health score page: the one filled button', () => {
+        it('a Complete model whose SIBLING still needs training: Train sensor is the filled button (the Complete model has none of its own)', async () => {
+            await hsMount([HS_IND({ status: true, healthExport: record }), makeModel({ id: 'r1', kind: 'relationship', targetSensor: 'TAG1', predictorSensors: ['TAG2'] })]);
+            await openHealthPage();
+            expect(filled()).toEqual(['train-sensor']);
+            expect(primary()).toBe('train');
+            expect(screen.getByTestId('mark-incomplete').className).toContain('f4-btn--plain');
+            expect(screen.queryByTestId('mark-complete')).toBeNull();
+        });
+
+        it('this model must train again (its fit is gone): Train sensor filled, Mark complete a ghost', async () => {
+            mockInvoke.mockImplementation((cmd: string, args?: any) => cmd === 'compute_health_preview'
+                ? Promise.reject('NOT_FITTED: no fitted model for this key') : healthInvoke(cmd, args));
+            const rel = HS_REL();
+            statefulUpdateMock([rel]);
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: { groups: [makeGroup()], models: [rel] } });
+            await fitGoneSettled();
+            fireEvent.click(screen.getByTestId('page-health'));
+            await waitFor(() => expect(screen.getByTestId('health-not-fitted')).toBeTruthy());
+            await waitFor(() => expect(filled()).toEqual(['train-sensor']));
+            expect(primary()).toBe('train');
+            expect(screen.getByTestId('mark-complete').className).toBe('rcx-btn');
+        });
+    });
+
+    describe('Health score footer: a failed Mark complete, the saved folder, a failed preview', () => {
+        // Review of 452d5c2 (must-fix): "Not saved" used to stay for the rest of the session and hide the real reason.
+        it('a failed save says "Not saved · fix it, then Mark complete again" with the red card — and both go as soon as a set point changes; a later empty point shows ITS reason', async () => {
+            const why = "Couldn't write C:\\data\\workspaces\\ws1\\output\\TAG1\\INDV_INFO_TAG1.json — the file is open in another program.";
+            mockInvoke.mockImplementation((cmd: string, args?: any) => cmd === 'export_model_files' ? Promise.reject(why) : healthInvoke(cmd, args));
+            statefulUpdateMock([HS_IND()]);
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: { groups: [makeGroup()], models: [HS_IND()] } });
+            await openHealthPage();
+            await waitFor(() => expect(hsMarkBtn().disabled).toBe(false));
+            await hsClickMark();
+            await waitFor(() => expect(screen.getByTestId('save-error')).toBeTruthy());
+            // the red card carries the file; the footer says what to do
+            expect(screen.getByTestId('save-error').className).toContain('hs-save--bad');
+            expect(screen.getByTestId('save-error-reason').textContent).toContain('output\\TAG1\\INDV_INFO_TAG1.json');
+            const line = () => screen.getByTestId('wb-footer').querySelector('.wbx-reason') as HTMLElement;
+            expect(line().textContent).toBe('Not saved · fix it, then Mark complete again');
+            expect(line().getAttribute('data-tone')).toBe('bad');
+            expect(line().className).toContain('f4-foot-reason--bad');
+            expect(screen.getByTestId('footer-pill').textContent).toBe('Trained');
+            expect(hsMarkBtn().disabled).toBe(false); // can try again
+            // the user changes a set point: that attempt's outcome no longer describes the page
+            hsType('sp-upper', '9.5');
+            expect(screen.queryByTestId('save-error')).toBeNull();
+            await waitFor(() => expect(screen.getByTestId('footer-status').textContent).toBe('Set points valid — check the score chart, then Mark complete'));
+            expect(screen.getByTestId('wb-footer').textContent).not.toMatch(/Not saved/);
+            // ...and later empties one: the footer shows the block reason, not "Not saved"
+            hsType('sp-upper', '');
+            await waitFor(() => expect(screen.getByTestId('mark-block-reason').textContent).toBe('1 set point still empty'));
+            expect(screen.getByTestId('wb-footer').textContent).not.toMatch(/Not saved/);
+            expect(hsMarkBtn().disabled).toBe(true);
+        });
+
+        it('export REFUSED by Rust for a set point → the user fixes it → later empties one: the footer shows that block reason ("1 set point still empty"), not "Not saved"', async () => {
+            const refused = { ok: false, files: [], output_dir: '', warnings: [], validation: [{ code: 'lower_equals_3sd', severity: 'error', field: 'lower', message: 'L equals the lower 3σ boundary (found at save time).' }] };
+            mockInvoke.mockImplementation((cmd: string, args?: any) => cmd === 'export_model_files' ? Promise.resolve(refused) : healthInvoke(cmd, args));
+            statefulUpdateMock([HS_IND()]);
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: { groups: [makeGroup()], models: [HS_IND()] } });
+            await openHealthPage();
+            await waitFor(() => expect(hsMarkBtn().disabled).toBe(false));
+            await hsClickMark();
+            await waitFor(() => expect(screen.getByTestId('save-error')).toBeTruthy());
+            expect(screen.getByTestId('check-line').textContent).toMatch(/found at save time/);
+            expect(screen.getByTestId('wb-footer').querySelector('.wbx-reason')!.textContent).toBe('Not saved · fix it, then Mark complete again');
+            // the user fixes the set point
+            hsType('sp-lower', '0.5');
+            await waitFor(() => expect(screen.getByTestId('check-valid')).toBeTruthy());
+            expect(screen.queryByTestId('save-error')).toBeNull();
+            await waitFor(() => expect(screen.getByTestId('footer-status').textContent).toBe('Set points valid — check the score chart, then Mark complete'));
+            // ...and later empties one
+            hsType('sp-lower', '');
+            await waitFor(() => expect(screen.getByTestId('mark-block-reason').textContent).toBe('1 set point still empty'));
+            expect(screen.getByTestId('wb-footer').textContent).not.toMatch(/Not saved/);
+            expect(screen.getByTestId('mark-block-reason').getAttribute('data-tone')).toBe('warn');
+        });
+
+        it('the saved folder of a Windows path is shortened to "…\\workspaces\\<id>\\output\\<sensor>" (the full path is the tooltip)', async () => {
+            const dir = 'C:\\Users\\me\\AppData\\Roaming\\com.wizard.app\\workspaces\\ws1\\output\\TAG1';
+            await hsMount([HS_IND({ status: true, healthExport: { ...record, outputDir: dir } })]);
+            await openHealthPage();
+            const path = screen.getByTestId('footer-saved-path');
+            expect(path.textContent).toBe('…\\workspaces\\ws1\\output\\TAG1');
+            expect(path.getAttribute('title')).toBe(dir);
+            expect(screen.getByTestId('save-ok').textContent).toMatch(/^Files saved 4 Oct 2026 \d{2}:\d{2} · …\\workspaces\\ws1\\output\\TAG1$/);
+        });
+
+        it('the health score failed to load: the red card + Retry on the page; Mark complete is disabled and the footer says what to do', async () => {
+            await hsMount([HS_IND()]);
+            await openHealthPage();
+            await waitFor(() => expect(hsMarkBtn().disabled).toBe(false));
+            let fail = true;
+            mockInvoke.mockImplementation((cmd: string, args?: any) =>
+                cmd === 'compute_health_preview' && fail ? Promise.reject('Failed to read column: transient I/O error.') : healthInvoke(cmd, args));
+            hsType('sp-upper', '9.5');
+            await waitFor(() => expect(screen.getByTestId('health-error')).toBeTruthy());
+            expect(screen.getByTestId('health-error').textContent).toMatch(/^Couldn't load the health score\. .*transient I\/O error · the score and Checks are not available until it loads/);
+            expect(screen.getByTestId('checks-unavailable').textContent).toBe('Not available until the health score loads.');
+            expect(screen.getByTestId('mark-block-reason').textContent).toBe('The health score did not load · Retry above, then Mark complete');
+            expect(hsMarkBtn().disabled).toBe(true);
+            // Retry brings it back
+            fail = false;
+            fireEvent.click(screen.getByTestId('health-retry'));
+            await waitFor(() => expect(screen.queryByTestId('health-error')).toBeNull());
+            await waitFor(() => expect(hsMarkBtn().disabled).toBe(false));
+        });
+
+        it('a Complete model with files out of date whose new set point is NOT valid: "Mark complete again" is disabled and the footer says why', async () => {
+            await hsMount([HS_IND({ status: true, healthExport: record })]);
+            await openHealthPage();
+            hsType('sp-upper', '12');
+            expect(screen.getByTestId('files-out-of-date').textContent).toBe('Files out of date — set points changed after saving · Mark complete again to update them');
+            hsType('sp-upper', '');
+            await waitFor(() => expect(screen.getByTestId('files-out-of-date').textContent).toBe('Files out of date · 1 set point still empty'));
+            expect((screen.getByTestId('mark-complete-again') as HTMLButtonElement).disabled).toBe(true);
+            expect(screen.getByTestId('footer-pill').textContent).toBe('Complete');
+        });
+    });
+
+    describe('keyboard focus is never dropped (review of 452d5c2)', () => {
+        const focusAndSave = async () => {
+            const save = screen.getByTestId('save-changes') as HTMLButtonElement;
+            save.focus();
+            expect(document.activeElement).toBe(save);
+            await act(async () => { fireEvent.click(save); await Promise.resolve(); await Promise.resolve(); });
+            await waitFor(() => expect(screen.queryByTestId('save-changes')).toBeNull());
+        };
+
+        it('the focused "Save changes" disappears once saved: the focus moves to "Next: Health score →"', async () => {
+            await hsMount([HS_IND()]);
+            await waitFor(() => expect(screen.getByTestId('results-chart')).toBeTruthy());
+            rename();
+            await focusAndSave();
+            await waitFor(() => expect(document.activeElement).toBe(screen.getByTestId('next-health-score')));
+        });
+
+        it('...or to the footer (its status sentence) when "Next: Health score →" is disabled', async () => {
+            statefulUpdateMock([makeModel()]);
+            render(<BuildModelWindow />);
+            await deliverData();
+            rename();
+            expect((screen.getByTestId('next-health-score') as HTMLButtonElement).disabled).toBe(true);
+            await focusAndSave();
+            await waitFor(() => expect(document.activeElement).toBe(screen.getByTestId('wb-footer')));
+            expect(screen.getByTestId('wb-footer').getAttribute('tabindex')).toBe('-1');
+        });
+
+        it('a Save that was clicked with the mouse while the focus was elsewhere moves nothing', async () => {
+            statefulUpdateMock([makeModel()]);
+            render(<BuildModelWindow />);
+            await deliverData();
+            rename();
+            const name = screen.getByPlaceholderText('e.g. Bearing vibration model') as HTMLInputElement;
+            name.focus();
+            await act(async () => { fireEvent.click(screen.getByTestId('save-changes')); await Promise.resolve(); await Promise.resolve(); });
+            await waitFor(() => expect(screen.queryByTestId('save-changes')).toBeNull());
+            expect(document.activeElement).toBe(name);
         });
     });
 

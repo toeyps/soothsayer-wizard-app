@@ -108,7 +108,9 @@ describe('Individual: the whole journey', () => {
         await openHealth();
         expect((bmw().getByTestId('sp-lower') as HTMLInputElement).value).toBe('20');
         expect((bmw().getByTestId('sp-upper') as HTMLInputElement).value).toBe('80');
-        expect(bmw().getByTestId('sp-lower-source').textContent).toBe('master data');
+        expect(bmw().getByTestId('master-origin').textContent).toBe('L and H come from the master data alarm limits.');
+        // ONE card: the table of set points with the Checks under it
+        expect(bmw().getByTestId('set-points-card').contains(bmw().getByTestId('checks-card'))).toBe(true);
         await waitFor(() => expect(bmw().getByTestId('check-valid')).toBeTruthy());
         expect(bmwEl().querySelector('[data-testid="score-locked"]')).toBeNull();
         expect(bmw().getByTestId('score-summary').textContent).toMatch(/Lowest/);
@@ -119,7 +121,10 @@ describe('Individual: the whole journey', () => {
         await waitFor(() => expect(bmw().getAllByTestId('check-line').map(l => l.textContent).join('|')).toMatch(/must be below the lower 3σ boundary/));
         expect(bmw().getByTestId('score-locked')).toBeTruthy();
         expect(markBtn().disabled).toBe(true);
-        expect(bmw().getByTestId('sp-lower-source').textContent).toBe('this model');
+        expect(bmw().getByTestId('master-origin').textContent).toBe('L is set on this model · H comes from the master data.');
+        // Rust echoes the typed value exactly, and the link prints the master value as typed
+        expect(bmw().getAllByTestId('check-line').map(l => l.textContent).join('|')).toContain(`(L = ${band.l3 + 0.5})`);
+        expect(bmw().getByTestId('sp-lower-reset').textContent).toBe('Use master L 20');
 
         // equal to the 3SD boundary -> its own message
         await enterSp({ 'sp-lower': String(band.l3) });
@@ -129,7 +134,7 @@ describe('Individual: the whole journey', () => {
         await enterSp({ 'sp-lower': '' });
         await waitFor(() => expect(bmw().getByTestId('mark-block-reason').textContent).toMatch(/1 set point still empty/));
 
-        // back to master via "use 20"
+        // back to master via "Use master L 20"
         await act(async () => { fireEvent.click(bmw().getByTestId('sp-lower-reset')); });
         await settle(350);
         await waitFor(() => expect(bmw().getByTestId('check-valid')).toBeTruthy());
@@ -236,7 +241,9 @@ describe('Relationship: the whole journey', () => {
         const gate = env.backend!.gate('sidecar:export_model_files');
         await act(async () => { fireEvent.click(markBtn()); });
         await settle(30);
-        expect(bmw().getByTestId('save-running').textContent).toMatch(/longer than 15 seconds, especially the first time/);
+        // saving is the footer sentence (a line on the page only once the save IS slow)
+        expect(bmw().queryByTestId('save-running')).toBeNull();
+        expect(bmw().getByTestId('footer-status').textContent).toMatch(/Saving the model files…/);
         expect(markBtn().disabled).toBe(true);
         expect(markBtn().textContent).toBe('Saving…');
         gate.release();

@@ -2,7 +2,7 @@ import type { HealthSetPoints } from '../../../types';
 import type { HealthIssue, HealthPreview, HealthSeries } from '../../../types/health';
 import { fmtNum } from './chartTheme';
 import { parseTimestamps } from './healthCharts';
-import { formatStamp } from '../periodDisplay';
+import { formatDataStamp } from '../periodDisplay';
 import { TEST_SCORING_ISSUE_CODES } from '../../../utils/trainTestValidation';
 
 /*
@@ -199,8 +199,10 @@ export interface Readout {
 export function readoutAt(series: HealthSeries, idx: number | null): Readout | null {
     if (idx === null || idx < 0 || idx >= series.timestamps.length) return null;
     const score = series.score ? (series.score[idx] ?? null) : null;
-    // The ONE Workbench date format ("9 Feb 2026 23:50").
-    const time = series.timestamps[idx] ? formatStamp(series.timestamps[idx]) : `row ${series.rows[idx] ?? idx}`;
+    // The ONE Workbench date format ("9 Feb 2026 23:50"), from the row's own wall clock;
+    // seconds are added when they are not zero, so the points of sub-minute data do not
+    // all read as the same time.
+    const time = series.timestamps[idx] ? formatDataStamp(series.timestamps[idx], { seconds: true }) : `row ${series.rows[idx] ?? idx}`;
     if (series.kind === 'individual') return { time, valueLabel: 'value', value: series.value[idx] ?? null, score };
     if (series.kind === 'relationship') return { time, valueLabel: 'residual', value: series.residual[idx] ?? null, score };
     return { time, valueLabel: null, value: null, score };

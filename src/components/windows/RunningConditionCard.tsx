@@ -1,4 +1,4 @@
-import { Fragment, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import { Check, ChevronDown, ChevronUp } from 'lucide-react';
 import type { TestPeriod, TimePeriod, WorkspaceSensorFilter } from '../../types';
 import { isCompleteCondition } from '../../utils/runningCondition';
@@ -122,6 +122,17 @@ export function RunningConditionCard({ state, periods, filters, combine, noneCon
     const lookup = useSensorLookup();
     // Set = one line; "Details" unfolds the full grid (toggling re-renders this card only).
     const [detailsOpen, setDetailsOpen] = useState(false);
+    // "Details" / "Hide details" is ONE control to the keyboard: the two views are
+    // different trees, so the button is a new element after each toggle — the focus
+    // is put back on it (it used to drop to <body> on every toggle).
+    const detailsBtnRef = useRef<HTMLButtonElement>(null);
+    const refocusDetails = useRef(false);
+    useEffect(() => {
+        if (!refocusDetails.current) return;
+        refocusDetails.current = false;
+        detailsBtnRef.current?.focus();
+    }, [detailsOpen]);
+    const toggleDetails = (open: boolean) => { refocusDetails.current = true; setDetailsOpen(open); };
     if (state === 'unset') {
         return (
             <section className="rcc-card rcc-card--req" data-testid="rc-card" data-state="unset">
@@ -167,7 +178,7 @@ export function RunningConditionCard({ state, periods, filters, combine, noneCon
         const badScoring = validateTestPeriods(testPeriods).filter(s => s.invalid).length;
         return (
             <section className="rcc-card rcc-card--ok rcc-line" data-testid="rc-card" data-state="set" data-details="closed">
-                <div className="rcc-num rcc-num--ok rcc-num--sm" title="Set · applies to every model"><Check size={13} aria-hidden="true" /></div>
+                <div className="rcc-num rcc-num--ok rcc-num--sm" role="img" aria-label="Set · applies to every model" title="Set · applies to every model" data-testid="rc-card-tick"><Check size={13} aria-hidden="true" /></div>
                 <div className="rcc-line-main">
                     <b>Running condition</b>
                     <span className="rcc-line-sep" aria-hidden="true" />
@@ -200,7 +211,7 @@ export function RunningConditionCard({ state, periods, filters, combine, noneCon
                 <div className="rcc-line-strip" title="Train (top lane) and scoring (bottom lane) periods across the dataset">
                     <PeriodCoverageBar periods={periods} bounds={bounds} mini tests={testPeriods} />
                 </div>
-                <button type="button" className="rcx-btn rcx-btn--sm rcc-line-more" data-testid="rc-card-details" aria-expanded={false} onClick={() => setDetailsOpen(true)}>
+                <button type="button" ref={detailsBtnRef} className="rcx-btn rcx-btn--sm rcc-line-more" data-testid="rc-card-details" aria-expanded={false} onClick={() => toggleDetails(true)}>
                     Details <ChevronDown size={12} aria-hidden="true" />
                 </button>
                 <button type="button" className="rcx-btn rcx-btn--sm" data-testid="rc-card-open" onClick={onOpen}>Edit</button>
@@ -216,7 +227,7 @@ export function RunningConditionCard({ state, periods, filters, combine, noneCon
                     Running condition <span className="f4-pill f4-pill--ok" data-testid="rc-card-pill">Set</span>
                     <span className="rcc-applies">applies to every model</span>
                     <span className="wb2-sp" />
-                    <button type="button" className="rcc-less" data-testid="rc-card-details" aria-expanded={true} onClick={() => setDetailsOpen(false)}>
+                    <button type="button" ref={detailsBtnRef} className="rcc-less" data-testid="rc-card-details" aria-expanded={true} onClick={() => toggleDetails(false)}>
                         Hide details <ChevronUp size={12} aria-hidden="true" />
                     </button>
                 </div>

@@ -112,11 +112,12 @@ describe('Individual: master-data prefill (snapshot, chips, reset, never written
         await settle(50);
         await train();
         await openHealth();
-        expect(bmw().getByTestId('sp-lower-source').textContent).toBe('not in master');
-        expect(bmw().getByTestId('sp-upper-source').textContent).toBe('master data');
-        expect((bmw().getByTestId('sp-lower') as HTMLInputElement).placeholder).toBe('Required');
+        expect(bmw().getByTestId('master-origin').textContent).toBe('L is not in the master data · H comes from the master data.');
+        expect((bmw().getByTestId('sp-lower') as HTMLInputElement).placeholder).toBe('L'); // what goes in the box; "required" is the dashed amber box
+        expect(bmw().getByTestId('sp-lower').getAttribute('aria-required')).toBe('true');
         await waitFor(() => expect(bmw().getByTestId('tab-status-' + t3.id).getAttribute('title')).toBe('Set points needed'));
-        expect(bmw().getByTestId('master-note').textContent).toMatch(/Master data is not changed/);
+        expect(bmw().getByTestId('master-note').textContent).toMatch(/Saved on this model only; the master data is not changed\./);
+        expect(bmw().getByTestId('set-points-card').contains(bmw().getByTestId('master-note'))).toBe(true);
     });
 
     it('an OLD model with no snapshot: the first Health page open snapshots master L/H ONCE; reopen writes nothing; master data is never written', async () => {
@@ -151,12 +152,13 @@ describe('Individual: master-data prefill (snapshot, chips, reset, never written
         await openHealth();
         expect(bmwEl().querySelector('[data-testid="sp-lower-reset"]')).toBeNull();
         await enterSp({ 'sp-lower': '15' });
-        expect(bmw().getByTestId('sp-lower-source').textContent).toBe('this model');
-        expect(bmw().getByTestId('sp-lower-reset').textContent).toMatch(/^use 20(.0+)?$/);
+        expect(bmw().getByTestId('master-origin').getAttribute('data-lower')).toBe('model');
+        expect(bmw().getByTestId('sp-lower-reset').textContent).toBe('Use master L 20'); // as typed in the master data — never "20.0"
         await act(async () => { fireEvent.click(bmw().getByTestId('sp-lower-reset')); });
         await settle(100);
         expect(diskModel('i1').healthSetPoints.lower).toBe(20);
-        expect(bmw().getByTestId('sp-lower-source').textContent).toBe('master data');
+        expect(bmw().getByTestId('master-origin').getAttribute('data-lower')).toBe('master');
+        expect(bmwEl().querySelector('[data-testid="sp-lower-reset"]')).toBeNull();
         expect(diskModel('i1').healthSetPoints.masterLower).toBe(20);
     });
 
@@ -170,8 +172,7 @@ describe('Individual: master-data prefill (snapshot, chips, reset, never written
         selectSensor('pump δp (ปั๊ม)'.toLowerCase());
         await waitForCharts();
         await openHealth();
-        expect(bmw().getByTestId('sp-lower-source').textContent).toBe('not in master');
-        expect(bmw().getByTestId('sp-upper-source').textContent).toBe('not in master');
+        expect(bmw().getByTestId('master-origin').textContent).toBe('The master data has no alarm limits for this sensor — type L and H.');
         await settle(300);
         expect(diskModel('s1').healthSetPoints).toEqual({ kind: 'individual', lower: null, upper: null, masterLower: null, masterUpper: null });
         await enterSp({ 'sp-lower': '-50', 'sp-upper': '80' });
@@ -196,7 +197,7 @@ describe('Individual: master-data prefill (snapshot, chips, reset, never written
         await sendBuildModelData(WS, { meta: PLANT_META });
         await settle(300);
         expect(diskModel('i1').healthSetPoints.masterLower).toBeNull();
-        expect(bmw().getByTestId('sp-lower-source').textContent).toBe('not in master');
+        expect(bmw().getByTestId('master-origin').getAttribute('data-lower')).toBe('not-in-master');
     });
 });
 
@@ -545,7 +546,8 @@ describe('misc edges', () => {
         await openHealth();
         const up80 = () => bmw().getByTestId('sp-residual_at_80_upper') as HTMLInputElement;
         await waitFor(() => expect(up80().closest('.hs-num')!.className).toMatch(/hs-num--req/));
-        expect(up80().placeholder).toBe('Required');
+        expect(up80().placeholder).toBe('+'); // a Relation-model point shows its side's sign, never a default value
+        expect(up80().getAttribute('aria-required')).toBe('true');
         const w = env.backend!.lastOk('compute_health_preview').stats.two_rmse as number;
         await enterSp({ 'sp-residual_at_80_upper': String(w) });
         await waitFor(() => expect(bmw().getAllByTestId('check-line').map(l => l.textContent).join('|')).toMatch(/sits exactly on the ±2RMSE band edge/));

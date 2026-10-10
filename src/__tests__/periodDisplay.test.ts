@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-    computeCoverage, computeTestCoverage, conditionChipParts, conditionSymbol, formatDate, formatPeriod, formatPeriodChip, formatStamp, overlapDays, periodDays,
+    computeCoverage, computeTestCoverage, conditionChipParts, conditionSymbol, formatDate, formatPeriod, formatDataStamp, formatPeriodChip, formatStamp, overlapDays, periodDays,
 } from '../components/windows/periodDisplay';
 import type { TestPeriod, WorkspaceSensorFilter } from '../types';
 
@@ -36,6 +36,39 @@ describe('formatPeriod (chip / row label)', () => {
         expect(formatStamp('2026-10-04T01:00:00.000Z')).toMatch(/^[34] Oct 2026 \d{2}:\d{2}$/);
         // never a locale form
         expect(formatStamp('2026-10-08T14:22:31')).not.toMatch(/PM|AM|,/);
+    });
+
+    // A CSV row's time is DATA: printed from its own wall-clock parts, never through a Date.
+    it('formatDataStamp: the same "9 Feb 2026 23:50" shape, from the text itself — an offset or Z never shifts it', () => {
+        expect(formatDataStamp('2026-02-09 23:50:00')).toBe('9 Feb 2026 23:50');
+        expect(formatDataStamp('2026-02-09T23:50')).toBe('9 Feb 2026 23:50');
+        expect(formatDataStamp('2026-02-09')).toBe('9 Feb 2026 00:00');
+        expect(formatDataStamp('2026/2/9 5:07')).toBe('9 Feb 2026 05:07');
+        expect(formatDataStamp(' 2026-02-09 23:50:00 ')).toBe('9 Feb 2026 23:50');
+        // would read 16:50 / the next day on a PC in another zone if it went through `new Date`
+        expect(formatDataStamp('2026-02-09T23:50:00+07:00')).toBe('9 Feb 2026 23:50');
+        expect(formatDataStamp('2026-02-09T23:50:00-0800')).toBe('9 Feb 2026 23:50');
+        expect(formatDataStamp('2026-02-09T23:50:00.000Z')).toBe('9 Feb 2026 23:50');
+        expect(formatDataStamp('2026-12-31T23:59:59+14:00')).toBe('31 Dec 2026 23:59');
+    });
+
+    it('formatDataStamp shows seconds only when asked AND they are not zero', () => {
+        expect(formatDataStamp('2026-02-09 23:50:07')).toBe('9 Feb 2026 23:50');
+        expect(formatDataStamp('2026-02-09 23:50:07', { seconds: true })).toBe('9 Feb 2026 23:50:07');
+        expect(formatDataStamp('2026-02-09 23:50:07.250', { seconds: true })).toBe('9 Feb 2026 23:50:07');
+        expect(formatDataStamp('2026-02-09 23:50:00', { seconds: true })).toBe('9 Feb 2026 23:50');
+        expect(formatDataStamp('2026-02-09T23:50:07+07:00', { seconds: true })).toBe('9 Feb 2026 23:50:07');
+        expect(formatDataStamp('2026-02-09T23:50', { seconds: true })).toBe('9 Feb 2026 23:50');
+    });
+
+    it('formatDataStamp: text in another shape is read as local time; text that is not a date stays; "—" for nothing', () => {
+        expect(formatDataStamp('Feb 9, 2026 23:50:07')).toBe('9 Feb 2026 23:50');
+        expect(formatDataStamp('Feb 9, 2026 23:50:07', { seconds: true })).toBe('9 Feb 2026 23:50:07');
+        expect(formatDataStamp('2026-13-40 00:00')).toBe('2026-13-40 00:00'); // not a real month: as it is
+        expect(formatDataStamp('row 12')).toBe('row 12');
+        expect(formatDataStamp('')).toBe('');
+        expect(formatDataStamp(null)).toBe('—');
+        expect(formatDataStamp(undefined)).toBe('—');
     });
 
     it('formatStamp leaves text that is not a date as it is, and "—" for nothing', () => {

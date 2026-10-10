@@ -437,14 +437,27 @@ describe('locked settings, queued card, Health score banner', () => {
         expect(screen.getByTestId('queued-card').textContent).toContain('Queued · #3 in line');
     });
 
-    it('RunSetPointsBanner: "N trained in this run need set points (M in total)" and Next', () => {
+    // workbench-redesign SPEC §4: ONE line.
+    it('RunSetPointsBanner is one line: "Trained in the run 14:05 · 3 need set points · this is 2 of 3" + the Next link', () => {
         const onNext = vi.fn();
-        withMeta(<RunSetPointsBanner at={new Date(2026, 9, 9, 14, 5).getTime()} inRun={3} total={5} position={2} nextDisabled={false} onNext={onNext} />);
-        expect(screen.getByTestId('run-setpoints-text').textContent).toBe('3 trained in this run need set points (5 in total)');
-        expect(screen.getByTestId('run-setpoints-banner').textContent).toContain('Trained in the run at 14:05.');
-        expect(screen.getByTestId('run-setpoints-banner').textContent).toContain('this is 2 of 3');
-        fireEvent.click(screen.getByTestId('next-needing-set-points'));
+        const { rerender } = withMeta(<RunSetPointsBanner at={new Date(2026, 9, 9, 14, 5).getTime()} inRun={3} position={2} nextDisabled={false} onNext={onNext} />);
+        const banner = screen.getByTestId('run-setpoints-banner');
+        expect(banner.textContent).toBe('✓Trained in the run 14:05 · 3 need set points · this is 2 of 3Next needing set points ›');
+        expect(screen.getByTestId('run-setpoints-line').textContent).toBe('Trained in the run 14:05 · 3 need set points · this is 2 of 3');
+        expect(screen.getByTestId('run-setpoints-text').textContent).toBe('3 need set points');
+        expect(banner.querySelector('.wbx-dt')!.textContent).toBe('14:05');
+        // the old sentences are gone
+        expect(banner.textContent).not.toMatch(/in total|Set them here|trained in this run| at 14:05/);
+        // a text link, not a second button-shaped control
+        const next = screen.getByTestId('next-needing-set-points');
+        expect(next.className).toContain('tq-inline-link');
+        expect(next.className).not.toContain('rcx-btn');
+        fireEvent.click(next);
         expect(onNext).toHaveBeenCalled();
+        // one model; the open model is not one of them -> no "this is …"; nothing next -> disabled
+        rerender(<SensorMetaContext.Provider value={LOOKUP}><RunSetPointsBanner at={new Date(2026, 9, 9, 9, 3).getTime()} inRun={1} position={0} nextDisabled onNext={onNext} /></SensorMetaContext.Provider>);
+        expect(screen.getByTestId('run-setpoints-line').textContent).toBe('Trained in the run 09:03 · 1 needs set points');
+        expect((screen.getByTestId('next-needing-set-points') as HTMLButtonElement).disabled).toBe(true);
     });
 });
 

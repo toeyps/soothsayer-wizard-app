@@ -9,7 +9,7 @@ vi.mock('../components/charts/ResponsiveECharts', () => ({
     default: (props: any) => { charts.push(props); return <div data-testid="echarts-mock" data-y-name={props.option?.yAxis?.name ?? ''} />; },
 }));
 
-import HealthScorePage, { sameHealthScoreProps } from '../components/windows/workbench/HealthScorePage';
+import HealthScorePage, { SLOW_SAVE_NOTICE_MS, sameHealthScoreProps } from '../components/windows/workbench/HealthScorePage';
 import { SensorMetaProvider } from '../components/sensor/SensorLabel';
 import { CHART } from '../components/windows/workbench/chartTheme';
 import type { HealthScorePageProps, SaveInfo } from '../components/windows/workbench/workbenchTypes';
@@ -39,7 +39,7 @@ interface Opts extends Partial<HealthScorePageProps> {
 
 const onChange = vi.fn();
 const onCommit = vi.fn();
-const onRetrain = vi.fn();
+const onGoTrain = vi.fn();
 
 /** The page, with the set points held in state like the container holds its draft, plus spies. */
 function Harness({ kind = 'individual', sp, data, ...rest }: Opts) {
@@ -58,7 +58,7 @@ function Harness({ kind = 'individual', sp, data, ...rest }: Opts) {
             onSetPointsCommit={onCommit}
             attemptIssues={null}
             save={{ phase: 'idle' }}
-            onRetrain={onRetrain}
+            onGoTrainSensor={onGoTrain}
             {...rest}
         />
     );
@@ -81,25 +81,50 @@ beforeEach(() => {
     charts.length = 0;
     onChange.mockClear();
     onCommit.mockClear();
-    onRetrain.mockClear();
+    onGoTrain.mockClear();
 });
 afterEach(cleanup);
 
-describe('Individual: the 100 / 80 / 0 ladder', () => {
-    it('has three rungs; the values the program computes are read-only (lock), only L and H are inputs', () => {
+describe('Individual: the set-point table (100 / 80 / 0)', () => {
+    // workbench-redesign SPEC §4: Score · Band · Lower · Upper. Automatic values are TEXT.
+    it('is ONE table — Score · Band · Lower · Upper; what the program computes is plain text, only L and H are inputs', () => {
         mount({ sp: IND_VALID });
         const card = screen.getByTestId('set-points-card');
-        expect(within(card).getByTestId('rung-100').textContent).toMatch(/Within ±1SD/);
-        expect(within(card).getByTestId('rung-100').textContent).toMatch(/auto/);
-        expect(within(card).getByTestId('rung-80').textContent).toMatch(/At ±3SD/);
-        expect(within(card).getByTestId('rung-0').textContent).toMatch(/At setpoint L \/ H/);
-        // read-only: not inputs
-        expect(screen.getByTestId('ro-l1').tagName).toBe('SPAN');
+        const table = within(card).getByRole('table', { name: 'Health set points' });
+        expect(within(table).getAllByRole('columnheader').map(h => h.textContent)).toEqual(['Score', 'Band', 'Lower', 'Upper']);
+        expect(within(table).getAllByRole('row')).toHaveLength(4); // head + 100 / 80 / 0
+        expect(within(card).getByTestId('rung-100').textContent).toBe('100within ±1SD · automatic4.006.00');
+        expect(within(card).getByTestId('rung-80').textContent).toBe('80at ±3SD · automatic2.008.00');
+        expect(within(card).getByTestId('rung-0').textContent).toMatch(/^0at L \/ H · you set them/);
+        // automatic values: text, never something that looks like an input
+        for (const id of ['ro-l1', 'ro-u1', 'ro-l3', 'ro-u3']) {
+            const el = screen.getByTestId(id);
+            expect(el.tagName).toBe('SPAN');
+            expect(el.className).toBe('hsx-ro');
+            expect(el.closest('.hs-num')).toBeNull();
+        }
         expect([screen.getByTestId('ro-l1'), screen.getByTestId('ro-u1'), screen.getByTestId('ro-l3'), screen.getByTestId('ro-u3')].map(e => e.textContent)).toEqual(['4.00', '6.00', '2.00', '8.00']);
         expect(card.querySelectorAll('input')).toHaveLength(2);
-        expect(card.querySelectorAll('svg.lucide-lock').length).toBe(2);
+        // no locks, no boxed rungs, no source chips any more
+        expect(card.querySelectorAll('svg.lucide-lock')).toHaveLength(0);
+        expect(card.querySelector('.hs-rung, .hs-ro, .hs-src, .hs-lock')).toBeNull();
         expect(input('sp-lower').value).toBe('1');
         expect(input('sp-upper').value).toBe('9');
+        expect(screen.getByLabelText(/^L — /)).toBe(input('sp-lower'));
+        expect(screen.getByLabelText(/^H — /)).toBe(input('sp-upper'));
+    });
+
+    it('the Checks live in the SAME card, under the table (no second card, no second header)', () => {
+        mount({ sp: IND_VALID });
+        const card = screen.getByTestId('set-points-card');
+        const checks = within(card).getByTestId('checks-card');
+        expect(checks.tagName).toBe('DIV');
+        expect(checks.closest('.hsx-checks')).not.toBeNull();
+        expect(within(card).getByTestId('check-valid').textContent).toBe('Every set point passes the checks — the score is below.');
+        expect(screen.getAllByTestId('checks-card')).toHaveLength(1);
+        expect(document.querySelectorAll('.hs-spp > section')).toHaveLength(1);
+        expect(card.querySelectorAll('.wb2-card-h')).toHaveLength(1);
+        expect(card.textContent).not.toMatch(/Checks/);
     });
 
     it('the inputs show the unit', () => {
@@ -134,52 +159,85 @@ describe('Individual: the 100 / 80 / 0 ladder', () => {
         expect(input('sp-lower').value).toBe('-1.5');
     });
 
-    describe('source chips + "use <master value>"', () => {
-        it('master data: the value equals the snapshot; no reset link', () => {
+    describe('master-data footnote (inside the card) + "Use master H …" only for a side that differs', () => {
+        const origin = () => screen.getByTestId('master-origin');
+
+        it('both sides equal the master data: one sentence, no link', () => {
             mount({ sp: IND_VALID });
-            expect(screen.getByTestId('sp-lower-source').textContent).toBe('master data');
+            const note = screen.getByTestId('master-note');
+            expect(note.closest('[data-testid="set-points-card"]')).not.toBeNull();
+            expect(note.textContent).toBe('L and H come from the master data alarm limits. Saved on this model only; the master data is not changed.');
+            expect(origin().dataset.lower).toBe('master');
+            expect(origin().dataset.upper).toBe('master');
+            expect(note.querySelector('button')).toBeNull();
             expect(screen.queryByTestId('sp-lower-reset')).toBeNull();
+            expect(screen.queryByTestId('sp-upper-reset')).toBeNull();
+            // the old per-field chips are gone
+            expect(screen.queryByTestId('sp-lower-source')).toBeNull();
         });
 
-        it('this model: the value differs from the snapshot; the link offers the master value and restores it with an immediate commit', () => {
+        it('H differs: the note says which side, the link offers the master value and restores it with an immediate commit', () => {
             mount({ sp: { ...IND_VALID, upper: 12 } });
-            expect(screen.getByTestId('sp-upper-source').textContent).toBe('this model');
+            expect(origin().textContent).toBe('L comes from the master data · H is set on this model.');
+            expect(screen.queryByTestId('sp-lower-reset')).toBeNull();
             const reset = screen.getByTestId('sp-upper-reset');
-            expect(reset.textContent).toBe('use 9.00');
+            expect(reset.textContent).toBe('Use master H 9');
             fireEvent.click(reset);
             expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ kind: 'individual', upper: 9, masterUpper: 9 }), true);
             expect(input('sp-upper').value).toBe('9');
-            expect(screen.getByTestId('sp-upper-source').textContent).toBe('master data');
+            expect(origin().textContent).toBe('L and H come from the master data alarm limits.');
             expect(screen.queryByTestId('sp-upper-reset')).toBeNull();
         });
 
-        it('typing a value over a master one flips the chip live', () => {
+        it('typing a value over a master one changes the note live', () => {
             mount({ sp: IND_VALID });
             type('sp-lower', '0.5');
-            expect(screen.getByTestId('sp-lower-source').textContent).toBe('this model');
-            expect(screen.getByTestId('sp-lower-reset').textContent).toBe('use 1.00');
+            expect(origin().textContent).toBe('L is set on this model · H comes from the master data.');
+            expect(screen.getByTestId('sp-lower-reset').textContent).toBe('Use master L 1');
         });
 
-        it('not in master: master has no value (special sensor / no alarm): the chip says so and there is nothing to restore', () => {
+        it('both sides differ: two links', () => {
+            mount({ sp: { kind: 'individual', lower: 0, upper: 12, masterLower: 1, masterUpper: 9 } });
+            expect(screen.getByTestId('master-note').textContent).toBe('L is set on this model · H is set on this model. Saved on this model only; the master data is not changed. Use master L 1 · Use master H 9');
+        });
+
+        // The user reported a padded "-2.000": a master value is one somebody TYPED — shown exactly.
+        it('the master value in the link is printed exactly as typed: never padded, never rounded', () => {
+            mount({ sp: { kind: 'individual', lower: -5, upper: 12, masterLower: -2, masterUpper: 4.5 } });
+            expect(screen.getByTestId('sp-lower-reset').textContent).toBe('Use master L -2');
+            expect(screen.getByTestId('sp-upper-reset').textContent).toBe('Use master H 4.5');
+            cleanup();
+            mount({ sp: { kind: 'individual', lower: 1, upper: 12, masterLower: 0.05, masterUpper: 4.61234 } });
+            expect(screen.getByTestId('sp-lower-reset').textContent).toBe('Use master L 0.05');
+            expect(screen.getByTestId('sp-upper-reset').textContent).toBe('Use master H 4.61234');
+            expect(screen.getByTestId('set-points-card').textContent).not.toMatch(/-2\.0|4\.50|4\.612(?!34)|0\.050/);
+        });
+
+        it('master has no value (special sensor / no alarm): the note says so and there is nothing to restore', () => {
             mount({ sp: { kind: 'individual', lower: null, upper: 20, masterLower: null, masterUpper: null } });
-            expect(screen.getByTestId('sp-lower-source').textContent).toBe('not in master');
-            expect(screen.getByTestId('sp-upper-source').textContent).toBe('this model');
+            expect(origin().textContent).toBe('L is not in the master data · H is set on this model.');
             expect(screen.queryByTestId('sp-lower-reset')).toBeNull();
             expect(screen.queryByTestId('sp-upper-reset')).toBeNull();
+            cleanup();
+            mount({ sp: { kind: 'individual', lower: null, upper: null, masterLower: null, masterUpper: null } });
+            expect(origin().textContent).toBe('The master data has no alarm limits for this sensor — type L and H.');
         });
 
-        it('a value that master has but the user cleared is "this model" with a link to bring it back', () => {
+        it('a value that master has but the user cleared is "set on this model" with a link to bring it back', () => {
             mount({ sp: { kind: 'individual', lower: null, upper: 9, masterLower: 5, masterUpper: 9 } });
-            expect(screen.getByTestId('sp-lower-source').textContent).toBe('this model');
-            expect(screen.getByTestId('sp-lower-reset').textContent).toBe('use 5.00');
+            expect(origin().dataset.lower).toBe('model');
+            expect(screen.getByTestId('sp-lower-reset').textContent).toBe('Use master L 5');
         });
     });
 
     describe('field state comes from Rust\'s issues', () => {
-        it('an empty field is "required" (dashed, "Required" placeholder); a rejected one is "error"; a fine one is neither', () => {
+        it('an empty field is "required" (dashed amber box, aria-required; the placeholder names the box: "L" / "H"); a rejected one is "error"; a fine one is neither', () => {
             mount({ sp: { kind: 'individual', lower: 3, upper: null, masterLower: null, masterUpper: null } });
             expect(field('sp-upper').className).toMatch(/hs-num--req/);
-            expect(input('sp-upper').placeholder).toBe('Required');
+            expect(input('sp-upper').placeholder).toBe('H');
+            expect(input('sp-lower').placeholder).toBe('L');
+            expect(input('sp-upper').getAttribute('aria-required')).toBe('true');
+            expect(input('sp-lower').getAttribute('aria-required')).toBeNull();
             expect(field('sp-lower').className).toMatch(/hs-num--err/);
             expect(input('sp-lower').getAttribute('aria-invalid')).toBe('true');
         });
@@ -199,26 +257,39 @@ describe('Individual: the 100 / 80 / 0 ladder', () => {
         });
     });
 
-    it('the master-data note is shown for Individual', () => {
-        mount({ sp: IND_VALID });
-        expect(screen.getByTestId('master-note').textContent).toBe('H and L entered here are saved on this model only. Master data is not changed.');
+    it('an input keeps the text the user typed ("2.50" is not rewritten to "2.5"; "-2" never becomes "-2.000")', () => {
+        mount({ sp: { kind: 'individual', lower: null, upper: 9, masterLower: null, masterUpper: null } });
+        type('sp-lower', '-2');
+        expect(input('sp-lower').value).toBe('-2');
+        type('sp-lower', '-2.50');
+        expect(input('sp-lower').value).toBe('-2.50');
+        fireEvent.blur(input('sp-lower'));
+        expect(input('sp-lower').value).toBe('-2.50');
+        expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ lower: -2.5 }), undefined);
     });
 });
 
 describe('Relationship: four points, all start empty', () => {
-    it('ladder: ±2RMSE read-only (locked, "from training"), Lower / Upper at 80 and at 0 are inputs showing the unit', () => {
+    it('table: the 100 row is text ("within ±2RMSE · automatic"); the four residual points are the only inputs, empty, with − / + placeholders and the unit', () => {
         mount({ kind: 'relationship', sp: { ...REL_EMPTY } });
-        expect(screen.getByTestId('rung-100').textContent).toMatch(/Within ±2RMSE/);
-        expect(screen.getByTestId('rung-100').textContent).toMatch(/from training/);
+        const card = screen.getByTestId('set-points-card');
+        expect(within(card).getAllByRole('columnheader').map(h => h.textContent)).toEqual(['Score', 'Band', 'Lower', 'Upper']);
+        expect(screen.getByTestId('rung-100').textContent).toBe('100within ±2RMSE · automatic−0.913+0.913');
+        expect(screen.getByTestId('rung-100').querySelector('input')).toBeNull();
         expect(screen.getByTestId('ro-l2').textContent).toBe('−0.913');
         expect(screen.getByTestId('ro-u2').textContent).toBe('+0.913');
+        expect(screen.getByTestId('ro-l2').closest('.hs-num')).toBeNull();
+        expect(screen.getByTestId('rung-80').textContent).toMatch(/^80residual at 80 · you set them/);
+        expect(screen.getByTestId('rung-0').textContent).toMatch(/^0residual at 0 · you set them/);
         const ids = ['sp-residual_at_80_lower', 'sp-residual_at_80_upper', 'sp-residual_at_0_lower', 'sp-residual_at_0_upper'];
+        expect(card.querySelectorAll('input')).toHaveLength(4);
         for (const id of ids) {
-            expect(input(id).value).toBe('');
-            expect(input(id).placeholder).toBe('Required');
+            expect(input(id).value).toBe(''); // they start EMPTY — no defaults
+            expect(input(id).placeholder).toBe(id.endsWith('_lower') ? '−' : '+');
             expect(field(id).className).toMatch(/hs-num--req/);
             expect(field(id).textContent).toContain('bar');
         }
+        expect(screen.getByTestId('sign-note').textContent).toBe('Residual = actual − predicted: lower points are negative, upper points positive. 0 sits further from zero than 80.');
         expect(screen.queryByTestId('master-note')).toBeNull();
     });
 
@@ -254,16 +325,31 @@ describe('Relationship: four points, all start empty', () => {
 describe('Clustering: one outer ring N for every cluster', () => {
     const CL = (n: number | null) => ({ kind: 'clustering', outerSd: n }) as const;
 
-    it('ladder: 100 and 80 are locked text, the 0 rung is the "Outer ring" with a number box, - / + and 4x 5x 6x 7x', () => {
+    it('table: the 1× and 3× rows are text; N is the one control (number box, − / +, 4× 5× 6× 7×) on its own line', () => {
         mount({ kind: 'clustering', sp: CL(null) });
-        expect(screen.getByTestId('rung-100').textContent).toMatch(/Inside the 1× SD ring/);
-        expect(screen.getByTestId('rung-80').textContent).toMatch(/On the 3× SD ring/);
-        expect(screen.getByTestId('rung-0').textContent).toMatch(/Outer ring — N× SD \(more than 3\)/);
+        const card = screen.getByTestId('set-points-card');
+        expect(screen.getByTestId('rung-100').textContent).toBe('100inside the 1× SD ring · automatic1× SD');
+        expect(screen.getByTestId('rung-80').textContent).toBe('80on the 3× SD ring · automatic3× SD');
+        expect(screen.getByTestId('rung-0').textContent).toBe('0on the N× SD ring · you set N · more than 3N× SD');
+        expect(within(card).queryAllByRole('columnheader')).toHaveLength(0); // one value column: no head row
+        for (const id of ['rung-100', 'rung-80', 'rung-0']) expect(screen.getByTestId(id).querySelector('input, button')).toBeNull();
+        expect(card.querySelectorAll('input')).toHaveLength(1);
+        const ctl = screen.getByTestId('ring-control');
+        expect(within(ctl).getByTestId('sp-outer_sd')).toBe(input('sp-outer_sd'));
         expect(input('sp-outer_sd').value).toBe('');
-        expect(input('sp-outer_sd').placeholder).toBe('Required');
+        expect(input('sp-outer_sd').placeholder).toBe('N');
+        expect(field('sp-outer_sd').className).toMatch(/hs-num--req/);
         expect(field('sp-outer_sd').textContent).toContain('× SD');
-        expect(['ring-quick-4', 'ring-quick-5', 'ring-quick-6', 'ring-quick-7'].map(id => screen.getByTestId(id).textContent)).toEqual(['4×', '5×', '6×', '7×']);
-        expect(screen.getByTestId('rung-0').textContent).toMatch(/One number for every cluster/);
+        expect(['ring-quick-4', 'ring-quick-5', 'ring-quick-6', 'ring-quick-7'].map(id => within(ctl).getByTestId(id).textContent)).toEqual(['4×', '5×', '6×', '7×']);
+        expect(card.textContent).toMatch(/One N for every cluster: each cluster gets its own 1×, 3× and N× rings/);
+    });
+
+    it('the 0 row names the N that is set, exactly as typed', () => {
+        mount({ kind: 'clustering', sp: CL(null) });
+        fireEvent.click(screen.getByTestId('ring-quick-5'));
+        expect(screen.getByTestId('ro-nx').textContent).toBe('5× SD');
+        type('sp-outer_sd', '4.25');
+        expect(screen.getByTestId('ro-nx').textContent).toBe('4.25× SD');
     });
 
     it('a quick button sets N and commits at once; the current one is pressed', () => {
@@ -618,40 +704,43 @@ describe('states of the preview', () => {
         expect(screen.getByTestId('health-loading')).toBeTruthy();
     });
 
-    it('NOT_FITTED with nothing to show: "Re-train to recompute" with a Re-train button', () => {
+    // SPEC §4: no in-pane Re-train button — the board points at "Train sensor ↑".
+    it('NOT_FITTED with nothing to show: ONE board, no Re-train button, a "Train sensor ↑" text link', () => {
         mount({ data: null, preview: { data: null, loading: false, error: 'no fit', errorCode: 'NOT_FITTED', notFitted: true, needsRetrain: true, idle: null } });
-        expect(screen.getByTestId('health-not-fitted').textContent).toMatch(/Re-train to recompute/);
-        fireEvent.click(screen.getByTestId('health-not-fitted-retrain'));
-        expect(onRetrain).toHaveBeenCalled();
+        const board = screen.getByTestId('health-not-fitted');
+        expect(board.className).toMatch(/\bwbx-msg\b/);
+        expect(board.querySelector('.wbx-msg-t')!.textContent).toBe('Fit no longer in memory');
+        expect(board.textContent).toMatch(/Re-train it with Train sensor ↑ — your set points are kept/);
+        expect(screen.queryByTestId('health-not-fitted-retrain')).toBeNull();
+        expect(screen.queryByRole('button', { name: /^↻|Re-train$/ })).toBeNull();
+        const link = within(board).getByTestId('health-go-train-sensor');
+        expect(link.className).toBe('tq-inline-link');
+        expect(link.textContent).toBe('Train sensor ↑');
+        expect(within(board).getAllByRole('button')).toHaveLength(1);
+        fireEvent.click(link);
+        expect(onGoTrain).toHaveBeenCalledTimes(1);
+        expect(screen.queryByTestId('health-error')).toBeNull(); // not the red "couldn't load" card
     });
 
-    it('NOT_FITTED while the last charts are still held: a banner above them', () => {
+    it('NOT_FITTED while the last charts are still held: a line above them with the same text link, no button of its own', () => {
         const d = previewFor('individual', IND_VALID);
         mount({ sp: IND_VALID, preview: { data: d, loading: false, error: 'no fit', errorCode: 'NOT_FITTED', notFitted: true, needsRetrain: true, idle: null } });
-        expect(screen.getByTestId('health-not-fitted-banner')).toBeTruthy();
+        const banner = screen.getByTestId('health-not-fitted-banner');
+        expect(banner.textContent).toMatch(/Fit no longer in memory\. The chart below is the last result\. Re-train the Relation model with Train sensor ↑/);
+        expect(banner.querySelector('.rcx-btn')).toBeNull();
+        fireEvent.click(within(banner).getByTestId('health-go-train-sensor'));
+        expect(onGoTrain).toHaveBeenCalledTimes(1);
         expect(screen.getByTestId('set-points-card')).toBeTruthy();
     });
 
-    it('Re-train is disabled with its reason while the window cannot train (a training run is active / data out of date)', () => {
-        onRetrain.mockClear();
-        const nf = { loading: false, error: 'no fit', errorCode: 'NOT_FITTED' as const, notFitted: true, needsRetrain: true, idle: null };
-        const { unmount } = mount({ data: null, preview: { data: null, ...nf }, retrainDisabledReason: 'Wait for the training run to finish' });
-        const btn = screen.getByTestId('health-not-fitted-retrain') as HTMLButtonElement;
-        expect(btn.disabled).toBe(true);
-        expect(btn.title).toBe('Wait for the training run to finish');
-        fireEvent.click(btn);
-        expect(onRetrain).not.toHaveBeenCalled();
-        unmount();
-        const d = previewFor('individual', IND_VALID);
-        mount({ sp: IND_VALID, preview: { data: d, ...nf }, retrainDisabledReason: 'Wait for the training run to finish' });
-        const bannerBtn = within(screen.getByTestId('health-not-fitted-banner')).getByRole('button', { name: /Re-train/ }) as HTMLButtonElement;
-        expect(bannerBtn.disabled).toBe(true);
-        expect(bannerBtn.title).toBe('Wait for the training run to finish');
-    });
-
-    it('another error with nothing to show: the message', () => {
-        mount({ data: null, preview: { data: null, loading: false, error: 'No rows in the training scope', errorCode: 'NO_DATA', notFitted: false, needsRetrain: false, idle: null } });
-        expect(screen.getByTestId('health-error').textContent).toMatch(/No rows in the training scope/);
+    it('another error with nothing to show: the red card with the reason', () => {
+        mount({ data: null, preview: { data: null, loading: false, error: 'No rows in the training scope.', errorCode: 'NO_DATA', notFitted: false, needsRetrain: false, idle: null } });
+        const card = screen.getByTestId('health-error');
+        expect(card.className).toMatch(/hs-save--bad/);
+        expect(card.getAttribute('role')).toBe('alert');
+        // "<reason> · the score and Checks …": the reason's own full stop is dropped
+        expect(card.textContent).toBe("Couldn't load the health score. No rows in the training scope · the score and Checks are not available until it loads");
+        expect(screen.queryByTestId('health-loading')).toBeNull();
     });
 
     it('while a newer answer loads the previous charts stay (the card never blanks out)', () => {
@@ -672,12 +761,40 @@ describe('saved files: progress, result and "changed after saving"', () => {
         expect(screen.queryByTestId('save-error')).toBeNull();
     });
 
-    it('running: "Saving results…"; a Relationship adds that it can take longer than 15 seconds the first time', () => {
-        save({ phase: 'running', slow: false });
-        expect(screen.getByTestId('save-running').textContent).toBe('Saving results…');
-        cleanup();
-        save({ phase: 'running', slow: true });
-        expect(screen.getByTestId('save-running').textContent).toMatch(/Saving results….*longer than 15 seconds, especially the first time/);
+    // SPEC §4: saving is the FOOTER only — no card on the page, unless the save is slow.
+    it('running: no "Saving…" card on the page; one appears only once the save has been running for a while', () => {
+        vi.useFakeTimers();
+        try {
+            save({ phase: 'running', slow: false });
+            expect(screen.queryByTestId('save-running')).toBeNull();
+            expect(screen.getByTestId('health-page').querySelector('.hs-save')).toBeNull();
+            expect(screen.getByTestId('health-page').textContent).not.toMatch(/Saving/);
+            act(() => { vi.advanceTimersByTime(SLOW_SAVE_NOTICE_MS - 1); });
+            expect(screen.queryByTestId('save-running')).toBeNull();
+            act(() => { vi.advanceTimersByTime(1); });
+            expect(screen.getByTestId('save-running').textContent).toBe('Still saving… Writing the model files is taking longer than usual.');
+            cleanup();
+            // a Relation model: not at once either (it used to show the card from the first moment)
+            mount({ kind: 'relationship', sp: REL_VALID, save: { phase: 'running', slow: true } });
+            expect(screen.queryByTestId('save-running')).toBeNull();
+            act(() => { vi.advanceTimersByTime(SLOW_SAVE_NOTICE_MS); });
+            expect(screen.getByTestId('save-running').textContent).toMatch(/Still saving….*longer than 15 seconds, especially the first time/);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('the slow-save line goes as soon as the save ends', () => {
+        vi.useFakeTimers();
+        try {
+            const { rerender } = render(<Harness sp={IND_VALID} save={{ phase: 'running', slow: false }} />);
+            act(() => { vi.advanceTimersByTime(SLOW_SAVE_NOTICE_MS); });
+            expect(screen.getByTestId('save-running')).toBeTruthy();
+            rerender(<Harness sp={IND_VALID} save={{ phase: 'idle' }} />);
+            expect(screen.queryByTestId('save-running')).toBeNull();
+        } finally {
+            vi.useRealTimers();
+        }
     });
 
     // Workbench redesign §1: a SUCCESSFUL save has no banner on the page — it is the
@@ -698,9 +815,14 @@ describe('saved files: progress, result and "changed after saving"', () => {
         expect(screen.getByTestId('health-page').textContent).not.toMatch(/Files saved/);
     });
 
-    it('error: says the model was not saved and why', () => {
-        save({ phase: 'error', message: 'Re-train first — the fitted Relation model is no longer in memory.' });
-        expect(screen.getByTestId('save-error').textContent).toMatch(/not saved.*Re-train first/);
+    it('error: a red card that says the model was not saved and why — with the file it could not write', () => {
+        const why = "Couldn't write C:\\Users\\me\\AppData\\Roaming\\app\\workspaces\\ws1\\output\\TAG1\\INDV_INFO_TAG1.json — the file is open in another program.";
+        save({ phase: 'error', message: why });
+        const card = screen.getByTestId('save-error');
+        expect(card.className).toMatch(/hs-save--bad/);
+        expect(card.getAttribute('role')).toBe('alert');
+        expect(card.textContent).toBe(`The model was not saved. ${why}`);
+        expect(screen.getByTestId('save-error-reason').textContent).toContain('output\\TAG1\\INDV_INFO_TAG1.json');
     });
 
     it('the page has no "Changed after saving" banner of its own (it is the footer sentence, next to Mark complete again)', () => {
@@ -737,8 +859,9 @@ describe('a failed request keeps the page (QA 2026-10-04)', () => {
     it('with an earlier answer: the inputs and charts stay under an error banner with a Retry button', () => {
         mount({ sp: IND_VALID, preview: failed(null, previewFor('individual', IND_VALID)), onRetryPreview: onRetry });
         const banner = screen.getByTestId('health-error');
-        expect(banner.textContent).toMatch(/Couldn't load the health score/);
-        expect(banner.textContent).toMatch(/transient I\/O error/);
+        expect(banner.className).toMatch(/hs-save--bad/);
+        expect(banner.textContent).toBe("Couldn't load the health score. Failed to read column: transient I/O error · the score and Checks are not available until it loadsRetry");
+        expect(screen.getByTestId('health-error-reason').textContent).toBe('Failed to read column: transient I/O error');
         expect(screen.getByTestId('set-points-card')).toBeTruthy();
         expect(input('sp-lower').value).toBe('1'); // still editable
         fireEvent.click(screen.getByTestId('health-retry'));
@@ -749,8 +872,8 @@ describe('a failed request keeps the page (QA 2026-10-04)', () => {
         mount({ sp: IND_VALID, preview: failed(null, previewFor('individual', IND_VALID)), onRetryPreview: onRetry });
         expect(screen.queryByTestId('hs-verdict')).toBeNull();
         expect(screen.queryByTestId('check-valid')).toBeNull();
-        expect(screen.getByTestId('checks-unavailable')).toBeTruthy();
-        expect(screen.getByTestId('score-locked').textContent).toMatch(/Score not available/);
+        expect(screen.getByTestId('checks-unavailable').textContent).toBe('Not available until the health score loads.');
+        expect(screen.getByTestId('score-locked').textContent).toBe('Health scoreScore not availableNot available until the health score loads.');
         expect(field('sp-lower').className).not.toMatch(/hs-num--err|hs-num--req/);
     });
 
@@ -766,9 +889,10 @@ describe('a failed request keeps the page (QA 2026-10-04)', () => {
         expect(screen.queryByTestId('health-retry')).toBeNull();
     });
 
-    it('with NO earlier answer: the full-page message, now with a Retry button', () => {
+    it('with NO earlier answer: the SAME red card with its Retry (one shape for "the preview failed")', () => {
         mount({ data: null, preview: failed(null, null), onRetryPreview: onRetry });
-        expect(screen.getByTestId('health-error').textContent).toMatch(/Couldn't load the health score/);
+        expect(screen.getByTestId('health-error').className).toMatch(/hs-save--bad/);
+        expect(screen.getByTestId('health-error').textContent).toMatch(/^Couldn't load the health score\. Failed to read column: transient I\/O error · the score and Checks are not available until it loads/);
         expect(screen.queryByTestId('set-points-card')).toBeNull();
         fireEvent.click(screen.getByTestId('health-retry'));
         expect(onRetry).toHaveBeenCalledTimes(1);
@@ -779,7 +903,7 @@ describe('a failed request keeps the page (QA 2026-10-04)', () => {
         expect(screen.queryByTestId('health-retry')).toBeNull();
     });
 
-    it('NOT_FITTED keeps its own full-page "Re-train to recompute", even with an earlier answer', () => {
+    it('NOT_FITTED keeps its own board ("Fit no longer in memory"), even with an earlier answer', () => {
         mount({ sp: IND_VALID, preview: { ...failed('NOT_FITTED', previewFor('individual', IND_VALID)), notFitted: true, needsRetrain: true, error: 'no fit' }, onRetryPreview: onRetry });
         expect(screen.getByTestId('health-not-fitted')).toBeTruthy();
         expect(screen.queryByTestId('set-points-card')).toBeNull();
@@ -793,17 +917,22 @@ describe('a failed request keeps the page (QA 2026-10-04)', () => {
 });
 
 describe('accessible names and full-precision values (QA 2026-10-04)', () => {
-    it('the four Relationship inputs have four DISTINCT accessible names while the visible labels stay Lower / Upper', () => {
+    it('the four Relationship inputs have four DISTINCT accessible names; the visible column heads stay Lower / Upper', () => {
         mount({ kind: 'relationship', sp: REL_VALID });
         const ids = ['sp-residual_at_80_lower', 'sp-residual_at_80_upper', 'sp-residual_at_0_lower', 'sp-residual_at_0_upper'];
-        const names = ids.map(id => (document.querySelector(`label[for="${id}"]`) as HTMLElement).textContent);
+        const names = ids.map(id => input(id).getAttribute('aria-label'));
         expect(new Set(names).size).toBe(4);
         expect(names).toEqual(['Lower residual at score 80', 'Upper residual at score 80', 'Lower residual at score 0', 'Upper residual at score 0']);
         for (const [i, id] of ids.entries()) expect(screen.getByLabelText(names[i]!)).toBe(input(id));
-        // visible text: just "Lower" / "Upper" (the rest is screen-reader only)
-        const visible = ids.map(id => (document.querySelector(`label[for="${id}"]`)!.firstChild as Text).textContent);
-        expect(visible).toEqual(['Lower', 'Upper', 'Lower', 'Upper']);
-        expect(document.querySelectorAll('label[for^="sp-residual"] .sr-only')).toHaveLength(4);
+        expect(screen.getAllByRole('columnheader').slice(2).map(h => h.textContent)).toEqual(['Lower', 'Upper']);
+    });
+
+    it('the state of the card is a dot with words for a screen reader, and a required / rejected input says so', () => {
+        mount({ sp: { kind: 'individual', lower: 3, upper: null, masterLower: null, masterUpper: null } });
+        expect(screen.getByRole('img', { name: 'A set point is not valid' })).toBe(screen.getByTestId('hs-verdict'));
+        expect(input('sp-upper').getAttribute('aria-required')).toBe('true');
+        expect(input('sp-lower').getAttribute('aria-invalid')).toBe('true');
+        expect(screen.getByRole('group', { name: 'Checks' })).toBe(screen.getByTestId('checks-card'));
     });
 
     it('a stored 4e-7 is shown as itself (not "0"), and 0.00012345 is not cut to 6 decimals', () => {
@@ -912,7 +1041,7 @@ describe('Scoring periods on the Health score page ("just score it", 2026-10-10)
     it('while the health score failed to load (last answer on screen) the quiet line says so, not "set points"', () => {
         const failed = { data: null, lastData: withTests('individual', IND_VALID), loading: false, error: 'boom', errorCode: null, notFitted: false, needsRetrain: false, idle: null as null, retry: vi.fn() };
         mount({ sp: IND_VALID, preview: failed });
-        expect(screen.getByTestId('test-results-pending').textContent).toBe('Not available until the health score loads again');
+        expect(screen.getByTestId('test-results-pending').textContent).toBe('Not available until the health score loads');
         expect(screen.queryByTestId('test-result-1')).toBeNull();
     });
 
@@ -984,7 +1113,7 @@ describe('memo (customer items 8 + 9: a training run must not redraw these chart
             preview: { data: previewFor('individual', sp), loading: false, error: null, errorCode: null, notFitted: false, needsRetrain: false, idle: null } as any,
             unit: 'bar', sensorLabel: (t: string) => t, getDesc: (t: string) => t,
             setPoints: sp, onSetPointsChange: onChange, onSetPointsCommit: onCommit, attemptIssues: null,
-            save: { phase: 'idle' }, onRetrain,
+            save: { phase: 'idle' }, onGoTrainSensor: onGoTrain,
             ...over,
         };
     };
@@ -1003,8 +1132,7 @@ describe('memo (customer items 8 + 9: a training run must not redraw these chart
     it('the comparator covers every prop: a new callback, a new reason or a changed preview field is a change', () => {
         const a = props();
         expect(sameHealthScoreProps(a, { ...a })).toBe(true);
-        expect(sameHealthScoreProps(a, { ...a, onRetrain: () => {} })).toBe(false);
-        expect(sameHealthScoreProps(a, { ...a, retrainDisabledReason: 'Wait for the training run to finish' })).toBe(false);
+        expect(sameHealthScoreProps(a, { ...a, onGoTrainSensor: () => {} })).toBe(false);
         expect(sameHealthScoreProps(a, { ...a, preview: { ...a.preview, loading: true } })).toBe(false);
         expect(sameHealthScoreProps(a, { ...a, setPoints: { ...IND_VALID, lower: 2 } as HealthSetPoints })).toBe(false);
     });

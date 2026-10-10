@@ -1,4 +1,4 @@
-import { memo, useMemo, useState, type ComponentProps } from 'react';
+import { memo, useEffect, useMemo, useState, type ComponentProps } from 'react';
 import { samePageProps } from './pageMemo';
 import { connect } from 'echarts';
 import { Loader2 } from 'lucide-react';
@@ -25,15 +25,16 @@ import {
     buildScoreOption,
 } from './healthPageCharts';
 import { scopesOf, sensorAxisTitle, type TimeScopes } from './healthCharts';
-import { formatStamp } from '../periodDisplay';
+import { formatDataStamp } from '../periodDisplay';
 import { SlowScoringNotice, TestResultsCard, TestsChangedBanner } from './ValidationCards';
+import { StateBoard, TrainSensorLink } from './WorkbenchShellParts';
 import type { HealthScorePageProps, SaveInfo } from './workbenchTypes';
 
 /*
  * Page 2 of the Workbench - "Health score" body (mockup `healthPage`):
  *
- *   [ set-point chart (tall)        ] [ Health set points ladder ]
- *   [                               ] [ Checks                    ]
+ *   [ set-point chart (tall)        ] [ Health set points: table  ]
+ *   [                               ] [ + footnote + the Checks   ]
  *   [ Health score over time (full width, locked until valid)     ]
  *
  * Everything is drawn from the ONE bounded `HealthPreview` the container's
@@ -61,14 +62,33 @@ export function sameHealthScoreProps(a: HealthScorePageProps, b: HealthScorePage
     return samePageProps(a, b, ['model', 'setPoints', 'save', 'testsChanged', 'testNumbers', 'attemptIssues']);
 }
 
+/** A save that has been running this long gets a line on the page; until then
+ *  the footer sentence ("Saving the model files…") says it alone (SPEC §4). */
+export const SLOW_SAVE_NOTICE_MS = 4000;
+
+/** `flag`, but only once it has stayed true for `delayMs` (false at once). */
+function useHeldFor(flag: boolean, delayMs: number): boolean {
+    const [on, setOn] = useState(false);
+    useEffect(() => {
+        if (!flag) {
+            setOn(false);
+            return;
+        }
+        const t = setTimeout(() => setOn(true), delayMs);
+        return () => clearTimeout(t);
+    }, [flag, delayMs]);
+    return flag && on;
+}
+
 function HealthScorePage(props: HealthScorePageProps) {
     const { model, stale, preview, unit, setPoints, attemptIssues, save } = props;
     const [hoverIdx, setHoverIdx] = useState<number | null>(null);
     // A failed request leaves `preview.data` null, but when an earlier answer for this
-    // model exists the page (inputs, charts) stays on screen from `lastData` under an
-    // error banner with a Retry button instead of being replaced (QA fix, 2026-10-04).
-    // "Re-train to recompute" (NOT_FITTED) keeps its own full-page message.
-    const errorMode = !preview.data && !preview.notFitted && !!preview.error && !!preview.lastData;
+    // model exists the page (inputs, charts) stays on screen from `lastData` under the
+    // red card with its Retry instead of being replaced (QA fix, 2026-10-04).
+    // A Relation-model fit that is gone from memory (NOT_FITTED) has its own board.
+    const failed = !preview.data && !preview.notFitted && !!preview.error;
+    const errorMode = failed && !!preview.lastData;
     const data = preview.data ?? (errorMode ? preview.lastData ?? null : null);
     // Train / scoring scopes on the time charts (null = no scoring periods sent).
     // Memoised on the payload so a hover re-render never rebuilds the time charts.
@@ -81,43 +101,48 @@ function HealthScorePage(props: HealthScorePageProps) {
         () => scopesOf(validation, numbersKey ? numbersKey.split(',').map(Number) : null),
         [validation, numbersKey],
     );
+    const slowSave = useHeldFor(save.phase === 'running', SLOW_SAVE_NOTICE_MS);
     // A new request cannot be fixed by asking again after the dataset changed.
     const canRetry = !!props.onRetryPreview && preview.errorCode !== 'STALE_SESSION';
-    const errorBanner = errorMode ? (
+    // The ONE shape of "the preview failed" (SPEC §4), with or without an earlier
+    // answer under it: a red card, the reason, Retry. Mark complete is disabled
+    // meanwhile and the footer says why.
+    const errorCard = failed ? (
         <div className="hs-save hs-save--bad hs-full" role="alert" data-testid="health-error">
-            <span><b>Couldn't load the health score.</b> {preview.error} The page shows the last result; the score and Checks are not available until it loads.</span>
+            <span>
+                <b>Couldn't load the health score.</b>{' '}
+                <span data-testid="health-error-reason">{String(preview.error ?? '').trim().replace(/\.$/, '')}</span>
+                {' '}· the score and Checks are not available until it loads
+            </span>
             <span className="wb2-sp" />
             {canRetry && <button type="button" className="rcx-btn rcx-btn--sm" data-testid="health-retry" onClick={props.onRetryPreview}>Retry</button>}
         </div>
     ) : null;
+    const goTrain = (testId: string) => <TrainSensorLink testId={testId} onClick={props.onGoTrainSensor} />;
 
     if (!data) {
         return (
             <div className="wb2-board" data-testid="health-page">
-                <SaveBanner save={save} />
+                <SaveBanner save={save} slow={slowSave} relation={model.kind === 'relationship'} />
                 <SlowScoringNotice show={props.slowScoring} />
-                <div className="wb2-lockpane" data-testid={preview.notFitted ? 'health-not-fitted' : preview.error ? 'health-error' : 'health-loading'}>
-                    {preview.notFitted ? (
-                        <div>
-                            <b>Re-train to recompute</b>
-                            The fitted Relation model is no longer in memory (the data was reloaded or a special sensor changed).
-                            <div style={{ marginTop: '10px' }}>
-                                <button type="button" className="rcx-btn rcx-btn--sm" data-testid="health-not-fitted-retrain" disabled={!!props.retrainDisabledReason} title={props.retrainDisabledReason} onClick={props.onRetrain}>↻ Re-train</button>
-                            </div>
-                        </div>
-                    ) : preview.error ? (
-                        <div>
-                            <b>Couldn't load the health score</b>{preview.error}
-                            {canRetry && (
-                                <div style={{ marginTop: '10px' }}>
-                                    <button type="button" className="rcx-btn rcx-btn--sm" data-testid="health-retry" onClick={props.onRetryPreview}>Retry</button>
-                                </div>
-                            )}
-                        </div>
-                    ) : (
-                        <div><Loader2 size={20} className="pm-spin" aria-hidden="true" /> Loading the {model.kind === 'relationship' ? 'Relation model' : `${model.kind === 'clustering' ? 'Clustering' : 'Individual'} model`}…</div>
-                    )}
-                </div>
+                {errorCard}
+                {preview.notFitted ? (
+                    // No Re-train button here: the board points at the one place to train.
+                    <StateBoard
+                        testId="health-not-fitted"
+                        className="hs-full hs-stateboard"
+                        title="Fit no longer in memory"
+                        text={<>The fitted Relation model is no longer in memory (the data was reloaded or a special sensor changed). Re-train it with {goTrain('health-go-train-sensor')} — your set points are kept and scored again when it finishes.</>}
+                    />
+                ) : !failed && (
+                    <StateBoard
+                        testId="health-loading"
+                        className="hs-full hs-stateboard"
+                        tone="run"
+                        title={`Loading the ${model.kind === 'relationship' ? 'Relation model' : `${model.kind === 'clustering' ? 'Clustering' : 'Individual'} model`}…`}
+                        text="The set points and the score appear here when it is ready."
+                    />
+                )}
             </div>
         );
     }
@@ -130,15 +155,13 @@ function HealthScorePage(props: HealthScorePageProps) {
 
     return (
         <div className="wb2-board wb2-hs hs-board" data-testid="health-page" data-valid={String(data.valid)}>
-            <SaveBanner save={save} />
+            <SaveBanner save={save} slow={slowSave} relation={model.kind === 'relationship'} />
             <SlowScoringNotice show={props.slowScoring} />
-            {errorBanner}
+            {errorCard}
             <TestsChangedBanner state={props.testsChanged} />
             {preview.notFitted && (
                 <div className="wb2-stale hs-full" role="status" data-testid="health-not-fitted-banner">
-                    <span><b>Re-train to recompute.</b> The fitted Relation model is no longer in memory; the chart below is the last result.</span>
-                    <span className="wb2-sp" />
-                    <button type="button" className="rcx-btn rcx-btn--sm" disabled={!!props.retrainDisabledReason} title={props.retrainDisabledReason} onClick={props.onRetrain}>↻ Re-train</button>
+                    <span><b>Fit no longer in memory.</b> The chart below is the last result. Re-train the Relation model with {goTrain('health-go-train-sensor')} — your set points are kept.</span>
                 </div>
             )}
             <SetPointChart
@@ -151,6 +174,7 @@ function HealthScorePage(props: HealthScorePageProps) {
                 scopes={scopes}
             />
             <div className="hs-spp">
+                {/* ONE card: the table of set points, its footnote, then the Checks. */}
                 <SetPointsCard
                     data={data}
                     setPoints={setPoints}
@@ -159,11 +183,9 @@ function HealthScorePage(props: HealthScorePageProps) {
                     verdict={verdict}
                     onChange={props.onSetPointsChange}
                     onCommit={props.onSetPointsCommit}
-                />
-                <ChecksCard kind={data.kind} issues={issues} verdict={verdict} unavailable={errorMode} />
-                {model.kind === 'individual' && (
-                    <div className="hs-note" data-testid="master-note">H and L entered here are saved on this model only. Master data is not changed.</div>
-                )}
+                >
+                    <ChecksCard kind={data.kind} issues={issues} verdict={verdict} unavailable={errorMode} />
+                </SetPointsCard>
             </div>
             {/* "Changed after saving" is said ONCE — the footer sentence, next to its
                 "Mark complete again" button (SPEC workbench-redesign §1). */}
@@ -182,7 +204,7 @@ function HealthScorePage(props: HealthScorePageProps) {
                 <section className="hs-card hs-full" data-testid="score-locked">
                     <div className="wb2-card-h"><b>Health score</b></div>
                     <div className="hs-lockbig">
-                        <div>{errorMode ? <><b>Score not available</b>It appears here once the health score loads again.</> : <><b>Set the points above</b>The score over time appears here once every set point is valid.</>}</div>
+                        <div>{errorMode ? <><b>Score not available</b>Not available until the health score loads.</> : <><b>Set the points above</b>The score over time appears here once every set point is valid.</>}</div>
                     </div>
                 </section>
             )}
@@ -192,23 +214,29 @@ function HealthScorePage(props: HealthScorePageProps) {
 }
 
 // ---------------------------------------------------------------------------
-// Saving progress / failure. A SUCCESSFUL save has no banner: it is the footer
-// sentence ("Files saved 9 Feb 2026 23:50 · …\output\TAG"; SPEC workbench-redesign §1).
+// A FAILED save, and a save that is taking long. Saving is otherwise said by the
+// footer alone ("Saving the model files…" next to its button), and a successful
+// save is the footer sentence too ("Files saved 9 Feb 2026 23:50 · …\output\TAG";
+// SPEC workbench-redesign §1 / §4).
 // ---------------------------------------------------------------------------
 
-function SaveBanner({ save }: { save: SaveInfo }) {
-    if (save.phase === 'idle' || save.phase === 'ok') return null;
-    if (save.phase === 'running') {
+function SaveBanner({ save, slow, relation }: { save: SaveInfo; slow: boolean; relation: boolean }) {
+    if (save.phase === 'running' && slow) {
         return (
             <div className="hs-save hs-full" role="status" data-testid="save-running">
                 <Loader2 size={14} className="pm-spin" aria-hidden="true" />
-                <span><b>Saving results…</b>{save.slow ? ' The Relation model is fitted again for the saved files and its scoring periods are scored. This can take longer than 15 seconds, especially the first time.' : ''}</span>
+                <span>
+                    <b>Still saving…</b>
+                    {relation ? ' The Relation model is fitted again for the saved files and its scoring periods are scored. This can take longer than 15 seconds, especially the first time.' : ' Writing the model files is taking longer than usual.'}
+                </span>
             </div>
         );
     }
+    if (save.phase !== 'error') return null;
+    // The reason carries the file (Rust names the file or folder it could not write).
     return (
         <div className="hs-save hs-save--bad hs-full" role="alert" data-testid="save-error">
-            <span><b>The model was not saved.</b> {save.message}</span>
+            <span><b>The model was not saved.</b> <span data-testid="save-error-reason">{save.message}</span></span>
         </div>
     );
 }
@@ -360,7 +388,7 @@ function ScoreChart({ data, score, summary, unit, hoverIdx, onHover, stale, scop
             stale={stale}
             sub={
                 <span data-testid="score-summary">
-                    {lowest ? <>Lowest <b className={lowest.score >= 80 ? 'hs-good' : 'hs-bad'} data-testid="score-lowest">{Math.round(lowest.score)}</b>{lowest.timestamp ? <> on <span className="wbx-dt" data-testid="score-lowest-at">{formatStamp(lowest.timestamp)}</span></> : ''}</> : 'No scored rows'}
+                    {lowest ? <>Lowest <b className={lowest.score >= 80 ? 'hs-good' : 'hs-bad'} data-testid="score-lowest">{Math.round(lowest.score)}</b>{lowest.timestamp ? <> on <span className="wbx-dt" data-testid="score-lowest-at">{formatDataStamp(lowest.timestamp)}</span></> : ''}</> : 'No scored rows'}
                     {pct !== null && <> · below 80 for <b data-testid="score-below80">{pct.toFixed(1)}%</b> of scored rows</>}
                 </span>
             }

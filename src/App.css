@@ -3292,10 +3292,6 @@ body {
 
 /* Build Model Workbench Phase B: Train/Re-train (footer, fixed slot) and the
    "N items to fix" links inside the results area's incomplete-config state. */
-.bmw-btn-retrain { font-size: 0.76rem; font-weight: 600; padding: 7px 14px; border-radius: 7px; border: 0; background: var(--accent-color); color: #06111f; cursor: pointer; white-space: nowrap; }
-.bmw-btn-retrain:hover { background: var(--accent-hi); }
-.bmw-btn-retrain:disabled { opacity: 0.4; cursor: not-allowed; }
-.bmw-btn-retrain--stale { background: var(--warn); color: #241a02; }
 .bmw-fix-link { background: none; border: 0; padding: 0; margin: 0; color: var(--warn); text-decoration: underline; cursor: pointer; font: inherit; font-size: 0.76rem; text-align: left; }
 .bmw-fix-link:hover { color: var(--text-primary); }
 
@@ -5170,7 +5166,7 @@ body {
 /* board of chart cards */
 .wb2-board { padding: 12px 18px 14px; display: grid; gap: 12px; align-content: start; }
 .wb2-g2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.wb2-hs { grid-template-columns: minmax(0, 1fr) 330px; }
+.wb2-hs { grid-template-columns: minmax(0, 1fr) 350px; }
 .wb2-full { grid-column: 1 / -1; }
 @container (max-width: 760px) {
     .wb2-g2, .wb2-hs { grid-template-columns: minmax(0, 1fr); }
@@ -5206,8 +5202,6 @@ body {
 .wb2-statc td.n { font-family: var(--mono); color: var(--text-primary); text-align: right; }
 .wb2-statc td.wb2-sub { padding-left: 12px; color: var(--text-faint); }
 .wb2-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 7px; }
-.wb2-lockpane { grid-column: 1 / -1; border: 1px dashed var(--border-strong); border-radius: 12px; min-height: 280px; display: grid; place-items: center; text-align: center; color: var(--text-secondary); font-size: 12.5px; }
-.wb2-lockpane b { display: block; color: var(--text-primary); font-size: 14px; margin-bottom: 4px; }
 
 /* left list: status dots (yellow needs input or re-train, red needs fixing, green complete) and legend */
 .f4-kb-dot--need { background: var(--warn); }
@@ -5221,8 +5215,9 @@ body {
    and the full-width score chart. Final mockup EqqcM7miNdBmNMZAiQxtSA. Prefix
    hs-. Reuses the wb2- cards, pills and tokens; no new colours.
    ===================================================================== */
-.hs-board { grid-template-columns: minmax(0, 1fr) 330px; }
+.hs-board { grid-template-columns: minmax(0, 1fr) 350px; }
 .hs-full { grid-column: 1 / -1; }
+.hs-stateboard { min-height: 280px; }
 .hs-setwrap { display: flex; min-width: 0; }
 .hs-setwrap > .wb2-card { flex: 1; }
 .hs-setwrap .wb2-cv { flex: 1; min-height: 330px; height: auto; }
@@ -5235,21 +5230,34 @@ body {
     .hs-board { grid-template-columns: minmax(0, 1fr); }
 }
 
-/* the 100 / 80 / 0 ladder */
-.hs-ladder { display: flex; flex-direction: column; }
-.hs-rung { display: grid; grid-template-columns: 44px 1fr; gap: 10px; padding: 9px 0; border-top: 1px solid var(--border); }
-.hs-rung:first-child { border-top: 0; padding-top: 2px; }
-.hs-sc { font: 700 15px var(--mono); display: flex; flex-direction: column; align-items: flex-start; gap: 1px; }
-.hs-sc small { font: 500 9.5px Inter, system-ui, sans-serif; color: var(--text-faint); text-transform: uppercase; letter-spacing: 0.05em; }
-.hs-sc--ok { color: var(--ok); }
-.hs-sc--warn { color: var(--warn); }
-.hs-sc--danger { color: var(--danger); }
-.hs-what { font-size: 11.5px; color: var(--text-secondary); margin-bottom: 5px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.hs-lock { display: inline-flex; align-items: center; gap: 4px; font-size: 10.5px; color: var(--text-faint); }
-.hs-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; align-items: end; }
-.hs-fld { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-.hs-fld label { font-size: 10.5px; color: var(--text-faint); display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
-.hs-ro { font: 500 12px var(--mono); color: var(--text-secondary); background: var(--input-bg); border: 1px solid var(--border); border-radius: 7px; height: 30px; display: flex; align-items: center; padding: 0 8px; }
+/* Health set points: ONE small table (Score · Band · Lower · Upper). Computed values
+   are plain text; the user's set points are the only boxes. The Checks sit in the
+   same card, under a hairline (workbench-redesign SPEC §4). Prefix hsx-. */
+.hsx-card { gap: 0; }
+.hsx-table { display: flex; flex-direction: column; }
+.hsx-row { display: grid; grid-template-columns: 34px minmax(0, 1fr) 84px 84px; gap: 8px; align-items: center; padding: 7px 0; border-top: 1px solid var(--border); }
+.hsx-head { border-top: 0; padding: 2px 0 4px; font: 600 9.5px Inter, "Segoe UI", system-ui, sans-serif; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-faint); }
+.hsx-table--cl .hsx-row { grid-template-columns: 34px minmax(0, 1fr) 76px; }
+.hsx-table--cl .hsx-row:first-child { border-top: 0; }
+.hsx-score { font: 700 14px var(--mono); }
+.hsx-row--ok .hsx-score { color: var(--ok); }
+.hsx-row--warn .hsx-score { color: var(--warn); }
+.hsx-row--danger .hsx-score { color: var(--danger); }
+.hsx-what { font-size: 11.5px; color: var(--text-primary); min-width: 0; line-height: 1.35; }
+.hsx-what > span, .hsx-what small { white-space: nowrap; }
+.hsx-what small { font-size: 10.5px; color: var(--text-faint); }
+.hsx-v { min-width: 0; }
+.hsx-ro { font: 500 12px var(--mono); color: var(--text-secondary); }
+.hsx-row .hs-num { height: 28px; padding: 0 7px; }
+/* a long unit never squeezes the number out of its box */
+.hsx-row .hs-num > span { flex-shrink: 0; max-width: 38px; overflow: hidden; text-overflow: ellipsis; }
+.hsx-note { font-size: 10.5px; color: var(--text-faint); line-height: 1.45; padding: 0 0 8px 42px; }
+.hsx-ctl { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 0 0 8px 42px; }
+.hsx-ctl .hs-quick { margin-top: 0; }
+.hsx-ctl .hs-num--ring { width: 96px; }
+.hsx-checks { border-top: 1px solid var(--border); padding-top: 9px; margin-top: 2px; }
+.hsx-checks-in .hs-checks { gap: 5px; }
+.hsx-checks-in .hs-chk { font-size: 11px; }
 .hs-num { display: flex; align-items: center; background: var(--input-bg); border: 1px solid var(--border-strong); border-radius: 7px; height: 30px; padding: 0 8px; gap: 4px; min-width: 0; }
 .hs-num:focus-within { border-color: var(--accent-color); }
 .hs-num input { background: none; border: 0; outline: none; font: 500 12px var(--mono); color: var(--text-primary); width: 100%; min-width: 0; }
@@ -5257,10 +5265,6 @@ body {
 .hs-num--req { border-color: var(--warn-line); border-style: dashed; background: var(--warn-muted); }
 .hs-num--err { border-color: var(--danger); background: var(--danger-muted); }
 .hs-num--ring { width: 110px; }
-.hs-src { font-size: 10px; padding: 1px 6px; border-radius: 99px; white-space: nowrap; }
-.hs-src--m { background: var(--hover-bg); color: var(--text-secondary); border: 1px solid var(--border-strong); }
-.hs-src--c { background: var(--accent-muted); color: var(--accent-hi); }
-.hs-src--n { background: var(--warn-muted); color: var(--warn); }
 .hs-restore { border: 0; background: none; color: var(--accent-hi); font-size: 10.5px; cursor: pointer; padding: 0; }
 .hs-restore:hover { text-decoration: underline; }
 .hs-kstep { display: flex; align-items: center; gap: 6px; }
@@ -5269,7 +5273,6 @@ body {
 .hs-quick { display: flex; gap: 4px; margin-top: 6px; }
 .hs-quick button { border: 1px solid var(--border-strong); background: none; border-radius: 6px; font: 500 11px var(--mono); padding: 2px 8px; cursor: pointer; color: var(--text-secondary); }
 .hs-quick button.on { border-color: var(--accent-color); color: var(--accent-hi); background: var(--accent-muted); }
-.hs-rung .hs-note { margin-top: 6px; }
 
 /* Checks */
 .hs-checks { display: flex; flex-direction: column; gap: 6px; }
@@ -5300,6 +5303,8 @@ body {
 /* "Saving results..." / "Saved N files to ..." / failure */
 .hs-save { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 9px 12px; border-radius: 10px; border: 1px solid var(--border-strong); background: var(--bg-secondary); font-size: 12px; color: var(--text-secondary); }
 .hs-save b { color: var(--text-primary); }
+/* a reason can carry a long file path: it wraps inside the card, never past its edge */
+.hs-save > span { min-width: 0; overflow-wrap: anywhere; }
 .hs-save--bad { background: var(--danger-muted); border-color: var(--danger-line); color: var(--danger); }
 .hs-path { font: 500 11px var(--mono); color: var(--text-primary); word-break: break-all; }
 
@@ -6374,9 +6379,12 @@ body {
 .tq-qring-big { width: 34px; height: 34px; margin: 0 auto; border-radius: 9px; border: 2px dashed var(--accent-hi); display: grid; place-items: center; font-weight: 700; color: var(--text-primary); }
 
 /* Health score page banner after a run */
-.tq-hbanner { margin: 12px 18px 0; padding: 9px 12px; border-radius: 10px; border: 1px solid var(--accent-line); background: var(--accent-wash); display: flex; gap: 10px; align-items: center; font-size: 12px; color: var(--text-secondary); }
-.tq-hbanner b { color: var(--text-primary); }
-.tq-hbanner-t { flex: 1; min-width: 0; }
+/* "Trained in the run 22:41 · 7 need set points · this is 3 of 7 · Next …": ONE line, not a card */
+.tq-hbanner { margin: 8px 18px 0; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--accent-line); background: var(--accent-wash); display: flex; flex-wrap: nowrap; gap: 10px; align-items: center; font-size: 11.5px; color: var(--text-secondary); }
+.tq-hbanner b { color: var(--text-primary); font-weight: 600; }
+.tq-hbanner-t { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tq-hbanner-next { flex: none; white-space: nowrap; }
+.tq-inline-link:disabled { color: var(--text-faint); cursor: default; text-decoration: none; }
 .tq-ok { color: var(--ok); }
 
 /* Train all modal (inside .bmw-modal-backdrop) */

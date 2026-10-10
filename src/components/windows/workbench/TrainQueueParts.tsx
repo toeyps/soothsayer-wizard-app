@@ -196,7 +196,7 @@ export function sensorTrainMenuCopy(models: readonly SensorTrainMenuModel[]): Se
     };
 }
 
-export function SensorTrainButton({ label, filled, disabled, title, why, whyTone, onTrain, menu, buttonRef }: {
+export function SensorTrainButton({ label, filled, disabled, title, why, whyTone, onTrain, menu, buttonRef, menuButtonRef }: {
     label: ReactNode;
     /** Filled (primary) only while it is THE next action — a model of this sensor
      *  needs training; a ghost otherwise ("at most one filled button on screen"). */
@@ -211,6 +211,8 @@ export function SensorTrainButton({ label, filled, disabled, title, why, whyTone
      *  then "Individual only" / "Re-train Individual only" per model. */
     menu: TrainMenuItem[];
     buttonRef?: Ref<HTMLButtonElement>;
+    /** The ▾ button (a sentence that points at the menu focuses and opens it). */
+    menuButtonRef?: Ref<HTMLButtonElement>;
 }) {
     const [open, setOpen] = useState(false);
     const wrap = useRef<HTMLDivElement>(null);
@@ -243,6 +245,7 @@ export function SensorTrainButton({ label, filled, disabled, title, why, whyTone
                 </button>
                 <button
                     type="button"
+                    ref={menuButtonRef}
                     className={`rcx-btn${tone} tq-split-caret`}
                     data-testid="train-sensor-menu-toggle"
                     aria-label="More train options"
@@ -404,11 +407,12 @@ export function QueuedCard({ kind, position, waitSeconds, current }: {
     );
 }
 
-/** Health score page, after a run: "N trained in this run need set points (M in total)". */
-export function RunSetPointsBanner({ at, inRun, total, position, onNext, nextDisabled }: {
+/** Health score page, after a run — ONE line (SPEC workbench-redesign §4):
+ *  "Trained in the run 22:41 · 7 need set points · this is 3 of 7 · Next needing set points ›". */
+export function RunSetPointsBanner({ at, inRun, position, onNext, nextDisabled }: {
     at: number;
+    /** Models trained in that run that still need set points. */
     inRun: number;
-    total: number;
     /** 1-based place of the open model among them, or 0 when it is not one of them. */
     position: number;
     onNext: () => void;
@@ -419,12 +423,13 @@ export function RunSetPointsBanner({ at, inRun, total, position, onNext, nextDis
     return (
         <div className="tq-hbanner" role="status" data-testid="run-setpoints-banner">
             <span className="tq-ok" aria-hidden="true">✓</span>
-            <span className="tq-hbanner-t">
-                <b>Trained in the run at {hhmm}.</b>{' '}
-                <span data-testid="run-setpoints-text">{inRun} trained in this run {inRun === 1 ? 'needs' : 'need'} set points ({total} in total)</span>
-                {position > 0 ? `; this is ${position} of ${inRun}` : ''}. Set them here, then Mark complete.
+            <span className="tq-hbanner-t" data-testid="run-setpoints-line">
+                <b>Trained in the run <span className="wbx-dt">{hhmm}</span></b>
+                {' · '}
+                <span data-testid="run-setpoints-text">{inRun} {inRun === 1 ? 'needs' : 'need'} set points</span>
+                {position > 0 ? ` · this is ${position} of ${inRun}` : ''}
             </span>
-            <button type="button" className="rcx-btn rcx-btn--sm" data-testid="next-needing-set-points" disabled={nextDisabled} onClick={onNext}>
+            <button type="button" className="tq-inline-link tq-hbanner-next" data-testid="next-needing-set-points" disabled={nextDisabled} onClick={onNext}>
                 Next needing set points ›
             </button>
         </div>

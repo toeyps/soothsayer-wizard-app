@@ -152,6 +152,10 @@ describe('Scoring results (Health score page) — neutral tiles only', () => {
         expect(screen.getByTestId('test-result-1-big').textContent).toBe('4.9% of running time below 80');
         expect(screen.getByTestId('test-result-1-lowest').textContent).toBe(`Lowest 61 (held 1 h) on ${stamp('2026-01-01 02:30:00')}.`);
         expect(stamp('2026-01-01 02:30:00')).toBe('1 Jan 2026 02:30');
+        // the row's own wall clock: an explicit offset never shifts it (any PC time zone)
+        expect(stamp('2026-01-01T02:30:00+07:00')).toBe('1 Jan 2026 02:30');
+        expect(stamp('2026-01-01T02:30:00Z')).toBe('1 Jan 2026 02:30');
+        expect(stamp(null)).toBe('—');
     });
 
     it.each([0, 1.2, 4.9, 5, 37.5, 100])('%s%% below 80 is never judged: same plain tile, no tone, no verdict text', pct => {
@@ -199,7 +203,7 @@ describe('Scoring results (Health score page) — neutral tiles only', () => {
 
     it('while the health score failed to load, the quiet line says that instead of pointing at the set points', () => {
         render(<TestResultsCard data={withV('individual')} scoreReady={false} unavailable />);
-        expect(screen.getByTestId('test-results-pending').textContent).toBe('Not available until the health score loads again');
+        expect(screen.getByTestId('test-results-pending').textContent).toBe('Not available until the health score loads');
         expect(screen.queryByTestId('test-result-1')).toBeNull();
     });
 

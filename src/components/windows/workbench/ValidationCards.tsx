@@ -12,7 +12,7 @@ import {
     trainDaysWarning,
     type TestsChangedState,
 } from '../../../utils/trainTestValidation';
-import { formatPeriodChip, formatStamp } from '../periodDisplay';
+import { formatDataStamp, formatPeriodChip } from '../periodDisplay';
 import { fmtNum } from './chartTheme';
 
 /*
@@ -48,9 +48,10 @@ import { fmtNum } from './chartTheme';
  *  `DROP_SUSTAIN_HOURS`. */
 export const DROP_SUSTAIN_HOURS = 1;
 
-/** "3 Feb 2026 14:05" (no seconds) — the ONE Workbench date format (`formatStamp`). */
+/** "3 Feb 2026 14:05" (no seconds) — the ONE Workbench date format, read from the
+ *  row's own wall clock (`formatDataStamp`: never shifted to another time zone). */
 export function stamp(s: string | null | undefined): string {
-    return s == null ? '—' : formatStamp(s);
+    return s == null ? '—' : formatDataStamp(s);
 }
 
 const range = (a: string | null, b: string | null) => formatPeriodChip({ id: '', start: a ?? '', end: b ?? '' });
@@ -286,7 +287,7 @@ export function TestResultsCard({ data, scoreReady, unavailable = false, custom 
                 <TestScoringFailedNotice issue={failed} onRetry={onRetry} />
             ) : !scoreReady ? (
                 <div className="vt-quiet" data-testid="test-results-pending">
-                    {unavailable ? 'Not available until the health score loads again' : 'Scored once the set points are valid'}
+                    {unavailable ? 'Not available until the health score loads' : 'Scored once the set points are valid'}
                 </div>
             ) : (
                 <>

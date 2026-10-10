@@ -26,7 +26,9 @@
  *    `cache_key`, for an unknown key, or when target/predictors differ from the
  *    cached fit); `BAD_REQUEST` for a missing sensor / field / unknown kind;
  *    `NO_DATA` for an empty scope. Validation = a port of `validate_individual`,
- *    `validate_relationship`, `validate_clustering` (codes, fields, messages);
+ *    `validate_relationship`, `validate_clustering` (codes, fields, messages —
+ *    a set point the user typed is echoed EXACTLY, `fmt_typed`; only values Rust
+ *    computed keep the INFO-file rounding, `fmt_num`);
  *    score = the piecewise-linear knots; `score_summary` = `summarize`.
  *  - `export_model_files` (`request`): Individual/Clustering re-validate against
  *    statistics computed in the call; Relationship pre-validates with the cached
@@ -81,7 +83,27 @@ function roundTo(x: number, d: number): number {
 export const roundMetric = (x: number) => roundTo(x, metricDecimals(x));
 export const roundMetricScaled = (x: number, scale: number) =>
     roundTo(x, Math.max(metricDecimals(x), scale === 0 || !Number.isFinite(scale) ? 3 : metricDecimals(scale)));
+/** Rust's `fmt_num`: a value Rust COMPUTED (SD, 2RMSE, a band edge) — rounded like the
+ *  INFO files. Never for a set point the user typed (`fmtTyped`). */
 const fmtNum = (x: number) => (Number.isFinite(x) ? String(roundMetric(x)) : String(x));
+/**
+ * Rust's `fmt_typed` (`format!("{}", x + 0.0)`): a set point the USER supplied, echoed
+ * exactly — the shortest text that reads back as the same number ("-2", "4.6", "0.05",
+ * "4.61234"), never padded, never rounded, "-0" printed as "0". Rust's `{}` never uses
+ * an exponent, so 1e-7 is "0.0000001" and 2.5e21 is "2500000000000000000000".
+ */
+export function fmtTyped(x: number): string {
+    if (!Number.isFinite(x)) return Number.isNaN(x) ? 'NaN' : x > 0 ? 'inf' : '-inf';
+    const s = String(x + 0); // -0 + 0 === 0
+    const m = /^(-?)(\d)(?:\.(\d+))?e([+-]\d+)$/.exec(s);
+    if (!m) return s;
+    const [, sign, int, frac = '', expText] = m;
+    const digits = int + frac;
+    const exp = Number(expText);
+    if (exp < 0) return `${sign}0.${'0'.repeat(-exp - 1)}${digits}`;
+    const pad = exp - frac.length;
+    return pad >= 0 ? `${sign}${digits}${'0'.repeat(pad)}` : `${sign}${digits.slice(0, 1 + exp)}.${digits.slice(1 + exp)}`;
+}
 
 // ---------------------------------------------------------------------------
 // Validation (health_score.rs) — codes / fields / messages as Rust writes them
@@ -156,15 +178,15 @@ export function validateIndividual(b: IndividualBand, sp: SetPointsArg): Issue[]
     if (h === null) out.push(issue('required', 'upper', 'Enter the upper set point (H): the value where health reaches 0 on the high side.'));
     const degenerate = bandDegenerate(b);
     if (degenerate) out.push(issue('degenerate_band', 'sd', `The ±1σ / ±3σ band is collapsed for this training scope (σ = ${fmtNum(b.sd)}), so a health score can't be calculated. Widen the training period or running condition so the sensor varies.`));
-    if (l !== null && h !== null && l >= h) out.push(issue('ordering', 'lower', `The lower set point (L = ${fmtNum(l)}) must be below the upper set point (H = ${fmtNum(h)}).`));
+    if (l !== null && h !== null && l >= h) out.push(issue('ordering', 'lower', `The lower set point (L = ${fmtTyped(l)}) must be below the upper set point (H = ${fmtTyped(h)}).`));
     if (!degenerate) {
         if (l !== null) {
-            if (l === b.l3) out.push(issue('lower_equals_3sd', 'lower', `The lower set point (L = ${fmtNum(l)}) equals the lower 3σ boundary, so the 80 and the 0 point would coincide. Set L below ${fmtNum(b.l3)}.`));
-            else if (l > b.l3) out.push(issue('lower_inside_3sd', 'lower', `The lower set point (L = ${fmtNum(l)}) must be below the lower 3σ boundary (${fmtNum(b.l3)}).`));
+            if (l === b.l3) out.push(issue('lower_equals_3sd', 'lower', `The lower set point (L = ${fmtTyped(l)}) equals the lower 3σ boundary, so the 80 and the 0 point would coincide. Set L below ${fmtNum(b.l3)}.`));
+            else if (l > b.l3) out.push(issue('lower_inside_3sd', 'lower', `The lower set point (L = ${fmtTyped(l)}) must be below the lower 3σ boundary (${fmtNum(b.l3)}).`));
         }
         if (h !== null) {
-            if (h === b.u3) out.push(issue('upper_equals_3sd', 'upper', `The upper set point (H = ${fmtNum(h)}) equals the upper 3σ boundary, so the 80 and the 0 point would coincide. Set H above ${fmtNum(b.u3)}.`));
-            else if (h < b.u3) out.push(issue('upper_inside_3sd', 'upper', `The upper set point (H = ${fmtNum(h)}) must be above the upper 3σ boundary (${fmtNum(b.u3)}).`));
+            if (h === b.u3) out.push(issue('upper_equals_3sd', 'upper', `The upper set point (H = ${fmtTyped(h)}) equals the upper 3σ boundary, so the 80 and the 0 point would coincide. Set H above ${fmtNum(b.u3)}.`));
+            else if (h < b.u3) out.push(issue('upper_inside_3sd', 'upper', `The upper set point (H = ${fmtTyped(h)}) must be above the upper 3σ boundary (${fmtNum(b.u3)}).`));
         }
     }
     return out;
@@ -196,22 +218,22 @@ export function validateRelationship(w: number | null, sp: SetPointsArg): Issue[
         let ok0 = false;
         if (v80 !== null) {
             if (signOk(v80)) ok80 = true;
-            else out.push(issue(code, f80, `The ${side} 80-point must be ${word} (residual = actual − predicted); got ${fmtNum(v80)}.`));
+            else out.push(issue(code, f80, `The ${side} 80-point must be ${word} (residual = actual − predicted); got ${fmtTyped(v80)}.`));
         }
         if (v0 !== null) {
             if (signOk(v0)) ok0 = true;
-            else out.push(issue(code, f0, `The ${side} 0-point must be ${word} (residual = actual − predicted); got ${fmtNum(v0)}.`));
+            else out.push(issue(code, f0, `The ${side} 0-point must be ${word} (residual = actual − predicted); got ${fmtTyped(v0)}.`));
         }
         if (bandOk && ok80 && w !== null && v80 !== null) {
             const m = Math.abs(v80);
-            if (m === w) out.push(issue('point80_equals_band', f80, `The ${side} 80-point (${fmtNum(v80)}) sits exactly on the ±2RMSE band edge (${fmtNum(w)}), so the 100 and the 80 point would coincide. Move it further from zero.`));
-            else if (m < w) out.push(issue('point80_inside_band', f80, `The ${side} 80-point (${fmtNum(v80)}) must be further from zero than the ±2RMSE band edge (${fmtNum(w)}).`));
+            if (m === w) out.push(issue('point80_equals_band', f80, `The ${side} 80-point (${fmtTyped(v80)}) sits exactly on the ±2RMSE band edge (${fmtNum(w)}), so the 100 and the 80 point would coincide. Move it further from zero.`));
+            else if (m < w) out.push(issue('point80_inside_band', f80, `The ${side} 80-point (${fmtTyped(v80)}) must be further from zero than the ±2RMSE band edge (${fmtNum(w)}).`));
         }
         if (ok80 && ok0 && v80 !== null && v0 !== null) {
             const m80 = Math.abs(v80);
             const m0 = Math.abs(v0);
-            if (m0 === m80) out.push(issue('point0_equals_point80', f0, `The ${side} 0-point (${fmtNum(v0)}) equals the ${side} 80-point, so the score would drop from 80 to 0 instantly. Move the 0-point further from zero.`));
-            else if (m0 < m80) out.push(issue('point0_inside_point80', f0, `The ${side} 0-point (${fmtNum(v0)}) must be further from zero than the ${side} 80-point (${fmtNum(v80)}).`));
+            if (m0 === m80) out.push(issue('point0_equals_point80', f0, `The ${side} 0-point (${fmtTyped(v0)}) equals the ${side} 80-point, so the score would drop from 80 to 0 instantly. Move the 0-point further from zero.`));
+            else if (m0 < m80) out.push(issue('point0_inside_point80', f0, `The ${side} 0-point (${fmtTyped(v0)}) must be further from zero than the ${side} 80-point (${fmtTyped(v80)}).`));
         }
     }
     return out;
@@ -224,7 +246,7 @@ export function validateClustering(clusters: ClusterGeom[], sp: SetPointsArg): I
     if (n === null) out.push(issue('required', 'outer_sd', 'Enter the outer ring (N × SD): the distance where health reaches 0.'));
     else if (!Number.isFinite(n)) out.push(issue('outer_sd_not_a_number', 'outer_sd', 'The outer ring must be a number.'));
     else if (n === 3) out.push(issue('outer_sd_equals_3', 'outer_sd', "The outer ring can't equal 3× SD (that ring is the 80 point). Use more than 3."));
-    else if (n < 3) out.push(issue('outer_sd_not_above_3', 'outer_sd', `The outer ring (${fmtNum(n)}× SD) must be more than 3× SD (the 80 point).`));
+    else if (n < 3) out.push(issue('outer_sd_not_above_3', 'outer_sd', `The outer ring (${fmtTyped(n)}× SD) must be more than 3× SD (the 80 point).`));
     for (const c of clusters) {
         const v = [c.x_center, c.y_center, c.x_sd, c.y_sd, c.angle_deg];
         if (!v.every(Number.isFinite) || c.x_sd <= 0 || c.y_sd <= 0) {
