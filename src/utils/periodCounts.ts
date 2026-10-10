@@ -2,7 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import type { TestPeriod, TimePeriod } from '../types';
 import type { TrainingScopeFilter } from '../types/health';
 import type { PeriodCount, PeriodCountArg, PeriodCountCondition, PeriodCounts } from '../types/periodCounts';
-import { validatePeriods, validateTestPeriods } from './timePeriods';
+import { validatePeriods, validateTestPeriods, type PeriodBaseline } from './timePeriods';
 import { isBelowRecommendedTrainDays, RECOMMENDED_TRAIN_DAYS, trainDaysWarning } from './trainTestValidation';
 import { parseLocal } from './workbenchDate';
 
@@ -90,6 +90,17 @@ export function trainCountPlan(periods: readonly TimePeriod[]): PeriodCountPlan 
 /** The SCORING periods to count: the ones `validateTestPeriods` accepts. */
 export function scoringCountPlan(tests: readonly TestPeriod[]): PeriodCountPlan {
     return plan(tests, validateTestPeriods([...tests]).map(s => s.invalid));
+}
+
+/**
+ * What a TRAIN count is a count OF: the valid train periods and the running
+ * condition, as one string. Two running conditions with the same key get the
+ * same answer from `count_period_rows` — so a settled count of one may be read
+ * for the other without asking again (two Custom models of one sensor on the
+ * same own condition), and "the training scope changed" is `key !== key`.
+ */
+export function trainCountKey(trainPeriods: readonly TimePeriod[], filter: CountFilterInput | null | undefined): string {
+    return JSON.stringify([countCondition(filter), trainCountPlan(trainPeriods).wire]);
 }
 
 // ---------------------------------------------------------------------------
@@ -389,8 +400,10 @@ export const CAPTION_RECOMMENDED_TEXT = `≥ ${RECOMMENDED_TRAIN_DAYS} d recomme
  * read "N of N rows (100%) used for training" — so the rows part says "set the
  * condition to count the rows" instead and no running time is printed.
  *
- * A period entirely outside the loaded data (`bounds`) is invalid like any
- * other: "fix the period to count the rows".
+ * A period that is new / changed in the draft and lies entirely outside the
+ * loaded data (`bounds`, judged against `savedTrain` / `savedScoring` — see
+ * `validatePeriods`) is invalid like any other: "fix the period to count the
+ * rows". A SAVED period outside the data is not: its rows (none) are counted.
  */
 export function runningConditionCaption(input: {
     trainPeriods: readonly TimePeriod[];
@@ -399,11 +412,14 @@ export function runningConditionCaption(input: {
     counts: PeriodCountsState;
     /** Default `true`. */
     configured?: boolean;
+    /** The SAVED lists the draft is judged against (`PeriodBaseline`). */
+    savedTrain?: PeriodBaseline;
+    savedScoring?: PeriodBaseline;
 }): RunningConditionCaption {
     const { trainPeriods, scoringPeriods, bounds, counts } = input;
     const configured = input.configured !== false;
-    const trainInvalid = validatePeriods([...trainPeriods], bounds).map(s => s.invalid);
-    const scoringInvalid = validateTestPeriods([...scoringPeriods], bounds).map(s => s.invalid);
+    const trainInvalid = validatePeriods([...trainPeriods], bounds, input.savedTrain).map(s => s.invalid);
+    const scoringInvalid = validateTestPeriods([...scoringPeriods], bounds, input.savedScoring).map(s => s.invalid);
     const noTrain = trainPeriods.length === 0;
     const anyTrainInvalid = trainInvalid.some(Boolean);
 

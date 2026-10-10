@@ -11,6 +11,7 @@ import {
     nextDefaultPeriod,
     sortPeriods,
     validatePeriods,
+    type PeriodBaseline,
 } from '../../utils/timePeriods';
 import { isCompleteDateInput, overlapDays, settleDateInput } from './periodDisplay';
 
@@ -36,12 +37,16 @@ import { isCompleteDateInput, overlapDays, settleDateInput } from './periodDispl
  * a thin red left edge, a red date field on the side that is wrong and ONE
  * reason line ("P2 ends before it starts — pick an end after 11 May 2026").
  *
- * Against the loaded data (2026-10-10, `bounds`): a period ENTIRELY outside the
- * data's time range is invalid like a reversed one — both date fields red and
- * "P1 is outside the data (1 Jan 2025 – 31 Dec 2025)"; one that is only partly
- * inside gets a quiet amber note ("Only the part inside the data is used (data
- * ends 31 Dec 2025)") and blocks nothing. A period whose settled count holds no
- * running row while the others do gets "no running rows in P2" (amber).
+ * Against the loaded data (2026-10-10, `bounds` + `savedPeriods`): a period that
+ * is NEW or was CHANGED here and lies ENTIRELY outside the data's time range is
+ * invalid like a reversed one — both date fields red and "P1 is outside the
+ * data (1 Jan 2025 – 31 Dec 2025)". One that is exactly as it was SAVED
+ * (`savedPeriods`: an old workspace, or the data file changed since) only gets
+ * an amber warning — "P2 is outside the data (…) — it is not used" — and blocks
+ * nothing. One that is only partly inside gets a quiet amber note ("Only the
+ * part inside the data is used (data ends 31 Dec 2025)"). A period whose settled
+ * count holds no running row while the others do gets "no running rows in P2"
+ * (amber).
  *
  * Typing a date (2026-10-10, review of a4acd7a): a date goes to the parent ON
  * CHANGE as soon as the field reports a complete one (`isCompleteDateInput`),
@@ -171,9 +176,13 @@ interface TimePeriodsEditorProps {
      *  holds what the parent has. Called when that changes, and with null on
      *  unmount. */
     onPendingChange?: (name: string | null) => void;
+    /** The list as it is SAVED (the persisted workspace periods / the model's own
+     *  saved ones). A period unchanged from it that lies outside the data only
+     *  warns; omitted = every period is new (outside the data = invalid). */
+    savedPeriods?: PeriodBaseline;
 }
 
-export default function TimePeriodsEditor({ periods, onChange, bounds, counts = PERIOD_COUNTS_IDLE, afterRows, onPendingChange }: TimePeriodsEditorProps) {
+export default function TimePeriodsEditor({ periods, onChange, bounds, counts = PERIOD_COUNTS_IDLE, afterRows, onPendingChange, savedPeriods }: TimePeriodsEditorProps) {
     const [draft, setDraft] = useState<TimePeriod[]>(periods);
     const [flashId, setFlashId] = useState<string | null>(null);
     const propsKey = JSON.stringify(periods);
@@ -256,8 +265,9 @@ export default function TimePeriodsEditor({ periods, onChange, bounds, counts = 
         const end = p.end !== saved.end && !isCompleteDateInput(p.end) ? saved.end : p.end;
         return start === p.start && end === p.end ? p : { ...p, start, end };
     });
-    // Judged against the loaded data too (the dataset's own bounds, to the second).
-    const statuses = validatePeriods(judged, bounds);
+    // Judged against the loaded data too (the dataset's own bounds, to the second);
+    // a period that is exactly as it was saved only warns.
+    const statuses = validatePeriods(judged, bounds, savedPeriods);
     const minAttr = toInputValue(bounds?.min);
     const maxAttr = toInputValue(bounds?.max);
     const boundsForCover = minAttr && maxAttr ? { min: minAttr, max: maxAttr } : null;
@@ -318,7 +328,8 @@ export default function TimePeriodsEditor({ periods, onChange, bounds, counts = 
         }
         const notes: ReactNode[] = [];
         if (st.dataNote) {
-            notes.push(<div key="data" data-testid={`period-data-note-${i + 1}`} className="rcm-permsg rcm-permsg--warn">{st.dataNote}</div>);
+            // Partly outside the data — or (`outsideData`) a saved period entirely outside it.
+            notes.push(<div key="data" data-testid={`period-data-note-${i + 1}`} data-outside={st.outsideData ? 'true' : undefined} className="rcm-permsg rcm-permsg--warn">{st.dataNote}</div>);
         }
         if (rows[i].noRunningRows && unionHasRows) {
             notes.push(<div key="rows" data-testid={`period-no-rows-${i + 1}`} className="rcm-permsg rcm-permsg--warn">{noRunningRowsNote(`P${i + 1}`)}</div>);
@@ -358,7 +369,8 @@ export default function TimePeriodsEditor({ periods, onChange, bounds, counts = 
                         key={p.id}
                         data-testid={`period-row-${i + 1}`}
                         data-invalid={st.invalid ? 'true' : undefined}
-                        className={`rcm-per${st.invalid ? ' rcm-per--bad' : ''}${flashId === p.id ? ' f4-flash' : ''}`}
+                        data-outside={st.outsideData ? 'true' : undefined}
+                        className={`rcm-per${st.invalid ? ' rcm-per--bad' : st.outsideData ? ' rcm-per--warn' : ''}${flashId === p.id ? ' f4-flash' : ''}`}
                     >
                         <span className="rcm-pn">P{i + 1}</span>
                         <div>{field(i, 'start')}</div>

@@ -13,10 +13,10 @@ import { withFailureGroupState } from "../../utils/failureGroupState";
 import { modelSensorKey, groupModelsBySensor, sensorCategory, setSensorCategory, type SensorModelGroup } from "../../utils/modelGrouping";
 import { normalizeCategories, flagLegacyGate, migratePeriods } from "../../utils/workspaceMigrations";
 import { findSameSensorNameConflict, kindModelName, MODEL_KIND_LABEL, suggestDistinctModelName } from "../../utils/modelNames";
-import { CATEGORY_BLOCK_REASON, customBlockText, customSummaryText, getBuildBlock, getBuildBlockReason, isRunningConditionConfigured, isWorkspaceRunningConditionConfigured, effectiveRunningCondition, markCompleteBlockReason, NO_TRAIN_PERIOD_REASON_CUSTOM, NO_TRAIN_ROWS_FOOTER, NO_TRAIN_ROWS_REASON_CUSTOM, runningConditionApplyBlock, seedCustomFromWorkspace, type BuildBlock, type GateOptions, type RunningConditionApplyBlock, type RunningConditionFg } from "../../utils/runningCondition";
+import { CATEGORY_BLOCK_REASON, customBlockText, customSummaryText, getBuildBlock, getBuildBlockReason, isRunningConditionConfigured, isWorkspaceRunningConditionConfigured, effectiveRunningCondition, markCompleteBlockReason, NO_TRAIN_DATA_SHORT, NO_TRAIN_PERIOD_REASON_CUSTOM, NO_TRAIN_ROWS_FOOTER, noTrainRowsReason, runningConditionApplyBlock, seedCustomFromWorkspace, type BuildBlock, type GateOptions, type RunningConditionApplyBlock, type RunningConditionFg } from "../../utils/runningCondition";
 import { modelsStillNeedingTraining, retrainNoticeParts, runningConditionImpact } from "../../utils/runningConditionImpact";
 import { usePeriodCounts } from "../../hooks/usePeriodCounts";
-import { countedNoTrainRows, countedTrainRunningDays } from "../../utils/periodCounts";
+import { countedNoTrainRows, countedTrainRunningDays, trainCountKey } from "../../utils/periodCounts";
 import { computeTrainFingerprint, isModelTrainedFresh as trainedFreshFor } from "../../utils/trainFingerprint";
 import { buildPreviewFilterPayload } from "../../utils/trainingScope";
 import { applyIncompleteRule } from "../../utils/incompleteRule";
@@ -50,7 +50,7 @@ import { isPickerSurfaceOpen } from "../sensor/SensorPicker";
 import { CloseRunDialog, LockedSettingsHeader, QueuedCard, RunSetPointsBanner, RunStrip, SensorTrainButton, sensorTrainMenuCopy, TrainAllBar, TrainAllModal, type TrainGroupInfo, type TrainMenuItem, type TrainReasonTone, type TrainRowModel } from "./workbench/TrainQueueParts";
 import { useTrainQueue } from "../../hooks/useTrainQueue";
 import type { TrainCandidate, TrainFixTarget, TrainOutcome } from "../../types/trainQueue";
-import { classifyTrainPlan, countTrainPlans, formatTrainSeconds, isStaleTrainError, missingSettingsText, preflightReason, REQUIRED_FIELDS_BLOCK_REASON, ROUGH_TRAIN_SECONDS, roughTrainSeconds, trainButtonsBlockedReason, TRAIN_NEEDS_RUNNING_CONDITION, TRAIN_STALE_MESSAGE } from "../../utils/trainQueue";
+import { classifyTrainPlan, countTrainPlans, formatTrainSeconds, isStaleTrainError, missingSettingsText, noRowsTrainError, preflightReason, REQUIRED_FIELDS_BLOCK_REASON, ROUGH_TRAIN_SECONDS, roughTrainSeconds, trainButtonsBlockedReason, TRAIN_NEEDS_RUNNING_CONDITION, TRAIN_STALE_MESSAGE } from "../../utils/trainQueue";
 
 /** How long a Relation-model preview that scores scoring periods must have been loading before
  *  the "this can take up to ~15 s" hint shows (cached re-scores finish sooner). */
@@ -231,10 +231,9 @@ const FIT_GONE_SAVE_MESSAGE = 'The fitted Relation model was no longer in memory
  *  Complete model, so these never point at it — "Load it again" is the way out. */
 const LOAD_FAILED_WORDS = "Couldn't load the model";
 const LOAD_FAILED_BLOCK_REASON = `${LOAD_FAILED_WORDS} · load it again first`;
-/** The gate badge (tab / list tooltip) of a model whose train periods hold no running row. */
+/** The gate badge (tab / list tooltip) of a model that still has to train and whose
+ *  train periods hold no running row. */
 const NO_ROWS_BADGE = NO_TRAIN_ROWS_FOOTER;
-/** "Load it again" while the model's settings (or its running condition) block it. */
-const FIT_RELOAD_SETTINGS_REASON = 'Fix the settings first';
 /** The line under Train sensor for a model on its OWN (Custom) running condition while the
  *  workspace one is not set / not valid: the card's "Set running condition" is the only
  *  filled button then, but nothing is blocked for this model. */
@@ -452,7 +451,6 @@ export default function BuildModelWindow() {
     // every status (`isModelStale` & co. take them). Kept as ONE array per read, so the recipe
     // signatures (memoised per array) are computed once, not per render.
     const [specialRecipes, setSpecialRecipes] = useState<SpecialSensorRecipe[] | null>(null);
-    const { bounds: datasetBounds } = useDatasetTimeBounds();
     // Drives the Workbench's Running condition settings modal (opened from the
     // Step-1 card's Edit / Set running condition / Fix period button; was an inline
     // collapsible panel before Phase A; same underlying state, now shown in
@@ -542,6 +540,14 @@ export default function BuildModelWindow() {
      *  `expectedGeneration` so a window left over from an old dataset gets
      *  `STALE_SESSION` instead of another dataset's numbers. */
     const [generation, setGeneration] = useState<number | undefined>(undefined);
+    // The loaded data's time range, for the "no data to train on" guards and the
+    // timelines. Known ONLY for the dataset this window is pointed at right now
+    // (workspace + Rust dataset generation): it is asked again whenever that
+    // changes, and it is `null` (unknown — nothing is judged against it) from the
+    // very render the window is re-pointed in until the new dataset's answer lands.
+    // It used to be fetched once on mount, so a window re-pointed at another
+    // workspace judged the new periods against the OLD data's range.
+    const { bounds: datasetBounds } = useDatasetTimeBounds(workspaceId === null ? null : `${workspaceId}|${generation ?? ''}`);
     /** Bumped after every Train so `useHealthPreview` refetches even when the
      *  request itself is identical (a Relationship re-train re-fills Rust's fit cache). */
     const [healthRevision, setHealthRevision] = useState(0);
@@ -978,6 +984,9 @@ export default function BuildModelWindow() {
                 setIncludeUpToDate(false);
                 setCloseAsk(false);
             }
+            // (The dataset bounds follow by themselves: `useDatasetTimeBounds` is keyed on
+            // the workspace + this generation, so from this very render they are unknown
+            // until the answer for the NEW dataset lands — never the old dataset's range.)
             setGeneration(d.metadata?.generation);
             setAllSensors(d.sensorHeaders);
             setSensorMetadata(d.sensorMetadata);
@@ -1154,7 +1163,8 @@ export default function BuildModelWindow() {
     rcPersistedRef.current = rcPersisted;
     /** What the modal's Apply gate knew about the loaded data on the last render:
      *  the dataset bounds and — for exactly `draft` — whether its settled row count
-     *  is zero. `applyRcDraft` re-checks the gate with it. */
+     *  is zero AND the draft changed what is trained on. `applyRcDraft` re-checks
+     *  the gate with it. */
     const rcGateRef = useRef<{ draft: RcDraft | null; bounds: PeriodDataBounds | null; noTrainRows: boolean }>({ draft: null, bounds: null, noTrainRows: false });
 
     /** Applies a patch (or a function of the current draft) to the draft,
@@ -1232,13 +1242,21 @@ export default function BuildModelWindow() {
         flushFocusedInput();
         const d = rcDraftRef.current;
         if (!d || rcDraftEqual(d, rcPersistedRef.current)) { closeRc(); return; }
-        // Invalid train period (a period entirely outside the loaded data included),
-        // NO train period (rule 1), an invalid scoring period (a missing date, or an
-        // end before its start), or a settled count of zero running rows keeps the
-        // modal open; the footer says why. The zero-rows answer only counts for the
+        // Invalid train period, NO train period (rule 1), an invalid scoring period (a
+        // missing date, or an end before its start), a period that was added / changed
+        // in this draft and lies entirely outside the loaded data, or a settled count
+        // of zero running rows for a draft that changed what is trained on keeps the
+        // modal open; the footer says why. A period that is exactly as it was saved
+        // never blocks (it only warns), and the zero-rows answer only counts for the
         // very draft it was counted for.
         const gate = rcGateRef.current;
-        if (runningConditionApplyBlock(d.periods, d.testPeriods, 'applying', { bounds: gate.bounds, noTrainRows: gate.draft === d && gate.noTrainRows }) !== null) return;
+        if (runningConditionApplyBlock(d.periods, d.testPeriods, 'applying', {
+            bounds: gate.bounds,
+            savedPeriods: rcPersistedRef.current.periods,
+            savedTestPeriods: rcPersistedRef.current.testPeriods,
+            noTrainRows: gate.draft === d && gate.noTrainRows,
+            hasCondition: !d.noneConfirmed,
+        }) !== null) return;
         // The models this Apply sends back to training (the same answer the impact
         // line next to Apply showed): kept for the notice under the running-condition
         // line. Models an earlier Apply of this session already sent back stay listed.
@@ -1291,14 +1309,29 @@ export default function BuildModelWindow() {
     const gateHeaders = allSensors.length ? allSensors : null;
     const rcConfigured = isWorkspaceRunningConditionConfigured(gateFg, gateHeaders);
 
-    // ---- "No data to train on" guards (user request 2026-10-10) ----
-    // The window stops a train that cannot work BEFORE the engine is asked:
-    //  1. a train period entirely outside the loaded data (`datasetBounds`, the
-    //     bounds the timeline already has — pure, no request), and
-    //  2. train periods that together hold no running row (the counts the card /
-    //     the panels already ask for — no new request).
-    // Both only BLOCK (Train, Mark complete, Apply, Save changes): nothing is
-    // written, and no model's `status`, fingerprint or `healthVerdict` changes.
+    // ---- "No data to train on" guards (user request 2026-10-10; rule revised the
+    //      same day after the review of 1e8cc7d) ----
+    // The intent: stop a train that has NO data, and warn at once when a period is
+    // chosen beyond the data — never take away results that already exist.
+    //  R1. The data's range (`datasetBounds`) is known only for the CURRENT dataset
+    //      (see `useDatasetTimeBounds` above). Unknown = nothing is judged.
+    //  R2. In a DRAFT (the settings modal, a Custom model's own panel): a train or
+    //      scoring period that is NEW or was CHANGED there and lies entirely outside
+    //      the data is invalid — red row, reason line, Apply / Save changes disabled.
+    //  R3. A period that is exactly as it was SAVED and lies entirely outside the
+    //      data (an old workspace, the data file changed) is an AMBER warning on its
+    //      row and on the card. It blocks nothing and flips no pill.
+    //  R4. Train is blocked ("nothing to train on") only when there truly is no
+    //      data: NO train period is inside the data (pure — from the dates), or the
+    //      settled count of that model's training scope is zero rows (the counts the
+    //      card / the panels already ask for — no new request).
+    //  R5. The guards block ACTIONS only — Train (`trainBlockReason`), Apply and
+    //      Save changes. The READ paths (`buildBlockReason` and `gateReasonOf`: a
+    //      trained model's charts, its Health score page, "Next: Health score →",
+    //      the preview / auto-recompute, the sub-model fits, Mark complete, Mark
+    //      incomplete, the dots of a trained or Complete model) never see them.
+    // Nothing is written, and no model's `status`, fingerprint or `healthVerdict`
+    // changes.
     //
     // Row counts — ONE source for every "rows used" / "running days" number of this
     // window: Rust's `count_period_rows` (`usePeriodCounts`), so the one-line card,
@@ -1318,8 +1351,9 @@ export default function BuildModelWindow() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
         [runningConditionFilters, runningConditionCombine, runningConditionNoneConfirmed, runningConditionTimePeriods, allSensors],
     );
-    // A persisted train period that is broken — or lies entirely outside the data.
-    const persistedPeriodsInvalid = validatePeriods(runningConditionTimePeriods, datasetBounds).some(st => st.invalid);
+    // A persisted train period that is broken (the plain date rules: a saved period
+    // outside the data is a warning on the card, never "invalid").
+    const persistedPeriodsInvalid = validatePeriods(runningConditionTimePeriods).some(st => st.invalid);
     const cardCounts = usePeriodCounts({
         // No train period = nothing is trained on (rule 1): no whole-dataset count.
         enabled: !loading && rcConfigured && !persistedPeriodsInvalid && runningConditionTimePeriods.length > 0,
@@ -1335,17 +1369,37 @@ export default function BuildModelWindow() {
     });
     const cardRows = useMemo(() => cardRowsFromCounts(cardCounts), [cardCounts]);
     /** The persisted workspace condition is counted (settled) and its train periods
-     *  hold no running row: every Workspace-mode model is blocked from training. */
+     *  hold no running row: no Workspace-mode model can TRAIN (nothing else changes). */
     const cardNoRows = countedNoTrainRows(cardCounts);
-    /** The ACTIVE Custom model whose own settled count is zero (its id), else null.
-     *  Assigned further down, right after its counts hook has run this render (the
-     *  hook needs the active model); every reader below that point — and every
-     *  handler / effect — sees this render's value. */
-    let customNoRowsId: string | null = null;
-    /** What the gate may know about the loaded data for this model (`GateOptions`). */
-    const gateOptsOf = (m: FailureModel): GateOptions => ({
+    /** What a Custom model's own training scope is, as the count sees it
+     *  (`trainCountKey`): its train periods + its condition. */
+    const customCountKeyOf = (d: ModelDraft): string => trainCountKey(
+        d.customPeriods,
+        buildPreviewFilterPayload({ filters: d.customFilters, combine: d.customCombine, noneConfirmed: d.customNoneConfirmed, periods: d.customPeriods }, gateHeaders),
+    );
+    /** The training scope (`customCountKeyOf`) the ACTIVE Custom model's settled
+     *  count found NO running row for, else null. Assigned further down, right
+     *  after its counts hook has run this render (the hook needs the active model);
+     *  every reader below that point — and every handler / effect — sees this
+     *  render's value. */
+    let customNoRowsKey: string | null = null;
+    /** This Custom model's own training scope is known to hold no running row: it is
+     *  the active model, or its scope is the very one counted for the active model
+     *  (two Custom models of a sensor on the same own condition — the answer is the
+     *  same, so the story must not flip with the open tab). A Custom model whose
+     *  scope was never counted is not known here: its train is stopped by the
+     *  engine's answer instead (`noRowsTrainError`). */
+    const customNoRowsOf = (m: FailureModel): boolean => {
+        if (customNoRowsKey === null) return false;
+        const eff = effectiveModelFor(m);
+        return eff.runningConditionMode === 'custom'
+            && isRunningConditionConfigured(eff, gateFg, gateHeaders)
+            && customCountKeyOf(draftOf(m)) === customNoRowsKey;
+    };
+    /** What the TRAIN gate may know about the loaded data for this model (`GateOptions`). */
+    const trainGuardOptsOf = (m: FailureModel): GateOptions => ({
         bounds: datasetBounds,
-        noTrainRows: effectiveModelFor(m).runningConditionMode === 'custom' ? customNoRowsId === m.id : cardNoRows,
+        noTrainRows: effectiveModelFor(m).runningConditionMode === 'custom' ? customNoRowsOf(m) : cardNoRows,
     });
     // 🆕 2026-09-30 QA fix (bug 3): judge the DRAFT-merged model
     // (`effectiveModelFor`, defined below — closures resolve it fine, it's
@@ -1362,14 +1416,40 @@ export default function BuildModelWindow() {
     // gate check live-reactive the same way, in both directions (blocks a
     // draft that just broke the condition; unblocks one that just fixed it,
     // without waiting for Save).
-    const gateBlockOf = (m: FailureModel): BuildBlock | null => getBuildBlock(effectiveModelFor(m), gateFg, gateHeaders, gateOptsOf(m));
+    //
+    // TWO gates (R5 above):
+    //  - `gateBlockOf` / `gateReasonOf` — the gate as it always was (category, no
+    //    condition, an invalid or missing train period). Every READ path asks this.
+    //  - `trainGateBlockOf` — the same, PLUS the data guards (`no-rows`: no train
+    //    period inside the data / a settled count of zero rows). Only where Train
+    //    is the action.
+    const gateBlockOf = (m: FailureModel): BuildBlock | null => getBuildBlock(effectiveModelFor(m), gateFg, gateHeaders);
     const gateReasonOf = (m: FailureModel): string | null => gateBlockOf(m)?.reason ?? null;
-    /** The gate without the row count (the saved condition + the data's time range
-     *  only). What decides whether Model settings open by themselves — and with them
-     *  whether a Custom model's own counts are asked for — must not depend on those
-     *  counts. */
-    const staticGateReasonOf = (m: FailureModel): string | null =>
-        getBuildBlockReason(effectiveModelFor(m), gateFg, gateHeaders, { bounds: datasetBounds });
+    const trainGateBlockOf = (m: FailureModel): BuildBlock | null => getBuildBlock(effectiveModelFor(m), gateFg, gateHeaders, trainGuardOptsOf(m));
+    /** The data guard alone: "nothing to train on" for a model nothing else blocks. */
+    const trainGuardBlockOf = (m: FailureModel): BuildBlock | null => {
+        const block = trainGateBlockOf(m);
+        return block !== null && block.kind === 'no-rows' ? block : null;
+    };
+    /** The data guard as part of what a model SHOWS about itself (dot, badge, board,
+     *  footer sentence): only for a model that still has to train — never trained, or
+     *  out of date. A trained or Complete model keeps its own words and its charts;
+     *  that it cannot be trained AGAIN is said where Train is offered. */
+    const shownGuardBlockOf = (m: FailureModel): BuildBlock | null =>
+        isModelDone(m) || isModelTrainedFresh(m) ? null : trainGuardBlockOf(m);
+    /** The part of the shown gate that needs NO row count (the gate + "no train
+     *  period inside the data"). What decides whether Model settings open by
+     *  themselves — and with them whether a Custom model's own counts are asked for —
+     *  must not depend on those counts. */
+    const countFreeGateReasonOf = (m: FailureModel): string | null =>
+        gateReasonOf(m) ?? (isModelDone(m) || isModelTrainedFresh(m)
+            ? null
+            : getBuildBlockReason(effectiveModelFor(m), gateFg, gateHeaders, { bounds: datasetBounds }));
+    /** A model's own (save) block and the gate's, in ONE order — the gate's: a Custom
+     *  model with neither a condition nor a train period is told about the condition
+     *  first, like its badge ("Needs condition", then "Needs train period"). */
+    const orderedBlockReason = (own: string | null, gate: BuildBlock | null): string | null =>
+        own === NO_TRAIN_PERIOD_REASON_CUSTOM && gate?.kind === 'no-condition' ? gate.reason : own ?? gate?.reason ?? null;
     /** The gate reason as the model's OWN page words it. A Custom model's own
      *  running condition is fixed inside its Model settings, so the wording says
      *  where: "Own running condition: P1 ends before it starts. Fix it in Model
@@ -1377,7 +1457,7 @@ export default function BuildModelWindow() {
      *  (`customBlockText`). Any other text is returned unchanged. */
     const ownGateText = (m: FailureModel, text: string | null): string | null => {
         if (text === null) return null;
-        const block = gateBlockOf(m);
+        const block = trainGateBlockOf(m);
         if (!block || block.mode !== 'custom' || block.kind === 'category' || block.reason !== text) return text;
         return customBlockText(block, { settingsOpen: isSettingsOpen(m) });
     };
@@ -1387,16 +1467,19 @@ export default function BuildModelWindow() {
      *  ("Add at least 1 predictor (+1 more)"). Everything else as `ownGateText`. */
     const awayFromFormText = (m: FailureModel, text: string | null): string | null =>
         text === REQUIRED_FIELDS_BLOCK_REASON ? missingSettingsText(missingItems(m)) : ownGateText(m, text);
-    const needsCondition = (m: FailureModel): boolean => !isRunningConditionConfigured(m, gateFg, gateHeaders);
+    // The DRAFT-merged model, like the gate itself: the badge and the sentence then
+    // name the same thing while a Custom model's own condition is being edited.
+    const needsCondition = (m: FailureModel): boolean => !isRunningConditionConfigured(effectiveModelFor(m), gateFg, gateHeaders);
     const legacyCompleteCount = allModels.filter(m => m.status).length;
     /** Badge text for a model the gate blocks, for ANY reason (missing condition,
-     *  missing category, invalid period), else null. Hover text is the reason. */
+     *  missing category, invalid period — and, for a model that still has to train,
+     *  nothing to train on), else null. Hover text is the reason. */
     const gateBadge = (m: FailureModel): string | null => {
-        const block = gateBlockOf(m);
+        const block = gateBlockOf(m) ?? shownGuardBlockOf(m);
         if (block === null) return null;
         if (needsCondition(m)) return m.status ? LEGACY_BADGE : 'Needs condition';
         if (categoryOf(m) === null) return 'Needs category';
-        if (block.kind === 'no-rows') return NO_ROWS_BADGE;
+        if (block.kind === 'no-rows') return block.cause === 'outside-data' ? NO_TRAIN_DATA_SHORT : NO_ROWS_BADGE;
         return effectiveRunningCondition(effectiveModelFor(m), gateFg).periods.length === 0 ? 'Needs train period' : 'Fix periods';
     };
 
@@ -1409,32 +1492,70 @@ export default function BuildModelWindow() {
         return findSameSensorNameConflict(allModels, m, d.name);
     };
 
+    /** A Custom model's own lists as they are SAVED — what its draft is judged
+     *  against (R2 / R3): the model's own saved lists. For a model that is saved in
+     *  Workspace mode and is being switched to Custom, ALSO the periods the switch
+     *  copied from the workspace (`seedCustomFromWorkspace` gives the copies fresh
+     *  ids, so they are matched by their dates): the user did not pick those — a
+     *  saved workspace period outside the data must not block the switch, it warns
+     *  here exactly as it does in the workspace settings. */
+    const savedCustomListsOf = (m: FailureModel): { periods: TimePeriod[]; tests: TestPeriod[] } => {
+        const own = { periods: m.filterTimePeriods ?? NO_PERIODS, tests: m.customTestPeriods ?? NO_PERIODS };
+        if (m.runningConditionMode === 'custom') return own;
+        const d = drafts[m.id];
+        if (!d || d.runningConditionMode !== 'custom') return own;
+        const sameDates = (a: { start: string; end: string }, b: { start: string; end: string }) =>
+            (a.start ?? '').trim() === (b.start ?? '').trim() && (a.end ?? '').trim() === (b.end ?? '').trim();
+        const copied = <T extends TimePeriod>(list: T[], from: readonly TimePeriod[]): T[] => list.filter(x => from.some(w => sameDates(w, x)));
+        return {
+            periods: [...own.periods, ...copied(d.customPeriods, runningConditionTimePeriods)],
+            tests: [...own.tests, ...copied(d.customTestPeriods, runningConditionTestPeriods)],
+        };
+    };
+    /** The training scope a model has as it is SAVED (`trainCountKey`): its own
+     *  lists in Custom mode, the workspace's in Workspace mode. A draft whose scope
+     *  equals it did not change what is trained on. */
+    const savedScopeKeyOf = (m: FailureModel): string =>
+        m.runningConditionMode === 'custom'
+            ? customCountKeyOf(draftFromModel(m))
+            : trainCountKey(runningConditionTimePeriods, persistedCountFilter);
     /** What blocks Save changes in a Custom model's OWN lists, or null — exactly what
-     *  blocks Apply in the workspace settings (`runningConditionApplyBlock`, whole):
-     *  an invalid train period, NO train period, an invalid scoring period, a period
-     *  entirely outside the loaded data, or a settled count of zero running rows.
+     *  blocks Apply in the workspace settings (`runningConditionApplyBlock`, whole).
      *  (User decision 2026-10-10: ANY invalid own period blocks the save — train as
-     *  well as scoring — not only the scoring ones.) */
-    const customSaveBlockOf = (m: FailureModel): RunningConditionApplyBlock | null => {
+     *  well as scoring — not only the scoring ones.)
+     *   - `data: false` — the plain rules only: an invalid train period, NO train
+     *     period, an invalid scoring period. What every READ path sees.
+     *   - `data: true` — plus the data guards of the DRAFT, for the Save / Train
+     *     actions: a period that is new or was changed here and lies entirely outside
+     *     the loaded data, and a settled count of zero running rows when the draft
+     *     changed what is trained on. A period (or a scope) that is exactly as it was
+     *     saved never blocks: renaming such a model saves fine. */
+    const customSaveBlockOf = (m: FailureModel, data = false): RunningConditionApplyBlock | null => {
         const d = draftOf(m);
         if (d.runningConditionMode !== 'custom') return null;
-        // The data guards judge what is being SAVED (a draft), like the workspace
-        // modal judges what is being applied. A model with nothing to save keeps the
-        // plain date rules here — its saved TRAIN periods are judged against the data
-        // by the gate (`gateOptsOf`), its saved scoring periods are left as they are.
-        return runningConditionApplyBlock(d.customPeriods, d.customTestPeriods, 'saving',
-            m.id in drafts ? { bounds: datasetBounds, noTrainRows: customNoRowsId === m.id } : undefined);
+        if (!data) return runningConditionApplyBlock(d.customPeriods, d.customTestPeriods, 'saving');
+        const saved = savedCustomListsOf(m);
+        const scopeChanged = customCountKeyOf(d) !== savedScopeKeyOf(m);
+        return runningConditionApplyBlock(d.customPeriods, d.customTestPeriods, 'saving', {
+            bounds: datasetBounds,
+            savedPeriods: saved.periods,
+            savedTestPeriods: saved.tests,
+            noTrainRows: scopeChanged && customNoRowsOf(m),
+            hasCondition: !d.customNoneConfirmed,
+        });
     };
     /** That block as the reason Save / Train show. The two train-side blocks use the
      *  gate's own sentences, so every place that words a gate reason (`ownGateText`,
      *  the preflight list) reads them the same whichever rule found them first. */
-    const customSaveReason = (block: RunningConditionApplyBlock): string =>
+    const customSaveReason = (m: FailureModel, block: RunningConditionApplyBlock): string =>
         block.kind === 'no-train' ? NO_TRAIN_PERIOD_REASON_CUSTOM
-            : block.kind === 'no-rows' ? NO_TRAIN_ROWS_REASON_CUSTOM
+            : block.kind === 'no-rows' ? noTrainRowsReason('custom', !draftOf(m).customNoneConfirmed)
             : block.reason;
 
-    /** Why Save is disabled (category / required fields), or null. */
-    const modelBlockReason = (m: FailureModel): string | null => {
+    /** Why Save is disabled (category / required fields / the model's own lists), or
+     *  null. `data` as in `customSaveBlockOf`: `true` only where saving (or training,
+     *  which saves first) is the action. */
+    const modelBlockReason = (m: FailureModel, data = false): string | null => {
         // Same text as `getBuildBlockReason` (single source: one string everywhere).
         if (categoryOf(m) === null) return CATEGORY_BLOCK_REASON;
         const d = draftOf(m);
@@ -1448,8 +1569,8 @@ export default function BuildModelWindow() {
         if (!ok) return REQUIRED_FIELDS_BLOCK_REASON;
         // A Custom model's own periods are saved with Save changes: whatever blocks
         // the workspace Apply blocks this save too (`customSaveBlockOf`).
-        const own = customSaveBlockOf(m);
-        if (own) return customSaveReason(own);
+        const own = customSaveBlockOf(m, data);
+        if (own) return customSaveReason(m, own);
         return nameConflictOf(m) ? DUPLICATE_NAME_BLOCK_REASON : null;
     };
 
@@ -1461,12 +1582,18 @@ export default function BuildModelWindow() {
      *  to save (no draft). */
     const customSaveBlockText = (m: FailureModel, reason: string | null): string | null => {
         if (reason === null || !(m.id in drafts)) return null;
-        const own = customSaveBlockOf(m);
-        return own && reason === customSaveReason(own) ? own.footer : null;
+        const own = customSaveBlockOf(m, true);
+        return own && reason === customSaveReason(m, own) ? own.footer : null;
     };
 
-    /** Why Train / Mark complete are disabled: everything Save needs, then the gate. */
-    const buildBlockReason = (m: FailureModel): string | null => modelBlockReason(m) ?? gateReasonOf(m);
+    /** The READ gate: everything Save needs (plain rules), then the gate — exactly
+     *  the rule from before the data guards. What a model may SHOW is decided by this:
+     *  its charts, the Health score page, the preview, Mark complete. */
+    const buildBlockReason = (m: FailureModel): string | null => orderedBlockReason(modelBlockReason(m), gateBlockOf(m));
+    /** The ACTION gate — why TRAIN cannot run for this model: the read gate plus the
+     *  data guards (a draft period outside the data, no train period inside the data,
+     *  no rows). Asked only where Train is offered or started. */
+    const trainBlockReason = (m: FailureModel): string | null => orderedBlockReason(modelBlockReason(m, true), trainGateBlockOf(m));
 
     /** Short list of what's missing from THIS model's own settings (not the
      *  running condition — that's a separate concern surfaced by the gate
@@ -1484,7 +1611,9 @@ export default function BuildModelWindow() {
             if (!d.criteria && d.numClusters > 1) items.push(CLUSTERS_NEED_CRITERIA);
         }
         if (d.runningConditionMode === 'custom') {
-            const badTest = testPeriodsError(d.customTestPeriods, m.id in drafts ? datasetBounds : undefined);
+            // A scoring period that is new / changed in the draft and outside the data
+            // included; one that is exactly as it was saved is not "to fix".
+            const badTest = testPeriodsError(d.customTestPeriods, datasetBounds, savedCustomListsOf(m).tests);
             if (badTest) items.push(badTest);
         }
         if (nameConflictOf(m)) items.push('Fix the duplicate model name');
@@ -1543,7 +1672,8 @@ export default function BuildModelWindow() {
     };
 
     const commitModel = async (m: FailureModel) => {
-        if (modelBlockReason(m) !== null) return;
+        // Saving is an action: the draft's data guards apply.
+        if (modelBlockReason(m, true) !== null) return;
         const d = draftOf(m);
         const fields = draftFields(m, d);
         await persist((models, groups) => ({
@@ -1676,7 +1806,7 @@ export default function BuildModelWindow() {
      *  thing. Each item carries its own "take me there" action. */
     /** A Custom-mode model whose OWN running condition is what blocks it: the fix is inside Model settings. */
     const customFixInside = (m: FailureModel): boolean =>
-        draftOf(m).runningConditionMode === 'custom' && categoryOf(m) !== null && staticGateReasonOf(m) !== null;
+        draftOf(m).runningConditionMode === 'custom' && categoryOf(m) !== null && countFreeGateReasonOf(m) !== null;
     /** "Model settings" of this model is open on screen. It opens by itself when
      *  the thing to fix is INSIDE it (a missing setting, or a Custom model's own
      *  running condition — that panel lives in this section); the user's own open /
@@ -1689,7 +1819,8 @@ export default function BuildModelWindow() {
             text,
             onClick: () => setSettingsOpenOverride(prev => ({ ...prev, [m.id]: true })),
         }));
-        const gr = gateReasonOf(m);
+        // The gate — and, for a model that still has to train, "nothing to train on".
+        const gr = gateReasonOf(m) ?? shownGuardBlockOf(m)?.reason ?? null;
         // Avoid double-reporting the category reason: `missingItems` already
         // lists "Pick a category" when it's null; `gateReasonOf` returns the
         // SAME `CATEGORY_BLOCK_REASON` text in that case, not a distinct one.
@@ -1865,7 +1996,12 @@ export default function BuildModelWindow() {
             });
             // The bundled Relation model engine is too old: show the app's own wording.
             const parsed = parseHealthError(e);
-            const message = parsed.code === 'SIDECAR_OUTDATED' ? parsed.message : (e instanceof Error ? e.message : String(e));
+            // The engine found nothing to train on (a scope the window had not counted —
+            // a Custom model that is not the open one — or a sensor with no value in the
+            // train periods): the named reason and where to fix it, not the raw text.
+            const raw = e instanceof Error ? e.message : String(e);
+            const message = parsed.code === 'SIDECAR_OUTDATED' ? parsed.message
+                : noRowsTrainError(raw, merged.runningConditionMode === 'custom') ?? raw;
             setTrainError(prev => ({ ...prev, [id]: message }));
             // The train commands never answer STALE_SESSION themselves: the real
             // "this data is not ours any more" signal is the generation check above
@@ -1913,7 +2049,8 @@ export default function BuildModelWindow() {
         const m = allModels.find(x => x.id === id);
         if (!m) return { ok: false, skip: 'the model no longer exists' };
         if (completeRunningRef.current.has(id)) return { ok: false, skip: BEING_SAVED_REASON };
-        const block = buildBlockReason(m);
+        // Training is THE action the data guards exist for: re-checked at run time.
+        const block = trainBlockReason(m);
         if (block !== null) {
             return { ok: false, skip: preflightReason(block, { missing: missingItems(m), customMode: draftOf(m).runningConditionMode === 'custom' }).text };
         }
@@ -1935,7 +2072,7 @@ export default function BuildModelWindow() {
         plan: saveInfo[m.id]?.phase === 'running'
             ? { kind: 'missing', reason: BEING_SAVED_REASON, fix: 'settings' }
             : classifyTrainPlan({
-                blockReason: buildBlockReason(m),
+                blockReason: trainBlockReason(m),
                 dotState: modelDotState(effectiveModelFor(m), gateFg, gateHeaders, specialRecipes),
                 // A failed run this session, or a Relation-model fit Rust no longer holds: ready again.
                 hasSessionError: !!trainError[m.id] || notFittedIds.has(m.id)
@@ -1952,11 +2089,11 @@ export default function BuildModelWindow() {
         if (queue.stale) return TRAIN_STALE_MESSAGE;
         if (queue.isRunning) return TRAIN_RUN_ACTIVE_REASON;
         if (saveInfo[m.id]?.phase === 'running') return FIT_RELOAD_SAVING_REASON;
-        // `reloadFit` refuses a model whose settings (an unsaved draft that cannot be
-        // saved) or running condition block it: the link is disabled with that reason
-        // instead of doing nothing.
-        const block = buildBlockReason(m);
-        return block === null ? null : awayFromFormText(m, block) ?? FIT_RELOAD_SETTINGS_REASON;
+        // A model whose settings (an unsaved draft that cannot be saved) or running
+        // condition block it cannot be loaded: the link is disabled with that reason
+        // instead of doing nothing. (The read gate: loading a trained model again is
+        // not a train — the data guards do not stand in its way.)
+        return awayFromFormText(m, buildBlockReason(m));
     };
     /** "Load it again" on the "Fit no longer in memory" boards (and the footer): the
      *  SAME silent re-fit the window runs by itself the first time a fit is lost
@@ -1968,7 +2105,7 @@ export default function BuildModelWindow() {
      *  board with its reason (`trainError`). */
     const reloadFit = (id: string) => {
         const m = allModels.find(x => x.id === id);
-        if (!m || fitReloadBlock(m) !== null || buildBlockReason(m) !== null) return;
+        if (!m || fitReloadBlock(m) !== null) return;
         if (trainStatus[id] === 'loading' || fitReloadingRef.current.has(id)) return;
         // Only a model that is trained and still current has a fit to load again.
         const fp = computeTrainFingerprint(m, gateFg);
@@ -2065,7 +2202,9 @@ export default function BuildModelWindow() {
         // Nothing is written for a model that is not allowed to be Complete anyway:
         // the gate, and "trained and still fresh" (the same rules `persistModelComplete`
         // re-checks against the disk inside its write).
-        const notAllowed = getBuildBlockReason(model, fg, gateHeaders, gateOptsOf(m))
+        // (The gate as it always was: Mark complete is not a train, the data guards
+        // do not block it.)
+        const notAllowed = getBuildBlockReason(model, fg, gateHeaders)
             // At least one valid scoring period (SPEC rule 2).
             ?? markCompleteBlockReason(model, fg)
             ?? (trainedFreshFor(model, fg, specialRecipes) ? null : (isModelStaleFor(model, fg, specialRecipes) ? 'Settings changed — re-train first.' : NOT_TRAINED_BLOCK_REASON));
@@ -2079,7 +2218,7 @@ export default function BuildModelWindow() {
         // draft that cannot be saved (invalid) stops here, before anything is written.
         const hasDraft = m.id in drafts;
         if (hasDraft) {
-            const draftBlock = modelBlockReason(m);
+            const draftBlock = modelBlockReason(m, true);
             if (draftBlock !== null) return fail(awayFromFormText(m, draftBlock) ?? draftBlock);
         }
         completeRunningRef.current.add(m.id);
@@ -2376,12 +2515,14 @@ export default function BuildModelWindow() {
         filter: customCountFilter,
         expectedGeneration: generation,
     });
-    // The zero-rows guard of the active Custom model (see `customNoRowsId` above):
-    // its own condition is configured, its count is settled, and no row is left.
-    customNoRowsId = activeModel && activeEffective && activeIsCustom
+    // The zero-rows guard of the active Custom model (see `customNoRowsKey` above):
+    // its own condition is configured, its count is settled, and no row is left —
+    // remembered as the training scope that was counted, so a sibling Custom model
+    // on the very same scope reads the same answer (`customNoRowsOf`).
+    customNoRowsKey = activeModel && activeEffective && activeCustomDraft && activeIsCustom
         && isRunningConditionConfigured(activeEffective, gateFg, gateHeaders)
         && countedNoTrainRows(customCounts)
-        ? activeModel.id : null;
+        ? customCountKeyOf(activeCustomDraft) : null;
 
     const activeFingerprint = activeEffective ? computeTrainFingerprint(activeEffective, gateFg) : null;
     const activeStale = activeEffective ? isModelStaleFor(activeEffective, gateFg, specialRecipes) : false;
@@ -2694,15 +2835,20 @@ export default function BuildModelWindow() {
         expectedGeneration: generation,
     });
     // The modal's zero-rows guard: the count shown is the draft's own (settled), the
-    // condition is configured (else nothing is counted for it) and no running row
-    // is left in its train periods. Apply is disabled on it (`rcApplyBlock`).
+    // condition is configured (else nothing is counted for it), no running row is
+    // left in its train periods — AND the draft changed what is trained on (its
+    // train periods or its condition). Apply is disabled on it (`rcApplyBlock`). A
+    // draft that left the training scope as it was saved (only a scoring period
+    // moved, say) is not blocked by a zero the saved state already had: the red line
+    // under the timeline and the red card say it, and Train is what is blocked.
     const rcCountView = rcDraft ?? rcPersisted;
     const rcNoRows = rcFilterOpen
         && isWorkspaceRunningConditionConfigured(
             { runningConditionFilters: rcCountView.filters, runningConditionNoneConfirmed: rcCountView.noneConfirmed },
             gateHeaders,
         )
-        && countedNoTrainRows(rcCounts);
+        && countedNoTrainRows(rcCounts)
+        && trainCountKey(rcCountPeriods, draftCountFilter) !== trainCountKey(runningConditionTimePeriods, persistedCountFilter);
     rcGateRef.current = { draft: rcDraft, bounds: datasetBounds, noTrainRows: rcNoRows };
 
     // The Dashboard may have changed its highlights since this window opened:
@@ -2785,7 +2931,7 @@ export default function BuildModelWindow() {
     }
 
     // Step-1 card / lock message / Train buttons all read the PERSISTED condition
-    // (a train period entirely outside the loaded data is "invalid" like a broken one).
+    // (the plain date rules — a saved period outside the loaded data only warns).
     const rcStepState: RcStepState = !rcConfigured ? 'unset' : persistedPeriodsInvalid ? 'invalid' : 'set';
 
     const realGroups = [...allGroups].filter(g => g.no !== 0).sort((a, b) => a.no - b.no);
@@ -2796,10 +2942,11 @@ export default function BuildModelWindow() {
      *  run of this session overrides an otherwise "trained" model. */
     const dotStateOf = (m: FailureModel): ModelDotState => {
         const st = modelDotState(effectiveModelFor(m), gateFg, gateHeaders, specialRecipes);
-        // The window's gate also knows the loaded data (a train period outside it, no
-        // running rows): "needs fixing" like any other gate block. Display only — the
-        // model's saved status is untouched.
-        if (!m.status && st !== 'blocked' && gateReasonOf(m) !== null) return 'blocked';
+        // A model that still has to train (never trained, or out of date) and has
+        // nothing to train on: "needs fixing" like any other gate block. Display only
+        // — the model's saved status is untouched. A trained or Complete model keeps
+        // its own state (it has results; the guard only stops training it AGAIN).
+        if ((st === 'none' || st === 'stale') && trainGuardBlockOf(m) !== null) return 'blocked';
         return st === 'trained' && trainError[m.id] ? 'stale' : st;
     };
 
@@ -2918,7 +3065,7 @@ export default function BuildModelWindow() {
      *  not this window's any more, the model itself cannot train, or a run is active. */
     const staleCantTrainOf = (m: FailureModel): StaleCantTrain | undefined => {
         if (queue.stale) return { kind: 'stale', text: TRAIN_STALE_MESSAGE };
-        const own = awayFromFormText(m, buildBlockReason(m));
+        const own = awayFromFormText(m, trainBlockReason(m));
         if (own) return { kind: 'reason', text: own };
         if (queue.isRunning) return { kind: 'run', text: TRAIN_RUN_ACTIVE_REASON };
         return undefined;
@@ -2928,7 +3075,9 @@ export default function BuildModelWindow() {
     const showSpChip = !!queue.lastTrained && queue.lastTrained.ids.length > 0 && spCount > 0;
     const listFilter: SidebarFilter = sidebarFilter === 'sp' && !showSpChip ? 'all' : sidebarFilter;
 
-    const sensorBuildBlocked = (sg: SensorModelGroup) => sg.models.some(m => buildBlockReason(m) !== null);
+    // "Needs setup": what the red dot says — the gate, or (for a model that still
+    // has to train) nothing to train on. Never a trained or Complete model's guard.
+    const sensorBuildBlocked = (sg: SensorModelGroup) => sg.models.some(m => buildBlockReason(m) !== null || shownGuardBlockOf(m) !== null);
     const sensorAllComplete = (sg: SensorModelGroup) => sg.models.length > 0 && sg.models.every(isModelDone);
     const matchesSidebarFilter = (sg: SensorModelGroup) =>
         listFilter === 'all' ? true
@@ -3506,6 +3655,8 @@ export default function BuildModelWindow() {
                         testPeriods={d.customTestPeriods}
                         onTestPeriodsChange={tests => patchDraft(m, { customTestPeriods: tests })}
                         highlights={dashHighlights}
+                        savedPeriods={savedCustomListsOf(m).periods}
+                        savedTestPeriods={savedCustomListsOf(m).tests}
                     />
                 </div>
             )}
@@ -3655,7 +3806,11 @@ export default function BuildModelWindow() {
         </div>
     );
     const renderModelFitBody = (m: FailureModel) => {
-        const reason = buildBlockReason(m);
+        // The read gate — plus "nothing to train on" for a model that has no result at
+        // all yet (never trained): its board is the place that says why Train will not
+        // start. A model with results keeps them (charts, or the "Out of date" view).
+        const reason = buildBlockReason(m)
+            ?? (!m.lastTrainedAt && !isModelDone(m) ? shownGuardBlockOf(m)?.reason ?? null : null);
         const qItem = queue.isRunning ? queue.itemOf(m.id) : undefined;
         if (qItem?.state === 'queued' && queue.run) {
             // Rough wait: the model in training + every model queued before this one.
@@ -3845,7 +4000,7 @@ export default function BuildModelWindow() {
         if (queue.isRunning) return TRAIN_RUN_ACTIVE_REASON;
         if (isModelStale(m)) return 'Settings changed — re-train first.';
         // Unsaved settings are saved by Mark complete first; ones that cannot be saved block it.
-        const draftBlock = m.id in drafts ? modelBlockReason(m) : null;
+        const draftBlock = m.id in drafts ? modelBlockReason(m, true) : null;
         if (draftBlock !== null) return awayFromFormText(m, draftBlock);
         const gate = gateReasonOf(m);
         if (gate !== null) return gate;
@@ -3934,8 +4089,13 @@ export default function BuildModelWindow() {
      *  Health score: "← Model fit" · Mark complete ("Mark incomplete", a text
      *  button, once Complete; "Mark complete again" only when the files are out of date). */
     const renderFooter = (m: FailureModel, page: WorkbenchPage, primary: PrimaryAction) => {
-        const saveReason = modelBlockReason(m);
+        // Save changes is an action: the draft's data guards apply to it.
+        const saveReason = modelBlockReason(m, true);
+        // The pill and what the page may show: the read gate.
         const reason = buildBlockReason(m);
+        // The ONE sentence: why Save is disabled, else the gate, else — for a model
+        // that still has to train — why Train will not start.
+        const lineReason = orderedBlockReason(saveReason, gateBlockOf(m) ?? shownGuardBlockOf(m));
         const cat = categoryOf(m);
         const trainedFresh = isModelTrainedFresh(m);
         const stale = isModelStale(m);
@@ -4054,7 +4214,7 @@ export default function BuildModelWindow() {
             line = qItem.state === 'running'
                 ? <><Loader2 size={11} className="pm-spin" aria-hidden="true" /> Training now · about {formatTrainSeconds(ROUGH_TRAIN_SECONDS[m.kind])}</>
                 : `Queued in the run · ${queue.queuePositionOf(m.id) === 1 ? 'next' : `#${queue.queuePositionOf(m.id)}`}`;
-        } else if (reason) { line = customSaveBlockText(m, reason) ?? ownGateText(m, reason); tone = 'warn'; lineId = 'build-block-reason'; }
+        } else if (lineReason) { line = customSaveBlockText(m, lineReason) ?? ownGateText(m, lineReason); tone = 'warn'; lineId = 'build-block-reason'; }
         // An unsaved draft is said here, once (the tab carries no "edited" pill).
         else if (hasDraft) line = `Unsaved changes to the ${kindModelName(m.kind)}`;
         // The fit is gone (for a Complete model too, and before "Training failed": a load
@@ -4202,7 +4362,16 @@ export default function BuildModelWindow() {
         else if (rcBlocks) { why = TRAIN_NEEDS_RUNNING_CONDITION; tone = 'warn'; }
         else if (ready.length === 0 && cant.length === 0) why = `${up.length} model${up.length === 1 ? '' : 's'} up to date — nothing to train${ownRcNote(up)}`;
         else if (ready.length === 0) {
-            why = cant.some(m => m.id === activeModel?.id)
+            // A trained or Complete model that only the data guard stops keeps its charts
+            // and its own footer sentence — there is no board "below" that says why, so
+            // the reason is named HERE (the one place its Train is offered).
+            const named = cant.find(m => {
+                const guard = trainGuardBlockOf(m);
+                return guard !== null && shownGuardBlockOf(m) === null && trainBlockReason(m) === guard.reason;
+            });
+            why = named
+                ? `${cant.length === 1 ? "Can't train" : `${names(cant, ', ')} can't train`} · ${whyOf(named)}`
+                : cant.some(m => m.id === activeModel?.id)
                 ? "Can't train · see below"
                 : `${names(cant, ', ')} can't train · see ${cant.length === 1 ? 'its tab' : 'their tabs'}`;
             tone = 'warn';
@@ -4460,13 +4629,21 @@ export default function BuildModelWindow() {
     // models) stays on the persisted state.
     const rcView = rcDraft ?? rcPersisted;
     const rcDirty = rcDraft !== null && !rcDraftEqual(rcDraft, rcPersisted);
-    const rcViewInvalid = validatePeriods(rcView.periods, datasetBounds).some(s => s.invalid);
-    // Apply gate: an invalid train period (one entirely outside the loaded data
-    // included), NO train period, an invalid scoring period (a missing date, an end
-    // before its start, or outside the data), or — once this draft's count is
-    // settled — no running row in its train periods. Scoring periods overlapping
-    // train time and train periods overlapping a highlight never block.
-    const rcApplyBlock = runningConditionApplyBlock(rcView.periods, rcView.testPeriods, 'applying', { bounds: datasetBounds, noTrainRows: rcNoRows });
+    const rcViewInvalid = validatePeriods(rcView.periods, datasetBounds, rcPersisted.periods).some(s => s.invalid);
+    // Apply gate: an invalid train period, NO train period, an invalid scoring
+    // period (a missing date, an end before its start), a train or scoring period
+    // that was added / changed in this draft and lies entirely outside the loaded
+    // data, or — once this draft's count is settled and it changed what is trained
+    // on — no running row in its train periods. A period that is exactly as it was
+    // saved never blocks (its row warns); scoring periods overlapping train time and
+    // train periods overlapping a highlight never block either.
+    const rcApplyBlock = runningConditionApplyBlock(rcView.periods, rcView.testPeriods, 'applying', {
+        bounds: datasetBounds,
+        savedPeriods: rcPersisted.periods,
+        savedTestPeriods: rcPersisted.testPeriods,
+        noTrainRows: rcNoRows,
+        hasCondition: !rcView.noneConfirmed,
+    });
     // Apply writes the DRAFT, and a typed date is in the draft as soon as it is
     // complete — so "dirty" is the whole condition, and the impact line below is on
     // screen whenever Apply is enabled. A half-typed date changes nothing (it
@@ -4730,6 +4907,8 @@ export default function BuildModelWindow() {
                                 configured={rcViewConfigured}
                                 periods={rcView.periods}
                                 onPeriodsChange={updateRunningConditionPeriods}
+                                savedPeriods={runningConditionTimePeriods}
+                                savedTestPeriods={runningConditionTestPeriods}
                                 bounds={datasetBounds}
                                 filters={rcView.filters}
                                 combine={rcView.combine}

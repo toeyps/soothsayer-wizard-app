@@ -5021,6 +5021,7 @@ body {
 .rct-lane--tr .rct-blk { background: var(--train-muted); border: 1px solid var(--train); }
 .rct-lane--sc .rct-blk { background: var(--test-muted); border: 1px dashed var(--test); }
 .rct-lane .rct-blk.bad { background: var(--danger-muted); border: 1px solid var(--danger); }
+.rct-lane .rct-blk.warn { background: var(--warn-muted); border: 1px solid var(--warn); }
 /* an open side runs to the edge of the data: square corners there */
 .rct-blk--os { border-top-left-radius: 0; border-bottom-left-radius: 0; }
 .rct-blk--oe { border-top-right-radius: 0; border-bottom-right-radius: 0; }
@@ -5053,6 +5054,8 @@ body {
 .rcm-per { display: grid; grid-template-columns: 30px 200px 18px 200px 150px 28px minmax(0, 1fr); gap: 2px 8px; align-items: center; padding: 3px 0 3px 6px; border-left: 2px solid transparent; }
 /* invalid: a thin red left edge (the date field that is wrong goes red too) */
 .rcm-per--bad { border-left-color: var(--danger); }
+/* A saved period entirely outside the loaded data: a warning, never a block. */
+.rcm-per--warn { border-left-color: var(--warn); }
 .rcm-pn { font: 600 11px var(--mono); color: var(--text-faint); }
 .tpe-pn { color: var(--test); }
 .rcm-arrow { color: var(--text-faint); text-align: center; }

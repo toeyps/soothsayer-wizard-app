@@ -13,6 +13,7 @@ import {
     toScoringPeriods,
     trainOverlapDays,
     validateTestPeriods,
+    type PeriodBaseline,
 } from '../../utils/timePeriods';
 import { isCompleteDateInput, settleDateInput } from './periodDisplay';
 import type { PeriodBounds } from './TimePeriodsEditor';
@@ -36,9 +37,12 @@ import type { PeriodBounds } from './TimePeriodsEditor';
  * train time it includes — never a block. An invalid period gets a thin red
  * left edge, a red date field and ONE reason line ("S1 needs an end date").
  *
- * Against the loaded data (2026-10-10, `bounds`): a scoring period ENTIRELY
- * outside the data's time range is invalid ("S1 is outside the data (1 Jan 2025
- * – 31 Dec 2025)", both fields red, blocks Apply / Save); one only partly
+ * Against the loaded data (2026-10-10, `bounds` + `savedTests`): a scoring
+ * period that is NEW or was CHANGED here and lies ENTIRELY outside the data's
+ * time range is invalid ("S1 is outside the data (1 Jan 2025 – 31 Dec 2025)",
+ * both fields red, blocks Apply / Save); one that is exactly as it was SAVED
+ * only gets an amber warning ("S1 is outside the data — nothing is scored
+ * there") and blocks nothing; one only partly
  * inside gets a quiet amber note and blocks nothing; one whose settled count
  * holds no running row gets "no running rows in S1" (amber — Mark complete's
  * own rule about scored periods is unchanged).
@@ -127,9 +131,12 @@ export interface TestPeriodsEditorProps {
      *  holds what the parent has. Called when that changes, and with null on
      *  unmount. */
     onPendingChange?: (name: string | null) => void;
+    /** The list as it is SAVED. A period unchanged from it that lies outside the
+     *  data only warns; omitted = every period is new (outside the data = invalid). */
+    savedTests?: PeriodBaseline;
 }
 
-export default function TestPeriodsEditor({ tests, train, onChange, bounds, blocks = 'apply', counts = PERIOD_COUNTS_IDLE, onPendingChange }: TestPeriodsEditorProps) {
+export default function TestPeriodsEditor({ tests, train, onChange, bounds, blocks = 'apply', counts = PERIOD_COUNTS_IDLE, onPendingChange, savedTests }: TestPeriodsEditorProps) {
     // The draft and the change check both work on the start / end only form, so a
     // legacy label on the incoming periods is neither drawn nor read as a change.
     const saved = toScoringPeriods(tests);
@@ -209,8 +216,9 @@ export default function TestPeriodsEditor({ tests, train, onChange, bounds, bloc
         const end = t.end !== was.end && !isCompleteDateInput(t.end) ? was.end : t.end;
         return start === t.start && end === t.end ? t : toScoringPeriod({ id: t.id, start, end });
     });
-    // Judged against the loaded data too (the dataset's own bounds, to the second).
-    const statuses = validateTestPeriods(judged, bounds);
+    // Judged against the loaded data too (the dataset's own bounds, to the second);
+    // a period that is exactly as it was saved only warns.
+    const statuses = validateTestPeriods(judged, bounds, savedTests);
     const rows = scoringRowModels(judged, boundsForDays, counts, statuses.map(s => s.invalid));
 
     const dateInput = (i: number, which: 'start' | 'end', label: string, bad = false) => (
@@ -242,7 +250,7 @@ export default function TestPeriodsEditor({ tests, train, onChange, bounds, bloc
                 // The date field the fault is about goes red (both, for a period outside the data).
                 const fault = st.invalid ? st.fault : undefined;
                 return (
-                    <div key={t.id} className={`rcm-per${st.invalid ? ' rcm-per--bad' : ''}`} data-testid={`test-row-${n}`} data-invalid={st.invalid ? 'true' : undefined}>
+                    <div key={t.id} className={`rcm-per${st.invalid ? ' rcm-per--bad' : st.outsideData ? ' rcm-per--warn' : ''}`} data-testid={`test-row-${n}`} data-invalid={st.invalid ? 'true' : undefined} data-outside={st.outsideData ? 'true' : undefined}>
                         <span className="rcm-pn tpe-pn">S{n}</span>
                         {dateInput(i, 'start', `Scoring period ${n} start`, !!fault && faultOnSide(fault, 'start'))}
                         <span className="rcm-arrow" aria-hidden="true">→</span>
@@ -261,8 +269,8 @@ export default function TestPeriodsEditor({ tests, train, onChange, bounds, bloc
                                 {st.rowReason ?? st.reason ?? `S${n} is not valid`}
                             </div>
                         )}
-                        {!st.invalid && st.dataNote && <div className="rcm-permsg rcm-permsg--warn" data-testid={`test-data-note-${n}`}>{st.dataNote}</div>}
-                        {row.noRunningRows && <div className="rcm-permsg rcm-permsg--warn" data-testid={`test-no-rows-${n}`}>{noRunningRowsNote(`S${n}`)}</div>}
+                        {!st.invalid && st.dataNote && <div className="rcm-permsg rcm-permsg--warn" data-testid={`test-data-note-${n}`} data-outside={st.outsideData ? 'true' : undefined}>{st.dataNote}</div>}
+                        {row.noRunningRows && !st.outsideData && <div className="rcm-permsg rcm-permsg--warn" data-testid={`test-no-rows-${n}`}>{noRunningRowsNote(`S${n}`)}</div>}
                         {note && <div className="rcm-permsg" data-testid={`test-overlap-${n}`}>{note}</div>}
                     </div>
                 );

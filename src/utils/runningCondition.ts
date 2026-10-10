@@ -2,8 +2,9 @@ import type { FailureGroupStateSlice, FailureModel, TestPeriod, TimePeriod, Work
 import { normalizeSensorTag } from '../hooks/useSensorMetaMap';
 import { modelSensorKey, sensorCategory } from './modelGrouping';
 import {
-    firstInvalidTestPeriodNumber, fixPeriodFirstText, newPeriodId, faultSide, testPeriodsError, toScoringPeriod, validatePeriods,
-    type PeriodDataBounds, type PeriodFault,
+    allPeriodsOutsideData, dataRangeText, firstInvalidTestPeriodNumber, fixPeriodFirstText, newPeriodId, faultSide, testPeriodsError,
+    toScoringPeriod, validatePeriods,
+    type PeriodBaseline, type PeriodDataBounds, type PeriodFault,
 } from './timePeriods';
 
 /** The parts of the failure-group slice these helpers read. */
@@ -98,33 +99,72 @@ export const NO_TRAIN_PERIOD_REASON_CUSTOM =
     'Add a train period in Model settings → Training data (Custom) — pick times the machine was healthy.';
 
 /**
- * What a gate may know about the LOADED DATA, beyond the saved condition itself
- * (user request 2026-10-10: stop "no data to train on" at the UI instead of
- * letting the engine fail). Both are optional and only ever ADD a block — a
- * caller that does not have them (a write path, the Dashboard's dot) gets
- * exactly the rules it had before. Nothing here is persisted: it never changes
- * a model's `status`, fingerprint or `healthVerdict`, it only stops the action.
+ * The "no data to train on" guards (user request 2026-10-10: stop a train that
+ * has no data at the UI instead of letting the engine fail, and warn at once
+ * when a period is chosen beyond the data — NOT take away results that exist).
+ *
+ * What a caller may know about the LOADED DATA, beyond the saved condition
+ * itself. Everything is optional and only ever ADDS a block, and only an ACTION
+ * may pass it (Train; Apply / Save changes for a draft). The READ paths — a
+ * trained model's charts, its Health score page, Mark complete, the dots, the
+ * Dashboard — call the gate WITHOUT it and get exactly the rules they had
+ * before. Nothing here is persisted: it never changes a model's `status`,
+ * fingerprint or `healthVerdict`.
  */
 export interface GateOptions {
-    /** The loaded dataset's time range (`get_dataset_time_bounds`): a train /
-     *  scoring period entirely outside it is invalid (`fault: 'outside-data'`). */
+    /** The loaded dataset's time range (`get_dataset_time_bounds`), known for
+     *  the CURRENT dataset generation only — unknown = nothing is judged.
+     *  `getBuildBlock`: NO train period inside it blocks Train.
+     *  `runningConditionApplyBlock`: a period that is new / changed in the draft
+     *  and lies entirely outside it is invalid. */
     bounds?: PeriodDataBounds | null;
     /** The row count of the running condition this gate is about is SETTLED and
      *  its train periods together hold no running row (`countedNoTrainRows`). */
     noTrainRows?: boolean;
+    /** `runningConditionApplyBlock` only: the SAVED lists the draft is judged
+     *  against. A period unchanged from them never blocks (it warns). */
+    savedPeriods?: PeriodBaseline;
+    savedTestPeriods?: PeriodBaseline;
 }
 
 /** The red line of the Running-condition settings (workspace modal and a Custom
- *  model's own panel) when the counted train periods hold no running row. */
-export const NO_TRAIN_ROWS_TEXT = 'No rows match — nothing to train on. Widen a train period or relax the condition.';
+ *  model's own panel) when the counted train periods hold no running row. With
+ *  "Use all rows" there is no condition to relax (`hasCondition: false`). */
+export function noTrainRowsText(hasCondition = true): string {
+    return `No rows match — nothing to train on. Widen a train period${hasCondition ? ' or relax the condition' : ''}.`;
+}
+/** `noTrainRowsText()` of a running condition that has a condition. */
+export const NO_TRAIN_ROWS_TEXT = noTrainRowsText(true);
 /** ...and the footer next to the disabled Apply / Save changes. */
 export const NO_TRAIN_ROWS_FOOTER = 'No rows to train on';
-/** The same state as the reason a model cannot train (Workspace-mode model). */
-export const NO_TRAIN_ROWS_REASON =
-    'No rows match — nothing to train on. Widen a train period or relax the condition (Running condition → Edit).';
-/** ...and for a Custom-mode model: the fix is in its own Model settings. */
-export const NO_TRAIN_ROWS_REASON_CUSTOM =
-    'No rows match — nothing to train on. Widen a train period or relax the condition in Model settings → Training data (Custom).';
+/** The same state as the reason a model cannot train: where the fix is depends
+ *  on whose running condition it is (the workspace's, or the model's own). */
+export function noTrainRowsReason(mode: 'workspace' | 'custom', hasCondition = true): string {
+    const what = `No rows match — nothing to train on. Widen a train period${hasCondition ? ' or relax the condition' : ''}`;
+    return mode === 'custom' ? `${what} in Model settings → Training data (Custom).` : `${what} (Running condition → Edit).`;
+}
+/** `noTrainRowsReason('workspace')` / `('custom')` of a running condition that has a condition. */
+export const NO_TRAIN_ROWS_REASON = noTrainRowsReason('workspace', true);
+export const NO_TRAIN_ROWS_REASON_CUSTOM = noTrainRowsReason('custom', true);
+
+/** Start of the reason of a model none of whose train periods is inside the data. */
+export const NO_TRAIN_DATA_WORDS = 'No train period is inside the data';
+/** "No train period is inside the data (1 Jan 2025 – 31 Dec 2025) — nothing to
+ *  train on. Move a train period inside the data (Running condition → Edit)." */
+export function noTrainDataReason(mode: 'workspace' | 'custom', bounds: PeriodDataBounds | null | undefined): string {
+    const what = `${NO_TRAIN_DATA_WORDS} (${dataRangeText(bounds)}) — nothing to train on. Move a train period inside the data`;
+    return mode === 'custom' ? `${what} in Model settings → Training data (Custom).` : `${what} (Running condition → Edit).`;
+}
+/** The short form for a list row / a badge. */
+export const NO_TRAIN_DATA_SHORT = 'No train period inside the data';
+
+/** What kind of "nothing to train on" a reason is (the preflight list keys on it), or null. */
+export function noTrainDataKindOf(reason: string): { cause: 'outside-data' | 'zero-rows'; mode: 'workspace' | 'custom' } | null {
+    const mode = /\(Running condition → Edit\)\.$/.test(reason) ? 'workspace' : 'custom';
+    if (reason.startsWith(NO_TRAIN_DATA_WORDS)) return { cause: 'outside-data', mode };
+    if (reason.startsWith('No rows match — nothing to train on.')) return { cause: 'zero-rows', mode };
+    return null;
+}
 
 /**
  * Why a model cannot train, as data. `reason` is the user-facing sentence
@@ -137,8 +177,12 @@ export type BuildBlock =
     | { kind: 'no-condition'; mode: 'workspace' | 'custom'; reason: string }
     | { kind: 'invalid-train'; mode: 'workspace' | 'custom'; reason: string; periodNumber: number; fault: PeriodFault; rowReason: string }
     | { kind: 'no-train'; mode: 'workspace' | 'custom'; reason: string }
-    /** The train periods hold no running row (only with `GateOptions.noTrainRows`). */
-    | { kind: 'no-rows'; mode: 'workspace' | 'custom'; reason: string };
+    /** Truly nothing to train on (only with `GateOptions`, i.e. only for an
+     *  ACTION): `outside-data` = no train period is inside the loaded data
+     *  (`periodNumber` names it when there is just one), `zero-rows` = the
+     *  settled count of the training scope holds no running row
+     *  (`hasCondition: false` = "Use all rows" — there is no condition to relax). */
+    | { kind: 'no-rows'; mode: 'workspace' | 'custom'; reason: string; cause: 'outside-data' | 'zero-rows'; periodNumber?: number; hasCondition: boolean };
 
 /**
  * The ONE gate for Train, Mark complete and re-train, as data (see
@@ -154,9 +198,12 @@ export type BuildBlock =
  * Scoring periods are NOT needed to train (`markCompleteBlockReason` asks for
  * them).
  *
- * `opts` (2026-10-10, see `GateOptions`): with the dataset bounds a train period
- * entirely outside the loaded data is an `invalid-train` block too ("P1 is
- * outside the data (…)"), and with `noTrainRows` the last block is `no-rows`.
+ * `opts` (2026-10-10, see `GateOptions` — pass it ONLY where Train is the
+ * action; never for a read path): after everything above, `no-rows` when there
+ * is truly nothing to train on — NO train period is inside the loaded data
+ * (`bounds`), or the settled count of the training scope is zero
+ * (`noTrainRows`). One train period outside the data next to one inside it
+ * blocks nothing: it is simply not used (the card and its row warn).
  */
 export function getBuildBlock(model: FailureModel, fg: RunningConditionFg, headers?: string[] | null, opts?: GateOptions | null): BuildBlock | null {
     const eff = effectiveRunningCondition(model, fg);
@@ -166,7 +213,7 @@ export function getBuildBlock(model: FailureModel, fg: RunningConditionFg, heade
     if (!isRunningConditionConfigured(model, fg, headers)) {
         return { kind: 'no-condition', mode, reason: NO_RUNNING_CONDITION_REASON };
     }
-    const status = validatePeriods(eff.periods, opts?.bounds);
+    const status = validatePeriods(eff.periods);
     const i = status.findIndex((s) => s.invalid);
     if (i >= 0) {
         const bad = status[i];
@@ -180,8 +227,16 @@ export function getBuildBlock(model: FailureModel, fg: RunningConditionFg, heade
     if (eff.periods.length === 0) {
         return { kind: 'no-train', mode, reason: mode === 'custom' ? NO_TRAIN_PERIOD_REASON_CUSTOM : NO_TRAIN_PERIOD_REASON };
     }
+    const hasCondition = !eff.noneConfirmed;
+    if (opts?.bounds && allPeriodsOutsideData(eff.periods, opts.bounds)) {
+        return {
+            kind: 'no-rows', mode, cause: 'outside-data', hasCondition,
+            reason: noTrainDataReason(mode, opts.bounds),
+            ...(eff.periods.length === 1 ? { periodNumber: 1 } : {}),
+        };
+    }
     if (opts?.noTrainRows) {
-        return { kind: 'no-rows', mode, reason: mode === 'custom' ? NO_TRAIN_ROWS_REASON_CUSTOM : NO_TRAIN_ROWS_REASON };
+        return { kind: 'no-rows', mode, cause: 'zero-rows', hasCondition, reason: noTrainRowsReason(mode, hasCondition) };
     }
     return null;
 }
@@ -202,9 +257,10 @@ export function getBuildBlockReason(model: FailureModel, fg: RunningConditionFg,
  * train period. Fix it in Model settings" / "Add a train period above"; "Own
  * running condition: not set. Fix it in Model settings" / "Set a condition
  * above, or choose Use all rows"; "Own running condition: no rows to train on.
- * Fix it in Model settings" / "Widen a train period or relax the condition
- * above"). A period outside the data has no single wrong field: "Move P1 inside
- * the data above". A `category` block — and any block of a
+ * Fix it in Model settings" / "Above: widen a train period or relax the
+ * condition"; "Own running condition: no train period is inside the data. Fix
+ * it in Model settings" / "Above: move P1 inside the data range"). A `category`
+ * block — and any block of a
  * Workspace-mode model — is not about the model's own condition: its plain
  * `reason` is returned.
  */
@@ -213,16 +269,19 @@ export function customBlockText(block: BuildBlock, opts: { settingsOpen: boolean
     if (opts.settingsOpen) {
         if (block.kind === 'invalid-train') {
             return block.fault === 'outside-data'
-                ? `Move P${block.periodNumber} inside the data above`
+                ? `Above: move P${block.periodNumber} inside the data range`
                 : `Fix P${block.periodNumber}'s ${faultSide(block.fault)} above`;
         }
         if (block.kind === 'no-train') return 'Add a train period above';
-        if (block.kind === 'no-rows') return 'Widen a train period or relax the condition above';
+        if (block.kind === 'no-rows') {
+            if (block.cause === 'outside-data') return `Above: move ${block.periodNumber ? `P${block.periodNumber}` : 'a train period'} inside the data range`;
+            return `Above: widen a train period${block.hasCondition ? ' or relax the condition' : ''}`;
+        }
         return 'Set a condition above, or choose Use all rows';
     }
     const what = block.kind === 'invalid-train' ? block.reason
         : block.kind === 'no-train' ? 'no train period.'
-        : block.kind === 'no-rows' ? 'no rows to train on.'
+        : block.kind === 'no-rows' ? (block.cause === 'outside-data' ? 'no train period is inside the data.' : 'no rows to train on.')
         : 'not set.';
     return `Own running condition: ${what} Fix it in Model settings`;
 }
@@ -259,8 +318,8 @@ export const NO_TEST_PERIOD_REASON_CUSTOM = 'Add a scoring period in Model setti
  * scoring period valid (start and end dates). Train itself does NOT need one.
  * Call it after `getBuildBlockReason` (which it does not repeat). Returns
  * user-facing text, or null. (Deliberately NOT judged against the loaded data's
- * time range: a saved scoring period outside the data blocks Apply / Save
- * changes when it is edited, but Mark complete's own rule is unchanged.)
+ * time range: a saved scoring period outside the data is a warning on its row
+ * and on the card, and Mark complete's own rule is unchanged.)
  */
 export function markCompleteBlockReason(model: FailureModel, fg: RunningConditionFg): string | null {
     const eff = effectiveRunningCondition(model, fg);
@@ -286,6 +345,7 @@ export type RunningConditionApplyBlock =
      *  `reason` is the red line of the panel, `footer` "No rows to train on". */
     | { kind: 'no-rows'; reason: string; footer: string };
 
+
 /** Short hint shown next to the disabled Apply when there is no train period. */
 export const ADD_TRAIN_PERIOD_HINT = 'Add a train period';
 
@@ -302,20 +362,25 @@ export const ADD_TRAIN_PERIOD_HINT = 'Add a train period';
  * "saving" for a model's own Custom lists (saved with Save changes).
  *
  * `opts` (2026-10-10, see `GateOptions`): with the dataset bounds a train or
- * scoring period ENTIRELY outside the loaded data is invalid like any other
- * ("Fix P1 before applying"); with `noTrainRows` — the count of this very draft
- * is settled and its train periods hold no running row — the last block is
- * `no-rows` ("No rows to train on"). A count that is loading, stale or failed
- * never blocks: the caller passes `noTrainRows` only for a settled one.
+ * scoring period that is NEW or was CHANGED in this draft (against
+ * `savedPeriods` / `savedTestPeriods`) and lies ENTIRELY outside the loaded
+ * data is invalid like any other ("Fix P1 before applying"); a period that is
+ * unchanged from the saved state never blocks — it only warns on its row. With
+ * `noTrainRows` — the count of this very draft is settled and its train periods
+ * hold no running row — the last block is `no-rows` ("No rows to train on"; the
+ * caller passes it only when the draft changed what is trained on). A count
+ * that is loading, stale or failed never blocks.
+ * `hasCondition: false` = "Use all rows": the no-rows line does not say "relax
+ * the condition".
  */
 export function runningConditionApplyBlock(
     periods: TimePeriod[],
     testPeriods: TestPeriod[] = [],
     action: 'applying' | 'saving' = 'applying',
-    opts?: GateOptions | null,
+    opts?: (GateOptions & { hasCondition?: boolean }) | null,
 ): RunningConditionApplyBlock | null {
     const bounds = opts?.bounds;
-    const status = validatePeriods(periods, bounds);
+    const status = validatePeriods(periods, bounds, opts?.savedPeriods);
     const i = status.findIndex((s) => s.invalid);
     if (i >= 0) {
         return {
@@ -326,16 +391,16 @@ export function runningConditionApplyBlock(
         };
     }
     if (periods.length === 0) return { kind: 'no-train', reason: ADD_TRAIN_PERIOD_HINT, footer: ADD_TRAIN_PERIOD_HINT };
-    const n = firstInvalidTestPeriodNumber(testPeriods, bounds);
+    const n = firstInvalidTestPeriodNumber(testPeriods, bounds, opts?.savedTestPeriods);
     if (n !== null) {
         return {
             kind: 'invalid-test',
-            reason: testPeriodsError(testPeriods, bounds) ?? 'Fix the scoring periods.',
+            reason: testPeriodsError(testPeriods, bounds, opts?.savedTestPeriods) ?? 'Fix the scoring periods.',
             footer: fixPeriodFirstText(`S${n}`, action),
             periodNumber: n,
         };
     }
-    if (opts?.noTrainRows) return { kind: 'no-rows', reason: NO_TRAIN_ROWS_TEXT, footer: NO_TRAIN_ROWS_FOOTER };
+    if (opts?.noTrainRows) return { kind: 'no-rows', reason: noTrainRowsText(opts.hasCondition !== false), footer: NO_TRAIN_ROWS_FOOTER };
     return null;
 }
 

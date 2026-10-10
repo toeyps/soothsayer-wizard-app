@@ -19,9 +19,9 @@ import {
     NO_RUNNING_CONDITION_REASON,
     NO_TRAIN_PERIOD_REASON,
     NO_TRAIN_PERIOD_REASON_CUSTOM,
+    NO_TRAIN_DATA_SHORT,
     NO_TRAIN_ROWS_FOOTER,
-    NO_TRAIN_ROWS_REASON,
-    NO_TRAIN_ROWS_REASON_CUSTOM,
+    noTrainDataKindOf,
 } from './runningCondition';
 import type { ModelKind } from '../types';
 import type {
@@ -110,13 +110,42 @@ export function preflightReason(
     }
     if (blockReason === NO_TRAIN_PERIOD_REASON) return { text: 'No train period', fix: 'runningCondition' };
     if (blockReason === NO_TRAIN_PERIOD_REASON_CUSTOM) return { text: 'No train period in its own training data', fix: 'settings' };
-    // The counted train periods hold no running row (the data-range / zero-rows guard).
-    if (blockReason === NO_TRAIN_ROWS_REASON) return { text: NO_TRAIN_ROWS_FOOTER, fix: 'runningCondition' };
-    if (blockReason === NO_TRAIN_ROWS_REASON_CUSTOM) return { text: `${NO_TRAIN_ROWS_FOOTER} in its own training data`, fix: 'settings' };
-    // Invalid train periods ("P2 ends before it starts.", "P1 is outside the data (…).") come from the gate;
+    // Truly nothing to train on (the data guards): no train period is inside the
+    // loaded data, or the counted train periods hold no running row.
+    const noData = noTrainDataKindOf(blockReason);
+    if (noData) {
+        const words = noData.cause === 'outside-data' ? NO_TRAIN_DATA_SHORT : NO_TRAIN_ROWS_FOOTER;
+        return noData.mode === 'custom'
+            ? { text: `${words} in its own training data`, fix: 'settings' }
+            : { text: words, fix: 'runningCondition' };
+    }
+    // Invalid train periods ("P2 ends before it starts.", "P1 is outside the data (…).") come from the gate / Save's check;
     // invalid Custom scoring periods ("S1 needs a start date.") from Save's own check.
     if (/^P\d+\b/.test(blockReason)) return { text: toReason(blockReason), fix: rcFix };
     return { text: toReason(blockReason), fix: 'settings' };
+}
+
+/**
+ * A train that FAILED because there was nothing to train on, in the app's own
+ * words — or null for any other failure (its text is shown as it is).
+ *
+ * The window's guards stop most of these before the engine is asked, but not
+ * all: a model whose own (Custom) rows were never counted, or a sensor with no
+ * value inside the train periods. What Rust answers then (`lib.rs`, the three
+ * train commands — none of them carries a code for it):
+ *   - Individual:   "No valid numeric values for sensor '<tag>'"
+ *   - Relation model / Clustering: "No rows remain after dropping nulls."
+ * (and `NO_DATA: … no rows …` from the health preview). The queue row, the
+ * Train-all results and the model's board show this sentence instead: the named
+ * reason and where to fix it.
+ */
+export function noRowsTrainError(message: string, customMode: boolean): string | null {
+    const m = message.trim();
+    const hit = /^No rows remain after dropping nulls\.?$/i.test(m)
+        || /^No valid numeric values for sensor\b/i.test(m)
+        || /^NO_DATA:.*\bno rows\b/i.test(m);
+    if (!hit) return null;
+    return `${NO_TRAIN_ROWS_FOOTER} — no row inside the train periods passes the running condition with values for this model. Widen a train period or relax the condition ${customMode ? 'in Model settings → Training data (Custom)' : '(Running condition → Edit)'}.`;
 }
 
 /**

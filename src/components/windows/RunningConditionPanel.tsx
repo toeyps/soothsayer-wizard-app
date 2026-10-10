@@ -3,7 +3,7 @@ import { Plus, X } from 'lucide-react';
 import type { TestPeriod, TimeHighlight, TimePeriod, WorkspaceSensorFilter } from '../../types';
 import { PERIOD_COUNTS_IDLE, type PeriodCountsState } from '../../utils/periodCounts';
 import { CUSTOM_PANEL_FOOTNOTE, isCompleteCondition } from '../../utils/runningCondition';
-import { validatePeriods } from '../../utils/timePeriods';
+import { validatePeriods, type PeriodBaseline } from '../../utils/timePeriods';
 import { SensorPickerModal } from './SensorPickers';
 import { TrainHighlightWarnings } from './RunningConditionParts';
 import RunningConditionTimeline from './RunningConditionTimeline';
@@ -99,12 +99,18 @@ export interface RunningConditionPanelProps {
      *  ("P1" / "S2"), or null once that list has nothing half-typed. A complete
      *  date arrives through `onPeriodsChange` / `onTestPeriodsChange` at once. */
     onPendingDate?: (list: 'train' | 'scoring', name: string | null) => void;
+    /** The two lists as they are SAVED (the persisted workspace periods, or the
+     *  model's own saved Custom ones). A period unchanged from them that lies
+     *  entirely outside the loaded data only WARNS on its row; a new / changed
+     *  one is invalid. Omitted = every period is new. */
+    savedPeriods?: PeriodBaseline;
+    savedTestPeriods?: PeriodBaseline;
 }
 
 export default function RunningConditionPanel({
     scope = 'workspace', configured, periods, onPeriodsChange, bounds, filters, combine, noneConfirmed,
     onNoneChange, onCombineChange, onAddFilter, onUpdateFilter, onRemoveFilter, sensors, getComponent, getUnit,
-    counts = PERIOD_COUNTS_IDLE, testPeriods, onTestPeriodsChange, highlights, onPendingDate,
+    counts = PERIOD_COUNTS_IDLE, testPeriods, onTestPeriodsChange, highlights, onPendingDate, savedPeriods, savedTestPeriods,
 }: RunningConditionPanelProps) {
     const custom = scope === 'custom';
     // "Only when running" without a complete condition: the count would be of
@@ -131,7 +137,7 @@ export default function RunningConditionPanel({
 
     return (
         <div data-testid={id('rc-panel', 'custom-rc-panel')} className={`rcm-body${custom ? ' rcm-body--own' : ''}`}>
-            <RunningConditionTimeline periods={periods} tests={testPeriods} bounds={bounds} counts={counts} configured={configured} />
+            <RunningConditionTimeline periods={periods} tests={testPeriods} bounds={bounds} counts={counts} configured={configured} usesAllRows={noneConfirmed} savedPeriods={savedPeriods} savedTests={savedTestPeriods} />
 
             <section className="rcx-sec" data-testid={id('rc-periods', 'custom-periods')}>
                 <div className="rcx-sec-h" data-testid="rc-train-head">
@@ -146,6 +152,7 @@ export default function RunningConditionPanel({
                     counts={rowCounts}
                     afterRows={<TrainHighlightWarnings periods={periods} highlights={highlights} onPeriodsChange={onPeriodsChange} />}
                     onPendingChange={onPendingDate ? name => onPendingDate('train', name) : undefined}
+                    savedPeriods={savedPeriods}
                 />
             </section>
 
@@ -163,6 +170,7 @@ export default function RunningConditionPanel({
                     blocks={custom ? 'save' : 'apply'}
                     counts={rowCounts}
                     onPendingChange={onPendingDate ? name => onPendingDate('scoring', name) : undefined}
+                    savedTests={savedTestPeriods}
                 />
             </section>
 

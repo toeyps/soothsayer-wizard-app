@@ -76,15 +76,26 @@ describe('timelineBlocks', () => {
         expect(junk).toBeNull();
     });
 
-    it('a period entirely outside the data is a red sliver on the edge it lies beyond (always invalid)', () => {
+    it('a period entirely outside the data is a sliver on the edge it lies beyond — red when its row is invalid (new in the draft), not when it is a saved one that only warns', () => {
         const [after, before] = timelineBlocks(
             [p('b', '2027-01-01T00:00', '2027-02-01T00:00'), p('d', '2020-01-01T00:00', '2020-02-01T00:00')],
-            [false, false], bounds, 'P',
+            [true, false], bounds, 'P',
         );
         expect(after).toMatchObject({ name: 'P1', invalid: true, outside: true, openStart: false, openEnd: false });
         expect(after!.leftPct + after!.widthPct).toBeCloseTo(100, 5); // on the right edge
         expect(after!.widthPct).toBeLessThan(2);
-        expect(before).toMatchObject({ name: 'P2', leftPct: 0, invalid: true, outside: true });
+        expect(before).toMatchObject({ name: 'P2', leftPct: 0, invalid: false, outside: true });
+    });
+
+    it('an OPEN-ENDED period that lies outside the data is the same sliver (it used to be drawn as a normal block titled "not valid")', () => {
+        const [openStart, openEnd] = timelineBlocks(
+            [p('a', '', '2020-02-01T00:00'), p('b', '2027-01-01T00:00', '')],
+            [true, true], bounds, 'P',
+        );
+        expect(openStart).toMatchObject({ name: 'P1', outside: true, leftPct: 0, openStart: false, openEnd: false });
+        expect(openStart!.widthPct).toBeLessThan(2);
+        expect(openEnd).toMatchObject({ name: 'P2', outside: true });
+        expect(openEnd!.leftPct + openEnd!.widthPct).toBeCloseTo(100, 5);
     });
 
     it('a reversed period is drawn over the time between its two dates, flagged invalid; no bounds = no blocks', () => {

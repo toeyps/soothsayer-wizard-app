@@ -6,24 +6,31 @@ import type { PeriodCount, PeriodCounts } from '../types/periodCounts';
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
 
 import {
-    dataRangeText, faultOnSide, faultSide, firstInvalidPeriodNumber, firstInvalidTestPeriodNumber, periodDataFit,
-    testPeriodsError, toFilterRanges, validatePeriods, validateTestPeriods,
+    allPeriodsOutsideData, dataRangeText, faultOnSide, faultSide, firstInvalidPeriodNumber, firstInvalidTestPeriodNumber, isPeriodUnchanged,
+    periodDataFit, savedOutsideDataNotes, testPeriodsError, toFilterRanges, validatePeriods, validateTestPeriods,
 } from '../utils/timePeriods';
 import {
-    customBlockText, getBuildBlock, getBuildBlockReason, markCompleteBlockReason, runningConditionApplyBlock,
+    customBlockText, getBuildBlock, getBuildBlockReason, markCompleteBlockReason, noTrainDataReason,
+    noTrainRowsReason, noTrainRowsText, runningConditionApplyBlock,
     NO_TRAIN_ROWS_FOOTER, NO_TRAIN_ROWS_REASON, NO_TRAIN_ROWS_REASON_CUSTOM, NO_TRAIN_ROWS_TEXT,
 } from '../utils/runningCondition';
 import {
-    countedNoTrainRows, noRunningRowsNote, runningConditionCaption, scoringCountPlan, scoringRowModels, trainCountPlan,
+    countedNoTrainRows, noRunningRowsNote, runningConditionCaption, scoringCountPlan, scoringRowModels, trainCountKey, trainCountPlan,
     trainRowModels, type PeriodCountsState,
 } from '../utils/periodCounts';
-import { classifyTrainPlan, preflightReason } from '../utils/trainQueue';
+import { classifyTrainPlan, noRowsTrainError, preflightReason } from '../utils/trainQueue';
 import { mk } from './helpers/failureModelFixture';
 
 /*
- * "No data to train on" is stopped at the UI (user request 2026-10-10):
+ * "No data to train on" is stopped at the UI (user request 2026-10-10; the rule
+ * was revised the same day after the review of 1e8cc7d — "stop a train that has
+ * no data and warn at once when a period is chosen beyond the data, NOT take
+ * away results that already exist"):
  *   B1 — a period against the loaded data's time range (pure, from the dataset
- *        bounds): entirely outside = invalid, partly outside = a quiet note;
+ *        bounds): entirely outside = invalid when it is NEW / CHANGED in a
+ *        draft, only a WARNING when it is exactly as it was saved; partly
+ *        outside = a quiet note; Train is blocked only when NO train period is
+ *        inside the data;
  *   B2 / B3 — a SETTLED count of zero running rows in the train periods.
  * These are the pure rules; the rows / footers / window behaviour are tested in
  * RunningConditionDataGuards.test.tsx and BuildModelWindow.test.tsx.
@@ -124,6 +131,65 @@ describe('periodDataFit / validatePeriods against the loaded data', () => {
     });
 });
 
+// R2 / R3 (the rule decided after the review): only what the user picks NOW is invalid.
+describe('a period outside the data: NEW / CHANGED in the draft = invalid, exactly as SAVED = a warning', () => {
+    it('unchanged from the saved list (same id, start and end): not invalid — `outsideData` + the amber sentence', () => {
+        const [inside, out] = validatePeriods([INSIDE, AFTER], DATA, [INSIDE, AFTER]);
+        expect(inside).toMatchObject({ invalid: false, dataNote: undefined });
+        expect(inside.outsideData).toBeUndefined();
+        expect(out).toMatchObject({ invalid: false, fault: undefined, outsideData: true, dataNote: 'P2 is outside the data (1 Jan 2025 – 31 Dec 2025) — it is not used' });
+        expect(firstInvalidPeriodNumber([INSIDE, AFTER], DATA, [INSIDE, AFTER])).toBeNull();
+    });
+
+    it('changed against the saved list (another date under the same id), or not in it at all: invalid as before', () => {
+        const moved = { ...AFTER, end: '2026-04-01T00:00' };
+        expect(validatePeriods([INSIDE, moved], DATA, [INSIDE, AFTER])[1]).toMatchObject({ invalid: true, fault: 'outside-data' });
+        expect(validatePeriods([INSIDE, AFTER], DATA, [INSIDE])[1].fault).toBe('outside-data');
+        expect(validatePeriods([INSIDE, AFTER], DATA, [])[1].fault).toBe('outside-data');
+        expect(validatePeriods([INSIDE, AFTER], DATA, null)[1].fault).toBe('outside-data');
+        // typed back to exactly what was saved: a warning again
+        expect(validatePeriods([INSIDE, { ...moved, end: AFTER.end }], DATA, [INSIDE, AFTER])[1]).toMatchObject({ invalid: false, outsideData: true });
+        expect(isPeriodUnchanged(AFTER, [AFTER])).toBe(true);
+        expect(isPeriodUnchanged({ ...AFTER, id: 'other' }, [AFTER])).toBe(false);
+        expect(isPeriodUnchanged(AFTER, undefined)).toBe(false);
+    });
+
+    it('a saved period keeps its own DATE fault whatever the baseline says', () => {
+        const reversed = p('2026-03-01T00:00', '2026-02-01T00:00');
+        expect(validatePeriods([reversed], DATA, [reversed])[0].fault).toBe('ends-before-start');
+    });
+
+    it('scoring periods the same: "S1 is outside the data — nothing is scored there"', () => {
+        const [st] = validateTestPeriods([AFTER], DATA, [AFTER]);
+        expect(st).toEqual({ invalid: false, reason: undefined, outsideData: true, dataNote: 'S1 is outside the data — nothing is scored there' });
+        expect(testPeriodsError([AFTER], DATA, [AFTER])).toBeNull();
+        expect(firstInvalidTestPeriodNumber([AFTER], DATA, [AFTER])).toBeNull();
+        // a legacy label on the saved period does not make it "changed"
+        expect(validateTestPeriods([AFTER], DATA, [{ ...AFTER, label: 'problem' } as TestPeriod])[0].invalid).toBe(false);
+        expect(validateTestPeriods([{ ...AFTER, start: '2026-02-02T00:00' }], DATA, [AFTER])[0].fault).toBe('outside-data');
+    });
+
+    it('savedOutsideDataNotes: the card\'s sentences for the saved lists — nothing while the range is unknown', () => {
+        expect(savedOutsideDataNotes([INSIDE, AFTER], [BEFORE], DATA)).toEqual([
+            'P2 is outside the data (1 Jan 2025 – 31 Dec 2025) — it is not used',
+            'S1 is outside the data — nothing is scored there',
+        ]);
+        expect(savedOutsideDataNotes([INSIDE], [INSIDE], DATA)).toEqual([]);
+        expect(savedOutsideDataNotes([AFTER], [AFTER], null)).toEqual([]);
+        expect(savedOutsideDataNotes([AFTER], [AFTER], { min: null, max: null })).toEqual([]);
+    });
+
+    it('allPeriodsOutsideData: only when there are periods, the range is known and NONE is inside', () => {
+        expect(allPeriodsOutsideData([AFTER], DATA)).toBe(true);
+        expect(allPeriodsOutsideData([BEFORE, AFTER], DATA)).toBe(true);
+        expect(allPeriodsOutsideData([INSIDE, AFTER], DATA)).toBe(false);
+        expect(allPeriodsOutsideData([p('2025-12-20T00:00', '2026-02-01T00:00')], DATA)).toBe(false); // partly inside
+        expect(allPeriodsOutsideData([], DATA)).toBe(false);
+        expect(allPeriodsOutsideData([AFTER], null)).toBe(false);
+        expect(allPeriodsOutsideData([p('2026-03-01T00:00', '2026-02-01T00:00')], DATA)).toBe(false); // reversed: its own fault first
+    });
+});
+
 describe('runningConditionApplyBlock with the data guards', () => {
     it('a train period entirely outside the data blocks Apply / Save like any invalid period — "Fix P1 before applying" / "…before saving"', () => {
         const block = runningConditionApplyBlock([AFTER], [], 'applying', { bounds: DATA });
@@ -151,40 +217,86 @@ describe('runningConditionApplyBlock with the data guards', () => {
         expect(runningConditionApplyBlock([AFTER], [AFTER])).toBeNull();
         expect(runningConditionApplyBlock([AFTER], [AFTER], 'applying', { bounds: null, noTrainRows: false })).toBeNull();
     });
+
+    it('R3: periods that are exactly as they were SAVED never block — an unrelated edit applies', () => {
+        const saved = { bounds: DATA, savedPeriods: [INSIDE, AFTER], savedTestPeriods: [BEFORE] };
+        expect(runningConditionApplyBlock([INSIDE, AFTER], [BEFORE], 'applying', saved)).toBeNull();
+        // ...a NEW scoring period inside the data next to the saved outside one: still fine
+        expect(runningConditionApplyBlock([INSIDE, AFTER], [BEFORE, INSIDE], 'applying', saved)).toBeNull();
+        // R2: a period ADDED outside the data, or a saved one MOVED to another place outside it, blocks
+        const added = p('2027-01-01T00:00', '2027-02-01T00:00');
+        expect(runningConditionApplyBlock([INSIDE, AFTER, added], [BEFORE], 'applying', saved)).toMatchObject({ kind: 'invalid-train', periodNumber: 3, footer: 'Fix P3 before applying' });
+        expect(runningConditionApplyBlock([INSIDE, AFTER], [{ ...BEFORE, start: '2024-02-02T00:00' }], 'saving', saved)).toMatchObject({ kind: 'invalid-test', periodNumber: 1, footer: 'Fix S1 before saving' });
+    });
+
+    it('"Use all rows" has no condition to relax: the no-rows line only says "Widen a train period"', () => {
+        expect(runningConditionApplyBlock([INSIDE], [], 'applying', { noTrainRows: true, hasCondition: false }))
+            .toEqual({ kind: 'no-rows', reason: 'No rows match — nothing to train on. Widen a train period.', footer: 'No rows to train on' });
+        expect(noTrainRowsText(false)).toBe('No rows match — nothing to train on. Widen a train period.');
+        expect(noTrainRowsText()).toBe(NO_TRAIN_ROWS_TEXT);
+    });
+
 });
 
 describe('getBuildBlock with the data guards (the PERSISTED state)', () => {
     const fg = (periods: TimePeriod[]) => ({ models: [], runningConditionFilters: [], runningConditionCombine: 'and' as const, runningConditionNoneConfirmed: true, runningConditionTimePeriods: periods });
     const model = (over: Partial<FailureModel> = {}) => mk({ id: 'm1', category: 'performance', ...over });
 
-    it('a saved train period entirely outside the loaded data blocks Train: `invalid-train` with the named reason', () => {
+    const WS_NO_DATA = 'No train period is inside the data (1 Jan 2025 – 31 Dec 2025) — nothing to train on. Move a train period inside the data (Running condition → Edit).';
+
+    it('R4: NO train period inside the loaded data blocks Train (`no-rows` / outside-data) with the named reason', () => {
         const block = getBuildBlock(model(), fg([AFTER]), null, { bounds: DATA });
-        expect(block).toMatchObject({
-            kind: 'invalid-train', mode: 'workspace', periodNumber: 1, fault: 'outside-data',
-            reason: 'P1 is outside the data (1 Jan 2025 – 31 Dec 2025).',
-            rowReason: 'P1 is outside the data (1 Jan 2025 – 31 Dec 2025)',
-        });
-        // the same model without the bounds (a write path, the Dashboard's dot): not blocked
+        expect(block).toEqual({ kind: 'no-rows', mode: 'workspace', cause: 'outside-data', hasCondition: false, periodNumber: 1, reason: WS_NO_DATA });
+        expect(noTrainDataReason('workspace', DATA)).toBe(WS_NO_DATA);
+        // several periods, none inside: no single period to name
+        const both = getBuildBlock(model(), fg([BEFORE, AFTER]), null, { bounds: DATA })!;
+        expect(both).toMatchObject({ kind: 'no-rows', cause: 'outside-data', reason: WS_NO_DATA });
+        expect('periodNumber' in both).toBe(false);
+        // the same model without the bounds (a READ path, a write path, the Dashboard's dot): not blocked
         expect(getBuildBlock(model(), fg([AFTER]), null)).toBeNull();
         expect(getBuildBlockReason(model(), fg([AFTER]), null, { bounds: null })).toBeNull();
     });
 
-    it('a settled count of zero rows is the last block (`no-rows`), worded for where the fix is', () => {
-        expect(getBuildBlock(model(), fg([INSIDE]), null, { bounds: DATA, noTrainRows: true })).toEqual({ kind: 'no-rows', mode: 'workspace', reason: NO_TRAIN_ROWS_REASON });
-        const custom = model({ runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true, filterTimePeriods: [INSIDE] });
-        expect(getBuildBlock(custom, fg([]), null, { noTrainRows: true })).toEqual({ kind: 'no-rows', mode: 'custom', reason: NO_TRAIN_ROWS_REASON_CUSTOM });
-        // a missing train period is said first
+    it('R3: ONE saved train period outside the data next to one inside it blocks NOTHING — it is simply not used', () => {
+        expect(getBuildBlock(model(), fg([INSIDE, AFTER]), null, { bounds: DATA })).toBeNull();
+        expect(getBuildBlock(model(), fg([BEFORE, INSIDE]), null, { bounds: DATA })).toBeNull();
+        // ...and a date fault is still the old `invalid-train`, never worded as "outside the data"
+        expect(getBuildBlock(model(), fg([p('2026-03-01T00:00', '2026-02-01T00:00')]), null, { bounds: DATA })).toMatchObject({ kind: 'invalid-train', fault: 'ends-before-start' });
+    });
+
+    it('a settled count of zero rows is the last block (`no-rows` / zero-rows), worded for where the fix is and for whether there is a condition', () => {
+        // "Use all rows" (this fixture): nothing to relax
+        expect(getBuildBlock(model(), fg([INSIDE]), null, { bounds: DATA, noTrainRows: true })).toEqual({
+            kind: 'no-rows', mode: 'workspace', cause: 'zero-rows', hasCondition: false,
+            reason: 'No rows match — nothing to train on. Widen a train period (Running condition → Edit).',
+        });
+        const COND = { id: 'f', sensor: 'A', operation: 'greater_than' as const, value1: '1', value2: '' };
+        const withCond = { ...fg([INSIDE]), runningConditionNoneConfirmed: false, runningConditionFilters: [COND] };
+        expect(getBuildBlock(model(), withCond, null, { noTrainRows: true })).toMatchObject({ cause: 'zero-rows', hasCondition: true, reason: NO_TRAIN_ROWS_REASON });
+        const custom = model({ runningConditionMode: 'custom', customRunningConditionFilters: [COND], filterTimePeriods: [INSIDE] });
+        expect(getBuildBlock(custom, fg([]), null, { noTrainRows: true })).toMatchObject({ kind: 'no-rows', mode: 'custom', cause: 'zero-rows', reason: NO_TRAIN_ROWS_REASON_CUSTOM });
+        expect(noTrainRowsReason('custom', false)).toBe('No rows match — nothing to train on. Widen a train period in Model settings → Training data (Custom).');
+        // a missing train period is said first; "no period inside the data" before the count
         expect(getBuildBlock(model(), fg([]), null, { noTrainRows: true })!.kind).toBe('no-train');
+        expect(getBuildBlock(model(), fg([AFTER]), null, { bounds: DATA, noTrainRows: true })).toMatchObject({ cause: 'outside-data' });
     });
 
     it('customBlockText words both for a Custom model, open and closed', () => {
         const custom = model({ runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true, filterTimePeriods: [AFTER] });
         const outside = getBuildBlock(custom, fg([]), null, { bounds: DATA })!;
-        expect(customBlockText(outside, { settingsOpen: true })).toBe('Move P1 inside the data above');
-        expect(customBlockText(outside, { settingsOpen: false })).toBe('Own running condition: P1 is outside the data (1 Jan 2025 – 31 Dec 2025). Fix it in Model settings');
+        expect(customBlockText(outside, { settingsOpen: true })).toBe('Above: move P1 inside the data range');
+        expect(customBlockText(outside, { settingsOpen: false })).toBe('Own running condition: no train period is inside the data. Fix it in Model settings');
+        const two = getBuildBlock({ ...custom, filterTimePeriods: [BEFORE, AFTER] }, fg([]), null, { bounds: DATA })!;
+        expect(customBlockText(two, { settingsOpen: true })).toBe('Above: move a train period inside the data range');
+        // "Use all rows": no condition to relax
         const noRows = getBuildBlock({ ...custom, filterTimePeriods: [INSIDE] }, fg([]), null, { bounds: DATA, noTrainRows: true })!;
-        expect(customBlockText(noRows, { settingsOpen: true })).toBe('Widen a train period or relax the condition above');
+        expect(customBlockText(noRows, { settingsOpen: true })).toBe('Above: widen a train period');
         expect(customBlockText(noRows, { settingsOpen: false })).toBe('Own running condition: no rows to train on. Fix it in Model settings');
+        const cond = { ...custom, filterTimePeriods: [INSIDE], customRunningConditionNoneConfirmed: false, customRunningConditionFilters: [{ id: 'f', sensor: 'A', operation: 'greater_than' as const, value1: '1', value2: '' }] };
+        expect(customBlockText(getBuildBlock(cond, fg([]), null, { noTrainRows: true })!, { settingsOpen: true })).toBe('Above: widen a train period or relax the condition');
+        // a draft period outside the data (Save's own check words it with its P-number)
+        expect(customBlockText({ kind: 'invalid-train', mode: 'custom', reason: 'P2 is outside the data (…).', periodNumber: 2, fault: 'outside-data', rowReason: 'P2 is outside the data (…)' }, { settingsOpen: true }))
+            .toBe('Above: move P2 inside the data range');
     });
 
     it('Mark complete\'s own scoring-period rule is unchanged (a saved scoring period is not judged against the data there)', () => {
@@ -197,8 +309,33 @@ describe('getBuildBlock with the data guards (the PERSISTED state)', () => {
         expect(preflightReason('P1 is outside the data (1 Jan 2025 – 31 Dec 2025).', { customMode: true }).fix).toBe('settings');
         expect(preflightReason(NO_TRAIN_ROWS_REASON)).toEqual({ text: 'No rows to train on', fix: 'runningCondition' });
         expect(preflightReason(NO_TRAIN_ROWS_REASON_CUSTOM, { customMode: true })).toEqual({ text: 'No rows to train on in its own training data', fix: 'settings' });
+        // ...whether or not there is a condition to relax
+        expect(preflightReason(noTrainRowsReason('workspace', false))).toEqual({ text: 'No rows to train on', fix: 'runningCondition' });
+        expect(preflightReason(noTrainRowsReason('custom', false), { customMode: true })).toEqual({ text: 'No rows to train on in its own training data', fix: 'settings' });
+        // no train period inside the data
+        expect(preflightReason(noTrainDataReason('workspace', DATA))).toEqual({ text: 'No train period inside the data', fix: 'runningCondition' });
+        expect(preflightReason(noTrainDataReason('custom', DATA), { customMode: true })).toEqual({ text: 'No train period inside the data in its own training data', fix: 'settings' });
         // a blocked model is never "ready", whatever its dot says
         expect(classifyTrainPlan({ blockReason: NO_TRAIN_ROWS_REASON, dotState: 'trained' })).toEqual({ kind: 'missing', reason: 'No rows to train on', fix: 'runningCondition' });
+    });
+
+    it('a train that FAILED for want of rows is named (what Rust answers for an empty training scope, per kind) — any other failure is left alone', () => {
+        const WS = 'No rows to train on — no row inside the train periods passes the running condition with values for this model. Widen a train period or relax the condition (Running condition → Edit).';
+        expect(noRowsTrainError('No rows remain after dropping nulls.', false)).toBe(WS);           // Relation model, Clustering
+        expect(noRowsTrainError("No valid numeric values for sensor 'TAG1'", false)).toBe(WS);      // Individual
+        expect(noRowsTrainError('NO_DATA: no rows in the training scope', true))
+            .toBe('No rows to train on — no row inside the train periods passes the running condition with values for this model. Widen a train period or relax the condition in Model settings → Training data (Custom).');
+        expect(noRowsTrainError('Cluster 2 has no rows after applying its criteria range.', false)).toBeNull(); // its own, more specific reason
+        expect(noRowsTrainError('The Relation model engine did not answer.', false)).toBeNull();
+        expect(noRowsTrainError('STALE_SESSION: the dataset changed', false)).toBeNull();
+    });
+
+    it('trainCountKey: the same training scope = the same key (so one settled count answers for both); a scoring-only change is not in it', () => {
+        const cond = { value_filters: [{ sensor: 'A', operation: 'greater_than', value1: 1, value2: null }], combine: 'and' } as never;
+        expect(trainCountKey([INSIDE], cond)).toBe(trainCountKey([{ ...INSIDE, id: 'another-id' }], cond));
+        expect(trainCountKey([INSIDE], cond)).not.toBe(trainCountKey([INSIDE], null));
+        expect(trainCountKey([INSIDE], cond)).not.toBe(trainCountKey([INSIDE, AFTER], cond));
+        expect(trainCountKey([INSIDE], null)).toBe(trainCountKey([INSIDE], { value_filters: [], combine: 'and' } as never));
     });
 });
 
@@ -256,11 +393,14 @@ describe('countedNoTrainRows — only a SETTLED count of zero', () => {
         expect(cap(state('error', null)).noRows).toBe(false);
     });
 
-    it('the caption treats a period outside the data as a period to fix (no total)', () => {
+    it('the caption treats a NEW period outside the data as a period to fix (no total) — a SAVED one is counted like any other', () => {
         const cap = runningConditionCaption({ trainPeriods: [AFTER], scoringPeriods: [], bounds: DATA, counts: state('ok', SOME) });
         expect(cap.rows.kind).toBe('fix');
         expect(cap.rowsText).toBe('fix the period to count the rows');
         expect(cap.noRows).toBe(false);
+        const saved = runningConditionCaption({ trainPeriods: [INSIDE, AFTER], scoringPeriods: [], bounds: DATA, counts: state('ok', SOME), savedTrain: [INSIDE, AFTER] });
+        expect(saved.rows.kind).toBe('counted');
+        expect(saved.rowsText).toBe('120 of 10,000 rows (1%) used for training');
     });
 });
 

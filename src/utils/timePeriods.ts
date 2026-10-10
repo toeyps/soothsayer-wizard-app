@@ -10,8 +10,10 @@ export type PeriodFault =
     | 'start-missing'
     | 'end-missing'
     | 'ends-before-start'
-    /** Entirely outside the loaded data's time range (only judged when the
-     *  caller hands in the dataset bounds). */
+    /** Entirely outside the loaded data's time range — only for a period that is
+     *  NEW or was CHANGED against the saved list (`PeriodBaseline`), and only
+     *  when the caller hands in the dataset bounds. A saved, untouched period
+     *  outside the data is never a fault: it is a warning (`outsideData`). */
     | 'outside-data';
 
 /** The loaded dataset's first / last timestamp (`get_dataset_time_bounds`), as
@@ -37,10 +39,33 @@ export interface PeriodStatus {
     fault?: PeriodFault;
     /** A VALID period that reaches past the loaded data on one or both sides
      *  (never a block): the quiet amber note under its row — "Only the part
-     *  inside the data is used (data ends 31 Dec 2025)". */
+     *  inside the data is used (data ends 31 Dec 2025)". For a saved period that
+     *  lies ENTIRELY outside the data (`outsideData`): "P2 is outside the data
+     *  (1 Jan 2025 – 31 Dec 2025) — it is not used". */
     dataNote?: string;
+    /** Not invalid, but entirely outside the loaded data: a period that is
+     *  UNCHANGED from the saved list (an old workspace, or the data file changed
+     *  since). A warning only — it never blocks Apply / Save changes, and Train
+     *  only when NO train period is inside the data (`allPeriodsOutsideData`). */
+    outsideData?: boolean;
     /** Starts strictly before the previous period ends (touching is NOT overlap). */
     overlapsPrev: boolean;
+}
+
+/**
+ * The SAVED list a draft is judged against (the persisted workspace periods, or
+ * a model's own saved Custom periods). A period that is in it with the same id,
+ * start and end is "unchanged": lying outside the data it only WARNS. Leave it
+ * out (or pass `null`) when everything is new — a draft with nothing saved
+ * behind it — and every period entirely outside the data is invalid.
+ */
+export type PeriodBaseline = readonly { id: string; start: string; end: string }[] | null | undefined;
+
+const sameBoundText = (a: string | null | undefined, b: string | null | undefined) => (a ?? '').trim() === (b ?? '').trim();
+
+/** Is `p` exactly as it was saved (same id, start and end)? */
+export function isPeriodUnchanged(p: { id: string; start: string; end: string }, baseline: PeriodBaseline): boolean {
+    return !!baseline && baseline.some(b => b.id === p.id && sameBoundText(b.start, p.start) && sameBoundText(b.end, p.end));
 }
 
 export interface FilterRange {
@@ -123,6 +148,39 @@ export function outsideDataTexts(name: string, bounds: PeriodDataBounds | null |
     return { reason: `${core}.`, rowReason: core };
 }
 
+/** The amber warning of a SAVED, untouched period that lies entirely outside the
+ *  data: "P2 is outside the data (1 Jan 2025 – 31 Dec 2025) — it is not used"
+ *  (train) / "S1 is outside the data — nothing is scored there" (scoring). */
+export function savedOutsideDataNote(name: string, kind: 'train' | 'scoring', bounds: PeriodDataBounds | null | undefined): string {
+    return kind === 'train'
+        ? `${name} ${FAULT_WORDS['outside-data']} (${dataRangeText(bounds)}) — it is not used`
+        : `${name} ${FAULT_WORDS['outside-data']} — nothing is scored there`;
+}
+
+/**
+ * NO train period is inside the loaded data: there are train periods, the data's
+ * range is known, and every one of them lies entirely outside it — truly nothing
+ * to train on (the one case where a period outside the data blocks Train). False
+ * while the range is unknown or any period is unreadable (its own fault first).
+ */
+export function allPeriodsOutsideData(list: readonly { start: string; end: string }[], bounds: PeriodDataBounds | null | undefined): boolean {
+    return list.length > 0 && list.every(p => periodDataFit(p, bounds)?.outside === true);
+}
+
+/**
+ * The warnings of the SAVED lists for the one-line running-condition card: one
+ * sentence per saved period that lies entirely outside the data ("P2 is outside
+ * the data (…) — it is not used", "S1 is outside the data — nothing is scored
+ * there"). Empty while the data's range is unknown. Periods broken by the plain
+ * date rules are not listed (they have their own red state).
+ */
+export function savedOutsideDataNotes(train: TimePeriod[], tests: TestPeriod[], bounds: PeriodDataBounds | null | undefined): string[] {
+    const out: string[] = [];
+    validatePeriods(train, bounds, train).forEach(s => { if (s.outsideData && s.dataNote) out.push(s.dataNote); });
+    validateTestPeriods(tests, bounds, tests).forEach(s => { if (s.outsideData && s.dataNote) out.push(s.dataNote); });
+    return out;
+}
+
 /** The quiet amber note of a period that is only PARTLY inside the data, or null. */
 export function partlyOutsideNote(fit: PeriodDataFit, bounds: PeriodDataBounds | null | undefined): string | null {
     const r = dataRangeMs(bounds);
@@ -185,14 +243,21 @@ export function newPeriodId(): string {
  * and the last period's end. Reasons name a train period "P1", "P2" … by its
  * list position (workbench redesign 2026-10: never "Period 1").
  *
- * `bounds` (optional — the loaded dataset's time range): a period that is
- * otherwise valid but lies ENTIRELY outside the data is invalid too
- * (`fault: 'outside-data'`, "P1 is outside the data (1 Jan 2025 – 31 Dec
- * 2025)"); one that is only partly inside stays valid and gets `dataNote`.
- * Without bounds (no data loaded yet, or a caller that only shapes a request)
- * nothing is judged against the data.
+ * `bounds` (optional — the loaded dataset's time range) and `baseline` (the
+ * SAVED list, see `PeriodBaseline`): a period that is otherwise valid but lies
+ * ENTIRELY outside the data is
+ *   - invalid when it is NEW or was CHANGED against `baseline` (`fault:
+ *     'outside-data'`, "P1 is outside the data (1 Jan 2025 – 31 Dec 2025)") —
+ *     the user is told at once and Apply / Save changes are blocked;
+ *   - only a WARNING when it is unchanged from `baseline` (`outsideData` +
+ *     `dataNote`: "P2 is outside the data (…) — it is not used") — an old
+ *     workspace, or a data file that changed, never blocks an unrelated edit.
+ * One that is only partly inside stays valid and gets `dataNote`. Without bounds
+ * (no data loaded yet, the data of another dataset generation, or a caller that
+ * only shapes a request) nothing is judged against the data. To judge a SAVED
+ * list as a whole (a gate, the card), pass the list itself as `baseline`.
  */
-export function validatePeriods(list: TimePeriod[], bounds?: PeriodDataBounds | null): PeriodStatus[] {
+export function validatePeriods(list: TimePeriod[], bounds?: PeriodDataBounds | null, baseline?: PeriodBaseline): PeriodStatus[] {
     const parsed = list.map((p) => ({ s: toMs(p.start), e: toMs(p.end) }));
     return list.map((p, i) => {
         const { s, e } = parsed[i];
@@ -205,11 +270,16 @@ export function validatePeriods(list: TimePeriod[], bounds?: PeriodDataBounds | 
         else if (endBlank && i !== list.length - 1) fault = 'end-missing';
         else if (s !== null && e !== null && e < s) fault = 'ends-before-start';
         const fit = fault ? null : periodDataFit(p, bounds);
-        if (fit?.outside) fault = 'outside-data';
+        // Entirely outside the data: a fault only for a period that is new /
+        // changed in this draft; a saved, untouched one only warns.
+        const savedOutside = !!fit?.outside && isPeriodUnchanged(p, baseline);
+        if (fit?.outside && !savedOutside) fault = 'outside-data';
         const texts = !fault ? undefined
             : fault === 'outside-data' ? outsideDataTexts(`P${i + 1}`, bounds)
             : periodReasonTexts(`P${i + 1}`, fault, p.start);
-        const dataNote = !fault && fit ? partlyOutsideNote(fit, bounds) ?? undefined : undefined;
+        const dataNote = fault || !fit ? undefined
+            : savedOutside ? savedOutsideDataNote(`P${i + 1}`, 'train', bounds)
+            : partlyOutsideNote(fit, bounds) ?? undefined;
 
         let overlapsPrev = false;
         if (!fault && i > 0 && !statusInvalidAt(list, parsed, i - 1)) {
@@ -219,13 +289,17 @@ export function validatePeriods(list: TimePeriod[], bounds?: PeriodDataBounds | 
             if (prevOpenEnd || curStart === null) overlapsPrev = true;
             else if (prevEnd !== null && curStart < prevEnd) overlapsPrev = true;
         }
-        return { invalid: !!fault, reason: texts?.reason, rowReason: texts?.rowReason, fault, dataNote, overlapsPrev };
+        return {
+            invalid: !!fault, reason: texts?.reason, rowReason: texts?.rowReason, fault, dataNote,
+            ...(savedOutside ? { outsideData: true } : {}),
+            overlapsPrev,
+        };
     });
 }
 
 /** 1-based list number of the first invalid train period (its P-number), or null. */
-export function firstInvalidPeriodNumber(list: TimePeriod[], bounds?: PeriodDataBounds | null): number | null {
-    const i = validatePeriods(list, bounds).findIndex(s => s.invalid);
+export function firstInvalidPeriodNumber(list: TimePeriod[], bounds?: PeriodDataBounds | null, baseline?: PeriodBaseline): number | null {
+    const i = validatePeriods(list, bounds, baseline).findIndex(s => s.invalid);
     return i < 0 ? null : i + 1;
 }
 
@@ -377,8 +451,12 @@ export interface TestPeriodStatus {
     rowReason?: string;
     /** What is wrong, when `invalid`. */
     fault?: PeriodFault;
-    /** Valid, but only partly inside the loaded data (see `PeriodStatus.dataNote`). */
+    /** Valid, but only partly inside the loaded data — or, with `outsideData`,
+     *  a saved period entirely outside it (see `PeriodStatus.dataNote`). */
     dataNote?: string;
+    /** Not invalid, but entirely outside the loaded data: unchanged from the
+     *  saved list, so only a warning (see `PeriodStatus.outsideData`). */
+    outsideData?: boolean;
 }
 
 /**
@@ -387,11 +465,13 @@ export interface TestPeriodStatus {
  * "% of running time below 80" are only meaningful on a closed range. Scoring
  * periods may overlap each other and train periods (never invalid for that).
  * The reason text names the period by its number ("S2 needs an end date.").
- * `bounds` (optional): as in `validatePeriods` — a scoring period entirely
- * outside the loaded data is invalid ("S1 is outside the data (…)"), one partly
- * inside gets `dataNote`.
+ * `bounds` / `baseline` (optional): as in `validatePeriods` — a scoring period
+ * entirely outside the loaded data is invalid when it is new or was changed
+ * against the saved list ("S1 is outside the data (…)") and only a warning when
+ * it is unchanged ("S1 is outside the data — nothing is scored there"); one
+ * partly inside gets `dataNote`.
  */
-export function validateTestPeriods(list: TestPeriod[], bounds?: PeriodDataBounds | null): TestPeriodStatus[] {
+export function validateTestPeriods(list: TestPeriod[], bounds?: PeriodDataBounds | null, baseline?: PeriodBaseline): TestPeriodStatus[] {
     return list.map((t, i) => {
         const n = i + 1;
         const startBlank = !(t.start ?? '').trim();
@@ -405,21 +485,26 @@ export function validateTestPeriods(list: TestPeriod[], bounds?: PeriodDataBound
         else if (e === null) fault = 'end-invalid';
         else if (e < s) fault = 'ends-before-start';
         const fit = fault ? null : periodDataFit(t, bounds);
-        if (fit?.outside) return { invalid: true, ...outsideDataTexts(`S${n}`, bounds), fault: 'outside-data' };
+        if (fit?.outside) {
+            if (isPeriodUnchanged(t, baseline)) {
+                return { invalid: false, reason: undefined, dataNote: savedOutsideDataNote(`S${n}`, 'scoring', bounds), outsideData: true };
+            }
+            return { invalid: true, ...outsideDataTexts(`S${n}`, bounds), fault: 'outside-data' };
+        }
         if (!fault) return { invalid: false, reason: undefined, dataNote: (fit && partlyOutsideNote(fit, bounds)) ?? undefined };
         return { invalid: true, ...periodReasonTexts(`S${n}`, fault, t.start), fault };
     });
 }
 
 /** 1-based list number of the first invalid scoring period (its S-number), or null. */
-export function firstInvalidTestPeriodNumber(list: TestPeriod[], bounds?: PeriodDataBounds | null): number | null {
-    const i = validateTestPeriods(list, bounds).findIndex(s => s.invalid);
+export function firstInvalidTestPeriodNumber(list: TestPeriod[], bounds?: PeriodDataBounds | null, baseline?: PeriodBaseline): number | null {
+    const i = validateTestPeriods(list, bounds, baseline).findIndex(s => s.invalid);
     return i < 0 ? null : i + 1;
 }
 
 /** First problem in a scoring-period list, or null. */
-export function testPeriodsError(list: TestPeriod[], bounds?: PeriodDataBounds | null): string | null {
-    for (const st of validateTestPeriods(list, bounds)) {
+export function testPeriodsError(list: TestPeriod[], bounds?: PeriodDataBounds | null, baseline?: PeriodBaseline): string | null {
+    for (const st of validateTestPeriods(list, bounds, baseline)) {
         if (st.invalid) return st.reason ?? 'Fix the scoring periods.';
     }
     return null;
