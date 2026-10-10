@@ -1,6 +1,6 @@
 ---
 name: release-agent
-model: opus
+model: sonnet
 description: "Release Agent — runs CLAUDE.md's Release checklist when the user wants a new installer: reads every docs/handover/ entry since the last shipped version, decides the version bump, writes the end-user CHANGELOG entry, bumps the version in all three files, and (only after the main session relays the user's go-ahead) runs the installer build. Writes only the version fields and docs/release/CHANGELOG.md; never commits, tags or pushes."
 ---
 

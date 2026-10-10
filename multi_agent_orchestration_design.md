@@ -35,7 +35,7 @@
 | `fe-ui-agent` | Opus | `src/components/`, `App.tsx`, `App.css` | หน้าจอตาม mockup + `DESIGN_SYSTEM.md` |
 | `qa-agent` | Opus | `src/__tests__/`, `src-tauri/tests/`, `MANUAL_TEST_PLAN.md` | เทสต์ข้าม zone, full suite, manual test plan + รายการ "ลองในแอปจริง" ให้ผู้ใช้ |
 | `code-reviewer` | Opus | — | รีวิว diff ตามกับดักของโปรเจกต์ (IPC, failureGroupState, ข้ามหน้าต่าง, CSP/ความปลอดภัย, เทสต์) ก่อน commit |
-| `release-agent` | Opus | version 3 ไฟล์, `CHANGELOG.md` | ออกเวอร์ชัน: เตรียม (bump + changelog) → ผู้ใช้อนุมัติ → build installer |
+| `release-agent` | Sonnet | version 3 ไฟล์, `CHANGELOG.md` | ออกเวอร์ชัน: เตรียม (bump + changelog) → ผู้ใช้อนุมัติ → build installer |
 | `ui-design-lead` | Fable | `docs/design/` | ทิศทาง + 1–2 จออ้างอิง |
 | `ui-design-agent` | Opus | scratchpad | จอที่เหลือ + วน feedback |
 | `ui-design-reviewer` | Opus | — | รีวิวเข้มรอบสุดท้าย |
@@ -120,3 +120,4 @@ handover entry → `notion-sync-agent` → commit ในเครื่อง �
 - **agent ที่จบโดยไม่มีบล็อกรายงาน = ยังไม่ผ่าน** (HANDOFF / CODE REVIEW / DESIGN HANDOFF / DESIGN REVIEW / PLAN) → main session สั่งทำต่อด้วย SendMessage หรือรันใหม่ ห้ามข้ามไปขั้นถัดไป
 - **แบ่งงานให้เล็ก**: งานออกแบบ 1 ครั้ง = 2–3 หน้าจอ หรือ feedback 1 รอบ; worker 1 ครั้ง = 1 phase; agent ต้องปิด server ที่เปิดเองก่อนรายงาน
 - 2026-10-10: `ui-design-reviewer` เปลี่ยนจาก Fable เป็น Opus (ผู้ใช้เห็นว่า Fable ช้าเกินสำหรับงานตรวจตามเกณฑ์) — Fable เหลือเฉพาะ `ui-design-lead`
+- 2026-10-10: `release-agent` เปลี่ยนจาก Opus เป็น Sonnet (ผู้ใช้สั่ง; งานหลักคืออ่าน handover + เขียน changelog)
