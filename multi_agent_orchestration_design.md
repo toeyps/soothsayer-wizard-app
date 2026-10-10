@@ -122,3 +122,4 @@ handover entry → `notion-sync-agent` → commit ในเครื่อง �
 - 2026-10-10: `ui-design-reviewer` เปลี่ยนจาก Fable เป็น Opus (ผู้ใช้เห็นว่า Fable ช้าเกินสำหรับงานตรวจตามเกณฑ์) — Fable เหลือเฉพาะ `ui-design-lead`
 - 2026-10-10: `release-agent` เปลี่ยนจาก Opus เป็น Sonnet (ผู้ใช้สั่ง; งานหลักคืออ่าน handover + เขียน changelog)
 - 2026-10-10: เพิ่ม `bug-investigator` (Opus, อ่านอย่างเดียว) — ผู้ใช้เจอบั๊กในแอปจริง → ตัวนี้หาสาเหตุที่แท้จริงก่อน → worker เจ้าของไฟล์แก้ + เพิ่ม regression test → main ตรวจซ้ำ; ลด context ของ main session ที่เคยไล่อ่านโค้ดเอง
+- 2026-10-10: **แบ่งขนาดงานก่อนทำ** (วัดแล้วเวลาต่อคำสั่งใน session dev ขึ้นจาก 1–4 นาที เป็น 7–59 นาที เพราะงานเล็กถูกส่งผ่าน agent ~3 ตัว): เล็ก (1–2 ไฟล์ สาเหตุชัด) → main session แก้เอง ไม่ใช้ agent; กลาง → agent ตัวเดียว, reviewer เฉพาะส่วนเสี่ยง; ใหญ่ → ครบทุกขั้น · `notion-sync-agent` รันเบื้องหลังเสมอ
