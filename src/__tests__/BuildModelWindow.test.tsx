@@ -694,11 +694,23 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
                     ],
                 },
             });
+            // The list badge of the Relation model says the kind as its tab does — never
+            // "Relationship" (naming rule; review of a4acd7a, item 7).
+            expect(screen.getByTestId('sensor-kind-badge-r1').getAttribute('title')).toMatch(/^Relation model · /);
             fireEvent.click(screen.getByRole('tab', { name: /Relation model/ }));
             openSettings();
             fireEvent.change(screen.getByPlaceholderText('e.g. Bearing vibration model'), { target: { value: 'tag1' } });
-            expect(screen.getByTestId('duplicate-name-warning')).toBeTruthy();
+            expect(screen.getByTestId('duplicate-name-warning').textContent).toContain("Same name as this sensor's Individual model — give it a different name");
             expect((screen.getByText('Save changes') as HTMLButtonElement).disabled).toBe(true);
+
+            // ...and the other way round: the Individual model named like the Relation model
+            fireEvent.change(screen.getByPlaceholderText('e.g. Bearing vibration model'), { target: { value: 'Rel' } });
+            fireEvent.click(screen.getByRole('tab', { name: /Individual/ }));
+            openSettings();
+            fireEvent.change(screen.getByPlaceholderText('e.g. Bearing vibration model'), { target: { value: 'rel' } });
+            expect(screen.getByTestId('duplicate-name-warning').textContent).toContain("Same name as this sensor's Relation model — give it a different name");
+            // no user-facing text of the window says "Relationship"
+            expect(document.body.textContent).not.toMatch(/Relationship/);
         });
 
         it('the locked Target/X sensor readout can never be reassigned (no select, no input)', async () => {
@@ -1059,8 +1071,10 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: { groups: [makeGroup()], models: [trained] } });
             await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
-            // The Step-1 card's own row count (no filter -> one query) PLUS the model's silent re-run.
-            expect(mockInvoke.mock.calls.filter(c => c[0] === 'compute_sensor_stats')).toHaveLength(2);
+            // Only the model's silent re-run: the running-condition card counts with
+            // `count_period_rows` (one call), never with `compute_sensor_stats`.
+            expect(mockInvoke.mock.calls.filter(c => c[0] === 'compute_sensor_stats')).toHaveLength(1);
+            await waitFor(() => expect(periodCountCalls()).toHaveLength(1));
             await waitFor(() => expect(screen.getByTestId('results-chart')).toBeTruthy());
             expect(screen.queryByTestId('results-placeholder')).toBeNull();
             // The silent run writes nothing and never touches `status`.
@@ -1432,8 +1446,12 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             mockUpdateWorkspaceData.mockImplementation(async (id: string, patch: (s: any) => any) => patch({ id, failureGroupState: { groups: [makeGroup()], models: inconsistent } }));
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: { groups: [makeGroup()], models: inconsistent } });
-            expect(screen.getByTestId('category-normalisation-notice')).toBeTruthy();
+            const notice = screen.getByTestId('category-normalisation-notice');
             expect(mockUpdateWorkspaceData).toHaveBeenCalledTimes(1);
+            // the kinds are named as on the tabs: "Relation model", never "Relationship"
+            expect(notice.textContent).toContain('taken from its Individual model');
+            expect(notice.textContent).toMatch(/Changed: Relation model /);
+            expect(notice.textContent).not.toMatch(/Relationship/);
         });
 
         it('Dismiss persists categoryNormalisationNotice: null and removes the card', async () => {
@@ -1935,7 +1953,7 @@ describe('Custom running-condition editor (2026-09-30 port)', () => {
 
     // Workbench redesign §5: the model's own running condition is the SAME panel as the
     // workspace settings (timeline, one-line rows, caption), with its own period counts.
-    it("the model's own panel: timeline + rows + footnote, its own period counts asked only while it is on screen, and the highlights re-read when it is shown", async () => {
+    it("the model's own panel: timeline + rows + footnote, its scoring counts asked only while it is on screen, and the highlights re-read when it is shown", async () => {
         const ownCond = { id: 'c1', sensor: 'TAG2', operation: 'greater_than', value1: '7', value2: '' };
         const ownTrain = [{ id: 'o1', start: '2026-02-01T00:00', end: '2026-02-28T23:59' }];
         const ownScore = [{ id: 'o2', start: '2026-03-01T00:00', end: '2026-03-10T00:00' }];
@@ -1946,17 +1964,27 @@ describe('Custom running-condition editor (2026-09-30 port)', () => {
         render(<BuildModelWindow />);
         await deliverData({ failureGroupState: { groups: [makeGroup()], models: [own] } });
         await flush();
-        // Model settings is closed (nothing to fix): nothing is counted, for this model or the workspace.
+        // Model settings is closed (nothing to fix). Two counts, ONE each: the running-condition
+        // card (the workspace's train periods) and this model's own TRAIN periods — its running
+        // days feed the amber "below the recommended train time" note on the charts. No scoring
+        // count: only the open panel prints one.
         expect(screen.queryByTestId('custom-rc-editor')).toBeNull();
-        expect(periodCountCalls()).toHaveLength(0);
+        await waitFor(() => expect(periodCountCalls()).toHaveLength(2));
+        await act(async () => { await new Promise(r => setTimeout(r, 400)); });
+        expect(periodCountCalls()).toHaveLength(2);
+        const cardCall = periodCountCalls().find(c => c.filter === null)!;
+        const trainCall = periodCountCalls().find(c => c.filter !== null)!;
+        expect(cardCall.periods).toEqual(ALL_TIME_TRAIN.map(p => ({ start: p.start || null, end: p.end || null })));
         const loads = mockLoadWorkspaceData.mock.calls.length;
 
         openSettings();
-        await waitFor(() => expect(periodCountCalls()).toHaveLength(2));
-        const [trainCall, scoreCall] = periodCountCalls();
+        // opening the panel adds ONE call — the scoring periods; the train side is remembered
+        await waitFor(() => expect(periodCountCalls()).toHaveLength(3));
+        const scoreCall = periodCountCalls()[2];
         // the MODEL's own lists and condition — never the workspace's
         expect(trainCall.periods).toEqual([{ start: '2026-02-01T00:00', end: '2026-02-28T23:59' }]);
         expect(scoreCall.periods).toEqual([{ start: '2026-03-01T00:00', end: '2026-03-10T00:00' }]);
+        expect(scoreCall.filter).toEqual(trainCall.filter);
         expect(trainCall.filter).toEqual({ value_filters: [{ sensor: 'TAG2', operation: 'greater_than', value1: 7, value2: null }], combine: 'and' });
         expect(Object.keys(trainCall).sort()).toEqual(['expected_generation', 'filter', 'periods']);
         // ...and the Dashboard highlights are read again for its train-overlap line (one read)
@@ -1974,7 +2002,47 @@ describe('Custom running-condition editor (2026-09-30 port)', () => {
         // Collapsing the section stops the counting; nothing more is asked while it is closed.
         fireEvent.click(screen.getByText('Model settings', { selector: 'b' }));
         await act(async () => { await new Promise(r => setTimeout(r, 450)); });
-        expect(periodCountCalls()).toHaveLength(2);
+        expect(periodCountCalls()).toHaveLength(3);
+    });
+
+    // Review of a4acd7a, item 1 (must-fix): Model settings — and with them the Custom panel — are
+    // drawn on the Model fit page only. `customPanelOpen` had no page term, so on the Health score
+    // page the panel's counts (`count_period_rows`, a full-dataset scan) kept running and the
+    // highlights were re-read from the workspace file for a panel that is not on screen.
+    it('on the Health score page nothing is counted or re-read for the Custom panel, even with Model settings left open', async () => {
+        mockInvoke.mockImplementation(defaultInvoke);
+        const own = withTrained(makeModel({
+            runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true,
+            filterTimePeriods: [{ id: 'o1', start: '2026-02-01T00:00', end: '2026-02-28T23:59' }],
+            customTestPeriods: [{ id: 'o2', start: '2026-03-01T00:00', end: '2026-03-10T00:00' }],
+        }));
+        statefulUpdateMock([own]);
+        render(<BuildModelWindow />);
+        await deliverData({ failureGroupState: { groups: [makeGroup()], models: [own] } });
+        await waitFor(() => expect(screen.getByTestId('results-chart')).toBeTruthy());
+        openSettings();
+        expect(screen.getByTestId('custom-rc-editor')).toBeTruthy();
+        // card + the model's own train and scoring periods
+        await waitFor(() => expect(periodCountCalls()).toHaveLength(3));
+
+        await waitFor(() => expect((screen.getByTestId('page-health') as HTMLButtonElement).disabled).toBe(false));
+        fireEvent.click(screen.getByTestId('page-health'));
+        await waitFor(() => expect(screen.getByTestId('footer-back-to-fit')).toBeTruthy());
+        expect(screen.queryByTestId('custom-rc-editor')).toBeNull(); // the panel is not on this page
+        const counts = periodCountCalls().length;
+        const loads = mockLoadWorkspaceData.mock.calls.length;
+        // an edit of the set points re-renders the window several times — and a change of the
+        // highlights' trigger would re-read the file
+        await act(async () => { await new Promise(r => setTimeout(r, 450)); });
+        expect(periodCountCalls()).toHaveLength(counts);
+        expect(mockLoadWorkspaceData.mock.calls.length).toBe(loads);
+
+        // back on Model fit (settings still open): the panel is on screen again, so it counts
+        // again (the answers of a closed panel are dropped) and re-reads the highlights once
+        fireEvent.click(screen.getByTestId('footer-back-to-fit'));
+        await waitFor(() => expect(screen.getByTestId('custom-rc-editor')).toBeTruthy());
+        await waitFor(() => expect(periodCountCalls()).toHaveLength(counts + 2));
+        expect(mockLoadWorkspaceData.mock.calls.length).toBe(loads + 1);
     });
 });
 
@@ -2931,6 +2999,74 @@ describe('Running Condition Filter modal — draft + explicit Apply (2026-10-03)
         expect(screen.queryByTestId('rc-impact')).toBeNull();
     });
 
+    // Review of a4acd7a, item 4: `persist` had the re-point guard, `persistRunningCondition` did
+    // not — an Apply whose write resolved after the window was re-pointed put the OLD workspace's
+    // slice into the new workspace's state (and broadcast it from this window).
+    it('an Apply whose write lands after the window was re-pointed at another workspace never puts the old slice on screen, nor broadcasts it', async () => {
+        const fg = fgSeed();
+        render(<BuildModelWindow />);
+        await deliverData({ failureGroupState: fg });
+        // ws1's write is held until after the re-point
+        let release!: (v: unknown) => void;
+        mockUpdateWorkspaceData.mockImplementation(() => new Promise(res => { release = res; }));
+        fireEvent.click(screen.getByTestId('rc-card-open'));
+        fireEvent.change(screen.getByDisplayValue('5'), { target: { value: '9' } });
+        fireEvent.click(apply());
+        await flush();
+        expect(writes()).toBe(1);
+
+        // the main window moved on: this window is re-pointed at ws2, which has its OWN condition
+        const ws2Filter = { id: 'g1', sensor: 'TAG2', operation: 'less_than' as const, value1: '2', value2: '' };
+        await deliverData({
+            id: 'ws2',
+            failureGroupState: {
+                groups: [makeGroup()], models: [makeModel({ id: 'w2' })],
+                runningConditionNoneConfirmed: false, runningConditionFilters: [ws2Filter], runningConditionTimePeriods: [seededPeriod],
+            },
+        }, { workspaceId: 'ws2' });
+        await flush();
+        fireEvent.click(screen.getByTestId('rc-card-details'));
+        const chip = () => screen.getByTestId('rc-card-cond-chip').textContent;
+        expect(chip()).toContain('< 2');
+        mockEmit.mockClear();
+
+        // ...and only now ws1's write resolves, with ws1's slice
+        await act(async () => {
+            release({ id: 'ws1', failureGroupState: { ...fg, runningConditionFilters: [{ ...seededFilter, value1: '9' }] } });
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+        expect(chip()).toContain('< 2'); // still ws2's condition — not ws1's "> 9"
+        expect(screen.getAllByTestId('rc-card-cond-chip')).toHaveLength(1);
+        expect(fgChangedEmits()).toHaveLength(0);
+    });
+
+    // Review of a4acd7a, item 6: with "Only when running" and no complete condition the count
+    // is of EVERY row (an incomplete condition is not sent) — the caption used to read
+    // "N of N rows (100%) used for training" while the header pill said "Required".
+    it('"Only when running" without a complete condition: the caption says "set the condition to count the rows" — no "100%", no running days on the rows', async () => {
+        // the condition row has no value yet: the workspace is "not set", so the modal opens by itself
+        render(<BuildModelWindow />);
+        await deliverData({ failureGroupState: { ...fgSeed(), runningConditionFilters: [{ ...seededFilter, value1: '' }] } });
+        expect(screen.getByRole('dialog', { name: 'Running condition' })).toBeTruthy();
+        await waitFor(() => expect(periodCountCalls().length).toBeGreaterThan(0));
+        await flush();
+        expect(screen.getByTestId('rc-required-pill')).toBeTruthy();
+        expect(screen.getByTestId('rc-caption-rows').textContent).toBe('set the condition to count the rows');
+        expect(screen.getByTestId('rc-caption').getAttribute('data-rows')).toBe('no-condition');
+        expect(screen.getByTestId('rc-caption-train').textContent).toBe('31 d train'); // no "(about … running time)"
+        expect(screen.queryByTestId('period-running-1')).toBeNull();
+        expect(screen.getByTestId('rc-caption').textContent).not.toMatch(/100%/);
+        // completing the condition brings the numbers
+        fireEvent.change(within(screen.getByTestId('rc-cond-1')).getByLabelText('Value'), { target: { value: '5' } });
+        await waitFor(() => expect(screen.getByTestId('rc-caption-rows').textContent).toBe('800 of 5,000 rows (16%) used for training'), { timeout: 3000 });
+        expect(screen.getByTestId('period-running-1').textContent).toBe(' · 20 d running');
+        // "Use all rows" is a configured choice: every row in the periods IS what is trained on
+        fireEvent.click(screen.getByTestId('rc-mode-none'));
+        await waitFor(() => expect(screen.getByTestId('rc-caption-rows').textContent).toBe('1,000 of 5,000 rows (20%) used for training'), { timeout: 3000 });
+    });
+
     describe('change warnings: the impact line before Apply, the notice after it (workbench redesign §5)', () => {
         /** A real workspace: a trained model, a Complete model, a Complete model on its OWN (Custom)
          *  running condition and an untrained one — train records computed against this very state. */
@@ -3007,6 +3143,121 @@ describe('Running Condition Filter modal — draft + explicit Apply (2026-10-03)
             fireEvent.blur(end);
             expect(screen.queryByTestId('rc-impact')).toBeNull();
             expect(screen.getByTestId('rc-apply-block').textContent).toBe('Fix P1 before applying');
+        });
+
+        // Review of a4acd7a, item 2 (must-fix): a date typed or picked in a period row used to
+        // live in the editor until blur — so there was NO impact line, the timeline and the
+        // counts were stale, yet Apply was enabled and ONE click committed + persisted (a
+        // Complete model was demoted with the notice only afterwards).
+        it('a typed date, no blur: the impact line and the timeline follow at once — Apply is enabled only with its impact line on screen, then one click applies it', async () => {
+            await openModal(impactFg());
+            const end = dlg().getByLabelText('P1 end');
+            const trainBefore = dlg().getByTestId('rc-caption-train').textContent;
+            expect(apply().disabled).toBe(true);
+            fireEvent.change(end, { target: { value: '2024-01-20T23:59' } }); // no blur
+            expect(impact().textContent).toBe('Applying sets 2 models back to Incomplete — they need training again');
+            expect(dlg().getByTestId('rc-caption-train').textContent).not.toBe(trainBefore);
+            expect(screen.queryByTestId('rc-pending-date')).toBeNull();
+            expect(apply().disabled).toBe(false);
+            expect(writes()).toBe(0); // typing writes nothing
+
+            fireEvent.click(apply());
+            await flush();
+            expect(writes()).toBe(1);
+            const written = (await mockUpdateWorkspaceData.mock.results[0].value).failureGroupState;
+            expect(written.runningConditionTimePeriods).toEqual([{ ...seededPeriod, end: '2024-01-20T23:59' }]);
+            expect(written.models.find((m: any) => m.id === 'm2').status).toBe(false); // what the line said
+        });
+
+        it('a half-typed date (the field reports ""): the neutral "Finish the date in P1 to see what this changes", no impact line, Apply not enabled by it — and leaving the field writes no half value', async () => {
+            await openModal(impactFg());
+            const end = dlg().getByLabelText('P1 end') as HTMLInputElement;
+            const trainBefore = dlg().getByTestId('rc-caption-train').textContent;
+            fireEvent.change(end, { target: { value: '' } });
+            const pending = screen.getByTestId('rc-pending-date');
+            expect(pending.textContent).toBe('Finish the date in P1 to see what this changes');
+            expect(pending.className).toContain('rc-impact--grey');
+            expect(pending.getAttribute('role')).toBe('status');
+            expect(screen.queryByTestId('rc-impact')).toBeNull();
+            expect(screen.queryByTestId('rc-apply-block')).toBeNull(); // not "P1 needs an end date": nothing half is in the draft
+            expect(dlg().getByTestId('rc-caption-train').textContent).toBe(trainBefore);
+            expect(apply().disabled).toBe(true);
+
+            fireEvent.blur(end);
+            expect(screen.queryByTestId('rc-pending-date')).toBeNull();
+            expect((dlg().getByLabelText('P1 end') as HTMLInputElement).value).toBe(seededPeriod.end);
+            expect(apply().disabled).toBe(true);
+            // nothing was edited: X closes without a "Discard?" and without a write
+            fireEvent.click(dlg().getByLabelText('Close'));
+            expect(screen.queryByRole('dialog', { name: 'Running condition' })).toBeNull();
+            expect(writes()).toBe(0);
+        });
+
+        it('a scoring date half-typed names its row ("S1"); finishing it replaces the neutral line with the impact line', async () => {
+            await openModal(impactFg());
+            const end = dlg().getByLabelText('Scoring period 1 end');
+            fireEvent.change(end, { target: { value: '' } });
+            expect(screen.getByTestId('rc-pending-date').textContent).toBe('Finish the date in S1 to see what this changes');
+            fireEvent.change(end, { target: { value: '2024-01-25T00:00' } });
+            expect(screen.queryByTestId('rc-pending-date')).toBeNull();
+            expect(impact().textContent).toBe('1 complete model will need Mark complete again (re-score, no training)');
+        });
+
+        it('another edit is waiting for Apply while a date is half-typed: the impact line of the draft stays, the neutral line under it — and Apply writes the draft, never the half-typed date', async () => {
+            await openModal(impactFg());
+            fireEvent.change(screen.getByDisplayValue('5'), { target: { value: '9' } });
+            fireEvent.change(dlg().getByLabelText('P1 end'), { target: { value: '' } });
+            expect(impact().firstElementChild!.textContent).toBe('Applying sets 2 models back to Incomplete — they need training again');
+            expect(within(impact()).getByTestId('rc-pending-date').textContent).toBe('Finish the date in P1 to see what this changes');
+            expect(apply().disabled).toBe(false);
+            fireEvent.click(apply());
+            await flush();
+            expect(writes()).toBe(1);
+            const written = (await mockUpdateWorkspaceData.mock.results[0].value).failureGroupState;
+            expect(written.runningConditionFilters[0].value1).toBe('9');
+            expect(written.runningConditionTimePeriods).toEqual([seededPeriod]); // the end did NOT become "End of data"
+        });
+
+        // Review of a4acd7a, item 3 (must-fix): a real datetime-local reports '' as soon as ONE
+        // segment is cleared, and '' is a valid value on P1's start ("Start of data") — the same
+        // Apply click (its blur) used to persist the cleared field as an OPEN bound.
+        it('P1 start cleared in the focused field, then Apply: the bound is not opened (the date comes back); the × is the only way to open it', async () => {
+            await openModal(impactFg());
+            const start = dlg().getByLabelText('P1 start') as HTMLInputElement;
+            start.focus();
+            fireEvent.change(start, { target: { value: '' } });
+            fireEvent.change(screen.getByDisplayValue('5'), { target: { value: '9' } }); // something to apply
+            fireEvent.click(apply()); // Apply blurs the focused field first
+            await flush();
+            expect(writes()).toBe(1);
+            const written = (await mockUpdateWorkspaceData.mock.results[0].value).failureGroupState;
+            expect(written.runningConditionTimePeriods).toEqual([seededPeriod]);
+
+            // the explicit action: × on P1 start, with its own impact line before Apply
+            fireEvent.click(screen.getByTestId('rc-card-open'));
+            fireEvent.click(dlg().getByTestId('period-open-toggle-start'));
+            expect(dlg().getByTestId('period-open-start').textContent).toContain('Start of data');
+            expect(screen.getByTestId('rc-impact')).toBeTruthy();
+            fireEvent.click(apply());
+            await flush();
+            const again = (await mockUpdateWorkspaceData.mock.results[1].value).failureGroupState;
+            expect(again.runningConditionTimePeriods).toEqual([{ ...seededPeriod, start: '' }]);
+        });
+
+        it('typing in a row never moves it: a P2 start typed before P1 keeps its row (and the focus) until blur sorts the list', async () => {
+            const second = { id: 'p2', start: '2024-03-01T00:00', end: '2024-03-31T23:59' };
+            await openModal({ ...impactFg(), runningConditionTimePeriods: [seededPeriod, second] });
+            const field = dlg().getByLabelText('P2 start') as HTMLInputElement;
+            field.focus();
+            fireEvent.change(field, { target: { value: '2023-12-01T00:00' } });
+            expect(dlg().getByLabelText('P2 start')).toBe(field);
+            expect(document.activeElement).toBe(field);
+            expect(field.value).toBe('2023-12-01T00:00');
+            expect(screen.getByTestId('rc-impact')).toBeTruthy();
+            fireEvent.blur(field);
+            // sorted now: the edited period is P1
+            expect((dlg().getByLabelText('P1 start') as HTMLInputElement).value).toBe('2023-12-01T00:00');
+            expect((dlg().getByLabelText('P2 start') as HTMLInputElement).value).toBe(seededPeriod.start);
         });
 
         it('after Apply: the notice under the running-condition line counts the models still to train, and goes away once they are trained', async () => {
@@ -3210,8 +3461,10 @@ describe('Running Condition Filter modal — draft + explicit Apply (2026-10-03)
 
 // 🆕 2026-10-03 [Running condition Step 1]: the Step-1 card (the header step bar was removed 2026-10-09)
 // (replaces the one-line rcbar), the redesigned settings modal and its live
-// row-count preview (compute_sensor_stats, reflects the DRAFT). The draft /
-// Apply guarantees themselves are tested in the describe above.
+// per-period counts (`count_period_rows`, of the DRAFT). Since 2026-10-10 the
+// card's own "N rows · x%" comes from `count_period_rows` too (ONE call for the
+// persisted condition) — nothing here counts through `compute_sensor_stats`.
+// The draft / Apply guarantees themselves are tested in the describe above.
 describe('Running condition Step 1 — header, card, settings modal preview (2026-10-03)', () => {
     const periods = [
         { id: 'p1', start: '2026-01-01T00:00', end: '2026-03-31T23:59' },
@@ -3275,8 +3528,23 @@ describe('Running condition Step 1 — header, card, settings modal preview (202
             expect(within(screen.getByTestId('rc-card-test')).getByText('Scoring')).toBeTruthy();
             expect(screen.getAllByTestId('rc-card-test-chip').map(c => c.textContent)).toEqual(['S1 · 1 Jan 2024 → 31 Jan 2024']);
             expect(screen.getByTestId('rc-card-cond-chip').textContent).toBe('Pump PressureTAG1 > 5 bar'); // Inline label (description then tag) + condition; description + unit come from the sensor metadata
-            await waitFor(() => expect(screen.getByTestId('rc-card-rows').textContent).toBe('100')); // mocked compute_sensor_stats count
-            expect(screen.getByTestId('rc-card-pct').textContent).toBe('rows · 100%');
+            // Rust's `count_period_rows` of the persisted condition: 2 periods x 800 running rows of 5,000
+            await waitFor(() => expect(screen.getByTestId('rc-card-rows').textContent).toBe('1,600'));
+            expect(screen.getByTestId('rc-card-pct').textContent).toBe('rows · 32%');
+        });
+
+        // Review of a4acd7a, item 5: the card counted "rows where the FIRST sensor has a value"
+        // (`compute_sensor_stats`) while the modal counts with `count_period_rows` — with gaps in
+        // that sensor the two disagreed about the SAME applied condition.
+        it('the card and the settings modal print the same two numbers for the applied condition (one source: count_period_rows)', async () => {
+            // the first sensor has a value in only 100 rows: the old card would have read "100 rows · 100%"
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: setFg() });
+            await waitFor(() => expect(screen.getByTestId('rc-card-rows').textContent).toBe('1,600'));
+            expect(statsCalls()).toEqual([]); // nothing is counted through compute_sensor_stats any more
+            fireEvent.click(screen.getByTestId('rc-card-open'));
+            await waitFor(() => expect(screen.getByTestId('rc-caption-rows').textContent).toBe('1,600 of 5,000 rows (32%) used for training'));
+            expect(screen.getByTestId('rc-card-pct').textContent).toBe('rows · 32%');
         });
 
         it('🆕 2026-10-03: Set card carries the small period strip (persisted periods, restored after 011675b dropped it); the modal draft moves its own strip only, Apply moves the card strip', async () => {
@@ -3305,10 +3573,12 @@ describe('Running condition Step 1 — header, card, settings modal preview (202
             const modalDays = () => dlg.getByTestId('rc-caption-train').textContent;
             const modalBefore = modalDays();
             fireEvent.change(dlg.getByLabelText('P1 end'), { target: { value: '2026-02-10T23:59' } });
-            expect(modalDays()).toBe(modalBefore); // typing alone moves nothing...
-            fireEvent.blur(dlg.getByLabelText('P1 end')); // ...the committed date moves the modal's timeline
-            await flush();
+            // a complete typed date moves the modal's timeline at once (no blur needed)...
             expect(modalDays()).not.toBe(modalBefore);
+            const modalTyped = modalDays();
+            fireEvent.blur(dlg.getByLabelText('P1 end'));
+            await flush();
+            expect(modalDays()).toBe(modalTyped); // ...and the blur changes nothing more
             expect(cardDays()).toBe(persisted); // the card strip is still the persisted periods (not applied)
 
             fireEvent.click(screen.getByTestId('rc-apply'));
@@ -3323,13 +3593,17 @@ describe('Running condition Step 1 — header, card, settings modal preview (202
             expect(within(screen.getByTestId('rc-card')).queryByTestId('period-coverage')).toBeNull();
         });
 
-        it('Set with "Use all rows": "All rows — no condition" and a single unfiltered count query', async () => {
+        it('Set with "Use all rows": "All rows — no condition" and ONE count call without a condition', async () => {
             render(<BuildModelWindow />);
             // one train period open at both ends = the whole time range, chosen explicitly
             await deliverData({ failureGroupState: setFg({ runningConditionNoneConfirmed: true, runningConditionTimePeriods: ALL_TIME_TRAIN }) });
             expect(within(screen.getByTestId('rc-card-cond')).getByText('All rows — no condition')).toBeTruthy();
-            await waitFor(() => expect(screen.getByTestId('rc-card-rows')).toBeTruthy());
-            expect(statsCalls()).toEqual([{ sensor: 'TAG1', filter: null }]);
+            await waitFor(() => expect(screen.getByTestId('rc-card-rows').textContent).toBe('1,000'));
+            expect(periodCountCalls()).toEqual([{
+                periods: ALL_TIME_TRAIN.map(p => ({ start: p.start || null, end: p.end || null })),
+                filter: null, expected_generation: null,
+            }]);
+            expect(statsCalls()).toEqual([]);
         });
 
         it('Train/Test validation: NO train period = "0 rows — add a train period" on the card and no count query at all (never a whole-dataset count)', async () => {
@@ -3341,27 +3615,30 @@ describe('Running condition Step 1 — header, card, settings modal preview (202
             fireEvent.click(screen.getByTestId('rc-card-details'));
             expect(screen.getByTestId('rc-card-period-chip').textContent).toBe('No train period — add one');
             expect(screen.getByTestId('rc-card-no-train').textContent).toBe('rows — add a train period');
+            await act(async () => { await new Promise(r => setTimeout(r, 50)); });
+            expect(periodCountCalls()).toEqual([]);
             expect(statsCalls()).toEqual([]);
         });
 
-        it('Set: the count queries use the SAME filter payload as training (periods + value conditions + combine), plus the unfiltered total', async () => {
+        it('Set: the card asks ONE count per settled persisted condition — its train periods + the condition (value filters + combine), pinned to the dataset generation; no scoring call', async () => {
             render(<BuildModelWindow />);
-            await deliverData({ failureGroupState: setFg({ runningConditionCombine: 'or' }) });
-            await waitFor(() => expect(statsCalls()).toHaveLength(2));
-            expect(statsCalls()).toContainEqual({ sensor: 'TAG1', filter: null });
-            expect(statsCalls()).toContainEqual({
-                sensor: 'TAG1',
-                filter: {
-                    timestamp_ranges: [{ start: '2026-01-01T00:00', end: '2026-03-31T23:59' }, { start: '2026-04-15T00:00', end: null }],
-                    value_filters: [{ sensor: 'TAG1', operation: 'greater_than', value1: 5, value2: null }],
-                    combine: 'or',
-                },
+            await deliverData({ failureGroupState: setFg({ runningConditionCombine: 'or' }) }, { metadata: { headers: ['timestamp', 'TAG1', 'TAG2', 'TAG3'], total_rows: 100, generation: 7 } });
+            await waitFor(() => expect(periodCountCalls()).toHaveLength(1));
+            expect(periodCountCalls()[0]).toEqual({
+                periods: [{ start: '2026-01-01T00:00', end: '2026-03-31T23:59' }, { start: '2026-04-15T00:00', end: null }],
+                filter: { value_filters: [{ sensor: 'TAG1', operation: 'greater_than', value1: 5, value2: null }], combine: 'or' },
+                expected_generation: 7,
             });
+            // settled: unrelated re-renders ask nothing more
+            fireEvent.click(screen.getByTestId('rc-card-details'));
+            await act(async () => { await new Promise(r => setTimeout(r, 400)); });
+            expect(periodCountCalls()).toHaveLength(1);
+            expect(statsCalls()).toEqual([]);
         });
 
         it('Set: a failing count shows "— rows" and never blocks anything', async () => {
             const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-            mockInvoke.mockImplementation((cmd: string) => cmd === 'compute_sensor_stats' ? Promise.reject(new Error('No data loaded')) : Promise.resolve({}));
+            mockInvoke.mockImplementation((cmd: string, args?: any) => cmd === 'count_period_rows' ? Promise.reject(new Error('NO_DATA: No data loaded')) : defaultInvoke(cmd, args));
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: setFg() });
             await waitFor(() => expect(screen.getByTestId('rc-card-rows-error').textContent).toBe('— rows'));
@@ -3386,7 +3663,10 @@ describe('Running condition Step 1 — header, card, settings modal preview (202
             expect(screen.getByTestId('rc-card').className).toContain('rcc-card--req');
             expect(screen.getByTestId('rc-card').textContent).toContain('Set the running condition');
             expect(screen.getByTestId('rc-card-open').textContent).toBe('Set running condition →');
-            await act(async () => { await Promise.resolve(); });
+            // the card asks nothing while unset: the ONE count is the auto-opened modal's own
+            // (its scoring period — this workspace has no train period yet)
+            await act(async () => { await new Promise(r => setTimeout(r, 50)); });
+            expect(periodCountCalls().map(c => c.periods)).toEqual([ONE_TEST.map(t => ({ start: t.start, end: t.end }))]);
             expect(statsCalls()).toHaveLength(0);
             fireEvent.click(screen.getByLabelText('Close')); // the unset workspace auto-opened the modal
             expect(screen.queryByRole('dialog', { name: 'Running condition' })).toBeNull();
@@ -3401,7 +3681,8 @@ describe('Running condition Step 1 — header, card, settings modal preview (202
             expect(screen.getByTestId('rc-card-title').textContent).toBe('P2 needs fixing');
             expect(screen.getByTestId('rc-card-reason').textContent).toContain('P2 ends before it starts.');
             expect(screen.getByTestId('rc-card-open').textContent).toBe('Fix period');
-            await act(async () => { await Promise.resolve(); });
+            await act(async () => { await new Promise(r => setTimeout(r, 50)); });
+            expect(periodCountCalls()).toHaveLength(0);
             expect(statsCalls()).toHaveLength(0);
             fireEvent.click(screen.getByTestId('rc-card-open'));
             expect(screen.getByRole('dialog', { name: 'Running condition' })).toBeTruthy();
@@ -3466,6 +3747,9 @@ describe('Running condition Step 1 — header, card, settings modal preview (202
         }
 
         const caption = () => screen.getByTestId('rc-caption-rows').textContent;
+        /** The running-condition card's own count of the PERSISTED condition: one call, made
+         *  when the window loads (before the modal opens). Everything after it is the modal's. */
+        const CARD = 1;
         /** `count_period_rows` held / answered per condition value. */
         const countsWith = (running: (value1: number | undefined) => number | Promise<unknown> | Error) =>
             mockInvoke.mockImplementation((cmd: string, args: any) => {
@@ -3495,16 +3779,16 @@ describe('Running condition Step 1 — header, card, settings modal preview (202
             expect(screen.queryByText('Running Condition Filter')).toBeNull();
         });
 
-        it('nothing is counted while the modal is closed; opening it asks TWICE (train periods, scoring periods) with snake_case keys and only the condition as the filter', async () => {
+        it('while the modal is closed only the card\'s one count is asked; opening it asks TWICE (train periods, scoring periods) with snake_case keys and only the condition as the filter', async () => {
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: setFg() });
             await flush();
             await act(async () => { await new Promise(r => setTimeout(r, 400)); });
-            expect(periodCountCalls()).toHaveLength(0);
+            expect(periodCountCalls()).toHaveLength(CARD);
 
             fireEvent.click(screen.getByTestId('rc-card-open'));
-            await waitFor(() => expect(periodCountCalls()).toHaveLength(2));
-            const [train, scoring] = periodCountCalls();
+            await waitFor(() => expect(periodCountCalls()).toHaveLength(CARD + 2));
+            const [train, scoring] = periodCountCalls().slice(CARD);
             expect(Object.keys(train).sort()).toEqual(['expected_generation', 'filter', 'periods']);
             expect(train.periods).toEqual([{ start: '2026-01-01T00:00', end: '2026-03-31T23:59' }, { start: '2026-04-15T00:00', end: null }]);
             expect(scoring.periods).toEqual(ONE_TEST.map(t => ({ start: t.start, end: t.end })));
@@ -3517,37 +3801,51 @@ describe('Running condition Step 1 — header, card, settings modal preview (202
             expect(screen.getByTestId('test-days-1').textContent).toMatch(/ d · 20 d running$/);
             // settled: nothing more is asked
             await act(async () => { await new Promise(r => setTimeout(r, 450)); });
-            expect(periodCountCalls()).toHaveLength(2);
+            expect(periodCountCalls()).toHaveLength(CARD + 2);
         });
 
         it('typing several characters sends the counts ONCE for the final value (debounced, at most two calls), not per keystroke — the card behind keeps the persisted numbers', async () => {
             await open();
-            await waitFor(() => expect(periodCountCalls()).toHaveLength(2));
+            await waitFor(() => expect(periodCountCalls()).toHaveLength(CARD + 2));
             fireEvent.click(screen.getByTestId('rc-card-details'));
             const cardBefore = screen.getByTestId('rc-card').textContent;
             const input = screen.getByDisplayValue('5');
             for (const v of ['1', '12', '123']) fireEvent.change(input, { target: { value: v } });
-            expect(periodCountCalls()).toHaveLength(2); // nothing yet
-            await waitFor(() => expect(periodCountCalls()).toHaveLength(4), { timeout: 3000 });
+            expect(periodCountCalls()).toHaveLength(CARD + 2); // nothing yet
+            await waitFor(() => expect(periodCountCalls()).toHaveLength(CARD + 4), { timeout: 3000 });
             await act(async () => { await new Promise(r => setTimeout(r, 450)); });
-            expect(periodCountCalls()).toHaveLength(4); // one settled draft = two calls, no more
-            for (const c of periodCountCalls().slice(2)) expect((c.filter as any).value_filters[0].value1).toBe(123);
+            expect(periodCountCalls()).toHaveLength(CARD + 4); // one settled draft = two calls, no more (and the card asks nothing: nothing was applied)
+            for (const c of periodCountCalls().slice(CARD + 2)) expect((c.filter as any).value_filters[0].value1).toBe(123);
             expect(screen.getByTestId('rc-card').textContent).toBe(cardBefore);
             expect(screen.getByTestId('rc-card-cond-chip').textContent).toContain('> 5');
         });
 
         it('moving a scoring date re-counts the scoring periods only (the train side is remembered)', async () => {
             await open();
-            await waitFor(() => expect(periodCountCalls()).toHaveLength(2));
+            await waitFor(() => expect(periodCountCalls()).toHaveLength(CARD + 2));
             const end = screen.getByLabelText('Scoring period 1 end') as HTMLInputElement;
             const [d, t] = ONE_TEST[0].end.split('T');
             const day = String(Math.max(1, Number(d.slice(8, 10)) - 1)).padStart(2, '0');
             fireEvent.change(end, { target: { value: `${d.slice(0, 8)}${day}T${t}` } });
             fireEvent.blur(end);
-            await waitFor(() => expect(periodCountCalls()).toHaveLength(3), { timeout: 3000 });
+            await waitFor(() => expect(periodCountCalls()).toHaveLength(CARD + 3), { timeout: 3000 });
             await act(async () => { await new Promise(r => setTimeout(r, 450)); });
-            expect(periodCountCalls()).toHaveLength(3);
-            expect(periodCountCalls()[2].periods).toHaveLength(1);
+            expect(periodCountCalls()).toHaveLength(CARD + 3);
+            expect(periodCountCalls()[CARD + 2].periods).toHaveLength(1);
+        });
+
+        // Review of a4acd7a, item 2: a typed date reaches the draft on change — but the count
+        // stays debounced: several keystrokes that each give a complete date are ONE count.
+        it('typing a date key by key (each key a complete date) counts ONCE for the final date, not per keystroke', async () => {
+            await open();
+            await waitFor(() => expect(periodCountCalls()).toHaveLength(CARD + 2));
+            const end = screen.getByLabelText('P1 end');
+            for (const v of ['2026-03-01T23:59', '2026-03-02T23:59', '2026-03-20T23:59']) fireEvent.change(end, { target: { value: v } });
+            expect(periodCountCalls()).toHaveLength(CARD + 2); // nothing yet
+            await waitFor(() => expect(periodCountCalls()).toHaveLength(CARD + 3), { timeout: 3000 });
+            await act(async () => { await new Promise(r => setTimeout(r, 450)); });
+            expect(periodCountCalls()).toHaveLength(CARD + 3); // the train periods only, once
+            expect(periodCountCalls()[CARD + 2].periods[0]).toEqual({ start: '2026-01-01T00:00', end: '2026-03-20T23:59' });
         });
 
         it('while a new count is on its way the previous numbers stay (dimmed); a slow answer for an older draft never overwrites the newer one', async () => {
@@ -3569,7 +3867,7 @@ describe('Running condition Step 1 — header, card, settings modal preview (202
         it('a failing count shows one quiet line instead of numbers and does not stop editing or Apply', async () => {
             const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
             await open();
-            await waitFor(() => expect(periodCountCalls()).toHaveLength(2));
+            await waitFor(() => expect(periodCountCalls()).toHaveLength(CARD + 2));
             countsWith(() => new Error('boom'));
             fireEvent.change(screen.getByDisplayValue('5'), { target: { value: '9' } });
             await waitFor(() => expect(caption()).toBe("Couldn't count the rows right now"), { timeout: 3000 });
@@ -3595,14 +3893,16 @@ describe('Running condition Step 1 — header, card, settings modal preview (202
 
         it('an invalid draft period is never sent (only the valid ones are counted); the caption says to fix it and Apply is blocked', async () => {
             await open();
-            await waitFor(() => expect(periodCountCalls()).toHaveLength(2));
+            await waitFor(() => expect(periodCountCalls()).toHaveLength(CARD + 2));
             const end = screen.getByLabelText('P1 end') as HTMLInputElement;
             fireEvent.change(end, { target: { value: '2025-01-01T00:00' } });
+            // the typed date is in the draft at once: no blur is needed for the block to show
+            expect(caption()).toBe('fix the period to count the rows');
+            expect((screen.getByTestId('rc-apply') as HTMLButtonElement).disabled).toBe(true);
             fireEvent.blur(end);
-            await waitFor(() => expect(caption()).toBe('fix the period to count the rows'));
-            await waitFor(() => expect(periodCountCalls()).toHaveLength(3), { timeout: 3000 });
+            await waitFor(() => expect(periodCountCalls()).toHaveLength(CARD + 3), { timeout: 3000 });
             // P1 is invalid: only P2 went out
-            expect(periodCountCalls()[2].periods).toEqual([{ start: '2026-04-15T00:00', end: null }]);
+            expect(periodCountCalls()[CARD + 2].periods).toEqual([{ start: '2026-04-15T00:00', end: null }]);
             expect(screen.getByTestId('period-invalid-1').textContent).toMatch(/^P1 ends before it starts — pick an end after /);
             expect(screen.getByTestId('rc-apply-block').textContent).toBe('Fix P1 before applying');
             expect(screen.getByTestId('rc-fix-period-pill')).toBeTruthy();
@@ -3611,12 +3911,12 @@ describe('Running condition Step 1 — header, card, settings modal preview (202
 
         it('closing the modal stops the counting; opening it again counts afresh', async () => {
             await open();
-            await waitFor(() => expect(periodCountCalls()).toHaveLength(2));
+            await waitFor(() => expect(periodCountCalls()).toHaveLength(CARD + 2));
             fireEvent.click(screen.getByTestId('rc-cancel'));
             await act(async () => { await new Promise(r => setTimeout(r, 450)); });
-            expect(periodCountCalls()).toHaveLength(2);
+            expect(periodCountCalls()).toHaveLength(CARD + 2);
             fireEvent.click(screen.getByTestId('rc-card-open'));
-            await waitFor(() => expect(periodCountCalls()).toHaveLength(4));
+            await waitFor(() => expect(periodCountCalls()).toHaveLength(CARD + 4));
         });
 
         it('Apply -> the Step-1 card (persisted) now shows the new condition and asks its own count for it', async () => {
@@ -3626,7 +3926,13 @@ describe('Running condition Step 1 — header, card, settings modal preview (202
             await flush();
             fireEvent.click(screen.getByTestId('rc-card-details'));
             expect(screen.getByTestId('rc-card-cond-chip').textContent).toContain('> 9');
-            await waitFor(() => expect(statsCalls().some(c => c.filter?.value_filters?.[0]?.value1 === 9)).toBe(true), { timeout: 3000 });
+            // ONE new count for the newly persisted condition (the modal never counted "> 9": Apply
+            // came before its debounce), and the optimistic mirror + the write's confirmation are
+            // one settled state — not two calls
+            await waitFor(() => expect(periodCountCalls().filter(c => (c.filter as any)?.value_filters?.[0]?.value1 === 9)).toHaveLength(1), { timeout: 3000 });
+            await act(async () => { await new Promise(r => setTimeout(r, 450)); });
+            expect(periodCountCalls().filter(c => (c.filter as any)?.value_filters?.[0]?.value1 === 9)).toHaveLength(1);
+            expect(statsCalls()).toEqual([]);
         });
 
         it('add / remove a condition and the AND/OR pill: all draft-only (nothing written) until Apply', async () => {
@@ -5973,7 +6279,11 @@ describe('Train periods and scoring periods — review fixes (2026-10-07)', () =
             expect(customTests().getByTestId('test-invalid-1').textContent).toMatch(/^S1 ends before it starts — pick an end after /);
             const save = screen.getByText('Save changes') as HTMLButtonElement;
             expect(save.disabled).toBe(true);
-            expect(screen.getByTestId('build-block-reason').textContent).toContain('S1 ends before it starts.');
+            // the footer says it like the workspace settings do ("Fix S1 before applying"), with
+            // "saving" — this model's own lists are saved with Save changes; the reason is on the
+            // row (above) and on the disabled button
+            expect(screen.getByTestId('build-block-reason').textContent).toBe('Fix S1 before saving');
+            expect(save.title).toBe('S1 ends before it starts.');
             mockUpdateWorkspaceData.mockClear();
             fireEvent.click(save);
             await flush();
@@ -6166,21 +6476,27 @@ describe('Train periods and scoring periods — review fixes (2026-10-07)', () =
     });
 
     describe('recommended train days: an estimate for a Custom model too (nit 7)', () => {
-        it('a Custom model with no scoring period gets the amber "Only N d" note from its own row count', async () => {
+        it('a Custom model with no scoring period gets the amber "Only N d" note from its own period count (the running days Rust counted — not an estimate from a sensor\'s row count)', async () => {
+            const own = customInd({ customTestPeriods: [] });
+            const ownPeriods = CUSTOM_TRAIN.map(p => ({ start: p.start || null, end: p.end || null }));
             mockInvoke.mockImplementation((cmd: string, args?: any) => {
                 if (cmd === 'get_dataset_time_bounds') return Promise.resolve({ min: '2024-01-01 00:00:00', max: '2024-04-10 00:00:00' }); // 100 days
-                if (cmd === 'compute_sensor_stats') {
-                    // 10 % of the rows pass the model's own filter; 100 % with no filter
-                    return Promise.resolve({ mean: 5, sd: 1, min: 0, max: 10, count: args?.filter ? 10 : 100, lower1: 4, upper1: 6, lower3: 2, upper3: 8 });
+                if (cmd === 'count_period_rows') {
+                    // the model's OWN train periods run 10 d; the workspace's (the card) 60 d
+                    const mine = JSON.stringify(args?.periods) === JSON.stringify(ownPeriods);
+                    const base = fakePeriodCounts(args);
+                    return Promise.resolve({ ...base, union: { ...base.union, running_days: mine ? 10 : 60 } });
                 }
                 return healthInvoke(cmd, args);
             });
-            const model = customInd({ customTestPeriods: [] });
-            statefulUpdateMock([model]);
+            statefulUpdateMock([own]);
             render(<BuildModelWindow />);
-            await deliverData({ failureGroupState: { groups: [makeGroup()], models: [model] } });
+            await deliverData({ failureGroupState: { groups: [makeGroup()], models: [own] } });
             await waitFor(() => expect(screen.getByTestId('train-days-warning').textContent).toContain('Only 10 d of train running time'));
             expect(screen.getByTestId('train-days-warning').textContent).toContain('You can still train.');
+            // ONE call for it (the train periods; Model settings is closed, so no scoring count),
+            // and nothing through compute_sensor_stats but the model's own re-run
+            expect(periodCountCalls().filter(c => JSON.stringify(c.periods) === JSON.stringify(ownPeriods))).toHaveLength(1);
         });
     });
 

@@ -10,7 +10,7 @@ vi.mock('@tauri-apps/api/core', () => ({
 import {
     countPeriodRows, countCondition, trainCountPlan, scoringCountPlan,
     periodCalendarDays, unionCalendarDays, percentText, runningDaysText, countFor,
-    trainRowModels, scoringRowModels, runningConditionCaption, CAPTION_RECOMMENDED_TEXT, PERIOD_COUNTS_IDLE,
+    trainRowModels, scoringRowModels, runningConditionCaption, countedTrainRunningDays, CAPTION_RECOMMENDED_TEXT, PERIOD_COUNTS_IDLE,
     type PeriodCountsState,
 } from '../utils/periodCounts';
 import { MAX_COUNT_PERIODS } from '../types/periodCounts';
@@ -213,6 +213,23 @@ describe('period rows: "P1 · 81 d · 69 d running"', () => {
     });
 });
 
+// The running-condition card and the amber "below the recommended train time" note read the
+// SAME figure the caption prints (review of a4acd7a, item 5).
+describe('countedTrainRunningDays', () => {
+    it('the train union running days of a settled count', () => {
+        expect(countedTrainRunningDays(state())).toBe(99.9);
+    });
+    it('null while the numbers are not the request own (loading keeps the PREVIOUS answer), failed, idle, or without a train answer', () => {
+        expect(countedTrainRunningDays(state({ status: 'loading' }))).toBeNull();
+        expect(countedTrainRunningDays(state({ status: 'error', train: null, scoring: null }))).toBeNull();
+        expect(countedTrainRunningDays(PERIOD_COUNTS_IDLE)).toBeNull();
+        expect(countedTrainRunningDays(state({ train: null }))).toBeNull();
+    });
+    it('null when the dataset has no sample interval (Rust days are 0 then, not a fact)', () => {
+        expect(countedTrainRunningDays(state({ train: { ...TRAIN_COUNTS, interval_secs: null } }))).toBeNull();
+    });
+});
+
 describe('runningConditionCaption (the one line under the timeline)', () => {
     const caption = (over: Partial<Parameters<typeof runningConditionCaption>[0]> = {}) =>
         runningConditionCaption({ trainPeriods: [P1, P2], scoringPeriods: [S1], bounds: BOUNDS, counts: state(), ...over });
@@ -255,6 +272,33 @@ describe('runningConditionCaption (the one line under the timeline)', () => {
         expect(c.rowsText).toBe('fix the period to count the rows');
         expect(c.trainText).toBe('81 d train');
         expect(c.trainRunningDays).toBeNull();
+    });
+    // Review of a4acd7a, item 6: "Only when running" without a complete condition. No condition
+    // is sent then, so Rust counts EVERY row of the periods — "N of N rows (100%) used for
+    // training" next to a header pill that says "Required".
+    it('the running condition is not configured yet: "set the condition to count the rows" — no rows, no percent and no running time, whatever the counts say', () => {
+        const allRows: PeriodCounts = { ...TRAIN_COUNTS, union: { rows_in_period: 16_848, running_rows: 16_848, running_days: 117 } };
+        const c = caption({ configured: false, counts: state({ train: allRows }) });
+        expect(c.rows).toEqual({ kind: 'no-condition' });
+        expect(c.rowsText).toBe('set the condition to count the rows');
+        expect(c.trainText).toBe('117 d train');
+        expect(c.trainRunningDays).toBeNull();
+        expect(c.belowRecommended).toBe(false);
+        expect(c.warning).toBeNull();
+        expect(c.text).toBe('117 d train · 59 d scoring · set the condition to count the rows · ≥ 30 d recommended');
+        expect(c.text).not.toMatch(/100%|of 25,880/);
+        // the same while the count is on its way, failed, or not asked
+        for (const counts of [state({ status: 'loading' }), state({ status: 'error', train: null, scoring: null }), PERIOD_COUNTS_IDLE]) {
+            expect(caption({ configured: false, counts }).rowsText).toBe('set the condition to count the rows');
+        }
+    });
+    it('what is missing FIRST is said first: no train period, then an invalid one, then the condition', () => {
+        expect(caption({ configured: false, trainPeriods: [] }).rowsText).toBe('add a train period to count the rows');
+        expect(caption({ configured: false, trainPeriods: [P1, p('2026-05-11T00:00', '2026-05-01T00:00')] }).rowsText).toBe('fix the period to count the rows');
+    });
+    it('`configured` defaults to true (a caller that does not say is counted as before)', () => {
+        expect(caption().rows.kind).toBe('counted');
+        expect(caption({ configured: true }).rowsText).toBe('14,391 of 25,880 rows (56%) used for training');
     });
     it('counting for the first time / failed / not counting', () => {
         expect(caption({ counts: state({ status: 'loading', train: null, scoring: null }) })).toMatchObject({ rows: { kind: 'loading' }, rowsText: 'Counting rows…', trainText: '117 d train' });

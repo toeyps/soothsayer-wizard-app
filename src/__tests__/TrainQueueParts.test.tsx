@@ -328,6 +328,50 @@ describe('RunStrip', () => {
     });
 });
 
+// CLAUDE.md naming rule (review of a4acd7a, item 7): the tabs and the Train menu said
+// "Relation model" while the run strip, the Train-all rows and the close dialog still
+// said "Relationship".
+describe('a Relation model is named "Relation model" everywhere in the run UI', () => {
+    const REL: TrainRowModel = { id: 'r9', kind: 'relationship', tag: 'TAG2', groupNos: [2], plan: { kind: 'ready' } };
+    const rows = new Map([...ROW_MAP, [REL.id, REL]]);
+    const run = makeRun([
+        { id: 'i1', kind: 'individual', state: 'trained', durationMs: 1000 },
+        { id: 'r9', kind: 'relationship', state: 'running' },
+    ], { currentId: 'r9' });
+
+    it('the run strip (current model + segment tooltip)', () => {
+        withMeta(<RunStrip run={run} summary={summarizeTrainRun(run)} timeLeftMs={null} rows={rows} onDetails={vi.fn()} onCancel={vi.fn()} onDismiss={vi.fn()} onCloseWindow={vi.fn()} onTrainNotStarted={vi.fn()} />);
+        const strip = screen.getByTestId('train-run-strip');
+        expect(strip.querySelector('.tq-who')!.textContent).toMatch(/ · Relation model$/);
+        const segs = screen.getByTestId('train-run-segments').querySelectorAll('i');
+        expect(segs[1].getAttribute('title')).toBe('2. Pump Temp · TAG2 · Relation model — training now');
+        expect(strip.innerHTML).not.toMatch(/Relationship/);
+    });
+
+    it('the Train-all pre-flight row sub-line and the run details', () => {
+        const props = {
+            rows: [...ROWS, REL], groups: GROUPS, includeUpToDate: false,
+            onIncludeUpToDate: vi.fn(), onClose: vi.fn(), onStart: vi.fn(), onCancelRun: vi.fn(), onFix: vi.fn(),
+            onOpenModel: vi.fn(), onRetry: vi.fn(), onTrainNotStarted: vi.fn(), onRemoveFromRun: vi.fn(),
+        };
+        const view = withMeta(<TrainAllModal view="preflight" run={null} summary={null} {...props} />);
+        const subs = [...screen.getByTestId('train-all-modal').querySelectorAll('.tq-sub')].map(e => e.textContent);
+        expect(subs).toContain('Relation model · ≈ 15 s');
+        expect(screen.getByTestId('train-all-modal').innerHTML).not.toMatch(/Relationship/);
+        view.unmount();
+        withMeta(<TrainAllModal view="run" run={run} summary={summarizeTrainRun(run)} {...props} />);
+        expect(screen.getByTestId('train-all-modal').textContent).toContain('Relation model');
+        expect(screen.getByTestId('train-all-modal').innerHTML).not.toMatch(/Relationship/);
+    });
+
+    it('the close-during-run dialog', () => {
+        withMeta(<CloseRunDialog run={run} summary={summarizeTrainRun(run)} current={REL} onKeep={vi.fn()} onStopAndClose={vi.fn()} onClose={vi.fn()} />);
+        const dlg = screen.getByRole('alertdialog');
+        expect(dlg.textContent).toContain(' · Relation model');
+        expect(dlg.innerHTML).not.toMatch(/Relationship/);
+    });
+});
+
 describe('TrainAllModal', () => {
     const base = () => ({
         rows: ROWS, groups: GROUPS, includeUpToDate: false,

@@ -356,8 +356,10 @@ describe('(3) lastTrainedAt / trainedFingerprint survive a save + reload', () =>
         expect(diskModel('i1').lastTrainedAt).toBe(before.lastTrainedAt);
         // Staleness after reload is computed exactly as before it.
         expect(diskFresh('i1')).toBe(true);
-        // 2 = the Step-1 card's row count (unfiltered workspace -> ONE query) + the silent auto-recompute.
-        expect(h.invokes.filter(c => c.cmd === 'compute_sensor_stats')).toHaveLength(2);
+        // Only the silent auto-recompute: the running-condition card counts its rows with ONE
+        // `count_period_rows` call (never with `compute_sensor_stats`).
+        expect(h.invokes.filter(c => c.cmd === 'compute_sensor_stats')).toHaveLength(1);
+        expect(h.invokes.filter(c => c.cmd === 'count_period_rows')).toHaveLength(1);
         await waitFor(() => expect(screen.getByTestId('results-chart')).toBeTruthy()); // the charts come from the debounced health preview
         expect(pill()).toBe('Trained');
         expect(markCompleteBtn().disabled).toBe(false);
@@ -379,8 +381,11 @@ describe('(3) lastTrainedAt / trainedFingerprint survive a save + reload', () =>
         expect(screen.getByTestId('results-stale')).toBeTruthy();
         expect(footerStatus()).toBe('Settings or running condition changed · train again with Train sensor ↑');
         expect(screen.queryByTestId('results-chart')).toBeNull();
-        // Only the Step-1 card's row count (filtered + unfiltered = 2 queries) — no model auto-recompute.
-        expect(h.invokes.filter(c => c.cmd === 'compute_sensor_stats')).toHaveLength(2);
+        // No model auto-recompute at all; the only count is the running-condition card's ONE
+        // `count_period_rows` call for the new persisted condition.
+        expect(h.invokes.filter(c => c.cmd === 'compute_sensor_stats')).toHaveLength(0);
+        await waitFor(() => expect(h.invokes.filter(c => c.cmd === 'count_period_rows')).toHaveLength(1));
+        expect(h.invokes.find(c => c.cmd === 'count_period_rows')!.args.filter.value_filters).toHaveLength(1);
     });
 
     it('a Complete model keeps its training metadata through reload and its footer says "Trained <date>" (one Workbench date format)', async () => {

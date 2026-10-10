@@ -210,12 +210,13 @@ const blockedTitle = (reason: string) => screen.getByTestId('rc-card').getAttrib
 /*
  * Which `compute_sensor_stats` call is Train's? (flake fixed 2026-10-10)
  *
- * The window ALSO calls `compute_sensor_stats` for its "rows used" counts
- * (`useRowCountPreview`), always on the FIRST dataset sensor (`HEADERS[0]` =
- * TAG1): once per filter plus once with `filter: null` for the total. For an
- * active Custom-mode model that count is debounced 300 ms, so on a loaded
- * machine it lands AFTER Train's own call - "the newest stats call" is then the
- * count's `filter: null`, not what Train sent. So a test never reads "the
+ * Until 2026-10-10 the window ALSO called `compute_sensor_stats` for its "rows
+ * used" counts, always on the FIRST dataset sensor (`HEADERS[0]` = TAG1), and
+ * for an active Custom-mode model that count was debounced 300 ms - on a loaded
+ * machine it landed AFTER Train's own call, so "the newest stats call" was the
+ * count's, not what Train sent. Those counts now go through
+ * `count_period_rows`, but other callers remain (the cluster-range slider's
+ * criteria stats, a silent re-run), so the rule stays: a test never reads "the
  * newest call" and never sleeps a fixed time:
  *   - it takes a mark (`h.invokes.length`) right before the Train click and
  *     waits for the FIRST matching call recorded after it (`trainCall`);

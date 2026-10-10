@@ -202,6 +202,19 @@ const rowsText = (n: number) => n.toLocaleString('en-US');
 
 const sameBound = (a: string | null | undefined, b: string | null | undefined) => ((a ?? '').trim() || null) === ((b ?? '').trim() || null);
 
+/**
+ * Running-time days of the rows used for TRAINING, as counted (the train call's
+ * union) — the figure the caption prints as "about N d running time" and the
+ * amber "below the recommended train time" note reads. `null` unless the counts
+ * are the request's own (`status: 'ok'`) and the dataset has a sample interval
+ * (fewer than two dated rows: Rust's days are 0 then, not a fact).
+ */
+export function countedTrainRunningDays(state: PeriodCountsState): number | null {
+    return state.status === 'ok' && state.train && state.train.interval_secs != null
+        ? state.train.union.running_days
+        : null;
+}
+
 /** The count of one period inside an answer, found by its own bounds (so a
  *  period keeps its numbers when another one is added, removed or re-ordered
  *  while the new answer is on its way). null when it was not counted. */
@@ -275,6 +288,9 @@ export type CaptionRows =
     | { kind: 'no-train' }
     /** A train period is invalid: no total until it is fixed. */
     | { kind: 'fix' }
+    /** "Only when running" is chosen but no condition is complete yet: counting
+     *  now would count EVERY row (no condition is sent). */
+    | { kind: 'no-condition' }
     | { kind: 'loading' }
     | { kind: 'error' }
     /** Nothing is being counted (the hook is disabled). */
@@ -297,8 +313,8 @@ export interface RunningConditionCaption {
     /** "59 d scoring" / "no scoring time". */
     scoringText: string;
     /** "14,391 of 25,880 rows (56%) used for training" / "add a train period to
-     *  count the rows" / "fix the period to count the rows" / "Counting rows…" /
-     *  "Couldn't count the rows right now". */
+     *  count the rows" / "fix the period to count the rows" / "set the condition
+     *  to count the rows" / "Counting rows…" / "Couldn't count the rows right now". */
     rowsText: string;
     /** "≥ 30 d recommended"; null with no train period. */
     recommendedText: string | null;
@@ -322,14 +338,23 @@ export const CAPTION_RECOMMENDED_TEXT = `≥ ${RECOMMENDED_TRAIN_DAYS} d recomme
  *
  * With no train period: "no train period · no scoring time · add a train
  * period to count the rows".
+ *
+ * `configured: false` = the running condition is still "Required" ("Only when
+ * running" with no complete condition). The count Rust gives then is of every
+ * row in the train periods (an incomplete condition is not sent), which would
+ * read "N of N rows (100%) used for training" — so the rows part says "set the
+ * condition to count the rows" instead and no running time is printed.
  */
 export function runningConditionCaption(input: {
     trainPeriods: readonly TimePeriod[];
     scoringPeriods: readonly TestPeriod[];
     bounds?: CountBounds | null;
     counts: PeriodCountsState;
+    /** Default `true`. */
+    configured?: boolean;
 }): RunningConditionCaption {
     const { trainPeriods, scoringPeriods, bounds, counts } = input;
+    const configured = input.configured !== false;
     const trainInvalid = validatePeriods([...trainPeriods]).map(s => s.invalid);
     const scoringInvalid = validateTestPeriods([...scoringPeriods]).map(s => s.invalid);
     const noTrain = trainPeriods.length === 0;
@@ -341,6 +366,7 @@ export function runningConditionCaption(input: {
     let rows: CaptionRows;
     if (noTrain) rows = { kind: 'no-train' };
     else if (anyTrainInvalid) rows = { kind: 'fix' };
+    else if (!configured) rows = { kind: 'no-condition' };
     else if (counts.status === 'error') rows = { kind: 'error' };
     else if (counts.train && (counts.status === 'ok' || counts.status === 'loading')) {
         const used = counts.train.union.running_rows;
@@ -359,6 +385,7 @@ export function runningConditionCaption(input: {
     const scoringText = scoringCalendarDays === null ? 'no scoring time' : `${scoringCalendarDays} d scoring`;
     const rowsLine = rows.kind === 'no-train' ? 'add a train period to count the rows'
         : rows.kind === 'fix' ? 'fix the period to count the rows'
+        : rows.kind === 'no-condition' ? 'set the condition to count the rows'
         : rows.kind === 'loading' ? 'Counting rows…'
         : rows.kind === 'error' ? "Couldn't count the rows right now"
         : rows.kind === 'counted' ? `${rowsText(rows.used)} of ${rowsText(rows.total)} rows (${rows.percent}) used for training`

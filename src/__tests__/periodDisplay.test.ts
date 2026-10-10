@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-    computeCoverage, computeTestCoverage, conditionChipParts, conditionSymbol, formatDate, formatPeriod, formatDataStamp, formatPeriodChip, formatStamp, overlapDays, periodDays,
+    computeCoverage, computeTestCoverage, conditionChipParts, conditionSymbol, formatDate, formatPeriod, formatDataStamp, formatPeriodChip, formatStamp, isCompleteDateInput, overlapDays, periodDays, settleDateInput,
 } from '../components/windows/periodDisplay';
 import type { TestPeriod, WorkspaceSensorFilter } from '../types';
 
@@ -9,6 +9,46 @@ const B = { min: '2025-01-01 00:00:00', max: '2026-03-31 23:50:00' };
 const p = (id: string, start: string, end: string) => ({ id, start, end });
 const f = (sensor: string, operation: WorkspaceSensorFilter['operation'], value1: string, value2 = ''): WorkspaceSensorFilter =>
     ({ id: `f-${sensor}`, sensor, operation, value1, value2 });
+
+// What the period editors commit while a date is being typed (review of a4acd7a, items 2 + 3).
+describe('isCompleteDateInput / settleDateInput (typing a date in a period row)', () => {
+    it('a complete datetime-local value is complete (seconds allowed)', () => {
+        expect(isCompleteDateInput('2026-02-09T23:50')).toBe(true);
+        expect(isCompleteDateInput('2026-02-09T23:50:30')).toBe(true);
+        expect(isCompleteDateInput(' 2026-02-09T23:50 ')).toBe(true);
+    });
+    it('"" (what the field reports while a segment is missing), null and text that is not a date-time are not', () => {
+        expect(isCompleteDateInput('')).toBe(false);
+        expect(isCompleteDateInput('   ')).toBe(false);
+        expect(isCompleteDateInput(null)).toBe(false);
+        expect(isCompleteDateInput(undefined)).toBe(false);
+        expect(isCompleteDateInput('2026-02-09')).toBe(false); // a date without its time
+        expect(isCompleteDateInput('nope')).toBe(false);
+        expect(isCompleteDateInput('2026-13-45T99:99')).toBe(false); // the right shape, not a date
+    });
+    it('a year still being typed (the field reports 0002, 0020, 0202 on the way to 2026) is not complete', () => {
+        for (const v of ['0002-02-09T23:50', '0020-02-09T23:50', '0202-02-09T23:50']) expect(isCompleteDateInput(v)).toBe(false);
+        expect(isCompleteDateInput('1000-01-01T00:00')).toBe(true);
+        expect(isCompleteDateInput('2026-02-09T23:50')).toBe(true);
+    });
+
+    it('settleDateInput: a bound that was SET is never emptied by typing — the committed date comes back', () => {
+        expect(settleDateInput('', '2026-01-01T00:00')).toBe('2026-01-01T00:00');
+        expect(settleDateInput('   ', '2026-01-01T00:00')).toBe('2026-01-01T00:00');
+        expect(settleDateInput('not a date', '2026-01-01T00:00')).toBe('2026-01-01T00:00');
+    });
+    it('settleDateInput: a readable typed date is kept (also one that was still pending on change), and nothing changes when nothing was typed', () => {
+        expect(settleDateInput('2026-03-01T00:00', '2026-01-01T00:00')).toBe('2026-03-01T00:00');
+        expect(settleDateInput('0202-03-01T00:00', '2026-01-01T00:00')).toBe('0202-03-01T00:00');
+        expect(settleDateInput('2026-01-01T00:00', '2026-01-01T00:00')).toBe('2026-01-01T00:00');
+        expect(settleDateInput('nope', 'nope')).toBe('nope'); // an unreadable date already on disk is not "fixed" by a blur
+    });
+    it('settleDateInput: a bound that was already blank stays as typed (there is no date to put back)', () => {
+        expect(settleDateInput('', '')).toBe('');
+        expect(settleDateInput('', null)).toBe('');
+        expect(settleDateInput('', undefined)).toBe('');
+    });
+});
 
 describe('formatPeriod (chip / row label)', () => {
     it('whole days in one year: year once, at the end', () => {

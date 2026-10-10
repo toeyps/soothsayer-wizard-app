@@ -1,11 +1,11 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
 import { Check, ChevronDown, ChevronUp } from 'lucide-react';
 import type { TestPeriod, TimePeriod, WorkspaceSensorFilter } from '../../types';
+import { percentText, type PeriodCountsState } from '../../utils/periodCounts';
 import { isCompleteCondition } from '../../utils/runningCondition';
 import { testTrainOverlaps, validatePeriods, validateTestPeriods } from '../../utils/timePeriods';
 import { conditionChipParts, formatPeriodChip, parseLocal, type DataBounds } from './periodDisplay';
 import { PeriodCoverageBar } from './RunningConditionParts';
-import { formatPercent, type RowCountPreview } from './useRowCountPreview';
 import { SensorInline } from '../sensor/SensorLabel';
 import { sensorTitle, useSensorLookup } from '../sensor/sensorInfo';
 
@@ -26,9 +26,33 @@ import { sensorTitle, useSensorLookup } from '../sensor/sensorInfo';
  * periods + span · Scoring n periods · When running: n conditions · rows · % ·
  * mini strip · Details · Edit. "Details" unfolds the full grid in place. Unset
  * and invalid stay loud cards with their own button, marked "!" (there is no
- * step number any more). The line reads the SAME props the card always had: no
- * new request, no new count.
+ * step number any more).
+ *
+ * The row count (2026-10-10, review of a4acd7a): "N rows · x%" is Rust's
+ * `count_period_rows` of the PERSISTED condition — the running rows inside the
+ * train periods, of all the dataset's rows — the same two numbers the settings
+ * modal's caption prints for that condition (`cardRowsFromCounts`). It used to
+ * be a count of the rows where the FIRST sensor has a value, which disagreed
+ * with the modal whenever that sensor had gaps.
  */
+
+/** The card's row count: rows used for training of all the dataset's rows.
+ *  `loading` keeps the previous numbers (if any) so the line does not flicker. */
+export interface RcCardRows {
+    status: 'idle' | 'loading' | 'ok' | 'error';
+    used: number | null;
+    total: number | null;
+}
+
+/** The card's two numbers from the period counts of the persisted condition
+ *  (`usePeriodCounts` with the persisted train periods). */
+export function cardRowsFromCounts(counts: PeriodCountsState): RcCardRows {
+    return {
+        status: counts.status,
+        used: counts.train ? counts.train.union.running_rows : null,
+        total: counts.train ? counts.train.total_rows : null,
+    };
+}
 
 /** unset = nothing configured yet · invalid = configured but a period is broken · set = good to go. */
 export type RcStepState = 'set' | 'unset' | 'invalid';
@@ -43,8 +67,8 @@ interface RunningConditionCardProps {
     headers: string[] | null;
     getDesc: (tag: string) => string;
     getUnit: (tag: string) => string;
-    /** Row count of the PERSISTED condition. */
-    rows: RowCountPreview;
+    /** Row count of the PERSISTED condition (`cardRowsFromCounts`). */
+    rows: RcCardRows;
     /** Dataset extent (`useDatasetTimeBounds`) — null/unknown hides the period strip. */
     bounds?: DataBounds | null;
     /** Opens the settings modal (Edit / Set running condition / Fix period). */
@@ -201,7 +225,7 @@ export function RunningConditionCard({ state, periods, filters, combine, noneCon
                         {noTrain ? (
                             <><b data-testid="rc-card-rows">0</b> <span data-testid="rc-card-no-train">rows — add a train period</span></>
                         ) : rows.status === 'idle' ? null : showCount ? (
-                            <><b data-testid="rc-card-rows">{(rows.used ?? 0).toLocaleString()}</b> <span data-testid="rc-card-pct">rows · {formatPercent(rows.used, rows.total)}</span></>
+                            <><b data-testid="rc-card-rows">{(rows.used ?? 0).toLocaleString()}</b> <span data-testid="rc-card-pct">rows · {percentText(rows.used, rows.total)}</span></>
                         ) : rows.status === 'error'
                             ? <span title="Couldn't count the rows" data-testid="rc-card-rows-error">— rows</span>
                             : <span data-testid="rc-card-rows-loading">Counting rows…</span>}
@@ -265,7 +289,7 @@ export function RunningConditionCard({ state, periods, filters, combine, noneCon
                             {showCount ? (
                                 <>
                                     <b data-testid="rc-card-rows">{(rows.used ?? 0).toLocaleString()}</b>
-                                    <span data-testid="rc-card-pct">rows · {formatPercent(rows.used, rows.total)}</span>
+                                    <span data-testid="rc-card-pct">rows · {percentText(rows.used, rows.total)}</span>
                                 </>
                             ) : rows.status === 'error'
                                 ? <span title="Couldn't count the rows" data-testid="rc-card-rows-error">— rows</span>

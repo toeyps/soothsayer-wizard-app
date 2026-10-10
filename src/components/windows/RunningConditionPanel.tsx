@@ -95,14 +95,23 @@ export interface RunningConditionPanelProps {
     /** The workspace's Dashboard time highlights — only for the TRAIN-period
      *  overlap line ("Remove the overlap"). */
     highlights: TimeHighlight[];
+    /** A date in one of the two lists is still being typed: the row's name
+     *  ("P1" / "S2"), or null once that list has nothing half-typed. A complete
+     *  date arrives through `onPeriodsChange` / `onTestPeriodsChange` at once. */
+    onPendingDate?: (list: 'train' | 'scoring', name: string | null) => void;
 }
 
 export default function RunningConditionPanel({
     scope = 'workspace', configured, periods, onPeriodsChange, bounds, filters, combine, noneConfirmed,
     onNoneChange, onCombineChange, onAddFilter, onUpdateFilter, onRemoveFilter, sensors, getComponent, getUnit,
-    counts = PERIOD_COUNTS_IDLE, testPeriods, onTestPeriodsChange, highlights,
+    counts = PERIOD_COUNTS_IDLE, testPeriods, onTestPeriodsChange, highlights, onPendingDate,
 }: RunningConditionPanelProps) {
     const custom = scope === 'custom';
+    // "Only when running" without a complete condition: the count would be of
+    // EVERY row (no condition is sent), which is not what will be trained on once
+    // the condition is set — so no running days on the rows, and the caption asks
+    // for the condition instead of printing "N of N rows (100%)".
+    const rowCounts = configured ? counts : PERIOD_COUNTS_IDLE;
     const validCount = validatePeriods(periods).filter(s => !s.invalid).length;
     const headers = sensors.length ? sensors : null;
     // Test ids of the two uses differ, so both can be on screen at once (the
@@ -122,7 +131,7 @@ export default function RunningConditionPanel({
 
     return (
         <div data-testid={id('rc-panel', 'custom-rc-panel')} className={`rcm-body${custom ? ' rcm-body--own' : ''}`}>
-            <RunningConditionTimeline periods={periods} tests={testPeriods} bounds={bounds} counts={counts} />
+            <RunningConditionTimeline periods={periods} tests={testPeriods} bounds={bounds} counts={counts} configured={configured} />
 
             <section className="rcx-sec" data-testid={id('rc-periods', 'custom-periods')}>
                 <div className="rcx-sec-h" data-testid="rc-train-head">
@@ -134,8 +143,9 @@ export default function RunningConditionPanel({
                     periods={periods}
                     onChange={onPeriodsChange}
                     bounds={bounds}
-                    counts={counts}
+                    counts={rowCounts}
                     afterRows={<TrainHighlightWarnings periods={periods} highlights={highlights} onPeriodsChange={onPeriodsChange} />}
+                    onPendingChange={onPendingDate ? name => onPendingDate('train', name) : undefined}
                 />
             </section>
 
@@ -151,7 +161,8 @@ export default function RunningConditionPanel({
                     onChange={onTestPeriodsChange}
                     bounds={bounds}
                     blocks={custom ? 'save' : 'apply'}
-                    counts={counts}
+                    counts={rowCounts}
+                    onPendingChange={onPendingDate ? name => onPendingDate('scoring', name) : undefined}
                 />
             </section>
 

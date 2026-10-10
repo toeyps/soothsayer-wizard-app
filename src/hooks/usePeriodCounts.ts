@@ -7,9 +7,8 @@ import {
     type CountFilterInput, type PeriodCountsState,
 } from '../utils/periodCounts';
 
-/** Wait after the last change of the draft before counting — the same wait the
- *  modal's row-count preview (`useRowCountPreview`) has always used, so typing
- *  a condition value never fires a call per keystroke. */
+/** Wait after the last change of the draft before counting, so typing a
+ *  condition value or a date never fires a call per keystroke. */
 export const PERIOD_COUNT_DEBOUNCE_MS = 300;
 
 /** Answers kept per open modal (a draft the user toggles back to is instant). */

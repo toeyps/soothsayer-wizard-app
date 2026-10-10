@@ -12,7 +12,7 @@ import {
     sortPeriods,
     validatePeriods,
 } from '../../utils/timePeriods';
-import { overlapDays } from './periodDisplay';
+import { isCompleteDateInput, overlapDays, settleDateInput } from './periodDisplay';
 
 /*
  * The TRAIN periods list of the Running-condition settings — the workspace
@@ -36,9 +36,19 @@ import { overlapDays } from './periodDisplay';
  * a thin red left edge, a red date field on the side that is wrong and ONE
  * reason line ("P2 ends before it starts — pick an end after 11 May 2026").
  *
- * Edits stay in a local draft and are committed (sorted) on blur / Enter, never
- * per keystroke, so rows don't jump around while a date is being typed and the
- * window around the editor does not re-render on a keystroke.
+ * Typing a date (2026-10-10, review of a4acd7a): a date goes to the parent ON
+ * CHANGE as soon as the field reports a complete one (`isCompleteDateInput`),
+ * so the timeline, the counts and the modal's impact line follow the edit
+ * BEFORE Apply can be pressed. What a change never does:
+ *  - commit `''` — a `datetime-local` reports `''` while a segment is missing
+ *    or was just cleared; the half-typed field keeps its own text locally and
+ *    the parent keeps the last complete date (`onPendingChange` names the row);
+ *  - re-order the rows — the list goes up in the order it is shown, so the row
+ *    being typed in never moves and the focus never jumps. Sorting happens on
+ *    blur / Enter and on the discrete actions (add, remove, merge, open).
+ * On blur / Enter a bound that was SET is never left empty by typing: the last
+ * committed date comes back (`settleDateInput`). Opening a bound is only the
+ * explicit ✕ ("Start of data" / "End of data").
  */
 
 export interface PeriodBounds {
@@ -150,45 +160,111 @@ interface TimePeriodsEditorProps {
     /** Drawn directly under the period rows, above the Add button (the amber
      *  train-period / highlight overlap line). */
     afterRows?: ReactNode;
+    /** The row whose date is still being typed ("P1"), or null once every field
+     *  holds what the parent has. Called when that changes, and with null on
+     *  unmount. */
+    onPendingChange?: (name: string | null) => void;
 }
 
-export default function TimePeriodsEditor({ periods, onChange, bounds, counts = PERIOD_COUNTS_IDLE, afterRows }: TimePeriodsEditorProps) {
+export default function TimePeriodsEditor({ periods, onChange, bounds, counts = PERIOD_COUNTS_IDLE, afterRows, onPendingChange }: TimePeriodsEditorProps) {
     const [draft, setDraft] = useState<TimePeriod[]>(periods);
     const [flashId, setFlashId] = useState<string | null>(null);
     const propsKey = JSON.stringify(periods);
-    useEffect(() => { setDraft(periods); }, [propsKey]); // eslint-disable-line react-hooks/exhaustive-deps
+    // The list this editor last handed up. When exactly that comes back as props
+    // the local draft is already right — and it may hold a half-typed field the
+    // parent never got, which a reset would wipe.
+    const emittedKey = useRef<string | null>(null);
+    useEffect(() => {
+        const own = emittedKey.current === propsKey;
+        emittedKey.current = null;
+        if (!own) setDraft(periods);
+    }, [propsKey]); // eslint-disable-line react-hooks/exhaustive-deps
     useEffect(() => {
         if (!flashId) return;
         const t = setTimeout(() => setFlashId(null), 900);
         return () => clearTimeout(t);
     }, [flashId]);
 
+    const savedById = new Map(periods.map(p => [p.id, p]));
+    /** Hands a list up (only when it differs from what the parent has). */
+    const emit = (list: TimePeriod[]) => {
+        const key = JSON.stringify(list);
+        if (key === propsKey) return;
+        emittedKey.current = key;
+        onChange(list);
+    };
+    /** A discrete change, or blur / Enter: the list is sorted and handed up. */
     const commit = (list: TimePeriod[], flash?: string) => {
         const sorted = sortPeriods(list);
         setDraft(sorted);
         if (flash) setFlashId(flash);
-        if (JSON.stringify(sorted) !== propsKey) onChange(sorted);
+        emit(sorted);
+    };
+    /** `list` with every field as it settles (`settleDateInput`): a bound that was
+     *  set and is empty / half-typed in the field goes back to its committed date. */
+    const settled = (list: TimePeriod[]): TimePeriod[] => list.map(p => {
+        const saved = savedById.get(p.id);
+        if (!saved) return p;
+        const start = settleDateInput(p.start, saved.start);
+        const end = settleDateInput(p.end, saved.end);
+        return start === p.start && end === p.end ? p : { ...p, start, end };
+    });
+    /** A date field changed. The field always shows what is typed; the parent gets
+     *  the list — in the order on screen — only once the date is complete, and
+     *  never a half-typed value of another field. */
+    const typeDate = (i: number, which: 'start' | 'end', v: string) => {
+        const next = draft.map((x, j) => (j === i ? { ...x, [which]: v } : x));
+        setDraft(next);
+        if (!isCompleteDateInput(v)) return;
+        emit(next.map((p, j) => {
+            const saved = savedById.get(p.id);
+            if (!saved) return p;
+            // Every field but the one just typed goes up as the parent has it.
+            const start = j === i && which === 'start' ? p.start : saved.start;
+            const end = j === i && which === 'end' ? p.end : saved.end;
+            return start === p.start && end === p.end ? p : { ...p, start, end };
+        }));
     };
 
-    const statuses = validatePeriods(draft);
+    // The first row holding a date the parent does not have (still being typed).
+    const pendingIndex = draft.findIndex(p => {
+        const saved = savedById.get(p.id);
+        return !!saved && (saved.start !== p.start || saved.end !== p.end);
+    });
+    const pendingName = pendingIndex >= 0 ? `P${pendingIndex + 1}` : null;
+    const onPendingRef = useRef(onPendingChange);
+    onPendingRef.current = onPendingChange;
+    useEffect(() => { onPendingRef.current?.(pendingName); }, [pendingName]);
+    useEffect(() => () => { onPendingRef.current?.(null); }, []);
+
+    // The list as it is JUDGED on screen (validity, day counts, overlap, the Add
+    // default): a field that is still being typed counts as the date the parent
+    // has. A half-typed date (or a year on its way: "0002-…") must not flash "P1
+    // ends before it starts" or blank the row's days — the field itself always
+    // shows what is typed.
+    const judged = draft.map(p => {
+        const saved = savedById.get(p.id);
+        if (!saved) return p;
+        const start = p.start !== saved.start && !isCompleteDateInput(p.start) ? saved.start : p.start;
+        const end = p.end !== saved.end && !isCompleteDateInput(p.end) ? saved.end : p.end;
+        return start === p.start && end === p.end ? p : { ...p, start, end };
+    });
+    const statuses = validatePeriods(judged);
     const minAttr = toInputValue(bounds?.min);
     const maxAttr = toInputValue(bounds?.max);
     const boundsForCover = minAttr && maxAttr ? { min: minAttr, max: maxAttr } : null;
-    const rows = trainRowModels(draft, boundsForCover, counts);
+    const rows = trainRowModels(judged, boundsForCover, counts);
 
-    const next = draft.length === 0 ? firstDefaultPeriod(bounds) : nextDefaultPeriod(draft, maxAttr ?? null);
-    const covered = isRangeFullyCovered(draft, boundsForCover);
+    const next = judged.length === 0 ? firstDefaultPeriod(bounds) : nextDefaultPeriod(judged, maxAttr ?? null);
+    const covered = isRangeFullyCovered(judged, boundsForCover);
     const addDisabled = !next || covered;
     const addTitle = covered
         ? 'The periods already cover the whole dataset'
         : !next ? 'Set an end date on the last period first' : 'Add another train period';
 
-    const patch = (i: number, p: Partial<TimePeriod>) =>
-        setDraft(prev => prev.map((x, j) => (j === i ? { ...x, ...p } : x)));
-
     const addPeriod = () => {
         if (!next) return;
-        commit([...draft, next], next.id);
+        commit([...settled(draft), next], next.id);
     };
 
     const field = (i: number, which: 'start' | 'end') => {
@@ -206,12 +282,12 @@ export default function TimePeriodsEditor({ periods, onChange, bounds, counts = 
                 max={maxAttr}
                 bad={bad}
                 canOpen={which === 'start' ? i === 0 : i === draft.length - 1}
-                onType={v => patch(i, { [which]: v })}
-                onCommit={() => commit(draft)}
-                onOpen={() => commit(draft.map((x, j) => (j === i ? { ...x, [which]: '' } : x)))}
+                onType={v => typeDate(i, which, v)}
+                onCommit={() => commit(settled(draft))}
+                onOpen={() => commit(settled(draft).map((x, j) => (j === i ? { ...x, [which]: '' } : x)))}
                 onSetDate={() => {
                     const v = which === 'start' ? minAttr : maxAttr;
-                    if (v) commit(draft.map((x, j) => (j === i ? { ...x, [which]: v } : x)), p.id);
+                    if (v) commit(settled(draft).map((x, j) => (j === i ? { ...x, [which]: v } : x)), p.id);
                 }}
                 setDateDisabled={!(which === 'start' ? minAttr : maxAttr)}
             />
@@ -220,7 +296,7 @@ export default function TimePeriodsEditor({ periods, onChange, bounds, counts = 
 
     const message = (i: number) => {
         const st = statuses[i];
-        const p = draft[i];
+        const p = judged[i];
         if (st.invalid) {
             return (
                 <div role="alert" data-testid={`period-invalid-${i + 1}`} className="rcm-permsg rcm-permsg--bad">
@@ -229,7 +305,7 @@ export default function TimePeriodsEditor({ periods, onChange, bounds, counts = 
             );
         }
         if (st.overlapsPrev) {
-            const d = overlapDays(draft[i - 1], p, boundsForCover);
+            const d = overlapDays(judged[i - 1], p, boundsForCover);
             return (
                 <div data-testid={`period-overlap-${i + 1}`} className="rcm-permsg">
                     <span>P{i + 1} overlaps P{i}{d !== null ? ` by ${d} d` : ''} — rows in both are used once.</span>
@@ -237,7 +313,10 @@ export default function TimePeriodsEditor({ periods, onChange, bounds, counts = 
                         type="button"
                         className="f4-link"
                         data-testid={`period-merge-${i + 1}`}
-                        onClick={() => commit([...draft.slice(0, i - 1), mergeOverlapping(draft[i - 1], p), ...draft.slice(i + 1)], draft[i - 1].id)}
+                        onClick={() => {
+                            const list = settled(draft);
+                            commit([...list.slice(0, i - 1), mergeOverlapping(list[i - 1], list[i]), ...list.slice(i + 1)], list[i - 1].id);
+                        }}
                     >
                         Merge into one
                     </button>
@@ -272,7 +351,7 @@ export default function TimePeriodsEditor({ periods, onChange, bounds, counts = 
                                 <span className={`rcm-run${row.stale ? ' rct-stale' : ''}`} data-testid={`period-running-${i + 1}`} data-stale={row.stale ? 'true' : undefined}> · {row.runningText}</span>
                             )}
                         </span>
-                        <button type="button" className="rcm-ib" aria-label={`Remove P${i + 1}`} title="Remove train period" onClick={() => commit(draft.filter((_, j) => j !== i))}>
+                        <button type="button" className="rcm-ib" aria-label={`Remove P${i + 1}`} title="Remove train period" onClick={() => commit(settled(draft).filter((_, j) => j !== i))}>
                             <Trash2 size={14} aria-hidden="true" />
                         </button>
                         {message(i)}

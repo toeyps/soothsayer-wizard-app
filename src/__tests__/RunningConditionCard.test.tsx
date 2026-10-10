@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup, within } from '@testing-library/react';
-import { RunningConditionCard } from '../components/windows/RunningConditionCard';
+import { RunningConditionCard, cardRowsFromCounts, type RcCardRows } from '../components/windows/RunningConditionCard';
 import { SensorMetaProvider } from '../components/sensor/SensorLabel';
-import type { RowCountPreview } from '../components/windows/useRowCountPreview';
+import { PERIOD_COUNTS_IDLE, type PeriodCountsState } from '../utils/periodCounts';
+import type { PeriodCounts } from '../types/periodCounts';
 import type { TestPeriod, WorkspaceSensorFilter } from '../types';
 
 afterEach(cleanup);
@@ -12,7 +13,7 @@ const f = (id: string, sensor: string, operation: WorkspaceSensorFilter['operati
     ({ id, sensor, operation, value1, value2 });
 const DESC: Record<string, string> = { POWER: 'GENERATOR ACTIVE POWER', SPEED: 'TURBINE SPEED' };
 const UNIT: Record<string, string> = { POWER: 'kW', SPEED: 'RPM' };
-const OK: RowCountPreview = { status: 'ok', used: 11_066, total: 52_340 };
+const OK: RcCardRows = { status: 'ok', used: 11_066, total: 52_340 };
 // The window's SensorMetaProvider (BuildModelWindow) supplies the chip labels.
 const META = Object.keys(DESC).map(tag => ({ tag, description: DESC[tag], unit: UNIT[tag], component: 'Generator' }));
 
@@ -44,6 +45,29 @@ function detailsCard(over: Partial<React.ComponentProps<typeof RunningConditionC
     openDetails();
     return onOpen;
 }
+
+// The card's two numbers are Rust's `count_period_rows` of the persisted condition — the
+// same source as the settings modal's caption (review of a4acd7a, item 5).
+describe('cardRowsFromCounts', () => {
+    const TRAIN: PeriodCounts = {
+        total_rows: 52_340, interval_secs: 600, periods: [],
+        // rows inside the train periods vs. the ones that also pass the running condition
+        union: { rows_in_period: 30_000, running_rows: 11_066, running_days: 76.8 },
+    };
+    const st = (over: Partial<PeriodCountsState>): PeriodCountsState => ({ status: 'ok', train: TRAIN, scoring: null, error: null, errorCode: null, ...over });
+
+    it('used = the RUNNING rows inside the train periods, total = every row of the dataset', () => {
+        expect(cardRowsFromCounts(st({}))).toEqual({ status: 'ok', used: 11_066, total: 52_340 });
+    });
+    it('while a new count is on its way the previous numbers are kept (the card does not flicker)', () => {
+        expect(cardRowsFromCounts(st({ status: 'loading' }))).toEqual({ status: 'loading', used: 11_066, total: 52_340 });
+        expect(cardRowsFromCounts(st({ status: 'loading', train: null }))).toEqual({ status: 'loading', used: null, total: null });
+    });
+    it('a failed count and "nothing is counted" carry no numbers', () => {
+        expect(cardRowsFromCounts(st({ status: 'error', train: null, error: 'boom' }))).toEqual({ status: 'error', used: null, total: null });
+        expect(cardRowsFromCounts(PERIOD_COUNTS_IDLE)).toEqual({ status: 'idle', used: null, total: null });
+    });
+});
 
 describe('RunningConditionCard — Not set', () => {
     it('big yellow card marked "!" (no step number, no "Step 1"), "Set the running condition", the one-sentence reason, its own primary "Set running condition →" button', () => {

@@ -13,9 +13,10 @@ import { boundsMs, formatPeriod, type DataBounds } from './periodDisplay';
  * ONE caption under it (`runningConditionCaption`).
  *
  * Plain DOM positioned in percent of the dataset's time range — no chart
- * library, nothing to resize. It draws the COMMITTED lists it is given (a date
- * being typed lives in the row editors until blur / Enter), so typing never
- * re-lays it out. Drawing / dragging periods here is a later step.
+ * library, nothing to resize. It draws the lists it is given: the row editors
+ * hand a typed date up as soon as it is complete (a half-typed one stays in its
+ * field), so the blocks follow the edit. Drawing / dragging periods here is a
+ * later step.
  */
 
 export interface TimelineTick {
@@ -127,11 +128,15 @@ export interface RunningConditionTimelineProps {
     tests: TestPeriod[];
     bounds: DataBounds | null | undefined;
     counts: PeriodCountsState;
+    /** The running condition (as drafted) is configured. `false` = "Only when
+     *  running" without a complete condition: the caption asks for the condition
+     *  instead of counting every row. Default `true`. */
+    configured?: boolean;
 }
 
-function RunningConditionTimeline({ periods, tests, bounds, counts }: RunningConditionTimelineProps) {
+function RunningConditionTimeline({ periods, tests, bounds, counts, configured = true }: RunningConditionTimelineProps) {
     const b = boundsMs(bounds);
-    const cap = runningConditionCaption({ trainPeriods: periods, scoringPeriods: tests, bounds, counts });
+    const cap = runningConditionCaption({ trainPeriods: periods, scoringPeriods: tests, bounds, counts, configured });
     const trainBlocks = timelineBlocks(periods, validatePeriods(periods).map(s => s.invalid), bounds, 'P');
     const scoreBlocks = timelineBlocks(tests, validateTestPeriods(tests).map(s => s.invalid), bounds, 'S');
     const rows = cap.rows;

@@ -23,7 +23,7 @@ import { HEALTH_DEFAULT_MAX_POINTS } from '../../utils/healthRequest';
  * scatter, and the true row count in `n_rows` (the "N" on each card). The reused
  * Train response (`reusable`) is bounded the same way.
  *
- * Lives next to the components (like `useRowCountPreview.ts`), not in
+ * Lives next to the components, not in
  * `src/hooks/`: it is presentation plumbing for this one modal.
  */
 

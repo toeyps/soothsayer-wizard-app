@@ -31,10 +31,12 @@ import {
  * Model fit charts (they are memoised, see ModelFitPage).
  */
 
-/** Kind names as the Workbench tabs show them (never the algorithm's name). */
+/** Kind names as the Workbench tabs and the Train menu show them — "Relation
+ *  model", never "Relationship" and never the algorithm's name. Used by the run
+ *  strip, the Train-all rows and the close-during-run dialog. */
 export const TRAIN_KIND_LABEL: Record<ModelKind, string> = {
     individual: 'Individual',
-    relationship: 'Relationship',
+    relationship: 'Relation model',
     clustering: 'Clustering',
 };
 const KIND_LETTER: Record<ModelKind, string> = { individual: 'I', relationship: 'R', clustering: 'C' };
@@ -166,7 +168,7 @@ export interface SensorTrainMenuCopy {
 }
 
 /** Kind names in the ▾ menu and the line under Train sensor (the tabs' names). */
-const MENU_KIND: Record<ModelKind, string> = { individual: 'Individual', relationship: 'Relation model', clustering: 'Clustering' };
+const MENU_KIND = TRAIN_KIND_LABEL;
 /** A kind inside a sentence: "the Individual model", "the Relation model". */
 const MENU_KIND_MODEL: Record<ModelKind, string> = { individual: 'Individual model', relationship: 'Relation model', clustering: 'Clustering model' };
 

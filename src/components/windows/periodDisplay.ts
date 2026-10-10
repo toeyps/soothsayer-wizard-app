@@ -24,6 +24,35 @@ export interface DataBounds {
 }
 
 const isBlank = (s: string | null | undefined) => !(s ?? '').trim();
+
+/**
+ * Is this what a `datetime-local` field reports once its date is COMPLETE?
+ * The period editors commit a typed date to their parent on change only when
+ * this is true:
+ *  - `''` is what the field reports while a segment is missing (or was just
+ *    cleared) — never a value to commit;
+ *  - a year below 1000 is a year still being typed (the field reports
+ *    "0002-…", "0020-…", "0202-…" on the way to "2026-…"): committing those
+ *    would flash the row red and count rows for a date nobody meant.
+ */
+export function isCompleteDateInput(v: string | null | undefined): boolean {
+    const t = (v ?? '').trim();
+    const m = /^(\d{4,6})-\d{2}-\d{2}T\d{2}:\d{2}/.exec(t);
+    return !!m && Number(m[1]) >= 1000 && parseLocal(t) !== null;
+}
+
+/**
+ * What a period date field settles to on blur / Enter, given what is typed in
+ * it and the value last committed. Typing never EMPTIES a bound that was set
+ * (a cleared segment makes the field report `''`): the committed value comes
+ * back, and opening a bound stays the explicit "Start of data" / "End of data"
+ * action. Anything else that was typed is kept as it is.
+ */
+export function settleDateInput(typed: string, committed: string | null | undefined): string {
+    const saved = committed ?? '';
+    if (typed === saved || parseLocal(typed) !== null) return typed;
+    return saved.trim() ? saved : typed;
+}
 const hhmm = clockText;
 const dateTxt = dateText;
 
@@ -213,17 +242,6 @@ export function computeTestCoverage(tests: TimePeriod[], bounds: DataBounds | nu
     }
     if (cs !== null) total += ce - cs;
     return { usedDays: Math.round(total / DAY_MS), segments };
-}
-
-/** Estimated RUNNING days of the train rows from a row count: the dataset's
- *  span x the share of its rows that are used (rows are close to evenly spaced
- *  in time). Null when anything is unknown. Used for the amber "below the
- *  recommended train time" note before Rust's exact `test_validation.train.days`
- *  exists (e.g. the Running condition modal's draft). */
-export function estimateRunningDays(used: number | null | undefined, total: number | null | undefined, bounds: DataBounds | null | undefined): number | null {
-    const b = boundsMs(bounds);
-    if (!b || typeof used !== 'number' || typeof total !== 'number' || !(total > 0)) return null;
-    return ((b.t1 - b.t0) / DAY_MS) * Math.min(1, Math.max(0, used / total));
 }
 
 export function conditionSymbol(op: WorkspaceSensorFilter['operation']): string {

@@ -161,6 +161,16 @@ describe('RunningConditionTimeline — the one caption', () => {
         expect(screen.queryByTestId('rc-min-data')).toBeNull();
     });
 
+    // Review of a4acd7a, item 6.
+    it('the running condition is not configured: "set the condition to count the rows" instead of a count of every row; no running time, no amber', () => {
+        render(<RunningConditionTimeline periods={[P1, P2]} tests={[S1]} bounds={bounds} counts={st('ok', train(17_280, 60))} configured={false} />);
+        expect(cap().getAttribute('data-rows')).toBe('no-condition');
+        expect(screen.getByTestId('rc-caption-rows').textContent).toBe('set the condition to count the rows');
+        expect(screen.getByTestId('rc-caption-train').textContent).toBe('60 d train');
+        expect(cap().className).not.toContain('rct-cap--warn');
+        expect(cap().textContent).not.toMatch(/%|of 25,880/);
+    });
+
     it('first count on its way: calendar days at once, "Counting rows…" for the rows', () => {
         show([P1, P2], [S1], st('loading', null));
         expect(cap().getAttribute('data-rows')).toBe('loading');

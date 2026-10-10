@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup } from '@testing-library/react';
 import TestPeriodsEditor, { nextDefaultTestPeriod, toInputValue } from '../components/windows/TestPeriodsEditor';
@@ -28,6 +29,28 @@ function setup(over: Partial<React.ComponentProps<typeof TestPeriodsEditor>> = {
     const view = render(<TestPeriodsEditor tests={[]} train={TRAIN} onChange={onChange} bounds={bounds} {...over} />);
     return Object.assign(onChange, { view });
 }
+
+/** The editor inside a parent that keeps what it is handed, like the modal's draft. */
+function Harness({ initial, onChange, onPending }: { initial: TestPeriod[]; onChange: (next: TestPeriod[]) => void; onPending?: (name: string | null) => void }) {
+    const [tests, setTests] = useState(initial);
+    return (
+        <TestPeriodsEditor
+            tests={tests}
+            train={TRAIN}
+            onChange={next => { onChange(next); setTests(next); }}
+            bounds={bounds}
+            onPendingChange={onPending}
+        />
+    );
+}
+/** `Harness` rendered; returns the `onChange` spy (and `onPending` on it). */
+function live(initial: TestPeriod[]) {
+    const onChange = vi.fn();
+    const onPending = vi.fn();
+    render(<Harness initial={initial} onChange={onChange} onPending={onPending} />);
+    return Object.assign(onChange, { onPending });
+}
+const lastCall = (fn: ReturnType<typeof vi.fn>) => fn.mock.calls[fn.mock.calls.length - 1][0] as TestPeriod[];
 
 describe('TestPeriodsEditor (scoring periods)', () => {
     it('empty: one quiet grey line (not a box, not amber) — it never blocks; the verb follows the form it sits in', () => {
@@ -88,25 +111,55 @@ describe('TestPeriodsEditor (scoring periods)', () => {
         expect(buttons).toEqual(['Remove scoring period 1', 'Add scoring period']);
     });
 
-    it('dates commit on blur, not per keystroke (a half-typed date must not reach the draft)', () => {
-        const onChange = setup({ tests: [t('a', '2026-02-01T00:00', '2026-02-15T00:00')] });
+    // 2026-10-10 (review of a4acd7a, item 2): a COMPLETE date goes to the parent on change, so
+    // the timeline, the counts and the impact line follow it before Apply can be pressed.
+    it('a complete typed date is handed up at once; the blur after it hands nothing up again', () => {
+        const onChange = live([t('a', '2026-02-01T00:00', '2026-02-15T00:00')]);
         const end = screen.getByLabelText('Scoring period 1 end');
         fireEvent.change(end, { target: { value: '2026-02-20T00:00' } });
-        expect(onChange).not.toHaveBeenCalled();
+        expect(onChange).toHaveBeenCalledTimes(1);
+        expect(lastCall(onChange)).toEqual([{ id: 'a', start: '2026-02-01T00:00', end: '2026-02-20T00:00' }]);
         fireEvent.blur(end);
         expect(onChange).toHaveBeenCalledTimes(1);
-        expect(onChange.mock.calls[0][0]).toEqual([{ id: 'a', start: '2026-02-01T00:00', end: '2026-02-20T00:00' }]);
     });
 
-    it('Enter commits too; a blur with nothing changed does not call onChange', () => {
-        const onChange = setup({ tests: [t('a', '2026-02-01T00:00', '2026-02-15T00:00')] });
+    it('a half-typed date (the field reports "") never reaches the parent: the row is named as pending and blur / Enter put the date back', () => {
+        const onChange = live([t('a', '2026-02-01T00:00', '2026-02-15T00:00'), t('b', '2026-03-01T00:00', '2026-03-10T00:00')]);
+        expect(onChange.onPending).toHaveBeenLastCalledWith(null);
+        const end = screen.getByLabelText('Scoring period 2 end') as HTMLInputElement;
+        fireEvent.change(end, { target: { value: '' } });
+        expect(onChange).not.toHaveBeenCalled();
+        expect(onChange.onPending).toHaveBeenLastCalledWith('S2');
+        expect(end.value).toBe('');
+        // the row is judged by the date the parent has: no red "S2 needs an end date" flash
+        expect(screen.queryByTestId('test-invalid-2')).toBeNull();
+        expect(screen.getByTestId('test-days-2').textContent).toBe('9 d');
+        // no "S2 needs an end date" is written by leaving the field
+        fireEvent.blur(end);
+        expect(onChange).not.toHaveBeenCalled();
+        expect((screen.getByLabelText('Scoring period 2 end') as HTMLInputElement).value).toBe('2026-03-10T00:00');
+        expect(onChange.onPending).toHaveBeenLastCalledWith(null);
+
+        const start = screen.getByLabelText('Scoring period 1 start') as HTMLInputElement;
+        fireEvent.change(start, { target: { value: '' } });
+        fireEvent.keyDown(start, { key: 'Enter' });
+        expect(onChange).not.toHaveBeenCalled();
+        expect((screen.getByLabelText('Scoring period 1 start') as HTMLInputElement).value).toBe('2026-02-01T00:00');
+    });
+
+    it('a blur or Enter with nothing changed does not call onChange', () => {
+        const onChange = live([t('a', '2026-02-01T00:00', '2026-02-15T00:00')]);
         const start = screen.getByLabelText('Scoring period 1 start');
         fireEvent.blur(start);
-        expect(onChange).not.toHaveBeenCalled();
-        fireEvent.change(start, { target: { value: '2026-02-02T00:00' } });
         fireEvent.keyDown(start, { key: 'Enter' });
-        expect(onChange).toHaveBeenCalledTimes(1);
-        expect(onChange.mock.calls[0][0][0].start).toBe('2026-02-02T00:00');
+        expect(onChange).not.toHaveBeenCalled();
+    });
+
+    it('a half-typed field is not carried along by Add or Remove', () => {
+        const onChange = live([t('a', '2026-02-01T00:00', '2026-02-15T00:00'), t('b', '2026-03-01T00:00', '2026-03-10T00:00')]);
+        fireEvent.change(screen.getByLabelText('Scoring period 1 end'), { target: { value: '' } });
+        fireEvent.click(screen.getByLabelText('Remove scoring period 2'));
+        expect(lastCall(onChange)).toEqual([{ id: 'a', start: '2026-02-01T00:00', end: '2026-02-15T00:00' }]);
     });
 
     it('an invalid period: thin red edge, the field that is wrong red, and ONE reason line named by its S-number', () => {
@@ -155,13 +208,17 @@ describe('TestPeriodsEditor (scoring periods)', () => {
         expect(screen.queryByTestId('test-overlap-1')).toBeNull();
     });
 
-    it('the list stays in time order (S1 is the earliest)', () => {
-        const onChange = setup({ tests: [t('a', '2026-03-01T00:00', '2026-03-10T00:00'), t('b', '2026-04-01T00:00', '2026-04-10T00:00')] });
+    it('the list is put in time order on blur (S1 is the earliest) — never while a date is being typed, so the row and the focus stay put', () => {
+        const onChange = live([t('a', '2026-03-01T00:00', '2026-03-10T00:00'), t('b', '2026-04-01T00:00', '2026-04-10T00:00')]);
         const start = screen.getByLabelText('Scoring period 1 start');
         fireEvent.change(start, { target: { value: '2026-05-01T00:00' } });
+        // handed up at once, still as S1 (and S1 reads "ends before it starts" until its end follows)
+        expect(lastCall(onChange).map(x => x.id)).toEqual(['a', 'b']);
+        expect(screen.getByLabelText('Scoring period 1 start')).toBe(start);
         fireEvent.change(screen.getByLabelText('Scoring period 1 end'), { target: { value: '2026-05-10T00:00' } });
+        expect(lastCall(onChange).map(x => x.id)).toEqual(['a', 'b']);
         fireEvent.blur(start);
-        expect(onChange.mock.calls[0][0].map((x: TestPeriod) => x.id)).toEqual(['b', 'a']);
+        expect(lastCall(onChange).map(x => x.id)).toEqual(['b', 'a']);
         expect((screen.getByLabelText('Scoring period 1 start') as HTMLInputElement).value).toBe('2026-04-01T00:00');
     });
 
@@ -237,7 +294,7 @@ describe('TestPeriodsEditor (scoring periods)', () => {
         });
 
         it('after editing ONE period, every period handed back has only id / start / end', () => {
-            const onChange = setup({ tests: OLD });
+            const onChange = live(OLD);
             const end = screen.getByLabelText('Scoring period 1 end');
             fireEvent.change(end, { target: { value: '2026-02-20T00:00' } });
             fireEvent.blur(end);

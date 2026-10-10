@@ -16,6 +16,7 @@ import { findSameSensorNameConflict, suggestDistinctModelName } from "../../util
 import { CATEGORY_BLOCK_REASON, customBlockText, customSummaryText, getBuildBlock, getBuildBlockReason, isRunningConditionConfigured, isWorkspaceRunningConditionConfigured, effectiveRunningCondition, markCompleteBlockReason, runningConditionApplyBlock, seedCustomFromWorkspace, type RunningConditionFg } from "../../utils/runningCondition";
 import { modelsStillNeedingTraining, retrainNoticeParts, runningConditionImpact } from "../../utils/runningConditionImpact";
 import { usePeriodCounts } from "../../hooks/usePeriodCounts";
+import { countedTrainRunningDays } from "../../utils/periodCounts";
 import { computeTrainFingerprint, isModelTrainedFresh as trainedFreshFor } from "../../utils/trainFingerprint";
 import { buildPreviewFilterPayload } from "../../utils/trainingScope";
 import { applyIncompleteRule } from "../../utils/incompleteRule";
@@ -27,17 +28,16 @@ import { commitHealthVerdict, commitSetPoints, MARK_COMPLETE_CLOSE_WAIT, persist
 import { useSensorMetaMap, normalizeSensorTag } from "../../hooks/useSensorMetaMap";
 import { useDatasetTimeBounds } from "../../hooks/useDatasetTimeBounds";
 import { useHealthPreview } from "../../hooks/useHealthPreview";
-import { validatePeriods, testPeriodsKey, testPeriodsError, testPeriodsWirePlan, toScoringPeriods, toTestPeriodsWire } from "../../utils/timePeriods";
+import { validatePeriods, firstInvalidTestPeriodNumber, fixPeriodFirstText, testPeriodsKey, testPeriodsError, testPeriodsWirePlan, toScoringPeriods, toTestPeriodsWire } from "../../utils/timePeriods";
 import { SLOW_TEST_SCORING_TEXT, testsChangedNotice, testsChangedNoticeParts, testsChangedState } from "../../utils/trainTestValidation";
 import { STIFFNESS_OPTIONS, STIFFNESS_DEFAULT, stiffnessLabel, snapStiffness } from "../reports/pmReportTypes";
 import RunningConditionPanel, { RunningConditionPills } from "./RunningConditionPanel";
-import { RunningConditionCard, type RcStepState } from "./RunningConditionCard";
-import { useRowCountPreview } from "./useRowCountPreview";
+import { RunningConditionCard, cardRowsFromCounts, type RcStepState } from "./RunningConditionCard";
 import { SensorPickerModal } from "./SensorPickers";
 import { SensorInline, SensorLabel } from "../sensor/SensorLabel";
 import { SensorMetaContext, fmtNumText, sensorHaystack, sensorTitle, useLayeredSensorLookup } from "../sensor/sensorInfo";
 import { useModalFocus } from "./useModalFocus";
-import { estimateRunningDays, formatStamp } from "./periodDisplay";
+import { formatStamp } from "./periodDisplay";
 import SubModelsModal from "./SubModelsModal";
 import { useSubModelFits } from "./useSubModelFits";
 import ModelFitPage from "./workbench/ModelFitPage";
@@ -269,19 +269,15 @@ const TRAIN_RUN_ACTIVE_REASON = 'Wait for the training run to finish';
 const BEING_SAVED_REASON = 'Its files are being saved';
 /** The close notice when "Stop after this model and close" gave up waiting. */
 const RUN_CLOSE_WAIT_NOTICE = 'Still training a model — the window stays open so nothing is cut off half-way. Close it again to leave without waiting.';
-const KIND_LABEL: Record<ModelKind, string> = {
-    individual: 'Individual',
-    relationship: 'Relationship',
-    clustering: 'Clustering',
-};
-/** Kind names on the tabs: Individual / Relation model / Clustering. */
+/** THE kind names of this window — tabs, tooltips, notices: Individual / Relation
+ *  model / Clustering. (The UI never says "Relationship": CLAUDE.md naming rule.) */
 const KIND_TAB_LABEL: Record<ModelKind, string> = {
     individual: 'Individual',
     relationship: 'Relation model',
     clustering: 'Clustering',
 };
 /** A kind inside a sentence: "the Individual model", "the Relation model". */
-const kindModelName = (kind: ModelKind): string => (kind === 'relationship' ? 'Relation model' : `${KIND_LABEL[kind]} model`);
+const kindModelName = (kind: ModelKind): string => (kind === 'relationship' ? KIND_TAB_LABEL[kind] : `${KIND_TAB_LABEL[kind]} model`);
 /** The ONE filled button of the detail pane (SPEC workbench-redesign §1: at most
  *  one filled button on screen) — see `primaryActionOf`. */
 type PrimaryAction = 'save' | 'train' | 'next' | 'mark' | null;
@@ -335,7 +331,13 @@ interface TrainCacheEntry {
  *  its `onCommit` ever firing, silently discarding the edit. Calling this
  *  before any close path (the modal's own, and the whole window's) forces
  *  that commit synchronously and unconditionally — a no-op when nothing
- *  relevant is focused. */
+ *  relevant is focused.
+ *
+ *  2026-10-10: the period editors now hand a COMPLETE typed date to the parent
+ *  on change, so what is left for the blur is the re-sort of the list and the
+ *  commit of a date that was still pending (a year being typed); a half-typed
+ *  field goes back to its committed date. The flush is still what makes a
+ *  close / Apply see that settled list. */
 function flushFocusedInput(): void {
     const active = document.activeElement;
     if (active instanceof HTMLElement && typeof active.blur === 'function') active.blur();
@@ -343,6 +345,11 @@ function flushFocusedInput(): void {
 
 /** One shared empty list, so a hook input does not change identity per render. */
 const NO_PERIODS: TimePeriod[] = [];
+
+/** The neutral line next to Apply while a period date is half-typed (`name` =
+ *  the row, "P1" / "S2"): its change is not in the draft yet, so there is no
+ *  impact to show for it. */
+const pendingDateText = (name: string): string => `Finish the date in ${name} to see what this changes`;
 
 /** 🆕 2026-10-03: the four workspace Running condition fields the settings modal
  *  edits as ONE local draft (nothing is written until Apply — see
@@ -455,16 +462,20 @@ export default function BuildModelWindow() {
     // persisted values live — copy-on-write on the first edit), so there is no
     // "seed on open" step to forget on any of the several paths that open the
     // modal. Cleared on every close, so a reopen always starts from persisted.
-    // Held in a ref too: a period date only commits on blur, which fires right
-    // before the Apply click — the click handler must see that commit
-    // synchronously, not wait for a re-render.
+    // Held in a ref too: the blur of a period date (which re-sorts the list and
+    // commits a date that was still pending) fires right before the Apply click —
+    // the click handler must see that commit synchronously, not wait for a re-render.
     const [rcDraft, setRcDraftState] = useState<RcDraft | null>(null);
     const rcDraftRef = useRef<RcDraft | null>(null);
-    // A period date input inside the modal has been typed into but not yet
-    // committed (blur / Enter). Keeps Apply clickable in that window — a
-    // disabled button would swallow the click, and the commit-on-blur would
-    // otherwise never be reached before Apply is judged "clean".
-    const [rcPeriodTyping, setRcPeriodTyping] = useState(false);
+    // A period date inside the modal that is HALF-TYPED (the field reports no
+    // complete date yet): the row's name per list ("P1" / "S2"), else null. A
+    // complete date is in the draft the moment it is typed (the editors commit on
+    // change), so this only drives the neutral "Finish the date in P1 …" line —
+    // it never enables Apply and nothing half-typed is ever written.
+    const [rcPendingDate, setRcPendingDate] = useState<{ train: string | null; scoring: string | null }>({ train: null, scoring: null });
+    const onRcPendingDate = useCallback((list: 'train' | 'scoring', name: string | null) => {
+        setRcPendingDate(prev => (prev[list] === name ? prev : { ...prev, [list]: name }));
+    }, []);
     // Inline "Discard changes?" row, shown instead of closing when X/backdrop
     // is used with an unapplied draft.
     const [rcDiscardPrompt, setRcDiscardPrompt] = useState(false);
@@ -931,7 +942,7 @@ export default function BuildModelWindow() {
                 // The unapplied draft belonged to the old workspace.
                 rcDraftRef.current = null;
                 setRcDraftState(null);
-                setRcPeriodTyping(false);
+                setRcPendingDate({ train: null, scoring: null });
                 setRcDiscardPrompt(false);
                 // The "need training again" notice belonged to the old workspace too.
                 setRcRetrainIds([]);
@@ -1109,6 +1120,10 @@ export default function BuildModelWindow() {
                 // both, never this window by hand.
                 return applyIncompleteRule(prev, withFailureGroupState(applied, { rcLegacyNotice: stillPending ? 'pending' : null }));
             });
+            // Re-pointed at another workspace meanwhile (same guard as `persist`): the
+            // write landed in ITS workspace; this window now shows another one — never
+            // put the old workspace's slice into this state, never broadcast it from here.
+            if (workspaceIdRef.current !== workspaceId) return;
             if (next?.failureGroupState) {
                 applyWritten(next);
                 await emit('failure-group-state-changed', { ...next.failureGroupState, workspaceId, origin: 'build-model' });
@@ -1171,11 +1186,12 @@ export default function BuildModelWindow() {
         patchRcDraft(base => ({ filters: base.filters.filter(f => f.id !== id) }));
     }, [patchRcDraft]);
 
-    // Periods are committed by the editor itself on blur / Enter (sorted).
+    // The editor hands up a typed date as soon as it is complete (in the order on
+    // screen) and the sorted list on blur / Enter / a discrete action.
     const updateRunningConditionPeriods = useCallback((periods: TimePeriod[]) => {
         patchRcDraft({ periods });
     }, [patchRcDraft]);
-    // Scoring periods are committed by `TestPeriodsEditor` on blur / Enter / a discrete action.
+    // Scoring periods: the same from `TestPeriodsEditor`.
     const updateRunningConditionTestPeriods = useCallback((testPeriods: TestPeriod[]) => {
         patchRcDraft({ testPeriods });
     }, [patchRcDraft]);
@@ -1185,7 +1201,7 @@ export default function BuildModelWindow() {
     const closeRc = useCallback(() => {
         rcDraftRef.current = null;
         setRcDraftState(null);
-        setRcPeriodTyping(false);
+        setRcPendingDate(prev => (prev.train === null && prev.scoring === null ? prev : { train: null, scoring: null }));
         setRcDiscardPrompt(false);
         setRcFilterOpen(false);
     }, []);
@@ -1193,7 +1209,8 @@ export default function BuildModelWindow() {
     /** X button / backdrop click. A dirty draft is never silently thrown away:
      *  the footer swaps to an inline "Discard changes?" row instead. */
     const requestCloseRc = useCallback(() => {
-        // Commit a half-typed period date first, so it counts as "dirty".
+        // Settle the focused period date first (a pending one commits, the list is
+        // sorted), so it counts as "dirty".
         flushFocusedInput();
         const d = rcDraftRef.current;
         if (d && !rcDraftEqual(d, rcPersistedRef.current)) {
@@ -1204,8 +1221,9 @@ export default function BuildModelWindow() {
     }, [closeRc]);
 
     const applyRcDraft = useCallback(() => {
-        // The click may land before a half-typed period date's blur-commit
-        // has re-rendered; this forces it, and the ref picks it up at once.
+        // The click may land before the focused period date's blur (sort, and the
+        // commit of a date still pending) has re-rendered; this forces it, and the
+        // ref picks it up at once.
         flushFocusedInput();
         const d = rcDraftRef.current;
         if (!d || rcDraftEqual(d, rcPersistedRef.current)) { closeRc(); return; }
@@ -1338,6 +1356,19 @@ export default function BuildModelWindow() {
             if (badTest) return badTest;
         }
         return nameConflictOf(m) ? DUPLICATE_NAME_BLOCK_REASON : null;
+    };
+
+    /** The footer's words when what blocks Save changes is one of the Custom
+     *  model's OWN scoring periods (the only thing in its panel that does):
+     *  "Fix S1 before saving" — the wording of the workspace settings' "Fix S1
+     *  before applying"; the row itself says what is wrong with it. Null for any
+     *  other reason, and while there is nothing to save (no draft). */
+    const customSaveBlockText = (m: FailureModel, reason: string | null): string | null => {
+        if (reason === null || !(m.id in drafts)) return null;
+        const d = draftOf(m);
+        if (d.runningConditionMode !== 'custom' || reason !== testPeriodsError(d.customTestPeriods)) return null;
+        const n = firstInvalidTestPeriodNumber(d.customTestPeriods);
+        return n === null ? null : fixPeriodFirstText(`S${n}`, 'saving');
     };
 
     /** Why Train / Mark complete are disabled: everything Save needs, then the gate. */
@@ -2483,15 +2514,25 @@ export default function BuildModelWindow() {
     // an invalid one (and its error) is dropped, never shown on — or written into — another model.
     useEffect(() => { setBoundaryEdit(null); }, [activeModel?.id]);
 
+    /** Which page of the detail pane a model shows. The Health score page is only
+     *  ever shown for a model that was trained and is up to date (it reads the
+     *  trained fit); otherwise the stored choice is ignored, not erased. */
+    const pageOf = (m: FailureModel): WorkbenchPage => {
+        const want = pageByModel[m.id] ?? 'model';
+        return want === 'health' && (isModelStale(m) || !m.lastTrainedAt) ? 'model' : want;
+    };
+
     // ---- Running condition: row counts ----
-    // The one-line card shows the PERSISTED condition's row count
-    // (`useRowCountPreview`). The settings modal and a Custom model's own panel
-    // show per-period running-row counts of what is being edited
-    // (`usePeriodCounts`, one instance each): nothing is asked while they are
-    // closed, a changing draft is debounced, and a settled draft costs at most
-    // two calls.
-    const rowCountCache = useRef(new Map<string, number>());
-    const rcCountSensor = allSensors[0] ?? null;
+    // ONE source for every "rows used" / "running days" number of this window:
+    // Rust's `count_period_rows` (`usePeriodCounts`), so the one-line card, the
+    // settings modal and the amber "below the recommended train time" note can
+    // never disagree about the same condition. Three instances:
+    //  - the card: the PERSISTED workspace condition — its train periods only, so
+    //    ONE call per settled persisted state (and none while the window loads);
+    //  - the settings modal: its draft, only while it is open (debounced, at most
+    //    two calls per settled draft);
+    //  - the active Custom model's own lists, only while its Model fit page is on
+    //    screen (see `customCountsWanted`).
     const persistedCountFilter = useMemo(
         () => buildPreviewFilterPayload(
             { filters: runningConditionFilters, combine: runningConditionCombine, noneConfirmed: runningConditionNoneConfirmed, periods: runningConditionTimePeriods },
@@ -2509,11 +2550,20 @@ export default function BuildModelWindow() {
         [rcDraft, runningConditionFilters, runningConditionCombine, runningConditionNoneConfirmed, runningConditionTimePeriods, allSensors],
     );
     const persistedPeriodsInvalid = validatePeriods(runningConditionTimePeriods).some(st => st.invalid);
-    const persistedRows = useRowCountPreview({
+    const cardCounts = usePeriodCounts({
         // No train period = nothing is trained on (rule 1): no whole-dataset count.
         enabled: !loading && rcConfigured && !persistedPeriodsInvalid && runningConditionTimePeriods.length > 0,
-        workspaceId, sensor: rcCountSensor, filter: persistedCountFilter, cache: rowCountCache,
+        workspaceId,
+        trainPeriods: runningConditionTimePeriods,
+        // The card prints no scoring count: no second call.
+        scoringPeriods: NO_PERIODS,
+        filter: persistedCountFilter,
+        expectedGeneration: generation,
+        // The persisted condition changes in whole steps (Apply, another window's
+        // write), never per keystroke: nothing to wait for.
+        debounceMs: 0,
     });
+    const cardRows = useMemo(() => cardRowsFromCounts(cardCounts), [cardCounts]);
     // The modal's DRAFT (what Apply would commit). The lists are the draft's own
     // arrays (stable until the draft changes), the filter is memoised above.
     const rcCountPeriods = rcDraft ? rcDraft.periods : runningConditionTimePeriods;
@@ -2526,32 +2576,28 @@ export default function BuildModelWindow() {
         filter: draftCountFilter,
         expectedGeneration: generation,
     });
-    // Train running time of the ACTIVE Custom model (its own condition + train
-    // periods, draft included) for the amber "below the recommended train time"
-    // note (`trainDaysEstimateFor`) — the Step-1 counts above are the workspace's.
-    // Only asked while the model could train (nothing blocks it).
-    const activeCustomScope = activeEffective && activeEffective.runningConditionMode === 'custom'
-        && getBuildBlockReason(activeEffective, gateFg, gateHeaders) === null
-        ? effectiveRunningCondition(activeEffective, gateFg) : null;
-    const customRows = useRowCountPreview({
-        enabled: !loading && activeCustomScope !== null,
-        workspaceId,
-        sensor: rcCountSensor,
-        filter: activeCustomScope ? buildPreviewFilterPayload(activeCustomScope, gateHeaders) : null,
-        cache: rowCountCache,
-        debounceMs: 300,
-    });
 
-    // A Custom model's OWN running condition, as drafted, while its panel is on
-    // screen (Custom mode + Model settings open): its own period counts, asked
-    // only then. `activeCustomDraft` keeps one identity per draft / saved model,
-    // so the hook's inputs do not change on unrelated renders.
+    // A Custom model's OWN running condition, as drafted. `activeCustomDraft` keeps
+    // one identity per draft / saved model, so the hook's inputs do not change on
+    // unrelated renders.
     const activeDraftEntry = activeModel ? drafts[activeModel.id] : undefined;
     const activeCustomDraft = useMemo(
         () => (activeModel ? (activeDraftEntry ?? draftFromModel(activeModel)) : null),
         [activeModel, activeDraftEntry],
     );
-    const customPanelOpen = !!activeModel && activeCustomDraft?.runningConditionMode === 'custom' && isSettingsOpen(activeModel);
+    const activeIsCustom = !!activeModel && activeCustomDraft?.runningConditionMode === 'custom';
+    // Model settings — and with them a Custom model's own panel — are drawn on the
+    // Model fit page only. On the Health score page NOTHING of it is on screen, so
+    // nothing may be counted or re-read for it there (review of a4acd7a, item 1).
+    const activeOnFitPage = !!activeModel && pageOf(activeModel) === 'model';
+    const customPanelOpen = activeIsCustom && activeOnFitPage && isSettingsOpen(activeModel);
+    // With the panel closed the train running time still feeds the amber "below
+    // the recommended train time" note on the Model fit charts
+    // (`trainDaysEstimateFor`) — asked only while the model could train (nothing
+    // blocks it), and then for the train periods alone: one call.
+    const activeCustomCanTrain = !!activeEffective && activeEffective.runningConditionMode === 'custom'
+        && getBuildBlockReason(activeEffective, gateFg, gateHeaders) === null;
+    const customCountsWanted = activeIsCustom && activeOnFitPage && (customPanelOpen || activeCustomCanTrain);
     const customCountFilter = useMemo(
         () => (activeCustomDraft && activeCustomDraft.runningConditionMode === 'custom'
             ? buildPreviewFilterPayload(
@@ -2563,10 +2609,11 @@ export default function BuildModelWindow() {
         [activeCustomDraft, allSensors],
     );
     const customCounts = usePeriodCounts({
-        enabled: !loading && customPanelOpen,
+        enabled: !loading && customCountsWanted,
         workspaceId,
         trainPeriods: activeCustomDraft?.customPeriods ?? NO_PERIODS,
-        scoringPeriods: activeCustomDraft?.customTestPeriods ?? NO_PERIODS,
+        // The scoring rows are only printed by the open panel.
+        scoringPeriods: customPanelOpen ? (activeCustomDraft?.customTestPeriods ?? NO_PERIODS) : NO_PERIODS,
         filter: customCountFilter,
         expectedGeneration: generation,
     });
@@ -2836,7 +2883,7 @@ export default function BuildModelWindow() {
                                 key={m.id}
                                 data-testid={`sensor-kind-badge-${m.id}`}
                                 className={`f4-kb model-kind-icon--${m.kind}`}
-                                title={`${KIND_LABEL[m.kind]} · ${failedRun ? failedWordsOf(m) : fixSetPoint ? 'Fix set point' : DOT_TITLE[st]}`}
+                                title={`${KIND_TAB_LABEL[m.kind]} · ${failedRun ? failedWordsOf(m) : fixSetPoint ? 'Fix set point' : DOT_TITLE[st]}`}
                             >
                                 {KIND_ABBREV[m.kind]}
                                 {dot && <span data-testid={`sensor-kind-badge-dot-${m.id}`} data-state={st} className={`f4-kb-dot f4-kb-dot--${dot}`} aria-hidden="true" />}
@@ -3136,7 +3183,7 @@ export default function BuildModelWindow() {
                     const suggestion = suggestDistinctModelName(allModels, m, d.name);
                     return (
                         <div data-testid="duplicate-name-warning" className="f4-req-note" style={{ marginTop: '4px' }}>
-                            Same name as this sensor's {KIND_LABEL[conflict.kind]} model — give it a different name so they can be told apart
+                            Same name as this sensor's {kindModelName(conflict.kind)} — give it a different name so they can be told apart
                             <button
                                 type="button"
                                 data-testid="use-suggested-name"
@@ -3432,13 +3479,6 @@ export default function BuildModelWindow() {
         };
     };
 
-    /** Which page of the detail pane a model shows. The Health score page is only
-     *  ever shown for a model that was trained and is up to date (it reads the
-     *  trained fit); otherwise the stored choice is ignored, not erased. */
-    const pageOf = (m: FailureModel): WorkbenchPage => {
-        const want = pageByModel[m.id] ?? 'model';
-        return want === 'health' && (isModelStale(m) || !m.lastTrainedAt) ? 'model' : want;
-    };
     const setPage = (m: FailureModel, page: WorkbenchPage) => setPageByModel(prev => (prev[m.id] === page ? prev : { ...prev, [m.id]: page }));
     /** Why the Health score page (and the "Health set points" / "Complete" steps)
      *  cannot be opened right now, or null. */
@@ -3653,18 +3693,17 @@ export default function BuildModelWindow() {
         );
     };
 
-    /** Train running days of a model, estimated from a row count: the Step-1 count
-     *  for a Workspace-mode model, the active Custom model's own count
-     *  (`customRows`) for a Custom one. Only feeds the amber "below the
-     *  recommended train time" note until Rust's exact figure exists (it does once
-     *  a scoring period is scored). */
+    /** Train running days of a model as Rust counted them (`count_period_rows`):
+     *  the card's count of the persisted workspace condition for a Workspace-mode
+     *  model, the active Custom model's own count for a Custom one — the SAME
+     *  figure the Running-condition caption prints ("about N d running time").
+     *  Only feeds the amber "below the recommended train time" note until the
+     *  health preview's own figure exists (it does once a scoring period is scored). */
     const trainDaysEstimateFor = (m: FailureModel): number | null => {
         if (effectiveModelFor(m).runningConditionMode === 'custom') {
-            return activeModel?.id === m.id && customRows.status === 'ok'
-                ? estimateRunningDays(customRows.used, customRows.total, datasetBounds)
-                : null;
+            return activeModel?.id === m.id ? countedTrainRunningDays(customCounts) : null;
         }
-        return persistedRows.status !== 'ok' ? null : estimateRunningDays(persistedRows.used, persistedRows.total, datasetBounds);
+        return countedTrainRunningDays(cardCounts);
     };
 
     /** Why Mark complete is not possible right now (the FIRST blocking reason), or
@@ -3880,7 +3919,7 @@ export default function BuildModelWindow() {
             line = qItem.state === 'running'
                 ? <><Loader2 size={11} className="pm-spin" aria-hidden="true" /> Training now · about {formatTrainSeconds(ROUGH_TRAIN_SECONDS[m.kind])}</>
                 : `Queued in the run · ${queue.queuePositionOf(m.id) === 1 ? 'next' : `#${queue.queuePositionOf(m.id)}`}`;
-        } else if (reason) { line = ownGateText(m, reason); tone = 'warn'; lineId = 'build-block-reason'; }
+        } else if (reason) { line = customSaveBlockText(m, reason) ?? ownGateText(m, reason); tone = 'warn'; lineId = 'build-block-reason'; }
         // An unsaved draft is said here, once (the tab carries no "edited" pill).
         else if (hasDraft) line = `Unsaved changes to the ${kindModelName(m.kind)}`;
         // The fit is gone (for a Complete model too, and before "Training failed": a load
@@ -4280,7 +4319,12 @@ export default function BuildModelWindow() {
     // period (a missing date, or an end before its start). Scoring periods
     // overlapping train time and train periods overlapping a highlight never block.
     const rcApplyBlock = runningConditionApplyBlock(rcView.periods, rcView.testPeriods);
-    const rcApplyEnabled = rcApplyBlock === null && (rcDirty || rcPeriodTyping);
+    // Apply writes the DRAFT, and a typed date is in the draft as soon as it is
+    // complete — so "dirty" is the whole condition, and the impact line below is on
+    // screen whenever Apply is enabled. A half-typed date changes nothing (it
+    // never reaches the draft): it only shows the neutral line.
+    const rcApplyEnabled = rcApplyBlock === null && rcDirty;
+    const rcPendingName = rcPendingDate.train ?? rcPendingDate.scoring;
     const rcTestsNotice = testsChangedNotice(allModels, gateFg);
     const rcRetrainLeft = rcRetrainIds.length > 0
         ? modelsStillNeedingTraining(rcRetrainIds, allModels, gateFg, specialRecipes ?? undefined)
@@ -4328,7 +4372,7 @@ export default function BuildModelWindow() {
                     headers={gateHeaders}
                     getDesc={getDesc}
                     getUnit={getUnit}
-                    rows={persistedRows}
+                    rows={cardRows}
                     bounds={datasetBounds}
                     onOpen={() => setRcFilterOpen(true)}
                     testPeriods={runningConditionTestPeriods}
@@ -4427,11 +4471,11 @@ export default function BuildModelWindow() {
                                         return (
                                             <li key={key} style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
                                                 <b>{sensorLabel(tag)}</b> → {to ? CATEGORY_LABELS[to] : 'not set'}
-                                                {source ? `, taken from its ${KIND_LABEL[source.kind]} model` : ''}. Changed:{' '}
+                                                {source ? `, taken from its ${kindModelName(source.kind)}` : ''}. Changed:{' '}
                                                 {changes.map((c, i) => (
                                                     <span key={c.modelId}>
                                                         {i > 0 && ' · '}
-                                                        {KIND_LABEL[c.kind]}{' '}
+                                                        {KIND_TAB_LABEL[c.kind]}{' '}
                                                         {c.from ? <span className="f4-strike">{CATEGORY_LABELS[c.from]}</span> : '(not set)'} → {c.to ? CATEGORY_LABELS[c.to] : 'not set'}
                                                     </span>
                                                 ))}
@@ -4532,13 +4576,7 @@ export default function BuildModelWindow() {
                                 <X size={16} />
                             </button>
                         </div>
-                        {/* The scrolling body. It also notices a period date being typed
-                            into (change) / committed (blur) — see rcPeriodTyping. */}
-                        <div
-                            className="rcm-scroll"
-                            onChange={e => { if ((e.target as HTMLElement).closest('[data-testid="time-periods-editor"], [data-testid="test-periods-editor"]')) setRcPeriodTyping(true); }}
-                            onBlur={e => { if ((e.target as HTMLElement).closest('[data-testid="time-periods-editor"], [data-testid="test-periods-editor"]')) setRcPeriodTyping(false); }}
-                        >
+                        <div className="rcm-scroll">
                             <RunningConditionPanel
                                 configured={rcViewConfigured}
                                 periods={rcView.periods}
@@ -4559,6 +4597,7 @@ export default function BuildModelWindow() {
                                 testPeriods={rcView.testPeriods}
                                 onTestPeriodsChange={updateRunningConditionTestPeriods}
                                 highlights={dashHighlights}
+                                onPendingDate={onRcPendingDate}
                             />
                         </div>
                         <div className="bmw-modal-foot" data-testid="rc-modal-foot">
@@ -4596,11 +4635,21 @@ export default function BuildModelWindow() {
                                         >
                                             <span>{rcApplyBlock.footer}</span>
                                         </span>
-                                    ) : rcImpact && (
-                                        // What applying does to the models (never blocks Apply).
+                                    ) : rcImpact ? (
+                                        // What applying the draft does to the models (never blocks
+                                        // Apply). Apply is only ever enabled with this line on screen.
+                                        // A date still half-typed is not part of the draft: one more
+                                        // quiet line says so.
                                         <span data-testid="rc-impact" data-tone={rcImpact.tone} role="status" className={`rc-impact rc-impact--${rcImpact.tone}`}>
                                             <span>{rcImpact.text}</span>
                                             {rcImpact.quiet && <span data-testid="rc-impact-quiet">{rcImpact.quiet}</span>}
+                                            {rcPendingName && <span data-testid="rc-pending-date">{pendingDateText(rcPendingName)}</span>}
+                                        </span>
+                                    ) : rcPendingName && (
+                                        // Nothing edited yet but a date is half-typed: nothing of it is
+                                        // in the draft, so there is no impact to show — only how to get it.
+                                        <span data-testid="rc-pending-date" role="status" className="rc-impact rc-impact--grey">
+                                            <span>{pendingDateText(rcPendingName)}</span>
                                         </span>
                                     )}
                                 </>

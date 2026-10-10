@@ -129,6 +129,38 @@ describe('RunningConditionPanel — one column (workbench redesign §5)', () => 
         expect(screen.getByTestId('test-days-1').textContent).toBe('15 d · 13 d running');
     });
 
+    // Review of a4acd7a, item 6: the count of an unset condition is a count of every row.
+    it('not configured ("Only when running", no complete condition): the caption asks for the condition and no row claims running days', () => {
+        setup({ configured: false, filters: [], counts: COUNTED });
+        expect(screen.getByTestId('rc-caption').getAttribute('data-rows')).toBe('no-condition');
+        expect(screen.getByTestId('rc-caption-rows').textContent).toBe('set the condition to count the rows');
+        expect(screen.getByTestId('rc-caption-train').textContent).toBe('60 d train');
+        expect(screen.getByTestId('period-days-1').textContent).toBe('30 d');
+        expect(screen.getByTestId('test-days-1').textContent).toBe('15 d');
+        expect(screen.queryByTestId('period-running-1')).toBeNull();
+        expect(screen.queryByTestId('test-running-1')).toBeNull();
+    });
+
+    // Review of a4acd7a, item 2: a half-typed date is reported per list, a complete one arrives at once.
+    it('a date being typed: a complete one goes to the host on change; a half-typed one only names its row (per list)', () => {
+        const typed = setup();
+        fireEvent.change(screen.getByLabelText('P1 end'), { target: { value: '2026-01-20T00:00' } });
+        expect(typed.onPeriodsChange).toHaveBeenLastCalledWith([{ ...P1, end: '2026-01-20T00:00' }, P2]);
+        cleanup();
+
+        const onPendingDate = vi.fn();
+        const h = setup({ onPendingDate });
+        fireEvent.change(screen.getByLabelText('P2 end'), { target: { value: '' } });
+        expect(onPendingDate).toHaveBeenLastCalledWith('train', 'P2');
+        expect(h.onPeriodsChange).not.toHaveBeenCalled(); // a half value never reaches the host
+        fireEvent.change(screen.getByLabelText('Scoring period 1 start'), { target: { value: '' } });
+        expect(onPendingDate).toHaveBeenLastCalledWith('scoring', 'S1');
+        expect(h.onTestPeriodsChange).not.toHaveBeenCalled();
+        fireEvent.blur(screen.getByLabelText('Scoring period 1 start'));
+        expect(onPendingDate).toHaveBeenLastCalledWith('scoring', null);
+        expect(h.onTestPeriodsChange).not.toHaveBeenCalled();
+    });
+
     it('without counts the caption has the calendar parts only and the rows their days', () => {
         setup();
         expect(screen.getByTestId('rc-caption').getAttribute('data-rows')).toBe('idle');

@@ -1,6 +1,8 @@
+import { useState } from 'react';
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup } from '@testing-library/react';
 import TimePeriodsEditor from '../components/windows/TimePeriodsEditor';
+import type { TimePeriod } from '../types';
 import type { PeriodCountsState } from '../utils/periodCounts';
 import type { PeriodCount, PeriodCounts } from '../types/periodCounts';
 
@@ -22,6 +24,21 @@ const answer = (periods: PeriodCount[]): PeriodCounts => ({
 });
 const state = (status: PeriodCountsState['status'], train: PeriodCounts | null): PeriodCountsState =>
     ({ status, train, scoring: null, error: status === 'error' ? 'boom' : null, errorCode: null });
+
+/** The editor inside a parent that keeps what it is handed, like the modal's draft. */
+function Harness({ initial, onChange, onPending }: { initial: TimePeriod[]; onChange: (next: TimePeriod[]) => void; onPending?: (name: string | null) => void }) {
+    const [periods, setPeriods] = useState(initial);
+    return (
+        <TimePeriodsEditor
+            periods={periods}
+            onChange={next => { onChange(next); setPeriods(next); }}
+            bounds={bounds}
+            onPendingChange={onPending}
+        />
+    );
+}
+const ids = (list: TimePeriod[]) => list.map(p => p.id);
+const lastCall = (fn: ReturnType<typeof vi.fn>) => fn.mock.calls[fn.mock.calls.length - 1][0] as TimePeriod[];
 
 describe('TimePeriodsEditor — adding and committing', () => {
     it('empty list: asks for a train period; Add seeds the first period from the data start to that month end', () => {
@@ -56,18 +73,121 @@ describe('TimePeriodsEditor — adding and committing', () => {
         expect(onChange.mock.calls[0][0][1]).toMatchObject({ start: '2026-03-01T00:00', end: '2026-03-15T12:00' });
     });
 
-    it('typing only edits the local draft; Enter commits (sorted)', () => {
+    // 2026-10-10 (review of a4acd7a, item 2): a COMPLETE date goes to the parent on change —
+    // the timeline, the counts and the impact line follow it before Apply can be pressed.
+    it('a complete typed date is handed up at once, in the order on screen; the row being typed in does not move until blur / Enter sorts', () => {
         const onChange = vi.fn();
-        render(<TimePeriodsEditor
-            periods={[{ id: 'b', start: '2026-03-01T00:00', end: '2026-03-31T23:59' }, { id: 'a', start: '2026-01-01T00:00', end: '2026-01-31T23:59' }]}
-            onChange={onChange}
-        />);
-        const start = screen.getByLabelText('P1 start');
-        fireEvent.change(start, { target: { value: '2026-03-02T00:00' } });
-        expect(onChange).not.toHaveBeenCalled();
-        fireEvent.keyDown(start, { key: 'Enter' });
+        render(<Harness initial={[A, B]} onChange={onChange} />);
+        const field = screen.getByLabelText('P2 start');
+        // P2 now starts BEFORE P1: handed up at once, but still as P2
+        fireEvent.change(field, { target: { value: '2025-12-01T00:00' } });
         expect(onChange).toHaveBeenCalledTimes(1);
-        expect(onChange.mock.calls[0][0].map((p: { id: string }) => p.id)).toEqual(['a', 'b']);
+        expect(lastCall(onChange)).toEqual([A, { ...B, start: '2025-12-01T00:00' }]);
+        // the same field is still "P2 start" and still the same element (the focus cannot jump)
+        expect(screen.getByLabelText('P2 start')).toBe(field);
+        expect((field as HTMLInputElement).value).toBe('2025-12-01T00:00');
+        // a second keystroke: handed up again, still unsorted
+        fireEvent.change(field, { target: { value: '2025-12-02T00:00' } });
+        expect(ids(lastCall(onChange))).toEqual(['a', 'b']);
+        // Enter: the list is put in time order
+        fireEvent.keyDown(field, { key: 'Enter' });
+        expect(onChange).toHaveBeenCalledTimes(3);
+        expect(ids(lastCall(onChange))).toEqual(['b', 'a']);
+        expect((screen.getByLabelText('P1 start') as HTMLInputElement).value).toBe('2025-12-02T00:00');
+    });
+
+    it('blur sorts too; a blur after a typed date that did not change the order hands nothing up again', () => {
+        const onChange = vi.fn();
+        render(<Harness initial={[A, B]} onChange={onChange} />);
+        fireEvent.change(screen.getByLabelText('P1 end'), { target: { value: '2026-01-20T23:59' } });
+        expect(onChange).toHaveBeenCalledTimes(1);
+        fireEvent.blur(screen.getByLabelText('P1 end'));
+        expect(onChange).toHaveBeenCalledTimes(1); // already in order: nothing new to hand up
+        fireEvent.change(screen.getByLabelText('P1 start'), { target: { value: '2026-03-12T00:00' } });
+        fireEvent.blur(screen.getByLabelText('P1 start'));
+        expect(ids(lastCall(onChange))).toEqual(['b', 'a']);
+    });
+
+    it('a half-typed date (the field reports "") is never handed up: the row is named as pending, and blur puts the committed date back', () => {
+        const onChange = vi.fn();
+        const onPending = vi.fn();
+        render(<Harness initial={[A, B]} onChange={onChange} onPending={onPending} />);
+        expect(onPending).toHaveBeenLastCalledWith(null);
+        const field = screen.getByLabelText('P2 end') as HTMLInputElement;
+        fireEvent.change(field, { target: { value: '' } });
+        expect(onChange).not.toHaveBeenCalled();
+        expect(onPending).toHaveBeenLastCalledWith('P2');
+        expect(field.value).toBe(''); // the field keeps what is being typed
+        // ...while the row keeps its committed state (P2 is the last period: a blank end would
+        // otherwise read as "End of data", and its days would run to the end of the dataset)
+        expect(screen.getByTestId('period-days-2').textContent).toBe('24 d');
+        expect(screen.queryByTestId('period-open-end')).toBeNull();
+        fireEvent.blur(field);
+        expect(onChange).not.toHaveBeenCalled(); // no half value was written
+        expect((screen.getByLabelText('P2 end') as HTMLInputElement).value).toBe(B.end);
+        expect(onPending).toHaveBeenLastCalledWith(null);
+    });
+
+    it('finishing the date after a cleared segment hands the complete date up and clears the pending name', () => {
+        const onChange = vi.fn();
+        const onPending = vi.fn();
+        render(<Harness initial={[A]} onChange={onChange} onPending={onPending} />);
+        const field = screen.getByLabelText('P1 end');
+        fireEvent.change(field, { target: { value: '' } });
+        expect(onPending).toHaveBeenLastCalledWith('P1');
+        fireEvent.change(field, { target: { value: '2026-02-10T23:59' } });
+        expect(lastCall(onChange)).toEqual([{ ...A, end: '2026-02-10T23:59' }]);
+        expect(onPending).toHaveBeenLastCalledWith(null);
+    });
+
+    it('a year still being typed ("0202-…") is not handed up on change — the parent only ever gets the finished date', () => {
+        const onChange = vi.fn();
+        const onPending = vi.fn();
+        render(<Harness initial={[A]} onChange={onChange} onPending={onPending} />);
+        const field = screen.getByLabelText('P1 end');
+        for (const v of ['0002-01-31T23:59', '0020-01-31T23:59', '0202-01-31T23:59']) {
+            fireEvent.change(field, { target: { value: v } });
+            expect(onChange).not.toHaveBeenCalled();
+            expect(onPending).toHaveBeenLastCalledWith('P1');
+            // the row is judged by the date the parent has: no "P1 ends before it starts" flash
+            expect(screen.queryByTestId('period-invalid-1')).toBeNull();
+            expect(screen.getByTestId('period-days-1').textContent).toBe('31 d');
+        }
+        fireEvent.change(field, { target: { value: '2026-02-28T23:59' } });
+        expect(onChange).toHaveBeenCalledTimes(1);
+        expect(lastCall(onChange)).toEqual([{ ...A, end: '2026-02-28T23:59' }]);
+        expect(onPending).toHaveBeenLastCalledWith(null);
+    });
+
+    // Review of a4acd7a, item 3: a real datetime-local reports '' as soon as ONE segment is
+    // cleared, and '' is a VALID value on P1's start / the last period's end ("Start of data").
+    it('clearing P1 start (or the last end) by typing never opens the bound: blur and Enter put the date back; only the × opens it', () => {
+        const onChange = vi.fn();
+        render(<Harness initial={[A, B]} onChange={onChange} />);
+        fireEvent.change(screen.getByLabelText('P1 start'), { target: { value: '' } });
+        fireEvent.blur(screen.getByLabelText('P1 start'));
+        expect(onChange).not.toHaveBeenCalled();
+        expect(screen.queryByTestId('period-open-start')).toBeNull();
+        expect((screen.getByLabelText('P1 start') as HTMLInputElement).value).toBe(A.start);
+
+        fireEvent.change(screen.getByLabelText('P2 end'), { target: { value: '' } });
+        fireEvent.keyDown(screen.getByLabelText('P2 end'), { key: 'Enter' });
+        expect(onChange).not.toHaveBeenCalled();
+        expect(screen.queryByTestId('period-open-end')).toBeNull();
+        expect((screen.getByLabelText('P2 end') as HTMLInputElement).value).toBe(B.end);
+
+        // the explicit action still works
+        fireEvent.click(screen.getByTestId('period-open-toggle-start'));
+        expect(lastCall(onChange)).toEqual([{ ...A, start: '' }, B]);
+        expect(screen.getByTestId('period-open-start').textContent).toContain('Start of data');
+    });
+
+    it('a half-typed field is never carried along by another action: removing a row hands up the committed dates', () => {
+        const onChange = vi.fn();
+        render(<Harness initial={[A, B]} onChange={onChange} />);
+        fireEvent.change(screen.getByLabelText('P1 end'), { target: { value: '' } });
+        fireEvent.click(screen.getByLabelText('Remove P2'));
+        expect(lastCall(onChange)).toEqual([A]);
     });
 
     it('blur without any edit does not call onChange', () => {
@@ -135,7 +255,7 @@ describe('TimePeriodsEditor — one quiet line per period (workbench redesign §
         expect(screen.getByTestId('period-days-1').textContent).toBe('31 d');
     });
 
-    it('a period being typed loses its running days until the new count lands (the count is for the old dates)', () => {
+    it('a period whose dates changed loses its running days until the new count lands (the count is for the old dates)', () => {
         render(<TimePeriodsEditor periods={[A]} onChange={vi.fn()} bounds={bounds} counts={state('ok', answer([counted(0, A, 26.4)]))} />);
         fireEvent.change(screen.getByLabelText('P1 end'), { target: { value: '2026-01-20T23:59' } });
         expect(screen.getByTestId('period-days-1').textContent).toBe('20 d');
