@@ -21,7 +21,7 @@
 ```
 ผู้ใช้
  └─ Main session ── รับงาน → แจกงาน → ตรวจซ้ำ → ปิดงาน
-     ├─ ทีมออกแบบ:   ui-design-lead (Fable) → ui-design-agent (Opus) ↻ → ui-design-reviewer (Fable)
+     ├─ ทีมออกแบบ:   ui-design-lead (Fable) → ui-design-agent (Opus) ↻ → ui-design-reviewer (Opus)
      ├─ ทีมเขียนโค้ด: (pm-agent) → fe-logic ∥ rust → fe-ui → code-reviewer → qa
      ├─ release-agent (ตอนออกเวอร์ชัน)
      └─ notion-sync-agent (main session เรียกท้ายทุกงาน)
@@ -38,7 +38,7 @@
 | `release-agent` | Opus | version 3 ไฟล์, `CHANGELOG.md` | ออกเวอร์ชัน: เตรียม (bump + changelog) → ผู้ใช้อนุมัติ → build installer |
 | `ui-design-lead` | Fable | `docs/design/` | ทิศทาง + 1–2 จออ้างอิง |
 | `ui-design-agent` | Opus | scratchpad | จอที่เหลือ + วน feedback |
-| `ui-design-reviewer` | Fable | — | รีวิวเข้มรอบสุดท้าย |
+| `ui-design-reviewer` | Opus | — | รีวิวเข้มรอบสุดท้าย |
 | `notion-sync-agent` | Sonnet | Notion | sync tracker, ไม่ตั้ง Done เอง |
 
 ## งานโค้ด — 3 ระดับ
@@ -75,7 +75,7 @@ fe-logic) → `code-reviewer` (แก้ must-fix) → `qa` ทดสอบร�
 ## งานออกแบบ
 
 lead (Fable) วางทิศทาง + จอหลัก → agent (Opus) ทำจอที่เหลือ วนแก้กับผู้ใช้ →
-reviewer (Fable) รีวิว (must-fix ส่งกลับ agent) → **กลับมาที่ main session** แก้จอเดิม
+reviewer (Opus) รีวิว (must-fix ส่งกลับ agent) → **กลับมาที่ main session** แก้จอเดิม
 เล็กๆ เริ่มที่ `ui-design-agent` ได้เลย Fable ช้ากว่า/แพงกว่า ~2.5× จึงใช้เฉพาะงาน
 ตัดสินคุณภาพ ทุกงานออกแบบต้องผ่าน design agent — main session ไม่ทำ mockup เอง
 
@@ -119,4 +119,4 @@ handover entry → `notion-sync-agent` → commit ในเครื่อง �
 ## กฎเพิ่ม 2026-10-09 (จากข้อมูลการทำงานจริง 10 วัน)
 - **agent ที่จบโดยไม่มีบล็อกรายงาน = ยังไม่ผ่าน** (HANDOFF / CODE REVIEW / DESIGN HANDOFF / DESIGN REVIEW / PLAN) → main session สั่งทำต่อด้วย SendMessage หรือรันใหม่ ห้ามข้ามไปขั้นถัดไป
 - **แบ่งงานให้เล็ก**: งานออกแบบ 1 ครั้ง = 2–3 หน้าจอ หรือ feedback 1 รอบ; worker 1 ครั้ง = 1 phase; agent ต้องปิด server ที่เปิดเองก่อนรายงาน
-
+- 2026-10-10: `ui-design-reviewer` เปลี่ยนจาก Fable เป็น Opus (ผู้ใช้เห็นว่า Fable ช้าเกินสำหรับงานตรวจตามเกณฑ์) — Fable เหลือเฉพาะ `ui-design-lead`
