@@ -762,27 +762,176 @@ fn spawn_sidecar(
     ),
     String,
 > {
-    const BUILD_HINT: &str = "The Python ML sidecar (src-tauri/bin/backend-<target>) is missing or is \
-         an empty stub. Build it with src-tauri/python/build_sidecar.sh (or \
-         scripts/build-installer-windows.ps1 step 3), then retry.";
-    let sidecar = app
-        .shell()
-        .sidecar("backend")
-        .map_err(|e| format!("Sidecar setup failed: {}. {}", e, BUILD_HINT))?;
+    // The UI gets the user wording (`engine_start_error`); the developer
+    // wording + build hint go to the error log / dev console only.
+    let sidecar = app.shell().sidecar("backend").map_err(|e| {
+        let detail = e.to_string();
+        log_sidecar_start_failure(app, &sidecar_start_log_line("Sidecar setup failed", &detail, true));
+        engine_start_error(&detail, true)
+    })?;
     sidecar.spawn().map_err(|e| {
         let msg = e.to_string();
-        let lower = msg.to_lowercase();
-        let looks_like_missing_build = lower.contains("os error 193")
-            || lower.contains("not a valid win32 application")
-            || lower.contains("exec format error")
-            || lower.contains("os error 2") // file not found
-            || lower.contains("not found");
-        if looks_like_missing_build {
-            format!("Failed to launch the Python ML sidecar ({}). {}", msg, BUILD_HINT)
-        } else {
-            format!("Failed to launch the Python ML sidecar: {}", msg)
-        }
+        let unbuilt = sidecar_looks_unbuilt(&msg);
+        log_sidecar_start_failure(
+            app,
+            &sidecar_start_log_line("Failed to launch the Python ML sidecar", &msg, unbuilt),
+        );
+        engine_start_error(&msg, unbuilt)
     })
+}
+
+/// Developer-only hint for a missing / stub sidecar binary. Goes to the error
+/// log and the dev console - NEVER into an error the UI shows (user decision
+/// 2026-10-10: user-readable text says "Relation model engine", never
+/// "sidecar" / "Python" / the binary name).
+const SIDECAR_BUILD_HINT: &str = "The Python ML sidecar (src-tauri/bin/backend-<target>) is missing or is \
+     an empty stub. Build it with src-tauri/python/build_sidecar.sh (or \
+     scripts/build-installer-windows.ps1 step 3), then retry.";
+
+/// A spawn error that means "the binary is missing or is the 0-byte stub".
+fn sidecar_looks_unbuilt(os_error: &str) -> bool {
+    let lower = os_error.to_lowercase();
+    lower.contains("os error 193")
+        || lower.contains("not a valid win32 application")
+        || lower.contains("exec format error")
+        || lower.contains("os error 2") // file not found
+        || lower.contains("not found")
+}
+
+/// The LOG line (developer wording) of a sidecar that could not be started.
+fn sidecar_start_log_line(what: &str, os_error: &str, unbuilt: bool) -> String {
+    if unbuilt {
+        format!("{what} ({os_error}). {SIDECAR_BUILD_HINT}")
+    } else {
+        format!("{what}: {os_error}")
+    }
+}
+
+/// Best effort: the permanent error log + stderr (the `tauri dev` console).
+fn log_sidecar_start_failure(app: &tauri::AppHandle, line: &str) {
+    eprintln!("{line}");
+    if let Ok(path) = error_log_path(app) {
+        append_error_line(&path, "sidecar", line, None);
+    }
+}
+
+// ── What the USER reads when the Relation model engine fails ──────────────
+// Every error below can reach the UI (Train, Compare predictors, Mark
+// complete). They name the thing "the Relation model engine" and keep the
+// technical detail (OS error, engine output) AFTER the sentence for support.
+
+/// The engine could not be started. `unbuilt` = it is missing / not runnable.
+fn engine_start_error(os_error: &str, unbuilt: bool) -> String {
+    if unbuilt {
+        format!(
+            "The Relation model engine could not start: it is missing from this installation or is \
+             damaged. Please reinstall or update the app. Detail: {os_error}"
+        )
+    } else {
+        format!("The Relation model engine could not start: {os_error}")
+    }
+}
+
+/// The engine ended without printing an answer; `stderr` = what it said instead.
+fn engine_no_output_error(stderr: &str) -> String {
+    let stderr = stderr.trim();
+    if stderr.is_empty() {
+        "The Relation model engine stopped without returning a result.".to_string()
+    } else {
+        format!("The Relation model engine stopped without returning a result. Detail: {stderr}")
+    }
+}
+
+/// The engine's answer is not valid JSON of the expected shape.
+fn engine_unreadable_answer_error(parse_error: &dyn std::fmt::Display, raw: &str) -> String {
+    format!("The Relation model engine returned an answer that could not be read: {parse_error} (raw: {raw})")
+}
+
+/// The engine answered with its own error (`err` is passed through as-is).
+fn engine_reported_error(err: &str) -> String {
+    format!("The Relation model engine reported an error: {err}")
+}
+
+/// A required field is absent from the engine's answer.
+fn engine_missing_field_error(field: &str) -> String {
+    format!("The Relation model engine's answer is incomplete: missing {field}")
+}
+
+#[cfg(test)]
+mod engine_wording_tests {
+    use super::*;
+
+    /// Words a user must never read (the confidential algorithm name included).
+    const DEV_WORDS: [&str; 9] =
+        ["idecar", "Python", "python", "backend", "build_", ".sh", "src-tauri", "LinearGAM", "Nuitka"];
+
+    fn assert_user_wording(msg: &str) {
+        assert!(msg.starts_with("The Relation model engine"), "{msg}");
+        for w in DEV_WORDS {
+            assert!(!msg.contains(w), "developer wording ({w}) in: {msg}");
+        }
+    }
+
+    #[test]
+    fn a_missing_engine_tells_the_user_to_reinstall_and_keeps_the_os_error() {
+        let os = "%1 is not a valid Win32 application. (os error 193)";
+        assert!(sidecar_looks_unbuilt(os));
+        let msg = engine_start_error(os, sidecar_looks_unbuilt(os));
+        assert_user_wording(&msg);
+        assert!(msg.contains("could not start") && msg.contains("reinstall or update the app"));
+        assert!(msg.ends_with(&format!("Detail: {os}")), "the OS error stays, after the sentence: {msg}");
+        // One line: the Train queue row shows only the first line of an error.
+        assert!(!msg.contains('\n'));
+    }
+
+    #[test]
+    fn every_missing_binary_shape_is_recognised_and_other_failures_are_not() {
+        for os in [
+            "%1 is not a valid Win32 application. (os error 193)",
+            "Exec format error (os error 8)",
+            "The system cannot find the file specified. (os error 2)",
+            "No such file or directory (os error 2)",
+            "program not found",
+        ] {
+            assert!(sidecar_looks_unbuilt(os), "{os}");
+        }
+        let other = "Access is denied. (os error 5)";
+        assert!(!sidecar_looks_unbuilt(other));
+        let msg = engine_start_error(other, false);
+        assert_user_wording(&msg);
+        assert_eq!(msg, format!("The Relation model engine could not start: {other}"));
+        assert!(!msg.contains("reinstall"), "not a known missing-install case: no such advice");
+    }
+
+    #[test]
+    fn the_build_hint_only_ever_goes_to_the_log_line() {
+        let os = "program not found";
+        let log = sidecar_start_log_line("Failed to launch the Python ML sidecar", os, true);
+        assert!(log.contains("sidecar") && log.contains("build_sidecar.sh") && log.contains(os));
+        assert!(!engine_start_error(os, true).contains("build_sidecar"));
+        // Not a missing build: no hint in the log either, just the reason.
+        assert_eq!(
+            sidecar_start_log_line("Failed to launch the Python ML sidecar", "Access is denied.", false),
+            "Failed to launch the Python ML sidecar: Access is denied."
+        );
+    }
+
+    #[test]
+    fn engine_failures_keep_their_detail_after_a_user_readable_sentence() {
+        let quiet = engine_no_output_error("  \n");
+        assert_eq!(quiet, "The Relation model engine stopped without returning a result.");
+        let loud = engine_no_output_error("  MemoryError: out of memory\n");
+        assert!(loud.ends_with("Detail: MemoryError: out of memory"), "{loud}");
+        let unreadable = engine_unreadable_answer_error(&"EOF while parsing a value", "{\"r2\":");
+        assert!(unreadable.contains("could not be read: EOF while parsing a value") && unreadable.contains("(raw: {\"r2\":)"));
+        let reported = engine_reported_error("X has 3 rows but y has 4");
+        assert!(reported.ends_with("reported an error: X has 3 rows but y has 4"));
+        let missing = engine_missing_field_error("rmse2");
+        assert!(missing.ends_with("missing rmse2"));
+        for msg in [&quiet, &loud, &unreadable, &reported, &missing] {
+            assert_user_wording(msg);
+        }
+    }
 }
 
 /// Optional value-filter passed alongside `preview_relationship_model`.
@@ -1650,14 +1799,11 @@ async fn preview_relationship_model(
     }
 
     if stdout_buf.trim().is_empty() {
-        return Err(format!(
-            "Sidecar returned no output. Stderr: {}",
-            stderr_buf.trim()
-        ));
+        return Err(engine_no_output_error(&stderr_buf));
     }
 
     let parsed = serde_json::from_str::<serde_json::Value>(stdout_buf.trim())
-        .map_err(|e| format!("Failed to parse sidecar output: {} (raw: {})", e, stdout_buf))?;
+        .map_err(|e| engine_unreadable_answer_error(&e, &stdout_buf))?;
 
     finish_relationship_response_ex(
         &state, stamp, parsed, &predictors, &target, lambda, &row_idx, &y_vector, &x_matrix, cache_key,
@@ -2975,11 +3121,7 @@ async fn write_relationship_files(
     }
 
     if stdout_buf.trim().is_empty() {
-        return Err(format!(
-            "Sidecar returned no output. Stderr: {}",
-            stderr_buf.trim()
-        )
-        .into());
+        return Err(engine_no_output_error(&stderr_buf).into());
     }
 
     #[derive(Deserialize)]
@@ -3002,23 +3144,24 @@ async fn write_relationship_files(
     }
 
     let resp: SidecarTrainResponse = serde_json::from_str(stdout_buf.trim())
-        .map_err(|e| format!("Failed to parse sidecar output: {} (raw: {})", e, stdout_buf))?;
+        .map_err(|e| engine_unreadable_answer_error(&e, &stdout_buf))?;
     if let Some(err) = resp.error {
-        return Err(format!("Sidecar error: {}", err).into());
+        return Err(engine_reported_error(&err).into());
     }
-    let r2 = resp.r2.ok_or("Sidecar response missing r2")?;
-    let rmse2 = resp.rmse2.ok_or("Sidecar response missing rmse2")?;
+    let r2 = resp.r2.ok_or_else(|| engine_missing_field_error("r2"))?;
+    let rmse2 = resp.rmse2.ok_or_else(|| engine_missing_field_error("rmse2"))?;
 
-    let model_path = resp.model_path.ok_or("Sidecar response missing model_path")?;
+    let model_path = resp.model_path.ok_or_else(|| engine_missing_field_error("model_path"))?;
     let predicted = resp
         .predicted
-        .ok_or("Sidecar response missing predicted")?;
+        .ok_or_else(|| engine_missing_field_error("predicted"))?;
     let residual = resp
         .residual
-        .ok_or("Sidecar response missing residual")?;
+        .ok_or_else(|| engine_missing_field_error("residual"))?;
     if predicted.len() != n_rows || residual.len() != n_rows {
         return Err(format!(
-            "Sidecar predicted/residual length mismatch (got {}/{} expected {})",
+            "The Relation model engine's answer does not match the request: predicted/residual \
+             length mismatch (got {}/{} expected {})",
             predicted.len(),
             residual.len(),
             n_rows,
@@ -3110,7 +3253,8 @@ fn export_extra_predictions(
     let arr = predicted_extra.ok_or_else(|| SIDECAR_OUTDATED.to_string())?;
     if arr.len() != want {
         return Err(format!(
-            "Sidecar predicted_extra length mismatch (got {} expected {want})",
+            "The Relation model engine's answer does not match the request: predicted_extra \
+             length mismatch (got {} expected {want})",
             arr.len()
         ));
     }
@@ -7311,6 +7455,12 @@ fn arm_timeout<F: FnOnce() + Send + 'static>(
 /// Run one request through the sidecar and return its JSON answer. A sidecar
 /// that has not finished after `limit` is KILLED (the process does not linger)
 /// and the call fails with a "did not answer" error.
+///
+/// Its errors (and [`parse_predicted_extra`]'s) are LOG-ONLY: the one caller,
+/// [`score_test_rows`], writes them to the error log and shows the user the
+/// fixed warning of the failure's kind instead. That is why they keep the
+/// developer word "sidecar"; a caller that shows them to the user must use the
+/// `engine_*_error` wording instead.
 async fn run_sidecar_json(
     app: &tauri::AppHandle,
     payload: &serde_json::Value,

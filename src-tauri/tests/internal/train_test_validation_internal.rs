@@ -1408,8 +1408,12 @@ fn export_never_claims_a_validation_it_could_not_compute() {
     assert_eq!(ex(None, 0), Ok(vec![]));
     // An outdated sidecar ignores X_extra: refuse (nothing is written by the caller).
     assert!(ex(None, 3).unwrap_err().starts_with("SIDECAR_OUTDATED:"));
-    // Wrong length: refuse.
-    assert!(ex(Some(&[Some(1.0)]), 3).unwrap_err().contains("length mismatch"));
+    // Wrong length: refuse. This error is SHOWN (Mark complete): user wording
+    // first ("Relation model engine", never "sidecar"), the numbers after it.
+    let wrong = ex(Some(&[Some(1.0)]), 3).unwrap_err();
+    assert!(wrong.starts_with("The Relation model engine's answer does not match the request"), "{wrong}");
+    assert!(wrong.contains("length mismatch (got 1 expected 3)"), "{wrong}");
+    assert!(!wrong.to_lowercase().contains("sidecar") && !wrong.contains("Python"), "{wrong}");
     // Good answer: NaN for a missing / non-finite value.
     let v = ex(Some(&[Some(1.0), None, Some(f64::INFINITY)]), 3).unwrap();
     assert_eq!(v[0], 1.0);
