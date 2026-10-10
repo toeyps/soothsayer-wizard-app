@@ -11,7 +11,7 @@ import type {
     RelationshipHealthSetPoints,
 } from '../../../types';
 import { fmtNumExact } from '../../sensor/sensorInfo';
-import { CHART, CLUSTER_COLORS, FONT, fmtScoreAxisValue } from './chartTheme';
+import { CHART, CHART_MONO, CLUSTER_COLORS, FONT, fmtScoreAxisValue } from './chartTheme';
 import {
     buildTimeSeriesOption,
     centreLabelSeries,
@@ -21,11 +21,10 @@ import {
     ringLabelSeries,
     rmseReferenceLines,
     sdReferenceLines,
+    type ClusterChartNames,
     type HLine,
     type TimeScopes,
 } from './healthCharts';
-
-export { ringBox } from './healthCharts';
 
 /*
  * Pure ECharts option builders of the Health score page (health score phase
@@ -54,8 +53,6 @@ export const HEALTH_SYNC_GROUP = 'health-score-sync';
 
 const finite = (v: number | null | undefined): v is number => typeof v === 'number' && Number.isFinite(v);
 
-const POINT_FONT = 'JetBrains Mono, monospace';
-
 /** Width of a set-point line (a reference line is 1 px). */
 const SET_POINT_WIDTH = 1.5;
 
@@ -64,9 +61,13 @@ const SET_POINT_WIDTH = 1.5;
  * thousands separators only — "4.6" (never the padded "4.60"), "4.61234" (never
  * the rounded "4.612"). The same rule Rust's validation messages follow
  * (`fmt_typed`), so the chart, the Checks and the input agree.
+ *
+ * As a chart label a negative carries a real minus sign (U+2212), like the
+ * "−1SD" and "0 · −9" labels beside it — never the ASCII hyphen — and a negative
+ * zero reads "0".
  */
 export function typedText(v: number): string {
-    return fmtNumExact(v);
+    return fmtNumExact(v === 0 ? 0 : v).replace(/^-/, '−');
 }
 
 /** A typed residual point with its sign spelled out: "+5", "−2.5", "0". */
@@ -162,8 +163,6 @@ export function buildRelationshipSetPointOption(
 // Set-point chart - Clustering
 // ---------------------------------------------------------------------------
 
-export interface ClusterSetPointNames { x: string; y: string }
-
 /**
  * Scatter of the (bounded) points with the 1x, 3x and N x SD ring of EVERY
  * cluster. Points come from `series` (not `cluster_scatter`) so a hovered point
@@ -178,7 +177,7 @@ export function buildClusterSetPointOption(
     series: ClusteringSeries,
     clusters: ClusterStat[],
     sp: ClusteringHealthSetPoints | null,
-    names: ClusterSetPointNames,
+    names: ClusterChartNames,
     hoverIdx: number | null = null,
 ) {
     const outer = sp && finite(sp.outerSd) && sp.outerSd > 0 ? sp.outerSd : null;
@@ -297,6 +296,6 @@ export function buildScoreOption(timestamps: string[], score: (number | null)[],
             outOfRange: { color: CHART.textFaint },
         },
         // The tooltip of a connected pair stays readable on the dark card.
-        tooltip: { ...base.tooltip, textStyle: { color: CHART.textPrimary, fontFamily: POINT_FONT, fontSize: 11 }, valueFormatter: (v: unknown) => (typeof v === 'number' ? String(Math.round(v)) : String(v ?? '')) },
+        tooltip: { ...base.tooltip, textStyle: { color: CHART.textPrimary, fontFamily: CHART_MONO, fontSize: 11 }, valueFormatter: (v: unknown) => (typeof v === 'number' ? String(Math.round(v)) : String(v ?? '')) },
     };
 }

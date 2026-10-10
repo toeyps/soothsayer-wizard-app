@@ -1,7 +1,7 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
-    END_LABEL_GUTTER,
     REF_LABEL_GUTTER,
+    REF_LABEL_MIN_GAP,
     buildClusterOption,
     buildDistributionOption,
     buildFitScatterOption,
@@ -20,8 +20,13 @@ import {
     ringLabelSeries,
     ringRightPoint,
     sensorAxisTitle,
+    stackedEdgeLabels,
+    wallClockMs,
+    type HLine,
 } from '../components/windows/workbench/healthCharts';
-import { CHART, CLUSTER_COLORS, fmtClusterBound } from '../components/windows/workbench/chartTheme';
+import { CHART, CLUSTER_COLORS, fmtClusterBound, fmtNum } from '../components/windows/workbench/chartTheme';
+import { fmtNum as fmtNumApp } from '../components/sensor/sensorInfo';
+import { formatDataStamp } from '../components/windows/periodDisplay';
 import { makeClusterStat, makeHealthPreview } from './helpers/healthPreviewFixture';
 import type { ClusteringStats, IndividualSeries, IndividualStats, RelationshipSeries, RelationshipStats } from '../types/health';
 
@@ -41,12 +46,134 @@ describe('parseTimestamps', () => {
 });
 
 describe('niceExtent', () => {
-    it('rounds a range out to 1/2/5 steps', () => {
-        expect(niceExtent(62.884400945773835, 80.6762832)).toEqual([60, 85]);
-        expect(niceExtent(-4.3, 5.2)).toEqual([-6, 6]);
+    it('rounds a range out to 1/2/5 steps and returns that step as the third value', () => {
+        expect(niceExtent(62.884400945773835, 80.6762832)).toEqual([60, 85, 5]);
+        expect(niceExtent(-4.3, 5.2)).toEqual([-6, 6, 2]);
     });
-    it('leaves a degenerate range alone', () => {
+    it('both ends are whole multiples of the step, with no float noise (0.1 × 3 is 0.3, not 0.30000000000000004)', () => {
+        expect(niceExtent(0.31, 0.74)).toEqual([0.3, 0.8, 0.1]);
+        expect(niceExtent(-0.04, 0.26)).toEqual([-0.05, 0.3, 0.05]);
+        for (const [lo, hi] of [[0.31, 0.74], [36.1987, 41.0443], [-1234.5, 99.9], [1e-7, 9e-7]]) {
+            const [min, max, step] = niceExtent(lo, hi);
+            expect(min).toBeLessThanOrEqual(lo);
+            expect(max).toBeGreaterThanOrEqual(hi);
+            const n = (max - min) / step!;
+            expect(Math.abs(n - Math.round(n))).toBeLessThan(1e-9); // a whole number of steps: every tick is on the grid
+            expect(Math.round(n)).toBeGreaterThanOrEqual(3);
+            expect(Math.round(n)).toBeLessThanOrEqual(10);
+        }
+        expect(Object.is(niceExtent(-0.4, 0.4)[0], -0)).toBe(false);
+    });
+    it('leaves a degenerate range alone, with NO step (the axis then scales itself)', () => {
         expect(niceExtent(3, 3)).toEqual([3, 3]);
+        expect(niceExtent(3, 3)[2]).toBeUndefined();
+        expect(niceExtent(0, NaN)[2]).toBeUndefined();
+    });
+});
+
+// Review of 0125190, item 11: the chart's time axis used `new Date(text)`, so a CSV whose stamps
+// carry an offset ("…+07:00", "Z") was drawn shifted on a PC in another time zone — while the
+// read-outs beside it (`formatDataStamp`) showed the stamp's own clock.
+describe('wallClockMs / parseTimestamps: a stamp sits at its OWN wall-clock time', () => {
+    const local = (y: number, mo: number, d: number, h = 0, mi = 0, s = 0, ms = 0) => new Date(y, mo - 1, d, h, mi, s, ms).getTime();
+
+    it('reads the usual CSV shapes as local wall-clock time', () => {
+        expect(wallClockMs('2026-02-09 23:50:00')).toBe(local(2026, 2, 9, 23, 50));
+        expect(wallClockMs('2026-02-09T23:50:07')).toBe(local(2026, 2, 9, 23, 50, 7));
+        expect(wallClockMs('2026-02-09 23:50')).toBe(local(2026, 2, 9, 23, 50));
+        expect(wallClockMs('2026/2/9 7:05')).toBe(local(2026, 2, 9, 7, 5));
+        expect(wallClockMs('  2026-02-09 23:50:00  ')).toBe(local(2026, 2, 9, 23, 50));
+        expect(wallClockMs('2026-02-09 23:50:07.250')).toBe(local(2026, 2, 9, 23, 50, 7, 250));
+        expect(wallClockMs('2026-02-09 23:50:07,5')).toBe(local(2026, 2, 9, 23, 50, 7, 500));
+        expect(wallClockMs('2026-02-09 23:50:07.123456')).toBe(local(2026, 2, 9, 23, 50, 7, 123));
+        // a date alone is that day's LOCAL midnight (`new Date('2026-02-09')` would be UTC midnight)
+        expect(wallClockMs('2026-02-09')).toBe(local(2026, 2, 9));
+    });
+
+    it('an explicit zone is IGNORED: the same clock time whatever offset the file wrote, on any PC', () => {
+        const want = local(2026, 2, 9, 23, 50);
+        for (const zone of ['Z', 'z', '+07:00', '+0700', '+07', '-05:00', ' +07:00', '+00:00', '+14:00']) {
+            expect(wallClockMs(`2026-02-09T23:50:00${zone}`), zone).toBe(want);
+        }
+        expect(wallClockMs('2026-02-09 23:50Z')).toBe(want);
+        expect(wallClockMs('2026-02-09T23:50:00.000+07:00')).toBe(want);
+        // `new Date` is what moves it: these two instants are 12 hours apart, the clock time is the same
+        expect(new Date('2026-02-09T23:50:00+07:00').getTime()).not.toBe(new Date('2026-02-09T23:50:00-05:00').getTime());
+        expect(wallClockMs('2026-02-09T23:50:00+07:00')).toBe(wallClockMs('2026-02-09T23:50:00-05:00'));
+    });
+
+    it('agrees with formatDataStamp — the axis and the read-out next to it show the same time', () => {
+        const stamps = [
+            '2026-02-09 23:50:00', '2026-02-09T23:50:00+07:00', '2026-02-09T00:05:00Z', '2026-12-31 23:59:59', '2024-02-29 12:00:00',
+            '2026/1/5 6:07', '2026-02-09', '2026-02-09T23:50:00.5-08:00',
+        ];
+        const pad = (n: number) => String(n).padStart(2, '0');
+        const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        for (const s of stamps) {
+            const d = new Date(wallClockMs(s));
+            // the axis draws the LOCAL fields of the ms value: they must be the stamp's own clock
+            expect(`${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`, s).toBe(formatDataStamp(s));
+        }
+    });
+
+    it('anything else is NaN (the caller falls back to Date, then to a category axis)', () => {
+        for (const s of ['', 'nope', '09/02/2026 23:50', '2026-13-01 00:00', '2026-02-09 25:00', '2026-02-09 23:61', '2026-02-09T', '2026-02-09 23:50:00 PM', '2026-02-09 23:50:00+7', '20260209', '2026-02-09 23:50:0']) {
+            expect(Number.isNaN(wallClockMs(s)), s).toBe(true);
+        }
+    });
+
+    it('a whole year of rows is exactly what Date gives for the same local fields', () => {
+        const pad = (n: number) => String(n).padStart(2, '0');
+        let bad = 0;
+        for (let day = 0; day < 366; day++) {
+            const base = new Date(2026, 0, 1 + day);
+            for (const [h, mi] of [[0, 0], [1, 30], [2, 30], [3, 0], [12, 0], [23, 59]]) {
+                const s = `${base.getFullYear()}-${pad(base.getMonth() + 1)}-${pad(base.getDate())} ${pad(h)}:${pad(mi)}:00`;
+                if (wallClockMs(s) !== new Date(base.getFullYear(), base.getMonth(), base.getDate(), h, mi).getTime()) bad++;
+            }
+        }
+        expect(bad).toBe(0);
+    });
+
+    it('the PC offset is looked up once per DAY, not once per row (reading a series is not slower than before)', () => {
+        const spy = vi.spyOn(Date.prototype, 'getTimezoneOffset');
+        try {
+            const day = Array.from({ length: 1440 }, (_, m) => `2033-05-17 ${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}:00`);
+            expect(parseTimestamps(day)).toHaveLength(1440);
+            expect(spy.mock.calls.length).toBeLessThanOrEqual(2); // the day's start and end
+        } finally {
+            spy.mockRestore();
+        }
+    });
+
+    it('on a day the PC clock changes (DST) the stamp is still what Date gives for those fields', () => {
+        // Pretend the day starts at UTC+1 and ends at UTC+2: the per-day shortcut must step aside.
+        const spy = vi.spyOn(Date.prototype, 'getTimezoneOffset').mockImplementation(function (this: Date) {
+            return this.getHours() < 12 ? -60 : -120;
+        });
+        try {
+            expect(wallClockMs('2031-03-30 01:30:00')).toBe(new Date(2031, 2, 30, 1, 30).getTime());
+            expect(wallClockMs('2031-03-30 18:00:00')).toBe(new Date(2031, 2, 30, 18, 0).getTime());
+        } finally {
+            spy.mockRestore();
+        }
+        // and the next ordinary day is back on the shortcut, still exact
+        expect(wallClockMs('2031-03-31 18:00:00')).toBe(new Date(2031, 2, 31, 18, 0).getTime());
+    });
+
+    it('parseTimestamps: offset stamps keep their own clock and their spacing; another shape still goes through Date', () => {
+        // three different zones on purpose: whatever zone this PC is in, `new Date` would move at least two of them
+        const ms = parseTimestamps(['2026-02-09T22:00:00+07:00', '2026-02-09T23:00:00-05:00', '2026-02-10T00:00:00Z'])!;
+        expect(ms).toEqual([local(2026, 2, 9, 22), local(2026, 2, 9, 23), local(2026, 2, 10, 0)]);
+        expect(ms[1] - ms[0]).toBe(3600_000); // the rows stay an hour apart on the axis, as their clocks say
+        // a date-only stamp and a full one of the same day are on the same LOCAL day (not UTC midnight)
+        expect(parseTimestamps(['2026-02-09', '2026-02-09 12:00:00'])).toEqual([local(2026, 2, 9), local(2026, 2, 9, 12)]);
+        const other = parseTimestamps(['Feb 9, 2026 23:50:00'])!;
+        expect(other[0]).toBe(new Date('Feb 9, 2026 23:50:00').getTime());
+        // the chart's X data is those values
+        const o: any = buildTimeSeriesOption({ timestamps: ['2026-02-09T22:00:00+07:00', '2026-02-09T23:00:00+07:00'], lines: [{ name: 'V', values: [1, 2], color: '#fff' }] });
+        expect(o.xAxis.type).toBe('time');
+        expect(o.series[0].data.map((d: number[]) => d[0])).toEqual([local(2026, 2, 9, 22), local(2026, 2, 9, 23)]);
     });
 });
 
@@ -121,16 +248,99 @@ describe('buildTimeSeriesOption', () => {
         expect(unlabelled.grid.right).toBe(18);
     });
 
-    it('a line with `endLabel` names itself at its right end; one without has no end label', () => {
+    // Review of 0125190, must-fix 1: ECharts places a line's end label only while it animates the
+    // line in, so after a zoom the name stayed behind and could sit beside the OTHER line. A data
+    // line is therefore never named on the plot.
+    it('a data line is NEVER named on the plot: no end label on any series, and no gutter kept for one', () => {
         const o: any = buildTimeSeriesOption({
             ...spec,
-            lines: [{ ...spec.lines[0], endLabel: 'Actual' }, { name: 'W', values: [1, 1, 1], color: '#abc' }],
+            lines: [spec.lines[0], { name: 'W', values: [1, 1, 1], color: '#abc' }],
         });
-        expect(o.series[0].endLabel).toMatchObject({ show: true, formatter: 'Actual', color: '#fff' });
-        expect(o.series[0].labelLayout).toEqual({ moveOverlap: 'shiftY' });
-        expect(o.series[1].endLabel).toBeUndefined();
-        expect(o.grid.right).toBe(END_LABEL_GUTTER);
-        expect(END_LABEL_GUTTER).toBeGreaterThan(REF_LABEL_GUTTER); // "Predicted" is longer than "+2RMSE"
+        for (const s of o.series) {
+            expect(s.endLabel).toBeUndefined();
+            expect(s.label).toBeUndefined();
+            expect(s.labelLayout).toBeUndefined();
+        }
+        expect(o.grid.right).toBe(18);
+        expect(JSON.stringify(o)).not.toContain('endLabel');
+    });
+
+    // Review item 3: the range is rounded to a 1/2/5 step — the axis must STEP by it too.
+    it('the Y axis steps by the step its range was rounded to; a fixed yRange leaves the step to the caller', () => {
+        const o: any = buildTimeSeriesOption({ ...spec, lines: [{ name: 'V', values: [1.2, 5.1, 8.7], color: '#fff' }] });
+        expect([o.yAxis.min, o.yAxis.max, o.yAxis.interval]).toEqual([0, 10, 2]);
+        expect((o.yAxis.max - o.yAxis.min) % o.yAxis.interval).toBe(0);
+        const fixed: any = buildTimeSeriesOption({ ...spec, yRange: [0, 100] });
+        expect(fixed.yAxis.interval).toBeUndefined();
+    });
+
+    // Review item 4: with L / H far from the data the whole ±3SD band is a few pixels tall and
+    // "+1SD" printed on "+3SD" (both sit just above their line).
+    describe('reference labels that would print on each other share ONE stacked label', () => {
+        const sd = (u1: number, l1: number, u3: number, l3: number): HLine[] => [
+            { y: u1, color: '#0f0', label: '+1SD', edge: 'above' },
+            { y: l1, color: '#0f0', label: '−1SD', edge: 'below' },
+            { y: u3, color: '#fa0', label: '+3SD', dashed: true, edge: 'above' },
+            { y: l3, color: '#fa0', label: '−3SD', dashed: true, edge: 'below' },
+        ];
+
+        it('stackedEdgeLabels: lines far apart keep their own label (nothing is merged)', () => {
+            expect(stackedEdgeLabels(sd(6, 4, 8, 2), 0.5).size).toBe(0);
+            // exactly the minimum apart is enough
+            expect(stackedEdgeLabels(sd(6, 4, 8, 2), 2).size).toBe(0);
+            expect(stackedEdgeLabels([], 1).size).toBe(0);
+            expect(stackedEdgeLabels(sd(6, 4, 8, 2), 0).size).toBe(0);
+        });
+
+        it('stackedEdgeLabels: a close same-side pair is carried by the OUTER line, listed top to bottom; the inner line carries nothing', () => {
+            const lines = sd(6, 4, 8, 2);
+            const m = stackedEdgeLabels(lines, 2.5);
+            // above the lines: the +3SD line (the higher one) carries "+3SD" over "+1SD"
+            expect(m.get(2)!.map(h => h.label)).toEqual(['+3SD', '+1SD']);
+            expect(m.get(0)).toBeNull();
+            // below the lines: the −3SD line (the lower one) carries "−1SD" over "−3SD"
+            expect(m.get(3)!.map(h => h.label)).toEqual(['−1SD', '−3SD']);
+            expect(m.get(1)).toBeNull();
+            // +1SD and −1SD are on OPPOSITE sides of their lines: they are never merged with each other
+            expect(stackedEdgeLabels([lines[0], lines[1]], 100).size).toBe(0);
+        });
+
+        it('stackedEdgeLabels: only outside labels of a +/− side take part (set points, unlabelled and centred lines are left alone)', () => {
+            const m = stackedEdgeLabels([
+                { y: 5, color: '#f00', label: 'H 5', inside: 'top' },
+                { y: 5.1, color: '#0f0', label: '+1SD', edge: 'above' },
+                { y: 5.2, color: '#888' },
+                { y: 5.3, color: '#fa0', label: '80' },
+                { y: NaN, color: '#fa0', label: '+3SD', edge: 'above' },
+            ], 10);
+            expect(m.size).toBe(0);
+        });
+
+        it('normal data (the fixture): four separate labels, as before', () => {
+            const p = ind();
+            const o: any = buildValueOverTimeOption(p.series as IndividualSeries, p.stats as IndividualStats, '°C');
+            expect(o.series[0].markLine.data.map((d: any) => [d.label.show, d.label.formatter])).toEqual([[true, '+1SD'], [true, '−1SD'], [true, '+3SD'], [true, '−3SD']]);
+            expect(o.series[0].markLine.data.every((d: any) => d.label.rich === undefined)).toBe(true);
+        });
+
+        it('a Y range 100× wider than the ±3SD band: "+3SD / +1SD" and "−1SD / −3SD" each become one two-line label in the lines\' own colours', () => {
+            const o: any = buildTimeSeriesOption({
+                ...spec,
+                hLines: [...sd(6, 4, 8, 2), { y: 300, color: '#f00', label: 'H 300', inside: 'top' }, { y: -200, color: '#f00', label: 'L −200', inside: 'bottom' }],
+            });
+            const [u1, l1, u3, l3, h, l] = o.series[0].markLine.data;
+            expect((8 - 6) / (o.yAxis.max - o.yAxis.min)).toBeLessThan(REF_LABEL_MIN_GAP); // the case this is for
+            expect(u1.label).toEqual({ show: false });
+            expect(l1.label).toEqual({ show: false });
+            expect(u3.label).toMatchObject({ show: true, position: 'end', verticalAlign: 'bottom', formatter: '{l0|+3SD}\n{l1|+1SD}' });
+            expect(u3.label.rich).toMatchObject({ l0: { color: '#fa0' }, l1: { color: '#0f0' } });
+            expect(l3.label).toMatchObject({ show: true, position: 'end', verticalAlign: 'top', formatter: '{l0|−1SD}\n{l1|−3SD}' });
+            expect(l3.label.rich).toMatchObject({ l0: { color: '#0f0' }, l1: { color: '#fa0' } });
+            // the lines themselves are all still drawn, and the set points keep their own labels
+            expect(o.series[0].markLine.data.map((d: any) => d.yAxis)).toEqual([6, 4, 8, 2, 300, -200]);
+            expect([h.label.formatter, l.label.formatter]).toEqual(['H 300', 'L −200']);
+            expect(o.grid.right).toBe(REF_LABEL_GUTTER); // stacked, not side by side: the gutter does not grow
+        });
     });
 
     it('draws horizontal lines and bands on the FIRST series only, and widens the Y range to include them', () => {
@@ -174,7 +384,9 @@ describe('Individual charts', () => {
         expect(bands).toHaveLength(1);
         expect(bands[0][0]).toEqual({ yAxis: 4, itemStyle: { color: CHART.okFill } });
         expect(bands[0][1]).toEqual({ yAxis: 6 });
-        expect(JSON.stringify(o)).not.toContain(CHART.warnFill);
+        expect(JSON.stringify(o)).not.toContain('rgba(229, 169, 61, 0.07)'); // the amber ±3SD fill that is gone
+        expect(Object.keys(CHART)).not.toContain('warnFill');
+        expect(Object.keys(CHART)).not.toContain('dangerFill');
         const lines = o.series[0].markLine.data;
         expect(lines.map((d: any) => d.lineStyle.type)).toEqual(['solid', 'solid', 'dashed', 'dashed']);
         // the four reference lines are named at the right edge, outside the plot — so the card needs no legend
@@ -217,6 +429,29 @@ describe('Individual charts', () => {
         expect(wide.xAxis.max).toBeGreaterThanOrEqual(44.07);
         expect([wide.xAxis.min, wide.xAxis.max]).toEqual([32, 46]);
         for (const v of [o.xAxis.min, o.xAxis.max, wide.xAxis.min, wide.xAxis.max]) expect(Number.isInteger(v)).toBe(true);
+        // review item 3: each axis STEPS by the step it was rounded to, so no tick is added at a raw end
+        expect([o.xAxis.interval, o.yAxis.interval, wide.xAxis.interval]).toEqual([1, 200, 2]);
+        for (const a of [o.xAxis, o.yAxis, wide.xAxis]) expect((a.max - a.min) % a.interval).toBe(0);
+    });
+
+    // Review item 7: `Math.min()` of nothing is Infinity — the X axis was `min: Infinity, max: -Infinity`.
+    it('Distribution with nothing finite to measure: the X axis is left to ECharts, never ±Infinity / NaN', () => {
+        const empty = { bin_edges: [], counts: [], curve: [], bin_width: 0, n: 0 };
+        const o: any = buildDistributionOption(empty, [], '°C');
+        expect('min' in o.xAxis).toBe(false);
+        expect('max' in o.xAxis).toBe(false);
+        expect('interval' in o.xAxis).toBe(false);
+        expect(o.xAxis.axisLabel.formatter(0.1 * 3)).toBe('0.3'); // still the app's tick formatter
+        expect([o.yAxis.min, o.yAxis.max, o.yAxis.interval]).toEqual([0, 1.2, 0.2]);
+        expect(JSON.stringify(o)).not.toMatch(/Infinity|NaN/);
+        expect(o.series[0].data).toEqual([]);
+        // NaN bins / lines are not measured either
+        const nan: any = buildDistributionOption({ bin_edges: [NaN, NaN], counts: [NaN], curve: [NaN], bin_width: NaN, n: 0 }, [{ x: NaN, color: '#fff' }], '');
+        expect('min' in nan.xAxis).toBe(false);
+        expect(Number.isFinite(nan.yAxis.max)).toBe(true);
+        // one finite reference line alone has no width to round: left to ECharts as well
+        const one: any = buildDistributionOption(empty, [{ x: 5, color: '#fff' }], '');
+        expect('min' in one.xAxis).toBe(false);
     });
 
     // 🆕 2026-10-09 (real-app report): the Distribution chart's top y label read
@@ -311,17 +546,15 @@ describe('Relationship charts', () => {
         expect(o.series[1].lineStyle.color).toBe(CHART.predicted);
     });
 
-    // workbench-redesign SPEC §3: "No legend rows where the lines are labelled (Target vs predicted:
-    // "Actual" / "Predicted" at the line ends)."
-    it('Target vs predicted: each line is named at its own right end, in its own colour (no legend needed)', () => {
+    // Review of 0125190, must-fix 1 (replaces "Actual / Predicted at the line ends"): the names are
+    // the card's own colour key (ModelFitPage); the chart draws no name that a zoom could misplace.
+    it('Target vs predicted: the two lines carry NO name on the plot (the card keeps the Actual / Predicted colour key)', () => {
         const p = rel();
         const o: any = buildTargetVsPredictedOption(p.series as RelationshipSeries, '°C');
-        expect(o.series.map((s: any) => [s.endLabel.show, s.endLabel.formatter, s.endLabel.color])).toEqual([
-            [true, 'Actual', CHART.actual],
-            [true, 'Predicted', CHART.predicted],
-        ]);
-        expect(o.grid.right).toBe(END_LABEL_GUTTER); // room outside the plot for the names
-        expect(o.legend).toEqual({ show: false });
+        expect(o.series.map((s: any) => s.endLabel)).toEqual([undefined, undefined]);
+        expect(o.series.map((s: any) => s.labelLayout)).toEqual([undefined, undefined]);
+        expect(o.grid.right).toBe(18); // no gutter: the plot uses the width
+        expect(o.legend).toEqual({ show: false }); // the key is the card's, not an ECharts legend
         // the data itself is exactly what it was: nothing added for the labels
         expect(o.series[0].data.map((d: any) => d[1])).toEqual((p.series as RelationshipSeries).actual);
         expect(o.series[1].data.map((d: any) => d[1])).toEqual((p.series as RelationshipSeries).predicted);
@@ -387,7 +620,7 @@ describe('Clustering chart', () => {
         expect(labels[0].tooltip).toEqual({ show: false });
     });
 
-    it('the level names can never print on top of each other: they are staggered one text line apart (first level up, last level down)', () => {
+    it('the level names of a FLAT cluster are staggered one text line apart, in level order (first level up, last level down)', () => {
         // one flat cluster: every ring reaches furthest right at the SAME height, a hair apart on a wide axis
         const c = makeClusterStat(1, { x_center: 0, y_center: 0, x_sd: 0.001, y_sd: 0.001, angle_deg: 0 });
         const lv = (n: number) => Array.from({ length: n }, (_, i) => ({ sigma: i + 1, text: `L${i}`, color: '#fff' }));
@@ -398,6 +631,47 @@ describe('Clustering chart', () => {
         expect(RING_LABEL_LINE).toBeGreaterThanOrEqual(12); // a 9.5 px line of text on its chip
         // only vertically: every name still starts right at its own ring's edge
         for (const o of offsets(3)) expect(o[0]).toBe(0);
+    });
+
+    // Review of 0125190, must-fix 2: with a fixed "first up, last down" the names of a cluster tilted
+    // up to the right (positively correlated sensors — the usual shape) were pushed INTO each other:
+    // there the 1× edge is the LOWEST point and the N× edge the highest.
+    it('the stagger FOLLOWS THE DATA: the name whose ring edge is highest goes up, the lowest down — for a tilt either way', () => {
+        const lv = [1, 3, 5].map((sigma, i) => ({ sigma, text: `L${i}`, color: '#fff' }));
+        const of = (angle_deg: number) => ringLabelSeries([makeClusterStat(1, { x_center: 10, y_center: 20, x_sd: 4, y_sd: 0.3, angle_deg })], lv).data;
+        // tilted UP to the right: the edge rises with the level …
+        const up = of(2);
+        expect(up[0].value[1]).toBeLessThan(up[1].value[1]);
+        expect(up[1].value[1]).toBeLessThan(up[2].value[1]);
+        // … so the 1× name goes DOWN (+) and the N× name UP (−): away from each other
+        expect(up.map(d => d.label.offset)).toEqual([[0, RING_LABEL_LINE], [0, 0], [0, -RING_LABEL_LINE]]);
+        // tilted DOWN to the right: the mirror image
+        const down = of(-2);
+        expect(down[0].value[1]).toBeGreaterThan(down[2].value[1]);
+        expect(down.map(d => d.label.offset)).toEqual([[0, -RING_LABEL_LINE], [0, 0], [0, RING_LABEL_LINE]]);
+        // the rule in one line: a higher edge (larger y) never gets a lower place (a larger offset)
+        for (const data of [up, down, of(45), of(-80), of(0)]) {
+            for (const a of data) for (const b of data) {
+                if (a.value[1] > b.value[1]) expect(a.label.offset[1]).toBeLessThan(b.label.offset[1]);
+            }
+            expect(new Set(data.map(d => d.label.offset[1])).size).toBe(data.length); // never two names on one line
+        }
+        // two levels (Model fit: 1×, 3×) follow the same rule
+        const two = ringLabelSeries([makeClusterStat(1, { x_sd: 4, y_sd: 0.3, angle_deg: 30 })], lv.slice(0, 2)).data;
+        expect(two.map(d => d.label.offset)).toEqual([[0, RING_LABEL_LINE / 2], [0, -RING_LABEL_LINE / 2]]);
+    });
+
+    it('levels whose furthest ring belongs to DIFFERENT clusters are ordered by their own heights too (not by level number)', () => {
+        // 1×: the narrow cluster on the right, high up · 3×: the wide cluster on the left, low down
+        const wide = makeClusterStat(1, { x_center: 0, y_center: 0, x_sd: 10, y_sd: 1 });
+        const narrow = makeClusterStat(2, { x_center: 15, y_center: 50, x_sd: 1, y_sd: 1 });
+        const s = ringLabelSeries([wide, narrow], [{ sigma: 1, text: 'a', color: '#fff' }, { sigma: 3, text: 'b', color: '#fff' }]);
+        expect(s.data.map(d => d.value)).toEqual([[16, 50], [30, 0]]);
+        expect(s.data.map(d => d.label.offset[1])).toEqual([-RING_LABEL_LINE / 2, RING_LABEL_LINE / 2]); // "a" is higher: up
+        // a level with no ring to measure is left out and does not leave a hole in the stagger
+        const broken = ringLabelSeries([makeClusterStat(1, { angle_deg: 20 })], [{ sigma: 1, text: 'a', color: '#fff' }, { sigma: NaN, text: 'x', color: '#fff' }, { sigma: 3, text: 'b', color: '#fff' }]);
+        expect(broken.data.map(d => d.name)).toEqual(['a', 'b']);
+        expect(broken.data.map(d => d.label.offset[1])).toEqual([RING_LABEL_LINE / 2, -RING_LABEL_LINE / 2]);
     });
 
     it('ringRightPoint follows the rotation; ringLabelSeries picks the furthest ring per level and skips a broken cluster', () => {
@@ -469,6 +743,43 @@ describe('Clustering chart', () => {
         expect(far.y[0]).toBeLessThanOrEqual(-300);
         // nothing to measure: a harmless default instead of ±Infinity
         expect(clusterExtent([], [], [], [1, 3])).toEqual({ x: [0, 1], y: [0, 1] });
+        // review item 3: both axes step by the step they were rounded to
+        expect(o.xAxis.interval).toBeGreaterThan(0);
+        expect((o.xAxis.max - o.xAxis.min) % o.xAxis.interval).toBe(0);
+        expect((o.yAxis.max - o.yAxis.min) % o.yAxis.interval).toBe(0);
+        const ex = clusterExtent(scatter.x, scatter.y, [big], [1, 3]);
+        expect([o.xAxis.min, o.xAxis.max, o.xAxis.interval]).toEqual(ex.x);
+        expect([o.yAxis.min, o.yAxis.max, o.yAxis.interval]).toEqual(ex.y);
+    });
+
+    // Review item 8: everything at ONE value (a constant sensor, rings of no size) gave min === max.
+    it('a degenerate extent (every point at one value, rings of no size) opens around the value — never min === max', () => {
+        const dot = makeClusterStat(1, { x_center: 5, y_center: 7, x_sd: 0, y_sd: 0 });
+        const ex = clusterExtent([5, 5], [7, 7], [dot], [1, 3]);
+        for (const [min, max, step] of [ex.x, ex.y]) {
+            expect(max).toBeGreaterThan(min);
+            expect(step).toBeGreaterThan(0);
+        }
+        expect(ex.x[0]).toBeLessThan(5);
+        expect(ex.x[1]).toBeGreaterThan(5);
+        expect(ex.y[0]).toBeLessThan(7);
+        expect(ex.y[1]).toBeGreaterThan(7);
+        // 5 % of the value on each side (like the time charts) …
+        expect(ex.x[1] - ex.x[0]).toBeLessThan(2);
+        // … and ±1 when the value is 0
+        const zero = clusterExtent([0], [0], [], [1, 3]);
+        expect(zero.x[0]).toBeLessThanOrEqual(-1);
+        expect(zero.x[1]).toBeGreaterThanOrEqual(1);
+        expect(zero.y[0]).toBeLessThanOrEqual(-1);
+        // only ONE axis flat (a constant Y sensor): X keeps its real range
+        const flatY = clusterExtent([1, 9], [3, 3], [], [1, 3]);
+        expect(flatY.x[0]).toBeLessThanOrEqual(1);
+        expect(flatY.x[1]).toBeGreaterThanOrEqual(9);
+        expect(flatY.y[1]).toBeGreaterThan(flatY.y[0]);
+        // the chart gets real axes
+        const o: any = buildClusterOption({ x: [5, 5], y: [7, 7], cluster: [1, 1], total: 2 }, [dot], { x: 'X', y: 'Y' });
+        expect(o.xAxis.max).toBeGreaterThan(o.xAxis.min);
+        expect(o.yAxis.max).toBeGreaterThan(o.yAxis.min);
     });
 
     it('no stray x = 0 / y = 0 line: both axis lines stay on the plot\'s edge even when the data straddles zero', () => {
@@ -500,6 +811,29 @@ describe('Clustering chart', () => {
         expect(fmtClusterBound(0.0005)).toBe('0.0005');
         expect(fmtClusterBound(12500.5)).toBe('12,500.5');
         expect(fmtClusterBound(100 / 3)).toBe('33.333'); // 33.333333333333336 is nobody's typing
+        // review item 9: a negative zero (dragging a boundary down to 0) reads "0", never "-0"
+        expect(fmtClusterBound(-0)).toBe('0');
+        expect(fmtClusterBound(-0.5)).toBe('-0.5'); // a real negative keeps its sign
+    });
+
+    // Review item 10: chartTheme held a second, older `fmtNum` that printed a non-zero value below
+    // 0.0005 as "0.000" — against the app's number rule (a non-zero value never shows as 0).
+    it('the Workbench number formatter IS the app\'s fmtNum (plus "—" for no value and "0" for a negative zero)', () => {
+        for (const v of [0, 1, 4.5, 12.5, 150.25, 1234.5678, 0.4567, 0.9123, 0.0002, -0.00004, 1e-9, 12345678901, -3.14159]) {
+            expect(fmtNum(v), String(v)).toBe(fmtNumApp(v));
+        }
+        expect(fmtNum(0.0002)).toBe('0.0002'); // was "0.000"
+        expect(fmtNum(-0.00004)).toBe('-0.00004'); // was "0.000"
+        expect(fmtNum(12.5)).toBe('12.5'); // was the padded "12.50"
+        expect(fmtNum(1234.5678)).toBe('1,234.568'); // was the rounded "1,235"
+        expect(fmtNum(-0)).toBe('0');
+        expect(fmtNum(null)).toBe('—');
+        expect(fmtNum(undefined)).toBe('—');
+        expect(fmtNum(NaN)).toBe('—');
+        // the chart tooltips read through it too
+        const o: any = buildTimeSeriesOption({ timestamps: ['2026-01-01 00:00:00'], lines: [{ name: 'V', values: [1], color: '#fff' }] });
+        expect(o.tooltip.valueFormatter(0.0002)).toBe('0.0002');
+        expect(o.tooltip.valueFormatter(null)).toBe('');
     });
 
     it('the rings are green (1×, solid) and amber (3×, dashed)', () => {

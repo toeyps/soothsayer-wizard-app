@@ -466,7 +466,7 @@ describe('ModelFitPage memo comparator (charts do not re-render on queue progres
     const preview = { retry: fn, retryTestScoring: fn } as unknown as ModelFitPageProps['preview'];
     const props = (over: Partial<ModelFitPageProps> = {}): ModelFitPageProps => ({
         data: {} as ModelFitPageProps['data'], model: {} as ModelFitPageProps['model'], stale: false, preview, unit: 'bar',
-        sensorLabel: (t: string) => t, getDesc: () => '', testNumbers: [1, 2], onXPredictorChange: fn, onCompare: fn, ...over,
+        testNumbers: [1, 2], onXPredictorChange: fn, onCompare: fn, ...over,
     });
 
     it('equal for a fresh-but-equal testNumbers array, a new preview object with the same callbacks, and the same model re-read from disk', () => {

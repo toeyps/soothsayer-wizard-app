@@ -197,8 +197,8 @@ describe('hover: nearestIndex / hoverIndexFromAxisEvent / readout', () => {
 
     it('readoutText: "time · value · score", "not running" for a row without a score, "" for nothing', () => {
         const ind = makeSetPointAwarePreview({ kind: 'individual', set_points: { lower: 1, upper: 9 } }).series;
-        expect(readoutText(readoutAt(ind, 3), 'bar')).toBe('1 Jan 2026 03:00 · value 6.20 bar · score 60');
-        expect(readoutText(readoutAt(ind, 3), '')).toBe('1 Jan 2026 03:00 · value 6.20 · score 60');
+        expect(readoutText(readoutAt(ind, 3), 'bar')).toBe('1 Jan 2026 03:00 · value 6.2 bar · score 60');
+        expect(readoutText(readoutAt(ind, 3), '')).toBe('1 Jan 2026 03:00 · value 6.2 · score 60');
         const noScore = makeHealthPreview({ kind: 'individual' }).series;
         expect(readoutText(readoutAt(noScore, 1), 'bar')).toBe('1 Jan 2026 01:00 · not running');
         expect(readoutText(null, 'bar')).toBe('');

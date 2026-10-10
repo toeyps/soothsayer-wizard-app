@@ -9,9 +9,9 @@ vi.mock('../components/charts/ResponsiveECharts', () => ({
             data-x-axis-name={props.option?.xAxis?.name ?? ''}
             data-y-axis-name={props.option?.yAxis?.name ?? ''}
             // the names in the strip above the plot (train / scoring scopes), in band order
-            data-strip={((props.option?.series ?? []).find((s: any) => s.name === '__scopes')?.markArea?.data ?? []).map((a: any) => a[0].label.formatter).join('|')}
-            // lines that name themselves at their right end
-            data-end-labels={(props.option?.series ?? []).filter((s: any) => s.endLabel?.show).map((s: any) => s.endLabel.formatter).join('|')}
+            data-strip={((props.option?.series ?? []).find((s: any) => s.name === '__scopes')?.markArea?.data ?? []).filter((a: any) => a[0].label.show).map((a: any) => a[0].label.formatter).join('|')}
+            // a data line named ON the plot (an ECharts end label) — there must be none: it does not follow a zoom
+            data-end-labels={(props.option?.series ?? []).filter((s: any) => s.endLabel).map((s: any) => s.name).join('|')}
             // the ring levels named on a Clusters chart
             data-ring-labels={((props.option?.series ?? []).find((s: any) => s.name === 'Ring labels')?.data ?? []).map((x: any) => x.label.formatter).join('|')}
         />
@@ -47,7 +47,6 @@ function page(m: FailureModel, req: Record<string, any>, over: Record<string, an
     const data = makeHealthPreview({ kind: m.kind, ...req });
     const props = {
         model: m, stale: false, preview: { ...idle, data }, unit: '°C', data,
-        sensorLabel: (t: string) => `Label of ${t}`, getDesc: (t: string) => t,
         onXPredictorChange: vi.fn(), onCompare: vi.fn(),
         ...over,
     };
@@ -76,16 +75,17 @@ describe('ModelFitPage — Individual', () => {
         page(model(), { target: 'T1' });
         const t = screen.getByTestId('stats-card').textContent!;
         expect(t).toMatch(/Rows1,000/);
-        expect(t).toMatch(/Mean5\.00 °C/);
-        expect(t).toMatch(/SD1\.00 °C/);
-        expect(t).toMatch(/±1SD4\.00 – 6\.00/);
-        expect(t).toMatch(/±3SD2\.00 – 8\.00/);
+        // the app's ONE formatter for computed values: up to 3 decimals, never padded
+        expect(t).toMatch(/Mean5 °C/);
+        expect(t).toMatch(/SD1 °C/);
+        expect(t).toMatch(/±1SD4 – 6±3SD/);
+        expect(t).toMatch(/±3SD2 – 8Rows outside/);
         expect(screen.getByTestId('stat-outside3').textContent).toMatch(/^≈ \d+ \(\d+\.\d{2}%\)$/);
     });
 
     it('without a histogram the Distribution card says so instead of drawing', () => {
         const data = { ...makeHealthPreview({ kind: 'individual' }), histogram: null };
-        render(<ModelFitPage model={model()} stale={false} preview={{ ...idle, data }} unit="" data={data} sensorLabel={t => t} getDesc={t => t} onXPredictorChange={() => {}} onCompare={() => {}} />);
+        render(<ModelFitPage model={model()} stale={false} preview={{ ...idle, data }} unit="" data={data} onXPredictorChange={() => {}} onCompare={() => {}} />);
         expect(within(screen.getByTestId('chart-card-dist')).queryByTestId('echarts-mock')).toBeNull();
         expect(screen.getByText('No distribution for this scope')).toBeTruthy();
         expect(screen.getByTestId('stat-outside3').textContent).toBe('—');
@@ -132,7 +132,7 @@ describe('ModelFitPage — Relationship', () => {
         expect(txt('stat-rmse')).toBe('RMSE0.457 °C');
         expect(txt('stat-2rmse')).toBe('2RMSE0.913');
         expect(txt('stat-res-mean')).toBe('Residual mean0.012');
-        expect(txt('stat-res-sd')).toBe('Residual SD0.400');
+        expect(txt('stat-res-sd')).toBe('Residual SD0.4');
         expect(txt('stat-rows')).toBe('Rows321');
         expect(txt('stat-predictors')).toBe('Predictors2');
     });
@@ -180,19 +180,52 @@ describe('ModelFitPage — Relationship', () => {
         expect(p.onCompare).toHaveBeenCalledTimes(1);
     });
 
+    // Review of 0125190, item 10: these read through the Workbench's own older formatter, which
+    // printed a non-zero value below 0.0005 as "0.000" (the app's rule: never show a non-zero as 0).
+    it('a tiny non-zero statistic never reads as zero: "0.0002", not "0.000"', () => {
+        const base = makeHealthPreview({ kind: 'relationship', target: 'T1', predictors: ['A'] });
+        const data = { ...base, stats: { ...(base.stats as any), residual_mean: 0.0002, residual_sd: 0.00004567, rmse: 1234.5678, two_rmse: -0 } };
+        render(<ModelFitPage model={rel()} stale={false} preview={{ ...idle, data }} unit="" data={data} onXPredictorChange={() => {}} onCompare={() => {}} />);
+        const txt = (id: string) => screen.getByTestId(id).textContent;
+        expect(txt('stat-res-mean')).toBe('Residual mean0.0002');
+        expect(txt('stat-res-sd')).toBe('Residual SD0.0000457'); // 3 significant digits
+        expect(txt('stat-rmse')).toBe('RMSE1,234.568'); // not rounded to "1,235"
+        expect(txt('stat-2rmse')).toBe('2RMSE0'); // a negative zero reads "0"
+    });
+
     it('stale: all three charts are "Out of date"', () => {
         page(rel(), { target: 'T1', predictors: ['A', 'B'] }, { stale: true });
         expect(screen.getAllByTestId('chart-outdated')).toHaveLength(3);
     });
 
-    // workbench-redesign SPEC §3: "No legend rows where the lines are labelled (Target vs predicted:
-    // "Actual" / "Predicted" at the line ends)."
-    it('Target vs predicted names "Actual" / "Predicted" at the line ends and has no legend row; Residual has none either; Fit keeps its two point colours', () => {
+    // Review of 0125190, must-fix 1: "Actual" / "Predicted" drawn at the line ends did not follow
+    // their lines through a wheel-zoom or a drag (a name could end up beside the OTHER line), and
+    // with the legend gone they were the only key. The card now keeps a fixed two-item colour key.
+    it('Target vs predicted keeps a fixed "Actual" / "Predicted" colour key under the chart, and draws NO name on the plot', () => {
         page(rel(), { target: 'T1', predictors: ['A', 'B'] });
-        expect(chartOf('tvp').getAttribute('data-end-labels')).toBe('Actual|Predicted');
-        expect(legendOf('tvp')).toBeNull();
+        expect(legendOf('tvp')).toBe('ActualPredicted');
+        const key = [...screen.getByTestId('chart-card-tvp').querySelectorAll('.wb2-legend .wb2-lg')];
+        expect(key.map(k => k.textContent)).toEqual(['Actual', 'Predicted']);
+        // each name next to a LINE swatch of its series' colour (blue = actual, red = predicted)
+        const swatch = key.map(k => k.querySelector('i')!);
+        expect(swatch.map(i => i.className)).toEqual(['', '']); // a line, not the square of a point colour
+        expect(swatch.map(i => i.style.borderColor)).toEqual(['rgb(111, 158, 232)', 'rgb(238, 90, 69)']);
+        // the chart itself carries the two series and nothing that a zoom could misplace
+        expect(chartOf('tvp').getAttribute('data-series')).toBe('Actual|Predicted');
+        expect(chartOf('tvp').getAttribute('data-end-labels')).toBe('');
+    });
+
+    it('the key survives the expanded copy of the chart (the only place the two lines are named)', () => {
+        page(rel(), { target: 'T1', predictors: ['A', 'B'] });
+        fireEvent.click(screen.getByTestId('chart-expand-tvp'));
+        const overlay = screen.getByTestId('chart-overlay-tvp');
+        expect(overlay.querySelector('.wb2-legend')!.textContent).toBe('ActualPredicted');
+    });
+
+    it('Residual has no legend row (its ±2RMSE lines are named on the chart); Fit keeps its two point colours', () => {
+        page(rel(), { target: 'T1', predictors: ['A', 'B'] });
         expect(legendOf('res')).toBeNull();
-        expect(chartOf('res').getAttribute('data-end-labels')).toBe(''); // one line: its ±2RMSE lines are named instead
+        expect(chartOf('res').getAttribute('data-end-labels')).toBe('');
         expect(legendOf('fit')).toBe('ActualRelation model'); // points, not labelled lines
         expect(chartOf('fit').getAttribute('data-end-labels')).toBe('');
     });
@@ -220,7 +253,7 @@ describe('ModelFitPage — Clustering', () => {
         expect(within(summary).getByTestId('cluster-row-1').textContent).toBe('Cluster 1 · 0 – 5041 rows');
         expect(within(summary).getByTestId('cluster-row-2').textContent).toBe('Cluster 2 · 50 – 10042 rows');
         // the centre is computed: the read-out formatter
-        expect(summary.textContent).toMatch(/x 10\.00 · y 20\.00/);
+        expect(summary.textContent).toMatch(/x 10 · y 20(?!\.)/);
     });
 
     // ---- workbench-redesign SPEC §3 "Clustering" ----
@@ -232,7 +265,7 @@ describe('ModelFitPage — Clustering', () => {
             ...base,
             stats: { ...stats, clusters: [{ ...stats.clusters[0], range: { min: null, max: 33.6 } }, { ...stats.clusters[1], range: { min: 33.6, max: 4.61234 } }] },
         };
-        render(<ModelFitPage model={clu()} stale={false} preview={{ ...idle, data }} unit="" data={data} sensorLabel={t => t} getDesc={t => t} onXPredictorChange={() => {}} onCompare={() => {}} />);
+        render(<ModelFitPage model={clu()} stale={false} preview={{ ...idle, data }} unit="" data={data} onXPredictorChange={() => {}} onCompare={() => {}} />);
         expect(screen.getByTestId('cluster-row-1').textContent).toBe('Cluster 1 · … – 33.641 rows');
         expect(screen.getByTestId('cluster-row-2').textContent).toBe('Cluster 2 · 33.6 – 4.6123442 rows');
     });
@@ -251,7 +284,7 @@ describe('ModelFitPage — Clustering', () => {
         const data = makeHealthPreview({ kind: 'clustering', n_clusters: 2 });
         render(
             <SensorMetaProvider metadata={meta}>
-                <ModelFitPage model={clu()} stale={false} preview={{ ...idle, data }} unit="" data={data} sensorLabel={t => t} getDesc={t => t} onXPredictorChange={() => {}} onCompare={() => {}} />
+                <ModelFitPage model={clu()} stale={false} preview={{ ...idle, data }} unit="" data={data} onXPredictorChange={() => {}} onCompare={() => {}} />
             </SensorMetaProvider>,
         );
         const chart = chartOf('cl');
@@ -265,7 +298,7 @@ describe('ModelFitPage — Clustering', () => {
 
     it('a sensor with no description (or no Tag names at all) falls back to its tag on the axis', () => {
         const data = makeHealthPreview({ kind: 'clustering', n_clusters: 1 });
-        render(<ModelFitPage model={clu()} stale={false} preview={{ ...idle, data }} unit="" data={data} sensorLabel={t => t} getDesc={t => t} onXPredictorChange={() => {}} onCompare={() => {}} />);
+        render(<ModelFitPage model={clu()} stale={false} preview={{ ...idle, data }} unit="" data={data} onXPredictorChange={() => {}} onCompare={() => {}} />);
         expect(chartOf('cl').getAttribute('data-x-axis-name')).toBe('X1');
         expect(chartOf('cl').getAttribute('data-y-axis-name')).toBe('Y1');
     });
@@ -297,14 +330,14 @@ describe('ModelFitPage — Clustering', () => {
 
 describe('ModelFitPage — train and scoring periods ("just score it", 2026-10-10)', () => {
     const withTests = (kind: 'individual' | 'relationship' | 'clustering') => ({
-        test_validation: makeValidation({ tests: [makeTestResult(), makeTestResult({ index: 2 })] }),
+        test_validation: makeValidation({ tests: [makeTestResult(), makeTestResult({ index: 2, start: '2026-01-01T03:00', end: '2026-01-01T04:00' })] }),
         kind,
     });
     const mount = (m: FailureModel, req: Record<string, any>, extra: Record<string, any> = {}) => {
         const base = makeHealthPreview({ kind: m.kind, ...req });
         const data = { ...base, ...extra };
         render(<ModelFitPage model={m} stale={false} preview={{ ...idle, data }} unit="°C" data={data}
-            sensorLabel={t => t} getDesc={t => t} onXPredictorChange={vi.fn()} onCompare={vi.fn()} trainDaysEstimate={extra.estimate} />);
+            onXPredictorChange={vi.fn()} onCompare={vi.fn()} trainDaysEstimate={extra.estimate} />);
     };
 
     it('without scoring periods: no scope bands, no "Train and scoring periods" card', () => {
@@ -339,13 +372,13 @@ describe('ModelFitPage — train and scoring periods ("just score it", 2026-10-1
         expect(chartOf('dist').getAttribute('data-strip')).toBe(''); // not a time chart
     });
 
-    it('several train periods: the full-width chart reads "TRAIN P1", "TRAIN P2"; the half-width one the short "P1", "P2"', () => {
+    it('several train periods: the full-width chart reads "TRAIN P1" then "P2" (the word once); the half-width one the short "P1", "P2"', () => {
         const test_validation = makeValidation({
             train_ranges: [{ start: '2026-01-01T00:00', end: '2026-01-01T00:30' }, { start: '2026-01-01T01:00', end: '2026-01-01T01:30' }],
             tests: [makeTestResult()],
         });
         mount(model({ kind: 'relationship', predictorSensors: ['A'] }), { target: 'T1', predictors: ['A'] }, { test_validation });
-        expect(chartOf('res').getAttribute('data-strip')).toBe('TRAIN P1|TRAIN P2|S1');
+        expect(chartOf('res').getAttribute('data-strip')).toBe('TRAIN P1|P2|S1');
         expect(chartOf('tvp').getAttribute('data-strip')).toBe('P1|P2|S1');
         expect(chartOf('fit').getAttribute('data-strip')).toBe(''); // a scatter has no time axis
         expect(screen.getByTestId('chart-card-tvp').querySelector('.wb2-card-s')!.textContent).toBe('°C · rows in the train and scoring periods');
@@ -359,7 +392,7 @@ describe('ModelFitPage — train and scoring periods ("just score it", 2026-10-1
     it('testNumbers name the scoring-period row by the ORIGINAL list position; slowScoring shows the hint', () => {
         const data = { ...makeHealthPreview({ kind: 'individual', target: 'T1' }), test_validation: makeValidation({ tests: [makeTestResult({ index: 1 })] }) };
         render(<ModelFitPage model={model()} stale={false} preview={{ ...idle, data }} unit="°C" data={data}
-            sensorLabel={t => t} getDesc={t => t} onXPredictorChange={vi.fn()} onCompare={vi.fn()} testNumbers={[2]} slowScoring />);
+            onXPredictorChange={vi.fn()} onCompare={vi.fn()} testNumbers={[2]} slowScoring />);
         expect(screen.getByTestId('train-test-row-2').querySelector('.vt-scope b')!.textContent).toBe('S2');
         expect(screen.queryByTestId('train-test-row-1')).toBeNull();
         expect(within(screen.getByTestId('chart-card-ts')).getByTestId('echarts-mock')).toBeTruthy();

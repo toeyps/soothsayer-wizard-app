@@ -30,8 +30,10 @@ import { CHART, CHART_MONO, CLUSTER_COLORS, FONT, axisValueFormatter, fmtAxisVal
  *   - train / scoring periods are NAMED in a thin strip above the plot (plain
  *     coloured mono text, two lanes) and are only a faint fill inside it;
  *   - reference lines (±1SD, ±3SD, ±2RMSE, 80) are labelled OUTSIDE the plot on
- *     its right edge; a line that names itself (`TimeLine.endLabel`) or is
- *     labelled this way needs no legend row under the chart;
+ *     its right edge, so they need no legend row under the chart. A DATA line is
+ *     never named on the plot — ECharts does not move an end label with its line
+ *     through a zoom — so a chart with two of them (Target vs predicted) keeps a
+ *     two-item colour key on its card;
  *   - only the score-100 band is filled; ±3SD is a dashed line;
  *   - the user's own set points are the strongest lines (`HLine.inside`).
  */
@@ -40,29 +42,166 @@ import { CHART, CHART_MONO, CLUSTER_COLORS, FONT, axisValueFormatter, fmtAxisVal
 // Shared pieces
 // ---------------------------------------------------------------------------
 
+/** Cursor of `readDigits` (module-level, so the scan allocates nothing per stamp). */
+let scanAt = 0;
+/** Reads `min`..`max` digits of `s` at `scanAt`; -1 when there are fewer. */
+function readDigits(s: string, min: number, max: number): number {
+    let v = 0;
+    let n = 0;
+    while (n < max && scanAt < s.length) {
+        const c = s.charCodeAt(scanAt) - 48;
+        if (c < 0 || c > 9) break;
+        v = v * 10 + c;
+        scanAt++;
+        n++;
+    }
+    return n >= min ? v : -1;
+}
+
+/** The local day (y × 10000 + month × 100 + day) `dayOffsetMs` belongs to. */
+let offsetDay = NaN;
+/** What to add to `Date.UTC(fields)` for the epoch ms of those LOCAL fields on
+ *  `offsetDay`; NaN on a day the PC's clock changes (DST) — then `Date` decides
+ *  per stamp. */
+let dayOffsetMs = 0;
+
+/** Epoch ms of local wall-clock fields — `new Date(y, mo - 1, d, h, mi, s, ms)`
+ *  without building a `Date` per stamp: the PC's UTC offset is looked up once per
+ *  calendar day (consecutive rows share it) and the rest is arithmetic. */
+function localFieldsMs(y: number, mo: number, d: number, h: number, mi: number, sec: number, milli: number): number {
+    const day = y * 10000 + mo * 100 + d;
+    if (day !== offsetDay) {
+        const a = new Date(y, mo - 1, d, 0, 0, 0, 0).getTimezoneOffset();
+        const b = new Date(y, mo - 1, d, 23, 59, 59, 999).getTimezoneOffset();
+        offsetDay = day;
+        dayOffsetMs = a === b ? a * 60_000 : NaN;
+    }
+    return Number.isNaN(dayOffsetMs)
+        ? new Date(y, mo - 1, d, h, mi, sec, milli).getTime()
+        : Date.UTC(y, mo - 1, d, h, mi, sec, milli) + dayOffsetMs;
+}
+
+/**
+ * Epoch ms of a CSV stamp read as its OWN wall clock — the same reading as
+ * `formatDataStamp` (`periodDisplay.ts`), which prints the read-outs beside these
+ * charts: `YYYY-MM-DD[ T]HH:MM[:SS[.fff]]` with an optional `Z` / `+07:00`, whose
+ * offset is IGNORED. "2026-02-09T23:50:00+07:00" sits at 23:50 on the axis of a
+ * PC in any time zone (`new Date(text)` would move it by the difference between
+ * the file's zone and the PC's). NaN for any other shape: the caller falls back.
+ * A hand-written scan — no regex, no substring, no `Date` per stamp — so reading
+ * a series costs less than the `new Date(text)` per point it replaces.
+ */
+export function wallClockMs(s: string): number {
+    const n = s.length;
+    scanAt = 0;
+    while (scanAt < n && s.charCodeAt(scanAt) <= 32) scanAt++;
+    const y = readDigits(s, 4, 4);
+    let c = s.charCodeAt(scanAt);
+    if (y < 0 || (c !== 45 && c !== 47)) return NaN; // "-" or "/"
+    scanAt++;
+    const mo = readDigits(s, 1, 2);
+    c = s.charCodeAt(scanAt);
+    if (mo < 1 || mo > 12 || (c !== 45 && c !== 47)) return NaN;
+    scanAt++;
+    const d = readDigits(s, 1, 2);
+    if (d < 1 || d > 31) return NaN;
+    let h = 0;
+    let mi = 0;
+    let sec = 0;
+    let milli = 0;
+    c = s.charCodeAt(scanAt);
+    if (c === 84 || c === 116 || c === 32) { // "T" / "t" / a space, then the time
+        const needsTime = c !== 32;
+        scanAt++;
+        while (scanAt < n && s.charCodeAt(scanAt) === 32) scanAt++;
+        const at = scanAt;
+        h = readDigits(s, 1, 2);
+        if (h < 0 || s.charCodeAt(scanAt) !== 58) {
+            // No "HH:" here: only blanks or a zone followed the date.
+            if (needsTime) return NaN;
+            h = 0;
+            scanAt = at;
+        } else {
+            scanAt++; // ":"
+            mi = readDigits(s, 2, 2);
+            if (h > 23 || mi < 0 || mi > 59) return NaN;
+            if (s.charCodeAt(scanAt) === 58) {
+                scanAt++;
+                sec = readDigits(s, 2, 2);
+                if (sec < 0 || sec > 59) return NaN;
+                c = s.charCodeAt(scanAt);
+                if (c === 46 || c === 44) { // "." or ",": a fraction of a second
+                    scanAt++;
+                    const from = scanAt;
+                    let unit = 100;
+                    for (; scanAt < n; scanAt++) {
+                        const f = s.charCodeAt(scanAt) - 48;
+                        if (f < 0 || f > 9) break;
+                        milli += f * unit;
+                        unit /= 10;
+                    }
+                    if (scanAt === from) return NaN;
+                    milli = Math.floor(milli);
+                }
+            }
+        }
+    }
+    while (scanAt < n && s.charCodeAt(scanAt) <= 32) scanAt++;
+    if (scanAt < n) {
+        // An explicit zone — "Z", "+07", "+0700", "+07:00": read past it, never applied.
+        c = s.charCodeAt(scanAt);
+        if (c === 90 || c === 122) {
+            scanAt++;
+        } else if (c === 43 || c === 45) {
+            scanAt++;
+            if (readDigits(s, 2, 2) < 0) return NaN;
+            if (s.charCodeAt(scanAt) === 58) scanAt++;
+            const at = scanAt;
+            if (readDigits(s, 2, 2) < 0 && scanAt !== at) return NaN; // one stray digit
+        } else {
+            return NaN;
+        }
+        while (scanAt < n && s.charCodeAt(scanAt) <= 32) scanAt++;
+        if (scanAt < n) return NaN;
+    }
+    return localFieldsMs(y, mo, d, h, mi, sec, milli);
+}
+
 /** Epoch ms of every timestamp, or `null` if ANY of them does not parse (the
- *  chart then falls back to a category axis showing the raw text). The server
- *  already normalised the text (Buddhist-Era years are Gregorian by now). */
+ *  chart then falls back to a category axis showing the raw text). Each stamp is
+ *  placed at its own wall-clock time (`wallClockMs`); text in another shape is
+ *  read by `Date`, as it always was. The server already normalised the text
+ *  (Buddhist-Era years are Gregorian by now). */
 export function parseTimestamps(ts: string[]): number[] | null {
     const out = new Array<number>(ts.length);
     for (let i = 0; i < ts.length; i++) {
-        const t = new Date(ts[i]).getTime();
+        let t = wallClockMs(ts[i]);
+        if (Number.isNaN(t)) t = new Date(ts[i]).getTime(); // not the usual shape
         if (!Number.isFinite(t)) return null;
         out[i] = t;
     }
     return out;
 }
 
+/** `[min, max, step]` of an axis. `step` is absent when the range could not be
+ *  rounded (a zero or non-finite span). */
+export type NiceRange = [min: number, max: number, step?: number];
+
+/** Drops the float noise of `k × step` (0.1 × 3 = 0.30000000000000004); -0 is 0. */
+const cleanTick = (v: number): number => Number(v.toPrecision(12)) || 0;
+
 /** Rounds a value range out to "nice" axis ends (1, 2, 5 x 10^n steps), so the
- *  axis never starts at 62.884400945773835. */
-export function niceExtent(lo: number, hi: number): [number, number] {
+ *  axis never starts at 62.884400945773835 — and returns that step, which the
+ *  axis must use as its `interval`: left to itself ECharts picks another step and
+ *  then adds the two ends as extra, unevenly spaced ticks (0, 3, 6 … 15, 16). */
+export function niceExtent(lo: number, hi: number): NiceRange {
     const span = hi - lo;
     if (!(span > 0) || !Number.isFinite(span)) return [lo, hi];
     const raw = span / 5;
     const mag = Math.pow(10, Math.floor(Math.log10(raw)));
     const f = raw / mag;
     const step = (f < 1.5 ? 1 : f < 3.5 ? 2 : f < 7.5 ? 5 : 10) * mag;
-    return [Math.floor(lo / step) * step, Math.ceil(hi / step) * step];
+    return [cleanTick(Math.floor(lo / step) * step), cleanTick(Math.ceil(hi / step) * step), cleanTick(step)];
 }
 
 const tooltipBase = {
@@ -101,9 +240,6 @@ export interface TimeLine {
     values: (number | null)[];
     color: string;
     width?: number;
-    /** The line names itself at its right end, outside the plot ("Actual",
-     *  "Predicted") — the chart then needs no legend row. */
-    endLabel?: string;
 }
 
 export interface HLine {
@@ -121,7 +257,9 @@ export interface HLine {
     /** A reference line of a +/− pair: its outside label sits just above
      *  (`'above'`, the + side) or below (`'below'`, the − side) the line's end
      *  instead of centred on it, so "+2RMSE" and "−2RMSE" never print on top of
-     *  each other when the two lines are only a few pixels apart (a wide Y range). */
+     *  each other when the two lines are only a few pixels apart (a wide Y range).
+     *  Two lines of the SAME side that close together share one stacked label
+     *  (`stackedEdgeLabels`). */
     edge?: 'above' | 'below';
 }
 
@@ -144,9 +282,10 @@ export interface TimeScope {
     kind: 'train' | 'score';
     start: string | null;
     end: string | null;
-    /** Its name in the strip above the plot: "TRAIN", "TRAIN P2", "S1". */
+    /** Its full name: "TRAIN", "TRAIN P2", "S1". */
     label: string;
-    /** Shorter name for half-width charts: "P2", "S1". */
+    /** Its short name: "P2", "S1" ("TRAIN" for the only train period). See
+     *  `scopeStripNames` for which of the two the strip prints. */
     short: string;
 }
 
@@ -155,8 +294,12 @@ export interface TimeScope {
  *  and passed in explicitly through `TimeSeriesSpec.scopes`. */
 export interface TimeScopes {
     ranges: TimeScope[];
-    /** Use the short names (half-width charts). */
+    /** A half-width chart: print the short names (numbers only, no "TRAIN"). */
     compact?: boolean;
+    /** The chart shares its row with a side card (the Health score set-point
+     *  chart), so its plot can be as narrow as a half-width one: the names keep
+     *  the word "TRAIN" but are spaced for the narrow plot (`STRIP_PLOT_WIDTH`). */
+    narrow?: boolean;
 }
 
 /**
@@ -199,6 +342,11 @@ export function compactScopes(s: TimeScopes | null | undefined): TimeScopes | nu
     return s ? { ...s, compact: true } : null;
 }
 
+/** The same scopes, their names spaced for a chart beside a side card. */
+export function narrowScopes(s: TimeScopes | null | undefined): TimeScopes | null {
+    return s ? { ...s, narrow: true } : null;
+}
+
 /** Height of the strip above the plot that names the scopes: two text lanes,
  *  train on the upper one and scoring periods on the lower one. */
 export const SCOPE_STRIP = 26;
@@ -206,8 +354,24 @@ export const SCOPE_STRIP = 26;
 export const SCOPE_LANE = { train: 15, score: 3 } as const;
 /** Room right of the plot for the reference-line labels ("+2RMSE"). */
 export const REF_LABEL_GUTTER = 52;
-/** The same for a line that names itself at its end ("Predicted" is longer). */
-export const END_LABEL_GUTTER = 64;
+/** Outside labels on the same side of their lines need about one line of text
+ *  between the lines. As a share of the Y range: ~12 px of the shortest Workbench
+ *  plot (a 250 px card with the scope strip, ~185 px). The builder is pure and
+ *  never knows the real height, so a taller chart merges a little early. */
+export const REF_LABEL_MIN_GAP = 0.07;
+/** Line height of a stacked reference label. */
+const REF_LABEL_LINE = 11;
+
+/** The plot width (px) the strip names must stay apart on. The builder is pure and
+ *  never knows the real width, so it spaces the names for the narrowest plot the
+ *  Workbench layout gives that kind of chart: a card across the whole board
+ *  (`full`), or a half-width card / a chart beside a side card (`narrow` — both
+ *  are ~230 px at the narrowest two-column layout). On a wider chart a name that
+ *  would have fitted may stay hidden; names do not print on each other. */
+export const STRIP_PLOT_WIDTH = { full: 420, narrow: 200 } as const;
+/** Advance of one character of the 9 px mono strip text, and the air between two names. */
+const STRIP_CHAR = 5.6;
+const STRIP_NAME_GAP = 6;
 
 const scopeMs = (s: string | null | undefined): number | null => parseLocal(s);
 
@@ -250,21 +414,69 @@ export function withScopeGaps(points: [number, number | null][], islands: [numbe
     return out;
 }
 
+/** One scope band as it is drawn: clamped to the data's time range. */
+export interface StripBand { kind: TimeScope['kind']; label: string; short: string; a: number; b: number }
+
+/**
+ * What each band prints in the strip above the plot — `null` = its name is left
+ * out (the band itself is still drawn).
+ *
+ *  - The word "TRAIN" is printed ONCE: the first train band reads its full name
+ *    ("TRAIN", or "TRAIN P1"), every later one only its number ("P2", "P3" — SPEC
+ *    §3 `TRAIN P1 P2`). A half-width chart (`short`) prints numbers only.
+ *  - Names never print on each other. Each sits centred over its band; going left
+ *    to right on a lane, a name that would touch the one before it (on a plot
+ *    `plotWidth` px wide) is left out — so 20 short periods read
+ *    "TRAIN P1 · P3 · P5 …" instead of a smear. Train and scoring names are on
+ *    separate lanes and are thinned separately.
+ */
+export function scopeStripNames(
+    bands: readonly StripBand[],
+    xMin: number,
+    xMax: number,
+    { short = false, plotWidth = STRIP_PLOT_WIDTH.full }: { short?: boolean; plotWidth?: number } = {},
+): (string | null)[] {
+    const width = plotWidth;
+    const span = xMax - xMin;
+    const out: (string | null)[] = new Array(bands.length).fill(null);
+    for (const kind of ['train', 'score'] as const) {
+        const lane = bands.map((_, i) => i).filter(i => bands[i].kind === kind)
+            .sort((i, j) => (bands[i].a + bands[i].b) - (bands[j].a + bands[j].b) || i - j);
+        let free = -Infinity; // right edge of the last name printed, plus the air after it
+        lane.forEach((i, at) => {
+            const band = bands[i];
+            const text = short || (kind === 'train' && at > 0) ? band.short : band.label;
+            const centre = span > 0 ? (((band.a + band.b) / 2 - xMin) / span) * width : 0;
+            const half = (text.length * STRIP_CHAR) / 2;
+            if (centre - half < free) return;
+            out[i] = text;
+            free = centre + half + STRIP_NAME_GAP;
+        });
+    }
+    return out;
+}
+
 /** The carrier series of the scope bands (no data of its own, drawn under the
  *  data). Each band carries its NAME in the strip above the plot — plain
  *  coloured text, never a pill and never inside the plot. */
 function scopeSeries(scopes: TimeScopes, xMin: number, xMax: number): Record<string, unknown> {
     const name = { fontSize: 9, fontWeight: 600, fontFamily: CHART_MONO, padding: 0 };
-    const area = scopes.ranges.flatMap(r => {
+    const bands: StripBand[] = scopes.ranges.flatMap(r => {
         const a = Math.max(xMin, r.start ? (scopeMs(r.start) ?? xMin) : xMin);
         const b = Math.min(xMax, r.end ? (scopeMs(r.end) ?? xMax) : xMax);
-        if (!(b >= a)) return [];
-        const train = r.kind === 'train';
+        return b >= a ? [{ kind: r.kind, label: r.label, short: r.short, a, b }] : [];
+    });
+    const names = scopeStripNames(bands, xMin, xMax, {
+        short: !!scopes.compact,
+        plotWidth: scopes.compact || scopes.narrow ? STRIP_PLOT_WIDTH.narrow : STRIP_PLOT_WIDTH.full,
+    });
+    const area = bands.map((band, i) => {
+        const train = band.kind === 'train';
         const line = train ? CHART.train : CHART.test;
-        return [[
+        return [
             {
-                name: r.label,
-                xAxis: a,
+                name: band.label,
+                xAxis: band.a,
                 // Train and scoring may overlap: train = a faint blue fill, scoring = a
                 // faint magenta fill + dashed outline, so a scoring period over train
                 // stays readable.
@@ -273,10 +485,10 @@ function scopeSeries(scopes: TimeScopes, xMin: number, xMax: number): Record<str
                     : { color: CHART.testFill, borderColor: CHART.testOutline, borderWidth: 1, borderType: 'dashed' },
                 // Two text lanes in the strip ABOVE the plot: train names on the upper
                 // lane, scoring names on the lower one (so S1 over TRAIN never collide).
-                label: { ...name, show: true, color: line, position: 'top', distance: train ? SCOPE_LANE.train : SCOPE_LANE.score, formatter: scopes.compact ? r.short : r.label },
+                label: { ...name, show: names[i] !== null, color: line, position: 'top', distance: train ? SCOPE_LANE.train : SCOPE_LANE.score, formatter: names[i] ?? band.short },
             },
-            { xAxis: b },
-        ]];
+            { xAxis: band.b },
+        ];
     });
     return {
         type: 'line',
@@ -288,6 +500,61 @@ function scopeSeries(scopes: TimeScopes, xMin: number, xMax: number): Record<str
         tooltip: { show: false },
         markArea: { silent: true, animation: false, data: area },
     };
+}
+
+/**
+ * Reference lines whose OUTSIDE labels would print on each other: two lines on
+ * the same side (`edge`) closer than `minGap` (in Y units). Normal data keeps
+ * ±1SD and ±3SD far apart; with set points far from the data (a master alarm
+ * limit) the whole ±3SD band is a few pixels tall and "+1SD" lands on "+3SD".
+ * Such a run shares ONE label, stacked in the order the lines have on screen and
+ * each name in its own line's colour, carried by the OUTERMOST line (the top one
+ * above the lines, the bottom one below them).
+ *
+ * Returns, per index of `hLines`: the lines a carrier prints (top to bottom), or
+ * `null` for a line whose name its neighbour carries. Lines not in the map keep
+ * their own label.
+ */
+export function stackedEdgeLabels(hLines: readonly HLine[], minGap: number): Map<number, HLine[] | null> {
+    const out = new Map<number, HLine[] | null>();
+    if (!(minGap > 0)) return out;
+    for (const edge of ['above', 'below'] as const) {
+        const side = hLines.map((_, i) => i)
+            .filter(i => hLines[i].edge === edge && !!hLines[i].label && !hLines[i].inside && Number.isFinite(hLines[i].y))
+            .sort((i, j) => hLines[i].y - hLines[j].y);
+        for (let from = 0; from < side.length;) {
+            let to = from;
+            while (to + 1 < side.length && hLines[side[to + 1]].y - hLines[side[to]].y < minGap) to++;
+            if (to > from) {
+                const run = side.slice(from, to + 1); // ascending y = bottom to top on screen
+                const carrier = edge === 'above' ? run[run.length - 1] : run[0];
+                for (const i of run) out.set(i, i === carrier ? run.map(k => hLines[k]).reverse() : null);
+            }
+            from = to + 1;
+        }
+    }
+    return out;
+}
+
+/** The label of a reference line, outside the plot on its right edge. */
+function outsideLabel(h: HLine, stack: HLine[] | null | undefined): Record<string, unknown> {
+    if (stack === null) return { show: false }; // a neighbour carries this name
+    const base = {
+        show: true,
+        formatter: h.label,
+        position: 'end',
+        distance: 4,
+        color: h.color,
+        fontSize: 9.5,
+        fontWeight: 'normal',
+        fontFamily: CHART_MONO,
+        verticalAlign: h.edge === 'above' ? 'bottom' : h.edge === 'below' ? 'top' : 'middle',
+    };
+    if (!stack) return base;
+    // One name per text line, each in its own line's colour.
+    const rich: Record<string, unknown> = {};
+    stack.forEach((s, i) => { rich[`l${i}`] = { color: s.color, fontSize: 9.5, fontFamily: CHART_MONO, lineHeight: REF_LABEL_LINE, align: 'left' }; });
+    return { ...base, formatter: stack.map((s, i) => `{l${i}|${s.label}}`).join('\n'), rich };
 }
 
 export interface TimeSeriesSpec {
@@ -325,7 +592,8 @@ export function buildTimeSeriesOption(spec: TimeSeriesSpec) {
     for (const b of bands) { take(b.from); take(b.to); }
     if (!Number.isFinite(lo) || !Number.isFinite(hi)) { lo = 0; hi = 1; }
     const pad = (hi - lo) * 0.06 || Math.abs(hi) * 0.05 || 1;
-    const [yMin, yMax] = spec.yRange ?? niceExtent(lo - pad, hi + pad);
+    const [yMin, yMax, yStep]: NiceRange = spec.yRange ?? niceExtent(lo - pad, hi + pad);
+    const stacks = stackedEdgeLabels(hLines, (yMax - yMin) * REF_LABEL_MIN_GAP);
 
     const series: Record<string, unknown>[] = lines.map((l, i) => {
         const pairs = ms ? l.values.map((v, k) => [ms[k], v] as [number, number | null]) : null;
@@ -340,18 +608,13 @@ export function buildTimeSeriesOption(spec: TimeSeriesSpec) {
             itemStyle: { color: l.color },
             z: 2,
         };
-        if (l.endLabel) {
-            base.endLabel = { show: true, formatter: l.endLabel, color: l.color, fontSize: 9.5, distance: 4, fontFamily: CHART_MONO };
-            // Two lines that end at nearly the same value: their names move apart.
-            base.labelLayout = { moveOverlap: 'shiftY' };
-        }
         if (i === 0) {
             if (hLines.length) {
                 base.markLine = {
                     silent: true,
                     symbol: 'none',
                     animation: false,
-                    data: hLines.map(h => ({
+                    data: hLines.map((h, k) => ({
                         yAxis: h.y,
                         lineStyle: { color: h.color, width: h.width ?? 1, type: h.dashed ? 'dashed' : 'solid' },
                         label: h.label
@@ -359,7 +622,7 @@ export function buildTimeSeriesOption(spec: TimeSeriesSpec) {
                                 // A set point of the user: inside the plot, at the right end.
                                 ? { show: true, formatter: h.label, position: h.inside === 'top' ? 'insideEndTop' : 'insideEndBottom', distance: 3, color: h.color, fontSize: 10, fontWeight: 600, fontFamily: CHART_MONO }
                                 // A reference line: outside the plot, on its right edge.
-                                : { show: true, formatter: h.label, position: 'end', distance: 4, color: h.color, fontSize: 9.5, fontWeight: 'normal', fontFamily: CHART_MONO, verticalAlign: h.edge === 'above' ? 'bottom' : h.edge === 'below' ? 'top' : 'middle' }
+                                : outsideLabel(h, stacks.get(k))
                             : { show: false },
                     })),
                 };
@@ -380,10 +643,8 @@ export function buildTimeSeriesOption(spec: TimeSeriesSpec) {
         series.push(scopeSeries(scopes, ms[0], ms[ms.length - 1]));
     }
 
-    // Room right of the plot for what is labelled there.
-    const right = lines.some(l => l.endLabel)
-        ? END_LABEL_GUTTER
-        : hLines.some(h => h.label && !h.inside) ? REF_LABEL_GUTTER : 18;
+    // Room right of the plot for the reference-line labels.
+    const right = hLines.some(h => h.label && !h.inside) ? REF_LABEL_GUTTER : 18;
 
     return {
         backgroundColor: 'transparent',
@@ -404,6 +665,8 @@ export function buildTimeSeriesOption(spec: TimeSeriesSpec) {
             nameTextStyle: { color: CHART.textSecondary, fontSize: 10 },
             min: yMin,
             max: yMax,
+            // The step the range was rounded to: every tick is round and evenly spaced.
+            interval: yStep,
             ...fixedValueAxisCommon(yMin, yMax),
             splitLine: { show: true, lineStyle: { color: CHART.splitLine } },
         },
@@ -463,10 +726,14 @@ export function buildDistributionOption(h: HealthHistogram, vLines: VLine[], uni
     const bars = h.counts.map((c, i) => [h.bin_edges[i], h.bin_edges[i + 1], c]);
     const curve = h.curve.map((c, i) => [(h.bin_edges[i] + h.bin_edges[i + 1]) / 2, c]);
     const xs = [h.bin_edges[0], h.bin_edges[h.bin_edges.length - 1], ...vLines.map(l => l.x)].filter(Number.isFinite);
-    const [xMin, xMax] = niceExtent(Math.min(...xs), Math.max(...xs));
+    // Nothing finite to measure (no bins, no lines): the axis is left to ECharts — never
+    // `min: Infinity, max: -Infinity`.
+    const xRange: NiceRange | null = xs.length > 0 ? niceExtent(Math.min(...xs), Math.max(...xs)) : null;
+    const xFixed = xRange && xRange[2] !== undefined ? { min: xRange[0], max: xRange[1], interval: xRange[2] } : null;
     // 10 % headroom, rounded up to a nice tick so the top label is a round count (it was a raw
     // max × 1.1 — "1,713.8000000000002" on screen, 2026-10-09).
-    const yMax = niceExtent(0, Math.max(...h.counts, ...h.curve, 1) * 1.1)[1];
+    const top = Math.max(1, ...h.counts.filter(Number.isFinite), ...h.curve.filter(Number.isFinite));
+    const [, yMax, yStep] = niceExtent(0, top * 1.1);
     return {
         backgroundColor: 'transparent',
         textStyle: { fontFamily: FONT },
@@ -476,20 +743,20 @@ export function buildDistributionOption(h: HealthHistogram, vLines: VLine[], uni
         grid: { left: 52, right: 18, top: 14, bottom: 32, containLabel: false },
         xAxis: {
             type: 'value',
-            min: xMin,
-            max: xMax,
+            ...(xFixed ?? {}),
             name: unit || undefined,
             nameLocation: 'middle',
             nameGap: 22,
             nameTextStyle: { color: CHART.textSecondary, fontSize: 10 },
             scale: true,
-            ...fixedValueAxisCommon(xMin, xMax),
+            ...(xFixed ? fixedValueAxisCommon(xFixed.min, xFixed.max) : valueAxisCommon),
             splitLine: { show: false },
         },
         yAxis: {
             type: 'value',
             min: 0,
             max: yMax,
+            interval: yStep,
             ...fixedValueAxisCommon(0, yMax),
             splitLine: { show: true, lineStyle: { color: CHART.splitLine } },
         },
@@ -606,16 +873,19 @@ export function buildFitScatterOption(fit: HealthFitScatter, yName: string) {
     };
 }
 
-/** "Target vs predicted" over time. Each line names itself at its right end
- *  ("Actual", "Predicted"), so the card has no legend row. */
+/** "Target vs predicted" over time: the Actual (blue) and Predicted (red) lines.
+ *  Which is which is the card's own two-item colour key (`ModelFitPage`) — the
+ *  lines are NOT named on the plot: ECharts places a line's end label only while
+ *  it animates the line in, so after a wheel-zoom or a drag a name stayed where
+ *  its line used to end and could sit beside the OTHER line. */
 export function buildTargetVsPredictedOption(series: RelationshipSeries, unit: string, scopes: TimeScopes | null = null) {
     return buildTimeSeriesOption({
         timestamps: series.timestamps,
         scopes,
         yName: unit || undefined,
         lines: [
-            { name: 'Actual', values: series.actual, color: CHART.actual, endLabel: 'Actual' },
-            { name: 'Predicted', values: series.predicted, color: CHART.predicted, endLabel: 'Predicted' },
+            { name: 'Actual', values: series.actual, color: CHART.actual },
+            { name: 'Predicted', values: series.predicted, color: CHART.predicted },
         ],
     });
 }
@@ -720,19 +990,33 @@ export const RING_LABEL_LINE = 13;
  *  furthest right ("1× · 100", "3× · 80", "5× · 0") — instead of once per
  *  cluster or in a legend row under the chart. */
 export function ringLabelSeries(clusters: RingShape[], levels: RingLevel[]) {
-    // The rings of one cluster reach furthest right at (nearly) the same height, and on a wide
-    // axis only a few pixels apart — so the level names are staggered one text line each around
-    // that height (first level up, last level down) and can never print on top of each other.
-    const mid = (levels.length - 1) / 2;
-    const data = levels.flatMap((l, i) => {
+    const named = levels.flatMap(l => {
         let best: [number, number] | null = null;
         for (const c of clusters) {
             const p = ringRightPoint(c, l.sigma);
             if (!Number.isFinite(p[0]) || !Number.isFinite(p[1])) continue;
             if (!best || p[0] > best[0]) best = p;
         }
-        return best ? [{ name: l.text, value: best, label: { formatter: l.text, color: l.color, offset: [0, (i - mid) * RING_LABEL_LINE] } }] : [];
+        return best ? [{ level: l, at: best }] : [];
     });
+    // The rings of one cluster reach furthest right at nearly the same height, and on a wide
+    // axis only a few pixels apart — so the names are staggered one text line each around that
+    // height. The stagger FOLLOWS THE DATA: the name whose ring edge is highest goes up, the
+    // lowest goes down, so the stagger only ever adds to the distance the points already have
+    // and two names are always at least one line apart. (A fixed "first level up, last level
+    // down" pushed the names of a cluster tilted up to the right — positively correlated
+    // sensors, the usual shape — INTO each other: there the 1× edge is the lowest.) Rings that
+    // end at the same height (a flat cluster) keep the level order: first up, last down.
+    const order = named.map((_, i) => i).sort((i, j) => named[j].at[1] - named[i].at[1] || i - j);
+    const mid = (named.length - 1) / 2;
+    const rank = new Array<number>(named.length);
+    order.forEach((i, r) => { rank[i] = r; });
+    const data = named.map((n, i) => ({
+        name: n.level.text,
+        value: n.at,
+        // screen Y grows downwards: rank 0 (the highest edge) gets the most negative offset
+        label: { formatter: n.level.text, color: n.level.color, offset: [0, (rank[i] - mid) * RING_LABEL_LINE] },
+    }));
     return {
         type: 'scatter' as const,
         name: 'Ring labels',
@@ -795,22 +1079,30 @@ export function clusterExtent(xs: readonly number[], ys: readonly number[], clus
             yLo = Math.min(yLo, b.y[0]); yHi = Math.max(yHi, b.y[1]);
         }
     }
-    const ext = (lo: number, hi: number, room = 0): [number, number] =>
-        Number.isFinite(lo) && Number.isFinite(hi) ? niceExtent(lo - (hi - lo) * 0.03, hi + (hi - lo) * (0.03 + room)) : [0, 1];
+    const ext = (lo: number, hi: number, room = 0): NiceRange => {
+        if (!Number.isFinite(lo) || !Number.isFinite(hi)) return [0, 1];
+        // Everything at one value (a constant sensor, rings of no size): open the axis around
+        // it like the time charts do — never `min === max`.
+        const flat = hi > lo ? 0 : Math.abs(hi) * 0.05 || 1;
+        const a = lo - flat;
+        const b = hi + flat;
+        return niceExtent(a - (b - a) * 0.03, b + (b - a) * (0.03 + room));
+    };
     return { x: ext(xLo, xHi, RING_LABEL_ROOM), y: ext(yLo, yHi) };
 }
 
 /** The two value axes of a Clusters chart (Model fit and Health score draw the
- *  same ones): fixed to `clusterExtent`, the axis lines on the plot's edge. */
-export function clusterAxes(names: ClusterChartNames, ex: { x: [number, number]; y: [number, number] }) {
+ *  same ones): fixed to `clusterExtent` and stepped by the step it was rounded
+ *  to, the axis lines on the plot's edge. */
+export function clusterAxes(names: ClusterChartNames, ex: { x: NiceRange; y: NiceRange }) {
     const title = { nameLocation: 'middle' as const, nameTextStyle: { color: CHART.textSecondary, fontSize: 10 } };
-    const axis = (min: number, max: number) => {
+    const axis = ([min, max, interval]: NiceRange) => {
         const common = fixedValueAxisCommon(min, max);
-        return { type: 'value' as const, min, max, ...title, ...common, axisLabel: { ...common.axisLabel, hideOverlap: true }, axisLine: EDGE_AXIS_LINE };
+        return { type: 'value' as const, min, max, interval, ...title, ...common, axisLabel: { ...common.axisLabel, hideOverlap: true }, axisLine: EDGE_AXIS_LINE };
     };
     return {
-        xAxis: { ...axis(ex.x[0], ex.x[1]), name: names.x, nameGap: 24, splitLine: { show: false } },
-        yAxis: { ...axis(ex.y[0], ex.y[1]), name: names.y, nameGap: 44, splitLine: { show: true, lineStyle: { color: CHART.splitLine } } },
+        xAxis: { ...axis(ex.x), name: names.x, nameGap: 24, splitLine: { show: false } },
+        yAxis: { ...axis(ex.y), name: names.y, nameGap: 44, splitLine: { show: true, lineStyle: { color: CHART.splitLine } } },
     };
 }
 

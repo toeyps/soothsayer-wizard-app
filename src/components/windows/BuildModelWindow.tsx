@@ -3316,8 +3316,6 @@ export default function BuildModelWindow() {
             stale: isModelStale(m),
             preview: healthPreview,
             unit: unitTag ? getUnit(unitTag) : '',
-            sensorLabel,
-            getDesc,
             // Results carry their WIRE index; the user numbers the full list.
             testNumbers: testPeriodsWirePlan(effectiveRunningCondition(eff, gateFg).testPeriods).numbers,
             slowScoring: activeModel?.id === m.id && slowScoring,

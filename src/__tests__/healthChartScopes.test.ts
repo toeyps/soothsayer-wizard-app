@@ -9,9 +9,13 @@ import {
     buildTimeSeriesOption,
     buildValueOverTimeOption,
     compactScopes,
+    narrowScopes,
     scopeIslands,
+    scopeStripNames,
     scopesOf,
+    STRIP_PLOT_WIDTH,
     withScopeGaps,
+    type StripBand,
     type TimeScopes,
 } from '../components/windows/workbench/healthCharts';
 import { buildIndividualSetPointOption, buildRelationshipSetPointOption, buildScoreOption } from '../components/windows/workbench/healthPageCharts';
@@ -36,8 +40,8 @@ import type { IndividualSeries, IndividualStats, RelationshipSeries, Relationshi
 const TS = ['2026-01-01 00:00:00', '2026-01-01 01:00:00', '2026-01-01 02:00:00', '2026-01-01 03:00:00', '2026-01-01 04:00:00'];
 const ms = (s: string) => new Date(s.replace(' ', 'T')).getTime();
 const carrier = (o: any) => o.series.find((s: any) => s.name === '__scopes');
-/** The names in the strip above the plot, in band order. */
-const stripNames = (o: any): string[] => carrier(o).markArea.data.map((a: any) => a[0].label.formatter);
+/** The names PRINTED in the strip above the plot, in band order (a name left out to avoid a collision is not listed). */
+const stripNames = (o: any): string[] => carrier(o).markArea.data.filter((a: any) => a[0].label.show).map((a: any) => a[0].label.formatter);
 /** Every label of the scope carrier. */
 const stripLabels = (o: any): any[] => carrier(o).markArea.data.map((a: any) => a[0].label);
 
@@ -168,14 +172,16 @@ describe('buildTimeSeriesOption with scopes', () => {
         expect(Object.keys(CHART)).not.toContain('scopePillBg');
     });
 
-    it('strip names per scope: one train period = "TRAIN"; several = "TRAIN P1", "TRAIN P2" (short "P1", "P2"); scoring periods = "S1", "S2"', () => {
+    // Review of 0125190, item 5: SPEC §3 writes the strip as `TRAIN P1 P2` — the word once.
+    it('strip names per scope: one train period = "TRAIN"; several = "TRAIN P1" then "P2", "P3" (the word ONCE); scoring periods = "S1", "S2"', () => {
         const v = makeValidation({
             train_ranges: [{ start: '2026-01-01T00:00', end: '2026-01-01T00:30' }, { start: '2026-01-01T01:00', end: '2026-01-01T02:00' }],
             tests: [makeTestResult({ index: 1, start: '2026-01-01T02:00', end: '2026-01-01T03:00' }), makeTestResult({ index: 2, start: '2026-01-01T03:00', end: '2026-01-01T04:00' })],
         });
         const full: any = buildTimeSeriesOption({ ...spec, scopes: scopesOf(v) });
-        expect(stripNames(full)).toEqual(['TRAIN P1', 'TRAIN P2', 'S1', 'S2']);
-        // a half-width chart drops the repeated word, never the number
+        expect(stripNames(full)).toEqual(['TRAIN P1', 'P2', 'S1', 'S2']);
+        expect(stripNames(full).filter(n => /TRAIN/.test(n))).toHaveLength(1);
+        // a half-width chart drops the word, never the number
         const half: any = buildTimeSeriesOption({ ...spec, scopes: compactScopes(scopesOf(v)) });
         expect(stripNames(half)).toEqual(['P1', 'P2', 'S1', 'S2']);
         // which lane each name sits on follows its kind, not its position
@@ -190,7 +196,8 @@ describe('buildTimeSeriesOption with scopes', () => {
     });
 
     it('strip names for LEGACY data: an old answer with a Normal / Known-problem label and an event time still reads plain "S1", "S2"', () => {
-        const old = (index: number, label: string) => ({ ...makeTestResult({ index }), label, event_time: '2026-01-01T03:30', lead_days: 2 });
+        // two periods at different times (two names over the SAME range would print on each other, so one is left out)
+        const old = (index: number, label: string) => ({ ...makeTestResult({ index, start: `2026-01-01T0${index}:00`, end: `2026-01-01T0${index}:30` }), label, event_time: '2026-01-01T03:30', lead_days: 2 });
         const v = makeValidation({ tests: [old(1, 'problem'), old(2, 'normal')] });
         const o: any = buildTimeSeriesOption({ ...spec, scopes: scopesOf(v) });
         expect(stripNames(o)).toEqual(['TRAIN', 'S1', 'S2']);
@@ -218,6 +225,110 @@ describe('buildTimeSeriesOption with scopes', () => {
         expect(c.markPoint).toBeUndefined();
         expect(JSON.stringify(c)).not.toContain('EVENT');
         expect(JSON.stringify(c)).not.toContain(CHART.danger);
+    });
+
+    describe('scopeStripNames: the word TRAIN once, and names that never print on each other', () => {
+        const band = (kind: 'train' | 'score', n: number, a: number, b: number): StripBand =>
+            ({ kind, label: kind === 'train' ? `TRAIN P${n}` : `S${n}`, short: kind === 'train' ? `P${n}` : `S${n}`, a, b });
+        /** [left, right] px of a printed name on the plot width the rule assumes (5.6 px per character). */
+        const box = (text: string, b: StripBand, width: number, xMin: number, xMax: number) => {
+            const c = (((b.a + b.b) / 2 - xMin) / (xMax - xMin)) * width;
+            return [c - (text.length * 5.6) / 2, c + (text.length * 5.6) / 2];
+        };
+        const apart = (bands: StripBand[], names: (string | null)[], width: number, xMin: number, xMax: number) => {
+            for (const kind of ['train', 'score'] as const) {
+                const shown = bands.map((b, i) => ({ b, t: names[i] })).filter(x => x.b.kind === kind && x.t !== null)
+                    .map(x => box(x.t!, x.b, width, xMin, xMax)).sort((p, q) => p[0] - q[0]);
+                for (let i = 1; i < shown.length; i++) expect(shown[i][0]).toBeGreaterThanOrEqual(shown[i - 1][1]);
+            }
+        };
+
+        it('a few periods: every name is printed — "TRAIN P1", "P2", "P3"', () => {
+            const bands = [band('train', 1, 0, 30), band('train', 2, 35, 65), band('train', 3, 70, 100)];
+            expect(scopeStripNames(bands, 0, 100)).toEqual(['TRAIN P1', 'P2', 'P3']);
+            expect(scopeStripNames(bands, 0, 100, { short: true })).toEqual(['P1', 'P2', 'P3']); // half-width: numbers only
+            // the only train period keeps its plain name
+            expect(scopeStripNames([{ kind: 'train', label: 'TRAIN', short: 'TRAIN', a: 0, b: 100 }], 0, 100)).toEqual(['TRAIN']);
+            expect(scopeStripNames([{ kind: 'train', label: 'TRAIN', short: 'TRAIN', a: 0, b: 100 }], 0, 100, { short: true })).toEqual(['TRAIN']);
+        });
+
+        it('the word goes to the LEFT-MOST train band that is drawn, whatever its number', () => {
+            // P1 lies outside the data and is not drawn: the strip still says TRAIN once
+            expect(scopeStripNames([band('train', 2, 0, 40), band('train', 3, 60, 100)], 0, 100)).toEqual(['TRAIN P2', 'P3']);
+            // listed out of time order
+            expect(scopeStripNames([band('train', 1, 60, 100), band('train', 2, 0, 40)], 0, 100)).toEqual(['P1', 'TRAIN P2']);
+        });
+
+        it('20 periods: no two printed names touch (some are left out), deterministically, and "TRAIN P1" is always there', () => {
+            const bands = Array.from({ length: 20 }, (_, i) => band('train', i + 1, i * 5, i * 5 + 4));
+            for (const [short, plotWidth] of [[false, STRIP_PLOT_WIDTH.full], [true, STRIP_PLOT_WIDTH.narrow], [false, STRIP_PLOT_WIDTH.narrow]] as const) {
+                const names = scopeStripNames(bands, 0, 100, { short, plotWidth });
+                apart(bands, names, plotWidth, 0, 100);
+                expect(names[0]).toBe(short ? 'P1' : 'TRAIN P1');
+                const shown = names.filter(n => n !== null);
+                expect(shown.length).toBeLessThan(20); // 20 names do not fit
+                expect(shown.length).toBeGreaterThanOrEqual(plotWidth === STRIP_PLOT_WIDTH.full ? 10 : 5); // but as many as do are printed
+                expect(names.filter(n => n !== null && /TRAIN/.test(n))).toHaveLength(short ? 0 : 1);
+                expect(scopeStripNames(bands, 0, 100, { short, plotWidth })).toEqual(names); // the same answer every time
+            }
+            // a narrower plot never prints MORE names than a wider one
+            const count = (plotWidth: number) => scopeStripNames(bands, 0, 100, { plotWidth }).filter(n => n !== null).length;
+            expect(count(STRIP_PLOT_WIDTH.narrow)).toBeLessThan(count(STRIP_PLOT_WIDTH.full));
+            expect(count(5000)).toBe(20); // with room for all of them, all are printed
+            // every band is still DRAWN: only a name is left out
+            const ts = Array.from({ length: 101 }, (_, i) => `2026-01-01 ${String(Math.floor(i / 60)).padStart(2, '0')}:${String(i % 60).padStart(2, '0')}:00`);
+            const at = (i: number) => `2026-01-01T${String(Math.floor(i / 60)).padStart(2, '0')}:${String(i % 60).padStart(2, '0')}`;
+            const ranges = Array.from({ length: 20 }, (_, i) => ({ kind: 'train' as const, start: at(i * 5), end: at(i * 5 + 4), label: `TRAIN P${i + 1}`, short: `P${i + 1}` }));
+            const o: any = buildTimeSeriesOption({ timestamps: ts, lines: [{ name: 'V', values: ts.map((_, i) => i), color: '#fff' }], scopes: { ranges } });
+            expect(carrier(o).markArea.data).toHaveLength(20);
+            expect(stripNames(o).length).toBeLessThan(20);
+            expect(stripNames(o)[0]).toBe('TRAIN P1');
+        });
+
+        it('uneven periods: a short one squeezed between two long ones gives way, the long ones keep their names', () => {
+            const bands = [band('train', 1, 0, 45), band('train', 2, 46, 47), band('train', 3, 48, 49), band('train', 4, 50, 100)];
+            const names = scopeStripNames(bands, 0, 100);
+            expect(names[0]).toBe('TRAIN P1');
+            expect(names[3]).toBe('P4');
+            expect(names.slice(1, 3).filter(n => n !== null).length).toBeLessThanOrEqual(1);
+            apart(bands, names, STRIP_PLOT_WIDTH.full, 0, 100);
+        });
+
+        it('train and scoring names are on separate lanes: one never hides the other', () => {
+            const bands = [band('train', 1, 0, 100), band('score', 1, 40, 60), band('score', 2, 41, 59), band('score', 3, 80, 100)];
+            const names = scopeStripNames(bands, 0, 100);
+            expect(names[0]).toBe('TRAIN P1'); // right above S1, on the other lane
+            expect(names[1]).toBe('S1');
+            expect(names[2]).toBeNull(); // S2 sits on S1: left out
+            expect(names[3]).toBe('S3');
+        });
+
+        it('a single instant (no time span to place names on) prints the first name only', () => {
+            expect(scopeStripNames([band('train', 1, 5, 5), band('train', 2, 5, 5)], 5, 5)).toEqual(['TRAIN P1', null]);
+            expect(scopeStripNames([], 0, 1)).toEqual([]);
+        });
+    });
+
+    it('which plot width the names are spaced for: a full-width card, or the narrow one for a half-width chart and a chart beside a side card', () => {
+        const ts = Array.from({ length: 101 }, (_, i) => `2026-01-01 ${String(Math.floor(i / 60)).padStart(2, '0')}:${String(i % 60).padStart(2, '0')}:00`);
+        const at = (i: number) => `2026-01-01T${String(Math.floor(i / 60)).padStart(2, '0')}:${String(i % 60).padStart(2, '0')}`;
+        const ranges = Array.from({ length: 20 }, (_, i) => ({ kind: 'train' as const, start: at(i * 5), end: at(i * 5 + 4), label: `TRAIN P${i + 1}`, short: `P${i + 1}` }));
+        const build = (scopes: TimeScopes | null) => buildTimeSeriesOption({ timestamps: ts, lines: [{ name: 'V', values: ts.map((_, i) => i), color: '#fff' }], scopes });
+        const full = stripNames(build({ ranges }));
+        const narrow = stripNames(build(narrowScopes({ ranges })));
+        const compact = stripNames(build(compactScopes({ ranges })));
+        expect(narrowScopes({ ranges })).toEqual({ ranges, narrow: true });
+        expect(narrowScopes(null)).toBeNull();
+        // beside a side card: fewer names than across the board, but still the word TRAIN
+        expect(narrow.length).toBeLessThan(full.length);
+        expect(narrow[0]).toBe('TRAIN P1');
+        // half-width: numbers only, spaced for the same narrow plot
+        expect(compact[0]).toBe('P1');
+        expect(compact.some(n => /TRAIN/.test(n))).toBe(false);
+        // few periods: the hint changes nothing
+        const few = { ranges: ranges.slice(0, 3).map((r, i) => ({ ...r, start: at(i * 30), end: at(i * 30 + 25) })) };
+        expect(stripNames(build(narrowScopes(few)))).toEqual(stripNames(build(few)));
+        expect(stripNames(build(few))).toEqual(['TRAIN P1', 'P2', 'P3']);
     });
 
     it('open ends run to the edges of the data; compact charts use the short names', () => {

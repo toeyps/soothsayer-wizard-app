@@ -30,10 +30,8 @@ export const CHART = {
     okFill: 'rgba(16, 185, 129, 0.10)',
     /** Score 80 line / ±3SD / 3× SD ring. */
     warn: '#e5a93d',
-    warnFill: 'rgba(229, 169, 61, 0.07)',
     /** Score 0 line (set points) — used by the Health score page. */
     danger: '#ee5a45',
-    dangerFill: 'rgba(238, 90, 69, 0.12)',
     /** Relationship: actual (blue) vs predicted (red). */
     actual: '#6f9ee8',
     predicted: '#ee5a45',
@@ -114,16 +112,16 @@ export function fmtScoreAxisValue(v: number): string {
     return String(Math.round(v) || 0); // `|| 0`: -0 reads "0"
 }
 
-/** Number formatting used by every workbench readout (matches the mockup's `fmt`). */
+/**
+ * A COMPUTED value on a Workbench page (statistics, read-outs, chart tooltips): the app's ONE
+ * number formatter (`fmtNum` of the sensor module — up to 3 decimals, thousands separators, and
+ * a non-zero value never reads as 0: 0.0002 is "0.0002", not "0.000"). This is not a second
+ * formatter, only the Workbench's two edges around it: no value is the em dash the Workbench
+ * uses everywhere ("—"), and a negative zero reads "0".
+ */
 export function fmtNum(v: number | null | undefined): string {
     if (v === null || v === undefined || !Number.isFinite(v)) return '—';
-    // No "-0.000": anything that rounds to zero at 3 decimals is plain 0.
-    if (Math.abs(v) < 0.0005) v = 0;
-    const a = Math.abs(v);
-    if (a >= 1000) return Math.round(v).toLocaleString();
-    if (a >= 100) return v.toFixed(1);
-    if (a >= 1) return v.toFixed(2);
-    return v.toFixed(3);
+    return fmtNumApp(v === 0 ? 0 : v);
 }
 
 /*
@@ -143,5 +141,6 @@ export const TYPED_DECIMALS_MAX = 10;
 /** A cluster boundary for display (2026-10-09): every decimal of a typed-looking value
  *  (`fmtNumExact`, never rounded), the app's `fmtNum` for a computed one. */
 export function fmtClusterBound(v: number): string {
-    return shortDecimals(v) <= TYPED_DECIMALS_MAX ? fmtNumExact(v) : fmtNumApp(v);
+    const x = v === 0 ? 0 : v; // a negative zero reads "0", never "-0"
+    return shortDecimals(x) <= TYPED_DECIMALS_MAX ? fmtNumExact(x) : fmtNumApp(x);
 }

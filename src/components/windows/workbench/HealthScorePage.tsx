@@ -24,7 +24,7 @@ import {
     buildRelationshipSetPointOption,
     buildScoreOption,
 } from './healthPageCharts';
-import { scopesOf, sensorAxisTitle, type TimeScopes } from './healthCharts';
+import { narrowScopes, scopesOf, sensorAxisTitle, type TimeScopes } from './healthCharts';
 import { formatDataStamp } from '../periodDisplay';
 import { SlowScoringNotice, TestResultsCard, TestsChangedBanner } from './ValidationCards';
 import { StateBoard, TrainSensorLink } from './WorkbenchShellParts';
@@ -271,6 +271,9 @@ function SetPointChart({ data, props, hoverIdx, onHover, stale, unit, scopes }: 
     // Stable until the Tag names change, so it never rebuilds a chart on its own.
     const lookup = useSensorLookup();
     const scored = !!series.score;
+    // This chart shares its row with the set-points card: its strip names are spaced for
+    // the narrower plot (the score chart below spans the board and uses `scopes` as is).
+    const sideScopes = useMemo(() => narrowScopes(scopes), [scopes]);
 
     const built = useMemo(() => {
         if (stats.kind === 'individual' && series.kind === 'individual') {
@@ -278,7 +281,7 @@ function SetPointChart({ data, props, hoverIdx, onHover, stale, unit, scopes }: 
                 id: 'set-individual',
                 title: 'Sensor value over time',
                 sub: unit || undefined,
-                option: buildIndividualSetPointOption(series, stats, setPoints.kind === 'individual' ? setPoints : null, unit, scopes),
+                option: buildIndividualSetPointOption(series, stats, setPoints.kind === 'individual' ? setPoints : null, unit, sideScopes),
                 time: true,
             };
         }
@@ -287,7 +290,7 @@ function SetPointChart({ data, props, hoverIdx, onHover, stale, unit, scopes }: 
                 id: 'set-relationship',
                 title: 'Residual over time',
                 sub: `actual − predicted${unit ? ` (${unit})` : ''}`,
-                option: buildRelationshipSetPointOption(series, stats.two_rmse, setPoints.kind === 'relationship' ? setPoints : null, unit, scopes),
+                option: buildRelationshipSetPointOption(series, stats.two_rmse, setPoints.kind === 'relationship' ? setPoints : null, unit, sideScopes),
                 time: true,
             };
         }
@@ -313,7 +316,7 @@ function SetPointChart({ data, props, hoverIdx, onHover, stale, unit, scopes }: 
         // `hoverIdx` only changes the Clustering highlight; the time charts follow
         // the connected cursor and must not be rebuilt on every mouse move.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [stats, series, setPoints, unit, model.xSensor, model.ySensor, scopes, lookup, scored, stats.kind === 'clustering' ? hoverIdx : null]);
+    }, [stats, series, setPoints, unit, model.xSensor, model.ySensor, sideScopes, lookup, scored, stats.kind === 'clustering' ? hoverIdx : null]);
 
     if (!built) return null;
 
@@ -350,6 +353,12 @@ function SetPointChart({ data, props, hoverIdx, onHover, stale, unit, scopes }: 
 // ---------------------------------------------------------------------------
 // Score chart
 // ---------------------------------------------------------------------------
+
+/** A share of the scored rows as text: one decimal, and a share that is not zero never
+ *  reads "0.0%" (it is "< 0.1%"). The share column and the card's subtitle use the same rule. */
+export function shareText(v: number): string {
+    return v > 0 && v < 0.1 ? '< 0.1%' : `${v.toFixed(1)}%`;
+}
 
 const SHARES: { key: 'share_80_100' | 'share_40_80' | 'share_0_40'; label: string; color: string }[] = [
     { key: 'share_80_100', label: '80–100', color: CHART.ok },
@@ -389,7 +398,7 @@ function ScoreChart({ data, score, summary, unit, hoverIdx, onHover, stale, scop
             sub={
                 <span data-testid="score-summary">
                     {lowest ? <>Lowest <b className={lowest.score >= 80 ? 'hs-good' : 'hs-bad'} data-testid="score-lowest">{Math.round(lowest.score)}</b>{lowest.timestamp ? <> on <span className="wbx-dt" data-testid="score-lowest-at">{formatDataStamp(lowest.timestamp)}</span></> : ''}</> : 'No scored rows'}
-                    {pct !== null && <> · below 80 for <b data-testid="score-below80">{pct.toFixed(1)}%</b> of scored rows</>}
+                    {pct !== null && <> · below 80 for <b data-testid="score-below80">{shareText(pct)}</b> of scored rows</>}
                 </span>
             }
             extra={<span className="hs-rd" data-testid="hs-readout">{text}</span>}
@@ -406,8 +415,7 @@ function ScoreChart({ data, score, summary, unit, hoverIdx, onHover, stale, scop
                                 <div key={s.key} className="hs-share" data-testid={`share-${s.key}`}>
                                     <span className="hs-share-l">{s.label}</span>
                                     <span className="hs-share-bar"><i style={{ width: `${Math.max(v === null ? 0 : v, v ? 1 : 0)}%`, background: s.color }} /></span>
-                                    {/* A share that is not zero never reads "0.0%". */}
-                                    <span className="hs-share-v">{v === null ? '—' : v > 0 && v < 0.1 ? '< 0.1%' : `${v.toFixed(1)}%`}</span>
+                                    <span className="hs-share-v">{v === null ? '—' : shareText(v)}</span>
                                 </div>
                             );
                         })}

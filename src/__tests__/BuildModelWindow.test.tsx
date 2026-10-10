@@ -3874,7 +3874,7 @@ describe('Workbench two pages — shell + Model fit page (health score 3b-1)', (
         it('the unit of the target sensor reaches the page (statistics in "bar")', async () => {
             await mount([withTrained(makeModel())]);
             await chartsReady();
-            expect(screen.getByTestId('stats-card').textContent).toMatch(/5\.00 bar/);
+            expect(screen.getByTestId('stats-card').textContent).toMatch(/Mean5 bar/);
         });
 
         it('every chart card has an Expand button that opens a large copy of the same chart, closed by Esc / backdrop / X', async () => {

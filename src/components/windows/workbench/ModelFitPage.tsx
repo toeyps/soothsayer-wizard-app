@@ -38,9 +38,10 @@ import type { WorkbenchPageProps } from './workbenchTypes';
  *
  * A chart whose lines are labelled ON the chart has no legend row under it
  * (workbench-redesign SPEC §3): reference lines carry their name at the right
- * edge, "Actual" / "Predicted" at the line ends, the ring levels at the ring's
- * edge. Only Distribution (Rows / Normal curve) and Fit (two point colours) keep
- * a legend.
+ * edge, the ring levels at the ring's edge. A legend row stays where DATA is told
+ * apart by colour: Distribution (Rows / Normal curve), Fit (two point colours)
+ * and Target vs predicted (Actual / Predicted — a fixed key, because a name
+ * drawn at a line's end does not follow the line through a zoom).
  *
  * Train and scoring periods (2026-10-07; "just score it" 2026-10-10): when the
  * preview carries `test_validation`, every time chart draws the train /
@@ -220,6 +221,10 @@ function ModelFitPage(props: ModelFitPageProps) {
                     sub={`${unit ? `${unit} · ` : ''}${rowsShown}`}
                     stale={stale}
                     option={buildTargetVsPredictedOption(series, unit, compactScopes(scopes))}
+                    legend={<>
+                        <LegendItem color={CHART.actual} label="Actual" />
+                        <LegendItem color={CHART.predicted} label="Predicted" />
+                    </>}
                 />
                 <ChartCard
                     id="res"

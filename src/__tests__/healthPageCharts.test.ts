@@ -5,13 +5,13 @@ import {
     buildIndividualSetPointOption,
     buildRelationshipSetPointOption,
     buildScoreOption,
-    ringBox,
     scoreColor,
     signedTypedText,
     typedText,
 } from '../components/windows/workbench/healthPageCharts';
 import { CHART, CLUSTER_COLORS, fmtScoreAxisValue } from '../components/windows/workbench/chartTheme';
-import { REF_LABEL_GUTTER, ringBox as sharedRingBox } from '../components/windows/workbench/healthCharts';
+import * as healthPageCharts from '../components/windows/workbench/healthPageCharts';
+import { REF_LABEL_GUTTER, RING_LABEL_LINE, ringBox } from '../components/windows/workbench/healthCharts';
 import type { ClusteringSeries, IndividualSeries, IndividualStats, RelationshipSeries } from '../types/health';
 import { makeClusterStat, makeHealthPreview } from './helpers/healthPreviewFixture';
 
@@ -53,7 +53,8 @@ describe('buildIndividualSetPointOption (raw value over time, no histogram)', ()
     // workbench-redesign SPEC §3: "The user's set points are the strongest lines and carry their
     // value as typed: H 4.6, L 2.2 … Never pad or round a typed value."
     it('L / H carry their value AS TYPED: never padded ("4.6", not "4.60") and never rounded ("4.61234" stays)', () => {
-        const label = (sp: any, side: 'H' | 'L') => lines(ind({ kind: 'individual', ...sp })).find((l: any) => l.label.startsWith(`${side} `)).label;
+        // (`?.`: with set points far from the data an inner ±SD line has no label of its own — its neighbour carries it)
+        const label = (sp: any, side: 'H' | 'L') => lines(ind({ kind: 'individual', ...sp })).find((l: any) => l.label?.startsWith(`${side} `)).label;
         // the user typed "4.6" / "4.60": the stored number is 4.6 and the chart must not pad it back out
         expect(label({ lower: 2.2, upper: 4.6 }, 'H')).toBe('H 4.6');
         expect(label({ lower: 2.2, upper: 4.6 }, 'L')).toBe('L 2.2');
@@ -65,9 +66,31 @@ describe('buildIndividualSetPointOption (raw value over time, no histogram)', ()
         // whole numbers stay whole ("85", not "85.00"); thousands are grouped; a negative keeps its sign
         expect(label({ lower: 40, upper: 85 }, 'H')).toBe('H 85');
         expect(label({ lower: -12.5, upper: 12500.25 }, 'H')).toBe('H 12,500.25');
-        expect(label({ lower: -12.5, upper: 12500.25 }, 'L')).toBe('L -12.5');
+        expect(label({ lower: -12.5, upper: 12500.25 }, 'L')).toBe('L −12.5');
         expect(typedText(4.6)).toBe('4.6');
         expect(typedText(100)).toBe('100');
+    });
+
+    // Review of 0125190, item 9: "L -200" (ASCII hyphen) sat next to "−1SD" and "0 · −9" (a real
+    // minus sign); and a negative zero printed "-0".
+    it('a negative set point carries a real minus sign (U+2212) like every other chart label; a negative zero reads "0"', () => {
+        const label = (sp: any, side: 'H' | 'L') => lines(ind({ kind: 'individual', ...sp })).find((l: any) => l.label?.startsWith(`${side} `)).label;
+        expect(label({ lower: -200, upper: 300 }, 'L')).toBe('L \u2212200');
+        expect(label({ lower: -200, upper: -0.0005 }, 'H')).toBe('H \u22120.0005');
+        expect(label({ lower: -12500.25, upper: 9 }, 'L')).toBe('L \u221212,500.25'); // the sign, then the grouped digits
+        expect(typedText(-200)).toBe('\u2212200');
+        expect(typedText(-200)).not.toContain('-'); // no ASCII hyphen-minus
+        expect(typedText(-4.61234)).toBe('\u22124.61234'); // still every typed decimal
+        expect(typedText(200)).toBe('200');
+        // negative zero: what an input holding "-0" (or a 0 reached by stepping down) stores
+        expect(typedText(-0)).toBe('0');
+        expect(typedText(0)).toBe('0');
+        expect(label({ lower: -0, upper: 9 }, 'L')).toBe('L 0');
+        expect(signedTypedText(-0)).toBe('0');
+        expect(signedTypedText(-200)).toBe('\u2212200'); // one sign, not two
+        // the same sign as the reference labels beside it
+        expect('−1SD'.charCodeAt(0)).toBe(0x2212);
+        expect(typedText(-1).charCodeAt(0)).toBe(0x2212);
     });
 
     it('the set points are the STRONGEST lines: thicker than every reference line, labelled inside the plot (H above its line, L below)', () => {
@@ -90,8 +113,9 @@ describe('buildIndividualSetPointOption (raw value over time, no histogram)', ()
             expect(fills(opt)).toEqual([[4, 6, CHART.okFill]]);
             const sd = lines(opt).slice(0, 4);
             expect(sd.map((l: any) => [l.label, l.dashed])).toEqual([['+1SD', false], ['−1SD', false], ['+3SD', true], ['−3SD', true]]);
-            expect(JSON.stringify(opt)).not.toContain(CHART.warnFill);
-            expect(JSON.stringify(opt)).not.toContain(CHART.dangerFill);
+            // the amber ±3SD fill and the red L / H fill that are gone
+            expect(JSON.stringify(opt)).not.toContain('rgba(229, 169, 61, 0.07)');
+            expect(JSON.stringify(opt)).not.toContain('rgba(238, 90, 69, 0.12)');
         }
     });
 
@@ -236,6 +260,19 @@ describe('buildClusterSetPointOption (points + 1x, 3x and N x rings of EVERY clu
         expect(nLabel(3.61234)).toBe('3.61234× · 0');
     });
 
+    // Review of 0125190, must-fix 2 — on this chart with all three levels.
+    it('the three level names move APART for a cluster tilted up to the right: "N× · 0" up, "1× · 100" down (never into each other)', () => {
+        const tilted = [1, 2, 3].map(i => makeClusterStat(i, { x_center: 10 * i, y_center: 20 + i, x_sd: 4, y_sd: 0.3, angle_deg: 2 }));
+        const opt = buildClusterSetPointOption(cluSeries, tilted, { kind: 'clustering', outerSd: 5 }, { x: 'X', y: 'Y' }) as any;
+        const data = opt.series.find((s: any) => s.name === 'Ring labels').data;
+        expect(data.map((d: any) => d.label.formatter)).toEqual(['1× · 100', '3× · 80', '5× · 0']);
+        // the ring edges rise with the level …
+        expect(data[0].value[1]).toBeLessThan(data[1].value[1]);
+        expect(data[1].value[1]).toBeLessThan(data[2].value[1]);
+        // … and the stagger pushes the same way: screen Y grows downwards
+        expect(data.map((d: any) => d.label.offset)).toEqual([[0, RING_LABEL_LINE], [0, 0], [0, -RING_LABEL_LINE]]);
+    });
+
     it('cluster colours stay out of green / amber / red, so a point coloured by its cluster is never read as a score', () => {
         const opt = cl({ kind: 'clustering', outerSd: null });
         const color = opt.series[0].itemStyle.color as (p: any) => string;
@@ -336,7 +373,8 @@ describe('buildClusterSetPointOption (points + 1x, 3x and N x rings of EVERY clu
         const turned = ringBox({ ...c, angle_deg: 90 }, 3);
         expect(turned.x[0]).toBeCloseTo(7);
         expect(turned.y[1]).toBeCloseTo(26);
-        expect(ringBox).toBe(sharedRingBox); // one implementation: Model fit and Health score measure rings alike
+        // one implementation, in healthCharts: this module has no ring maths (or re-export) of its own
+        expect(Object.keys(healthPageCharts)).not.toContain('ringBox');
     });
 });
 
@@ -359,9 +397,11 @@ describe('buildScoreOption (0-100 over time)', () => {
         expect(f(0)).toBe('0');
         expect(f(null)).toBe(''); // a gap
         expect(opt.tooltip.trigger).toBe('axis'); // still the shared-cursor tooltip
-        // the SET-POINT chart's tooltip is a sensor value: it keeps its decimals
+        // the SET-POINT chart's tooltip is a sensor value: it keeps its decimals (the app's fmtNum)
         const sp = buildIndividualSetPointOption(indSeries, indStats, null, 'bar') as any;
-        expect(sp.tooltip.valueFormatter(85)).not.toBe('85');
+        expect(sp.tooltip.valueFormatter(84.6)).toBe('84.6');
+        expect(sp.tooltip.valueFormatter(0.0002)).toBe('0.0002'); // a non-zero value never reads as 0
+        expect(f(84.6)).toBe('85'); // the score, for comparison
     });
 
     it('the score axis prints whole numbers (0, 20 … 100), never "0.000" / "20.00"; the look of the labels is kept', () => {

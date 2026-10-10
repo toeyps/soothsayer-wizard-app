@@ -31,10 +31,6 @@ export interface WorkbenchPageProps {
     preview: UseHealthPreviewResult;
     /** Unit text of the model's target sensor ("°C", "bar"; '' when unknown). */
     unit: string;
-    /** "description (tag)" for any sensor tag. */
-    sensorLabel: (tag: string) => string;
-    /** Raw description of a tag ('' when unknown). */
-    getDesc: (tag: string) => string;
     /** The S-number (1-based position in the user's full scoring-period list) of
      *  each scoring period that was SENT — `testPeriodsWirePlan(...).numbers`.
      *  Results carry their wire `index`; this maps it back so an invalid

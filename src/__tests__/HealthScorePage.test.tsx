@@ -9,7 +9,7 @@ vi.mock('../components/charts/ResponsiveECharts', () => ({
     default: (props: any) => { charts.push(props); return <div data-testid="echarts-mock" data-y-name={props.option?.yAxis?.name ?? ''} />; },
 }));
 
-import HealthScorePage, { SLOW_SAVE_NOTICE_MS, sameHealthScoreProps } from '../components/windows/workbench/HealthScorePage';
+import HealthScorePage, { SLOW_SAVE_NOTICE_MS, sameHealthScoreProps, shareText } from '../components/windows/workbench/HealthScorePage';
 import { SensorMetaProvider } from '../components/sensor/SensorLabel';
 import { CHART } from '../components/windows/workbench/chartTheme';
 import type { HealthScorePageProps, SaveInfo } from '../components/windows/workbench/workbenchTypes';
@@ -51,8 +51,6 @@ function Harness({ kind = 'individual', sp, data, ...rest }: Opts) {
             stale={false}
             preview={{ data: preview, loading: false, error: null, errorCode: null, notFitted: false, needsRetrain: false, idle: null }}
             unit="bar"
-            sensorLabel={t => t}
-            getDesc={t => t}
             setPoints={points}
             onSetPointsChange={(next, commit) => { setPoints(next); onChange(next, commit); }}
             onSetPointsCommit={onCommit}
@@ -72,8 +70,9 @@ const scoreChart = () => charts.filter(c => c.option?.yAxis?.name === 'Score').p
 const setChart = () => charts.filter(c => c.option?.yAxis?.name !== 'Score' || c.option?.series?.[0]?.name === 'Points').pop();
 /** Text of the legend row under a card's chart, or null when the card has none. */
 const legendOf = (id: string) => screen.getByTestId(`chart-card-${id}`).querySelector('.wb2-legend')?.textContent ?? null;
-/** The names in the strip above a time chart's plot (train / scoring scopes), in band order. */
-const stripOf = (c: any): string[] => (c.option.series.find((x: any) => x.name === '__scopes')?.markArea?.data ?? []).map((a: any) => a[0].label.formatter);
+/** The names PRINTED in the strip above a time chart's plot (train / scoring scopes), in band order. */
+const stripOf = (c: any): string[] => (c.option.series.find((x: any) => x.name === '__scopes')?.markArea?.data ?? [])
+    .filter((a: any) => a[0].label.show).map((a: any) => a[0].label.formatter);
 /** The ring levels named on the Clusters chart. */
 const ringLabelsOf = (c: any): string[] => (c.option.series.find((x: any) => x.name === 'Ring labels')?.data ?? []).map((x: any) => x.label.formatter);
 
@@ -93,8 +92,8 @@ describe('Individual: the set-point table (100 / 80 / 0)', () => {
         const table = within(card).getByRole('table', { name: 'Health set points' });
         expect(within(table).getAllByRole('columnheader').map(h => h.textContent)).toEqual(['Score', 'Band', 'Lower', 'Upper']);
         expect(within(table).getAllByRole('row')).toHaveLength(4); // head + 100 / 80 / 0
-        expect(within(card).getByTestId('rung-100').textContent).toBe('100within ±1SD · automatic4.006.00');
-        expect(within(card).getByTestId('rung-80').textContent).toBe('80at ±3SD · automatic2.008.00');
+        expect(within(card).getByTestId('rung-100').textContent).toBe('100within ±1SD · automatic46');
+        expect(within(card).getByTestId('rung-80').textContent).toBe('80at ±3SD · automatic28');
         expect(within(card).getByTestId('rung-0').textContent).toMatch(/^0at L \/ H · you set them/);
         // automatic values: text, never something that looks like an input
         for (const id of ['ro-l1', 'ro-u1', 'ro-l3', 'ro-u3']) {
@@ -103,7 +102,7 @@ describe('Individual: the set-point table (100 / 80 / 0)', () => {
             expect(el.className).toBe('hsx-ro');
             expect(el.closest('.hs-num')).toBeNull();
         }
-        expect([screen.getByTestId('ro-l1'), screen.getByTestId('ro-u1'), screen.getByTestId('ro-l3'), screen.getByTestId('ro-u3')].map(e => e.textContent)).toEqual(['4.00', '6.00', '2.00', '8.00']);
+        expect([screen.getByTestId('ro-l1'), screen.getByTestId('ro-u1'), screen.getByTestId('ro-l3'), screen.getByTestId('ro-u3')].map(e => e.textContent)).toEqual(['4', '6', '2', '8']);
         expect(card.querySelectorAll('input')).toHaveLength(2);
         // no locks, no boxed rungs, no source chips any more
         expect(card.querySelectorAll('svg.lucide-lock')).toHaveLength(0);
@@ -500,6 +499,30 @@ describe('Health score chart', () => {
         expect(screen.getByTestId('share-share_80_100').textContent).toBe('80–100100.0%');
     });
 
+    // Review of 0125190, item 6: the rule was on the share column only — the same card's subtitle
+    // printed `toFixed(1)`: "below 80 for 0.0%" next to a "< 0.1%" share.
+    it('the subtitle follows the same rule: "below 80 for < 0.1% of scored rows", never "0.0%" for a share that is not zero', () => {
+        const d = previewFor('individual', IND_VALID);
+        const withPct = (pct: number | null) => ({ ...d, score_summary: { ...d.score_summary!, share_80_100: 99.96, share_40_80: 0.04, share_0_40: 0, pct_below_80: pct } });
+        mount({ sp: IND_VALID, data: withPct(0.04) });
+        expect(screen.getByTestId('score-below80').textContent).toBe('< 0.1%');
+        expect(screen.getByTestId('score-summary').textContent).toContain('below 80 for < 0.1% of scored rows');
+        expect(screen.getByTestId('score-summary').textContent).not.toContain('0.0%');
+        // the subtitle and the share column of the same card agree
+        expect(screen.getByTestId('share-share_40_80').textContent).toBe('40–80< 0.1%');
+        cleanup();
+        mount({ sp: IND_VALID, data: withPct(0) });
+        expect(screen.getByTestId('score-below80').textContent).toBe('0.0%'); // a real zero stays zero
+        cleanup();
+        mount({ sp: IND_VALID, data: withPct(0.1) });
+        expect(screen.getByTestId('score-below80').textContent).toBe('0.1%');
+        cleanup();
+        mount({ sp: IND_VALID, data: withPct(41.56) });
+        expect(screen.getByTestId('score-below80').textContent).toBe('41.6%');
+        expect(shareText(0.0999)).toBe('< 0.1%');
+        expect(shareText(100)).toBe('100.0%');
+    });
+
     it('header: the lowest score and when, % of scored rows below 80, and the three time-share numbers', () => {
         mount({ sp: IND_VALID });
         const sum = screen.getByTestId('score-summary');
@@ -659,7 +682,7 @@ describe('hover sync (the pointer on either chart reads the same row on both)', 
         mount({ sp: IND_VALID });
         expect(screen.getByTestId('hs-readout').textContent).toBe('');
         act(() => { scoreChart().onEvents.updateAxisPointer(axisEvent(TS)); });
-        expect(screen.getByTestId('hs-readout').textContent).toBe('1 Jan 2026 03:00 · value 6.20 bar · score 60');
+        expect(screen.getByTestId('hs-readout').textContent).toBe('1 Jan 2026 03:00 · value 6.2 bar · score 60');
         act(() => { scoreChart().onEvents.globalout(); });
         expect(screen.getByTestId('hs-readout').textContent).toBe('');
     });
@@ -667,13 +690,13 @@ describe('hover sync (the pointer on either chart reads the same row on both)', 
     it('hovering the SET-POINT chart drives the same read-out', () => {
         mount({ sp: IND_VALID });
         act(() => { setChart().onEvents.updateAxisPointer(axisEvent('2026-01-01 04:00:00')); });
-        expect(screen.getByTestId('hs-readout').textContent).toBe('1 Jan 2026 04:00 · value 3.10 bar · score 30');
+        expect(screen.getByTestId('hs-readout').textContent).toBe('1 Jan 2026 04:00 · value 3.1 bar · score 30');
     });
 
     it('Relationship reads "residual"', () => {
         mount({ kind: 'relationship', sp: { ...REL_VALID } });
         act(() => { scoreChart().onEvents.updateAxisPointer(axisEvent('2026-01-01 02:00:00')); });
-        expect(screen.getByTestId('hs-readout').textContent).toMatch(/residual -0\.200 bar · score 80/);
+        expect(screen.getByTestId('hs-readout').textContent).toMatch(/residual -0\.2 bar · score 80/);
     });
 
     it('Clustering: hovering a point of the scatter highlights that row and fills the read-out; hovering the score chart highlights it on the scatter', () => {
@@ -975,7 +998,7 @@ describe('warning issues are shown as non-blocking notes (coordinator 2026-10-04
 describe('Scoring periods on the Health score page ("just score it", 2026-10-10)', () => {
     const withTests = (kind: 'individual' | 'relationship', sp: HealthSetPoints): HealthPreview => ({
         ...previewFor(kind, sp),
-        test_validation: makeValidation({ tests: [makeTestResult({ pct_below_80: 7, lowest: 62, lowest_at: '2026-01-01 02:30:00' }), makeTestResult({ index: 2, pct_below_80: 41.5, lowest: 12, lowest_at: '2026-01-01 02:40:00' })] }),
+        test_validation: makeValidation({ tests: [makeTestResult({ pct_below_80: 7, lowest: 62, lowest_at: '2026-01-01 02:30:00' }), makeTestResult({ index: 2, start: '2026-01-01T03:00', end: '2026-01-01T04:00', pct_below_80: 41.5, lowest: 12, lowest_at: '2026-01-01 02:40:00' })] }),
     });
 
     it('the set-point chart and the score chart both draw the train / scoring scopes — bands only, no EVENT line, no hatch', () => {
@@ -999,7 +1022,7 @@ describe('Scoring periods on the Health score page ("just score it", 2026-10-10)
 
     it('Clustering has no time chart of its own: the strip is on the SCORE chart, not on the scatter', () => {
         const sp = { kind: 'clustering', outerSd: 5 } as const;
-        const data: HealthPreview = { ...previewFor('clustering', sp), test_validation: makeValidation({ tests: [makeTestResult(), makeTestResult({ index: 2 })] }) };
+        const data: HealthPreview = { ...previewFor('clustering', sp), test_validation: makeValidation({ tests: [makeTestResult(), makeTestResult({ index: 2, start: '2026-01-01T03:00', end: '2026-01-01T04:00' })] }) };
         mount({ kind: 'clustering', sp, data });
         expect(stripOf(scoreChart())).toEqual(['TRAIN', 'S1', 'S2']);
         expect(stripOf(setChart())).toEqual([]);
@@ -1009,6 +1032,31 @@ describe('Scoring periods on the Health score page ("just score it", 2026-10-10)
     it('no scopes without scoring periods', () => {
         mount({ sp: IND_VALID });
         expect(scoreChart().option.series.map((x: any) => x.name)).not.toContain('__scopes');
+    });
+
+    // Review of 0125190, item 5: many periods printed "TRAIN P1" … "TRAIN P20" on each other.
+    it('several train periods: "TRAIN" once then numbers; two periods at the same time print ONE name; the chart beside the set-points card spaces its names for the narrower plot', () => {
+        const hhmm = (m: number) => `2026-01-01T${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+        // 16 short train periods over the 4 hours of data
+        const train_ranges = Array.from({ length: 16 }, (_, i) => ({ start: hhmm(i * 15), end: hhmm(i * 15 + 12) }));
+        const data: HealthPreview = { ...previewFor('individual', IND_VALID), test_validation: makeValidation({ train_ranges, tests: [makeTestResult(), makeTestResult({ index: 2 })] }) };
+        mount({ sp: IND_VALID, data });
+        const score = stripOf(scoreChart());
+        const set = stripOf(setChart());
+        for (const names of [score, set]) {
+            expect(names[0]).toBe('TRAIN P1');
+            expect(names.filter(n => /TRAIN/.test(n))).toHaveLength(1);
+            // S1 and S2 cover the same time: one name there, not two on top of each other
+            expect(names.filter(n => /^S\d/.test(n))).toEqual(['S1']);
+        }
+        // every band is drawn on both charts; only names are left out
+        for (const chart of [scoreChart(), setChart()]) {
+            expect(chart.option.series.find((x: any) => x.name === '__scopes').markArea.data).toHaveLength(18);
+        }
+        const trainNames = (names: string[]) => names.filter(n => /P\d/.test(n)).length;
+        expect(trainNames(score)).toBeLessThan(16); // 16 names do not fit across the board either
+        expect(trainNames(set)).toBeLessThan(trainNames(score)); // fewer on the narrower chart
+        expect(trainNames(set)).toBeGreaterThanOrEqual(3);
     });
 
     it('"Scoring results" under the score: neutral tiles with the two facts — never a verdict, never a tone', () => {
@@ -1111,7 +1159,7 @@ describe('memo (customer items 8 + 9: a training run must not redraw these chart
             model: { id: 'm1', kind: 'individual', targetSensor: 'TAG1' } as any,
             stale: false,
             preview: { data: previewFor('individual', sp), loading: false, error: null, errorCode: null, notFitted: false, needsRetrain: false, idle: null } as any,
-            unit: 'bar', sensorLabel: (t: string) => t, getDesc: (t: string) => t,
+            unit: 'bar',
             setPoints: sp, onSetPointsChange: onChange, onSetPointsCommit: onCommit, attemptIssues: null,
             save: { phase: 'idle' }, onGoTrainSensor: onGoTrain,
             ...over,
