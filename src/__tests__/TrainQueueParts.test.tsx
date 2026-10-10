@@ -7,9 +7,11 @@ import {
     RunSetPointsBanner,
     RunStrip,
     SensorTrainButton,
+    sensorTrainMenuCopy,
     shortTrainError,
     TrainAllBar,
     TrainAllModal,
+    type SensorTrainMenuModel,
     type TrainGroupInfo,
     type TrainRowModel,
 } from '../components/windows/workbench/TrainQueueParts';
@@ -78,10 +80,62 @@ describe('TrainAllBar', () => {
     });
 });
 
+// The ▾ menu's copy (user decision 2026-10-10): "Re-train" is only said about a model that
+// has been trained before; the all-row says it only when EVERY model of the sensor has.
+describe('sensorTrainMenuCopy', () => {
+    const READY = { kind: 'ready' } as const;
+    const UP = { kind: 'upToDate', reason: 'up to date', complete: false } as const;
+    const DONE = { kind: 'upToDate', reason: 'Complete, up to date', complete: true } as const;
+    const MISSING = { kind: 'missing', reason: 'no Y sensor', fix: 'settings' } as const;
+    const m = (kind: SensorTrainMenuModel['kind'], plan: SensorTrainMenuModel['plan'], trainedBefore: boolean): SensorTrainMenuModel => ({ kind, plan, trainedBefore });
+
+    it('a never-trained sensor: "Train all N models" and "<Kind> only" — no "Re-train" anywhere', () => {
+        const copy = sensorTrainMenuCopy([m('individual', READY, false), m('relationship', READY, false), m('clustering', MISSING, false)]);
+        expect(copy.all.label).toBe('Train all 3 models');
+        expect(copy.only.map(o => o.label)).toEqual(['Individual only', 'Relationship only', 'Clustering only']);
+        expect(copy.only.map(o => o.small)).toEqual(['≈ 1 s', '≈ 15 s', "Can't train — no Y sensor"]);
+        expect(JSON.stringify(copy)).not.toMatch(/re-train/i);
+    });
+
+    it('mixed: only the trained model says "Re-train … only"; the all-row stays "Train all N models"', () => {
+        const copy = sensorTrainMenuCopy([m('individual', UP, true), m('relationship', READY, false)]);
+        expect(copy.all.label).toBe('Train all 2 models');
+        expect(copy.only.map(o => o.label)).toEqual(['Re-train Individual only', 'Relationship only']);
+        expect(copy.only[0].small).toBe('Re-trains it even though it is up to date');
+        expect(copy.only[1].small).toBe('≈ 15 s');
+    });
+
+    it('every model trained before: "Re-train all N models" and "Re-train <Kind> only" (a stale one included)', () => {
+        const copy = sensorTrainMenuCopy([m('individual', DONE, true), m('relationship', READY, true), m('clustering', UP, true)]);
+        expect(copy.all.label).toBe('Re-train all 3 models');
+        expect(copy.all.small).toBe('Includes up-to-date ones · a Complete model becomes Incomplete and needs Mark complete again');
+        expect(copy.only.map(o => o.label)).toEqual(['Re-train Individual only', 'Re-train Relationship only', 'Re-train Clustering only']);
+        expect(copy.only[0].small).toBe('Re-trains it even though it is up to date · it becomes Incomplete');
+        expect(copy.only[1].small).toBe('≈ 15 s');
+        expect(copy.only[2].small).toBe('Re-trains it even though it is up to date');
+    });
+
+    it('a trained model that can\'t train now keeps "Re-train … only" with its reason', () => {
+        const copy = sensorTrainMenuCopy([m('clustering', MISSING, true)]);
+        expect(copy.only[0]).toEqual({ label: 'Re-train Clustering only', small: "Can't train — no Y sensor" });
+    });
+
+    it('a model marked Complete with NO train record (legacy) is never said to be "re-trained"', () => {
+        const copy = sensorTrainMenuCopy([m('individual', DONE, false)]);
+        expect(copy.all.label).toBe('Train all 1 model');
+        expect(copy.only[0]).toEqual({ label: 'Individual only', small: 'Trains it even though it is up to date · it becomes Incomplete' });
+    });
+
+    it('one model: the count reads "1 model" (singular)', () => {
+        expect(sensorTrainMenuCopy([m('individual', READY, false)]).all.label).toBe('Train all 1 model');
+        expect(sensorTrainMenuCopy([m('individual', UP, true)]).all.label).toBe('Re-train all 1 model');
+    });
+});
+
 describe('SensorTrainButton', () => {
     const menu = (onA = vi.fn(), onB = vi.fn()) => [
-        { key: 'retrain-all', label: 'Re-train all models of this sensor', small: 'Includes up-to-date ones', onClick: onA },
-        { key: 'only-relationship', label: 'Train only the Relationship model', small: "Can't train — no predictor sensor", disabled: true, onClick: onB },
+        { key: 'retrain-all', label: 'Train all 2 models', small: 'Includes up-to-date ones', onClick: onA },
+        { key: 'only-relationship', label: 'Relationship only', small: "Can't train — no predictor sensor", disabled: true, onClick: onB },
     ];
 
     it('the main button trains; the line under it says what it does', () => {

@@ -8,6 +8,7 @@ import {
     ringBox,
     scoreColor,
 } from '../components/windows/workbench/healthPageCharts';
+import { CHART, fmtScoreAxisValue } from '../components/windows/workbench/chartTheme';
 import type { ClusteringSeries, IndividualSeries, IndividualStats, RelationshipSeries } from '../types/health';
 import { makeClusterStat, makeHealthPreview } from './helpers/healthPreviewFixture';
 
@@ -155,6 +156,26 @@ describe('buildScoreOption (0-100 over time)', () => {
         expect(opt.yAxis.min).toBe(0);
         expect(opt.yAxis.max).toBe(100);
         expect(lines(opt)).toEqual([expect.objectContaining({ y: 80, dashed: true })]);
+    });
+
+    it('the score axis prints whole numbers (0, 20 … 100), never "0.000" / "20.00"; the look of the labels is kept', () => {
+        const f = opt.yAxis.axisLabel.formatter;
+        expect(f).toBe(fmtScoreAxisValue);
+        expect(opt.yAxis.interval).toBe(20);
+        expect(f(20.4)).toBe('20'); // never a decimal, even off a tick
+        expect([0, 20, 40, 60, 80, 100].map(f)).toEqual(['0', '20', '40', '60', '80', '100']);
+        expect(f(20.000000000000004)).toBe('20'); // float noise on a tick
+        expect(f(-0)).toBe('0');
+        expect(f(NaN)).toBe('');
+        expect(opt.yAxis.axisLabel.color).toBe(CHART.textSecondary);
+        expect(opt.yAxis.axisLabel.fontSize).toBe(10);
+    });
+
+    it('only the SCORE axis is whole-number: a set-point (sensor value) axis keeps its decimals', () => {
+        const sp = buildIndividualSetPointOption(indSeries, indStats, null, 'bar') as any; // 3SD band 2..8
+        expect(sp.yAxis.axisLabel.formatter(4.5)).toBe('4.5');
+        const rel = buildRelationshipSetPointOption(relSeries, 0.9, null, 'bar') as any;
+        expect(rel.yAxis.axisLabel.formatter).not.toBe(opt.yAxis.axisLabel.formatter);
     });
 
     it('a row without a score is a GAP (null), never 0', () => {

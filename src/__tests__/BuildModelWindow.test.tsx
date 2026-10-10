@@ -2159,6 +2159,49 @@ describe('Cluster-range slider (2026-09-30 port)', () => {
         expect(screen.queryByText('edited')).toBeNull();
     });
 
+    // 🆕 2026-10-10 (code review): `duplicateWorkspace` keeps model ids. The auto-divide memory
+    // and the criteria stats are keyed by model id, so a window re-pointed from W to its copy W′
+    // used to read W's last division ("TAG3::3") as c1's own, see W′'s saved "TAG3::2" as a
+    // change, and re-divide W′'s saved uneven ranges into an unprompted "edited" draft.
+    it('re-pointed at a duplicated workspace (same model id): its saved uneven ranges are kept, its own stats are fetched, and no "edited" draft appears', async () => {
+        let current = 'ws1';
+        mockInvoke.mockImplementation((cmd: string, args?: any) => (cmd === 'compute_sensor_stats' && args?.sensor === 'TAG3'
+            ? Promise.resolve(current === 'ws1'
+                ? { mean: 5, sd: 1, min: 0, max: 10, count: 100, lower1: 4, upper1: 6, lower3: 2, upper3: 8 }
+                : { mean: 700, sd: 10, min: 500, max: 900, count: 100, lower1: 690, upper1: 710, lower3: 670, upper3: 730 })
+            : defaultInvoke(cmd, args)));
+        const criteriaStatsCalls = () => mockInvoke.mock.calls.filter(c => c[0] === 'compute_sensor_stats' && (c[1] as any)?.sensor === 'TAG3').length;
+        const clu = makeModel({
+            id: 'c1', kind: 'clustering', targetSensor: '', xSensor: 'TAG1', ySensor: 'TAG2', criteriaSensor: 'TAG3',
+            numClusters: 2, clusterRanges: [{ min: 0, max: 5 }, { min: 5, max: 10 }],
+        });
+        render(<BuildModelWindow />);
+        await deliverData({ failureGroupState: { groups: [makeGroup()], models: [clu] } });
+        openSettings();
+        await flush(); // W's stats [0, 10]
+        // W: the user raises the count to 3 -> divided over [0, 10] (and remembered for c1).
+        fireEvent.click(screen.getByRole('button', { name: 'More clusters' }));
+        await flush();
+        expect(pill(2)).toMatch(/^#3: .* – 10$/);
+        expect(screen.getByText('edited')).toBeTruthy();
+
+        // W′ (a duplicate): the SAME model id, saved with 2 clusters and an uneven split of its own data.
+        const copy = { ...clu, clusterRanges: [{ min: 500, max: 600 }, { min: 600, max: 900 }] };
+        current = 'ws2';
+        const before = criteriaStatsCalls();
+        await deliverData({ id: 'ws2', failureGroupState: { groups: [makeGroup()], models: [copy] } }, { workspaceId: 'ws2' });
+        await flush();
+        openSettings();
+        await flush(); // W′'s stats [500, 900] arrive
+        expect(criteriaStatsCalls()).toBeGreaterThan(before); // never W's cached stats
+        expect(screen.getByTestId('cluster-slider')).toBeTruthy();
+        expect(pill(0)).toBe('#1: 500 – ');
+        expect(bound(0).value).toBe('600'); // the saved uneven split, not an equal 700
+        expect(pill(1)).toBe('#2: 600 – 900');
+        expect(screen.queryByTestId('cluster-pill-2')).toBeNull();
+        expect(screen.queryByText('edited')).toBeNull();
+    });
+
     // 🆕 2026-10-09 (real-app test, item 8): exact boundaries must be typeable — dragging
     // slowly takes too long. Inner boundaries are inputs; Enter / blur commit, Esc reverts.
     describe('typed cluster boundaries', () => {
@@ -4123,6 +4166,25 @@ describe('Health score page - Mark complete (the ONLY way a model becomes Comple
         expect(exportCalls()).toHaveLength(0);
     });
 
+    // The footer counts the EMPTY SET POINTS (Rust's `required` issues), not the Checks lines:
+    // a Relation model's 4 empty points are ONE Checks line, and the footer used to say "1".
+    it('says how many set points are empty: 4 empty Relationship points read "4 set points still empty" (the Checks card still shows ONE line)', async () => {
+        await hsMount([HS_REL({ healthSetPoints: { kind: 'relationship', residualAt80Lower: null, residualAt80Upper: null, residualAt0Lower: null, residualAt0Upper: null } })]);
+        await openHealthPage();
+        await waitFor(() => expect(screen.getByTestId('mark-block-reason').textContent).toBe('4 set points still empty'));
+        expect(hsMarkBtn().disabled).toBe(true);
+        expect(hsMarkBtn().title).toBe('4 set points still empty');
+        expect(screen.getAllByTestId('check-line')).toHaveLength(1);
+        expect(screen.getByTestId('check-line').textContent).toMatch(/Enter 4 empty points/);
+    });
+
+    it('one empty Relationship point reads "1 set point still empty" (singular)', async () => {
+        await hsMount([HS_REL({ healthSetPoints: { kind: 'relationship', residualAt80Lower: -1, residualAt80Upper: 1, residualAt0Lower: -5, residualAt0Upper: null } })]);
+        await openHealthPage();
+        await waitFor(() => expect(screen.getByTestId('mark-block-reason').textContent).toBe('1 set point still empty'));
+        expect(hsMarkBtn().title).toBe('1 set point still empty');
+    });
+
     it('is blocked while the preview is still loading ("Checking the set points…")', async () => {
         mockInvoke.mockImplementation((cmd: string, args?: any) => cmd === 'compute_health_preview' ? new Promise(() => {}) : healthInvoke(cmd, args));
         statefulUpdateMock([HS_IND()]);
@@ -5151,6 +5213,61 @@ describe('train queue wiring (customer items 8 + 9)', () => {
         expect(screen.getByTestId('train-run-text').textContent).toBe('Done · 2 trained');
         const models = (await lastDisk()).models;
         expect(models.every((m: any) => m.lastTrainedAt && m.status === false)).toBe(true);
+    });
+
+    // 🆕 2026-10-10 (user decision): the ▾ menu says "Re-train" only about a model that has a
+    // train record; the all-row says it only when EVERY model of the sensor has one.
+    describe('Train sensor ▾ menu copy', () => {
+        const openMenu = async () => { await flush(); fireEvent.click(screen.getByTestId('train-sensor-menu-toggle')); };
+        const item = (key: string) => {
+            const el = screen.getByTestId(`train-menu-${key}`);
+            return { label: el.firstChild!.textContent, small: el.querySelector('small')!.textContent };
+        };
+
+        it('a never-trained sensor: "Train all 2 models", "Individual only", "Relationship only" — no "Re-train"', async () => {
+            await mountModels([IND2(), REL2()]);
+            await openMenu();
+            expect(item('retrain-all').label).toBe('Train all 2 models');
+            expect(item('only-individual')).toEqual({ label: 'Individual only', small: '≈ 1 s' });
+            expect(item('only-relationship')).toEqual({ label: 'Relationship only', small: '≈ 15 s' });
+            expect(screen.getByTestId('train-sensor-menu').textContent).not.toMatch(/re-train/i);
+        });
+
+        it('a never-trained model that can\'t train keeps its reason, without "Re-train"', async () => {
+            await mountModels([IND2(), REL2({ predictorSensors: [] })]);
+            await openMenu();
+            expect(item('only-relationship')).toEqual({ label: 'Relationship only', small: "Can't train — no predictor sensor" });
+            expect((screen.getByTestId('train-menu-only-relationship') as HTMLButtonElement).disabled).toBe(true);
+        });
+
+        it('mixed (Individual trained, Relationship never): only the Individual row says "Re-train"; the all-row stays "Train all 2 models"', async () => {
+            await mountModels([withTrained(IND2()), REL2()]);
+            await openMenu();
+            expect(item('retrain-all').label).toBe('Train all 2 models');
+            expect(item('only-individual')).toEqual({ label: 'Re-train Individual only', small: 'Re-trains it even though it is up to date' });
+            expect(item('only-relationship')).toEqual({ label: 'Relationship only', small: '≈ 15 s' });
+        });
+
+        it('every model trained before: "Re-train all 2 models", "Re-train Individual only", "Re-train Relationship only"', async () => {
+            await mountModels([withTrained(IND2()), withTrained(REL2())]);
+            await openMenu();
+            expect(item('retrain-all').label).toBe('Re-train all 2 models');
+            expect(item('only-individual').label).toBe('Re-train Individual only');
+            expect(item('only-relationship').label).toBe('Re-train Relationship only');
+        });
+
+        it('training a never-trained model turns its row into "Re-train … only"', async () => {
+            await mountModels([IND2()]);
+            await openMenu();
+            expect(item('retrain-all').label).toBe('Train all 1 model');
+            expect(item('only-individual').label).toBe('Individual only');
+            fireEvent.keyDown(window, { key: 'Escape' });
+            await clickTrainSensor();
+            await waitFor(() => expect(strip().getAttribute('data-phase')).toBe('done'));
+            await openMenu();
+            expect(item('retrain-all').label).toBe('Re-train all 1 model');
+            expect(item('only-individual').label).toBe('Re-train Individual only');
+        });
     });
 
     it('a queued model is locked ("Remove from run", Save disabled); removing it leaves it untrained', async () => {

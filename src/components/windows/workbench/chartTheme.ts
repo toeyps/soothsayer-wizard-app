@@ -89,6 +89,15 @@ export function axisValueFormatter(min: number, max: number): (v: number) => str
     };
 }
 
+/** Tick labels of a 0-100 HEALTH SCORE axis: whole numbers only ("0", "20" … "100"), never
+ *  "0.000" / "20.00". A score is a 0-100 mark, not a measured value, so it carries no decimals.
+ *  Only for an axis whose values are the score — sensor-value / residual axes keep
+ *  `axisValueFormatter` / `fmtAxisValue`. */
+export function fmtScoreAxisValue(v: number): string {
+    if (!Number.isFinite(v)) return '';
+    return String(Math.round(v) || 0); // `|| 0`: -0 reads "0"
+}
+
 /** Number formatting used by every workbench readout (matches the mockup's `fmt`). */
 export function fmtNum(v: number | null | undefined): string {
     if (v === null || v === undefined || !Number.isFinite(v)) return '—';

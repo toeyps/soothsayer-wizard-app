@@ -14,6 +14,7 @@ import type {
 import {
     formatTrainSeconds,
     planTrainRun,
+    ROUGH_TRAIN_SECONDS,
     roughTrainSeconds,
     TRAIN_STALE_MESSAGE,
 } from '../../../utils/trainQueue';
@@ -143,6 +144,53 @@ export interface TrainMenuItem {
     onClick: () => void;
 }
 
+/** One model of the sensor, as the ▾ menu's copy needs it. */
+export interface SensorTrainMenuModel {
+    kind: ModelKind;
+    plan: TrainPlan;
+    /** The model has a previous train record (`FailureModel.lastTrainedAt`, the same
+     *  field `isModelStale` / the "up to date" rule read as "was trained"). */
+    trainedBefore: boolean;
+}
+
+export interface SensorTrainMenuCopy {
+    /** The "all" row. */
+    all: { label: string; small: string };
+    /** One row per model, in the order given. */
+    only: { label: string; small: string }[];
+}
+
+/**
+ * Labels and sub-lines of the Train sensor ▾ menu. "Re-train" is only said about a
+ * model that HAS been trained before:
+ *   - all row:   "Train all N models" — "Re-train all N models" only when EVERY model of
+ *                the sensor was trained before
+ *   - model row: "Individual only" before its first train, "Re-train Individual only" after
+ * The sub-lines keep their meaning (can't train + why, a Complete model becomes Incomplete,
+ * the rough time) and never say "re-trains" about a model with no train record.
+ */
+export function sensorTrainMenuCopy(models: readonly SensorTrainMenuModel[]): SensorTrainMenuCopy {
+    const n = models.length;
+    const allTrained = n > 0 && models.every(m => m.trainedBefore);
+    const hasComplete = models.some(m => m.plan.kind === 'upToDate' && m.plan.complete);
+    return {
+        all: {
+            label: `${allTrained ? 'Re-train' : 'Train'} all ${n} model${n === 1 ? '' : 's'}`,
+            small: `Includes up-to-date ones${hasComplete ? ' · a Complete model becomes Incomplete and needs Mark complete again' : ''}`,
+        },
+        only: models.map(m => {
+            const kind = TRAIN_KIND_LABEL[m.kind];
+            const p = m.plan;
+            return {
+                label: m.trainedBefore ? `Re-train ${kind} only` : `${kind} only`,
+                small: p.kind === 'missing' ? `Can't train — ${p.reason}`
+                    : p.kind === 'upToDate' ? `${m.trainedBefore ? 'Re-trains' : 'Trains'} it even though it is up to date${p.complete ? ' · it becomes Incomplete' : ''}`
+                    : `≈ ${formatTrainSeconds(ROUGH_TRAIN_SECONDS[m.kind])}`,
+            };
+        }),
+    };
+}
+
 export function SensorTrainButton({ label, disabled, title, why, whyTone, onTrain, menu, buttonRef }: {
     label: ReactNode;
     disabled: boolean;
@@ -151,7 +199,8 @@ export function SensorTrainButton({ label, disabled, title, why, whyTone, onTrai
     why: string;
     whyTone: TrainReasonTone;
     onTrain: () => void;
-    /** The ▾ menu: "Re-train all models of this sensor", "Train only the … model". */
+    /** The ▾ menu (`sensorTrainMenuCopy`): "Train all N models" / "Re-train all N models",
+     *  then "Individual only" / "Re-train Individual only" per model. */
     menu: TrainMenuItem[];
     buttonRef?: Ref<HTMLButtonElement>;
 }) {

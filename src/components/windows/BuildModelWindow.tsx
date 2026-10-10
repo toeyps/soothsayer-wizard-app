@@ -44,11 +44,11 @@ import ModelFitPage from "./workbench/ModelFitPage";
 import { CLUSTER_COLORS as CLUSTER_PALETTE } from "./workbench/chartTheme";
 import HealthScorePage from "./workbench/HealthScorePage";
 import { PageSwitch, SaveErrorNotice, StaleBanner } from "./workbench/WorkbenchShellParts";
-import { buildCheckLines, healthVerdict, sameSetPoints, verdictOfIssues, type HealthVerdict } from "./workbench/healthChecks";
+import { buildCheckLines, healthVerdict, isBlockingIssue, sameSetPoints, verdictOfIssues, type HealthVerdict } from "./workbench/healthChecks";
 import type { SaveInfo, WorkbenchPage } from "./workbench/workbenchTypes";
 import { TestedPill } from "./workbench/ValidationCards";
 import { isPickerSurfaceOpen } from "../sensor/SensorPicker";
-import { CloseRunDialog, LockedSettingsHeader, QueuedCard, RunSetPointsBanner, RunStrip, SensorTrainButton, TrainAllBar, TrainAllModal, type TrainGroupInfo, type TrainMenuItem, type TrainReasonTone, type TrainRowModel } from "./workbench/TrainQueueParts";
+import { CloseRunDialog, LockedSettingsHeader, QueuedCard, RunSetPointsBanner, RunStrip, SensorTrainButton, sensorTrainMenuCopy, TrainAllBar, TrainAllModal, type TrainGroupInfo, type TrainMenuItem, type TrainReasonTone, type TrainRowModel } from "./workbench/TrainQueueParts";
 import { useTrainQueue } from "../../hooks/useTrainQueue";
 import type { TrainCandidate, TrainFixTarget, TrainOutcome } from "../../types/trainQueue";
 import { classifyTrainPlan, countTrainPlans, formatTrainSeconds, isStaleTrainError, preflightReason, ROUGH_TRAIN_SECONDS, roughTrainSeconds, trainButtonsBlockedReason, TRAIN_NEEDS_RUNNING_CONDITION, TRAIN_STALE_MESSAGE } from "../../utils/trainQueue";
@@ -859,6 +859,12 @@ export default function BuildModelWindow() {
                 // A half-typed cluster boundary (or its error) belongs to the old workspace.
                 setBoundaryEdit(null);
                 setTypedBoundaryText({});
+                // The auto-divide memory and the criteria stats are keyed by MODEL id, and
+                // `duplicateWorkspace` keeps model ids: left behind, a copy's model would read
+                // the other workspace's last division key as its own, re-divide its saved
+                // (uneven) cluster ranges and show an unprompted "edited" draft.
+                prevClusterDivisionKeyRef.current = {};
+                setCriteriaStatsEntry(null);
                 setSearchQuery('');
                 setSidebarFilter('all');
                 setLeftGroupBy('fg');
@@ -2196,8 +2202,11 @@ export default function BuildModelWindow() {
     // effect read them as B's, divided B's ranges over A's [min, max] and locked that result
     // (a wrong training scope). Deriving per render means stats for another key read as "not
     // arrived yet", so the divide waits for B's own stats.
+    // The workspace id is part of the key: a duplicated workspace has the SAME model ids (and
+    // often the same criteria sensor + filter), so without it a window re-pointed at the copy
+    // would keep reading the other workspace's stats as its own and never fetch again.
     const criteriaStatsKey = (activeModel && activeModel.kind === 'clustering' && criteriaSensorForActive)
-        ? `${activeModel.id}::${criteriaSensorForActive}::${criteriaFilterKey}`
+        ? `${workspaceId ?? ''}::${activeModel.id}::${criteriaSensorForActive}::${criteriaFilterKey}`
         : '';
     const criteriaStats: SensorStats | null = (criteriaStatsEntry && criteriaStatsEntry.key === criteriaStatsKey)
         ? criteriaStatsEntry.stats
@@ -3486,10 +3495,15 @@ export default function BuildModelWindow() {
         if (healthPreview.loading) return 'Checking the set points…';
         if (!data.valid) {
             const issues = attemptIssues[m.id] ?? data.validation;
-            const n = Math.max(1, buildCheckLines(data.kind, issues).filter(l => !l.warning).length);
-            return verdictOfIssues(issues) === 'bad'
-                ? `${n} set point${n > 1 ? 's' : ''} not valid — fix before marking complete`
-                : `${n} set point${n > 1 ? 's' : ''} still empty`;
+            if (verdictOfIssues(issues) === 'bad') {
+                const n = Math.max(1, buildCheckLines(data.kind, issues).filter(l => !l.warning).length);
+                return `${n} set point${n > 1 ? 's' : ''} not valid — fix before marking complete`;
+            }
+            // Empty set points are counted from Rust's `required` issues (one per empty set
+            // point), not from the Checks lines: a Relation model's 4 empty points collapse
+            // into ONE line there, and the footer used to say "1 set point still empty".
+            const empty = Math.max(1, issues.filter(i => isBlockingIssue(i) && i.code === 'required').length);
+            return `${empty} set point${empty > 1 ? 's' : ''} still empty`;
         }
         return null;
     };
@@ -3669,8 +3683,9 @@ export default function BuildModelWindow() {
 
     /** The detail header's sensor-level Train (customer items 8 + 9): one primary
      *  "▶ Train sensor · n of m" that trains every model of the sensor that needs
-     *  it (I → R → C, up-to-date ones skipped), a ▾ menu (Re-train all / Train
-     *  only the … model) and the line under it saying what it will do or why not. */
+     *  it (I → R → C, up-to-date ones skipped), a ▾ menu ("Train all N models" /
+     *  "<Kind> only" — "Re-train …" once trained before, see `sensorTrainMenuCopy`)
+     *  and the line under it saying what it will do or why not. */
     const renderSensorTrain = () => {
         const cands = orderedDetail.map(candidateOf);
         const plans = new Map(cands.map(c => [c.id, c.plan]));
@@ -3703,27 +3718,24 @@ export default function BuildModelWindow() {
             : rcBlocks ? TRAIN_NEEDS_RUNNING_CONDITION
             : ready.length === 0 ? why
             : undefined;
-        const hasComplete = cands.some(c => c.plan.kind === 'upToDate' && c.plan.complete);
+        // Menu copy: "Re-train" is only said about a model that has a train record
+        // (`lastTrainedAt` — what `isModelStale` / the up-to-date rule read as "was trained").
+        const copy = sensorTrainMenuCopy(orderedDetail.map((m, i) => ({ kind: m.kind, plan: cands[i].plan, trainedBefore: !!m.lastTrainedAt })));
         const menu: TrainMenuItem[] = [
             {
                 key: 'retrain-all',
-                label: 'Re-train all models of this sensor',
-                small: `Includes up-to-date ones${hasComplete ? ' · a Complete model becomes Incomplete and needs Mark complete again' : ''}`,
+                label: copy.all.label,
+                small: copy.all.small,
                 disabled: busy || ready.length + up.length === 0,
                 onClick: () => { queue.start(cands, { includeUpToDate: true, source: 'sensor-all' }); },
             },
-            ...orderedDetail.map((m): TrainMenuItem => {
-                const p = plans.get(m.id);
-                return {
-                    key: `only-${m.kind}`,
-                    label: `Train only the ${KIND_LABEL[m.kind]} model`,
-                    small: p?.kind === 'missing' ? `Can't train — ${p.reason}`
-                        : p?.kind === 'upToDate' ? `Re-trains it even though it is up to date${p.complete ? ' · it becomes Incomplete' : ''}`
-                        : `≈ ${formatTrainSeconds(ROUGH_TRAIN_SECONDS[m.kind])}`,
-                    disabled: busy || p?.kind === 'missing',
-                    onClick: () => trainOnly(m),
-                };
-            }),
+            ...orderedDetail.map((m, i): TrainMenuItem => ({
+                key: `only-${m.kind}`,
+                label: copy.only[i].label,
+                small: copy.only[i].small,
+                disabled: busy || plans.get(m.id)?.kind === 'missing',
+                onClick: () => trainOnly(m),
+            })),
         ];
         return (
             <SensorTrainButton

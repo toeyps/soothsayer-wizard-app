@@ -10,7 +10,7 @@ import type {
     IndividualHealthSetPoints,
     RelationshipHealthSetPoints,
 } from '../../../types';
-import { CHART, CLUSTER_COLORS, FONT, axisValueFormatter } from './chartTheme';
+import { CHART, CLUSTER_COLORS, FONT, axisValueFormatter, fmtScoreAxisValue } from './chartTheme';
 import { buildTimeSeriesOption, ellipseSeries, niceExtent, type HLine, type TimeScopes } from './healthCharts';
 
 /*
@@ -285,7 +285,9 @@ export function buildScoreOption(timestamps: string[], score: (number | null)[],
     return {
         ...base,
         ...SYNC,
-        yAxis: { ...base.yAxis, interval: 20 },
+        // The score axis prints whole numbers (0, 20 … 100), whatever the shared value-axis
+        // formatter would do with a 0-100 range.
+        yAxis: { ...base.yAxis, interval: 20, axisLabel: { ...base.yAxis.axisLabel, formatter: fmtScoreAxisValue } },
         visualMap: {
             show: false,
             type: 'piecewise',
