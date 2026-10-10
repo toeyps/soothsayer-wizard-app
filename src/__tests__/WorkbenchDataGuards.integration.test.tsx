@@ -600,7 +600,16 @@ describe('R5 — the guards never touch what READS a model', () => {
 
     const P25 = { id: 'p1', start: '2025-01-01T00:00', end: '2025-01-02T23:00' };
     const S25 = { id: 's1', start: '2025-01-03T00:00', end: '2025-01-03T11:00' };
-    const NO_ROWS_SAID = 'No rows to train on — no row inside the train periods passes the running condition with values for this model. Widen a train period or relax the condition (Running condition → Edit).';
+    const NO_DATA_TITLE = 'No data for this model in the loaded file';
+    /** The one board of a model that has results but no row in the loaded file. */
+    const noDataBoard = () => {
+        const b = bmw().getByTestId('results-no-data');
+        return {
+            title: b.querySelector('.wbx-msg-t')!.textContent,
+            text: b.querySelector('.wbx-msg-s')!.textContent,
+            detail: b.querySelector('.wbx-msg-d')!.textContent,
+        };
+    };
     /** A workspace saved on the 2025 data (i1 trained, i3 Complete, i4 never trained) — and the
      *  CSV loaded today is 2027: every saved train period lies outside the data. */
     function seedOtherYear() {
@@ -637,37 +646,67 @@ describe('R5 — the guards never touch what READS a model', () => {
         expect(bmwDot('i3').state).toBe('complete');
         expect(dashDot(1, 'tag3', 'individual')).toBe('complete');
         selectSensor('tag3');
-        await waitFor(() => expect(bmw().getByTestId('results-load-failed')).toBeTruthy(), { timeout: 4000 });
+        // (2026-10-11) its data is not in this file: ONE board says exactly that — not "Couldn't load
+        // the model · Load it again", which could never work
+        await waitFor(() => expect(bmw().getByTestId('results-no-data')).toBeTruthy(), { timeout: 4000 });
+        await settle(400);
+        expect(noDataBoard()).toEqual({
+            title: NO_DATA_TITLE,
+            text: `None of its train periods is inside the data (${RANGE_27}). Fix it in Running condition ↑ to see its charts.`,
+            detail: 'Complete · nothing about the model changed',
+        });
+        expect(bmw().queryByTestId('results-load-failed')).toBeNull();
         expect(pill()).toBe('Complete');
-        expect(tabWords('i3')).toBe("Complete · Couldn't load the model");
-        // its data is not in this file: the board says so in the app's words (never Rust's sentence)
-        expect(bmw().getByTestId('results-load-failed').querySelector('.wbx-msg-d')!.textContent).toBe(NO_ROWS_SAID);
-        expect(bmwEl().textContent).not.toMatch(/No valid numeric values|dropping nulls/);
+        expect(tabWords('i3')).toBe('Complete · no data in the loaded file');
+        expect(bmwDot('i3').state).toBe('complete');
+        expect(bmw().getByTestId('footer-no-data').textContent).toBe('Complete · no rows for it in the loaded file — fix the running condition to see its charts');
+        expect(bmwEl().textContent).not.toMatch(/No valid numeric values|dropping nulls|Couldn't load|Load it again|Training failed/);
         // training it AGAIN is what is blocked, said where Train is offered
         expect(trainBtn().disabled).toBe(true);
         expect(trainWhy()).toBe("Can't train · No train period inside the data");
-        // WHAT THE APP DOES TODAY for a model that has results but no data in this file: the model is
-        // untouched (see the byte comparison below), yet nothing can be drawn — Rust has no row to
-        // compute from — so its Health score page is shut until the running condition is repaired.
-        expect((bmw().getByTestId('page-health') as HTMLButtonElement).disabled).toBe(true);
-        expect(bmw().getByTestId('page-health').getAttribute('title')).toBe('Load the model again first');
+        // its Health score page is open (not a shut tab): the same board, Mark incomplete reachable
+        expect((bmw().getByTestId('page-health') as HTMLButtonElement).disabled).toBe(false);
+        fireEvent.click(bmw().getByTestId('page-health'));
+        await settle(400);
+        expect(noDataBoard().title).toBe(NO_DATA_TITLE);
+        expect(bmw().queryByTestId('set-points-card')).toBeNull();
+        expect(pill()).toBe('Complete');
+        expect((bmw().getByTestId('mark-incomplete') as HTMLButtonElement).disabled).toBe(false);
+        fireEvent.click(bmw().getByTestId('page-model'));
 
-        // ── the trained model: still trained on disk and on the Dashboard; its page names the reason ──
+        // ── the trained model: still trained on disk, on the Dashboard AND here — never "Training failed" ──
         expect(dashDot(1, 'tag1', 'individual')).toBe('trained');
         selectSensor('tag1');
         await settle(600);
-        expect(bmw().getByTestId('wb-scroll').textContent).toContain(NO_ROWS_SAID);
-        // (today its board is the "Training failed" one, its list dot amber and its pill "Incomplete" —
-        // in THIS window only; see the two known gaps below)
-        expect(bmw().getByTestId('results-error').querySelector('.wbx-msg-d')!.textContent).toBe(NO_ROWS_SAID);
-        expect(bmwEl().textContent).not.toMatch(/No valid numeric values|dropping nulls/);
+        expect(noDataBoard()).toEqual({
+            title: NO_DATA_TITLE,
+            text: `None of its train periods is inside the data (${RANGE_27}). Fix it in Running condition ↑ to see its charts.`,
+            detail: 'Trained · nothing about the model changed',
+        });
+        expect(bmw().queryByTestId('results-error')).toBeNull();
+        expect(pill()).toBe('Trained');
+        expect(tabWords('i1')).toMatch(/^(Trained|Set points needed) · no data in the loaded file$/);
+        expect(bmwDot('i1').state).toBe('trained');
+        expect(bmwEl().textContent).not.toMatch(/No valid numeric values|dropping nulls|Couldn't load|Training failed/);
         expect(trainBtn().disabled).toBe(true);
         expect(trainWhy()).toBe("Can't train · No train period inside the data");
+        // Mark complete could only fail (the export needs the data): disabled, with that reason
+        fireEvent.click(bmw().getByTestId('next-health-score'));
+        await settle(400);
+        expect(noDataBoard().title).toBe(NO_DATA_TITLE);
+        expect(markBtn().disabled).toBe(true);
+        expect(markBtn().title).toBe('No data for this model in the loaded file — fix the running condition (Running condition → Edit) first');
+        fireEvent.click(bmw().getByTestId('page-model'));
         expect(dashDot(1, 'tag1', 'individual')).toBe('trained');
 
-        // ── opening changed nothing on disk and nothing was broadcast or trained ──
+        // ── opening changed nothing on disk, nothing was broadcast, and the engine was never asked
+        //    for a model that has no row in this file (no silent load, no preview, no export) ──
         expect(fgBytes()).toBe(bytes);
         expect(bmwBroadcasts()).toEqual([]);
+        expect(env.backend!.calls.filter(c => c.error).map(c => `${c.cmd}: ${c.error}`)).toEqual([]);
+        expect(trains()).toEqual([]);
+        expect(env.backend!.cmds('compute_health_preview')).toHaveLength(0);
+        expect(env.backend!.cmds('export_model_files')).toHaveLength(0);
 
         // ── repair through Edit: the saved row only warns, moving it into the data applies ──
         const dlg = openRc();
@@ -700,36 +739,56 @@ describe('R5 — the guards never touch what READS a model', () => {
     });
 
     // -----------------------------------------------------------------------
-    // KNOWN GAPS found by this close-out (reported to the main session, NOT fixed
-    // here — QA does not touch app code). `it.fails` = the assertion describes the
-    // behaviour the Workbench rules ask for ("a board never offers a link that does
-    // nothing", SPEC §6 / d828a88) and FAILS on today's code. When the app is
-    // fixed these tests start passing, vitest reports them as failed, and the
-    // `.fails` must be removed.
+    // FIXED 2026-10-11 (were the two `it.fails` "KNOWN GAP" of the QA close-out):
+    // a board never offers a link to a control that is disabled (SPEC §6 /
+    // d828a88). The state itself is now described truthfully — ONE "No data for
+    // this model in the loaded file" board whose only link is the place where it
+    // is fixed — instead of "Couldn't load… / the Train sensor ▾ menu" (Complete)
+    // and "Training failed … Train sensor ↑" (Trained).
     //
     // Reproduction (both): a workspace whose saved train periods all lie outside
     // the loaded data (saved on a 2025 CSV, opened with a 2027 CSV) holding a
     // model that already has results. Open Build Model and select that model.
     // -----------------------------------------------------------------------
-    it.fails('KNOWN GAP — a COMPLETE model: its "Couldn\'t load…" board offers "the Train sensor ▾ menu" as a link while that ▾ is disabled (the click does nothing)', async () => {
+    /** Every link of `board` leads somewhere: none is disabled, and none points at Train. */
+    const expectOnlyTheRcLink = (board: HTMLElement) => {
+        const links = within(board).getAllByRole('button') as HTMLButtonElement[];
+        expect(links.map(b => b.textContent)).toEqual(['Running condition ↑']);
+        expect(links[0].disabled).toBe(false);
+        for (const id of ['board-train-menu', 'board-train-sensor', 'board-load-again', 'board-load-fit']) {
+            expect(within(board).queryByTestId(id), id).toBeNull();
+        }
+        // …and it works: the Running-condition settings open
+        fireEvent.click(links[0]);
+        expect(bmw().getByRole('dialog', { name: 'Running condition' })).toBeTruthy();
+        fireEvent.click(bmw().getByTestId('rc-cancel'));
+    };
+
+    it('a COMPLETE model with no data in the loaded file: no "Couldn\'t load…" board and no link to the disabled Train sensor ▾ menu — the "No data…" board\'s ONE link opens the Running-condition settings', async () => {
         seedOtherYear();
         await mountWindows();
         selectSensor('tag3');
-        const board = await waitFor(() => bmw().getByTestId('results-load-failed'), { timeout: 4000 });
+        const board = await waitFor(() => bmw().getByTestId('results-no-data'), { timeout: 4000 });
+        await settle(300);
         // the menu cannot be opened: no train period is inside the data
         expect((bmw().getByTestId('train-sensor-menu-toggle') as HTMLButtonElement).disabled).toBe(true);
-        // ...so the board must not offer it as a link (plain text + the reason, like `trainMenuPhrase`
-        // already does while a run is active or the data is out of date)
-        expect(within(board).queryByTestId('board-train-menu')).toBeNull();
+        expect(bmw().queryByTestId('results-load-failed')).toBeNull();
+        expect(bmw().queryByTestId('footer-load-again')).toBeNull();
+        expect(pill()).toBe('Complete');
+        expectOnlyTheRcLink(board);
     });
 
-    it.fails('KNOWN GAP — a TRAINED model: opening it shows "Training failed … train again with Train sensor ↑" as a link while Train sensor is disabled', async () => {
+    it('a TRAINED model with no data in the loaded file: never "Training failed … Train sensor ↑" (Train sensor is disabled) — it stays "Trained" and the "No data…" board\'s ONE link opens the Running-condition settings', async () => {
         seedOtherYear();
         await mountWindows();
         selectSensor('tag1');
-        const board = await waitFor(() => bmw().getByTestId('results-error'), { timeout: 4000 });
+        const board = await waitFor(() => bmw().getByTestId('results-no-data'), { timeout: 4000 });
+        await settle(300);
         expect(trainBtn().disabled).toBe(true); // nothing to train on
-        // ...so "Train sensor ↑" must not be a link here (the stale banner already drops it in this state)
-        expect(within(board).queryByTestId('board-train-sensor')).toBeNull();
+        expect(bmw().queryByTestId('results-error')).toBeNull();
+        expect(bmw().queryByTestId('footer-train-sensor')).toBeNull();
+        expect(pill()).toBe('Trained');
+        expect(bmwDot('i1').state).toBe('trained');
+        expectOnlyTheRcLink(board);
     });
 });

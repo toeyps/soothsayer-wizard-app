@@ -4712,7 +4712,9 @@ body {
 /* Shared column template: dot | name | I | R | C | menu. */
 .fg-sheet-grid {
     display: grid;
-    grid-template-columns: 10px minmax(0, 1fr) repeat(3, minmax(52px, 72px)) 28px;
+    /* Kind columns: 84px max so the "Relation model" header fits its column (it was
+       ~5px wider than 72px); the three stay equal, the 52px floor is unchanged. */
+    grid-template-columns: 10px minmax(0, 1fr) repeat(3, minmax(52px, 84px)) 28px;
     column-gap: 8px;
     align-items: center;
 }

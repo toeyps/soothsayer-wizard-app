@@ -10,9 +10,9 @@ import {
     periodDataFit, savedOutsideDataNotes, testPeriodsError, toFilterRanges, validatePeriods, validateTestPeriods,
 } from '../utils/timePeriods';
 import {
-    customBlockText, getBuildBlock, getBuildBlockReason, markCompleteBlockReason, noTrainDataReason,
-    noTrainRowsReason, noTrainRowsText, runningConditionApplyBlock,
-    NO_TRAIN_ROWS_FOOTER, NO_TRAIN_ROWS_REASON, NO_TRAIN_ROWS_REASON_CUSTOM, NO_TRAIN_ROWS_TEXT,
+    customBlockText, getBuildBlock, getBuildBlockReason, markCompleteBlockReason, noModelDataCauseText, noModelDataFooter,
+    noModelDataMarkReason, noTrainDataReason, noTrainRowsReason, noTrainRowsText, runningConditionApplyBlock,
+    NO_MODEL_DATA_TITLE, NO_MODEL_DATA_WORDS, NO_TRAIN_ROWS_FOOTER, NO_TRAIN_ROWS_REASON, NO_TRAIN_ROWS_REASON_CUSTOM, NO_TRAIN_ROWS_TEXT,
 } from '../utils/runningCondition';
 import {
     countedNoTrainRows, noRunningRowsNote, runningConditionCaption, scoringCountPlan, scoringRowModels, trainCountKey, trainCountPlan,
@@ -336,6 +336,38 @@ describe('getBuildBlock with the data guards (the PERSISTED state)', () => {
         expect(trainCountKey([INSIDE], cond)).not.toBe(trainCountKey([INSIDE], null));
         expect(trainCountKey([INSIDE], cond)).not.toBe(trainCountKey([INSIDE, AFTER], cond));
         expect(trainCountKey([INSIDE], null)).toBe(trainCountKey([INSIDE], { value_filters: [], combine: 'and' } as never));
+    });
+});
+
+// ---------------------------------------------------------------------------
+// A model that HAS results but no row in the loaded data (2026-10-11): the words
+// ---------------------------------------------------------------------------
+
+describe('"No data for this model in the loaded file" — the texts of a trained / Complete model with no row in the data', () => {
+    it('the title and the tooltip suffix', () => {
+        expect(NO_MODEL_DATA_TITLE).toBe('No data for this model in the loaded file');
+        expect(NO_MODEL_DATA_WORDS).toBe('no data in the loaded file');
+    });
+
+    it('the cause is the one the guard found: the data range for "outside the data", the condition for a zero count ("Use all rows" names no condition), the engine\'s finding otherwise', () => {
+        expect(noModelDataCauseText('outside-data', DATA)).toBe('None of its train periods is inside the data (1 Jan 2025 – 31 Dec 2025).');
+        expect(noModelDataCauseText('zero-rows', DATA)).toBe('No row passes the running condition in its train periods.');
+        expect(noModelDataCauseText('zero-rows', DATA, false)).toBe('Its train periods hold no row of the data.');
+        expect(noModelDataCauseText('engine', null)).toBe('No row inside its train periods passes the running condition with values for this model.');
+    });
+
+    it('the footer keeps the model\'s OWN status word and says where the fix is (the workspace condition, or the model\'s own)', () => {
+        expect(noModelDataFooter('Complete', 'workspace')).toBe('Complete · no rows for it in the loaded file — fix the running condition to see its charts');
+        expect(noModelDataFooter('Trained', 'workspace')).toBe('Trained · no rows for it in the loaded file — fix the running condition to see its charts');
+        expect(noModelDataFooter('Trained', 'custom')).toBe('Trained · no rows for it in the loaded file — fix its own running condition in Model settings to see its charts');
+        for (const s of [noModelDataFooter('Complete', 'workspace'), noModelDataFooter('Trained', 'custom')]) {
+            expect(s).not.toMatch(/Incomplete|failed|Couldn't load/i);
+        }
+    });
+
+    it('why Mark complete is disabled then', () => {
+        expect(noModelDataMarkReason('workspace')).toBe('No data for this model in the loaded file — fix the running condition (Running condition → Edit) first');
+        expect(noModelDataMarkReason('custom')).toBe('No data for this model in the loaded file — fix its own running condition in Model settings first');
     });
 });
 

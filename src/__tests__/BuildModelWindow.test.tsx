@@ -8421,9 +8421,21 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
         const sum = periods.reduce((s, c) => s + c.running_rows, 0);
         return { total_rows: 5000, interval_secs: 300, periods, union: { rows_in_period: 1000 * periods.length, running_rows: sum, running_days: sum / 288 } };
     };
-    /** The fake Rust of this block: the dataset bounds, and (optionally) its own row counts. */
-    const rust = (opts: { bounds?: unknown; running?: (p: { start: string | null; end: string | null }, i: number, args: CountArgs) => number | Error } = {}) =>
+    /** What the real engine answers when a training scope holds no row (`lib.rs`; Tauri rejects with a string). */
+    const ENGINE_NO_ROWS: Record<string, string> = {
+        compute_sensor_stats: "No valid numeric values for sensor 'TAG1'",
+        preview_relationship_model: 'No rows remain after dropping nulls.',
+        compute_clustering_preview: 'No rows remain after dropping nulls.',
+        compute_health_preview: 'NO_DATA: no rows in the training scope',
+        export_model_files: 'NO_DATA: no rows in the training scope',
+    };
+    const engineCalls = (cmd: string) => mockInvoke.mock.calls.filter(c => c[0] === cmd);
+    /** The fake Rust of this block: the dataset bounds, (optionally) its own row counts — and, with
+     *  `noRows`, an engine that answers like the real one for an EMPTY training scope (every train /
+     *  preview / export is refused with its "no rows" sentence instead of made-up numbers). */
+    const rust = (opts: { bounds?: unknown; noRows?: boolean; running?: (p: { start: string | null; end: string | null }, i: number, args: CountArgs) => number | Error } = {}) =>
         mockInvoke.mockImplementation((cmd: string, args?: any) => {
+            if (opts.noRows && cmd in ENGINE_NO_ROWS) return Promise.reject(ENGINE_NO_ROWS[cmd]);
             if (cmd === 'get_dataset_time_bounds') return Promise.resolve('bounds' in opts ? opts.bounds : DATA);
             if (cmd === 'count_period_rows' && opts.running) {
                 try {
@@ -8570,29 +8582,157 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
             expect(mockInvoke.mock.calls.filter(c => c[0] === 'compute_sensor_stats')).toHaveLength(0);
         });
 
-        it('a COMPLETE model keeps EVERYTHING — its status, its charts, the Health score page, Mark incomplete; only training it again is blocked, and said where Train is offered', async () => {
-            rust({ running: () => 800 });
+        // 🆕 2026-10-11: the fake engine now answers like the real one for an EMPTY scope (`noRows`).
+        // This test used to pass only because the mock drew charts whatever the filter was — in the
+        // app the charts are computed from the loaded data, so with no row for the model there is
+        // nothing to draw. What is true is said instead: the model is unchanged, ONE board names the
+        // cause and the one place to fix it. Never "Couldn't load… Load it again" / "Training failed".
+        it('a COMPLETE model with NO train period inside the data stays Complete (pill, dots, filter counts): ONE "No data for this model in the loaded file" board with the cause and a working "Running condition ↑" link — no "Load it again", no dead Train link — on BOTH pages; Mark incomplete works, nothing else is written', async () => {
+            rust({ running: () => 800, noRows: true });
             const fgShape = { runningConditionFilters: [], runningConditionCombine: 'and', runningConditionTimePeriods: [P_OUT], runningConditionNoneConfirmed: true };
             const base = makeModel({ id: 'm1', targetSensor: 'TAG1', healthSetPoints: HS_SNAP });
             const done: Record<string, any> = { ...withTrained(base, { models: [base], ...fgShape }), status: true };
             await mountB([done], { runningConditionTimePeriods: [P_OUT] });
             await waitFor(() => expect(screen.getByTestId('rc-card').getAttribute('data-norows')).toBe('true'));
-            // read paths are untouched: charts (not a "Marked complete — no charts" board), the pill, the dots
+            // ── the ONE board: the title, the cause from the guard, one link ──
+            const board = await waitFor(() => screen.getByTestId('results-no-data'));
+            expect(board.querySelector('.wbx-msg-t')!.textContent).toBe('No data for this model in the loaded file');
+            expect(within(board).getByTestId('no-data-cause').textContent).toBe('None of its train periods is inside the data (1 Jan 2025 – 31 Dec 2025).');
+            expect(board.querySelector('.wbx-msg-s')!.textContent)
+                .toBe('None of its train periods is inside the data (1 Jan 2025 – 31 Dec 2025). Fix it in Running condition ↑ to see its charts.');
+            expect(board.querySelector('.wbx-msg-d')!.textContent).toBe('Complete · nothing about the model changed');
+            expect(board.className).not.toContain('wbx-msg--bad');
+            expect(within(board).getAllByRole('button')).toHaveLength(1);
+            // never the "load failed" / "training failed" story, and no link to a disabled control
+            for (const id of ['results-chart', 'results-load-failed', 'results-error', 'results-placeholder', 'results-not-fitted',
+                'board-load-again', 'board-train-menu', 'board-train-sensor', 'footer-load-again', 'footer-train-sensor']) {
+                expect(screen.queryByTestId(id), id).toBeNull();
+            }
+            expect(document.body.textContent).not.toMatch(/Couldn't load|Load it again|load it again|Training failed|No valid numeric values|NO_DATA/);
+            // ── the model's OWN words stay ──
+            expect(screen.getByTestId('footer-pill').textContent).toBe('Complete');
+            expect(screen.getByTestId('footer-no-data').textContent).toBe('Complete · no rows for it in the loaded file — fix the running condition to see its charts');
+            expect(screen.queryByTestId('build-block-reason')).toBeNull();
+            expect(screen.getByTestId('tab-status-m1').getAttribute('data-dot')).toBe('complete');
+            expect(screen.getByTestId('tab-status-m1').getAttribute('title')).toBe('Complete · no data in the loaded file');
+            expect(screen.getByTestId('sensor-kind-badge-dot-m1').getAttribute('data-state')).toBe('complete');
+            expect(screen.getByTestId('sensor-kind-badge-dot-m1').className).toContain('f4-kb-dot--complete');
+            expect(screen.getByTestId('sensor-kind-badge-m1').getAttribute('title')).toBe('Individual · Complete · no data in the loaded file');
+            // never counted under "Needs setup" next to "Complete"
+            expect(screen.getByRole('button', { name: /^Needs setup/ }).textContent).toBe('Needs setup 0');
+            expect(screen.getByRole('button', { name: /^Complete/ }).textContent).toBe('Complete 1');
+            // training it AGAIN is what is blocked: named on the Train sensor line
+            expect(trainSensorBtn().disabled).toBe(true);
+            expect(trainSensorWhy()).toBe("Can't train · No train period inside the data");
+            expect((screen.getByTestId('train-sensor-menu-toggle') as HTMLButtonElement).disabled).toBe(true);
+            // no filled "next step": the Health score page is the same board
+            expect(screen.getByTestId('wb-footer').getAttribute('data-primary')).toBe('none');
+            // the engine is not asked again and again for a scope that has no row (at most the one
+            // load that started before the data's range was known), and never for a health preview
+            await act(async () => { await new Promise(r => setTimeout(r, 400)); });
+            expect(engineCalls('compute_sensor_stats').length).toBeLessThanOrEqual(1);
+            expect(engineCalls('compute_health_preview')).toHaveLength(0);
+
+            // ── the Health score page: open (not a closed tab), the SAME board, Mark incomplete reachable ──
+            const healthTab = screen.getByTestId('page-health') as HTMLButtonElement;
+            expect(healthTab.disabled).toBe(false);
+            fireEvent.click(healthTab);
+            const hBoard = await waitFor(() => screen.getByTestId('results-no-data'));
+            expect(hBoard.querySelector('.wbx-msg-t')!.textContent).toBe('No data for this model in the loaded file');
+            expect(screen.queryByTestId('set-points-card')).toBeNull();
+            expect(screen.getByTestId('footer-pill').textContent).toBe('Complete');
+            expect(screen.getByTestId('footer-no-data').textContent).toBe('Complete · no rows for it in the loaded file — fix the running condition to see its charts');
+            expect((screen.getByTestId('mark-incomplete') as HTMLButtonElement).disabled).toBe(false);
+            await flush();
+            // nothing was written by looking at it (no status, fingerprint, verdict or export change)
+            expect(mockUpdateWorkspaceData).not.toHaveBeenCalled();
+            expect(engineCalls('compute_health_preview')).toHaveLength(0);
+            expect(exportCalls()).toHaveLength(0);
+
+            // ── the link WORKS: it opens the Running-condition settings ──
+            fireEvent.click(within(hBoard).getByTestId('board-open-rc'));
+            expect(screen.getByRole('dialog', { name: 'Running condition' })).toBeTruthy();
+            fireEvent.click(screen.getByTestId('rc-cancel'));
+
+            // ── Mark incomplete: the one write the user asked for — then it is "Trained", still with no data ──
+            await act(async () => { fireEvent.click(screen.getByTestId('mark-incomplete')); await Promise.resolve(); });
+            await flush();
+            expect(mockUpdateWorkspaceData).toHaveBeenCalledTimes(1);
+            const written = await hsLastModel();
+            expect(written).toMatchObject({ status: false, lastTrainedAt: done.lastTrainedAt, trainedFingerprint: done.trainedFingerprint });
+            await waitFor(() => expect(screen.getByTestId('footer-pill').textContent).toBe('Trained'));
+            expect(screen.getByTestId('results-no-data').querySelector('.wbx-msg-d')!.textContent).toBe('Trained · nothing about the model changed');
+            // Mark complete could only fail (the export needs the data): disabled, with that reason
+            expect(hsMarkBtn().disabled).toBe(true);
+            expect(hsMarkBtn().title).toBe('No data for this model in the loaded file — fix the running condition (Running condition → Edit) first');
+            expect(screen.getByTestId('footer-no-data').textContent).toBe('Trained · no rows for it in the loaded file — fix the running condition to see its charts');
+            expect(exportCalls()).toHaveLength(0);
+        });
+
+        // The rule behind finding 1 (2026-10-11): a sentence never links to a control that is disabled.
+        // A load that failed for ANOTHER reason before the data's range was known keeps its own board —
+        // but once the guard holds, the menu row / Train sensor it pointed at cannot train the model.
+        it('a load that failed for another reason, then "no train period inside the data" becomes known: the "Couldn\'t load…" board drops its Train sensor ▾ menu link and the "Training failed" board says "Train sensor ↑" as plain text — never a link to a disabled control', async () => {
+            const fgShape = { runningConditionFilters: [], runningConditionCombine: 'and', runningConditionTimePeriods: [P_OUT], runningConditionNoneConfirmed: true };
+            const base = makeModel({ id: 'm1', targetSensor: 'TAG1', healthSetPoints: HS_SNAP });
+            const trained: Record<string, any> = withTrained(base, { models: [base], ...fgShape });
+            for (const model of [{ ...trained, status: true }, trained]) {
+                let releaseBounds: () => void = () => {};
+                const boundsGate = new Promise<void>(r => { releaseBounds = r; });
+                mockInvoke.mockImplementation((cmd: string, args?: any) => {
+                    if (cmd === 'get_dataset_time_bounds') return boundsGate.then(() => DATA);
+                    if (cmd === 'compute_sensor_stats') return Promise.reject('the engine stopped');
+                    if (cmd === 'count_period_rows') return Promise.resolve(countAnswer(args, () => 800));
+                    return healthInvoke(cmd, args);
+                });
+                await mountB([model], { runningConditionTimePeriods: [P_OUT] });
+                const boardId = model.status ? 'results-load-failed' : 'results-error';
+                const linkId = model.status ? 'board-train-menu' : 'board-train-sensor';
+                // the data's range is not known yet: the model can train, so the link is live
+                await waitFor(() => expect(screen.getByTestId(boardId)).toBeTruthy());
+                expect(within(screen.getByTestId(boardId)).getByTestId(linkId)).toBeTruthy();
+                await act(async () => { releaseBounds(); await Promise.resolve(); await Promise.resolve(); });
+                await waitFor(() => expect(screen.getByTestId('rc-card').getAttribute('data-norows')).toBe('true'));
+                // now nothing can train it: Train sensor and its ▾ are disabled…
+                expect(trainSensorBtn().disabled).toBe(true);
+                expect((screen.getByTestId('train-sensor-menu-toggle') as HTMLButtonElement).disabled).toBe(true);
+                // …and no sentence links there any more
+                const board = screen.getByTestId(boardId);
+                expect(within(board).queryByTestId(linkId)).toBeNull();
+                if (model.status) {
+                    expect(board.querySelector('.wbx-msg-s')!.textContent)
+                        .toBe('Nothing about the model changed and it stays Complete — Load it again. The charts come back when it is loaded.');
+                    expect(screen.getByTestId('footer-pill').textContent).toBe('Complete');
+                } else {
+                    expect(board.querySelector('.wbx-msg-s')!.textContent)
+                        .toBe("Fix the problem, then train again with Train sensor ↑ (it can't train yet). The model keeps its last state.");
+                    expect(within(board).getByTestId('board-train-sensor-blocked').getAttribute('title'))
+                        .toBe('No train period is inside the data (1 Jan 2025 – 31 Dec 2025) — nothing to train on. Move a train period inside the data (Running condition → Edit).');
+                    expect(screen.queryByTestId('footer-train-sensor')).toBeNull();
+                    expect(screen.getByTestId('footer-train-sensor-blocked').textContent).toBe("(it can't train yet)");
+                }
+                expect(board.querySelector('.wbx-msg-d')!.textContent).toBe('the engine stopped');
+                cleanup();
+            }
+        });
+
+        it('[inside, outside]: ONE train period inside the data next to one outside it changes nothing — a COMPLETE model keeps its charts, its Health score page and Mark incomplete', async () => {
+            rust({ running: () => 800 });
+            const periods = [P_IN, { ...P_OUT, id: 'p2' }];
+            const fgShape = { runningConditionFilters: [], runningConditionCombine: 'and', runningConditionTimePeriods: periods, runningConditionNoneConfirmed: true };
+            const base = makeModel({ id: 'm1', targetSensor: 'TAG1', healthSetPoints: HS_SNAP });
+            const done: Record<string, any> = { ...withTrained(base, { models: [base], ...fgShape }), status: true };
+            await mountB([done], { runningConditionTimePeriods: periods });
+            await waitFor(() => expect(screen.getByTestId('rc-card-outside')).toBeTruthy());
+            expect(screen.getByTestId('rc-card').getAttribute('data-norows')).toBeNull();
             await waitFor(() => expect(screen.getByTestId('results-chart')).toBeTruthy());
-            expect(screen.queryByTestId('results-placeholder')).toBeNull();
+            expect(screen.queryByTestId('results-no-data')).toBeNull();
+            expect(screen.queryByTestId('footer-no-data')).toBeNull();
             expect(screen.getByTestId('footer-pill').textContent).toBe('Complete');
             expect(screen.queryByTestId('build-block-reason')).toBeNull();
             expect(screen.getByTestId('tab-status-m1').getAttribute('data-dot')).toBe('complete');
             expect(screen.getByTestId('tab-status-m1').getAttribute('title')).toBe('Complete');
             expect(screen.getByTestId('sensor-kind-badge-dot-m1').getAttribute('data-state')).toBe('complete');
-            // never counted under "Needs setup" next to "Complete"
-            expect(screen.getByRole('button', { name: /^Needs setup/ }).textContent).toBe('Needs setup 0');
-            expect(screen.getByRole('button', { name: /^Complete/ }).textContent).toBe('Complete 1');
-            // training it AGAIN is what is blocked: named on the Train sensor line (there is no board "below")
-            expect(trainSensorBtn().disabled).toBe(true);
-            expect(trainSensorWhy()).toBe("Can't train · No train period inside the data");
-            expect((screen.getByTestId('train-sensor-menu-toggle') as HTMLButtonElement).disabled).toBe(true);
-            // the Health score page opens and Mark incomplete works
             await openHealthPage();
             expect((screen.getByTestId('mark-incomplete') as HTMLButtonElement).disabled).toBe(false);
             mockUpdateWorkspaceData.mockClear();
@@ -8717,32 +8857,87 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
             expect(mockUpdateWorkspaceData).not.toHaveBeenCalled();
         });
 
-        it('a TRAINED model keeps its pill, its charts and its Health score page: only training it again is blocked — and no status / train record is written', async () => {
-            const rows = 0;
-            rust({ running: () => rows });
+        // 🆕 2026-10-11: with an engine that answers like the real one for an empty scope (`noRows`), a
+        // TRAINED model whose scope counts zero rows has no charts to draw. It is NOT "Training failed"
+        // (nobody trained it) and NOT "Incomplete" (nothing about it changed): it stays "Trained".
+        it('a TRAINED model whose scope counts ZERO rows stays "Trained" (pill, amber dot — never "Training failed" / "Incomplete" / a red dot): the "No data…" board with the cause and "Running condition ↑" on both pages, Mark complete disabled with the reason — and nothing is written', async () => {
+            rust({ running: () => 0, noRows: true });
             const fgShape = { runningConditionFilters: [COND], runningConditionCombine: 'and', runningConditionTimePeriods: [P_IN], runningConditionNoneConfirmed: false };
             const base = makeModel({ id: 'm1', targetSensor: 'TAG1', healthSetPoints: HS_SNAP });
             const trained: Record<string, any> = withTrained(base, { models: [base], ...fgShape });
             await mountB([trained], { runningConditionNoneConfirmed: false, runningConditionFilters: [COND] });
             await waitFor(() => expect(screen.getByTestId('rc-card').getAttribute('data-norows')).toBe('true'));
-            await waitFor(() => expect(screen.getByTestId('results-chart')).toBeTruthy());
+            const board = await waitFor(() => screen.getByTestId('results-no-data'));
+            expect(board.querySelector('.wbx-msg-t')!.textContent).toBe('No data for this model in the loaded file');
+            expect(board.querySelector('.wbx-msg-s')!.textContent)
+                .toBe('No row passes the running condition in its train periods. Fix it in Running condition ↑ to see its charts.');
+            expect(board.querySelector('.wbx-msg-d')!.textContent).toBe('Trained · nothing about the model changed');
+            expect(within(board).getAllByRole('button')).toHaveLength(1);
+            for (const id of ['results-chart', 'results-error', 'results-load-failed', 'board-train-sensor', 'board-train-menu', 'board-load-again', 'footer-train-sensor']) {
+                expect(screen.queryByTestId(id), id).toBeNull();
+            }
+            expect(document.body.textContent).not.toMatch(/Training failed|Couldn't load|No valid numeric values|NO_DATA/);
+            // its own words
             expect(screen.getByTestId('footer-pill').textContent).toBe('Trained');
+            expect(screen.getByTestId('footer-no-data').textContent).toBe('Trained · no rows for it in the loaded file — fix the running condition to see its charts');
             expect(screen.queryByTestId('build-block-reason')).toBeNull();
-            expect(screen.getByTestId('tab-status-m1').getAttribute('data-dot')).not.toBe('bad');
-            expect(screen.getByTestId('tab-status-m1').getAttribute('title')).not.toBe('No rows to train on');
+            expect(screen.getByTestId('tab-status-m1').getAttribute('data-dot')).toBe('need');
+            expect(screen.getByTestId('tab-status-m1').getAttribute('title')).toMatch(/^(Trained|Set points needed) · no data in the loaded file$/);
             expect(screen.getByTestId('sensor-kind-badge-dot-m1').getAttribute('data-state')).toBe('trained');
-            expect((screen.getByTestId('next-health-score') as HTMLButtonElement).disabled).toBe(false);
+            expect(screen.getByTestId('sensor-kind-badge-dot-m1').className).toContain('f4-kb-dot--need');
+            expect(screen.getByRole('button', { name: /^Needs setup/ }).textContent).toBe('Needs setup 0');
             // where Train is offered the reason is named
             expect(trainSensorBtn().disabled).toBe(true);
             expect(trainSensorWhy()).toBe("Can't train · No rows to train on");
             expect(trainSensorBtn().title).toBe("Can't train: Individual — No rows to train on");
+            // "Next: Health score →" is reachable but never the filled next step
+            expect((screen.getByTestId('next-health-score') as HTMLButtonElement).disabled).toBe(false);
+            expect(screen.getByTestId('wb-footer').getAttribute('data-primary')).toBe('none');
+
+            // ── the Health score page: the same board; Mark complete could only fail ──
+            fireEvent.click(screen.getByTestId('next-health-score'));
+            await waitFor(() => expect(screen.getByTestId('footer-back-to-fit')).toBeTruthy());
+            expect(screen.getByTestId('results-no-data')).toBeTruthy();
+            expect(screen.queryByTestId('set-points-card')).toBeNull();
+            expect(hsMarkBtn().disabled).toBe(true);
+            expect(hsMarkBtn().title).toBe('No data for this model in the loaded file — fix the running condition (Running condition → Edit) first');
+            expect(screen.queryByTestId('mark-block-reason')).toBeNull();
+            expect(screen.getByTestId('footer-no-data')).toBeTruthy();
+            expect(screen.getByTestId('footer-pill').textContent).toBe('Trained');
+            fireEvent.click(hsMarkBtn());
+            await act(async () => { await new Promise(r => setTimeout(r, 400)); });
+            // ── nothing written, nothing exported, the engine not asked for a preview ──
+            expect(mockUpdateWorkspaceData).not.toHaveBeenCalled();
+            expect(exportCalls()).toHaveLength(0);
+            expect(engineCalls('compute_health_preview')).toHaveLength(0);
+            expect(engineCalls('compute_sensor_stats').length).toBeLessThanOrEqual(1);
+            // the link works
+            fireEvent.click(screen.getByTestId('board-open-rc'));
+            expect(screen.getByRole('dialog', { name: 'Running condition' })).toBeTruthy();
+        });
+
+        it('[inside, outside] with rows: a TRAINED model keeps its pill, its charts and its Health score page — Mark complete is not a train, the data guards do not block it', async () => {
+            rust({ running: (_p, i) => (i === 0 ? 800 : 0) });
+            const periods = [P_IN, { ...P_OUT, id: 'p2' }];
+            const fgShape = { runningConditionFilters: [COND], runningConditionCombine: 'and', runningConditionTimePeriods: periods, runningConditionNoneConfirmed: false };
+            const base = makeModel({ id: 'm1', targetSensor: 'TAG1', healthSetPoints: HS_SNAP });
+            const trained: Record<string, any> = withTrained(base, { models: [base], ...fgShape });
+            await mountB([trained], { runningConditionNoneConfirmed: false, runningConditionFilters: [COND], runningConditionTimePeriods: periods });
+            await waitFor(() => expect(screen.getByTestId('rc-card-outside')).toBeTruthy());
+            expect(screen.getByTestId('rc-card').getAttribute('data-norows')).toBeNull();
+            await waitFor(() => expect(screen.getByTestId('results-chart')).toBeTruthy());
+            expect(screen.queryByTestId('results-no-data')).toBeNull();
+            expect(screen.getByTestId('footer-pill').textContent).toBe('Trained');
+            expect(screen.queryByTestId('build-block-reason')).toBeNull();
+            expect(screen.getByTestId('tab-status-m1').getAttribute('title')).not.toContain('no data');
+            expect(screen.getByTestId('sensor-kind-badge-dot-m1').getAttribute('data-state')).toBe('trained');
+            expect(trainSensorBtn().disabled).toBe(true); // up to date: nothing to train
             await flush();
-            // the guard writes nothing: the only write there may be is the saved-set-point verdict of the preview
+            // the only write there may be is the saved-set-point verdict of the preview
             for (const r of mockUpdateWorkspaceData.mock.results) {
                 const m = (await r.value).failureGroupState.models[0];
                 expect(m).toMatchObject({ status: false, lastTrainedAt: trained.lastTrainedAt, trainedFingerprint: trained.trainedFingerprint });
             }
-            // R5: Mark complete is not a train — the data guards do not block it (its own rules decide)
             await openHealthPage();
             await waitFor(() => expect(hsMarkBtn().disabled).toBe(false));
             expect(screen.queryByTestId('mark-block-reason')).toBeNull();
@@ -8750,6 +8945,49 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
             await waitFor(() => expect(screen.getByTestId('save-ok')).toBeTruthy());
             expect(exportCalls()).toHaveLength(1);
             expect((await hsLastModel()).status).toBe(true);
+        });
+
+        it('NOT settled yet (the data range unknown, the count failed): the load is attempted as before — and the engine\'s "no rows" answer leads to the SAME board, asked ONCE, never "Training failed" / "Couldn\'t load"; nothing is written', async () => {
+            const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+            // a Complete and a Trained model, each on its own sensor
+            const fgShape = { runningConditionFilters: [COND], runningConditionCombine: 'and', runningConditionTimePeriods: [P_IN], runningConditionNoneConfirmed: false };
+            const a = makeModel({ id: 'm1', targetSensor: 'TAG1', healthSetPoints: HS_SNAP });
+            const b = makeModel({ id: 'm2', name: 'Two', targetSensor: 'TAG2', healthSetPoints: HS_SNAP });
+            const trained: Record<string, any> = withTrained(a, { models: [a, b], ...fgShape });
+            const done: Record<string, any> = { ...withTrained(b, { models: [a, b], ...fgShape }), status: true };
+            rust({ bounds: { min: null, max: null }, running: () => new Error('count failed'), noRows: true });
+            await mountB([trained, done], { runningConditionNoneConfirmed: false, runningConditionFilters: [COND] });
+            // nothing was known up front: the card is not red, Train is not blocked by a guard
+            expect(screen.getByTestId('rc-card').getAttribute('data-norows')).toBeNull();
+            const board = await waitFor(() => screen.getByTestId('results-no-data'));
+            expect(board.querySelector('.wbx-msg-s')!.textContent)
+                .toBe('No row inside its train periods passes the running condition with values for this model. Fix it in Running condition ↑ to see its charts.');
+            expect(screen.queryByTestId('results-error')).toBeNull();
+            expect(screen.getByTestId('footer-pill').textContent).toBe('Trained');
+            expect(screen.getByTestId('tab-status-m1').getAttribute('data-dot')).toBe('need');
+            expect(screen.getByTestId('tab-status-m1').getAttribute('title')).not.toMatch(/Training failed/);
+            expect(screen.getByTestId('sensor-kind-badge-dot-m1').getAttribute('data-state')).toBe('trained');
+            // asked once, and not again while nothing changed
+            await act(async () => { await new Promise(r => setTimeout(r, 400)); });
+            expect(engineCalls('compute_sensor_stats')).toHaveLength(1);
+            expect(engineCalls('compute_health_preview')).toHaveLength(0);
+
+            // the Complete one: the same board — never "Couldn't load the model · Load it again"
+            fireEvent.click(screen.getAllByTestId('sensor-row-label')[1]);
+            await waitFor(() => expect(screen.getByTestId('tab-status-m2')).toBeTruthy());
+            await waitFor(() => expect(screen.getByTestId('results-no-data').querySelector('.wbx-msg-d')!.textContent).toBe('Complete · nothing about the model changed'));
+            expect(screen.queryByTestId('results-load-failed')).toBeNull();
+            expect(screen.queryByTestId('board-load-again')).toBeNull();
+            expect(screen.queryByTestId('board-train-menu')).toBeNull();
+            expect(screen.getByTestId('footer-pill').textContent).toBe('Complete');
+            expect(screen.getByTestId('tab-status-m2').getAttribute('data-dot')).toBe('complete');
+            expect(screen.getByTestId('tab-status-m2').getAttribute('title')).toBe('Complete · no data in the loaded file');
+            expect((screen.getByTestId('page-health') as HTMLButtonElement).disabled).toBe(false);
+            await act(async () => { await new Promise(r => setTimeout(r, 400)); });
+            expect(engineCalls('compute_sensor_stats')).toHaveLength(2); // one per model, no retry
+            expect(document.body.textContent).not.toMatch(/Training failed|Couldn't load|No valid numeric values/);
+            expect(mockUpdateWorkspaceData).not.toHaveBeenCalled();
+            warn.mockRestore();
         });
 
         it('a count that answers STALE_SESSION (or fails any other way) never blocks Train', async () => {
@@ -9047,16 +9285,31 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
             expect(written.filterTimePeriods.map((x: any) => [x.start, x.end])).toEqual([[P_IN.start, P_IN.end], [P_OUT.start, P_OUT.end]]);
         });
 
-        it('a Custom TRAINED model whose own scope holds no rows any more: renaming it still saves (the scope did not change) — only Train is blocked, the charts stay', async () => {
-            rust({ running: () => 0 });
+        // 🆕 2026-10-11: the engine answers like the real one for an empty scope (`noRows`) — the charts
+        // cannot be drawn, and the board says so with ONE link into the model's OWN settings (Custom).
+        it('a Custom TRAINED model whose own scope holds no rows any more: it stays "Trained", the "No data…" board points at its Model settings (a working link) — and renaming it still saves (the scope did not change)', async () => {
+            rust({ running: () => 0, noRows: true });
             const base = makeModel({
                 id: 'm1', targetSensor: 'TAG1', runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true,
                 filterTimePeriods: [P_IN], customTestPeriods: S_IN, healthSetPoints: HS_SNAP,
             });
             await mountB([withTrained(base, { models: [base] })]);
             await waitFor(() => expect(trainSensorWhy()).toBe("Can't train · No rows to train on in its own training data"));
-            await waitFor(() => expect(screen.getByTestId('results-chart')).toBeTruthy());
+            const board = await waitFor(() => screen.getByTestId('results-no-data'));
+            // "Use all rows": there is no condition to name
+            expect(board.querySelector('.wbx-msg-s')!.textContent).toBe('Its train periods hold no row of the data. Fix it in Model settings to see its charts.');
+            expect(within(board).queryByTestId('board-open-rc')).toBeNull();
+            expect(screen.queryByTestId('results-error')).toBeNull();
+            expect(screen.queryByTestId('board-train-sensor')).toBeNull();
             expect(screen.getByTestId('footer-pill').textContent).toBe('Trained');
+            expect(screen.getByTestId('footer-no-data').textContent)
+                .toBe('Trained · no rows for it in the loaded file — fix its own running condition in Model settings to see its charts');
+            // the link opens the model's own settings (they were closed: nothing in them is "missing")
+            expect(screen.queryByTestId('add-model-form')).toBeNull();
+            fireEvent.click(within(board).getByTestId('board-open-settings'));
+            expect(screen.getByTestId('add-model-form')).toBeTruthy();
+            expect(screen.getByTestId('custom-rc-panel')).toBeTruthy();
+            expect(mockUpdateWorkspaceData).not.toHaveBeenCalled();
             openSettings();
             fireEvent.change(screen.getByPlaceholderText('e.g. Bearing vibration model'), { target: { value: 'Renamed' } });
             const save = screen.getByTestId('save-changes') as HTMLButtonElement;

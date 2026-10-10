@@ -3,7 +3,7 @@
 > **อ่านไฟล์นี้ก่อน.** ไฟล์นี้ **เขียนทับให้เป็นปัจจุบันเสมอ** (ไม่ต่อท้าย) — ประวัติละเอียดว่าแต่ละงานทำอย่างไรและทำไม
 > อยู่ที่ [`handover/`](handover/README.md) (ไฟล์รายเดือน) · สิ่งที่เปลี่ยนในแต่ละเวอร์ชันแบบอ่านง่ายอยู่ที่ [`release/CHANGELOG.md`](release/CHANGELOG.md)
 >
-> อัปเดตล่าสุด: **2026-10-09**
+> อัปเดตล่าสุด: **2026-10-11**
 
 ---
 
@@ -36,8 +36,8 @@
 | เวอร์ชันล่าสุดที่ build เป็น installer | **0.9.0** (2026-10-08) — ดู [`release/CHANGELOG.md`](release/CHANGELOG.md) |
 | git tag | `v0.8.0`, `v0.9.0` มีในเครื่อง **ยังไม่ push** (0.6.0/0.7.0 ไม่เคย build จึงไม่มี tag) |
 | การ push | ล่าสุดที่ remote `personal` คือ 2026-10-04 — งานหลังจากนั้นอยู่ในเครื่องเท่านั้น ([กติกา push](#5-กติกาสำคัญที่ต้องรู้)) |
-| งานที่รอผู้ใช้ทดสอบในแอปจริง | **Customer batch 2026-10** (5 phase: sensor label/picker/colour มาตรฐานเดียว, Pair Plot cluster legend, Failure groups เป็น Import step 3, Train sensor/Train all, formula editor) → ผ่านแล้วค่อย push + เปลี่ยน Notion เป็น Done — รายละเอียดอยู่ท้าย [`handover/2026-10.md`](handover/2026-10.md) |
-| เรื่องที่รอผู้ใช้ตัดสินใจ | ลบคำสั่ง Rust `write_user_file` ที่ไม่มีใครเรียกแล้ว หรือเก็บไว้ · ลดสิทธิ์ `dialog:default` เหลือ open + message |
+| งานที่รอผู้ใช้ทดสอบในแอปจริง | (1) **Customer batch 2026-10** (5 phase) + รอบแก้จากการทดสอบแอปจริง 2026-10-09 (ปุ่มลบ/แก้ชื่อโปรเจกต์, ปฏิทินในแถบช่วงเวลา, ปุ่ม ↺ Pair Plot, Criteria sensor, พิมพ์ขอบเขต cluster, ไม่เกิน 5 cluster) · (2) **Workbench redesign 2026-10-10/11** (4 phase: scoring periods มีแค่เริ่ม–จบ, โครงหน้า Model fit / Health score ใหม่, กราฟ, ตาราง set point, หน้าต่าง Running condition ใหม่, ข้อความ Train, ตัวดัก "ไม่มีข้อมูลให้ train", คำว่า "Relation model" ทั้งแอป, ข้อความ "Relation model engine") → ผ่านแล้วค่อย push + ถามเปลี่ยน Notion เป็น Done — รายละเอียดและรายการทดสอบอยู่ท้าย [`handover/2026-10.md`](handover/2026-10.md) |
+| เรื่องที่รอผู้ใช้ตัดสินใจ | ลบคำสั่ง Rust `write_user_file` ที่ไม่มีใครเรียกแล้ว หรือเก็บไว้ · ลดสิทธิ์ `dialog:default` เหลือ open + message · การแสดงไฟล์/โฟลเดอร์ output หลัง Mark complete (ผู้ใช้เลื่อนไว้จนกว่า UI จะใช้ได้ครบ) · แยก `BuildModelWindow.tsx` เป็นไฟล์ย่อย (เสนอไว้) |
 | งานค้างที่รู้อยู่ | [`BACKLOG.md`](BACKLOG.md) |
 
 ## 4. โครงสร้างโค้ด (ย่อ)

@@ -167,6 +167,38 @@ export function noTrainDataKindOf(reason: string): { cause: 'outside-data' | 'ze
 }
 
 /**
+ * A model that HAS results (trained and up to date, or Complete) whose training
+ * scope holds no row of the LOADED data (2026-10-11): its charts are computed
+ * from the loaded data, so they cannot be drawn — but nothing about the model
+ * changed. The window says exactly that (one board, the model's own status
+ * words), never "Couldn't load" / "Training failed".
+ *   - `outside-data` — none of its train periods is inside the data;
+ *   - `zero-rows`    — the settled count of its training scope is zero;
+ *   - `engine`       — the count was not known yet and the engine answered
+ *                      "no rows" to the silent load (`noRowsTrainError`).
+ */
+export type NoModelDataCause = 'outside-data' | 'zero-rows' | 'engine';
+/** The board's title. */
+export const NO_MODEL_DATA_TITLE = 'No data for this model in the loaded file';
+/** After the status words in a dot's tooltip: "Complete · no data in the loaded file". */
+export const NO_MODEL_DATA_WORDS = 'no data in the loaded file';
+/** The board's one sentence: the cause, as the guard found it. */
+export function noModelDataCauseText(cause: NoModelDataCause, bounds: PeriodDataBounds | null | undefined, hasCondition = true): string {
+    if (cause === 'outside-data') return `None of its train periods is inside the data (${dataRangeText(bounds)}).`;
+    if (cause === 'engine') return 'No row inside its train periods passes the running condition with values for this model.';
+    return hasCondition ? 'No row passes the running condition in its train periods.' : 'Its train periods hold no row of the data.';
+}
+/** The footer's sentence, after the status pill: "Complete · no rows for it in the
+ *  loaded file — fix the running condition to see its charts". */
+export function noModelDataFooter(status: 'Complete' | 'Trained', mode: 'workspace' | 'custom'): string {
+    return `${status} · no rows for it in the loaded file — fix ${mode === 'custom' ? 'its own running condition in Model settings' : 'the running condition'} to see its charts`;
+}
+/** Why Mark complete (again) is disabled then: the export could only fail. */
+export function noModelDataMarkReason(mode: 'workspace' | 'custom'): string {
+    return `${NO_MODEL_DATA_TITLE} — fix ${mode === 'custom' ? 'its own running condition in Model settings' : 'the running condition (Running condition → Edit)'} first`;
+}
+
+/**
  * Why a model cannot train, as data. `reason` is the user-facing sentence
  * `getBuildBlockReason` returns; `kind` lets a caller tell the blockers apart
  * without reading the text, and an invalid train period also says WHICH one

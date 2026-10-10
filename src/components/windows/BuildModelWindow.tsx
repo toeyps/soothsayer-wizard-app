@@ -13,7 +13,7 @@ import { withFailureGroupState } from "../../utils/failureGroupState";
 import { modelSensorKey, groupModelsBySensor, sensorCategory, setSensorCategory, type SensorModelGroup } from "../../utils/modelGrouping";
 import { normalizeCategories, flagLegacyGate, migratePeriods } from "../../utils/workspaceMigrations";
 import { findSameSensorNameConflict, kindModelName, MODEL_KIND_LABEL, suggestDistinctModelName } from "../../utils/modelNames";
-import { CATEGORY_BLOCK_REASON, customBlockText, customSummaryText, getBuildBlock, getBuildBlockReason, isRunningConditionConfigured, isWorkspaceRunningConditionConfigured, effectiveRunningCondition, markCompleteBlockReason, NO_TRAIN_DATA_SHORT, NO_TRAIN_PERIOD_REASON_CUSTOM, NO_TRAIN_ROWS_FOOTER, noTrainRowsReason, runningConditionApplyBlock, seedCustomFromWorkspace, type BuildBlock, type GateOptions, type RunningConditionApplyBlock, type RunningConditionFg } from "../../utils/runningCondition";
+import { CATEGORY_BLOCK_REASON, customBlockText, customSummaryText, getBuildBlock, getBuildBlockReason, isRunningConditionConfigured, isWorkspaceRunningConditionConfigured, effectiveRunningCondition, markCompleteBlockReason, NO_MODEL_DATA_TITLE, NO_MODEL_DATA_WORDS, NO_TRAIN_DATA_SHORT, NO_TRAIN_PERIOD_REASON_CUSTOM, NO_TRAIN_ROWS_FOOTER, noModelDataCauseText, noModelDataFooter, noModelDataMarkReason, noTrainRowsReason, runningConditionApplyBlock, seedCustomFromWorkspace, type BuildBlock, type GateOptions, type NoModelDataCause, type RunningConditionApplyBlock, type RunningConditionFg } from "../../utils/runningCondition";
 import { modelsStillNeedingTraining, retrainNoticeParts, runningConditionImpact } from "../../utils/runningConditionImpact";
 import { usePeriodCounts } from "../../hooks/usePeriodCounts";
 import { countedNoTrainRows, countedTrainRunningDays, trainCountKey } from "../../utils/periodCounts";
@@ -238,6 +238,8 @@ const NO_ROWS_BADGE = NO_TRAIN_ROWS_FOOTER;
  *  workspace one is not set / not valid: the card's "Set running condition" is the only
  *  filled button then, but nothing is blocked for this model. */
 const OWN_RC_NOT_BLOCKED = 'own running condition, not blocked';
+/** A model with results whose training scope holds no row of the loaded data (`noDataOf`). */
+interface ModelNoData { cause: NoModelDataCause; mode: 'workspace' | 'custom'; hasCondition: boolean }
 /** "Load it again" while Mark complete is writing this model's files (it runs the engine too). */
 const FIT_RELOAD_SAVING_REASON = 'Wait for the save to finish';
 /** Mark complete while Rust is still answering for what was just typed (a moment). */
@@ -529,6 +531,13 @@ export default function BuildModelWindow() {
      *  finished run is represented by its entry landing in `trainResults`. */
     const [trainStatus, setTrainStatus] = useState<Record<string, 'loading'>>({});
     const [trainError, setTrainError] = useState<Record<string, string>>({});
+    /** Models whose SILENT load (opening a trained / Complete model, "Load it again")
+     *  the engine answered "no rows" for, as model id -> `noRowsLoadKey` (the train
+     *  fingerprint + dataset generation it was asked with). Nobody trained it and
+     *  nothing about the model changed: it is not a `trainError` — the window shows
+     *  the "No data for this model in the loaded file" board (`noDataOf`) and does
+     *  not ask again for the same scope and data. */
+    const [noRowsLoads, setNoRowsLoads] = useState<Record<string, string>>({});
     // ---- Two pages per model (health score phase 3b-1, 2026-10-04) ----
     /** Which page of the detail pane each model is on ("Model fit" is the
      *  default). Keyed by model id so switching sensors/kind tabs keeps each
@@ -956,6 +965,7 @@ export default function BuildModelWindow() {
                 setTrainResults({});
                 setTrainStatus({});
                 setTrainError({});
+                setNoRowsLoads({});
                 setPageByModel({});
                 setCompareOpen(false);
                 // Health score page state of the old workspace.
@@ -1433,8 +1443,10 @@ export default function BuildModelWindow() {
     };
     /** The data guard as part of what a model SHOWS about itself (dot, badge, board,
      *  footer sentence): only for a model that still has to train — never trained, or
-     *  out of date. A trained or Complete model keeps its own words and its charts;
-     *  that it cannot be trained AGAIN is said where Train is offered. */
+     *  out of date. A trained or Complete model keeps its own words; that it cannot be
+     *  trained AGAIN is said where Train is offered — and, since its charts are
+     *  computed from the loaded data, its pages show the "No data for this model in
+     *  the loaded file" board instead of them (`noDataOf`, further down). */
     const shownGuardBlockOf = (m: FailureModel): BuildBlock | null =>
         isModelDone(m) || isModelTrainedFresh(m) ? null : trainGuardBlockOf(m);
     /** The part of the shown gate that needs NO row count (the gate + "no train
@@ -1870,6 +1882,38 @@ export default function BuildModelWindow() {
      *  (`stale` when the dataset is no longer this window's — the run then
      *  stops), or `abandoned` when the window was re-pointed at another
      *  workspace meanwhile. */
+    /** What a "no rows" answer of the engine is about: this training scope (the train
+     *  fingerprint) on this dataset (`noRowsLoads`). */
+    const noRowsLoadKey = (fingerprint: string): string => `${fingerprint}|${generation ?? ''}`;
+    const forgetNoRowsLoad = (id: string) => setNoRowsLoads(prev => {
+        if (!(id in prev)) return prev;
+        const rest = { ...prev };
+        delete rest[id];
+        return rest;
+    });
+    /** A model that HAS results (trained and up to date, or Complete) and whose
+     *  training scope holds NO row of the loaded data — else null. Its charts are
+     *  computed from the loaded data, so they cannot be drawn; nothing about the model
+     *  changed. Known from the same source that blocks its Train (`trainGuardBlockOf`:
+     *  no train period inside the data — known at once — or a settled count of zero),
+     *  or, while that was not known yet, from the engine's own "no rows" answer to
+     *  the silent load (`noRowsLoads`). Display only — nothing is ever written for it:
+     *  the model keeps its own status words, ONE board says why there are no charts
+     *  and where to fix it, and the window does not ask the engine for it.
+     *  Not while it is being loaded (the answer is on its way), not for a run of this
+     *  session that failed for another reason, and not while the gate itself blocks
+     *  the model (those boards say what to fix first). */
+    const noDataOf = (m: FailureModel): ModelNoData | null => {
+        if (!m.lastTrainedAt || isModelStale(m)) return null;
+        if (trainStatus[m.id] === 'loading' || trainError[m.id]) return null;
+        if (buildBlockReason(m) !== null) return null;
+        const guard = trainGuardBlockOf(m);
+        if (guard !== null && guard.kind === 'no-rows') return { cause: guard.cause, mode: guard.mode, hasCondition: guard.hasCondition };
+        if (noRowsLoads[m.id] !== undefined && noRowsLoads[m.id] === noRowsLoadKey(computeTrainFingerprint(m, gateFg))) {
+            return { cause: 'engine', mode: effectiveModelFor(m).runningConditionMode === 'custom' ? 'custom' : 'workspace', hasCondition: true };
+        }
+        return null;
+    };
     const executeTrain = async (merged: FailureModel, fingerprint: string, opts: { persistMeta: boolean }): Promise<TrainOutcome> => {
         const id = merged.id;
         // 🆕 QA fix (2026-09-29): a Train can still be running when this
@@ -1952,6 +1996,7 @@ export default function BuildModelWindow() {
                 delete rest[id];
                 return rest;
             });
+            forgetNoRowsLoad(id);
             // The Relationship fit is now in Rust's cache under this key: make the
             // health preview (re)fetch even if its request is byte-identical. Only
             // for the model on screen (the one preview there is): a training run
@@ -2000,8 +2045,18 @@ export default function BuildModelWindow() {
             // a Custom model that is not the open one — or a sensor with no value in the
             // train periods): the named reason and where to fix it, not the raw text.
             const raw = e instanceof Error ? e.message : String(e);
-            const message = parsed.code === 'SIDECAR_OUTDATED' ? parsed.message
-                : noRowsTrainError(raw, merged.runningConditionMode === 'custom') ?? raw;
+            const noRows = parsed.code === 'SIDECAR_OUTDATED' ? null : noRowsTrainError(raw, merged.runningConditionMode === 'custom');
+            const message = parsed.code === 'SIDECAR_OUTDATED' ? parsed.message : noRows ?? raw;
+            if (noRows !== null && !opts.persistMeta) {
+                // A SILENT load (opening a trained / Complete model, "Load it again") that
+                // found no row: nobody trained it and nothing about the model changed, so
+                // this is not a failed train. Remembered for this scope and dataset — the
+                // window shows the "No data for this model in the loaded file" board
+                // (`noDataOf`) and does not ask again.
+                setNoRowsLoads(prev => ({ ...prev, [id]: noRowsLoadKey(fingerprint) }));
+                return { ok: false, error: message };
+            }
+            forgetNoRowsLoad(id);
             setTrainError(prev => ({ ...prev, [id]: message }));
             // The train commands never answer STALE_SESSION themselves: the real
             // "this data is not ours any more" signal is the generation check above
@@ -2441,22 +2496,9 @@ export default function BuildModelWindow() {
     // never persists anything (`persistMeta: false` — the fingerprint didn't
     // change, and `status` is never touched), and never fires while a run for
     // this model is already in flight.
-    useEffect(() => {
-        if (!activeModel) return;
-        if (buildBlockReason(activeModel) !== null) return;
-        const fp = computeTrainFingerprint(activeModel, gateFg);
-        if (!activeModel.lastTrainedAt || activeModel.trainedFingerprint !== fp) return;
-        const cached = trainResults[activeModel.id];
-        if (cached && cached.fingerprint === fp) return;
-        if (trainStatus[activeModel.id] === 'loading') return;
-        // A training run owns the sidecar: two calls must never run at once. The
-        // effect runs again when the run ends (`queue.isRunning` is a dependency).
-        if (queue.isRunning) return;
-        const p = executeTrain(activeModel, fp, { persistMeta: false });
-        autoRecomputeRef.current = p;
-        void p.finally(() => { if (autoRecomputeRef.current === p) autoRecomputeRef.current = null; });
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [activeModel?.id, activeModel?.trainedFingerprint, activeModel?.lastTrainedAt, activeModel?.status, activeModel?.category, runningConditionFilters, runningConditionCombine, runningConditionTimePeriods, runningConditionNoneConfirmed, queue.isRunning, activeModel ? trainResults[activeModel.id]?.fingerprint : undefined]);
+    // (The effect itself sits further down, right after the active Custom model's
+    // row count: it must not ask the engine for a model that is known to have no
+    // row in the loaded data — `noDataOf`.)
 
     // ---- Health preview + Sub-models for the ACTIVE model (health score 3b-1) ----
     // ONE `useHealthPreview` call feeds both pages of the detail pane: the bounded
@@ -2524,6 +2566,35 @@ export default function BuildModelWindow() {
         && countedNoTrainRows(customCounts)
         ? customCountKeyOf(activeCustomDraft) : null;
 
+    /** The model on screen has results but no row in the loaded data (`noDataOf`):
+     *  nothing is asked of the engine for it (no silent load, no health preview) and
+     *  nothing is written — both pages show the one "No data…" board. */
+    const activeNoData = activeModel ? noDataOf(activeModel) : null;
+    const activeGuardHolds = !!activeModel && trainGuardBlockOf(activeModel) !== null;
+    // The auto-recompute on reopen (see the block comment above).
+    useEffect(() => {
+        if (!activeModel) return;
+        if (buildBlockReason(activeModel) !== null) return;
+        const fp = computeTrainFingerprint(activeModel, gateFg);
+        if (!activeModel.lastTrainedAt || activeModel.trainedFingerprint !== fp) return;
+        const cached = trainResults[activeModel.id];
+        if (cached && cached.fingerprint === fp) return;
+        if (trainStatus[activeModel.id] === 'loading') return;
+        // No row of the loaded data is in its training scope (no train period inside
+        // the data, a settled count of zero, or the engine already said so for this
+        // scope): a load could only fail — the board says why instead. (A count that
+        // is not settled yet is not known here: the load is attempted, and the
+        // engine's "no rows" answer leads to the same board.)
+        if (activeGuardHolds || noRowsLoads[activeModel.id] === noRowsLoadKey(fp)) return;
+        // A training run owns the sidecar: two calls must never run at once. The
+        // effect runs again when the run ends (`queue.isRunning` is a dependency).
+        if (queue.isRunning) return;
+        const p = executeTrain(activeModel, fp, { persistMeta: false });
+        autoRecomputeRef.current = p;
+        void p.finally(() => { if (autoRecomputeRef.current === p) autoRecomputeRef.current = null; });
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [activeModel?.id, activeModel?.trainedFingerprint, activeModel?.lastTrainedAt, activeModel?.status, activeModel?.category, runningConditionFilters, runningConditionCombine, runningConditionTimePeriods, runningConditionNoneConfirmed, queue.isRunning, activeModel ? trainResults[activeModel.id]?.fingerprint : undefined, activeGuardHolds, activeNoData !== null]);
+
     const activeFingerprint = activeEffective ? computeTrainFingerprint(activeEffective, gateFg) : null;
     const activeStale = activeEffective ? isModelStaleFor(activeEffective, gateFg, specialRecipes) : false;
     const activeTrainEntry = activeModel ? trainResults[activeModel.id] : undefined;
@@ -2539,6 +2610,8 @@ export default function BuildModelWindow() {
     const healthReady = !!activeModel && !!activeEffective?.lastTrainedAt && !activeStale
         && buildBlockReason(activeModel) === null
         && !trainError[activeModel.id]
+        // No row of the loaded data in its training scope: there is nothing to preview.
+        && activeNoData === null
         && trainStatus[activeModel.id] !== 'loading'
         && (activeModel.kind !== 'relationship' || activeTrainEntry?.fingerprint === activeFingerprint);
     const healthPreview = useHealthPreview({
@@ -2624,6 +2697,9 @@ export default function BuildModelWindow() {
     useEffect(() => {
         if (loading || !activeModel || activeModel.kind !== 'individual') return;
         if (pageByModel[activeModel.id] !== 'health' || !activeModel.lastTrainedAt) return;
+        // No data for it in the loaded file: its Health score page is the "No data…"
+        // board — nothing is written for a model in that state.
+        if (activeNoData !== null) return;
         if (setPointsSeededRef.current.has(activeModel.id) || spDraftsRef.current[activeModel.id]) return;
         const ensured = ensureHealthSetPoints(activeModel, sensorMetadata ?? []);
         if (ensured === activeModel || !ensured.healthSetPoints) return;
@@ -2631,7 +2707,7 @@ export default function BuildModelWindow() {
         writeSpDrafts({ ...spDraftsRef.current, [activeModel.id]: ensured.healthSetPoints });
         void commitSetPointDrafts();
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [loading, activeModel, pageByModel, sensorMetadata]);
+    }, [loading, activeModel, pageByModel, sensorMetadata, activeNoData !== null]);
 
     // Leaving the page or the model (page switch, another sensor or kind tab): persist
     // what was typed. No draft = nothing happens.
@@ -3146,7 +3222,8 @@ export default function BuildModelWindow() {
                                 key={m.id}
                                 data-testid={`sensor-kind-badge-${m.id}`}
                                 className={`f4-kb model-kind-icon--${m.kind}`}
-                                title={`${KIND_TAB_LABEL[m.kind]} · ${failedRun ? failedWordsOf(m) : fixSetPoint ? 'Fix set point' : DOT_TITLE[st]}`}
+                                // A model with results but no row in the loaded data keeps its own dot and words.
+                                title={`${KIND_TAB_LABEL[m.kind]} · ${failedRun ? failedWordsOf(m) : fixSetPoint ? 'Fix set point' : DOT_TITLE[st]}${noDataOf(m) ? ` · ${NO_MODEL_DATA_WORDS}` : ''}`}
                             >
                                 {KIND_ABBREV[m.kind]}
                                 {dot && <span data-testid={`sensor-kind-badge-dot-${m.id}`} data-state={st} className={`f4-kb-dot f4-kb-dot--${dot}`} aria-hidden="true" />}
@@ -3720,6 +3797,14 @@ export default function BuildModelWindow() {
         const unsaved = m.id in drafts ? ' · unsaved changes' : '';
         if (trainError[m.id]) return { dot: 'bad', words: `${failedWordsOf(m)}${unsaved}` };
         const badge = gateBadge(m);
+        // Results, but no row of the loaded data: nothing about the model changed — its
+        // own dot and words ("Complete", "Trained", its set-point flag), plus why there
+        // are no charts.
+        if (noDataOf(m)) {
+            const flag = setPointFlagOf(m, st);
+            const own = flag === 'fix' ? 'Fix set point' : flag === 'needed' ? 'Set points needed' : TAB_WORDS[st];
+            return { dot: flag === 'fix' ? 'bad' : DOT_CLASS[st], words: `${own} · ${NO_MODEL_DATA_WORDS}${unsaved}` };
+        }
         // A trained model whose fit is gone needs training again (amber, like "Re-train needed").
         if (badge === null && fitGoneOf(m) && (st === 'trained' || st === 'complete')) {
             return { dot: DOT_CLASS[st], words: `${st === 'complete' ? 'Complete · ' : ''}${FIT_GONE_WORDS}${unsaved}` };
@@ -3788,14 +3873,56 @@ export default function BuildModelWindow() {
      *  menu (a run is active, or the data is not this window's any more) its ▾ is
      *  disabled, so a link there would do nothing: the phrase is plain text then and
      *  says when — or why not. */
-    const trainMenuPhrase = (testId: string): ReactNode => {
+    const trainMenuPhrase = (testId: string, m?: FailureModel): ReactNode => {
         const why = queue.stale ? 'not available: the data in this window is out of date'
             : queue.isRunning ? 'when the training run finishes'
+            // The menu row that trains THIS model is disabled (and with nothing to
+            // train on the sensor's ▾ itself is): no link to it either.
+            : m && trainBlockReason(m) !== null ? "not available: it can't be trained yet"
             : null;
         return why === null
             ? <>the {trainMenuLink(testId)} menu</>
             : <>the Train sensor ▾ menu <span data-testid={`${testId}-blocked`}>({why})</span></>;
     };
+    /** "Train sensor ↑" in a sentence about ONE model: the link — or, while Train
+     *  sensor would not train it (the data is not this window's any more, a run is
+     *  active, the model cannot train), plain text that says so. Never a link to a
+     *  control that does nothing. */
+    const trainSensorPhrase = (testId: string, m: FailureModel): ReactNode => {
+        const cant = staleCantTrainOf(m);
+        if (!cant) return trainSensorLink(testId);
+        const why = cant.kind === 'stale' ? 'not available: the data in this window is out of date'
+            : cant.kind === 'run' ? 'when the training run finishes'
+            : "it can't train yet";
+        return <>Train sensor ↑ <span data-testid={`${testId}-blocked`} title={cant.text}>({why})</span></>;
+    };
+    /** The ONE board of a model that has results but no row in the loaded data
+     *  (`noDataOf`), on BOTH pages: what is true (nothing about the model changed —
+     *  its charts are computed from the loaded data, and there is none for it), the
+     *  cause as the data guard found it, and ONE link to where it is fixed — the
+     *  Running-condition settings for a model on the workspace condition, its own
+     *  Model settings for a Custom one. Never "Load it again" / "Train sensor":
+     *  neither can work. */
+    const noDataBoard = (m: FailureModel, nd: ModelNoData) => board('results-no-data', 'plain', NO_MODEL_DATA_TITLE,
+        <>
+            <span data-testid="no-data-cause">{noModelDataCauseText(nd.cause, datasetBounds, nd.hasCondition)}</span> Fix it in{' '}
+            {nd.mode === 'custom' ? (
+                <button
+                    type="button"
+                    className="tq-inline-link"
+                    data-testid="board-open-settings"
+                    onClick={() => { setPage(m, 'model'); setSettingsOpenOverride(prev => ({ ...prev, [m.id]: true })); }}
+                >
+                    Model settings
+                </button>
+            ) : (
+                <button type="button" className="tq-inline-link" data-testid="board-open-rc" onClick={() => setRcFilterOpen(true)}>
+                    Running condition ↑
+                </button>
+            )}
+            {' '}to see its charts.
+        </>,
+        `${isModelDone(m) ? 'Complete' : 'Trained'} · nothing about the model changed`);
     /** The ONE board shape of every chart-less state (SPEC workbench-redesign §1): a
      *  title, one sentence and an optional mono line. Its actions are text links to
      *  the one place for them ("Train sensor ↑", "Model settings", "Running
@@ -3837,12 +3964,15 @@ export default function BuildModelWindow() {
             // record has nothing to "load again"): the board turns red and its mono line
             // carries the reason — the menu row is still the way out.
             const failed = legacyTrainFailedOf(m) ? trainError[m.id] : undefined;
-            return reason !== null
+            // (Its menu row is disabled by the data guards too — nothing to train on —
+            // so those are a reason here as well, never a link to that row.)
+            const cantTrain = reason ?? trainBlockReason(m);
+            return cantTrain !== null
                 ? board('results-placeholder', 'plain', 'Marked complete',
-                    "It has no charts to show, and it can't be trained yet.", ownGateText(m, reason))
+                    "It has no charts to show, and it can't be trained yet.", ownGateText(m, cantTrain))
                 : board('results-placeholder', failed ? 'bad' : 'plain', 'Marked complete',
                     // The row's own name: a single-model sensor has no "… only" rows.
-                    <>{failed ? 'Training it did not work, so it still has no charts. Fix the problem, then train it again from ' : 'To see its charts, train it from '}{trainMenuPhrase('board-train-menu')} (“{orderedDetail.length === 1 ? `Train the ${kindModelName(m.kind)}` : `${KIND_TAB_LABEL[m.kind]} only`}”). It then needs Mark complete again.</>,
+                    <>{failed ? 'Training it did not work, so it still has no charts. Fix the problem, then train it again from ' : 'To see its charts, train it from '}{trainMenuPhrase('board-train-menu', m)} (“{orderedDetail.length === 1 ? `Train the ${kindModelName(m.kind)}` : `${KIND_TAB_LABEL[m.kind]} only`}”). It then needs Mark complete again.</>,
                     failed ? <span data-testid="board-train-error">{`Training failed: ${failed}`}</span> : undefined);
         }
         if (reason !== null) {
@@ -3899,6 +4029,10 @@ export default function BuildModelWindow() {
                     'Its settings are locked until it finishes. The charts appear here when it is done.')
                 : board('results-loading', 'run', `Loading the ${kindModelName(m.kind)}…`, 'The charts appear here when it is ready.');
         }
+        // Results, but no row of the loaded data for it: say that — before any
+        // "fit gone" / "couldn't load" board, whose links could not work here.
+        const noData = noDataOf(m);
+        if (noData) return noDataBoard(m, noData);
         const err = trainError[m.id];
         // The fit is gone: ONE board, whatever came after it — a load that failed is its
         // reason line, never the "Training failed" board (whose "Train sensor ↑" cannot
@@ -3931,14 +4065,18 @@ export default function BuildModelWindow() {
                         error={err}
                         onReload={onReloadFit}
                         reloadDisabledReason={fitReloadBlock(m) ?? undefined}
-                        trainMenu={<>, or train it from {trainMenuPhrase('board-train-menu')} (it then needs Mark complete again)</>}
+                        // Only while that row can really train it: a model that cannot train
+                        // (e.g. nothing to train on) gets no pointer to a disabled menu.
+                        trainMenu={trainBlockReason(m) === null
+                            ? <>, or train it from {trainMenuPhrase('board-train-menu', m)} (it then needs Mark complete again)</>
+                            : undefined}
                     />
                 </div>
             );
         }
         if (err) {
             return board('results-error', 'bad', 'Training failed',
-                <>Fix the problem, then train again with {trainSensorLink('board-train-sensor')}. The model keeps its last state.</>, err);
+                <>Fix the problem, then train again with {trainSensorPhrase('board-train-sensor', m)}. The model keeps its last state.</>, err);
         }
         if (!m.lastTrainedAt) {
             return board('results-placeholder', 'plain', 'Not trained yet',
@@ -4004,6 +4142,9 @@ export default function BuildModelWindow() {
         if (draftBlock !== null) return awayFromFormText(m, draftBlock);
         const gate = gateReasonOf(m);
         if (gate !== null) return gate;
+        // No row of the loaded data is in its training scope: the export could only fail.
+        const noData = noDataOf(m);
+        if (noData) return noModelDataMarkReason(noData.mode);
         // At least one valid scoring period (SPEC rule 2) — Train does not need one.
         const noTest = markCompleteBlockReason(effectiveModelFor(m), gateFg);
         if (noTest !== null) return noTest;
@@ -4073,10 +4214,13 @@ export default function BuildModelWindow() {
         if (page === 'model') {
             if (m.id in drafts) return 'save';
             if (sensorNeedsTrain) return 'train';
-            if (isModelDone(m)) return null;
+            // (No data for it in the loaded file: the Health score page is the same board — no next step.)
+            if (isModelDone(m) || noDataOf(m)) return null;
             return healthPageBlock(m) === null && !queue.isLocked(m.id) ? 'next' : null;
         }
         if (cands.find(c => c.id === m.id)?.plan.kind === 'ready') return 'train';
+        // ...and Mark complete could only fail.
+        if (noDataOf(m)) return sensorNeedsTrain ? 'train' : null;
         if (!isModelDone(m) || filesOutOfDateFor(m)) return 'mark';
         return sensorNeedsTrain ? 'train' : null;
     };
@@ -4110,8 +4254,15 @@ export default function BuildModelWindow() {
         // The fit Rust held is gone: trained on paper (or Complete — `trainedFresh` is
         // only said of a model that is not), but the fit must be loaded or trained again.
         const fitGone = (trainedFresh || done) && fitGoneOf(m);
+        // Results, but no row of the loaded data for it: nothing about the model changed,
+        // so the pill keeps its own word ("Complete" / "Trained") and the sentence says
+        // what the charts need.
+        const noData = noDataOf(m);
+        const noDataLine: ReactNode = noData
+            ? <span data-testid="footer-no-data">{noModelDataFooter(done ? 'Complete' : 'Trained', noData.mode)}</span>
+            : null;
         const pillState: 'complete' | 'trained' | 'incomplete' =
-            done ? 'complete' : (trainedFresh && !hasSessionError && reason === null && !fitGone) ? 'trained' : 'incomplete';
+            done ? 'complete' : (trainedFresh && !hasSessionError && reason === null && (!fitGone || noData !== null)) ? 'trained' : 'incomplete';
         const pillLabel = pillState === 'complete' ? 'Complete' : pillState === 'trained' ? 'Trained' : 'Incomplete';
         const healthBlock = healthPageBlock(m);
         const markBlock = page === 'health' ? markCompleteBlock(m) : null;
@@ -4189,6 +4340,9 @@ export default function BuildModelWindow() {
         if (page === 'health') {
             // Saving is said HERE only (no card on the page unless it is slow).
             if (saving) line = <><Loader2 size={11} className="pm-spin" aria-hidden="true" /> Saving the model files…</>;
+            // No data for it in the loaded file: the same sentence on both pages (it is
+            // also why Mark complete / Mark complete again is disabled — the button's tooltip).
+            else if (noDataLine) { line = noDataLine; tone = 'warn'; }
             // Why Mark complete (again) is disabled comes before everything else: a failed
             // attempt's "Not saved" must never hide the reason that blocks the next one.
             else if (!done && markBlock !== null) { line = blockWhy ?? markBlock; tone = 'warn'; lineId = 'mark-block-reason'; }
@@ -4217,6 +4371,7 @@ export default function BuildModelWindow() {
         } else if (lineReason) { line = customSaveBlockText(m, lineReason) ?? ownGateText(m, lineReason); tone = 'warn'; lineId = 'build-block-reason'; }
         // An unsaved draft is said here, once (the tab carries no "edited" pill).
         else if (hasDraft) line = `Unsaved changes to the ${kindModelName(m.kind)}`;
+        else if (noDataLine) { line = noDataLine; tone = 'warn'; }
         // The fit is gone (for a Complete model too, and before "Training failed": a load
         // that failed is the board's reason line).
         else if (fitGone) { line = fitGoneLine; tone = 'warn'; }
@@ -4224,9 +4379,9 @@ export default function BuildModelWindow() {
         else if (loadFailed) { line = loadFailedLine; tone = 'bad'; }
         // A Complete model with no train record whose ▾ train failed: nothing to load
         // again — the menu row that trains it is the way out (the board has the reason).
-        else if (legacyTrainFailedOf(m)) { line = <>{TRAIN_FAILED_WORDS} · train it again from {trainMenuPhrase('footer-train-menu')}</>; tone = 'bad'; }
+        else if (legacyTrainFailedOf(m)) { line = <>{TRAIN_FAILED_WORDS} · train it again from {trainMenuPhrase('footer-train-menu', m)}</>; tone = 'bad'; }
         else if (done) line = trainedLine ?? identityLine;
-        else if (hasSessionError) { line = <>Training failed · fix the problem, then {goTrainSensor}</>; tone = 'bad'; }
+        else if (hasSessionError) { line = <>Training failed · fix the problem, then {trainSensorPhrase('footer-train-sensor', m)}</>; tone = 'bad'; }
         // Trained, but its charts could not be loaded (the board above says so): there
         // is nothing to "check" yet.
         else if (trainedFresh && healthPreview.error && !healthPreview.data && !healthPreview.loading) {
@@ -4600,7 +4755,9 @@ export default function BuildModelWindow() {
                             />
                         )}
                         {page === 'health' && renderRunSetPointsBanner(activeModel)}
-                        {page === 'model' ? renderModelFitBody(activeModel) : (
+                        {/* No data for it in the loaded file: the Health score page is the same
+                            ONE board as the Model fit page (the score is computed from that data too). */}
+                        {page === 'model' ? renderModelFitBody(activeModel) : activeNoData ? noDataBoard(activeModel, activeNoData) : (
                             <HealthScorePage
                                 key={activeModel.id}
                                 {...pagePropsFor(activeModel)}
