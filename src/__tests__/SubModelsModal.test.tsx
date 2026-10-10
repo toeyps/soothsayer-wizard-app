@@ -117,8 +117,8 @@ describe('SubModelsModal', () => {
         show(fits({ loading: true, progress: { current: 1, total: 3 } }));
         expect(screen.getByText(/Fitting Relation model 2 of 3/)).toBeTruthy();
         cleanup();
-        show(fits({ error: 'sidecar exploded' }));
-        expect(screen.getByText('sidecar exploded')).toBeTruthy();
+        show(fits({ error: 'The Relation model engine could not fit this model. The details are in the error log.' }));
+        expect(screen.getByText('The Relation model engine could not fit this model. The details are in the error log.')).toBeTruthy();
         cleanup();
         const f = fits();
         show(f);
@@ -184,10 +184,10 @@ describe('useSubModelFits', () => {
 
     it('a failing fit becomes `error` (no throw) and leaves no half-filled result', async () => {
         const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-        mockInvoke.mockImplementation((_c: string, args: any) => args.predictors.length === 2 ? Promise.resolve({ ...result(3), error: 'GAM did not converge' }) : Promise.resolve(result(3)));
+        mockInvoke.mockImplementation((_c: string, args: any) => args.predictors.length === 2 ? Promise.resolve({ ...result(3), error: 'The Relation model engine could not fit this model. The details are in the error log.' }) : Promise.resolve(result(3)));
         const { result: hook } = renderHook(() => useSubModelFits(base));
         await act(async () => { await hook.current.run(); });
-        expect(hook.current.error).toBe('GAM did not converge');
+        expect(hook.current.error).toBe('The Relation model engine could not fit this model. The details are in the error log.');
         expect(hook.current.subModels).toBeNull();
         expect(hook.current.loading).toBe(false);
         errSpy.mockRestore();

@@ -273,7 +273,7 @@ describe('SensorSelection', () => {
             render(<SensorSelection {...makeProps({ fgModels: [modelTag1InGroupA, relModel] })} />);
             expandPump();
             expect(screen.getByTitle('Remove Individual from Group A')).toBeTruthy();
-            expect(screen.getByTitle('Remove Relationship from Group A')).toBeTruthy();
+            expect(screen.getByTitle('Remove Relation model from Group A')).toBeTruthy();
         });
 
         it('each chip carries a colored kind badge (not just a dim letter), reusing the same .model-kind-icon class Build Model\'s own rows use (2026-08-31: reported by the user as hard to tell apart)', () => {
@@ -315,14 +315,14 @@ describe('SensorSelection', () => {
             expandPump();
             expect(screen.getByTitle('Remove Individual from Group A')).toBeTruthy();
             expect(screen.getByTitle('Remove Individual from Group B')).toBeTruthy();
-            expect(screen.getByTitle('Remove Relationship from Group B')).toBeTruthy();
+            expect(screen.getByTitle('Remove Relation model from Group B')).toBeTruthy();
             // …but NOT a relationship membership in Group A, which no model has.
             // The chips show only memberships that exist; the sheet's empty
             // Relationship cell for Group A is the "not a member" side of it.
-            expect(screen.queryByTitle('Remove Relationship from Group A')).toBeNull();
+            expect(screen.queryByTitle('Remove Relation model from Group A')).toBeNull();
             fireEvent.click(screen.getAllByTitle('Add to failure group')[0]);
-            expect(screen.getByRole('button', { name: 'Relationship · Group A' }).getAttribute('aria-pressed')).toBe('false');
-            expect(screen.getByRole('button', { name: 'Relationship · Group B' }).getAttribute('aria-pressed')).toBe('true');
+            expect(screen.getByRole('button', { name: 'Relation model · Group A' }).getAttribute('aria-pressed')).toBe('false');
+            expect(screen.getByRole('button', { name: 'Relation model · Group B' }).getAttribute('aria-pressed')).toBe('true');
         });
     });
 

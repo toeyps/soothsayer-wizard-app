@@ -484,13 +484,13 @@ describe('TrainAllModal', () => {
         const p = base();
         const run = makeRun([
             { id: 'i1', kind: 'individual', state: 'trained' },
-            { id: 'i2', kind: 'individual', state: 'failed', error: 'sidecar exploded' },
+            { id: 'i2', kind: 'individual', state: 'failed', error: 'stats exploded' },
             { id: 'c3', kind: 'clustering', state: 'notStarted' },
         ], { phase: 'stopped' });
         withMeta(<TrainAllModal view="run" run={run} summary={summarizeTrainRun(run)} {...p} />);
         expect(screen.getByTestId('train-all-modal').getAttribute('data-view')).toBe('done');
         expect(screen.getByTestId('train-row-status-i1').textContent).toBe('✓ Trained · set points needed');
-        expect(screen.getByTestId('train-row-i2').textContent).toContain('sidecar exploded');
+        expect(screen.getByTestId('train-row-i2').textContent).toContain('stats exploded');
         fireEvent.click(screen.getByTestId('train-open-i1'));
         expect(p.onOpenModel).toHaveBeenCalledWith('i1');
         fireEvent.click(screen.getByTestId('train-retry-i2'));
@@ -650,11 +650,14 @@ describe('ModelFitPage memo comparator (charts do not re-render on queue progres
     });
 });
 
-describe('shortTrainError (run details never show a raw traceback)', () => {
+describe('shortTrainError (run details show ONE line, never a raw multi-line dump)', () => {
     const NL = String.fromCharCode(10);
     it('first non-empty line, the app wording for a known code, capped at 200 characters', () => {
-        expect(shortTrainError(['Traceback (most recent call last):', '  File "backend.py", line 3', 'ValueError: x'].join(NL))).toBe('Traceback (most recent call last):');
-        expect(shortTrainError(['', '  sidecar exploded  ', 'more'].join(NL))).toBe('sidecar exploded');
+        // What Rust sends for a failed Relation model fit (the engine's own text goes to the error log, never here).
+        const ENGINE = 'The Relation model engine could not fit this model. The details are in the error log.';
+        expect(shortTrainError(ENGINE)).toBe(ENGINE);
+        expect(shortTrainError([ENGINE, '  second line', 'third line'].join(NL))).toBe(ENGINE);
+        expect(shortTrainError(['', '  stats exploded  ', 'more'].join(NL))).toBe('stats exploded');
         expect(shortTrainError('SIDECAR_OUTDATED: raw')).toContain('reinstall or update the app');
         const long = shortTrainError('x'.repeat(500));
         expect(long).toHaveLength(200);
@@ -662,7 +665,7 @@ describe('shortTrainError (run details never show a raw traceback)', () => {
     });
 
     it('the details row shows the short form, the full text in its title', () => {
-        const full = ['boom', 'Traceback line'].join(NL);
+        const full = ['boom', 'second line'].join(NL);
         const run = makeRun([{ id: 'i1', kind: 'individual', state: 'failed', error: full }], { phase: 'done' });
         withMeta(<TrainAllModal view="run" run={run} summary={summarizeTrainRun(run)} rows={ROWS} groups={GROUPS} includeUpToDate={false}
             onIncludeUpToDate={() => {}} onClose={() => {}} onStart={() => {}} onCancelRun={() => {}} onFix={() => {}}

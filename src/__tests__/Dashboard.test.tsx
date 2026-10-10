@@ -1594,7 +1594,19 @@ describe('Dashboard', () => {
             renderDashboard({ initialState: initial });
             remove('TAG3', 1, 'relationship');
             await flush();
-            expect(toast()!.textContent).toContain('Relationship model of TAG3 deleted');
+            // "Relation model of …" — the kind name already ends in "model" (never
+            // "Relation model model of …", never the old "Relationship model of …").
+            expect(toast()!.textContent).toContain('Relation model of TAG3 deleted');
+            expect(toast()!.textContent).not.toMatch(/Relationship|model model/);
+        });
+
+        it('a Clustering model says "Clustering model of <sensor> deleted"', async () => {
+            const initial = stateFor([fullModel({ id: 'clu', kind: 'clustering', targetSensor: '', xSensor: 'TAG3' })]);
+            statefulDisk(initial);
+            renderDashboard({ initialState: initial });
+            remove('TAG3', 1, 'clustering');
+            await flush();
+            expect(toast()!.textContent).toContain('Clustering model of TAG3 deleted');
         });
 
         it('also fires when the last membership removed is "Not in Group" (0)', async () => {

@@ -5,6 +5,7 @@ import { sensorPlainLabel, useSensorLookup } from '../../sensor/sensorInfo';
 import { useModalFocus } from '../useModalFocus';
 import type { ModelKind } from '../../../types';
 import { parseHealthError } from '../../../utils/completeModel';
+import { MODEL_KIND_LABEL } from '../../../utils/modelNames';
 import type {
     TrainFixTarget,
     TrainPlan,
@@ -34,11 +35,7 @@ import {
 /** Kind names as the Workbench tabs and the Train menu show them — "Relation
  *  model", never "Relationship" and never the algorithm's name. Used by the run
  *  strip, the Train-all rows and the close-during-run dialog. */
-export const TRAIN_KIND_LABEL: Record<ModelKind, string> = {
-    individual: 'Individual',
-    relationship: 'Relation model',
-    clustering: 'Clustering',
-};
+export const TRAIN_KIND_LABEL: Record<ModelKind, string> = MODEL_KIND_LABEL;
 const KIND_LETTER: Record<ModelKind, string> = { individual: 'I', relationship: 'R', clustering: 'C' };
 
 /** One model as the train parts show it. */

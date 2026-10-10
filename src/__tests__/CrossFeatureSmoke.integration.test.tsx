@@ -408,7 +408,7 @@ async function setRunningCondition() {
 // ═════════════════════════════════════════════════════════════════════════
 
 type Kind = 'individual' | 'relationship' | 'clustering';
-const KIND_LABEL: Record<Kind, 'Individual' | 'Relationship' | 'Clustering'> = { individual: 'Individual', relationship: 'Relationship', clustering: 'Clustering' };
+const KIND_LABEL: Record<Kind, 'Individual' | 'Relation model' | 'Clustering'> = { individual: 'Individual', relationship: 'Relation model', clustering: 'Clustering' };
 
 interface KindPlan {
     /** The special sensor's formula. */
@@ -560,7 +560,9 @@ describe.each(['individual', 'relationship', 'clustering'] as Kind[])('cross-fea
         await inSheet(plan.sheetTag, async sheet => {
             await clickCell(sheet, `${label} · FG-A`);
             expect(disk(A).failureGroupState.models.some((m: any) => m.id === mid)).toBe(false);
-            const toast = screen.getAllByTestId('fg-undo-toast').find(t => t.textContent?.includes(`${label} model`))!;
+            // the toast names the kind as a noun: 'Individual model of …', 'Relation model of …' (never 'Relation model model')
+            const kindNoun = kind === 'relationship' ? label : `${label} model`;
+            const toast = screen.getAllByTestId('fg-undo-toast').find(t => t.textContent?.includes(`${kindNoun} of `))!;
             await act(async () => { fireEvent.click(within(toast).getByText('Undo')); });
             await settle(400);
         });
@@ -775,7 +777,7 @@ async function relationshipReadyToComplete(): Promise<{ A: string; mid: string }
         fireEvent.change(sheet.getByLabelText('New failure group name'), { target: { value: 'FG-A' } });
         await act(async () => { fireEvent.click(sheet.getByText('Create')); });
         await settle(400);
-        await clickCell(sheet, 'Relationship · FG-A');
+        await clickCell(sheet, 'Relation model · FG-A');
         await clickCell(sheet, 'Individual · FG-A');
     });
     const mid = disk(A).failureGroupState.models[0].id as string;

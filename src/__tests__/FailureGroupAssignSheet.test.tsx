@@ -118,7 +118,7 @@ describe('FailureGroupAssignSheet', () => {
         it('has a column per kind and a row per group, with Not in Group present', () => {
             renderSheet();
             for (const g of ['Group A', 'Group B', 'Group C', 'Not in Group']) {
-                for (const k of ['Individual', 'Relationship', 'Clustering']) expect(cell(k, g)).toBeTruthy();
+                for (const k of ['Individual', 'Relation model', 'Clustering']) expect(cell(k, g)).toBeTruthy();
             }
         });
 
@@ -136,7 +136,7 @@ describe('FailureGroupAssignSheet', () => {
         it('each kind column carries its own colour class (hover colour for an empty cell, fill for a selected one)', () => {
             renderSheet();
             expect(cell('Individual', 'Group B').classList.contains('fg-sheet-cell--individual')).toBe(true);
-            expect(cell('Relationship', 'Group B').classList.contains('fg-sheet-cell--relationship')).toBe(true);
+            expect(cell('Relation model', 'Group B').classList.contains('fg-sheet-cell--relationship')).toBe(true);
             expect(cell('Clustering', 'Group B').classList.contains('fg-sheet-cell--clustering')).toBe(true);
             const css: string = readFileSync('src/App.css', 'utf-8');
             expect(css).toMatch(/\.fg-sheet-cell--individual\s*\{\s*--cc:\s*var\(--ki\)/);
@@ -151,6 +151,26 @@ describe('FailureGroupAssignSheet', () => {
             expect(header('individual')).toBe('1 group');
             expect(header('relationship')).toBe('2 groups');
             expect(header('clustering')).toBe('none');
+        });
+
+        // User decision 2026-10-10: the kind is "Relation model" in the whole app.
+        it('names the kinds Individual / Relation model / Clustering — header, cell names and tooltips; the letter badges stay I / R / C', () => {
+            // r1 only in Group B here, so removing it is the "deletes the model" case.
+            renderSheet({ fgModels: [model({ id: 'r1', kind: 'relationship', groupNos: [2] })] });
+            const headers = [...document.querySelectorAll('.fg-sheet-ch')] as HTMLElement[];
+            // header text = letter badge + kind name + the count line
+            expect(headers.map(h => h.querySelector('.kind-badge')!.textContent)).toEqual(['I', 'R', 'C']);
+            expect(headers.map(h => h.textContent)).toEqual(['IIndividualnone', 'RRelation model1 group', 'CClusteringnone']);
+            expect(cell('Relation model', 'Group A').title).toBe('Add Relation model to Group A');
+            // a sentence never doubles the word: "the sensor's Relation model", not "Relation model model"
+            expect(cell('Relation model', 'Group B').title)
+                .toBe("Remove Relation model from Group B — this deletes the sensor's Relation model (you can undo for 7 seconds)");
+            expect(document.body.textContent).not.toMatch(/Relationship/);
+            for (const el of [...document.querySelectorAll('[title], [aria-label]')]) {
+                expect(`${el.getAttribute('title') ?? ''} ${el.getAttribute('aria-label') ?? ''}`).not.toMatch(/Relationship|Relation model model/);
+            }
+            // the data/CSS side still keys on the kind VALUE
+            expect(cell('Relation model', 'Group B').getAttribute('data-kind')).toBe('relationship');
         });
 
         it('the column header row is sticky and Not in Group is pinned to the bottom (CSS contract)', () => {
@@ -189,8 +209,8 @@ describe('FailureGroupAssignSheet', () => {
             expect(cell('Individual', 'Group A').title).toMatch(/undo for 7 seconds/);
             expect(cell('Individual', 'Group A').getAttribute('data-last')).toBe('true');
             // Relationship is in A and B -> removing one of them is a plain removal.
-            expect(cell('Relationship', 'Group A').title).toBe('Remove Relationship from Group A');
-            expect(cell('Relationship', 'Group A').getAttribute('data-last')).toBeNull();
+            expect(cell('Relation model', 'Group A').title).toBe('Remove Relation model from Group A');
+            expect(cell('Relation model', 'Group A').getAttribute('data-last')).toBeNull();
             // An empty cell offers to add.
             expect(cell('Individual', 'Group B').title).toBe('Add Individual to Group B');
         });

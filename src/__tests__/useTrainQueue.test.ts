@@ -154,8 +154,8 @@ describe('useTrainQueue — failures', () => {
         const { t, hook, start, flush } = setup();
         start([ready('a'), ready('b')]);
         await flush();
-        await t.fail('a', new Error('sidecar crashed'));
-        expect(hook.result.current.itemOf('a')).toMatchObject({ state: 'failed', error: 'sidecar crashed' });
+        await t.fail('a', new Error('The Relation model engine stopped without returning a result.'));
+        expect(hook.result.current.itemOf('a')).toMatchObject({ state: 'failed', error: 'The Relation model engine stopped without returning a result.' });
         expect(t.calls).toEqual(['a', 'b']);
     });
 

@@ -120,12 +120,12 @@ describe('completeModel', () => {
         expect(res).toMatchObject({ ok: false, reason: 'error', code: 'STALE_SESSION', error: 'the dataset was reloaded' });
     });
 
-    it('export that fails with an unprefixed error (sidecar / disk): code is null, message kept', async () => {
+    it('export that fails with an unprefixed error (the Relation model engine / disk): code is null, message kept', async () => {
         mockInvoke.mockImplementation(async (cmd: string) => {
             if (cmd === 'compute_health_preview') return previewOk;
-            throw new Error('sidecar crashed');
+            throw new Error('The Relation model engine stopped without returning a result.');
         });
-        expect(await run()).toMatchObject({ ok: false, reason: 'error', code: null, error: 'sidecar crashed' });
+        expect(await run()).toMatchObject({ ok: false, reason: 'error', code: null, error: 'The Relation model engine stopped without returning a result.' });
     });
 
     it('export that comes back ok:false (Rust re-validated and refused): validation result with ITS issues, nothing persisted', async () => {
@@ -162,8 +162,8 @@ describe('completeModel', () => {
 
 describe('parseHealthError', () => {
     it('splits a known prefix from the message', () => {
-        // NOT_FITTED: the Workbench's own words, never Rust's "this Relationship model … train it first"
-        expect(parseHealthError('NOT_FITTED: this Relationship model has no fit in memory (not trained yet, or the data changed) - train it first'))
+        // NOT_FITTED: the Workbench's own words, never Rust's "this Relation model … train it first"
+        expect(parseHealthError('NOT_FITTED: this Relation model has no fit in memory (not trained yet, or the data changed) - train it first'))
             .toEqual({ code: 'NOT_FITTED', message: 'Fit no longer in memory — load it again.' });
         expect(HEALTH_ERROR_TEXT.NOT_FITTED).not.toMatch(/Relationship|re-?train|train it/i);
         expect(parseHealthError(new Error('NO_DATA: nothing in scope'))).toEqual({ code: 'NO_DATA', message: 'nothing in scope' });

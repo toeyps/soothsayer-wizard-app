@@ -144,7 +144,7 @@ describe('useHealthPreview', () => {
 
     describe('error code mapping', () => {
         const cases: Array<[string, string]> = [
-            ['NOT_FITTED: this Relationship model has no fit in memory', 'NOT_FITTED'],
+            ['NOT_FITTED: this Relation model has no fit in memory', 'NOT_FITTED'],
             ['NO_DATA: no rows in scope', 'NO_DATA'],
             ['STALE_SESSION: the dataset was reloaded', 'STALE_SESSION'],
             ['BAD_REQUEST: target not found: T', 'BAD_REQUEST'],
@@ -156,7 +156,7 @@ describe('useHealthPreview', () => {
                 await settle();
                 expect(result.current.errorCode).toBe(code);
                 // NOT_FITTED is worded by the UI ("Fit no longer in memory — load it again."),
-                // never by Rust's "this Relationship model …"; the other codes keep Rust's text.
+                // never by Rust's "this Relation model …"; the other codes keep Rust's text.
                 expect(result.current.error).toBe(code === 'NOT_FITTED' ? HEALTH_ERROR_TEXT.NOT_FITTED : text.slice(code.length + 2));
                 expect(result.current.data).toBeNull();
                 expect(result.current.loading).toBe(false);

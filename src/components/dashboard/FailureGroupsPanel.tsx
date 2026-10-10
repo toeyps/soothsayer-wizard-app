@@ -4,18 +4,15 @@ import { FailureGroup, FailureModel, FailureGroupStateSlice, ModelKind, SensorMe
 import { SensorLabel } from '../sensor/SensorLabel';
 import { SensorMetaContext, sensorHaystack, sensorTitle, useLayeredSensorLookup } from '../sensor/sensorInfo';
 import { groupModelsBySensor, type SensorModelGroup } from '../../utils/modelGrouping';
+import { MODEL_KIND_LABEL } from '../../utils/modelNames';
 import type { RunningConditionFg } from '../../utils/runningCondition';
 import { isModelComplete, modelDotState, modelSetPointFlag } from '../../utils/modelStatus';
 import { summarizeFailureGroups } from '../../utils/failureGroupSummary';
 import { isDuplicateFailureGroupName } from './failureGroupOps';
 
-// Same kind labels as BuildModelWindow.tsx / SensorSelection.tsx — used
+// The app-wide kind names (Individual / Relation model / Clustering) — used
 // for the model-kind badge's tooltip (see renderModelRow below).
-const KIND_LABEL: Record<ModelKind, string> = {
-    individual: 'Individual',
-    relationship: 'Relationship',
-    clustering: 'Clustering',
-};
+const KIND_LABEL = MODEL_KIND_LABEL;
 
 interface FailureGroupsPanelProps {
     fgGroups: FailureGroup[];

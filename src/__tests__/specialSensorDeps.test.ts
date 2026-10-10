@@ -537,7 +537,7 @@ describe('describeEditLock -- wording', () => {
             makeModel({ id: 'm1', name: 'GENERATOR ACTIVE POWER', kind: 'individual', targetSensor: A.tag }),
             makeModel({ id: 'm2', name: 'GENERATOR ACTIVE POWER', kind: 'relationship', targetSensor: A.tag }),
         ]));
-        expect(msg).toBe('Used by 2 models: GENERATOR ACTIVE POWER (Individual, Relationship). Remove it from those models first, then you can edit it.');
+        expect(msg).toBe('Used by 2 models: GENERATOR ACTIVE POWER (Individual, Relation model). Remove it from those models first, then you can edit it.');
     });
 
     it('truncates a long list: the first three, then "and N more"', () => {

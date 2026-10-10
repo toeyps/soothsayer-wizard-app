@@ -1011,7 +1011,7 @@ export function createFakeHealthRust(opts: FakeHealthRustOptions) {
                 if (req.kind === 'relationship') {
                     if (!req.cache_key) throw 'NOT_FITTED: no cache_key was given';
                     const fit = relCache.get(req.cache_key);
-                    if (!fit) throw 'NOT_FITTED: this Relationship model has no fit in memory (not trained yet, or the data changed) - train it first';
+                    if (!fit) throw 'NOT_FITTED: this Relation model has no fit in memory (not trained yet, or the data changed) - train it first';
                     return relationshipPreview(fit, req);
                 }
                 throw `BAD_REQUEST: unknown kind '${req.kind}'`;

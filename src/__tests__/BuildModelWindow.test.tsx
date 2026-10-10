@@ -703,6 +703,9 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             fireEvent.change(screen.getByPlaceholderText('e.g. Bearing vibration model'), { target: { value: 'tag1' } });
             expect(screen.getByTestId('duplicate-name-warning').textContent).toContain("Same name as this sensor's Individual model — give it a different name");
             expect((screen.getByText('Save changes') as HTMLButtonElement).disabled).toBe(true);
+            // the suggested name of a Relation model carries the kind as the app says it (2026-10-10)
+            expect(screen.getByTestId('use-suggested-name').textContent).toBe("Use 'tag1 (Relation model)'");
+            expect(document.body.textContent).not.toMatch(/Relationship/);
 
             // ...and the other way round: the Individual model named like the Relation model
             fireEvent.change(screen.getByPlaceholderText('e.g. Bearing vibration model'), { target: { value: 'Rel' } });
@@ -712,6 +715,47 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             expect(screen.getByTestId('duplicate-name-warning').textContent).toContain("Same name as this sensor's Relation model — give it a different name");
             // no user-facing text of the window says "Relationship"
             expect(document.body.textContent).not.toMatch(/Relationship/);
+        });
+
+        // 2026-10-10 wording change: a workspace saved earlier holds names the old
+        // suggestion wrote ("X (Relationship)"). They are the user's data and their
+        // export file names — shown and kept exactly as saved, never re-suggested.
+        it('a model saved as "TAG1 (Relationship)" keeps its name: shown as saved, no warning, nothing written; a NEW suggestion skips its twin', async () => {
+            render(<BuildModelWindow />);
+            await deliverData({
+                failureGroupState: {
+                    groups: [makeGroup()],
+                    models: [
+                        makeModel({ id: 'i1', kind: 'individual', targetSensor: 'TAG1', name: 'TAG1' }),
+                        makeModel({ id: 'r1', kind: 'relationship', targetSensor: 'TAG1', predictorSensors: ['TAG2'], name: 'TAG1 (Relationship)' }),
+                    ],
+                },
+            });
+            const writesBefore = mockUpdateWorkspaceData.mock.calls.length;
+            fireEvent.click(screen.getByRole('tab', { name: /Relation model/ }));
+            openSettings();
+            const nameInput = screen.getByPlaceholderText('e.g. Bearing vibration model') as HTMLInputElement;
+            expect(nameInput.value).toBe('TAG1 (Relationship)');
+            expect(screen.queryByTestId('duplicate-name-warning')).toBeNull();
+            // opening the model rewrote nothing
+            expect(mockUpdateWorkspaceData.mock.calls.length).toBe(writesBefore);
+
+            // Typing the Individual model's name: the suggestion is the NEW wording, and it
+            // steps past the legacy twin a sibling could hold (here the model itself owns
+            // the legacy name, so the plain suggestion is free).
+            fireEvent.change(nameInput, { target: { value: 'TAG1' } });
+            expect(screen.getByTestId('use-suggested-name').textContent).toBe("Use 'TAG1 (Relation model)'");
+            // Back to the saved legacy name: not a conflict, Save is not held back by the name.
+            fireEvent.change(nameInput, { target: { value: 'TAG1 (Relationship)' } });
+            expect(screen.queryByTestId('duplicate-name-warning')).toBeNull();
+
+            // The Individual model named like the Relation model's legacy name is a real duplicate;
+            // its suggestion is its own kind word.
+            fireEvent.click(screen.getByRole('tab', { name: /Individual/ }));
+            openSettings();
+            fireEvent.change(screen.getByPlaceholderText('e.g. Bearing vibration model'), { target: { value: 'tag1 (relationship)' } });
+            expect(screen.getByTestId('duplicate-name-warning').textContent).toContain("Same name as this sensor's Relation model — give it a different name");
+            expect(screen.getByTestId('use-suggested-name').textContent).toBe("Use 'tag1 (relationship) (Individual)'");
         });
 
         it('the locked Target/X sensor readout can never be reassigned (no select, no input)', async () => {
@@ -1041,14 +1085,14 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             // once-rejection would land on THAT call instead of the Train
             // click's `compute_sensor_stats`.
             mockInvoke.mockImplementation((cmd: string) =>
-                cmd === 'compute_sensor_stats' ? Promise.reject(new Error('sidecar exploded')) : Promise.resolve({}));
+                cmd === 'compute_sensor_stats' ? Promise.reject(new Error('stats exploded')) : Promise.resolve({}));
             render(<BuildModelWindow />);
             await deliverData();
             await act(async () => {
                 fireEvent.click(trainSensorBtn());
                 await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
             });
-            expect(screen.getByTestId('results-error').textContent).toMatch(/sidecar exploded/);
+            expect(screen.getByTestId('results-error').textContent).toMatch(/stats exploded/);
             // A failed run makes the model ready again: Train sensor offers it, the footer says so.
             await waitFor(() => expect(trainSensorBtn().disabled).toBe(false));
             expect(screen.getByTestId('footer-status').textContent).toBe('Training failed · fix the problem, then Train sensor ↑');
@@ -5290,7 +5334,7 @@ describe('Health score page - Mark complete (the ONLY way a model becomes Comple
 
     it.each([
         ['STALE_SESSION: the dataset was reloaded', /out of date/],
-        ['sidecar crashed', /sidecar crashed/],
+        ['The Relation model engine stopped without returning a result.', /The Relation model engine stopped without returning a result\./],
     ])('an export error (%s) keeps the model Incomplete and says what to do', async (rejection, text) => {
         mockInvoke.mockImplementation((cmd: string, args?: any) => cmd === 'export_model_files' ? Promise.reject(rejection) : healthInvoke(cmd, args));
         statefulUpdateMock([HS_IND()]);
@@ -7289,7 +7333,7 @@ describe('Workbench redesign §1 — the page spine', () => {
     describe('kind tab: ONE state dot in the list\'s colours, the words in its tooltip', () => {
         it('a model whose run failed gets the RED dot — on its tab AND in the sensor list — with "Training failed"; the board and the footer say it once each', async () => {
             mockInvoke.mockImplementation((cmd: string) =>
-                cmd === 'compute_sensor_stats' ? Promise.reject(new Error('sidecar exploded')) : Promise.resolve({}));
+                cmd === 'compute_sensor_stats' ? Promise.reject(new Error('stats exploded')) : Promise.resolve({}));
             render(<BuildModelWindow />);
             await deliverData();
             // before: never trained = an empty ring, no colour
@@ -7318,7 +7362,7 @@ describe('Workbench redesign §1 — the page spine', () => {
             expect(b.className).toContain('wbx-msg--bad');
             expect(b.querySelector('.wbx-msg-t')!.textContent).toBe('Training failed');
             expect(b.querySelector('.wbx-msg-s')!.textContent).toBe('Fix the problem, then train again with Train sensor ↑. The model keeps its last state.');
-            expect(b.querySelector('.wbx-msg-d')!.textContent).toMatch(/sidecar exploded/);
+            expect(b.querySelector('.wbx-msg-d')!.textContent).toMatch(/stats exploded/);
             // ...and the footer: one pill, one sentence, in red
             const line = screen.getByTestId('footer-status');
             expect(line.textContent).toBe('Training failed · fix the problem, then Train sensor ↑');

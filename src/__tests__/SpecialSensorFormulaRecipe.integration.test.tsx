@@ -571,7 +571,7 @@ describe('(b) Dashboard + Add Sensor + Build Model: a special sensor\'s recipe c
             fireEvent.change(sheet.getByLabelText('New failure group name'), { target: { value: 'FG-A' } });
             await act(async () => { fireEvent.click(sheet.getByText('Create')); });
             await settle(400);
-            await clickCell(sheet, 'Relationship · FG-A');
+            await clickCell(sheet, 'Relation model · FG-A');
             await clickCell(sheet, 'Individual · FG-A');
         });
         const models0 = disk(A).failureGroupState.models;

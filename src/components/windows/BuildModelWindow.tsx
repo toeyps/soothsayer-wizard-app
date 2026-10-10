@@ -12,7 +12,7 @@ import { loadWorkspaceData, updateWorkspaceData } from "../../workspaceManager";
 import { withFailureGroupState } from "../../utils/failureGroupState";
 import { modelSensorKey, groupModelsBySensor, sensorCategory, setSensorCategory, type SensorModelGroup } from "../../utils/modelGrouping";
 import { normalizeCategories, flagLegacyGate, migratePeriods } from "../../utils/workspaceMigrations";
-import { findSameSensorNameConflict, suggestDistinctModelName } from "../../utils/modelNames";
+import { findSameSensorNameConflict, kindModelName, MODEL_KIND_LABEL, suggestDistinctModelName } from "../../utils/modelNames";
 import { CATEGORY_BLOCK_REASON, customBlockText, customSummaryText, getBuildBlock, getBuildBlockReason, isRunningConditionConfigured, isWorkspaceRunningConditionConfigured, effectiveRunningCondition, markCompleteBlockReason, NO_TRAIN_PERIOD_REASON_CUSTOM, NO_TRAIN_ROWS_FOOTER, NO_TRAIN_ROWS_REASON_CUSTOM, runningConditionApplyBlock, seedCustomFromWorkspace, type BuildBlock, type GateOptions, type RunningConditionApplyBlock, type RunningConditionFg } from "../../utils/runningCondition";
 import { modelsStillNeedingTraining, retrainNoticeParts, runningConditionImpact } from "../../utils/runningConditionImpact";
 import { usePeriodCounts } from "../../hooks/usePeriodCounts";
@@ -274,14 +274,11 @@ const BEING_SAVED_REASON = 'Its files are being saved';
 /** The close notice when "Stop after this model and close" gave up waiting. */
 const RUN_CLOSE_WAIT_NOTICE = 'Still training a model — the window stays open so nothing is cut off half-way. Close it again to leave without waiting.';
 /** THE kind names of this window — tabs, tooltips, notices: Individual / Relation
- *  model / Clustering. (The UI never says "Relationship": CLAUDE.md naming rule.) */
-const KIND_TAB_LABEL: Record<ModelKind, string> = {
-    individual: 'Individual',
-    relationship: 'Relation model',
-    clustering: 'Clustering',
-};
-/** A kind inside a sentence: "the Individual model", "the Relation model". */
-const kindModelName = (kind: ModelKind): string => (kind === 'relationship' ? KIND_TAB_LABEL[kind] : `${KIND_TAB_LABEL[kind]} model`);
+ *  model / Clustering. (The UI never says "Relationship": CLAUDE.md naming rule.)
+ *  The app-wide map (`utils/modelNames.ts`) — the Dashboard and the special-sensor
+ *  lock sentences read the same one; `kindModelName` (a kind inside a sentence:
+ *  "the Individual model", "the Relation model") comes from there too. */
+const KIND_TAB_LABEL: Record<ModelKind, string> = MODEL_KIND_LABEL;
 /** The ONE filled button of the detail pane (SPEC workbench-redesign §1: at most
  *  one filled button on screen) — see `primaryActionOf`. */
 type PrimaryAction = 'save' | 'train' | 'next' | 'mark' | null;

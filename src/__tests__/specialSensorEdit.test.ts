@@ -207,7 +207,7 @@ describe('runSpecialSensorEdit -- edit lock', () => {
         const err = await run(rust, { recipes: CHAIN, next: F('A', '$TAG1 * 3'), failureState: usesA }).catch(e => e);
         expect(err).toBeInstanceOf(SpecialSensorLockedError);
         expect((err as Error).message).toMatch(/Can't change the formula, operation or sources of "A"\./);
-        expect((err as Error).message).toMatch(/Used by 1 model: Pump model \(Relationship\)\./);
+        expect((err as Error).message).toMatch(/Used by 1 model: Pump model \(Relation model\)\./);
         expect((err as Error).message).toMatch(/Remove it from those models first, then you can edit it\./);
         expect(wrote(rust)).toHaveLength(0);
         expect(rust.resolvedValues('A')).toEqual([2, 4, 6, 8]); // still the OLD formula's values

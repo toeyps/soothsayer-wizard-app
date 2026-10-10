@@ -61,7 +61,7 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 /** Dashboard Sensor tab -> 📁 of `tag` -> the FG sheet's `<kind> · FG-A` cell. */
-async function createViaSheet(tag: string, kindLabel: 'Individual' | 'Relationship' | 'Clustering') {
+async function createViaSheet(tag: string, kindLabel: 'Individual' | 'Relation model' | 'Clustering') {
     openDashSensorTab();
     fireEvent.change(dash().getByPlaceholderText('Search description, tag, unit or component…'), { target: { value: tag } });
     await settle();
@@ -187,7 +187,7 @@ describe('Relationship: the whole journey', () => {
     it('FG sheet -> predictors -> Train (cache_key) -> Model fit -> 4 set points -> Mark complete (sidecar) -> restart re-fills the cache', async () => {
         writeDisk(wsState({ models: [] }));
         await mountWindows();
-        await createViaSheet('TAG1', 'Relationship');
+        await createViaSheet('TAG1', 'Relation model');
         const id = readDisk().failureGroupState.models[0].id;
         expect(readDisk().failureGroupState.models[0].healthSetPoints).toEqual({
             kind: 'relationship', residualAt80Lower: null, residualAt80Upper: null, residualAt0Lower: null, residualAt0Upper: null,

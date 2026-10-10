@@ -408,6 +408,24 @@ describe('FailureGroupsPanel', () => {
             expect(screen.getByText('C', { selector: '.kind-badge' })).toBeTruthy();
         });
 
+        // User decision 2026-10-10: the kind is "Relation model" in the whole app; the
+        // letter on the badge stays R.
+        it('the kind badges say Individual / Relation model / Clustering on hover — on the sensor line and on each model row', () => {
+            const fgModels = [
+                makeModel({ id: 'i', kind: 'individual' }),
+                makeModel({ id: 'r', kind: 'relationship', predictorSensors: ['TAG2'] }),
+                makeModel({ id: 'c', kind: 'clustering', targetSensor: '', xSensor: 'TAG1', ySensor: 'TAG2' }),
+            ];
+            render(<FailureGroupsPanel {...makeProps({ fgModels })} />);
+            const titles = () => [...document.querySelectorAll('.kind-badge')].map(b => `${b.textContent?.charAt(0)}=${b.getAttribute('title')}`);
+            expect(titles()).toEqual(['I=Individual', 'R=Relation model', 'C=Clustering']);
+            // expanded: the per-model rows carry the same names
+            fireEvent.click(screen.getByTestId(/^fg-sensor-row-/).querySelector('button')!);
+            expect(titles()).toEqual(['I=Individual', 'R=Relation model', 'C=Clustering', 'I=Individual', 'R=Relation model', 'C=Clustering']);
+            for (const el of [...document.querySelectorAll('[title]')]) expect(el.getAttribute('title')).not.toMatch(/Relationship/);
+            expect(document.body.textContent).not.toMatch(/Relationship/);
+        });
+
         it('different sensors are different lines; a sensor in two groups appears in each', () => {
             const fgModels = [
                 makeModel({ id: 'a', targetSensor: 'TAG1', groupNos: [1, 2] }),

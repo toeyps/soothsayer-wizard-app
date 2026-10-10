@@ -32,7 +32,7 @@ const ERROR_CODES: readonly HealthErrorCode[] = ['NOT_FITTED', 'NO_DATA', 'BAD_R
 /** User-facing text for codes whose wording the UI owns (the Rust text after the
  *  prefix is used for every other code). */
 export const HEALTH_ERROR_TEXT: Partial<Record<HealthErrorCode, string>> = {
-    // Rust's own text says "this Relationship model … train it first". The Workbench's
+    // Rust's own text says "this Relation model … train it first". The Workbench's
     // words for a fit Rust no longer holds are "Fit no longer in memory · load it again":
     // nothing has to be trained again, the same fit is loaded back.
     NOT_FITTED: 'Fit no longer in memory — load it again.',

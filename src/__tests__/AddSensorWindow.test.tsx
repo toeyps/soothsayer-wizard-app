@@ -2322,7 +2322,7 @@ describe('AddSensorWindow: edit lock for sensors a model uses', () => {
         expect(formula.value).toBe('$TAG1 * 2');
         const banner = screen.getByTestId('edit-lock-banner');
         expect(banner.textContent).toMatch(/Name and formula are locked\./);
-        expect(banner.textContent).toMatch(/Used by 1 model: Uses A \(Relationship\)\. Remove it from those models first, then you can edit it\./);
+        expect(banner.textContent).toMatch(/Used by 1 model: Uses A \(Relation model\)\. Remove it from those models first, then you can edit it\./);
         expect((screen.getByLabelText('Description') as HTMLInputElement).readOnly).toBe(false);
         expect((screen.getByLabelText('Unit') as HTMLInputElement).readOnly).toBe(false);
         // One neutral lock pill in the header; Quick build and the palette are hidden; the
@@ -2375,7 +2375,7 @@ describe('AddSensorWindow: edit lock for sensors a model uses', () => {
         // queued task must find out on its own, from the file.
         disk.models = [usingA];
         await save();
-        expect(editorAlert()).toMatch(/Can't rename "A"\. Used by 1 model: Uses A \(Relationship\)\./);
+        expect(editorAlert()).toMatch(/Can't rename "A"\. Used by 1 model: Uses A \(Relation model\)\./);
         expect(writes(rust)).toHaveLength(0);
         expect(mockEmit.mock.calls.filter(c => c[0] === 'rename-special-sensor' || c[0] === 'update-special-sensor')).toHaveLength(0);
         expect(mockLoadWorkspace).toHaveBeenCalledWith('ws-1');
@@ -2425,7 +2425,7 @@ describe('AddSensorWindow: edit lock for sensors a model uses', () => {
         fireEvent.click(screen.getByText('Used by 1 sensor and 1 model'));
         const lock = screen.getByTestId('edit-lock-A');
         expect(lock.textContent).toMatch(/Name and formula are locked:/);
-        expect(lock.textContent).toMatch(/Used by 1 model: Uses A \(Relationship\)/);
+        expect(lock.textContent).toMatch(/Used by 1 model: Uses A \(Relation model\)/);
         expect(screen.getByText(/Used by models:/)).toBeTruthy(); // the existing delete explanation is still there
     });
 

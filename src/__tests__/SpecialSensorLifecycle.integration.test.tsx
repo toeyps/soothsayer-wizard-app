@@ -1588,7 +1588,7 @@ describe('9. edit lock: a sensor a model uses', () => {
 
         // Edit / rename: locked, with a plain reason.
         await openEditor('A');
-        expect(banner()!.textContent).toContain('Used by 1 model: Pump model (Relationship). Remove it from those models first, then you can edit it.');
+        expect(banner()!.textContent).toContain('Used by 1 model: Pump model (Relation model). Remove it from those models first, then you can edit it.');
         expect((W().getByLabelText('Name') as HTMLInputElement).readOnly).toBe(true);
         expect((W().getByLabelText('Formula') as HTMLTextAreaElement).readOnly).toBe(true);
 
@@ -1597,7 +1597,7 @@ describe('9. edit lock: a sensor a model uses', () => {
         expect(deleteBtn('A').disabled).toBe(true);
         await act(async () => { fireEvent.click(W().getByText('Used by 1 sensor and 1 model')); });
         expect(W().getByText(/Used by models:/)).toBeTruthy();
-        expect(W().getByTestId('edit-lock-A').textContent).toContain('Pump model (Relationship)');
+        expect(W().getByTestId('edit-lock-A').textContent).toContain('Pump model (Relation model)');
 
         // The user removes the sensor from the model in Build Model.
         await writerPersistsThenBroadcasts([modelOn('TAG3')]);
@@ -1621,7 +1621,7 @@ describe('9. edit lock: a sensor a model uses', () => {
         });
         const from = rust.calls.length;
         await openEditor('A'); // locked transitively through B
-        expect(banner()!.textContent).toContain('Built on by "B", which is used by 1 model: Pump model (Relationship).');
+        expect(banner()!.textContent).toContain('Built on by "B", which is used by 1 model: Pump model (Relation model).');
         await act(async () => { fireEvent.change(W().getByLabelText('Description'), { target: { value: 'Generator power' } }); });
         await act(async () => { fireEvent.change(W().getByLabelText('Unit'), { target: { value: 'kW' } }); });
         await saveEditor();
@@ -1644,7 +1644,7 @@ describe('9. edit lock: a sensor a model uses', () => {
         await writerPersistsThenBroadcasts([modelOn('A')], {}, 'build-model', { broadcast: false });
         const from = rust.calls.length;
         await saveEditor();
-        expect(editorError()).toMatch(/Can't rename "A"\. Used by 1 model: Pump model \(Relationship\)\./);
+        expect(editorError()).toMatch(/Can't rename "A"\. Used by 1 model: Pump model \(Relation model\)\./);
         expect(sessionWrites(from)).toHaveLength(0);
         expect(sentEvents(['rename-special-sensor', 'update-special-sensor'])).toHaveLength(0);
         expect(rust.chartValues('A')).toEqual([2, 4, 6, 8]);

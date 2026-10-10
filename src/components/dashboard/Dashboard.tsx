@@ -24,7 +24,8 @@ import { ALARM_LEVELS, alarmLevelColor } from '../../utils/alarmLevels';
 import FilterPanel, { FilterState, FilterSensorChange } from './FilterPanel';
 import SensorSelection from './SensorSelection';
 import UndoToastStack from './UndoToastStack';
-import { KIND_LABEL, UNDO_SECONDS } from './FailureGroupAssignSheet';
+import { UNDO_SECONDS } from './FailureGroupAssignSheet';
+import { kindModelName } from '../../utils/modelNames';
 import FailureGroupsPanel from './FailureGroupsPanel';
 import { NOT_IN_GROUP, appendFailureGroup, applyFailureGroupDetails, isDuplicateFailureGroupName } from './failureGroupOps';
 import { getFgGroupColor } from '../../utils/failureGroupColor';
@@ -673,7 +674,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         const entry: FgUndoEntry | null = deletesModel
             ? {
                 id: `undo-${++undoSeq.current}`,
-                message: `${KIND_LABEL[kind]} model of ${getSensorMeta(tag)?.description || tag} deleted`,
+                message: `${kindModelName(kind)} of ${getSensorMeta(tag)?.description || tag} deleted`,
                 captured: { model: existing! },
             }
             : null;
@@ -696,7 +697,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                 // announce from here instead.)
                 const e = entry ?? {
                     id: `undo-${++undoSeq.current}`,
-                    message: `${KIND_LABEL[kind]} model of ${getSensorMeta(tag)?.description || tag} deleted`,
+                    message: `${kindModelName(kind)} of ${getSensorMeta(tag)?.description || tag} deleted`,
                     captured: { model: onDisk! },
                 };
                 e.captured.model = onDisk!;

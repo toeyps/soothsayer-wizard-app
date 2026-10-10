@@ -76,7 +76,7 @@ afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 const REL_SP = { kind: 'relationship', residualAt80Lower: -5, residualAt80Upper: 5, residualAt0Lower: -10, residualAt0Upper: 10 };
 const IND_SP = { kind: 'individual', lower: 20, upper: 80, masterLower: 20, masterUpper: 80 };
 const record = (sp: unknown) => ({ at: '2026-10-02T10:00:00.000Z', outputDir: env.backend!.outputDir(WS), setPoints: sp });
-const FIT_GONE_ERROR = 'NOT_FITTED: this Relationship model has no fit in memory (not trained yet, or the data changed) - train it first';
+const FIT_GONE_ERROR = 'NOT_FITTED: this Relation model has no fit in memory (not trained yet, or the data changed) - train it first';
 
 const fits = () => env.backend!.cmds('preview_relationship_model').filter(c => c.args.cache_key).length;
 /** Every write of the workspace file so far. */

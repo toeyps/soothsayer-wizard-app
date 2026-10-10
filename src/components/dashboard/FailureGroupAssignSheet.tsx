@@ -6,6 +6,7 @@ import type { SensorInfo } from '../sensor/sensorInfo';
 import { isPickerSurfaceOpen } from '../sensor/SensorPicker';
 import type { FailureGroup, FailureModel, ModelKind } from '../../types';
 import { modelSensorKey } from '../../utils/modelGrouping';
+import { MODEL_KIND_LABEL, kindModelName } from '../../utils/modelNames';
 import { normalizeSensorTag } from '../../hooks/useSensorMetaMap';
 import { UNDO_SECONDS } from './UndoToastStack';
 import { isDuplicateFailureGroupName } from './failureGroupOps';
@@ -15,11 +16,10 @@ export const KIND_LETTER: Record<ModelKind, string> = {
     relationship: 'R',
     clustering: 'C',
 };
-export const KIND_LABEL: Record<ModelKind, string> = {
-    individual: 'Individual',
-    relationship: 'Relationship',
-    clustering: 'Clustering',
-};
+/** The app-wide kind names (`utils/modelNames.ts`): Individual / Relation model /
+ *  Clustering. In a sentence use `kindModelName` ("… Relation model", never
+ *  "Relation model model"). */
+export const KIND_LABEL: Record<ModelKind, string> = MODEL_KIND_LABEL;
 export const ALL_KINDS: ModelKind[] = ['individual', 'relationship', 'clustering'];
 
 /** How long the "model deleted — Undo" toast (Dashboard.tsx) stays up; this
@@ -87,7 +87,7 @@ function assignedGroupNos(groups: FailureGroup[], models: FailureModel[], tagKey
  * "Failure Group Assignment" — the full-height sheet docked to the left edge of
  * the Dashboard's Sensors panel that replaced the old `AnchoredPopover` menu
  * (2026-10-03). One matrix: a row per Failure Group x a column per model kind
- * (Individual / Relationship / Clustering), plus the permanent "Not in Group"
+ * (Individual / Relation model / Clustering), plus the permanent "Not in Group"
  * row pinned at the bottom.
  *
  * Presentation + local UI state only. Every change goes through the Dashboard's
@@ -364,7 +364,7 @@ function SheetBody({
         const label = KIND_LABEL[kind];
         const title = on
             ? (last
-                ? `Remove ${label} from ${group.name} — this deletes the sensor's ${label} model (you can undo for ${UNDO_SECONDS} seconds)`
+                ? `Remove ${label} from ${group.name} — this deletes the sensor's ${kindModelName(kind)} (you can undo for ${UNDO_SECONDS} seconds)`
                 : `Remove ${label} from ${group.name}`)
             : `Add ${label} to ${group.name}`;
         return (

@@ -1,4 +1,5 @@
 import { FailureModel, ModelKind, SpecialSensorRecipe } from '../types';
+import { MODEL_KIND_LABEL } from './modelNames';
 
 /**
  * Who still depends on a special sensor — the check that decides whether
@@ -288,11 +289,8 @@ function isUsed(src: EditLockSource): boolean {
     return src.models.length > 0 || src.runningCondition;
 }
 
-const KIND_LABEL: Record<ModelKind, string> = {
-    individual: 'Individual',
-    relationship: 'Relationship',
-    clustering: 'Clustering',
-};
+/** The kind names of the lock sentence — the app-wide ones ("Relation model"). */
+const KIND_LABEL = MODEL_KIND_LABEL;
 
 /** `Name (Kind, Kind)` per distinct model name; the first few, then "and N more". */
 function listModels(models: LockedModelUse[]): string {
@@ -311,7 +309,7 @@ function listModels(models: LockedModelUse[]): string {
         : `${entries.slice(0, MAX).join(', ')} and ${entries.length - MAX} more`;
 }
 
-/** "2 models: A (Individual, Relationship), B (Clustering)" and/or "the running condition". */
+/** "2 models: A (Individual, Relation model), B (Clustering)" and/or "the running condition". */
 function describeSource(src: EditLockSource): string {
     const parts: string[] = [];
     if (src.models.length > 0) {
