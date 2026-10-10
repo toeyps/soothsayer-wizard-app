@@ -89,12 +89,24 @@ pub fn has_errors(issues: &[Issue]) -> bool {
     issues.iter().any(|i| i.severity == Severity::Error)
 }
 
-/// Human-friendly number for messages (rounded like the INFO files).
+/// Human-friendly number for messages (rounded like the INFO files). For
+/// values Rust COMPUTED (SD, 2RMSE, band edges) only - a set point the user
+/// typed goes through [`fmt_typed`].
 fn fmt_num(x: f64) -> String {
     if !x.is_finite() {
         return format!("{x}");
     }
     format!("{}", round_metric(x))
+}
+
+/// A set point the USER supplied, echoed exactly as typed: the shortest text
+/// that reads back as the same number (`-2`, `4.6`, `0.05`, `4.61234`). Never
+/// padded, never rounded (a typed `4.61234` used to come back as `4.612`, which
+/// made "L = 4.612 must be below 4.612" style messages possible), and `-0`
+/// prints as `0`.
+fn fmt_typed(x: f64) -> String {
+    // Adding +0.0 turns -0.0 into 0.0 and changes nothing else.
+    format!("{}", x + 0.0)
 }
 
 // ---------------------------------------------------------------------------
@@ -249,8 +261,8 @@ pub fn validate_individual(band: &IndividualBand, sp: &SetPointsArg) -> Vec<Issu
                 "lower",
                 format!(
                     "The lower set point (L = {}) must be below the upper set point (H = {}).",
-                    fmt_num(l),
-                    fmt_num(h)
+                    fmt_typed(l),
+                    fmt_typed(h)
                 ),
             ));
         }
@@ -264,7 +276,7 @@ pub fn validate_individual(band: &IndividualBand, sp: &SetPointsArg) -> Vec<Issu
                     format!(
                         "The lower set point (L = {}) equals the lower 3σ boundary, so the 80 and \
                          the 0 point would coincide. Set L below {}.",
-                        fmt_num(l),
+                        fmt_typed(l),
                         fmt_num(band.lower_3sd)
                     ),
                 ));
@@ -274,7 +286,7 @@ pub fn validate_individual(band: &IndividualBand, sp: &SetPointsArg) -> Vec<Issu
                     "lower",
                     format!(
                         "The lower set point (L = {}) must be below the lower 3σ boundary ({}).",
-                        fmt_num(l),
+                        fmt_typed(l),
                         fmt_num(band.lower_3sd)
                     ),
                 ));
@@ -288,7 +300,7 @@ pub fn validate_individual(band: &IndividualBand, sp: &SetPointsArg) -> Vec<Issu
                     format!(
                         "The upper set point (H = {}) equals the upper 3σ boundary, so the 80 and \
                          the 0 point would coincide. Set H above {}.",
-                        fmt_num(h),
+                        fmt_typed(h),
                         fmt_num(band.upper_3sd)
                     ),
                 ));
@@ -298,7 +310,7 @@ pub fn validate_individual(band: &IndividualBand, sp: &SetPointsArg) -> Vec<Issu
                     "upper",
                     format!(
                         "The upper set point (H = {}) must be above the upper 3σ boundary ({}).",
-                        fmt_num(h),
+                        fmt_typed(h),
                         fmt_num(band.upper_3sd)
                     ),
                 ));
@@ -465,7 +477,7 @@ pub fn validate_relationship(w: Option<f64>, sp: &SetPointsArg) -> Vec<Issue> {
                     f80,
                     format!(
                         "The {name} 80-point must be {sign_word} (residual = actual − predicted); got {}.",
-                        fmt_num(v)
+                        fmt_typed(v)
                     ),
                 ));
             }
@@ -479,7 +491,7 @@ pub fn validate_relationship(w: Option<f64>, sp: &SetPointsArg) -> Vec<Issue> {
                     f0,
                     format!(
                         "The {name} 0-point must be {sign_word} (residual = actual − predicted); got {}.",
-                        fmt_num(v)
+                        fmt_typed(v)
                     ),
                 ));
             }
@@ -493,7 +505,7 @@ pub fn validate_relationship(w: Option<f64>, sp: &SetPointsArg) -> Vec<Issue> {
                     format!(
                         "The {name} 80-point ({}) sits exactly on the ±2RMSE band edge ({}), so the \
                          100 and the 80 point would coincide. Move it further from zero.",
-                        fmt_num(v),
+                        fmt_typed(v),
                         fmt_num(w)
                     ),
                 ));
@@ -504,7 +516,7 @@ pub fn validate_relationship(w: Option<f64>, sp: &SetPointsArg) -> Vec<Issue> {
                     format!(
                         "The {name} 80-point ({}) must be further from zero than the ±2RMSE band \
                          edge ({}).",
-                        fmt_num(v),
+                        fmt_typed(v),
                         fmt_num(w)
                     ),
                 ));
@@ -519,7 +531,7 @@ pub fn validate_relationship(w: Option<f64>, sp: &SetPointsArg) -> Vec<Issue> {
                     format!(
                         "The {name} 0-point ({}) equals the {name} 80-point, so the score would \
                          drop from 80 to 0 instantly. Move the 0-point further from zero.",
-                        fmt_num(b)
+                        fmt_typed(b)
                     ),
                 ));
             } else if m0 < m80 {
@@ -529,8 +541,8 @@ pub fn validate_relationship(w: Option<f64>, sp: &SetPointsArg) -> Vec<Issue> {
                     format!(
                         "The {name} 0-point ({}) must be further from zero than the {name} \
                          80-point ({}).",
-                        fmt_num(b),
-                        fmt_num(a)
+                        fmt_typed(b),
+                        fmt_typed(a)
                     ),
                 ));
             }
@@ -673,7 +685,7 @@ pub fn validate_clustering(clusters: &[ClusterGeom], sp: &SetPointsArg) -> Vec<I
             "outer_sd",
             format!(
                 "The outer ring ({}× SD) must be more than 3× SD (the 80 point).",
-                fmt_num(n)
+                fmt_typed(n)
             ),
         )),
         Some(_) => {}
@@ -1571,6 +1583,135 @@ mod tests {
         assert!(codes(&v).contains(&"ordering"), "{:?}", codes(&v));
         let v = validate_individual(&band(), &sp_ind(Some(150.0), Some(150.0)));
         assert!(codes(&v).contains(&"ordering"));
+    }
+
+    // ---------- messages echo the typed set point as typed ----------
+
+    #[test]
+    fn fmt_typed_is_the_shortest_exact_text() {
+        for (x, text) in [
+            (-2.0, "-2"),
+            (4.6, "4.6"),
+            (0.05, "0.05"),
+            (4.61234, "4.61234"),
+            (0.000123456, "0.000123456"),
+            (1234.56789, "1234.56789"),
+            (150.0, "150"),
+            (0.0, "0"),
+            (-0.0, "0"),
+            (1e-7, "0.0000001"),
+            (2.5e6, "2500000"),
+        ] {
+            assert_eq!(fmt_typed(x), text);
+            // Reads back as the very same number.
+            assert_eq!(fmt_typed(x).parse::<f64>().unwrap(), x);
+        }
+        // Computed values keep the INFO-file rounding.
+        assert_eq!(fmt_num(4.61234), "4.612");
+        assert_eq!(fmt_num(0.000123456), "0.0001235");
+    }
+
+    #[test]
+    fn individual_messages_echo_the_typed_set_point_and_round_only_the_band() {
+        // Band edges with more than 3 decimals (never the case in the app, where
+        // they arrive rounded - this only proves which side is rounded).
+        let b = IndividualBand::from_rounded(100.0, 10.0, [90.0, 110.0], [70.123456, 130.0]);
+        let v = validate_individual(&b, &sp_ind(Some(75.61234), Some(160.0)));
+        assert_eq!(codes(&v), vec!["lower_inside_3sd"]);
+        assert_eq!(v[0].field, "lower");
+        assert_eq!(
+            v[0].message,
+            "The lower set point (L = 75.61234) must be below the lower 3σ boundary (70.123)."
+        );
+        let v = validate_individual(&band(), &sp_ind(Some(40.0), Some(125.00049)));
+        assert_eq!(codes(&v), vec!["upper_inside_3sd"]);
+        assert_eq!(
+            v[0].message,
+            "The upper set point (H = 125.00049) must be above the upper 3σ boundary (130)."
+        );
+        // Equal: whole numbers stay whole ("70", never "70.000").
+        let v = validate_individual(&band(), &sp_ind(Some(70.0), Some(160.0)));
+        assert_eq!(
+            v[0].message,
+            "The lower set point (L = 70) equals the lower 3σ boundary, so the 80 and the 0 point \
+             would coincide. Set L below 70."
+        );
+        let v = validate_individual(&band(), &sp_ind(Some(40.0), Some(130.0)));
+        assert_eq!(
+            v[0].message,
+            "The upper set point (H = 130) equals the upper 3σ boundary, so the 80 and the 0 point \
+             would coincide. Set H above 130."
+        );
+        // Ordering: both typed values, exact; a typed -0 reads "0".
+        let v = validate_individual(&band(), &sp_ind(Some(200.12345), Some(-0.0)));
+        let o = v.iter().find(|i| i.code == "ordering").unwrap();
+        assert_eq!(o.field, "lower");
+        assert_eq!(
+            o.message,
+            "The lower set point (L = 200.12345) must be below the upper set point (H = 0)."
+        );
+        assert!(v.iter().all(|i| i.severity == Severity::Error));
+    }
+
+    #[test]
+    fn relationship_messages_echo_the_typed_points_and_round_only_the_band() {
+        // Sign: "-2" as typed on the upper side, "0.05" on the lower side.
+        let v = validate_relationship(Some(2.0), &sp_rel(0.05, -2.0, -10.0, 20.0));
+        let msg = |code: &str, field: &str| {
+            v.iter().find(|i| i.code == code && i.field == field).map(|i| i.message.clone()).unwrap()
+        };
+        assert_eq!(
+            msg("must_be_negative", "residual_at_80_lower"),
+            "The lower 80-point must be negative (residual = actual − predicted); got 0.05."
+        );
+        assert_eq!(
+            msg("must_be_positive", "residual_at_80_upper"),
+            "The upper 80-point must be positive (residual = actual − predicted); got -2."
+        );
+        // 80-point against the band: the typed point exact, the computed 2RMSE rounded.
+        let v = validate_relationship(Some(2.123456), &sp_rel(-1.23456, 6.0, -10.0, 20.0));
+        assert_eq!(codes(&v), vec!["point80_inside_band"]);
+        assert_eq!(
+            v[0].message,
+            "The lower 80-point (-1.23456) must be further from zero than the ±2RMSE band edge (2.123)."
+        );
+        let v = validate_relationship(Some(2.0), &sp_rel(-4.0, 2.0, -10.0, 20.0));
+        assert_eq!(codes(&v), vec!["point80_equals_band"]);
+        assert_eq!(
+            v[0].message,
+            "The upper 80-point (2) sits exactly on the ±2RMSE band edge (2), so the 100 and the 80 \
+             point would coincide. Move it further from zero."
+        );
+        // 0-point against the 80-point: both typed, both exact.
+        let v = validate_relationship(Some(2.0), &sp_rel(-4.56789, 6.0, -3.00001, 20.0));
+        assert_eq!(codes(&v), vec!["point0_inside_point80"]);
+        assert_eq!(v[0].field, "residual_at_0_lower");
+        assert_eq!(
+            v[0].message,
+            "The lower 0-point (-3.00001) must be further from zero than the lower 80-point (-4.56789)."
+        );
+        let v = validate_relationship(Some(2.0), &sp_rel(-4.0, 6.00001, -10.0, 6.00001));
+        assert_eq!(codes(&v), vec!["point0_equals_point80"]);
+        assert_eq!(
+            v[0].message,
+            "The upper 0-point (6.00001) equals the upper 80-point, so the score would drop from 80 \
+             to 0 instantly. Move the 0-point further from zero."
+        );
+    }
+
+    #[test]
+    fn clustering_message_echoes_the_typed_ring() {
+        let c = ClusterGeom { cluster_id: 1, x_center: 0.0, y_center: 0.0, x_sd: 1.0, y_sd: 1.0, angle_deg: 0.0 };
+        let sp = SetPointsArg { outer_sd: Some(2.75001), ..Default::default() };
+        let v = validate_clustering(&[c], &sp);
+        assert_eq!(codes(&v), vec!["outer_sd_not_above_3"]);
+        assert_eq!(v[0].field, "outer_sd");
+        assert_eq!(v[0].message, "The outer ring (2.75001× SD) must be more than 3× SD (the 80 point).");
+        let sp = SetPointsArg { outer_sd: Some(-2.0), ..Default::default() };
+        assert_eq!(
+            validate_clustering(&[c], &sp)[0].message,
+            "The outer ring (-2× SD) must be more than 3× SD (the 80 point)."
+        );
     }
 
     #[test]

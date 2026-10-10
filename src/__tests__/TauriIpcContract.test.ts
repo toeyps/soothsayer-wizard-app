@@ -48,6 +48,9 @@ const INTENTIONALLY_UNCALLED = new Set([
     // Pair Plot's CSV export of brushed rows, via the deleted `writeUserTextFile`) was removed in
     // customer-batch phase 2 (2026-10-09). Kept for future user-picked exports — user decision pending.
     'write_user_file',
+    // Per-period running-row counts for the rebuilt Running-condition modal (workbench redesign
+    // SPEC §5). Rust landed first; remove this entry when the modal's binding calls it (phase C).
+    'count_period_rows',
 ]);
 
 // ── Rust side ────────────────────────────────────────────────────────────

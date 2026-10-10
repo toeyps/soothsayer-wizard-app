@@ -68,7 +68,7 @@ pub struct TestPeriodArg {
     pub end: Option<String>,
 }
 
-fn blank_to_none(s: &Option<String>) -> Option<String> {
+pub(crate) fn blank_to_none(s: &Option<String>) -> Option<String> {
     s.as_deref()
         .map(str::trim)
         .filter(|t| !t.is_empty())
@@ -483,7 +483,11 @@ pub fn sustain_rows(interval_secs: Option<f64>) -> usize {
     }
 }
 
-fn days_of(rows: usize, interval_secs: Option<f64>) -> f64 {
+/// "Running time days" of `rows` dataset rows: rows x the dataset's median
+/// sample interval, one decimal (`0.0` when the interval is unknown). THE one
+/// definition - the scoring results' `days` and the Running-condition modal's
+/// per-period "d running" (`period_counts`) both come from here.
+pub(crate) fn days_of(rows: usize, interval_secs: Option<f64>) -> f64 {
     interval_secs.map_or(0.0, |iv| r1(rows as f64 * iv / 86_400.0))
 }
 

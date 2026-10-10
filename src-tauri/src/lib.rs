@@ -8,6 +8,7 @@ mod health_validation;
 pub mod metrics;
 mod model_export;
 pub mod operation_registry;
+mod period_counts;
 // QA-owned in-crate tests (private surface); the file lives in tests/internal/.
 #[cfg(test)]
 #[path = "../tests/internal/qa_health_internal.rs"]
@@ -7436,6 +7437,122 @@ fn health_preview_in(
     }
 }
 
+/// Session-level core of [`count_period_rows`] (no Tauri state type). The
+/// generation guard is the one of [`health_preview_in`]: a caller that pinned a
+/// generation gets `STALE_SESSION` when the loaded dataset is another one - or
+/// when nothing is loaded at all.
+fn count_period_rows_in(
+    state: &AppState,
+    periods: &[TimeRangeArg],
+    filter: Option<&PreviewFilter>,
+    expected_generation: Option<u64>,
+) -> Result<period_counts::PeriodCounts, String> {
+    let lock = state.0.read().map_err(|e| e.to_string())?;
+    let session = lock.as_ref().ok_or_else(|| match expected_generation {
+        Some(_) => STALE_SESSION_ERROR.to_string(),
+        None => "NO_DATA: no dataset is loaded".to_string(),
+    })?;
+    check_expected_generation(expected_generation, session.generation)?;
+    period_counts::count(&session.data, periods, filter)
+}
+
+/// Running-condition modal: for each period (`[{start, end}]`, same datetime
+/// text as the training / scoring periods, `null` / blank = open bound) the
+/// dataset rows inside it and how many of them pass the running condition
+/// (`filter.value_filters` + `filter.combine`; the filter's own time fields are
+/// ignored), with the running-time days - see [`period_counts`] for the result
+/// and the exact definitions (they are the scoring results' own).
+///
+/// Bounded: at most [`period_counts::MAX_PERIODS`] periods, an O(periods)
+/// answer, ONE pass over the timestamps for all periods together. Read-only.
+///
+/// A period that cannot be counted (ends before it starts, unparseable bound)
+/// is answered `valid: false` with zeroes - it never fails the call. Errors:
+/// `BAD_REQUEST: ...` (too many periods), `NO_DATA: ...` (nothing loaded),
+/// `STALE_SESSION: ...` (`expected_generation` is not the loaded dataset's).
+///
+/// `async` so the O(rows) pass never runs on the main thread.
+#[tauri::command(rename_all = "snake_case")]
+async fn count_period_rows(
+    periods: Vec<TimeRangeArg>,
+    filter: Option<PreviewFilter>,
+    expected_generation: Option<u64>,
+    state: State<'_, AppState>,
+) -> Result<period_counts::PeriodCounts, String> {
+    count_period_rows_in(&state, &periods, filter.as_ref(), expected_generation)
+}
+
+#[cfg(test)]
+mod count_period_rows_tests {
+    use super::*;
+
+    /// One day of 10-minute rows; `RUN` is 1 for the first half of the day.
+    fn state_with(generation: u64) -> AppState {
+        let n = 144;
+        let data = ColumnarData::from_parts(
+            vec!["timestamp".into(), "RUN".into()],
+            (0..n).map(|i| Some(format!("2024-01-01T{:02}:{:02}:00", i / 6, (i % 6) * 10))).collect(),
+            vec![vec![f64::NAN; n], (0..n).map(|i| if i < 72 { 1.0 } else { 0.0 }).collect()],
+        );
+        AppState(RwLock::new(Some(SessionData {
+            data,
+            paths: vec![],
+            derived: std::collections::HashSet::new(),
+            generation,
+            rel_cache: Default::default(),
+        })))
+    }
+
+    fn day() -> Vec<TimeRangeArg> {
+        vec![TimeRangeArg { start: Some("2024-01-01T00:00".into()), end: None }]
+    }
+
+    fn running() -> PreviewFilter {
+        serde_json::from_str(r#"{"value_filters":[{"sensor":"RUN","operation":"greater_than","value1":0.5}]}"#).unwrap()
+    }
+
+    #[test]
+    fn counts_against_the_loaded_dataset() {
+        let state = state_with(4);
+        for pinned in [None, Some(4)] {
+            let c = count_period_rows_in(&state, &day(), Some(&running()), pinned).unwrap();
+            assert_eq!(c.total_rows, 144);
+            assert_eq!((c.periods[0].rows_in_period, c.periods[0].running_rows, c.periods[0].running_days), (144, 72, 0.5));
+        }
+    }
+
+    #[test]
+    fn a_stale_caller_generation_is_refused() {
+        let state = state_with(4);
+        let e = count_period_rows_in(&state, &day(), None, Some(3)).unwrap_err();
+        assert_eq!(e, STALE_SESSION_ERROR);
+        assert!(e.starts_with("STALE_SESSION:"), "{e}");
+        // A newer generation than the loaded one is just as foreign.
+        assert_eq!(count_period_rows_in(&state, &day(), None, Some(5)).unwrap_err(), STALE_SESSION_ERROR);
+        // The generation is checked before the request: a stale window is told
+        // it is stale, not that its request is too long.
+        let many = vec![TimeRangeArg::default(); period_counts::MAX_PERIODS + 1];
+        assert_eq!(count_period_rows_in(&state, &many, None, Some(3)).unwrap_err(), STALE_SESSION_ERROR);
+    }
+
+    #[test]
+    fn nothing_loaded_is_no_data_or_stale_for_a_pinned_caller() {
+        let none = AppState(RwLock::new(None));
+        let e = count_period_rows_in(&none, &day(), None, None).unwrap_err();
+        assert!(e.starts_with("NO_DATA:"), "{e}");
+        assert_eq!(count_period_rows_in(&none, &day(), None, Some(4)).unwrap_err(), STALE_SESSION_ERROR);
+    }
+
+    #[test]
+    fn too_many_periods_is_a_bad_request() {
+        let state = state_with(1);
+        let many = vec![TimeRangeArg::default(); period_counts::MAX_PERIODS + 1];
+        let e = count_period_rows_in(&state, &many, None, Some(1)).unwrap_err();
+        assert!(e.starts_with("BAD_REQUEST:"), "{e}");
+        assert!(count_period_rows_in(&state, &many[..period_counts::MAX_PERIODS], None, Some(1)).is_ok());
+    }
+}
+
 /// `{app_data}/workspaces/{workspace_id}/output` — the folder "Mark complete"
 /// writes into (created if missing, so the UI can reveal it right away).
 #[tauri::command(rename_all = "snake_case")]
@@ -9126,6 +9243,7 @@ pub fn run() {
             compute_health_preview,
             export_model_files,
             get_model_output_dir,
+            count_period_rows,
             write_user_file,
             get_scatter_sample,
             log_frontend_error,
