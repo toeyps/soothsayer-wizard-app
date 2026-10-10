@@ -3,6 +3,8 @@ import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/re
 import { useState } from 'react';
 import ColourPicker, { COLOUR_PALETTE, HEX_ERROR, parseHexColour } from '../components/sensor/ColourPicker';
 import { LINE_CHART_COLORS } from '../components/charts/LineChart';
+// @ts-expect-error - @types/node is not installed; vitest runs in Node so this resolves at runtime
+import { readFileSync } from 'node:fs';
 
 // Customer item 4 (SPEC FINAL 2026-10-09 §1, DESIGN_SYSTEM §4 "Colour picking — ONE picker").
 
@@ -235,5 +237,15 @@ describe('ColourPicker', () => {
         render(<Harness initial="#123456" />);
         fireEvent.click(swatchBtn());
         expect(document.querySelector('input[type="color"]')).toBeNull();
+    });
+
+    // Real-app bug (2026-10-11): with a long sensor name the popover's implicit `auto` grid column
+    // grew to the heading's full nowrap width (372 px inside a 228 px popover), the swatch grid
+    // stretched across it and the swatches came out twice their size, spilling out of the surface.
+    // jsdom has no layout, so this pins the CSS rule that keeps the column at the popover's width.
+    it('a long heading cannot widen the popover content: the column is minmax(0, 1fr) and the label ellipsises (CSS contract)', () => {
+        const css: string = readFileSync('src/App.css', 'utf-8').replace(/\/\*[\s\S]*?\*\//g, '');
+        expect(css).toMatch(/\.cp-pop\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/);
+        expect(css).toMatch(/\.cp-head-label\s*\{[^}]*min-width:\s*0;[^}]*overflow:\s*hidden;[^}]*text-overflow:\s*ellipsis/);
     });
 });

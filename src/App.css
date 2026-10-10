@@ -5848,7 +5848,11 @@ body {
     transition: transform 0.15s, border-color 0.15s;
 }
 .cp-hit:hover:not(:disabled) .cp-swatch { border-color: var(--accent-color); transform: scale(1.12); }
-.cp-pop { display: grid; gap: 8px; padding: 10px; }
+/* `minmax(0, 1fr)`, not the implicit `auto` column: an auto column grows to the widest child's
+   max-content, so a long sensor name in `.cp-head-label` (nowrap) made the column — and the
+   swatch grid stretched across it — wider than the 228 px popover (swatches twice their size,
+   spilling out of the surface). */
+.cp-pop { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; padding: 10px; }
 .cp-head {
     display: flex;
     align-items: center;

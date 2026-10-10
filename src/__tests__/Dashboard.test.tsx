@@ -1896,6 +1896,27 @@ describe('Dashboard', () => {
             expect(lastChart.sensorAxisRange.TAG1).toBeUndefined();
         });
 
+        // Real-app bug (2026-10-11): at 230 px the row needed more width than the popover had, so
+        // "Y-axis:" wrapped onto two lines and Apply was clipped at the right edge (worse with Unpin).
+        it('the axis popover is wide enough for its row on one line: 270 px, 310 px once Unpin is shown; nothing in the row wraps', () => {
+            renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });
+            const axisPop = () => screen.getByPlaceholderText('min').closest('.sensor-popover') as HTMLElement;
+            fireEvent.click(screen.getByTitle(/Pin the Y-axis/));
+            expect(axisPop().style.width).toBe('270px');
+            expect(screen.getByText('Y-axis:').style.whiteSpace).toBe('nowrap');
+            expect(screen.getByText('Apply').style.whiteSpace).toBe('nowrap');
+            // The fields share what is left instead of a fixed width that can push Apply out.
+            expect(screen.getByPlaceholderText('min').style.minWidth).toBe('0px');
+            expect(screen.getByPlaceholderText('max').style.flexGrow).toBe('1');
+
+            fireEvent.change(screen.getByPlaceholderText('min'), { target: { value: '0' } });
+            fireEvent.change(screen.getByPlaceholderText('max'), { target: { value: '100' } });
+            fireEvent.click(screen.getByText('Apply'));
+            fireEvent.click(screen.getByTitle(/Y-axis scale pinned/));
+            expect(axisPop().style.width).toBe('310px');
+            expect(screen.getByText('Unpin').style.whiteSpace).toBe('nowrap');
+        });
+
         it('clears the color/axis-range override once the sensor is deselected', () => {
             renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });
             fireEvent.click(screen.getByTitle('Line colour'));

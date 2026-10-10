@@ -2884,19 +2884,22 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                                         <AnchoredPopover
                                             anchorRect={axisEditorAnchor}
                                             onRequestClose={closeAxisEditor}
-                                            width={230}
+                                            // Wide enough for the whole row on ONE line (label, two fields,
+                                            // Apply — plus Unpin once pinned). At the old 230 px the row needed
+                                            // more than the popover had: "Y-axis:" wrapped and Apply was clipped.
+                                            width={isPinned ? 310 : 270}
                                             style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}
                                         >
                                             <div className="fg-menu-heading">Pin Y-axis</div>
                                             <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem' }}>
-                                                <span style={{ color: 'var(--text-secondary)' }}>Y-axis:</span>
+                                                <span style={{ color: 'var(--text-secondary)', whiteSpace: 'nowrap', flexShrink: 0 }}>Y-axis:</span>
                                                 <input
                                                     type="number"
                                                     placeholder="min"
                                                     value={axisDraftMin}
                                                     onChange={(e) => setAxisDraftMin(e.target.value)}
                                                     style={{
-                                                        width: '64px', padding: '2px 4px',
+                                                        flex: 1, minWidth: 0, padding: '2px 4px',
                                                         background: 'var(--input-bg)', border: '1px solid var(--border)',
                                                         borderRadius: '4px', color: 'var(--text-primary)',
                                                         fontSize: '0.75rem', outline: 'none',
@@ -2909,16 +2912,17 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                                                     value={axisDraftMax}
                                                     onChange={(e) => setAxisDraftMax(e.target.value)}
                                                     style={{
-                                                        width: '64px', padding: '2px 4px',
+                                                        flex: 1, minWidth: 0, padding: '2px 4px',
                                                         background: 'var(--input-bg)', border: '1px solid var(--border)',
                                                         borderRadius: '4px', color: 'var(--text-primary)',
                                                         fontSize: '0.75rem', outline: 'none',
                                                     }}
                                                 />
-                                                <button className="text-btn" onClick={applyAxisEditor}>Apply</button>
+                                                <button className="text-btn" style={{ whiteSpace: 'nowrap', flexShrink: 0 }} onClick={applyAxisEditor}>Apply</button>
                                                 {isPinned && (
                                                     <button
                                                         className="text-btn"
+                                                        style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
                                                         onClick={() => { clearSensorFixedRange(sensor); closeAxisEditor(); }}
                                                     >
                                                         Unpin
