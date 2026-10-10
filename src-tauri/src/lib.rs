@@ -7426,7 +7426,7 @@ fn health_preview_in(
                 .ok_or_else(|| health_preview::not_fitted("no cache_key was given"))?;
             let fit = session.rel_cache.peek(key).ok_or_else(|| {
                 health_preview::not_fitted(
-                    "this Relationship model has no fit in memory (not trained yet, or the data changed) - train it first",
+                    "this Relation model has no fit in memory (not trained yet, or the data changed) - train it first",
                 )
             })?;
             // Test-row predictions (Train/Test validation), when cached.
@@ -7947,8 +7947,18 @@ mod health_export_tests {
         let state = state_with(ds(vec![("S", s_values())]), 1);
         let e = health_preview_in(&state, &rel_request(Some("m1:abc"))).unwrap_err();
         assert!(e.starts_with("NOT_FITTED"), "{e}");
+        // Wording (user decision 2026-10-10): the kind is named "Relation model"
+        // wherever a user can read it - never "Relationship", never the algorithm.
+        assert_eq!(
+            e,
+            "NOT_FITTED: this Relation model has no fit in memory (not trained yet, or the data changed) - train it first"
+        );
         let e = health_preview_in(&state, &rel_request(None)).unwrap_err();
         assert!(e.starts_with("NOT_FITTED"), "{e}");
+        for msg in [&e, &health_preview_in(&state, &rel_request(Some("m1:abc"))).unwrap_err()] {
+            assert!(!msg.contains("Relationship") && !msg.contains("relationship"), "{msg}");
+            assert!(!msg.contains("GAM"), "{msg}");
+        }
     }
 
     #[test]
