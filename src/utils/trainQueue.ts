@@ -35,9 +35,11 @@ import type {
 // Copy shared with the Build Model window
 // ---------------------------------------------------------------------------
 
-/** `modelBlockReason`'s generic text in the Build Model window (Save / footer).
- *  It reads wrong inside the preflight list ("above" is not above there), so
- *  `preflightReason` replaces it with the specific missing settings. */
+/** `modelBlockReason`'s generic text in the Build Model window. It is only shown
+ *  right under the Model settings form (the Model fit footer, Save's tooltip),
+ *  where "above" is true. Everywhere else — the preflight list, the Train sensor
+ *  menu and tooltip, the Health score page, the save card — the missing setting
+ *  is named instead (`preflightReason` / `missingSettingsText`). */
 export const REQUIRED_FIELDS_BLOCK_REASON = 'Fill in the required fields above first';
 
 /** `DUPLICATE_NAME_BLOCK_REASON` in the Build Model window. */
@@ -59,34 +61,27 @@ export const TRAIN_NOTHING_READY = 'Nothing is ready to train.';
 export const UP_TO_DATE_REASON = 'up to date';
 export const COMPLETE_UP_TO_DATE_REASON = 'Complete, up to date';
 
-/** `missingItems(m)` text (Build Model window) → the short phrase the
- *  preflight row shows after "Can't train — ". */
-const MISSING_ITEM_PHRASES: Record<string, string> = {
-    'Pick a category': 'no category (Performance or Condition) on the sensor',
-    'Model name is required': 'no model name',
-    'Add at least 1 predictor': 'no predictor sensor',
-    'Pick a Y sensor': 'no Y sensor',
-    'Fill in the cluster ranges': 'cluster ranges not filled in',
-    'Fix the duplicate model name': 'model name already used by another model of this sensor',
-};
+/** `missingItems(m)`'s "Pick a category" as a reason that stands alone. */
+const NO_CATEGORY_REASON = 'No category (Performance or Condition) on the sensor';
 
-/** A sentence → a phrase that reads after "Can't train — ": no trailing full
- *  stop, first letter lower-cased unless it starts an identifier ("S1", "Y").
- *  "P2 ends before it starts." (`validatePeriods`) reads "train period P2 ends
- *  before it starts"; "S1 needs a start date." (`validateTestPeriods`) reads
- *  "scoring period S1 needs a start date". */
-function toPhrase(text: string): string {
+/** A reason that stands on its own line: no trailing full stop, first letter
+ *  upper-cased. "P2 ends before it starts." (`validatePeriods`) reads "Train
+ *  period P2 ends before it starts"; "S1 needs a start date."
+ *  (`validateTestPeriods`) reads "Scoring period S1 needs a start date". */
+function toReason(text: string): string {
     let t = text.trim().replace(/\.+$/, '');
     t = t.replace(/^(P\d+)\b/, 'Train period $1');
     t = t.replace(/^(S\d+)\b/, 'Scoring period $1');
-    if (/^[A-Z][a-z]/.test(t)) t = t[0].toLowerCase() + t.slice(1);
-    return t;
+    return t ? t[0].toUpperCase() + t.slice(1) : t;
 }
 
 /**
- * The reason a model can't train, rewritten for the preflight list / run
- * results / the Train-sensor line (they read "Can't train — {text}" and
- * "Skipped — {text}"), plus where "Fix →" should go.
+ * The reason a model can't train, as the preflight list / run results / the
+ * Train sensor menu and tooltip show it — on a line of its own (under "Skipped",
+ * or as a menu item's state line), so it is a short sentence that names the
+ * missing setting — plus where "Fix →" should go. The window's generic "Fill in
+ * the required fields above first" is never shown here ("above" is not above
+ * there): the FIRST missing setting is named, with "(+N more)" for the rest.
  *
  * `blockReason` is the window's `buildBlockReason(m)`; `missing` its
  * `missingItems(m)`; `customMode` whether the model's DRAFT uses Custom
@@ -99,26 +94,35 @@ export function preflightReason(
     const custom = !!opts.customMode;
     const rcFix: TrainFixTarget = custom ? 'settings' : 'runningCondition';
     if (blockReason === CATEGORY_BLOCK_REASON) {
-        return { text: MISSING_ITEM_PHRASES['Pick a category'], fix: 'category' };
+        return { text: NO_CATEGORY_REASON, fix: 'category' };
     }
     if (blockReason === REQUIRED_FIELDS_BLOCK_REASON) {
-        const phrases = (opts.missing ?? [])
-            .filter(item => item !== 'Pick a category') // its own reason, handled above
-            .map(item => MISSING_ITEM_PHRASES[item] ?? toPhrase(item));
-        return { text: phrases.length ? phrases.join(', ') : 'required settings are missing', fix: 'settings' };
+        return { text: missingSettingsText(opts.missing ?? []), fix: 'settings' };
     }
     if (blockReason === DUPLICATE_NAME_BLOCK_REASON) {
-        return { text: MISSING_ITEM_PHRASES['Fix the duplicate model name'], fix: 'settings' };
+        return { text: 'Model name already used by another model of this sensor', fix: 'settings' };
     }
     if (blockReason === NO_RUNNING_CONDITION_REASON) {
-        return { text: custom ? 'no running condition in its own training data' : 'no running condition', fix: rcFix };
+        return { text: custom ? 'No running condition in its own training data' : 'No running condition', fix: rcFix };
     }
-    if (blockReason === NO_TRAIN_PERIOD_REASON) return { text: 'no train period', fix: 'runningCondition' };
-    if (blockReason === NO_TRAIN_PERIOD_REASON_CUSTOM) return { text: 'no train period in its own training data', fix: 'settings' };
+    if (blockReason === NO_TRAIN_PERIOD_REASON) return { text: 'No train period', fix: 'runningCondition' };
+    if (blockReason === NO_TRAIN_PERIOD_REASON_CUSTOM) return { text: 'No train period in its own training data', fix: 'settings' };
     // Invalid train periods ("P2 ends before it starts.") come from the gate;
     // invalid Custom scoring periods ("S1 needs a start date.") from Save's own check.
-    if (/^P\d+\b/.test(blockReason)) return { text: toPhrase(blockReason), fix: rcFix };
-    return { text: toPhrase(blockReason), fix: 'settings' };
+    if (/^P\d+\b/.test(blockReason)) return { text: toReason(blockReason), fix: rcFix };
+    return { text: toReason(blockReason), fix: 'settings' };
+}
+
+/**
+ * `missingItems(m)` as ONE short reason: the first missing setting by name, then
+ * "(+N more)" — "Add at least 1 predictor (+1 more)". The category is its own
+ * reason (`CATEGORY_BLOCK_REASON`), so it is not counted here. Used wherever the
+ * window's generic `REQUIRED_FIELDS_BLOCK_REASON` would be shown outside the form.
+ */
+export function missingSettingsText(missing: readonly string[]): string {
+    const items = missing.filter(item => item !== 'Pick a category').map(toReason);
+    if (items.length === 0) return 'Model settings are incomplete';
+    return `${items[0]}${items.length > 1 ? ` (+${items.length - 1} more)` : ''}`;
 }
 
 /**

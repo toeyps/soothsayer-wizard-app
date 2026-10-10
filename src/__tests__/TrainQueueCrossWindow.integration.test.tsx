@@ -376,9 +376,13 @@ describe('(b) Train all over two failure groups with one failure and one skip', 
         const g2 = within(bmw().getByTestId('train-group-2'));
         expect(g1.getByTestId('train-row-status-i3').textContent).toBe('Ready');
         expect(g1.getByTestId('train-row-status-r1').textContent).toBe('Ready');
-        expect(g2.getByTestId('train-row-status-r5').textContent).toBe("Can't train — no predictor sensor");
+        // amber "Skipped" + Fix →, the long reason (the missing setting, by name) on its own line
+        expect(g2.getByTestId('train-row-status-r5').textContent).toBe('Skipped');
+        expect(g2.getByTestId('train-row-note-r5').textContent).toBe('Add at least 1 predictor');
         expect(g2.getByTestId('train-fix-r5')).toBeTruthy();
-        expect(bmw().getByTestId('train-all-foot').textContent).toBe('Trains 4 models; the 1 with missing settings stay as they are.');
+        // zero counts are hidden: nothing is up to date here, so that count is not printed
+        expect(bmw().getByTestId('train-all-summary').textContent).toBe("4 will train· ≈ 19 s· 1 can't train — fix, then run again");
+        expect(bmw().getByTestId('train-all-foot').textContent).toBe("Trains 4 models; the 1 that can't train stays as it is");
         await act(async () => { fireEvent.click(bmw().getByTestId('train-all-start')); });
         await waitFor(() => expect(bmw().getByTestId('train-all-modal').getAttribute('data-view')).toBe('done'), { timeout: 5000 });
         await settle(50);
@@ -399,7 +403,8 @@ describe('(b) Train all over two failure groups with one failure and one skip', 
         expect(bmw().getByTestId('train-row-r1').textContent).toContain('Relation model failed: not enough rows after filtering');
         expect(bmw().getByTestId('train-retry-r1')).toBeTruthy();
         expect(bmw().getByTestId('train-row-status-i5').textContent).toBe('✓ Trained · set points needed');
-        expect(bmw().getByTestId('train-row-status-r5').textContent).toBe('Skipped — no predictor sensor');
+        expect(bmw().getByTestId('train-row-status-r5').textContent).toBe('Skipped');
+        expect(bmw().getByTestId('train-row-note-r5').textContent).toBe('Add at least 1 predictor');
         expect(bmw().getByTestId('train-row-status-r5').className).toContain('tq-st--cant');
         expect(bmw().getByTestId('train-row-status-c5').textContent).toBe('✓ Trained · set points needed');
         fireEvent.click(bmw().getByTestId('train-all-close'));

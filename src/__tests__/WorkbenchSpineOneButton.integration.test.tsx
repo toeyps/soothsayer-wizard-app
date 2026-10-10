@@ -216,7 +216,7 @@ describe('ONE filled button + status said once, through a whole Individual journ
             words: 'Set points needed', dot: 'need', dash: 'need',
         });
         expect(bmw().getByTestId('train-sensor').className).not.toContain('rcx-btn--pri');
-        expect(bmw().getByTestId('train-sensor').textContent).toBe('▶ Train sensor · 0 of 1');
+        expect(bmw().getByTestId('train-sensor').textContent).toBe('▶ Train sensor');
 
         // 5) Health score, set points empty: Mark complete is THE button (disabled, with the reason)
         await act(async () => { fireEvent.click(bmw().getByTestId('next-health-score')); });

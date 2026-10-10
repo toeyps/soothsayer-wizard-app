@@ -270,10 +270,21 @@ describe('ModelFitPage — Clustering', () => {
         expect(screen.getByTestId('cluster-row-2').textContent).toBe('Cluster 2 · 33.6 – 4.6123442 rows');
     });
 
-    it('the rings are named on the chart, once per level, so the card has NO legend row', () => {
+    // Design rule (workbench-redesign phase D): a name drawn on the chart is the ONLY key
+    // only on a chart that cannot zoom or pan. The Clusters chart zooms on both axes and a
+    // ring's name leaves the view with the ring's edge — so the rings also get a fixed key.
+    it('the rings are named on the chart, once per level, AND in a fixed key under it (the chart zooms and pans)', () => {
         page(clu(), { n_clusters: 2 });
         expect(chartOf('cl').getAttribute('data-ring-labels')).toBe('1× SD|3× SD');
-        expect(legendOf('cl')).toBeNull();
+        const key = screen.getByTestId('ring-key');
+        expect(screen.getByTestId('chart-card-cl').contains(key)).toBe(true);
+        expect(key.textContent).toBe('1× SD3× SD');
+        const lines = key.querySelectorAll('i');
+        expect(lines).toHaveLength(2);
+        // 1× solid, 3× dashed — the same line styles as the rings themselves
+        expect((lines[0] as HTMLElement).style.borderTopStyle).toBe('solid');
+        expect((lines[1] as HTMLElement).style.borderTopStyle).toBe('dashed');
+        // (the time charts keep NO key row: they only zoom in time — pinned above with legendOf('ts'))
     });
 
     it('axis titles are description + unit; the tag is in the subtitle, not on the axis', () => {

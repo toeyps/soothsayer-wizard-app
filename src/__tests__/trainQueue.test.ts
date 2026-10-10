@@ -14,6 +14,7 @@ import {
     estimateTimeLeftMs,
     formatTrainSeconds,
     isStaleTrainError,
+    missingSettingsText,
     planTrainRun,
     preflightReason,
     queuePosition,
@@ -38,62 +39,80 @@ const it_ = (id: string, state: TrainQueueItem['state'], over: Partial<TrainQueu
 });
 
 describe('preflightReason', () => {
-    it('replaces the generic "required fields above" text with the specific missing settings', () => {
+    // SPEC workbench-redesign §6: a can't-train reason NAMES the missing setting and
+    // stands on a line of its own (under "Skipped", or as a menu row's state line).
+    it('replaces the generic "required fields above" text with the NAME of the missing setting, then "(+N more)"', () => {
         expect(preflightReason(REQUIRED_FIELDS_BLOCK_REASON, { missing: ['Add at least 1 predictor'] }))
-            .toEqual({ text: 'no predictor sensor', fix: 'settings' });
+            .toEqual({ text: 'Add at least 1 predictor', fix: 'settings' });
+        expect(preflightReason(REQUIRED_FIELDS_BLOCK_REASON, { missing: ['Model name is required', 'Add at least 1 predictor'] }).text)
+            .toBe('Model name is required (+1 more)');
         expect(preflightReason(REQUIRED_FIELDS_BLOCK_REASON, { missing: ['Model name is required', 'Pick a Y sensor', 'Fill in the cluster ranges'] }).text)
-            .toBe('no model name, no Y sensor, cluster ranges not filled in');
+            .toBe('Model name is required (+2 more)');
     });
 
-    it('never says "above" and falls back to a neutral phrase when nothing specific is known', () => {
+    it('never says "above" and falls back to a neutral sentence when nothing specific is known', () => {
         const r = preflightReason(REQUIRED_FIELDS_BLOCK_REASON, { missing: [] });
-        expect(r.text).toBe('required settings are missing');
+        expect(r.text).toBe('Model settings are incomplete');
         expect(r.text).not.toMatch(/above/);
+        expect(r.text).not.toBe(REQUIRED_FIELDS_BLOCK_REASON);
     });
 
-    it('turns an unknown missing item (a Custom scoring period error) into a phrase', () => {
+    it('the category is its own reason: it is not counted among the missing settings', () => {
+        expect(missingSettingsText(['Pick a category', 'Add at least 1 predictor'])).toBe('Add at least 1 predictor');
+        expect(missingSettingsText(['Pick a category'])).toBe('Model settings are incomplete');
+        expect(missingSettingsText([])).toBe('Model settings are incomplete');
+    });
+
+    it('turns an unknown missing item (a Custom scoring period error) into a sentence without its full stop', () => {
         expect(preflightReason(REQUIRED_FIELDS_BLOCK_REASON, { missing: ['S1 needs a start date.'] }).text)
-            .toBe('scoring period S1 needs a start date');
+            .toBe('Scoring period S1 needs a start date');
         // the real text `validateTestPeriods` produces, end to end
         const reason = testPeriodsError([{ id: 't', start: '2026-02-01T00:00', end: '2026-01-01T00:00' }])!;
-        expect(preflightReason(REQUIRED_FIELDS_BLOCK_REASON, { missing: [reason] }).text).toBe('scoring period S1 ends before it starts');
+        expect(preflightReason(REQUIRED_FIELDS_BLOCK_REASON, { missing: [reason] }).text).toBe('Scoring period S1 ends before it starts');
         expect(preflightReason(REQUIRED_FIELDS_BLOCK_REASON, { missing: [reason] }).text).not.toMatch(/test period/i);
     });
 
-    it('category → its own phrase and the sensor header as the fix target', () => {
-        expect(preflightReason(CATEGORY_BLOCK_REASON)).toEqual({ text: 'no category (Performance or Condition) on the sensor', fix: 'category' });
+    it('category → its own reason and the sensor header as the fix target', () => {
+        expect(preflightReason(CATEGORY_BLOCK_REASON)).toEqual({ text: 'No category (Performance or Condition) on the sensor', fix: 'category' });
     });
 
     it('duplicate model name', () => {
-        expect(preflightReason(DUPLICATE_NAME_BLOCK_REASON).text).toBe('model name already used by another model of this sensor');
+        expect(preflightReason(DUPLICATE_NAME_BLOCK_REASON).text).toBe('Model name already used by another model of this sensor');
     });
 
     it('running condition / train period: workspace → Running condition, Custom → its own settings', () => {
-        expect(preflightReason(NO_RUNNING_CONDITION_REASON)).toEqual({ text: 'no running condition', fix: 'runningCondition' });
+        expect(preflightReason(NO_RUNNING_CONDITION_REASON)).toEqual({ text: 'No running condition', fix: 'runningCondition' });
         expect(preflightReason(NO_RUNNING_CONDITION_REASON, { customMode: true }))
-            .toEqual({ text: 'no running condition in its own training data', fix: 'settings' });
-        expect(preflightReason(NO_TRAIN_PERIOD_REASON)).toEqual({ text: 'no train period', fix: 'runningCondition' });
-        expect(preflightReason(NO_TRAIN_PERIOD_REASON_CUSTOM)).toEqual({ text: 'no train period in its own training data', fix: 'settings' });
+            .toEqual({ text: 'No running condition in its own training data', fix: 'settings' });
+        expect(preflightReason(NO_TRAIN_PERIOD_REASON)).toEqual({ text: 'No train period', fix: 'runningCondition' });
+        expect(preflightReason(NO_TRAIN_PERIOD_REASON_CUSTOM)).toEqual({ text: 'No train period in its own training data', fix: 'settings' });
     });
 
     it('an invalid train period keeps its specifics', () => {
-        expect(preflightReason('P2 ends before it starts.')).toEqual({ text: 'train period P2 ends before it starts', fix: 'runningCondition' });
+        expect(preflightReason('P2 ends before it starts.')).toEqual({ text: 'Train period P2 ends before it starts', fix: 'runningCondition' });
         expect(preflightReason('P1 has an invalid start date.', { customMode: true }).fix).toBe('settings');
         // the real text `validatePeriods` produces, end to end (never "Period 2")
         const real = validatePeriods([{ id: 'a', start: '2026-01-01T00:00', end: '2026-01-31T23:59' }, { id: 'b', start: '2026-03-01T00:00', end: '2026-02-01T00:00' }])[1].reason!;
-        expect(preflightReason(real)).toEqual({ text: 'train period P2 ends before it starts', fix: 'runningCondition' });
+        expect(preflightReason(real)).toEqual({ text: 'Train period P2 ends before it starts', fix: 'runningCondition' });
     });
 
-    it('anything else: no trailing full stop, lower-case start', () => {
-        expect(preflightReason('Something odd happened.')).toEqual({ text: 'something odd happened', fix: 'settings' });
+    it('anything else: no trailing full stop, a capital first letter (it stands on its own line)', () => {
+        expect(preflightReason('Something odd happened.')).toEqual({ text: 'Something odd happened', fix: 'settings' });
+        expect(preflightReason('its files are being saved').text).toBe('Its files are being saved');
     });
 });
 
 describe('the reason texts mapped above still exist in the Build Model window', () => {
     // The mapping matches on exact text; if a wording changes there, update the map here.
     const src: string = readFileSync('src/components/windows/BuildModelWindow.tsx', 'utf8');
+    // The generic "required fields" text is no longer a second literal there: the window
+    // uses THIS module's constant (and names the missing setting away from the form).
+    it('the window uses the shared REQUIRED_FIELDS_BLOCK_REASON, not its own copy of the text', () => {
+        expect(src).toContain('return REQUIRED_FIELDS_BLOCK_REASON;');
+        expect(src).not.toContain(REQUIRED_FIELDS_BLOCK_REASON);
+        expect(src).toContain('missingSettingsText(missingItems(m))');
+    });
     it.each([
-        REQUIRED_FIELDS_BLOCK_REASON,
         DUPLICATE_NAME_BLOCK_REASON,
         'Pick a category',
         'Model name is required',
@@ -110,7 +129,7 @@ describe('the reason texts mapped above still exist in the Build Model window', 
 describe('classifyTrainPlan', () => {
     it('a block reason wins: missing (amber) with the rewritten reason and fix target', () => {
         expect(classifyTrainPlan({ blockReason: CATEGORY_BLOCK_REASON, dotState: 'complete' }))
-            .toEqual({ kind: 'missing', reason: 'no category (Performance or Condition) on the sensor', fix: 'category' });
+            .toEqual({ kind: 'missing', reason: 'No category (Performance or Condition) on the sensor', fix: 'category' });
     });
     it('complete → up to date (complete)', () => {
         expect(classifyTrainPlan({ blockReason: null, dotState: 'complete' }))

@@ -791,6 +791,53 @@ describe('states of the preview', () => {
         expect(onReload).toHaveBeenCalledTimes(1);
     });
 
+    // Phase D: the model's own load failed (NOT a lost fit), so no preview is asked for at
+    // all — the page must not read "Loading…" for ever, and never offers a link that cannot work.
+    const idlePreview = { data: null, lastData: null, loading: false, error: null, errorCode: null, notFitted: false, needsRetrain: false, idle: 'disabled' as const };
+    it.each([
+        ['individual', 'Individual model'],
+        ['relationship', 'Relation model'],
+        ['clustering', 'Clustering model'],
+    ] as const)('%s — a COMPLETE model whose load failed: "Couldn\'t load the …" with "Load it again" (same words as the fit-gone board), no Train sensor link', (kind, name) => {
+        mount({ kind, data: null, preview: idlePreview, fitGone: { onReload, error: 'The engine stopped.' } });
+        expect(screen.queryByTestId('health-loading')).toBeNull();
+        const board = screen.getByTestId('health-load-failed');
+        expect(board.className).toMatch(/wbx-msg--bad/);
+        expect(board.querySelector('.wbx-msg-t')!.textContent).toBe(`Couldn't load the ${name}`);
+        expect(board.querySelector('.wbx-msg-s')!.textContent).toBe('Nothing about the model changed and it stays Complete — Load it again. Your set points are kept and scored again when it is loaded.');
+        expect(board.querySelector('.wbx-msg-d')!.textContent).toBe('The engine stopped.');
+        expect(board.textContent).not.toMatch(/Train sensor/);
+        expect(within(board).getAllByRole('button')).toHaveLength(1);
+        const link = within(board).getByTestId('health-load-again');
+        expect(link.textContent).toBe('Load it again');
+        expect(link.className).toBe('tq-inline-link');
+        fireEvent.click(link);
+        expect(onReload).toHaveBeenCalledTimes(1);
+    });
+
+    it('a model that is NOT Complete whose train failed: "Training failed" with the "Train sensor ↑" link (Train sensor trains it again)', () => {
+        mount({ kind: 'individual', data: null, preview: idlePreview, fitGone: { onReload, onGoTrainSensor: onGoTrain, error: 'stats exploded' } });
+        expect(screen.queryByTestId('health-loading')).toBeNull();
+        expect(screen.queryByTestId('health-load-failed')).toBeNull();
+        const board = screen.getByTestId('health-train-failed');
+        expect(board.querySelector('.wbx-msg-t')!.textContent).toBe('Training failed');
+        expect(board.querySelector('.wbx-msg-s')!.textContent).toBe('Fix the problem, then train again with Train sensor ↑. Your set points are kept.');
+        expect(board.querySelector('.wbx-msg-d')!.textContent).toBe('stats exploded');
+        fireEvent.click(within(board).getByTestId('health-go-train-sensor'));
+        expect(onGoTrain).toHaveBeenCalledTimes(1);
+    });
+
+    it('while that load runs again the page reads "Loading the … model…"; with no error at all it is the plain loading board', () => {
+        const { unmount } = mount({ kind: 'clustering', data: null, preview: idlePreview, fitLoading: true, fitGone: { onReload, error: 'old error' } });
+        expect(screen.queryByTestId('health-load-failed')).toBeNull();
+        expect(screen.getByTestId('health-loading').querySelector('.wbx-msg-t')!.textContent).toBe('Loading the Clustering model…');
+        unmount();
+        mount({ kind: 'individual', data: null, preview: idlePreview, fitGone: { onReload } });
+        expect(screen.getByTestId('health-loading')).toBeTruthy();
+        expect(screen.queryByTestId('health-load-failed')).toBeNull();
+        expect(screen.queryByTestId('health-train-failed')).toBeNull();
+    });
+
     it('"Load it again" is disabled, with the reason as its tooltip, while it cannot run (a training run is active)', () => {
         mount({ kind: 'relationship', sp: REL_VALID, data: null, preview: notFitted(), fitGone: { onReload, reloadDisabledReason: 'Wait for the training run to finish' } });
         const load = screen.getByTestId('health-load-fit') as HTMLButtonElement;

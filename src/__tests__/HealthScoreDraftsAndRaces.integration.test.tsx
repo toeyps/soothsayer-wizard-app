@@ -504,7 +504,8 @@ describe('Mark complete: races and failures', () => {
         fireEvent.click(bmw().getByTestId('train-sensor-menu-toggle'));
         const only = bmw().getByTestId('train-menu-only-relationship') as HTMLButtonElement;
         expect(only.disabled).toBe(true);
-        expect(only.textContent).toContain("Can't train — being saved");
+        // the row's state line is the reason itself
+        expect(only.querySelector('small')!.textContent).toBe('Its files are being saved');
         await act(async () => { g.release(); });
         await settle(150);
         const m = diskModel('r1');

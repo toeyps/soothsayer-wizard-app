@@ -840,7 +840,7 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             await deliverData({ failureGroupState: { groups: [makeGroup()], models: [makeModel({ status: true })] } });
             const b = screen.getByTestId('results-placeholder');
             expect(b.querySelector('.wbx-msg-t')!.textContent).toBe('Marked complete');
-            expect(b.querySelector('.wbx-msg-s')!.textContent).toBe('To see its charts, train it from the Train sensor ▾ menu (“Individual only”). It then needs Mark complete again.');
+            expect(b.querySelector('.wbx-msg-s')!.textContent).toBe('To see its charts, train it from the Train sensor ▾ menu (“Train the Individual model”). It then needs Mark complete again.');
             expect(within(b).queryByTestId('board-train-sensor')).toBeNull();
             expect(trainSensorBtn().disabled).toBe(true); // why "Train sensor ↑" would lead nowhere
             const link = within(b).getByTestId('board-train-menu');
@@ -853,7 +853,7 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             expect(caret.getAttribute('aria-expanded')).toBe('true');
             // the row the sentence names is there and usable
             const only = within(screen.getByTestId('train-sensor-menu')).getByTestId('train-menu-only-individual') as HTMLButtonElement;
-            expect(only.textContent).toMatch(/^Individual only/);
+            expect(only.textContent).toMatch(/^Train the Individual model/);
             expect(only.disabled).toBe(false);
             // a second click leaves the menu open (it never toggles it shut)
             fireEvent.click(link);
@@ -1011,11 +1011,11 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: { groups: [makeGroup()], models: [{ ...trained, trainedFingerprint: 'stale-fingerprint-does-not-match' }] } });
             await flush();
-            expect(screen.getByTestId('results-stale').textContent).toMatch(/Settings changed/);
+            expect(screen.getByTestId('results-stale').textContent).toBe('Out of dateSettings or running condition changed — train it again with Train sensor ↑ to see the charts.');
             expect(screen.getByText('Incomplete', { selector: '.model-status-pill' })).toBeTruthy(); // pill reverts, "Trained" is only for fresh
             expect(trainSensorBtn().disabled).toBe(false);
             expect(trainSensorBtn().textContent).toBe('▶ Train sensor · 1 of 1');
-            expect(screen.getByTestId('footer-status').textContent).toBe('Settings changed · re-train with Train sensor ↑'); // footer message
+            expect(screen.getByTestId('footer-status').textContent).toBe('Settings or running condition changed · train again with Train sensor ↑'); // footer message
             expect(screen.queryByText('↻ Re-train')).toBeNull(); // the per-model footer button is gone
             fireEvent.click(trainSensorBtn());
             await flush();
@@ -1128,7 +1128,7 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             expect(train.disabled).toBe(true);
             // ONE short line: the reason is said once, on the board below; the tooltip keeps the full reason.
             expect(trainSensorWhy()).toBe("Can't train · see below");
-            expect(train.title).toBe("Can't train: Individual — no model name");
+            expect(train.title).toBe("Can't train: Individual — Model name is required");
             // The footer keeps the shipped Save reason.
             expect(screen.getByTestId('build-block-reason').textContent).toMatch(/Fill in the required fields/);
         });
@@ -3444,7 +3444,7 @@ describe('Running condition Step 1 — header, card, settings modal preview (202
             await deliverData({ failureGroupState: setFg({ runningConditionTimePeriods: [{ id: 'x', start: '2026-02-01T00:00', end: '2026-01-05T00:00' }] }) });
             expect(screen.getByTestId('results-rc-locked').textContent).toContain('Fix the running condition first');
             expect(trainSensorBtn().disabled).toBe(true);
-            expect(trainSensorBtn().title).toBe("Can't train: Individual — train period P1 ends before it starts");
+            expect(trainSensorBtn().title).toBe("Can't train: Individual — Train period P1 ends before it starts");
             expect(screen.getByTestId('results-rc-locked-open').textContent).toBe('Running condition ↑');
         });
 
@@ -3843,7 +3843,7 @@ describe('Incomplete immediately + Relationship fit cache key (health score phas
         await deliverData({ failureGroupState: { groups: [makeGroup()], models: [stale] } });
         await flush();
         expect(screen.getByText('Incomplete', { selector: '.model-status-pill' })).toBeTruthy();
-        expect(screen.getByTestId('results-stale').textContent).toMatch(/Settings changed/);
+        expect(screen.getByTestId('results-stale').textContent).toBe('Out of dateSettings or running condition changed — train it again with Train sensor ↑ to see the charts.');
         expect(trainSensorBtn().disabled).toBe(false); // stale = ready to train again
         expect(screen.queryByText('Mark incomplete')).toBeNull();
         // Yellow ("needs re-train"), never the green Complete dot.
@@ -4221,14 +4221,25 @@ describe('Workbench two pages — shell + Model fit page (health score 3b-1)', (
     });
 
     describe('stale banner + "Out of date" overlay', () => {
-        it('shows the banner only while stale, with a Re-train button that trains the model', async () => {
+        // SPEC workbench-redesign §6: the banner has NO button of its own — its sentence links
+        // to the header's Train sensor, the one place to train.
+        it('shows the banner only while stale: the whole sentence, a "Train sensor ↑" link that focuses Train sensor — which trains the model', async () => {
             const stale = { ...withTrained(makeModel()), trainedFingerprint: 'old' };
             await mount([stale]);
             const banner = screen.getByTestId('stale-banner');
-            expect(banner.textContent).toMatch(/Settings changed — this model is Incomplete again/);
-            expect(banner.textContent).toMatch(/Your set points are kept/);
-            await act(async () => { fireEvent.click(screen.getByTestId('stale-retrain')); await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
-            expect(mockInvoke).toHaveBeenCalledWith('compute_sensor_stats', expect.anything());
+            expect(banner.textContent).toBe('Settings or running condition changed — this model is Incomplete again. Train it again with Train sensor ↑ to update the charts. Your set points are kept.');
+            expect(screen.queryByTestId('stale-retrain')).toBeNull();
+            expect(banner.querySelector('.rcx-btn')).toBeNull();
+            const trains = () => mockInvoke.mock.calls.filter(c => c[0] === 'compute_sensor_stats').length;
+            const before = trains();
+            // the link does not train by itself: it moves the focus to Train sensor
+            fireEvent.click(screen.getByTestId('stale-go-train'));
+            await flush();
+            expect(document.activeElement).toBe(trainSensorBtn());
+            expect(trains()).toBe(before);
+            expect(trainSensorBtn().textContent).toBe('▶ Train sensor · 1 of 1');
+            await act(async () => { fireEvent.click(trainSensorBtn()); await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+            await waitFor(() => expect(trains()).toBe(before + 1));
             expect(healthCalls().length).toBe(0); // no preview request for a stale model...
         });
 
@@ -4250,8 +4261,11 @@ describe('Workbench two pages — shell + Model fit page (health score 3b-1)', (
             expect(screen.getAllByTestId('chart-outdated')).toHaveLength(3); // Fit, Target vs predicted, Residual
             await new Promise(r => setTimeout(r, 400)); // longer than the hook's debounce
             expect(healthCalls().length).toBe(before);
-            // Re-train commits the draft and the banner / overlays go away again.
-            await act(async () => { fireEvent.click(screen.getByTestId('stale-retrain')); await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+            // Train sensor (where the banner points) commits the draft and the banner / overlays go away again.
+            expect(screen.queryByTestId('stale-retrain')).toBeNull();
+            fireEvent.click(screen.getByTestId('stale-go-train'));
+            expect(document.activeElement).toBe(trainSensorBtn());
+            await act(async () => { fireEvent.click(trainSensorBtn()); await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
             await waitFor(() => expect(screen.queryByTestId('stale-banner')).toBeNull());
             await waitFor(() => expect(screen.queryAllByTestId('chart-outdated')).toHaveLength(0));
         });
@@ -4374,7 +4388,7 @@ describe('Workbench two pages — shell + Model fit page (health score 3b-1)', (
             expect(within(board()).queryByTestId('board-train-sensor')).toBeNull();
             expect(board().querySelectorAll('button')).toHaveLength(1);
             expect(trainSensorBtn().disabled).toBe(true);
-            expect(trainSensorBtn().textContent).toBe('▶ Train sensor · 0 of 1');
+            expect(trainSensorBtn().textContent).toBe('▶ Train sensor'); // a ghost: no "· n of m" when nothing needs it
             expect(trainSensorWhy()).toBe('1 model up to date — nothing to train');
             // it is still Complete, and the footer says what is wrong (not only "Trained …")
             expect(screen.getByTestId('footer-pill').textContent).toBe('Complete');
@@ -4452,7 +4466,7 @@ describe('Workbench two pages — shell + Model fit page (health score 3b-1)', (
             expect(relTab().getAttribute('aria-label')).toBe('Relation model, Trained');
             expect(screen.queryByTestId('results-not-fitted')).toBeNull();
             await chartsReady();
-            expect(trainSensorBtn().textContent).toBe('▶ Train sensor · 0 of 2');
+            expect(trainSensorBtn().textContent).toBe('▶ Train sensor');
         });
 
         it('another preview failure is reported in place of the charts', async () => {
@@ -6268,19 +6282,23 @@ describe('train queue wiring (customer items 8 + 9)', () => {
             return { label: el.firstChild!.textContent, small: el.querySelector('small')!.textContent };
         };
 
-        it('a never-trained sensor: "Train all 2 models", "Individual only", "Relationship only" — no "Re-train"', async () => {
+        it('a never-trained sensor: "Train all 2 models", "Individual only", "Relation model only" — no "Re-train", no "up to date"', async () => {
             await mountModels([IND2(), REL2()]);
             await openMenu();
-            expect(item('retrain-all').label).toBe('Train all 2 models');
-            expect(item('only-individual')).toEqual({ label: 'Individual only', small: '≈ 1 s' });
-            expect(item('only-relationship')).toEqual({ label: 'Relationship only', small: '≈ 15 s' });
-            expect(screen.getByTestId('train-sensor-menu').textContent).not.toMatch(/re-train/i);
+            // the all-row gives the time; it does NOT say "Includes up-to-date ones" (there are none)
+            expect(item('retrain-all')).toEqual({ label: 'Train all 2 models', small: '≈ 16 s' });
+            expect(item('only-individual')).toEqual({ label: 'Individual only', small: 'Not trained yet · ≈ 1 s' });
+            expect(item('only-relationship')).toEqual({ label: 'Relation model only', small: 'Not trained yet · ≈ 15 s' });
+            expect(screen.getByTestId('train-sensor-menu').textContent).not.toMatch(/re-train|up[- ]to[- ]date|Relationship/i);
         });
 
         it('a never-trained model that can\'t train keeps its reason, without "Re-train"', async () => {
             await mountModels([IND2(), REL2({ predictorSensors: [] })]);
             await openMenu();
-            expect(item('only-relationship')).toEqual({ label: 'Relationship only', small: "Can't train — no predictor sensor" });
+            // the state line is the reason itself: it names the missing setting
+            expect(item('only-relationship')).toEqual({ label: 'Relation model only', small: 'Add at least 1 predictor' });
+            expect(item('retrain-all').small).toBe("≈ 1 s · 1 can't train, skipped");
+            expect(screen.getByTestId('train-sensor-menu').textContent).not.toMatch(/Fill in the required fields/);
             expect((screen.getByTestId('train-menu-only-relationship') as HTMLButtonElement).disabled).toBe(true);
         });
 
@@ -6288,29 +6306,48 @@ describe('train queue wiring (customer items 8 + 9)', () => {
             await mountModels([withTrained(IND2()), REL2()]);
             await openMenu();
             expect(item('retrain-all').label).toBe('Train all 2 models');
-            expect(item('only-individual')).toEqual({ label: 'Re-train Individual only', small: 'Re-trains it even though it is up to date' });
-            expect(item('only-relationship')).toEqual({ label: 'Relationship only', small: '≈ 15 s' });
+            expect(item('retrain-all').small).toBe('Includes the 1 up to date');
+            expect(item('only-individual')).toEqual({ label: 'Re-train Individual only', small: 'Up to date · trains anyway' });
+            expect(item('only-relationship')).toEqual({ label: 'Relation model only', small: 'Not trained yet · ≈ 15 s' });
         });
 
-        it('every model trained before: "Re-train all 2 models", "Re-train Individual only", "Re-train Relationship only"', async () => {
+        it('every model trained before: "Re-train all 2 models", "Re-train Individual only", "Re-train Relation model only"', async () => {
             await mountModels([withTrained(IND2()), withTrained(REL2())]);
             await openMenu();
             expect(item('retrain-all').label).toBe('Re-train all 2 models');
             expect(item('only-individual').label).toBe('Re-train Individual only');
-            expect(item('only-relationship').label).toBe('Re-train Relationship only');
+            expect(item('only-relationship').label).toBe('Re-train Relation model only');
         });
 
-        it('training a never-trained model turns its row into "Re-train … only"', async () => {
+        // A sensor with ONE model never reads "Train all 1 model": no all-row, and its own
+        // row is a whole sentence that turns into "Re-train the …" once it was trained.
+        it('a sensor with ONE model: no "Train all 1 model" row; "Train the Individual model" becomes "Re-train the Individual model" after training', async () => {
             await mountModels([IND2()]);
             await openMenu();
-            expect(item('retrain-all').label).toBe('Train all 1 model');
-            expect(item('only-individual').label).toBe('Individual only');
+            expect(screen.queryByTestId('train-menu-retrain-all')).toBeNull();
+            expect(screen.getByTestId('train-sensor-menu').querySelectorAll('[role="menuitem"]')).toHaveLength(1);
+            expect(item('only-individual')).toEqual({ label: 'Train the Individual model', small: 'Not trained yet · ≈ 1 s' });
+            expect(screen.getByTestId('train-sensor-menu').textContent).not.toMatch(/all 1 model| only/);
             fireEvent.keyDown(window, { key: 'Escape' });
             await clickTrainSensor();
             await waitFor(() => expect(strip().getAttribute('data-phase')).toBe('done'));
             await openMenu();
-            expect(item('retrain-all').label).toBe('Re-train all 1 model');
-            expect(item('only-individual').label).toBe('Re-train Individual only');
+            expect(screen.queryByTestId('train-menu-retrain-all')).toBeNull();
+            expect(item('only-individual')).toEqual({ label: 'Re-train the Individual model', small: 'Up to date · trains anyway' });
+        });
+
+        it('state lines follow the model: settings changed since it was trained, and a failed run', async () => {
+            // trained before, but its fingerprint no longer matches (settings / running condition changed)
+            mockInvoke.mockImplementation((cmd: string, args?: any) => cmd === 'compute_sensor_stats' ? Promise.reject(new Error('stats exploded')) : healthInvoke(cmd, args));
+            await mountModels([{ ...withTrained(IND2()), trainedFingerprint: 'old' }, REL2()]);
+            await openMenu();
+            expect(item('only-individual')).toEqual({ label: 'Re-train Individual only', small: 'Settings changed since it was trained · ≈ 1 s' });
+            fireEvent.keyDown(window, { key: 'Escape' });
+            // its run fails: the row says so (and the time it will take again)
+            await clickTrainSensor();
+            await waitFor(() => expect(strip().getAttribute('data-phase')).toBe('done'));
+            await openMenu();
+            expect(item('only-individual').small).toBe('Failed last run · ≈ 1 s');
         });
     });
 
@@ -6443,7 +6480,11 @@ describe('train queue wiring (customer items 8 + 9)', () => {
         await mountModels([IND2(), noPred]);
         expect(screen.getByTestId('train-all-counts').textContent).toBe("1 ready0 up to date1 can't train");
         await act(async () => { fireEvent.click(screen.getByTestId('train-all')); });
-        expect(screen.getByTestId('train-row-status-r3').textContent).toBe("Can't train — no predictor sensor");
+        // amber "Skipped", the reason (the missing setting, by name) on its own line under the row
+        expect(screen.getByTestId('train-row-status-r3').textContent).toBe('Skipped');
+        expect(screen.getByTestId('train-row-note-r3').textContent).toBe('Add at least 1 predictor');
+        expect(screen.getByTestId('train-all-foot').textContent).toBe("Trains 1 model; the 1 that can't train stays as it is");
+        expect(screen.getByTestId('train-all-modal').textContent).not.toMatch(/Fill in the required fields|0 up to date/);
         fireEvent.click(screen.getByTestId('train-fix-r3'));
         expect(screen.queryByTestId('train-all-modal')).toBeNull();
         expect(screen.getByRole('heading', { level: 3 }).textContent).toContain('TAG3');
@@ -6758,17 +6799,17 @@ describe('train queue wiring — review fixes (phase 4)', () => {
         notFitted = false;
         await act(async () => { fireEvent.click(trainSensorBtn()); await Promise.resolve(); });
         await waitFor(() => expect(screen.getByTestId('train-run-strip').getAttribute('data-phase')).toBe('done'));
-        await waitFor(() => expect(trainSensorBtn().textContent).toBe('▶ Train sensor · 0 of 1'));
+        await waitFor(() => expect(trainSensorBtn().textContent).toBe('▶ Train sensor'));
     });
 
-    it('a model being saved (Mark complete running) is planned as "Can\'t train — being saved"', async () => {
+    it('a model being saved (Mark complete running) is planned as can\'t train — "Its files are being saved"', async () => {
         mockInvoke.mockImplementation((cmd: string, args?: any) => cmd === 'export_model_files' ? new Promise(() => {}) : healthInvoke(cmd, args));
         await mountModels([IND3T({ healthSetPoints: VALID_IND })]);
         await openHealthPage();
         await waitFor(() => expect((screen.getByTestId('mark-complete') as HTMLButtonElement).disabled).toBe(false));
         await act(async () => { fireEvent.click(screen.getByTestId('mark-complete')); await Promise.resolve(); });
         expect(screen.getByTestId('train-sensor-why').textContent).toBe("Can't train · see below");
-        expect(trainSensorBtn().title).toBe("Can't train: Individual — being saved");
+        expect(trainSensorBtn().title).toBe("Can't train: Individual — Its files are being saved");
         expect(trainSensorBtn().disabled).toBe(true);
         // every menu item is disabled too, so the ▾ toggle is
         expect((screen.getByTestId('train-sensor-menu-toggle') as HTMLButtonElement).disabled).toBe(true);
@@ -6864,12 +6905,14 @@ describe('Workbench redesign §1 — the page spine', () => {
             expect(primary()).toBe('mark');
         });
 
-        it('settings changed (stale): Train sensor — the stale banner\'s own Re-train is a ghost', async () => {
+        it('settings changed (stale): Train sensor — the stale banner has no button of its own, only the "Train sensor ↑" link', async () => {
             await hsMount([{ ...HS_IND(), trainedFingerprint: 'old' }]);
             expect(screen.getByTestId('stale-banner')).toBeTruthy();
             expect(filled()).toEqual(['train-sensor']);
-            expect(screen.getByTestId('stale-retrain').className).not.toContain('rcx-btn--pri');
-            expect(screen.getByTestId('footer-status').textContent).toBe('Settings changed · re-train with Train sensor ↑');
+            expect(screen.queryByTestId('stale-retrain')).toBeNull();
+            expect(screen.getByTestId('stale-banner').querySelector('.rcx-btn')).toBeNull();
+            expect(screen.getByTestId('stale-go-train').className).toBe('tq-inline-link');
+            expect(screen.getByTestId('footer-status').textContent).toBe('Settings or running condition changed · train again with Train sensor ↑');
         });
 
         it('running condition not set / not valid: only the card\'s own button; everything in the detail pane is a ghost (a draft\'s Save too)', async () => {
@@ -7284,5 +7327,377 @@ describe('Workbench redesign §1 — the page spine', () => {
         expect(load.querySelector('.wbx-msg-t')!.textContent).toBe('Loading the Individual model…');
         expect(load.textContent).not.toMatch(/Training|about \d/);
         await release();
+    });
+});
+
+
+// ─────────────────────────────────────────────────────────────────────────
+// Workbench redesign, phase D — SPEC workbench-redesign §6 (Train sensor /
+// Train all copy) and §7 (page states). Every chart-less state of every KIND
+// follows the spine rules: ONE board shape (title · one sentence · optional mono
+// line) whose actions are text links, the status said once in the footer
+// sentence, at most one filled button (`data-primary`), "Loading the … model…"
+// for a trained model being worked out again vs "Training the … · about N s"
+// for a model in the run — and no state is a dead end.
+// ─────────────────────────────────────────────────────────────────────────
+describe('Workbench redesign §7 — page states of every kind (phase D)', () => {
+    // The Step-1 row count asks `compute_sensor_stats` for TAG1, so the Individual model sits
+    // on TAG2: its own train can then be held / failed without touching that count.
+    const KINDS = [
+        {
+            kind: 'individual', name: 'Individual model', tab: 'Individual', trains: 'Trains Individual', secs: '1 s',
+            make: (o: Record<string, any> = {}) => makeModel({ id: 'i1', targetSensor: 'TAG2', ...o }),
+            isTrain: (cmd: string, args: any) => cmd === 'compute_sensor_stats' && args?.sensor === 'TAG2',
+        },
+        {
+            kind: 'relationship', name: 'Relation model', tab: 'Relation model', trains: 'Trains the Relation model', secs: '15 s',
+            make: (o: Record<string, any> = {}) => makeModel({ id: 'r1', kind: 'relationship', targetSensor: 'TAG1', predictorSensors: ['TAG2'], relStiffness: 10_000, ...o }),
+            isTrain: (cmd: string) => cmd === 'preview_relationship_model',
+        },
+        {
+            kind: 'clustering', name: 'Clustering model', tab: 'Clustering', trains: 'Trains Clustering', secs: '2 s',
+            make: (o: Record<string, any> = {}) => makeModel({ id: 'c1', kind: 'clustering', targetSensor: '', xSensor: 'TAG1', ySensor: 'TAG2', numClusters: 1, ...o }),
+            isTrain: (cmd: string) => cmd === 'compute_clustering_preview',
+        },
+    ] as const;
+    type K = typeof KINDS[number];
+    const each = it.each(KINDS.map(k => [k.kind, k] as const));
+
+    const boardOf = (id: string) => {
+        const b = screen.getByTestId(id);
+        return {
+            el: b,
+            title: b.querySelector('.wbx-msg-t')!.textContent,
+            text: b.querySelector('.wbx-msg-s')?.textContent ?? null,
+            detail: b.querySelector('.wbx-msg-d')?.textContent ?? null,
+            // a board never has a button-shaped control of its own: its actions are text links
+            buttonShaped: b.querySelectorAll('.rcx-btn, .f4-btn, .bmw-btn-ok, .f4-btn-save').length,
+        };
+    };
+    const foot = () => screen.getByTestId('wb-footer');
+    const sentence = () => foot().querySelector('.wbx-reason')!.textContent;
+    const primary = () => foot().getAttribute('data-primary');
+    const pill = () => screen.getByTestId('footer-pill').textContent;
+    const filled = () => Array.from(document.querySelectorAll<HTMLElement>('.rcx-btn--pri, .rcx-btn--danger, .f4-btn-save, .bmw-btn-ok'))
+        .filter(b => !b.classList.contains('tq-split-caret') && !b.closest('[role="dialog"]'))
+        .map(b => b.getAttribute('data-testid'));
+    const lastModel = async (id: string) => (await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1]?.value)?.failureGroupState.models.find((m: any) => m.id === id);
+    const mountK = async (models: any[], extraFg: Record<string, any> = {}) => {
+        statefulUpdateMock(models, extraFg);
+        render(<BuildModelWindow />);
+        await deliverData({ failureGroupState: { groups: [makeGroup()], models, ...extraFg } });
+        await flush();
+    };
+    /** The model's own train command answers what `mode` says; everything else as usual. */
+    const trainAnswers = (k: K, mode: { current: 'ok' | 'fail' | 'hold' }) => {
+        let release: () => void = () => {};
+        const gate = new Promise<void>(r => { release = r; });
+        mockInvoke.mockImplementation((cmd: string, args?: any) => {
+            if (!k.isTrain(cmd, args)) return healthInvoke(cmd, args);
+            if (mode.current === 'fail') return Promise.reject(new Error('the engine stopped'));
+            if (mode.current === 'hold') return gate.then(() => healthInvoke(cmd, args));
+            return healthInvoke(cmd, args);
+        });
+        return () => act(async () => { release(); await Promise.resolve(); await Promise.resolve(); });
+    };
+    const trainCalls = (k: K) => mockInvoke.mock.calls.filter(c => k.isTrain(c[0] as string, c[1])).length;
+    const openMenu = () => fireEvent.click(screen.getByTestId('train-sensor-menu-toggle'));
+    const menuRow = (k: K) => {
+        const el = screen.getByTestId(`train-menu-only-${k.kind}`);
+        return { label: el.firstChild!.textContent, small: el.querySelector('small')!.textContent };
+    };
+
+    each('%s — not trained: the "Not trained yet" board points at Train sensor ↑; the footer says it once; Train sensor is the one filled button', async (_n, k) => {
+        mockInvoke.mockImplementation(healthInvoke);
+        await mountK([k.make()]);
+        const b = boardOf('results-placeholder');
+        expect(b.title).toBe('Not trained yet');
+        expect(b.text).toBe('Train it with Train sensor ↑ — the charts of the trained model appear here.');
+        expect(b.detail).toBe(`${k.tab} · uses the workspace running condition · ≈ ${k.secs}`);
+        expect(b.buttonShaped).toBe(0);
+        expect(pill()).toBe('Incomplete');
+        expect(sentence()).toBe('Not trained yet · Train sensor ↑');
+        expect(primary()).toBe('train');
+        expect(filled()).toEqual(['train-sensor']);
+        // §6: filled "▶ Train sensor · n of m", one short line under it, a menu row with its state line
+        expect(trainSensorBtn().textContent).toBe('▶ Train sensor · 1 of 1');
+        expect(trainSensorWhy()).toBe(`${k.trains} · ≈ ${k.secs}`);
+        openMenu();
+        expect(screen.queryByTestId('train-menu-retrain-all')).toBeNull(); // one model: never "Train all 1 model"
+        expect(menuRow(k)).toEqual({ label: `Train the ${k.name}`, small: `Not trained yet · ≈ ${k.secs}` });
+        // the board's link goes to the ONE place to train
+        fireEvent.click(within(b.el).getByTestId('board-train-sensor'));
+        expect(document.activeElement).toBe(trainSensorBtn());
+    });
+
+    each('%s — training (in the run) reads "Training the … · about N s"; a trained model being worked out again reads "Loading the … model…" (no estimate)', async (_n, k) => {
+        const mode = { current: 'hold' as 'ok' | 'fail' | 'hold' };
+        const release = trainAnswers(k, mode);
+        await mountK([k.make()]);
+        await act(async () => { fireEvent.click(trainSensorBtn()); await Promise.resolve(); await Promise.resolve(); });
+        await waitFor(() => expect(boardOf('results-loading').title).toBe(`Training the ${k.name} · about ${k.secs}`));
+        expect(boardOf('results-loading').text).toBe('Its settings are locked until it finishes. The charts appear here when it is done.');
+        expect(boardOf('results-loading').el.className).toContain('wbx-msg--run');
+        expect(sentence()).toBe(` Training now · about ${k.secs}`);
+        expect(screen.getByTestId('settings-locked')).toBeTruthy();
+        await release();
+        await waitFor(() => expect(screen.getByTestId('train-run-strip').getAttribute('data-phase')).toBe('done'));
+        cleanup();
+
+        // The same model, trained, opened again: its result is worked out silently.
+        mockInvoke.mockClear();
+        const mode2 = { current: 'hold' as 'ok' | 'fail' | 'hold' };
+        const release2 = trainAnswers(k, mode2);
+        await mountK([withTrained(k.make())]);
+        const load = boardOf('results-loading');
+        expect(load.title).toBe(`Loading the ${k.name}…`);
+        expect(load.text).toBe('The charts appear here when it is ready.');
+        expect(load.el.textContent).not.toMatch(/Training|about \d/);
+        expect(sentence()).not.toMatch(/Training now|Queued/);
+        expect(screen.queryByTestId('train-run-strip')).toBeNull(); // not a run
+        await release2();
+    });
+
+    each('%s — stale: the banner has no button, the board and the footer point at Train sensor ↑, which is the one filled button', async (_n, k) => {
+        mockInvoke.mockImplementation(healthInvoke);
+        await mountK([{ ...withTrained(k.make()), trainedFingerprint: 'old' }]);
+        const banner = screen.getByTestId('stale-banner');
+        expect(banner.textContent).toBe('Settings or running condition changed — this model is Incomplete again. Train it again with Train sensor ↑ to update the charts. Your set points are kept.');
+        expect(banner.querySelector('.rcx-btn')).toBeNull();
+        const b = boardOf('results-stale');
+        expect(b.title).toBe('Out of date');
+        expect(b.text).toBe('Settings or running condition changed — train it again with Train sensor ↑ to see the charts.');
+        expect(b.buttonShaped).toBe(0);
+        expect(pill()).toBe('Incomplete');
+        expect(sentence()).toBe('Settings or running condition changed · train again with Train sensor ↑');
+        expect(primary()).toBe('train');
+        expect(filled()).toEqual(['train-sensor']);
+        expect(trainSensorBtn().textContent).toBe('▶ Train sensor · 1 of 1');
+        openMenu();
+        expect(menuRow(k)).toEqual({ label: `Re-train the ${k.name}`, small: `Settings changed since it was trained · ≈ ${k.secs}` });
+    });
+
+    each('%s — blocked by the gate (no running condition): the lock board links to "Running condition ↑"; the card holds the only filled button', async (_n, k) => {
+        mockInvoke.mockImplementation(healthInvoke);
+        await mountK([k.make()], { runningConditionNoneConfirmed: false, rcLegacyNotice: null });
+        fireEvent.click(screen.getByLabelText('Close')); // the auto-opened settings modal
+        const lock = boardOf('results-rc-locked');
+        expect(lock.title).toBe('Set the running condition first');
+        expect(lock.text).toBe('Nothing that follows the workspace running condition can train until it is set — open Running condition ↑');
+        expect(lock.buttonShaped).toBe(0);
+        expect(pill()).toBe('Incomplete');
+        expect(foot().querySelector('.wbx-reason')!.getAttribute('data-testid')).toBe('build-block-reason');
+        expect(primary()).toBe('none');
+        expect(filled()).toEqual(['rc-card-open']);
+        // Train sensor: a ghost without "· n of m", disabled, with the reason as its one line
+        expect(trainSensorBtn().textContent).toBe('▶ Train sensor');
+        expect(trainSensorBtn().disabled).toBe(true);
+        expect(trainSensorWhy()).toBe('Set the running condition first.');
+        expect(screen.getByTestId('wb-footer').textContent).not.toMatch(/Fill in the required fields/);
+    });
+
+    each('%s — blocked by its own invalid Custom running condition: the reason is on the board and in the footer; no filled button; Train sensor only points down', async (_n, k) => {
+        mockInvoke.mockImplementation(healthInvoke);
+        await mountK([k.make({
+            runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true,
+            filterTimePeriods: [{ id: 'o1', start: '2026-03-01T00:00', end: '2026-02-01T00:00' }],
+        })]);
+        expect(within(screen.getByTestId('results-incomplete')).getByText("Fix P1's end above")).toBeTruthy();
+        expect(screen.getByTestId('results-incomplete').querySelector('.wbx-msg-t')!.textContent).toBe('1 item to fix before training');
+        expect(screen.getByTestId('build-block-reason').textContent).toBe("Fix P1's end above");
+        expect(pill()).toBe('Incomplete');
+        expect(primary()).toBe('none');
+        expect(filled()).toEqual([]);
+        expect(trainSensorBtn().textContent).toBe('▶ Train sensor');
+        expect(trainSensorBtn().disabled).toBe(true);
+        expect(trainSensorWhy()).toBe("Can't train · see below"); // short: the reason is said once, below
+        expect(trainSensorBtn().title).toBe(`Can't train: ${k.tab} — Train period P1 ends before it starts`);
+    });
+
+    each('%s — failed (not Complete): "Training failed" with Train sensor ↑ — which really trains it again', async (_n, k) => {
+        const mode = { current: 'fail' as 'ok' | 'fail' | 'hold' };
+        trainAnswers(k, mode);
+        await mountK([k.make()]);
+        await act(async () => { fireEvent.click(trainSensorBtn()); await Promise.resolve(); await Promise.resolve(); });
+        await waitFor(() => expect(screen.getByTestId('results-error')).toBeTruthy());
+        const b = boardOf('results-error');
+        expect(b.title).toBe('Training failed');
+        expect(b.text).toBe('Fix the problem, then train again with Train sensor ↑. The model keeps its last state.');
+        expect(b.detail).toBe('the engine stopped');
+        expect(b.el.className).toContain('wbx-msg--bad');
+        expect(b.buttonShaped).toBe(0);
+        expect(pill()).toBe('Incomplete');
+        expect(sentence()).toBe('Training failed · fix the problem, then Train sensor ↑');
+        expect(foot().querySelector('.wbx-reason')!.getAttribute('data-tone')).toBe('bad');
+        expect(screen.getByTestId(`tab-status-${k.make().id}`).getAttribute('data-dot')).toBe('bad');
+        expect(screen.getByTestId(`tab-status-${k.make().id}`).getAttribute('title')).toBe('Training failed');
+        await waitFor(() => expect(primary()).toBe('train'));
+        expect(trainSensorBtn().disabled).toBe(false);
+        openMenu();
+        expect(menuRow(k).small).toBe(`Failed last run · ≈ ${k.secs}`);
+        fireEvent.keyDown(window, { key: 'Escape' });
+        // not a dead end: the same button trains it once the problem is gone
+        mode.current = 'ok';
+        const before = trainCalls(k);
+        await act(async () => { fireEvent.click(trainSensorBtn()); await Promise.resolve(); await Promise.resolve(); });
+        await waitFor(() => expect(trainCalls(k)).toBe(before + 1));
+        await waitFor(() => expect(screen.queryByTestId('results-error')).toBeNull());
+        await waitFor(async () => expect((await lastModel(k.make().id)).lastTrainedAt).toBeTruthy());
+    });
+
+    // Leftover of 0ce26a9: a COMPLETE model whose silent load on open failed (not a lost fit)
+    // used to show "Training failed … Train sensor ↑" — but Train sensor never trains an
+    // up-to-date Complete model, so that was a dead end.
+    each('%s — COMPLETE and its load failed: "Couldn\'t load the …" with "Load it again" (nothing written, stays Complete) and the ▾ menu — never Train sensor ↑', async (_n, k) => {
+        const mode = { current: 'fail' as 'ok' | 'fail' | 'hold' };
+        trainAnswers(k, mode);
+        const model: Record<string, any> = { ...withTrained(k.make()), status: true };
+        await mountK([model]);
+        await waitFor(() => expect(screen.getByTestId('results-load-failed')).toBeTruthy());
+        expect(screen.queryByTestId('results-error')).toBeNull(); // not the "Training failed" board
+        const b = boardOf('results-load-failed');
+        expect(b.title).toBe(`Couldn't load the ${k.name}`);
+        expect(b.text).toBe('Nothing about the model changed and it stays Complete — Load it again, or train it from the Train sensor ▾ menu (it then needs Mark complete again). The charts come back when it is loaded.');
+        expect(b.detail).toBe('the engine stopped');
+        expect(b.el.className).toContain('wbx-msg--bad');
+        expect(b.buttonShaped).toBe(0);
+        // never a link that cannot work: Train sensor is a disabled ghost for an up-to-date Complete model
+        expect(b.el.textContent).not.toContain('Train sensor ↑');
+        expect(within(b.el).queryByTestId('board-train-sensor')).toBeNull();
+        expect(trainSensorBtn().disabled).toBe(true);
+        expect(trainSensorBtn().textContent).toBe('▶ Train sensor');
+        expect(trainSensorWhy()).toBe('1 model up to date — nothing to train');
+        // the footer says it once, with the same way out; the model is still Complete
+        expect(pill()).toBe('Complete');
+        expect(sentence()).toBe("Couldn't load the model · load it again");
+        expect(foot().querySelector('.wbx-reason')!.getAttribute('data-tone')).toBe('bad');
+        expect(primary()).toBe('none');
+        expect(filled()).toEqual([]);
+        // the Health score page stays shut meanwhile, and its tooltip names the way back that works
+        expect((screen.getByTestId('page-health') as HTMLButtonElement).disabled).toBe(true);
+        expect(screen.getByTestId('page-health').getAttribute('title')).toBe('Load the model again first');
+        expect(screen.getByTestId(`tab-status-${model.id}`).getAttribute('title')).toBe("Complete · Couldn't load the model");
+        expect(screen.getByTestId(`tab-status-${model.id}`).getAttribute('data-dot')).toBe('bad');
+        // the ▾ link opens the menu whose row really trains it
+        fireEvent.click(within(b.el).getByTestId('board-train-menu'));
+        expect((screen.getByTestId(`train-menu-only-${k.kind}`) as HTMLButtonElement).disabled).toBe(false);
+        expect(menuRow(k)).toEqual({ label: `Re-train the ${k.name}`, small: 'Up to date · trains anyway · it becomes Incomplete' });
+        fireEvent.keyDown(window, { key: 'Escape' });
+
+        // "Load it again" fails again: back on the same board (never stuck on "Loading…")
+        const writesBefore = mockUpdateWorkspaceData.mock.calls.length;
+        let calls = trainCalls(k);
+        await act(async () => { fireEvent.click(screen.getByTestId('board-load-again')); await Promise.resolve(); await Promise.resolve(); });
+        await waitFor(() => expect(trainCalls(k)).toBe(calls + 1));
+        await waitFor(() => expect(screen.getByTestId('results-load-failed')).toBeTruthy());
+
+        // ...and once the problem is gone it loads: the charts are back, NOTHING was written, still Complete
+        mode.current = 'ok';
+        calls = trainCalls(k);
+        await act(async () => { fireEvent.click(screen.getByTestId('board-load-again')); await Promise.resolve(); await Promise.resolve(); });
+        await waitFor(() => expect(trainCalls(k)).toBe(calls + 1));
+        await waitFor(() => expect(screen.getByTestId('results-chart')).toBeTruthy());
+        expect(screen.queryByTestId('results-load-failed')).toBeNull();
+        expect(pill()).toBe('Complete');
+        expect(sentence()).not.toMatch(/Couldn't load/);
+        expect(screen.getByTestId(`tab-status-${model.id}`).getAttribute('title')).toBe('Complete');
+        const written = mockUpdateWorkspaceData.mock.calls.length > writesBefore ? await lastModel(model.id) : model;
+        expect(written.status).toBe(true);
+        expect(written.lastTrainedAt).toBe(model.lastTrainedAt);
+        expect(written.trainedFingerprint).toBe(model.trainedFingerprint);
+        // no training run was started for it
+        expect(screen.queryByTestId('train-run-strip')).toBeNull();
+    });
+
+    each('%s — the charts could not be loaded (preview error): the board says the model is kept and offers "Try again", which asks again', async (_n, k) => {
+        let fail = true;
+        mockInvoke.mockImplementation((cmd: string, args?: any) =>
+            cmd === 'compute_health_preview' && fail ? Promise.reject('NO_DATA: no rows in the training scope') : healthInvoke(cmd, args));
+        await mountK([withTrained(k.make())]);
+        await waitFor(() => expect(screen.getByTestId('results-health-error')).toBeTruthy());
+        const b = boardOf('results-health-error');
+        expect(b.title).toBe("Couldn't load the charts");
+        expect(b.text).toBe('The trained model is kept — Try again.');
+        expect(b.detail).toMatch(/no rows in the training scope/);
+        expect(b.buttonShaped).toBe(0);
+        expect(pill()).toBe('Trained');
+        const before = healthCalls().length;
+        fail = false;
+        fireEvent.click(within(b.el).getByTestId('board-retry-charts'));
+        await waitFor(() => expect(healthCalls().length).toBeGreaterThan(before));
+        await waitFor(() => expect(screen.getByTestId('results-chart')).toBeTruthy());
+        expect(screen.queryByTestId('results-health-error')).toBeNull();
+    });
+
+    // Leftover 3: with the workspace running condition unset, "Set running condition →" is the
+    // only filled button — but a model on its OWN (Custom) condition is not blocked: its
+    // Train sensor is a ghost that works, and the line under it must say so.
+    each('%s — a Custom-mode model while the workspace running condition is unset: Train sensor is a working ghost and its line says nothing is blocked', async (_n, k) => {
+        mockInvoke.mockImplementation(healthInvoke);
+        const custom = k.make({ runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true, filterTimePeriods: ALL_TIME_TRAIN });
+        await mountK([custom], { runningConditionNoneConfirmed: false, rcLegacyNotice: null });
+        fireEvent.click(screen.getByLabelText('Close')); // the auto-opened settings modal
+        expect(screen.queryByTestId('results-rc-locked')).toBeNull();
+        expect(filled()).toEqual(['rc-card-open']);
+        expect(primary()).toBe('none');
+        expect(trainSensorBtn().className).not.toContain('rcx-btn--pri');
+        expect(trainSensorBtn().disabled).toBe(false);
+        expect(trainSensorBtn().textContent).toBe('▶ Train sensor · 1 of 1');
+        expect(trainSensorWhy()).toBe(`${k.trains} · own running condition, not blocked`);
+        expect(screen.getByTestId('train-sensor-why').className).not.toMatch(/tq-why--(warn|danger)/);
+        expect(boardOf('results-placeholder').detail).toBe(`${k.tab} · uses its own running condition (Custom) · ≈ ${k.secs}`);
+        // it works
+        const before = trainCalls(k);
+        await act(async () => { fireEvent.click(trainSensorBtn()); await Promise.resolve(); await Promise.resolve(); });
+        await waitFor(() => expect(trainCalls(k)).toBe(before + 1));
+        await waitFor(() => expect(screen.getByTestId('train-run-strip').getAttribute('data-phase')).toBe('done'));
+        // trained: nothing left to train, and still "not blocked" — never "Set the running condition first."
+        await waitFor(() => expect(trainSensorWhy()).toBe('1 model up to date — nothing to train · own running condition, not blocked'));
+        expect(trainSensorBtn().textContent).toBe('▶ Train sensor');
+        expect(filled()).toEqual(['rc-card-open']);
+    });
+
+    it('a workspace-mode sibling of that Custom model IS blocked: the line names both — what trains, and what can\'t', async () => {
+        mockInvoke.mockImplementation(healthInvoke);
+        const custom = makeModel({ id: 'i1', targetSensor: 'TAG2', runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true, filterTimePeriods: ALL_TIME_TRAIN });
+        const ws = makeModel({ id: 'r1', kind: 'relationship', targetSensor: 'TAG2', predictorSensors: ['TAG1'] });
+        await mountK([custom, ws], { runningConditionNoneConfirmed: false, rcLegacyNotice: null });
+        fireEvent.click(screen.getByLabelText('Close'));
+        expect(trainSensorWhy()).toBe("Trains Individual · own running condition, not blocked · Relation model can't train, skipped");
+        expect(trainSensorBtn().textContent).toBe('▶ Train sensor · 1 of 2');
+        expect(trainSensorBtn().disabled).toBe(false);
+        openMenu();
+        expect(screen.getByTestId('train-menu-only-relationship').querySelector('small')!.textContent).toBe('No running condition');
+        expect((screen.getByTestId('train-menu-only-relationship') as HTMLButtonElement).disabled).toBe(true);
+        expect(screen.getByTestId('train-menu-retrain-all').querySelector('small')!.textContent).toBe("≈ 1 s · 1 can't train, skipped");
+    });
+
+    // §6: "Fill in the required fields above first" is only true right under the form.
+    it('a missing setting is NAMED outside the form (Train sensor tooltip, Train all); right under the form the shipped sentence stays', async () => {
+        mockInvoke.mockImplementation(healthInvoke);
+        const broken = makeModel({ id: 'r1', name: '', kind: 'relationship', targetSensor: 'TAG1', predictorSensors: [] });
+        const fine = makeModel({ id: 'i2', name: 'Temp I', targetSensor: 'TAG2' });
+        await mountK([broken, fine]);
+        fireEvent.click(screen.getAllByTestId('sensor-row-label').find(e => e.textContent?.includes('Pump Pressure'))!);
+        await flush();
+        // under the form: "above" is true, the shipped sentence stays
+        expect(screen.getByTestId('build-block-reason').textContent).toBe('Fill in the required fields above first');
+        // header: one short line, the tooltip names the first missing setting and counts the rest
+        expect(trainSensorWhy()).toBe("Can't train · see below");
+        expect(trainSensorBtn().title).toBe("Can't train: Relation model — Model name is required (+1 more)");
+        expect(trainSensorBtn().title).not.toMatch(/Fill in the required fields|above/);
+        // Train all: amber "Skipped" + Fix →, the named reason on its own line
+        await act(async () => { fireEvent.click(screen.getByTestId('train-all')); });
+        expect(screen.getByTestId('train-row-status-r1').textContent).toBe('Skipped');
+        expect(screen.getByTestId('train-row-note-r1').textContent).toBe('Model name is required (+1 more)');
+        expect(screen.getByTestId('train-row-status-i2').textContent).toBe('Ready');
+        expect(screen.getByTestId('train-all-foot').textContent).toBe("Trains 1 model; the 1 that can't train stays as it is");
+        expect(screen.getByTestId('train-all-modal').textContent).not.toMatch(/Fill in the required fields|above first/);
+    });
+
+    it('the list legend reads "Needs input / re-train"', async () => {
+        render(<BuildModelWindow />);
+        await deliverData();
+        expect(screen.getByText('Needs input / re-train')).toBeTruthy();
     });
 });

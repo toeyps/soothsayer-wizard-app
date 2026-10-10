@@ -27,7 +27,7 @@ import {
 import { narrowScopes, scopesOf, sensorAxisTitle, type TimeScopes } from './healthCharts';
 import { formatDataStamp } from '../periodDisplay';
 import { SlowScoringNotice, TestResultsCard, TestsChangedBanner } from './ValidationCards';
-import { FitGoneBoard, StateBoard } from './WorkbenchShellParts';
+import { FitGoneBoard, LoadFailedBoard, StateBoard, TrainSensorLink } from './WorkbenchShellParts';
 import type { HealthScorePageProps, SaveInfo } from './workbenchTypes';
 
 /*
@@ -149,12 +149,40 @@ function HealthScorePage(props: HealthScorePageProps) {
     );
 
     if (!data) {
+        // The model's own load (or train) failed in this session, so no preview is asked
+        // for at all: without this the page would read "Loading…" for ever.
+        const loadError = !preview.notFitted && !props.fitLoading ? props.fitGone.error ?? null : null;
+        const kindName = model.kind === 'relationship' ? 'Relation model' : `${model.kind === 'clustering' ? 'Clustering' : 'Individual'} model`;
         return (
             <div className="wb2-board" data-testid="health-page">
                 <SaveBanner save={save} slow={slowSave} relation={model.kind === 'relationship'} />
                 <SlowScoringNotice show={props.slowScoring} />
-                {errorCard}
-                {preview.notFitted ? (
+                {!loadError && errorCard}
+                {loadError ? (
+                    props.fitGone.onGoTrainSensor ? (
+                        // Not Complete: Train sensor trains it again (a failed run = ready).
+                        <StateBoard
+                            testId="health-train-failed"
+                            className="hs-full hs-stateboard"
+                            tone="bad"
+                            title="Training failed"
+                            text={<>Fix the problem, then train again with <TrainSensorLink testId="health-go-train-sensor" onClick={props.fitGone.onGoTrainSensor} />. Your set points are kept.</>}
+                            detail={loadError}
+                        />
+                    ) : (
+                        // Complete: Train sensor never trains it — "Load it again" is the way out.
+                        <LoadFailedBoard
+                            testId="health-load-failed"
+                            linkTestId="health-load-again"
+                            className="hs-full hs-stateboard"
+                            kindName={kindName}
+                            tail="Your set points are kept and scored again when it is loaded."
+                            error={loadError}
+                            onReload={props.fitGone.onReload}
+                            reloadDisabledReason={props.fitGone.reloadDisabledReason}
+                        />
+                    )
+                ) : preview.notFitted ? (
                     // The fit is being loaded again (silently, or "Load it again"): say so.
                     // Otherwise ONE board, no button of its own: "Load it again" (nothing
                     // about the model changed) and, when it trains this model, "Train sensor ↑".
@@ -341,6 +369,10 @@ function SetPointChart({ data, props, hoverIdx, onHover, stale, unit, scopes }: 
 
     if (!built) return null;
 
+    // No key row under these charts: the time charts only zoom in time, so the names of
+    // their level lines stay at the right edge; the Clusters chart zooms on both axes,
+    // but its rings are keyed by the set-points table beside it (the 100 / 80 / 0 rows
+    // in the rings' colours), which never leaves the view.
     const chartProps: Partial<ComponentProps<typeof ResponsiveECharts>> = built.time
         ? {
             onChartReady: joinSyncGroup,

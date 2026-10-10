@@ -2,6 +2,7 @@ import { memo, useEffect, useRef, useState, type ReactNode, type Ref } from 'rea
 import { ChevronDown, Loader2, Lock, X } from 'lucide-react';
 import { SensorInline } from '../../sensor/SensorLabel';
 import { sensorPlainLabel, useSensorLookup } from '../../sensor/sensorInfo';
+import { useModalFocus } from '../useModalFocus';
 import type { ModelKind } from '../../../types';
 import { parseHealthError } from '../../../utils/completeModel';
 import type {
@@ -151,44 +152,68 @@ export interface SensorTrainMenuModel {
     /** The model has a previous train record (`FailureModel.lastTrainedAt`, the same
      *  field `isModelStale` / the "up to date" rule read as "was trained"). */
     trainedBefore: boolean;
+    /** Its last train (or load) of this session failed. */
+    failedLastRun?: boolean;
+    /** A trained Relation model whose fit is no longer in memory. */
+    fitGone?: boolean;
 }
 
 export interface SensorTrainMenuCopy {
-    /** The "all" row. */
-    all: { label: string; small: string };
+    /** The "all" row; null for a sensor with ONE model (its own row says it all). */
+    all: { label: string; small: string } | null;
     /** One row per model, in the order given. */
     only: { label: string; small: string }[];
 }
 
+/** Kind names in the ▾ menu and the line under Train sensor (the tabs' names). */
+const MENU_KIND: Record<ModelKind, string> = { individual: 'Individual', relationship: 'Relation model', clustering: 'Clustering' };
+/** A kind inside a sentence: "the Individual model", "the Relation model". */
+const MENU_KIND_MODEL: Record<ModelKind, string> = { individual: 'Individual model', relationship: 'Relation model', clustering: 'Clustering model' };
+
+/** The small state line under a model's menu row: where the model stands and the
+ *  rough time, or why it can't train (SPEC workbench-redesign §6). "≈ 15 s" is the
+ *  Relation model's time; the other kinds print their own (≈ 1 s / ≈ 2 s). */
+export function trainMenuStateLine(m: SensorTrainMenuModel): string {
+    const p = m.plan;
+    if (p.kind === 'missing') return p.reason;
+    if (p.kind === 'upToDate') return `Up to date · trains anyway${p.complete ? ' · it becomes Incomplete' : ''}`;
+    const time = `≈ ${formatTrainSeconds(ROUGH_TRAIN_SECONDS[m.kind])}`;
+    if (m.fitGone) return `Fit no longer in memory · ${time}`;
+    if (m.failedLastRun) return `Failed last run · ${time}`;
+    return `${m.trainedBefore ? 'Settings changed since it was trained' : 'Not trained yet'} · ${time}`;
+}
+
 /**
- * Labels and sub-lines of the Train sensor ▾ menu. "Re-train" is only said about a
+ * Labels and state lines of the Train sensor ▾ menu. "Re-train" is only said about a
  * model that HAS been trained before:
  *   - all row:   "Train all N models" — "Re-train all N models" only when EVERY model of
- *                the sensor was trained before
- *   - model row: "Individual only" before its first train, "Re-train Individual only" after
- * The sub-lines keep their meaning (can't train + why, a Complete model becomes Incomplete,
- * the rough time) and never say "re-trains" about a model with no train record.
+ *                the sensor was trained before. A sensor with ONE model has no all row.
+ *   - model row: "Individual only" before its first train, "Re-train Individual only"
+ *                after; the one model of a single-model sensor reads "Train the
+ *                Individual model" / "Re-train the Individual model".
+ * Every model row carries its state line (`trainMenuStateLine`). The all row says what
+ * it adds to plain Train sensor — the up-to-date models, and that a Complete one becomes
+ * Incomplete — and only when there is one; otherwise the rough time.
  */
 export function sensorTrainMenuCopy(models: readonly SensorTrainMenuModel[]): SensorTrainMenuCopy {
     const n = models.length;
-    const allTrained = n > 0 && models.every(m => m.trainedBefore);
+    const single = n === 1;
+    const only = models.map(m => ({
+        label: single
+            ? `${m.trainedBefore ? 'Re-train' : 'Train'} the ${MENU_KIND_MODEL[m.kind]}`
+            : m.trainedBefore ? `Re-train ${MENU_KIND[m.kind]} only` : `${MENU_KIND[m.kind]} only`,
+        small: trainMenuStateLine(m),
+    }));
+    if (n < 2) return { all: null, only };
+    const allTrained = models.every(m => m.trainedBefore);
+    const upToDate = models.filter(m => m.plan.kind === 'upToDate').length;
     const hasComplete = models.some(m => m.plan.kind === 'upToDate' && m.plan.complete);
-    return {
-        all: {
-            label: `${allTrained ? 'Re-train' : 'Train'} all ${n} model${n === 1 ? '' : 's'}`,
-            small: `Includes up-to-date ones${hasComplete ? ' · a Complete model becomes Incomplete and needs Mark complete again' : ''}`,
-        },
-        only: models.map(m => {
-            const kind = TRAIN_KIND_LABEL[m.kind];
-            const p = m.plan;
-            return {
-                label: m.trainedBefore ? `Re-train ${kind} only` : `${kind} only`,
-                small: p.kind === 'missing' ? `Can't train — ${p.reason}`
-                    : p.kind === 'upToDate' ? `${m.trainedBefore ? 'Re-trains' : 'Trains'} it even though it is up to date${p.complete ? ' · it becomes Incomplete' : ''}`
-                    : `≈ ${formatTrainSeconds(ROUGH_TRAIN_SECONDS[m.kind])}`,
-            };
-        }),
-    };
+    const runnable = models.filter(m => m.plan.kind !== 'missing');
+    const cant = n - runnable.length;
+    const small = runnable.length === 0 ? 'None of them can train yet'
+        : upToDate > 0 ? `Includes the ${upToDate} up to date${hasComplete ? ' · a Complete model becomes Incomplete and needs Mark complete again' : ''}`
+        : `≈ ${formatTrainSeconds(roughTrainSeconds(runnable.map(m => m.kind)))}${cant > 0 ? ` · ${cant} can't train, skipped` : ''}`;
+    return { all: { label: `${allTrained ? 'Re-train' : 'Train'} all ${n} models`, small }, only };
 }
 
 export function SensorTrainButton({ label, filled, disabled, title, why, whyTone, onTrain, menu, buttonRef, menuButtonRef }: {
@@ -203,7 +228,8 @@ export function SensorTrainButton({ label, filled, disabled, title, why, whyTone
     whyTone: TrainReasonTone;
     onTrain: () => void;
     /** The ▾ menu (`sensorTrainMenuCopy`): "Train all N models" / "Re-train all N models",
-     *  then "Individual only" / "Re-train Individual only" per model. */
+     *  then "Individual only" / "Re-train Individual only" per model, each with its
+     *  small state line. */
     menu: TrainMenuItem[];
     buttonRef?: Ref<HTMLButtonElement>;
     /** The ▾ button (a sentence that points at the menu focuses and opens it). */
@@ -448,7 +474,11 @@ export function shortTrainError(raw: string): string {
     return line.length > 200 ? `${line.slice(0, 199)}…` : line;
 }
 
-function QRow({ m, st, act, err }: { m: TrainRowModel; st: RowStatus; act?: ReactNode; err?: string }) {
+/** A row the run leaves out because it can't train: amber "Skipped", the long
+ *  reason on a second line under the row (never squeezed into the status). */
+const CANT_STATUS: RowStatus = { tone: 'cant', text: 'Skipped' };
+
+function QRow({ m, st, act, err, note }: { m: TrainRowModel; st: RowStatus; act?: ReactNode; err?: string; note?: string }) {
     return (
         <div className={`tq-qrow tq-qrow--${st.tone}`} data-testid={`train-row-${m.id}`}>
             <span className={`f4-kb model-kind-icon--${m.kind}`} aria-hidden="true">{KIND_LETTER[m.kind]}</span>
@@ -459,6 +489,7 @@ function QRow({ m, st, act, err }: { m: TrainRowModel; st: RowStatus; act?: Reac
             <span className={`tq-st tq-st--${st.tone}`} data-testid={`train-row-status-${m.id}`}>{st.text}</span>
             <span className="tq-act">{act}</span>
             {err && <div className="tq-err" title={err}>{shortTrainError(err)}</div>}
+            {note && <div className="tq-err tq-note" data-testid={`train-row-note-${m.id}`}>{note}</div>}
         </div>
     );
 }
@@ -483,10 +514,12 @@ function ByGroup({ rows, groups, render }: { rows: TrainRowModel[]; groups: Trai
     );
 }
 
-const skipStatus = (it: TrainQueueItem): RowStatus =>
+/** A skipped item of a run: grey "Skipped — up to date", or amber "Skipped" with
+ *  its reason as the row's second line. */
+const skipStatus = (it: TrainQueueItem): { st: RowStatus; note?: string } =>
     it.skip?.kind === 'upToDate'
-        ? { tone: 'up', text: `Skipped — ${it.skip.reason}` }
-        : { tone: 'cant', text: `Skipped — ${it.skip?.reason ?? 'missing settings'}` };
+        ? { st: { tone: 'up', text: `Skipped — ${it.skip.reason}` } }
+        : { st: CANT_STATUS, note: it.skip?.reason ?? 'Model settings are incomplete' };
 
 export interface TrainAllModalProps {
     /** `preflight` before a run; `run` = the current / last run's details. */
@@ -538,13 +571,14 @@ export function TrainAllModal(props: TrainAllModalProps) {
                 <div className="tq-sumrow" data-testid="train-all-summary">
                     <span className="tq-big"><b>{willRun.length}</b> will train</span>
                     {willRun.length > 0 && <span>· ≈ {formatTrainSeconds(secs)}</span>}
-                    <span>· <b>{includeUpToDate ? 0 : upToDate.length}</b> up to date, skipped</span>
-                    <span>· <b className="tq-amber">{cant.length}</b> can't train — fix, then run again</span>
+                    {/* Zero counts are hidden: only what is really there is said. */}
+                    {!includeUpToDate && upToDate.length > 0 && <span data-testid="train-all-sum-up">· <b>{upToDate.length}</b> up to date, skipped</span>}
+                    {cant.length > 0 && <span data-testid="train-all-sum-cant">· <b className="tq-amber">{cant.length}</b> can't train — fix, then run again</span>}
                 </div>
                 <ByGroup rows={rows} groups={groups} render={m => {
                     const p = m.plan;
                     if (p.kind === 'missing') {
-                        return <QRow m={m} st={{ tone: 'cant', text: `Can't train — ${p.reason}` }} act={<button type="button" className="tq-link" data-testid={`train-fix-${m.id}`} onClick={() => props.onFix(m.id, p.fix)}>Fix →</button>} />;
+                        return <QRow m={m} st={CANT_STATUS} note={p.reason} act={<button type="button" className="tq-link" data-testid={`train-fix-${m.id}`} onClick={() => props.onFix(m.id, p.fix)}>Fix →</button>} />;
                     }
                     if (p.kind === 'upToDate') {
                         return <QRow m={m} st={includeUpToDate ? { tone: 'ready', text: 'Re-train' } : { tone: 'up', text: `Skipped — ${p.reason}` }} />;
@@ -568,7 +602,7 @@ export function TrainAllModal(props: TrainAllModalProps) {
             <>
                 <span className={`tq-reason${willRun.length ? '' : ' tq-reason--warn'}`} data-testid="train-all-foot">
                     {willRun.length
-                        ? `Trains ${willRun.length} model${willRun.length === 1 ? '' : 's'}${cant.length ? `; the ${cant.length} with missing settings stay as they are` : ''}.`
+                        ? `Trains ${willRun.length} model${willRun.length === 1 ? '' : 's'}${cant.length ? `; the ${cant.length} that can't train ${cant.length === 1 ? 'stays as it is' : 'stay as they are'}` : ''}`
                         : 'Nothing is ready to train — fix the settings listed above first.'}
                 </span>
                 <button type="button" className="rcx-btn" onClick={onClose}>Cancel</button>
@@ -590,7 +624,7 @@ export function TrainAllModal(props: TrainAllModalProps) {
             );
             body = <ByGroup rows={inRun} groups={groups} render={m => {
                 const it = byId.get(m.id) as TrainQueueItem;
-                if (it.state === 'skipped') return <QRow m={m} st={skipStatus(it)} />;
+                if (it.state === 'skipped') { const sk = skipStatus(it); return <QRow m={m} st={sk.st} note={sk.note} />; }
                 const st: RowStatus = it.state === 'trained' ? { tone: 'done', text: '✓ Trained' }
                     : it.state === 'failed' ? { tone: 'err', text: '✕ Failed' }
                     : it.state === 'running' ? { tone: 'now', text: 'Training…' }
@@ -619,9 +653,9 @@ export function TrainAllModal(props: TrainAllModalProps) {
             body = <ByGroup rows={inRun} groups={groups} render={m => {
                 const it = byId.get(m.id) as TrainQueueItem;
                 if (it.state === 'skipped') {
-                    const st = skipStatus(it);
+                    const sk = skipStatus(it);
                     const fix = m.plan.kind === 'missing' ? m.plan.fix : null;
-                    return <QRow m={m} st={st} act={st.tone === 'cant' && fix ? <button type="button" className="tq-link" data-testid={`train-fix-${m.id}`} onClick={() => props.onFix(m.id, fix)}>Fix →</button> : undefined} />;
+                    return <QRow m={m} st={sk.st} note={sk.note} act={sk.st.tone === 'cant' && fix ? <button type="button" className="tq-link" data-testid={`train-fix-${m.id}`} onClick={() => props.onFix(m.id, fix)}>Fix →</button> : undefined} />;
                 }
                 const st: RowStatus = it.state === 'trained' ? { tone: 'done', text: '✓ Trained · set points needed' }
                     : it.state === 'failed' ? { tone: 'err', text: '✕ Failed' }
@@ -686,7 +720,12 @@ export function CloseRunDialog({ run, summary, current, onKeep, onStopAndClose, 
     onClose: () => void;
 }) {
     const keepRef = useRef<HTMLButtonElement>(null);
+    const dialogRef = useRef<HTMLDivElement>(null);
     const finished = run.phase !== 'running';
+    // Tab / Shift+Tab stay inside the dialog; the focus goes back where it was on close.
+    useModalFocus(dialogRef, true);
+    // ...and the focus opens on the safe choice ("Keep training"; "Close" once the run
+    // has finished) — declared after the trap, so it wins over "first focusable".
     useEffect(() => { keepRef.current?.focus(); }, [finished]);
     useEffect(() => {
         const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.preventDefault(); onKeep(); } };
@@ -696,7 +735,7 @@ export function CloseRunDialog({ run, summary, current, onKeep, onStopAndClose, 
     const c = summary.counts;
     return (
         <div className="bmw-modal-backdrop tq-close-back" role="presentation">
-            <div className="tq-confirm" role="alertdialog" aria-modal="true" aria-labelledby="tq-close-title" aria-describedby="tq-close-body" data-testid="close-run-dialog" data-finished={finished}>
+            <div className="tq-confirm" ref={dialogRef} tabIndex={-1} role="alertdialog" aria-modal="true" aria-labelledby="tq-close-title" aria-describedby="tq-close-body" data-testid="close-run-dialog" data-finished={finished}>
                 {finished ? (
                     <>
                         <div className="tq-cb" id="tq-close-body">

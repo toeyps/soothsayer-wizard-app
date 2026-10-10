@@ -41,7 +41,9 @@ import type { WorkbenchPageProps } from './workbenchTypes';
  * edge, the ring levels at the ring's edge. A legend row stays where DATA is told
  * apart by colour: Distribution (Rows / Normal curve), Fit (two point colours)
  * and Target vs predicted (Actual / Predicted — a fixed key, because a name
- * drawn at a line's end does not follow the line through a zoom).
+ * drawn at a line's end does not follow the line through a zoom). Design rule:
+ * a name on the chart is the ONLY key only on a chart that cannot zoom or pan —
+ * the Clusters chart zooms on both axes, so its rings have a fixed key too.
  *
  * Train and scoring periods (2026-10-07; "just score it" 2026-10-10): when the
  * preview carries `test_validation`, every time chart draws the train /
@@ -255,6 +257,12 @@ function ModelFitPage(props: ModelFitPageProps) {
                     // Axis titles: description + unit — the tags are in the subtitle above.
                     option={scatter ? buildClusterOption(scatter, stats.clusters, { x: sensorAxisTitle(lookup(xTag)), y: sensorAxisTitle(lookup(yTag)) }) : null}
                     empty="No clusters to draw"
+                    // A fixed key for the rings: this chart zooms and pans on both axes, and
+                    // the name drawn at a ring's edge leaves the view with that edge.
+                    legend={scatter ? <span data-testid="ring-key" style={{ display: 'contents' }}>
+                        <LegendItem color={CHART.ok} label="1× SD" />
+                        <LegendItem color={CHART.warn} label="3× SD" dashed />
+                    </span> : undefined}
                 />
                 <div className="vt-stack" data-testid="fit-side">
                     <section className="wb2-statc wb2-statc--top" data-testid="cluster-summary">

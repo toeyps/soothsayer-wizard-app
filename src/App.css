@@ -6363,6 +6363,8 @@ body {
 .tq-link { font: inherit; font-size: 11px; font-weight: 600; color: var(--accent-hi); background: none; border: 0; padding: 0; cursor: pointer; white-space: nowrap; }
 .tq-link:hover { text-decoration: underline; }
 .tq-err { grid-column: 2 / -1; font-size: 11px; color: var(--danger); }
+/* The long reason of a "Skipped" row, on its own line under the row (SPEC workbench-redesign §6). */
+.tq-err.tq-note { color: var(--warn); line-height: 1.4; }
 .tq-opt { display: flex; gap: 8px; align-items: flex-start; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 12px; color: var(--text-secondary); cursor: pointer; }
 .tq-opt input { margin-top: 2px; accent-color: var(--accent-color); }
 .tq-mf { display: flex; align-items: center; gap: 8px; padding: 10px 16px; border-top: 1px solid var(--border); }

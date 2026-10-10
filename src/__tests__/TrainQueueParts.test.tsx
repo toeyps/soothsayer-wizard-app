@@ -9,6 +9,7 @@ import {
     SensorTrainButton,
     sensorTrainMenuCopy,
     shortTrainError,
+    trainMenuStateLine,
     TrainAllBar,
     TrainAllModal,
     type SensorTrainMenuModel,
@@ -37,7 +38,7 @@ const withMeta = (ui: React.ReactElement) => render(<SensorMetaContext.Provider 
 
 const ROWS: TrainRowModel[] = [
     { id: 'i1', kind: 'individual', tag: 'TAG1', groupNos: [1], plan: { kind: 'ready' } },
-    { id: 'r1', kind: 'relationship', tag: 'TAG1', groupNos: [1, 2], plan: { kind: 'missing', reason: 'no predictor sensor', fix: 'settings' } },
+    { id: 'r1', kind: 'relationship', tag: 'TAG1', groupNos: [1, 2], plan: { kind: 'missing', reason: 'Add at least 1 predictor (+1 more)', fix: 'settings' } },
     { id: 'i2', kind: 'individual', tag: 'TAG2', groupNos: [2], plan: { kind: 'upToDate', reason: 'Complete, up to date', complete: true } },
     { id: 'c3', kind: 'clustering', tag: 'TAG3', groupNos: [0], plan: { kind: 'upToDate', reason: 'up to date', complete: false } },
 ];
@@ -82,62 +83,102 @@ describe('TrainAllBar', () => {
     });
 });
 
-// The ▾ menu's copy (user decision 2026-10-10): "Re-train" is only said about a model that
-// has been trained before; the all-row says it only when EVERY model of the sensor has.
+// The ▾ menu's copy (user decision 2026-10-10; state lines SPEC workbench-redesign §6):
+// "Re-train" is only said about a model that has been trained before; the all-row says it
+// only when EVERY model of the sensor has. Every model row carries a small state line.
 describe('sensorTrainMenuCopy', () => {
     const READY = { kind: 'ready' } as const;
     const UP = { kind: 'upToDate', reason: 'up to date', complete: false } as const;
     const DONE = { kind: 'upToDate', reason: 'Complete, up to date', complete: true } as const;
-    const MISSING = { kind: 'missing', reason: 'no Y sensor', fix: 'settings' } as const;
-    const m = (kind: SensorTrainMenuModel['kind'], plan: SensorTrainMenuModel['plan'], trainedBefore: boolean): SensorTrainMenuModel => ({ kind, plan, trainedBefore });
+    const MISSING = { kind: 'missing', reason: 'Pick a Y sensor', fix: 'settings' } as const;
+    const m = (kind: SensorTrainMenuModel['kind'], plan: SensorTrainMenuModel['plan'], trainedBefore: boolean, over: Partial<SensorTrainMenuModel> = {}): SensorTrainMenuModel => ({ kind, plan, trainedBefore, ...over });
 
-    it('a never-trained sensor: "Train all N models" and "<Kind> only" — no "Re-train" anywhere', () => {
+    it('a never-trained sensor: "Train all N models" and "<Kind> only" — no "Re-train" anywhere; rows say "Not trained yet · ≈ …"', () => {
         const copy = sensorTrainMenuCopy([m('individual', READY, false), m('relationship', READY, false), m('clustering', MISSING, false)]);
-        expect(copy.all.label).toBe('Train all 3 models');
-        expect(copy.only.map(o => o.label)).toEqual(['Individual only', 'Relationship only', 'Clustering only']);
-        expect(copy.only.map(o => o.small)).toEqual(['≈ 1 s', '≈ 15 s', "Can't train — no Y sensor"]);
+        expect(copy.all!.label).toBe('Train all 3 models');
+        // The kind reads as on its tab: "Relation model", never "Relationship".
+        expect(copy.only.map(o => o.label)).toEqual(['Individual only', 'Relation model only', 'Clustering only']);
+        // "≈ 15 s" only for the Relation model; a model that can't train says WHY (the missing setting).
+        expect(copy.only.map(o => o.small)).toEqual(['Not trained yet · ≈ 1 s', 'Not trained yet · ≈ 15 s', 'Pick a Y sensor']);
         expect(JSON.stringify(copy)).not.toMatch(/re-train/i);
     });
 
-    it('mixed: only the trained model says "Re-train … only"; the all-row stays "Train all N models"', () => {
+    it('the all-row of a never-trained sensor does NOT say "Includes up-to-date ones": it gives the time, and how many are skipped', () => {
+        const copy = sensorTrainMenuCopy([m('individual', READY, false), m('relationship', READY, false), m('clustering', MISSING, false)]);
+        expect(copy.all!.small).toBe("≈ 16 s · 1 can't train, skipped");
+        expect(sensorTrainMenuCopy([m('individual', READY, false), m('relationship', READY, false)]).all!.small).toBe('≈ 16 s');
+        expect(JSON.stringify(copy)).not.toMatch(/up[- ]to[- ]date/i);
+    });
+
+    it('mixed: only the trained model says "Re-train … only"; the all-row stays "Train all N models" and counts the up-to-date one', () => {
         const copy = sensorTrainMenuCopy([m('individual', UP, true), m('relationship', READY, false)]);
-        expect(copy.all.label).toBe('Train all 2 models');
-        expect(copy.only.map(o => o.label)).toEqual(['Re-train Individual only', 'Relationship only']);
-        expect(copy.only[0].small).toBe('Re-trains it even though it is up to date');
-        expect(copy.only[1].small).toBe('≈ 15 s');
+        expect(copy.all!.label).toBe('Train all 2 models');
+        expect(copy.all!.small).toBe('Includes the 1 up to date');
+        expect(copy.only.map(o => o.label)).toEqual(['Re-train Individual only', 'Relation model only']);
+        expect(copy.only[0].small).toBe('Up to date · trains anyway');
+        expect(copy.only[1].small).toBe('Not trained yet · ≈ 15 s');
     });
 
     it('every model trained before: "Re-train all N models" and "Re-train <Kind> only" (a stale one included)', () => {
         const copy = sensorTrainMenuCopy([m('individual', DONE, true), m('relationship', READY, true), m('clustering', UP, true)]);
-        expect(copy.all.label).toBe('Re-train all 3 models');
-        expect(copy.all.small).toBe('Includes up-to-date ones · a Complete model becomes Incomplete and needs Mark complete again');
-        expect(copy.only.map(o => o.label)).toEqual(['Re-train Individual only', 'Re-train Relationship only', 'Re-train Clustering only']);
-        expect(copy.only[0].small).toBe('Re-trains it even though it is up to date · it becomes Incomplete');
-        expect(copy.only[1].small).toBe('≈ 15 s');
-        expect(copy.only[2].small).toBe('Re-trains it even though it is up to date');
+        expect(copy.all!.label).toBe('Re-train all 3 models');
+        expect(copy.all!.small).toBe('Includes the 2 up to date · a Complete model becomes Incomplete and needs Mark complete again');
+        expect(copy.only.map(o => o.label)).toEqual(['Re-train Individual only', 'Re-train Relation model only', 'Re-train Clustering only']);
+        // A Complete model that is trained anyway becomes Incomplete: said on its own row too.
+        expect(copy.only[0].small).toBe('Up to date · trains anyway · it becomes Incomplete');
+        expect(copy.only[1].small).toBe('Settings changed since it was trained · ≈ 15 s');
+        expect(copy.only[2].small).toBe('Up to date · trains anyway');
     });
 
-    it('a trained model that can\'t train now keeps "Re-train … only" with its reason', () => {
-        const copy = sensorTrainMenuCopy([m('clustering', MISSING, true)]);
-        expect(copy.only[0]).toEqual({ label: 'Re-train Clustering only', small: "Can't train — no Y sensor" });
+    it('state lines of a model that needs training: failed last run, fit no longer in memory (which wins), settings changed', () => {
+        const copy = sensorTrainMenuCopy([
+            m('individual', READY, true, { failedLastRun: true }),
+            m('relationship', READY, true, { fitGone: true, failedLastRun: true }),
+            m('clustering', READY, false, { failedLastRun: true }),
+        ]);
+        expect(copy.only.map(o => o.small)).toEqual([
+            'Failed last run · ≈ 1 s',
+            'Fit no longer in memory · ≈ 15 s',
+            'Failed last run · ≈ 2 s',
+        ]);
+        // the flags never override "up to date" or a can't-train reason
+        expect(trainMenuStateLine(m('relationship', DONE, true, { fitGone: true }))).toBe('Up to date · trains anyway · it becomes Incomplete');
+        expect(trainMenuStateLine(m('relationship', MISSING, true, { failedLastRun: true }))).toBe('Pick a Y sensor');
+    });
+
+    it('when no model of the sensor can train, the all-row says so', () => {
+        const copy = sensorTrainMenuCopy([m('individual', MISSING, false), m('clustering', MISSING, true)]);
+        expect(copy.all!.small).toBe('None of them can train yet');
+        expect(copy.only[1]).toEqual({ label: 'Re-train Clustering only', small: 'Pick a Y sensor' });
+    });
+
+    // A sensor with ONE model never reads "Train all 1 model": there is no all-row, and its
+    // own row is a whole sentence ("… only" would have nothing to be the only one of).
+    it('one model: NO all-row; its row reads "Train the Individual model" / "Re-train the Relation model"', () => {
+        const fresh = sensorTrainMenuCopy([m('individual', READY, false)]);
+        expect(fresh.all).toBeNull();
+        expect(fresh.only).toEqual([{ label: 'Train the Individual model', small: 'Not trained yet · ≈ 1 s' }]);
+        const trained = sensorTrainMenuCopy([m('relationship', UP, true)]);
+        expect(trained.all).toBeNull();
+        expect(trained.only).toEqual([{ label: 'Re-train the Relation model', small: 'Up to date · trains anyway' }]);
+        expect(sensorTrainMenuCopy([m('clustering', MISSING, true)]).only[0]).toEqual({ label: 'Re-train the Clustering model', small: 'Pick a Y sensor' });
+        expect(JSON.stringify([fresh, trained])).not.toMatch(/all 1 model| only/);
     });
 
     it('a model marked Complete with NO train record (legacy) is never said to be "re-trained"', () => {
         const copy = sensorTrainMenuCopy([m('individual', DONE, false)]);
-        expect(copy.all.label).toBe('Train all 1 model');
-        expect(copy.only[0]).toEqual({ label: 'Individual only', small: 'Trains it even though it is up to date · it becomes Incomplete' });
-    });
-
-    it('one model: the count reads "1 model" (singular)', () => {
-        expect(sensorTrainMenuCopy([m('individual', READY, false)]).all.label).toBe('Train all 1 model');
-        expect(sensorTrainMenuCopy([m('individual', UP, true)]).all.label).toBe('Re-train all 1 model');
+        expect(copy.all).toBeNull();
+        expect(copy.only[0]).toEqual({ label: 'Train the Individual model', small: 'Up to date · trains anyway · it becomes Incomplete' });
+        const two = sensorTrainMenuCopy([m('individual', DONE, false), m('relationship', READY, false)]);
+        expect(two.all!.label).toBe('Train all 2 models');
+        expect(two.only[0].label).toBe('Individual only');
     });
 });
 
 describe('SensorTrainButton', () => {
     const menu = (onA = vi.fn(), onB = vi.fn()) => [
-        { key: 'retrain-all', label: 'Train all 2 models', small: 'Includes up-to-date ones', onClick: onA },
-        { key: 'only-relationship', label: 'Relationship only', small: "Can't train — no predictor sensor", disabled: true, onClick: onB },
+        { key: 'retrain-all', label: 'Train all 2 models', small: 'Includes the 1 up to date', onClick: onA },
+        { key: 'only-relationship', label: 'Relation model only', small: 'Add at least 1 predictor', disabled: true, onClick: onB },
     ];
 
     it('the main button trains; the line under it says what it does', () => {
@@ -159,6 +200,9 @@ describe('SensorTrainButton', () => {
         fireEvent.click(toggle);
         expect(toggle.getAttribute('aria-expanded')).toBe('true');
         expect((screen.getByTestId('train-menu-only-relationship') as HTMLButtonElement).disabled).toBe(true);
+        // Every row: its name, then its small state line (SPEC §6).
+        expect(screen.getByTestId('train-menu-only-relationship').querySelector('small')!.textContent).toBe('Add at least 1 predictor');
+        expect(screen.getByTestId('train-menu-retrain-all').querySelector('small')!.textContent).toBe('Includes the 1 up to date');
         fireEvent.keyDown(window, { key: 'Escape' });
         expect(screen.queryByTestId('train-sensor-menu')).toBeNull();
         fireEvent.click(toggle);
@@ -181,14 +225,14 @@ describe('SensorTrainButton', () => {
         const { rerender } = withMeta(<SensorTrainButton filled label="▶ Train sensor · 1 of 2" disabled={false} why="" whyTone="neutral" onTrain={() => {}} menu={menu()} />);
         expect(screen.getByTestId('train-sensor').className).toContain('rcx-btn--pri');
         expect(screen.getByTestId('train-sensor-menu-toggle').className).toContain('rcx-btn--pri');
-        rerender(<SensorMetaContext.Provider value={LOOKUP}><SensorTrainButton filled={false} label="▶ Train sensor · 0 of 2" disabled why="" whyTone="neutral" onTrain={() => {}} menu={menu()} /></SensorMetaContext.Provider>);
+        rerender(<SensorMetaContext.Provider value={LOOKUP}><SensorTrainButton filled={false} label="▶ Train sensor" disabled why="" whyTone="neutral" onTrain={() => {}} menu={menu()} /></SensorMetaContext.Provider>);
         expect(screen.getByTestId('train-sensor').className).not.toContain('rcx-btn--pri');
         expect(screen.getByTestId('train-sensor-menu-toggle').className).not.toContain('rcx-btn--pri');
         expect(screen.getByTestId('train-sensor').className).toContain('rcx-btn');
     });
 
     it('never prints "Step 1" — in the line under the button or in its tooltip', () => {
-        withMeta(<SensorTrainButton filled={false} label="▶ Train sensor · 0 of 1" disabled title={TRAIN_NEEDS_RUNNING_CONDITION} why={TRAIN_NEEDS_RUNNING_CONDITION} whyTone="warn" onTrain={() => {}} menu={menu()} />);
+        withMeta(<SensorTrainButton filled={false} label="▶ Train sensor" disabled title={TRAIN_NEEDS_RUNNING_CONDITION} why={TRAIN_NEEDS_RUNNING_CONDITION} whyTone="warn" onTrain={() => {}} menu={menu()} />);
         expect(screen.getByTestId('train-sensor-why').textContent).toBe('Set the running condition first.');
         expect((screen.getByTestId('train-sensor') as HTMLButtonElement).title).toBe('Set the running condition first.');
     });
@@ -291,14 +335,25 @@ describe('TrainAllModal', () => {
         onOpenModel: vi.fn(), onRetry: vi.fn(), onTrainNotStarted: vi.fn(), onRemoveFromRun: vi.fn(),
     });
 
-    it('preflight: grouped by failure group (each model once), Ready / Can\'t train — reason + Fix → / grey Skipped — up to date', () => {
+    // SPEC workbench-redesign §6: rows say "Ready", amber "Skipped" + Fix → with the long
+    // reason on a second line under the row, or grey "Skipped — up to date".
+    it('preflight: grouped by failure group (each model once), Ready / amber Skipped + reason line + Fix → / grey Skipped — up to date', () => {
         const p = base();
         withMeta(<TrainAllModal view="preflight" run={null} summary={null} {...p} />);
         const modal = screen.getByTestId('train-all-modal');
         expect(modal.getAttribute('data-view')).toBe('preflight');
         expect(within(screen.getByTestId('train-group-1')).getByTestId('train-row-status-i1').textContent).toBe('Ready');
-        expect(screen.getByTestId('train-row-status-r1').textContent).toBe("Can't train — no predictor sensor");
+        expect(screen.getByTestId('train-row-status-r1').textContent).toBe('Skipped');
         expect(screen.getByTestId('train-row-status-r1').className).toContain('tq-st--cant');
+        // the long reason: its own line under the row, naming the missing setting
+        const note = screen.getByTestId('train-row-note-r1');
+        expect(note.textContent).toBe('Add at least 1 predictor (+1 more)');
+        expect(note.className).toContain('tq-note');
+        expect(screen.getByTestId('train-row-r1').contains(note)).toBe(true);
+        expect(screen.getByTestId('train-all-modal').textContent).not.toMatch(/Can't train —|Fill in the required fields/);
+        // a row that will train, and a grey skipped one, have no second line
+        expect(screen.queryByTestId('train-row-note-i1')).toBeNull();
+        expect(screen.queryByTestId('train-row-note-i2')).toBeNull();
         // r1 is in FG-1 and FG-2: listed once, under FG-1.
         expect(screen.getAllByTestId('train-row-r1')).toHaveLength(1);
         expect(within(screen.getByTestId('train-group-2')).queryByTestId('train-row-r1')).toBeNull();
@@ -307,7 +362,10 @@ describe('TrainAllModal', () => {
         expect(within(screen.getByTestId('train-group-0')).getByText('Not in Group')).toBeTruthy();
         expect(screen.getByTestId('train-all-summary').textContent).toContain('1 will train');
         expect(screen.getByTestId('train-all-start').textContent).toBe('▶ Start · 1');
-        expect(screen.getByTestId('train-all-foot').textContent).toBe('Trains 1 model; the 1 with missing settings stay as they are.');
+        expect(screen.getByTestId('train-all-foot').textContent).toBe("Trains 1 model; the 1 that can't train stays as it is");
+        // the counts that are there are said …
+        expect(screen.getByTestId('train-all-sum-up').textContent).toBe('· 2 up to date, skipped');
+        expect(screen.getByTestId('train-all-sum-cant').textContent).toBe("· 1 can't train — fix, then run again");
         fireEvent.click(screen.getByTestId('train-fix-r1'));
         expect(p.onFix).toHaveBeenCalledWith('r1', 'settings');
         fireEvent.click(screen.getByTestId('train-all-start'));
@@ -324,6 +382,29 @@ describe('TrainAllModal', () => {
         expect(p.onIncludeUpToDate).toHaveBeenCalledWith(false);
     });
 
+    it('preflight: zero counts are hidden, and the footer follows the numbers ("Trains 3 models; the 2 that can\'t train stay as they are")', () => {
+        const ready = (id: string, kind: TrainRowModel['kind']): TrainRowModel => ({ id, kind, tag: 'TAG1', groupNos: [1], plan: { kind: 'ready' } });
+        const cant = (id: string): TrainRowModel => ({ id, kind: 'relationship', tag: 'TAG2', groupNos: [2], plan: { kind: 'missing', reason: 'No running condition', fix: 'runningCondition' } });
+        // only ready models: neither "0 up to date" nor "0 can't train" is printed
+        const { unmount } = withMeta(<TrainAllModal view="preflight" run={null} summary={null} {...base()} rows={[ready('a', 'individual'), ready('b', 'relationship')]} />);
+        expect(screen.getByTestId('train-all-summary').textContent).toBe('2 will train· ≈ 16 s');
+        expect(screen.queryByTestId('train-all-sum-up')).toBeNull();
+        expect(screen.queryByTestId('train-all-sum-cant')).toBeNull();
+        expect(screen.getByTestId('train-all-foot').textContent).toBe('Trains 2 models');
+        unmount();
+        withMeta(<TrainAllModal view="preflight" run={null} summary={null} {...base()} rows={[ready('a', 'individual'), ready('b', 'individual'), ready('c', 'clustering'), cant('x'), cant('y')]} />);
+        expect(screen.getByTestId('train-all-foot').textContent).toBe("Trains 3 models; the 2 that can't train stay as they are");
+        expect(screen.queryByTestId('train-all-sum-up')).toBeNull();
+        expect(screen.getByTestId('train-all-sum-cant').textContent).toBe("· 2 can't train — fix, then run again");
+        expect(screen.getByTestId('train-row-note-x').textContent).toBe('No running condition');
+    });
+
+    it('preflight: with "also re-train the up-to-date ones" ticked, the "up to date, skipped" count goes (it would be 0)', () => {
+        withMeta(<TrainAllModal view="preflight" run={null} summary={null} {...base()} includeUpToDate />);
+        expect(screen.queryByTestId('train-all-sum-up')).toBeNull();
+        expect(screen.getByTestId('train-all-summary').textContent).not.toMatch(/\b0\b/);
+    });
+
     it('preflight with nothing ready: Start disabled, amber footer reason', () => {
         const rows = ROWS.filter(r => r.plan.kind !== 'ready');
         withMeta(<TrainAllModal view="preflight" run={null} summary={null} {...base()} rows={rows} />);
@@ -335,13 +416,16 @@ describe('TrainAllModal', () => {
         const p = base();
         const run = makeRun([
             { id: 'i1', kind: 'individual', state: 'running' },
-            { id: 'r1', kind: 'relationship', state: 'skipped', skip: { kind: 'missing', reason: 'no predictor sensor' } },
+            { id: 'r1', kind: 'relationship', state: 'skipped', skip: { kind: 'missing', reason: 'Add at least 1 predictor' } },
             { id: 'i2', kind: 'individual', state: 'queued' },
         ], { currentId: 'i1' });
         withMeta(<TrainAllModal view="run" run={run} summary={summarizeTrainRun(run)} {...p} />);
         expect(screen.getByTestId('train-all-modal').getAttribute('data-view')).toBe('running');
         expect(screen.getByTestId('train-row-status-i1').textContent).toBe('Training…');
-        expect(screen.getByTestId('train-row-status-r1').textContent).toBe('Skipped — no predictor sensor');
+        // skipped because it can't train: amber "Skipped", the reason on its own line
+        expect(screen.getByTestId('train-row-status-r1').textContent).toBe('Skipped');
+        expect(screen.getByTestId('train-row-status-r1').className).toContain('tq-st--cant');
+        expect(screen.getByTestId('train-row-note-r1').textContent).toBe('Add at least 1 predictor');
         expect(screen.queryByTestId('train-row-c3')).toBeNull(); // not in this run
         fireEvent.click(screen.getByTestId('train-remove-i2'));
         expect(p.onRemoveFromRun).toHaveBeenCalledWith('i2');
@@ -403,6 +487,42 @@ describe('CloseRunDialog', () => {
         expect(onStop).toHaveBeenCalled();
         fireEvent.keyDown(window, { key: 'Escape' });
         expect(onKeep).toHaveBeenCalled();
+    });
+
+    // SPEC workbench-redesign §6: focus "Keep training" on open; Esc = Keep training; trap Tab.
+    it('traps Tab inside the dialog (both ways), and gives the focus back to where it was on close', () => {
+        const run = makeRun([
+            { id: 'r1', kind: 'relationship', state: 'running' },
+            { id: 'i2', kind: 'individual', state: 'queued' },
+        ], { currentId: 'r1' });
+        const outside = document.createElement('button');
+        outside.textContent = 'outside';
+        document.body.appendChild(outside);
+        outside.focus();
+        const onKeep = vi.fn(), onStop = vi.fn(), onClose = vi.fn();
+        const { unmount } = withMeta(<CloseRunDialog run={run} summary={summarizeTrainRun(run)} current={ROW_MAP.get('r1')} onKeep={onKeep} onStopAndClose={onStop} onClose={onClose} />);
+        const keep = screen.getByTestId('close-run-keep');
+        const stop = screen.getByTestId('close-run-stop');
+        // opens on the safe choice, not on the first button of the dialog
+        expect(document.activeElement).toBe(keep);
+        // Tab on the last button wraps to the first; Shift+Tab on the first wraps to the last
+        const tab = (shiftKey = false) => fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Tab', shiftKey });
+        tab();
+        expect(document.activeElement).toBe(stop);
+        tab(true);
+        expect(document.activeElement).toBe(keep);
+        // the focus never escapes to the page behind: from outside, Tab comes back in
+        outside.focus();
+        tab();
+        expect(screen.getByRole('alertdialog').contains(document.activeElement)).toBe(true);
+        // Esc keeps training — it never stops the run or closes the window
+        fireEvent.keyDown(window, { key: 'Escape' });
+        expect(onKeep).toHaveBeenCalledTimes(1);
+        expect(onStop).not.toHaveBeenCalled();
+        expect(onClose).not.toHaveBeenCalled();
+        unmount();
+        expect(document.activeElement).toBe(outside);
+        outside.remove();
     });
 
     it('finished while open: becomes "Run finished — close?" with one Close', () => {

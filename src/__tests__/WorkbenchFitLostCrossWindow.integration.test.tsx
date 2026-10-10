@@ -125,7 +125,7 @@ describe('(a) a COMPLETE Relation model whose fit Rust no longer holds', () => {
         expect(dashDot(1, 'tag1', 'relationship')).toBe('complete');
         // no filled button offers to train a model Train sensor would not train
         expect(filled()).toEqual([]);
-        expect(bmw().getByTestId('train-sensor').textContent).toBe('▶ Train sensor · 0 of 1');
+        expect(bmw().getByTestId('train-sensor').textContent).toBe('▶ Train sensor');
         expect(diskModel('r1').status).toBe(true);
 
         // Health score page: the same board, the same sentence
@@ -231,9 +231,13 @@ describe('(b) Mark complete answered NOT_FITTED by export_model_files', () => {
         await waitFor(() => expect(bmw().getByTestId('check-valid')).toBeTruthy());
         expect(fits()).toBe(fitsBefore + 1);
         expect(diskModel('r1').lastTrainedAt, 'loaded, not re-trained').toBe(trainedAt);
-        // the failed attempt is still on the page until the next one (it says what to do now)
-        expect(bmw().getByTestId('save-error-reason').textContent).toMatch(/Mark complete again once it is loaded\.$/);
-        expect(sentence()).toBe('Not saved · fix it, then Mark complete again');
+        // Loaded by the user's own "Load it again": nothing is left to fix, so the refusal's
+        // red card and the footer's "Not saved · fix it" are gone — the footer is back on the
+        // ordinary sentence of a model whose set points are valid.
+        expect(bmw().queryByTestId('save-error')).toBeNull();
+        expect(bmw().queryByTestId('save-error-reason')).toBeNull();
+        expect(sentence()).toBe('Set points valid — check the score chart, then Mark complete');
+        expect(footer().textContent).not.toMatch(/Not saved|fix it/);
         expect(footPill()).toBe('Trained');
         expect(tabWords('r1')).toBe('Trained');
         expect(filled()).toEqual(['mark-complete']);

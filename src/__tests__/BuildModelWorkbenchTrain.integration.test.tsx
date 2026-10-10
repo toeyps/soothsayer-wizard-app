@@ -276,7 +276,7 @@ describe('(1) models whose record carries an empty clusterRanges list stay Train
         expect(diskModel('r1').trainedFingerprint).toBe(fp); // not rewritten - it is the evidence of staleness
         expect(screen.getByTestId('stale-banner')).toBeTruthy();
         expect(pill()).toBe('Incomplete');
-        expect(footerStatus()).toBe('Settings changed · re-train with Train sensor ↑');
+        expect(footerStatus()).toBe('Settings or running condition changed · train again with Train sensor ↑');
         expect((screen.getByTestId('train-sensor') as HTMLButtonElement).disabled).toBe(false); // ready to (re-)train
         expect(markCompleteBtn().disabled).toBe(true);
     });
@@ -377,7 +377,7 @@ describe('(3) lastTrainedAt / trainedFingerprint survive a save + reload', () =>
         await mountBuildModel();
         expect(diskFresh('i1')).toBe(false);
         expect(screen.getByTestId('results-stale')).toBeTruthy();
-        expect(footerStatus()).toBe('Settings changed · re-train with Train sensor ↑');
+        expect(footerStatus()).toBe('Settings or running condition changed · train again with Train sensor ↑');
         expect(screen.queryByTestId('results-chart')).toBeNull();
         // Only the Step-1 card's row count (filtered + unfiltered = 2 queries) — no model auto-recompute.
         expect(h.invokes.filter(c => c.cmd === 'compute_sensor_stats')).toHaveLength(2);

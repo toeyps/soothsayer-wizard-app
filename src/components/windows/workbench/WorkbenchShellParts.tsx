@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef, type ReactNode } from 'react';
-import { Loader2, RotateCw } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import type { WorkbenchPage } from './workbenchTypes';
 
 /*
@@ -161,37 +161,92 @@ export function WorkbenchScroll({ resetKey, page, children }: { resetKey: string
 }
 
 interface StaleBannerProps {
-    /** A (re-)train is already running. */
+    /** The model is being trained again right now. */
     training?: boolean;
     /** The model is waiting in a training run (customer items 8 + 9). */
     queued?: boolean;
-    /** Re-train is not possible (the model's gate blocks it). */
-    disabled?: boolean;
-    disabledTitle?: string;
-    onRetrain: () => void;
+    /** Why Train sensor cannot train this model right now (its gate, a run that is
+     *  active, out-of-date data): the link's tooltip. The link still moves the focus to
+     *  Train sensor, whose own line says the same. */
+    blockedReason?: string;
+    /** "Train sensor ↑": focus the header's Train sensor button. */
+    onGoTrainSensor: () => void;
 }
 
-/** "Settings changed — this model is Incomplete again. Re-train…" (mockup `.stale`). */
-export function StaleBanner({ training, queued, disabled, disabledTitle, onRetrain }: StaleBannerProps) {
+/**
+ * "Settings or running condition changed — this model is Incomplete again. Train it
+ * again with Train sensor ↑ to update the charts. Your set points are kept."
+ * (SPEC workbench-redesign §6.) It has NO button of its own: the one place to train
+ * is the header's Train sensor, and the sentence links there.
+ */
+export function StaleBanner({ training, queued, blockedReason, onGoTrainSensor }: StaleBannerProps) {
     return (
-        <div className="wb2-stale" role="status" data-testid="stale-banner">
+        <div className="wb2-stale" role="status" data-testid="stale-banner" data-state={training ? 'training' : queued ? 'queued' : 'stale'}>
             <span>
-                <b>Settings changed — this model is Incomplete again.</b>{' '}
-                Re-train to update the charts and re-check the set points. Your set points are kept.
+                <b>Settings or running condition changed — this model is Incomplete again.</b>{' '}
+                {training ? 'Training it again now… ' : queued ? 'It is queued in the training run. ' : (
+                    <>
+                        Train it again with{' '}
+                        <button type="button" className="tq-inline-link" data-testid="stale-go-train" title={blockedReason} onClick={onGoTrainSensor}>
+                            Train sensor ↑
+                        </button>
+                        {' '}to update the charts.{' '}
+                    </>
+                )}
+                Your set points are kept.
             </span>
-            <span className="wb2-sp" />
-            <button
-                type="button"
-                className="rcx-btn rcx-btn--sm"
-                data-testid="stale-retrain"
-                disabled={disabled || training || queued}
-                title={disabled ? disabledTitle : undefined}
-                onClick={onRetrain}
-            >
-                <RotateCw size={12} aria-hidden="true" />
-                {training ? 'Training…' : queued ? 'Queued' : 'Re-train'}
-            </button>
         </div>
+    );
+}
+
+/**
+ * A trained model's result could not be worked out again when it was opened (the
+ * silent load failed — not a lost Relation-model fit, which has `FitGoneBoard`).
+ * Shown for a COMPLETE model on both pages: Train sensor never trains an up-to-date
+ * Complete model, so "Train sensor ↑" would be a dead end there. The ways out that
+ * work: "Load it again" (the same silent load — nothing is written, the model stays
+ * Complete) and, when given, the ▾ menu row that really trains it.
+ */
+export function LoadFailedBoard({ testId, linkTestId, className, kindName, tail, error, onReload, reloadDisabledReason, trainMenu }: {
+    testId: string;
+    linkTestId: string;
+    className?: string;
+    /** "Individual model", "Relation model", "Clustering model". */
+    kindName: string;
+    /** What comes back once it loads ("The charts come back when it is loaded."). */
+    tail: string;
+    /** Why the load did not work (the mono line). */
+    error: string;
+    onReload: () => void;
+    reloadDisabledReason?: string;
+    /** ", or train it from the Train sensor ▾ menu (…)" — a node with its own link. */
+    trainMenu?: ReactNode;
+}) {
+    return (
+        <StateBoard
+            testId={testId}
+            className={className}
+            tone="bad"
+            title={`Couldn't load the ${kindName}`}
+            text={(
+                <>
+                    Nothing about the model changed and it stays Complete —{' '}
+                    <button
+                        type="button"
+                        className="tq-inline-link"
+                        data-testid={linkTestId}
+                        disabled={!!reloadDisabledReason}
+                        title={reloadDisabledReason}
+                        onClick={onReload}
+                    >
+                        Load it again
+                    </button>
+                    {trainMenu}
+                    . {tail}
+                </>
+            )}
+            detail={error}
+        />
     );
 }
 

@@ -43,14 +43,14 @@ import { useSubModelFits } from "./useSubModelFits";
 import ModelFitPage from "./workbench/ModelFitPage";
 import { CLUSTER_COLORS as CLUSTER_PALETTE, TYPED_DECIMALS_MAX, fmtClusterBound, shortDecimals } from "./workbench/chartTheme";
 import HealthScorePage from "./workbench/HealthScorePage";
-import { FIT_GONE_WORDS, FitGoneBoard, PageSwitch, SaveErrorNotice, StaleBanner, StateBoard, TrainSensorLink, WorkbenchScroll, type FitGoneActions } from "./workbench/WorkbenchShellParts";
+import { FIT_GONE_WORDS, FitGoneBoard, LoadFailedBoard, PageSwitch, SaveErrorNotice, StaleBanner, StateBoard, TrainSensorLink, WorkbenchScroll, type FitGoneActions } from "./workbench/WorkbenchShellParts";
 import { buildCheckLines, healthVerdict, isBlockingIssue, sameSetPoints, verdictOfIssues, type HealthVerdict } from "./workbench/healthChecks";
 import type { SaveInfo, WorkbenchPage } from "./workbench/workbenchTypes";
 import { isPickerSurfaceOpen } from "../sensor/SensorPicker";
 import { CloseRunDialog, LockedSettingsHeader, QueuedCard, RunSetPointsBanner, RunStrip, SensorTrainButton, sensorTrainMenuCopy, TrainAllBar, TrainAllModal, type TrainGroupInfo, type TrainMenuItem, type TrainReasonTone, type TrainRowModel } from "./workbench/TrainQueueParts";
 import { useTrainQueue } from "../../hooks/useTrainQueue";
 import type { TrainCandidate, TrainFixTarget, TrainOutcome } from "../../types/trainQueue";
-import { classifyTrainPlan, countTrainPlans, formatTrainSeconds, isStaleTrainError, preflightReason, ROUGH_TRAIN_SECONDS, roughTrainSeconds, trainButtonsBlockedReason, TRAIN_NEEDS_RUNNING_CONDITION, TRAIN_STALE_MESSAGE } from "../../utils/trainQueue";
+import { classifyTrainPlan, countTrainPlans, formatTrainSeconds, isStaleTrainError, missingSettingsText, preflightReason, REQUIRED_FIELDS_BLOCK_REASON, ROUGH_TRAIN_SECONDS, roughTrainSeconds, trainButtonsBlockedReason, TRAIN_NEEDS_RUNNING_CONDITION, TRAIN_STALE_MESSAGE } from "../../utils/trainQueue";
 
 /** How long a Relation-model preview that scores scoring periods must have been loading before
  *  the "this can take up to ~15 s" hint shows (cached re-scores finish sooner). */
@@ -225,6 +225,16 @@ const FIT_GONE_BLOCK_REASON = `${FIT_GONE_WORDS} · load it again, or re-train w
 const FIT_GONE_BLOCK_REASON_COMPLETE = `${FIT_GONE_WORDS} · load it again first`;
 /** Mark complete answered NOT_FITTED: the files need the fit Rust no longer holds. */
 const FIT_GONE_SAVE_MESSAGE = 'The fitted Relation model was no longer in memory, so its files were not written. Mark complete again once it is loaded.';
+/** A COMPLETE model whose result could not be worked out again when it was opened (the
+ *  silent load failed for another reason than a lost fit): tab / list tooltip, and the
+ *  reason Mark complete again is blocked. Train sensor never trains an up-to-date
+ *  Complete model, so these never point at it — "Load it again" is the way out. */
+const LOAD_FAILED_WORDS = "Couldn't load the model";
+const LOAD_FAILED_BLOCK_REASON = `${LOAD_FAILED_WORDS} · load it again first`;
+/** The line under Train sensor for a model on its OWN (Custom) running condition while the
+ *  workspace one is not set / not valid: the card's "Set running condition" is the only
+ *  filled button then, but nothing is blocked for this model. */
+const OWN_RC_NOT_BLOCKED = 'own running condition, not blocked';
 /** "Load it again" while Mark complete is writing this model's files (it runs the engine too). */
 const FIT_RELOAD_SAVING_REASON = 'Wait for the save to finish';
 /** Mark complete while Rust is still answering for what was just typed (a moment). */
@@ -256,7 +266,7 @@ const DUPLICATE_NAME_BLOCK_REASON = 'Model name is already used by another model
  *  decision, phase 4 review). */
 const TRAIN_RUN_ACTIVE_REASON = 'Wait for the training run to finish';
 /** A model whose Mark complete is writing its files is not trained meanwhile. */
-const BEING_SAVED_REASON = 'being saved';
+const BEING_SAVED_REASON = 'Its files are being saved';
 /** The close notice when "Stop after this model and close" gave up waiting. */
 const RUN_CLOSE_WAIT_NOTICE = 'Still training a model — the window stays open so nothing is cut off half-way. Close it again to leave without waiting.';
 const KIND_LABEL: Record<ModelKind, string> = {
@@ -1280,6 +1290,12 @@ export default function BuildModelWindow() {
         if (!block || block.mode !== 'custom' || block.kind === 'category' || block.reason !== text) return text;
         return customBlockText(block, { settingsOpen: isSettingsOpen(m) });
     };
+    /** A block reason shown AWAY from the Model settings form (the Health score page,
+     *  the save card, a tooltip in the header): "Fill in the required fields above
+     *  first" reads wrong there — nothing is "above" — so the missing setting is named
+     *  ("Add at least 1 predictor (+1 more)"). Everything else as `ownGateText`. */
+    const awayFromFormText = (m: FailureModel, text: string | null): string | null =>
+        text === REQUIRED_FIELDS_BLOCK_REASON ? missingSettingsText(missingItems(m)) : ownGateText(m, text);
     const rcConfigured = isWorkspaceRunningConditionConfigured(gateFg, gateHeaders);
     const needsCondition = (m: FailureModel): boolean => !isRunningConditionConfigured(m, gateFg, gateHeaders);
     const legacyCompleteCount = allModels.filter(m => m.status).length;
@@ -1313,7 +1329,7 @@ export default function BuildModelWindow() {
             // 2+ clusters are split by the criteria sensor — Rust rejects n_clusters > 1 without one.
             && (!!d.criteria || d.numClusters <= 1)
         );
-        if (!ok) return 'Fill in the required fields above first';
+        if (!ok) return REQUIRED_FIELDS_BLOCK_REASON;
         // A Custom model's own scoring periods are saved with Save changes: an invalid
         // one (a missing date, or an end before its start) blocks the save, exactly
         // like it blocks the workspace Apply.
@@ -1838,6 +1854,18 @@ export default function BuildModelWindow() {
                 const out = await executeTrain(m, fp, { persistMeta: false });
                 // Loaded: should this fit be lost again later, it is re-fitted automatically once more.
                 if (out.ok) for (const k of [...refitTriedRef.current]) if (k.startsWith(`${id}::`)) refitTriedRef.current.delete(k);
+                // A Mark complete that was refused ONLY because the fit was gone has nothing
+                // left to fix now: its red card and the footer's "Not saved" go with the
+                // user's own "Load it again". (Any other refusal stays until it is acted on.)
+                if (out.ok && workspaceIdRef.current === ws) {
+                    setSaveInfo(prev => {
+                        const cur = prev[id];
+                        if (!cur || cur.phase !== 'error' || cur.message !== FIT_GONE_SAVE_MESSAGE) return prev;
+                        const rest = { ...prev };
+                        delete rest[id];
+                        return rest;
+                    });
+                }
                 return out;
             } finally {
                 fitReloadingRef.current.delete(id);
@@ -1922,7 +1950,7 @@ export default function BuildModelWindow() {
         const hasDraft = m.id in drafts;
         if (hasDraft) {
             const draftBlock = modelBlockReason(m);
-            if (draftBlock !== null) return fail(draftBlock);
+            if (draftBlock !== null) return fail(awayFromFormText(m, draftBlock) ?? draftBlock);
         }
         completeRunningRef.current.add(m.id);
         setSaveInfo(prev => ({ ...prev, [id]: { phase: 'running' } }));
@@ -2725,6 +2753,15 @@ export default function BuildModelWindow() {
         // A load (or a train) of it that failed since.
         error: trainError[m.id] ?? null,
     });
+    /** A COMPLETE model whose last load (or train) of this session failed, with its fit
+     *  not reported gone: Train sensor never trains it ("up to date"), so every sentence
+     *  about it offers "Load it again" — the same silent load, nothing written — instead
+     *  of "Train sensor ↑". (A model that is not Complete is planned as ready by Train
+     *  sensor after a failure, so it keeps "Training failed · Train sensor ↑".) */
+    const loadFailedOf = (m: FailureModel): boolean =>
+        !!trainError[m.id] && trainStatus[m.id] !== 'loading' && isModelDone(m) && !fitGoneOf(m);
+    /** The words of a failed run on the tab / list dot. */
+    const failedWordsOf = (m: FailureModel): string => (isModelDone(m) ? `Complete · ${LOAD_FAILED_WORDS}` : TRAIN_FAILED_WORDS);
     /** "Set points needed" list chip: only after a run trained something here. */
     const spCount = sensorGroupsAll.filter(sg => sg.models.some(needSetPoints)).length;
     const showSpChip = !!queue.lastTrained && queue.lastTrained.ids.length > 0 && spCount > 0;
@@ -2799,7 +2836,7 @@ export default function BuildModelWindow() {
                                 key={m.id}
                                 data-testid={`sensor-kind-badge-${m.id}`}
                                 className={`f4-kb model-kind-icon--${m.kind}`}
-                                title={`${KIND_LABEL[m.kind]} · ${failedRun ? TRAIN_FAILED_WORDS : fixSetPoint ? 'Fix set point' : DOT_TITLE[st]}`}
+                                title={`${KIND_LABEL[m.kind]} · ${failedRun ? failedWordsOf(m) : fixSetPoint ? 'Fix set point' : DOT_TITLE[st]}`}
                             >
                                 {KIND_ABBREV[m.kind]}
                                 {dot && <span data-testid={`sensor-kind-badge-dot-${m.id}`} data-state={st} className={`f4-kb-dot f4-kb-dot--${dot}`} aria-hidden="true" />}
@@ -3369,7 +3406,7 @@ export default function BuildModelWindow() {
         // Unsaved Model-settings edits are said in the footer of the tab that is open;
         // on any other tab the tooltip is the only place that can say it.
         const unsaved = m.id in drafts ? ' · unsaved changes' : '';
-        if (trainError[m.id]) return { dot: 'bad', words: `${TRAIN_FAILED_WORDS}${unsaved}` };
+        if (trainError[m.id]) return { dot: 'bad', words: `${failedWordsOf(m)}${unsaved}` };
         const badge = gateBadge(m);
         // A trained model whose fit is gone needs training again (amber, like "Re-train needed").
         if (badge === null && fitGoneOf(m) && (st === 'trained' || st === 'complete')) {
@@ -3410,7 +3447,8 @@ export default function BuildModelWindow() {
             : !m.lastTrainedAt ? 'Train the model first'
             : buildBlockReason(m) !== null ? 'Fix the settings first'
             // The last run of THIS session failed: the numbers on screen are not trustworthy.
-            : trainError[m.id] ? 'Re-train first'
+            // (A Complete model is never trained by Train sensor: its way back is "Load it again".)
+            : trainError[m.id] ? (isModelDone(m) ? 'Load the model again first' : 'Re-train first')
             : null;
 
     /** The Model fit page body — the old "results area" state machine, now ending
@@ -3478,7 +3516,8 @@ export default function BuildModelWindow() {
                 ? board('results-placeholder', 'plain', 'Marked complete',
                     "It has no charts to show, and it can't be trained yet.", ownGateText(m, reason))
                 : board('results-placeholder', 'plain', 'Marked complete',
-                    <>To see its charts, train it from the {trainMenuLink('board-train-menu')} menu (“{KIND_TAB_LABEL[m.kind]} only”). It then needs Mark complete again.</>);
+                    // The row's own name: a single-model sensor has no "… only" rows.
+                    <>To see its charts, train it from the {trainMenuLink('board-train-menu')} menu (“{orderedDetail.length === 1 ? `Train the ${kindModelName(m.kind)}` : `${KIND_TAB_LABEL[m.kind]} only`}”). It then needs Mark complete again.</>);
         }
         if (reason !== null) {
             // No running condition yet (2026-10-03): a model that FOLLOWS the workspace
@@ -3538,7 +3577,7 @@ export default function BuildModelWindow() {
         // The fit is gone: ONE board, whatever came after it — a load that failed is its
         // reason line, never the "Training failed" board (whose "Train sensor ↑" cannot
         // train a Complete model).
-        if (healthPreview.notFitted && m.lastTrainedAt && !isModelStale(m)) {
+        if ((healthPreview.notFitted || (!!err && fitGoneOf(m))) && m.lastTrainedAt && !isModelStale(m)) {
             return (
                 <div className="bmw-stage">
                     <FitGoneBoard
@@ -3547,6 +3586,26 @@ export default function BuildModelWindow() {
                         trainTestId="board-train-sensor"
                         tail="The charts come back when it is loaded."
                         actions={fitGoneActionsOf(m)}
+                    />
+                </div>
+            );
+        }
+        if (err && isModelDone(m)) {
+            // A Complete model is "up to date" for Train sensor, which never trains it: a
+            // "Train sensor ↑" link here would be a dead end. The ways out that work are
+            // "Load it again" (the same silent load: nothing written, it stays Complete)
+            // and the ▾ menu row that really trains it.
+            return (
+                <div className="bmw-stage">
+                    <LoadFailedBoard
+                        testId="results-load-failed"
+                        linkTestId="board-load-again"
+                        kindName={kindModelName(m.kind)}
+                        tail="The charts come back when it is loaded."
+                        error={err}
+                        onReload={onReloadFit}
+                        reloadDisabledReason={fitReloadBlock(m) ?? undefined}
+                        trainMenu={<>, or train it from the {trainMenuLink('board-train-menu')} menu (it then needs Mark complete again)</>}
                     />
                 </div>
             );
@@ -3568,10 +3627,17 @@ export default function BuildModelWindow() {
                     <ModelFitPage {...props} data={healthPreview.data} onXPredictorChange={onFitX} onCompare={onCompare} compareDisabledReason={queue.isRunning ? TRAIN_RUN_ACTIVE_REASON : undefined} trainDaysEstimate={trainDaysEstimateFor(m)} />
                 </div>
             ) : board('results-stale', 'plain', 'Out of date',
-                <>Settings changed — re-train with {trainSensorLink('board-train-sensor')} to see the result.</>);
+                <>Settings or running condition changed — train it again with {trainSensorLink('board-train-sensor')} to see the charts.</>);
         }
         if (healthPreview.error && !healthPreview.data) {
-            return board('results-health-error', 'bad', "Couldn't load the charts", undefined, healthPreview.error);
+            // The trained model itself is fine: only its charts could not be worked out.
+            // The way out is asking again (a text link — the board has no button of its
+            // own); after the dataset was replaced asking again cannot help, so no link.
+            return board('results-health-error', 'bad', "Couldn't load the charts",
+                healthPreview.errorCode === 'STALE_SESSION'
+                    ? 'The trained model is kept, but its charts can only be loaded from the data it was trained on.'
+                    : <>The trained model is kept — <button type="button" className="tq-inline-link" data-testid="board-retry-charts" onClick={healthPreview.retry}>Try again</button>.</>,
+                healthPreview.error);
         }
         if (!healthPreview.data) {
             // Trained-and-fresh per the workspace's persisted fields, but the
@@ -3610,7 +3676,7 @@ export default function BuildModelWindow() {
         if (isModelStale(m)) return 'Settings changed — re-train first.';
         // Unsaved settings are saved by Mark complete first; ones that cannot be saved block it.
         const draftBlock = m.id in drafts ? modelBlockReason(m) : null;
-        if (draftBlock !== null) return draftBlock;
+        if (draftBlock !== null) return awayFromFormText(m, draftBlock);
         const gate = gateReasonOf(m);
         if (gate !== null) return gate;
         // At least one valid scoring period (SPEC rule 2) — Train does not need one.
@@ -3620,7 +3686,8 @@ export default function BuildModelWindow() {
         // The fit is gone (a load of it that failed included): its own reason, which names
         // only what works for this model.
         if (fitGoneOf(m)) return isModelDone(m) ? FIT_GONE_BLOCK_REASON_COMPLETE : FIT_GONE_BLOCK_REASON;
-        if (trainError[m.id]) return "Couldn't refresh the result — fix the problem, then re-train.";
+        // A Complete model is never trained by Train sensor: its way out is "Load it again".
+        if (trainError[m.id]) return isModelDone(m) ? LOAD_FAILED_BLOCK_REASON : "Couldn't refresh the result — fix the problem, then re-train.";
         const data = healthPreview.data;
         if (!data) {
             // Being worked out (the model is loaded again, or Rust is answering): a moment.
@@ -3757,10 +3824,29 @@ export default function BuildModelWindow() {
                 {!done && <>, or re-train with {goTrainSensor}</>}
             </>
         );
+        // A Complete model whose load failed (not a lost fit): the same "load it again" link
+        // — never "Train sensor ↑", which does not train a Complete model.
+        const loadFailed = loadFailedOf(m);
+        const loadFailedLine: ReactNode = (
+            <>
+                {LOAD_FAILED_WORDS} ·{' '}
+                <button
+                    type="button"
+                    className="tq-inline-link"
+                    data-testid="footer-load-again"
+                    disabled={reloadBlock !== null}
+                    title={reloadBlock ?? undefined}
+                    onClick={() => reloadFit(m.id)}
+                >
+                    load it again
+                </button>
+            </>
+        );
         // Why Mark complete is disabled, as the sentence shows it: the fit-gone reason gets
         // its links; the moment Rust is still checking what was typed is not
         // a reason worth replacing a Complete model's sentence for.
         const blockWhy: ReactNode = markBlock === null || markBlock === CHECKING_SET_POINTS ? null
+            : markBlock === LOAD_FAILED_BLOCK_REASON ? loadFailedLine
             : markBlock === FIT_GONE_BLOCK_REASON || markBlock === FIT_GONE_BLOCK_REASON_COMPLETE ? fitGoneLine
             : ownGateText(m, markBlock);
         // The ONE sentence (first match wins).
@@ -3774,11 +3860,20 @@ export default function BuildModelWindow() {
             // attempt's "Not saved" must never hide the reason that blocks the next one.
             else if (!done && markBlock !== null) { line = blockWhy ?? markBlock; tone = 'warn'; lineId = 'mark-block-reason'; }
             else if (done && outOfDate && blockWhy !== null) { line = <>Files out of date · {blockWhy}</>; tone = 'warn'; lineId = 'files-out-of-date'; }
-            else if (savePhase === 'error') { line = 'Not saved · fix it, then Mark complete again'; tone = 'bad'; }
+            // (A refusal for a lost fit that was loaded again since — by itself — has
+            // nothing left to "fix": only the second click is missing.)
+            else if (savePhase === 'error') {
+                line = (saveInfo[m.id] as { message?: string }).message === FIT_GONE_SAVE_MESSAGE
+                    ? 'Not saved · the Relation model is loaded again — Mark complete again'
+                    : 'Not saved · fix it, then Mark complete again';
+                tone = 'bad';
+            }
             else if (done && outOfDate) { line = 'Files out of date — set points changed after saving · Mark complete again to update them'; tone = 'warn'; lineId = 'files-out-of-date'; }
             // A Complete model whose fit is gone stays Complete — but the page cannot score
             // until the fit is loaded again: say that, not only "Files saved …".
             else if (done && fitGone) { line = fitGoneLine; tone = 'warn'; }
+            // ...and so does one whose load failed while nothing of it is on screen.
+            else if (loadFailed && !healthPreview.data) { line = loadFailedLine; tone = 'bad'; }
             else if (done) line = savedLine ?? trainedLine ?? identityLine;
             else line = 'Set points valid — check the score chart, then Mark complete';
         } else if (qItem && locked) {
@@ -3791,10 +3886,12 @@ export default function BuildModelWindow() {
         // The fit is gone (for a Complete model too, and before "Training failed": a load
         // that failed is the board's reason line).
         else if (fitGone) { line = fitGoneLine; tone = 'warn'; }
+        // A Complete model whose load failed: its board has the reason; the way out is the same link.
+        else if (loadFailed) { line = loadFailedLine; tone = 'bad'; }
         else if (done) line = trainedLine ?? identityLine;
         else if (hasSessionError) { line = <>Training failed · fix the problem, then {goTrainSensor}</>; tone = 'bad'; }
         else if (trainedFresh) line = <>{trainedLine} · check the charts, then set the health set points</>;
-        else if (stale) { line = <>Settings changed · re-train with {goTrainSensor}</>; tone = 'warn'; }
+        else if (stale) { line = <>Settings or running condition changed · train again with {goTrainSensor}</>; tone = 'warn'; }
         // Also why "Next: Health score →" is disabled.
         else if (!m.lastTrainedAt) line = <>Not trained yet · {goTrainSensor}</>;
         else line = identityLine;
@@ -3902,24 +3999,32 @@ export default function BuildModelWindow() {
         const cantDetail = `Can't train: ${cant.map(m => `${name(m)} — ${whyOf(m)}`).join(' · ')}`;
         const thisRunning = queue.isRunning && orderedDetail.some(m => queue.itemOf(m.id)?.state === 'running');
         const inRun = orderedDetail.filter(m => queue.isLocked(m.id));
-        // No workspace running condition at all (an invalid period has its own, more specific reason per model).
-        const rcBlocks = rcStepState === 'unset' && ready.length === 0;
+        // A model on its OWN (Custom) running condition does not wait for the workspace one.
+        const usesOwnRc = (m: FailureModel): boolean => effectiveModelFor(m).runningConditionMode === 'custom';
+        // No workspace running condition at all (an invalid period has its own, more specific
+        // reason per model) — and a model of this sensor really waits for it.
+        const rcBlocks = rcStepState === 'unset' && ready.length === 0 && cant.some(m => !usesOwnRc(m));
+        // The workspace condition is not set / not valid, so its card holds the only filled
+        // button — but the models this line is about run on their own condition: say that
+        // nothing is blocked for them (Train sensor is a ghost then, and works).
+        const ownRcNote = (list: FailureModel[]): string =>
+            rcStepState !== 'set' && list.length > 0 && list.every(usesOwnRc) ? ` · ${OWN_RC_NOT_BLOCKED}` : '';
         let why: string;
         let tone: TrainReasonTone = 'neutral';
         if (queue.stale) { why = TRAIN_STALE_MESSAGE; tone = 'danger'; }
         else if (thisRunning) why = 'Training this sensor…';
         else if (inRun.length) why = `${inRun.length} model${inRun.length === 1 ? '' : 's'} of this sensor queued in the run`;
         else if (rcBlocks) { why = TRAIN_NEEDS_RUNNING_CONDITION; tone = 'warn'; }
-        else if (ready.length === 0 && cant.length === 0) why = `${up.length} model${up.length === 1 ? '' : 's'} up to date — nothing to train`;
+        else if (ready.length === 0 && cant.length === 0) why = `${up.length} model${up.length === 1 ? '' : 's'} up to date — nothing to train${ownRcNote(up)}`;
         else if (ready.length === 0) {
             why = cant.some(m => m.id === activeModel?.id)
                 ? "Can't train · see below"
                 : `${names(cant, ', ')} can't train · see ${cant.length === 1 ? 'its tab' : 'their tabs'}`;
             tone = 'warn';
         }
-        else if (cant.length) { why = `${trains(ready)} · ${names(cant, ', ')} can't train, skipped`; tone = 'warn'; }
-        else if (up.length) why = `${trains(ready)} · ${names(up, ', ')} up to date, skipped`;
-        else why = `${trains(ready)} · ≈ ${formatTrainSeconds(roughTrainSeconds(ready.map(m => m.kind)))}`;
+        else if (cant.length) { why = `${trains(ready)}${ownRcNote(ready)} · ${names(cant, ', ')} can't train, skipped`; tone = 'warn'; }
+        else if (up.length) why = `${trains(ready)}${ownRcNote(ready)} · ${names(up, ', ')} up to date, skipped`;
+        else why = `${trains(ready)}${ownRcNote(ready) || ` · ≈ ${formatTrainSeconds(roughTrainSeconds(ready.map(m => m.kind)))}`}`;
         const busy = !queue.canStart;
         const title = queue.stale ? TRAIN_STALE_MESSAGE
             : queue.isRunning ? TRAIN_RUN_ACTIVE_REASON
@@ -3929,15 +4034,24 @@ export default function BuildModelWindow() {
             : undefined;
         // Menu copy: "Re-train" is only said about a model that has a train record
         // (`lastTrainedAt` — what `isModelStale` / the up-to-date rule read as "was trained").
-        const copy = sensorTrainMenuCopy(orderedDetail.map((m, i) => ({ kind: m.kind, plan: cands[i].plan, trainedBefore: !!m.lastTrainedAt })));
+        // Each row's state line: where the model stands ("Not trained yet", "Failed last
+        // run", "Fit no longer in memory", …) or why it can't train.
+        const copy = sensorTrainMenuCopy(orderedDetail.map((m, i) => ({
+            kind: m.kind,
+            plan: cands[i].plan,
+            trainedBefore: !!m.lastTrainedAt,
+            failedLastRun: !!trainError[m.id],
+            fitGone: !!m.lastTrainedAt && fitGoneOf(m),
+        })));
         const menu: TrainMenuItem[] = [
-            {
+            // A sensor with ONE model has no "all" row: its own row says it all.
+            ...(copy.all ? [{
                 key: 'retrain-all',
                 label: copy.all.label,
                 small: copy.all.small,
                 disabled: busy || ready.length + up.length === 0,
                 onClick: () => { queue.start(cands, { includeUpToDate: true, source: 'sensor-all' }); },
-            },
+            }] : []),
             ...orderedDetail.map((m, i): TrainMenuItem => ({
                 key: `only-${m.kind}`,
                 label: copy.only[i].label,
@@ -3951,7 +4065,9 @@ export default function BuildModelWindow() {
                 buttonRef={trainSensorBtnRef}
                 menuButtonRef={trainMenuBtnRef}
                 filled={filled}
-                label={thisRunning ? <><Loader2 size={12} className="pm-spin" aria-hidden="true" /> Training…</> : `▶ Train sensor · ${ready.length} of ${orderedDetail.length}`}
+                // "· n of m" only while something needs training; a plain ghost otherwise.
+                label={thisRunning ? <><Loader2 size={12} className="pm-spin" aria-hidden="true" /> Training…</>
+                    : ready.length > 0 ? `▶ Train sensor · ${ready.length} of ${orderedDetail.length}` : '▶ Train sensor'}
                 disabled={busy || ready.length === 0}
                 title={title}
                 why={why}
@@ -4119,9 +4235,8 @@ export default function BuildModelWindow() {
                             <StaleBanner
                                 training={training}
                                 queued={queue.isRunning && queue.itemOf(activeModel.id)?.state === 'queued'}
-                                disabled={buildBlockReason(activeModel) !== null || !queue.canStart}
-                                disabledTitle={buildBlockReason(activeModel) ?? (queue.stale ? TRAIN_STALE_MESSAGE : queue.isRunning ? TRAIN_RUN_ACTIVE_REASON : undefined)}
-                                onRetrain={() => trainOnly(activeModel)}
+                                blockedReason={awayFromFormText(activeModel, buildBlockReason(activeModel)) ?? (queue.stale ? TRAIN_STALE_MESSAGE : queue.isRunning ? TRAIN_RUN_ACTIVE_REASON : undefined)}
+                                onGoTrainSensor={focusTrainSensor}
                             />
                         )}
                         {page === 'model' && saveInfo[activeModel.id]?.phase === 'error' && (

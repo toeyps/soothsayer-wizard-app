@@ -6,7 +6,7 @@ vi.mock('../components/charts/ResponsiveECharts', () => ({
     default: (props: any) => <div data-testid="echarts-mock" data-series={props.option?.series?.length ?? 0} />,
 }));
 
-import { PageSwitch, StaleBanner, StateBoard, TrainSensorLink, WorkbenchScroll } from '../components/windows/workbench/WorkbenchShellParts';
+import { FitGoneBoard, LoadFailedBoard, PageSwitch, StaleBanner, StateBoard, TrainSensorLink, WorkbenchScroll } from '../components/windows/workbench/WorkbenchShellParts';
 import ChartCard, { LegendItem } from '../components/windows/workbench/ChartCard';
 import { SensorPickerSingle } from '../components/sensor/SensorPicker';
 
@@ -113,36 +113,90 @@ describe('WorkbenchScroll', () => {
     });
 });
 
+// SPEC workbench-redesign §6: the banner has NO button of its own — the one place to
+// train is the header's Train sensor, and the sentence links there.
 describe('StaleBanner', () => {
-    it('says the model is Incomplete again, that set points are kept, and has a Re-train button', () => {
-        const onRetrain = vi.fn();
-        render(<StaleBanner onRetrain={onRetrain} />);
+    const SENTENCE = 'Settings or running condition changed — this model is Incomplete again. Train it again with Train sensor ↑ to update the charts. Your set points are kept.';
+
+    it('says the whole sentence, with "Train sensor ↑" as a text link — and no button of its own', () => {
+        const onGo = vi.fn();
+        render(<StaleBanner onGoTrainSensor={onGo} />);
         const b = screen.getByTestId('stale-banner');
         expect(b.getAttribute('role')).toBe('status');
-        expect(b.textContent).toMatch(/Settings changed — this model is Incomplete again/);
-        expect(b.textContent).toMatch(/Your set points are kept/);
-        // One filled button on screen: this one is a ghost (the header's Train sensor is the filled one).
-        expect(screen.getByTestId('stale-retrain').className).not.toContain('rcx-btn--pri');
-        fireEvent.click(screen.getByTestId('stale-retrain'));
-        expect(onRetrain).toHaveBeenCalledTimes(1);
+        expect(b.getAttribute('data-state')).toBe('stale');
+        expect(b.textContent).toBe(SENTENCE);
+        // the old Re-train button is gone
+        expect(screen.queryByTestId('stale-retrain')).toBeNull();
+        expect(b.querySelector('.rcx-btn')).toBeNull();
+        expect(b.querySelectorAll('button')).toHaveLength(1);
+        const link = screen.getByTestId('stale-go-train');
+        expect(link.className).toBe('tq-inline-link');
+        expect(link.textContent).toBe('Train sensor ↑');
+        fireEvent.click(link);
+        expect(onGo).toHaveBeenCalledTimes(1);
     });
 
-    it('while training the button reads "Training…" and is disabled; when blocked it explains why', () => {
-        const { rerender } = render(<StaleBanner training onRetrain={() => {}} />);
-        expect((screen.getByTestId('stale-retrain') as HTMLButtonElement).disabled).toBe(true);
-        expect(screen.getByTestId('stale-retrain').textContent).toBe('Training…');
-        rerender(<StaleBanner disabled disabledTitle="Needs condition" onRetrain={() => {}} />);
-        expect((screen.getByTestId('stale-retrain') as HTMLButtonElement).title).toBe('Needs condition');
+    it('when Train sensor cannot train the model right now, the link still goes there and its tooltip says why', () => {
+        const onGo = vi.fn();
+        render(<StaleBanner blockedReason="Add at least 1 predictor" onGoTrainSensor={onGo} />);
+        const link = screen.getByTestId('stale-go-train') as HTMLButtonElement;
+        expect(link.title).toBe('Add at least 1 predictor');
+        expect(link.disabled).toBe(false);
+        fireEvent.click(link);
+        expect(onGo).toHaveBeenCalledTimes(1);
     });
 
-    it('while the model waits in a training run the button reads "Queued" and is disabled (customer items 8 + 9)', () => {
-        const onRetrain = vi.fn();
-        render(<StaleBanner queued onRetrain={onRetrain} />);
-        const btn = screen.getByTestId('stale-retrain') as HTMLButtonElement;
-        expect(btn.textContent).toBe('Queued');
-        expect(btn.disabled).toBe(true);
-        fireEvent.click(btn);
-        expect(onRetrain).not.toHaveBeenCalled();
+    it('while it trains again, or waits in the run, it says so instead of pointing at Train sensor', () => {
+        const { rerender } = render(<StaleBanner training onGoTrainSensor={() => {}} />);
+        expect(screen.getByTestId('stale-banner').getAttribute('data-state')).toBe('training');
+        expect(screen.getByTestId('stale-banner').textContent).toBe('Settings or running condition changed — this model is Incomplete again. Training it again now… Your set points are kept.');
+        expect(screen.queryByTestId('stale-go-train')).toBeNull();
+        rerender(<StaleBanner queued onGoTrainSensor={() => {}} />);
+        expect(screen.getByTestId('stale-banner').getAttribute('data-state')).toBe('queued');
+        expect(screen.getByTestId('stale-banner').textContent).toBe('Settings or running condition changed — this model is Incomplete again. It is queued in the training run. Your set points are kept.');
+        expect(screen.queryByTestId('stale-go-train')).toBeNull();
+        expect(screen.getByTestId('stale-banner').querySelector('button')).toBeNull();
+    });
+});
+
+// A Complete model whose load failed: "Train sensor ↑" would be a dead end (Train sensor
+// never trains an up-to-date Complete model) — the board offers "Load it again".
+describe('LoadFailedBoard', () => {
+    it('the ONE board shape in red: title, a sentence with "Load it again" as a text link, the reason as the mono line', () => {
+        const onReload = vi.fn();
+        render(<LoadFailedBoard testId="lf" linkTestId="lf-load" kindName="Individual model" tail="The charts come back when it is loaded." error="stats exploded" onReload={onReload} />);
+        const b = screen.getByTestId('lf');
+        expect(b.className).toBe('bmw-stage-empty wbx-msg wbx-msg--bad');
+        expect(b.querySelector('.wbx-msg-t')!.textContent).toBe("Couldn't load the Individual model");
+        expect(b.querySelector('.wbx-msg-s')!.textContent).toBe('Nothing about the model changed and it stays Complete — Load it again. The charts come back when it is loaded.');
+        expect(b.querySelector('.wbx-msg-d')!.textContent).toBe('stats exploded');
+        // never a link that cannot work, never a button-shaped control
+        expect(b.textContent).not.toContain('Train sensor ↑');
+        expect(b.querySelector('.rcx-btn')).toBeNull();
+        const link = screen.getByTestId('lf-load') as HTMLButtonElement;
+        expect(link.className).toBe('tq-inline-link');
+        expect(link.textContent).toBe('Load it again');
+        fireEvent.click(link);
+        expect(onReload).toHaveBeenCalledTimes(1);
+    });
+
+    it('"Load it again" reads the same as on the fit-gone board; a busy engine disables it with the reason; a train-menu hint is appended when given', () => {
+        const onReload = vi.fn();
+        render(
+            <>
+                <LoadFailedBoard testId="lf" linkTestId="lf-load" kindName="Relation model" tail="T." error="boom" onReload={onReload}
+                    reloadDisabledReason="Wait for the training run to finish" trainMenu={<>, or train it from the menu</>} />
+                <FitGoneBoard testId="fg" linkTestId="fg-load" trainTestId="fg-train" tail="T." actions={{ onReload }} />
+            </>,
+        );
+        const link = screen.getByTestId('lf-load') as HTMLButtonElement;
+        expect(link.textContent).toBe(screen.getByTestId('fg-load').textContent);
+        expect(link.disabled).toBe(true);
+        expect(link.title).toBe('Wait for the training run to finish');
+        fireEvent.click(link);
+        expect(onReload).not.toHaveBeenCalled();
+        expect(screen.getByTestId('lf').querySelector('.wbx-msg-s')!.textContent)
+            .toBe('Nothing about the model changed and it stays Complete — Load it again, or train it from the menu. T.');
     });
 });
 
