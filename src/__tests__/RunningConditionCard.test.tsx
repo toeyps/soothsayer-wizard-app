@@ -189,7 +189,7 @@ describe('RunningConditionCard — Set', () => {
             expect(cov().className).toContain('f4-cov--mini');
             expect(cov().textContent).toContain('Jan 2025');
             expect(cov().textContent).toContain('Jul 2026');
-            expect(within(cov()).getByTestId('period-coverage-days').textContent).toBe('198 d train · 0 d test'); // Jan1-Mar31 2026 (90 d) + Apr15 2026-end of data (108 d)
+            expect(within(cov()).getByTestId('period-coverage-days').textContent).toBe('198 d train · 0 d scoring'); // Jan1-Mar31 2026 (90 d) + Apr15 2026-end of data (108 d)
             expect(screen.getByTestId('rc-card-use').contains(cov())).toBe(true);
             // the rows-used count, % and bar are all still there
             expect(screen.getByTestId('rc-card-rows').textContent).toBe('11,066');
@@ -202,7 +202,7 @@ describe('RunningConditionCard — Set', () => {
                     getDesc={() => ''} getUnit={() => ''} rows={OK} bounds={B} onOpen={vi.fn()} />,
             );
             const first = within(cov()).getByTestId('period-coverage-days').textContent;
-            expect(first).toBe('31 d train · 0 d test');
+            expect(first).toBe('31 d train · 0 d scoring');
             rerender(
                 <RunningConditionCard state="set" periods={[p('a', '2025-01-01T00:00', '2025-01-31T23:59')]} filters={[]} combine="and" noneConfirmed headers={[]}
                     getDesc={() => ''} getUnit={() => ''} rows={{ status: 'ok', used: 1, total: 2 }} bounds={B} onOpen={vi.fn()} />,
@@ -212,18 +212,19 @@ describe('RunningConditionCard — Set', () => {
 
         it('no train period = an EMPTY train lane ("0 d train"), not a full strip', () => {
             card({ periods: [], bounds: B });
-            expect(within(cov()).getByTestId('period-coverage-days').textContent).toBe('0 d train · 0 d test');
+            expect(within(cov()).getByTestId('period-coverage-days').textContent).toBe('0 d train · 0 d scoring');
             expect(cov().querySelectorAll('.f4-strip i')).toHaveLength(0);
         });
 
-        it('two lanes: train on top, test below (Known problem hatched); caption "N d train · M d test"', () => {
+        it('two lanes: train on top, scoring below (every scoring block the same, none hatched); caption "N d train · M d scoring"', () => {
             card({ bounds: B, periods: [p('a', '2026-01-01T00:00', '2026-03-31T23:59')], testPeriods: [
-                { id: 't1', start: '2026-01-01T00:00', end: '2026-06-30T23:59', label: 'normal' },
+                { id: 't1', start: '2026-01-01T00:00', end: '2026-06-30T23:59' },
+                // a period saved before 2026-10-10 still carries a label: drawn like the other one
                 { id: 't2', start: '2026-07-01T00:00', end: '2026-07-10T00:00', label: 'problem' },
             ] });
             expect(cov().querySelector('.f4-strip--tt')).not.toBeNull();
-            expect(Array.from(cov().querySelectorAll('.f4-strip i.te')).map(x => x.className)).toEqual(['te', 'te pb']);
-            expect(within(cov()).getByTestId('period-coverage-days').textContent).toBe('90 d train · 190 d test');
+            expect(Array.from(cov().querySelectorAll('.f4-strip i.te')).map(x => x.className)).toEqual(['te', 'te']);
+            expect(within(cov()).getByTestId('period-coverage-days').textContent).toBe('90 d train · 190 d scoring');
         });
 
         it('open ends reach the edge of the strip', () => {
@@ -273,46 +274,72 @@ describe('RunningConditionCard — Set', () => {
     });
 });
 
-describe('RunningConditionCard — Test chips (Train/Test validation, 2026-10-07)', () => {
-    const T = (over: Partial<TestPeriod>): TestPeriod => ({ id: 't', start: '2026-05-01T00:00', end: '2026-05-31T23:59', label: 'normal', ...over });
+describe('RunningConditionCard — Scoring chips ("just score it", 2026-10-10)', () => {
+    const T = (over: Partial<TestPeriod> = {}): TestPeriod => ({ id: 't', start: '2026-05-01T00:00', end: '2026-05-31T23:59', ...over });
 
-    it('no test period: an amber chip "needed before Mark complete" (Train does not need one)', () => {
+    it('no scoring period: an amber chip "needed before Mark complete" (Train does not need one)', () => {
         card();
         const row = screen.getByTestId('rc-card-test');
-        expect(within(row).getByText('Test')).toBeTruthy();
+        expect(within(row).getByText('Scoring')).toBeTruthy();
+        expect(within(row).queryByText('Test')).toBeNull();
         const chip = screen.getByTestId('rc-card-test-chip');
-        expect(chip.textContent).toBe('No test period — needed before Mark complete');
+        expect(chip.textContent).toBe('No scoring period — needed before Mark complete');
         expect(chip.className).toContain('rcc-chip--warn');
     });
 
-    it('one chip per test: "T1 Normal · dates"; a Known problem is hatched and shows its event time', () => {
+    it('one chip per scoring period: "S1 · dates" — start → end and nothing else', () => {
         card({ testPeriods: [
             T({ id: 'a' }),
-            T({ id: 'b', start: '2026-06-01T00:00', end: '2026-06-30T23:59', label: 'problem', eventTime: '2026-06-20T14:30' }),
+            T({ id: 'b', start: '2026-06-01T00:00', end: '2026-06-30T23:59' }),
         ] });
         const chips = screen.getAllByTestId('rc-card-test-chip');
         expect(chips.map(c => c.textContent)).toEqual([
-            'T1 Normal · 1 May 2026 → 31 May 2026',
-            'T2 Known problem · 1 Jun 2026 → 30 Jun 2026 · event 20 Jun 2026 14:30',
+            'S1 · 1 May 2026 → 31 May 2026',
+            'S2 · 1 Jun 2026 → 30 Jun 2026',
         ]);
-        expect(chips[0].querySelector('.tpe-sw--te')).not.toBeNull();
-        expect(chips[1].className).toContain('rcc-chip--pb');
-        expect(chips[1].querySelector('.tpe-sw--pb')).not.toBeNull();
-        expect(within(chips[1]).getByTestId('rc-card-test-event').className).toContain('rcc-ev');
+        for (const c of chips) {
+            expect(c.className).toBe('rcc-chip rcc-chip--test');
+            expect(c.querySelector('.tpe-sw--te')).not.toBeNull();
+            expect(c.hasAttribute('data-label')).toBe(false);
+        }
     });
 
-    it('a test that includes train time is only a hover note on its chip, never an error', () => {
+    it('a workspace saved before 2026-10-10: a "Known problem" period with an event time is the same plain "S#" chip', () => {
+        card({ testPeriods: [
+            T({ id: 'a', label: 'normal' }),
+            T({ id: 'b', start: '2026-06-01T00:00', end: '2026-06-30T23:59', label: 'problem', eventTime: '2026-06-20T14:30', fromHighlight: 'Bearing trip' }),
+        ] });
+        const chips = screen.getAllByTestId('rc-card-test-chip');
+        expect(chips.map(c => c.textContent)).toEqual([
+            'S1 · 1 May 2026 → 31 May 2026',
+            'S2 · 1 Jun 2026 → 30 Jun 2026',
+        ]);
+        expect(chips[1].className).toBe('rcc-chip rcc-chip--test');
+        expect(chips[1].querySelector('.tpe-sw--pb')).toBeNull();
+        expect(screen.queryByTestId('rc-card-test-event')).toBeNull();
+        expect(screen.getByTestId('rc-card').textContent).not.toMatch(/Known problem|Normal|event|Bearing trip/);
+    });
+
+    it('a scoring period that includes train time is only a hover note on its chip, never an error', () => {
         card({ testPeriods: [T({ start: '2026-03-01T00:00', end: '2026-03-31T23:59' })] });
         const chip = screen.getByTestId('rc-card-test-chip');
         expect(chip.getAttribute('title')).toBe('Includes train time (P1) — information only');
         expect(chip.className).not.toContain('rcc-chip--bad');
     });
 
-    it('a broken test period (e.g. event outside it) is flagged red on the card', () => {
+    it('a broken scoring period (end before start, or a missing date) is flagged red on the card', () => {
+        card({ testPeriods: [T({ start: '2026-05-31T00:00', end: '2026-05-01T00:00' }), T({ id: 'u', end: '' })] });
+        const chips = screen.getAllByTestId('rc-card-test-chip');
+        for (const chip of chips) {
+            expect(chip.className).toContain('rcc-chip--bad');
+            expect(chip.textContent!.startsWith('⚠ S')).toBe(true);
+        }
+    });
+
+    it('a legacy event time outside its period is NOT an error any more (the event time is ignored)', () => {
         card({ testPeriods: [T({ label: 'problem', eventTime: '2027-01-01T00:00' })] });
         const chip = screen.getByTestId('rc-card-test-chip');
-        expect(chip.className).toContain('rcc-chip--bad');
-        expect(chip.textContent!.startsWith('⚠ ')).toBe(true);
-        expect(within(chip).queryByTestId('rc-card-test-event')).toBeNull();
+        expect(chip.className).not.toContain('rcc-chip--bad');
+        expect(chip.textContent).toBe('S1 · 1 May 2026 → 31 May 2026');
     });
 });

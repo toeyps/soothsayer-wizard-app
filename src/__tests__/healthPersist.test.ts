@@ -19,13 +19,14 @@ vi.mock('../workspaceManager', () => ({
 
 import { commitHealthVerdict, commitSetPoints, persistModelComplete, SETTINGS_CHANGED_DURING_EXPORT_REASON, TESTS_CHANGED_DURING_EXPORT_REASON } from '../utils/healthPersist';
 import { NO_TEST_PERIOD_REASON } from '../utils/runningCondition';
-import { testPeriodsKey } from '../utils/timePeriods';
+import { testPeriodsKey, toScoringPeriods } from '../utils/timePeriods';
 import { computeTrainFingerprint } from '../utils/trainFingerprint';
 import type { TestPeriod } from '../types';
+import { LEGACY_TESTS } from './helpers/trainTestFixture';
 
-const TEST: TestPeriod = { id: 't1', start: '2026-01-01T00:00', end: '2026-01-31T23:59', label: 'normal' };
-// Train/Test validation (2026-10-07): a train period is required to train and
-// a test period to Mark complete.
+// A scoring period is start → end only ("just score it", 2026-10-10).
+const TEST: TestPeriod = { id: 't1', start: '2026-01-01T00:00', end: '2026-01-31T23:59' };
+// A train period is required to train and a scoring period to Mark complete.
 const baseFg = (models: FailureModel[]): FailureGroupStateSlice => ({
     groups: [], models,
     runningConditionFilters: [], runningConditionCombine: 'and',
@@ -249,8 +250,8 @@ describe('the persisted verdict (healthVerdict)', () => {
     });
 });
 
-describe('persistModelComplete - Train/Test validation (2026-10-07)', () => {
-    it('refuses without a test period (re-checked against disk), nothing written or broadcast', async () => {
+describe('persistModelComplete - scoring periods', () => {
+    it('refuses without a scoring period (re-checked against disk), nothing written or broadcast', async () => {
         setDisk([trained(ind())]);
         disk = { ...disk, failureGroupState: { ...disk.failureGroupState!, runningConditionTestPeriods: [] } };
         const { reason } = await persistModelComplete('ws1', 'i1', sp, null);
@@ -267,20 +268,56 @@ describe('persistModelComplete - Train/Test validation (2026-10-07)', () => {
         expect(disk.failureGroupState!.models[0]).not.toHaveProperty('testsChangedAt');
     });
 
-    it('test periods edited DURING the export keep the model Incomplete (the files describe the old tests)', async () => {
+    it('scoring periods edited DURING the export keep the model Incomplete (the files describe the old ones)', async () => {
         const m = trained(ind());
         setDisk([m]);
         const race = { fingerprint: computeTrainFingerprint(m, baseFg([])), setPointsBefore: undefined, testsKey: testPeriodsKey([TEST]) };
-        disk = { ...disk, failureGroupState: { ...disk.failureGroupState!, runningConditionTestPeriods: [{ ...TEST, label: 'problem' }] } };
+        const moved = [{ ...TEST, end: '2026-02-15T00:00' }];
+        disk = { ...disk, failureGroupState: { ...disk.failureGroupState!, runningConditionTestPeriods: moved } };
         const { reason } = await persistModelComplete('ws1', 'i1', sp, null, 'build-model', undefined, race);
         expect(reason).toBe(TESTS_CHANGED_DURING_EXPORT_REASON);
+        expect(TESTS_CHANGED_DURING_EXPORT_REASON).toBe('the scoring periods changed while the files were being written — mark it complete again.');
         expect(disk.failureGroupState!.models[0].status).toBe(false);
-        // Unchanged tests pass.
-        const ok = await persistModelComplete('ws1', 'i1', sp, null, 'build-model', undefined, { ...race, testsKey: testPeriodsKey([{ ...TEST, label: 'problem' }]) });
+        // Unchanged periods pass.
+        const ok = await persistModelComplete('ws1', 'i1', sp, null, 'build-model', undefined, { ...race, testsKey: testPeriodsKey(moved) });
         expect(ok.reason).toBeNull();
     });
 
-    it('after completing, a tests-only change sets it Incomplete + testsChangedAt but keeps it trained', async () => {
+    it('an old workspace (periods still carrying label / eventTime): Mark complete works, and periods that only LOST those keys during the export are not "changed"', async () => {
+        const m = trained(ind());
+        setDisk([m]);
+        disk = { ...disk, failureGroupState: { ...disk.failureGroupState!, runningConditionTestPeriods: LEGACY_TESTS } };
+        // key taken at click time from the old-shaped list...
+        const race = { fingerprint: computeTrainFingerprint(m, baseFg([])), setPointsBefore: undefined, testsKey: testPeriodsKey(LEGACY_TESTS) };
+        // ...while the export ran, an edit elsewhere re-wrote the same periods without the legacy keys
+        disk = { ...disk, failureGroupState: { ...disk.failureGroupState!, runningConditionTestPeriods: toScoringPeriods(LEGACY_TESTS) } };
+        const { reason } = await persistModelComplete('ws1', 'i1', sp, null, 'build-model', undefined, race);
+        expect(reason).toBeNull();
+        expect(disk.failureGroupState!.models[0].status).toBe(true);
+        expect(disk.failureGroupState!.models[0]).not.toHaveProperty('testsChangedAt');
+    });
+
+    it('an old workspace: a Complete model stays Complete through an unrelated write and through its periods losing the legacy keys', async () => {
+        setDisk([trained(ind())]);
+        disk = { ...disk, failureGroupState: { ...disk.failureGroupState!, runningConditionTestPeriods: LEGACY_TESTS } };
+        expect((await persistModelComplete('ws1', 'i1', sp, null)).reason).toBeNull();
+        expect(disk.failureGroupState!.models[0].status).toBe(true);
+        const { updateWorkspaceData } = await import('../workspaceManager');
+        // an unrelated write (e.g. the Dashboard autosave)
+        await updateWorkspaceData('ws1', prev => ({ ...prev, name: 'Renamed' }));
+        expect(disk.failureGroupState!.models[0].status).toBe(true);
+        // the periods pass through an edit that changes no date (the legacy keys go)
+        await updateWorkspaceData('ws1', prev => ({
+            ...prev,
+            failureGroupState: { ...prev.failureGroupState!, runningConditionTestPeriods: toScoringPeriods(prev.failureGroupState!.runningConditionTestPeriods) },
+        }));
+        const after = disk.failureGroupState!.models[0];
+        expect(after.status).toBe(true);
+        expect(after).not.toHaveProperty('testsChangedAt');
+        expect(JSON.stringify(disk.failureGroupState!.runningConditionTestPeriods)).not.toMatch(/label|eventTime|fromHighlight/);
+    });
+
+    it('after completing, a scoring-periods-only change sets it Incomplete + testsChangedAt but keeps it trained', async () => {
         setDisk([trained(ind())]);
         await persistModelComplete('ws1', 'i1', sp, null);
         expect(disk.failureGroupState!.models[0].status).toBe(true);

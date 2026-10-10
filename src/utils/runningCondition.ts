@@ -1,7 +1,7 @@
 import type { FailureGroupStateSlice, FailureModel, TestPeriod, TimePeriod, WorkspaceSensorFilter } from '../types';
 import { normalizeSensorTag } from '../hooks/useSensorMetaMap';
 import { modelSensorKey, sensorCategory } from './modelGrouping';
-import { newPeriodId, testPeriodsError, validatePeriods } from './timePeriods';
+import { newPeriodId, testPeriodsError, toScoringPeriod, validatePeriods } from './timePeriods';
 
 /** The parts of the failure-group slice these helpers read. */
 export type RunningConditionFg = Partial<FailureGroupStateSlice> | null | undefined;
@@ -14,13 +14,14 @@ export interface EffectiveRunningCondition {
     noneConfirmed: boolean;
     /** TRAIN periods (required to train since 2026-10-07). */
     periods: TimePeriod[];
-    /** TEST periods (Train/Test validation, 2026-10-07) — where the score is
-     *  checked; never trained on, never part of the train fingerprint. */
+    /** SCORING periods ("test periods" until 2026-10-10) — the time the trained
+     *  model gives a health score for; never trained on, never part of the
+     *  train fingerprint. */
     testPeriods: TestPeriod[];
 }
 
 /**
- * The running condition (value conditions + train/test periods) a model
+ * The running condition (value conditions + train / scoring periods) a model
  * actually uses: the workspace default in 'workspace' mode, the model's own in
  * 'custom'. Periods are always lists (`migratePeriods` turns old start/end
  * pairs into them at load; a missing list reads as `[]` — which, since the
@@ -100,8 +101,9 @@ export const NO_TRAIN_PERIOD_REASON_CUSTOM =
  * Train/Test validation (SPEC rule 1, 2026-10-07): at least one TRAIN period is
  * required — the old "no period = whole dataset" default is gone. Any period
  * counts, including one left open at both ends (that is the user's explicit
- * choice of the whole time range; the Add-period button's first default). Test
- * periods are NOT needed to train (`markCompleteBlockReason` asks for them).
+ * choice of the whole time range; the Add-period button's first default).
+ * Scoring periods are NOT needed to train (`markCompleteBlockReason` asks for
+ * them).
  */
 export function getBuildBlockReason(model: FailureModel, fg: RunningConditionFg, headers?: string[] | null): string | null {
     const category = model.category ?? sensorCategory(fg?.models ?? [], modelSensorKey(model));
@@ -116,16 +118,16 @@ export function getBuildBlockReason(model: FailureModel, fg: RunningConditionFg,
     return null;
 }
 
-/** No test period, Workspace-mode model (SPEC rule 2). */
-export const NO_TEST_PERIOD_REASON = 'Add a test period before marking complete (Running condition → Edit).';
-/** No test period, Custom-mode model. */
-export const NO_TEST_PERIOD_REASON_CUSTOM = 'Add a test period in Model settings → Training data (Custom) before marking complete.';
+/** No scoring period, Workspace-mode model. */
+export const NO_TEST_PERIOD_REASON = 'Add a scoring period before marking complete (Running condition → Edit).';
+/** No scoring period, Custom-mode model. */
+export const NO_TEST_PERIOD_REASON_CUSTOM = 'Add a scoring period in Model settings → Training data (Custom) before marking complete.';
 
 /**
- * The extra Mark complete requirement of SPEC rule 2: at least one test
- * period, and every test period valid (dates + event time). Train itself does
- * NOT need a test. Call it after `getBuildBlockReason` (which it does not
- * repeat). Returns user-facing text, or null.
+ * The extra Mark complete requirement: at least one scoring period, and every
+ * scoring period valid (start and end dates). Train itself does NOT need one.
+ * Call it after `getBuildBlockReason` (which it does not repeat). Returns
+ * user-facing text, or null.
  */
 export function markCompleteBlockReason(model: FailureModel, fg: RunningConditionFg): string | null {
     const eff = effectiveRunningCondition(model, fg);
@@ -147,9 +149,11 @@ export const ADD_TRAIN_PERIOD_HINT = 'Add a train period';
 /**
  * Apply gate of the Running-condition settings (workspace draft, or a Custom
  * model's own lists): an invalid train period, NO train period (SPEC rule 1 —
- * hint "Add a train period"), or an invalid test period / event time (SPEC
- * rule 5) blocks it. A test period that overlaps a train period does NOT
- * (rule 3), and neither does a train period overlapping a highlight (rule 4).
+ * hint "Add a train period"), or an invalid scoring period (a missing /
+ * unparseable date, or an end before its start) blocks it. A scoring period
+ * that overlaps a train period does NOT, neither does having NO scoring period
+ * (only Mark complete needs one), and neither does a train period overlapping
+ * a highlight (rule 4).
  */
 export function runningConditionApplyBlock(periods: TimePeriod[], testPeriods: TestPeriod[] = []): RunningConditionApplyBlock | null {
     const bad = validatePeriods(periods).find((s) => s.invalid);
@@ -190,11 +194,14 @@ export interface CustomSeedResult {
 const newFilterId = () => `rcf-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
 /**
- * The switch-to-Custom seed (SPEC rule 7), extended with test periods: each of
- * the model's own lists (conditions, train periods, test periods) is copied
- * from the workspace ONCE — only when it is still empty, so switching
+ * The switch-to-Custom seed (SPEC rule 7), extended with scoring periods: each
+ * of the model's own lists (conditions, train periods, scoring periods) is
+ * copied from the workspace ONCE — only when it is still empty, so switching
  * Workspace → Custom → Workspace → Custom never overwrites the model's own
- * edits. Copies get fresh ids. Pure: the caller stages `patch` into its draft.
+ * edits. Copies get fresh ids. A copied scoring period is start / end only
+ * (`toScoringPeriod`): the legacy label / event time of a workspace saved
+ * before 2026-10-10 is never written into a model's own list. Pure: the caller
+ * stages `patch` into its draft.
  */
 export function seedCustomFromWorkspace(
     current: CustomSeedCurrent,
@@ -216,7 +223,7 @@ export function seedCustomFromWorkspace(
     }
     if (current.customTestPeriods.length === 0 && workspace.testPeriods.length > 0) {
         copied.tests = workspace.testPeriods.length;
-        patch.customTestPeriods = workspace.testPeriods.map(t => ({ ...t, id: periodId() }));
+        patch.customTestPeriods = workspace.testPeriods.map(t => toScoringPeriod({ ...t, id: periodId() }));
     }
     return { patch, copied };
 }

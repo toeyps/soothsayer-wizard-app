@@ -1,28 +1,26 @@
 import type { TestPeriodResult, ValidationResult } from '../../types/health';
 
 /**
- * Train/Test validation (2026-10-07) fixtures for UI tests: a
- * `HealthPreview.test_validation` payload as Rust returns it
- * (`health_validation.rs`). Small, hand-checkable numbers.
+ * Scoring-period fixtures for UI tests: a `HealthPreview.test_validation`
+ * payload as Rust returns it (`health_validation.rs`, "just score it"
+ * 2026-10-10 — a result is facts only: no `label`, `event_time`, `lead_days`
+ * or `first_below_80`). Small, hand-checkable numbers.
  */
 
+/** One scoring period's result (S1 by default). */
 export function makeTestResult(over: Partial<TestPeriodResult> = {}): TestPeriodResult {
     return {
         index: 1,
-        label: 'normal',
         start: '2026-01-01T02:00',
         end: '2026-01-01T03:00',
-        event_time: null,
         days: 12.5,
         rows: 300,
         train_rows: 0,
         train_days: 0,
         scored: 300,
         pct_below_80: 1.2,
-        first_below_80: null,
         lowest: 84,
         lowest_at: '2026-01-01 02:30:00',
-        lead_days: null,
         ...over,
     };
 }

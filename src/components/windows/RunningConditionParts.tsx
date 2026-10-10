@@ -15,12 +15,12 @@ import { computeCoverage, computeTestCoverage, conditionChipParts, formatPeriodC
  *  `className` lets a host (the settings modal) restyle the wrapper;
  *  `mini` is the Step-1 card variant: thinner strip, shorter day caption.
  *
- *  With `tests` (Train/Test validation, 2026-10-07 -- every Build Model use
- *  passes it) the strip has two lanes: TRAIN periods on the top half, TEST
- *  periods on the bottom half in the test colour (Known problem hatched), so a
- *  test that overlaps train time stays readable; the caption reads
- *  "117 d train · 59 d test". A train period is required then, so an empty
- *  train list draws an empty top lane (not "all data"). */
+ *  With `tests` (the scoring periods -- every Build Model use passes them) the
+ *  strip has two lanes: TRAIN periods on the top half, SCORING periods on the
+ *  bottom half in the scoring colour, so a scoring period that overlaps train
+ *  time stays readable; the caption reads "117 d train · 59 d scoring". A train
+ *  period is required then, so an empty train list draws an empty top lane
+ *  (not "all data"). */
 export function PeriodCoverageBar({ periods, bounds, className, mini = false, tests }: {
     periods: TimePeriod[];
     bounds: DataBounds | null | undefined;
@@ -34,7 +34,7 @@ export function PeriodCoverageBar({ periods, bounds, className, mini = false, te
     const trainSegs = validation && periods.length === 0 ? [] : cov.segments;
     const testCov = validation ? computeTestCoverage(tests, bounds) : null;
     const days = validation
-        ? `${periods.length === 0 ? 0 : cov.usedDays} d train · ${testCov?.usedDays ?? 0} d test`
+        ? `${periods.length === 0 ? 0 : cov.usedDays} d train · ${testCov?.usedDays ?? 0} d scoring`
         : cov.unlimited
             ? `all ${cov.totalDays} days`
             : mini ? `${cov.usedDays} / ${cov.totalDays} d` : `${cov.usedDays} of ${cov.totalDays} days used`;
@@ -43,7 +43,7 @@ export function PeriodCoverageBar({ periods, bounds, className, mini = false, te
             <div
                 className={`f4-strip${validation ? ' f4-strip--tt' : ''}`}
                 role="img"
-                aria-label={validation ? 'Train periods (top lane) and test periods (bottom lane) on the dataset timeline' : 'Periods on the dataset timeline'}
+                aria-label={validation ? 'Train periods (top lane) and scoring periods (bottom lane) on the dataset timeline' : 'Periods on the dataset timeline'}
             >
                 {trainSegs.map((s, i) => (
                     <i
@@ -56,7 +56,7 @@ export function PeriodCoverageBar({ periods, bounds, className, mini = false, te
                 {testCov?.segments.map((s, i) => (
                     <i
                         key={`t${i}`}
-                        className={s.problem ? 'te pb' : 'te'}
+                        className="te"
                         data-testid="period-coverage-test"
                         title={s.label}
                         style={{ left: `${s.leftPct.toFixed(2)}%`, width: `${s.widthPct.toFixed(2)}%` }}

@@ -120,9 +120,9 @@ describe('TimePeriodsEditor - wide period cards (Running condition modal, mockup
         expect(add.textContent).toBe('Add train period');
     });
 
-    it('with test periods, the strip is shown even before the first train period (test lane only)', () => {
-        render(<TimePeriodsEditor periods={[]} onChange={vi.fn()} bounds={bounds} tests={[{ id: 't', start: '2026-02-01T00:00', end: '2026-02-11T00:00', label: 'normal' }]} />);
-        expect(screen.getByTestId('period-coverage-days').textContent).toBe('0 d train · 10 d test');
+    it('with scoring periods, the strip is shown even before the first train period (scoring lane only)', () => {
+        render(<TimePeriodsEditor periods={[]} onChange={vi.fn()} bounds={bounds} tests={[{ id: 't', start: '2026-02-01T00:00', end: '2026-02-11T00:00' }]} />);
+        expect(screen.getByTestId('period-coverage-days').textContent).toBe('0 d train · 10 d scoring');
         expect(screen.getAllByTestId('period-coverage-test')).toHaveLength(1);
     });
 

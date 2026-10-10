@@ -119,29 +119,41 @@ describe('RuleSentence (settings modal summary)', () => {
     });
 });
 
-describe('PeriodCoverageBar with test periods (Train/Test validation, two lanes)', () => {
+describe('PeriodCoverageBar with scoring periods (two lanes)', () => {
     const B2 = { min: '2026-01-01 00:00:00', max: '2026-12-31 23:50:00' };
     const train = [p('a', '2026-01-01T00:00', '2026-03-31T23:59')];
 
-    it('train on the top lane, tests on the bottom lane (Known problem hatched), caption "N d train · M d test"', () => {
+    it('train on the top lane, scoring periods on the bottom lane, caption "N d train · M d scoring"', () => {
         const { container } = render(<PeriodCoverageBar periods={train} bounds={B2} tests={[
-            { id: 't1', start: '2026-01-01T00:00', end: '2026-12-31T23:50', label: 'normal' },
-            { id: 't2', start: '2026-06-01T00:00', end: '2026-06-10T00:00', label: 'problem', eventTime: '2026-06-05T00:00' },
+            { id: 't1', start: '2026-01-01T00:00', end: '2026-12-31T23:50' },
+            { id: 't2', start: '2026-06-01T00:00', end: '2026-06-10T00:00' },
         ]} />);
         const strip = container.querySelector('.f4-strip')!;
         expect(strip.className).toContain('f4-strip--tt');
+        expect(strip.getAttribute('aria-label')).toBe('Train periods (top lane) and scoring periods (bottom lane) on the dataset timeline');
         expect(strip.querySelectorAll('i:not(.te)')).toHaveLength(1);
         const te = screen.getAllByTestId('period-coverage-test');
-        expect(te.map(x => x.className)).toEqual(['te', 'te pb']);
-        expect(te[0].getAttribute('title')).toContain('T1 Normal');
-        // the tests overlap each other: their days are counted once
-        expect(screen.getByTestId('period-coverage-days').textContent).toBe('90 d train · 365 d test');
+        expect(te.map(x => x.className)).toEqual(['te', 'te']);
+        expect(te.map(x => x.getAttribute('title'))).toEqual(['S1 · 1 Jan 2026 00:00 – 31 Dec 2026 23:50', 'S2 · 1 Jun 2026 00:00 – 10 Jun 2026 00:00']);
+        // the scoring periods overlap each other: their days are counted once
+        expect(screen.getByTestId('period-coverage-days').textContent).toBe('90 d train · 365 d scoring');
+    });
+
+    it('a period saved before 2026-10-10 (label / event time) is drawn like any other: plain block, "S#" tooltip, no hatch', () => {
+        render(<PeriodCoverageBar periods={train} bounds={B2} tests={[
+            { id: 't1', start: '2026-05-01T00:00', end: '2026-05-10T00:00', label: 'normal' },
+            { id: 't2', start: '2026-06-01T00:00', end: '2026-06-10T00:00', label: 'problem', eventTime: '2026-06-05T00:00', fromHighlight: 'Bearing trip' },
+        ]} />);
+        const te = screen.getAllByTestId('period-coverage-test');
+        expect(te.map(x => x.className)).toEqual(['te', 'te']);
+        for (const x of te) expect(x.getAttribute('title')).not.toMatch(/Known problem|Normal|event|Bearing/i);
+        expect(te[1].getAttribute('title')).toMatch(/^S2 · /);
     });
 
     it('no train period: an EMPTY top lane and "0 d train" — never the whole dataset', () => {
         const { container } = render(<PeriodCoverageBar periods={[]} bounds={B2} tests={[]} />);
         expect(container.querySelectorAll('.f4-strip i')).toHaveLength(0);
-        expect(screen.getByTestId('period-coverage-days').textContent).toBe('0 d train · 0 d test');
+        expect(screen.getByTestId('period-coverage-days').textContent).toBe('0 d train · 0 d scoring');
     });
 
     it('without the tests prop it is the old single-lane bar', () => {

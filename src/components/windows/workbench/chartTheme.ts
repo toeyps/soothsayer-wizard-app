@@ -38,14 +38,15 @@ export const CHART = {
     /** Histogram bars. */
     bar: 'rgba(120, 160, 230, 0.55)',
     normalCurve: '#e8e8ee',
-    /** Train / Test scopes on every Workbench time chart (DESIGN_SYSTEM §4
-     *  "Train / Test periods"): train = the accent blue (`--train`), test =
-     *  magenta oklch(.74 .16 340) (`--test`), as the canvas draws them. */
+    /** Train / scoring scopes on every Workbench time chart (DESIGN_SYSTEM §4):
+     *  train = the accent blue (`--train`), scoring = magenta
+     *  oklch(.74 .16 340) (`--test` — the token keeps its name), as the canvas
+     *  draws them. */
     train: '#5b95f0',
     trainFill: 'rgba(77, 140, 240, 0.10)',
     test: '#e866c4',
     testFill: 'rgba(232, 102, 196, 0.11)',
-    /** Dark pill behind the scope / EVENT labels. */
+    /** Dark pill behind the scope labels. */
     scopePillBg: 'rgba(10, 10, 11, 0.82)',
 } as const;
 

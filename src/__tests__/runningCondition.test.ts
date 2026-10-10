@@ -8,13 +8,15 @@ import {
     ADD_TRAIN_PERIOD_HINT,
 } from '../utils/runningCondition';
 import { mk } from './helpers/failureModelFixture';
+import { LEGACY_TESTS } from './helpers/trainTestFixture';
 
 const f = (over: Partial<WorkspaceSensorFilter> = {}): WorkspaceSensorFilter => ({
     id: 'f', sensor: 'S1', operation: 'greater_than', value1: '10', value2: '', ...over,
 });
 const fg = (over: Partial<FailureGroupStateSlice> = {}): FailureGroupStateSlice => ({ groups: [], models: [], ...over });
 const TRAIN: TimePeriod[] = [{ id: 'tr', start: '2025-01-01T00:00', end: '2025-03-31T23:59' }];
-const tp = (over: Partial<TestPeriod> = {}): TestPeriod => ({ id: 't', start: '2025-04-01T00:00', end: '2025-04-30T23:59', label: 'normal', ...over });
+/** A scoring period: start → end only. */
+const tp = (over: Partial<TestPeriod> = {}): TestPeriod => ({ id: 't', start: '2025-04-01T00:00', end: '2025-04-30T23:59', ...over });
 
 describe('isCompleteCondition', () => {
     it('needs a sensor and value1', () => {
@@ -49,12 +51,12 @@ describe('effectiveRunningCondition', () => {
         expect(e.noneConfirmed).toBe(true);
         expect(e.periods).toHaveLength(1);
     });
-    it('test periods: workspace list in workspace mode, the model own customTestPeriods in custom mode; missing lists read as []', () => {
+    it('scoring periods: workspace list in workspace mode, the model own customTestPeriods in custom mode; missing lists read as []', () => {
         const ws = [tp({ id: 'w' })];
-        const own = [tp({ id: 'c', label: 'problem' })];
+        const own = [tp({ id: 'c', start: '2025-06-01T00:00', end: '2025-06-30T23:59' })];
         expect(effectiveRunningCondition(mk({ id: 'a', customTestPeriods: own }), fg({ runningConditionTestPeriods: ws })).testPeriods).toEqual(ws);
         expect(effectiveRunningCondition(mk({ id: 'a', runningConditionMode: 'custom', customTestPeriods: own }), fg({ runningConditionTestPeriods: ws })).testPeriods).toEqual(own);
-        // Old workspaces / models without the fields load unchanged and read as "no test period".
+        // Old workspaces / models without the fields load unchanged and read as "no scoring period".
         expect(effectiveRunningCondition(mk({ id: 'a' }), fg()).testPeriods).toEqual([]);
         expect(effectiveRunningCondition(mk({ id: 'a', runningConditionMode: 'custom' }), fg({ runningConditionTestPeriods: ws })).testPeriods).toEqual([]);
     });
@@ -119,7 +121,7 @@ describe('getBuildBlockReason', () => {
         const open = fg({ runningConditionNoneConfirmed: true, runningConditionTimePeriods: [{ id: 'o', start: '', end: '' }] });
         expect(getBuildBlockReason(mk({ id: 'a', category: 'condition' }), open)).toBeNull();
     });
-    it('Train does NOT need a test period', () => {
+    it('Train does NOT need a scoring period', () => {
         expect(getBuildBlockReason(mk({ id: 'a', targetSensor: 'T', category: 'condition' }), { ...okFg, runningConditionTestPeriods: [] })).toBeNull();
     });
     it('category comes first (precedence category -> condition -> period)', () => {
@@ -147,18 +149,25 @@ describe('getBuildBlockReason', () => {
 
 describe('markCompleteBlockReason (SPEC rule 2)', () => {
     const m = mk({ id: 'a', category: 'condition' });
-    it('needs at least one test period - workspace text vs Custom text', () => {
+    it('needs at least one scoring period - workspace text vs Custom text', () => {
         expect(markCompleteBlockReason(m, fg())).toBe(NO_TEST_PERIOD_REASON);
         expect(markCompleteBlockReason({ ...m, runningConditionMode: 'custom' }, fg({ runningConditionTestPeriods: [tp()] }))).toBe(NO_TEST_PERIOD_REASON_CUSTOM);
-        expect(NO_TEST_PERIOD_REASON_CUSTOM).toMatch(/Model settings/);
+        expect(NO_TEST_PERIOD_REASON).toBe('Add a scoring period before marking complete (Running condition → Edit).');
+        expect(NO_TEST_PERIOD_REASON_CUSTOM).toBe('Add a scoring period in Model settings → Training data (Custom) before marking complete.');
     });
-    it('null with a valid test period (Workspace and Custom)', () => {
+    it('null with a valid scoring period (Workspace and Custom)', () => {
         expect(markCompleteBlockReason(m, fg({ runningConditionTestPeriods: [tp()] }))).toBeNull();
         expect(markCompleteBlockReason({ ...m, runningConditionMode: 'custom', customTestPeriods: [tp()] }, fg())).toBeNull();
     });
-    it('an invalid test period or event time blocks it', () => {
-        expect(markCompleteBlockReason(m, fg({ runningConditionTestPeriods: [tp({ end: '' })] }))).toMatch(/T1 needs an end date/);
-        expect(markCompleteBlockReason(m, fg({ runningConditionTestPeriods: [tp({ label: 'problem', eventTime: '2026-01-01T00:00' })] }))).toMatch(/event time must be inside T1/);
+    it('an invalid scoring period blocks it, named S<n>, with where to fix it', () => {
+        expect(markCompleteBlockReason(m, fg({ runningConditionTestPeriods: [tp({ end: '' })] }))).toBe('S1 needs an end date. Fix it in Running condition → Edit.');
+        expect(markCompleteBlockReason({ ...m, runningConditionMode: 'custom', customTestPeriods: [tp(), tp({ start: '2025-05-02T00:00', end: '2025-05-01T00:00' })] }, fg()))
+            .toBe('S2 ends before it starts. Fix it in Model settings → Training data (Custom).');
+    });
+    it('an old workspace: periods still carrying label / event time are valid — even an event time that used to block (outside the period)', () => {
+        expect(markCompleteBlockReason(m, fg({ runningConditionTestPeriods: LEGACY_TESTS }))).toBeNull();
+        expect(markCompleteBlockReason(m, fg({ runningConditionTestPeriods: [tp({ label: 'problem', eventTime: '2026-01-01T00:00' })] }))).toBeNull();
+        expect(markCompleteBlockReason({ ...m, runningConditionMode: 'custom', customTestPeriods: LEGACY_TESTS }, fg())).toBeNull();
     });
 });
 
@@ -170,10 +179,12 @@ describe('runningConditionApplyBlock (Apply of the Running-condition settings)',
     it('an invalid train period comes first', () => {
         expect(runningConditionApplyBlock([{ id: 'p', start: '2025-02-01T00:00', end: '2025-01-01T00:00' }])).toEqual({ kind: 'invalid-train', reason: 'Period 1 ends before it starts.' });
     });
-    it('an invalid test period / event time blocks; overlap with train does not; no test does not', () => {
-        expect(runningConditionApplyBlock(TRAIN, [tp({ start: 'garbage' })])?.kind).toBe('invalid-test');
-        expect(runningConditionApplyBlock(TRAIN, [tp({ label: 'problem', eventTime: '2024-12-01T00:00' })])?.kind).toBe('invalid-test');
-        // Test inside train time (SPEC rule 3: may overlap) - fine.
+    it('an invalid scoring period blocks; overlap with train does not; no scoring period does not; a legacy event time does not', () => {
+        expect(runningConditionApplyBlock(TRAIN, [tp({ start: 'garbage' })])).toEqual({ kind: 'invalid-test', reason: 'S1 has an invalid start date.' });
+        // An old workspace's event time outside its period used to block Apply; it is ignored now.
+        expect(runningConditionApplyBlock(TRAIN, [tp({ label: 'problem', eventTime: '2024-12-01T00:00' })])).toBeNull();
+        expect(runningConditionApplyBlock(TRAIN, LEGACY_TESTS)).toBeNull();
+        // Scoring inside train time (may overlap) - fine.
         expect(runningConditionApplyBlock(TRAIN, [tp({ start: '2025-01-01T00:00', end: '2025-12-31T23:59' })])).toBeNull();
         expect(runningConditionApplyBlock(TRAIN, [])).toBeNull();
         expect(runningConditionApplyBlock(TRAIN)).toBeNull();
@@ -183,7 +194,8 @@ describe('runningConditionApplyBlock (Apply of the Running-condition settings)',
 describe('seedCustomFromWorkspace (switch to Custom, SPEC rule 7)', () => {
     let n = 0;
     const ids = { period: () => `np-${++n}`, filter: () => `nf-${++n}` };
-    const ws = { filters: [f({ id: 'w' })], combine: 'or' as const, periods: TRAIN, testPeriods: [tp({ id: 'wt', label: 'problem', eventTime: '2025-04-10T00:00' })] };
+    // The workspace list as an OLD workspace holds it (label / event time / highlight caption still on it).
+    const ws = { filters: [f({ id: 'w' })], combine: 'or' as const, periods: TRAIN, testPeriods: [tp({ id: 'wt', label: 'problem', eventTime: '2025-04-10T00:00', fromHighlight: 'Bearing' })] };
     it('copies every empty list once, with fresh ids, and says how many', () => {
         n = 0;
         const r = seedCustomFromWorkspace({ customFilters: [], customPeriods: [], customTestPeriods: [] }, ws, ids);
@@ -192,8 +204,12 @@ describe('seedCustomFromWorkspace (switch to Custom, SPEC rule 7)', () => {
         expect(r.patch.customFilters?.[0]).toMatchObject({ sensor: 'S1' });
         expect(r.patch.customFilters?.[0].id).not.toBe('w');
         expect(r.patch.customPeriods?.[0]).toMatchObject({ start: TRAIN[0].start, end: TRAIN[0].end });
-        expect(r.patch.customTestPeriods?.[0]).toMatchObject({ label: 'problem', eventTime: '2025-04-10T00:00' });
+        // The copy is start / end only: the legacy keys are never WRITTEN into the model's own list.
+        expect(r.patch.customTestPeriods).toEqual([{ id: expect.stringMatching(/^np-/), start: '2025-04-01T00:00', end: '2025-04-30T23:59' }]);
+        expect(Object.keys(r.patch.customTestPeriods![0]).sort()).toEqual(['end', 'id', 'start']);
         expect(r.patch.customTestPeriods?.[0].id).not.toBe('wt');
+        // ...and the workspace's own list is not touched (pure).
+        expect(ws.testPeriods[0]).toMatchObject({ id: 'wt', label: 'problem', eventTime: '2025-04-10T00:00' });
     });
     it('non-destructive: a list the model already has is never overwritten (switch back and forth)', () => {
         const own = [tp({ id: 'mine' })];

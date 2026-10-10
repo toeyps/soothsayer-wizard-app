@@ -118,7 +118,7 @@ import { emit } from '@tauri-apps/api/event';
 import { updateWorkspaceData, saveWorkspaceData, loadWorkspaceData, duplicateWorkspace } from '../workspaceManager';
 import { withFailureGroupState } from '../utils/failureGroupState';
 import { computeTrainFingerprint } from '../utils/trainFingerprint';
-// Train/Test validation (2026-10-07): train period required to Train, test period to Mark complete.
+// Since 2026-10-07: a train period is required to Train, a scoring period ("test period" until 2026-10-10) to Mark complete.
 import { ALL_TIME_TRAIN, ONE_TEST } from './helpers/trainTestFixture';
 
 // ── fixtures ────────────────────────────────────────────────────────────
@@ -664,7 +664,7 @@ describe('(6) a Custom running-condition edited live in the Workbench (not pre-s
         fireEvent.click(screen.getByText('No condition — use all rows'));
         fireEvent.click(screen.getByText('Model settings', { selector: 'b' })); // collapse
         // 1 train period: the workspace train period was copied on the switch (2026-10-07),
-        // and the workspace test periods with it.
-        expect(screen.getByText(/Custom · no cond · 1 train · \d+ test$/)).toBeTruthy();
+        // and the workspace scoring periods with it.
+        expect(screen.getByText(/Custom · no cond · 1 train · \d+ scoring$/)).toBeTruthy();
     });
 });

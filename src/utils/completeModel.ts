@@ -17,7 +17,7 @@ import { markCompleteBlockReason } from './runningCondition';
  * Pure async (no React, no workspace writes): check the set points, write the
  * model's files, and tell the caller what to persist.
  *
- *   0. At least one valid test period (`markCompleteBlockReason`), else `inputs`.
+ *   0. At least one valid scoring period (`markCompleteBlockReason`), else `inputs`.
  *   1. `compute_health_preview` with the set points the user typed — if the
  *      preview is not valid, STOP: return the issues, export nothing.
  *   2. `export_model_files` (re-validates against freshly computed statistics
@@ -87,8 +87,8 @@ export interface CompleteModelOptions extends HealthRequestOptions {
  * Workbench only enables Mark complete for a fresh-trained model).
  */
 export async function completeModel(opts: CompleteModelOptions): Promise<CompleteModelResult> {
-    // Train/Test validation (SPEC rule 2): no export without a valid test period
-    // — the files' `validation` block always has `tested = true`.
+    // No export without a valid scoring period — the files' `validation` block
+    // always describes at least one scored period.
     const noTest = markCompleteBlockReason(opts.model, opts.fg);
     if (noTest !== null) return fail('inputs', { error: noTest });
     const previewReq: HealthPreviewRequest | null = buildHealthPreviewRequest({

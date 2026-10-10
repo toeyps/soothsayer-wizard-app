@@ -13,11 +13,13 @@ import { sensorTitle, useSensorLookup } from '../sensor/sensorInfo';
  * Build Model window: the Step-1 card that replaced the old one-line
  * `.bmw-rcbar` (approved mockup WKZxQbvJZLQiMLvMDEFoqq, 2026-10-03).
  * Presentation only — the persisted state, the build gate and the settings
- * modal all stay in BuildModelWindow. Train/Test validation (2026-10-07): the
- * "Which time" row became "Train" (required) + "Test" (Known problem hatched,
- * event time shown), and the strip draws train on the top lane, test on the
- * bottom lane. (The header step bar that once lived here moved out on
- * 2026-10-04 and was removed altogether on 2026-10-09 at the user's request.)
+ * modal all stay in BuildModelWindow. Since 2026-10-07 the "Which time" row is
+ * "Train" (required) + a second row for the periods the model is scored on —
+ * "Scoring" since 2026-10-10 ("just score it": S1, S2 …, start → end only, no
+ * label and no event time) — and the strip draws train on the top lane,
+ * scoring on the bottom lane. (The header step bar that once lived here moved
+ * out on 2026-10-04 and was removed altogether on 2026-10-09 at the user's
+ * request.)
  */
 
 /** unset = nothing configured yet · invalid = configured but a period is broken · set = good to go. */
@@ -39,7 +41,7 @@ interface RunningConditionCardProps {
     bounds?: DataBounds | null;
     /** Opens the settings modal (Edit / Set running condition / Fix period). */
     onOpen: () => void;
-    /** The PERSISTED workspace test periods (Train/Test validation). */
+    /** The PERSISTED workspace scoring periods. */
     testPeriods?: TestPeriod[];
 }
 
@@ -64,33 +66,28 @@ function PeriodChips({ periods }: { periods: TimePeriod[] }) {
     );
 }
 
-/** Test period chips: "T1 Normal · dates", Known problem hatched with its event
- *  time. None yet = an amber chip (Mark complete needs one, Train does not). */
-function TestChips({ tests, train }: { tests: TestPeriod[]; train: TimePeriod[] }) {
+/** Scoring period chips: "S1 · dates" — start → end only (a legacy label /
+ *  event time on an old workspace's period is never shown). None yet = an amber
+ *  chip (Mark complete needs one, Train does not). */
+function ScoringChips({ tests, train }: { tests: TestPeriod[]; train: TimePeriod[] }) {
     if (tests.length === 0) {
-        return <span className="rcc-chip rcc-chip--warn" data-testid="rc-card-test-chip">No test period — needed before Mark complete</span>;
+        return <span className="rcc-chip rcc-chip--warn" data-testid="rc-card-test-chip">No scoring period — needed before Mark complete</span>;
     }
     const status = validateTestPeriods(tests);
     const ovl = testTrainOverlaps(train, tests);
     return (
         <>
             {tests.map((t, i) => {
-                const problem = t.label === 'problem';
-                const bad = status[i].invalid || status[i].eventInvalid;
-                const event = problem && (t.eventTime ?? '').trim() && !status[i].eventInvalid
-                    ? formatPeriodChip({ id: '', start: t.eventTime as string, end: '' }).split(' → ')[0]
-                    : null;
+                const bad = status[i].invalid;
                 return (
                     <span
                         key={t.id}
                         data-testid="rc-card-test-chip"
-                        data-label={t.label}
-                        className={`rcc-chip rcc-chip--test${problem ? ' rcc-chip--pb' : ''}${bad ? ' rcc-chip--bad' : ''}`}
+                        className={`rcc-chip rcc-chip--test${bad ? ' rcc-chip--bad' : ''}`}
                         title={ovl[i].length ? `Includes train time (${ovl[i].map(n => `P${n}`).join(', ')}) — information only` : undefined}
                     >
-                        <i className={`tpe-sw ${problem ? 'tpe-sw--pb' : 'tpe-sw--te'}`} aria-hidden="true" />
-                        {bad ? '⚠ ' : ''}T{i + 1} {problem ? 'Known problem' : 'Normal'} · {formatPeriodChip(t)}
-                        {event && <span className="rcc-ev" data-testid="rc-card-test-event"> · event {event}</span>}
+                        <i className="tpe-sw tpe-sw--te" aria-hidden="true" />
+                        {bad ? '⚠ ' : ''}S{i + 1} · {formatPeriodChip(t)}
                     </span>
                 );
             })}
@@ -147,7 +144,7 @@ export function RunningConditionCard({ state, periods, filters, combine, noneCon
                 </div>
                 <div className="rcc-grid">
                     <div className="rcc-rows" data-testid="rc-card-time"><span className="rcc-lbl">Train</span><PeriodChips periods={periods} /></div>
-                    <div className="rcc-rows" data-testid="rc-card-test"><span className="rcc-lbl">Test</span><TestChips tests={testPeriods} train={periods} /></div>
+                    <div className="rcc-rows" data-testid="rc-card-test"><span className="rcc-lbl">Scoring</span><ScoringChips tests={testPeriods} train={periods} /></div>
                     <div className="rcc-rows" data-testid="rc-card-cond">
                         <span className="rcc-lbl">When running</span>
                         {noneConfirmed || complete.length === 0

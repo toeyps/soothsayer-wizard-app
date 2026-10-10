@@ -12,7 +12,7 @@
  *   - `preview` (the `useHealthPreview` result, a fresh object per render) by
  *     its fields, each by identity;
  *   - the keys in `byValue` (small plain data the window rebuilds per render:
- *     the model re-read from disk, set points, test numbers …) by JSON value.
+ *     the model re-read from disk, set points, scoring-period numbers …) by JSON value.
  */
 export function samePageProps<T extends object>(a: T, b: T, byValue: readonly (keyof T)[]): boolean {
     const keys = new Set<keyof T>([...Object.keys(a), ...Object.keys(b)] as (keyof T)[]);

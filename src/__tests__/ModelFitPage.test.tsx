@@ -52,7 +52,7 @@ describe('ModelFitPage — Individual', () => {
         page(model(), { target: 'T1' });
         const board = screen.getByTestId('model-fit-individual');
         expect([...board.children].map(c => c.getAttribute('data-testid'))).toEqual(['chart-card-ts', 'chart-card-dist', 'fit-side']);
-        // the side column stacks the statistics (and, with test periods, the Train vs test card)
+        // the side column stacks the statistics (and, with scoring periods, the "Train and scoring periods" card)
         expect([...screen.getByTestId('fit-side').children].map(c => c.getAttribute('data-testid'))).toEqual(['stats-card']);
         expect(screen.getByTestId('chart-card-ts').className).toMatch(/wb2-full/);
         expect(screen.getByTestId('chart-card-ts').className).toMatch(/wb2-card--tall/);
@@ -188,9 +188,9 @@ describe('ModelFitPage — Clustering', () => {
     });
 });
 
-describe('ModelFitPage — Train / Test validation (2026-10-07)', () => {
+describe('ModelFitPage — train and scoring periods ("just score it", 2026-10-10)', () => {
     const withTests = (kind: 'individual' | 'relationship' | 'clustering') => ({
-        test_validation: makeValidation({ tests: [makeTestResult(), makeTestResult({ label: 'problem', event_time: '2026-01-01T03:30' })] }),
+        test_validation: makeValidation({ tests: [makeTestResult(), makeTestResult({ index: 2 })] }),
         kind,
     });
     const mount = (m: FailureModel, req: Record<string, any>, extra: Record<string, any> = {}) => {
@@ -200,16 +200,21 @@ describe('ModelFitPage — Train / Test validation (2026-10-07)', () => {
             sensorLabel={t => t} getDesc={t => t} onXPredictorChange={vi.fn()} onCompare={vi.fn()} trainDaysEstimate={extra.estimate} />);
     };
 
-    it('without test periods: no scope bands, no Train vs test card', () => {
+    it('without scoring periods: no scope bands, no "Train and scoring periods" card', () => {
         page(model(), { target: 'T1' });
         expect(within(screen.getByTestId('chart-card-ts')).getByTestId('echarts-mock').getAttribute('data-series')).toBe('Value');
         expect(screen.queryByTestId('train-test-card')).toBeNull();
     });
 
-    it('Individual: the value chart draws the scopes; the Train vs test card sits under the statistics', () => {
+    it('Individual: the value chart draws the scopes; the "Train and scoring periods" card sits under the statistics', () => {
         mount(model(), { target: 'T1' }, withTests('individual'));
         expect(within(screen.getByTestId('chart-card-ts')).getByTestId('echarts-mock').getAttribute('data-series')).toBe('Value|__scopes');
         expect([...screen.getByTestId('fit-side').children].map(c => c.getAttribute('data-testid'))).toEqual(['stats-card', 'train-test-card']);
+        const card = screen.getByTestId('train-test-card');
+        expect(card.querySelector('.wb2-card-h b')!.textContent).toBe('Train and scoring periods');
+        expect([...card.querySelectorAll('.vt-scope b')].map(b => b.textContent)).toEqual(['Train', 'S1', 'S2']);
+        // nothing on the page labels or judges a scoring period
+        expect(screen.getByTestId('model-fit-individual').textContent).not.toMatch(/Known problem|T\d Normal|Train vs test|test period|event time|lead time/i);
     });
 
     it('Relationship: both time charts draw the scopes; the card is a capped full-width row', () => {
@@ -224,14 +229,14 @@ describe('ModelFitPage — Train / Test validation (2026-10-07)', () => {
         expect([...screen.getByTestId('fit-side').children].map(c => c.getAttribute('data-testid'))).toEqual(['cluster-summary', 'train-test-card']);
     });
 
-    it('review fix 2026-10-07: testNumbers name the Train vs test row by the ORIGINAL list position; slowScoring shows the hint', () => {
+    it('testNumbers name the scoring-period row by the ORIGINAL list position; slowScoring shows the hint', () => {
         const data = { ...makeHealthPreview({ kind: 'individual', target: 'T1' }), test_validation: makeValidation({ tests: [makeTestResult({ index: 1 })] }) };
         render(<ModelFitPage model={model()} stale={false} preview={{ ...idle, data }} unit="°C" data={data}
             sensorLabel={t => t} getDesc={t => t} onXPredictorChange={vi.fn()} onCompare={vi.fn()} testNumbers={[2]} slowScoring />);
-        expect(screen.getByTestId('train-test-row-2').textContent).toContain('T2 Normal');
+        expect(screen.getByTestId('train-test-row-2').querySelector('.vt-scope b')!.textContent).toBe('S2');
         expect(screen.queryByTestId('train-test-row-1')).toBeNull();
         expect(within(screen.getByTestId('chart-card-ts')).getByTestId('echarts-mock')).toBeTruthy();
-        expect(screen.getByTestId('slow-test-scoring').textContent).toContain('Scoring test periods');
+        expect(screen.getByTestId('slow-test-scoring').textContent).toContain('Scoring these periods with the Relation model');
     });
 
     it('amber "below the recommended train time" note from Rust\'s train days (never a block); the estimate is used only without them', () => {

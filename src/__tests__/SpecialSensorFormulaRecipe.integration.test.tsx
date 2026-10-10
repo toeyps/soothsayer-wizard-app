@@ -726,7 +726,7 @@ describe('(b) Dashboard + Add Sensor + Build Model: a special sensor\'s recipe c
     });
 });
 
-/** Running condition: Step-1 card -> modal -> TAG2 > 10, a train period and a Known-problem test period -> Apply. */
+/** Running condition: Step-1 card -> modal -> TAG2 > 10, a train period and a scoring period (start -> end only) -> Apply. */
 async function setRunningCondition() {
     if (!screen.queryByRole('dialog', { name: 'Running condition' })) {
         await act(async () => { fireEvent.click(bmw().getByTestId('rc-card-open')); });
@@ -747,10 +747,8 @@ async function setRunningCondition() {
             fireEvent.change(el, { target: { value } });
             fireEvent.blur(el);
         };
-        typeDate('Test period 1 start', '2026-01-01T00:00');
-        typeDate('Test period 1 end', '2026-01-03T00:00');
-        await act(async () => { fireEvent.click(dlg.getByTestId('test-label-problem-1')); });
-        typeDate('Test period 1 event time', '2026-01-02T12:00');
+        typeDate('Scoring period 1 start', '2026-01-01T00:00');
+        typeDate('Scoring period 1 end', '2026-01-03T00:00');
     }
     await settle(30);
     await act(async () => { fireEvent.click(dlg.getByTestId('rc-apply')); });

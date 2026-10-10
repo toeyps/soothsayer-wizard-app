@@ -1,15 +1,19 @@
-//! Train/Test model validation (2026-10-07) — Rust side, PRIVATE surface.
+//! Scoring periods (Train/Test validation 2026-10-07, reduced to "just score
+//! it" on 2026-10-10) — Rust side, PRIVATE surface.
 //!
 //! Included from `lib.rs` as a `#[cfg(test)]` child module (one `#[path]` line,
 //! like `qa_health_internal`) because the previews, the export and the session
 //! cache helpers are private to the crate.
 //!
+//! A scoring period is only start -> end: there is no Normal / Known-problem
+//! label, no event time, no lead time and no detection any more.
+//!
 //! Every scenario is a regular synthetic series whose expected numbers follow
 //! from how it is built (10-minute rows, 144 rows = 1 day):
 //!   * train  = rows 0..=287 (2 days),
-//!   * a Normal test with the same pattern,
-//!   * a Known-problem test with a STEP at row 776 (so `first_below_80`,
-//!     `lead_days`, `pct_below_80` are exact).
+//!   * a quiet period with the same pattern,
+//!   * a period with a STEP at row 776 (so `pct_below_80`, `lowest` and
+//!     `lowest_at` are exact).
 
 #![allow(clippy::too_many_arguments)]
 
@@ -59,13 +63,11 @@ fn state_with(data: ColumnarData) -> AppState {
     })))
 }
 
-/// Inclusive rows `a..=b` as a test period.
-fn tp(label: &str, a: usize, b: usize, event_row: Option<usize>) -> TestPeriodArg {
+/// Inclusive rows `a..=b` as a scoring period (only start -> end).
+fn tp(a: usize, b: usize) -> TestPeriodArg {
     TestPeriodArg {
         start: Some(ts_at(a)),
         end: Some(ts_at(b)),
-        label: label.into(),
-        event_time: event_row.map(ts_at),
     }
 }
 
@@ -138,21 +140,21 @@ fn b3_upper(p: &HealthPreview) -> f64 {
 }
 
 #[test]
-fn individual_normal_test_has_no_false_alarms() {
+fn individual_quiet_period_scores_100_throughout() {
     let d = ind_data(400, 0..0);
     let sp = ind_sp(&d);
-    let p = individual_preview(&d, &ind_req(vec![tp("normal", 288, 575, None)], Some(sp))).unwrap();
+    let p = individual_preview(&d, &ind_req(vec![tp(288, 575)], Some(sp))).unwrap();
     assert!(p.valid, "{:?}", p.validation);
     let v = tv(&p);
     assert_eq!(v.tests.len(), 1);
     let t = &v.tests[0];
-    assert_eq!((t.index, t.label.as_str(), t.rows, t.days), (1, "normal", 288, 2.0));
+    assert_eq!((t.index, t.rows, t.days), (1, 288, 2.0));
+    assert_eq!((t.start.clone(), t.end.clone()), (Some(ts_at(288)), Some(ts_at(575))), "the period is echoed");
     assert_eq!((t.train_rows, t.train_days), (0, 0.0));
     assert_eq!(t.scored, 288);
     assert_eq!(t.pct_below_80, Some(0.0));
-    assert_eq!(t.first_below_80, None);
-    assert_eq!(t.lead_days, None);
     assert_eq!(t.lowest, Some(100.0), "every 6-row window holds a 100");
+    assert_eq!(t.lowest_at.as_deref(), Some(ts_at(288).as_str()), "the first window of the period");
     assert_eq!(t.metrics.within_3sd_pct, Some(100.0));
     assert!(t.metrics.mean_shift_sd.unwrap().abs() < 0.1);
     assert!(t.metrics.r2.is_none() && t.metrics.inside_3sd_ring_pct.is_none());
@@ -171,16 +173,13 @@ fn individual_normal_test_has_no_false_alarms() {
 }
 
 #[test]
-fn individual_known_problem_has_an_exact_first_drop_and_lead_time() {
+fn individual_period_with_a_step_has_an_exact_share_below_80_and_lowest() {
     let d = ind_data(400, 0..0); // value 120 from row 776 to 1175
     let sp = ind_sp(&d);
-    // The period is rows 576..=1151 (4 days); the event is 2 days after the step.
-    let tests = vec![tp("problem", 576, 1151, Some(STEP_ROW + 2 * DAY))];
-    let p = individual_preview(&d, &ind_req(tests, Some(sp))).unwrap();
+    // The period is rows 576..=1151 (4 days).
+    let p = individual_preview(&d, &ind_req(vec![tp(576, 1151)], Some(sp))).unwrap();
     let t = &tv(&p).tests[0];
     assert_eq!((t.rows, t.days, t.scored), (576, 4.0, 576));
-    assert_eq!(t.first_below_80.as_deref(), Some(ts_at(STEP_ROW).as_str()));
-    assert_eq!(t.lead_days, Some(2.0), "positive = detected BEFORE the event");
     // 576 - 776 + 576 = rows 776..=1151 are below 80 -> 376 of 576.
     assert_eq!(t.pct_below_80, Some(65.3));
     // Plateau score at 120: 80 + (120 - b3u) / (130 - b3u) * (0 - 80).
@@ -194,49 +193,42 @@ fn individual_known_problem_has_an_exact_first_drop_and_lead_time() {
 }
 
 #[test]
-fn individual_detection_only_after_the_event_has_a_negative_lead() {
+fn a_result_carries_no_label_event_time_lead_or_detection_keys() {
+    // The same step period, serialized: only the scoring facts are on the wire.
     let d = ind_data(400, 0..0);
-    let sp = ind_sp(&d);
-    // The event is one day BEFORE the drop starts.
-    let tests = vec![tp("problem", 576, 1151, Some(STEP_ROW - DAY))];
-    let p = individual_preview(&d, &ind_req(tests, Some(sp))).unwrap();
-    let t = &tv(&p).tests[0];
-    assert_eq!(t.first_below_80.as_deref(), Some(ts_at(STEP_ROW).as_str()));
-    assert_eq!(t.lead_days, Some(-1.0), "negative = detected only after the event");
+    let p = individual_preview(&d, &ind_req(vec![tp(576, 1151)], Some(ind_sp(&d)))).unwrap();
+    let j = serde_json::to_value(tv(&p)).unwrap();
+    let mut keys: Vec<&str> = j["tests"][0].as_object().unwrap().keys().map(String::as_str).collect();
+    keys.sort_unstable();
+    assert_eq!(
+        keys,
+        vec![
+            "days", "end", "index", "lowest", "lowest_at", "mean_shift_sd", "pct_below_80", "rows", "scored",
+            "start", "train_days", "train_rows", "within_3sd_pct",
+        ]
+    );
+    let mut top: Vec<&str> = j.as_object().unwrap().keys().map(String::as_str).collect();
+    top.sort_unstable();
+    assert_eq!(top, vec!["tests", "train", "train_ranges"]);
 }
 
 #[test]
-fn individual_problem_without_event_time_detects_but_has_no_lead() {
-    let d = ind_data(400, 0..0);
-    let p = individual_preview(&d, &ind_req(vec![tp("problem", 576, 1151, None)], Some(ind_sp(&d)))).unwrap();
-    let t = &tv(&p).tests[0];
-    assert!(t.first_below_80.is_some());
-    assert_eq!((t.lead_days, t.event_time.clone()), (None, None));
-}
-
-#[test]
-fn individual_never_detected_has_null_first_drop_and_lead() {
-    let d = ind_data(400, 0..0);
-    // A "problem" period over normal data.
-    let p = individual_preview(&d, &ind_req(vec![tp("problem", 288, 575, Some(400))], Some(ind_sp(&d)))).unwrap();
-    let t = &tv(&p).tests[0];
-    assert_eq!((t.first_below_80.clone(), t.lead_days), (None, None));
-    assert_eq!(t.pct_below_80, Some(0.0));
-    assert_eq!(t.lowest, Some(100.0));
-    assert_eq!(t.event_time.as_deref(), Some(ts_at(400).as_str()), "the event is echoed");
-}
-
-#[test]
-fn individual_one_hour_rule_a_50_minute_dip_is_not_a_detection_a_60_minute_one_is() {
-    for (dip_rows, detected) in [(5usize, false), (6, true), (7, true)] {
+fn individual_lowest_needs_one_hour_a_50_minute_dip_does_not_move_it_a_60_minute_one_does() {
+    for (dip_rows, held) in [(5usize, false), (6, true), (7, true)] {
         let d = ind_data(dip_rows, 0..0);
-        let p = individual_preview(&d, &ind_req(vec![tp("problem", 576, 1151, Some(STEP_ROW + 10))], Some(ind_sp(&d)))).unwrap();
+        let p = individual_preview(&d, &ind_req(vec![tp(576, 1151)], Some(ind_sp(&d)))).unwrap();
         let t = &tv(&p).tests[0];
-        assert_eq!(t.first_below_80.is_some(), detected, "{dip_rows} rows of 10 min");
-        if detected {
-            assert_eq!(t.first_below_80.as_deref(), Some(ts_at(STEP_ROW).as_str()));
+        let u = b3_upper(&p);
+        let plateau = (80.0 + (120.0 - u) / (130.0 - u) * -80.0).round();
+        assert!(plateau < 80.0);
+        if held {
+            assert_eq!(t.lowest, Some(plateau), "{dip_rows} rows of 10 min");
+            assert_eq!(t.lowest_at.as_deref(), Some(ts_at(STEP_ROW).as_str()));
+        } else {
+            // Every 1 h window still holds a normal row (inside 3 sigma).
+            assert!(t.lowest.unwrap() >= 80.0, "{dip_rows} rows of 10 min: {:?}", t.lowest);
         }
-        // The share counts every low row, detected or not.
+        // The share counts every low row, held for an hour or not.
         assert_eq!(t.pct_below_80, Some(((dip_rows as f64 * 1000.0 / 576.0).round()) / 10.0), "{dip_rows}");
     }
 }
@@ -245,7 +237,7 @@ fn individual_one_hour_rule_a_50_minute_dip_is_not_a_detection_a_60_minute_one_i
 fn individual_overlap_with_train_reports_train_rows_and_days_and_uses_the_whole_period() {
     let d = ind_data(400, 0..0);
     // Rows 144..=431: the last train day (144 rows) + 144 later rows.
-    let p = individual_preview(&d, &ind_req(vec![tp("normal", 144, 431, None)], Some(ind_sp(&d)))).unwrap();
+    let p = individual_preview(&d, &ind_req(vec![tp(144, 431)], Some(ind_sp(&d)))).unwrap();
     let t = &tv(&p).tests[0];
     assert_eq!((t.rows, t.days), (288, 2.0));
     assert_eq!((t.train_rows, t.train_days), (144, 1.0));
@@ -259,15 +251,15 @@ fn individual_overlap_with_train_reports_train_rows_and_days_and_uses_the_whole_
 fn individual_empty_test_period_has_no_rows_and_no_metrics() {
     let d = ind_data(400, 0..0);
     // Beyond the end of the data.
-    let p = individual_preview(&d, &ind_req(vec![tp("normal", 5000, 6000, None)], Some(ind_sp(&d)))).unwrap();
+    let p = individual_preview(&d, &ind_req(vec![tp(5000, 6000)], Some(ind_sp(&d)))).unwrap();
     let t = &tv(&p).tests[0];
     assert_eq!((t.rows, t.days, t.scored, t.train_rows), (0, 0.0, 0, 0));
-    assert!(t.pct_below_80.is_none() && t.first_below_80.is_none() && t.lowest.is_none() && t.lowest_at.is_none());
+    assert!(t.pct_below_80.is_none() && t.lowest.is_none() && t.lowest_at.is_none());
     let j = serde_json::to_value(t).unwrap();
     assert!(j.get("within_3sd_pct").is_none() && j.get("mean_shift_sd").is_none(), "no metric = omitted");
     // Rows removed by the running condition give the same.
     let g_zero = ind_data(400, 288..576);
-    let mut r = ind_req(vec![tp("normal", 288, 575, None)], Some(ind_sp(&g_zero)));
+    let mut r = ind_req(vec![tp(288, 575)], Some(ind_sp(&g_zero)));
     r.filter = Some(train_to(
         2 * DAY - 1,
         vec![PreviewValueFilter { sensor: "G".into(), operation: "greater_than".into(), value1: Some(0.5), value2: None }],
@@ -277,28 +269,41 @@ fn individual_empty_test_period_has_no_rows_and_no_metrics() {
 }
 
 #[test]
-fn individual_test_rows_must_pass_the_running_condition_and_a_stop_breaks_a_run() {
-    // The machine is stopped (G = 0) for rows 800..=809 inside the problem period;
-    // the 120 plateau is 776..=1175, so a stop splits it into 776..=799 (24 rows)
-    // and 810..=1175: both runs are long enough, the first is the detection.
+fn individual_test_rows_must_pass_the_running_condition_and_a_stop_breaks_the_lowest_window() {
+    // The machine is stopped (G = 0) for rows 800..=809 inside the period; the
+    // 120 plateau is 776..=1175, so the stop splits it into 776..=799 (24 rows)
+    // and 810..=1175: both are longer than 1 h, the first one gives `lowest_at`.
     let d = ind_data(400, 800..810);
-    let mut r = ind_req(vec![tp("problem", 576, 1151, None)], Some(ind_sp(&d)));
+    let mut r = ind_req(vec![tp(576, 1151)], Some(ind_sp(&d)));
     r.filter = Some(train_to(
         2 * DAY - 1,
         vec![PreviewValueFilter { sensor: "G".into(), operation: "greater_than".into(), value1: Some(0.5), value2: None }],
     ));
     let p = individual_preview(&d, &r).unwrap();
     let t = &tv(&p).tests[0];
-    assert_eq!(t.rows, 576 - 10, "stopped rows are not test rows");
-    assert_eq!(t.first_below_80.as_deref(), Some(ts_at(STEP_ROW).as_str()));
-    // A stop inside a SHORT plateau cuts it below one hour: no detection.
-    let d2 = ind_data(10, 779..780); // plateau 776..=785, row 779 stopped -> 3 + 6 rows
+    assert_eq!(t.rows, 576 - 10, "stopped rows are not scoring rows");
+    let plateau = |p: &HealthPreview| {
+        let u = b3_upper(p);
+        (80.0 + (120.0 - u) / (130.0 - u) * -80.0).round()
+    };
+    assert_eq!(t.lowest, Some(plateau(&p)));
+    assert_eq!(t.lowest_at.as_deref(), Some(ts_at(STEP_ROW).as_str()));
+    // A stop inside a SHORT plateau: 776..=785 with row 779 stopped leaves 3 rows
+    // and then 780..=785 = exactly 6 rows = 60 min, so the level is held from 780.
+    let d2 = ind_data(10, 779..780);
     let mut r2 = r.clone();
     r2.set_points = Some(ind_sp(&d2));
     let p2 = individual_preview(&d2, &r2).unwrap();
     let t2 = &tv(&p2).tests[0];
-    // 776..=778 is 3 rows; 780..=785 is exactly 6 rows = 60 min -> detected at 780.
-    assert_eq!(t2.first_below_80.as_deref(), Some(ts_at(780).as_str()));
+    assert_eq!(t2.lowest, Some(plateau(&p2)));
+    assert_eq!(t2.lowest_at.as_deref(), Some(ts_at(780).as_str()));
+    // One more stopped row (782) and no part of the plateau lasts an hour.
+    let mut d3 = ind_data(10, 779..780);
+    d3.columns[2][782] = 0.0;
+    let mut r3 = r.clone();
+    r3.set_points = Some(ind_sp(&d3));
+    let p3 = individual_preview(&d3, &r3).unwrap();
+    assert!(tv(&p3).tests[0].lowest.unwrap() >= 80.0);
 }
 
 #[test]
@@ -320,7 +325,7 @@ fn the_and_or_mode_of_the_running_condition_applies_to_test_rows_too() {
             .count()
     };
     for (mode, or) in [("and", false), ("or", true)] {
-        let mut r = ind_req(vec![tp("normal", 288, 575, None)], Some(ind_sp(&d)));
+        let mut r = ind_req(vec![tp(288, 575)], Some(ind_sp(&d)));
         let mut f = train_to(2 * DAY - 1, conds.clone());
         f.combine = Some(mode.into());
         r.filter = Some(f);
@@ -333,21 +338,21 @@ fn the_and_or_mode_of_the_running_condition_applies_to_test_rows_too() {
 #[test]
 fn individual_without_set_points_still_returns_metrics_but_no_score_facts() {
     let d = ind_data(400, 0..0);
-    let p = individual_preview(&d, &ind_req(vec![tp("problem", 576, 1151, Some(900))], None)).unwrap();
+    let p = individual_preview(&d, &ind_req(vec![tp(576, 1151)], None)).unwrap();
     assert!(!p.valid);
     let t = &tv(&p).tests[0];
     assert_eq!(t.rows, 576);
     assert!(t.metrics.within_3sd_pct.is_some());
     assert_eq!(t.scored, 0);
-    assert!(t.pct_below_80.is_none() && t.first_below_80.is_none() && t.lead_days.is_none());
+    assert!(t.pct_below_80.is_none() && t.lowest.is_none() && t.lowest_at.is_none());
 }
 
 #[test]
 fn individual_series_scores_test_rows_and_leaves_other_rows_out() {
     let d = ind_data(400, 0..0);
     let sp = ind_sp(&d);
-    // Train 0..=287, normal 288..=431, problem 576..=1151; rows 432..=575 are in neither.
-    let tests = vec![tp("normal", 288, 431, None), tp("problem", 576, 1151, None)];
+    // Train 0..=287, S1 288..=431, S2 576..=1151; rows 432..=575 are in neither.
+    let tests = vec![tp(288, 431), tp(576, 1151)];
     let p = individual_preview(&d, &ind_req(tests.clone(), Some(sp.clone()))).unwrap();
     let (rows, scores, in_scope) = match &p.series {
         HealthSeries::Individual(s) => (&s.rows, s.score.as_ref().unwrap(), &s.in_scope),
@@ -378,7 +383,7 @@ fn individual_training_stats_summary_and_histogram_are_unchanged_by_test_periods
     let base = individual_preview(&d, &ind_req(vec![], Some(sp.clone()))).unwrap();
     let with = individual_preview(
         &d,
-        &ind_req(vec![tp("normal", 288, 575, None), tp("problem", 576, 1151, Some(900))], Some(sp)),
+        &ind_req(vec![tp(288, 575), tp(576, 1151)], Some(sp)),
     )
     .unwrap();
     let j = |p: &HealthPreview| serde_json::to_value(p).unwrap();
@@ -411,18 +416,52 @@ fn absent_or_empty_test_periods_change_nothing_and_give_null() {
 fn bad_test_periods_become_structured_issues_and_the_period_is_skipped() {
     let d = ind_data(400, 0..0);
     let sp = ind_sp(&d);
-    let bad_event = tp("problem", 576, 1151, Some(1500)); // outside the period
-    let bad_date = TestPeriodArg { start: Some("not a date".into()), end: Some(ts_at(700)), label: "normal".into(), event_time: None };
-    let p = individual_preview(&d, &ind_req(vec![bad_event, bad_date, tp("normal", 288, 575, None)], Some(sp))).unwrap();
+    let backwards = tp(1151, 576); // ends before it starts
+    let bad_date = TestPeriodArg { start: Some("not a date".into()), end: Some(ts_at(700)) };
+    let p = individual_preview(&d, &ind_req(vec![backwards, bad_date, tp(288, 575)], Some(sp))).unwrap();
     let codes: Vec<(&str, &str)> = p.validation.iter().map(|i| (i.code.as_str(), i.field.as_str())).collect();
-    assert!(codes.contains(&("event_outside_test_period", "test_period_1_event_time")), "{codes:?}");
+    assert!(codes.contains(&("test_ends_before_start", "test_period_1_end")), "{codes:?}");
     assert!(codes.contains(&("test_start_unparseable", "test_period_2_start")), "{codes:?}");
+    for i in p.validation.iter().filter(|i| i.field.starts_with("test_period_")) {
+        assert!(i.message.starts_with("Scoring period S"), "{}", i.message);
+    }
     assert!(p.valid, "set-point validity is about the set points");
     let v = tv(&p);
     assert_eq!(v.tests.len(), 3, "every period gets a result, in order");
     assert_eq!((v.tests[0].rows, v.tests[0].scored), (0, 0));
     assert_eq!((v.tests[1].rows, v.tests[1].scored), (0, 0));
     assert_eq!((v.tests[2].index, v.tests[2].rows), (3, 288));
+}
+
+#[test]
+fn a_legacy_label_or_event_time_on_the_wire_changes_nothing() {
+    // The request of a frontend from before 2026-10-10, with an event time that
+    // used to be refused (outside the period) and a label that never existed.
+    let d = ind_data(400, 0..0);
+    let make = |periods: serde_json::Value| -> HealthPreviewRequest {
+        serde_json::from_value(serde_json::json!({
+            "kind": "individual",
+            "target": "S",
+            "filter": { "timestamp_ranges": [{ "start": ts_at(0), "end": ts_at(2 * DAY - 1) }] },
+            "set_points": { "lower": 80.0, "upper": 130.0 },
+            "test_periods": periods,
+            "max_points": 100000,
+        }))
+        .expect("old callers must not break")
+    };
+    let (a, b) = (ts_at(576), ts_at(1151));
+    let plain = individual_preview(&d, &make(serde_json::json!([{ "start": a, "end": b }]))).unwrap();
+    assert!(plain.valid, "{:?}", plain.validation);
+    assert_eq!((tv(&plain).tests[0].rows, tv(&plain).tests[0].pct_below_80), (576, Some(65.3)));
+    for legacy in [
+        serde_json::json!([{ "start": a, "end": b, "label": "normal" }]),
+        serde_json::json!([{ "start": a, "end": b, "label": "problem", "event_time": ts_at(1500) }]),
+        serde_json::json!([{ "start": a, "end": b, "label": "problem", "eventTime": "nonsense" }]),
+        serde_json::json!([{ "start": a, "end": b, "label": "sideways", "event_time": null }]),
+    ] {
+        let p = individual_preview(&d, &make(legacy.clone())).unwrap();
+        assert_eq!(serde_json::to_value(&p).unwrap(), serde_json::to_value(&plain).unwrap(), "{legacy}");
+    }
 }
 
 // ===========================================================================
@@ -439,7 +478,7 @@ fn rel_noise(i: usize) -> f64 {
     }
 }
 
-/// Y = 2X + noise (+10 from the step row on, inside the problem period).
+/// Y = 2X + noise (+10 from the step row on, inside the second scoring period).
 fn rel_data() -> ColumnarData {
     let x: Vec<f64> = (0..N_REL).map(|i| i as f64 * 0.01).collect();
     let y: Vec<f64> = (0..N_REL)
@@ -515,17 +554,17 @@ fn rel_ref(d: &ColumnarData, rows: impl Iterator<Item = usize>) -> (f64, f64, f6
 }
 
 #[test]
-fn relationship_normal_test_metrics_and_no_false_alarms() {
+fn relationship_quiet_period_metrics_and_a_score_of_100_throughout() {
     let d = rel_data();
     let fit = rel_fit(&d);
     let extra = rel_extra(&d, 288..576);
-    let p = relationship_preview_ex(&d, &fit, Some(&extra), &rel_req(vec![tp("normal", 288, 575, None)])).unwrap();
+    let p = relationship_preview_ex(&d, &fit, Some(&extra), &rel_req(vec![tp(288, 575)])).unwrap();
     assert!(p.valid, "{:?}", p.validation);
     let t = &tv(&p).tests[0];
     assert_eq!((t.rows, t.days, t.scored, t.train_rows), (288, 2.0, 288, 0));
     assert_eq!(t.pct_below_80, Some(0.0));
-    assert_eq!((t.first_below_80.clone(), t.lead_days), (None, None));
     assert_eq!(t.lowest, Some(100.0));
+    assert_eq!(t.lowest_at.as_deref(), Some(ts_at(288).as_str()));
     let (r2, rmse, mean, sd) = rel_ref(&d, 288..576);
     approx(t.metrics.r2.unwrap(), r2, 0.0006, "r2");
     assert_eq!(t.metrics.rmse, Some(1.0));
@@ -546,17 +585,15 @@ fn relationship_normal_test_metrics_and_no_false_alarms() {
 }
 
 #[test]
-fn relationship_known_problem_drift_has_exact_first_drop_lead_and_residual_shift() {
+fn relationship_drift_period_has_exact_share_below_80_lowest_and_residual_shift() {
     let d = rel_data();
     let fit = rel_fit(&d);
     let extra = rel_extra(&d, 288..1152);
-    let tests = vec![tp("problem", 576, 1151, Some(STEP_ROW + 2 * DAY))];
+    let tests = vec![tp(576, 1151)];
     let p = relationship_preview_ex(&d, &fit, Some(&extra), &rel_req(tests)).unwrap();
     let t = &tv(&p).tests[0];
     assert_eq!((t.rows, t.scored), (576, 576));
     // Residual 9 or 11 beyond the 80-point (5) -> scores 48 / 32, all below 80.
-    assert_eq!(t.first_below_80.as_deref(), Some(ts_at(STEP_ROW).as_str()));
-    assert_eq!(t.lead_days, Some(2.0));
     assert_eq!(t.pct_below_80, Some(65.3));
     assert_eq!(t.lowest, Some(48.0), "the level held for 1 h: max of a 32/48 window");
     assert_eq!(t.lowest_at.as_deref(), Some(ts_at(STEP_ROW).as_str()));
@@ -565,20 +602,22 @@ fn relationship_known_problem_drift_has_exact_first_drop_lead_and_residual_shift
     approx(t.metrics.rmse.unwrap(), rmse, 0.0006, "rmse");
     approx(t.metrics.residual_sd.unwrap(), sd, 0.0006, "sd");
     assert!(t.metrics.rmse.unwrap() > 5.0, "many times the train RMSE of 1");
+    // Only the scoring facts and the Relation-model metrics are on the wire.
+    let j = serde_json::to_value(t).unwrap();
+    let mut keys: Vec<&str> = j.as_object().unwrap().keys().map(String::as_str).collect();
+    keys.sort_unstable();
+    assert_eq!(
+        keys,
+        vec![
+            "days", "end", "index", "lowest", "lowest_at", "pct_below_80", "r2", "residual_mean", "residual_sd",
+            "rmse", "rows", "scored", "start", "train_days", "train_rows",
+        ]
+    );
 }
 
 #[test]
-fn relationship_detection_after_the_event_is_negative() {
-    let d = rel_data();
-    let fit = rel_fit(&d);
-    let extra = rel_extra(&d, 288..1152);
-    let p = relationship_preview_ex(&d, &fit, Some(&extra), &rel_req(vec![tp("problem", 576, 1151, Some(STEP_ROW - DAY))])).unwrap();
-    assert_eq!(tv(&p).tests[0].lead_days, Some(-1.0));
-}
-
-#[test]
-fn relationship_one_hour_rule_on_the_residual_score() {
-    for (dip, detected) in [(5usize, false), (6, true)] {
+fn relationship_lowest_needs_one_hour_on_the_residual_score() {
+    for (dip, held) in [(5usize, false), (6, true)] {
         // A residual burst of +10 for `dip` rows only.
         let mut d = rel_data();
         for i in STEP_ROW..N_REL {
@@ -587,9 +626,15 @@ fn relationship_one_hour_rule_on_the_residual_score() {
         }
         let fit = rel_fit(&d);
         let extra = rel_extra(&d, 288..1152);
-        let p = relationship_preview_ex(&d, &fit, Some(&extra), &rel_req(vec![tp("problem", 576, 1151, None)])).unwrap();
+        let p = relationship_preview_ex(&d, &fit, Some(&extra), &rel_req(vec![tp(576, 1151)])).unwrap();
         let t = &tv(&p).tests[0];
-        assert_eq!(t.first_below_80.is_some(), detected, "{dip} rows");
+        // Burst rows score 48 / 32; every other row scores 100.
+        assert_eq!(t.lowest, Some(if held { 48.0 } else { 100.0 }), "{dip} rows");
+        if held {
+            assert_eq!(t.lowest_at.as_deref(), Some(ts_at(STEP_ROW).as_str()));
+        }
+        // The share counts every low row either way.
+        assert_eq!(t.pct_below_80, Some((dip as f64 * 1000.0 / 576.0).round() / 10.0), "{dip} rows");
     }
 }
 
@@ -599,15 +644,15 @@ fn relationship_overlap_and_rows_without_a_prediction() {
     let fit = rel_fit(&d);
     // Test 144..=431 overlaps the last train day (144 rows); rows 288..=431 need a prediction.
     let extra = rel_extra(&d, 288..432);
-    let p = relationship_preview_ex(&d, &fit, Some(&extra), &rel_req(vec![tp("normal", 144, 431, None)])).unwrap();
+    let p = relationship_preview_ex(&d, &fit, Some(&extra), &rel_req(vec![tp(144, 431)])).unwrap();
     let t = &tv(&p).tests[0];
     assert_eq!((t.rows, t.days, t.train_rows, t.train_days), (288, 2.0, 144, 1.0));
     // Without any extra prediction only the train overlap can be scored.
-    let p = relationship_preview_ex(&d, &fit, None, &rel_req(vec![tp("normal", 144, 431, None)])).unwrap();
+    let p = relationship_preview_ex(&d, &fit, None, &rel_req(vec![tp(144, 431)])).unwrap();
     let t = &tv(&p).tests[0];
     assert_eq!((t.rows, t.train_rows, t.scored), (144, 144, 144));
     // A period with no row at all.
-    let p = relationship_preview_ex(&d, &fit, Some(&extra), &rel_req(vec![tp("normal", 5000, 6000, None)])).unwrap();
+    let p = relationship_preview_ex(&d, &fit, Some(&extra), &rel_req(vec![tp(5000, 6000)])).unwrap();
     let t = &tv(&p).tests[0];
     assert_eq!((t.rows, t.scored, t.pct_below_80), (0, 0, None));
     assert!(serde_json::to_value(t).unwrap().get("r2").is_none());
@@ -619,7 +664,7 @@ fn relationship_fit_summary_scatter_and_stats_stay_training_only() {
     let fit = rel_fit(&d);
     let extra = rel_extra(&d, 288..1152);
     let base = relationship_preview_ex(&d, &fit, None, &rel_req(vec![])).unwrap();
-    let with = relationship_preview_ex(&d, &fit, Some(&extra), &rel_req(vec![tp("normal", 288, 575, None), tp("problem", 576, 1151, None)])).unwrap();
+    let with = relationship_preview_ex(&d, &fit, Some(&extra), &rel_req(vec![tp(288, 575), tp(576, 1151)])).unwrap();
     let (a, b) = (serde_json::to_value(&base).unwrap(), serde_json::to_value(&with).unwrap());
     assert_eq!(a["stats"], b["stats"]);
     assert_eq!(a["score_summary"], b["score_summary"]);
@@ -650,7 +695,7 @@ fn rel_state() -> (AppState, ColumnarData) {
 #[test]
 fn only_test_rows_without_a_cached_prediction_are_planned_and_edits_never_run_again() {
     let (state, d) = rel_state();
-    let req = rel_req(vec![tp("normal", 288, 431, None)]);
+    let req = rel_req(vec![tp(288, 431)]);
     let job = plan_rel_extra(&state, &req).unwrap().expect("new test rows need a prediction run");
     assert_eq!(job.rows, (288..432).collect::<Vec<u32>>());
     assert_eq!(job.x.len(), 288, "the model is refitted on the TRAIN rows only");
@@ -672,7 +717,7 @@ fn only_test_rows_without_a_cached_prediction_are_planned_and_edits_never_run_ag
     assert_eq!(tv(&p).tests[0].rows, 144);
     assert_eq!(tv(&p).tests[0].scored, 144);
     // A longer period needs only the NEW rows.
-    let longer = rel_req(vec![tp("normal", 288, 575, None)]);
+    let longer = rel_req(vec![tp(288, 575)]);
     let job2 = plan_rel_extra(&state, &longer).unwrap().unwrap();
     assert_eq!(job2.rows, (432..576).collect::<Vec<u32>>());
     let preds2: Vec<f64> = job2.rows.iter().map(|&r| 2.0 * d.columns[1][r as usize]).collect();
@@ -680,28 +725,28 @@ fn only_test_rows_without_a_cached_prediction_are_planned_and_edits_never_run_ag
     let p = health_preview_in(&state, &longer).unwrap();
     assert_eq!(tv(&p).tests[0].rows, 288, "old and new predictions are both used");
     // A period inside what is cached, and train-overlap rows, plan nothing.
-    assert!(plan_rel_extra(&state, &rel_req(vec![tp("normal", 100, 400, None)])).unwrap().is_none());
+    assert!(plan_rel_extra(&state, &rel_req(vec![tp(100, 400)])).unwrap().is_none());
 }
 
 #[test]
 fn nothing_is_planned_without_test_periods_or_without_a_fit_and_stale_results_are_refused() {
     let (state, d) = rel_state();
     assert!(plan_rel_extra(&state, &rel_req(vec![])).unwrap().is_none());
-    let mut other = rel_req(vec![tp("normal", 288, 431, None)]);
+    let mut other = rel_req(vec![tp(288, 431)]);
     other.cache_key = Some("unknown".into());
     assert!(plan_rel_extra(&state, &other).unwrap().is_none());
     assert!(health_preview_in(&state, &other).unwrap_err().starts_with("NOT_FITTED"));
     other.cache_key = None;
     assert!(plan_rel_extra(&state, &other).unwrap().is_none());
-    let mut wrong_target = rel_req(vec![tp("normal", 288, 431, None)]);
+    let mut wrong_target = rel_req(vec![tp(288, 431)]);
     wrong_target.target = Some("X".into());
     assert!(plan_rel_extra(&state, &wrong_target).unwrap().is_none());
     // The generation guard applies.
-    let mut stale = rel_req(vec![tp("normal", 288, 431, None)]);
+    let mut stale = rel_req(vec![tp(288, 431)]);
     stale.expected_generation = Some(99);
     assert!(plan_rel_extra(&state, &stale).unwrap_err().starts_with("STALE_SESSION"));
     // A result that straddles a special-sensor change (cache cleared) is dropped.
-    let job = plan_rel_extra(&state, &rel_req(vec![tp("normal", 288, 431, None)])).unwrap().unwrap();
+    let job = plan_rel_extra(&state, &rel_req(vec![tp(288, 431)])).unwrap().unwrap();
     state.0.write().unwrap().as_mut().unwrap().rel_cache.clear();
     let preds: Vec<f64> = job.rows.iter().map(|&r| 2.0 * d.columns[1][r as usize]).collect();
     assert!(apply_rel_extra(&state, &job, &preds).unwrap_err().starts_with("NOT_FITTED"));
@@ -772,7 +817,7 @@ fn train_and_the_lazy_prediction_choose_the_same_test_rows() {
     // the preview's own job would ask the sidecar for (both: finite inputs,
     // inside a test period, not a training row).
     let (state, d) = rel_state();
-    let tests = vec![tp("normal", 144, 431, None), tp("problem", 576, 600, Some(590))];
+    let tests = vec![tp(144, 431), tp(576, 600)];
     let plan = crate::health_validation::TestPlan::resolve(&tests, Some(&train_to(2 * DAY - 1, vec![])), &d.headers);
     let train_rows: Vec<u32> = (0..2 * DAY as u32).collect();
     let rows = crate::health_validation::extra_test_rows(&plan, &d, 2, &[1], &train_rows);
@@ -796,7 +841,7 @@ fn train_prewarm_seeds_the_predictions_so_the_next_preview_needs_no_sidecar() {
     let seeded = state.0.read().unwrap().as_ref().unwrap().rel_cache.peek_extra("m1::fp").unwrap();
     assert_eq!(seeded.rows, extra_rows);
     // ...so the preview's planner has nothing left to predict = no sidecar call.
-    let req = rel_req(vec![tp("normal", 288, 575, None)]);
+    let req = rel_req(vec![tp(288, 575)]);
     assert!(plan_rel_extra(&state, &req).unwrap().is_none());
     let p = health_preview_in(&state, &req).unwrap();
     assert_eq!((tv(&p).tests[0].rows, tv(&p).tests[0].scored), (288, 288));
@@ -807,7 +852,7 @@ fn train_prewarm_seeds_the_predictions_so_the_next_preview_needs_no_sidecar() {
     let lazy = health_preview_in(&lazy_state, &req).unwrap();
     assert_eq!(serde_json::to_value(&p).unwrap(), serde_json::to_value(&lazy).unwrap());
     // A longer period needs only the rows the pre-warm did not cover.
-    let longer = rel_req(vec![tp("normal", 288, 719, None)]);
+    let longer = rel_req(vec![tp(288, 719)]);
     assert_eq!(plan_rel_extra(&state, &longer).unwrap().unwrap().rows, (576..720).collect::<Vec<u32>>());
 }
 
@@ -832,7 +877,7 @@ fn train_without_prewarm_is_exactly_as_before() {
     assert_eq!(resp["cached"], true);
     assert!(state.0.read().unwrap().as_ref().unwrap().rel_cache.peek_extra("m1::fp").is_none());
     // The lazy path then still works for those rows.
-    assert!(plan_rel_extra(&state, &rel_req(vec![tp("normal", 288, 575, None)])).unwrap().is_some());
+    assert!(plan_rel_extra(&state, &rel_req(vec![tp(288, 575)])).unwrap().is_some());
 }
 
 #[test]
@@ -860,7 +905,7 @@ fn train_prewarm_is_not_stored_for_a_fit_that_was_not_cached() {
 #[test]
 fn failed_prediction_gives_the_train_preview_with_unscored_tests_and_one_warning() {
     let (state, _d) = rel_state();
-    let tests = vec![tp("normal", 288, 575, None), tp("problem", 144, 431, Some(300))];
+    let tests = vec![tp(288, 575), tp(144, 431)];
     let req = rel_req(tests);
     // What a sidecar crash looks like to the caller.
     let crash = parse_predicted_extra(&serde_json::json!({ "error": "boom: C:\\build\\x.py line 3" }), 1).unwrap_err();
@@ -878,8 +923,11 @@ fn failed_prediction_gives_the_train_preview_with_unscored_tests_and_one_warning
     assert_eq!(v["train"]["rows"], 288);
     for t in v["tests"].as_array().unwrap() {
         assert_eq!(t["scored"], 0);
-        for k in ["pct_below_80", "first_below_80", "lowest", "lowest_at", "lead_days"] {
+        for k in ["pct_below_80", "lowest", "lowest_at"] {
             assert!(t[k].is_null(), "{k}");
+        }
+        for k in ["label", "event_time", "first_below_80", "lead_days"] {
+            assert!(t.get(k).is_none(), "{k} is no longer part of a result");
         }
         for k in ["r2", "rmse", "residual_mean", "residual_sd", "mean_shift_sd", "within_3sd_pct"] {
             assert!(t.get(k).is_none(), "{k} must be omitted");
@@ -906,7 +954,7 @@ fn outdated_sidecar_gets_its_own_user_facing_wording() {
     for dev in ["build_sidecar", ".sh", "src-tauri", "Python", "sidecar"] {
         assert!(!old.contains(dev), "no developer wording ({dev}) in: {old}");
     }
-    let p = crate::health_preview_with_outcome(&state, &rel_req(vec![tp("normal", 288, 575, None)]), Some(TestScoringFailure::Outdated)).unwrap();
+    let p = crate::health_preview_with_outcome(&state, &rel_req(vec![tp(288, 575)]), Some(TestScoringFailure::Outdated)).unwrap();
     // Its own code (review fix 3, 2026-10-07): a retry cannot help, so the
     // frontend shows no "Try again" for it.
     let w = p.validation.iter().find(|i| i.code == "test_scoring_outdated").unwrap();
@@ -917,7 +965,7 @@ fn outdated_sidecar_gets_its_own_user_facing_wording() {
     // An Individual preview has no prediction step and is never touched.
     let d = ind_data(0, 0..0);
     let st = state_with(d);
-    let ip = crate::health_preview_with_outcome(&st, &ind_req(vec![tp("normal", 288, 575, None)], None), None).unwrap();
+    let ip = crate::health_preview_with_outcome(&st, &ind_req(vec![tp(288, 575)], None), None).unwrap();
     assert!(ip.validation.iter().all(|i| i.code != "test_scoring_failed"));
 }
 
@@ -929,7 +977,7 @@ fn predictions_over_the_cache_budget_are_reported_not_stored_and_not_an_error() 
     state.0.write().unwrap().as_mut().unwrap().rel_cache = crate::health_score::RelCache::new(8, 8100);
     let stamp = session_stamp(&state).unwrap().unwrap();
     assert!(store_rel_fit(&state, stamp, "m1::fp".into(), rel_fit(&d)));
-    let req = rel_req(vec![tp("normal", 288, 431, None)]);
+    let req = rel_req(vec![tp(288, 431)]);
     let job = plan_rel_extra(&state, &req).unwrap().unwrap();
     let preds: Vec<f64> = job.rows.iter().map(|&r| 2.0 * d.columns[1][r as usize]).collect();
     assert_eq!(apply_rel_extra(&state, &job, &preds), Ok(crate::ExtraStored::OverBudget), "still fitted, but no room");
@@ -950,7 +998,7 @@ fn unscored_tests_still_report_their_rows_and_days() {
     // Review fix 2026-10-07: a period fully outside the training scope has no
     // prediction after a failure; it used to report 0 rows / 0 days.
     let (state, _d) = rel_state();
-    let req = rel_req(vec![tp("normal", 288, 575, None), tp("normal", 144, 431, None)]);
+    let req = rel_req(vec![tp(288, 575), tp(144, 431)]);
     let p = crate::health_preview_with_outcome(&state, &req, Some(TestScoringFailure::EngineError)).unwrap();
     let t = &tv(&p).tests;
     assert_eq!((t[0].rows, t[0].days, t[0].scored), (288, 2.0, 0));
@@ -994,7 +1042,7 @@ fn a_fully_cached_preview_is_planned_without_waiting_for_the_prediction_lock() {
     let serial = tauri::async_runtime::Mutex::new(());
     let outdated = AtomicBool::new(false);
     let calls = AtomicUsize::new(0);
-    let req = rel_req(vec![tp("normal", 288, 431, None)]);
+    let req = rel_req(vec![tp(288, 431)]);
     // Fill the predictions once.
     assert_eq!(block_on(score_test_rows(&state, &req, &serial, &outdated, good_runner(&d, &calls), &|_| {})), Ok(None));
     assert_eq!(calls.load(Ordering::SeqCst), 1);
@@ -1008,7 +1056,7 @@ fn a_fully_cached_preview_is_planned_without_waiting_for_the_prediction_lock() {
     assert_eq!(calls.load(Ordering::SeqCst), 1, "no sidecar run");
 
     // A preview that needs NEW rows does wait for it...
-    let longer = rel_req(vec![tp("normal", 288, 575, None)]);
+    let longer = rel_req(vec![tp(288, 575)]);
     let mut fut = std::pin::pin!(score_test_rows(&state, &longer, &serial, &outdated, good_runner(&d, &calls), &|_| {}));
     assert!(fut.as_mut().poll(&mut cx).is_pending(), "a run needs the lock");
     // ...and runs once it is free.
@@ -1021,7 +1069,7 @@ fn a_fully_cached_preview_is_planned_without_waiting_for_the_prediction_lock() {
 #[test]
 fn the_planning_split_builds_the_job_only_when_asked() {
     let (state, _d) = rel_state();
-    let req = rel_req(vec![tp("normal", 288, 431, None)]);
+    let req = rel_req(vec![tp(288, 431)]);
     assert!(matches!(crate::plan_rel_extra_ex(&state, &req, false, false).unwrap(), ExtraPlan::Needed(None)));
     match crate::plan_rel_extra_ex(&state, &req, false, true).unwrap() {
         ExtraPlan::Needed(Some(job)) => assert_eq!(job.rows, (288..432).collect::<Vec<u32>>()),
@@ -1033,7 +1081,7 @@ fn the_planning_split_builds_the_job_only_when_asked() {
         other => panic!("{other:?}"),
     }
     // Nothing missing -> Nothing, whatever the flags.
-    assert!(matches!(crate::plan_rel_extra_ex(&state, &rel_req(vec![tp("normal", 0, 100, None)]), true, true).unwrap(), ExtraPlan::Nothing));
+    assert!(matches!(crate::plan_rel_extra_ex(&state, &rel_req(vec![tp(0, 100)]), true, true).unwrap(), ExtraPlan::Nothing));
     // The generation guard still applies to the lock-free look.
     let mut stale = req.clone();
     stale.expected_generation = Some(99);
@@ -1048,7 +1096,7 @@ fn a_failed_attempt_is_logged_remembered_and_retried_only_on_request() {
     let calls = AtomicUsize::new(0);
     let logged = std::sync::Mutex::new(Vec::<String>::new());
     let log = |s: &str| logged.lock().unwrap().push(s.to_string());
-    let req = rel_req(vec![tp("normal", 288, 431, None)]);
+    let req = rel_req(vec![tp(288, 431)]);
 
     // 1. The sidecar fails: the raw reason is returned and logged, the fit is marked.
     let r = block_on(score_test_rows(&state, &req, &serial, &outdated, failing_runner("boom at C:\\x.py", &calls), &log));
@@ -1089,7 +1137,7 @@ fn a_retrain_clears_the_failed_marker() {
     let serial = tauri::async_runtime::Mutex::new(());
     let outdated = AtomicBool::new(false);
     let calls = AtomicUsize::new(0);
-    let req = rel_req(vec![tp("normal", 288, 431, None)]);
+    let req = rel_req(vec![tp(288, 431)]);
     block_on(score_test_rows(&state, &req, &serial, &outdated, failing_runner("boom", &calls), &|_| {})).unwrap();
     assert!(matches!(crate::plan_rel_extra_ex(&state, &req, false, false).unwrap(), ExtraPlan::Failed(_)));
     // Train again (same key): a fresh fit, a fresh attempt.
@@ -1106,7 +1154,7 @@ fn an_outdated_sidecar_is_remembered_for_the_process_not_per_fit() {
     let serial = tauri::async_runtime::Mutex::new(());
     let outdated = AtomicBool::new(false);
     let calls = AtomicUsize::new(0);
-    let req = rel_req(vec![tp("normal", 288, 431, None)]);
+    let req = rel_req(vec![tp(288, 431)]);
     let old = parse_predicted_extra(&serde_json::json!({ "error": "Unknown action: 'predict_relationship'" }), 1).unwrap_err();
     let r = block_on(score_test_rows(&state, &req, &serial, &outdated, failing_runner(&old, &calls), &|_| {})).unwrap();
     let e = r.unwrap();
@@ -1116,7 +1164,7 @@ fn an_outdated_sidecar_is_remembered_for_the_process_not_per_fit() {
     // Any later run is skipped - also another fit, also on retry.
     let stamp = session_stamp(&state).unwrap().unwrap();
     assert!(store_rel_fit(&state, stamp, "m2::fp".into(), rel_fit(&d)));
-    let mut other = rel_req(vec![tp("normal", 288, 431, None)]);
+    let mut other = rel_req(vec![tp(288, 431)]);
     other.cache_key = Some("m2::fp".into());
     other.retry_test_scoring = true;
     for r in [&req, &other] {
@@ -1125,7 +1173,7 @@ fn an_outdated_sidecar_is_remembered_for_the_process_not_per_fit() {
     }
     assert_eq!(calls.load(Ordering::SeqCst), 1);
     // Fully cached periods (here: inside the training rows) need no sidecar: no warning.
-    let inside = rel_req(vec![tp("normal", 0, 200, None)]);
+    let inside = rel_req(vec![tp(0, 200)]);
     assert_eq!(block_on(score_test_rows(&state, &inside, &serial, &outdated, good_runner(&d, &calls), &|_| {})), Ok(None));
 }
 
@@ -1140,7 +1188,7 @@ fn over_budget_predictions_are_remembered_like_a_failure() {
     let outdated = AtomicBool::new(false);
     let calls = AtomicUsize::new(0);
     let logged = std::sync::Mutex::new(Vec::<String>::new());
-    let req = rel_req(vec![tp("normal", 288, 431, None)]);
+    let req = rel_req(vec![tp(288, 431)]);
     let r = block_on(score_test_rows(&state, &req, &serial, &outdated, good_runner(&d, &calls), &|s| logged.lock().unwrap().push(s.into()))).unwrap();
     let e = r.unwrap();
     assert!(e.reason.contains("do not fit the model cache") && e.kind == TestScoringFailure::OverBudget);
@@ -1149,7 +1197,7 @@ fn over_budget_predictions_are_remembered_like_a_failure() {
     assert_eq!(again.map(|e| e.kind), Some(TestScoringFailure::OverBudget), "remembered with its own wording");
     assert_eq!(calls.load(Ordering::SeqCst), 1, "not predicted again");
     // The natural fix - a shorter test period - is tried again (and here fits).
-    let shorter = rel_req(vec![tp("normal", 288, 289, None)]);
+    let shorter = rel_req(vec![tp(288, 289)]);
     assert_eq!(block_on(score_test_rows(&state, &shorter, &serial, &outdated, good_runner(&d, &calls), &|_| {})), Ok(None));
     assert_eq!(calls.load(Ordering::SeqCst), 2);
 }
@@ -1166,21 +1214,21 @@ fn a_remembered_failure_applies_only_to_the_same_missing_rows() {
     let serial = tauri::async_runtime::Mutex::new(());
     let outdated = AtomicBool::new(false);
     let calls = AtomicUsize::new(0);
-    let t1 = rel_req(vec![tp("normal", 288, 431, None)]);
+    let t1 = rel_req(vec![tp(288, 431)]);
     assert!(block_on(score_test_rows(&state, &t1, &serial, &outdated, failing_runner("boom", &calls), &|_| {})).unwrap().is_some());
     assert_eq!(calls.load(Ordering::SeqCst), 1);
     // Same rows (a set-point edit): remembered, no run.
     assert!(block_on(score_test_rows(&state, &t1, &serial, &outdated, failing_runner("x", &calls), &|_| {})).unwrap().is_some());
     assert_eq!(calls.load(Ordering::SeqCst), 1);
     // T2 added: other rows -> one fresh attempt (fails again here).
-    let t1_t2 = rel_req(vec![tp("normal", 288, 431, None), tp("problem", 576, 700, Some(600))]);
+    let t1_t2 = rel_req(vec![tp(288, 431), tp(576, 700)]);
     assert!(block_on(score_test_rows(&state, &t1_t2, &serial, &outdated, failing_runner("boom 2", &calls), &|_| {})).unwrap().is_some());
     assert_eq!(calls.load(Ordering::SeqCst), 2, "a superset runs again");
     // ...and THAT set is now the remembered one.
     assert!(block_on(score_test_rows(&state, &t1_t2, &serial, &outdated, failing_runner("x", &calls), &|_| {})).unwrap().is_some());
     assert_eq!(calls.load(Ordering::SeqCst), 2);
     // A period shortened: runs again (and succeeds).
-    let shrunk = rel_req(vec![tp("normal", 288, 300, None)]);
+    let shrunk = rel_req(vec![tp(288, 300)]);
     assert_eq!(block_on(score_test_rows(&state, &shrunk, &serial, &outdated, good_runner(&d, &calls), &|_| {})), Ok(None));
     assert_eq!(calls.load(Ordering::SeqCst), 3, "a subset runs again");
     assert!(!has_marker(&state, "m1::fp"), "a success clears the marker");
@@ -1195,7 +1243,7 @@ fn the_logged_reason_is_bounded() {
     let calls = AtomicUsize::new(0);
     let logged = std::sync::Mutex::new(Vec::<String>::new());
     let huge = format!("Failed to parse sidecar output: EOF (raw: {})", "ก1.5, ".repeat(400_000));
-    let req = rel_req(vec![tp("normal", 288, 431, None)]);
+    let req = rel_req(vec![tp(288, 431)]);
     let e = block_on(score_test_rows(&state, &req, &serial, &outdated, failing_runner(&huge, &calls), &|s| logged.lock().unwrap().push(s.into())))
         .unwrap()
         .unwrap();
@@ -1229,7 +1277,7 @@ fn the_log_is_written_after_the_prediction_lock_is_released() {
     let calls = AtomicUsize::new(0);
     let free_while_logging = AtomicBool::new(false);
     let log = |_: &str| free_while_logging.store(serial.try_lock().is_ok(), Ordering::SeqCst);
-    let req = rel_req(vec![tp("normal", 288, 431, None)]);
+    let req = rel_req(vec![tp(288, 431)]);
     assert!(block_on(score_test_rows(&state, &req, &serial, &outdated, failing_runner("boom", &calls), &log)).unwrap().is_some());
     assert!(free_while_logging.load(Ordering::SeqCst));
     // ...while the failure itself was remembered before (the next caller sees it).
@@ -1242,7 +1290,7 @@ fn a_same_key_retrain_during_the_run_never_receives_the_old_fits_predictions() {
     let (state, d) = rel_state();
     let serial = tauri::async_runtime::Mutex::new(());
     let outdated = AtomicBool::new(false);
-    let req = rel_req(vec![tp("normal", 288, 431, None)]);
+    let req = rel_req(vec![tp(288, 431)]);
     let retrain = || {
         let stamp = session_stamp(&state).unwrap().unwrap();
         assert!(store_rel_fit(&state, stamp, "m1::fp".into(), rel_fit(&d)));
@@ -1299,7 +1347,7 @@ fn other_kinds_and_requests_without_tests_never_touch_the_sidecar() {
     let outdated = AtomicBool::new(false);
     let calls = AtomicUsize::new(0);
     assert_eq!(block_on(score_test_rows(&state, &rel_req(vec![]), &serial, &outdated, good_runner(&d, &calls), &|_| {})), Ok(None));
-    let mut ind = rel_req(vec![tp("normal", 288, 431, None)]);
+    let mut ind = rel_req(vec![tp(288, 431)]);
     ind.kind = "individual".into();
     assert_eq!(block_on(score_test_rows(&state, &ind, &serial, &outdated, good_runner(&d, &calls), &|_| {})), Ok(None));
     assert_eq!(calls.load(Ordering::SeqCst), 0);
@@ -1337,7 +1385,7 @@ fn the_preview_and_the_prediction_step_select_the_same_test_rows() {
     // Review fix 2026-10-07: relationship_preview_ex uses the shared selection.
     let d = rel_data();
     let fit = rel_fit(&d);
-    let tests = vec![tp("normal", 144, 431, None), tp("problem", 576, 600, Some(590))];
+    let tests = vec![tp(144, 431), tp(576, 600)];
     let plan = crate::health_validation::TestPlan::resolve(&tests, Some(&train_to(2 * DAY - 1, vec![])), &d.headers);
     let rows = crate::health_validation::extra_test_rows(&plan, &d, 2, &[1], &fit.rows);
     let extra = rel_extra(&d, rows.iter().copied());
@@ -1406,11 +1454,11 @@ fn clu_req(tests: Vec<TestPeriodArg>, n_clusters: u32) -> HealthPreviewRequest {
 }
 
 #[test]
-fn clustering_normal_and_known_problem_tests() {
+fn clustering_quiet_period_and_a_period_with_a_shift() {
     let d = clu_data();
     let tests = vec![
-        tp("normal", 288, 575, None),
-        tp("problem", 576, 1151, Some(STEP_ROW + 2 * DAY)),
+        tp(288, 575),
+        tp(576, 1151),
     ];
     let p = clustering_preview(&d, &clu_req(tests, 1)).unwrap();
     assert!(p.valid, "{:?}", p.validation);
@@ -1421,23 +1469,34 @@ fn clustering_normal_and_known_problem_tests() {
     assert_eq!((n.rows, n.days, n.scored, n.train_rows), (288, 2.0, 288, 0));
     assert_eq!(n.metrics.inside_3sd_ring_pct, Some(100.0));
     assert_eq!(n.pct_below_80, Some(0.0));
-    assert_eq!((n.first_below_80.clone(), n.lead_days), (None, None));
+    assert!(n.lowest.unwrap() >= 80.0, "inside the 3 SD ring throughout: {:?}", n.lowest);
     let k = &v.tests[1];
     assert_eq!((k.rows, k.scored), (576, 576));
     // 200 rows before the shift are inside the ring, the 376 shifted ones are far outside.
     assert_eq!(k.metrics.inside_3sd_ring_pct, Some(34.7));
-    assert_eq!(k.first_below_80.as_deref(), Some(ts_at(STEP_ROW).as_str()));
-    assert_eq!(k.lead_days, Some(2.0));
     assert_eq!(k.pct_below_80, Some(65.3));
     assert_eq!(k.lowest, Some(0.0), "the plateau beyond the outer ring scores 0 and is held for 1 h");
+    assert_eq!(k.lowest_at.as_deref(), Some(ts_at(STEP_ROW).as_str()));
     assert!(k.metrics.r2.is_none() && k.metrics.within_3sd_pct.is_none());
+    assert_eq!((n.index, k.index), (1, 2));
+    // Only the scoring facts and the Clustering metric are on the wire.
+    let j = serde_json::to_value(k).unwrap();
+    let mut keys: Vec<&str> = j.as_object().unwrap().keys().map(String::as_str).collect();
+    keys.sort_unstable();
+    assert_eq!(
+        keys,
+        vec![
+            "days", "end", "index", "inside_3sd_ring_pct", "lowest", "lowest_at", "pct_below_80", "rows", "scored",
+            "start", "train_days", "train_rows",
+        ]
+    );
 }
 
 #[test]
 fn clustering_rows_in_no_criteria_range_are_not_scored_and_not_counted_inside() {
     // Criteria ranges [None,10) and [20,None): the C = 15 rows are unassigned.
     let d = clu_data();
-    let mut r = clu_req(vec![tp("normal", 288, 575, None)], 2);
+    let mut r = clu_req(vec![tp(288, 575)], 2);
     r.cluster_ranges = Some(vec![
         ClusterRange { min: None, max: Some(10.0) },
         ClusterRange { min: Some(20.0), max: None },
@@ -1454,7 +1513,7 @@ fn clustering_rows_in_no_criteria_range_are_not_scored_and_not_counted_inside() 
         .map(|i| [20.0, 50.0, 80.0][i % 3] + (((i * 17) % 13) as f64 - 6.0) * 0.1)
         .collect();
     let d3 = ds(vec![("X", x), ("Y", y), ("C", c)]);
-    let mut r = clu_req(vec![tp("normal", 288, 575, None)], 2);
+    let mut r = clu_req(vec![tp(288, 575)], 2);
     r.cluster_ranges = Some(vec![
         ClusterRange { min: None, max: Some(10.0) },
         ClusterRange { min: Some(50.0), max: None },
@@ -1477,7 +1536,7 @@ fn clustering_rows_in_no_criteria_range_are_not_scored_and_not_counted_inside() 
 fn clustering_overlap_and_training_summary_stay_training_only() {
     let d = clu_data();
     let base = clustering_preview(&d, &clu_req(vec![], 1)).unwrap();
-    let with = clustering_preview(&d, &clu_req(vec![tp("normal", 144, 431, None)], 1)).unwrap();
+    let with = clustering_preview(&d, &clu_req(vec![tp(144, 431)], 1)).unwrap();
     let t = &tv(&with).tests[0];
     assert_eq!((t.rows, t.train_rows, t.train_days), (288, 144, 1.0));
     let (a, b) = (serde_json::to_value(&base).unwrap(), serde_json::to_value(&with).unwrap());
@@ -1523,7 +1582,7 @@ fn ind_export(tests: Vec<TestPeriodArg>, sp: SetPointsArg) -> ModelFilesRequest 
 fn individual_export_adds_a_validation_block_and_keeps_every_existing_key() {
     let d = ind_data(400, 0..0);
     let sp = ind_sp(&d);
-    let tests = vec![tp("normal", 288, 575, None), tp("problem", 576, 1151, Some(STEP_ROW + 2 * DAY))];
+    let tests = vec![tp(288, 575), tp(576, 1151)];
 
     let plain_dir = tempfile::tempdir().unwrap();
     let r0 = export_sync(&d, &ind_export(vec![], sp.clone()), plain_dir.path()).unwrap();
@@ -1546,14 +1605,21 @@ fn individual_export_adds_a_validation_block_and_keeps_every_existing_key() {
     assert_eq!(v["train"]["rows"], 288);
     let tests_json = v["tests"].as_array().unwrap();
     assert_eq!(tests_json.len(), 2);
-    for key in ["label", "start", "end", "event_time", "rows", "days", "scored", "pct_below_80", "first_below_80", "lowest", "lowest_at", "lead_days", "train_rows", "train_days", "within_3sd_pct", "mean_shift_sd"] {
+    for key in ["index", "start", "end", "rows", "days", "scored", "pct_below_80", "lowest", "lowest_at", "train_rows", "train_days", "within_3sd_pct", "mean_shift_sd"] {
         assert!(tests_json[1].get(key).is_some(), "{key}");
     }
-    assert_eq!(tests_json[0]["label"], "normal");
-    assert_eq!(tests_json[1]["label"], "problem");
-    assert_eq!(tests_json[1]["event_time"], ts_at(STEP_ROW + 2 * DAY));
-    assert_eq!(tests_json[1]["lead_days"], 2.0);
-    assert_eq!(tests_json[1]["first_below_80"], ts_at(STEP_ROW));
+    // Scoring periods are written as start -> end only: no label, no event time,
+    // no lead time, no detection.
+    for t in tests_json {
+        for gone in ["label", "event_time", "lead_days", "first_below_80"] {
+            assert!(t.get(gone).is_none(), "{gone} must not be written");
+        }
+    }
+    assert_eq!((tests_json[0]["index"].clone(), tests_json[1]["index"].clone()), (1.into(), 2.into()));
+    assert_eq!(tests_json[1]["start"], ts_at(576));
+    assert_eq!(tests_json[1]["end"], ts_at(1151));
+    assert_eq!(tests_json[1]["pct_below_80"], 65.3);
+    assert_eq!(tests_json[1]["lowest_at"], ts_at(STEP_ROW));
 
     // The export is the SAME computation as the preview.
     let mut pr = ind_req(tests, Some(sp));
@@ -1568,18 +1634,24 @@ fn export_refuses_malformed_test_periods_before_writing_anything() {
     let d = ind_data(400, 0..0);
     let sp = ind_sp(&d);
     let dir = tempfile::tempdir().unwrap();
-    let bad = vec![tp("problem", 576, 1151, Some(1500))];
-    let r = export_sync(&d, &ind_export(bad, sp), dir.path()).unwrap();
+    let bad = vec![tp(1151, 576)]; // ends before it starts
+    let r = export_sync(&d, &ind_export(bad, sp.clone()), dir.path()).unwrap();
     assert!(!r.ok);
     assert!(r.files.is_empty());
-    assert_eq!(r.validation[0].code, "event_outside_test_period");
+    assert_eq!(r.validation[0].code, "test_ends_before_start");
+    assert_eq!(r.validation[0].field, "test_period_1_end");
+    assert!(std::fs::read_dir(dir.path()).unwrap().next().is_none(), "nothing was created");
+    let bad_date = vec![TestPeriodArg { start: Some("not a date".into()), end: Some(ts_at(700)) }];
+    let r = export_sync(&d, &ind_export(bad_date, sp), dir.path()).unwrap();
+    assert!(!r.ok && r.files.is_empty());
+    assert_eq!(r.validation[0].code, "test_start_unparseable");
     assert!(std::fs::read_dir(dir.path()).unwrap().next().is_none(), "nothing was created");
 }
 
 #[test]
 fn clustering_export_keeps_both_criteria_spellings_and_adds_validation() {
     let d = clu_data();
-    let tests = vec![tp("normal", 288, 575, None), tp("problem", 576, 1151, Some(STEP_ROW + DAY))];
+    let tests = vec![tp(288, 575), tp(576, 1151)];
     let make = |tests: Vec<TestPeriodArg>| {
         let r = clu_req(tests.clone(), 2);
         ModelFilesRequest {
@@ -1613,7 +1685,8 @@ fn clustering_export_keeps_both_criteria_spellings_and_adds_validation() {
     assert_eq!(v["tested"], true);
     assert_eq!(v["tests"].as_array().unwrap().len(), 2);
     assert!(v["tests"][0].get("inside_3sd_ring_pct").is_some());
-    assert_eq!(v["tests"][1]["lead_days"], 1.0);
+    assert_eq!(v["tests"][1]["pct_below_80"], 65.3);
+    assert!(!v.to_string().contains("lead_days") && !v.to_string().contains("label"));
 }
 
 #[test]
@@ -1622,7 +1695,7 @@ fn relationship_export_block_matches_the_preview_and_writes_into_the_info_file()
     let d = rel_data();
     let fit = rel_fit(&d);
     let extra = rel_extra(&d, 288..1152);
-    let tests = vec![tp("normal", 288, 575, None), tp("problem", 576, 1151, Some(STEP_ROW + 2 * DAY))];
+    let tests = vec![tp(288, 575), tp(576, 1151)];
 
     // What the sidecar returned for the training rows (rounded like the files).
     let predicted: Vec<Option<f64>> = fit.predicted.iter().map(|&p| Some(p)).collect();
@@ -1669,8 +1742,11 @@ fn relationship_export_block_matches_the_preview_and_writes_into_the_info_file()
     assert_eq!(v["tested"], true);
     let preview = relationship_preview_ex(&d, &fit, Some(&extra), &rel_req(tests)).unwrap();
     assert_eq!(v["tests"], serde_json::to_value(&tv(&preview).tests).unwrap());
-    assert_eq!(v["tests"][1]["lead_days"], 2.0);
     assert_eq!(v["tests"][1]["lowest"], 48.0);
+    assert_eq!(v["tests"][1]["lowest_at"], ts_at(STEP_ROW));
+    for gone in ["label", "event_time", "lead_days", "first_below_80"] {
+        assert!(!v.to_string().contains(gone), "{gone} must not be written");
+    }
     assert!(v["tests"][0].get("r2").is_some() && v["tests"][0].get("residual_sd").is_some());
 }
 
@@ -1687,18 +1763,18 @@ fn relationship_export_plan_refuses_malformed_test_periods_before_the_sidecar() 
         filter: Some(train_to(2 * DAY - 1, vec![])),
         set_points: Some(rel_sp()),
         cache_key: Some("m1::fp".into()),
-        test_periods: Some(vec![tp("problem", 576, 1151, Some(1500))]),
+        test_periods: Some(vec![tp(1151, 576)]), // ends before it starts
         ..Default::default()
     };
     match plan_export(&req, dir.path(), &state).unwrap() {
         ExportPlan::Finished(r) => {
             assert!(!r.ok);
-            assert_eq!(r.validation[0].code, "event_outside_test_period");
+            assert_eq!(r.validation[0].code, "test_ends_before_start");
         }
         ExportPlan::RunSidecar => panic!("a malformed test period must be refused before the sidecar"),
     }
     // A good period proceeds to the sidecar.
-    req.test_periods = Some(vec![tp("problem", 576, 1151, Some(900))]);
+    req.test_periods = Some(vec![tp(576, 1151)]);
     assert!(matches!(plan_export(&req, dir.path(), &state).unwrap(), ExportPlan::RunSidecar));
     // And so does a request without test periods.
     req.test_periods = None;
@@ -1712,9 +1788,17 @@ fn export_request_deserializes_test_periods_from_the_frontend_json() {
             "test_periods":[{"start":"2024-01-01T00:00","end":null,"label":"problem","event_time":"2024-01-02T00:00"}]}"#,
     )
     .unwrap();
+    // The legacy `label` / `event_time` keys are accepted and dropped.
     let t = &r.test_periods.as_ref().unwrap()[0];
-    assert_eq!((t.label.as_str(), t.end.clone()), ("problem", None));
+    assert_eq!(*t, TestPeriodArg { start: Some("2024-01-01T00:00".into()), end: None });
     assert!(r.tests_requested());
+    // What the frontend sends from now on: only start / end.
+    let new: ModelFilesRequest = serde_json::from_str(
+        r#"{"kind":"individual","workspace_id":"w","target":"S",
+            "test_periods":[{"start":"2024-01-01T00:00","end":"2024-01-02T00:00"}]}"#,
+    )
+    .unwrap();
+    assert_eq!(new.test_periods.as_ref().unwrap()[0].end.as_deref(), Some("2024-01-02T00:00"));
     let none: ModelFilesRequest = serde_json::from_str(r#"{"kind":"individual","workspace_id":"w"}"#).unwrap();
     assert!(!none.tests_requested());
     let h: HealthPreviewRequest = serde_json::from_str(

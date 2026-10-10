@@ -4,10 +4,17 @@ import { isModelStale } from './modelStatus';
 import { effectiveRunningCondition, type RunningConditionFg } from './runningCondition';
 
 /*
- * Train/Test model validation (SPEC FINAL 2026-10-07,
- * docs/design/handoff/train-test-validation/README.md) — the pure read-side
- * helpers the UI shows: the "test periods changed" banners (rule 8) and the
- * minimum-training-data warning (rule 12).
+ * Train periods and scoring periods — the pure read-side helpers the UI shows:
+ * the "scoring periods changed" banners, the minimum-training-data warning and
+ * the "could not be scored" notice.
+ *
+ * SPEC: docs/design/handoff/train-test-validation/README.md (2026-10-07), as
+ * revised by docs/design/handoff/workbench-redesign/README.md §2 (user
+ * decision 2026-10-09, "just score it"): a scoring period is only start → end
+ * — no Normal / Known problem label, no event time, no lead time and no
+ * verdict, so there is nothing here that judges a result. The identifiers keep
+ * their "test" names (`testsChangedAt` is a storage key); only the words the
+ * user reads say "scoring period".
  */
 
 /**
@@ -38,13 +45,13 @@ export function trainDaysWarning(trainDays: number | null | undefined): string |
     return `Only ${d} d of train running time — at least ${RECOMMENDED_TRAIN_DAYS} d is recommended for a reliable model. You can still train.`;
 }
 
-/** Per-model banner state on the Health score page (SPEC rule 8). */
+/** Per-model banner state on the Health score page. */
 export type TestsChangedState = 'changed' | 'removed';
 
 /**
- * Does this model need "Mark complete" again because ONLY its test periods
+ * Does this model need "Mark complete" again because ONLY its scoring periods
  * changed while it was Complete (`applyIncompleteRule` set `testsChangedAt`)?
- * `'removed'` when its effective test list is now empty, `'changed'` otherwise,
+ * `'removed'` when its effective list is now empty, `'changed'` otherwise,
  * `null` when there is nothing to say (no stamp, or it is Complete again).
  */
 export function testsChangedState(model: FailureModel, fg: RunningConditionFg): TestsChangedState | null {
@@ -60,19 +67,19 @@ export function testsChangedState(model: FailureModel, fg: RunningConditionFg): 
 /** Health score page banner text for `testsChangedState`. */
 export function testsChangedBannerText(state: TestsChangedState): string {
     return state === 'removed'
-        ? 'Test periods removed — add at least one test period, then Mark complete again. The model was not re-trained.'
-        : 'Test periods changed — the results were re-scored with the same trained model. Mark complete again to save them.';
+        ? 'Scoring periods removed — add at least one scoring period, then Mark complete again. The model was not re-trained.'
+        : 'Scoring periods changed — re-scored with the same trained model. Mark complete again to save the new results.';
 }
 
-/** Workspace-wide summary for the notice under the Step-1 card. */
+/** Workspace-wide summary for the notice under the running-condition line. */
 export interface TestsChangedNotice {
     /** Models that were Complete and need Mark complete again. */
     count: number;
-    /** Every one of them now has NO test period. */
+    /** Every one of them now has NO scoring period. */
     allRemoved: boolean;
 }
 
-/** `null` when no model needs Mark complete again because of a test change. */
+/** `null` when no model needs Mark complete again because of a scoring-period change. */
 export function testsChangedNotice(models: FailureModel[], fg: RunningConditionFg): TestsChangedNotice | null {
     let count = 0;
     let removed = 0;
@@ -85,57 +92,58 @@ export function testsChangedNotice(models: FailureModel[], fg: RunningConditionF
     return count === 0 ? null : { count, allRemoved: removed === count };
 }
 
-/** The Step-1 notice text: "Test periods changed — N complete model(s) need
- *  Mark complete again" (or "Test periods removed — …" when every one of them
- *  lost all its test periods). */
+/** The notice text: "Scoring periods changed — N complete model(s) need Mark
+ *  complete again" (or "Scoring periods removed — …" when every one of them
+ *  lost all its scoring periods). */
 export function testsChangedNoticeText(n: TestsChangedNotice): string {
     const models = `${n.count} complete model${n.count === 1 ? '' : 's'}`;
     const need = n.count === 1 ? 'needs' : 'need';
     return n.allRemoved
-        ? `Test periods removed — ${models} ${need} a test period and Mark complete again`
-        : `Test periods changed — ${models} ${need} Mark complete again`;
+        ? `Scoring periods removed — ${models} ${need} a scoring period and Mark complete again`
+        : `Scoring periods changed — ${models} ${need} Mark complete again`;
 }
 
-/** Stable code of the WARNING issue `compute_health_preview` adds when the test
- *  periods could not be scored (e.g. the Relation model engine did not answer,
- *  or is too old). The train results are still valid; every test then comes
- *  back unscored. */
+/** Stable code of the WARNING issue `compute_health_preview` adds when the
+ *  scoring periods could not be scored (e.g. the Relation model engine did not
+ *  answer, or is too old). The train results are still valid; every scoring
+ *  period then comes back unscored. */
 export const TEST_SCORING_FAILED_CODE = 'test_scoring_failed';
 
 /** Same, but the Relation model engine bundled with this build is too old to
- *  score test periods (2026-10-07). Retrying cannot help — only updating the
- *  app does — so this one gets no "Try again". */
+ *  score them (2026-10-07). Retrying cannot help — only updating the app does —
+ *  so this one gets no "Try again". */
 export const TEST_SCORING_OUTDATED_CODE = 'test_scoring_outdated';
 
-/** Same, but the test periods have too many rows to score in memory (2026-10-07,
- *  code review): retrying the same periods fails the same way, so no "Try
- *  again" either — the user has to shorten or remove one (Rust's message says so). */
+/** Same, but the scoring periods have too many rows to score in memory
+ *  (2026-10-07, code review): retrying the same periods fails the same way, so
+ *  no "Try again" either — the user has to shorten or remove one (Rust's
+ *  message says so). */
 export const TEST_SCORING_TOO_LARGE_CODE = 'test_scoring_too_large';
 
-/** Every warning code that means "the test periods were not scored". */
+/** Every warning code that means "the scoring periods were not scored". */
 export const TEST_SCORING_ISSUE_CODES: readonly string[] = [TEST_SCORING_FAILED_CODE, TEST_SCORING_OUTDATED_CODE, TEST_SCORING_TOO_LARGE_CODE];
 
-/** Headline the test tiles / "Train vs test" card show for `test_scoring_failed`
- *  (amber, information only — never a block). Rust's own `message` is shown under
- *  it (it says why, e.g. too many rows to score in memory). */
-export const TEST_SCORING_FAILED_TEXT = "Couldn't score the test periods — try again";
+/** Headline the scoring-results card shows for `test_scoring_failed` (amber,
+ *  for reading only — never a block). Rust's own `message` is shown under it
+ *  (it says why, e.g. the engine did not answer). */
+export const TEST_SCORING_FAILED_TEXT = 'The scoring periods could not be scored — try again';
 
 /** Headline when no retry is offered (`test_scoring_outdated`,
  *  `test_scoring_too_large`); Rust's message underneath says what to do. */
-export const TEST_SCORING_OUTDATED_TEXT = "Couldn't score the test periods";
+export const TEST_SCORING_OUTDATED_TEXT = 'The scoring periods could not be scored';
 
-/** The test-scoring warning of a preview (`test_scoring_failed` or
- *  `test_scoring_outdated`), or null. */
+/** The "not scored" warning of a preview (`test_scoring_failed`,
+ *  `test_scoring_outdated` or `test_scoring_too_large`), or null. */
 export function testScoringFailure(data: Pick<HealthPreview, 'validation'> | null | undefined): HealthIssue | null {
     return data?.validation?.find(i => TEST_SCORING_ISSUE_CODES.includes(i.code)) ?? null;
 }
 
-/** Whether "Try again" can help for this test-scoring warning — only for an
+/** Whether "Try again" can help for this "not scored" warning — only for an
  *  engine that did not answer; never for an outdated engine or too many rows. */
 export function isTestScoringRetryable(issue: Pick<HealthIssue, 'code'>): boolean {
     return issue.code === TEST_SCORING_FAILED_CODE;
 }
 
-/** Shown while a Relation-model preview that scores test periods is still
- *  loading (the sidecar predicts the test rows — slow the first time). */
-export const SLOW_TEST_SCORING_TEXT = 'Scoring test periods with the Relation model — this can take up to ~15 s.';
+/** Shown while a Relation-model preview that scores scoring periods is still
+ *  loading (the sidecar predicts their rows — slow the first time). */
+export const SLOW_TEST_SCORING_TEXT = 'Scoring these periods with the Relation model — this can take up to ~15 s.';

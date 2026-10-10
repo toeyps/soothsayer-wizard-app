@@ -127,15 +127,15 @@ export interface MarkCompleteRace {
      *  exported set points may differ from these (typed but not committed): only a
      *  change of what is on disk AFTER the click counts as an edit during the export. */
     setPointsBefore: HealthSetPoints | undefined;
-    /** `testPeriodsKey` of the model's EFFECTIVE test periods at click time
-     *  (Train/Test validation, 2026-10-07). Optional: when given, test periods
-     *  edited during the export (the files' `validation` block would describe
-     *  the old ones) keep the model Incomplete (`TESTS_CHANGED_DURING_EXPORT_REASON`). */
+    /** `testPeriodsKey` of the model's EFFECTIVE scoring periods at click time.
+     *  Optional: when given, scoring periods edited during the export (the
+     *  files' `validation` block would describe the old ones) keep the model
+     *  Incomplete (`TESTS_CHANGED_DURING_EXPORT_REASON`). */
     testsKey?: string;
 }
 
 export const TESTS_CHANGED_DURING_EXPORT_REASON =
-    'the test periods changed while the files were being written — mark it complete again.';
+    'the scoring periods changed while the files were being written — mark it complete again.';
 
 export const SETTINGS_CHANGED_DURING_EXPORT_REASON =
     "the model's settings changed while its files were being written — re-train, then mark it complete again.";
@@ -181,7 +181,7 @@ export async function persistModelComplete(
             return prev;
         }
         res.reason = getBuildBlockReason(target, fg, headers);
-        // Train/Test validation (SPEC rule 2): at least one valid test period.
+        // At least one valid scoring period.
         if (res.reason === null) res.reason = markCompleteBlockReason(target, fg);
         // A special sensor it was trained on changed its recipe since (customer
         // batch 2026-10, item 6): not fresh either -- judged against DISK.
@@ -203,7 +203,7 @@ export async function persistModelComplete(
             models: (fg?.models ?? []).map(m => {
                 if (m.id !== modelId) return m;
                 return {
-                    // Mark complete answers a "test periods changed" stamp.
+                    // Mark complete answers a "scoring periods changed" stamp.
                     ...withoutTestsChanged(withoutVerdict(m)),
                     status: true,
                     healthSetPoints: keepDisk ? target.healthSetPoints : setPoints,

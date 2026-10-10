@@ -67,7 +67,7 @@ export interface UseHealthPreviewResult {
     lastData?: HealthPreview | null;
     /** Ask again for the same request (the error banner's Retry button). */
     retry?: () => void;
-    /** Ask again AND tell Rust to retry scoring the test periods (2026-10-07):
+    /** Ask again AND tell Rust to retry scoring the scoring periods (2026-10-07):
      *  after a failed Relation-model prediction Rust remembers the failure so
      *  debounced set-point edits don't re-run the slow sidecar; only the
      *  `test_scoring_failed` notice's "Try again" clears it, by sending

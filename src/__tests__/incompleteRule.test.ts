@@ -4,6 +4,10 @@ import type { FailureGroupStateSlice, FailureModel, TestPeriod, WorkspaceState }
 import { applyIncompleteRule, applyRecipeRule, modelsWithChangedInputs, modelsWithChangedTests, recipesDiffer } from '../utils/incompleteRule';
 import { isModelComplete, isModelStale, modelDotState, modelSetPointFlag, NOT_TRAINED_BLOCK_REASON } from '../utils/modelStatus';
 import { computeTrainFingerprint } from '../utils/trainFingerprint';
+import { toScoringPeriod, toScoringPeriods } from '../utils/timePeriods';
+import { markCompleteBlockReason } from '../utils/runningCondition';
+import { testsChangedNotice, testsChangedState } from '../utils/trainTestValidation';
+import { LEGACY_TESTS } from './helpers/trainTestFixture';
 
 const slice = (models: FailureModel[], over: Partial<FailureGroupStateSlice> = {}): FailureGroupStateSlice => ({
     groups: [], models,
@@ -306,24 +310,25 @@ describe('modelSetPointFlag - what the saved verdict says about a TRAINED model'
     });
 });
 
-describe('applyIncompleteRule - Train/Test validation: changing ONLY test periods (SPEC rules 8 & 9)', () => {
+describe('applyIncompleteRule - changing ONLY scoring periods (SPEC rules 8 & 9)', () => {
     const NOW = '2026-10-07T10:00:00.000Z';
-    const t1: TestPeriod = { id: 't1', start: '2026-01-01T00:00', end: '2026-01-31T23:59', label: 'normal' };
-    const t2: TestPeriod = { id: 't2', start: '2026-03-01T00:00', end: '2026-03-31T23:59', label: 'problem', eventTime: '2026-03-20T08:00' };
+    // A scoring period is start → end only ("just score it", 2026-10-10).
+    const t1: TestPeriod = { id: 't1', start: '2026-01-01T00:00', end: '2026-01-31T23:59' };
+    const t2: TestPeriod = { id: 't2', start: '2026-03-01T00:00', end: '2026-03-31T23:59' };
     const fgBase = slice([]);
     const trainedComplete = (over: Partial<FailureModel> = {}): FailureModel => {
         const m = { ...individual(), ...over };
         return { ...m, lastTrainedAt: '2026-10-01T00:00:00Z', trainedFingerprint: computeTrainFingerprint(m, fgBase), healthVerdict: 'valid' };
     };
 
-    it('test periods are NOT part of the train fingerprint (workspace list and a Custom model own list)', () => {
+    it('scoring periods are NOT part of the train fingerprint (workspace list and a Custom model own list)', () => {
         const m = individual();
         expect(computeTrainFingerprint(m, slice([], { runningConditionTestPeriods: [t1, t2] }))).toBe(computeTrainFingerprint(m, fgBase));
         const c = { ...m, runningConditionMode: 'custom' as const, customRunningConditionNoneConfirmed: true };
         expect(computeTrainFingerprint({ ...c, customTestPeriods: [t1] }, fgBase)).toBe(computeTrainFingerprint(c, fgBase));
     });
 
-    it('workspace test list changed -> a Complete Workspace-mode model goes Incomplete + testsChangedAt in the SAME write, still trained (fresh)', () => {
+    it('workspace scoring list changed -> a Complete Workspace-mode model goes Incomplete + testsChangedAt in the SAME write, still trained (fresh)', () => {
         const m = trainedComplete();
         const prev = ws(slice([m]));
         const next = ws(slice([m], { runningConditionTestPeriods: [t1] }));
@@ -361,18 +366,89 @@ describe('applyIncompleteRule - Train/Test validation: changing ONLY test period
         expect(b.failureGroupState!.models[0]).toMatchObject({ status: false, testsChangedAt: NOW });
     });
 
-    it('label, event time, start/end and removing every test all count; ids and fromHighlight do not', () => {
+    it('a start / end change, adding one, removing every one and re-ordering all count; ids and the legacy keys do not', () => {
         const m = trainedComplete();
         const run = (before: TestPeriod[], after: TestPeriod[]) =>
             applyIncompleteRule(ws(slice([m], { runningConditionTestPeriods: before })), ws(slice([m], { runningConditionTestPeriods: after })), { now: NOW })
                 .failureGroupState!.models[0].status;
-        expect(run([t1], [{ ...t1, label: 'problem' }])).toBe(false);
-        expect(run([t2], [{ ...t2, eventTime: '2026-03-21T08:00' }])).toBe(false);
+        expect(run([t1], [{ ...t1, start: '2026-01-02T00:00' }])).toBe(false);
         expect(run([t1], [{ ...t1, end: '2026-02-15T00:00' }])).toBe(false);
+        expect(run([t1], [t1, t2])).toBe(false);
         expect(run([t1, t2], [])).toBe(false);
-        expect(run([t1], [{ ...t1, id: 'other', fromHighlight: 'Overhaul' }])).toBe(true);
-        // An event time on a Normal period is not read, so it is not a change.
-        expect(run([t1], [{ ...t1, eventTime: '2026-01-05T00:00' }])).toBe(true);
+        expect(run([t1, t2], [t2, t1])).toBe(false); // S1 / S2 swapped: the saved results are in the other order
+        expect(run([t1], [{ ...t1, id: 'other' }])).toBe(true);
+        // The removed label / event time / highlight caption cannot change a result (Rust ignores
+        // them), so gaining, losing or changing one is NOT a change of the scoring periods.
+        expect(run([t1], [{ ...t1, label: 'problem' }])).toBe(true);
+        expect(run([{ ...t1, label: 'normal' }], [{ ...t1, label: 'problem', eventTime: '2026-01-05T00:00' }])).toBe(true);
+        expect(run([{ ...t2, label: 'problem', eventTime: '2026-03-20T08:00' }], [{ ...t2, label: 'problem', eventTime: '2026-03-21T08:00' }])).toBe(true);
+        expect(run([{ ...t1, label: 'problem', eventTime: '2026-01-05T00:00', fromHighlight: 'Overhaul' }], [t1])).toBe(true);
+    });
+
+    // SPEC workbench-redesign §2: "keep them readable so old workspaces load. Stop writing
+    // them and ignore them on load. No migration is needed." The danger this guards: dropping
+    // `label` / `eventTime` from what counts must not turn every Complete model of an existing
+    // workspace into "needs Mark complete again" the first time that workspace is opened or saved.
+    describe('a workspace saved before 2026-10-10 (scoring periods still carrying label / eventTime / fromHighlight)', () => {
+        const oldFg = (models: FailureModel[], over: Partial<FailureGroupStateSlice> = {}) => slice(models, { runningConditionTestPeriods: LEGACY_TESTS, ...over });
+
+        it('loads: its models are Complete, pass the Mark-complete gate and show no "scoring periods changed" notice', () => {
+            const m = trainedComplete();
+            const fg = oldFg([m]);
+            expect(isModelComplete(m, fg)).toBe(true);
+            expect(isModelStale(m, fg)).toBe(false);
+            expect(markCompleteBlockReason(m, fg)).toBeNull();
+            expect(testsChangedState(m, fg)).toBeNull();
+            expect(testsChangedNotice([m], fg)).toBeNull();
+        });
+
+        it('any write that leaves the periods alone (a rename, a Dashboard autosave, a JSON round trip) keeps it Complete — same reference, no stamp', () => {
+            const m = trainedComplete();
+            const prev = ws(oldFg([m]));
+            const renamed = { ...prev, name: 'Renamed' } as WorkspaceState;
+            expect(applyIncompleteRule(prev, renamed, { now: NOW })).toBe(renamed);
+            const reread = JSON.parse(JSON.stringify(prev)) as WorkspaceState; // what a load -> save cycle hands the rule
+            expect(applyIncompleteRule(prev, reread, { now: NOW })).toBe(reread);
+            expect(reread.failureGroupState!.models[0]).toMatchObject({ status: true });
+            expect(reread.failureGroupState!.models[0]).not.toHaveProperty('testsChangedAt');
+            // nothing was migrated away: the legacy keys are still what is on disk
+            expect(reread.failureGroupState!.runningConditionTestPeriods).toEqual(LEGACY_TESTS);
+        });
+
+        it('a write whose periods passed through an edit and LOST the legacy keys is not a change: still Complete, no stamp, nothing demoted', () => {
+            const m = trainedComplete();
+            const prev = ws(oldFg([m]));
+            const stripped = toScoringPeriods(LEGACY_TESTS);
+            expect(JSON.stringify(stripped)).not.toMatch(/label|eventTime|fromHighlight/);
+            const next = ws(oldFg([m], { runningConditionTestPeriods: stripped }));
+            const out = applyIncompleteRule(prev, next, { now: NOW });
+            expect(out).toBe(next);
+            expect(out.failureGroupState!.models[0].status).toBe(true);
+            expect(out.failureGroupState!.models[0]).not.toHaveProperty('testsChangedAt');
+            expect(modelsWithChangedTests(prev, next)).toEqual([]);
+            // ...and the other way round (another window still holding the old list writes it back)
+            expect(applyIncompleteRule(next, prev, { now: NOW })).toBe(prev);
+        });
+
+        it('the same for a Custom model whose OWN list is old-shaped', () => {
+            const c = trainedComplete({ runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true, filterTimePeriods: [period('2025-01-01T00:00', '2025-06-30T23:59')], customTestPeriods: LEGACY_TESTS });
+            const fixed = { ...c, trainedFingerprint: computeTrainFingerprint(c, fgBase) };
+            const prev = ws(slice([fixed]));
+            expect(isModelComplete(fixed, prev.failureGroupState!)).toBe(true);
+            const next = ws(slice([{ ...fixed, customTestPeriods: toScoringPeriods(LEGACY_TESTS) }]));
+            expect(applyIncompleteRule(prev, next, { now: NOW })).toBe(next);
+            expect(modelsWithChangedTests(prev, next)).toEqual([]);
+        });
+
+        it('a REAL edit of an old period still counts: its end moved -> Incomplete + testsChangedAt, and what is written has no legacy key', () => {
+            const m = trainedComplete();
+            const prev = ws(oldFg([m]));
+            const edited = [toScoringPeriod({ ...LEGACY_TESTS[0], end: '2024-02-15T00:00' }), toScoringPeriod(LEGACY_TESTS[1])];
+            const out = applyIncompleteRule(prev, ws(oldFg([m], { runningConditionTestPeriods: edited })), { now: NOW });
+            expect(out.failureGroupState!.models[0]).toMatchObject({ status: false, testsChangedAt: NOW });
+            expect(isModelStale(out.failureGroupState!.models[0], out.failureGroupState!)).toBe(false); // still trained
+            expect(JSON.stringify(out.failureGroupState!.runningConditionTestPeriods)).not.toMatch(/label|eventTime|fromHighlight/);
+        });
     });
 
     it('a model that is not Complete gets no stamp and stays the same object', () => {
@@ -427,7 +503,7 @@ describe('applyIncompleteRule - Train/Test validation: changing ONLY test period
         expect(out.failureGroupState!.models[0]).not.toHaveProperty('testsChangedAt');
     });
 
-    it('modelsWithChangedTests reports exactly the models whose EFFECTIVE tests changed', () => {
+    it('modelsWithChangedTests reports exactly the models whose EFFECTIVE scoring periods changed', () => {
         const a = individual();
         const c = { ...individual(), id: 'c', runningConditionMode: 'custom' as const };
         const prev = ws(slice([a, c]));
@@ -436,7 +512,7 @@ describe('applyIncompleteRule - Train/Test validation: changing ONLY test period
         expect(modelsWithChangedInputs(prev, next)).toEqual([]);
     });
 
-    it('old workspaces without any test field compare equal (undefined vs [])', () => {
+    it('old workspaces without any scoring-period field compare equal (undefined vs [])', () => {
         const m = trainedComplete();
         const prev = ws(slice([m]));
         const next = ws(slice([{ ...m, customTestPeriods: [] }], { runningConditionTestPeriods: [] }));

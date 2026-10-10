@@ -173,49 +173,52 @@ export function toFilterRanges(list: TimePeriod[]): FilterRange[] {
 }
 
 // ---------------------------------------------------------------------------
-// Train/Test validation (2026-10-07, SPEC "Train/Test model validation").
-// `runningConditionTimePeriods` / a model's `filterTimePeriods` are the TRAIN
-// periods; `TestPeriod`s are where the score is checked. Everything below is
-// pure and works on `datetime-local` strings read as LOCAL time (like `toMs`).
+// Train periods vs scoring periods. `runningConditionTimePeriods` / a model's
+// `filterTimePeriods` are the TRAIN periods; `TestPeriod`s are the SCORING
+// periods — "just score it" (user decision 2026-10-09, SPEC
+// docs/design/handoff/workbench-redesign/README.md §2): start → end only, the
+// trained model gives a health score for that time. They were called "test
+// periods" until 2026-10-10 and the identifiers below keep that name (as do
+// the storage keys and the `test_periods` wire key) so nothing about the
+// workspace format changes; the user-facing words are "scoring period" and the
+// numbers are S1, S2 … by list position. Everything below is pure and works on
+// `datetime-local` strings read as LOCAL time (like `toMs`).
 // ---------------------------------------------------------------------------
 
 const DAY = 86_400_000;
 
-/** Validity of one test period (list order = T1, T2 …). */
+/**
+ * A scoring period as it is WRITTEN: `id`, `start`, `end` and nothing else.
+ *
+ * A workspace saved before 2026-10-10 may carry `label` / `eventTime` /
+ * `fromHighlight` on its periods. They stay readable (the type allows them) but
+ * nothing may write them any more, and a spread (`{ ...t, start }`) would carry
+ * them along silently — so every place that BUILDS or COPIES a period (the
+ * editor's add / edit, `seedCustomFromWorkspace`) goes through this instead.
+ * A period that is never touched keeps whatever is on disk (no migration).
+ */
+export function toScoringPeriod(t: Pick<TestPeriod, 'id' | 'start' | 'end'>): TestPeriod {
+    return { id: t.id, start: t.start ?? '', end: t.end ?? '' };
+}
+
+/** `toScoringPeriod` for a whole list (a missing list reads as `[]`). */
+export function toScoringPeriods(list: readonly TestPeriod[] | null | undefined): TestPeriod[] {
+    return (list ?? []).map(toScoringPeriod);
+}
+
+/** Validity of one scoring period (list order = S1, S2 …). */
 export interface TestPeriodStatus {
     /** Start/end missing or unparseable, or end before start. Blocks Apply. */
     invalid: boolean;
     reason?: string;
-    /** The event time is set but unparseable or outside the period. Blocks Apply. */
-    eventInvalid: boolean;
-    eventReason?: string;
 }
 
 /**
- * Event time of a test period (SPEC rule 5): optional, only read for a Known
- * problem; when set it must parse and lie INSIDE the period (bounds inclusive).
- * Returns the user-facing reason, or null when fine. `n` is the 1-based number
- * used in the text ("T2").
- */
-export function eventTimeError(t: TestPeriod, n = 1): string | null {
-    if (t.label !== 'problem') return null;
-    const raw = (t.eventTime ?? '').trim();
-    if (!raw) return null;
-    const ev = toMs(raw);
-    if (ev === null) return `T${n} has an invalid event time.`;
-    const s = toMs(t.start);
-    const e = toMs(t.end);
-    if ((s !== null && ev < s) || (e !== null && ev > e)) return `The event time must be inside T${n}.`;
-    return null;
-}
-
-/**
- * Per-test-period validity. DECISION (2026-10-07): unlike train periods, a test
- * period needs BOTH a start and an end — its day count, "% of running time
- * below 80" and the event lead time are only meaningful on a closed range, and
- * both ways of adding one (Add test period, From Highlights) produce closed
- * ranges. Test periods may overlap each other and train periods (never invalid
- * for that).
+ * Per-scoring-period validity. DECISION (2026-10-07, kept): unlike train
+ * periods, a scoring period needs BOTH a start and an end — its day count and
+ * "% of running time below 80" are only meaningful on a closed range. Scoring
+ * periods may overlap each other and train periods (never invalid for that).
+ * The reason text names the period by its number ("S2 needs an end date.").
  */
 export function validateTestPeriods(list: TestPeriod[]): TestPeriodStatus[] {
     return list.map((t, i) => {
@@ -225,51 +228,47 @@ export function validateTestPeriods(list: TestPeriod[]): TestPeriodStatus[] {
         const s = toMs(t.start);
         const e = toMs(t.end);
         let reason: string | undefined;
-        if (startBlank) reason = `T${n} needs a start date.`;
-        else if (endBlank) reason = `T${n} needs an end date.`;
-        else if (s === null) reason = `T${n} has an invalid start date.`;
-        else if (e === null) reason = `T${n} has an invalid end date.`;
-        else if (e < s) reason = `T${n} ends before it starts.`;
-        const eventReason = eventTimeError(t, n) ?? undefined;
-        return { invalid: !!reason, reason, eventInvalid: !!eventReason, eventReason };
+        if (startBlank) reason = `S${n} needs a start date.`;
+        else if (endBlank) reason = `S${n} needs an end date.`;
+        else if (s === null) reason = `S${n} has an invalid start date.`;
+        else if (e === null) reason = `S${n} has an invalid end date.`;
+        else if (e < s) reason = `S${n} ends before it starts.`;
+        return { invalid: !!reason, reason };
     });
 }
 
-/** First problem in a test-period list (a period first, then its event time), or null. */
+/** First problem in a scoring-period list, or null. */
 export function testPeriodsError(list: TestPeriod[]): string | null {
     for (const st of validateTestPeriods(list)) {
-        if (st.invalid) return st.reason ?? 'Fix the test periods.';
-        if (st.eventInvalid) return st.eventReason ?? 'Fix the event time.';
+        if (st.invalid) return st.reason ?? 'Fix the scoring periods.';
     }
     return null;
 }
 
-/** `test_periods` wire list plus, for each entry, the T-number (1-based
+/** `test_periods` wire list plus, for each entry, the S-number (1-based
  *  POSITION in the full list) of the period it came from. */
 export interface TestPeriodsWirePlan {
     wire: TestPeriodWire[];
-    /** `numbers[k]` = T-number of `wire[k]` — e.g. `[2]` for a list whose T1 is
-     *  invalid (dropped) and T2 valid. */
+    /** `numbers[k]` = S-number of `wire[k]` — e.g. `[2]` for a list whose S1 is
+     *  invalid (dropped) and S2 valid. */
     numbers: number[];
 }
 
-/** Wire shape for `test_periods` (invalid periods are dropped, `''` → null,
- *  `event_time` only for a Known problem with a valid event time) together with
- *  the T-number of every entry sent. Results come back with the 1-based WIRE
- *  `index`; `testNumberFor` maps that back to the T-number the editor and the
- *  Step-1 chips show (they number the full list, invalid periods included). */
+/** Wire shape for `test_periods` — start / end only (invalid periods are
+ *  dropped, `''` → null; a legacy label / event time is never sent) together
+ *  with the S-number of every entry sent. Results come back with the 1-based
+ *  WIRE `index`; `testNumberFor` maps that back to the S-number the editor and
+ *  the running-condition chips show (they number the full list, invalid
+ *  periods included). */
 export function testPeriodsWirePlan(list: TestPeriod[]): TestPeriodsWirePlan {
     const status = validateTestPeriods(list);
     const wire: TestPeriodWire[] = [];
     const numbers: number[] = [];
     list.forEach((t, i) => {
         if (status[i].invalid) return;
-        const ev = (t.eventTime ?? '').trim();
         wire.push({
             start: (t.start ?? '').trim() ? t.start : null,
             end: (t.end ?? '').trim() ? t.end : null,
-            label: t.label,
-            event_time: t.label === 'problem' && ev && !status[i].eventInvalid ? ev : null,
         });
         numbers.push(i + 1);
     });
@@ -282,12 +281,12 @@ export function toTestPeriodsWire(list: TestPeriod[]): TestPeriodWire[] {
 }
 
 /**
- * The T-number to show for a test result. `numbers` is
+ * The S-number to show for a scoring result. `numbers` is
  * `testPeriodsWirePlan(...).numbers` of the list that was sent; `wireIndex` is
  * the result's 1-based `index` (its position in the `test_periods` sent) and
- * `position` its 0-based position in the results. Looks the T-number up by the
+ * `position` its 0-based position in the results. Looks the S-number up by the
  * wire index, then by position; with no mapping at all (or none covering it)
- * the result's position is the number (T1, T2 … in result order).
+ * the result's position is the number (S1, S2 … in result order).
  */
 export function testNumberFor(
     numbers: readonly number[] | null | undefined,
@@ -300,15 +299,23 @@ export function testNumberFor(
     return position + 1;
 }
 
-/** What of a test-period list can change its RESULTS (no id, no
- *  `fromHighlight`; the event time only counts for a Known problem). Used to
- *  detect a "tests only" change (`applyIncompleteRule`) and export races. */
+/**
+ * What of a scoring-period list can change its RESULTS: each period's start and
+ * end, in list order — nothing else. Used to detect a "scoring periods only"
+ * change (`applyIncompleteRule`) and an edit during an export
+ * (`persistModelComplete`).
+ *
+ * The id and the legacy `label` / `eventTime` / `fromHighlight` keys of a
+ * workspace saved before 2026-10-10 are deliberately NOT part of it: Rust
+ * ignores them, so they cannot change a result — and it means a period that
+ * loses those keys when it passes through an edit (`toScoringPeriod`) is NOT
+ * read as a change, so a Complete model of an old workspace is never sent back
+ * to "Mark complete again" by the upgrade.
+ */
 export function testPeriodsKey(list: TestPeriod[] | null | undefined): string {
     return JSON.stringify((list ?? []).map(t => ({
         start: t.start ?? '',
         end: t.end ?? '',
-        label: t.label,
-        eventTime: t.label === 'problem' ? (t.eventTime ?? '').trim() : '',
     })));
 }
 
@@ -334,7 +341,7 @@ export function periodsOverlap(a: { start: string; end: string }, b: { start: st
     return x.s <= y.e && y.s <= x.e;
 }
 
-/** Per test period, the 1-based numbers of the train periods it overlaps (P1 …). */
+/** Per scoring period, the 1-based numbers of the train periods it overlaps (P1 …). */
 export function testTrainOverlaps(train: TimePeriod[], tests: TimePeriod[]): number[][] {
     return tests.map(t => train.flatMap((p, j) => (periodsOverlap(p, t) ? [j + 1] : [])));
 }
@@ -342,7 +349,7 @@ export function testTrainOverlaps(train: TimePeriod[], tests: TimePeriod[]): num
 /**
  * CALENDAR days of `test` that are also inside a train period (train periods
  * merged first, so overlapping train periods are not counted twice), rounded
- * to whole days; 0 when none. Information only (SPEC rule 3 — never blocks).
+ * to whole days; 0 when none. Information only (never blocks).
  * Open train ends are clipped to `bounds` when given. Before a preview exists
  * the UI uses this; once Rust answered, `TestPeriodResult.train_days`
  * (RUNNING days) is the better number.
@@ -374,10 +381,10 @@ export function trainOverlapDays(train: TimePeriod[], test: TimePeriod, bounds?:
     return Math.round(ms / DAY);
 }
 
-/** The neutral note on a test row / table row / result tile that includes
- *  train time (SPEC rule 3). `index` is 0-based (T1 = 0). */
+/** The one quiet note on a scoring-period row / result tile that includes
+ *  train time. `index` is 0-based (S1 = 0). */
 export function testIncludesTrainNote(index: number, days: number): string {
-    return `T${index + 1} includes ${days} d of train running time — results include rows the model was trained on`;
+    return `S${index + 1} includes ${days} d of train running time — results include rows the model was trained on`;
 }
 
 /** One train period that overlaps an enabled Dashboard time highlight. */

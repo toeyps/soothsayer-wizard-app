@@ -10,16 +10,19 @@ vi.mock('@tauri-apps/api/core', () => ({
 
 import { completeModel, getModelOutputDir, HEALTH_ERROR_TEXT, parseHealthError } from '../utils/completeModel';
 
-// Train/Test validation (2026-10-07): an open-ended train period (= no time
-// filter on the wire) and one test period, which Mark complete requires.
+// An open-ended train period (= no time filter on the wire) and one scoring
+// period, which Mark complete requires. The period is deliberately in the shape
+// a workspace saved BEFORE 2026-10-10 holds it (the removed `label` /
+// `eventTime` / `fromHighlight` still on it): every request below must carry
+// start / end ONLY — an old workspace is validated and exported like a new one.
 const fg: FailureGroupStateSlice = {
     groups: [], models: [],
     runningConditionFilters: [], runningConditionCombine: 'and',
     runningConditionTimePeriods: [{ id: 'all', start: '', end: '' }],
-    runningConditionTestPeriods: [{ id: 't1', start: '2026-01-01T00:00', end: '2026-01-31T23:59', label: 'problem', eventTime: '2026-01-20T06:00' }],
+    runningConditionTestPeriods: [{ id: 't1', start: '2026-01-01T00:00', end: '2026-01-31T23:59', label: 'problem', eventTime: '2026-01-20T06:00', fromHighlight: 'Bearing' }],
     runningConditionNoneConfirmed: true,
 };
-const TESTS_WIRE = [{ start: '2026-01-01T00:00', end: '2026-01-31T23:59', label: 'problem', event_time: '2026-01-20T06:00' }];
+const TESTS_WIRE = [{ start: '2026-01-01T00:00', end: '2026-01-31T23:59' }];
 const HEADERS = ['T', 'P1'];
 const sp: HealthSetPoints = { kind: 'individual', lower: 1, upper: 9 };
 const model = mk({ id: 'i1', name: 'Pump', kind: 'individual', targetSensor: 'T' });
@@ -57,23 +60,48 @@ describe('completeModel', () => {
         });
     });
 
-    it('Train/Test SPEC rule 2: no test period -> refused as inputs with the reason, NO Rust call', async () => {
+    it('"just score it": neither request carries a label / event time, even from an old workspace whose periods still have them', async () => {
+        mockInvoke.mockImplementation(async (cmd: string) => (cmd === 'compute_health_preview' ? previewOk : filesOk));
+        expect((await run()).ok).toBe(true);
+        for (const [, args] of mockInvoke.mock.calls) {
+            expect(args.request.test_periods).toEqual(TESTS_WIRE);
+            expect(Object.keys(args.request.test_periods[0]).sort()).toEqual(['end', 'start']);
+            expect(JSON.stringify(args.request)).not.toMatch(/label|event_time|eventTime|fromHighlight|problem|Bearing/);
+        }
+    });
+
+    it('an old period whose event time lay OUTSIDE it (used to refuse Mark complete) is exported like any other', async () => {
+        mockInvoke.mockImplementation(async (cmd: string) => (cmd === 'compute_health_preview' ? previewOk : filesOk));
+        const old = { ...fg, runningConditionTestPeriods: [{ id: 't1', start: '2026-01-01T00:00', end: '2026-01-31T23:59', label: 'problem' as const, eventTime: '2027-06-01T00:00' }] };
+        const res = await completeModel({ model, fg: old, headers: HEADERS, workspaceId: 'ws1', setPoints: sp });
+        expect(res.ok).toBe(true);
+        expect(calls('export_model_files')[0][1].request.test_periods).toEqual(TESTS_WIRE);
+    });
+
+    it('no scoring period -> refused as inputs with the reason, NO Rust call', async () => {
         const res = await completeModel({ model, fg: { ...fg, runningConditionTestPeriods: [] }, headers: HEADERS, workspaceId: 'ws1', setPoints: sp });
         expect(res).toMatchObject({ ok: false, reason: 'inputs' });
-        expect(res.ok === false && res.error).toMatch(/Add a test period/);
+        expect(res.ok === false && res.error).toMatch(/Add a scoring period/);
         expect(mockInvoke).not.toHaveBeenCalled();
     });
 
-    it('a Custom model exports ITS OWN test periods', async () => {
+    it('an invalid scoring period -> refused as inputs, named S<n>, NO Rust call', async () => {
+        const bad = { ...fg, runningConditionTestPeriods: [{ id: 't1', start: '2026-02-01T00:00', end: '2026-01-01T00:00' }] };
+        const res = await completeModel({ model, fg: bad, headers: HEADERS, workspaceId: 'ws1', setPoints: sp });
+        expect(res).toMatchObject({ ok: false, reason: 'inputs', error: 'S1 ends before it starts. Fix it in Running condition → Edit.' });
+        expect(mockInvoke).not.toHaveBeenCalled();
+    });
+
+    it('a Custom model exports ITS OWN scoring periods', async () => {
         mockInvoke.mockImplementation(async (cmd: string) => (cmd === 'compute_health_preview' ? previewOk : filesOk));
         const custom = mk({
             id: 'i1', name: 'Pump', kind: 'individual', targetSensor: 'T', runningConditionMode: 'custom',
             customRunningConditionNoneConfirmed: true, filterTimePeriods: [{ id: 'o', start: '', end: '' }],
-            customTestPeriods: [{ id: 'c', start: '2026-02-01T00:00', end: '2026-02-10T00:00', label: 'normal' }],
+            customTestPeriods: [{ id: 'c', start: '2026-02-01T00:00', end: '2026-02-10T00:00' }],
         });
         const res = await run(custom);
         expect(res.ok).toBe(true);
-        expect(calls('export_model_files')[0][1].request.test_periods).toEqual([{ start: '2026-02-01T00:00', end: '2026-02-10T00:00', label: 'normal', event_time: null }]);
+        expect(calls('export_model_files')[0][1].request.test_periods).toEqual([{ start: '2026-02-01T00:00', end: '2026-02-10T00:00' }]);
     });
 
     it('invalid set points: refuses with the issues and makes NO export call', async () => {

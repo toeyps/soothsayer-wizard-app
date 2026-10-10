@@ -42,7 +42,7 @@ function setup(over: Partial<React.ComponentProps<typeof RunningConditionPanel>>
     const handlers = {
         onPeriodsChange: vi.fn(), onNoneChange: vi.fn(), onCombineChange: vi.fn(),
         onAddFilter: vi.fn(), onUpdateFilter: vi.fn(), onRemoveFilter: vi.fn(),
-        onTestPeriodsChange: vi.fn(), onHighlightsMenuOpen: vi.fn(),
+        onTestPeriodsChange: vi.fn(),
     };
     render(
         <RunningConditionPanel
@@ -108,9 +108,9 @@ describe('RunningConditionPanel — period coverage strip (restored 2026-10-03; 
         expect(cov.querySelector('.f4-strip')).not.toBeNull();
         expect(cov.textContent).toContain('Jan 2025');
         expect(cov.textContent).toContain('Mar 2026');
-        // two lanes (train on top, test below) with the "N d train · M d test" caption
+        // two lanes (train on top, scoring below) with the "N d train · M d scoring" caption
         expect(cov.querySelector('.f4-strip--tt')).not.toBeNull();
-        expect(within(cov).getByTestId('period-coverage-days').textContent).toBe('31 d train · 0 d test');
+        expect(within(cov).getByTestId('period-coverage-days').textContent).toBe('31 d train · 0 d scoring');
         const firstRow = within(section).getByTestId('period-row-1');
         // coverage comes before the first card in document order
         expect(cov.compareDocumentPosition(firstRow) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -119,7 +119,7 @@ describe('RunningConditionPanel — period coverage strip (restored 2026-10-03; 
     it('draws one block per period', () => {
         setup({ periods: [p('a', '2025-01-01T00:00', '2025-01-31T23:59'), p('b', '2025-06-01T00:00', '2025-06-30T23:59')] });
         expect(blockStyle()).toHaveLength(2);
-        expect(within(screen.getByTestId('rc-periods')).getByTestId('period-coverage-days').textContent).toBe('61 d train · 0 d test');
+        expect(within(screen.getByTestId('rc-periods')).getByTestId('period-coverage-days').textContent).toBe('61 d train · 0 d scoring');
     });
 
     it('updates live while a date is being edited (the draft, not the committed list)', () => {
@@ -127,7 +127,7 @@ describe('RunningConditionPanel — period coverage strip (restored 2026-10-03; 
         const before = blockStyle()[0].width;
         fireEvent.change(screen.getByLabelText('Period 1 end'), { target: { value: '2025-03-31T23:59' } });
         expect(blockStyle()[0].width).toBeGreaterThan(before);
-        expect(within(screen.getByTestId('rc-periods')).getByTestId('period-coverage-days').textContent).toBe('90 d train · 0 d test');
+        expect(within(screen.getByTestId('rc-periods')).getByTestId('period-coverage-days').textContent).toBe('90 d train · 0 d scoring');
     });
 
     it('open ends extend to the dataset edge (blank start -> 0%, blank end -> 100%)', () => {
@@ -142,7 +142,7 @@ describe('RunningConditionPanel — period coverage strip (restored 2026-10-03; 
     it('a reversed period is drawn red (bad) and not counted as used days', () => {
         setup({ periods: [p('a', '2025-03-01T00:00', '2025-02-01T00:00')] });
         expect(blockStyle()[0].cls).toContain('bad');
-        expect(within(screen.getByTestId('rc-periods')).getByTestId('period-coverage-days').textContent).toBe('0 d train · 0 d test');
+        expect(within(screen.getByTestId('rc-periods')).getByTestId('period-coverage-days').textContent).toBe('0 d train · 0 d scoring');
     });
 
     it('an overlapping period is drawn hatched (ovl)', () => {
@@ -162,13 +162,13 @@ describe('RunningConditionPanel — period coverage strip (restored 2026-10-03; 
         setup({ periods: [] });
         const cov = within(screen.getByTestId('rc-periods')).getByTestId('period-coverage');
         expect(cov.querySelectorAll('.f4-strip i')).toHaveLength(0);
-        expect(within(cov).getByTestId('period-coverage-days').textContent).toBe('0 d train · 0 d test');
+        expect(within(cov).getByTestId('period-coverage-days').textContent).toBe('0 d train · 0 d scoring');
         expect(screen.getByTestId('periods-empty').textContent).toBe('No train period yet — add at least one. Models learn only from the train periods.');
     });
 
-    it('test periods are drawn on the bottom lane in the test colour, Known problem hatched', () => {
+    it('scoring periods are drawn on the bottom lane in the scoring colour — all the same, none hatched (a legacy "problem" label changes nothing)', () => {
         const tests: TestPeriod[] = [
-            { id: 't1', start: '2025-02-01T00:00', end: '2025-02-28T23:59', label: 'normal' },
+            { id: 't1', start: '2025-02-01T00:00', end: '2025-02-28T23:59' },
             { id: 't2', start: '2025-05-01T00:00', end: '2025-05-10T23:59', label: 'problem' },
         ];
         setup({ periods: JAN, testPeriods: tests });
@@ -176,8 +176,8 @@ describe('RunningConditionPanel — period coverage strip (restored 2026-10-03; 
         const te = cov.querySelectorAll('.f4-strip i.te');
         expect(te).toHaveLength(2);
         expect(te[0].className).toBe('te');
-        expect(te[1].className).toBe('te pb');
-        expect(within(cov).getByTestId('period-coverage-days').textContent).toBe('31 d train · 38 d test');
+        expect(te[1].className).toBe('te');
+        expect(within(cov).getByTestId('period-coverage-days').textContent).toBe('31 d train · 38 d scoring');
     });
 });
 
@@ -433,27 +433,47 @@ describe('RunningConditionPanel — Data used for training', () => {
         expect(screen.queryByTestId('rc-invalid-reason')).toBeNull();
     });
 });
-describe('RunningConditionPanel — Train / Test periods (Train/Test validation, 2026-10-07)', () => {
+describe('RunningConditionPanel — Train periods and Scoring periods ("just score it", 2026-10-10)', () => {
     const HL: TimeHighlight[] = [{ id: 'h1', start: '2026-02-01 00:00:00', end: '2026-02-05 00:00:00', label: 'Bearing trip', color: '#f43f5e', enabled: true }];
 
-    it('"Which time" has a Train sub-section (required, healthy-periods-only callout) and a Test sub-section', () => {
+    it('"Which time" has a Train sub-section (required, healthy-periods-only callout) and a Scoring sub-section', () => {
         setup();
         const s1 = screen.getByTestId('rc-periods');
         expect(within(s1).getByTestId('rc-train-head').textContent).toContain('Train periods');
         expect(within(s1).getByTestId('rc-train-head').textContent).toContain('required');
         expect(within(s1).getByTestId('rc-train-callout').textContent).toContain('Pick only times when the machine was healthy and running normally.');
-        expect(within(s1).getByTestId('rc-test-head').textContent).toContain('Test periods');
+        const head = within(s1).getByTestId('rc-test-head');
+        expect(head.querySelector('b')!.textContent).toBe('Scoring periods');
+        expect(head.textContent).toContain('the trained model gives a health score for this time');
+        expect(head.textContent).toContain('needed before Mark complete');
+        expect(head.textContent).toContain('may include train time');
         expect(within(s1).getByTestId('test-periods-editor')).toBeTruthy();
         expect(s1.textContent).not.toContain('whole dataset');
         expect(within(s1).getByTestId('period-add').textContent).toBe('Add train period');
+        expect(within(s1).getByTestId('test-add').textContent).toBe('Add scoring period');
     });
 
-    it('test edits are reported through onTestPeriodsChange; "From Highlights" asks the host to refresh', () => {
+    it('nothing in the panel labels a scoring period or asks for an event time (the "Label each one" callout is gone)', () => {
+        setup({
+            highlights: HL,
+            testPeriods: [{ id: 't1', start: '2026-05-01T00:00', end: '2026-05-10T00:00', label: 'problem', eventTime: '2026-05-05T00:00', fromHighlight: 'Bearing trip' }],
+        });
+        const panel = screen.getByTestId('rc-panel');
+        expect(panel.textContent).not.toMatch(/Known problem|Label each one|event time|lead time|false alarm|test period/i);
+        expect(panel.querySelector('.tpe-callout--te')).toBeNull();
+        // the only "Normal"-ish word left is the train callout's "running normally"
+        expect(within(panel).queryByText('Normal')).toBeNull();
+        expect(screen.getByTestId('test-row-1').querySelector('.tpe-pn')!.textContent).toBe('S1');
+    });
+
+    it('scoring-period edits are reported through onTestPeriodsChange; there is no "From Highlights" for scoring periods', () => {
         const h = setup({ highlights: HL });
         fireEvent.click(screen.getByTestId('test-add'));
         expect(h.onTestPeriodsChange).toHaveBeenCalledTimes(1);
-        fireEvent.click(screen.getByTestId('test-from-hl'));
-        expect(h.onHighlightsMenuOpen).toHaveBeenCalledTimes(1);
+        expect(Object.keys(h.onTestPeriodsChange.mock.calls[0][0][0]).sort()).toEqual(['end', 'id', 'start']);
+        expect(screen.queryByTestId('test-from-hl')).toBeNull();
+        expect(screen.queryByTestId('test-hl-menu')).toBeNull();
+        expect(screen.getByTestId('rc-panel').textContent).not.toContain('From Highlights');
     });
 
     it('a train period overlapping a Dashboard highlight: amber warning only, "Remove the overlap" splits the train period', () => {
@@ -482,17 +502,21 @@ describe('RunningConditionPanel — Train / Test periods (Train/Test validation,
         expect(screen.getByTestId('rule-no-train').textContent).toBe('No train period');
     });
 
-    it('preview column: the test summary (count, Normal / Known problem), or an amber "none yet" note', () => {
+    it('preview column: the scoring-period count only (no "n Normal · n Known problem"), or an amber "none yet" note', () => {
         setup({ testPeriods: [
-            { id: 't1', start: '2026-01-01T00:00', end: '2026-01-10T00:00', label: 'normal' },
+            { id: 't1', start: '2026-01-01T00:00', end: '2026-01-10T00:00' },
+            // labels of a workspace saved before 2026-10-10 are not counted or shown
             { id: 't2', start: '2026-02-01T00:00', end: '2026-02-10T00:00', label: 'problem' },
             { id: 't3', start: '2026-03-01T00:00', end: '2026-03-10T00:00', label: 'normal' },
         ] });
-        expect(screen.getByTestId('rc-preview-tests').textContent).toBe('Test3periods · 2 Normal · 1 Known problem');
+        expect(screen.getByTestId('rc-preview-tests').textContent).toBe('Scoring3periods');
+        cleanup();
+        setup({ testPeriods: [{ id: 't1', start: '2026-01-01T00:00', end: '2026-01-10T00:00' }] });
+        expect(screen.getByTestId('rc-preview-tests').textContent).toBe('Scoring1period');
         cleanup();
         setup();
         expect(screen.getByTestId('rc-preview-tests').className).toContain('tpe-pvtest--none');
-        expect(screen.getByTestId('rc-preview-tests').textContent).toContain('Mark complete needs one');
+        expect(screen.getByTestId('rc-preview-tests').textContent).toBe('No scoring period yet — you can train, but Mark complete needs one.');
     });
 
     it(`recommended train time: amber below ${RECOMMENDED_TRAIN_DAYS} d (estimated from the row count), a faint hint otherwise — never a block`, () => {

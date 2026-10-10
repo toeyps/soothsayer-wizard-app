@@ -96,8 +96,8 @@ export function buildCheckLines(kind: HealthPreview['kind'], issues: readonly He
         ? issues.filter(i => i.code === 'required' && i.field in REL_POINT_LABEL)
         : [];
     issues.forEach((i, n) => {
-        // "The test periods could not be scored" is about the test results, not the set
-        // points: the Test results / Train vs test cards show it (amber), not Checks.
+        // "The scoring periods could not be scored" is about the scoring results, not the
+        // set points: the Scoring results / Train and scoring periods cards show it, not Checks.
         if (TEST_SCORING_ISSUE_CODES.includes(i.code)) return;
         if (relRequired.length > 1 && relRequired.includes(i)) {
             if (collapsed) return;

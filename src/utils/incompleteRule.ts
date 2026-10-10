@@ -25,7 +25,7 @@ import { demoteModelsForRecipeChange, stampTrainedFormulas } from './specialSens
  *
  * What does NOT trigger it: set points, name, notes, category, status, group
  * membership, `scatterXSensor` — none of them is in `computeTrainFingerprint`.
- * TEST periods (Train/Test validation, 2026-10-07) are not in it either; a
+ * SCORING periods ("test periods" until 2026-10-10) are not in it either; a
  * change of ONLY them takes the second road described on `applyIncompleteRule`
  * (Complete -> Incomplete + `testsChangedAt`, but still trained).
  *
@@ -81,10 +81,12 @@ export function modelsWithChangedInputs(prev: WorkspaceState, next: WorkspaceSta
 }
 
 /**
- * Ids of the models in `next` whose EFFECTIVE TEST periods differ from `prev`
- * (workspace list for a Workspace-mode model, `customTestPeriods` for a Custom
- * one; ids / `fromHighlight` ignored — `testPeriodsKey`). Models only on one
- * side are ignored.
+ * Ids of the models in `next` whose EFFECTIVE SCORING periods differ from
+ * `prev` (workspace list for a Workspace-mode model, `customTestPeriods` for a
+ * Custom one). Only each period's start / end counts (`testPeriodsKey`): ids
+ * and the legacy `label` / `eventTime` / `fromHighlight` keys of a workspace
+ * saved before 2026-10-10 are ignored, so a period that merely loses those
+ * keys in a write is not a change. Models only on one side are ignored.
  */
 export function modelsWithChangedTests(prev: WorkspaceState, next: WorkspaceState): string[] {
     const prevFg = prev.failureGroupState;
@@ -112,15 +114,16 @@ export interface IncompleteRuleOptions {
  * `prev` and `next` set back to `status: false`. Returns `next` itself (same
  * reference) when nothing needs demoting, so callers can cheaply tell.
  *
- * Train/Test validation (SPEC rules 8 & 9, 2026-10-07):
+ * Train periods vs scoring periods (SPEC rules 8 & 9, 2026-10-07):
  *  - a TRAINING-input change (incl. train periods) behaves exactly as before:
  *    Incomplete, and the fingerprint mismatch asks for a re-train; it also
  *    drops any `testsChangedAt` stamp (the train rule wins — the model needs a
  *    re-train, not just Mark complete again);
- *  - a change of ONLY the model's effective TEST periods keeps it trained (test
- *    periods are not in `computeTrainFingerprint`, so it stays fresh) but a
- *    Complete model goes back to `status: false` and gets `testsChangedAt` in
- *    the SAME write — its saved test results no longer match. Its
+ *  - a change of ONLY the model's effective SCORING periods (a start or an
+ *    end, a period added or removed) keeps it trained (they are not in
+ *    `computeTrainFingerprint`, so it stays fresh) but a Complete model goes
+ *    back to `status: false` and gets `testsChangedAt` in the SAME write — the
+ *    scoring results in its saved files no longer match. Its
  *    `healthVerdict` is kept (the set points still describe the same fit).
  *    Not-Complete models are left alone (nothing to mark again).
  * Idempotent: a second pass finds no Complete model to demote.

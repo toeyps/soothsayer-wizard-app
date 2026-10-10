@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
-    computeCoverage, conditionChipParts, conditionSymbol, formatDate, formatPeriod, formatPeriodChip, overlapDays, periodDays,
+    computeCoverage, computeTestCoverage, conditionChipParts, conditionSymbol, formatDate, formatPeriod, formatPeriodChip, overlapDays, periodDays,
 } from '../components/windows/periodDisplay';
-import type { WorkspaceSensorFilter } from '../types';
+import type { TestPeriod, WorkspaceSensorFilter } from '../types';
 
 // Dataset of the approved mockup: 1 Jan 2025 00:00 - 31 Mar 2026 23:50 = 455 days.
 const B = { min: '2025-01-01 00:00:00', max: '2026-03-31 23:50:00' };
@@ -100,6 +100,34 @@ describe('computeCoverage', () => {
         expect(c.unlimited).toBe(true);
         expect(c.usedDays).toBe(c.totalDays);
         expect(c.segments).toEqual([expect.objectContaining({ leftPct: 0, widthPct: 100 })]);
+    });
+});
+
+describe('computeTestCoverage (scoring periods on the timeline — "just score it", 2026-10-10)', () => {
+    it('one segment per scoring period, named S1, S2 … by list position; overlapping days are counted once', () => {
+        const c = computeTestCoverage([p('a', '2025-01-01T00:00', '2025-01-31T00:00'), p('b', '2025-01-21T00:00', '2025-02-10T00:00')], B)!;
+        expect(c.segments.map(s => s.label)).toEqual([
+            'S1 · 1 Jan 2025 00:00 – 31 Jan 2025 00:00',
+            'S2 · 21 Jan 2025 00:00 – 10 Feb 2025 00:00',
+        ]);
+        expect(c.usedDays).toBe(40); // 1 Jan -> 10 Feb, the 10 shared days once
+        expect(c.segments[0].leftPct).toBe(0);
+    });
+
+    it('a segment is geometry and a label only — a legacy label / event time changes nothing', () => {
+        const plain = computeTestCoverage([p('a', '2025-03-01T00:00', '2025-03-11T00:00')], B)!;
+        const old: TestPeriod = { ...p('a', '2025-03-01T00:00', '2025-03-11T00:00'), label: 'problem', eventTime: '2025-03-05T00:00', fromHighlight: 'Trip' };
+        const legacy = computeTestCoverage([old], B)!;
+        expect(legacy).toEqual(plain);
+        expect(Object.keys(plain.segments[0]).sort()).toEqual(['label', 'leftPct', 'widthPct']);
+        expect(plain.segments[0].label).not.toMatch(/Known problem|Normal/);
+    });
+
+    it('an unparseable or reversed period draws nothing but keeps its number for the others; unknown bounds = null', () => {
+        const c = computeTestCoverage([p('bad', '2025-02-10T00:00', '2025-02-01T00:00'), p('ok', '2025-03-01T00:00', '2025-03-11T00:00')], B)!;
+        expect(c.segments.map(s => s.label)).toEqual(['S2 · 1 Mar 2025 00:00 – 11 Mar 2025 00:00']);
+        expect(c.usedDays).toBe(10);
+        expect(computeTestCoverage([p('a', '2025-03-01T00:00', '2025-03-11T00:00')], null)).toBeNull();
     });
 });
 

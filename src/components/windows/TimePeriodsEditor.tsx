@@ -142,9 +142,9 @@ interface TimePeriodsEditorProps {
     /** True dataset extent (`useDatasetTimeBounds`); drives defaults and min/max. */
     bounds?: PeriodBounds | null;
     compact?: boolean;
-    /** The test periods next to these train periods (Train/Test validation): drawn
-     *  on the bottom lane of the coverage strip, which is then shown even while
-     *  there is no train period yet. */
+    /** The scoring periods next to these train periods: drawn on the bottom lane
+     *  of the coverage strip, which is then shown even while there is no train
+     *  period yet. */
     tests?: TestPeriod[];
 }
 
@@ -286,7 +286,7 @@ export default function TimePeriodsEditor({ periods, onChange, bounds, compact =
             <div data-testid="time-periods-editor" className="rcm-periods">
                 {/* Coverage strip (restored 2026-10-03 — it was removed by mistake in
                     011675b): draws the editor's own draft, so it follows every edit.
-                    With test periods it is shown even before the first train period. */}
+                    With scoring periods it is shown even before the first train period. */}
                 {(draft.length > 0 || tests !== undefined) && (
                     <PeriodCoverageBar periods={draft} bounds={boundsForCover} className="rcm-cov" tests={tests} />
                 )}

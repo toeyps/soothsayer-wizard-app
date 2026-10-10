@@ -33,11 +33,12 @@ import type { WorkbenchPageProps } from './workbenchTypes';
  *                (no residual distribution, no side histogram — by design)
  *   Clustering   scatter + 1×/3× SD ellipses · cluster summary card
  *
- * Train/Test validation (2026-10-07): when the preview carries
- * `test_validation`, every time chart draws the train / test scopes
- * (`scopesOf` → `TimeSeriesSpec.scopes`) and a "Train vs test" card is added
- * (side column for Individual / Clustering, a capped full row for
- * Relationship), plus an amber note below the recommended train time.
+ * Train and scoring periods (2026-10-07; "just score it" 2026-10-10): when the
+ * preview carries `test_validation`, every time chart draws the train /
+ * scoring scopes (`scopesOf` → `TimeSeriesSpec.scopes`) and a "Train and
+ * scoring periods" card is added (side column for Individual / Clustering, a
+ * capped full row for Relationship), plus an amber note below the recommended
+ * train time.
  *
  * The "Model settings" section and the footer are NOT here: they sit around this
  * body in `BuildModelWindow` (they share the draft/Apply state with the rest of
@@ -67,7 +68,7 @@ const Stat = ({ label, value, testId }: { label: string; value: string; testId?:
 
 /** Memo comparison (see `samePageProps`): small data the window rebuilds per
  *  render is compared by value — the model (re-read from disk after every
- *  write), the test numbers; everything else by identity. */
+ *  write), the scoring-period numbers; everything else by identity. */
 export function sameModelFitProps(a: ModelFitPageProps, b: ModelFitPageProps): boolean {
     return samePageProps(a, b, ['model', 'testNumbers']);
 }
@@ -75,7 +76,7 @@ export function sameModelFitProps(a: ModelFitPageProps, b: ModelFitPageProps): b
 function ModelFitPage(props: ModelFitPageProps) {
     const { data, model, stale, unit } = props;
     const stats = data.stats;
-    // Train / test scopes on every time chart (null = the preview carried no test periods).
+    // Train / scoring scopes on every time chart (null = the preview carried no scoring periods).
     const scopes = scopesOf(data.test_validation, props.testNumbers);
     const custom = model.runningConditionMode === 'custom';
     const daysNotice = (

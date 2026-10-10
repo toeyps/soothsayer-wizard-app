@@ -870,6 +870,97 @@ describe('updateWorkspaceData applies the Incomplete-immediately rule to every w
         const next = await updateWorkspaceData('ws1', prev => ({ ...prev, name: 'x' }));
         expect(next!.failureGroupState!.models[0].status).toBe(true);
     });
+
+    // "Just score it" (2026-10-10, SPEC workbench-redesign §2): a scoring period is only
+    // start -> end. A workspace saved BEFORE that still has `label` / `eventTime` /
+    // `fromHighlight` on its periods: it must load, stay Complete, and never be sent back to
+    // "Mark complete again" just because those keys stop counting or get dropped by an edit.
+    describe('a workspace saved before 2026-10-10 (scoring periods still carrying label / eventTime / fromHighlight)', () => {
+        const OLD_TESTS = [
+            { id: 'o1', start: '2024-01-01T00:00', end: '2024-01-31T23:59', label: 'normal' },
+            { id: 'o2', start: '2024-03-01T00:00', end: '2024-03-31T23:59', label: 'problem', eventTime: '2024-03-20T08:00', fromHighlight: 'Bearing failure' },
+        ];
+        const oldDisk = (models: unknown[]) => JSON.stringify({
+            id: 'ws1', name: 'A',
+            failureGroupState: {
+                groups: [], models, runningConditionFilters: [], runningConditionCombine: 'and', runningConditionNoneConfirmed: true,
+                runningConditionTimePeriods: [{ id: 'tr', start: '2023-01-01T00:00', end: '2023-12-31T23:59' }],
+                runningConditionTestPeriods: OLD_TESTS,
+            },
+        });
+        const complete = (over: Record<string, unknown> = {}) => model({ lastTrainedAt: '2026-10-03T00:00:00Z', trainedFingerprint: 'fp', ...over });
+        const lastWritten = () => {
+            const saved = savedFiles();
+            return JSON.parse(saved[saved.length - 1][1]);
+        };
+
+        it('loads as it is: the model is Complete and the legacy keys are still readable (no migration on load)', async () => {
+            mockStoreGet.mockResolvedValue([]);
+            mockReadTextFile.mockResolvedValue(oldDisk([complete()]));
+            const { loadWorkspaceData } = await freshModule();
+            const state = await loadWorkspaceData('ws1');
+            expect(state!.failureGroupState!.models[0]).toMatchObject({ status: true, trainedFingerprint: 'fp' });
+            expect(state!.failureGroupState!.models[0]).not.toHaveProperty('testsChangedAt');
+            expect(state!.failureGroupState!.runningConditionTestPeriods).toEqual(OLD_TESTS);
+            expect(mockWriteTextFile).not.toHaveBeenCalled(); // reading never rewrites the file
+        });
+
+        it('an unrelated write keeps the model Complete and writes the periods back untouched', async () => {
+            mockStoreGet.mockResolvedValue([]);
+            mockReadTextFile.mockResolvedValue(oldDisk([complete()]));
+            const { updateWorkspaceData } = await freshModule();
+            const next = await updateWorkspaceData('ws1', prev => ({ ...prev, name: 'Renamed' }));
+            expect(next!.failureGroupState!.models[0].status).toBe(true);
+            expect(next!.failureGroupState!.models[0]).not.toHaveProperty('testsChangedAt');
+            expect(lastWritten().failureGroupState.runningConditionTestPeriods).toEqual(OLD_TESTS);
+        });
+
+        it('a write whose periods went through an edit and lost the legacy keys (toScoringPeriods) keeps it Complete — nothing to mark again', async () => {
+            mockStoreGet.mockResolvedValue([]);
+            mockReadTextFile.mockResolvedValue(oldDisk([
+                complete({ id: 'ws-mode' }),
+                complete({ id: 'custom-mode', runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true, customTestPeriods: OLD_TESTS }),
+            ]));
+            const { updateWorkspaceData } = await freshModule();
+            const { toScoringPeriods } = await import('../utils/timePeriods');
+            const next = await updateWorkspaceData('ws1', prev => ({
+                ...prev,
+                failureGroupState: {
+                    ...prev.failureGroupState!,
+                    runningConditionTestPeriods: toScoringPeriods(prev.failureGroupState!.runningConditionTestPeriods),
+                    models: prev.failureGroupState!.models.map(m => (m.customTestPeriods ? { ...m, customTestPeriods: toScoringPeriods(m.customTestPeriods) } : m)),
+                },
+            }));
+            for (const m of next!.failureGroupState!.models) {
+                expect(m.status).toBe(true);
+                expect(m).not.toHaveProperty('testsChangedAt');
+            }
+            const written = lastWritten().failureGroupState;
+            expect(written.models.map((m: any) => m.status)).toEqual([true, true]);
+            expect(JSON.stringify(written)).not.toMatch(/"label"|eventTime|fromHighlight/);
+            expect(written.runningConditionTestPeriods).toEqual([
+                { id: 'o1', start: '2024-01-01T00:00', end: '2024-01-31T23:59' },
+                { id: 'o2', start: '2024-03-01T00:00', end: '2024-03-31T23:59' },
+            ]);
+        });
+
+        it('a real change of an old period (its end moved) still asks for Mark complete again: Incomplete + testsChangedAt, train record kept', async () => {
+            mockStoreGet.mockResolvedValue([]);
+            mockReadTextFile.mockResolvedValue(oldDisk([complete()]));
+            const { updateWorkspaceData } = await freshModule();
+            const { toScoringPeriod } = await import('../utils/timePeriods');
+            const next = await updateWorkspaceData('ws1', prev => ({
+                ...prev,
+                failureGroupState: {
+                    ...prev.failureGroupState!,
+                    runningConditionTestPeriods: prev.failureGroupState!.runningConditionTestPeriods!.map((t, i) => toScoringPeriod(i === 0 ? { ...t, end: '2024-02-15T00:00' } : t)),
+                },
+            }));
+            const m = next!.failureGroupState!.models[0];
+            expect(m).toMatchObject({ status: false, lastTrainedAt: '2026-10-03T00:00:00Z', trainedFingerprint: 'fp' });
+            expect(typeof m.testsChangedAt).toBe('string');
+        });
+    });
 });
 
 describe('deleteWorkspace', () => {

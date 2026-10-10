@@ -96,7 +96,7 @@ import { makeHealthPreview, makeSetPointAwarePreview } from './helpers/healthPre
 import { makeTestResult, makeValidation } from './helpers/validationFixture';
 import { computeTrainFingerprint } from '../utils/trainFingerprint';
 import { snapshotTrainedFormulas } from '../utils/specialSensorSignature';
-import { ALL_TIME_TRAIN, ONE_TEST } from './helpers/trainTestFixture';
+import { ALL_TIME_TRAIN, LEGACY_TESTS, ONE_TEST } from './helpers/trainTestFixture';
 import { MARK_COMPLETE_CLOSE_WAIT } from '../utils/healthPersist';
 import { ADD_TRAIN_PERIOD_HINT, NO_TEST_PERIOD_REASON } from '../utils/runningCondition';
 // @ts-expect-error - @types/node is not installed; vitest runs in Node so this resolves at runtime
@@ -211,8 +211,9 @@ async function deliverData(overrides: Record<string, any> = {}, payloadOver: Rec
             ...(!('rcLegacyNotice' in fg) ? { rcLegacyNotice: null } : {}),
             // Feature 4-C: already-migrated periods, so the periods migration's
             // write-back doesn't fire in tests about something else.
-            // Train/Test validation (2026-10-07): a train period is required to
-            // Train and a test period to Mark complete — default to having both.
+            // Since 2026-10-07 a train period is required to Train and a scoring
+            // period ("test period" until 2026-10-10) to Mark complete — default
+            // to having both.
             ...(!('runningConditionTimePeriods' in fg) ? { runningConditionTimePeriods: ALL_TIME_TRAIN } : {}),
             ...(!('runningConditionTestPeriods' in fg) ? { runningConditionTestPeriods: ONE_TEST } : {}),
             ...fg,
@@ -1691,8 +1692,8 @@ describe('Custom running-condition editor (2026-09-30 port)', () => {
         openSettings();
         fireEvent.click(screen.getByRole('button', { name: 'Custom' }));
         expect(screen.getByTestId('custom-rc-editor')).toBeTruthy();
-        // Train/Test validation: the workspace TEST periods are copied too (seedCustomFromWorkspace).
-        expect(screen.getByTestId('pm-seed-note').textContent).toMatch(/Copied 1 train period, 1 test period and 1 condition from Workspace/);
+        // The workspace SCORING periods are copied too (seedCustomFromWorkspace).
+        expect(screen.getByTestId('pm-seed-note').textContent).toMatch(/Copied 1 train period, 1 scoring period and 1 condition from Workspace/);
         expect((screen.getByPlaceholderText('val') as HTMLInputElement).value).toBe('5');
         expect(within(screen.getByTestId('custom-test-periods')).getByTestId('test-row-1')).toBeTruthy();
 
@@ -1706,9 +1707,8 @@ describe('Custom running-condition editor (2026-09-30 port)', () => {
         expect(saved.runningConditionMode).toBe('custom');
         expect(saved.customRunningConditionFilters[0].value1).toBe('9');
         expect(saved.filterTimePeriods[0].start).toBe('2026-01-01T00:00');
-        // the copied test period is saved as the model's own (fresh id, same range / label)
-        expect(saved.customTestPeriods).toHaveLength(1);
-        expect(saved.customTestPeriods[0]).toMatchObject({ start: ONE_TEST[0].start, end: ONE_TEST[0].end, label: 'normal' });
+        // the copied scoring period is saved as the model's own: a fresh id, the same range, and nothing else
+        expect(saved.customTestPeriods).toEqual([{ id: expect.any(String), start: ONE_TEST[0].start, end: ONE_TEST[0].end }]);
         expect(saved.customTestPeriods[0].id).not.toBe(ONE_TEST[0].id);
     });
 
@@ -1732,7 +1732,7 @@ describe('Custom running-condition editor (2026-09-30 port)', () => {
 
     it('"No condition — use all rows", the AND/OR toggle, and the collapsed summary line ("Custom · N cond · M periods")', async () => {
         render(<BuildModelWindow />);
-        // no workspace conditions/periods (train or test) set — nothing to seed
+        // no workspace conditions/periods (train or scoring) set — nothing to seed
         await deliverData({ failureGroupState: { groups: [makeGroup()], models: [makeModel()], runningConditionTimePeriods: [], runningConditionTestPeriods: [] } });
         openSettings();
         fireEvent.click(screen.getByRole('button', { name: 'Custom' }));
@@ -1749,7 +1749,7 @@ describe('Custom running-condition editor (2026-09-30 port)', () => {
 
         // Collapse "Model settings" back and check the summary line.
         fireEvent.click(screen.getByText('Model settings', { selector: 'b' }));
-        expect(screen.getByText(/Custom · no cond · 0 train · 0 test/)).toBeTruthy();
+        expect(screen.getByText(/Custom · no cond · 0 train · 0 scoring/)).toBeTruthy();
     });
 });
 
@@ -2802,8 +2802,9 @@ describe('Running condition Step 1 — header, card, settings modal preview (202
             expect(state()).toBe('set');
             expect(screen.getByTestId('rc-card').className).toContain('rcc-card--ok');
             expect(screen.getAllByTestId('rc-card-period-chip').map(c => c.textContent)).toEqual(['P1 · 1 Jan 2026 → 31 Mar 2026', 'P2 · 15 Apr 2026 → End']);
-            // Train/Test validation: the persisted test periods sit on their own "Test" row
-            expect(screen.getAllByTestId('rc-card-test-chip').map(c => c.textContent)).toEqual(['T1 Normal · 1 Jan 2024 → 31 Jan 2024']);
+            // the persisted scoring periods sit on their own "Scoring" row: S# · start → end
+            expect(within(screen.getByTestId('rc-card-test')).getByText('Scoring')).toBeTruthy();
+            expect(screen.getAllByTestId('rc-card-test-chip').map(c => c.textContent)).toEqual(['S1 · 1 Jan 2024 → 31 Jan 2024']);
             expect(screen.getByTestId('rc-card-cond-chip').textContent).toBe('Pump PressureTAG1 > 5 bar'); // Inline label (description then tag) + condition; description + unit come from the sensor metadata
             await waitFor(() => expect(screen.getByTestId('rc-card-rows').textContent).toBe('100')); // mocked compute_sensor_stats count
             expect(screen.getByTestId('rc-card-pct').textContent).toBe('rows · 100%');
@@ -2825,7 +2826,7 @@ describe('Running condition Step 1 — header, card, settings modal preview (202
             expect(cardCov().textContent).toContain('Jul 2026');
             const cardDays = () => within(cardCov()).getByTestId('period-coverage-days').textContent;
             const persisted = cardDays();
-            expect(persisted).toMatch(/^\d+ d train · \d+ d test$/);
+            expect(persisted).toMatch(/^\d+ d train · \d+ d scoring$/);
 
             fireEvent.click(screen.getByTestId('rc-card-open'));
             await flush();
@@ -4754,12 +4755,14 @@ describe('Health score - QA fixes 2026-10-04', () => {
 
 
 // ─────────────────────────────────────────────────────────────────────────
-// Train/Test model validation (SPEC FINAL 2026-10-07): the Running condition
-// modal's Apply gate, the workspace test periods + "From Highlights", Mark
-// complete needing a test period, the "Tested · N" footer pill and the
-// "Test periods changed" notice under the Step-1 card.
+// Train periods and scoring periods (SPEC FINAL 2026-10-07, revised
+// 2026-10-10 by workbench-redesign §2 "just score it"): the Running condition
+// modal's Apply gate, the workspace scoring periods (start → end only: no
+// label, no event time, no "From Highlights"), Mark complete needing a scoring
+// period, the "Scored · N" footer pill and the "Scoring periods changed"
+// notice under the Step-1 card.
 // ─────────────────────────────────────────────────────────────────────────
-describe('Train / Test validation in the Build Model window (2026-10-07)', () => {
+describe('Train periods and scoring periods in the Build Model window', () => {
     const seededFilter = { id: 'f1', sensor: 'TAG1', operation: 'greater_than' as const, value1: '5', value2: '' };
     const fgBase = (over: Record<string, any> = {}) => ({
         groups: [makeGroup()], models: [makeModel()],
@@ -4802,55 +4805,131 @@ describe('Train / Test validation in the Build Model window (2026-10-07)', () =>
             expect(screen.queryByTestId('rc-apply-block')).toBeNull();
         });
 
-        it('a Known-problem event time outside its test period is red and blocks Apply; moving it inside unblocks, Apply saves the test periods', async () => {
+        it('a scoring period that ends before it starts is red and blocks Apply; fixing it unblocks, Apply saves the period as id / start / end only', async () => {
             await openModal(fgBase());
             const dlg = within(screen.getByRole('dialog', { name: 'Running condition' }));
-            fireEvent.click(dlg.getByTestId('test-label-problem-1'));
-            const ev = dlg.getByLabelText('Test period 1 event time');
-            fireEvent.change(ev, { target: { value: '2025-05-01T00:00' } });
-            fireEvent.blur(ev);
-            expect(dlg.getByTestId('test-event-invalid-1').textContent).toContain('The event time must be inside T1.');
+            const end = () => dlg.getByLabelText('Scoring period 1 end');
+            fireEvent.change(end(), { target: { value: '2023-12-01T00:00' } });
+            fireEvent.blur(end());
+            expect(dlg.getByTestId('test-invalid-1').textContent).toContain('S1 ends before it starts. Fix it to apply.');
             expect(apply().disabled).toBe(true);
             expect(screen.getByTestId('rc-apply-block').getAttribute('data-kind')).toBe('invalid-test');
-            expect(screen.getByTestId('rc-apply-block').textContent).toBe('The event time must be inside T1.');
+            expect(screen.getByTestId('rc-apply-block').textContent).toBe('S1 ends before it starts.');
+            fireEvent.click(apply());
+            await flush();
+            expect(mockUpdateWorkspaceData).not.toHaveBeenCalled();
 
-            fireEvent.change(dlg.getByLabelText('Test period 1 event time'), { target: { value: '2024-01-20T06:00' } });
-            fireEvent.blur(dlg.getByLabelText('Test period 1 event time'));
-            expect(dlg.queryByTestId('test-event-invalid-1')).toBeNull();
+            fireEvent.change(end(), { target: { value: '2024-01-20T06:00' } });
+            fireEvent.blur(end());
+            expect(dlg.queryByTestId('test-invalid-1')).toBeNull();
             expect(apply().disabled).toBe(false);
             fireEvent.click(apply());
             await flush();
             const fg = await lastWrittenFg();
-            expect(fg.runningConditionTestPeriods).toEqual([{ ...ONE_TEST[0], label: 'problem', eventTime: '2024-01-20T06:00' }]);
+            expect(fg.runningConditionTestPeriods).toEqual([{ id: ONE_TEST[0].id, start: ONE_TEST[0].start, end: '2024-01-20T06:00' }]);
             expect(screen.queryByRole('dialog', { name: 'Running condition' })).toBeNull();
-            // the Step-1 card shows the persisted Known problem with its event
-            expect(screen.getByTestId('rc-card-test-chip').textContent).toContain('T1 Known problem');
-            expect(screen.getByTestId('rc-card-test-event').textContent).toBe(' · event 20 Jan 2024 06:00');
+            // the Step-1 card shows the persisted period as a plain S1 chip
+            expect(screen.getByTestId('rc-card-test-chip').textContent).toBe('S1 · 1 Jan 2024 → 20 Jan 2024 06:00');
+            expect(screen.queryByTestId('rc-card-test-event')).toBeNull();
         });
 
-        it('a test period overlapping the train period is information only: a grey note, Apply still allowed', async () => {
+        it('a scoring period overlapping the train period is information only: one quiet note, Apply still allowed', async () => {
             await openModal(fgBase());
             const dlg = within(screen.getByRole('dialog', { name: 'Running condition' }));
             // ONE_TEST (Jan 2024) lies inside the train period (Jan 2024)
-            expect(dlg.getByTestId('test-overlap-1').textContent).toContain('T1 includes 31 d of train running time');
+            expect(dlg.getByTestId('test-overlap-1').textContent).toContain('S1 includes 31 d of train running time');
             fireEvent.click(dlg.getByTestId('test-add'));
             expect(apply().disabled).toBe(false);
             expect(screen.queryByTestId('rc-apply-block')).toBeNull();
         });
 
-        it('"From Highlights" offers the workspace\'s Dashboard highlights (re-read when the modal opens); the label stays on the test period', async () => {
+        it('the modal has no label control, no event time and no "From Highlights" for scoring periods — even when the Dashboard has highlights', async () => {
             const hl = { id: 'h1', start: '2024-03-01 00:00:00', end: '2024-03-05 00:00:00', label: 'Seal leak', color: '#f43f5e', enabled: true };
             await openModal(fgBase(), { timeHighlights: [hl] });
-            fireEvent.click(screen.getByTestId('test-from-hl'));
-            fireEvent.click(screen.getByTestId('test-hl-problem-h1'));
+            const dlg = within(screen.getByRole('dialog', { name: 'Running condition' }));
+            expect(dlg.getByTestId('rc-test-head').querySelector('b')!.textContent).toBe('Scoring periods');
+            expect(dlg.getByTestId('test-row-1').querySelector('.tpe-pn')!.textContent).toBe('S1');
+            expect(dlg.queryByTestId('test-from-hl')).toBeNull();
+            expect(dlg.queryByTestId('test-hl-menu')).toBeNull();
+            expect(dlg.queryByTestId('test-label-normal-1')).toBeNull();
+            expect(dlg.queryByTestId('test-label-problem-1')).toBeNull();
+            expect(dlg.queryByLabelText(/event time/i)).toBeNull();
+            const text = screen.getByRole('dialog', { name: 'Running condition' }).textContent ?? '';
+            expect(text).not.toMatch(/Known problem|From Highlights|event time|lead time|Test period|Seal leak/i);
+            // the highlight is still read (it feeds the TRAIN-overlap warning only) and nothing is written onto it
+            fireEvent.click(dlg.getByTestId('test-add'));
             fireEvent.click(apply());
             await flush();
             const written = (await mockUpdateWorkspaceData.mock.results[0].value);
-            expect(written.failureGroupState.runningConditionTestPeriods[1]).toMatchObject({
-                start: '2024-03-01T00:00', end: '2024-03-05T00:00', label: 'problem', fromHighlight: 'Seal leak',
-            });
-            // nothing is written onto the highlight itself
+            expect(written.failureGroupState.runningConditionTestPeriods).toHaveLength(2);
+            for (const t of written.failureGroupState.runningConditionTestPeriods) expect(Object.keys(t).sort()).toEqual(['end', 'id', 'start']);
             expect(written.timeHighlights ?? [hl]).toEqual([hl]);
+        });
+
+        describe('a workspace saved before 2026-10-10 (scoring periods with label / eventTime / fromHighlight)', () => {
+            it('the Step-1 card and the modal show plain S1 / S2 — no label, no event time, no error, Apply not armed', async () => {
+                await openModal(fgBase({ runningConditionTestPeriods: LEGACY_TESTS }));
+                expect(screen.getAllByTestId('rc-card-test-chip').map(c => c.textContent)).toEqual([
+                    'S1 · 1 Jan 2024 → 31 Jan 2024',
+                    'S2 · 1 Mar 2024 → 31 Mar 2024',
+                ]);
+                const dlg = within(screen.getByRole('dialog', { name: 'Running condition' }));
+                expect(dlg.getAllByTestId(/^test-row-\d+$/).map(r => r.querySelector('.tpe-pn')!.textContent)).toEqual(['S1', 'S2']);
+                expect(dlg.getByTestId('rc-preview-tests').textContent).toBe('Scoring2periods');
+                expect(screen.getByRole('dialog', { name: 'Running condition' }).textContent).not.toMatch(/Known problem|Bearing failure|event time/i);
+                expect(dlg.queryByTestId('test-invalid-1')).toBeNull();
+                expect(dlg.queryByTestId('test-invalid-2')).toBeNull();
+                // merely opening it is not an edit: nothing to apply, and closing asks nothing
+                expect(apply().disabled).toBe(true);
+                expect(screen.queryByTestId('rc-dirty-hint')).toBeNull();
+                fireEvent.blur(dlg.getByLabelText('Scoring period 2 end'));
+                expect(apply().disabled).toBe(true);
+                expect(mockUpdateWorkspaceData).not.toHaveBeenCalled();
+            });
+
+            it('after editing ONE period and Apply, the saved list has only id / start / end on EVERY period', async () => {
+                await openModal(fgBase({ runningConditionTestPeriods: LEGACY_TESTS }));
+                const dlg = within(screen.getByRole('dialog', { name: 'Running condition' }));
+                const end = dlg.getByLabelText('Scoring period 1 end');
+                fireEvent.change(end, { target: { value: '2024-01-20T00:00' } });
+                fireEvent.blur(end);
+                expect(apply().disabled).toBe(false);
+                fireEvent.click(apply());
+                await flush();
+                const fg = await lastWrittenFg();
+                expect(fg.runningConditionTestPeriods).toEqual([
+                    { id: 'old-1', start: '2024-01-01T00:00', end: '2024-01-20T00:00' },
+                    { id: 'old-2', start: '2024-03-01T00:00', end: '2024-03-31T23:59' },
+                ]);
+            });
+
+            it('editing something ELSE in the modal (a train period) and Apply also saves the scoring periods without the legacy keys', async () => {
+                await openModal(fgBase({ runningConditionTestPeriods: LEGACY_TESTS }));
+                const dlg = within(screen.getByRole('dialog', { name: 'Running condition' }));
+                const end = dlg.getByLabelText('Period 1 end');
+                fireEvent.change(end, { target: { value: '2024-01-25T00:00' } });
+                fireEvent.blur(end);
+                fireEvent.click(apply());
+                await flush();
+                const fg = await lastWrittenFg();
+                expect(fg.runningConditionTimePeriods[0].end).toBe('2024-01-25T00:00');
+                for (const t of fg.runningConditionTestPeriods) expect(Object.keys(t).sort()).toEqual(['end', 'id', 'start']);
+                expect(fg.runningConditionTestPeriods.map((t: any) => t.id)).toEqual(['old-1', 'old-2']);
+            });
+
+            it('the preview / export requests carry start / end only (the fake Rust refuses anything else)', async () => {
+                await hsMount([HS_IND()], {}, { runningConditionTestPeriods: LEGACY_TESTS });
+                await openHealthPage();
+                await waitFor(() => expect(hsMarkBtn().disabled).toBe(false));
+                expect(healthCalls().slice(-1)[0].test_periods).toEqual([
+                    { start: '2024-01-01T00:00', end: '2024-01-31T23:59' },
+                    { start: '2024-03-01T00:00', end: '2024-03-31T23:59' },
+                ]);
+                expect(screen.getByTestId('scored-pill').textContent).toBe('Scored · 2');
+                await hsClickMark();
+                await waitFor(() => expect(exportCalls()).toHaveLength(1));
+                expect(exportCalls()[0].test_periods).toEqual(healthCalls().slice(-1)[0].test_periods);
+            });
         });
 
         it('a train period overlapping a highlight shows the amber warning; "Remove the overlap" splits it in the draft', async () => {
@@ -4863,51 +4942,103 @@ describe('Train / Test validation in the Build Model window (2026-10-07)', () =>
             expect(dlg.queryByTestId('train-hl-warning')).toBeNull();
             expect(apply().disabled).toBe(false);
         });
+
+        // Test gap (QA 2026-10-10). Opening the modal is now the ONLY moment the Dashboard
+        // highlights are re-read (the scoring-period "From Highlights" menu, which also re-read
+        // them, is gone) - so a highlight the Dashboard added AFTER this window opened must show
+        // up the next time the modal opens, and one it removed must be gone the time after.
+        it('the Dashboard highlights are re-read each time the modal opens: one added after this window opened raises the warning, one removed since is gone on the next open', async () => {
+            const fg = fgBase();
+            const hl = { id: 'h1', start: '2024-01-10 00:00:00', end: '2024-01-12 00:00:00', label: 'Trip', color: '#f43f5e', enabled: true };
+            const disk = (timeHighlights: unknown[]) => ({ id: 'ws1', failureGroupState: fg, timeHighlights });
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: fg }); // hydration: the workspace has NO highlight yet
+            statefulUpdateMock(fg.models, fg);
+            const modal = () => screen.getByRole('dialog', { name: 'Running condition' });
+
+            // The Dashboard adds a highlight (on disk). The closed window does not poll for it.
+            mockLoadWorkspaceData.mockResolvedValue(disk([hl]));
+            const loads = mockLoadWorkspaceData.mock.calls.length;
+            await flush();
+            expect(mockLoadWorkspaceData.mock.calls.length).toBe(loads);
+
+            fireEvent.click(screen.getByTestId('rc-card-open'));
+            await waitFor(() => expect(within(modal()).getByTestId('train-hl-warning').textContent).toContain('Train P1 overlaps the highlight “Trip”'));
+            expect(mockLoadWorkspaceData.mock.calls.length).toBe(loads + 1);
+            expect(mockLoadWorkspaceData.mock.calls[loads][0]).toBe('ws1');
+            // Re-reading is not an edit: nothing to apply, nothing written.
+            expect(apply().disabled).toBe(true);
+            expect(mockUpdateWorkspaceData).not.toHaveBeenCalled();
+
+            // Close, the Dashboard deletes the highlight, reopen: read again, warning gone.
+            fireEvent.click(within(modal()).getByLabelText('Close'));
+            expect(screen.queryByRole('dialog', { name: 'Running condition' })).toBeNull();
+            mockLoadWorkspaceData.mockResolvedValue(disk([]));
+            fireEvent.click(screen.getByTestId('rc-card-open'));
+            await waitFor(() => expect(mockLoadWorkspaceData.mock.calls.length).toBe(loads + 2));
+            await waitFor(() => expect(within(modal()).queryByTestId('train-hl-warning')).toBeNull());
+            expect(within(modal()).getAllByTestId(/^period-row-/)).toHaveLength(1); // the train period itself was never touched
+        });
+
+        it('a failed re-read keeps the last highlights (the warning stays) and the modal still opens', async () => {
+            const fg = fgBase();
+            const hl = { id: 'h1', start: '2024-01-10 00:00:00', end: '2024-01-12 00:00:00', label: 'Trip', color: '#f43f5e', enabled: true };
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: fg, timeHighlights: [hl] });
+            statefulUpdateMock(fg.models, fg);
+            mockLoadWorkspaceData.mockRejectedValue(new Error('file is locked'));
+            fireEvent.click(screen.getByTestId('rc-card-open'));
+            await flush();
+            const dlg = within(screen.getByRole('dialog', { name: 'Running condition' }));
+            expect(dlg.getByTestId('train-hl-warning').textContent).toContain('Trip');
+        });
     });
 
-    describe('Mark complete needs a test period; "Tested · N" in the footer only', () => {
-        it('no test period: Mark complete is disabled with the reason, and clicking exports nothing', async () => {
+    describe('Mark complete needs a scoring period; "Scored · N" in the footer only', () => {
+        it('no scoring period: Mark complete is disabled with the reason, and clicking exports nothing', async () => {
             await hsMount([HS_IND()], {}, { runningConditionTestPeriods: [] });
             await openHealthPage();
             await waitFor(() => expect(screen.getByTestId('mark-block-reason').textContent).toBe(NO_TEST_PERIOD_REASON));
+            expect(NO_TEST_PERIOD_REASON).toBe('Add a scoring period before marking complete (Running condition → Edit).');
             expect(hsMarkBtn().disabled).toBe(true);
             expect(hsMarkBtn().title).toBe(NO_TEST_PERIOD_REASON);
             await hsClickMark();
             expect(exportCalls()).toHaveLength(0);
-            expect(screen.queryByTestId('tested-pill')).toBeNull();
+            expect(screen.queryByTestId('scored-pill')).toBeNull();
         });
 
-        it('with a test period: Mark complete is enabled, the export carries test_periods, and the footer shows "Tested · 1"', async () => {
+        it('with a scoring period: Mark complete is enabled, the requests carry test_periods as start / end only, and the footer shows "Scored · 1"', async () => {
             await hsMount([HS_IND()]);
             await openHealthPage();
             await waitFor(() => expect(hsMarkBtn().disabled).toBe(false));
-            expect(screen.getByTestId('tested-pill').textContent).toBe('Tested · 1');
-            expect(healthCalls().slice(-1)[0].test_periods).toEqual([{ start: ONE_TEST[0].start, end: ONE_TEST[0].end, label: 'normal', event_time: null }]);
+            expect(screen.getByTestId('scored-pill').textContent).toBe('Scored · 1');
+            expect(screen.queryByTestId('tested-pill')).toBeNull();
+            expect(healthCalls().slice(-1)[0].test_periods).toEqual([{ start: ONE_TEST[0].start, end: ONE_TEST[0].end }]);
             await hsClickMark();
             await waitFor(() => expect(exportCalls()).toHaveLength(1));
-            expect(exportCalls()[0].test_periods).toHaveLength(1);
+            expect(exportCalls()[0].test_periods).toEqual([{ start: ONE_TEST[0].start, end: ONE_TEST[0].end }]);
             // the pill also sits in the Model fit footer, never anywhere else
             fireEvent.click(screen.getByTestId('footer-back-to-fit'));
-            expect(screen.getAllByTestId('tested-pill')).toHaveLength(1);
-            expect(screen.getByTestId('tested-pill').closest('.f4-foot')).not.toBeNull();
+            expect(screen.getAllByTestId('scored-pill')).toHaveLength(1);
+            expect(screen.getByTestId('scored-pill').closest('.f4-foot')).not.toBeNull();
         });
 
-        it('an untrained model shows no "Tested" pill', async () => {
+        it('an untrained model shows no "Scored" pill', async () => {
             await hsMount([makeModel()]);
-            expect(screen.queryByTestId('tested-pill')).toBeNull();
+            expect(screen.queryByTestId('scored-pill')).toBeNull();
         });
     });
 
-    describe('"Test periods changed" (rule 8)', () => {
+    describe('"Scoring periods changed"', () => {
         it('a notice under the Step-1 card counts the models that need Mark complete again', async () => {
             await hsMount([HS_IND({ status: false, testsChangedAt: '2026-10-07T01:00:00.000Z' })]);
             expect(screen.getByTestId('tests-changed-notice').textContent)
-                .toBe('Test periods changed — 1 complete model needs Mark complete again. It was not re-trained.');
+                .toBe('Scoring periods changed — 1 complete model needs Mark complete again. It was not re-trained.');
         });
 
-        it('the Health score page shows the banner; "removed" when no test period is left', async () => {
+        it('the Health score page shows the banner; "removed" when no scoring period is left', async () => {
             await hsMount([HS_IND({ status: false, testsChangedAt: '2026-10-07T01:00:00.000Z' })], {}, { runningConditionTestPeriods: [] });
-            expect(screen.getByTestId('tests-changed-notice').textContent).toContain('Test periods removed');
+            expect(screen.getByTestId('tests-changed-notice').textContent).toContain('Scoring periods removed');
             await openHealthPage();
             expect(screen.getByTestId('tests-changed-banner').getAttribute('data-state')).toBe('removed');
         });
@@ -4929,16 +5060,19 @@ describe('Train / Test validation in the Build Model window (2026-10-07)', () =>
         });
     });
 
-    describe('Custom mode: the model\'s own test periods live in Model settings', () => {
-        it('switching to Custom shows the test periods editor next to the train periods; edits stay in the draft until Save', async () => {
+    describe('Custom mode: the model\'s own scoring periods live in Model settings', () => {
+        it('switching to Custom shows the scoring periods editor next to the train periods; edits stay in the draft until Save', async () => {
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: fgBase({ runningConditionNoneConfirmed: true }) });
             statefulUpdateMock([makeModel()], fgBase({ runningConditionNoneConfirmed: true }));
             openSettings();
             fireEvent.click(screen.getByRole('button', { name: 'Custom' }));
             const tests = within(screen.getByTestId('custom-test-periods'));
+            expect(screen.getByTestId('custom-test-periods').textContent).toContain('Scoring periods');
+            expect(screen.getByTestId('custom-test-periods').textContent).not.toMatch(/Test periods|From Highlights|Known problem/);
             expect(tests.getByTestId('test-periods-editor').className).toContain('tpe-periods--compact');
-            fireEvent.click(tests.getByLabelText('Remove test period 1'));
+            expect(tests.queryByTestId('test-from-hl')).toBeNull();
+            fireEvent.click(tests.getByLabelText('Remove scoring period 1'));
             expect(tests.getByTestId('tests-empty')).toBeTruthy();
             await act(async () => {
                 fireEvent.click(screen.getByText('Save changes'));
@@ -4953,8 +5087,9 @@ describe('Train / Test validation in the Build Model window (2026-10-07)', () =>
     });
 });
 
-// 🆕 2026-10-07 code-review fixes on Train/Test validation (fe-ui-agent).
-describe('Train / Test validation — review fixes (2026-10-07)', () => {
+// 🆕 2026-10-07 code-review fixes on train / scoring periods (fe-ui-agent);
+// reworded 2026-10-10 for "just score it" (no label, no event time).
+describe('Train periods and scoring periods — review fixes (2026-10-07)', () => {
     const CUSTOM_TRAIN = [{ id: 'ct', start: '2024-01-01T00:00', end: '2024-01-11T00:00' }];
     const customInd = (over: Record<string, any> = {}) => withTrained(makeModel({
         healthSetPoints: HS_SNAP,
@@ -4967,60 +5102,139 @@ describe('Train / Test validation — review fixes (2026-10-07)', () => {
         (await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value).failureGroupState;
 
     describe('Mark complete saves unsaved Model settings first (must-fix 1)', () => {
-        it('a Custom model with an UNSAVED test-period edit: Mark complete succeeds once, files written once, disk has the edited tests', async () => {
+        it('a Custom model with an UNSAVED scoring-period edit: Mark complete succeeds once, files written once, disk has the edited periods', async () => {
             await hsMount([customInd()]);
             openSettings();
-            fireEvent.click(customTests().getByTestId('test-label-problem-1'));
+            const end = customTests().getByLabelText('Scoring period 1 end');
+            fireEvent.change(end, { target: { value: '2024-01-25T00:00' } });
+            fireEvent.blur(end);
             await openHealthPage();
             await waitFor(() => expect(hsMarkBtn().disabled).toBe(false));
             await hsClickMark();
             await waitFor(() => expect(screen.getByTestId('save-ok')).toBeTruthy());
             expect(screen.queryByTestId('save-error')).toBeNull();
-            // the files describe the edited tests, and were written exactly once
+            // the files describe the edited periods, and were written exactly once
             expect(exportCalls()).toHaveLength(1);
-            expect(exportCalls()[0].test_periods).toEqual([{ start: ONE_TEST[0].start, end: ONE_TEST[0].end, label: 'problem', event_time: null }]);
-            // what is on disk: Complete, with the edited tests, no "changed" stamp left
+            expect(exportCalls()[0].test_periods).toEqual([{ start: ONE_TEST[0].start, end: '2024-01-25T00:00' }]);
+            // what is on disk: Complete, with the edited periods (id / start / end only), no "changed" stamp left
             const fg = await lastFg();
             expect(fg.models[0].status).toBe(true);
-            expect(fg.models[0].customTestPeriods).toEqual([{ ...ONE_TEST[0], label: 'problem' }]);
+            expect(fg.models[0].customTestPeriods).toEqual([{ id: ONE_TEST[0].id, start: ONE_TEST[0].start, end: '2024-01-25T00:00' }]);
             expect(fg.models[0].testsChangedAt).toBeUndefined();
             expect(fg.models[0].healthExport).toBeTruthy();
         });
 
     });
 
-    describe('Custom test periods are validated on Save (should-fix 2a)', () => {
-        it('an event time outside its test period blocks Save changes (and Train) with the reason; the editor says "to save"', async () => {
+    describe('Custom scoring periods are validated on Save (should-fix 2a)', () => {
+        it('a scoring period that ends before it starts blocks Save changes (and Train) with the reason; the editor says "to save"', async () => {
             await hsMount([customInd()]);
             openSettings();
-            fireEvent.click(customTests().getByTestId('test-label-problem-1'));
-            const ev = customTests().getByLabelText('Test period 1 event time');
-            fireEvent.change(ev, { target: { value: '2025-05-01T00:00' } });
-            fireEvent.blur(ev);
-            expect(customTests().getByTestId('test-event-invalid-1').textContent).toContain('Fix it, or clear it, to save.');
+            const end = () => customTests().getByLabelText('Scoring period 1 end');
+            fireEvent.change(end(), { target: { value: '2023-12-01T00:00' } });
+            fireEvent.blur(end());
+            expect(customTests().getByTestId('test-invalid-1').textContent).toContain('S1 ends before it starts. Fix it to save.');
             const save = screen.getByText('Save changes') as HTMLButtonElement;
             expect(save.disabled).toBe(true);
-            expect(screen.getByTestId('build-block-reason').textContent).toContain('The event time must be inside T1.');
+            expect(screen.getByTestId('build-block-reason').textContent).toContain('S1 ends before it starts.');
             mockUpdateWorkspaceData.mockClear();
             fireEvent.click(save);
             await flush();
             expect(mockUpdateWorkspaceData).not.toHaveBeenCalled();
-            // moving it inside lifts the block
-            fireEvent.change(customTests().getByLabelText('Test period 1 event time'), { target: { value: '2024-01-20T06:00' } });
-            fireEvent.blur(customTests().getByLabelText('Test period 1 event time'));
+            // fixing the date lifts the block
+            fireEvent.change(end(), { target: { value: '2024-01-20T06:00' } });
+            fireEvent.blur(end());
             expect((screen.getByText('Save changes') as HTMLButtonElement).disabled).toBe(false);
         });
 
-        it('a Workspace-mode model is never blocked by its (unused) custom test list', async () => {
+        it('a Custom model of a workspace saved before 2026-10-10: plain S1 / S2 rows, and Save changes after editing one writes id / start / end only', async () => {
+            await hsMount([customInd({ customTestPeriods: LEGACY_TESTS })]);
+            openSettings();
+            expect(customTests().getAllByTestId(/^test-row-\d+$/).map(r => r.querySelector('.tpe-pn')!.textContent)).toEqual(['S1', 'S2']);
+            expect(screen.getByTestId('custom-test-periods').textContent).not.toMatch(/Known problem|Bearing failure|event/i);
+            // a legacy event time is not validated any more
+            expect(screen.queryByTestId('build-block-reason')).toBeNull();
+            const end = customTests().getByLabelText('Scoring period 2 end');
+            fireEvent.change(end, { target: { value: '2024-03-20T00:00' } });
+            fireEvent.blur(end);
+            await act(async () => {
+                fireEvent.click(screen.getByText('Save changes'));
+                await Promise.resolve(); await Promise.resolve();
+            });
+            const fg = await lastFg();
+            expect(fg.models[0].customTestPeriods).toEqual([
+                { id: 'old-1', start: '2024-01-01T00:00', end: '2024-01-31T23:59' },
+                { id: 'old-2', start: '2024-03-01T00:00', end: '2024-03-20T00:00' },
+            ]);
+        });
+
+        it('a Workspace-mode model is never blocked by its (unused) custom scoring list', async () => {
             await hsMount([withTrained(makeModel({ healthSetPoints: HS_SNAP, customTestPeriods: [{ ...ONE_TEST[0], end: '' }] }))]);
             expect(screen.queryByTestId('build-block-reason')).toBeNull();
         });
     });
 
-    describe('test results are numbered by their ORIGINAL list position (should-fix 2b)', () => {
-        it('[T1 invalid, T2 valid]: only T2 is sent, and the table row, tile and overlap note all say "T2"', async () => {
+    // Test gap (QA 2026-10-10): the Custom editor in Model settings has its OWN copy of the
+    // train-vs-highlight warning, fed by the model's own train periods and writing into the
+    // model's DRAFT (Save changes commits it) - it was only tested for the workspace modal.
+    describe('a Custom model\'s own train periods against the Dashboard highlights (test gap)', () => {
+        // CUSTOM_TRAIN is 1 Jan -> 11 Jan 2024; the highlight sits inside it.
+        const HL = { id: 'h1', start: '2024-01-05 00:00:00', end: '2024-01-07 00:00:00', label: 'Trip', color: '#f43f5e', enabled: true };
+        const customPeriods = () => within(screen.getByTestId('custom-periods'));
+        const mountCustom = async (model: any, timeHighlights: unknown[]) => {
+            mockInvoke.mockImplementation(healthInvoke);
+            statefulUpdateMock([model]);
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: { groups: [makeGroup()], models: [model] }, timeHighlights });
+            openSettings();
+        };
+
+        it('the warning names the model\'s own train period; "Remove the overlap" splits it in the DRAFT only, and Save changes writes the two periods to the model (workspace list untouched)', async () => {
+            await mountCustom(customInd(), [HL]);
+            // Only the Custom editor's warning is on screen (the workspace's own all-time train
+            // period overlaps the highlight too, but that one lives in the closed modal).
+            expect(screen.getAllByTestId('train-hl-warning')).toHaveLength(1);
+            expect(customPeriods().getByTestId('train-hl-warning').textContent).toContain('Train P1 overlaps the highlight “Trip”');
+            expect(customPeriods().getAllByTestId(/^period-row-/)).toHaveLength(1);
+
+            mockUpdateWorkspaceData.mockClear();
+            fireEvent.click(customPeriods().getByTestId('train-hl-split'));
+            expect(customPeriods().queryByTestId('train-hl-warning')).toBeNull();
+            expect(customPeriods().getAllByTestId(/^period-row-/)).toHaveLength(2);
+            // It went into the draft: nothing on disk yet, Save changes is armed.
+            await flush();
+            expect(mockUpdateWorkspaceData).not.toHaveBeenCalled();
+            const save = screen.getByText('Save changes') as HTMLButtonElement;
+            expect(save.disabled).toBe(false);
+
+            await act(async () => { fireEvent.click(save); await Promise.resolve(); await Promise.resolve(); });
+            const fg = await lastFg();
+            expect(fg.models[0].filterTimePeriods.map((p: any) => [p.start, p.end])).toEqual([
+                ['2024-01-01T00:00', '2024-01-04T23:59'],
+                ['2024-01-07T00:01', '2024-01-11T00:00'],
+            ]);
+            expect(fg.models[0].filterTimePeriods[0].id).toBe('ct'); // the first half keeps the period's id
+            expect(fg.models[0].runningConditionMode).toBe('custom');
+            // the workspace's own train periods are not this editor's to change
+            expect(fg.runningConditionTimePeriods).toEqual(ALL_TIME_TRAIN);
+            // the model's scoring periods ride along unchanged
+            expect(fg.models[0].customTestPeriods).toEqual(ONE_TEST);
+            // and the saved result raises no warning any more
+            expect(screen.queryByTestId('train-hl-warning')).toBeNull();
+        });
+
+        it('no warning for a highlight outside the model\'s own train periods, or a disabled one - even though the WORKSPACE train period overlaps both', async () => {
+            const outside = { ...HL, id: 'h2', start: '2024-02-01 00:00:00', end: '2024-02-03 00:00:00', label: 'Later' };
+            await mountCustom(customInd(), [outside, { ...HL, enabled: false }]);
+            expect(screen.queryByTestId('train-hl-warning')).toBeNull();
+            expect(customPeriods().getAllByTestId(/^period-row-/)).toHaveLength(1);
+        });
+    });
+
+    describe('scoring results are numbered by their ORIGINAL list position (should-fix 2b)', () => {
+        it('[S1 invalid, S2 valid]: only S2 is sent, and the table row, tile and overlap note all say "S2"', async () => {
             const tests = [
-                { id: 'bad', start: '2024-02-10T00:00', end: '2024-02-01T00:00', label: 'normal' },
+                { id: 'bad', start: '2024-02-10T00:00', end: '2024-02-01T00:00' },
                 { ...ONE_TEST[0], id: 'good' },
             ];
             mockInvoke.mockImplementation((cmd: string, args?: any) => {
@@ -5028,7 +5242,7 @@ describe('Train / Test validation — review fixes (2026-10-07)', () => {
                     const req = args?.request;
                     return Promise.resolve(makeSetPointAwarePreview(req, {
                         test_validation: makeValidation({
-                            tests: (req?.test_periods ?? []).map((t: any, i: number) => makeTestResult({ index: i + 1, start: t.start, end: t.end, label: t.label, train_rows: 10, train_days: 2 })),
+                            tests: (req?.test_periods ?? []).map((t: any, i: number) => makeTestResult({ index: i + 1, start: t.start, end: t.end, train_rows: 10, train_days: 2 })),
                         }),
                     }));
                 }
@@ -5039,18 +5253,18 @@ describe('Train / Test validation — review fixes (2026-10-07)', () => {
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: { groups: [makeGroup()], models: [model], runningConditionTestPeriods: tests } });
             await waitFor(() => expect(screen.getByTestId('train-test-row-2')).toBeTruthy());
-            expect(healthCalls().slice(-1)[0].test_periods).toHaveLength(1);
+            expect(healthCalls().slice(-1)[0].test_periods).toEqual([{ start: ONE_TEST[0].start, end: ONE_TEST[0].end }]);
             expect(screen.queryByTestId('train-test-row-1')).toBeNull();
-            expect(screen.getByTestId('train-test-row-2').textContent).toContain('T2 Normal');
-            expect(screen.getByTestId('train-test-overlap-2').textContent).toContain('T2 includes 2 d of train running time');
+            expect(screen.getByTestId('train-test-row-2').querySelector('.vt-scope b')!.textContent).toBe('S2');
+            expect(screen.getByTestId('train-test-overlap-2').textContent).toContain('S2 includes 2 d of train running time');
             await openHealthPage();
-            expect(screen.getByTestId('test-result-2').textContent).toContain('T2 Normal');
-            expect(screen.getByTestId('test-result-overlap-2').textContent).toContain('T2 includes');
+            expect(screen.getByTestId('test-result-2').querySelector('.vt-th b')!.textContent).toBe('S2');
+            expect(screen.getByTestId('test-result-overlap-2').textContent).toContain('S2 includes');
             expect(screen.queryByTestId('test-result-1')).toBeNull();
         });
     });
 
-    describe('Relation model: Train also predicts the test rows; slow scoring says so (should-fix 3)', () => {
+    describe('Relation model: Train also predicts the scoring periods\' rows; slow scoring says so (should-fix 3)', () => {
         const relModel = (over: Record<string, any> = {}) => makeModel({ id: 'r1', kind: 'relationship', targetSensor: 'TAG1', predictorSensors: ['TAG2'], relStiffness: 10_000, ...over });
         const trainArgs = async (model: any, fgOver: Record<string, any> = {}) => {
             cleanup();
@@ -5062,20 +5276,21 @@ describe('Train / Test validation — review fixes (2026-10-07)', () => {
             return mockInvoke.mock.calls.find(c => c[0] === 'preview_relationship_model')![1] as any;
         };
 
-        it('Workspace mode sends the workspace test periods; Custom its own; none = no test_periods key', async () => {
+        it('Workspace mode sends the workspace scoring periods; Custom its own; none = no test_periods key — always start / end only', async () => {
             const ws = await trainArgs(relModel());
-            expect(ws.test_periods).toEqual([{ start: ONE_TEST[0].start, end: ONE_TEST[0].end, label: 'normal', event_time: null }]);
+            expect(ws.test_periods).toEqual([{ start: ONE_TEST[0].start, end: ONE_TEST[0].end }]);
             expect(ws.cache_key).toMatch(/^r1::/);
 
+            // the model's own list still carries a label / event time from before 2026-10-10: never sent
             const own = [{ id: 'o1', start: '2024-03-01T00:00', end: '2024-03-10T00:00', label: 'problem', eventTime: '2024-03-05T12:00' }];
             const custom = await trainArgs(relModel({ runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true, filterTimePeriods: CUSTOM_TRAIN, customTestPeriods: own }));
-            expect(custom.test_periods).toEqual([{ start: '2024-03-01T00:00', end: '2024-03-10T00:00', label: 'problem', event_time: '2024-03-05T12:00' }]);
+            expect(custom.test_periods).toEqual([{ start: '2024-03-01T00:00', end: '2024-03-10T00:00' }]);
 
             const none = await trainArgs(relModel(), { runningConditionTestPeriods: [] });
             expect(none).not.toHaveProperty('test_periods');
         });
 
-        it('a test-scoring health preview that takes a while shows the "Scoring test periods" hint; none without test periods', async () => {
+        it('a health preview that scores scoring periods and takes a while shows the "Scoring these periods" hint; none without scoring periods', async () => {
             mockInvoke.mockImplementation((cmd: string, args?: any) =>
                 cmd === 'compute_health_preview' ? new Promise(() => {}) : healthInvoke(cmd, args));
             const rel = HS_REL();
@@ -5086,7 +5301,7 @@ describe('Train / Test validation — review fixes (2026-10-07)', () => {
             // not at once (a cached re-score finishes well before) ...
             expect(screen.queryByTestId('slow-test-scoring')).toBeNull();
             // ... but once it has been loading for a moment
-            await waitFor(() => expect(screen.getByTestId('slow-test-scoring').textContent).toContain('Scoring test periods with the Relation model'), { timeout: 3000 });
+            await waitFor(() => expect(screen.getByTestId('slow-test-scoring').textContent).toContain('Scoring these periods with the Relation model'), { timeout: 3000 });
 
             cleanup();
             mockInvoke.mockClear();
@@ -5114,7 +5329,7 @@ describe('Train / Test validation — review fixes (2026-10-07)', () => {
     });
 
     describe('recommended train days: an estimate for a Custom model too (nit 7)', () => {
-        it('a Custom model with no test period gets the amber "Only N d" note from its own row count', async () => {
+        it('a Custom model with no scoring period gets the amber "Only N d" note from its own row count', async () => {
             mockInvoke.mockImplementation((cmd: string, args?: any) => {
                 if (cmd === 'get_dataset_time_bounds') return Promise.resolve({ min: '2024-01-01 00:00:00', max: '2024-04-10 00:00:00' }); // 100 days
                 if (cmd === 'compute_sensor_stats') {
@@ -5133,14 +5348,15 @@ describe('Train / Test validation — review fixes (2026-10-07)', () => {
     });
 
     describe('re-pointing the window at another workspace (test gap)', () => {
-        it('drops the old workspace test periods and Dashboard highlights at once (before the new one has loaded)', async () => {
+        it('drops the old workspace scoring periods and Dashboard highlights at once (before the new one has loaded)', async () => {
+            // A's highlight overlaps A's (all-time) train period: the amber TRAIN-overlap warning is how a highlight shows.
             const hl = { id: 'h1', start: '2024-03-01 00:00:00', end: '2024-03-05 00:00:00', label: 'Seal leak', color: '#f43f5e', enabled: true };
             render(<BuildModelWindow />);
             await deliverData({ timeHighlights: [hl] });
-            expect(screen.getAllByTestId('rc-card-test-chip')[0].textContent).toContain('T1 Normal');
+            expect(screen.getAllByTestId('rc-card-test-chip')[0].textContent).toContain('S1 · ');
             fireEvent.click(screen.getByTestId('rc-card-open'));
             await flush();
-            expect((screen.getByTestId('test-from-hl') as HTMLButtonElement).disabled).toBe(false);
+            expect(screen.getByTestId('train-hl-warning').textContent).toContain('Seal leak');
 
             // workspace B never finishes loading: anything still on screen would be A's
             mockLoadWorkspaceData.mockReturnValue(new Promise(() => {}));
@@ -5154,14 +5370,18 @@ describe('Train / Test validation — review fixes (2026-10-07)', () => {
             });
             // the re-point also closed the modal
             expect(screen.queryByRole('dialog', { name: 'Running condition' })).toBeNull();
-            // B has nothing configured yet (its load is pending): no trace of A's T1 anywhere
+            // B has nothing configured yet (its load is pending): no trace of A's S1 anywhere
             expect(screen.getByTestId('rc-card').getAttribute('data-state')).toBe('unset');
-            expect(screen.queryByText(/T1 Normal/)).toBeNull();
+            expect(screen.queryByTestId('rc-card-test-chip')).toBeNull();
             fireEvent.click(screen.getByTestId('rc-card-open'));
             await flush();
             const dlg = within(screen.getByRole('dialog', { name: 'Running condition' }));
             expect(dlg.queryByTestId('test-row-1')).toBeNull();
-            expect((dlg.getByTestId('test-from-hl') as HTMLButtonElement).disabled).toBe(true);
+            // ...and A's highlight is gone too: a train period added in B raises no overlap warning
+            fireEvent.click(dlg.getByTestId('period-add'));
+            expect(dlg.getAllByTestId(/^period-row-/)).toHaveLength(1);
+            expect(dlg.queryByTestId('train-hl-warning')).toBeNull();
+            expect(screen.getByRole('dialog', { name: 'Running condition' }).textContent).not.toContain('Seal leak');
         });
     });
 });
@@ -5495,7 +5715,44 @@ describe('train queue wiring — review fixes (phase 4)', () => {
         expect(preventDefault).not.toHaveBeenCalled();
     });
 
-    it('a hung train at close: "Stop after this model and close" gives up after the cap with a notice; the next close goes through; a second Stop does not wait twice', async () => {
+    // Split in two on 2026-10-10 (was ONE test with a 30 ms real-time cap that then ran two more
+    // act() rounds assuming the wait was still pending - on a loaded machine one round took longer
+    // than 30 ms, the cap fired early, and the "second" Close simply closed the window). Each half
+    // is now independent of how long a step takes: the first never lets the cap elapse, the second
+    // does nothing between Stop and the notice.
+    it('a hung train at close: a second "Stop after this model and close" while the first still waits is ignored - one wait, one close', async () => {
+        // The cap stays at its real value (90 s): it cannot elapse inside this test, so the
+        // first Stop is certainly still waiting whenever the second one arrives.
+        expect(MARK_COMPLETE_CLOSE_WAIT.ms).toBeGreaterThanOrEqual(60_000);
+        const release = hold('TAG2'); // held: the sidecar is "still training"
+        try {
+            await mountModels([IND2(), makeModel({ id: 'i4', targetSensor: 'TAG3' })]);
+            await clickTrainAll();
+            await act(async () => { fireEvent.click(screen.getByTitle('Close')); await Promise.resolve(); });
+            await act(async () => { fireEvent.click(screen.getByTestId('close-run-stop')); await Promise.resolve(); });
+            expect(screen.queryByRole('alertdialog')).toBeNull();
+            // A second attempt while the first still waits: the dialog again, Stop again — ignored.
+            await act(async () => { fireEvent.click(screen.getByTitle('Close')); await Promise.resolve(); });
+            expect(screen.getByRole('alertdialog')).toBeTruthy(); // the run is still active: it asks again
+            await act(async () => { fireEvent.click(screen.getByTestId('close-run-stop')); await Promise.resolve(); });
+            expect(screen.queryByRole('alertdialog')).toBeNull();
+            expect(mockClose).not.toHaveBeenCalled();
+            expect(screen.queryByTestId('close-wait-notice')).toBeNull(); // nobody gave up
+            // The model in training finishes: the ONE waiting Stop closes the window, once.
+            await release();
+            await waitFor(() => expect(mockClose).toHaveBeenCalledTimes(1));
+            await flush();
+            await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+            expect(mockClose).toHaveBeenCalledTimes(1); // a second, un-ignored Stop would have closed again
+            expect(screen.queryByTestId('close-wait-notice')).toBeNull();
+            // The run stopped after the model in training: the queued one never started.
+            expect(statsFor('TAG3')).toHaveLength(0);
+        } finally {
+            await release();
+        }
+    });
+
+    it('a hung train at close: "Stop after this model and close" gives up after the cap with a notice; the next close goes through', async () => {
         const wait = MARK_COMPLETE_CLOSE_WAIT.ms;
         MARK_COMPLETE_CLOSE_WAIT.ms = 30;
         try {
@@ -5504,16 +5761,14 @@ describe('train queue wiring — review fixes (phase 4)', () => {
             await clickTrainAll();
             await act(async () => { fireEvent.click(screen.getByTitle('Close')); await Promise.resolve(); });
             await act(async () => { fireEvent.click(screen.getByTestId('close-run-stop')); await Promise.resolve(); });
-            // A second attempt while the first still waits: the dialog again, Stop again — ignored.
-            await act(async () => { fireEvent.click(screen.getByTitle('Close')); await Promise.resolve(); });
-            await act(async () => { fireEvent.click(screen.getByTestId('close-run-stop')); await Promise.resolve(); });
+            // Nothing else happens until the cap has elapsed - however long that takes on this machine.
             await waitFor(() => expect(screen.getByTestId('close-wait-notice').textContent).toContain('Still training a model'));
             expect(mockClose).not.toHaveBeenCalled();
             // The next close goes through (no dialog), and a rejected close() is caught.
             mockClose.mockRejectedValueOnce(new Error('window already closing'));
             await act(async () => { fireEvent.click(screen.getByTitle('Close')); await Promise.resolve(); await Promise.resolve(); });
             expect(screen.queryByRole('alertdialog')).toBeNull();
-            expect(mockClose).toHaveBeenCalledTimes(1);
+            await waitFor(() => expect(mockClose).toHaveBeenCalledTimes(1));
             const preventDefault = vi.fn();
             await act(async () => { await mockCloseRequestedHandler!({ preventDefault }); });
             expect(screen.queryByRole('alertdialog')).toBeNull();

@@ -35,6 +35,14 @@
  *    shared in-memory file map under `workspaces/{id}/output/...`.
  *  - `get_model_output_dir` (`workspace_id`).
  *  - Tauri arg-key casing: an unexpected or missing top-level key rejects.
+ *  - Scoring periods (`test_periods`, on the request of `compute_health_preview`
+ *    / `export_model_files` and as an argument of `preview_relationship_model`):
+ *    each item is `{ start, end }`. ONE deliberate difference from real Rust:
+ *    Rust still ACCEPTS and ignores a legacy `label` / `event_time`, but the
+ *    frontend must not send them any more (2026-10-10, "just score it"), so
+ *    this fake REJECTS any other key — a caller that still sends one fails its
+ *    test instead of passing unnoticed. (The fake does not compute
+ *    `test_validation`; tests that need one use `helpers/validationFixture.ts`.)
  */
 
 export interface HealthDataset {
@@ -951,7 +959,28 @@ export function createFakeHealthRust(opts: FakeHealthRustOptions) {
         if (g) { g.armed = false; g.entered = true; await g.promise; }
     };
 
+    /** Stricter than Rust on purpose (see the header): only `start` / `end`. */
+    const checkScoringPeriods = (cmd: string, args: Args) => {
+        const list = args?.request?.test_periods ?? args?.test_periods;
+        if (list === undefined || list === null) return;
+        if (!Array.isArray(list)) throw `invalid args for command ${cmd}: test_periods must be a list`;
+        list.forEach((item: unknown, i: number) => {
+            // Real Rust: `Vec<TestPeriodArg>` - serde refuses a list item that is not a struct
+            // ("invalid type: null, expected struct TestPeriodArg"), so the whole invoke rejects.
+            // A `null` / string / number / nested list item must fail here too, not pass as "no extra keys".
+            if (item === null || typeof item !== 'object' || Array.isArray(item)) {
+                const got = item === null ? 'null' : Array.isArray(item) ? 'a list' : `a ${typeof item}`;
+                throw `invalid args for command ${cmd}: test_periods[${i}] is ${got} — a scoring period is sent as { start, end }`;
+            }
+            const extra = Object.keys(item as object).filter(k => k !== 'start' && k !== 'end');
+            if (extra.length > 0) {
+                throw `invalid args for command ${cmd}: test_periods[${i}] carries '${extra.join("', '")}' — a scoring period is sent as { start, end } only`;
+            }
+        });
+    };
+
     const checkArgs = (cmd: string, args: Args) => {
+        checkScoringPeriods(cmd, args);
         const sig = SIGNATURES[cmd];
         if (!sig) return;
         const allowed = new Set([...sig.required, ...(sig.optional ?? [])]);

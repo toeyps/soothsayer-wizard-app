@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { mk } from './helpers/failureModelFixture';
 import type { FailureGroupStateSlice, HealthSetPoints } from '../types';
+import type { HealthPreview, ModelFilesResult } from '../types/health';
 import {
     HEALTH_DEFAULT_MAX_POINTS,
     buildHealthPreviewRequest,
@@ -11,7 +12,11 @@ import {
     healthSetPointsToWire,
     relationshipCacheKey,
     relationshipLambda,
+    testPeriodsWireFor,
 } from '../utils/healthRequest';
+import { toScoringPeriods } from '../utils/timePeriods';
+import { createFakeHealthRust, plantDataset } from './helpers/fakeHealthRust';
+import { LEGACY_TESTS } from './helpers/trainTestFixture';
 import { buildPreviewFilterPayload, trainingScopeFilter } from '../utils/trainingScope';
 import { computeTrainFingerprint } from '../utils/trainFingerprint';
 
@@ -259,44 +264,131 @@ describe('buildModelFilesRequest', () => {
     });
 });
 
-describe('test_periods (Train/Test validation, 2026-10-07)', () => {
+describe('test_periods — scoring periods are sent as start / end only ("just score it", 2026-10-10)', () => {
+    // The workspace list as a workspace saved BEFORE 2026-10-10 holds it: the removed
+    // label / event time / highlight caption are still on the periods. None of it may be sent.
     const wsTests = [
         { id: 'w1', start: '2026-01-01T00:00', end: '2026-01-31T23:59', label: 'normal' as const },
         { id: 'w2', start: '2026-03-01T00:00', end: '2026-03-31T23:59', label: 'problem' as const, eventTime: '2026-03-15T08:00', fromHighlight: 'Bearing' },
     ];
-    const own = [{ id: 'c1', start: '2026-05-01T00:00', end: '2026-05-31T23:59', label: 'problem' as const }];
+    const own = [{ id: 'c1', start: '2026-05-01T00:00', end: '2026-05-31T23:59' }];
     const ind = mk({ id: 'i', kind: 'individual', targetSensor: 'T' });
     const rel = mk({ id: 'r', kind: 'relationship', targetSensor: 'T', predictorSensors: ['P1'], relStiffness: 100_000 });
+    const WIRE = [
+        { start: '2026-01-01T00:00', end: '2026-01-31T23:59' },
+        { start: '2026-03-01T00:00', end: '2026-03-31T23:59' },
+    ];
 
-    it('Workspace mode: the preview AND the export carry the workspace list (snake_case, no ids / highlight names)', () => {
+    it('Workspace mode: the preview AND the export carry the workspace list — start / end only, no ids, no label, no event time', () => {
         const f = fg({ runningConditionTestPeriods: wsTests });
-        const wire = [
-            { start: '2026-01-01T00:00', end: '2026-01-31T23:59', label: 'normal', event_time: null },
-            { start: '2026-03-01T00:00', end: '2026-03-31T23:59', label: 'problem', event_time: '2026-03-15T08:00' },
-        ];
-        expect(buildHealthPreviewRequest({ model: ind, fg: f, headers: HEADERS })!.test_periods).toEqual(wire);
-        expect(buildModelFilesRequest({ model: ind, fg: f, headers: HEADERS, workspaceId: 'ws' })!.test_periods).toEqual(wire);
+        const preview = buildHealthPreviewRequest({ model: ind, fg: f, headers: HEADERS })!;
+        const files = buildModelFilesRequest({ model: ind, fg: f, headers: HEADERS, workspaceId: 'ws' })!;
+        expect(preview.test_periods).toEqual(WIRE);
+        expect(files.test_periods).toEqual(WIRE);
+        for (const req of [preview, files]) {
+            for (const item of req.test_periods!) expect(Object.keys(item).sort()).toEqual(['end', 'start']);
+            expect(JSON.stringify(req)).not.toMatch(/label|event_time|eventTime|fromHighlight|normal|problem|Bearing/);
+        }
+    });
+
+    it('testPeriodsWireFor (also the `test_periods` argument of preview_relationship_model): the same start / end list, undefined when there is none', () => {
+        expect(testPeriodsWireFor(rel, fg({ runningConditionTestPeriods: wsTests }))).toEqual(WIRE);
+        expect(testPeriodsWireFor(rel, fg())).toBeUndefined();
+        // every period invalid -> nothing to send
+        expect(testPeriodsWireFor(rel, fg({ runningConditionTestPeriods: [{ id: 'x', start: '2026-02-01T00:00', end: '' }] }))).toBeUndefined();
     });
 
     it('Custom mode: the model own customTestPeriods, never the workspace list', () => {
         const custom = { ...ind, runningConditionMode: 'custom' as const, customTestPeriods: own };
         const f = fg({ runningConditionTestPeriods: wsTests });
-        const wire = [{ start: '2026-05-01T00:00', end: '2026-05-31T23:59', label: 'problem', event_time: null }];
+        const wire = [{ start: '2026-05-01T00:00', end: '2026-05-31T23:59' }];
         expect(buildHealthPreviewRequest({ model: custom, fg: f, headers: HEADERS })!.test_periods).toEqual(wire);
         expect(buildModelFilesRequest({ model: custom, fg: f, headers: HEADERS, workspaceId: 'ws' })!.test_periods).toEqual(wire);
         // A Custom model without its own list sends none (the key is omitted).
         expect(buildHealthPreviewRequest({ model: { ...ind, runningConditionMode: 'custom' }, fg: f, headers: HEADERS })).not.toHaveProperty('test_periods');
     });
 
-    it('no test periods -> the key is omitted (old workspaces send exactly what they sent before)', () => {
+    it('no scoring periods -> the key is omitted (old workspaces send exactly what they sent before)', () => {
         expect(buildHealthPreviewRequest({ model: ind, fg: fg(), headers: HEADERS })).not.toHaveProperty('test_periods');
         expect(buildModelFilesRequest({ model: ind, fg: fg(), headers: HEADERS, workspaceId: 'ws' })).not.toHaveProperty('test_periods');
     });
 
-    it('changing ONLY the tests keeps the Relationship cache_key (re-score, no re-train) but changes the request key', () => {
+    it('changing ONLY the scoring periods keeps the Relationship cache_key (re-score, no re-train) but changes the request key', () => {
         const a = buildHealthPreviewRequest({ model: rel, fg: fg(), headers: HEADERS })!;
         const b = buildHealthPreviewRequest({ model: rel, fg: fg({ runningConditionTestPeriods: wsTests }), headers: HEADERS })!;
         expect(b.cache_key).toBe(a.cache_key);
         expect(healthRequestKey(b)).not.toBe(healthRequestKey(a));
+    });
+
+    it('an old-shaped list and the same list without the legacy keys build the IDENTICAL request (no extra preview call, same key)', () => {
+        const oldReq = buildHealthPreviewRequest({ model: rel, fg: fg({ runningConditionTestPeriods: wsTests }), headers: HEADERS })!;
+        const newReq = buildHealthPreviewRequest({ model: rel, fg: fg({ runningConditionTestPeriods: toScoringPeriods(wsTests) }), headers: HEADERS })!;
+        expect(healthRequestKey(newReq)).toBe(healthRequestKey(oldReq));
+    });
+});
+
+// End to end against the fake Rust backend (a port of the real contract): a workspace
+// saved before 2026-10-10 — scoring periods still carrying label / eventTime — is scored.
+describe('an old workspace is scored like a new one (request -> fake Rust)', () => {
+    const data = plantDataset();
+    const model = mk({ id: 'i', kind: 'individual', targetSensor: 'TAG1', category: 'condition' });
+    const oldFg = fg({ runningConditionTimePeriods: [{ id: 'all', start: '', end: '' }], runningConditionTestPeriods: LEGACY_TESTS });
+    const setPoints: HealthSetPoints = { kind: 'individual', lower: 20, upper: 80 };
+    const request = () => buildHealthPreviewRequest({ model, fg: oldFg, headers: data.headers, setPoints })!;
+
+    it('the preview request is accepted and returns a valid, scored preview', async () => {
+        const rust = createFakeHealthRust({ datasets: { plant: data } });
+        const req = request();
+        expect(req.test_periods).toEqual([
+            { start: '2024-01-01T00:00', end: '2024-01-31T23:59' },
+            { start: '2024-03-01T00:00', end: '2024-03-31T23:59' },
+        ]);
+        const res = await rust.invoke('compute_health_preview', { request: req }) as HealthPreview;
+        expect(res.valid).toBe(true);
+        expect(res.validation).toEqual([]);
+        expect(res.score_summary).not.toBeNull();
+        expect(res.score_summary!.scored).toBeGreaterThan(0);
+    });
+
+    it('the export request is accepted too (Mark complete writes the files)', async () => {
+        const rust = createFakeHealthRust({ datasets: { plant: data } });
+        const req = buildModelFilesRequest({ model, fg: oldFg, headers: data.headers, workspaceId: 'ws-old', setPoints })!;
+        const res = await rust.invoke('export_model_files', { request: req }) as ModelFilesResult;
+        expect(res.ok).toBe(true);
+        expect(res.files.length).toBeGreaterThan(0);
+    });
+
+    it('guard: the fake REJECTS a scoring period that still carries a label / event time (stricter than Rust, so a stale caller fails its test)', async () => {
+        const rust = createFakeHealthRust({ datasets: { plant: data } });
+        const legacyItem = { start: '2024-01-01T00:00', end: '2024-01-31T23:59', label: 'problem', event_time: '2024-01-20T08:00' };
+        await expect(rust.invoke('compute_health_preview', { request: { ...request(), test_periods: [legacyItem] } }))
+            .rejects.toMatch(/compute_health_preview: test_periods\[0\] carries 'label', 'event_time'/);
+        await expect(rust.invoke('export_model_files', { request: { ...buildModelFilesRequest({ model, fg: oldFg, headers: data.headers, workspaceId: 'ws-old', setPoints })!, test_periods: [{ start: null, end: null }, legacyItem] } }))
+            .rejects.toMatch(/export_model_files: test_periods\[1\] carries/);
+        await expect(rust.invoke('preview_relationship_model', { predictors: ['TAG3'], target: 'TAG1', lambda: 1, test_periods: [{ start: '2024-01-01T00:00', end: '2024-01-31T23:59', label: 'normal' }] }))
+            .rejects.toMatch(/preview_relationship_model: test_periods\[0\] carries 'label'/);
+        // the new shape passes
+        await expect(rust.invoke('preview_relationship_model', { predictors: ['TAG3'], target: 'TAG1', lambda: 1, test_periods: [{ start: '2024-01-01T00:00', end: '2024-01-31T23:59' }] })).resolves.toBeTruthy();
+    });
+
+    // Real Rust deserialises `test_periods` as `Vec<TestPeriodArg>`: an item that is not a
+    // struct (null, a string, a number) makes serde refuse the whole call. The fake used to let
+    // a `null` item through as "no extra keys" (QA 2026-10-10).
+    it('guard: the fake REJECTS a list item that is not a period object (null / string / number / list), on all three commands', async () => {
+        const rust = createFakeHealthRust({ datasets: { plant: data } });
+        const good = { start: '2024-01-01T00:00', end: '2024-01-31T23:59' };
+        await expect(rust.invoke('compute_health_preview', { request: { ...request(), test_periods: [null] } }))
+            .rejects.toMatch(/compute_health_preview: test_periods\[0\] is null/);
+        await expect(rust.invoke('export_model_files', { request: { ...buildModelFilesRequest({ model, fg: oldFg, headers: data.headers, workspaceId: 'ws-old', setPoints })!, test_periods: [good, null] } }))
+            .rejects.toMatch(/export_model_files: test_periods\[1\] is null/);
+        await expect(rust.invoke('preview_relationship_model', { predictors: ['TAG3'], target: 'TAG1', lambda: 1, test_periods: [good, '2024-03-01T00:00'] }))
+            .rejects.toMatch(/preview_relationship_model: test_periods\[1\] is a string/);
+        await expect(rust.invoke('compute_health_preview', { request: { ...request(), test_periods: [7] } }))
+            .rejects.toMatch(/test_periods\[0\] is a number/);
+        await expect(rust.invoke('compute_health_preview', { request: { ...request(), test_periods: [[good.start, good.end]] } }))
+            .rejects.toMatch(/test_periods\[0\] is a list/);
+        // `null` / absent as the LIST itself is still "no scoring periods", and open bounds are still fine
+        await expect(rust.invoke('compute_health_preview', { request: { ...request(), test_periods: null } })).resolves.toBeTruthy();
+        await expect(rust.invoke('compute_health_preview', { request: { ...request(), test_periods: [{ start: null, end: null }] } })).resolves.toBeTruthy();
     });
 });

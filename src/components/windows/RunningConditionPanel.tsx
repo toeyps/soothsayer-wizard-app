@@ -14,11 +14,12 @@ import { formatPercent, type RowCountPreview } from './useRowCountPreview';
 /*
  * Body of BuildModelWindow's "Running condition" settings modal — the
  * 2026-10-03 redesign (approved mockup 1pp59aydphzaDu2R1SvKGh): two columns.
- *   left   "1 Which time"  (TRAIN period cards + TEST period rows, Train/Test
- *          validation 2026-10-07)  and  "2 When the plant is running"
+ *   left   "1 Which time"  (TRAIN period cards + SCORING period rows — start →
+ *          end only since 2026-10-10, "just score it")  and
+ *          "2 When the plant is running"
  *          (two choice cards, condition rows, AND/OR pill between rows)
- *   right  "Data used for training": row count + bar, summary sentence, the test
- *          summary, the recommended-train-days note, warnings
+ *   right  "Data used for training": row count + bar, summary sentence, the
+ *          scoring-period count, the recommended-train-days note, warnings
  * Presentation only: every value and handler arrives through props from
  * BuildModelWindow, which feeds it the modal's local DRAFT (nothing here
  * writes anything — Apply lives in the modal footer).
@@ -72,19 +73,19 @@ interface RunningConditionPanelProps {
     getUnit: (tag: string) => string;
     /** Row count of what Apply would commit (the draft). */
     preview: RowCountPreview;
-    /** Test periods (draft) — where the score is checked; never trained on. */
+    /** Scoring periods (draft) — the time the trained model gives a health score
+     *  for; never trained on. */
     testPeriods: TestPeriod[];
     onTestPeriodsChange: (next: TestPeriod[]) => void;
-    /** The workspace's Dashboard time highlights ("From Highlights", train-overlap warning). */
+    /** The workspace's Dashboard time highlights — only for the TRAIN-period
+     *  overlap warning ("Remove the overlap"). */
     highlights: TimeHighlight[];
-    /** The "From Highlights" menu opened (the host may re-read the highlights). */
-    onHighlightsMenuOpen?: () => void;
 }
 
 export default function RunningConditionPanel({
     configured, periods, onPeriodsChange, bounds, filters, combine, noneConfirmed,
     onNoneChange, onCombineChange, onAddFilter, onUpdateFilter, onRemoveFilter, sensors, getDesc, getComponent, getUnit,
-    preview, testPeriods, onTestPeriodsChange, highlights, onHighlightsMenuOpen,
+    preview, testPeriods, onTestPeriodsChange, highlights,
 }: RunningConditionPanelProps) {
     const status = validatePeriods(periods);
     const firstBad = status.findIndex(s => s.invalid);
@@ -100,8 +101,6 @@ export default function RunningConditionPanel({
     // estimated from the draft's row count until Rust has the exact figure.
     const trainDays = hasCount && preview.status === 'ok' ? estimateRunningDays(preview.used, preview.total, bounds) : null;
     const daysWarning = trainDaysWarning(trainDays);
-    const nNormal = testPeriods.filter(t => t.label === 'normal').length;
-    const nProblem = testPeriods.length - nNormal;
 
     return (
         <div data-testid="rc-panel" className="rcm-body">
@@ -110,7 +109,7 @@ export default function RunningConditionPanel({
                     <div className="rcm-step-h">
                         <span className="rcm-num">1</span>
                         <b>Which time</b>
-                        <span className="rcm-q">Train periods teach the model what normal looks like · test periods are when the score is checked</span>
+                        <span className="rcm-q">Train periods teach the model what normal looks like · scoring periods are the time it gives a health score for</span>
                     </div>
                     <div className="tpe-sub" data-testid="rc-train-head">
                         <i className="tpe-sw tpe-sw--tr" aria-hidden="true" /><b>Train periods</b><span>required · at least one · a row inside any period is used</span>
@@ -122,18 +121,13 @@ export default function RunningConditionPanel({
                     <TrainHighlightWarnings periods={periods} highlights={highlights} onPeriodsChange={onPeriodsChange} />
 
                     <div className="tpe-sub tpe-sub--te" data-testid="rc-test-head">
-                        <i className="tpe-sw tpe-sw--te" aria-hidden="true" /><b>Test periods</b><span>when the score is checked · needed before Mark complete · may include train time</span>
-                    </div>
-                    <div className="tpe-callout tpe-callout--te">
-                        Label each one. <b>Normal</b>: the score should stay high (shows false alarms). <b>Known problem</b>: the score should drop (shows the problem is caught) — add the event time to get the lead time.
+                        <i className="tpe-sw tpe-sw--te" aria-hidden="true" /><b>Scoring periods</b><span>the trained model gives a health score for this time — you read it on the score chart · needed before Mark complete · may include train time</span>
                     </div>
                     <TestPeriodsEditor
                         tests={testPeriods}
                         train={periods}
                         onChange={onTestPeriodsChange}
-                        highlights={highlights}
                         bounds={bounds}
-                        onHighlightsMenuOpen={onHighlightsMenuOpen}
                     />
                 </section>
 
@@ -310,13 +304,13 @@ export default function RunningConditionPanel({
                 />
                 {testPeriods.length > 0 ? (
                     <div className="tpe-pvtest" data-testid="rc-preview-tests">
-                        <span className="tpe-pvtest-l"><i className="tpe-sw tpe-sw--te" aria-hidden="true" />Test</span>
+                        <span className="tpe-pvtest-l"><i className="tpe-sw tpe-sw--te" aria-hidden="true" />Scoring</span>
                         <b>{testPeriods.length}</b>
-                        <span>period{testPeriods.length === 1 ? '' : 's'} · {nNormal} Normal · {nProblem} Known problem</span>
+                        <span>period{testPeriods.length === 1 ? '' : 's'}</span>
                     </div>
                 ) : (
                     <div className="tpe-pvtest tpe-pvtest--none" data-testid="rc-preview-tests">
-                        No test period yet — you can train, but Mark complete needs one.
+                        No scoring period yet — you can train, but Mark complete needs one.
                     </div>
                 )}
                 <div className={`tpe-min${daysWarning ? ' tpe-min--warn' : ''}`} data-testid="rc-min-data">

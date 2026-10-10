@@ -733,51 +733,77 @@ describe('warning issues are shown as non-blocking notes (coordinator 2026-10-04
     });
 });
 
-describe('Train / Test validation (2026-10-07)', () => {
+describe('Scoring periods on the Health score page ("just score it", 2026-10-10)', () => {
     const withTests = (kind: 'individual' | 'relationship', sp: HealthSetPoints): HealthPreview => ({
         ...previewFor(kind, sp),
-        test_validation: makeValidation({ tests: [makeTestResult({ pct_below_80: 7 }), makeTestResult({ label: 'problem', first_below_80: null, event_time: '2026-01-01T03:30' })] }),
+        test_validation: makeValidation({ tests: [makeTestResult({ pct_below_80: 7, lowest: 62, lowest_at: '2026-01-01 02:30:00' }), makeTestResult({ index: 2, pct_below_80: 41.5, lowest: 12, lowest_at: '2026-01-01 02:40:00' })] }),
     });
 
-    it('the set-point chart and the score chart both draw the train / test scopes', () => {
+    it('the set-point chart and the score chart both draw the train / scoring scopes — bands only, no EVENT line, no hatch', () => {
         mount({ sp: IND_VALID, data: withTests('individual', IND_VALID) });
         const names = (c: any) => c.option.series.map((x: any) => x.name);
         expect(names(scoreChart())).toContain('__scopes');
         expect(names(setChart())).toContain('__scopes');
-        const ev = scoreChart().option.series.find((x: any) => x.name === '__scopes').markLine.data;
-        expect(ev).toHaveLength(1); // the Known problem's event
+        for (const chart of [scoreChart(), setChart()]) {
+            const carrier = chart.option.series.find((x: any) => x.name === '__scopes');
+            expect(carrier.markLine).toBeUndefined();
+            expect(carrier.markPoint).toBeUndefined();
+            const pills = carrier.markArea.data.map((a: any) => a[0].label.formatter);
+            expect(pills).toEqual(['TRAIN', 'S1', 'S2']);
+            expect(JSON.stringify(carrier)).not.toMatch(/EVENT|KNOWN|NORMAL|PROBLEM|data:image/);
+        }
     });
 
-    it('no scopes without test periods', () => {
+    it('no scopes without scoring periods', () => {
         mount({ sp: IND_VALID });
         expect(scoreChart().option.series.map((x: any) => x.name)).not.toContain('__scopes');
     });
 
-    it('"Test results" tiles under the score: Normal amber at >= 5 %, Known problem "Not detected" amber (never red)', () => {
+    it('"Scoring results" under the score: neutral tiles with the two facts — never a verdict, never a tone', () => {
         mount({ sp: IND_VALID, data: withTests('individual', IND_VALID) });
         const card = screen.getByTestId('test-results');
-        expect(within(card).getByTestId('test-result-1').getAttribute('data-tone')).toBe('warn');
-        expect(within(card).getByTestId('test-result-2-big').textContent).toBe('Not detected');
-        expect(card.innerHTML).not.toMatch(/danger|--bad/);
+        expect(card.querySelector('.wb2-card-h b')!.textContent).toBe('Scoring results');
+        expect(card.textContent).toContain('for reading only — never blocks Mark complete');
+        expect(within(card).getByTestId('test-result-1-big').textContent).toBe('7.0% of running time below 80');
+        expect(within(card).getByTestId('test-result-1-lowest').textContent).toBe('Lowest 62 (held 1 h) on 1 Jan 2026 02:30.');
+        expect(within(card).getByTestId('test-result-2-big').textContent).toBe('41.5% of running time below 80');
+        expect(within(card).getByTestId('test-result-2-lowest').textContent).toBe('Lowest 12 (held 1 h) on 1 Jan 2026 02:40.');
+        for (const n of [1, 2]) {
+            const tile = within(card).getByTestId(`test-result-${n}`);
+            expect(tile.className).toBe('vt-tile');
+            expect(tile.hasAttribute('data-tone')).toBe(false);
+        }
+        expect(card.innerHTML).not.toMatch(/danger|--bad|--warn|--ok/);
+        expect(card.textContent).not.toMatch(/Known problem|Normal|Not detected|Detected|false alarm|event|lead/i);
     });
 
-    it('while the set points are not valid every tile reads "Not scored yet"', () => {
+    it('until the set points are valid the card is one quiet line: "Scored once the set points are valid" (no tiles)', () => {
         const data = { ...withTests('relationship', REL_EMPTY) };
         mount({ kind: 'relationship', sp: REL_EMPTY, data });
-        expect(screen.getByTestId('test-result-1-big').textContent).toBe('Not scored yet');
+        const card = screen.getByTestId('test-results');
+        expect(within(card).getByTestId('test-results-pending').textContent).toBe('Scored once the set points are valid');
+        expect(card.querySelector('.vt-tile')).toBeNull();
+        expect(card.textContent).not.toContain('Not scored yet');
     });
 
-    it('review fix 2026-10-07: testNumbers name the tiles and the chart pills by the ORIGINAL list position', () => {
+    it('while the health score failed to load (last answer on screen) the quiet line says so, not "set points"', () => {
+        const failed = { data: null, lastData: withTests('individual', IND_VALID), loading: false, error: 'boom', errorCode: null, notFitted: false, needsRetrain: false, idle: null as null, retry: vi.fn() };
+        mount({ sp: IND_VALID, preview: failed });
+        expect(screen.getByTestId('test-results-pending').textContent).toBe('Not available until the health score loads again');
+        expect(screen.queryByTestId('test-result-1')).toBeNull();
+    });
+
+    it('testNumbers name the tiles and the chart pills by the ORIGINAL list position', () => {
         const data: HealthPreview = { ...previewFor('individual', IND_VALID), test_validation: makeValidation({ tests: [makeTestResult({ index: 1 })] }) };
         mount({ sp: IND_VALID, data, testNumbers: [2] });
-        expect(screen.getByTestId('test-result-2').textContent).toContain('T2 Normal');
+        expect(screen.getByTestId('test-result-2').querySelector('.vt-th b')!.textContent).toBe('S2');
         expect(screen.queryByTestId('test-result-1')).toBeNull();
         const carrier = scoreChart().option.series.find((x: any) => x.name === '__scopes');
-        expect(JSON.stringify(carrier)).toContain('T2 NORMAL');
-        expect(JSON.stringify(carrier)).not.toContain('T1 NORMAL');
+        const pills = carrier.markArea.data.map((a: any) => a[0].label.formatter);
+        expect(pills).toEqual(['TRAIN', 'S2']);
     });
 
-    it('review fix 2026-10-07: test_scoring_failed -> amber notice with "Try again" (the preview Retry) instead of tiles; the score chart still draws', () => {
+    it('test_scoring_failed -> amber notice with "Try again" (the preview Retry) instead of tiles; the score chart still draws', () => {
         const onRetryPreview = vi.fn();
         const data: HealthPreview = {
             ...previewFor('relationship', REL_VALID),
@@ -785,7 +811,7 @@ describe('Train / Test validation (2026-10-07)', () => {
             test_validation: makeValidation({ tests: [makeTestResult({ scored: 0, pct_below_80: null, lowest: null })] }),
         };
         mount({ kind: 'relationship', sp: REL_VALID, data, onRetryPreview });
-        expect(screen.getByTestId('test-scoring-failed').textContent).toContain("Couldn't score the test periods — try again");
+        expect(screen.getByTestId('test-scoring-failed').textContent).toContain('The scoring periods could not be scored — try again');
         expect(screen.queryByTestId('test-result-1')).toBeNull();
         expect(scoreChart()).toBeTruthy();
         fireEvent.click(screen.getByTestId('test-scoring-retry'));
@@ -806,20 +832,21 @@ describe('Train / Test validation (2026-10-07)', () => {
         expect(onRetryPreview).not.toHaveBeenCalled();
     });
 
-    it('review fix 2026-10-07: the "Scoring test periods … ~15 s" hint shows when the container says so', () => {
+    it('the "Scoring these periods … ~15 s" hint shows when the container says so', () => {
         mount({ sp: IND_VALID, slowScoring: true });
-        expect(screen.getByTestId('slow-test-scoring').textContent).toContain('Scoring test periods with the Relation model');
+        expect(screen.getByTestId('slow-test-scoring').textContent).toBe('Scoring these periods with the Relation model — this can take up to ~15 s.');
         cleanup();
         mount({ sp: IND_VALID });
         expect(screen.queryByTestId('slow-test-scoring')).toBeNull();
     });
 
-    it('banner when only the test periods changed since Mark complete ("changed" / "removed")', () => {
+    it('banner when only the scoring periods changed since Mark complete ("changed" / "removed")', () => {
         mount({ sp: IND_VALID, testsChanged: 'changed' });
+        expect(screen.getByTestId('tests-changed-banner').textContent).toContain('Scoring periods changed');
         expect(screen.getByTestId('tests-changed-banner').textContent).toContain('Mark complete again');
         cleanup();
         mount({ sp: IND_VALID, testsChanged: 'removed' });
-        expect(screen.getByTestId('tests-changed-banner').textContent).toContain('Test periods removed');
+        expect(screen.getByTestId('tests-changed-banner').textContent).toContain('Scoring periods removed');
         cleanup();
         mount({ sp: IND_VALID });
         expect(screen.queryByTestId('tests-changed-banner')).toBeNull();

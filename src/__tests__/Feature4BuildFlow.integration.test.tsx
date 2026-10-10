@@ -97,7 +97,7 @@ import { updateWorkspaceData } from '../workspaceManager';
 import { withFailureGroupState } from '../utils/failureGroupState';
 import { getBuildBlockReason } from '../utils/runningCondition';
 import { preflightReason, TRAIN_NEEDS_RUNNING_CONDITION } from '../utils/trainQueue';
-// Train/Test validation (2026-10-07): train period required to Train, test period to Mark complete.
+// Since 2026-10-07: a train period is required to Train, a scoring period ("test period" until 2026-10-10) to Mark complete.
 import { ALL_TIME_TRAIN, ONE_TEST } from './helpers/trainTestFixture';
 
 // ── fixtures ────────────────────────────────────────────────────────────
@@ -207,12 +207,51 @@ const blockedTitle = (reason: string) => screen.getByTestId('rc-card').getAttrib
     ? TRAIN_NEEDS_RUNNING_CONDITION
     : `Can't train: Individual — ${preflightReason(reason).text}`;
 
-/** Select a row and press Train (the Workbench's only path that sends the training scope to Rust). */
-async function trainRow(rowIndex = 0) {
+/*
+ * Which `compute_sensor_stats` call is Train's? (flake fixed 2026-10-10)
+ *
+ * The window ALSO calls `compute_sensor_stats` for its "rows used" counts
+ * (`useRowCountPreview`), always on the FIRST dataset sensor (`HEADERS[0]` =
+ * TAG1): once per filter plus once with `filter: null` for the total. For an
+ * active Custom-mode model that count is debounced 300 ms, so on a loaded
+ * machine it lands AFTER Train's own call - "the newest stats call" is then the
+ * count's `filter: null`, not what Train sent. So a test never reads "the
+ * newest call" and never sleeps a fixed time:
+ *   - it takes a mark (`h.invokes.length`) right before the Train click and
+ *     waits for the FIRST matching call recorded after it (`trainCall`);
+ *   - where the count could match too, the trained model's target is a sensor
+ *     that is not `HEADERS[0]`, and the predicate names that sensor - the count
+ *     can then never be mistaken for Train's call, whatever the timing.
+ */
+const firstSince = (mark: number, cmd: string, pred: (a: any) => boolean = () => true) =>
+    h.invokes.slice(mark).find(c => c.cmd === cmd && pred(c.args));
+
+/** Press the (already selected) sensor's Train button; returns the mark taken just before the click. */
+async function clickTrain(): Promise<number> {
+    const mark = h.invokes.length;
+    await act(async () => { fireEvent.click(trainBtn()); });
+    return mark;
+}
+
+/** Select a row and press Train (the Workbench's only path that sends the training scope to Rust).
+ *  Returns the invoke mark taken just before the click - pass it to `trainCall`. */
+async function trainRow(rowIndex = 0): Promise<number> {
     closeRcModal();
     selectSensorRow(rowIndex);
-    await act(async () => { fireEvent.click(trainBtn()); });
-    await settle(30);
+    return clickTrain();
+}
+
+/** The first `cmd` call Train made after `mark` (waits for it - no fixed sleep). */
+async function trainCall(mark: number, cmd: string, pred: (a: any) => boolean = () => true) {
+    await waitFor(() => expect(firstSince(mark, cmd, pred)).toBeTruthy());
+    return firstSince(mark, cmd, pred)!;
+}
+
+/** Wait until the Train run stamped the model on disk (`lastTrainedAt`) - the one
+ *  signal that the run really finished, so no write of it can land in the next test. */
+async function trained(modelId: string) {
+    await waitFor(() => expect(readDisk().failureGroupState.models.find((m: any) => m.id === modelId).lastTrainedAt).toBeTruthy());
+    await settle(0);
 }
 
 const lastInvoke = (cmd: string, pred: (a: any) => boolean = () => true) =>
@@ -320,10 +359,12 @@ describe('(1) opening a v1 (pre-Feature-4) workspace', () => {
         closeRcModal();
         selectSensorRow(0); // TAG1 row, Individual tab
         expect(trainBtn().disabled).toBe(false);
-        await act(async () => { fireEvent.click(trainBtn()); });
-        await settle(30);
+        // The Step-1 row count (same filter + a `null` total, both on TAG1) was asked when the
+        // gate became satisfied - before this mark; the first TAG1 stats call after it is Train's.
+        const mark = await clickTrain();
         const ranges = [{ start: '2026-01-01T00:00', end: '2026-06-30T23:59' }];
-        expect(lastInvoke('compute_sensor_stats')!.args.filter).toEqual({ timestamp_ranges: ranges, value_filters: [], combine: 'and' });
+        expect((await trainCall(mark, 'compute_sensor_stats', a => a.sensor === 'TAG1')).args.filter).toEqual({ timestamp_ranges: ranges, value_filters: [], combine: 'and' });
+        await trained('i1');
     });
 });
 
@@ -375,7 +416,7 @@ describe('(2) the Workbench footer reason and the Train button agree with the sh
         expect(screen.getByTestId('rc-card').getAttribute('data-state')).toBe('unset');
         expect(screen.getByTestId('rc-required-pill')).toBeTruthy();
         await trainRow(0);
-        expect(readDisk().failureGroupState.models[0].lastTrainedAt).toBeTruthy();
+        await trained('i1');
 
         await markCompleteFromHealthPage('individual');
         expect(readDisk().failureGroupState.models[0].status).toBe(true);
@@ -418,9 +459,9 @@ describe('(3) Train sends one filter to stats and every fit path - and it matche
     it('Relationship: the relationship fit (and the health preview that follows it) carry the fixture payload exactly', async () => {
         writeDisk(wsState(currentFg([customModel({ id: 'r1', kind: 'relationship', predictorSensors: ['TAG2'], rcMode: 'relationship', individualChecked: false })])));
         await mountBuildModel();
-        await trainRow(0);
+        const mark = await trainRow(0);
 
-        const fit = lastInvoke('preview_relationship_model')!.args.filter;
+        const fit = (await trainCall(mark, 'preview_relationship_model')).args.filter;
         expect(fit).toEqual(customOr);
         keysOk(fit, contract.preview_filter_fields);
         for (const r of fit.timestamp_ranges) keysOk(r, contract.time_range_fields);
@@ -428,15 +469,21 @@ describe('(3) Train sends one filter to stats and every fit path - and it matche
 
         await waitFor(() => expect(lastInvoke('compute_health_preview')).toBeTruthy());
         expect(lastInvoke('compute_health_preview')!.args.request.filter).toEqual(customOr);
+        await trained('r1');
     });
 
     it('Individual: the stats call gets the fixture payload; Clustering: the clustering preview and the criteria-sensor stats get the same one', async () => {
-        writeDisk(wsState(currentFg([customModel({ id: 'i1' })])));
+        // Target TAG2, not HEADERS[0]: the Custom model's debounced row count (always on TAG1,
+        // once with this filter and once with `filter: null`) can then never be read as Train's call.
+        writeDisk(wsState(currentFg([customModel({ id: 'i1', targetSensor: 'TAG2' })])));
         await mountBuildModel();
-        await trainRow(0);
-        const stats = lastInvoke('compute_sensor_stats', a => a.sensor === 'TAG1')!.args.filter;
+        const markI = await trainRow(0);
+        const stats = (await trainCall(markI, 'compute_sensor_stats', a => a.sensor === 'TAG2')).args.filter;
         expect(stats).toEqual(customOr);
         keysOk(stats, contract.preview_filter_fields);
+        await trained('i1');
+        // Train asked for the target's stats exactly once (the row count never asks for TAG2).
+        expect(h.invokes.filter(c => c.cmd === 'compute_sensor_stats' && c.args.sensor === 'TAG2')).toHaveLength(1);
         cleanup();
 
         h.invokes.length = 0;
@@ -445,16 +492,25 @@ describe('(3) Train sends one filter to stats and every fit path - and it matche
             scatterXSensor: 'TAG1', criteriaSensor: 'TAG2', rcMode: 'clustering', individualChecked: false,
         })])));
         await mountBuildModel();
-        await trainRow(0);
-        expect(lastInvoke('compute_sensor_stats', a => a.sensor === 'TAG2')!.args.filter).toEqual(customOr);
-        expect(lastInvoke('compute_clustering_preview')!.args.filter).toEqual(customOr);
+        const markC = await trainRow(0);
+        expect((await trainCall(markC, 'compute_clustering_preview')).args.filter).toEqual(customOr);
+        await trained('c1');
+        // The criteria sensor (TAG2, not the row count's TAG1) is only ever asked with the model's own scope.
+        const criteria = h.invokes.filter(c => c.cmd === 'compute_sensor_stats' && c.args.sensor === 'TAG2');
+        expect(criteria.length).toBeGreaterThan(0);
+        for (const c of criteria) expect(c.args.filter).toEqual(customOr);
     });
 
     it('Workspace mode with "No condition" and no periods sends filter: null (fixture)', async () => {
-        writeDisk(wsState(currentFg([model({ id: 'i1' })], { runningConditionNoneConfirmed: true, runningConditionFilters: [COND] })));
+        // Target TAG2: the Step-1 row count asks TAG1 with `filter: null` on its own, which would
+        // satisfy this even if Train never ran - so read Train's own call, and check it finished.
+        writeDisk(wsState(currentFg([model({ id: 'i1', targetSensor: 'TAG2' })], { runningConditionNoneConfirmed: true, runningConditionFilters: [COND] })));
         await mountBuildModel();
-        await trainRow(0);
-        expect(lastInvoke('compute_sensor_stats')!.args.filter).toBe(contract.pm_payloads[1].json);
+        const mark = await trainRow(0);
+        const call = await trainCall(mark, 'compute_sensor_stats', a => a.sensor === 'TAG2');
+        expect(call.args).toHaveProperty('filter');
+        expect(call.args.filter).toBe(contract.pm_payloads[1].json);
+        await trained('i1');
     });
 
     it('"No condition" drops value conditions but NOT periods, and combine still rides along (periods are AND-ed on the Rust side)', async () => {
@@ -463,9 +519,10 @@ describe('(3) Train sends one filter to stats and every fit path - and it matche
             runningConditionTimePeriods: [{ id: 'w1', start: '2026-05-01T00:00', end: '2026-05-31T23:59' }],
         })));
         await mountBuildModel();
-        await trainRow(0);
-        const f = lastInvoke('compute_sensor_stats')!.args.filter;
+        const mark = await trainRow(0);
+        const f = (await trainCall(mark, 'compute_sensor_stats', a => a.sensor === 'TAG1')).args.filter;
         expect(f).toEqual({ timestamp_ranges: [{ start: '2026-05-01T00:00', end: '2026-05-31T23:59' }], value_filters: [], combine: 'or' });
+        await trained('i1');
     });
 
     // FIXED 2026-09-24 (was a known bug). The gate
@@ -483,10 +540,10 @@ describe('(3) Train sends one filter to stats and every fit path - and it matche
         closeRcModal();
         selectSensorRow(0);
         expect(trainBtn().disabled).toBe(false); // gate: COND alone configures it
-        await act(async () => { fireEvent.click(trainBtn()); });
-        await settle(30);
-        const sent = lastInvoke('compute_sensor_stats')!.args.filter.value_filters;
+        const mark = await clickTrain();
+        const sent = (await trainCall(mark, 'compute_sensor_stats', a => a.sensor === 'TAG1')).args.filter.value_filters;
         expect(sent).toEqual([{ sensor: 'TAG2', operation: 'greater_than', value1: 10, value2: null }]);
+        await trained('i1');
     });
 });
 
@@ -516,8 +573,9 @@ describe('(4) old time keys re-added by a stale writer', () => {
         expect(fg.runningConditionTimePeriods).toEqual([P]);
         expect(fg.models.find((m: any) => m.id === 'i2').filterTimePeriods).toEqual([Q]);
 
-        await trainRow(0); // i1 - Workspace mode
-        expect(lastInvoke('compute_sensor_stats')!.args.filter.timestamp_ranges).toEqual([{ start: P.start, end: P.end }]);
+        const markW = await trainRow(0); // i1 - Workspace mode
+        expect((await trainCall(markW, 'compute_sensor_stats', a => a.sensor === 'TAG1')).args.filter.timestamp_ranges).toEqual([{ start: P.start, end: P.end }]);
+        await trained('i1');
         expect(JSON.stringify(h.invokes)).not.toContain('2020-');
 
         // A stale copy landing on disk (old keys back on every model), then the window
@@ -531,9 +589,11 @@ describe('(4) old time keys re-added by a stale writer', () => {
         const rows = screen.getAllByTestId('sensor-row-label');
         selectSensorRow(rows.length - 1); // TAG2 row
         expect(screen.getByRole('heading', { level: 3 }).querySelector('.sl-desc')?.textContent).toBe('Pump Temp'); // detail pane is TAG2's
-        await act(async () => { fireEvent.click(trainBtn()); });
-        await settle(30);
-        expect(lastInvoke('compute_sensor_stats')!.args.filter.timestamp_ranges).toEqual([{ start: Q.start, end: Q.end }]);
+        // i2 is a Custom model on TAG2: its debounced row count asks TAG1 (with the same periods),
+        // so name the target - only Train asks for TAG2.
+        const markQ = await clickTrain();
+        expect((await trainCall(markQ, 'compute_sensor_stats', a => a.sensor === 'TAG2')).args.filter.timestamp_ranges).toEqual([{ start: Q.start, end: Q.end }]);
+        await trained('i2');
         expect(JSON.stringify(h.invokes)).not.toContain('2019-');
     });
 });

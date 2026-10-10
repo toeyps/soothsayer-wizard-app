@@ -111,7 +111,8 @@ pub struct HealthPreviewRequest {
     /// Refuse (`STALE_SESSION`) when the loaded dataset's generation differs.
     #[serde(default, alias = "expectedGeneration")]
     pub expected_generation: Option<u64>,
-    /// Train/Test validation: time ranges to score with the TRAIN-only model
+    /// Scoring periods: time ranges (`[{start,end}]`; a legacy `label` /
+    /// `event_time` is accepted and ignored) to score with the TRAIN-only model
     /// and compare with the training rows (see `health_validation`). Absent /
     /// empty = no change at all and `test_validation: null`.
     #[serde(default)]

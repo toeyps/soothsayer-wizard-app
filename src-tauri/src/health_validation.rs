@@ -1,10 +1,12 @@
-//! Train/Test model validation ("retrospective health scoring").
+//! Scoring periods ("just score it", user decision 2026-10-09/10).
 //!
-//! A model is fitted ONLY on the training scope (healthy periods); the test
-//! periods are time ranges where the score is checked afterwards:
-//!   * `normal`  - the score should stay high (false alarms),
-//!   * `problem` - the score should drop (detection), with an optional event
-//!     time that gives the lead time.
+//! A model is fitted ONLY on the training scope (healthy periods). A scoring
+//! period (wire name still `test_periods`) is nothing but a time range,
+//! `start` -> `end`: the train-only model gives a health score for that time and
+//! the user reads the chart. Nothing is judged here - there is no Normal /
+//! Known-problem label, no event time, no lead time and no detection verdict any
+//! more (they were removed with the Workbench redesign; see
+//! `docs/design/handoff/workbench-redesign/README.md` section 2).
 //!
 //! This module is the one implementation of that maths. The three previews
 //! (`health_preview`) feed it the rows they already scored with the TRAIN-only
@@ -13,64 +15,57 @@
 //! the same block as `validation` into the `*_INFO_*.json` file. Nothing here
 //! ever fits or refits anything.
 //!
-//! Semantics (user-confirmed 2026-10-07):
-//!   * Test rows = rows inside the test period that also pass the running
+//! Semantics:
+//!   * Scoring rows = rows inside the scoring period that also pass the running
 //!     condition's VALUE conditions (and AND/OR mode) of the training scope.
-//!     The training TIME periods do not apply to them. A test period MAY overlap
-//!     the training periods; results use the whole test period and
+//!     The training TIME periods do not apply to them. A scoring period MAY
+//!     overlap the training periods; results use the whole period and
 //!     `train_rows` / `train_days` report the overlap.
-//!   * "Detected" (`first_below_80`) = the score stayed below 80 for
+//!   * `pct_below_80` = share of the SCORED rows whose score is below 80.
+//!   * `lowest` = the lowest level the score STAYED at (or below) for
 //!     [`DROP_SUSTAIN_HOURS`] of running time, i.e. for `ceil(1 h / sample
 //!     interval)` CONSECUTIVE scored dataset rows (a row removed by the running
-//!     condition, or an unscored row, breaks the run). `lowest` uses the same
-//!     rule: the lowest level the score STAYED at (or below) for that long
-//!     (min over every window of the window's max), so a single restart dip is
-//!     never reported as "lowest 0".
-//!   * `lead_days = event_time - first_below_80` in days: POSITIVE = detected
-//!     BEFORE the event, NEGATIVE = detected only after it. `null` without a
-//!     detection or without an event time.
+//!     condition, or an unscored row, breaks the window): min over every window
+//!     of the window's max, so a single restart dip is never reported as
+//!     "lowest 0". `lowest_at` = the first row of that window.
 //!   * "Running time days" = rows x the dataset's median sample interval.
+//!
+//! Naming: the Rust types and the wire keys keep their original `test_*` names
+//! (`TestPeriodArg`, `test_periods`, `test_validation`, `tests`) so nothing on
+//! the wire is renamed; only the user-facing wording says "scoring period" and
+//! numbers them `S1`, `S2`, ... by list position.
 
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::path::Path;
 
-use crate::csv_processor::{ColumnarData, TS_MISSING};
+use crate::csv_processor::ColumnarData;
 use crate::health_score::{Issue, Severity, SCORE_AT_3SD};
 use crate::{parse_time_bound, PreviewFilter, ResolvedFilter, TimeRangeArg};
 
-/// A drop below 80 counts when the score stays below it this long (hours of
-/// RUNNING time). Also the window of the "lowest" rule.
+/// The window of the "lowest" rule: the score has to stay at (or below) a level
+/// for this long (hours of RUNNING time) for that level to be reported.
 pub const DROP_SUSTAIN_HOURS: f64 = 1.0;
-
-const MICROS_PER_DAY: f64 = 86_400_000_000.0;
 
 // ---------------------------------------------------------------------------
 // Request
 // ---------------------------------------------------------------------------
 
-/// One test period as sent by the frontend (`test_periods[]`). Same datetime
-/// strings as the training periods; `None` / blank = open bound.
+/// One scoring period as sent by the frontend (`test_periods[]`): only
+/// `start` -> `end`. Same datetime strings as the training periods; `None` /
+/// blank = open bound.
+///
+/// Older callers also send `label` (`"normal"` | `"problem"`) and `event_time`
+/// (or `eventTime`). Those keys are still ACCEPTED - serde skips keys it does
+/// not know, and this struct must never get `deny_unknown_fields` - but they
+/// are not read: whatever they hold, the period is scored the same way.
 #[derive(Debug, Clone, Default, Deserialize, PartialEq)]
 pub struct TestPeriodArg {
     #[serde(default)]
     pub start: Option<String>,
     #[serde(default)]
     pub end: Option<String>,
-    /// `"normal"` | `"problem"`.
-    #[serde(default)]
-    pub label: String,
-    /// Known problem only: when the problem became visible. Must lie inside
-    /// the test period.
-    #[serde(default, alias = "eventTime")]
-    pub event_time: Option<String>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Label {
-    Normal,
-    Problem,
 }
 
 fn blank_to_none(s: &Option<String>) -> Option<String> {
@@ -89,19 +84,14 @@ fn err_issue(code: &str, field: String, message: String) -> Issue {
     }
 }
 
-/// One resolved test period. `filter` is `None` when the period is invalid
+/// One resolved scoring period. `filter` is `None` when the period is invalid
 /// (the matching issue is in [`TestPlan::issues`]): it is skipped, its result
 /// has no rows and no metrics.
 pub struct PlannedTest {
-    /// 1-based (`T1`, `T2`, ...).
+    /// 1-based position in the request (`S1`, `S2`, ...).
     pub index: usize,
-    label: Option<Label>,
-    label_text: String,
     start: Option<String>,
     end: Option<String>,
-    /// Echoed event time (`None` for a Normal test or an unusable value).
-    event_time: Option<String>,
-    event_us: Option<i64>,
     filter: Option<ResolvedFilter>,
 }
 
@@ -111,7 +101,7 @@ pub struct TrainRange {
     pub end: Option<String>,
 }
 
-/// The test periods of a request, parsed once. Built by [`TestPlan::resolve`].
+/// The scoring periods of a request, parsed once. Built by [`TestPlan::resolve`].
 pub struct TestPlan {
     pub tests: Vec<PlannedTest>,
     /// Structured problems with the periods (error severity, codes below).
@@ -120,31 +110,17 @@ pub struct TestPlan {
 }
 
 impl TestPlan {
-    /// Parse and check every test period against the training scope `base`.
+    /// Parse and check every scoring period against the training scope `base`.
     ///
-    /// Issue codes (field `test_period_<n>_<what>`): `test_label_invalid`,
+    /// Issue codes (field `test_period_<n>_start` / `test_period_<n>_end`):
     /// `test_start_unparseable`, `test_end_unparseable`,
-    /// `test_ends_before_start`, `event_unparseable`,
-    /// `event_outside_test_period`.
+    /// `test_ends_before_start`.
     pub fn resolve(args: &[TestPeriodArg], base: Option<&PreviewFilter>, headers: &[String]) -> TestPlan {
         let mut tests = Vec::with_capacity(args.len());
         let mut issues = Vec::new();
         for (i, a) in args.iter().enumerate() {
             let n = i + 1;
             let mut bad = false;
-            let label = match a.label.trim().to_ascii_lowercase().as_str() {
-                "normal" => Some(Label::Normal),
-                "problem" => Some(Label::Problem),
-                _ => {
-                    issues.push(err_issue(
-                        "test_label_invalid",
-                        format!("test_period_{n}_label"),
-                        format!("Test period T{n}: the label must be 'normal' or 'problem', got '{}'.", a.label),
-                    ));
-                    bad = true;
-                    None
-                }
-            };
             let start = blank_to_none(&a.start);
             let end = blank_to_none(&a.end);
             let s = match parse_time_bound(start.as_deref(), "start") {
@@ -153,7 +129,7 @@ impl TestPlan {
                     issues.push(err_issue(
                         "test_start_unparseable",
                         format!("test_period_{n}_start"),
-                        format!("Test period T{n}: the start time '{}' is not a valid date and time.", start.as_deref().unwrap_or("")),
+                        format!("Scoring period S{n}: the start time '{}' is not a valid date and time.", start.as_deref().unwrap_or("")),
                     ));
                     bad = true;
                     None
@@ -165,7 +141,7 @@ impl TestPlan {
                     issues.push(err_issue(
                         "test_end_unparseable",
                         format!("test_period_{n}_end"),
-                        format!("Test period T{n}: the end time '{}' is not a valid date and time.", end.as_deref().unwrap_or("")),
+                        format!("Scoring period S{n}: the end time '{}' is not a valid date and time.", end.as_deref().unwrap_or("")),
                     ));
                     bad = true;
                     None
@@ -176,47 +152,16 @@ impl TestPlan {
                     issues.push(err_issue(
                         "test_ends_before_start",
                         format!("test_period_{n}_end"),
-                        format!("Test period T{n} ends before it starts."),
+                        format!("Scoring period S{n} ends before it starts."),
                     ));
                     bad = true;
-                }
-            }
-            let mut event_time = None;
-            let mut event_us = None;
-            if label == Some(Label::Problem) {
-                if let Some(ev) = blank_to_none(&a.event_time) {
-                    match parse_time_bound(Some(&ev), "event_time") {
-                        Ok(Some(us)) => {
-                            let inside = s.is_none_or(|sv| us >= sv) && e.is_none_or(|evv| us <= evv);
-                            if inside {
-                                event_us = Some(us);
-                                event_time = Some(ev);
-                            } else {
-                                issues.push(err_issue(
-                                    "event_outside_test_period",
-                                    format!("test_period_{n}_event_time"),
-                                    format!("Test period T{n}: the event time ({ev}) must be inside the test period."),
-                                ));
-                                bad = true;
-                            }
-                        }
-                        Ok(None) => {}
-                        Err(_) => {
-                            issues.push(err_issue(
-                                "event_unparseable",
-                                format!("test_period_{n}_event_time"),
-                                format!("Test period T{n}: the event time '{ev}' is not a valid date and time."),
-                            ));
-                            bad = true;
-                        }
-                    }
                 }
             }
             let filter = if bad {
                 None
             } else {
                 // The running condition's VALUE conditions (+ AND/OR) with the
-                // test period as the only time gate.
+                // scoring period as the only time gate.
                 let pf = PreviewFilter {
                     timestamp_start: None,
                     timestamp_end: None,
@@ -231,12 +176,8 @@ impl TestPlan {
             };
             tests.push(PlannedTest {
                 index: n,
-                label,
-                label_text: a.label.trim().to_ascii_lowercase(),
                 start,
                 end,
-                event_time,
-                event_us,
                 filter,
             });
         }
@@ -357,17 +298,17 @@ pub fn test_scoring_issue(kind: TestScoringFailure) -> Issue {
     let (code, message) = match kind {
         TestScoringFailure::Outdated => (
             TEST_SCORING_OUTDATED,
-            "The test periods could not be scored: the Relation model engine in this build is out of \
+            "The scoring periods could not be scored: the Relation model engine in this build is out of \
              date - reinstall or update the app. The training results above are not affected.",
         ),
         TestScoringFailure::OverBudget => (
             TEST_SCORING_TOO_LARGE,
-            "These test periods have too many rows to score in memory - shorten them or remove one. \
+            "These scoring periods have too many rows to score in memory - shorten them or remove one. \
              The training results above are not affected.",
         ),
         TestScoringFailure::EngineError => (
             TEST_SCORING_FAILED,
-            "The test periods could not be scored because the Relation model engine did not answer. \
+            "The scoring periods could not be scored because the Relation model engine did not answer. \
              The training results above are not affected - try again, or train the model again.",
         ),
     };
@@ -379,10 +320,10 @@ pub fn test_scoring_issue(kind: TestScoringFailure) -> Issue {
     }
 }
 
-/// Turn a finished `test_validation` into "nothing could be scored": every test
-/// keeps its identity (index, label, period, days, rows) but has no score, no
-/// metrics and none of the nullable detection fields - never a half-filled
-/// result that looks like a real one.
+/// Turn a finished `test_validation` into "nothing could be scored": every
+/// period keeps its identity (index, period, days, rows) but has no score, no
+/// metrics and none of the nullable score fields - never a half-filled result
+/// that looks like a real one.
 ///
 /// `input_rows` (aligned with `v.tests`; ignored when the length differs): the
 /// rows of each test period that have all the model's inputs, i.e. what a
@@ -400,10 +341,8 @@ pub fn mark_unscored(v: &mut TestValidation, input_rows: Option<&[usize]>, inter
         t.scored = 0;
         t.metrics = KindMetrics::default();
         t.pct_below_80 = None;
-        t.first_below_80 = None;
         t.lowest = None;
         t.lowest_at = None;
-        t.lead_days = None;
     }
 }
 
@@ -471,27 +410,30 @@ pub struct TrainBlock {
     pub metrics: KindMetrics,
 }
 
+/// The result of one scoring period. Facts only - no label, no event time, no
+/// lead time and no verdict (removed 2026-10-10, "just score it").
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct TestResult {
+    /// 1-based position in the request's `test_periods` (`S1` = 1).
     pub index: usize,
-    pub label: String,
     pub start: Option<String>,
     pub end: Option<String>,
-    pub event_time: Option<String>,
     pub days: f64,
     pub rows: usize,
     #[serde(flatten)]
     pub metrics: KindMetrics,
-    /// Rows (and running days) of this test period that are also train rows.
+    /// Rows (and running days) of this scoring period that are also train rows.
     pub train_rows: usize,
     pub train_days: f64,
     /// Rows that got a score.
     pub scored: usize,
+    /// Share (%) of the scored rows whose score is below 80. `None` = nothing
+    /// was scored.
     pub pct_below_80: Option<f64>,
-    pub first_below_80: Option<String>,
+    /// The lowest level the score held for [`DROP_SUSTAIN_HOURS`] (rounded to
+    /// a whole score), and the timestamp text of the first row of that window.
     pub lowest: Option<f64>,
     pub lowest_at: Option<String>,
-    pub lead_days: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -530,7 +472,8 @@ pub fn sample_interval_secs(data: &ColumnarData) -> Option<f64> {
     crate::csv_processor::median_interval_seconds(&data.ts_parsed)
 }
 
-/// Consecutive scored rows that make [`DROP_SUSTAIN_HOURS`] of running time.
+/// Consecutive scored rows that make [`DROP_SUSTAIN_HOURS`] of running time
+/// (the window of the "lowest" rule).
 pub fn sustain_rows(interval_secs: Option<f64>) -> usize {
     match interval_secs {
         Some(iv) if iv.is_finite() && iv > 0.0 => {
@@ -544,38 +487,33 @@ fn days_of(rows: usize, interval_secs: Option<f64>) -> f64 {
     interval_secs.map_or(0.0, |iv| r1(rows as f64 * iv / 86_400.0))
 }
 
-/// What the sustained-drop rule found in one test period's scored rows.
-/// Positions index `rows` / `scores`.
+/// The score facts of one scoring period's rows. Positions index `rows` /
+/// `scores`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Facts {
     pub scored: usize,
+    /// Scored rows below 80 (every one counts, however short the dip).
     pub below_80: usize,
-    /// Position of the first row of the first run of `sustain` consecutive
-    /// scores below 80.
-    pub first_below: Option<usize>,
     /// `(level, position of the window's first row)`: the lowest level the
     /// score stayed at (or below) for `sustain` consecutive scored rows.
     pub lowest: Option<(f64, usize)>,
 }
 
-/// Port of the mock backend's `scoreFacts` (O(n): the window maximum uses a
-/// monotonic deque). `rows` are ascending dataset rows, `scores` aligned with
-/// them (`NaN` = unscored). A gap (an unscored row, or rows that are not
-/// adjacent in the dataset) restarts both the run and the window.
+/// One O(n) pass (the window maximum uses a monotonic deque). `rows` are
+/// ascending dataset rows, `scores` aligned with them (`NaN` = unscored). A gap
+/// (an unscored row, or rows that are not adjacent in the dataset) restarts the
+/// window.
 pub fn score_facts(rows: &[u32], scores: &[f64], sustain: usize) -> Facts {
     let s = sustain.max(1);
     let mut scored = 0usize;
     let mut below = 0usize;
-    let mut first = None;
     let mut lowest: Option<(f64, usize)> = None;
-    let mut run = 0usize;
     let mut seg = 0usize;
     let mut dq: VecDeque<usize> = VecDeque::new();
     for i in 0..rows.len() {
         let v = scores[i];
         let gap = v.is_nan() || (i > 0 && u64::from(rows[i]) != u64::from(rows[i - 1]) + 1);
         if gap {
-            run = 0;
             seg = 0;
             dq.clear();
         }
@@ -586,12 +524,6 @@ pub fn score_facts(rows: &[u32], scores: &[f64], sustain: usize) -> Facts {
         scored += 1;
         if v < SCORE_AT_3SD {
             below += 1;
-            run += 1;
-            if run == s && first.is_none() {
-                first = Some(i + 1 - s);
-            }
-        } else {
-            run = 0;
         }
         while dq.back().is_some_and(|&b| scores[b] <= v) {
             dq.pop_back();
@@ -610,7 +542,6 @@ pub fn score_facts(rows: &[u32], scores: &[f64], sustain: usize) -> Facts {
     Facts {
         scored,
         below_80: below,
-        first_below: first,
         lowest,
     }
 }
@@ -633,7 +564,7 @@ pub struct Universe<'a> {
 ///   rows missing from the universe (no prediction, ...) are dropped.
 /// * `train_rows` / `train_metrics` - the kind's train summary.
 /// * `metrics_for(positions)` - the kind's metrics over a test's universe
-///   positions (called only for a test with rows).
+///   positions (called only for a period with rows).
 pub fn build(
     plan: &TestPlan,
     test_rows: &[Vec<u32>],
@@ -658,10 +589,8 @@ pub fn build(
             let metrics = if rows > 0 { metrics_for(&pos) } else { KindMetrics::default() };
             let mut res = TestResult {
                 index: t.index,
-                label: t.label_text.clone(),
                 start: t.start.clone(),
                 end: t.end.clone(),
-                event_time: t.event_time.clone(),
                 days: days_of(rows, interval_secs),
                 rows,
                 metrics,
@@ -669,10 +598,8 @@ pub fn build(
                 train_days: days_of(train_in, interval_secs),
                 scored: 0,
                 pct_below_80: None,
-                first_below_80: None,
                 lowest: None,
                 lowest_at: None,
-                lead_days: None,
             };
             if let (Some(sc), true) = (u.scores, rows > 0) {
                 let drows: Vec<u32> = pos.iter().map(|&p| u.rows[p]).collect();
@@ -680,19 +607,9 @@ pub fn build(
                 let f = score_facts(&drows, &tscores, sustain);
                 res.scored = f.scored;
                 res.pct_below_80 = (f.scored > 0).then(|| r1(f.below_80 as f64 * 100.0 / f.scored as f64));
-                let text = |at: usize| u.data.timestamps[drows[at] as usize].clone();
-                res.first_below_80 = f.first_below.and_then(&text);
                 if let Some((lvl, at)) = f.lowest {
                     res.lowest = Some(lvl.round());
-                    res.lowest_at = text(at);
-                }
-                if t.label == Some(Label::Problem) {
-                    if let (Some(at), Some(ev)) = (f.first_below, t.event_us) {
-                        let ts = u.data.ts_parsed[drows[at] as usize];
-                        if ts != TS_MISSING {
-                            res.lead_days = Some(r1((ev - ts) as f64 / MICROS_PER_DAY));
-                        }
-                    }
+                    res.lowest_at = u.data.timestamps[drows[at] as usize].clone();
                 }
             }
             res
@@ -713,7 +630,9 @@ pub fn build(
 // Export block
 // ---------------------------------------------------------------------------
 
-/// The `validation` object written into the `*_INFO_*.json` file.
+/// The `validation` object written into the `*_INFO_*.json` file. `tests` are
+/// the scoring periods exactly as in `test_validation` (so: no `label`, no
+/// `event_time`, no `first_below_80`, no `lead_days`).
 pub fn export_block(v: &TestValidation, validated_at: &str) -> serde_json::Value {
     serde_json::json!({
         "tested": true,
@@ -744,12 +663,10 @@ pub fn inject_validation(info_path: &Path, block: serde_json::Value) -> Result<(
 mod tests {
     use super::*;
 
-    fn arg(label: &str, start: &str, end: &str, ev: Option<&str>) -> TestPeriodArg {
+    fn arg(start: &str, end: &str) -> TestPeriodArg {
         TestPeriodArg {
             start: Some(start.into()),
             end: Some(end.into()),
-            label: label.into(),
-            event_time: ev.map(str::to_string),
         }
     }
 
@@ -780,10 +697,13 @@ mod tests {
             assert_eq!(i.field, "test_periods");
             assert!(i.message.contains("training results above are not affected"));
             assert!(!i.message.contains("LinearGAM") && !i.message.contains("sidecar"));
+            // "Test periods" are called scoring periods in everything the user reads.
+            assert!(i.message.contains("coring periods"), "{}", i.message);
+            assert!(!i.message.to_lowercase().contains("test period"), "{}", i.message);
         }
     }
 
-    // ---------- sustained-drop rule ----------
+    // ---------- the 1 h "lowest" window + the below-80 count ----------
 
     #[test]
     fn sustain_rows_follows_the_sample_interval() {
@@ -801,26 +721,15 @@ mod tests {
     }
 
     #[test]
-    fn a_50_minute_dip_is_not_a_detection_but_60_minutes_is() {
+    fn every_row_below_80_counts_but_only_a_full_hour_moves_the_lowest() {
         let r = rows(30);
         // 10-minute rows: 5 rows = 50 min, 6 rows = 60 min.
         let f5 = score_facts(&r, &scores_with_dip(30, 10, 5, 30.0), 6);
-        assert_eq!(f5.first_below, None);
-        assert_eq!(f5.below_80, 5);
+        assert_eq!((f5.scored, f5.below_80), (30, 5), "a short dip still counts in the share");
+        assert_eq!(f5.lowest, Some((100.0, 0)), "50 min at 30 is not a level the score held for 1 h");
         let f6 = score_facts(&r, &scores_with_dip(30, 10, 6, 30.0), 6);
-        assert_eq!(f6.first_below, Some(10));
         assert_eq!(f6.below_80, 6);
-    }
-
-    #[test]
-    fn first_below_is_the_start_of_the_first_sustained_run_even_after_a_short_dip() {
-        let r = rows(40);
-        let mut s = scores_with_dip(40, 5, 3, 10.0); // short dip, ignored
-        for v in s.iter_mut().skip(20).take(8) {
-            *v = 50.0;
-        }
-        let f = score_facts(&r, &s, 6);
-        assert_eq!(f.first_below, Some(20));
+        assert_eq!(f6.lowest, Some((30.0, 10)), "60 min at 30: held, from the dip's first row");
     }
 
     #[test]
@@ -842,82 +751,102 @@ mod tests {
     fn fewer_than_a_window_of_rows_has_no_lowest() {
         let f = score_facts(&rows(4), &[90.0, 80.0, 70.0, 60.0], 6);
         assert_eq!(f.lowest, None);
-        assert_eq!(f.first_below, None);
-        assert_eq!(f.scored, 4);
+        assert_eq!((f.scored, f.below_80), (4, 2));
     }
 
     #[test]
-    fn unscored_rows_and_dataset_gaps_break_the_run() {
+    fn unscored_rows_and_dataset_gaps_break_the_window() {
         // 3 low, NaN, 3 low  => never 6 in a row.
         let r = rows(7);
         let s = [30.0, 30.0, 30.0, f64::NAN, 30.0, 30.0, 30.0];
-        assert_eq!(score_facts(&r, &s, 6).first_below, None);
+        let f = score_facts(&r, &s, 6);
+        assert_eq!((f.scored, f.below_80, f.lowest), (6, 6, None));
         // 3 low, then rows 4 apart (removed by the running condition), 3 low.
         let r = [0u32, 1, 2, 7, 8, 9];
         let s = [30.0; 6];
         let f = score_facts(&r, &s, 6);
-        assert_eq!(f.first_below, None);
-        assert_eq!(f.lowest, None);
-        // Contiguous rows do detect.
+        assert_eq!((f.below_80, f.lowest), (6, None));
+        // Contiguous rows do hold the level.
         let r = [4u32, 5, 6, 7, 8, 9];
-        assert_eq!(score_facts(&r, &s, 6).first_below, Some(0));
+        assert_eq!(score_facts(&r, &s, 6).lowest, Some((30.0, 0)));
     }
 
     #[test]
     fn exactly_80_is_not_below_80() {
         let f = score_facts(&rows(12), &[80.0; 12], 6);
-        assert_eq!(f.first_below, None);
         assert_eq!(f.below_80, 0);
+        assert_eq!(f.lowest, Some((80.0, 0)));
+        assert_eq!(score_facts(&rows(12), &[79.9; 12], 6).below_80, 12);
     }
 
     // ---------- plan / issues ----------
 
     #[test]
-    fn plan_parses_labels_ranges_and_events() {
+    fn plan_parses_ranges_and_numbers_them_from_one() {
         let p = TestPlan::resolve(
             &[
-                arg("normal", "2024-01-01T00:00", "2024-01-03T00:00", None),
-                arg("problem", "2024-02-01 00:00:00", "2024-02-10 00:00:00", Some("2024-02-08T12:00")),
+                arg("2024-01-01T00:00", "2024-01-03T00:00"),
+                arg("2024-02-01 00:00:00", "2024-02-10 00:00:00"),
+                // Open bounds (absent or blank) are fine.
+                TestPeriodArg { start: Some("2024-03-01T00:00".into()), end: None },
+                TestPeriodArg { start: Some("  ".into()), end: Some("".into()) },
             ],
             None,
             &headers(),
         );
         assert!(p.issues.is_empty(), "{:?}", p.issues);
-        assert_eq!(p.tests.len(), 2);
-        assert_eq!(p.tests[1].index, 2);
-        assert!(p.tests[1].event_us.is_some());
+        assert_eq!(p.tests.iter().map(|t| t.index).collect::<Vec<_>>(), vec![1, 2, 3, 4]);
         assert!(p.tests.iter().all(|t| t.filter.is_some()));
+        assert_eq!((p.tests[3].start.clone(), p.tests[3].end.clone()), (None, None), "blank = open bound");
     }
 
     #[test]
     fn plan_flags_every_kind_of_bad_period_with_a_stable_code() {
-        let codes = |a: TestPeriodArg| -> Vec<String> {
-            TestPlan::resolve(&[a], None, &headers()).issues.into_iter().map(|i| i.code).collect()
-        };
+        let issues = |a: TestPeriodArg| TestPlan::resolve(&[a], None, &headers()).issues;
+        let codes = |a: TestPeriodArg| -> Vec<String> { issues(a).into_iter().map(|i| i.code).collect() };
         let (s, e) = ("2024-02-01T00:00", "2024-02-10T00:00");
-        assert_eq!(codes(arg("problem", s, e, Some("2024-03-01T00:00"))), vec!["event_outside_test_period"]);
-        assert_eq!(codes(arg("problem", s, e, Some("2024-01-31 23:59"))), vec!["event_outside_test_period"]);
-        assert_eq!(codes(arg("problem", s, e, Some("nonsense"))), vec!["event_unparseable"]);
-        assert_eq!(codes(arg("normal", "not a date", e, None)), vec!["test_start_unparseable"]);
-        assert_eq!(codes(arg("normal", s, "31/12/2024", None)), vec!["test_end_unparseable"]);
-        assert_eq!(codes(arg("normal", e, s, None)), vec!["test_ends_before_start"]);
-        assert_eq!(codes(arg("sideways", s, e, None)), vec!["test_label_invalid"]);
-        // Event on the boundary is inside.
-        assert!(codes(arg("problem", s, e, Some(e))).is_empty());
-        // An open end accepts any later event.
-        let open = TestPeriodArg { start: Some(s.into()), end: None, label: "problem".into(), event_time: Some("2030-01-01T00:00".into()) };
-        assert!(codes(open).is_empty());
-        // An invalid period is skipped (no filter), the others still resolve.
-        let p = TestPlan::resolve(&[arg("normal", "bad", e, None), arg("normal", s, e, None)], None, &headers());
-        assert!(p.tests[0].filter.is_none() && p.tests[1].filter.is_some());
-        assert_eq!(p.issues[0].field, "test_period_1_start");
+        assert_eq!(codes(arg("not a date", e)), vec!["test_start_unparseable"]);
+        assert_eq!(codes(arg(s, "31/12/2024")), vec!["test_end_unparseable"]);
+        assert_eq!(codes(arg(e, s)), vec!["test_ends_before_start"]);
+        assert!(codes(arg(s, s)).is_empty(), "start == end is a (one-instant) period, not an error");
+        // The wording says "Scoring period S<n>", never "Test period T<n>".
+        for a in [arg("not a date", e), arg(s, "31/12/2024"), arg(e, s)] {
+            let i = &issues(a)[0];
+            assert!(i.message.starts_with("Scoring period S1"), "{}", i.message);
+            assert_eq!(i.severity, Severity::Error);
+        }
+        // An invalid period is skipped (no filter), the others still resolve;
+        // the field names its 1-based position.
+        let p = TestPlan::resolve(&[arg("bad", e), arg(s, e), arg(e, s)], None, &headers());
+        assert!(p.tests[0].filter.is_none() && p.tests[1].filter.is_some() && p.tests[2].filter.is_none());
+        let at: Vec<(&str, &str)> = p.issues.iter().map(|i| (i.code.as_str(), i.field.as_str())).collect();
+        assert_eq!(at, vec![("test_start_unparseable", "test_period_1_start"), ("test_ends_before_start", "test_period_3_end")]);
+        assert!(p.issues[1].message.starts_with("Scoring period S3"));
     }
 
     #[test]
-    fn a_normal_test_never_carries_an_event_time() {
-        let p = TestPlan::resolve(&[arg("normal", "2024-02-01T00:00", "2024-02-10T00:00", Some("2024-03-01T00:00"))], None, &headers());
-        assert!(p.issues.is_empty(), "an event on a normal test is ignored, not an error: {:?}", p.issues);
-        assert_eq!(p.tests[0].event_time, None);
+    fn the_removed_label_and_event_time_are_accepted_on_the_wire_but_never_read() {
+        // What the frontend sent before the redesign, with values that used to be
+        // refused (`test_label_invalid`, `event_outside_test_period`,
+        // `event_unparseable`) - none of it matters any more.
+        let (s, e) = ("2024-02-01T00:00", "2024-02-10T00:00");
+        let plain: TestPeriodArg = serde_json::from_value(serde_json::json!({ "start": s, "end": e })).unwrap();
+        for legacy in [
+            serde_json::json!({ "start": s, "end": e, "label": "normal" }),
+            serde_json::json!({ "start": s, "end": e, "label": "problem", "event_time": "2024-02-08T12:00" }),
+            serde_json::json!({ "start": s, "end": e, "label": "problem", "eventTime": "2030-01-01T00:00" }),
+            serde_json::json!({ "start": s, "end": e, "label": "sideways", "event_time": "nonsense" }),
+            serde_json::json!({ "start": s, "end": e, "label": null, "event_time": null, "fromHighlight": "h1" }),
+        ] {
+            let a: TestPeriodArg = serde_json::from_value(legacy.clone()).expect("old callers must not break");
+            assert_eq!(a, plain, "{legacy}");
+            let p = TestPlan::resolve(&[a], None, &headers());
+            assert!(p.issues.is_empty(), "{legacy}: {:?}", p.issues);
+            assert!(p.tests[0].filter.is_some());
+        }
+        // Absent start / end still default to an open bound.
+        let open: TestPeriodArg = serde_json::from_str(r#"{"label":"normal","eventTime":"y"}"#).unwrap();
+        assert_eq!(open, TestPeriodArg::default());
     }
 
     #[test]
@@ -946,10 +875,8 @@ mod tests {
     fn unscored_fixture() -> TestValidation {
         let t = |index: usize, rows: usize| TestResult {
             index,
-            label: "normal".into(),
             start: None,
             end: None,
-            event_time: None,
             days: 0.0,
             rows,
             metrics: KindMetrics { r2: Some(0.9), ..Default::default() },
@@ -957,10 +884,8 @@ mod tests {
             train_days: 0.0,
             scored: rows,
             pct_below_80: Some(1.0),
-            first_below_80: Some("x".into()),
             lowest: Some(50.0),
             lowest_at: Some("y".into()),
-            lead_days: Some(1.0),
         };
         TestValidation {
             train: TrainBlock { rows: 10, days: 1.0, metrics: KindMetrics::default() },
@@ -979,8 +904,7 @@ mod tests {
         for t in &v.tests {
             assert_eq!(t.scored, 0);
             assert_eq!(t.metrics, KindMetrics::default());
-            assert!(t.pct_below_80.is_none() && t.first_below_80.is_none() && t.lowest.is_none());
-            assert!(t.lowest_at.is_none() && t.lead_days.is_none());
+            assert!(t.pct_below_80.is_none() && t.lowest.is_none() && t.lowest_at.is_none());
         }
         // No counts / a length mismatch: rows and days are left as they were.
         let mut v = unscored_fixture();
@@ -996,10 +920,8 @@ mod tests {
     fn unknown_metrics_are_omitted_not_null() {
         let t = TestResult {
             index: 1,
-            label: "normal".into(),
             start: None,
             end: None,
-            event_time: None,
             days: 0.0,
             rows: 0,
             metrics: KindMetrics { within_3sd_pct: Some(99.5), ..Default::default() },
@@ -1007,26 +929,53 @@ mod tests {
             train_days: 0.0,
             scored: 0,
             pct_below_80: None,
-            first_below_80: None,
             lowest: None,
             lowest_at: None,
-            lead_days: None,
         };
         let j = serde_json::to_value(&t).unwrap();
         assert_eq!(j["within_3sd_pct"], 99.5);
         assert!(j.get("r2").is_none() && j.get("inside_3sd_ring_pct").is_none());
-        for k in ["pct_below_80", "first_below_80", "lowest", "lowest_at", "lead_days", "event_time", "start", "end"] {
+        for k in ["pct_below_80", "lowest", "lowest_at", "start", "end"] {
             assert!(j[k].is_null(), "{k} must be present and null");
         }
     }
 
     #[test]
-    fn request_deserializes_snake_and_camel_event_time() {
-        let a: TestPeriodArg = serde_json::from_str(r#"{"start":"a","end":null,"label":"problem","event_time":"x"}"#).unwrap();
-        assert_eq!(a.event_time.as_deref(), Some("x"));
-        let b: TestPeriodArg = serde_json::from_str(r#"{"label":"normal","eventTime":"y"}"#).unwrap();
-        assert_eq!(b.event_time.as_deref(), Some("y"));
-        assert_eq!(b.start, None);
+    fn a_result_is_exactly_the_scoring_facts_no_label_event_or_verdict_keys() {
+        let t = TestResult {
+            index: 2,
+            start: Some("a".into()),
+            end: Some("b".into()),
+            days: 1.5,
+            rows: 10,
+            metrics: KindMetrics::default(),
+            train_rows: 3,
+            train_days: 0.5,
+            scored: 9,
+            pct_below_80: Some(11.1),
+            lowest: Some(42.0),
+            lowest_at: Some("c".into()),
+        };
+        let j = serde_json::to_value(&t).unwrap();
+        let mut keys: Vec<&str> = j.as_object().unwrap().keys().map(String::as_str).collect();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            vec!["days", "end", "index", "lowest", "lowest_at", "pct_below_80", "rows", "scored", "start", "train_days", "train_rows"]
+        );
+        // The export block carries the periods unchanged.
+        let v = TestValidation {
+            train: TrainBlock { rows: 10, days: 1.0, metrics: KindMetrics::default() },
+            train_ranges: vec![],
+            tests: vec![t],
+        };
+        let block = export_block(&v, "2026-10-10T00:00:00Z");
+        assert_eq!(block["tests"][0], j);
+        let text = block.to_string();
+        for gone in ["label", "event_time", "lead_days", "first_below_80"] {
+            assert!(!text.contains(gone), "{gone} must not be written");
+        }
+        assert_eq!((block["tested"].clone(), block["validated_at"].clone()), (true.into(), "2026-10-10T00:00:00Z".into()));
     }
 
     #[test]

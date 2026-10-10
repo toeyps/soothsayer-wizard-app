@@ -109,10 +109,11 @@ pub struct ModelFilesRequest {
     pub cache_key: Option<String>,
     #[serde(default, alias = "expectedGeneration")]
     pub expected_generation: Option<u64>,
-    /// Train/Test validation. When non-empty the model is validated on these
-    /// periods (train-only model, the same code as `compute_health_preview`) and
-    /// a `validation` block is added to the `*_INFO_*.json`. Empty / absent = no
-    /// `validation` block.
+    /// Scoring periods (`[{start,end}]`; a legacy `label` / `event_time` is
+    /// accepted and ignored). When non-empty the train-only model scores these
+    /// periods (the same code as `compute_health_preview`) and a `validation`
+    /// block is added to the `*_INFO_*.json`. Empty / absent = no `validation`
+    /// block.
     #[serde(default)]
     pub test_periods: Option<Vec<TestPeriodArg>>,
 }
@@ -123,9 +124,10 @@ impl ModelFilesRequest {
     }
 }
 
-/// Refusal of an export whose test periods are malformed (bad dates, an event
-/// outside its period, ...): `ok: false` with the structured issues, nothing
-/// written. `None` when there are no test periods or they are fine.
+/// Refusal of an export whose scoring periods (`test_periods`) are malformed (a
+/// date that cannot be read, an end before its start): `ok: false` with the
+/// structured issues, nothing written. `None` when there are none or they are
+/// fine.
 pub fn refuse_bad_test_periods(
     req: &ModelFilesRequest,
     data: &ColumnarData,

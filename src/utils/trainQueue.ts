@@ -70,11 +70,13 @@ const MISSING_ITEM_PHRASES: Record<string, string> = {
 };
 
 /** A sentence → a phrase that reads after "Can't train — ": no trailing full
- *  stop, first letter lower-cased unless it starts an identifier ("T1", "Y"). */
+ *  stop, first letter lower-cased unless it starts an identifier ("S1", "Y").
+ *  "S1 needs a start date." (`validateTestPeriods`) reads "scoring period S1
+ *  needs a start date". */
 function toPhrase(text: string): string {
     let t = text.trim().replace(/\.+$/, '');
     t = t.replace(/^Period (\d+)\b/, 'Train period $1');
-    t = t.replace(/^(T\d+)\b/, 'Test period $1');
+    t = t.replace(/^(S\d+)\b/, 'Scoring period $1');
     if (/^[A-Z][a-z]/.test(t)) t = t[0].toLowerCase() + t.slice(1);
     return t;
 }
@@ -112,7 +114,7 @@ export function preflightReason(
     if (blockReason === NO_TRAIN_PERIOD_REASON) return { text: 'no train period', fix: 'runningCondition' };
     if (blockReason === NO_TRAIN_PERIOD_REASON_CUSTOM) return { text: 'no train period in its own training data', fix: 'settings' };
     // Invalid train periods ("Period 2 ends before it starts.") come from the gate;
-    // invalid Custom test periods ("T1 needs a start date.") from Save's own check.
+    // invalid Custom scoring periods ("S1 needs a start date.") from Save's own check.
     if (/^Period \d+\b/.test(blockReason)) return { text: toPhrase(blockReason), fix: rcFix };
     return { text: toPhrase(blockReason), fix: 'settings' };
 }

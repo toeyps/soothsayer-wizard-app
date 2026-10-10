@@ -27,6 +27,7 @@ import {
     NO_TRAIN_PERIOD_REASON,
     NO_TRAIN_PERIOD_REASON_CUSTOM,
 } from '../utils/runningCondition';
+import { testPeriodsError } from '../utils/timePeriods';
 import type { TrainCandidate, TrainQueueItem, TrainRun } from '../types/trainQueue';
 
 const run = (items: TrainQueueItem[], over: Partial<TrainRun> = {}): TrainRun => ({
@@ -50,9 +51,13 @@ describe('preflightReason', () => {
         expect(r.text).not.toMatch(/above/);
     });
 
-    it('turns an unknown missing item (a Custom test period error) into a phrase', () => {
-        expect(preflightReason(REQUIRED_FIELDS_BLOCK_REASON, { missing: ['T1 needs a start date.'] }).text)
-            .toBe('test period T1 needs a start date');
+    it('turns an unknown missing item (a Custom scoring period error) into a phrase', () => {
+        expect(preflightReason(REQUIRED_FIELDS_BLOCK_REASON, { missing: ['S1 needs a start date.'] }).text)
+            .toBe('scoring period S1 needs a start date');
+        // the real text `validateTestPeriods` produces, end to end
+        const reason = testPeriodsError([{ id: 't', start: '2026-02-01T00:00', end: '2026-01-01T00:00' }])!;
+        expect(preflightReason(REQUIRED_FIELDS_BLOCK_REASON, { missing: [reason] }).text).toBe('scoring period S1 ends before it starts');
+        expect(preflightReason(REQUIRED_FIELDS_BLOCK_REASON, { missing: [reason] }).text).not.toMatch(/test period/i);
     });
 
     it('category → its own phrase and the sensor header as the fix target', () => {

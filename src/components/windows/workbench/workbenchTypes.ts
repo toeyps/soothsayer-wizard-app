@@ -35,14 +35,14 @@ export interface WorkbenchPageProps {
     sensorLabel: (tag: string) => string;
     /** Raw description of a tag ('' when unknown). */
     getDesc: (tag: string) => string;
-    /** Train/Test validation: the T-number (1-based position in the user's full
-     *  test list) of each test period that was SENT — `testPeriodsWirePlan(...)
-     *  .numbers`. Results carry their wire `index`; this maps it back so an
-     *  invalid (unsent) T1 does not make the valid T2 read "T1". Absent = the
-     *  wire index is shown. */
+    /** The S-number (1-based position in the user's full scoring-period list) of
+     *  each scoring period that was SENT — `testPeriodsWirePlan(...).numbers`.
+     *  Results carry their wire `index`; this maps it back so an invalid
+     *  (unsent) S1 does not make the valid S2 read "S1". Absent = the wire index
+     *  is shown. */
     testNumbers?: readonly number[] | null;
-    /** A Relation-model preview that scores test periods has been loading for a
-     *  while: show "Scoring test periods … up to ~15 s". */
+    /** A Relation-model preview that scores scoring periods has been loading for
+     *  a while: show "Scoring these periods … up to ~15 s". */
     slowScoring?: boolean;
 }
 
@@ -53,7 +53,7 @@ export interface WorkbenchPageProps {
 /** What the page tells about the model's saved files ("Mark complete" writes them). */
 export type SaveInfo =
     | { phase: 'idle' }
-    /** `slow`: Relationship re-runs the sidecar and scores the test periods (15 s or more, longer the first time). */
+    /** `slow`: Relationship re-runs the sidecar and scores the scoring periods (15 s or more, longer the first time). */
     | { phase: 'running'; slow: boolean }
     /** `files` is `null` when only the persisted record is known (the model was
      *  completed in an earlier session): the folder and time, not the file list. */
@@ -81,11 +81,11 @@ export interface HealthScorePageProps extends WorkbenchPageProps {
     /** The error banner's Retry: ask `compute_health_preview` again. */
     onRetryPreview?: () => void;
     /** The `test_scoring_failed` notice's "Try again": same, but also tells Rust to
-     *  retry the test-period prediction it remembered as failed. Falls back to
+     *  retry the scoring-period prediction it remembered as failed. Falls back to
      *  `onRetryPreview` when absent. */
     onRetryTestScoring?: () => void;
-    /** Train/Test validation (rule 8): only the model's test periods changed since
-     *  it was Complete — `'changed'` / `'removed'` shows the "Mark complete again"
-     *  banner (`testsChangedState`); null/absent = nothing to say. */
+    /** Only the model's scoring periods changed since it was Complete —
+     *  `'changed'` / `'removed'` shows the "Mark complete again" banner
+     *  (`testsChangedState`); null/absent = nothing to say. */
     testsChanged?: TestsChangedState | null;
 }

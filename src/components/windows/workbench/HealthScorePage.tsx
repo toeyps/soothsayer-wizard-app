@@ -47,7 +47,7 @@ import type { HealthScorePageProps, SaveInfo } from './workbenchTypes';
  */
 
 /** Memo comparison (see `samePageProps`): the small data the window rebuilds per
- *  render (model, set points, save record, tests-changed state, test numbers)
+ *  render (model, set points, save record, tests-changed state, scoring-period numbers)
  *  by value, everything else by identity — the callbacks must be stable. */
 export function sameHealthScoreProps(a: HealthScorePageProps, b: HealthScorePageProps): boolean {
     return samePageProps(a, b, ['model', 'setPoints', 'save', 'testsChanged', 'testNumbers', 'attemptIssues']);
@@ -62,10 +62,10 @@ function HealthScorePage(props: HealthScorePageProps) {
     // "Re-train to recompute" (NOT_FITTED) keeps its own full-page message.
     const errorMode = !preview.data && !preview.notFitted && !!preview.error && !!preview.lastData;
     const data = preview.data ?? (errorMode ? preview.lastData ?? null : null);
-    // Train / test scopes on the time charts (null = no test periods sent). Memoised
-    // on the payload so a hover re-render never rebuilds the time charts.
+    // Train / scoring scopes on the time charts (null = no scoring periods sent).
+    // Memoised on the payload so a hover re-render never rebuilds the time charts.
     const validation = data?.test_validation;
-    // T-numbers of the sent test periods: memoised on their VALUE (the container
+    // S-numbers of the sent scoring periods: memoised on their VALUE (the container
     // builds a new array every render).
     const testNumbers = props.testNumbers;
     const numbersKey = testNumbers ? testNumbers.join(',') : '';
@@ -182,7 +182,7 @@ function HealthScorePage(props: HealthScorePageProps) {
                     </div>
                 </section>
             )}
-            <TestResultsCard data={data} scoreReady={scoreReady} custom={model.runningConditionMode === 'custom'} testNumbers={testNumbers} onRetry={canRetry ? (props.onRetryTestScoring ?? props.onRetryPreview) : undefined} />
+            <TestResultsCard data={data} scoreReady={scoreReady} unavailable={errorMode} custom={model.runningConditionMode === 'custom'} testNumbers={testNumbers} onRetry={canRetry ? (props.onRetryTestScoring ?? props.onRetryPreview) : undefined} />
         </div>
     );
 }
@@ -197,7 +197,7 @@ function SaveBanner({ save }: { save: SaveInfo }) {
         return (
             <div className="hs-save hs-full" role="status" data-testid="save-running">
                 <Loader2 size={14} className="pm-spin" aria-hidden="true" />
-                <span><b>Saving results…</b>{save.slow ? ' The Relation model is fitted again for the saved files and its test periods are scored. This can take longer than 15 seconds, especially the first time.' : ''}</span>
+                <span><b>Saving results…</b>{save.slow ? ' The Relation model is fitted again for the saved files and its scoring periods are scored. This can take longer than 15 seconds, especially the first time.' : ''}</span>
             </div>
         );
     }

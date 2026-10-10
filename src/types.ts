@@ -191,18 +191,20 @@ export interface PredictiveModelStateSlice {
     customRunningConditionFilters: WorkspaceSensorFilter[];
     /** Only read when `runningConditionMode === 'custom'`. */
     customRunningConditionCombine: 'and' | 'or';
-    /** Train/Test validation (2026-10-07): this model's own TEST periods —
-     *  only read when `runningConditionMode === 'custom'` (in 'workspace' mode
-     *  the effective list is `FailureGroupStateSlice.runningConditionTestPeriods`).
-     *  Copied ONCE from the workspace list when the model switches to Custom
+    /** This model's own SCORING periods (called "test periods" until
+     *  2026-10-10; the field keeps its name so older workspaces load
+     *  unchanged) — only read when `runningConditionMode === 'custom'` (in
+     *  'workspace' mode the effective list is
+     *  `FailureGroupStateSlice.runningConditionTestPeriods`). Copied ONCE from
+     *  the workspace list when the model switches to Custom
      *  (`seedCustomFromWorkspace`), then independent. Optional: an older
-     *  workspace without it reads as "no test period" (`?? []`). NOT part of
-     *  `computeTrainFingerprint` — test periods never change the fit. */
+     *  workspace without it reads as "no scoring period" (`?? []`). NOT part of
+     *  `computeTrainFingerprint` — scoring periods never change the fit. */
     customTestPeriods?: TestPeriod[];
-    /** ISO time the model's EFFECTIVE test periods last changed while it was
+    /** ISO time the model's EFFECTIVE scoring periods last changed while it was
      *  Complete (`applyIncompleteRule` sets it in the same write that puts the
      *  model back to `status: false`; the model stays trained). Cleared by
-     *  Mark complete (`persistModelComplete`). Drives the "Test periods
+     *  Mark complete (`persistModelComplete`). Drives the "Scoring periods
      *  changed — Mark complete again" banners (`testsChangedNotice`). */
     testsChangedAt?: string;
 }
@@ -421,8 +423,9 @@ export interface FailureGroupStateSlice {
      *  change at least one is REQUIRED to train (`getBuildBlockReason`); an
      *  empty/undefined list no longer means "whole dataset". */
     runningConditionTimePeriods?: TimePeriod[];
-    /** Workspace-default TEST periods (Train/Test validation, 2026-10-07): the
-     *  time ranges a model's health score is checked on (never trained on). A
+    /** Workspace-default SCORING periods ("test periods" until 2026-10-10; the
+     *  field keeps its name so older workspaces load unchanged): the time
+     *  ranges the trained model gives a health score for (never trained on). A
      *  Workspace-mode model uses THIS list; a Custom one its own
      *  `customTestPeriods`. At least one is required before Mark complete
      *  (`markCompleteBlockReason`). Optional — undefined reads as `[]`. */
@@ -445,18 +448,28 @@ export interface TimePeriod {
     end: string;
 }
 
-/** Train/Test validation (2026-10-07): a period the health score is CHECKED on.
- *  `normal` = the score should stay high (false-alarm check); `problem` = a
- *  known problem, the score should drop (detection check — the optional
- *  `eventTime`, which must lie inside the period, gives the lead time). Unlike
- *  a train period both `start` and `end` are required (`validateTestPeriods`).
- *  A test period MAY overlap train periods (information only). */
+/** A SCORING period ("just score it", user decision 2026-10-09 — SPEC
+ *  `docs/design/handoff/workbench-redesign/README.md` §2): only start → end.
+ *  The trained model gives a health score for that time and the user reads the
+ *  chart; there is no Normal / Known problem label, no event time, no lead
+ *  time and no verdict. Shown as `S1, S2 …` by list position. Unlike a train
+ *  period both `start` and `end` are required (`validateTestPeriods`). It MAY
+ *  overlap train periods (information only).
+ *
+ *  The type and the storage keys (`runningConditionTestPeriods`,
+ *  `customTestPeriods`) keep their "test period" names so the workspace format
+ *  does not change.
+ *
+ *  The three optional keys below exist ONLY so a workspace saved before
+ *  2026-10-10 still type-checks when it is read. Nothing reads them for any
+ *  decision and nothing writes them: build / copy a period with
+ *  `toScoringPeriod` (`utils/timePeriods.ts`), which drops them. */
 export interface TestPeriod extends TimePeriod {
-    label: 'normal' | 'problem';
-    /** `datetime-local` string; only meaningful when `label === 'problem'`. */
+    /** @deprecated read-only legacy (the removed Normal / Known problem label), never written. */
+    label?: 'normal' | 'problem';
+    /** @deprecated read-only legacy (the removed "when was it found" time), never written. */
     eventTime?: string;
-    /** Label of the Dashboard highlight it was copied from (display only — the
-     *  Normal/Known problem label is NOT stored on the highlight). */
+    /** @deprecated read-only legacy (the removed "From Highlights" caption), never written. */
     fromHighlight?: string;
 }
 

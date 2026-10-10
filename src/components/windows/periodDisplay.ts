@@ -179,18 +179,18 @@ export function computeCoverage(periods: TimePeriod[], bounds: DataBounds | null
 export interface TestCoverageSegment {
     leftPct: number;
     widthPct: number;
-    /** Known problem (drawn hatched). */
-    problem: boolean;
+    /** "S2 · 1 Mar 2026 → 14 Mar 2026" (the segment's tooltip). */
     label: string;
 }
 
 /**
- * Test periods on the dataset timeline (Train/Test validation): one segment per
- * test period with a parseable range (clamped to the dataset; open ends run to
- * the edge) and the days of the dataset inside at least one of them (overlap
- * counted once). Null when the dataset bounds are unknown.
+ * Scoring periods on the dataset timeline: one segment per scoring period with
+ * a parseable range (clamped to the dataset; open ends run to the edge) and
+ * the days of the dataset inside at least one of them (overlap counted once).
+ * Null when the dataset bounds are unknown. Only start / end are read — a
+ * legacy label on an old workspace's period changes nothing here.
  */
-export function computeTestCoverage(tests: (TimePeriod & { label?: string })[], bounds: DataBounds | null | undefined): { usedDays: number; segments: TestCoverageSegment[] } | null {
+export function computeTestCoverage(tests: TimePeriod[], bounds: DataBounds | null | undefined): { usedDays: number; segments: TestCoverageSegment[] } | null {
     const b = boundsMs(bounds);
     if (!b) return null;
     const { t0, t1 } = b;
@@ -204,12 +204,10 @@ export function computeTestCoverage(tests: (TimePeriod & { label?: string })[], 
         const a = Math.max(t0, s);
         const z = Math.min(t1, e);
         if (z < a) return;
-        const problem = t.label === 'problem';
         segments.push({
             leftPct: ((a - t0) / W) * 100,
             widthPct: Math.max(0.6, ((z - a) / W) * 100),
-            problem,
-            label: `T${i + 1} ${problem ? 'Known problem' : 'Normal'} · ${formatPeriod(t)}`,
+            label: `S${i + 1} · ${formatPeriod(t)}`,
         });
         ivs.push([a, z]);
     });

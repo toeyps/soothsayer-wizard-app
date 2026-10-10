@@ -107,11 +107,12 @@ export function healthInputsMissing(model: FailureModel): string | null {
  *  `n_clusters > 1` without one). One message for every place that checks it. */
 export const CLUSTERS_NEED_CRITERIA = 'Pick a criteria sensor for 2+ clusters (or set Clusters to 1)';
 
-/** The model's EFFECTIVE test periods (workspace list in Workspace mode, its
- *  own `customTestPeriods` in Custom mode) as the `test_periods` wire list, or
- *  `undefined` when there is none to send (invalid ones are dropped). Test
- *  periods are NOT part of the train fingerprint / Relationship cache key —
- *  changing them re-scores against the same cached fit, no re-train. */
+/** The model's EFFECTIVE scoring periods (workspace list in Workspace mode,
+ *  its own `customTestPeriods` in Custom mode) as the `test_periods` wire list
+ *  — start / end only — or `undefined` when there is none to send (invalid
+ *  ones are dropped). Scoring periods are NOT part of the train fingerprint /
+ *  Relationship cache key — changing them re-scores against the same cached
+ *  fit, no re-train. */
 export function testPeriodsWireFor(model: FailureModel, fg: RunningConditionFg): TestPeriodWire[] | undefined {
     const wire = toTestPeriodsWire(effectiveRunningCondition(model, fg).testPeriods);
     return wire.length > 0 ? wire : undefined;

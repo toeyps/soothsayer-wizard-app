@@ -1483,7 +1483,8 @@ mod resolved_filter_tests {
 /// session cache still gets the FULL arrays.
 ///
 /// **Train/Test pre-warm (2026-10-07):** `test_periods` (same wire as
-/// `compute_health_preview`: `[{start,end,label,event_time?}]`; only used
+/// `compute_health_preview`: `[{start,end}]` - a legacy `label` / `event_time`
+/// is accepted and ignored; only used
 /// together with `cache_key`) makes the SAME sidecar run also predict the test
 /// rows with the train-only model it just fitted (`X_extra`, no refit on them)
 /// and seeds the fit's cached test-row predictions, so the `compute_health_preview`
@@ -6825,7 +6826,7 @@ async fn compute_health_preview(
             append_error_line(
                 &path,
                 "test-scoring",
-                "Test periods could not be scored (Relation model prediction step)",
+                "Scoring periods could not be scored (Relation model prediction step)",
                 Some(reason),
             );
         }
@@ -6978,7 +6979,7 @@ where
                             ExtraPlan::Failed(e) => Some(e),
                             ExtraPlan::Needed(_) => Some(TestScoringError::new(
                                 Kind::EngineError,
-                                "the model was trained again while its test periods were being predicted",
+                                "the model was trained again while its scoring periods were being predicted",
                             )),
                         },
                         None,
@@ -7264,7 +7265,7 @@ fn merge_rel_extra(
 
 /// `NOT_FITTED` detail when the data or the fit left while predicting.
 const REL_EXTRA_FIT_GONE: &str =
-    "the data or the model changed while the test periods were being predicted - train the model again";
+    "the data or the model changed while the scoring periods were being predicted - train the model again";
 
 /// Store the predictions of `job` - only into the job's fit on the same data.
 /// `Ok(Stored)`; `Ok(OverBudget)` = the fit is still there but its predictions
