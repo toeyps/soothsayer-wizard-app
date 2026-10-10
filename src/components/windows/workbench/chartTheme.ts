@@ -12,6 +12,8 @@
  * Both the Model fit page (3b-1) and the Health score page (3b-2) draw from
  * this file, so a band/line means the same colour on both.
  */
+import { fmtNum as fmtNumApp, fmtNumExact } from '../../sensor/sensorInfo';
+
 export const CHART = {
     textPrimary: '#ededef',
     textSecondary: '#8c8c94',
@@ -38,20 +40,33 @@ export const CHART = {
     /** Histogram bars. */
     bar: 'rgba(120, 160, 230, 0.55)',
     normalCurve: '#e8e8ee',
-    /** Train / scoring scopes on every Workbench time chart (DESIGN_SYSTEM §4):
-     *  train = the accent blue (`--train`), scoring = magenta
-     *  oklch(.74 .16 340) (`--test` — the token keeps its name), as the canvas
-     *  draws them. */
+    /** Train / scoring scopes on every Workbench time chart (DESIGN_SYSTEM §4
+     *  "Time scopes on charts"): train = the accent blue (`--train`), scoring =
+     *  magenta oklch(.74 .16 340) (`--test` — the token keeps its name), as the
+     *  canvas draws them. The names are plain coloured text in the strip above the
+     *  plot; inside the plot a scope is only a faint fill (train 6 %, scoring 5 %
+     *  with a dashed outline), so the data line stays readable. */
     train: '#5b95f0',
-    trainFill: 'rgba(77, 140, 240, 0.10)',
+    trainFill: 'rgba(77, 140, 240, 0.06)',
     test: '#e866c4',
-    testFill: 'rgba(232, 102, 196, 0.11)',
-    /** Dark pill behind the scope labels. */
-    scopePillBg: 'rgba(10, 10, 11, 0.82)',
+    testFill: 'rgba(232, 102, 196, 0.05)',
+    testOutline: 'rgba(232, 102, 196, 0.45)',
+    /** Dark chip behind a label that sits on top of dense points (cluster names, ring levels). */
+    labelChipBg: 'rgba(10, 10, 11, 0.72)',
 } as const;
 
-/** Same palette as PredictiveModelBuild.tsx's `CLUSTER_PALETTE` (cluster 1, 2, ...). */
-export const CLUSTER_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#f43f5e', '#14b8a6', '#ec4899', '#6366f1'] as const;
+/** Mono face of every label drawn ON a chart (scope names, reference lines, set points, rings). */
+export const CHART_MONO = 'JetBrains Mono, Consolas, monospace';
+
+/**
+ * Cluster 1, 2, … (the Clusters charts and the cluster-range slider in Model settings).
+ * Blues and violets ONLY: green, amber and red mean score 100 / 80 / 0 on these charts (the
+ * 1× / 3× / N× rings and the score-coloured points), so a cluster is never drawn in one of
+ * them (workbench-redesign SPEC §3). Magenta is left out too — it is the scoring-period colour.
+ * Slot 7 is a light indigo, not the mockup's slate: that slate is the pre-refresh axis grey the
+ * app removed from every chart (VisualRefreshFinalSweep keeps it out of these files).
+ */
+export const CLUSTER_COLORS = ['#3b82f6', '#a78bfa', '#38bdf8', '#818cf8', '#c084fc', '#60a5fa', '#a5b4fc', '#7dd3fc'] as const;
 
 export const FONT = 'Inter, system-ui, sans-serif';
 
@@ -109,4 +124,24 @@ export function fmtNum(v: number | null | undefined): string {
     if (a >= 100) return v.toFixed(1);
     if (a >= 1) return v.toFixed(2);
     return v.toFixed(3);
+}
+
+/*
+ * A stored number that the USER typed (a cluster range boundary, a set point), for display.
+ * `fmtNumExact` keeps every decimal of its shortest form — never padded ("4.6", not "4.60"),
+ * never rounded ("4.61234" stays). A boundary that is float noise from auto-dividing or
+ * dragging (33.333333333333336) is not something anyone typed and reads through `fmtNum`.
+ */
+/** Decimals in a number's shortest JS form ("33.6" → 1); scientific counts as "long". */
+export const shortDecimals = (v: number): number => {
+    const s = String(v);
+    return /e/i.test(s) ? Infinity : (s.split('.')[1]?.length ?? 0);
+};
+/** Up to this many decimals a stored cluster boundary reads as a value someone TYPED and is
+ *  shown in full; more is float noise from auto-dividing or dragging (33.333333333333336). */
+export const TYPED_DECIMALS_MAX = 10;
+/** A cluster boundary for display (2026-10-09): every decimal of a typed-looking value
+ *  (`fmtNumExact`, never rounded), the app's `fmtNum` for a computed one. */
+export function fmtClusterBound(v: number): string {
+    return shortDecimals(v) <= TYPED_DECIMALS_MAX ? fmtNumExact(v) : fmtNumApp(v);
 }

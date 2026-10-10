@@ -10,8 +10,22 @@ import type {
     IndividualHealthSetPoints,
     RelationshipHealthSetPoints,
 } from '../../../types';
-import { CHART, CLUSTER_COLORS, FONT, axisValueFormatter, fmtScoreAxisValue } from './chartTheme';
-import { buildTimeSeriesOption, ellipseSeries, niceExtent, type HLine, type TimeScopes } from './healthCharts';
+import { fmtNumExact } from '../../sensor/sensorInfo';
+import { CHART, CLUSTER_COLORS, FONT, fmtScoreAxisValue } from './chartTheme';
+import {
+    buildTimeSeriesOption,
+    centreLabelSeries,
+    clusterAxes,
+    clusterExtent,
+    ellipseSeries,
+    ringLabelSeries,
+    rmseReferenceLines,
+    sdReferenceLines,
+    type HLine,
+    type TimeScopes,
+} from './healthCharts';
+
+export { ringBox } from './healthCharts';
 
 /*
  * Pure ECharts option builders of the Health score page (health score phase
@@ -21,6 +35,12 @@ import { buildTimeSeriesOption, ellipseSeries, niceExtent, type HLine, type Time
  *
  * Lines for a value that is not entered yet (null / NaN) are simply absent;
  * they appear and move as the user types.
+ *
+ * The user's set points are the STRONGEST lines of a chart (solid, 1.5 px) and
+ * carry their value inside the plot at the right end — in the form the user
+ * typed (`typedText`: "H 4.6", "L 2.2", "80 · +5"), never padded or rounded.
+ * The computed reference lines (±1SD, ±3SD, ±2RMSE) are thin and labelled
+ * outside the plot (workbench-redesign SPEC §3).
  *
  * Hover sync: every time-based option (set-point chart of Individual /
  * Relationship, and the score chart) carries `axisPointer.link` on the X axis
@@ -35,6 +55,25 @@ export const HEALTH_SYNC_GROUP = 'health-score-sync';
 const finite = (v: number | null | undefined): v is number => typeof v === 'number' && Number.isFinite(v);
 
 const POINT_FONT = 'JetBrains Mono, monospace';
+
+/** Width of a set-point line (a reference line is 1 px). */
+const SET_POINT_WIDTH = 1.5;
+
+/**
+ * A set point as the user typed it: every decimal of its shortest exact form,
+ * thousands separators only — "4.6" (never the padded "4.60"), "4.61234" (never
+ * the rounded "4.612"). The same rule Rust's validation messages follow
+ * (`fmt_typed`), so the chart, the Checks and the input agree.
+ */
+export function typedText(v: number): string {
+    return fmtNumExact(v);
+}
+
+/** A typed residual point with its sign spelled out: "+5", "−2.5", "0". */
+export function signedTypedText(v: number): string {
+    const sign = v > 0 ? '+' : v < 0 ? '−' : '';
+    return `${sign}${typedText(Math.abs(v))}`;
+}
 
 /** `axisPointer.link` so two connected charts show one cursor. */
 const SYNC = { axisPointer: { link: [{ xAxisIndex: 'all' }] } };
@@ -55,8 +94,9 @@ export function scoreColor(score: number | null | undefined, alpha = 1): string 
 // Set-point chart - Individual
 // ---------------------------------------------------------------------------
 
-/** Raw sensor value over time with ±1SD, ±3SD and the L / H set-point lines.
- *  No histogram on this page. */
+/** Raw sensor value over time with the ±1SD band (the only fill), the dashed
+ *  ±3SD lines and the L / H set-point lines ("H 4.6" above its line, "L 2.2"
+ *  below). No histogram on this page. */
 export function buildIndividualSetPointOption(
     series: IndividualSeries,
     stats: IndividualStats,
@@ -65,25 +105,16 @@ export function buildIndividualSetPointOption(
     scopes: TimeScopes | null = null,
 ) {
     const [l1, u1] = stats.boundary_1sd;
-    const [l3, u3] = stats.boundary_3sd;
-    const hLines: HLine[] = [
-        { y: u1, color: CHART.ok, label: '+1SD' },
-        { y: l1, color: CHART.ok, label: '−1SD' },
-        { y: u3, color: CHART.warn, label: '+3SD' },
-        { y: l3, color: CHART.warn, label: '−3SD' },
-    ];
-    if (sp && finite(sp.upper)) hLines.push({ y: sp.upper, color: CHART.danger, dashed: true, label: 'H' });
-    if (sp && finite(sp.lower)) hLines.push({ y: sp.lower, color: CHART.danger, dashed: true, label: 'L' });
+    const hLines: HLine[] = sdReferenceLines(stats);
+    if (sp && finite(sp.upper)) hLines.push({ y: sp.upper, color: CHART.danger, width: SET_POINT_WIDTH, label: `H ${typedText(sp.upper)}`, inside: 'top' });
+    if (sp && finite(sp.lower)) hLines.push({ y: sp.lower, color: CHART.danger, width: SET_POINT_WIDTH, label: `L ${typedText(sp.lower)}`, inside: 'bottom' });
     return {
         ...buildTimeSeriesOption({
             timestamps: series.timestamps,
             scopes,
             yName: unit || undefined,
             lines: [{ name: 'Value', values: series.value, color: CHART.series }],
-            bands: [
-                { from: l3, to: u3, color: CHART.warnFill },
-                { from: l1, to: u1, color: CHART.okFill },
-            ],
+            bands: [{ from: l1, to: u1, color: CHART.okFill }],
             hLines,
         }),
         ...SYNC,
@@ -95,7 +126,9 @@ export function buildIndividualSetPointOption(
 // ---------------------------------------------------------------------------
 
 /** Residual over time ONLY, with ±2RMSE, a zero line and the four 80 / 0 lines
- *  (lower and upper) the user has entered so far. */
+ *  (lower and upper) the user has entered so far — each labelled with its score
+ *  and its value as typed ("80 · +5" above an upper line, "0 · −9" below a
+ *  lower one). */
 export function buildRelationshipSetPointOption(
     series: RelationshipSeries,
     twoRmse: number,
@@ -103,16 +136,14 @@ export function buildRelationshipSetPointOption(
     unit: string,
     scopes: TimeScopes | null = null,
 ) {
-    const hLines: HLine[] = [
-        { y: twoRmse, color: CHART.ok, label: '+2RMSE' },
-        { y: -twoRmse, color: CHART.ok, label: '−2RMSE' },
-        { y: 0, color: 'rgba(255,255,255,0.25)' },
-    ];
+    const hLines: HLine[] = rmseReferenceLines(twoRmse);
     if (sp) {
-        if (finite(sp.residualAt80Upper)) hLines.push({ y: sp.residualAt80Upper, color: CHART.warn, dashed: true, label: '80' });
-        if (finite(sp.residualAt80Lower)) hLines.push({ y: sp.residualAt80Lower, color: CHART.warn, dashed: true, label: '80' });
-        if (finite(sp.residualAt0Upper)) hLines.push({ y: sp.residualAt0Upper, color: CHART.danger, dashed: true, label: '0' });
-        if (finite(sp.residualAt0Lower)) hLines.push({ y: sp.residualAt0Lower, color: CHART.danger, dashed: true, label: '0' });
+        const point = (y: number, score: 80 | 0, side: 'top' | 'bottom'): HLine =>
+            ({ y, color: score === 80 ? CHART.warn : CHART.danger, width: SET_POINT_WIDTH, label: `${score} · ${signedTypedText(y)}`, inside: side });
+        if (finite(sp.residualAt80Upper)) hLines.push(point(sp.residualAt80Upper, 80, 'top'));
+        if (finite(sp.residualAt80Lower)) hLines.push(point(sp.residualAt80Lower, 80, 'bottom'));
+        if (finite(sp.residualAt0Upper)) hLines.push(point(sp.residualAt0Upper, 0, 'top'));
+        if (finite(sp.residualAt0Lower)) hLines.push(point(sp.residualAt0Lower, 0, 'bottom'));
     }
     return {
         ...buildTimeSeriesOption({
@@ -131,18 +162,6 @@ export function buildRelationshipSetPointOption(
 // Set-point chart - Clustering
 // ---------------------------------------------------------------------------
 
-/** Half-width / half-height of the box around the ellipse `sigma` x SD of a
- *  cluster (rotated by its angle) - so a ring that lies outside the data is
- *  still inside the axes. */
-export function ringBox(c: Pick<ClusterStat, 'x_center' | 'y_center' | 'x_sd' | 'y_sd' | 'angle_deg'>, sigma: number) {
-    const rx = c.x_sd * sigma;
-    const ry = c.y_sd * sigma;
-    const a = (c.angle_deg * Math.PI) / 180;
-    const hx = Math.hypot(rx * Math.cos(a), ry * Math.sin(a));
-    const hy = Math.hypot(rx * Math.sin(a), ry * Math.cos(a));
-    return { x: [c.x_center - hx, c.x_center + hx] as [number, number], y: [c.y_center - hy, c.y_center + hy] as [number, number] };
-}
-
 export interface ClusterSetPointNames { x: string; y: string }
 
 /**
@@ -150,7 +169,10 @@ export interface ClusterSetPointNames { x: string; y: string }
  * cluster. Points come from `series` (not `cluster_scatter`) so a hovered point
  * is exactly one entry of the score series: they are coloured by score once the
  * set points are valid, by cluster before. The N x ring appears when N is a
- * number (any number; Rust judges it).
+ * number (any number; Rust judges it): it is the user's own set point, so it is
+ * the strongest ring — solid red. Each ring LEVEL is named once, at the right
+ * edge of the ring that reaches furthest right ("1× · 100", "3× · 80",
+ * "5× · 0" with N as typed). `names` are the axis titles (description + unit).
  */
 export function buildClusterSetPointOption(
     series: ClusteringSeries,
@@ -169,32 +191,16 @@ export function buildClusterSetPointOption(
     const colorOfCluster = (id: number | null) =>
         id === null ? 'rgba(180, 190, 210, 0.45)' : CLUSTER_COLORS[(id - 1 + CLUSTER_COLORS.length) % CLUSTER_COLORS.length];
 
-    let xLo = Infinity; let xHi = -Infinity; let yLo = Infinity; let yHi = -Infinity;
-    const take = (b: { x: [number, number]; y: [number, number] }) => {
-        xLo = Math.min(xLo, b.x[0]); xHi = Math.max(xHi, b.x[1]);
-        yLo = Math.min(yLo, b.y[0]); yHi = Math.max(yHi, b.y[1]);
-    };
-    for (let i = 0; i < n; i++) {
-        if (!finite(series.x[i]) || !finite(series.y[i])) continue;
-        xLo = Math.min(xLo, series.x[i]); xHi = Math.max(xHi, series.x[i]);
-        yLo = Math.min(yLo, series.y[i]); yHi = Math.max(yHi, series.y[i]);
-    }
-    for (const c of clusters) {
-        take(ringBox(c, 1));
-        take(ringBox(c, 3));
-        if (outer !== null) take(ringBox(c, outer));
-    }
-    const ext = (lo: number, hi: number): [number, number] =>
-        Number.isFinite(lo) && Number.isFinite(hi) ? niceExtent(lo - (hi - lo) * 0.03, hi + (hi - lo) * 0.03) : [0, 1];
-    const [xMin, xMax] = ext(xLo, xHi);
-    const [yMin, yMax] = ext(yLo, yHi);
+    // The axes hold the points AND every ring drawn, the N ring included.
+    const axes = clusterAxes(names, clusterExtent(series.x, series.y, clusters, outer !== null ? [1, 3, outer] : [1, 3]));
 
     const rings = clusters.flatMap(c => {
         const r = [
             ellipseSeries(c, 1, { name: `Cluster ${c.cluster_id} 1× SD`, stroke: CHART.ok }),
             ellipseSeries(c, 3, { name: `Cluster ${c.cluster_id} 3× SD`, stroke: CHART.warn, dashed: true }),
         ];
-        if (outer !== null) r.push(ellipseSeries(c, outer, { name: `Cluster ${c.cluster_id} ${outer}× SD`, stroke: CHART.danger, dashed: true, lineWidth: 1.8 }));
+        // The user's N: the strongest ring (solid, like L / H and the residual points).
+        if (outer !== null) r.push(ellipseSeries(c, outer, { name: `Cluster ${c.cluster_id} ${outer}× SD`, stroke: CHART.danger, lineWidth: 1.8 }));
         return r;
     });
     const hover = hoverIdx !== null && hoverIdx >= 0 && hoverIdx < n && finite(series.x[hoverIdx]) && finite(series.y[hoverIdx])
@@ -208,22 +214,12 @@ export function buildClusterSetPointOption(
             z: 6,
         }]
         : [];
-    const centres = {
-        type: 'scatter' as const,
-        name: 'Centres',
-        data: clusters.map(c => [c.x_center, c.y_center]),
-        symbolSize: 5,
-        silent: true,
-        itemStyle: { color: CHART.textPrimary },
-        label: {
-            show: true,
-            position: 'top' as const,
-            color: CHART.textSecondary,
-            fontSize: 10.5,
-            formatter: (p: { dataIndex: number }) => `Cluster ${clusters[p.dataIndex]?.cluster_id ?? ''}`,
-        },
-        z: 4,
-    };
+    const centres = centreLabelSeries(clusters, colorOfCluster);
+    const ringLabels = ringLabelSeries(clusters, [
+        { sigma: 1, text: '1× · 100', color: CHART.ok },
+        { sigma: 3, text: '3× · 80', color: CHART.warn },
+        ...(outer !== null ? [{ sigma: outer, text: `${typedText(outer)}× · 0`, color: CHART.danger }] : []),
+    ]);
     return {
         backgroundColor: 'transparent',
         textStyle: { fontFamily: FONT },
@@ -238,8 +234,7 @@ export function buildClusterSetPointOption(
         legend: { show: false },
         grid: { left: 58, right: 18, top: 14, bottom: 40, containLabel: false },
         dataZoom: [{ type: 'inside', xAxisIndex: 0, filterMode: 'none' }, { type: 'inside', yAxisIndex: 0, filterMode: 'none' }],
-        xAxis: { type: 'value', name: names.x, min: xMin, max: xMax, nameLocation: 'middle', nameGap: 24, nameTextStyle: { color: CHART.textSecondary, fontSize: 10 }, axisLabel: { color: CHART.textSecondary, fontSize: 10, formatter: axisValueFormatter(xMin, xMax) }, axisLine: { lineStyle: { color: CHART.gridLine } }, axisTick: { show: false }, splitLine: { show: false } },
-        yAxis: { type: 'value', name: names.y, min: yMin, max: yMax, nameLocation: 'middle', nameGap: 44, nameTextStyle: { color: CHART.textSecondary, fontSize: 10 }, axisLabel: { color: CHART.textSecondary, fontSize: 10, formatter: axisValueFormatter(yMin, yMax) }, axisLine: { lineStyle: { color: CHART.gridLine } }, axisTick: { show: false }, splitLine: { show: true, lineStyle: { color: CHART.splitLine } } },
+        ...axes,
         series: [
             {
                 type: 'scatter' as const,
@@ -257,6 +252,7 @@ export function buildClusterSetPointOption(
             },
             ...rings,
             centres,
+            ringLabels,
             ...hover,
         ],
     };

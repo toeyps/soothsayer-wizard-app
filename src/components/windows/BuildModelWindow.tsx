@@ -33,7 +33,7 @@ import { RunningConditionCard, type RcStepState } from "./RunningConditionCard";
 import { useRowCountPreview } from "./useRowCountPreview";
 import { SensorPickerModal } from "./SensorPickers";
 import { SensorInline, SensorLabel } from "../sensor/SensorLabel";
-import { SensorMetaContext, fmtNum, fmtNumExact, fmtNumText, sensorHaystack, sensorTitle, useLayeredSensorLookup } from "../sensor/sensorInfo";
+import { SensorMetaContext, fmtNumText, sensorHaystack, sensorTitle, useLayeredSensorLookup } from "../sensor/sensorInfo";
 import TimePeriodsEditor from "./TimePeriodsEditor";
 import TestPeriodsEditor from "./TestPeriodsEditor";
 import { TrainHighlightWarnings } from "./RunningConditionParts";
@@ -41,7 +41,7 @@ import { estimateRunningDays, formatStamp } from "./periodDisplay";
 import SubModelsModal from "./SubModelsModal";
 import { useSubModelFits } from "./useSubModelFits";
 import ModelFitPage from "./workbench/ModelFitPage";
-import { CLUSTER_COLORS as CLUSTER_PALETTE } from "./workbench/chartTheme";
+import { CLUSTER_COLORS as CLUSTER_PALETTE, TYPED_DECIMALS_MAX, fmtClusterBound, shortDecimals } from "./workbench/chartTheme";
 import HealthScorePage from "./workbench/HealthScorePage";
 import { PageSwitch, SaveErrorNotice, StaleBanner, WorkbenchScroll } from "./workbench/WorkbenchShellParts";
 import { buildCheckLines, healthVerdict, isBlockingIssue, sameSetPoints, verdictOfIssues, type HealthVerdict } from "./workbench/healthChecks";
@@ -97,19 +97,9 @@ const DEFAULT_CLUSTER_RANGES = [
 /** A typed number whose commas are thousands separators only ("1,234.5", "-12,000"). */
 const THOUSANDS_GROUPED = /^[+-]?\d{1,3}(,\d{3})+(\.\d*)?$/;
 
-/** Decimals in a number's shortest JS form ("33.6" → 1); scientific counts as "long". */
-const shortDecimals = (v: number): number => {
-    const s = String(v);
-    return /e/i.test(s) ? Infinity : (s.split('.')[1]?.length ?? 0);
-};
-/** Up to this many decimals a stored cluster boundary reads as a value someone TYPED and is
- *  shown in full; more is float noise from auto-dividing or dragging (33.333333333333336). */
-const TYPED_DECIMALS_MAX = 10;
-/** A cluster boundary for display (2026-10-09): every decimal of a typed-looking value
- *  (`fmtNumExact`, never rounded), the app's `fmtNum` for a computed one. */
-function fmtClusterBound(v: number): string {
-    return shortDecimals(v) <= TYPED_DECIMALS_MAX ? fmtNumExact(v) : fmtNum(v);
-}
+// `shortDecimals` / `TYPED_DECIMALS_MAX` / `fmtClusterBound` (a cluster boundary for display:
+// typed-looking values in full, float noise through `fmtNum`) live in `workbench/chartTheme.ts`,
+// shared with the Model fit page's cluster summary.
 /** The same boundary as plain input text (no thousands separators — an `<input>` value). */
 function clusterBoundInputText(v: number): string {
     if (shortDecimals(v) <= TYPED_DECIMALS_MAX) return String(v);

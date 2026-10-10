@@ -10,6 +10,8 @@ vi.mock('../components/charts/ResponsiveECharts', () => ({
 }));
 
 import HealthScorePage, { sameHealthScoreProps } from '../components/windows/workbench/HealthScorePage';
+import { SensorMetaProvider } from '../components/sensor/SensorLabel';
+import { CHART } from '../components/windows/workbench/chartTheme';
 import type { HealthScorePageProps, SaveInfo } from '../components/windows/workbench/workbenchTypes';
 import type { HealthSetPoints } from '../types';
 import type { HealthIssue, HealthPreview } from '../types/health';
@@ -68,6 +70,12 @@ const input = (id: string) => screen.getByTestId(id) as HTMLInputElement;
 const field = (id: string) => input(id).closest('.hs-num') as HTMLElement;
 const scoreChart = () => charts.filter(c => c.option?.yAxis?.name === 'Score').pop();
 const setChart = () => charts.filter(c => c.option?.yAxis?.name !== 'Score' || c.option?.series?.[0]?.name === 'Points').pop();
+/** Text of the legend row under a card's chart, or null when the card has none. */
+const legendOf = (id: string) => screen.getByTestId(`chart-card-${id}`).querySelector('.wb2-legend')?.textContent ?? null;
+/** The names in the strip above a time chart's plot (train / scoring scopes), in band order. */
+const stripOf = (c: any): string[] => (c.option.series.find((x: any) => x.name === '__scopes')?.markArea?.data ?? []).map((a: any) => a[0].label.formatter);
+/** The ring levels named on the Clusters chart. */
+const ringLabelsOf = (c: any): string[] => (c.option.series.find((x: any) => x.name === 'Ring labels')?.data ?? []).map((x: any) => x.label.formatter);
 
 beforeEach(() => {
     charts.length = 0;
@@ -306,6 +314,19 @@ describe('Clustering: one outer ring N for every cluster', () => {
         expect(rings(setChart())).toBe(6); // + N x ring of each
     });
 
+    // workbench-redesign SPEC §3: rings labelled once per level; N as typed; no legend row.
+    it('the ring levels are named ON the chart, once each, and the N label follows what is typed — as typed', () => {
+        mount({ kind: 'clustering', sp: CL(null) });
+        expect(ringLabelsOf(setChart())).toEqual(['1× · 100', '3× · 80']);
+        fireEvent.click(screen.getByTestId('ring-quick-5'));
+        expect(ringLabelsOf(setChart())).toEqual(['1× · 100', '3× · 80', '5× · 0']);
+        type('sp-outer_sd', '4.5');
+        expect(ringLabelsOf(setChart())).toEqual(['1× · 100', '3× · 80', '4.5× · 0']);
+        type('sp-outer_sd', '4.25');
+        expect(ringLabelsOf(setChart()).slice(-1)).toEqual(['4.25× · 0']);
+        expect(legendOf('set-clustering')).toBeNull();
+    });
+
     it('no master-data note (that is Individual\'s)', () => {
         mount({ kind: 'clustering', sp: CL(5) });
         expect(screen.queryByTestId('master-note')).toBeNull();
@@ -367,6 +388,32 @@ describe('Health score chart', () => {
         expect(opt.yAxis.max).toBe(100);
     });
 
+    it('has NO legend row and no "hover to read" sentence: the share column and the read-out say it', () => {
+        mount({ sp: IND_VALID });
+        expect(legendOf('score')).toBeNull();
+        const card = screen.getByTestId('chart-card-score');
+        expect(card.textContent).not.toMatch(/Hover to read|near 0|both charts move together/i);
+        expect(screen.getByTestId('score-shares')).toBeTruthy(); // the share column stays
+        expect(screen.getByTestId('hs-readout')).toBeTruthy(); // so does the hover read-out
+    });
+
+    it('the line at 80 is named at the right edge outside the plot; the tooltip prints whole scores', () => {
+        mount({ sp: IND_VALID });
+        const opt = scoreChart().option;
+        const line = opt.series[0].markLine.data[0];
+        expect([line.yAxis, line.label.formatter, line.label.position]).toEqual([80, '80', 'end']);
+        expect(opt.tooltip.valueFormatter(85)).toBe('85');
+        expect(opt.tooltip.valueFormatter(84.99)).toBe('85');
+    });
+
+    it('a share that is not zero never reads "0.0%": below a tenth of a percent it says "< 0.1%"', () => {
+        const d = previewFor('individual', IND_VALID);
+        mount({ sp: IND_VALID, data: { ...d, score_summary: { ...d.score_summary!, share_80_100: 99.96, share_40_80: 0.04, share_0_40: 0 } } });
+        expect(screen.getByTestId('share-share_40_80').textContent).toBe('40–80< 0.1%');
+        expect(screen.getByTestId('share-share_0_40').textContent).toBe('0–400.0%'); // a real zero stays zero
+        expect(screen.getByTestId('share-share_80_100').textContent).toBe('80–100100.0%');
+    });
+
     it('header: the lowest score and when, % of scored rows below 80, and the three time-share numbers', () => {
         mount({ sp: IND_VALID });
         const sum = screen.getByTestId('score-summary');
@@ -414,29 +461,97 @@ describe('Health score chart', () => {
 });
 
 describe('set-point chart per kind', () => {
+    const marks = (c: any): (string | undefined)[] => c.option.series[0].markLine.data.map((d: any) => d.label?.formatter);
+
     it('Individual: raw values with the L / H lines the draft holds (and they move as the user types)', () => {
         mount({ sp: IND_VALID });
-        const marks = (c: any) => c.option.series[0].markLine.data.map((d: any) => d.label?.formatter);
-        expect(marks(setChart())).toEqual(expect.arrayContaining(['L', 'H']));
+        expect(marks(setChart())).toEqual(expect.arrayContaining(['L 1', 'H 9']));
         type('sp-upper', '');
-        expect(marks(setChart())).not.toContain('H');
-        expect(marks(setChart())).toContain('L');
-        expect(screen.getByTestId('chart-card-set-individual').textContent).toMatch(/type L and H on the right/);
+        expect(marks(setChart()).some(m => m?.startsWith('H'))).toBe(false);
+        expect(marks(setChart())).toContain('L 1');
+    });
+
+    // workbench-redesign SPEC §3: the set points carry their value AS TYPED on the chart.
+    it('Individual: what the user types is what the line says — "4.60" is never padded back, "9.61234" is never rounded', () => {
+        mount({ sp: IND_VALID });
+        type('sp-upper', '9.5');
+        expect(marks(setChart())).toContain('H 9.5');
+        expect(marks(setChart())).not.toContain('H 9.50');
+        type('sp-upper', '9.50'); // the same number: the label does not grow a padded zero
+        expect(marks(setChart())).toContain('H 9.5');
+        expect(input('sp-upper').value).toBe('9.50'); // while the box keeps the user's own text
+        type('sp-upper', '9.61234');
+        expect(marks(setChart())).toContain('H 9.61234');
+        type('sp-lower', '0.25');
+        expect(marks(setChart())).toContain('L 0.25');
+        // half-typed text that is not a number yet draws no line (and no "H NaN")
+        type('sp-upper', '-');
+        expect(marks(setChart()).some(m => m?.startsWith('H'))).toBe(false);
+    });
+
+    it('Individual: the subtitle is just the unit (no "type L and H on the right"), and the card has no legend row', () => {
+        mount({ sp: IND_VALID });
+        const card = screen.getByTestId('chart-card-set-individual');
+        expect(card.querySelector('.wb2-card-s')!.textContent).toBe('bar');
+        expect(card.textContent).not.toMatch(/type L and H|on the right/);
+        expect(legendOf('set-individual')).toBeNull();
+        // only the score-100 band is filled
+        const bands = setChart().option.series[0].markArea.data;
+        expect(bands).toHaveLength(1);
+        expect(bands[0][0].itemStyle.color).toBe(CHART.okFill);
     });
 
     it('Relationship: the residual only - the 80 / 0 lines appear as they are typed', () => {
         mount({ kind: 'relationship', sp: { ...REL_EMPTY } });
         expect(screen.getByTestId('chart-card-set-relationship')).toBeTruthy();
-        const marks = (c: any) => c.option.series[0].markLine.data.length;
-        expect(marks(setChart())).toBe(3); // +2RMSE, -2RMSE, zero
+        expect(marks(setChart())).toHaveLength(3); // +2RMSE, -2RMSE, zero
         type('sp-residual_at_80_upper', '1.5');
-        expect(marks(setChart())).toBe(4);
+        expect(marks(setChart())).toHaveLength(4);
+        expect(marks(setChart()).slice(-1)).toEqual(['80 · +1.5']);
+    });
+
+    it('Relationship: each point says its score and its value as typed, signed; the subtitle carries no typing hint; no legend row', () => {
+        mount({ kind: 'relationship', sp: { ...REL_EMPTY } });
+        type('sp-residual_at_80_upper', '5');
+        type('sp-residual_at_80_lower', '-2.5');
+        type('sp-residual_at_0_upper', '12.250'); // typed with a trailing zero
+        type('sp-residual_at_0_lower', '-9.61234');
+        expect(marks(setChart()).slice(3)).toEqual(['80 · +5', '80 · −2.5', '0 · +12.25', '0 · −9.61234']);
+        const card = screen.getByTestId('chart-card-set-relationship');
+        expect(card.querySelector('.wb2-card-s')!.textContent).toBe('actual − predicted (bar)');
+        expect(card.textContent).not.toMatch(/type the 80|on the right/);
+        expect(legendOf('set-relationship')).toBeNull();
     });
 
     it('Clustering: the scatter card', () => {
         mount({ kind: 'clustering', sp: { kind: 'clustering', outerSd: 5 } });
         expect(screen.getByTestId('chart-card-set-clustering')).toBeTruthy();
         expect(setChart().option.series[0].name).toBe('Points');
+    });
+
+    it('Clustering: the subtitle names both sensors and says what the point colours mean right now', () => {
+        mount({ kind: 'clustering', sp: { kind: 'clustering', outerSd: 5 } });
+        expect(screen.getByTestId('chart-card-set-clustering').querySelector('.wb2-card-s')!.textContent).toBe('TAG1 vs TAG2 · points coloured by score');
+        cleanup();
+        mount({ kind: 'clustering', sp: { kind: 'clustering', outerSd: null } }); // not scored yet: the points show their cluster
+        expect(screen.getByTestId('chart-card-set-clustering').querySelector('.wb2-card-s')!.textContent).toBe('TAG1 vs TAG2 · coloured by score once N is set');
+    });
+
+    it('Clustering: axis titles are description + unit (from the Tag names); the tags stay in the subtitle', () => {
+        const meta = [
+            { tag: 'TAG1', description: 'GENERATOR ACTIVE POWER', unit: 'MW', component: 'Generator' },
+            { tag: 'TAG2', description: 'BEARING DE TEMPERATURE', unit: '°C', component: 'Bearing' },
+        ];
+        render(<SensorMetaProvider metadata={meta}><Harness kind="clustering" sp={{ kind: 'clustering', outerSd: 5 }} /></SensorMetaProvider>);
+        expect(setChart().option.xAxis.name).toBe('GENERATOR ACTIVE POWER · MW');
+        expect(setChart().option.yAxis.name).toBe('BEARING DE TEMPERATURE · °C');
+        expect(screen.getByTestId('chart-card-set-clustering').querySelector('.wb2-card-s')!.textContent)
+            .toBe('GENERATOR ACTIVE POWERTAG1 vs BEARING DE TEMPERATURETAG2 · points coloured by score');
+        cleanup();
+        // without Tag names the axis falls back to the tag
+        mount({ kind: 'clustering', sp: { kind: 'clustering', outerSd: 5 } });
+        expect(setChart().option.xAxis.name).toBe('TAG1');
+        expect(setChart().option.yAxis.name).toBe('TAG2');
     });
 });
 
@@ -743,10 +858,23 @@ describe('Scoring periods on the Health score page ("just score it", 2026-10-10)
             const carrier = chart.option.series.find((x: any) => x.name === '__scopes');
             expect(carrier.markLine).toBeUndefined();
             expect(carrier.markPoint).toBeUndefined();
-            const pills = carrier.markArea.data.map((a: any) => a[0].label.formatter);
-            expect(pills).toEqual(['TRAIN', 'S1', 'S2']);
+            expect(stripOf(chart)).toEqual(['TRAIN', 'S1', 'S2']);
             expect(JSON.stringify(carrier)).not.toMatch(/EVENT|KNOWN|NORMAL|PROBLEM|data:image/);
+            // the names are in the strip ABOVE the plot — no pill inside it
+            for (const a of carrier.markArea.data) {
+                expect(a[0].label.position).toBe('top');
+                expect(a[0].label.backgroundColor).toBeUndefined();
+            }
         }
+    });
+
+    it('Clustering has no time chart of its own: the strip is on the SCORE chart, not on the scatter', () => {
+        const sp = { kind: 'clustering', outerSd: 5 } as const;
+        const data: HealthPreview = { ...previewFor('clustering', sp), test_validation: makeValidation({ tests: [makeTestResult(), makeTestResult({ index: 2 })] }) };
+        mount({ kind: 'clustering', sp, data });
+        expect(stripOf(scoreChart())).toEqual(['TRAIN', 'S1', 'S2']);
+        expect(stripOf(setChart())).toEqual([]);
+        expect(setChart().option.series.map((x: any) => x.name)).not.toContain('__scopes');
     });
 
     it('no scopes without scoring periods', () => {
@@ -788,14 +916,13 @@ describe('Scoring periods on the Health score page ("just score it", 2026-10-10)
         expect(screen.queryByTestId('test-result-1')).toBeNull();
     });
 
-    it('testNumbers name the tiles and the chart pills by the ORIGINAL list position', () => {
+    it('testNumbers name the tiles and the names in the chart strip by the ORIGINAL list position', () => {
         const data: HealthPreview = { ...previewFor('individual', IND_VALID), test_validation: makeValidation({ tests: [makeTestResult({ index: 1 })] }) };
         mount({ sp: IND_VALID, data, testNumbers: [2] });
         expect(screen.getByTestId('test-result-2').querySelector('.vt-th b')!.textContent).toBe('S2');
         expect(screen.queryByTestId('test-result-1')).toBeNull();
-        const carrier = scoreChart().option.series.find((x: any) => x.name === '__scopes');
-        const pills = carrier.markArea.data.map((a: any) => a[0].label.formatter);
-        expect(pills).toEqual(['TRAIN', 'S2']);
+        expect(stripOf(scoreChart())).toEqual(['TRAIN', 'S2']);
+        expect(stripOf(setChart())).toEqual(['TRAIN', 'S2']);
     });
 
     it('test_scoring_failed -> amber notice with "Try again" (the preview Retry) instead of tiles; the score chart still draws', () => {

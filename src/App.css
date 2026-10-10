@@ -6132,6 +6132,9 @@ body {
 .f4-readout--sl .sl-fit { min-width: 0; }
 .wb2-xpk { display: inline-flex; width: clamp(160px, 18vw, 260px); min-width: 0; vertical-align: middle; }
 .wb2-sub-sl { display: inline-flex; align-items: baseline; gap: 5px; min-width: 0; max-width: 100%; }
+/* A short note after the sensor labels of a chart subtitle ("· points coloured by score"):
+   it keeps its width, the labels before it ellipsise. */
+.wb2-sub-sl > .wb2-sub-note { flex-shrink: 0; white-space: nowrap; }
 .f4-cond-s .pk-trigger { min-width: 0; }
 .rcm-cond-s { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 6px; }
 .rcm-cond-s > .pk-trigger { flex: 1; min-width: 140px; height: 34px; background: var(--bg-primary); font-size: 12px; }

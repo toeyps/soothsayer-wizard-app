@@ -3,9 +3,10 @@ import { samePageProps } from './pageMemo';
 import { LayoutGrid } from 'lucide-react';
 import { SensorPickerSingle } from '../../sensor/SensorPicker';
 import { SensorInline } from '../../sensor/SensorLabel';
+import { useSensorLookup } from '../../sensor/sensorInfo';
 import type { ClusterStat, HealthPreview } from '../../../types/health';
 import ChartCard, { LegendItem } from './ChartCard';
-import { CHART, CLUSTER_COLORS, fmtNum } from './chartTheme';
+import { CHART, CLUSTER_COLORS, fmtClusterBound, fmtNum } from './chartTheme';
 import {
     buildClusterOption,
     buildDistributionOption,
@@ -17,6 +18,7 @@ import {
     estimateRowsOutside3sd,
     individualVLines,
     scopesOf,
+    sensorAxisTitle,
 } from './healthCharts';
 import { SlowScoringNotice, TrainDaysNotice, TrainTestCard } from './ValidationCards';
 import type { WorkbenchPageProps } from './workbenchTypes';
@@ -32,6 +34,13 @@ import type { WorkbenchPageProps } from './workbenchTypes';
  *                Target vs predicted · Residual over time (±2RMSE)
  *                (no residual distribution, no side histogram — by design)
  *   Clustering   scatter + 1×/3× SD ellipses · cluster summary card
+ *                (no time chart — by design)
+ *
+ * A chart whose lines are labelled ON the chart has no legend row under it
+ * (workbench-redesign SPEC §3): reference lines carry their name at the right
+ * edge, "Actual" / "Predicted" at the line ends, the ring levels at the ring's
+ * edge. Only Distribution (Rows / Normal curve) and Fit (two point colours) keep
+ * a legend.
  *
  * Train and scoring periods (2026-10-07; "just score it" 2026-10-10): when the
  * preview carries `test_validation`, every time chart draws the train /
@@ -76,8 +85,12 @@ export function sameModelFitProps(a: ModelFitPageProps, b: ModelFitPageProps): b
 function ModelFitPage(props: ModelFitPageProps) {
     const { data, model, stale, unit } = props;
     const stats = data.stats;
+    const lookup = useSensorLookup();
     // Train / scoring scopes on every time chart (null = the preview carried no scoring periods).
     const scopes = scopesOf(data.test_validation, props.testNumbers);
+    // With scopes a time chart shows exactly the rows of the periods named in its strip
+    // (everything else is a gap); without them, every running row of the training scope.
+    const rowsShown = scopes ? 'rows in the train and scoring periods' : 'running rows';
     const custom = model.runningConditionMode === 'custom';
     const daysNotice = (
         <>
@@ -98,29 +111,22 @@ function ModelFitPage(props: ModelFitPageProps) {
                 <ChartCard
                     id="ts"
                     title="Sensor value over time"
-                    sub={`${unit ? `${unit} · ` : ''}running rows`}
+                    sub={`${unit ? `${unit} · ` : ''}${rowsShown}`}
                     full
                     size="tall"
                     stale={stale}
                     option={buildValueOverTimeOption(series, stats, unit, scopes)}
-                    legend={<>
-                        <LegendItem color={CHART.series} label="Value" />
-                        <LegendItem color={CHART.ok} label="±1SD" />
-                        <LegendItem color={CHART.warn} label="±3SD" />
-                    </>}
                 />
                 <ChartCard
                     id="dist"
                     title="Distribution"
-                    sub={`${unit ? `${unit} · ` : ''}bars = rows, line = normal curve from mean and SD`}
+                    sub={`${unit ? `${unit} · ` : ''}rows per value`}
                     stale={stale}
                     option={data.histogram ? buildDistributionOption(data.histogram, individualVLines(stats), unit) : null}
                     empty="No distribution for this scope"
                     legend={<>
                         <LegendItem color={CHART.bar} label="Rows" square />
                         <LegendItem color={CHART.normalCurve} label="Normal curve" />
-                        <LegendItem color={CHART.ok} label="±1SD" />
-                        <LegendItem color={CHART.warn} label="±3SD" />
                     </>}
                 />
                 <div className="vt-stack" data-testid="fit-side">
@@ -211,13 +217,9 @@ function ModelFitPage(props: ModelFitPageProps) {
                 <ChartCard
                     id="tvp"
                     title="Target vs predicted"
-                    sub={`${unit ? `${unit} ` : ''}over time`}
+                    sub={`${unit ? `${unit} · ` : ''}${rowsShown}`}
                     stale={stale}
                     option={buildTargetVsPredictedOption(series, unit, compactScopes(scopes))}
-                    legend={<>
-                        <LegendItem color={CHART.actual} label="Actual" />
-                        <LegendItem color={CHART.predicted} label="Predicted" />
-                    </>}
                 />
                 <ChartCard
                     id="res"
@@ -226,10 +228,6 @@ function ModelFitPage(props: ModelFitPageProps) {
                     full
                     stale={stale}
                     option={buildResidualOption(series, stats.two_rmse, unit, scopes)}
-                    legend={<>
-                        <LegendItem color={CHART.series} label="Residual" />
-                        <LegendItem color={CHART.ok} label="±2RMSE" />
-                    </>}
                 />
                 <TrainTestCard data={data} unit={unit} custom={custom} {...vt} />
             </div>
@@ -249,12 +247,9 @@ function ModelFitPage(props: ModelFitPageProps) {
                     sub={<span className="wb2-sub-sl"><SensorInline tag={xTag} size="sm" muted /> vs <SensorInline tag={yTag} size="sm" muted /></span>}
                     size="xtall"
                     stale={stale}
-                    option={scatter ? buildClusterOption(scatter, stats.clusters, { x: xTag, y: yTag }) : null}
+                    // Axis titles: description + unit — the tags are in the subtitle above.
+                    option={scatter ? buildClusterOption(scatter, stats.clusters, { x: sensorAxisTitle(lookup(xTag)), y: sensorAxisTitle(lookup(yTag)) }) : null}
                     empty="No clusters to draw"
-                    legend={<>
-                        <LegendItem color={CHART.ok} label="1× SD" />
-                        <LegendItem color={CHART.warn} label="3× SD" dashed />
-                    </>}
                 />
                 <div className="vt-stack" data-testid="fit-side">
                     <section className="wb2-statc wb2-statc--top" data-testid="cluster-summary">
@@ -284,8 +279,10 @@ function ModelFitPage(props: ModelFitPageProps) {
 
 function ClusterRows({ c }: { c: ClusterStat }) {
     const color = CLUSTER_COLORS[(c.cluster_id - 1 + CLUSTER_COLORS.length) % CLUSTER_COLORS.length];
+    // The range is what the user typed in Model settings: printed as typed, never padded
+    // ("33.6", not "33.60"); only an auto-divided boundary's float noise is shortened.
     const range = c.range && (c.range.min !== null || c.range.max !== null)
-        ? ` · ${c.range.min !== null ? fmtNum(c.range.min) : '…'} – ${c.range.max !== null ? fmtNum(c.range.max) : '…'}`
+        ? ` · ${c.range.min !== null ? fmtClusterBound(c.range.min) : '…'} – ${c.range.max !== null ? fmtClusterBound(c.range.max) : '…'}`
         : '';
     return (
         <>

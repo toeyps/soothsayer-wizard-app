@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
+    END_LABEL_GUTTER,
+    REF_LABEL_GUTTER,
     buildClusterOption,
     buildDistributionOption,
     buildFitScatterOption,
@@ -7,14 +9,20 @@ import {
     buildTargetVsPredictedOption,
     buildTimeSeriesOption,
     buildValueOverTimeOption,
+    clusterExtent,
     ellipseSeries,
     estimateRowsOutside3sd,
     individualVLines,
     niceExtent,
     parseTimestamps,
+    ringBox,
+    RING_LABEL_LINE,
+    ringLabelSeries,
+    ringRightPoint,
+    sensorAxisTitle,
 } from '../components/windows/workbench/healthCharts';
-import { CHART } from '../components/windows/workbench/chartTheme';
-import { makeHealthPreview } from './helpers/healthPreviewFixture';
+import { CHART, CLUSTER_COLORS, fmtClusterBound } from '../components/windows/workbench/chartTheme';
+import { makeClusterStat, makeHealthPreview } from './helpers/healthPreviewFixture';
 import type { ClusteringStats, IndividualSeries, IndividualStats, RelationshipSeries, RelationshipStats } from '../types/health';
 
 const ind = () => makeHealthPreview({ kind: 'individual', target: 'T' });
@@ -63,6 +71,68 @@ describe('buildTimeSeriesOption', () => {
         expect(o.series[0].data).toEqual([1, null, 3]);
     });
 
+    // workbench-redesign SPEC §3: a reference line is thin and named OUTSIDE the plot, on its
+    // right edge (the grid keeps a gutter for the text); one of the user's set points is the
+    // strongest line and carries its label INSIDE the plot at the right end.
+    it('reference-line labels sit at the right edge OUTSIDE the plot; a set point is labelled inside, above or below its line', () => {
+        const o: any = buildTimeSeriesOption({
+            ...spec,
+            hLines: [
+                { y: 5, color: '#0f0', label: '+1SD' },
+                { y: 9, color: '#f00', label: 'H 9', width: 1.5, inside: 'top' },
+                { y: 1, color: '#f00', label: 'L 1', width: 1.5, inside: 'bottom' },
+                { y: 0, color: '#888' }, // no label: a plain line
+            ],
+        });
+        const [ref, h, l, zero] = o.series[0].markLine.data;
+        expect(ref.label).toMatchObject({ show: true, formatter: '+1SD', position: 'end', fontWeight: 'normal' });
+        expect(ref.lineStyle.width).toBe(1);
+        expect(h.label).toMatchObject({ show: true, formatter: 'H 9', position: 'insideEndTop', fontWeight: 600 });
+        expect(l.label).toMatchObject({ show: true, formatter: 'L 1', position: 'insideEndBottom', fontWeight: 600 });
+        // the user's lines are the strongest
+        expect(h.lineStyle.width).toBeGreaterThan(ref.lineStyle.width);
+        expect(l.lineStyle.width).toBe(h.lineStyle.width);
+        expect(zero.label).toEqual({ show: false });
+        // every label is at the END of its line — none on the left, none floating at the top
+        for (const m of [ref, h, l]) expect(m.label.position).toMatch(/^(end|insideEnd(Top|Bottom))$/);
+        expect(o.grid.right).toBe(REF_LABEL_GUTTER);
+        expect(o.legend).toEqual({ show: false });
+    });
+
+    it('a +/− pair of reference lines keeps its two outside labels apart: the + label sits above its line end, the − label below', () => {
+        const o: any = buildTimeSeriesOption({
+            ...spec,
+            // 0.001 apart on an axis 200 wide: the two lines are on the same pixel row
+            hLines: [{ y: 0.0005, color: '#0f0', label: '+2RMSE', edge: 'above' }, { y: -0.0005, color: '#0f0', label: '−2RMSE', edge: 'below' }, { y: 100, color: '#888', label: '80' }, { y: -100, color: '#888' }],
+        });
+        const [plus, minus, plain] = o.series[0].markLine.data;
+        expect(plus.label).toMatchObject({ position: 'end', verticalAlign: 'bottom' }); // text above the line
+        expect(minus.label).toMatchObject({ position: 'end', verticalAlign: 'top' }); // text below the line
+        expect(plain.label).toMatchObject({ position: 'end', verticalAlign: 'middle' }); // a single line: centred on it
+    });
+
+    it('the right gutter exists only when something is labelled there', () => {
+        const none: any = buildTimeSeriesOption(spec);
+        expect(none.grid.right).toBe(18);
+        // set-point labels sit inside the plot: they need no gutter
+        const inside: any = buildTimeSeriesOption({ ...spec, hLines: [{ y: 9, color: '#f00', label: 'H 9', inside: 'top' }] });
+        expect(inside.grid.right).toBe(18);
+        const unlabelled: any = buildTimeSeriesOption({ ...spec, hLines: [{ y: 0, color: '#888' }] });
+        expect(unlabelled.grid.right).toBe(18);
+    });
+
+    it('a line with `endLabel` names itself at its right end; one without has no end label', () => {
+        const o: any = buildTimeSeriesOption({
+            ...spec,
+            lines: [{ ...spec.lines[0], endLabel: 'Actual' }, { name: 'W', values: [1, 1, 1], color: '#abc' }],
+        });
+        expect(o.series[0].endLabel).toMatchObject({ show: true, formatter: 'Actual', color: '#fff' });
+        expect(o.series[0].labelLayout).toEqual({ moveOverlap: 'shiftY' });
+        expect(o.series[1].endLabel).toBeUndefined();
+        expect(o.grid.right).toBe(END_LABEL_GUTTER);
+        expect(END_LABEL_GUTTER).toBeGreaterThan(REF_LABEL_GUTTER); // "Predicted" is longer than "+2RMSE"
+    });
+
     it('draws horizontal lines and bands on the FIRST series only, and widens the Y range to include them', () => {
         const o: any = buildTimeSeriesOption({
             ...spec,
@@ -94,7 +164,26 @@ describe('Individual charts', () => {
         expect(lines.map((d: any) => d.yAxis)).toEqual([6, 4, 8, 2]); // +1SD, -1SD, +3SD, -3SD of the fixture
         expect(lines.map((d: any) => d.lineStyle.color)).toEqual([CHART.ok, CHART.ok, CHART.warn, CHART.warn]);
         expect(o.yAxis.name).toBe('°C');
-        expect(o.series[0].markArea.data).toHaveLength(2); // the ±3SD and ±1SD zones
+    });
+
+    // workbench-redesign SPEC §3: "Only the 100 band is filled; ±3SD is a dashed line."
+    it('value over time: ONLY the score-100 band (±1SD) is filled; ±3SD is a dashed line with no fill', () => {
+        const p = ind();
+        const o: any = buildValueOverTimeOption(p.series as IndividualSeries, p.stats as IndividualStats, '°C');
+        const bands = o.series[0].markArea.data;
+        expect(bands).toHaveLength(1);
+        expect(bands[0][0]).toEqual({ yAxis: 4, itemStyle: { color: CHART.okFill } });
+        expect(bands[0][1]).toEqual({ yAxis: 6 });
+        expect(JSON.stringify(o)).not.toContain(CHART.warnFill);
+        const lines = o.series[0].markLine.data;
+        expect(lines.map((d: any) => d.lineStyle.type)).toEqual(['solid', 'solid', 'dashed', 'dashed']);
+        // the four reference lines are named at the right edge, outside the plot — so the card needs no legend
+        expect(lines.map((d: any) => [d.label.formatter, d.label.position])).toEqual([['+1SD', 'end'], ['−1SD', 'end'], ['+3SD', 'end'], ['−3SD', 'end']]);
+        expect(lines.map((d: any) => d.label.verticalAlign)).toEqual(['bottom', 'top', 'bottom', 'top']); // + above, − below its line
+        expect(o.grid.right).toBe(REF_LABEL_GUTTER);
+        // the Y range still holds the ±3SD lines although they carry no band any more
+        expect(o.yAxis.min).toBeLessThanOrEqual(2);
+        expect(o.yAxis.max).toBeGreaterThanOrEqual(8);
     });
 
     it('Distribution: bars from the histogram counts, the normal curve at the bin centres, vertical ±1SD/±3SD lines', () => {
@@ -110,6 +199,24 @@ describe('Individual charts', () => {
         expect(o.xAxis.min).toBe(0);
         expect(o.xAxis.max).toBe(10);
         expect(o.yAxis.max).toBeGreaterThan(710); // headroom above the tallest bar / curve
+    });
+
+    // workbench-redesign SPEC §3: "Axes use round ticks on both axes, with no raw extremes (Distribution x/y)."
+    it('Distribution: both axes end on round ticks — never a raw bin edge or count — and the X axis holds every reference line', () => {
+        const h = { bin_edges: [36.1987, 37.4, 38.6, 39.8, 41.0443], counts: [3, 400, 942, 87], curve: [5, 380, 942.7, 90], bin_width: 1.2, n: 1432 };
+        const o: any = buildDistributionOption(h, [], '°C');
+        expect([o.xAxis.min, o.xAxis.max]).toEqual([36, 42]); // 36.1987 … 41.0443 rounded out to the 1-step ticks
+        expect(o.xAxis.min).toBeLessThanOrEqual(h.bin_edges[0]);
+        expect(o.xAxis.max).toBeGreaterThanOrEqual(h.bin_edges[4]);
+        expect([o.yAxis.min, o.yAxis.max]).toEqual([0, 1200]); // 942.7 × 1.1 rounded up
+        // the bars themselves are untouched: still drawn at their real bin edges
+        expect(o.series[0].data[0]).toEqual([36.1987, 37.4, 3]);
+        // a ±3SD line beyond the outermost bin is still on the axis
+        const wide: any = buildDistributionOption(h, [{ x: 33.31, color: CHART.warn, label: '−3SD' }, { x: 44.07, color: CHART.warn, label: '+3SD' }], '°C');
+        expect(wide.xAxis.min).toBeLessThanOrEqual(33.31);
+        expect(wide.xAxis.max).toBeGreaterThanOrEqual(44.07);
+        expect([wide.xAxis.min, wide.xAxis.max]).toEqual([32, 46]);
+        for (const v of [o.xAxis.min, o.xAxis.max, wide.xAxis.min, wide.xAxis.max]) expect(Number.isInteger(v)).toBe(true);
     });
 
     // 🆕 2026-10-09 (real-app report): the Distribution chart's top y label read
@@ -156,6 +263,8 @@ describe('Individual charts', () => {
         const cl: any = buildClusterOption(c.cluster_scatter!, (c.stats as ClusteringStats).clusters, { x: 'X', y: 'Y' });
         expect(cl.xAxis.axisLabel.formatter(noisy)).toBe('0.3');
         expect(cl.yAxis.axisLabel.formatter(noisy)).toBe('0.3');
+        expect(cl.xAxis.axisLabel.color).toBe(CHART.textSecondary); // the look of the labels is kept
+        expect(cl.yAxis.axisLabel.fontSize).toBe(10);
     });
 
     it('Distribution: the custom bar series draws a rect spanning its bin edges', () => {
@@ -202,6 +311,29 @@ describe('Relationship charts', () => {
         expect(o.series[1].lineStyle.color).toBe(CHART.predicted);
     });
 
+    // workbench-redesign SPEC §3: "No legend rows where the lines are labelled (Target vs predicted:
+    // "Actual" / "Predicted" at the line ends)."
+    it('Target vs predicted: each line is named at its own right end, in its own colour (no legend needed)', () => {
+        const p = rel();
+        const o: any = buildTargetVsPredictedOption(p.series as RelationshipSeries, '°C');
+        expect(o.series.map((s: any) => [s.endLabel.show, s.endLabel.formatter, s.endLabel.color])).toEqual([
+            [true, 'Actual', CHART.actual],
+            [true, 'Predicted', CHART.predicted],
+        ]);
+        expect(o.grid.right).toBe(END_LABEL_GUTTER); // room outside the plot for the names
+        expect(o.legend).toEqual({ show: false });
+        // the data itself is exactly what it was: nothing added for the labels
+        expect(o.series[0].data.map((d: any) => d[1])).toEqual((p.series as RelationshipSeries).actual);
+        expect(o.series[1].data.map((d: any) => d[1])).toEqual((p.series as RelationshipSeries).predicted);
+    });
+
+    it('Fit: the axis lines stay on the plot\'s edge (no stray line through zero when the data straddles it)', () => {
+        const o: any = buildFitScatterOption(rel().fit_scatter!, '°C');
+        expect(o.xAxis.axisLine.onZero).toBe(false);
+        expect(o.yAxis.axisLine.onZero).toBe(false);
+        expect(o.xAxis.axisLine.lineStyle.color).toBe(CHART.gridLine);
+    });
+
     it('Residual over time: the ±2RMSE band and zero line, and nothing about set points or a distribution', () => {
         const p = rel();
         const two = (p.stats as RelationshipStats).two_rmse;
@@ -209,7 +341,11 @@ describe('Relationship charts', () => {
         expect(o.series).toHaveLength(1);
         expect(o.series[0].name).toBe('Residual');
         expect(o.series[0].markLine.data.map((d: any) => d.yAxis)).toEqual([two, -two, 0]);
+        expect(o.series[0].markArea.data).toHaveLength(1); // the ±2RMSE band = score 100: the only fill
         expect(o.series[0].markArea.data[0][0].yAxis).toBe(-two);
+        expect(o.series[0].markArea.data[0][0].itemStyle.color).toBe(CHART.okFill);
+        // "+2RMSE" / "−2RMSE" at the right edge outside the plot; the zero line has no label
+        expect(o.series[0].markLine.data.map((d: any) => d.label.position ?? null)).toEqual(['end', 'end', null]);
         expect(JSON.stringify(o)).not.toMatch(/histogram|distribution/i);
         expect(o.yAxis.max).toBeGreaterThanOrEqual(two);
     });
@@ -224,10 +360,146 @@ describe('Clustering chart', () => {
         expect(names.filter((n: string) => /1× SD$/.test(n))).toHaveLength(2);
         expect(names.filter((n: string) => /3× SD$/.test(n))).toHaveLength(2);
         const centres = o.series.find((s: any) => s.name === 'Centres');
-        expect(centres.data).toEqual([[10, 20], [20, 40]]);
+        expect(centres.data.map((d: any) => d.value)).toEqual([[10, 20], [20, 40]]);
         expect(centres.label.formatter({ dataIndex: 1 })).toBe('Cluster 2');
+        // each centre is named in its own cluster's colour
+        expect(centres.data.map((d: any) => d.label.color)).toEqual([CLUSTER_COLORS[0], CLUSTER_COLORS[1]]);
         expect(o.xAxis.name).toBe('X');
         expect(o.yAxis.name).toBe('Y');
+    });
+
+    // ---- workbench-redesign SPEC §3 "Clustering" ----
+
+    it('each ring LEVEL is named once — not once per cluster — at the edge of the ring that reaches furthest right', () => {
+        const p = clu(2);
+        const clusters = (p.stats as ClusteringStats).clusters; // centres x 10 / 20, x_sd 2, no rotation
+        const o: any = buildClusterOption(p.cluster_scatter!, clusters, { x: 'X', y: 'Y' });
+        const labels = o.series.filter((s: any) => s.name === 'Ring labels');
+        expect(labels).toHaveLength(1);
+        const data = labels[0].data;
+        expect(data.map((d: any) => d.label.formatter)).toEqual(['1× SD', '3× SD']); // two levels, two labels (4 rings)
+        expect(data.map((d: any) => d.label.color)).toEqual([CHART.ok, CHART.warn]);
+        // cluster 2 reaches furthest right: 20 + 1×2 and 20 + 3×2, at its centre height
+        expect(data.map((d: any) => d.value)).toEqual([[22, 40], [26, 40]]);
+        expect(labels[0].label).toMatchObject({ show: true, position: 'right' });
+        expect(labels[0].symbolSize).toBe(0); // text only, no extra dot
+        expect(labels[0].silent).toBe(true);
+        expect(labels[0].tooltip).toEqual({ show: false });
+    });
+
+    it('the level names can never print on top of each other: they are staggered one text line apart (first level up, last level down)', () => {
+        // one flat cluster: every ring reaches furthest right at the SAME height, a hair apart on a wide axis
+        const c = makeClusterStat(1, { x_center: 0, y_center: 0, x_sd: 0.001, y_sd: 0.001, angle_deg: 0 });
+        const lv = (n: number) => Array.from({ length: n }, (_, i) => ({ sigma: i + 1, text: `L${i}`, color: '#fff' }));
+        const offsets = (n: number) => ringLabelSeries([c], lv(n)).data.map(x => x.label.offset);
+        expect(offsets(2)).toEqual([[0, -RING_LABEL_LINE / 2], [0, RING_LABEL_LINE / 2]]); // Model fit: 1×, 3×
+        expect(offsets(3)).toEqual([[0, -RING_LABEL_LINE], [0, 0], [0, RING_LABEL_LINE]]); // Health score: 1×, 3×, N×
+        expect(offsets(1)).toEqual([[0, 0]]);
+        expect(RING_LABEL_LINE).toBeGreaterThanOrEqual(12); // a 9.5 px line of text on its chip
+        // only vertically: every name still starts right at its own ring's edge
+        for (const o of offsets(3)) expect(o[0]).toBe(0);
+    });
+
+    it('ringRightPoint follows the rotation; ringLabelSeries picks the furthest ring per level and skips a broken cluster', () => {
+        const flat = makeClusterStat(1, { x_center: 10, y_center: 20, x_sd: 2, y_sd: 1, angle_deg: 0 });
+        expect(ringRightPoint(flat, 3)).toEqual([16, 20]);
+        const turned = ringRightPoint({ ...flat, angle_deg: 90 }, 3); // the major axis now points up
+        expect(turned[0]).toBeCloseTo(13); // 10 + 3 × y_sd
+        expect(turned[1]).toBeCloseTo(20);
+        // 45°: the right-most point is to the right of AND above the centre, on the bounding box's edge
+        const tilted = ringRightPoint({ ...flat, angle_deg: 45 }, 1);
+        expect(tilted[0]).toBeCloseTo(ringBox({ ...flat, angle_deg: 45 }, 1).x[1]);
+        expect(tilted[1]).toBeGreaterThan(20);
+        // a wide cluster on the left can reach further right than a narrow one on the right
+        const wide = makeClusterStat(1, { x_center: 0, x_sd: 10 });
+        const narrow = makeClusterStat(2, { x_center: 15, x_sd: 1 });
+        const s = ringLabelSeries([wide, narrow], [{ sigma: 1, text: 'a', color: '#fff' }, { sigma: 3, text: 'b', color: '#fff' }]);
+        expect(s.data.map(x => x.value[0])).toEqual([16, 30]); // 1×: narrow (16 > 10) · 3×: wide (30 > 18)
+        const broken = makeClusterStat(3, { x_sd: NaN });
+        expect(ringLabelSeries([broken], [{ sigma: 1, text: 'a', color: '#fff' }]).data).toEqual([]);
+        expect(ringLabelSeries([], [{ sigma: 1, text: 'a', color: '#fff' }]).data).toEqual([]);
+    });
+
+    it('cluster point colours never use green, amber or red (those mean score 100 / 80 / 0 on these charts)', () => {
+        const hue = (hex: string) => {
+            const [r, g, b] = [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16) / 255);
+            const max = Math.max(r, g, b);
+            const min = Math.min(r, g, b);
+            const dlt = max - min;
+            const h = max === r ? ((g - b) / dlt) % 6 : max === g ? (b - r) / dlt + 2 : (r - g) / dlt + 4;
+            return (h * 60 + 360) % 360;
+        };
+        expect(CLUSTER_COLORS.length).toBeGreaterThanOrEqual(8);
+        expect(new Set(CLUSTER_COLORS).size).toBe(CLUSTER_COLORS.length);
+        for (const c of CLUSTER_COLORS) {
+            expect(c).toMatch(/^#[0-9a-f]{6}$/);
+            // only cyan → blue → violet: red is ~0/360, amber ~40, green ~120-160
+            expect(hue(c)).toBeGreaterThanOrEqual(190);
+            expect(hue(c)).toBeLessThanOrEqual(280);
+            expect([CHART.ok, CHART.warn, CHART.danger] as string[]).not.toContain(c);
+        }
+        // the hue check itself recognises the three score colours
+        expect(hue(CHART.ok)).toBeLessThan(190);
+        expect(hue(CHART.warn)).toBeLessThan(190);
+        expect(hue(CHART.danger)).toBeLessThan(190);
+        // and the chart really draws from this palette
+        const p = clu(2);
+        const o: any = buildClusterOption(p.cluster_scatter!, (p.stats as ClusteringStats).clusters, { x: 'X', y: 'Y' });
+        expect(o.series.find((s: any) => s.name === 'Cluster 1').itemStyle.color).toBe(CLUSTER_COLORS[0]);
+        expect(o.series.find((s: any) => s.name === 'Cluster 2').itemStyle.color).toBe(CLUSTER_COLORS[1]);
+    });
+
+    it('the axes include every ring (a 3× ring outside the points is never cut) and end on round ticks, with room right for the ring labels', () => {
+        const big = makeClusterStat(1, { x_center: 50, y_center: 50, x_sd: 20, y_sd: 10, angle_deg: 30 });
+        const scatter = { x: [49, 50, 51], y: [49, 50, 51], cluster: [1, 1, 1], total: 3 }; // points huddle at the centre
+        const o: any = buildClusterOption(scatter, [big], { x: 'X', y: 'Y' });
+        const box = ringBox(big, 3);
+        expect(o.xAxis.min).toBeLessThanOrEqual(box.x[0]);
+        expect(o.xAxis.max).toBeGreaterThanOrEqual(box.x[1]);
+        expect(o.yAxis.min).toBeLessThanOrEqual(box.y[0]);
+        expect(o.yAxis.max).toBeGreaterThanOrEqual(box.y[1]);
+        // at least a tenth of the rings' width stays free right of the furthest ring: the ring labels are drawn there
+        expect(o.xAxis.max - box.x[1]).toBeGreaterThanOrEqual((box.x[1] - box.x[0]) * 0.1);
+        for (const v of [o.xAxis.min, o.xAxis.max, o.yAxis.min, o.yAxis.max]) expect(Math.abs(v % 10)).toBe(0); // 1/2/5 × 10ⁿ steps
+        // the fixed extent replaces auto-scaling
+        expect(o.xAxis.scale).toBeUndefined();
+        // points far outside the rings widen the axes too
+        const far = clusterExtent([400], [-300], [big], [1, 3]);
+        expect(far.x[1]).toBeGreaterThanOrEqual(400);
+        expect(far.y[0]).toBeLessThanOrEqual(-300);
+        // nothing to measure: a harmless default instead of ±Infinity
+        expect(clusterExtent([], [], [], [1, 3])).toEqual({ x: [0, 1], y: [0, 1] });
+    });
+
+    it('no stray x = 0 / y = 0 line: both axis lines stay on the plot\'s edge even when the data straddles zero', () => {
+        const c = makeClusterStat(1, { x_center: 0, y_center: 0 });
+        const o: any = buildClusterOption({ x: [-1, 1], y: [-1, 1], cluster: [1, 1], total: 2 }, [c], { x: 'X', y: 'Y' });
+        expect(o.xAxis.min).toBeLessThan(0);
+        expect(o.xAxis.max).toBeGreaterThan(0);
+        expect(o.xAxis.axisLine).toEqual({ lineStyle: { color: CHART.gridLine }, onZero: false });
+        expect(o.yAxis.axisLine).toEqual({ lineStyle: { color: CHART.gridLine }, onZero: false });
+    });
+
+    it('axis titles are description + unit (the tag only when there is no description)', () => {
+        expect(sensorAxisTitle({ tag: '11JI1001.PV', description: 'GENERATOR ACTIVE POWER', unit: 'MW' })).toBe('GENERATOR ACTIVE POWER · MW');
+        expect(sensorAxisTitle({ tag: '11JI1001.PV', description: 'GENERATOR ACTIVE POWER' })).toBe('GENERATOR ACTIVE POWER');
+        expect(sensorAxisTitle({ tag: '11JI1001.PV', unit: 'MW' })).toBe('11JI1001.PV · MW');
+        expect(sensorAxisTitle({ tag: '11JI1001.PV' })).toBe('11JI1001.PV');
+        // and the chart prints exactly what it is given
+        const p = clu(1);
+        const o: any = buildClusterOption(p.cluster_scatter!, (p.stats as ClusteringStats).clusters, { x: 'GENERATOR ACTIVE POWER · MW', y: 'BEARING TEMP · °C' });
+        expect(o.xAxis.name).toBe('GENERATOR ACTIVE POWER · MW');
+        expect(o.yAxis.name).toBe('BEARING TEMP · °C');
+    });
+
+    it('a cluster range boundary prints as typed: never padded, never rounded; only auto-divide float noise is shortened', () => {
+        expect(fmtClusterBound(50)).toBe('50'); // not "50.00"
+        expect(fmtClusterBound(0)).toBe('0'); // not "0.000"
+        expect(fmtClusterBound(33.6)).toBe('33.6');
+        expect(fmtClusterBound(4.61234)).toBe('4.61234'); // not "4.612"
+        expect(fmtClusterBound(0.0005)).toBe('0.0005');
+        expect(fmtClusterBound(12500.5)).toBe('12,500.5');
+        expect(fmtClusterBound(100 / 3)).toBe('33.333'); // 33.333333333333336 is nobody's typing
     });
 
     it('the rings are green (1×, solid) and amber (3×, dashed)', () => {

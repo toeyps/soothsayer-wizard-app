@@ -7,6 +7,13 @@ vi.mock('../components/charts/ResponsiveECharts', () => ({
             data-testid="echarts-mock"
             data-series={(props.option?.series ?? []).map((s: any) => s.name).join('|')}
             data-x-axis-name={props.option?.xAxis?.name ?? ''}
+            data-y-axis-name={props.option?.yAxis?.name ?? ''}
+            // the names in the strip above the plot (train / scoring scopes), in band order
+            data-strip={((props.option?.series ?? []).find((s: any) => s.name === '__scopes')?.markArea?.data ?? []).map((a: any) => a[0].label.formatter).join('|')}
+            // lines that name themselves at their right end
+            data-end-labels={(props.option?.series ?? []).filter((s: any) => s.endLabel?.show).map((s: any) => s.endLabel.formatter).join('|')}
+            // the ring levels named on a Clusters chart
+            data-ring-labels={((props.option?.series ?? []).find((s: any) => s.name === 'Ring labels')?.data ?? []).map((x: any) => x.label.formatter).join('|')}
         />
     ),
 }));
@@ -15,6 +22,7 @@ vi.mock('../components/charts/ResponsiveECharts', () => ({
 
 import ModelFitPage from '../components/windows/workbench/ModelFitPage';
 import { SensorMetaProvider } from '../components/sensor/SensorLabel';
+import { CLUSTER_COLORS } from '../components/windows/workbench/chartTheme';
 import { openPickerSurface, pickSingle, pickerRows, rowTag } from './helpers/sensorPicker';
 import { makeHealthPreview } from './helpers/healthPreviewFixture';
 import { makeTestResult, makeValidation } from './helpers/validationFixture';
@@ -46,6 +54,10 @@ function page(m: FailureModel, req: Record<string, any>, over: Record<string, an
     render(<SensorMetaProvider metadata={META}><ModelFitPage {...props} /></SensorMetaProvider>);
     return props;
 }
+
+const chartOf = (id: string) => within(screen.getByTestId(`chart-card-${id}`)).getByTestId('echarts-mock');
+/** Text of the legend row under a card's chart, or null when the card has none. */
+const legendOf = (id: string) => screen.getByTestId(`chart-card-${id}`).querySelector('.wb2-legend')?.textContent ?? null;
 
 describe('ModelFitPage — Individual', () => {
     it('has the full-width value chart, the Distribution chart and the statistics card, in that order', () => {
@@ -82,6 +94,21 @@ describe('ModelFitPage — Individual', () => {
     it('stale: every chart is "Out of date"', () => {
         page(model(), { target: 'T1' }, { stale: true });
         expect(screen.getAllByTestId('chart-outdated')).toHaveLength(2);
+    });
+
+    // workbench-redesign SPEC §3: no legend row where the lines are labelled on the chart.
+    it('the value chart has NO legend row (±1SD / ±3SD are named on the chart); Distribution keeps only "Rows" and "Normal curve"', () => {
+        page(model(), { target: 'T1' });
+        expect(legendOf('ts')).toBeNull();
+        expect(legendOf('dist')).toBe('RowsNormal curve');
+        expect(screen.getByTestId('chart-card-dist').textContent).not.toMatch(/±1SD|±3SD/);
+        expect(screen.getByTestId('chart-card-ts').textContent).not.toMatch(/±1SD|±3SD|Value/);
+    });
+
+    it('the subtitles say what the chart shows: every running row without scoring periods, "rows per value" for Distribution', () => {
+        page(model(), { target: 'T1' });
+        expect(screen.getByTestId('chart-card-ts').querySelector('.wb2-card-s')!.textContent).toBe('°C · running rows');
+        expect(screen.getByTestId('chart-card-dist').querySelector('.wb2-card-s')!.textContent).toBe('°C · rows per value');
     });
 });
 
@@ -157,6 +184,23 @@ describe('ModelFitPage — Relationship', () => {
         page(rel(), { target: 'T1', predictors: ['A', 'B'] }, { stale: true });
         expect(screen.getAllByTestId('chart-outdated')).toHaveLength(3);
     });
+
+    // workbench-redesign SPEC §3: "No legend rows where the lines are labelled (Target vs predicted:
+    // "Actual" / "Predicted" at the line ends)."
+    it('Target vs predicted names "Actual" / "Predicted" at the line ends and has no legend row; Residual has none either; Fit keeps its two point colours', () => {
+        page(rel(), { target: 'T1', predictors: ['A', 'B'] });
+        expect(chartOf('tvp').getAttribute('data-end-labels')).toBe('Actual|Predicted');
+        expect(legendOf('tvp')).toBeNull();
+        expect(legendOf('res')).toBeNull();
+        expect(chartOf('res').getAttribute('data-end-labels')).toBe(''); // one line: its ±2RMSE lines are named instead
+        expect(legendOf('fit')).toBe('ActualRelation model'); // points, not labelled lines
+        expect(chartOf('fit').getAttribute('data-end-labels')).toBe('');
+    });
+
+    it('never names the algorithm on the page', () => {
+        page(rel(), { target: 'T1', predictors: ['A', 'B'] });
+        expect(screen.getByTestId('model-fit-relationship').textContent).not.toMatch(/GAM/i);
+    });
 });
 
 describe('ModelFitPage — Clustering', () => {
@@ -172,9 +216,72 @@ describe('ModelFitPage — Clustering', () => {
         expect(series).toMatch(/Cluster 2 3× SD/);
         const summary = screen.getByTestId('cluster-summary');
         expect(summary.textContent).toMatch(/split by Label of LOADLOAD/);
-        expect(within(summary).getByTestId('cluster-row-1').textContent).toMatch(/Cluster 1 · 0\.000 – 50\.0041 rows/);
-        expect(within(summary).getByTestId('cluster-row-2').textContent).toMatch(/Cluster 2 · 50\.00 – 100\.042 rows/);
+        // the ranges are what the user typed: printed as typed ("0 – 50"), never padded ("0.000 – 50.00")
+        expect(within(summary).getByTestId('cluster-row-1').textContent).toBe('Cluster 1 · 0 – 5041 rows');
+        expect(within(summary).getByTestId('cluster-row-2').textContent).toBe('Cluster 2 · 50 – 10042 rows');
+        // the centre is computed: the read-out formatter
         expect(summary.textContent).toMatch(/x 10\.00 · y 20\.00/);
+    });
+
+    // ---- workbench-redesign SPEC §3 "Clustering" ----
+
+    it('a typed range keeps every decimal and is never rounded; an open end reads "…"', () => {
+        const base = makeHealthPreview({ kind: 'clustering', n_clusters: 2 });
+        const stats = base.stats as any;
+        const data = {
+            ...base,
+            stats: { ...stats, clusters: [{ ...stats.clusters[0], range: { min: null, max: 33.6 } }, { ...stats.clusters[1], range: { min: 33.6, max: 4.61234 } }] },
+        };
+        render(<ModelFitPage model={clu()} stale={false} preview={{ ...idle, data }} unit="" data={data} sensorLabel={t => t} getDesc={t => t} onXPredictorChange={() => {}} onCompare={() => {}} />);
+        expect(screen.getByTestId('cluster-row-1').textContent).toBe('Cluster 1 · … – 33.641 rows');
+        expect(screen.getByTestId('cluster-row-2').textContent).toBe('Cluster 2 · 33.6 – 4.6123442 rows');
+    });
+
+    it('the rings are named on the chart, once per level, so the card has NO legend row', () => {
+        page(clu(), { n_clusters: 2 });
+        expect(chartOf('cl').getAttribute('data-ring-labels')).toBe('1× SD|3× SD');
+        expect(legendOf('cl')).toBeNull();
+    });
+
+    it('axis titles are description + unit; the tag is in the subtitle, not on the axis', () => {
+        const meta = [
+            { tag: 'X1', description: 'GENERATOR ACTIVE POWER', unit: 'MW', component: 'Generator' },
+            { tag: 'Y1', description: 'BEARING DE TEMPERATURE', unit: '°C', component: 'Bearing' },
+        ];
+        const data = makeHealthPreview({ kind: 'clustering', n_clusters: 2 });
+        render(
+            <SensorMetaProvider metadata={meta}>
+                <ModelFitPage model={clu()} stale={false} preview={{ ...idle, data }} unit="" data={data} sensorLabel={t => t} getDesc={t => t} onXPredictorChange={() => {}} onCompare={() => {}} />
+            </SensorMetaProvider>,
+        );
+        const chart = chartOf('cl');
+        expect(chart.getAttribute('data-x-axis-name')).toBe('GENERATOR ACTIVE POWER · MW');
+        expect(chart.getAttribute('data-y-axis-name')).toBe('BEARING DE TEMPERATURE · °C');
+        expect(chart.getAttribute('data-x-axis-name')).not.toContain('X1');
+        // the tags are still on the card — in the subtitle (description then tag, the Inline label)
+        const sub = screen.getByTestId('chart-card-cl').querySelector('.wb2-card-s')!.textContent;
+        expect(sub).toBe('GENERATOR ACTIVE POWERX1 vs BEARING DE TEMPERATUREY1');
+    });
+
+    it('a sensor with no description (or no Tag names at all) falls back to its tag on the axis', () => {
+        const data = makeHealthPreview({ kind: 'clustering', n_clusters: 1 });
+        render(<ModelFitPage model={clu()} stale={false} preview={{ ...idle, data }} unit="" data={data} sensorLabel={t => t} getDesc={t => t} onXPredictorChange={() => {}} onCompare={() => {}} />);
+        expect(chartOf('cl').getAttribute('data-x-axis-name')).toBe('X1');
+        expect(chartOf('cl').getAttribute('data-y-axis-name')).toBe('Y1');
+    });
+
+    it('the summary dots use the cluster palette (never the green / amber / red of the rings)', () => {
+        page(clu(), { n_clusters: 2 });
+        const dot = (n: number) => (screen.getByTestId(`cluster-row-${n}`).querySelector('.wb2-dot') as HTMLElement).style.background;
+        const rgb = (hex: string) => `rgb(${[1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16)).join(', ')})`;
+        expect(dot(1)).toBe(rgb(CLUSTER_COLORS[0]));
+        expect(dot(2)).toBe(rgb(CLUSTER_COLORS[1]));
+    });
+
+    it('Model fit has no time chart for Clustering: one chart on the page, and it carries no scope strip', () => {
+        page(clu(), { n_clusters: 2 });
+        expect(screen.getAllByTestId('echarts-mock')).toHaveLength(1);
+        expect(chartOf('cl').getAttribute('data-strip')).toBe('');
     });
 
     it('rows that fall in no cluster range are listed', () => {
@@ -222,6 +329,26 @@ describe('ModelFitPage — train and scoring periods ("just score it", 2026-10-1
         expect(within(screen.getByTestId('chart-card-tvp')).getByTestId('echarts-mock').getAttribute('data-series')).toBe('Actual|Predicted|__scopes');
         expect(within(screen.getByTestId('chart-card-res')).getByTestId('echarts-mock').getAttribute('data-series')).toBe('Residual|__scopes');
         expect(screen.getByTestId('train-test-card').className).toContain('vt-card--cap');
+    });
+
+    // workbench-redesign SPEC §3: the scopes are named in the strip above the plot.
+    it('the strip names the scopes on every time chart: "TRAIN", "S1", "S2" — and the subtitle says the chart shows only those rows', () => {
+        mount(model(), { target: 'T1' }, withTests('individual'));
+        expect(chartOf('ts').getAttribute('data-strip')).toBe('TRAIN|S1|S2');
+        expect(screen.getByTestId('chart-card-ts').querySelector('.wb2-card-s')!.textContent).toBe('°C · rows in the train and scoring periods');
+        expect(chartOf('dist').getAttribute('data-strip')).toBe(''); // not a time chart
+    });
+
+    it('several train periods: the full-width chart reads "TRAIN P1", "TRAIN P2"; the half-width one the short "P1", "P2"', () => {
+        const test_validation = makeValidation({
+            train_ranges: [{ start: '2026-01-01T00:00', end: '2026-01-01T00:30' }, { start: '2026-01-01T01:00', end: '2026-01-01T01:30' }],
+            tests: [makeTestResult()],
+        });
+        mount(model({ kind: 'relationship', predictorSensors: ['A'] }), { target: 'T1', predictors: ['A'] }, { test_validation });
+        expect(chartOf('res').getAttribute('data-strip')).toBe('TRAIN P1|TRAIN P2|S1');
+        expect(chartOf('tvp').getAttribute('data-strip')).toBe('P1|P2|S1');
+        expect(chartOf('fit').getAttribute('data-strip')).toBe(''); // a scatter has no time axis
+        expect(screen.getByTestId('chart-card-tvp').querySelector('.wb2-card-s')!.textContent).toBe('°C · rows in the train and scoring periods');
     });
 
     it('Clustering (no time chart): the card stacks under the cluster summary', () => {

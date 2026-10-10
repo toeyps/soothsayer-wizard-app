@@ -4,10 +4,12 @@ import { connect } from 'echarts';
 import { Loader2 } from 'lucide-react';
 import ResponsiveECharts from '../../charts/ResponsiveECharts';
 import type { HealthPreview, ScoreSummary } from '../../../types/health';
-import ChartCard, { LegendItem } from './ChartCard';
+import { SensorInline } from '../../sensor/SensorLabel';
+import { useSensorLookup } from '../../sensor/sensorInfo';
+import ChartCard from './ChartCard';
 import ChecksCard from './ChecksCard';
 import SetPointsCard from './SetPointsCard';
-import { CHART, fmtNum } from './chartTheme';
+import { CHART } from './chartTheme';
 import {
     healthVerdict,
     hoverIndexFromAxisEvent,
@@ -22,7 +24,7 @@ import {
     buildRelationshipSetPointOption,
     buildScoreOption,
 } from './healthPageCharts';
-import { scopesOf, type TimeScopes } from './healthCharts';
+import { scopesOf, sensorAxisTitle, type TimeScopes } from './healthCharts';
 import { formatStamp } from '../periodDisplay';
 import { SlowScoringNotice, TestResultsCard, TestsChangedBanner } from './ValidationCards';
 import type { HealthScorePageProps, SaveInfo } from './workbenchTypes';
@@ -45,6 +47,11 @@ import type { HealthScorePageProps, SaveInfo } from './workbenchTypes';
  * hovered series index to print "time - value - score" next to the score
  * chart's title. Clustering has no time axis on its set-point chart, so hovering
  * a point there (or the score chart) highlights the same row on the other.
+ *
+ * No legend rows (workbench-redesign SPEC §3): every line is labelled on its
+ * chart — reference lines at the right edge, the user's set points with their
+ * typed value, the ring levels at the ring's edge — and the score bands are read
+ * off the share column beside the score chart.
  */
 
 /** Memo comparison (see `samePageProps`): the small data the window rebuilds per
@@ -55,7 +62,7 @@ export function sameHealthScoreProps(a: HealthScorePageProps, b: HealthScorePage
 }
 
 function HealthScorePage(props: HealthScorePageProps) {
-    const { model, stale, preview, unit, sensorLabel, setPoints, attemptIssues, save } = props;
+    const { model, stale, preview, unit, setPoints, attemptIssues, save } = props;
     const [hoverIdx, setHoverIdx] = useState<number | null>(null);
     // A failed request leaves `preview.data` null, but when an earlier answer for this
     // model exists the page (inputs, charts) stays on screen from `lastData` under an
@@ -141,7 +148,6 @@ function HealthScorePage(props: HealthScorePageProps) {
                 onHover={setHoverIdx}
                 stale={stale}
                 unit={unit}
-                sensorLabel={sensorLabel}
                 scopes={scopes}
             />
             <div className="hs-spp">
@@ -222,26 +228,28 @@ function joinSyncGroup(inst: { group?: string } | null | undefined) {
     }
 }
 
-function SetPointChart({ data, props, hoverIdx, onHover, stale, unit, sensorLabel, scopes }: {
+function SetPointChart({ data, props, hoverIdx, onHover, stale, unit, scopes }: {
     data: HealthPreview;
     props: HealthScorePageProps;
     hoverIdx: number | null;
     onHover: (i: number | null) => void;
     stale: boolean;
     unit: string;
-    sensorLabel: (tag: string) => string;
     scopes: TimeScopes | null;
 }) {
     const { model, setPoints } = props;
     const stats = data.stats;
     const series = data.series;
+    // Stable until the Tag names change, so it never rebuilds a chart on its own.
+    const lookup = useSensorLookup();
+    const scored = !!series.score;
 
     const built = useMemo(() => {
         if (stats.kind === 'individual' && series.kind === 'individual') {
             return {
                 id: 'set-individual',
                 title: 'Sensor value over time',
-                sub: `${unit ? `${unit} · ` : ''}type L and H on the right`,
+                sub: unit || undefined,
                 option: buildIndividualSetPointOption(series, stats, setPoints.kind === 'individual' ? setPoints : null, unit, scopes),
                 time: true,
             };
@@ -250,7 +258,7 @@ function SetPointChart({ data, props, hoverIdx, onHover, stale, unit, sensorLabe
             return {
                 id: 'set-relationship',
                 title: 'Residual over time',
-                sub: `actual − predicted${unit ? ` (${unit})` : ''} · type the 80 and 0 points on the right`,
+                sub: `actual − predicted${unit ? ` (${unit})` : ''}`,
                 option: buildRelationshipSetPointOption(series, stats.two_rmse, setPoints.kind === 'relationship' ? setPoints : null, unit, scopes),
                 time: true,
             };
@@ -259,10 +267,16 @@ function SetPointChart({ data, props, hoverIdx, onHover, stale, unit, sensorLabe
             return {
                 id: 'set-clustering',
                 title: 'Clusters',
-                sub: `${sensorLabel(model.xSensor ?? '')} vs ${sensorLabel(model.ySensor ?? '')} · points coloured by score`,
+                sub: (
+                    <span className="wb2-sub-sl">
+                        <SensorInline tag={model.xSensor ?? ''} size="sm" muted /> vs <SensorInline tag={model.ySensor ?? ''} size="sm" muted />
+                        {' '}<span className="wb2-sub-note">· {scored ? 'points coloured by score' : 'coloured by score once N is set'}</span>
+                    </span>
+                ),
+                // Axis titles: description + unit — the tags are in the subtitle above.
                 option: buildClusterSetPointOption(
                     series, stats.clusters, setPoints.kind === 'clustering' ? setPoints : null,
-                    { x: model.xSensor ?? '', y: model.ySensor ?? '' }, hoverIdx,
+                    { x: sensorAxisTitle(lookup(model.xSensor ?? '')), y: sensorAxisTitle(lookup(model.ySensor ?? '')) }, hoverIdx,
                 ),
                 time: false,
             };
@@ -271,10 +285,9 @@ function SetPointChart({ data, props, hoverIdx, onHover, stale, unit, sensorLabe
         // `hoverIdx` only changes the Clustering highlight; the time charts follow
         // the connected cursor and must not be rebuilt on every mouse move.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [stats, series, setPoints, unit, model.xSensor, model.ySensor, scopes, stats.kind === 'clustering' ? hoverIdx : null]);
+    }, [stats, series, setPoints, unit, model.xSensor, model.ySensor, scopes, lookup, scored, stats.kind === 'clustering' ? hoverIdx : null]);
 
     if (!built) return null;
-    const nOuter = setPoints.kind === 'clustering' && setPoints.outerSd !== null ? `${fmtNum(setPoints.outerSd)}×` : 'N×';
 
     const chartProps: Partial<ComponentProps<typeof ResponsiveECharts>> = built.time
         ? {
@@ -301,25 +314,6 @@ function SetPointChart({ data, props, hoverIdx, onHover, stale, unit, sensorLabe
                 stale={stale}
                 option={built.option}
                 chartProps={chartProps}
-                legend={model.kind === 'clustering' ? (
-                    <>
-                        <LegendItem color={CHART.ok} label="1× SD · 100" />
-                        <LegendItem color={CHART.warn} label="3× SD · 80 (fixed)" dashed />
-                        <LegendItem color={CHART.danger} label={`${nOuter} SD · 0`} dashed />
-                    </>
-                ) : model.kind === 'relationship' ? (
-                    <>
-                        <LegendItem color={CHART.ok} label="±2RMSE · 100" />
-                        <LegendItem color={CHART.warn} label="80" dashed />
-                        <LegendItem color={CHART.danger} label="0" dashed />
-                    </>
-                ) : (
-                    <>
-                        <LegendItem color={CHART.ok} label="±1SD · 100" />
-                        <LegendItem color={CHART.warn} label="±3SD · 80 (fixed)" />
-                        <LegendItem color={CHART.danger} label="L / H · 0" dashed />
-                    </>
-                )}
             />
         </div>
     );
@@ -371,14 +365,6 @@ function ScoreChart({ data, score, summary, unit, hoverIdx, onHover, stale, scop
                 </span>
             }
             extra={<span className="hs-rd" data-testid="hs-readout">{text}</span>}
-            legend={
-                <>
-                    <LegendItem color={CHART.ok} label="80–100" />
-                    <LegendItem color={CHART.warn} label="below 80" />
-                    <LegendItem color={CHART.danger} label="near 0" />
-                    <span>Hover to read the score and the value at that time — both charts move together</span>
-                </>
-            }
             render={() => (
                 <div className="hs-scorewrap">
                     <div className="hs-scorechart">
@@ -392,7 +378,8 @@ function ScoreChart({ data, score, summary, unit, hoverIdx, onHover, stale, scop
                                 <div key={s.key} className="hs-share" data-testid={`share-${s.key}`}>
                                     <span className="hs-share-l">{s.label}</span>
                                     <span className="hs-share-bar"><i style={{ width: `${Math.max(v === null ? 0 : v, v ? 1 : 0)}%`, background: s.color }} /></span>
-                                    <span className="hs-share-v">{v === null ? '—' : `${v.toFixed(1)}%`}</span>
+                                    {/* A share that is not zero never reads "0.0%". */}
+                                    <span className="hs-share-v">{v === null ? '—' : v > 0 && v < 0.1 ? '< 0.1%' : `${v.toFixed(1)}%`}</span>
                                 </div>
                             );
                         })}
