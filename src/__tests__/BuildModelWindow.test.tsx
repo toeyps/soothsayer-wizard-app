@@ -323,7 +323,7 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
     it('shows the running condition bar, the left sensor list, and auto-selects the first sensor into the detail pane', async () => {
         render(<BuildModelWindow />);
         await deliverData();
-        expect(screen.getByText('Build Model — Overview')).toBeTruthy();
+        expect(screen.getByText('Build Model')).toBeTruthy();
         expect(screen.getByTestId('rc-card')).toBeTruthy();
         expect(screen.getAllByText('Pump Pressure').length).toBeGreaterThan(0); // sensor row, labelled by the sensor
         // Detail pane auto-selected the only sensor without a click.
@@ -527,7 +527,19 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: { groups: [makeGroup()], models: [clu, ind, rel] } });
             const tabs = screen.getAllByRole('tab');
-            expect(tabs.map(t => t.querySelector('.f4-tab-l')!.textContent)).toEqual(['Individual', 'Relationship', 'Clustering']);
+            expect(tabs.map(t => t.querySelector('.f4-tab-l')!.textContent)).toEqual(['Individual', 'Relation model', 'Clustering']);
+            // Workbench redesign §1: ONE state dot per tab (the words are its tooltip) and no text pill at all.
+            for (const [i, id] of ['i1', 'r1', 'c1'].entries()) {
+                expect(tabs[i].querySelectorAll('.f4-sdot')).toHaveLength(1);
+                expect(tabs[i].querySelector('.f4-pill')).toBeNull();
+                expect(tabs[i].querySelector('.f4-dirty')).toBeNull();
+                const dot = screen.getByTestId(`tab-status-${id}`);
+                expect(dot.textContent).toBe('');
+                expect(dot.getAttribute('title')).toBeTruthy();
+                expect(tabs[i].getAttribute('title')).toBe(`${['Individual', 'Relation model', 'Clustering'][i]} · ${dot.getAttribute('title')}`);
+            }
+            expect(screen.getByTestId('tab-status-i1').getAttribute('title')).toBe('Not trained yet');
+            expect(screen.getByTestId('tab-status-i1').getAttribute('data-dot')).toBe('none');
         });
 
         it('switching tabs keeps each model\'s own unsaved draft (no cross-talk)', async () => {
@@ -540,7 +552,7 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             });
             openSettings();
             fireEvent.change(screen.getByPlaceholderText('e.g. Bearing vibration model'), { target: { value: 'Ind renamed' } });
-            fireEvent.click(screen.getByRole('tab', { name: /Relationship/ }));
+            fireEvent.click(screen.getByRole('tab', { name: /Relation model/ }));
             openSettings();
             expect((screen.getByPlaceholderText('e.g. Bearing vibration model') as HTMLInputElement).value).toBe('Rel');
             fireEvent.click(screen.getByRole('tab', { name: /Individual/ }));
@@ -548,12 +560,16 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             expect((screen.getByPlaceholderText('e.g. Bearing vibration model') as HTMLInputElement).value).toBe('Ind renamed');
         });
 
-        it('an edited tab shows the "edited" tag', async () => {
+        it('an unsaved edit is said ONCE, in the footer — the tab carries no "edited" pill; "Save changes" exists only while the draft does', async () => {
             render(<BuildModelWindow />);
             await deliverData();
+            expect(screen.queryByTestId('save-changes')).toBeNull();
             openSettings();
             fireEvent.change(screen.getByPlaceholderText('e.g. Bearing vibration model'), { target: { value: 'Renamed' } });
-            expect(screen.getByText('edited')).toBeTruthy();
+            expect(screen.queryByText('edited')).toBeNull();
+            expect(screen.getByRole('tab').querySelector('.f4-pill, .f4-dirty')).toBeNull();
+            expect(screen.getByTestId('footer-status').textContent).toBe('Unsaved changes to the Individual model');
+            expect(screen.getByTestId('save-changes').textContent).toBe('Save changes');
         });
     });
 
@@ -642,7 +658,7 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
                     ],
                 },
             });
-            fireEvent.click(screen.getByRole('tab', { name: /Relationship/ }));
+            fireEvent.click(screen.getByRole('tab', { name: /Relation model/ }));
             openSettings();
             fireEvent.change(screen.getByPlaceholderText('e.g. Bearing vibration model'), { target: { value: 'tag1' } });
             expect(screen.getByTestId('duplicate-name-warning')).toBeTruthy();
@@ -731,7 +747,18 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
         it('shows "Not trained yet" for a fully-configured model that has never been trained', async () => {
             render(<BuildModelWindow />);
             await deliverData();
-            expect(screen.getByTestId('results-placeholder').textContent).toBe('Not trained yet');
+            // ONE board shape: a title, one sentence, a mono line; its action is a text link, never a button.
+            const b = screen.getByTestId('results-placeholder');
+            expect(b.className).toContain('wbx-msg');
+            expect(b.querySelector('.wbx-msg-t')!.textContent).toBe('Not trained yet');
+            expect(b.querySelector('.wbx-msg-s')!.textContent).toBe('Train it with Train sensor ↑ — the charts of the trained model appear here.');
+            expect(b.querySelector('.wbx-msg-d')!.textContent).toMatch(/^Individual · uses the workspace running condition · ≈ \d+ s$/);
+            expect(b.querySelectorAll('button')).toHaveLength(1);
+            const link = within(b).getByTestId('board-train-sensor');
+            expect(link.className).toBe('tq-inline-link');
+            expect(link.textContent).toBe('Train sensor ↑');
+            fireEvent.click(link);
+            expect(document.activeElement).toBe(trainSensorBtn());
         });
 
         // 🆕 2026-09-30 (issue 4): `renderResultsStage` checks `buildBlockReason`
@@ -761,7 +788,7 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             await flush();
 
             expect(screen.queryByTestId('results-rc-locked')).toBeNull();
-            expect(screen.getByTestId('results-placeholder').textContent).toBe('Not trained yet');
+            expect(screen.getByTestId('results-placeholder').querySelector('.wbx-msg-t')!.textContent).toBe('Not trained yet');
         });
 
         it('shows a "marked complete" message once the model is Complete (chart never shows for a Complete model)', async () => {
@@ -782,12 +809,16 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             expect(screen.getByTestId('add-model-form')).toBeTruthy(); // link re-opened it
         });
 
-        it('Step 1 not done: the results area says "Set the running condition first" with a button that opens the Running condition modal (no generic items list)', async () => {
+        it('no running condition yet: the results area says "Set the running condition first" with a "Running condition ↑" text link that opens the modal (no generic items list, no "Step 1")', async () => {
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: { groups: [makeGroup()], models: [makeModel()], runningConditionNoneConfirmed: false, rcLegacyNotice: null } });
             const lock = screen.getByTestId('results-rc-locked');
             expect(lock.textContent).toMatch(/Set the running condition first/);
-            expect(lock.textContent).toMatch(/Training is locked until Step 1 is done\./);
+            expect(lock.textContent).toBe('Set the running condition firstNothing that follows the workspace running condition can train until it is set — open Running condition ↑');
+            expect(lock.textContent).not.toMatch(/Step\s*1/i);
+            // the action is a text link to the one place for it — the board has no button of its own
+            expect(screen.getByTestId('results-rc-locked-open').className).toBe('tq-inline-link');
+            expect(lock.querySelector('.rcx-btn')).toBeNull();
             expect(screen.queryByTestId('results-incomplete')).toBeNull(); // nothing else is wrong with this model
             // The modal auto-opens for an unset workspace; close it, then use the lock's own button.
             fireEvent.click(screen.getByLabelText('Close'));
@@ -796,7 +827,7 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             expect(screen.getByRole('dialog', { name: 'Running condition' })).toBeTruthy();
         });
 
-        it('Step 1 not done AND another item missing: the lock message AND the (non-running-condition) items list both show', async () => {
+        it('no running condition yet AND another item missing: the lock message AND the (non-running-condition) items list both show', async () => {
             const rel = makeModel({ kind: 'relationship', targetSensor: 'TAG1', predictorSensors: [] });
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: { groups: [makeGroup()], models: [rel], runningConditionNoneConfirmed: false, rcLegacyNotice: null } });
@@ -807,12 +838,13 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             expect(list.textContent).not.toMatch(/running condition first/); // the lock owns that reason
         });
 
-        it('an invalid workspace period locks with "Fix the running condition first" and a "Fix period" button', async () => {
+        it('an invalid workspace period locks with "Fix the running condition first" and the same "Running condition ↑" link', async () => {
             const periods = [{ id: 'x', start: '2026-02-01T00:00', end: '2026-01-05T00:00' }];
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: { groups: [makeGroup()], models: [makeModel()], runningConditionNoneConfirmed: true, runningConditionTimePeriods: periods } });
             expect(screen.getByTestId('results-rc-locked').textContent).toMatch(/Fix the running condition first/);
-            expect(screen.getByTestId('results-rc-locked-open').textContent).toBe('Fix period');
+            expect(screen.getByTestId('results-rc-locked').textContent).toMatch(/can train until it is fixed — open Running condition ↑$/);
+            expect(screen.getByTestId('results-rc-locked-open').textContent).toBe('Running condition ↑');
         });
 
         it('a Custom-mode model is NOT locked by an unset workspace condition (it has its own)', async () => {
@@ -993,17 +1025,21 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
     });
 
     describe('footer', () => {
-        it('shows a read-only status pill and "Save changes" - NO per-model Train (it moved to the header, customer items 8 + 9) and NO "Open full view" control (health score phase 4: the full-view page is gone)', async () => {
+        it('shows ONE read-only status pill and ONE sentence - no "Save changes" without a draft, NO per-model Train (it moved to the header, customer items 8 + 9) and NO "Open full view" control (health score phase 4: the full-view page is gone)', async () => {
             render(<BuildModelWindow />);
             await deliverData();
             expect(screen.getByText('Incomplete')).toBeTruthy();
             expect(screen.queryByText(/Open full view/)).toBeNull();
-            expect(screen.getByText('Save changes')).toBeTruthy();
+            expect(screen.queryByText('Save changes')).toBeNull(); // only while a draft exists
+            const foot = screen.getByTestId('wb-footer');
+            expect(foot.querySelectorAll('.model-status-pill')).toHaveLength(1);
+            expect(foot.querySelectorAll('.f4-pill')).toHaveLength(0);
+            expect(foot.querySelectorAll('.f4-foot-reason')).toHaveLength(1);
             expect(screen.queryByText('▶ Train model')).toBeNull();
             expect(screen.queryByText('↻ Re-train')).toBeNull();
             expect(trainSensorBtn().textContent).toBe('▶ Train sensor · 1 of 1');
             // The footer says "not trained yet" and links to the header button (which it focuses).
-            expect(screen.getByTestId('footer-status').textContent).toBe('Not trained · Train sensor ↑ — train first, then set the health set points');
+            expect(screen.getByTestId('footer-status').textContent).toBe('Not trained yet · Train sensor ↑');
             fireEvent.click(screen.getByTestId('footer-train-sensor'));
             expect(document.activeElement).toBe(trainSensorBtn());
             // 3b-2: a model is completed ONLY from the Health score page - never from this footer.
@@ -1016,7 +1052,8 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             await deliverData({ failureGroupState: { groups: [makeGroup()], models: [makeModel({ name: '' })] } });
             const train = trainSensorBtn();
             expect(train.disabled).toBe(true);
-            expect(trainSensorWhy()).toBe("Can't train: Individual — no model name");
+            // ONE short line: the reason is said once, on the board below; the tooltip keeps the full reason.
+            expect(trainSensorWhy()).toBe("Can't train · see below");
             expect(train.title).toBe("Can't train: Individual — no model name");
             // The footer keeps the shipped Save reason.
             expect(screen.getByTestId('build-block-reason').textContent).toMatch(/Fill in the required fields/);
@@ -1032,7 +1069,7 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
                 await Promise.resolve();
                 await Promise.resolve();
             });
-            expect(screen.queryByText('edited')).toBeNull();
+            expect(screen.queryByTestId('save-changes')).toBeNull();
             const state = await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value;
             expect(state.failureGroupState.models[0].name).toBe('Renamed Model');
         });
@@ -1192,14 +1229,18 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             await deliverGate([makeModel()]);
             const train = trainButton();
             expect(train.disabled).toBe(true);
-            expect(train.title).toBe(TRAIN_NEEDS_RUNNING_CONDITION);
-            expect(trainSensorWhy()).toBe(TRAIN_NEEDS_RUNNING_CONDITION);
+            // (the shared constant still ends "(Step 1)"; nothing on screen may say it)
+            expect(TRAIN_NEEDS_RUNNING_CONDITION).toContain('Set the running condition first');
+            expect(train.title).toBe('Set the running condition first.');
+            expect(trainSensorWhy()).toBe('Set the running condition first.');
             expect(screen.getByTestId('build-block-reason').textContent).toBe(REASON);
         });
 
         it('Save changes stays allowed while Train is blocked by the running condition', async () => {
             render(<BuildModelWindow />);
             await deliverGate([makeModel()]);
+            openSettings();
+            fireEvent.change(screen.getByPlaceholderText('e.g. Bearing vibration model'), { target: { value: 'Renamed' } });
             expect((screen.getByText('Save changes') as HTMLButtonElement).disabled).toBe(false);
         });
 
@@ -1227,14 +1268,19 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             expect(trainButton().disabled).toBe(true);
         });
 
-        it('the gate badge on the kind tab reflects the reason (Needs condition / Needs category / Legacy · all data)', async () => {
+        it('the gate reason is the kind tab\'s DOT tooltip (Needs condition / Legacy · all data) — no badge pill on the tab', async () => {
             render(<BuildModelWindow />);
             await deliverGate([makeModel({ id: 'i1' })]);
-            expect(screen.getByTestId('condition-badge-i1').textContent).toBe('Needs condition');
+            expect(screen.queryByTestId('condition-badge-i1')).toBeNull();
+            expect(screen.getByRole('tab').querySelector('.f4-pill')).toBeNull();
+            expect(screen.getByTestId('tab-status-i1').getAttribute('title')).toBe('Needs condition');
+            expect(screen.getByTestId('tab-status-i1').className).toContain('f4-sdot--bad');
+            expect(screen.getByRole('tab').getAttribute('title')).toBe('Individual · Needs condition');
             cleanup();
             render(<BuildModelWindow />);
             await deliverGate([makeModel({ id: 'i1', status: true })]);
-            expect(screen.getByTestId('condition-badge-i1').textContent).toBe('Legacy · all data');
+            expect(screen.queryByTestId('condition-badge-i1')).toBeNull();
+            expect(screen.getByTestId('tab-status-i1').getAttribute('title')).toBe('Legacy · all data');
         });
     });
 
@@ -1290,10 +1336,13 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             expect(screen.queryByTestId('rc-legacy-banner')).toBeNull();
         });
 
-        it('shows the "N models can\'t be built yet" summary only while unconfigured', async () => {
+        it('has no "N models can\'t be built yet" line any more — the Not-set card and each model\'s footer say it', async () => {
             render(<BuildModelWindow />);
             await deliverTracked({ groups: [makeGroup()], models: [makeModel(), makeModel({ id: 'm2', targetSensor: 'TAG2' })], runningConditionNoneConfirmed: false, runningConditionFilters: [], rcLegacyNotice: null });
-            expect(screen.getByTestId('rc-blocked-summary').textContent).toContain("2 of 2 models can't be built yet");
+            expect(screen.queryByTestId('rc-blocked-summary')).toBeNull();
+            expect(document.body.textContent).not.toMatch(/can't be built yet/);
+            expect(screen.getByTestId('rc-card').getAttribute('data-state')).toBe('unset');
+            expect(screen.getByTestId('build-block-reason').textContent).toMatch(/Set a running condition first/);
             cleanup();
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: { groups: [makeGroup()], models: [makeModel()], runningConditionNoneConfirmed: true } });
@@ -2060,7 +2109,7 @@ describe('Cluster-range slider (2026-09-30 port)', () => {
             await flush();
             // Unchanged saved key: never blocked, even while the stats are still loading.
             expect(screen.getByTestId('cluster-slider-loading')).toBeTruthy();
-            expect(saveBtn().disabled).toBe(false);
+            expect(screen.queryByText('Save changes')).toBeNull(); // no draft yet: nothing to save
             expect(trainSensorBtn().disabled).toBe(false);
 
             fireEvent.click(screen.getByRole('button', { name: 'More clusters' }));
@@ -2156,7 +2205,7 @@ describe('Cluster-range slider (2026-09-30 port)', () => {
         openSettings();
         await flush(); // stats [0, 10] arrive
         expect(bound(0).value).toBe('2');
-        expect(screen.queryByText('edited')).toBeNull();
+        expect(screen.queryByTestId('save-changes')).toBeNull();
     });
 
     // 🆕 2026-10-10 (code review): `duplicateWorkspace` keeps model ids. The auto-divide memory
@@ -2183,7 +2232,7 @@ describe('Cluster-range slider (2026-09-30 port)', () => {
         fireEvent.click(screen.getByRole('button', { name: 'More clusters' }));
         await flush();
         expect(pill(2)).toMatch(/^#3: .* – 10$/);
-        expect(screen.getByText('edited')).toBeTruthy();
+        expect(screen.getByTestId('save-changes')).toBeTruthy();
 
         // W′ (a duplicate): the SAME model id, saved with 2 clusters and an uneven split of its own data.
         const copy = { ...clu, clusterRanges: [{ min: 500, max: 600 }, { min: 600, max: 900 }] };
@@ -2199,7 +2248,7 @@ describe('Cluster-range slider (2026-09-30 port)', () => {
         expect(bound(0).value).toBe('600'); // the saved uneven split, not an equal 700
         expect(pill(1)).toBe('#2: 600 – 900');
         expect(screen.queryByTestId('cluster-pill-2')).toBeNull();
-        expect(screen.queryByText('edited')).toBeNull();
+        expect(screen.queryByTestId('save-changes')).toBeNull();
     });
 
     // 🆕 2026-10-09 (real-app test, item 8): exact boundaries must be typeable — dragging
@@ -2262,7 +2311,7 @@ describe('Cluster-range slider (2026-09-30 port)', () => {
             expect(pill(1)).toBe('#2: 4 – '); // nothing moved
             fireEvent.blur(bound(0));
             expect(screen.getByTestId('cluster-bound-error')).toBeTruthy(); // blur does not commit it either
-            expect(screen.queryByText('edited')).toBeNull(); // no draft was made
+            expect(screen.queryByTestId('save-changes')).toBeNull(); // no draft was made
 
             typeBound(0, '-1', 'Enter'); // below the criteria sensor's min
             expect(screen.getByTestId('cluster-bound-error').textContent).toMatch(/between 0 and 7/);
@@ -2281,7 +2330,7 @@ describe('Cluster-range slider (2026-09-30 port)', () => {
             expect(pill(1)).toBe('#2: 4 – ');
             typeBound(0, '33,6', 'Enter');
             expect(screen.getByTestId('cluster-bound-error').textContent).toBe('Use . for decimals (e.g. 33.6).');
-            expect(screen.queryByText('edited')).toBeNull();
+            expect(screen.queryByTestId('save-changes')).toBeNull();
         });
 
         it('a thousands-grouped value ("1,234.5") is accepted as 1234.5', async () => {
@@ -2304,7 +2353,7 @@ describe('Cluster-range slider (2026-09-30 port)', () => {
             expect(screen.queryByTestId('cluster-bound-error')).toBeNull();
             expect(bound(0).value).toBe('4.0');
             expect(pill(1)).toBe('#2: 4.0 – ');
-            expect(screen.queryByText('edited')).toBeNull();
+            expect(screen.queryByTestId('save-changes')).toBeNull();
         });
 
         it('a pending boundary never leaks into another model: a valid one commits to its own model on blur, an invalid one is dropped', async () => {
@@ -2338,10 +2387,10 @@ describe('Cluster-range slider (2026-09-30 port)', () => {
             fireEvent.blur(bound(0));
             await select('tag2');
             expect(bound(0).value).toBe('4');
-            expect(screen.queryByText('edited')).toBeNull(); // c2 has no draft
+            expect(screen.queryByTestId('save-changes')).toBeNull(); // c2 has no draft
             await select('tag1');
             expect(bound(0).value).toBe('3.5');
-            expect(screen.getByText('edited')).toBeTruthy();
+            expect(screen.getByTestId('save-changes')).toBeTruthy();
             await act(async () => { fireEvent.click(screen.getByText('Save changes')); await Promise.resolve(); await Promise.resolve(); });
             const models = (await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value).failureGroupState.models;
             expect(models.find((x: any) => x.id === 'c1').clusterRanges[0]).toEqual({ min: 0, max: 3.5 });
@@ -2363,7 +2412,7 @@ describe('Cluster-range slider (2026-09-30 port)', () => {
             expect(pill(1)).toBe('#2: 3.333 – ');
             fireEvent.focus(bound(0));
             fireEvent.blur(bound(0));
-            expect(screen.queryByText('edited')).toBeNull();
+            expect(screen.queryByTestId('save-changes')).toBeNull();
         });
 
         it('dragging after an invalid entry drops the pending text and its error', async () => {
@@ -2600,6 +2649,7 @@ describe('Running Condition Filter modal — draft + explicit Apply (2026-10-03)
         statefulUpdateMock(fg.models, fg);
         mockUpdateWorkspaceData.mockClear();
         mockEmit.mockClear();
+        fireEvent.click(screen.getByTestId('rc-card-details')); // the condition text lives under "Details"
         fireEvent.click(screen.getByTestId('rc-card-open'));
     }
 
@@ -2774,7 +2824,7 @@ describe('Running condition Step 1 — header, card, settings modal preview (202
             expect(screen.queryByTestId('wb-steps')).toBeNull();
             expect(screen.queryByRole('list', { name: 'Build steps' })).toBeNull();
             expect(document.querySelector('[data-testid^="wb-step-"]')).toBeNull();
-            const header = screen.getByText('Build Model — Overview').closest('[data-tauri-drag-region]') as HTMLElement;
+            const header = screen.getByText('Build Model').closest('[data-tauri-drag-region]') as HTMLElement;
             expect(header).not.toBeNull();
             expect(within(header).getAllByRole('button').map(b => b.getAttribute('title'))).toEqual(['Close']);
             expect(screen.getByTestId('rc-card')).toBeTruthy();
@@ -2801,6 +2851,13 @@ describe('Running condition Step 1 — header, card, settings modal preview (202
             await deliverData({ failureGroupState: setFg() });
             expect(state()).toBe('set');
             expect(screen.getByTestId('rc-card').className).toContain('rcc-card--ok');
+            // Set = ONE line (counts + span); the chips are under "Details".
+            expect(screen.getByTestId('rc-card').className).toContain('rcc-line');
+            expect(screen.getByTestId('rc-card-time').textContent).toBe('Train 2 periods 1 Jan 2026 → End');
+            expect(screen.getByTestId('rc-card-test').textContent).toBe('Scoring 1 period');
+            expect(screen.getByTestId('rc-card-cond').textContent).toBe('When running: 1 condition');
+            expect(screen.getByTestId('rc-card').textContent).not.toMatch(/Step\s*1/i);
+            fireEvent.click(screen.getByTestId('rc-card-details'));
             expect(screen.getAllByTestId('rc-card-period-chip').map(c => c.textContent)).toEqual(['P1 · 1 Jan 2026 → 31 Mar 2026', 'P2 · 15 Apr 2026 → End']);
             // the persisted scoring periods sit on their own "Scoring" row: S# · start → end
             expect(within(screen.getByTestId('rc-card-test')).getByText('Scoring')).toBeTruthy();
@@ -2865,6 +2922,9 @@ describe('Running condition Step 1 — header, card, settings modal preview (202
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: setFg({ runningConditionNoneConfirmed: true, runningConditionTimePeriods: [] }) });
             await flush();
+            expect(screen.getByTestId('rc-card-time').textContent).toBe('No train period');
+            expect(screen.getByTestId('rc-card-no-train').textContent).toBe('rows — add a train period');
+            fireEvent.click(screen.getByTestId('rc-card-details'));
             expect(screen.getByTestId('rc-card-period-chip').textContent).toBe('No train period — add one');
             expect(screen.getByTestId('rc-card-no-train').textContent).toBe('rows — add a train period');
             expect(statsCalls()).toEqual([]);
@@ -2934,44 +2994,44 @@ describe('Running condition Step 1 — header, card, settings modal preview (202
             expect(screen.getByTestId('rc-fix-period-pill')).toBeTruthy();
         });
 
-        it('the legacy banner and blocked-models line sit UNDER the card (DOM order), not above it', async () => {
+        it('the legacy banner sits UNDER the card (DOM order), not above it', async () => {
             const fg = unsetFg({ rcLegacyNotice: 'pending' });
             let disk: any = { id: 'ws1', failureGroupState: fg };
             mockUpdateWorkspaceData.mockImplementation(async (_id: string, patch: (s: any) => any) => { disk = patch(disk); return disk; });
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: fg });
             const card = screen.getByTestId('rc-card');
-            for (const id of ['rc-legacy-banner', 'rc-blocked-summary']) {
-                expect(card.compareDocumentPosition(screen.getByTestId(id)) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-            }
+            expect(card.compareDocumentPosition(screen.getByTestId('rc-legacy-banner')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+            expect(screen.queryByTestId('rc-blocked-summary')).toBeNull(); // the blocked-models line is gone (workbench redesign)
             // ...and the old one-line bar is gone
             expect(document.querySelector('.bmw-rcbar')).toBeNull();
             expect(screen.queryByText('RUNNING CONDITION')).toBeNull();
         });
     });
 
-    describe('training stays locked until Step 1 is done (existing gate, new message)', () => {
+    describe('training stays locked until the running condition is set (existing gate, new message)', () => {
         it('Not set: the results area says so, Train / Mark complete stay disabled with the gate reason', async () => {
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: unsetFg() });
             expect(screen.getByTestId('results-rc-locked').textContent).toContain('Set the running condition first');
-            expect(screen.getByTestId('results-rc-locked').textContent).toContain('Training is locked until Step 1 is done.');
+            expect(screen.getByTestId('results-rc-locked').textContent).toContain('can train until it is set — open Running condition ↑');
+            expect(document.body.textContent).not.toMatch(/Step\s*1/i); // no text in the window says "Step 1"
             const REASON = 'Set a running condition first, or choose "No condition — use all rows".';
             const train = trainSensorBtn();
             expect(train.disabled).toBe(true);
-            expect(train.title).toBe(TRAIN_NEEDS_RUNNING_CONDITION);
+            expect(train.title).toBe('Set the running condition first.');
             expect(screen.getByTestId('build-block-reason').textContent).toBe(REASON);
             expect(screen.queryByText('✓ Mark complete')).toBeNull(); // Mark complete lives on the Health score page
             expect((screen.getByTestId('page-health') as HTMLButtonElement).disabled).toBe(true);
         });
 
-        it('Invalid period: same lock, "Fix period" button, Train disabled with the period reason', async () => {
+        it('Invalid period: same lock with the "Running condition ↑" link, Train disabled with the period reason', async () => {
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: setFg({ runningConditionTimePeriods: [{ id: 'x', start: '2026-02-01T00:00', end: '2026-01-05T00:00' }] }) });
             expect(screen.getByTestId('results-rc-locked').textContent).toContain('Fix the running condition first');
             expect(trainSensorBtn().disabled).toBe(true);
             expect(trainSensorBtn().title).toBe("Can't train: Individual — train period 1 ends before it starts");
-            expect(screen.getByTestId('results-rc-locked-open').textContent).toBe('Fix period');
+            expect(screen.getByTestId('results-rc-locked-open').textContent).toBe('Running condition ↑');
         });
 
         it('Set: no lock, Train enabled', async () => {
@@ -3013,6 +3073,7 @@ describe('Running condition Step 1 — header, card, settings modal preview (202
 
         it('the preview asks for the DRAFT (what Apply would commit) after a pause, while the Step-1 card keeps the persisted numbers and chips', async () => {
             await open();
+            fireEvent.click(screen.getByTestId('rc-card-details'));
             const before = statsCalls().length;
             const cardBefore = screen.getByTestId('rc-card').textContent;
             fireEvent.change(screen.getByDisplayValue('5'), { target: { value: '9' } });
@@ -3107,6 +3168,7 @@ describe('Running condition Step 1 — header, card, settings modal preview (202
             fireEvent.change(screen.getByDisplayValue('5'), { target: { value: '9' } });
             fireEvent.click(screen.getByTestId('rc-apply'));
             await flush();
+            fireEvent.click(screen.getByTestId('rc-card-details'));
             expect(screen.getByTestId('rc-card-cond-chip').textContent).toContain('> 9');
             await waitFor(() => expect(statsCalls().some(c => c.filter?.value_filters?.[0]?.value1 === 9)).toBe(true), { timeout: 3000 });
         });
@@ -3528,7 +3590,7 @@ describe('Workbench two pages — shell + Model fit page (health score 3b-1)', (
             expect(screen.queryByTestId('page-model-done')).toBeNull();
         });
 
-        it('while stale: Health score is disabled with the title "Re-train first" and Model fit has no tick', async () => {
+        it('while stale: Health score is disabled with the title "Re-train first"', async () => {
             await mount([{ ...withTrained(makeModel()), trainedFingerprint: 'old' }]);
             const health = screen.getByTestId('page-health') as HTMLButtonElement;
             expect(health.disabled).toBe(true);
@@ -3536,10 +3598,12 @@ describe('Workbench two pages — shell + Model fit page (health score 3b-1)', (
             expect(screen.queryByTestId('page-model-done')).toBeNull();
         });
 
-        it('trained and fresh: Model fit shows a tick, Health score opens the real page (set points + checks) and back', async () => {
+        it('trained and fresh: the switch stays a plain segmented control (no tick, no number); Health score opens the real page (set points + checks) and back', async () => {
             await mount([withTrained(makeModel())]);
-            expect(screen.getByTestId('page-model-done')).toBeTruthy();
+            expect(screen.queryByTestId('page-model-done')).toBeNull();
             expect(screen.queryByTestId('page-health-done')).toBeNull();
+            expect(screen.getByTestId('page-switch').textContent).toBe('Model fitHealth score');
+            expect(screen.getByTestId('page-switch').querySelector('svg, b')).toBeNull();
             fireEvent.click(screen.getByTestId('page-health'));
             await waitFor(() => expect(screen.getByTestId('set-points-card')).toBeTruthy());
             expect(screen.getByTestId('checks-card')).toBeTruthy();
@@ -3549,10 +3613,13 @@ describe('Workbench two pages — shell + Model fit page (health score 3b-1)', (
             expect(screen.queryByTestId('health-page')).toBeNull();
         });
 
-        it('a Complete model shows a tick on both pages', async () => {
+        it('a Complete model shows no tick either — "Complete" is said once, by the footer pill', async () => {
             await mount([withTrained(makeModel({ status: true }))]);
-            expect(screen.getByTestId('page-model-done')).toBeTruthy();
-            expect(screen.getByTestId('page-health-done')).toBeTruthy();
+            expect(screen.queryByTestId('page-model-done')).toBeNull();
+            expect(screen.queryByTestId('page-health-done')).toBeNull();
+            expect(screen.getByTestId('page-switch').textContent).toBe('Model fitHealth score');
+            expect(screen.getByTestId('footer-pill').textContent).toBe('Complete');
+            expect(screen.getAllByText('Complete', { selector: '.model-status-pill' })).toHaveLength(1);
         });
 
         it('each model keeps its own page, and a model that turns stale (another window changed it) falls back to Model fit', async () => {
@@ -3560,13 +3627,13 @@ describe('Workbench two pages — shell + Model fit page (health score 3b-1)', (
             const ind = withTrained(makeModel({ id: 'i1' }));
             await mount([ind, rel]);
             fireEvent.click(screen.getByTestId('page-health'));
-            fireEvent.click(screen.getByRole('tab', { name: /Relationship/ }));
+            fireEvent.click(screen.getByRole('tab', { name: /Relation model/ }));
             expect(screen.queryByTestId('health-page')).toBeNull(); // the Relationship model is still on Model fit
             fireEvent.click(screen.getByRole('tab', { name: /Individual/ }));
             expect(screen.getByTestId('health-page')).toBeTruthy(); // ...and Individual kept its page
             // Another window changes a training input of the Relationship model: it turns stale, so
             // its page falls back to Model fit (the stored choice is not erased, just not shown).
-            fireEvent.click(screen.getByRole('tab', { name: /Relationship/ }));
+            fireEvent.click(screen.getByRole('tab', { name: /Relation model/ }));
             fireEvent.click(screen.getByTestId('page-health'));
             expect(screen.getByTestId('health-page')).toBeTruthy();
             await flush(); // the first-open set-point snapshot write of the Individual model lands before the other window's change
@@ -3635,7 +3702,7 @@ describe('Workbench two pages — shell + Model fit page (health score 3b-1)', (
         it('stays hidden while the user moves between models and pages', async () => {
             await mount([withTrained(makeModel({ id: 'i1' })), trainedRel()]);
             fireEvent.click(screen.getByTitle('Hide sensor list'));
-            fireEvent.click(screen.getByRole('tab', { name: /Relationship/ }));
+            fireEvent.click(screen.getByRole('tab', { name: /Relation model/ }));
             fireEvent.click(screen.getByTestId('page-health'));
             expect(screen.queryByLabelText('Search sensors')).toBeNull();
         });
@@ -3681,9 +3748,9 @@ describe('Workbench two pages — shell + Model fit page (health score 3b-1)', (
                 trainedRel(),
                 { ...withTrained(makeModel({ id: 'c1', kind: 'clustering', targetSensor: '', xSensor: 'TAG1', ySensor: 'TAG2' })), trainedFingerprint: 'old' },
             ]);
-            expect(screen.getByTestId('tab-status-i1').textContent).toBe('Complete');
-            expect(screen.getByTestId('tab-status-r1').textContent).toBe('Trained');
-            expect(screen.getByTestId('tab-status-c1').textContent).toBe('Re-train');
+            expect(screen.getByTestId('tab-status-i1').getAttribute('title')).toBe('Complete');
+            expect(screen.getByTestId('tab-status-r1').getAttribute('title')).toBe('Trained');
+            expect(screen.getByTestId('tab-status-c1').getAttribute('title')).toBe('Re-train needed');
         });
     });
 
@@ -3807,7 +3874,7 @@ describe('Workbench two pages — shell + Model fit page (health score 3b-1)', (
             await mount([makeModel()]);
             await new Promise(r => setTimeout(r, 400));
             expect(healthCalls()).toHaveLength(0);
-            expect(screen.getByTestId('results-placeholder').textContent).toBe('Not trained yet');
+            expect(screen.getByTestId('results-placeholder').querySelector('.wbx-msg-t')!.textContent).toBe('Not trained yet');
         });
     });
 
@@ -3830,7 +3897,7 @@ describe('Workbench two pages — shell + Model fit page (health score 3b-1)', (
 
         it('is closed when the user moves to another model', async () => {
             await mount([withTrained(makeModel({ id: 'i1' })), trainedRel()]);
-            fireEvent.click(screen.getByRole('tab', { name: /Relationship/ }));
+            fireEvent.click(screen.getByRole('tab', { name: /Relation model/ }));
             await chartsReady();
             fireEvent.click(screen.getByTestId('compare-predictors'));
             expect(screen.getByTestId('sub-models-modal')).toBeTruthy();
@@ -3931,15 +3998,15 @@ describe('Health score page - draft set points and when they are persisted (heal
         it('the Checks, the verdict pill and Mark complete follow the typing', async () => {
             await hsMount([HS_IND({ healthSetPoints: HS_EMPTY_IND })]);
             await openHealthPage();
-            await waitFor(() => expect(screen.getByTestId('hs-verdict').textContent).toBe('Incomplete'));
+            await waitFor(() => expect(screen.getByTestId('hs-verdict').getAttribute('title')).toBe('Set points still empty'));
             expect(hsMarkBtn().disabled).toBe(true);
             expect(screen.getByTestId('mark-block-reason').textContent).toBe('2 set points still empty');
             hsType('sp-lower', '3');
             hsType('sp-upper', '9');
-            await waitFor(() => expect(screen.getByTestId('hs-verdict').textContent).toBe('Not valid'));
+            await waitFor(() => expect(screen.getByTestId('hs-verdict').getAttribute('title')).toBe('A set point is not valid'));
             expect(screen.getByTestId('mark-block-reason').textContent).toBe('1 set point not valid — fix before marking complete');
             hsType('sp-lower', '1');
-            await waitFor(() => expect(screen.getByTestId('hs-verdict').textContent).toBe('Valid'));
+            await waitFor(() => expect(screen.getByTestId('hs-verdict').getAttribute('title')).toBe('Set points valid'));
             await waitFor(() => expect(hsMarkBtn().disabled).toBe(false));
             expect(screen.getByTestId('chart-card-score')).toBeTruthy();
         });
@@ -4144,7 +4211,7 @@ describe('Health score page - draft set points and when they are persisted (heal
             expect((await hsLastModel()).healthSetPoints).toEqual({ kind: 'individual', lower: null, upper: null, masterLower: null, masterUpper: null });
             expect(screen.getByTestId('sp-lower-source').textContent).toBe('not in master');
             expect(hsInput('sp-lower').value).toBe('');
-            expect(screen.getByTestId('hs-verdict').textContent).toBe('Incomplete');
+            expect(screen.getByTestId('hs-verdict').getAttribute('title')).toBe('Set points still empty');
         });
 
         it('Relationship and Clustering never take a master snapshot (no write on first open)', async () => {
@@ -4212,8 +4279,16 @@ describe('Health score page - Mark complete (the ONLY way a model becomes Comple
         expect(written.healthSetPoints).toMatchObject({ lower: 1, upper: 9, masterLower: 1, masterUpper: 90 });
         expect(written.healthExport).toMatchObject({ outputDir: 'C:/data/workspaces/ws1/output', setPoints: { lower: 1, upper: 9 } });
         expect(typeof written.healthExport.at).toBe('string');
-        expect(screen.getByTestId('save-ok').textContent).toMatch(/Saved 1 file to C:\/data\/workspaces\/ws1\/output/);
-        expect(within(screen.getByTestId('save-files')).getByText('INDV_INFO_TAG1.json')).toBeTruthy();
+        // No "Files saved to …" banner on the page: it is the footer's ONE sentence, with the
+        // Workbench date format (mono) and the folder (the full path is the tooltip).
+        const saved = screen.getByTestId('save-ok');
+        expect(saved.closest('.f4-foot')).not.toBeNull();
+        expect(saved.textContent).toMatch(/^Files saved \d{1,2} [A-Z][a-z]{2} \d{4} \d{2}:\d{2} · …\/workspaces\/ws1\/output$/);
+        expect(saved.querySelector('.wbx-dt')!.textContent).toMatch(/^\d{1,2} [A-Z][a-z]{2} \d{4} \d{2}:\d{2}$/);
+        expect(screen.getByTestId('footer-saved-path').getAttribute('title')).toBe('C:/data/workspaces/ws1/output');
+        expect(screen.getByTestId('health-page').querySelector('.hs-save')).toBeNull();
+        expect(screen.queryByTestId('save-files')).toBeNull();
+        expect(screen.getByTestId('wb-footer').querySelectorAll('.f4-foot-reason')).toHaveLength(1);
         expect(screen.getByText('Complete', { selector: '.model-status-pill' })).toBeTruthy();
         expect(screen.getByTestId('mark-incomplete')).toBeTruthy();
         expect(screen.queryByTestId('mark-complete')).toBeNull();
@@ -4250,7 +4325,7 @@ describe('Health score page - Mark complete (the ONLY way a model becomes Comple
         await hsClickMark();
         await waitFor(() => expect(screen.getByTestId('save-error')).toBeTruthy());
         expect(screen.getByTestId('check-line').textContent).toMatch(/found at save time/);
-        expect(screen.getByTestId('hs-verdict').textContent).toBe('Not valid');
+        expect(screen.getByTestId('hs-verdict').getAttribute('title')).toBe('A set point is not valid');
         expect(mockUpdateWorkspaceData).not.toHaveBeenCalled();
         expect(screen.getByText('Trained', { selector: '.model-status-pill' })).toBeTruthy();
         expect(screen.queryByTestId('mark-incomplete')).toBeNull();
@@ -4292,7 +4367,7 @@ describe('Health score page - Mark complete (the ONLY way a model becomes Comple
         expect(hsMarkBtn().disabled).toBe(true);
         expect(hsMarkBtn().textContent).toBe('Saving…');
         expect(screen.getByTestId('save-running').textContent).toBe('Saving results…');
-        expect(screen.getByTestId('footer-status').textContent).toMatch(/Saving results…/);
+        expect(screen.getByTestId('footer-status').textContent).toMatch(/Saving the model files…/);
         await act(async () => { release(); await Promise.resolve(); await Promise.resolve(); });
         await waitFor(() => expect(screen.getByTestId('save-ok')).toBeTruthy());
         expect(exportCalls()).toHaveLength(1);
@@ -4315,7 +4390,9 @@ describe('Health score page - Mark complete (the ONLY way a model becomes Comple
         expect(hsInput('sp-residual_at_0_upper').value).toBe('3.5');
         expect((screen.getByTestId('footer-back-to-fit') as HTMLButtonElement).disabled).toBe(false);
         await act(async () => { release(); await Promise.resolve(); await Promise.resolve(); });
-        await waitFor(() => expect(screen.getByTestId('save-ok')).toBeTruthy());
+        await waitFor(() => expect(screen.getByTestId('mark-incomplete')).toBeTruthy());
+        // 3.5 was typed while the files were being written with 3: the footer says they are out of date
+        await waitFor(() => expect(screen.getByTestId('files-out-of-date')).toBeTruthy());
         expect(exportCalls()[0]).toMatchObject({ kind: 'relationship', lambda: 10_000 });
         expect(exportCalls()[0].cache_key).toMatch(/^r1::/);
     });
@@ -4365,9 +4442,15 @@ describe('Health score page - Mark incomplete and "Changed after saving"', () =>
         await openHealthPage();
         expect(screen.queryByTestId('files-out-of-date')).toBeNull();
         expect(screen.queryByTestId('mark-complete-again')).toBeNull();
-        expect(screen.getByTestId('save-ok').textContent).toMatch(/Files saved to C:\/data\/workspaces\/ws1\/output/); // from the stored record
+        expect(screen.getByTestId('save-ok').textContent).toMatch(/^Files saved 4 Oct 2026 \d{2}:\d{2} · …\/workspaces\/ws1\/output$/); // from the stored record, in the footer
+        expect(screen.getByTestId('save-ok').closest('.f4-foot')).not.toBeNull();
         hsType('sp-upper', '12');
-        expect(screen.getByTestId('files-out-of-date').textContent).toMatch(/Changed after saving.*Mark complete again to update the files/);
+        // said ONCE, in the footer (no banner on the page), next to its button
+        const hint = screen.getByTestId('files-out-of-date');
+        expect(hint.textContent).toBe('Files out of date — set points changed after saving · Mark complete again to update them');
+        expect(hint.closest('.f4-foot')).not.toBeNull();
+        expect(screen.getByTestId('health-page').textContent).not.toMatch(/Changed after saving/);
+        expect(screen.queryByTestId('save-ok')).toBeNull();
         await hsBlur('sp-upper');
         expect((await hsLastModel()).status).toBe(true);
         expect(screen.getByText('Complete', { selector: '.model-status-pill' })).toBeTruthy();
@@ -4417,15 +4500,15 @@ describe('Health score page - Mark incomplete and "Changed after saving"', () =>
 describe('Health score page - status pills and dots follow the verdict Rust gave', () => {
     it('trained with empty set points: tab pill "Set points needed" (yellow dot)', async () => {
         await hsMount([HS_IND({ healthSetPoints: HS_EMPTY_IND })]);
-        await waitFor(() => expect(screen.getByTestId('tab-status-m1').textContent).toBe('Set points needed'));
-        expect(screen.getByTestId('tab-status-m1').className).toMatch(/f4-pill--warn/);
+        await waitFor(() => expect(screen.getByTestId('tab-status-m1').getAttribute('title')).toBe('Set points needed'));
+        expect(screen.getByTestId('tab-status-m1').className).toMatch(/f4-sdot--need/);
         expect(screen.getByTestId('sensor-kind-badge-dot-m1').className).toMatch(/f4-kb-dot--need/);
     });
 
     it('a rejected set point: "Fix set point" (red pill, red dot); the central dot state stays "trained"', async () => {
         await hsMount([HS_IND({ healthSetPoints: { kind: 'individual', lower: 3, upper: 9, masterLower: null, masterUpper: null } })]);
-        await waitFor(() => expect(screen.getByTestId('tab-status-m1').textContent).toBe('Fix set point'));
-        expect(screen.getByTestId('tab-status-m1').className).toMatch(/f4-pill--bad/);
+        await waitFor(() => expect(screen.getByTestId('tab-status-m1').getAttribute('title')).toBe('Fix set point'));
+        expect(screen.getByTestId('tab-status-m1').className).toMatch(/f4-sdot--bad/);
         const dot = screen.getByTestId('sensor-kind-badge-dot-m1');
         expect(dot.className).toMatch(/f4-kb-dot--bad/);
         expect(dot.getAttribute('data-state')).toBe('trained');
@@ -4434,16 +4517,16 @@ describe('Health score page - status pills and dots follow the verdict Rust gave
 
     it('valid set points: the pill is "Trained"; typing a bad value turns it red live', async () => {
         await hsMount([HS_IND()]);
-        await waitFor(() => expect(screen.getByTestId('tab-status-m1').textContent).toBe('Trained'));
-        expect(screen.getByTestId('tab-status-m1').textContent).toBe('Trained');
+        await waitFor(() => expect(screen.getByTestId('tab-status-m1').getAttribute('title')).toBe('Trained'));
+        expect(screen.getByTestId('tab-status-m1').getAttribute('title')).toBe('Trained');
         await openHealthPage();
         hsType('sp-lower', '3');
-        await waitFor(() => expect(screen.getByTestId('tab-status-m1').textContent).toBe('Fix set point'));
+        await waitFor(() => expect(screen.getByTestId('tab-status-m1').getAttribute('title')).toBe('Fix set point'));
     });
 
     it('a stale model keeps the central stale state - no "set points" pill on top of "Re-train"', async () => {
         await hsMount([{ ...HS_IND({ healthSetPoints: HS_EMPTY_IND }), trainedFingerprint: 'old' }]);
-        expect(screen.getByTestId('tab-status-m1').textContent).toBe('Re-train');
+        expect(screen.getByTestId('tab-status-m1').getAttribute('title')).toBe('Re-train needed');
     });
 });
 
@@ -4533,7 +4616,7 @@ describe('Health score - QA fixes 2026-10-04', () => {
             mockUpdateWorkspaceData.mockClear();
             hsType('sp-lower', '3');
             await waitFor(() => expect(healthCalls().slice(-1)[0].set_points).toEqual({ lower: 3, upper: 9 }));
-            await waitFor(() => expect(screen.getByTestId('tab-status-m1').textContent).toBe('Fix set point')); // live
+            await waitFor(() => expect(screen.getByTestId('tab-status-m1').getAttribute('title')).toBe('Fix set point')); // live
             await flush();
             expect(updateCalls()).toBe(0);
             await hsBlur('sp-lower');
@@ -4828,7 +4911,8 @@ describe('Train periods and scoring periods in the Build Model window', () => {
             const fg = await lastWrittenFg();
             expect(fg.runningConditionTestPeriods).toEqual([{ id: ONE_TEST[0].id, start: ONE_TEST[0].start, end: '2024-01-20T06:00' }]);
             expect(screen.queryByRole('dialog', { name: 'Running condition' })).toBeNull();
-            // the Step-1 card shows the persisted period as a plain S1 chip
+            // the card (Details) shows the persisted period as a plain S1 chip
+            fireEvent.click(screen.getByTestId('rc-card-details'));
             expect(screen.getByTestId('rc-card-test-chip').textContent).toBe('S1 · 1 Jan 2024 → 20 Jan 2024 06:00');
             expect(screen.queryByTestId('rc-card-test-event')).toBeNull();
         });
@@ -4869,6 +4953,8 @@ describe('Train periods and scoring periods in the Build Model window', () => {
         describe('a workspace saved before 2026-10-10 (scoring periods with label / eventTime / fromHighlight)', () => {
             it('the Step-1 card and the modal show plain S1 / S2 — no label, no event time, no error, Apply not armed', async () => {
                 await openModal(fgBase({ runningConditionTestPeriods: LEGACY_TESTS }));
+                expect(screen.getByTestId('rc-card-test').textContent).toBe('Scoring 2 periods'); // the one line
+                fireEvent.click(screen.getByTestId('rc-card-details'));
                 expect(screen.getAllByTestId('rc-card-test-chip').map(c => c.textContent)).toEqual([
                     'S1 · 1 Jan 2024 → 31 Jan 2024',
                     'S2 · 1 Mar 2024 → 31 Mar 2024',
@@ -4925,7 +5011,7 @@ describe('Train periods and scoring periods in the Build Model window', () => {
                     { start: '2024-01-01T00:00', end: '2024-01-31T23:59' },
                     { start: '2024-03-01T00:00', end: '2024-03-31T23:59' },
                 ]);
-                expect(screen.getByTestId('scored-pill').textContent).toBe('Scored · 2');
+                expect(screen.queryByTestId('scored-pill')).toBeNull(); // no pill: the Model fit footer sentence says "scored on 2 periods"
                 await hsClickMark();
                 await waitFor(() => expect(exportCalls()).toHaveLength(1));
                 expect(exportCalls()[0].test_periods).toEqual(healthCalls().slice(-1)[0].test_periods);
@@ -5007,25 +5093,32 @@ describe('Train periods and scoring periods in the Build Model window', () => {
             expect(screen.queryByTestId('scored-pill')).toBeNull();
         });
 
-        it('with a scoring period: Mark complete is enabled, the requests carry test_periods as start / end only, and the footer shows "Scored · 1"', async () => {
+        it('with a scoring period: Mark complete is enabled, the requests carry test_periods as start / end only, and the footer SENTENCE says "scored on 1 period" (no pill)', async () => {
             await hsMount([HS_IND()]);
+            // Model fit footer of a trained model: ONE sentence — trained when, scored on how many periods, what is next.
+            expect(screen.getByTestId('footer-status').textContent).toMatch(/^Trained \d{1,2} [A-Z][a-z]{2} \d{4} \d{2}:\d{2} · scored on 1 period · check the charts, then set the health set points$/);
+            expect(screen.getByTestId('footer-status').querySelector('.wbx-dt')).not.toBeNull();
             await openHealthPage();
             await waitFor(() => expect(hsMarkBtn().disabled).toBe(false));
-            expect(screen.getByTestId('scored-pill').textContent).toBe('Scored · 1');
+            expect(screen.getByTestId('footer-status').textContent).toBe('Set points valid — check the score chart, then Mark complete');
+            expect(screen.queryByTestId('scored-pill')).toBeNull();
             expect(screen.queryByTestId('tested-pill')).toBeNull();
             expect(healthCalls().slice(-1)[0].test_periods).toEqual([{ start: ONE_TEST[0].start, end: ONE_TEST[0].end }]);
             await hsClickMark();
             await waitFor(() => expect(exportCalls()).toHaveLength(1));
             expect(exportCalls()[0].test_periods).toEqual([{ start: ONE_TEST[0].start, end: ONE_TEST[0].end }]);
-            // the pill also sits in the Model fit footer, never anywhere else
+            // once Complete, the Model fit footer keeps saying it — still one sentence, one pill
+            await waitFor(() => expect(screen.getByTestId('mark-incomplete')).toBeTruthy());
             fireEvent.click(screen.getByTestId('footer-back-to-fit'));
-            expect(screen.getAllByTestId('scored-pill')).toHaveLength(1);
-            expect(screen.getByTestId('scored-pill').closest('.f4-foot')).not.toBeNull();
+            expect(screen.getByTestId('footer-status').textContent).toMatch(/^Trained \d{1,2} [A-Z][a-z]{2} \d{4} \d{2}:\d{2} · scored on 1 period$/);
+            expect(screen.getByTestId('wb-footer').querySelectorAll('.f4-pill')).toHaveLength(0);
+            expect(screen.queryByTestId('scored-pill')).toBeNull();
         });
 
-        it('an untrained model shows no "Scored" pill', async () => {
+        it('an untrained model says nothing about scoring', async () => {
             await hsMount([makeModel()]);
             expect(screen.queryByTestId('scored-pill')).toBeNull();
+            expect(screen.getByTestId('footer-status').textContent).toBe('Not trained yet · Train sensor ↑');
         });
     });
 
@@ -5353,6 +5446,7 @@ describe('Train periods and scoring periods — review fixes (2026-10-07)', () =
             const hl = { id: 'h1', start: '2024-03-01 00:00:00', end: '2024-03-05 00:00:00', label: 'Seal leak', color: '#f43f5e', enabled: true };
             render(<BuildModelWindow />);
             await deliverData({ timeHighlights: [hl] });
+            fireEvent.click(screen.getByTestId('rc-card-details'));
             expect(screen.getAllByTestId('rc-card-test-chip')[0].textContent).toContain('S1 · ');
             fireEvent.click(screen.getByTestId('rc-card-open'));
             await flush();
@@ -5418,7 +5512,7 @@ describe('train queue wiring (customer items 8 + 9)', () => {
         const release = holdStats();
         await mountModels([IND2(), REL2()]);
         expect(trainSensorBtn().textContent).toBe('▶ Train sensor · 2 of 2');
-        expect(screen.getByTestId('train-sensor-why').textContent).toBe('Trains Individual + Relationship · ≈ 16 s');
+        expect(screen.getByTestId('train-sensor-why').textContent).toBe('Trains Individual + Relation model · ≈ 16 s');
         await clickTrainSensor();
         expect(screen.getByTestId('sensor-kind-badge-running-i2')).toBeTruthy();
         expect(screen.getByTestId('sensor-kind-badge-queued-r2')).toBeTruthy();
@@ -5493,8 +5587,14 @@ describe('train queue wiring (customer items 8 + 9)', () => {
     it('a queued model is locked ("Remove from run", Save disabled); removing it leaves it untrained', async () => {
         const release = holdStats();
         await mountModels([IND2(), REL2()]);
+        // "Save changes" exists only while a draft does: give the Relation model one before the run starts.
+        fireEvent.click(screen.getAllByRole('tab').find(t => t.textContent?.includes('Relation model'))!);
+        expect(screen.queryByText('Save changes')).toBeNull();
+        openSettings();
+        fireEvent.change(screen.getByPlaceholderText('e.g. Bearing vibration model'), { target: { value: 'Temp R draft' } });
+        expect((screen.getByText('Save changes') as HTMLButtonElement).disabled).toBe(false);
         await clickTrainSensor();
-        fireEvent.click(screen.getAllByRole('tab').find(t => t.textContent?.includes('Relationship'))!);
+        fireEvent.click(screen.getAllByRole('tab').find(t => t.textContent?.includes('Relation model'))!);
         expect(screen.getByTestId('settings-locked').textContent).toContain('Locked while this model is in the run');
         expect(screen.getByTestId('queued-card').textContent).toContain('Queued · next');
         expect(screen.getByTestId('footer-status').textContent).toBe('Queued in the run · next');
@@ -5624,10 +5724,11 @@ describe('train queue wiring (customer items 8 + 9)', () => {
         fireEvent.click(screen.getByLabelText('Close')); // the auto-opened settings modal
         expect(screen.getByTestId('rc-card-pill').textContent).toBe('Not set');
         expect((screen.getByTestId('train-all') as HTMLButtonElement).disabled).toBe(true);
-        expect(screen.getByTestId('train-all-reason').textContent).toBe(TRAIN_NEEDS_RUNNING_CONDITION);
+        expect(screen.getByTestId('train-all-reason').textContent).toBe('Set the running condition first.');
         expect(screen.getByTestId('train-all-reason').className).toContain('tq-why--warn');
         expect(trainSensorBtn().disabled).toBe(true);
-        expect(screen.getByTestId('train-sensor-why').textContent).toBe(TRAIN_NEEDS_RUNNING_CONDITION);
+        expect(screen.getByTestId('train-sensor-why').textContent).toBe('Set the running condition first.');
+        expect(document.body.textContent).not.toMatch(/Step\s*1/i);
     });
 
     it('a run that trains OTHER models does not refetch the open model\'s charts (performance)', async () => {
@@ -5924,9 +6025,281 @@ describe('train queue wiring — review fixes (phase 4)', () => {
         await openHealthPage();
         await waitFor(() => expect((screen.getByTestId('mark-complete') as HTMLButtonElement).disabled).toBe(false));
         await act(async () => { fireEvent.click(screen.getByTestId('mark-complete')); await Promise.resolve(); });
-        expect(screen.getByTestId('train-sensor-why').textContent).toBe("Can't train: Individual — being saved");
+        expect(screen.getByTestId('train-sensor-why').textContent).toBe("Can't train · see below");
+        expect(trainSensorBtn().title).toBe("Can't train: Individual — being saved");
         expect(trainSensorBtn().disabled).toBe(true);
         // every menu item is disabled too, so the ▾ toggle is
         expect((screen.getByTestId('train-sensor-menu-toggle') as HTMLButtonElement).disabled).toBe(true);
+    });
+});
+
+// 🆕 2026-10-10 — Workbench redesign, the page spine (SPEC FINAL
+// docs/design/handoff/workbench-redesign/README.md §1; DESIGN_SYSTEM §4 "Build Model
+// Workbench pages"): one control group in the header, one state dot per kind tab, one
+// status sentence in the footer, at most one filled button on screen, one board shape
+// for the chart-less states, one date format, scroll back to the top on a page / tab switch.
+describe('Workbench redesign §1 — the page spine', () => {
+    const record = { at: '2026-10-04T01:00:00.000Z', outputDir: 'C:/data/workspaces/ws1/output', setPoints: HS_SNAP };
+    /** Every FILLED button in the window (a split button's ▾ half belongs to its main half; dialogs are not the page). */
+    const filled = () => Array.from(document.querySelectorAll<HTMLElement>('.rcx-btn--pri, .rcx-btn--danger, .f4-btn-save, .bmw-btn-ok, .bmw-btn-retrain'))
+        .filter(b => !b.classList.contains('tq-split-caret') && !b.closest('[role="dialog"]'))
+        .map(b => b.getAttribute('data-testid'));
+    const primary = () => screen.getByTestId('wb-footer').getAttribute('data-primary');
+    const rename = () => {
+        openSettings();
+        fireEvent.change(screen.getByPlaceholderText('e.g. Bearing vibration model'), { target: { value: 'Renamed' } });
+    };
+
+    describe('at most ONE filled button on screen, and it follows the state', () => {
+        it('not trained yet: Train sensor (Next is a ghost — training comes first)', async () => {
+            render(<BuildModelWindow />);
+            await deliverData();
+            expect(filled()).toEqual(['train-sensor']);
+            expect(primary()).toBe('train');
+            expect(screen.getByTestId('train-sensor-menu-toggle').className).toContain('rcx-btn--pri'); // both halves follow
+            expect(screen.getByTestId('next-health-score').className).toBe('rcx-btn');
+            expect(screen.queryByTestId('save-changes')).toBeNull();
+        });
+
+        it('a draft: Save changes — it exists only while the draft does, and Train sensor steps back to a ghost meanwhile', async () => {
+            render(<BuildModelWindow />);
+            await deliverData();
+            rename();
+            expect(filled()).toEqual(['save-changes']);
+            expect(primary()).toBe('save');
+            expect(screen.getByTestId('save-changes').className).toBe('f4-btn-save');
+            expect(trainSensorBtn().className).not.toContain('rcx-btn--pri');
+            expect(trainSensorBtn().disabled).toBe(false); // a ghost, still usable
+            await act(async () => { fireEvent.click(screen.getByTestId('save-changes')); await Promise.resolve(); await Promise.resolve(); });
+            await waitFor(() => expect(screen.queryByTestId('save-changes')).toBeNull());
+            expect(filled()).toEqual(['train-sensor']);
+        });
+
+        it('trained and up to date: "Next: Health score →" — Train sensor is a ghost', async () => {
+            await hsMount([HS_IND()]);
+            await waitFor(() => expect(screen.getByTestId('results-chart')).toBeTruthy());
+            expect(filled()).toEqual(['next-health-score']);
+            expect(primary()).toBe('next');
+            expect(trainSensorBtn().className).not.toContain('rcx-btn--pri');
+            expect(screen.getByTestId('train-sensor-menu-toggle').className).not.toContain('rcx-btn--pri');
+        });
+
+        it('a sibling model of the same sensor still needs training: Train sensor — Next is a ghost even on the trained model', async () => {
+            await hsMount([HS_IND(), makeModel({ id: 'r1', kind: 'relationship', targetSensor: 'TAG1', predictorSensors: ['TAG2'] })]);
+            expect(screen.getAllByRole('tab').find(t => t.getAttribute('aria-selected') === 'true')!.textContent).toContain('Individual');
+            expect(filled()).toEqual(['train-sensor']);
+            const next = screen.getByTestId('next-health-score') as HTMLButtonElement;
+            expect(next.className).toBe('rcx-btn');
+            expect(next.disabled).toBe(false); // only its weight changes
+        });
+
+        it('Health score: Mark complete (green) only', async () => {
+            await hsMount([HS_IND()]);
+            await openHealthPage();
+            expect(filled()).toEqual(['mark-complete']);
+            expect(primary()).toBe('mark');
+            expect(screen.getByTestId('mark-complete').className).toBe('bmw-btn-ok');
+            expect(screen.getByTestId('footer-back-to-fit').className).toContain('f4-btn--plain');
+        });
+
+        it('a Complete model has NO filled button on either page; "Mark incomplete" is a text button', async () => {
+            await hsMount([HS_IND({ status: true, healthExport: record })]);
+            await waitFor(() => expect(screen.getByTestId('results-chart')).toBeTruthy());
+            expect(filled()).toEqual([]);
+            expect(primary()).toBe('none');
+            await openHealthPage();
+            expect(filled()).toEqual([]);
+            expect(screen.getByTestId('mark-incomplete').className).toContain('f4-btn--plain');
+            expect(screen.queryByTestId('mark-complete-again')).toBeNull();
+            expect(screen.queryByTestId('mark-complete')).toBeNull();
+        });
+
+        it('Complete with files out of date: "Mark complete again" appears and is the one filled button', async () => {
+            await hsMount([HS_IND({ status: true, healthExport: record })]);
+            await openHealthPage();
+            hsType('sp-upper', '12');
+            expect(filled()).toEqual(['mark-complete-again']);
+            expect(primary()).toBe('mark');
+        });
+
+        it('settings changed (stale): Train sensor — the stale banner\'s own Re-train is a ghost', async () => {
+            await hsMount([{ ...HS_IND(), trainedFingerprint: 'old' }]);
+            expect(screen.getByTestId('stale-banner')).toBeTruthy();
+            expect(filled()).toEqual(['train-sensor']);
+            expect(screen.getByTestId('stale-retrain').className).not.toContain('rcx-btn--pri');
+            expect(screen.getByTestId('footer-status').textContent).toBe('Settings changed · re-train with Train sensor ↑');
+        });
+
+        it('running condition not set / not valid: only the card\'s own button; everything in the detail pane is a ghost (a draft\'s Save too)', async () => {
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: { groups: [makeGroup()], models: [makeModel()], runningConditionNoneConfirmed: false, rcLegacyNotice: null } });
+            fireEvent.click(screen.getByLabelText('Close')); // the auto-opened settings modal
+            expect(filled()).toEqual(['rc-card-open']);
+            expect(screen.getByTestId('rc-card-open').textContent).toBe('Set running condition →');
+            expect(primary()).toBe('none');
+            rename();
+            expect(filled()).toEqual(['rc-card-open']);
+            expect(screen.getByTestId('save-changes').className).toBe('rcx-btn');
+            expect((screen.getByTestId('save-changes') as HTMLButtonElement).disabled).toBe(false);
+            cleanup();
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: {
+                groups: [makeGroup()], models: [makeModel()], runningConditionNoneConfirmed: true,
+                runningConditionTimePeriods: [{ id: 'x', start: '2026-02-01T00:00', end: '2026-01-05T00:00' }],
+            } });
+            expect(screen.getByTestId('rc-card').getAttribute('data-state')).toBe('invalid');
+            expect(filled()).toEqual(['rc-card-open']);
+            expect(screen.getByTestId('rc-card-open').className).toContain('rcx-btn--danger');
+        });
+    });
+
+    describe('kind tab: ONE state dot in the list\'s colours, the words in its tooltip', () => {
+        it('a model whose run failed gets the RED dot — on its tab AND in the sensor list — with "Training failed"; the board and the footer say it once each', async () => {
+            mockInvoke.mockImplementation((cmd: string) =>
+                cmd === 'compute_sensor_stats' ? Promise.reject(new Error('sidecar exploded')) : Promise.resolve({}));
+            render(<BuildModelWindow />);
+            await deliverData();
+            // before: never trained = an empty ring, no colour
+            expect(screen.getByTestId('tab-status-m1').className).toBe('f4-sdot');
+            await act(async () => {
+                fireEvent.click(trainSensorBtn());
+                await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+            });
+            await waitFor(() => expect(screen.getByTestId('results-error')).toBeTruthy());
+            const dot = screen.getByTestId('tab-status-m1');
+            expect(dot.className).toContain('f4-sdot--bad');
+            expect(dot.getAttribute('title')).toBe('Training failed');
+            expect(dot.textContent).toBe('');
+            const tab = screen.getByRole('tab');
+            expect(tab.getAttribute('title')).toBe('Individual · Training failed');
+            expect(tab.querySelector('.f4-pill')).toBeNull();
+            expect(tab.textContent).toBe('IIndividual'); // kind badge + name — no status word on the tab
+            // the same red dot in the sensor list
+            expect(screen.getByTestId('sensor-kind-badge-dot-m1').className).toContain('f4-kb-dot--bad');
+            expect(screen.getByTestId('sensor-kind-badge-m1').getAttribute('title')).toBe('Individual · Training failed');
+            // ONE board shape: title, one sentence with a text link, the error in mono
+            const b = screen.getByTestId('results-error');
+            expect(b.className).toContain('wbx-msg--bad');
+            expect(b.querySelector('.wbx-msg-t')!.textContent).toBe('Training failed');
+            expect(b.querySelector('.wbx-msg-s')!.textContent).toBe('Fix the problem, then train again with Train sensor ↑. The model keeps its last state.');
+            expect(b.querySelector('.wbx-msg-d')!.textContent).toMatch(/sidecar exploded/);
+            // ...and the footer: one pill, one sentence, in red
+            const line = screen.getByTestId('footer-status');
+            expect(line.textContent).toBe('Training failed · fix the problem, then Train sensor ↑');
+            expect(line.getAttribute('data-tone')).toBe('bad');
+            expect(line.className).toContain('f4-foot-reason--bad');
+            expect(screen.getByTestId('footer-pill').textContent).toBe('Incomplete');
+        });
+
+        it('complete = green, trained = amber — the same colour classes as the list', async () => {
+            await hsMount([HS_IND({ id: 'i1', status: true, healthExport: record }), HS_REL()]);
+            expect(screen.getByTestId('tab-status-i1').className).toContain('f4-sdot--complete');
+            expect(screen.getByTestId('tab-status-i1').getAttribute('title')).toBe('Complete');
+            expect(screen.getByTestId('tab-status-r1').className).toContain('f4-sdot--need');
+            for (const tab of screen.getAllByRole('tab')) expect(tab.querySelector('.f4-pill')).toBeNull();
+        });
+    });
+
+    it('the header has ONE control group — category switch · page switch · Train sensor — and the category is still saved to FailureModel.category', async () => {
+        const groups = [makeGroup()];
+        const models = [makeModel({ category: 'performance' })];
+        render(<BuildModelWindow />);
+        await deliverData({ failureGroupState: { groups, models } });
+        const ctl = screen.getByTestId('detail-controls');
+        expect(ctl.className).toBe('wbx-dh-ctl');
+        const kids = Array.from(ctl.children) as HTMLElement[];
+        expect(kids).toHaveLength(3);
+        expect(kids[0]).toBe(screen.getByRole('group', { name: 'Category' }));
+        expect(kids[1]).toBe(screen.getByTestId('page-switch'));
+        expect(kids[2].contains(trainSensorBtn())).toBe(true);
+        expect(kids[2].contains(screen.getByTestId('train-sensor-why'))).toBe(true); // one short line under the button
+        expect(within(kids[0]).getByRole('button', { name: 'Performance' }).getAttribute('aria-pressed')).toBe('true');
+        expect(within(kids[0]).getByRole('button', { name: 'Condition' }).getAttribute('aria-pressed')).toBe('false');
+
+        mockUpdateWorkspaceData.mockClear();
+        mockUpdateWorkspaceData.mockImplementation(async (id: string, patch: (s: any) => any) => patch({ id, failureGroupState: { groups, models } }));
+        fireEvent.click(within(kids[0]).getByRole('button', { name: 'Condition' }));
+        await flush();
+        expect(mockUpdateWorkspaceData).toHaveBeenCalled();
+        const written = (await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value).failureGroupState.models;
+        expect(written[0].category).toBe('condition');
+    });
+
+    it('Model settings opens by itself when the thing to fix is inside it (a Custom model\'s own running condition); the user can still close it', async () => {
+        render(<BuildModelWindow />);
+        await deliverData({ failureGroupState: { groups: [makeGroup()], models: [makeModel({ runningConditionMode: 'custom' })] } });
+        expect(screen.getByTestId('build-block-reason')).toBeTruthy(); // its own condition is not set
+        expect(screen.queryByTestId('settings-to-fix')).toBeNull();     // ...which is not one of the "N to fix" fields
+        expect(screen.getByTestId('add-model-form')).toBeTruthy();
+        fireEvent.click(screen.getByText('Model settings', { selector: 'b' }));
+        expect(screen.queryByTestId('add-model-form')).toBeNull();
+        cleanup();
+        // nothing to fix: it stays the collapsed one-line summary
+        render(<BuildModelWindow />);
+        await deliverData();
+        expect(screen.queryByTestId('add-model-form')).toBeNull();
+        expect(document.querySelector('.bmw-sets-sum')!.textContent).toContain('Model One');
+    });
+
+    it('switching the kind tab or the page puts the scroll area back at the top', async () => {
+        await hsMount([HS_IND(), HS_REL()]);
+        const sc = () => screen.getByTestId('wb-scroll');
+        const el = sc();
+        el.scrollTop = 180;
+        fireEvent.click(screen.getByRole('tab', { name: /Relation model/ }));
+        expect(sc()).toBe(el); // the same element — nothing was remounted
+        expect(el.scrollTop).toBe(0);
+        el.scrollTop = 90;
+        fireEvent.click(screen.getByRole('tab', { name: /Individual/ }));
+        expect(el.scrollTop).toBe(0);
+        el.scrollTop = 60;
+        await openHealthPage();
+        expect(sc().scrollTop).toBe(0);
+        sc().scrollTop = 40;
+        fireEvent.click(screen.getByTestId('footer-back-to-fit'));
+        expect(sc().scrollTop).toBe(0);
+    });
+
+    it('ONE date format: the footer prints "9 Feb 2026 23:50" in mono — never a locale date', async () => {
+        await hsMount([{ ...HS_IND(), lastTrainedAt: '2026-02-09T23:50:00' }]);
+        const line = screen.getByTestId('footer-status');
+        expect(line.textContent).toMatch(/^Trained 9 Feb 2026 23:50( · scored on \d+ periods?)? · check the charts, then set the health set points$/);
+        expect(line.querySelector('.wbx-dt')!.textContent).toBe('9 Feb 2026 23:50');
+        expect(line.textContent).not.toMatch(/\b(AM|PM)\b|\d{4}-\d{2}-\d{2}|T\d\d:|Feb 9/);
+        expect(screen.getByTestId('wb-footer').querySelectorAll('.model-status-pill')).toHaveLength(1);
+        expect(screen.getByTestId('footer-pill').textContent).toBe('Trained');
+    });
+
+    it('"Training the … · about N s" only for a model IN THE RUN; a trained model whose result is worked out again says "Loading the … model…" (no time estimate)', async () => {
+        const gated = () => {
+            let release: () => void = () => {};
+            const gate = new Promise<void>(r => { release = r; });
+            mockInvoke.mockImplementation((cmd: string, args?: any) =>
+                cmd === 'compute_sensor_stats' && args?.sensor === 'TAG2' ? gate.then(() => defaultInvoke(cmd, args)) : defaultInvoke(cmd, args));
+            return () => act(async () => { release(); await Promise.resolve(); await Promise.resolve(); });
+        };
+        // 1) in the run
+        let release = gated();
+        const ind = makeModel({ id: 'i2', name: 'Temp I', targetSensor: 'TAG2' });
+        statefulUpdateMock([ind]);
+        render(<BuildModelWindow />);
+        await deliverData({ failureGroupState: { groups: [makeGroup()], models: [ind] } });
+        await act(async () => { fireEvent.click(trainSensorBtn()); await Promise.resolve(); await Promise.resolve(); });
+        const run = screen.getByTestId('results-loading');
+        expect(run.querySelector('.wbx-msg-t')!.textContent).toMatch(/^Training the Individual model · about \d+ s$/);
+        expect(run.querySelector('.wbx-msg-s')!.textContent).toBe('Its settings are locked until it finishes. The charts appear here when it is done.');
+        expect(run.querySelector('.pm-spin')).not.toBeNull();
+        await release();
+        cleanup();
+        // 2) reopening a trained model: the silent recompute is "Loading", never "Training"
+        release = gated();
+        const trained = withTrained(makeModel({ id: 'i2', name: 'Temp I', targetSensor: 'TAG2' }));
+        statefulUpdateMock([trained]);
+        render(<BuildModelWindow />);
+        await deliverData({ failureGroupState: { groups: [makeGroup()], models: [trained] } });
+        const load = screen.getByTestId('results-loading');
+        expect(load.querySelector('.wbx-msg-t')!.textContent).toBe('Loading the Individual model…');
+        expect(load.textContent).not.toMatch(/Training|about \d/);
+        await release();
     });
 });

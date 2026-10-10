@@ -350,7 +350,7 @@ describe('(1) the X-axis switcher\'s IMMEDIATE scatterXSensor write vs. Dashboar
             await waitFor(() => expect(echartsX()).toBe('TAG3'));
             // A view choice, not a fit input: no staleness, no draft created.
             expect(pill()).toBe('Trained');
-            expect(bmw().queryByText('edited')).toBeNull();
+            expect(bmw().queryByTestId('save-changes')).toBeNull();
             expect(diskFresh('r1')).toBe(true);
 
             // Dashboard, whose mirror (in the lost case) still has scatterXSensor ''.
@@ -626,7 +626,7 @@ describe('(4) criteria-stats fetch races between Clustering models', () => {
         await settle(10);
         expect(bmw().getByTestId('cluster-pill-0').textContent).toBe('#1: 500 – ');
         expect((bmw().getByTestId('cluster-bound-0') as HTMLInputElement).value).toBe('600');
-        expect(bmw().queryByText('edited')).toBeNull();
+        expect(bmw().queryByTestId('save-changes')).toBeNull();
     });
 
     it('a change to the active model\'s PERSISTED training scope (another window write, broadcast in) refetches the criteria bounds with the new filter', async () => {
@@ -840,6 +840,8 @@ describe('(6) Running condition modal + the real nested sensor picker (2026-10-0
         await act(async () => { fireEvent.click(screen.getByTestId('rc-apply')); });
         await settle(30);
         expect(readDisk().failureGroupState.runningConditionFilters[0]).toMatchObject({ sensor: 'TAG3', value1: '5' });
+        expect(bmw().getByTestId('rc-card-cond').textContent).toBe('When running: 1 condition'); // the one line
+        fireEvent.click(bmw().getByTestId('rc-card-details'));
         expect(bmw().getByTestId('rc-card-cond-chip').textContent).toBe('Motor CurrentTAG3 > 5 A');
     });
 });

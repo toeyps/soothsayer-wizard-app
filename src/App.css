@@ -3126,8 +3126,12 @@ body {
 .f4-tab--on { color: var(--text-primary); font-weight: 600; border-bottom-color: var(--kc); }
 .f4-kmini { width: 18px; height: 18px; border-radius: 5px; display: grid; place-items: center; font-size: 0.56rem; font-weight: 700; }
 .f4-sdot { width: 7px; height: 7px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px var(--text-faint); }
-.f4-sdot--done { background: var(--perf); box-shadow: none; }
-.f4-dirty { font-size: 0.62rem; color: var(--accent-hi); font-weight: 600; }
+/* One state dot per kind tab (and on the set-point card), in the sensor list's
+   colours; the words are its tooltip. No text pills on a tab. */
+.f4-sdot { flex-shrink: 0; }
+.f4-sdot--need { background: var(--warn); box-shadow: none; }
+.f4-sdot--bad { background: var(--danger); box-shadow: none; }
+.f4-sdot--complete { background: var(--ok); box-shadow: none; }
 .f4-tabs-spacer { flex: 1; }
 @container (max-width: 480px) {
     .f4-tab-l { display: none; }
@@ -3166,6 +3170,8 @@ body {
    list, the collapsible "Model settings" section, the Phase-A results
    placeholder, and the Running Condition edit modal. */
 .bmw-wb { flex: 1; min-height: 0; display: grid; }
+/* Sensor list hidden: the detail pane is the only column (the component also sets it inline). */
+.bmw-wb--nolist { grid-template-columns: minmax(0, 1fr); }
 .bmw-side { border-right: 1px solid var(--border); display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
 .bmw-side-top { padding: 12px; display: flex; flex-direction: column; gap: 9px; border-bottom: 1px solid var(--border); }
 .bmw-prog { display: flex; flex-direction: column; gap: 5px; font-size: 0.72rem; color: var(--text-secondary); }
@@ -3311,10 +3317,6 @@ body {
 .bmw-modal-foot { position: sticky; bottom: 0; display: flex; align-items: center; gap: 8px; padding: 10px 16px; background: var(--card-bg); border-top: 1px solid var(--border); border-radius: 0 0 12px 12px; }
 .bmw-modal-foot .filter-apply-btn:not(:disabled):hover { filter: brightness(1.08); }
 
-@container (max-width: 720px) {
-    .bmw-dhead { grid-template-columns: auto minmax(0, 1fr); }
-    .bmw-dhead > div[role="group"] { grid-column: 1 / -1; }
-}
 
 /* =============================================
    Visual refresh Phase 0 -- shared base classes (2026-10-02)
@@ -5027,10 +5029,7 @@ body {
 .rcc-use .f4-cov--mini .f4-strip { height: 8px; border-radius: 99px; }
 
 /* results area while Step 1 is not done */
-.bmw-stage-lock { display: flex; align-items: center; justify-content: center; gap: 14px; text-align: left; color: var(--text-secondary); font-size: 12.5px; }
-.bmw-stage-lock svg { margin: 0; width: 22px; height: 22px; color: var(--text-faint); flex-shrink: 0; }
-.bmw-stage-lock b { display: block; color: var(--text-primary); font-size: 13px; }
-.bmw-stage-lock span { font-size: 12px; }
+/* (the locked state is a `.wbx-msg` board now — see the Workbench redesign block) */
 
 /* settings modal shell: wide, header / two-column body / sticky footer */
 .bmw-modal--rc { width: min(1120px, 100%); height: min(760px, calc(100vh - 40px)); max-height: none; display: flex; flex-direction: column; overflow: hidden; border-radius: 16px; }
@@ -5156,20 +5155,11 @@ body {
 /* page switch, right side of the detail header */
 .wb2-pages { display: flex; gap: 6px; }
 .wb2-pg { display: inline-flex; align-items: center; gap: 7px; height: 30px; padding: 0 12px; border: 1px solid var(--border-strong); background: var(--input-bg); border-radius: 8px; font: inherit; font-size: 12px; color: var(--text-secondary); cursor: pointer; white-space: nowrap; }
-.wb2-pg b { width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; font: 600 10.5px var(--mono); background: var(--surface-hi); color: var(--text-faint); }
 .wb2-pg--on { border-color: var(--accent-color); color: var(--text-primary); background: var(--accent-muted); }
-.wb2-pg--on b { background: var(--accent-color); color: #06111f; }
-.wb2-pg--ok b { background: var(--ok); color: #04130a; }
 .wb2-pg:disabled { opacity: 0.45; cursor: not-allowed; }
 .wb2-pg:focus-visible { outline: 2px solid var(--accent-color); outline-offset: 1px; }
-/* 5th column: the sensor-level Train (customer items 8 + 9) */
-.bmw-dhead { grid-template-columns: auto minmax(0, 1fr) auto auto auto; }
-@container (max-width: 820px) {
-    .wb2-pages { grid-column: 1 / -1; }
-}
-@container (max-width: 980px) {
-    .bmw-dhead .tq-sensortrain { grid-column: 1 / -1; justify-self: end; }
-}
+/* (The detail header's columns and its narrow-pane wrap live in the "Workbench
+   redesign" block at the end of this file: identity | ONE control group.) */
 
 /* detail body: settings, banner and page scroll together, the footer stays put */
 .wb2-scroll { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; }
@@ -5310,12 +5300,8 @@ body {
 /* "Saving results..." / "Saved N files to ..." / failure */
 .hs-save { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 9px 12px; border-radius: 10px; border: 1px solid var(--border-strong); background: var(--bg-secondary); font-size: 12px; color: var(--text-secondary); }
 .hs-save b { color: var(--text-primary); }
-.hs-save--ok { background: var(--ok-m); border-color: rgba(16, 185, 129, 0.3); }
 .hs-save--bad { background: var(--danger-muted); border-color: var(--danger-line); color: var(--danger); }
 .hs-path { font: 500 11px var(--mono); color: var(--text-primary); word-break: break-all; }
-.hs-files { font-size: 11px; }
-.hs-files summary { cursor: pointer; color: var(--accent-hi); }
-.hs-files ul { margin: 6px 0 0; padding-left: 18px; font: 500 11px var(--mono); color: var(--text-secondary); }
 
 /* Spinner icon used by the Build Model window (Loader2); reuses the global spin keyframes. */
 .pm-spin {
@@ -6430,3 +6416,95 @@ body {
 .tq-ct { display: block; font-size: 14.5px; }
 .tq-cf { display: flex; gap: 8px; justify-content: flex-end; padding: 12px 18px; border-top: 1px solid var(--border); }
 .tq-cf-left { margin-right: auto; }
+
+
+/* =====================================================================
+   Build Model Workbench redesign — the page spine (2026-10-10, SPEC
+   docs/design/handoff/workbench-redesign/README.md §1; DESIGN_SYSTEM §4
+   "Build Model Workbench pages"). One line of workspace context, an
+   identity-only header with ONE control group, one state dot per tab, one
+   status sentence in the footer, at most one filled button. Prefixes:
+   rcc-line (running-condition line), wbx- (header group, board, footer).
+   Only the app's own tokens.
+   ===================================================================== */
+
+/* Running condition as ONE line once it is set ("Details" unfolds the full card) */
+.rcc-card.rcc-line { padding: 8px 12px; gap: 12px; flex-wrap: nowrap; margin: 10px 16px 0; border-radius: 10px; background: var(--card-bg); }
+.rcc-num--sm { width: 24px; height: 24px; }
+.rcc-line-main { flex: 1; min-width: 0; display: flex; align-items: center; gap: 14px; font-size: 12px; color: var(--text-secondary); white-space: nowrap; overflow: hidden; }
+.rcc-line-main > b { color: var(--text-primary); font-weight: 600; font-size: 12.5px; flex-shrink: 0; }
+.rcc-line-item { display: inline-flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.rcc-line-item b { color: var(--text-primary); font-weight: 600; }
+.rcc-line-item .tpe-sw { flex-shrink: 0; }
+.rcc-line-item:empty { display: none; }
+.rcc-line-sep { width: 1px; height: 16px; background: var(--border-strong); flex-shrink: 0; }
+.rcc-line-dt { font-size: 11px; color: var(--text-faint); }
+.rcc-line-warn { color: var(--warn); }
+.rcc-line-bad { color: var(--danger); }
+.rcc-line-rows { font-size: 11.5px; }
+.rcc-line-rows b { font-family: var(--mono); }
+.rcc-line-strip { width: 150px; flex-shrink: 0; }
+.rcc-line-strip:empty { display: none; }
+.rcc-line-strip .f4-cov--mini .f4-strip { height: 7px; border-radius: 99px; }
+.rcc-line-strip .f4-strip-ax { display: none; }
+.rcc-line-more { color: var(--text-secondary); }
+.rcc-less { font: inherit; font-size: 11px; color: var(--text-secondary); background: none; border: 0; padding: 0; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; text-transform: none; letter-spacing: 0; font-weight: 500; }
+.rcc-less:hover { color: var(--text-primary); }
+.rcc-less:focus-visible { outline: 2px solid var(--accent-color); outline-offset: 2px; border-radius: 3px; }
+.rcc-card--req .rcc-num, .rcc-card--bad .rcc-num { font-weight: 700; }
+@media (max-width: 1100px) { .rcc-line-dt, .rcc-line-strip { display: none; } }
+
+/* The ONE Workbench date format ("9 Feb 2026 23:50") is always mono */
+.wbx-dt { font-family: var(--mono); font-size: 0.95em; }
+
+/* Detail header: identity on the left, ONE control group on the right. On a pane
+   narrower than ~1000 px the whole group moves under the name, as one row. */
+.bmw-dhead { padding: 12px 20px 10px; grid-template-columns: auto minmax(0, 1fr) auto; }
+.wbx-dh-ctl { display: flex; align-items: flex-start; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
+@container (max-width: 1000px) {
+    .wbx-dh-ctl { grid-column: 1 / -1; justify-content: flex-start; }
+    .wbx-dh-ctl .tq-sensortrain { margin-left: auto; }
+}
+.f4-catseg button { font-size: 0.68rem; padding: 3px 9px; }
+
+/* Page switch: a plain segmented control — it says WHERE, not how far */
+.wb2-pages { gap: 0; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--input-bg); padding: 2px; }
+.wb2-pg { height: 26px; padding: 0 12px; border: 0; background: none; border-radius: 6px; color: var(--text-secondary); font-weight: 500; }
+.wb2-pg--on { border: 0; background: var(--surface-hi); color: var(--text-primary); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35); }
+
+/* Train sensor: filled only while it is the pane's next action; the caption is one short line */
+.tq-sensortrain .tq-why { margin-top: -1px; }
+.tq-split-caret:not(.rcx-btn--pri) { border-left-color: transparent; margin-left: -1px; }
+
+/* Kind tabs: kind badge + name + ONE dot */
+.f4-tab { padding: 8px 10px 7px; }
+
+/* Model settings: a quiet disclosure line */
+.bmw-sets { background: transparent; }
+.bmw-sets-h { padding: 7px 20px; font-size: 0.74rem; color: var(--text-secondary); }
+.bmw-sets-h b { color: var(--text-primary); font-weight: 600; }
+.bmw-sets-sum { font-size: 0.68rem; }
+
+/* Board: the ONE shape of every chart-less state — title, one sentence, optional mono line */
+.wbx-msg { align-content: center; justify-items: center; }
+.wbx-msg-in { display: flex; flex-direction: column; align-items: center; gap: 6px; max-width: 520px; }
+.wbx-msg-t { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 600; color: var(--text-primary); }
+.bmw-stage-empty.wbx-msg svg { margin: 0; display: inline-block; }
+.wbx-msg-s { font-size: 12px; color: var(--text-secondary); line-height: 1.5; }
+.wbx-msg-d { font: 11px var(--mono); color: var(--text-faint); overflow-wrap: anywhere; }
+.wbx-msg-list { margin: 0; padding: 0; list-style: none; display: grid; gap: 3px; }
+.wbx-msg--bad { border-color: var(--danger-line); }
+.wbx-msg--bad .wbx-msg-t { color: var(--danger); }
+.wbx-msg--run .wbx-msg-t { color: var(--accent-hi); }
+
+/* Footer: one pill + ONE sentence, at most one filled button */
+.wbx-foot { padding: 9px 14px; }
+.wbx-reason { font-size: 0.72rem; color: var(--text-secondary); }
+.f4-foot-reason--bad { color: var(--danger); }
+.wbx-reason .hs-path { font-size: 10.5px; color: var(--text-secondary); max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; word-break: normal; display: inline-block; vertical-align: bottom; }
+.wbx-foot .rcx-btn { height: 30px; font-size: 0.74rem; }
+
+/* Spinners honour reduced motion */
+@media (prefers-reduced-motion: reduce) {
+    .pm-spin { animation: none; }
+}

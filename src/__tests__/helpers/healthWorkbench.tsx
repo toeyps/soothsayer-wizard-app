@@ -143,7 +143,7 @@ export async function sendBuildModelData(workspaceId: string, o: { meta?: any[] 
 }
 
 export const selectSensor = (key: string, g = 1) => fireEvent.click(bmw().getByTestId(`sensor-list-row-fg:${g}-${key}`));
-export const selectKindTab = (label: 'Individual' | 'Relationship' | 'Clustering') =>
+export const selectKindTab = (label: 'Individual' | 'Relation model' | 'Clustering') =>
     fireEvent.click(bmw().getAllByRole('tab').find(t => t.textContent?.includes(label))!);
 
 export const pill = () => bmwEl().querySelector('.f4-foot .model-status-pill')!.textContent;
@@ -158,7 +158,9 @@ export async function waitForCharts() {
  *  items 8 + 9 — the footer button is gone; every train goes through the queue). */
 export async function train() {
     const tab = bmw().getAllByRole('tab').find(t => t.getAttribute('aria-selected') === 'true');
-    const kind = (['individual', 'relationship', 'clustering'] as const).find(k => tab?.textContent?.toLowerCase().includes(k));
+    // The tabs read Individual / Relation model / Clustering.
+    const label = tab?.textContent?.toLowerCase() ?? '';
+    const kind = (['individual', 'relationship', 'clustering'] as const).find(k => label.includes(k === 'relationship' ? 'relation model' : k));
     expect(kind, 'an active kind tab').toBeTruthy();
     fireEvent.click(bmw().getByTestId('train-sensor-menu-toggle'));
     const item = bmw().getByTestId(`train-menu-only-${kind}`) as HTMLButtonElement;

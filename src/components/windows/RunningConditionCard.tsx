@@ -1,9 +1,9 @@
-import { Fragment } from 'react';
-import { Check } from 'lucide-react';
+import { Fragment, useState } from 'react';
+import { Check, ChevronDown, ChevronUp } from 'lucide-react';
 import type { TestPeriod, TimePeriod, WorkspaceSensorFilter } from '../../types';
 import { isCompleteCondition } from '../../utils/runningCondition';
 import { testTrainOverlaps, validatePeriods, validateTestPeriods } from '../../utils/timePeriods';
-import { conditionChipParts, formatPeriodChip, type DataBounds } from './periodDisplay';
+import { conditionChipParts, formatPeriodChip, parseLocal, type DataBounds } from './periodDisplay';
 import { PeriodCoverageBar } from './RunningConditionParts';
 import { formatPercent, type RowCountPreview } from './useRowCountPreview';
 import { SensorInline } from '../sensor/SensorLabel';
@@ -20,6 +20,14 @@ import { sensorTitle, useSensorLookup } from '../sensor/sensorInfo';
  * scoring on the bottom lane. (The header step bar that once lived here moved
  * out on 2026-10-04 and was removed altogether on 2026-10-09 at the user's
  * request.)
+ *
+ * Workbench redesign 2026-10-10 (SPEC workbench-redesign §1): once the running
+ * condition is SET the card is ONE line of workspace context — ✓ · Train n
+ * periods + span · Scoring n periods · When running: n conditions · rows · % ·
+ * mini strip · Details · Edit. "Details" unfolds the full grid in place. Unset
+ * and invalid stay loud cards with their own button, marked "!" (there is no
+ * step number any more). The line reads the SAME props the card always had: no
+ * new request, no new count.
  */
 
 /** unset = nothing configured yet · invalid = configured but a period is broken · set = good to go. */
@@ -95,15 +103,32 @@ function ScoringChips({ tests, train }: { tests: TestPeriod[]; train: TimePeriod
     );
 }
 
+/** "1 Jan 2026 → 30 Jun 2026": first train start to last train end (an open side reads Start / End). */
+function trainSpan(periods: TimePeriod[]): string {
+    if (periods.length === 0) return '';
+    const byTime = (a: string, b: string) => (parseLocal(a) ?? 0) - (parseLocal(b) ?? 0);
+    const starts = periods.map(p => p.start).filter(x => x.trim()).sort(byTime);
+    const ends = periods.map(p => p.end).filter(x => x.trim()).sort(byTime);
+    return formatPeriodChip({
+        id: '',
+        start: starts.length < periods.length ? '' : starts[0],
+        end: ends.length < periods.length ? '' : ends[ends.length - 1],
+    });
+}
+
+const plural = (n: number, word: string) => `${word}${n === 1 ? '' : 's'}`;
+
 export function RunningConditionCard({ state, periods, filters, combine, noneConfirmed, headers, getDesc, getUnit, rows, bounds, onOpen, testPeriods = [] }: RunningConditionCardProps) {
     const lookup = useSensorLookup();
+    // Set = one line; "Details" unfolds the full grid (toggling re-renders this card only).
+    const [detailsOpen, setDetailsOpen] = useState(false);
     if (state === 'unset') {
         return (
             <section className="rcc-card rcc-card--req" data-testid="rc-card" data-state="unset">
-                <div className="rcc-num">1</div>
+                <div className="rcc-num" aria-hidden="true">!</div>
                 <div className="rcc-main">
                     <div className="rcc-kicker">
-                        Step 1 · Required before training <span className="f4-pill f4-pill--warn" data-testid="rc-card-pill">Not set</span>
+                        Running condition · required before training <span className="f4-pill f4-pill--warn" data-testid="rc-card-pill">Not set</span>
                     </div>
                     <h3>Set the running condition</h3>
                     <p>Tell Wizard which healthy time to learn from (train periods) and when the plant is running, so models learn from normal operation — not from problems, shutdowns or idle time. It applies to every model.</p>
@@ -118,9 +143,9 @@ export function RunningConditionCard({ state, periods, filters, combine, noneCon
         const bad = status.findIndex(s => s.invalid);
         return (
             <section className="rcc-card rcc-card--bad" data-testid="rc-card" data-state="invalid">
-                <div className="rcc-num">1</div>
+                <div className="rcc-num" aria-hidden="true">!</div>
                 <div className="rcc-main">
-                    <div className="rcc-kicker">Step 1 · Running condition</div>
+                    <div className="rcc-kicker">Running condition</div>
                     <h3 data-testid="rc-card-title">Period {bad + 1} needs fixing</h3>
                     <p data-testid="rc-card-reason">{status[bad]?.reason ?? 'Fix the training period dates.'} Models can't be trained until it's fixed.</p>
                     <div className="rcc-rows"><span className="rcc-lbl">Train</span><PeriodChips periods={periods} /></div>
@@ -134,13 +159,66 @@ export function RunningConditionCard({ state, periods, filters, combine, noneCon
     const noTrain = periods.length === 0;
     const showCount = !noTrain && (rows.status === 'ok' || (rows.status === 'loading' && rows.used !== null));
     const pct = rows.used !== null && rows.total ? Math.min(100, (rows.used / rows.total) * 100) : 0;
+
+    if (!detailsOpen) {
+        const nTrain = periods.length;
+        const nScore = testPeriods.length;
+        const nCond = complete.length;
+        const badScoring = validateTestPeriods(testPeriods).filter(s => s.invalid).length;
+        return (
+            <section className="rcc-card rcc-card--ok rcc-line" data-testid="rc-card" data-state="set" data-details="closed">
+                <div className="rcc-num rcc-num--ok rcc-num--sm" title="Set · applies to every model"><Check size={13} aria-hidden="true" /></div>
+                <div className="rcc-line-main">
+                    <b>Running condition</b>
+                    <span className="rcc-line-sep" aria-hidden="true" />
+                    <span className="rcc-line-item" data-testid="rc-card-time">
+                        <i className="tpe-sw tpe-sw--tr" aria-hidden="true" />
+                        {noTrain
+                            ? <span className="rcc-line-warn">No train period</span>
+                            : <>Train <b>{nTrain}</b> {plural(nTrain, 'period')} <span className="rcc-line-dt wbx-dt" data-testid="rc-card-span">{trainSpan(periods)}</span></>}
+                    </span>
+                    <span className="rcc-line-item" data-testid="rc-card-test">
+                        <i className="tpe-sw tpe-sw--te" aria-hidden="true" />
+                        {nScore === 0
+                            ? <span className="rcc-line-warn" title="Needed before Mark complete">No scoring period</span>
+                            : <>Scoring <b>{nScore}</b> {plural(nScore, 'period')}{badScoring > 0 && <span className="rcc-line-bad" data-testid="rc-card-test-bad"> · ⚠ {badScoring} to fix</span>}</>}
+                    </span>
+                    <span className="rcc-line-item" data-testid="rc-card-cond">
+                        {noneConfirmed || nCond === 0 ? 'All rows — no condition' : <>When running: <b>{nCond}</b> {plural(nCond, 'condition')}</>}
+                    </span>
+                    <span className="rcc-line-item rcc-line-rows" data-testid="rc-card-use" aria-live="polite">
+                        {noTrain ? (
+                            <><b data-testid="rc-card-rows">0</b> <span data-testid="rc-card-no-train">rows — add a train period</span></>
+                        ) : rows.status === 'idle' ? null : showCount ? (
+                            <><b data-testid="rc-card-rows">{(rows.used ?? 0).toLocaleString()}</b> <span data-testid="rc-card-pct">rows · {formatPercent(rows.used, rows.total)}</span></>
+                        ) : rows.status === 'error'
+                            ? <span title="Couldn't count the rows" data-testid="rc-card-rows-error">— rows</span>
+                            : <span data-testid="rc-card-rows-loading">Counting rows…</span>}
+                    </span>
+                </div>
+                {/* PERSISTED periods only, the same strip as the Details view. Hidden while the dataset bounds are unknown. */}
+                <div className="rcc-line-strip" title="Train (top lane) and scoring (bottom lane) periods across the dataset">
+                    <PeriodCoverageBar periods={periods} bounds={bounds} mini tests={testPeriods} />
+                </div>
+                <button type="button" className="rcx-btn rcx-btn--sm rcc-line-more" data-testid="rc-card-details" aria-expanded={false} onClick={() => setDetailsOpen(true)}>
+                    Details <ChevronDown size={12} aria-hidden="true" />
+                </button>
+                <button type="button" className="rcx-btn rcx-btn--sm" data-testid="rc-card-open" onClick={onOpen}>Edit</button>
+            </section>
+        );
+    }
+
     return (
-        <section className="rcc-card rcc-card--ok" data-testid="rc-card" data-state="set">
+        <section className="rcc-card rcc-card--ok" data-testid="rc-card" data-state="set" data-details="open">
             <div className="rcc-num rcc-num--ok"><Check size={16} aria-hidden="true" /></div>
             <div className="rcc-main">
                 <div className="rcc-kicker">
-                    Step 1 · Running condition <span className="f4-pill f4-pill--ok" data-testid="rc-card-pill">Set</span>
+                    Running condition <span className="f4-pill f4-pill--ok" data-testid="rc-card-pill">Set</span>
                     <span className="rcc-applies">applies to every model</span>
+                    <span className="wb2-sp" />
+                    <button type="button" className="rcc-less" data-testid="rc-card-details" aria-expanded={true} onClick={() => setDetailsOpen(false)}>
+                        Hide details <ChevronUp size={12} aria-hidden="true" />
+                    </button>
                 </div>
                 <div className="rcc-grid">
                     <div className="rcc-rows" data-testid="rc-card-time"><span className="rcc-lbl">Train</span><PeriodChips periods={periods} /></div>

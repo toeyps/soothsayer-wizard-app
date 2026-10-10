@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup, within } from '@testing-library/react';
 
@@ -5,25 +6,34 @@ vi.mock('../components/charts/ResponsiveECharts', () => ({
     default: (props: any) => <div data-testid="echarts-mock" data-series={props.option?.series?.length ?? 0} />,
 }));
 
-import { PageSwitch, StaleBanner } from '../components/windows/workbench/WorkbenchShellParts';
+import { PageSwitch, StaleBanner, WorkbenchScroll } from '../components/windows/workbench/WorkbenchShellParts';
 import ChartCard, { LegendItem } from '../components/windows/workbench/ChartCard';
 import { SensorPickerSingle } from '../components/sensor/SensorPicker';
 
 afterEach(cleanup);
 
 describe('PageSwitch', () => {
-    const base = { page: 'model' as const, modelFitDone: false, healthDone: false, healthDisabled: false, onPage: () => {} };
+    const base = { page: 'model' as const, healthDisabled: false, onPage: () => {} };
 
-    it('marks the page on screen and shows numbers until a page is done (tick)', () => {
+    // Workbench redesign §1: a plain segmented control — it says where you are, with
+    // no step numbers and no ticks (a model's status is said once, in the footer).
+    it('marks the page on screen; the two buttons carry their name only — no numbers, no ticks', () => {
         const { rerender } = render(<PageSwitch {...base} />);
         expect(screen.getByTestId('page-model').getAttribute('aria-pressed')).toBe('true');
         expect(screen.getByTestId('page-health').getAttribute('aria-pressed')).toBe('false');
-        expect(screen.getByTestId('page-model').textContent).toBe('1Model fit');
-        expect(screen.getByTestId('page-health').textContent).toBe('2Health score');
-        rerender(<PageSwitch {...base} modelFitDone healthDone />);
-        expect(screen.getByTestId('page-model').textContent).toBe('Model fit');
-        expect(screen.getByTestId('page-model-done')).toBeTruthy();
-        expect(screen.getByTestId('page-health-done')).toBeTruthy();
+        expect(screen.getByTestId('page-model').className).toContain('wb2-pg--on');
+        for (const page of ['model', 'health'] as const) {
+            rerender(<PageSwitch {...base} page={page} />);
+            expect(screen.getByTestId('page-model').textContent).toBe('Model fit');
+            expect(screen.getByTestId('page-health').textContent).toBe('Health score');
+            const sw = screen.getByTestId('page-switch');
+            expect(sw.querySelector('svg')).toBeNull();
+            expect(sw.querySelector('b')).toBeNull();
+            expect(sw.textContent).not.toMatch(/[0-9✓]/);
+            expect(screen.queryByTestId('page-model-done')).toBeNull();
+            expect(screen.queryByTestId('page-health-done')).toBeNull();
+        }
+        expect(screen.getByTestId('page-health').getAttribute('aria-pressed')).toBe('true');
     });
 
     it('the second page can be disabled with a reason, and the buttons report the page', () => {
@@ -41,6 +51,31 @@ describe('PageSwitch', () => {
     });
 });
 
+describe('WorkbenchScroll', () => {
+    it('goes back to the top when the page or the kind tab changes (a new resetKey) — and only then; the children are not remounted', () => {
+        let mounts = 0;
+        const Child = () => { useEffect(() => { mounts += 1; }, []); return <div data-testid="child">charts</div>; };
+        const { rerender } = render(<WorkbenchScroll resetKey="m1:model" page="model"><Child /></WorkbenchScroll>);
+        const el = screen.getByTestId('wb-scroll');
+        expect(el.className).toBe('wb2-scroll');
+        expect(el.getAttribute('data-page')).toBe('model');
+        el.scrollTop = 240;
+        // an ordinary re-render (same model, same page) keeps the user's place
+        rerender(<WorkbenchScroll resetKey="m1:model" page="model"><Child /></WorkbenchScroll>);
+        expect(el.scrollTop).toBe(240);
+        // the page changed
+        rerender(<WorkbenchScroll resetKey="m1:health" page="health"><Child /></WorkbenchScroll>);
+        expect(screen.getByTestId('wb-scroll')).toBe(el);
+        expect(el.scrollTop).toBe(0);
+        expect(el.getAttribute('data-page')).toBe('health');
+        // the kind tab changed
+        el.scrollTop = 90;
+        rerender(<WorkbenchScroll resetKey="m2:health" page="health"><Child /></WorkbenchScroll>);
+        expect(el.scrollTop).toBe(0);
+        expect(mounts).toBe(1);
+    });
+});
+
 describe('StaleBanner', () => {
     it('says the model is Incomplete again, that set points are kept, and has a Re-train button', () => {
         const onRetrain = vi.fn();
@@ -49,6 +84,8 @@ describe('StaleBanner', () => {
         expect(b.getAttribute('role')).toBe('status');
         expect(b.textContent).toMatch(/Settings changed — this model is Incomplete again/);
         expect(b.textContent).toMatch(/Your set points are kept/);
+        // One filled button on screen: this one is a ghost (the header's Train sensor is the filled one).
+        expect(screen.getByTestId('stale-retrain').className).not.toContain('rcx-btn--pri');
         fireEvent.click(screen.getByTestId('stale-retrain'));
         expect(onRetrain).toHaveBeenCalledTimes(1);
     });

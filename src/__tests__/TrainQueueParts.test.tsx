@@ -66,7 +66,9 @@ describe('TrainAllBar', () => {
     it('is disabled with its reason as text (amber for the running condition, red for STALE)', () => {
         const { rerender } = withMeta(<TrainAllBar counts={{ ready: 0, upToDate: 0, missing: 3 }} running={false} reason={TRAIN_NEEDS_RUNNING_CONDITION} reasonTone="warn" onOpen={() => {}} />);
         expect((screen.getByTestId('train-all') as HTMLButtonElement).disabled).toBe(true);
-        expect(screen.getByTestId('train-all-reason').textContent).toBe(TRAIN_NEEDS_RUNNING_CONDITION);
+        // The step bar is gone: no text on screen may say "Step 1" (the shared reason constant still does).
+        expect(screen.getByTestId('train-all-reason').textContent).toBe('Set the running condition first.');
+        expect((screen.getByTestId('train-all') as HTMLButtonElement).title).toBe('Set the running condition first.');
         expect(screen.getByTestId('train-all-reason').className).toContain('tq-why--warn');
         rerender(<SensorMetaContext.Provider value={LOOKUP}><TrainAllBar counts={{ ready: 2, upToDate: 0, missing: 0 }} running={false} reason={TRAIN_STALE_MESSAGE} reasonTone="danger" onOpen={() => {}} /></SensorMetaContext.Provider>);
         expect(screen.getByTestId('train-all-reason').className).toContain('tq-why--danger');
@@ -140,8 +142,9 @@ describe('SensorTrainButton', () => {
 
     it('the main button trains; the line under it says what it does', () => {
         const onTrain = vi.fn();
-        withMeta(<SensorTrainButton label="▶ Train sensor · 1 of 2" disabled={false} why="Trains I · skips R (no predictor sensor)" whyTone="warn" onTrain={onTrain} menu={menu()} />);
+        withMeta(<SensorTrainButton filled label="▶ Train sensor · 1 of 2" disabled={false} why="Trains Individual · Relation model can't train, skipped" whyTone="warn" onTrain={onTrain} menu={menu()} />);
         expect(screen.getByTestId('train-sensor').textContent).toBe('▶ Train sensor · 1 of 2');
+        expect(screen.getByTestId('train-sensor-why').textContent).toBe("Trains Individual · Relation model can't train, skipped");
         expect(screen.getByTestId('train-sensor-why').className).toContain('tq-why--warn');
         fireEvent.click(screen.getByTestId('train-sensor'));
         expect(onTrain).toHaveBeenCalledTimes(1);
@@ -149,7 +152,7 @@ describe('SensorTrainButton', () => {
 
     it('the ▾ menu runs an item, keeps a disabled one disabled, and closes on Esc / outside click', () => {
         const onA = vi.fn();
-        withMeta(<SensorTrainButton label="▶ Train sensor" disabled why="" whyTone="neutral" onTrain={() => {}} menu={menu(onA)} />);
+        withMeta(<SensorTrainButton filled={false} label="▶ Train sensor" disabled why="" whyTone="neutral" onTrain={() => {}} menu={menu(onA)} />);
         // The main button can be disabled while the menu still offers a re-train.
         expect((screen.getByTestId('train-sensor') as HTMLButtonElement).disabled).toBe(true);
         const toggle = screen.getByTestId('train-sensor-menu-toggle');
@@ -168,8 +171,26 @@ describe('SensorTrainButton', () => {
     });
 
     it('the ▾ toggle is disabled when every menu item is', () => {
-        withMeta(<SensorTrainButton label="x" disabled why="" whyTone="neutral" onTrain={() => {}} menu={menu().map(m => ({ ...m, disabled: true }))} />);
+        withMeta(<SensorTrainButton filled={false} label="x" disabled why="" whyTone="neutral" onTrain={() => {}} menu={menu().map(m => ({ ...m, disabled: true }))} />);
         expect((screen.getByTestId('train-sensor-menu-toggle') as HTMLButtonElement).disabled).toBe(true);
+    });
+
+    // Workbench redesign §1: at most one filled button on screen — the button is filled
+    // (primary) only while it is the next action, a ghost otherwise. Both halves follow.
+    it('filled = primary on the button AND its ▾; not filled = a ghost on both', () => {
+        const { rerender } = withMeta(<SensorTrainButton filled label="▶ Train sensor · 1 of 2" disabled={false} why="" whyTone="neutral" onTrain={() => {}} menu={menu()} />);
+        expect(screen.getByTestId('train-sensor').className).toContain('rcx-btn--pri');
+        expect(screen.getByTestId('train-sensor-menu-toggle').className).toContain('rcx-btn--pri');
+        rerender(<SensorMetaContext.Provider value={LOOKUP}><SensorTrainButton filled={false} label="▶ Train sensor · 0 of 2" disabled why="" whyTone="neutral" onTrain={() => {}} menu={menu()} /></SensorMetaContext.Provider>);
+        expect(screen.getByTestId('train-sensor').className).not.toContain('rcx-btn--pri');
+        expect(screen.getByTestId('train-sensor-menu-toggle').className).not.toContain('rcx-btn--pri');
+        expect(screen.getByTestId('train-sensor').className).toContain('rcx-btn');
+    });
+
+    it('never prints "Step 1" — in the line under the button or in its tooltip', () => {
+        withMeta(<SensorTrainButton filled={false} label="▶ Train sensor · 0 of 1" disabled title={TRAIN_NEEDS_RUNNING_CONDITION} why={TRAIN_NEEDS_RUNNING_CONDITION} whyTone="warn" onTrain={() => {}} menu={menu()} />);
+        expect(screen.getByTestId('train-sensor-why').textContent).toBe('Set the running condition first.');
+        expect((screen.getByTestId('train-sensor') as HTMLButtonElement).title).toBe('Set the running condition first.');
     });
 });
 

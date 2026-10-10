@@ -137,7 +137,12 @@ const previewsFor = (target: string) => env.backend!.cmds('compute_health_previe
 const lastPreviewFor = (target: string) => previewsFor(target).slice(-1)[0].args.request;
 const wsWrites = () => env.writes.filter(w => w.path === wsFile()).length;
 const onlyStartEnd = (list: unknown[]) => { for (const t of list) expect(Object.keys(t as object).sort()).toEqual(['end', 'start']); };
-const chips = () => bmw().getAllByTestId('rc-card-test-chip').map(c => c.textContent ?? '');
+/** The scoring chips of the running-condition card (they sit under "Details" — the card is one line once set). */
+const chips = () => {
+    const details = bmw().getByTestId('rc-card-details');
+    if (details.getAttribute('aria-expanded') === 'false') fireEvent.click(details);
+    return bmw().getAllByTestId('rc-card-test-chip').map(c => c.textContent ?? '');
+};
 const tile = (n: number) => bmw().getByTestId(`test-result-${n}`);
 
 beforeEach(() => {
@@ -198,7 +203,7 @@ describe('a workspace saved before "just score it" (scoring periods with label /
             expect(tile(n).className).toBe('vt-tile'); // no green / amber tone class
             expect(tile(n).textContent).not.toMatch(REMOVED_UI);
         }
-        expect(bmw().getByTestId('scored-pill').textContent).toBe('Scored · 2');
+        expect(bmw().queryByTestId('scored-pill')).toBeNull(); // the "Scored · N" pill is gone (footer sentence instead)
         // Still Complete with current files: nothing to do here.
         expect(bmw().queryByTestId('tests-changed-banner')).toBeNull();
         expect(bmw().queryByTestId('mark-complete-again')).toBeNull();

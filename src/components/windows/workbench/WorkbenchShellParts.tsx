@@ -1,18 +1,15 @@
-import { Check, RotateCw } from 'lucide-react';
+import { useLayoutEffect, useRef, type ReactNode } from 'react';
+import { RotateCw } from 'lucide-react';
 import type { WorkbenchPage } from './workbenchTypes';
 
 /*
  * Small shared pieces of the Workbench shell that both pages sit under:
- * the "1 Model fit / 2 Health score" page switch (detail header, right side)
- * and the stale banner. Presentational only.
+ * the "Model fit | Health score" page switch (detail header, right side),
+ * the scroll area of the page body and the stale banner. Presentational only.
  */
 
 interface PageSwitchProps {
     page: WorkbenchPage;
-    /** Model fit is done (trained and up to date) -> a tick instead of "1". */
-    modelFitDone: boolean;
-    /** Marked complete and up to date -> a tick instead of "2". */
-    healthDone: boolean;
     /** The Health score page cannot be opened right now. */
     healthDisabled: boolean;
     /** Hover text of the disabled "Health score" button ("Re-train first"). */
@@ -20,33 +17,47 @@ interface PageSwitchProps {
     onPage: (page: WorkbenchPage) => void;
 }
 
-export function PageSwitch({ page, modelFitDone, healthDone, healthDisabled, healthDisabledTitle, onPage }: PageSwitchProps) {
+/** A plain segmented control: it says WHERE you are, never how far (no numbers,
+ *  no ticks — a model's status is said once, in the footer; SPEC workbench-redesign §1). */
+export function PageSwitch({ page, healthDisabled, healthDisabledTitle, onPage }: PageSwitchProps) {
     return (
         <div className="wb2-pages" role="group" aria-label="Model pages" data-testid="page-switch">
             <button
                 type="button"
-                className={`wb2-pg${page === 'model' ? ' wb2-pg--on' : ''}${modelFitDone ? ' wb2-pg--ok' : ''}`}
+                className={`wb2-pg${page === 'model' ? ' wb2-pg--on' : ''}`}
                 data-testid="page-model"
                 aria-pressed={page === 'model'}
                 onClick={() => onPage('model')}
             >
-                <b>{modelFitDone ? <Check size={11} strokeWidth={3} aria-hidden="true" data-testid="page-model-done" /> : '1'}</b>
                 Model fit
             </button>
             <button
                 type="button"
-                className={`wb2-pg${page === 'health' ? ' wb2-pg--on' : ''}${healthDone ? ' wb2-pg--ok' : ''}`}
+                className={`wb2-pg${page === 'health' ? ' wb2-pg--on' : ''}`}
                 data-testid="page-health"
                 aria-pressed={page === 'health'}
                 disabled={healthDisabled}
                 title={healthDisabled ? healthDisabledTitle : undefined}
                 onClick={() => onPage('health')}
             >
-                <b>{healthDone ? <Check size={11} strokeWidth={3} aria-hidden="true" data-testid="page-health-done" /> : '2'}</b>
                 Health score
             </button>
         </div>
     );
+}
+
+/**
+ * The ONE scroll area of the detail pane (settings + banners + the page body;
+ * the footer stays outside it). Switching the page or the kind tab — a new
+ * `resetKey` — puts it back at the top. Only `scrollTop` is written: the
+ * children are never remounted, so the charts are not rebuilt.
+ */
+export function WorkbenchScroll({ resetKey, page, children }: { resetKey: string; page: WorkbenchPage; children: ReactNode }) {
+    const ref = useRef<HTMLDivElement>(null);
+    useLayoutEffect(() => {
+        if (ref.current) ref.current.scrollTop = 0;
+    }, [resetKey]);
+    return <div ref={ref} className="wb2-scroll" data-testid="wb-scroll" data-page={page}>{children}</div>;
 }
 
 interface StaleBannerProps {
@@ -71,7 +82,7 @@ export function StaleBanner({ training, queued, disabled, disabledTitle, onRetra
             <span className="wb2-sp" />
             <button
                 type="button"
-                className="rcx-btn rcx-btn--pri rcx-btn--sm"
+                className="rcx-btn rcx-btn--sm"
                 data-testid="stale-retrain"
                 disabled={disabled || training || queued}
                 title={disabled ? disabledTitle : undefined}

@@ -23,6 +23,7 @@ import {
     buildScoreOption,
 } from './healthPageCharts';
 import { scopesOf, type TimeScopes } from './healthCharts';
+import { formatStamp } from '../periodDisplay';
 import { SlowScoringNotice, TestResultsCard, TestsChangedBanner } from './ValidationCards';
 import type { HealthScorePageProps, SaveInfo } from './workbenchTypes';
 
@@ -54,7 +55,7 @@ export function sameHealthScoreProps(a: HealthScorePageProps, b: HealthScorePage
 }
 
 function HealthScorePage(props: HealthScorePageProps) {
-    const { model, stale, preview, unit, sensorLabel, setPoints, attemptIssues, save, filesOutOfDate } = props;
+    const { model, stale, preview, unit, sensorLabel, setPoints, attemptIssues, save } = props;
     const [hoverIdx, setHoverIdx] = useState<number | null>(null);
     // A failed request leaves `preview.data` null, but when an earlier answer for this
     // model exists the page (inputs, charts) stays on screen from `lastData` under an
@@ -94,7 +95,7 @@ function HealthScorePage(props: HealthScorePageProps) {
                             <b>Re-train to recompute</b>
                             The fitted Relation model is no longer in memory (the data was reloaded or a special sensor changed).
                             <div style={{ marginTop: '10px' }}>
-                                <button type="button" className="bmw-btn-retrain bmw-btn-retrain--stale" data-testid="health-not-fitted-retrain" disabled={!!props.retrainDisabledReason} title={props.retrainDisabledReason} onClick={props.onRetrain}>↻ Re-train</button>
+                                <button type="button" className="rcx-btn rcx-btn--sm" data-testid="health-not-fitted-retrain" disabled={!!props.retrainDisabledReason} title={props.retrainDisabledReason} onClick={props.onRetrain}>↻ Re-train</button>
                             </div>
                         </div>
                     ) : preview.error ? (
@@ -107,7 +108,7 @@ function HealthScorePage(props: HealthScorePageProps) {
                             )}
                         </div>
                     ) : (
-                        <div><Loader2 size={20} className="pm-spin" aria-hidden="true" /> Loading…</div>
+                        <div><Loader2 size={20} className="pm-spin" aria-hidden="true" /> Loading the {model.kind === 'relationship' ? 'Relation model' : `${model.kind === 'clustering' ? 'Clustering' : 'Individual'} model`}…</div>
                     )}
                 </div>
             </div>
@@ -130,7 +131,7 @@ function HealthScorePage(props: HealthScorePageProps) {
                 <div className="wb2-stale hs-full" role="status" data-testid="health-not-fitted-banner">
                     <span><b>Re-train to recompute.</b> The fitted Relation model is no longer in memory; the chart below is the last result.</span>
                     <span className="wb2-sp" />
-                    <button type="button" className="bmw-btn-retrain bmw-btn-retrain--stale" disabled={!!props.retrainDisabledReason} title={props.retrainDisabledReason} onClick={props.onRetrain}>↻ Re-train</button>
+                    <button type="button" className="rcx-btn rcx-btn--sm" disabled={!!props.retrainDisabledReason} title={props.retrainDisabledReason} onClick={props.onRetrain}>↻ Re-train</button>
                 </div>
             )}
             <SetPointChart
@@ -158,11 +159,8 @@ function HealthScorePage(props: HealthScorePageProps) {
                     <div className="hs-note" data-testid="master-note">H and L entered here are saved on this model only. Master data is not changed.</div>
                 )}
             </div>
-            {filesOutOfDate && (
-                <div className="wb2-stale hs-full" role="status" data-testid="files-out-of-date">
-                    <span><b>Changed after saving.</b> Mark complete again to update the files.</span>
-                </div>
-            )}
+            {/* "Changed after saving" is said ONCE — the footer sentence, next to its
+                "Mark complete again" button (SPEC workbench-redesign §1). */}
             {scoreReady && data.series.score && data.score_summary ? (
                 <ScoreChart
                     data={data}
@@ -188,11 +186,12 @@ function HealthScorePage(props: HealthScorePageProps) {
 }
 
 // ---------------------------------------------------------------------------
-// "Saved N files to ..." / progress / failure
+// Saving progress / failure. A SUCCESSFUL save has no banner: it is the footer
+// sentence ("Files saved 9 Feb 2026 23:50 · …\output\TAG"; SPEC workbench-redesign §1).
 // ---------------------------------------------------------------------------
 
 function SaveBanner({ save }: { save: SaveInfo }) {
-    if (save.phase === 'idle') return null;
+    if (save.phase === 'idle' || save.phase === 'ok') return null;
     if (save.phase === 'running') {
         return (
             <div className="hs-save hs-full" role="status" data-testid="save-running">
@@ -201,27 +200,9 @@ function SaveBanner({ save }: { save: SaveInfo }) {
             </div>
         );
     }
-    if (save.phase === 'error') {
-        return (
-            <div className="hs-save hs-save--bad hs-full" role="alert" data-testid="save-error">
-                <span><b>The model was not saved.</b> {save.message}</span>
-            </div>
-        );
-    }
-    const count = save.files?.length ?? 0;
     return (
-        <div className="hs-save hs-save--ok hs-full" role="status" data-testid="save-ok">
-            <span>
-                {save.files
-                    ? <>Saved <b>{count}</b> file{count === 1 ? '' : 's'} to <span className="hs-path">{save.outputDir}</span></>
-                    : <>Files saved to <span className="hs-path">{save.outputDir}</span></>}
-            </span>
-            {save.files && save.files.length > 0 && (
-                <details className="hs-files" data-testid="save-files">
-                    <summary>Files</summary>
-                    <ul>{save.files.map(f => <li key={f.path} title={f.path}>{f.file_name}</li>)}</ul>
-                </details>
-            )}
+        <div className="hs-save hs-save--bad hs-full" role="alert" data-testid="save-error">
+            <span><b>The model was not saved.</b> {save.message}</span>
         </div>
     );
 }
@@ -385,7 +366,7 @@ function ScoreChart({ data, score, summary, unit, hoverIdx, onHover, stale, scop
             stale={stale}
             sub={
                 <span data-testid="score-summary">
-                    {lowest ? <>Lowest <b className={lowest.score >= 80 ? 'hs-good' : 'hs-bad'} data-testid="score-lowest">{Math.round(lowest.score)}</b>{lowest.timestamp ? ` on ${lowest.timestamp}` : ''}</> : 'No scored rows'}
+                    {lowest ? <>Lowest <b className={lowest.score >= 80 ? 'hs-good' : 'hs-bad'} data-testid="score-lowest">{Math.round(lowest.score)}</b>{lowest.timestamp ? <> on <span className="wbx-dt" data-testid="score-lowest-at">{formatStamp(lowest.timestamp)}</span></> : ''}</> : 'No scored rows'}
                     {pct !== null && <> · below 80 for <b data-testid="score-below80">{pct.toFixed(1)}%</b> of scored rows</>}
                 </span>
             }

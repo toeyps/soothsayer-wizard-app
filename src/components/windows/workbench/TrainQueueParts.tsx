@@ -38,6 +38,11 @@ export const TRAIN_KIND_LABEL: Record<ModelKind, string> = {
 };
 const KIND_LETTER: Record<ModelKind, string> = { individual: 'I', relationship: 'R', clustering: 'C' };
 
+/** A train reason as the user reads it. The 5-step bar is gone (2026-10-09), so
+ *  no text may point at "Step 1" — the shared reason constant in
+ *  `utils/trainQueue.ts` still carries it. */
+export const trainReasonText = (reason: string): string => reason.replace(/\s*\(Step 1\)/g, '');
+
 /** One model as the train parts show it. */
 export interface TrainRowModel {
     id: string;
@@ -117,7 +122,7 @@ export function TrainAllBar({ counts, running, reason, reasonTone, onOpen }: {
                 className="rcx-btn tq-all-btn"
                 data-testid="train-all"
                 disabled={running || reason !== null}
-                title={reason ?? undefined}
+                title={reason ? trainReasonText(reason) : undefined}
                 onClick={onOpen}
             >
                 {running ? <><Loader2 size={12} className="pm-spin" aria-hidden="true" /> Training…</> : '▶ Train all'}
@@ -127,7 +132,7 @@ export function TrainAllBar({ counts, running, reason, reasonTone, onOpen }: {
                 <span><b>{counts.upToDate}</b> up to date</span>
                 <span><b>{counts.missing}</b> can't train</span>
             </div>
-            {reason && <div className={`tq-why tq-why--${reasonTone}`} data-testid="train-all-reason" role={reasonTone === 'danger' ? 'alert' : undefined}>{reason}</div>}
+            {reason && <div className={`tq-why tq-why--${reasonTone}`} data-testid="train-all-reason" role={reasonTone === 'danger' ? 'alert' : undefined}>{trainReasonText(reason)}</div>}
         </div>
     );
 }
@@ -191,11 +196,14 @@ export function sensorTrainMenuCopy(models: readonly SensorTrainMenuModel[]): Se
     };
 }
 
-export function SensorTrainButton({ label, disabled, title, why, whyTone, onTrain, menu, buttonRef }: {
+export function SensorTrainButton({ label, filled, disabled, title, why, whyTone, onTrain, menu, buttonRef }: {
     label: ReactNode;
+    /** Filled (primary) only while it is THE next action — a model of this sensor
+     *  needs training; a ghost otherwise ("at most one filled button on screen"). */
+    filled: boolean;
     disabled: boolean;
     title?: string;
-    /** The line under the button (what it will do, or why it can't). */
+    /** The ONE short line under the button (what it will do, or where the reason is). */
     why: string;
     whyTone: TrainReasonTone;
     onTrain: () => void;
@@ -218,23 +226,24 @@ export function SensorTrainButton({ label, disabled, title, why, whyTone, onTrai
         };
     }, [open]);
     const menuDisabled = menu.every(m => m.disabled);
+    const tone = filled ? ' rcx-btn--pri' : '';
     return (
-        <div className="tq-sensortrain" ref={wrap}>
+        <div className="tq-sensortrain" ref={wrap} data-filled={String(filled)}>
             <div className="tq-split">
                 <button
                     type="button"
                     ref={buttonRef}
-                    className="rcx-btn rcx-btn--pri tq-split-main"
+                    className={`rcx-btn${tone} tq-split-main`}
                     data-testid="train-sensor"
                     disabled={disabled}
-                    title={title}
+                    title={title ? trainReasonText(title) : undefined}
                     onClick={onTrain}
                 >
                     {label}
                 </button>
                 <button
                     type="button"
-                    className="rcx-btn rcx-btn--pri tq-split-caret"
+                    className={`rcx-btn${tone} tq-split-caret`}
                     data-testid="train-sensor-menu-toggle"
                     aria-label="More train options"
                     aria-haspopup="menu"
@@ -262,7 +271,7 @@ export function SensorTrainButton({ label, disabled, title, why, whyTone, onTrai
                     </div>
                 )}
             </div>
-            <div className={`tq-why tq-why--${whyTone}`} data-testid="train-sensor-why">{why}</div>
+            <div className={`tq-why tq-why--${whyTone}`} data-testid="train-sensor-why">{trainReasonText(why)}</div>
         </div>
     );
 }

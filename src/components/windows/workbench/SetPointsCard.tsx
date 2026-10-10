@@ -134,19 +134,26 @@ const SOURCE_CHIP: Record<ReturnType<typeof setPointSource>, { cls: string; text
     'not-in-master': { cls: 'hs-src--n', text: 'not in master' },
 };
 
+/** The card's state dot: colour class (the sensor list's) + the tooltip words. */
+const VERDICT_DOT: Record<HealthVerdict, { cls: 'complete' | 'need' | 'bad'; words: string }> = {
+    valid: { cls: 'complete', words: 'Set points valid' },
+    needs: { cls: 'need', words: 'Set points still empty' },
+    bad: { cls: 'bad', words: 'A set point is not valid' },
+};
+
 // ---------------------------------------------------------------------------
 // The card
 // ---------------------------------------------------------------------------
 
 export default function SetPointsCard(props: SetPointsCardProps) {
     const { data, setPoints, verdict } = props;
-    const head = verdict === 'valid'
-        ? <span className="f4-pill f4-pill--ok" data-testid="hs-verdict">Valid</span>
-        : verdict === 'bad'
-            ? <span className="f4-pill f4-pill--bad" data-testid="hs-verdict">Not valid</span>
-            : verdict === 'needs'
-                ? <span className="f4-pill f4-pill--warn" data-testid="hs-verdict">Incomplete</span>
-                : null;
+    // No status pill on this card (SPEC workbench-redesign §1): one dot in the list's
+    // colours, the words in its tooltip. The words themselves are the Checks lines
+    // and the footer sentence.
+    const dot = verdict ? VERDICT_DOT[verdict] : null;
+    const head = verdict && dot
+        ? <span className={`f4-sdot f4-sdot--${dot.cls}`} data-testid="hs-verdict" data-verdict={verdict} role="img" title={dot.words} aria-label={dot.words} />
+        : null;
     return (
         <section className="hs-card" data-testid="set-points-card">
             <div className="wb2-card-h"><b>Health set points</b><span className="wb2-sp" />{head}</div>

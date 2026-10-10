@@ -204,7 +204,7 @@ const trainBtn = () => screen.getByTestId('train-sensor') as HTMLButtonElement;
 /** Train sensor's title for a sensor whose one model the gate blocks: the "set the running condition"
  *  reason while Step 1 is not set at all, else the model's reason in the preflight wording. */
 const blockedTitle = (reason: string) => screen.getByTestId('rc-card').getAttribute('data-state') === 'unset'
-    ? TRAIN_NEEDS_RUNNING_CONDITION
+    ? TRAIN_NEEDS_RUNNING_CONDITION.replace(' (Step 1)', '') // the step bar is gone: nothing on screen says "Step 1"
     : `Can't train: Individual — ${preflightReason(reason).text}`;
 
 /*

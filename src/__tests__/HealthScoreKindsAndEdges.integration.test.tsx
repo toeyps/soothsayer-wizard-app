@@ -115,7 +115,7 @@ describe('Individual: master-data prefill (snapshot, chips, reset, never written
         expect(bmw().getByTestId('sp-lower-source').textContent).toBe('not in master');
         expect(bmw().getByTestId('sp-upper-source').textContent).toBe('master data');
         expect((bmw().getByTestId('sp-lower') as HTMLInputElement).placeholder).toBe('Required');
-        await waitFor(() => expect(bmw().getByTestId('tab-status-' + t3.id).textContent).toBe('Set points needed'));
+        await waitFor(() => expect(bmw().getByTestId('tab-status-' + t3.id).getAttribute('title')).toBe('Set points needed'));
         expect(bmw().getByTestId('master-note').textContent).toMatch(/Master data is not changed/);
     });
 
@@ -551,7 +551,7 @@ describe('misc edges', () => {
         await waitFor(() => expect(bmw().getAllByTestId('check-line').map(l => l.textContent).join('|')).toMatch(/sits exactly on the ±2RMSE band edge/));
         expect(up80().closest('.hs-num')!.className).toMatch(/hs-num--err/);
         expect(up80().getAttribute('aria-invalid')).toBe('true');
-        expect(bmw().getByTestId('hs-verdict').textContent).toBe('Not valid');
+        expect(bmw().getByTestId('hs-verdict').getAttribute('title')).toBe('A set point is not valid');
     });
 
     it('a narrow window (<760px) renders both pages without throwing', async () => {

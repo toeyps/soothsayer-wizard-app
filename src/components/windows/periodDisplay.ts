@@ -90,6 +90,18 @@ export function formatDate(s: string | null | undefined): string {
     return ms === null ? (s ?? '') : dateTxt(ms, true);
 }
 
+/**
+ * THE Workbench date-and-time format: "9 Feb 2026 23:50" (24 h, no seconds,
+ * local time; SPEC workbench-redesign §1 "One date format"). Takes a CSV / ISO
+ * timestamp string or epoch ms; text that is not a date is returned as it is.
+ * Show it in mono (`.wbx-dt`).
+ */
+export function formatStamp(v: string | number | null | undefined): string {
+    const ms = typeof v === 'number' ? (Number.isFinite(v) ? v : null) : parseLocal(v);
+    if (ms === null) return typeof v === 'string' ? v : '—';
+    return `${dateTxt(ms, true)} ${hhmm(ms)}`;
+}
+
 /** Whole days a period spans (open ends resolve to the dataset bounds); null if unknowable or reversed. */
 export function periodDays(p: TimePeriod, bounds: DataBounds | null | undefined): number | null {
     const b = boundsMs(bounds);

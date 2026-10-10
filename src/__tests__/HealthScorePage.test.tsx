@@ -56,7 +56,6 @@ function Harness({ kind = 'individual', sp, data, ...rest }: Opts) {
             onSetPointsCommit={onCommit}
             attemptIssues={null}
             save={{ phase: 'idle' }}
-            filesOutOfDate={false}
             onRetrain={onRetrain}
             {...rest}
         />
@@ -233,12 +232,12 @@ describe('Relationship: four points, all start empty', () => {
         lines = screen.getAllByTestId('check-line');
         expect(lines).toHaveLength(1);
         expect(lines[0].textContent).toMatch(/Enter 2 empty points: lower 0, upper 0/);
-        expect(screen.getByTestId('hs-verdict').textContent).toBe('Incomplete');
+        expect(screen.getByTestId('hs-verdict').getAttribute('title')).toBe('Set points still empty');
     });
 
     it('all four entered: Valid, the green line, no field marked', () => {
         mount({ kind: 'relationship', sp: { ...REL_VALID } });
-        expect(screen.getByTestId('hs-verdict').textContent).toBe('Valid');
+        expect(screen.getByTestId('hs-verdict').getAttribute('title')).toBe('Set points valid');
         expect(screen.getByTestId('check-valid')).toBeTruthy();
         expect(screen.queryAllByTestId('check-line')).toHaveLength(0);
     });
@@ -295,7 +294,7 @@ describe('Clustering: one outer ring N for every cluster', () => {
         mount({ kind: 'clustering', sp: CL(null) });
         type('sp-outer_sd', '3');
         expect(field('sp-outer_sd').className).toMatch(/hs-num--err/);
-        expect(screen.getByTestId('hs-verdict').textContent).toBe('Not valid');
+        expect(screen.getByTestId('hs-verdict').getAttribute('title')).toBe('A set point is not valid');
         expect(screen.getByTestId('check-line').textContent).toMatch(/must be more than 3× SD/);
     });
 
@@ -320,15 +319,15 @@ describe('Checks card', () => {
         expect(lines.map(l => l.getAttribute('data-tone'))).toEqual(['need', 'bad']);
         expect(lines[0].textContent).toMatch(/Enter the upper set point \(H\)/);
         expect(lines[1].textContent).toMatch(/must be below the lower 3σ boundary/);
-        expect(screen.getByTestId('hs-verdict').textContent).toBe('Not valid');
+        expect(screen.getByTestId('hs-verdict').getAttribute('title')).toBe('A set point is not valid');
     });
 
     it('"Incomplete" when everything missing is only empty, "Valid" when nothing is left', () => {
         mount({ sp: { kind: 'individual', lower: null, upper: null, masterLower: null, masterUpper: null } });
-        expect(screen.getByTestId('hs-verdict').textContent).toBe('Incomplete');
+        expect(screen.getByTestId('hs-verdict').getAttribute('title')).toBe('Set points still empty');
         cleanup();
         mount({ sp: IND_VALID });
-        expect(screen.getByTestId('hs-verdict').textContent).toBe('Valid');
+        expect(screen.getByTestId('hs-verdict').getAttribute('title')).toBe('Set points valid');
         expect(screen.getByTestId('check-valid').textContent).toMatch(/passes the checks/);
     });
 
@@ -337,7 +336,7 @@ describe('Checks card', () => {
         mount({ sp: IND_VALID, attemptIssues: attempt });
         expect(screen.getAllByTestId('check-line')).toHaveLength(1);
         expect(screen.getByTestId('check-line').textContent).toMatch(/found when saving/);
-        expect(screen.getByTestId('hs-verdict').textContent).toBe('Not valid');
+        expect(screen.getByTestId('hs-verdict').getAttribute('title')).toBe('A set point is not valid');
         expect(field('sp-lower').className).toMatch(/hs-num--err/);
     });
 });
@@ -372,7 +371,10 @@ describe('Health score chart', () => {
         mount({ sp: IND_VALID });
         const sum = screen.getByTestId('score-summary');
         expect(screen.getByTestId('score-lowest').textContent).toBe('30');
-        expect(sum.textContent).toMatch(/on 2026-01-01 04:00:00/);
+        // ONE Workbench date format, in mono — never the raw CSV timestamp.
+        expect(sum.textContent).toMatch(/Lowest 30 on 1 Jan 2026 04:00 ·/);
+        expect(sum.textContent).not.toMatch(/2026-01-01/);
+        expect(screen.getByTestId('score-lowest-at').className).toContain('wbx-dt');
         expect(screen.getByTestId('score-below80').textContent).toBe('40.0%');
         expect(screen.getByTestId('share-share_80_100').textContent).toBe('80–10060.0%');
         expect(screen.getByTestId('share-share_40_80').textContent).toBe('40–8020.0%');
@@ -456,7 +458,7 @@ describe('hover sync (the pointer on either chart reads the same row on both)', 
         mount({ sp: IND_VALID });
         expect(screen.getByTestId('hs-readout').textContent).toBe('');
         act(() => { scoreChart().onEvents.updateAxisPointer(axisEvent(TS)); });
-        expect(screen.getByTestId('hs-readout').textContent).toBe(`${TS} · value 6.20 bar · score 60`);
+        expect(screen.getByTestId('hs-readout').textContent).toBe('1 Jan 2026 03:00 · value 6.20 bar · score 60');
         act(() => { scoreChart().onEvents.globalout(); });
         expect(screen.getByTestId('hs-readout').textContent).toBe('');
     });
@@ -464,7 +466,7 @@ describe('hover sync (the pointer on either chart reads the same row on both)', 
     it('hovering the SET-POINT chart drives the same read-out', () => {
         mount({ sp: IND_VALID });
         act(() => { setChart().onEvents.updateAxisPointer(axisEvent('2026-01-01 04:00:00')); });
-        expect(screen.getByTestId('hs-readout').textContent).toBe('2026-01-01 04:00:00 · value 3.10 bar · score 30');
+        expect(screen.getByTestId('hs-readout').textContent).toBe('1 Jan 2026 04:00 · value 3.10 bar · score 30');
     });
 
     it('Relationship reads "residual"', () => {
@@ -477,10 +479,10 @@ describe('hover sync (the pointer on either chart reads the same row on both)', 
         mount({ kind: 'clustering', sp: { kind: 'clustering', outerSd: 5 } });
         expect(setChart().option.series.some((s: any) => s.name === 'Hover')).toBe(false);
         act(() => { setChart().onEvents.mouseover({ seriesName: 'Points', dataIndex: 3 }); });
-        expect(screen.getByTestId('hs-readout').textContent).toBe('2026-01-01 03:00:00 · score 60');
+        expect(screen.getByTestId('hs-readout').textContent).toBe('1 Jan 2026 03:00 · score 60');
         expect(setChart().option.series.find((s: any) => s.name === 'Hover').data).toEqual([[21, 41]]);
         act(() => { setChart().onEvents.mouseover({ seriesName: 'Centres', dataIndex: 0 }); }); // a ring / centre is not a row
-        expect(screen.getByTestId('hs-readout').textContent).toBe('2026-01-01 03:00:00 · score 60');
+        expect(screen.getByTestId('hs-readout').textContent).toBe('1 Jan 2026 03:00 · score 60');
         act(() => { scoreChart().onEvents.updateAxisPointer(axisEvent('2026-01-01 01:00:00')); });
         expect(setChart().option.series.find((s: any) => s.name === 'Hover').data).toEqual([[11, 21]]);
         act(() => { setChart().onEvents.globalout(); });
@@ -491,7 +493,7 @@ describe('hover sync (the pointer on either chart reads the same row on both)', 
         const d = previewFor('individual', IND_VALID);
         mount({ sp: IND_VALID, data: { ...d, series: { ...d.series, score: [100, null, 80, 55, 30] } as any } });
         act(() => { scoreChart().onEvents.updateAxisPointer(axisEvent('2026-01-01 01:00:00')); });
-        expect(screen.getByTestId('hs-readout').textContent).toBe('2026-01-01 01:00:00 · not running');
+        expect(screen.getByTestId('hs-readout').textContent).toBe('1 Jan 2026 01:00 · not running');
     });
 });
 
@@ -563,27 +565,22 @@ describe('saved files: progress, result and "changed after saving"', () => {
         expect(screen.getByTestId('save-running').textContent).toMatch(/Saving results….*longer than 15 seconds, especially the first time/);
     });
 
-    it('ok: "Saved N files to <path>" in plain text, with the file names in an expandable row', () => {
+    // Workbench redesign §1: a SUCCESSFUL save has no banner on the page — it is the
+    // footer sentence ("Files saved <date> · <folder>", BuildModelWindow.test.tsx).
+    it('ok: NO "Saved N files to …" / "Files saved to …" banner on the page (this session or an earlier one)', () => {
         save({
-            phase: 'ok', outputDir: 'C:/data/workspaces/ws1/output', at: 'now',
+            phase: 'ok', outputDir: 'C:/data/workspaces/ws1/output', at: '2026-10-08T20:31:00',
             files: [{ file_name: 'REL_INFO_a.json', path: 'C:/o/REL_INFO_a.json' }, { file_name: 'REL_DATASET_a.csv', path: 'C:/o/REL_DATASET_a.csv' }],
         });
-        const ok = screen.getByTestId('save-ok');
-        expect(ok.textContent).toMatch(/Saved 2 files to C:\/data\/workspaces\/ws1\/output/);
-        const files = within(screen.getByTestId('save-files'));
-        expect(files.getByText('REL_INFO_a.json')).toBeTruthy();
-        expect(files.getByText('REL_DATASET_a.csv')).toBeTruthy();
-    });
-
-    it('ok for one file is singular', () => {
-        save({ phase: 'ok', outputDir: 'C:/o', at: 'now', files: [{ file_name: 'INDV_INFO_a.json', path: 'C:/o/INDV_INFO_a.json' }] });
-        expect(screen.getByTestId('save-ok').textContent).toMatch(/Saved 1 file to C:\/o/);
-    });
-
-    it('ok from an earlier session (only the record is known): the folder, no file list', () => {
-        save({ phase: 'ok', outputDir: 'C:/o', at: 'earlier', files: null });
-        expect(screen.getByTestId('save-ok').textContent).toBe('Files saved to C:/o');
+        const page = screen.getByTestId('health-page');
+        expect(screen.queryByTestId('save-ok')).toBeNull();
         expect(screen.queryByTestId('save-files')).toBeNull();
+        expect(page.querySelector('.hs-save')).toBeNull();
+        expect(page.textContent).not.toMatch(/Files saved|Saved 2 files|workspaces\/ws1/);
+        cleanup();
+        save({ phase: 'ok', outputDir: 'C:/o', at: 'earlier', files: null });
+        expect(screen.getByTestId('health-page').querySelector('.hs-save')).toBeNull();
+        expect(screen.getByTestId('health-page').textContent).not.toMatch(/Files saved/);
     });
 
     it('error: says the model was not saved and why', () => {
@@ -591,12 +588,10 @@ describe('saved files: progress, result and "changed after saving"', () => {
         expect(screen.getByTestId('save-error').textContent).toMatch(/not saved.*Re-train first/);
     });
 
-    it('"Changed after saving — Mark complete again to update the files" only when the files are out of date', () => {
-        mount({ sp: IND_VALID, filesOutOfDate: true });
-        expect(screen.getByTestId('files-out-of-date').textContent).toMatch(/Changed after saving.*Mark complete again to update the files/);
-        cleanup();
-        mount({ sp: IND_VALID, filesOutOfDate: false });
+    it('the page has no "Changed after saving" banner of its own (it is the footer sentence, next to Mark complete again)', () => {
+        mount({ sp: IND_VALID });
         expect(screen.queryByTestId('files-out-of-date')).toBeNull();
+        expect(screen.getByTestId('health-page').textContent).not.toMatch(/Changed after saving/);
     });
 });
 
@@ -723,13 +718,13 @@ describe('warning issues are shown as non-blocking notes (coordinator 2026-10-04
         expect(line.textContent).toMatch(/not allowed in a file name/);
         expect(line.textContent).toMatch(/does not stop you from marking the model complete/);
         expect(screen.queryByTestId('score-locked')).toBeNull();
-        expect(screen.getByTestId('hs-verdict').textContent).toBe('Valid');
+        expect(screen.getByTestId('hs-verdict').getAttribute('title')).toBe('Set points valid');
     });
 
     it('empty set points + a warning: the verdict is "Incomplete" (amber), not "Not valid"', () => {
         const data = { ...previewFor('individual', { kind: 'individual', lower: null, upper: null }), validation: [{ code: 'required', severity: 'error' as const, message: 'L required', field: 'lower' }, warn] };
         mount({ sp: { kind: 'individual', lower: null, upper: null }, data });
-        expect(screen.getByTestId('hs-verdict').textContent).toBe('Incomplete');
+        expect(screen.getByTestId('hs-verdict').getAttribute('title')).toBe('Set points still empty');
     });
 });
 
@@ -862,7 +857,7 @@ describe('memo (customer items 8 + 9: a training run must not redraw these chart
             preview: { data: previewFor('individual', sp), loading: false, error: null, errorCode: null, notFitted: false, needsRetrain: false, idle: null } as any,
             unit: 'bar', sensorLabel: (t: string) => t, getDesc: (t: string) => t,
             setPoints: sp, onSetPointsChange: onChange, onSetPointsCommit: onCommit, attemptIssues: null,
-            save: { phase: 'idle' }, filesOutOfDate: false, onRetrain,
+            save: { phase: 'idle' }, onRetrain,
             ...over,
         };
     };

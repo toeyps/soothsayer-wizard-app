@@ -105,7 +105,7 @@ async function openI1Health() {
 describe('a set point typed WITHOUT blur is persisted (exactly once) when the user leaves', () => {
     const leaves: { name: string; leave: () => Promise<void> }[] = [
         { name: 'switches to another sensor', leave: async () => { selectSensor('tag3'); await settle(100); } },
-        { name: 'switches the kind tab', leave: async () => { selectKindTab('Relationship'); await settle(100); } },
+        { name: 'switches the kind tab', leave: async () => { selectKindTab('Relation model'); await settle(100); } },
         { name: 'goes back to Model fit', leave: async () => { fireEvent.click(bmw().getByTestId('footer-back-to-fit')); await settle(100); } },
         { name: 'clicks the window Close button', leave: async () => { await act(async () => { fireEvent.click(bmw().getByTitle('Close')); }); await settle(100); } },
         {
@@ -252,7 +252,7 @@ describe('errors from Rust', () => {
         writeDisk(trainedWs());
         await mountWindows();
         selectSensor('tag1');
-        selectKindTab('Relationship');
+        selectKindTab('Relation model');
         await waitForCharts();
         await openHealth();
         const fits = () => env.backend!.cmds('preview_relationship_model').filter(c => c.args.cache_key).length;
@@ -469,7 +469,7 @@ describe('Mark complete: races and failures', () => {
         writeDisk(trainedWs());
         await mountWindows();
         selectSensor('tag1');
-        selectKindTab('Relationship');
+        selectKindTab('Relation model');
         await waitForCharts();
         await openHealth();
         await waitFor(() => expect(bmw().getByTestId('check-valid')).toBeTruthy());

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-    computeCoverage, computeTestCoverage, conditionChipParts, conditionSymbol, formatDate, formatPeriod, formatPeriodChip, overlapDays, periodDays,
+    computeCoverage, computeTestCoverage, conditionChipParts, conditionSymbol, formatDate, formatPeriod, formatPeriodChip, formatStamp, overlapDays, periodDays,
 } from '../components/windows/periodDisplay';
 import type { TestPeriod, WorkspaceSensorFilter } from '../types';
 
@@ -25,6 +25,27 @@ describe('formatPeriod (chip / row label)', () => {
         expect(formatPeriod(p('a', '2025-11-01T00:00', ''))).toBe('1 Nov 2025 – end of data');
         expect(formatPeriod(p('a', '', ''))).toBe('All data');
     });
+    // Workbench redesign §1: ONE date-and-time format in the Workbench.
+    it('formatStamp is "9 Feb 2026 23:50": day, short month, year, 24-hour time, no seconds — for CSV text, datetime-local, ISO and epoch ms', () => {
+        expect(formatStamp('2026-02-09 23:50:00')).toBe('9 Feb 2026 23:50');
+        expect(formatStamp('2026-02-09T23:50')).toBe('9 Feb 2026 23:50');
+        expect(formatStamp('2026-10-08T14:22:31')).toBe('8 Oct 2026 14:22');
+        expect(formatStamp('2026-01-01')).toBe('1 Jan 2026 00:00');
+        expect(formatStamp(new Date(2026, 1, 9, 5, 7).getTime())).toBe('9 Feb 2026 05:07');
+        // a UTC instant is shown in local time, in the same shape
+        expect(formatStamp('2026-10-04T01:00:00.000Z')).toMatch(/^[34] Oct 2026 \d{2}:\d{2}$/);
+        // never a locale form
+        expect(formatStamp('2026-10-08T14:22:31')).not.toMatch(/PM|AM|,/);
+    });
+
+    it('formatStamp leaves text that is not a date as it is, and "—" for nothing', () => {
+        expect(formatStamp('row 12')).toBe('row 12');
+        expect(formatStamp('')).toBe('');
+        expect(formatStamp(null)).toBe('—');
+        expect(formatStamp(undefined)).toBe('—');
+        expect(formatStamp(Number.NaN)).toBe('—');
+    });
+
     it('formatDate is a single bound with year', () => {
         expect(formatDate('2025-06-01T00:00')).toBe('1 Jun 2025');
     });

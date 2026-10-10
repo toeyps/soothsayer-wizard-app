@@ -2,7 +2,6 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { render, screen, cleanup, within } from '@testing-library/react';
 import * as ValidationCards from '../components/windows/workbench/ValidationCards';
 import {
-    ScoredPill,
     SlowScoringNotice,
     TestResultsCard,
     TestsChangedBanner,
@@ -32,13 +31,9 @@ const withV = (kind: 'individual' | 'relationship' | 'clustering', v: Partial<Re
 /** Words that only existed for the removed label / event / verdict features. */
 const REMOVED_WORDS = /Known problem|Normal\b|event|lead time|false alarm|detected|before the event|after the event/i;
 
-describe('ScoredPill', () => {
-    it('reads "Scored · N", neutral grey', () => {
-        render(<ScoredPill n={2} />);
-        const p = screen.getByTestId('scored-pill');
-        expect(p.textContent).toBe('Scored · 2');
-        expect(p.className).toContain('f4-pill--grey');
-        expect(p.getAttribute('title')).toContain('for reading only');
+describe('removed pieces', () => {
+    it('the "Scored · N" pill is gone from the module (the footer sentence says "scored on N periods")', () => {
+        expect(Object.keys(ValidationCards)).not.toContain('ScoredPill');
     });
 
     it('the verdict helpers of the old test results are gone from the module', () => {

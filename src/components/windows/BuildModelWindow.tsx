@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef, type CSSProperties } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef, type CSSProperties, type ReactNode } from "react";
 import { getFgGroupColor } from '../../utils/failureGroupColor';
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { emit } from "@tauri-apps/api/event";
@@ -37,16 +37,15 @@ import { SensorMetaContext, fmtNum, fmtNumExact, fmtNumText, sensorHaystack, sen
 import TimePeriodsEditor from "./TimePeriodsEditor";
 import TestPeriodsEditor from "./TestPeriodsEditor";
 import { TrainHighlightWarnings } from "./RunningConditionParts";
-import { estimateRunningDays } from "./periodDisplay";
+import { estimateRunningDays, formatStamp } from "./periodDisplay";
 import SubModelsModal from "./SubModelsModal";
 import { useSubModelFits } from "./useSubModelFits";
 import ModelFitPage from "./workbench/ModelFitPage";
 import { CLUSTER_COLORS as CLUSTER_PALETTE } from "./workbench/chartTheme";
 import HealthScorePage from "./workbench/HealthScorePage";
-import { PageSwitch, SaveErrorNotice, StaleBanner } from "./workbench/WorkbenchShellParts";
+import { PageSwitch, SaveErrorNotice, StaleBanner, WorkbenchScroll } from "./workbench/WorkbenchShellParts";
 import { buildCheckLines, healthVerdict, isBlockingIssue, sameSetPoints, verdictOfIssues, type HealthVerdict } from "./workbench/healthChecks";
 import type { SaveInfo, WorkbenchPage } from "./workbench/workbenchTypes";
-import { ScoredPill } from "./workbench/ValidationCards";
 import { isPickerSurfaceOpen } from "../sensor/SensorPicker";
 import { CloseRunDialog, LockedSettingsHeader, QueuedCard, RunSetPointsBanner, RunStrip, SensorTrainButton, sensorTrainMenuCopy, TrainAllBar, TrainAllModal, type TrainGroupInfo, type TrainMenuItem, type TrainReasonTone, type TrainRowModel } from "./workbench/TrainQueueParts";
 import { useTrainQueue } from "../../hooks/useTrainQueue";
@@ -158,17 +157,6 @@ const modelTagOf = (m: FailureModel): string => (m.kind === 'clustering' ? m.xSe
 /** Placeholder plan for rows the run strip / close dialog only label (they never read it). */
 const LABEL_ONLY_PLAN = { kind: 'ready' } as const;
 
-/** Gate badge (approved mockup rc-gate.html): "Legacy · all data" is a neutral
- *  grey pill (the model stays Complete, nothing is wrong); every blocking
- *  reason ("Needs condition" ...) is the amber warn pill. */
-function GateBadgePill({ text, title, testId }: { text: string; title?: string; testId?: string }) {
-    return (
-        <span data-testid={testId} title={title} className={`f4-pill ${text === LEGACY_BADGE ? 'f4-pill--grey' : 'f4-pill--warn'}`}>
-            {text}
-        </span>
-    );
-}
-
 /** Kind identity colour used for the active tab underline. */
 const KIND_COLOR: Record<ModelKind, string> = {
     individual: 'var(--accent-hi)',
@@ -230,14 +218,14 @@ const DOT_CLASS: Record<ModelDotState, 'complete' | 'need' | 'bad' | null> = {
 const DOT_TITLE: Record<ModelDotState, string> = {
     complete: 'Complete', trained: 'Trained — set points needed', stale: 'Re-train needed', blocked: 'Needs fixing', none: 'Incomplete',
 };
-/** Status pill on a kind tab (mockup `.wd-tabs .pill`) — only the states worth a word. */
-const TAB_PILL: Record<ModelDotState, { text: string; cls: string } | null> = {
-    complete: { text: 'Complete', cls: 'f4-pill--ok' },
-    trained: { text: 'Trained', cls: 'f4-pill--grey' },
-    stale: { text: 'Re-train', cls: 'f4-pill--warn' },
-    blocked: null,
-    none: null,
+/** The words behind a kind tab's state dot (its tooltip). A tab carries NO text
+ *  pill (SPEC workbench-redesign §1): a model's status is said in words once, in
+ *  the footer. */
+const TAB_WORDS: Record<ModelDotState, string> = {
+    complete: 'Complete', trained: 'Trained', stale: 'Re-train needed', blocked: 'Needs fixing', none: 'Not trained yet',
 };
+/** A run of this session failed: red dot on the tab and in the list. */
+const TRAIN_FAILED_WORDS = 'Training failed';
 /** Next to every Model-settings field that is part of the training inputs
  *  (training data, predictors, sensors, clusters, stiffness): changing it sets a
  *  Complete model back to Incomplete (`applyIncompleteRule`) — say so up front. */
@@ -262,6 +250,17 @@ const KIND_LABEL: Record<ModelKind, string> = {
     relationship: 'Relationship',
     clustering: 'Clustering',
 };
+/** Kind names on the tabs: Individual / Relation model / Clustering. */
+const KIND_TAB_LABEL: Record<ModelKind, string> = {
+    individual: 'Individual',
+    relationship: 'Relation model',
+    clustering: 'Clustering',
+};
+/** A kind inside a sentence: "the Individual model", "the Relation model". */
+const kindModelName = (kind: ModelKind): string => (kind === 'relationship' ? 'Relation model' : `${KIND_LABEL[kind]} model`);
+/** The ONE filled button of the detail pane (SPEC workbench-redesign §1: at most
+ *  one filled button on screen) — see `primaryActionOf`. */
+type PrimaryAction = 'save' | 'train' | 'next' | 'mark' | null;
 
 // ─── Build Model Workbench Phase B (Train in place) ───────────────────────
 // Shape returned by Rust's `compute_sensor_stats` — mirrors the identically-
@@ -344,14 +343,9 @@ function rcDraftEqual(a: RcDraft, b: RcDraft): boolean {
         && JSON.stringify(toScoringPeriods(a.testPeriods)) === JSON.stringify(toScoringPeriods(b.testPeriods));
 }
 
-/** Footer's "Last trained <date>" (Complete state) — locale-formatted, not a
- *  fixed pattern, since this is a plain human-readable timestamp, not
- *  something any other code parses back. */
-function formatTrainedAt(iso: string): string {
-    const d = new Date(iso);
-    if (Number.isNaN(d.getTime())) return iso;
-    return d.toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-}
+/** A date in the footer ("Trained …", "Files saved …"): the ONE Workbench date
+ *  format, "9 Feb 2026 23:50", in mono. */
+const Stamp = ({ at }: { at: string }) => <span className="wbx-dt">{formatStamp(at)}</span>;
 
 /**
  * The single Build Model window — a singleton (label `build-model`) opened
@@ -1231,7 +1225,6 @@ export default function BuildModelWindow() {
     const rcConfigured = isWorkspaceRunningConditionConfigured(gateFg, gateHeaders);
     const needsCondition = (m: FailureModel): boolean => !isRunningConditionConfigured(m, gateFg, gateHeaders);
     const legacyCompleteCount = allModels.filter(m => m.status).length;
-    const blockedByCondition = allModels.filter(m => !m.status && needsCondition(m)).length;
     /** Badge text for a model the gate blocks, for ANY reason (missing condition,
      *  missing category, invalid period), else null. Hover text is the reason. */
     const gateBadge = (m: FailureModel): string | null => {
@@ -1478,6 +1471,9 @@ export default function BuildModelWindow() {
      *  already surfaces in the collapsible Model settings section, per the
      *  SPEC FINAL instruction not to invent a second wording for the same
      *  thing. Each item carries its own "take me there" action. */
+    /** A Custom-mode model whose OWN running condition is what blocks it: the fix is inside Model settings. */
+    const customFixInside = (m: FailureModel): boolean =>
+        draftOf(m).runningConditionMode === 'custom' && categoryOf(m) !== null && gateReasonOf(m) !== null;
     const incompleteItems = (m: FailureModel): { text: string; onClick: () => void }[] => {
         const items = missingItems(m).map(text => ({
             text,
@@ -2587,13 +2583,15 @@ export default function BuildModelWindow() {
                         // A trained model whose SAVED set points Rust rejected reads red ("Fix set
                         // point") — the persisted verdict, the same one the Dashboard dot reads.
                         const fixSetPoint = setPointFlagOf(m, st) === 'fix';
-                        const dot = fixSetPoint ? 'bad' : DOT_CLASS[st];
+                        // A run that failed in THIS session is red too (same dot as its kind tab).
+                        const failedRun = !!trainError[m.id];
+                        const dot = fixSetPoint || failedRun ? 'bad' : DOT_CLASS[st];
                         return (
                             <span
                                 key={m.id}
                                 data-testid={`sensor-kind-badge-${m.id}`}
                                 className={`f4-kb model-kind-icon--${m.kind}`}
-                                title={`${KIND_LABEL[m.kind]} · ${fixSetPoint ? 'Fix set point' : DOT_TITLE[st]}`}
+                                title={`${KIND_LABEL[m.kind]} · ${failedRun ? TRAIN_FAILED_WORDS : fixSetPoint ? 'Fix set point' : DOT_TITLE[st]}`}
                             >
                                 {KIND_ABBREV[m.kind]}
                                 {dot && <span data-testid={`sensor-kind-badge-dot-${m.id}`} data-state={st} className={`f4-kb-dot f4-kb-dot--${dot}`} aria-hidden="true" />}
@@ -3223,7 +3221,10 @@ export default function BuildModelWindow() {
             );
         }
         const missing = missingItems(m);
-        const isOpen = settingsOpenOverride[m.id] ?? (missing.length > 0);
+        // Opens by itself when the thing to fix is INSIDE it: a missing setting, or a
+        // Custom model's own running condition (that editor lives in this section).
+        // The user's own open / close (the override) still wins.
+        const isOpen = settingsOpenOverride[m.id] ?? (missing.length > 0 || customFixInside(m));
         const toggle = () => setSettingsOpenOverride(prev => ({ ...prev, [m.id]: !isOpen }));
         return (
             <div className={`bmw-sets${isOpen ? ' bmw-sets--open' : ''}`}>
@@ -3257,15 +3258,15 @@ export default function BuildModelWindow() {
         return modelSetPointFlag(effectiveModelFor(m), gateFg, gateHeaders, st, specialRecipes);
     };
 
-    /** The pill on a kind tab: the central status (`modelDotState`), refined for a
-     *  trained model by the persisted verdict Rust gave on its saved set points. */
-    const tabPillOf = (m: FailureModel, st: ModelDotState): { text: string; cls: string } | null => {
-        if (st === 'trained') {
-            const flag = setPointFlagOf(m, st);
-            if (flag === 'fix') return { text: 'Fix set point', cls: 'f4-pill--bad' };
-            if (flag === 'needed') return { text: 'Set points needed', cls: 'f4-pill--warn' };
-        }
-        return TAB_PILL[st];
+    /** The state dot of a kind tab: colour (the sensor list's colours) + the words of
+     *  its tooltip — the central status (`modelDotState`), refined for a trained model
+     *  by the verdict on its set points, by the gate badge, and red for a model whose
+     *  run failed in this session. */
+    const tabDotOf = (m: FailureModel, st: ModelDotState): { dot: 'complete' | 'need' | 'bad' | null; words: string } => {
+        if (trainError[m.id]) return { dot: 'bad', words: TRAIN_FAILED_WORDS };
+        const flag = setPointFlagOf(m, st);
+        const words = gateBadge(m) ?? (flag === 'fix' ? 'Fix set point' : flag === 'needed' ? 'Set points needed' : TAB_WORDS[st]);
+        return { dot: flag === 'fix' ? 'bad' : DOT_CLASS[st], words };
     };
 
     /** Props the two pages share (`WorkbenchPageProps`) for the ACTIVE model. */
@@ -3311,6 +3312,31 @@ export default function BuildModelWindow() {
      *  stale -> "Out of date" charts (or a message when there is nothing to
      *  draw) · Relationship fit gone from memory -> "Re-train to recompute" ·
      *  otherwise the charts. */
+    /** "Train sensor ↑": the text link every sentence uses to point at the ONE place
+     *  to train (it focuses the header's Train sensor button). */
+    const trainSensorLink = (testId: string) => (
+        <button type="button" className="tq-inline-link" data-testid={testId} onClick={() => trainSensorBtnRef.current?.focus()}>
+            Train sensor ↑
+        </button>
+    );
+    /** The ONE board shape of every chart-less state (SPEC workbench-redesign §1): a
+     *  title, one sentence and an optional mono line. Its actions are text links to
+     *  the one place for them ("Train sensor ↑", "Model settings", "Running
+     *  condition ↑") — never a button of its own. */
+    const board = (testId: string, tone: 'plain' | 'bad' | 'run', title: ReactNode, text?: ReactNode, detail?: ReactNode) => (
+        <div className="bmw-stage">
+            <div className={`bmw-stage-empty wbx-msg${tone === 'plain' ? '' : ` wbx-msg--${tone}`}`} data-testid={testId}>
+                <div className="wbx-msg-in">
+                    <b className="wbx-msg-t">
+                        {tone === 'run' && <Loader2 size={14} className="pm-spin" aria-hidden="true" />}
+                        {title}
+                    </b>
+                    {text && <span className="wbx-msg-s">{text}</span>}
+                    {detail && <span className="wbx-msg-d">{detail}</span>}
+                </div>
+            </div>
+        </div>
+    );
     const renderModelFitBody = (m: FailureModel) => {
         const reason = buildBlockReason(m);
         const qItem = queue.isRunning ? queue.itemOf(m.id) : undefined;
@@ -3331,18 +3357,13 @@ export default function BuildModelWindow() {
             );
         }
         if (isModelDone(m) && (reason !== null || !m.lastTrainedAt)) {
-            return (
-                <div className="bmw-stage">
-                    <div className="bmw-stage-empty" data-testid="results-placeholder">
-                        Marked complete — train the model to see its charts.
-                    </div>
-                </div>
-            );
+            return board('results-placeholder', 'plain', 'Marked complete',
+                <>Train it with {trainSensorLink('board-train-sensor')} to see its charts.</>);
         }
         if (reason !== null) {
-            // Step 1 not done (2026-10-03): a model that FOLLOWS the workspace
+            // No running condition yet (2026-10-03): a model that FOLLOWS the workspace
             // condition is locked until the workspace running condition is
-            // set / fixed — say that first, with a button straight into the
+            // set / fixed — say that first, with a link straight into the
             // settings. A model on its own Custom condition is not affected by
             // the workspace one, so it keeps the plain list below.
             const gr = gateReasonOf(m);
@@ -3353,59 +3374,55 @@ export default function BuildModelWindow() {
             return (
                 <div className="bmw-stage" style={wsLocked ? { flexDirection: 'column', gap: '12px' } : undefined}>
                     {wsLocked && (
-                        <div className="bmw-stage-empty bmw-stage-lock" data-testid="results-rc-locked">
-                            <Lock size={22} aria-hidden="true" />
-                            <div>
-                                <b>{rcStepState === 'invalid' ? 'Fix the running condition first' : 'Set the running condition first'}</b>
-                                <span>Training is locked until Step 1 is done.</span>
+                        <div className="bmw-stage-empty wbx-msg" data-testid="results-rc-locked">
+                            <div className="wbx-msg-in">
+                                <b className="wbx-msg-t">
+                                    <Lock size={14} aria-hidden="true" />
+                                    {rcStepState === 'invalid' ? 'Fix the running condition first' : 'Set the running condition first'}
+                                </b>
+                                <span className="wbx-msg-s">
+                                    Nothing that follows the workspace running condition can train until it is {rcStepState === 'invalid' ? 'fixed' : 'set'} — open{' '}
+                                    <button type="button" className="tq-inline-link" data-testid="results-rc-locked-open" onClick={() => setRcFilterOpen(true)}>
+                                        Running condition ↑
+                                    </button>
+                                </span>
                             </div>
-                            <button type="button" className="rcx-btn" data-testid="results-rc-locked-open" onClick={() => setRcFilterOpen(true)}>
-                                {rcStepState === 'invalid' ? 'Fix period' : 'Set running condition'}
-                            </button>
                         </div>
                     )}
                     {items.length > 0 && (
-                        <div className="bmw-stage-empty" data-testid="results-incomplete" style={{ textAlign: 'left', alignItems: 'flex-start' }}>
-                            <div style={{ fontWeight: 600, marginBottom: '6px', color: 'var(--text-primary)' }}>
-                                {items.length} item{items.length === 1 ? '' : 's'} to fix before training
+                        <div className="bmw-stage-empty wbx-msg" data-testid="results-incomplete">
+                            <div className="wbx-msg-in">
+                                <b className="wbx-msg-t">{items.length} item{items.length === 1 ? '' : 's'} to fix before training</b>
+                                <ul className="wbx-msg-list">
+                                    {items.map((it, i) => (
+                                        <li key={i}>
+                                            <button type="button" className="bmw-fix-link" onClick={it.onClick}>{it.text}</button>
+                                        </li>
+                                    ))}
+                                </ul>
                             </div>
-                            <ul style={{ margin: 0, paddingLeft: '18px' }}>
-                                {items.map((it, i) => (
-                                    <li key={i}>
-                                        <button type="button" className="bmw-fix-link" onClick={it.onClick}>{it.text}</button>
-                                    </li>
-                                ))}
-                            </ul>
                         </div>
                     )}
                 </div>
             );
         }
         if (trainStatus[m.id] === 'loading') {
-            return (
-                <div className="bmw-stage">
-                    <div className="bmw-stage-empty" data-testid="results-loading">
-                        <Loader2 size={20} className="pm-spin" aria-hidden="true" /> Running…
-                    </div>
-                </div>
-            );
+            // "Training" is said only about a model IN THE RUN; a trained model whose
+            // result is being worked out again (reopening it) is "Loading" — no time estimate.
+            return qItem?.state === 'running'
+                ? board('results-loading', 'run', `Training the ${kindModelName(m.kind)} · about ${formatTrainSeconds(ROUGH_TRAIN_SECONDS[m.kind])}`,
+                    'Its settings are locked until it finishes. The charts appear here when it is done.')
+                : board('results-loading', 'run', `Loading the ${kindModelName(m.kind)}…`, 'The charts appear here when it is ready.');
         }
         const err = trainError[m.id];
         if (err) {
-            return (
-                <div className="bmw-stage">
-                    <div className="bmw-stage-empty" data-testid="results-error" style={{ color: 'var(--warn)' }}>
-                        Couldn't compute the preview: {err}
-                    </div>
-                </div>
-            );
+            return board('results-error', 'bad', 'Training failed',
+                <>Fix the problem, then train again with {trainSensorLink('board-train-sensor')}. The model keeps its last state.</>, err);
         }
         if (!m.lastTrainedAt) {
-            return (
-                <div className="bmw-stage">
-                    <div className="bmw-stage-empty" data-testid="results-placeholder">Not trained yet</div>
-                </div>
-            );
+            return board('results-placeholder', 'plain', 'Not trained yet',
+                <>Train it with {trainSensorLink('board-train-sensor')} — the charts of the trained model appear here.</>,
+                `${KIND_TAB_LABEL[m.kind]} · uses ${effectiveModelFor(m).runningConditionMode === 'custom' ? 'its own running condition (Custom)' : 'the workspace running condition'} · ≈ ${formatTrainSeconds(ROUGH_TRAIN_SECONDS[m.kind])}`);
         }
         const props = pagePropsFor(m);
         if (props.stale) {
@@ -3414,11 +3431,8 @@ export default function BuildModelWindow() {
                 <div data-testid="results-chart" data-stale="true">
                     <ModelFitPage {...props} data={healthPreview.data} onXPredictorChange={onFitX} onCompare={onCompare} compareDisabledReason={queue.isRunning ? TRAIN_RUN_ACTIVE_REASON : undefined} trainDaysEstimate={trainDaysEstimateFor(m)} />
                 </div>
-            ) : (
-                <div className="bmw-stage">
-                    <div className="bmw-stage-empty" data-testid="results-stale">Settings changed — re-train to see the result.</div>
-                </div>
-            );
+            ) : board('results-stale', 'plain', 'Out of date',
+                <>Settings changed — re-train with {trainSensorLink('board-train-sensor')} to see the result.</>);
         }
         if (healthPreview.notFitted) {
             return (
@@ -3428,7 +3442,7 @@ export default function BuildModelWindow() {
                             <b style={{ color: 'var(--text-primary)', display: 'block', marginBottom: '4px' }}>Re-train to recompute</b>
                             The fitted Relation model is no longer in memory (the data was reloaded or a special sensor changed).
                             <div style={{ marginTop: '10px' }}>
-                                <button type="button" className="bmw-btn-retrain bmw-btn-retrain--stale" data-testid="results-not-fitted-retrain" disabled={retrainBlockOf(m) !== undefined} title={retrainBlockOf(m)} onClick={() => trainOnly(m)}>↻ Re-train</button>
+                                <button type="button" className="rcx-btn rcx-btn--sm" data-testid="results-not-fitted-retrain" disabled={retrainBlockOf(m) !== undefined} title={retrainBlockOf(m)} onClick={() => trainOnly(m)}>↻ Re-train</button>
                             </div>
                         </div>
                     </div>
@@ -3436,26 +3450,14 @@ export default function BuildModelWindow() {
             );
         }
         if (healthPreview.error && !healthPreview.data) {
-            return (
-                <div className="bmw-stage">
-                    <div className="bmw-stage-empty" data-testid="results-health-error" style={{ color: 'var(--warn)' }}>
-                        Couldn't load the charts: {healthPreview.error}
-                    </div>
-                </div>
-            );
+            return board('results-health-error', 'bad', "Couldn't load the charts", undefined, healthPreview.error);
         }
         if (!healthPreview.data) {
             // Trained-and-fresh per the workspace's persisted fields, but the
             // auto-recompute / preview has not landed its first result in THIS
             // session yet.
-            return (
-                <div className="bmw-stage">
-                    <div className="bmw-stage-empty" data-testid="results-loading">
-                        <Loader2 size={20} className="pm-spin" aria-hidden="true" /> Loading the last result…
-                        {slowScoring && <span data-testid="slow-test-scoring"> {SLOW_TEST_SCORING_TEXT}</span>}
-                    </div>
-                </div>
-            );
+            return board('results-loading', 'run', `Loading the ${kindModelName(m.kind)}…`,
+                slowScoring ? <span data-testid="slow-test-scoring">{SLOW_TEST_SCORING_TEXT}</span> : 'The charts appear here when it is ready.');
         }
         return (
             <div data-testid="results-chart">
@@ -3526,155 +3528,144 @@ export default function BuildModelWindow() {
     const filesOutOfDateFor = (m: FailureModel): boolean =>
         isModelDone(m) && !!m.healthExport && !sameSetPoints(m.healthExport.setPoints, setPointsOf(m));
 
-    /** Footer of BOTH pages (mockup `.wd-foot`). Model fit: status · Open full
-     *  view · Save changes · Re-train · "Next: Health score →" (NO Mark complete:
-     *  a model is completed only from the Health score page).
-     *  Health score: "← Model fit" · status / blocking reason · Mark complete
-     *  ("Mark incomplete" once Complete). */
-    const renderFooter = (m: FailureModel, page: WorkbenchPage) => {
+    /** "…\workspaces\<id>\output\<sensor>": the saved folder without the machine's own prefix (the full path is the tooltip). */
+    const shortOutputDir = (dir: string): string => dir.replace(/^.*([\\/])(workspaces[\\/])/, '…$1$2');
+
+    /** THE one filled button of the detail pane right now (SPEC workbench-redesign §1,
+     *  "at most ONE filled button on screen"). Every other button is a ghost or a text
+     *  button:
+     *   - the running condition is not set / not valid -> none here (its own card has it)
+     *   - Model fit:    Save changes while a draft exists · else Train sensor while a
+     *                   model of this sensor needs training · else "Next: Health score"
+     *                   for a trained model · a Complete model has none
+     *   - Health score: Train sensor when THIS model must train again · else Mark
+     *                   complete (again, when the files are out of date) · a Complete
+     *                   model has none, unless a sibling model needs training
+     *  Presentation only: it never enables, disables or hides anything. */
+    const primaryActionOf = (m: FailureModel, page: WorkbenchPage, cands: readonly TrainCandidate[]): PrimaryAction => {
+        if (rcStepState !== 'set') return null;
+        const sensorNeedsTrain = cands.some(c => c.plan.kind === 'ready');
+        if (page === 'model') {
+            if (m.id in drafts) return 'save';
+            if (sensorNeedsTrain) return 'train';
+            if (isModelDone(m)) return null;
+            return healthPageBlock(m) === null && !queue.isLocked(m.id) ? 'next' : null;
+        }
+        if (cands.find(c => c.id === m.id)?.plan.kind === 'ready') return 'train';
+        if (!isModelDone(m) || filesOutOfDateFor(m)) return 'mark';
+        return sensorNeedsTrain ? 'train' : null;
+    };
+
+    /** Footer of BOTH pages (SPEC workbench-redesign §1): ONE status pill + ONE
+     *  sentence + at most one filled button (`primary`). This is the only place a
+     *  model's status is said in words — tabs, list and set-point card carry a dot.
+     *  Model fit: "Save changes" (only while a draft exists) · "Next: Health score →"
+     *  (NO Mark complete: a model is completed only from the Health score page).
+     *  Health score: "← Model fit" · Mark complete ("Mark incomplete", a text
+     *  button, once Complete; "Mark complete again" only when the files are out of date). */
+    const renderFooter = (m: FailureModel, page: WorkbenchPage, primary: PrimaryAction) => {
         const saveReason = modelBlockReason(m);
         const reason = buildBlockReason(m);
         const cat = categoryOf(m);
         const trainedFresh = isModelTrainedFresh(m);
         const stale = isModelStale(m);
         const training = trainStatus[m.id] === 'loading';
+        const done = isModelDone(m);
         // 🆕 QA fix (2026-09-29): a run that failed IN THIS SESSION — whether
         // an explicit Re-train click or the silent auto-recompute on reopen —
         // must override the happy-path pill/footer/Mark-complete-enabled
         // state even though the PERSISTED fields still say "fresh" (nothing
-        // was written back on failure). Mirrors how a failed MANUAL Train
-        // already keeps the Train/Re-train button visible for retry without
-        // touching persisted fields — this just extends the same "in-session
-        // error overrides the happy path" treatment to the pill/footer text/
-        // Mark complete, which previously only looked at `trainedFresh`.
+        // was written back on failure).
         const hasSessionError = !!trainError[m.id];
         const pillState: 'complete' | 'trained' | 'incomplete' =
-            isModelDone(m) ? 'complete' : (trainedFresh && !hasSessionError && reason === null) ? 'trained' : 'incomplete';
+            done ? 'complete' : (trainedFresh && !hasSessionError && reason === null) ? 'trained' : 'incomplete';
         const pillLabel = pillState === 'complete' ? 'Complete' : pillState === 'trained' ? 'Trained' : 'Incomplete';
         const healthBlock = healthPageBlock(m);
         const markBlock = page === 'health' ? markCompleteBlock(m) : null;
-        const saving = saveInfo[m.id]?.phase === 'running';
+        const savePhase = saveInfo[m.id]?.phase;
+        const saving = savePhase === 'running';
         const outOfDate = page === 'health' && filesOutOfDateFor(m);
         const scoredCount = toTestPeriodsWire(effectiveRunningCondition(effectiveModelFor(m), gateFg).testPeriods).length;
         // Train queue: queued or training in the run = settings locked (Save disabled).
         const qItem = queue.isRunning ? queue.itemOf(m.id) : undefined;
         const locked = queue.isLocked(m.id);
+        const hasDraft = m.id in drafts;
         // The per-model Train button left this footer (customer items 8 + 9): the
         // header's Train sensor is the one place. This link focuses it.
-        const goTrainSensor = (
-            <button type="button" className="tq-inline-link" data-testid="footer-train-sensor" onClick={() => trainSensorBtnRef.current?.focus()}>
-                Train sensor ↑
-            </button>
-        );
+        const goTrainSensor = trainSensorLink('footer-train-sensor');
+        // "Trained 9 Feb 2026 23:50 · scored on 2 periods" (what used to be the
+        // "Scored · N" pill and the "Last trained" caption).
+        const trainedLine: ReactNode = m.lastTrainedAt
+            ? <>Trained <Stamp at={m.lastTrainedAt} />{scoredCount > 0 ? ` · scored on ${scoredCount} period${scoredCount === 1 ? '' : 's'}` : ''}</>
+            : null;
+        const identityLine = `${kindModelName(m.kind)}${cat ? ` · ${CATEGORY_LABELS[cat]}` : ''}`;
+        // A successful save is THIS sentence (there is no "Files saved to …" banner).
+        const saved = saveInfoFor(m);
+        const savedLine: ReactNode = saved.phase === 'ok'
+            ? <span data-testid="save-ok">Files saved <Stamp at={saved.at} /> · <span className="hs-path" data-testid="footer-saved-path" title={saved.outputDir}>{shortOutputDir(saved.outputDir)}</span></span>
+            : null;
+
+        // The ONE sentence (first match wins).
+        let line: ReactNode;
+        let tone: 'plain' | 'warn' | 'bad' = 'plain';
+        let lineId: 'footer-status' | 'mark-block-reason' | 'build-block-reason' | 'files-out-of-date' = 'footer-status';
+        if (page === 'health') {
+            if (saving) line = <><Loader2 size={11} className="pm-spin" aria-hidden="true" /> Saving the model files…</>;
+            else if (savePhase === 'error') { line = 'Not saved · fix it, then Mark complete again'; tone = 'bad'; }
+            else if (done && outOfDate) { line = 'Files out of date — set points changed after saving · Mark complete again to update them'; tone = 'warn'; lineId = 'files-out-of-date'; }
+            else if (done) line = savedLine ?? trainedLine ?? identityLine;
+            else if (markBlock !== null) { line = markBlock; tone = 'warn'; lineId = 'mark-block-reason'; }
+            else line = 'Set points valid — check the score chart, then Mark complete';
+        } else if (qItem && locked) {
+            line = qItem.state === 'running'
+                ? <><Loader2 size={11} className="pm-spin" aria-hidden="true" /> Training now · about {formatTrainSeconds(ROUGH_TRAIN_SECONDS[m.kind])}</>
+                : `Queued in the run · ${queue.queuePositionOf(m.id) === 1 ? 'next' : `#${queue.queuePositionOf(m.id)}`}`;
+        } else if (reason) { line = reason; tone = 'warn'; lineId = 'build-block-reason'; }
+        // An unsaved draft is said here, once (the tab carries no "edited" pill).
+        else if (hasDraft) line = `Unsaved changes to the ${kindModelName(m.kind)}`;
+        else if (done) line = trainedLine ?? identityLine;
+        else if (hasSessionError) { line = <>Training failed · fix the problem, then {goTrainSensor}</>; tone = 'bad'; }
+        else if (trainedFresh) line = <>{trainedLine} · check the charts, then set the health set points</>;
+        else if (stale) { line = <>Settings changed · re-train with {goTrainSensor}</>; tone = 'warn'; }
+        // Also why "Next: Health score →" is disabled.
+        else if (!m.lastTrainedAt) line = <>Not trained yet · {goTrainSensor}</>;
+        else line = identityLine;
+
+        const markClass = primary === 'mark' ? 'bmw-btn-ok' : 'rcx-btn';
         return (
-            <div className="f4-foot">
+            <div className="f4-foot wbx-foot" data-testid="wb-footer" data-primary={primary ?? 'none'}>
                 {page === 'health' && (
                     <button type="button" className="f4-btn f4-btn--plain f4-btn--small" data-testid="footer-back-to-fit" onClick={() => setPage(m, 'model')}>
                         ← Model fit
                     </button>
                 )}
-                <span className={`model-status-pill model-status-pill--${pillState}`} style={{ cursor: 'default' }}>
+                <span className={`model-status-pill model-status-pill--${pillState}`} data-testid="footer-pill" style={{ cursor: 'default' }}>
                     {pillLabel}
                 </span>
-                {/* "Scored · N" (for reading only, footer only): the trained model is
-                    scored on N valid scoring periods. */}
-                {pillState !== 'incomplete' && scoredCount > 0 && <ScoredPill n={scoredCount} />}
-                {page === 'health' && saving ? (
-                    <span data-testid="footer-status" className="f4-foot-reason">
-                        <Loader2 size={11} className="pm-spin" aria-hidden="true" /> Saving results…
-                    </span>
-                ) : page === 'health' && !isModelDone(m) && markBlock !== null ? (
-                    <span data-testid="mark-block-reason" className="f4-foot-reason f4-foot-reason--block">
-                        <CircleAlert size={11} aria-hidden="true" />
-                        {markBlock}
-                    </span>
-                ) : page === 'health' && !isModelDone(m) ? (
-                    <span data-testid="footer-status" className="f4-foot-reason">Set points valid — check the score, then mark complete</span>
-                ) : page === 'model' && qItem && locked ? (
-                    <span data-testid="footer-status" className="f4-foot-reason">
-                        {qItem.state === 'running'
-                            ? <><Loader2 size={11} className="pm-spin" aria-hidden="true" /> Training now · about {formatTrainSeconds(ROUGH_TRAIN_SECONDS[m.kind])}</>
-                            : `Queued in the run · ${queue.queuePositionOf(m.id) === 1 ? 'next' : `#${queue.queuePositionOf(m.id)}`}`}
-                    </span>
-                ) : reason ? (
-                    <span data-testid="build-block-reason" className="f4-foot-reason f4-foot-reason--block">
-                        <CircleAlert size={11} aria-hidden="true" />
-                        {reason}
-                    </span>
-                ) : m.id in drafts ? (
-                    <span data-testid="footer-status" className="f4-foot-reason">Unsaved changes to the {KIND_LABEL[m.kind]} model</span>
-                ) : isModelDone(m) ? (
-                    <span data-testid="footer-status" className="f4-foot-reason">
-                        {m.lastTrainedAt ? `Last trained ${formatTrainedAt(m.lastTrainedAt)}` : `${KIND_LABEL[m.kind]}${cat ? ` · ${CATEGORY_LABELS[cat]}` : ''}`}
-                    </span>
-                ) : hasSessionError ? (
-                    <span data-testid="footer-status" className="f4-foot-reason f4-foot-reason--block">
-                        <CircleAlert size={11} aria-hidden="true" />
-                        Training failed · fix the problem, then {goTrainSensor}
-                    </span>
-                ) : trainedFresh ? (
-                    <span data-testid="footer-status" className="f4-foot-reason">Check the chart, then mark it complete</span>
-                ) : stale ? (
-                    <span data-testid="footer-status" className="f4-foot-reason f4-foot-reason--block">
-                        <CircleAlert size={11} aria-hidden="true" />
-                        Settings changed · re-train with {goTrainSensor}
-                    </span>
-                ) : !m.lastTrainedAt ? (
-                    // Also why "Next: Health score →" is disabled.
-                    <span data-testid="footer-status" className="f4-foot-reason">
-                        Not trained · {goTrainSensor} — train first, then set the health set points
-                    </span>
-                ) : (
-                    <span data-testid="footer-status" className="f4-foot-reason">{KIND_LABEL[m.kind]}{cat ? ` · ${CATEGORY_LABELS[cat]}` : ''}</span>
-                )}
-                {page === 'model' && (
+                <span
+                    data-testid={lineId}
+                    data-tone={tone}
+                    className={`f4-foot-reason wbx-reason${tone === 'warn' ? ' f4-foot-reason--block' : tone === 'bad' ? ' f4-foot-reason--bad' : ''}`}
+                >
+                    {tone !== 'plain' && <CircleAlert size={11} aria-hidden="true" />}
+                    {line}
+                </span>
+                {page === 'model' && hasDraft && (
                     <button
-                        className="f4-btn-save"
+                        type="button"
+                        className={primary === 'save' ? 'f4-btn-save' : 'rcx-btn'}
+                        data-testid="save-changes"
                         disabled={saveReason !== null || locked}
-                        title={locked ? 'Settings are locked while this model is in the run' : undefined}
+                        title={locked ? 'Settings are locked while this model is in the run' : saveReason ?? undefined}
                         onClick={() => commitModel(m)}
                     >
                         Save changes
                     </button>
                 )}
-                {page === 'health' && (
-                    <>
-                        {isModelDone(m) ? (
-                            <>
-                                {outOfDate && (
-                                    <button
-                                        type="button"
-                                        className="bmw-btn-ok"
-                                        data-testid="mark-complete-again"
-                                        disabled={markBlock !== null || saving}
-                                        title={markBlock ?? 'Write the files again with the current set points'}
-                                        onClick={() => { void runMarkComplete(m); }}
-                                    >
-                                        {saving ? 'Saving…' : '✓ Mark complete again'}
-                                    </button>
-                                )}
-                                <button type="button" className="f4-btn f4-btn--plain f4-btn--small" data-testid="mark-incomplete" disabled={saving} onClick={() => markModelIncomplete(m.id)}>
-                                    Mark incomplete
-                                </button>
-                            </>
-                        ) : (
-                            <button
-                                type="button"
-                                className="bmw-btn-ok"
-                                data-testid="mark-complete"
-                                disabled={markBlock !== null || saving}
-                                title={markBlock ?? 'Write the model files and mark it complete'}
-                                onClick={() => { void runMarkComplete(m); }}
-                            >
-                                {saving ? 'Saving…' : '✓ Mark complete'}
-                            </button>
-                        )}
-                    </>
-                )}
                 {page === 'model' && (
                     <button
                         type="button"
-                        className="rcx-btn rcx-btn--pri"
+                        className={`rcx-btn${primary === 'next' ? ' rcx-btn--pri' : ''}`}
                         data-testid="next-health-score"
                         disabled={healthBlock !== null || training}
                         title={healthBlock ?? undefined}
@@ -3683,6 +3674,36 @@ export default function BuildModelWindow() {
                         Next: Health score →
                     </button>
                 )}
+                {page === 'health' && (done ? (
+                    <>
+                        <button type="button" className="f4-btn f4-btn--plain f4-btn--small" data-testid="mark-incomplete" disabled={saving} onClick={() => markModelIncomplete(m.id)}>
+                            Mark incomplete
+                        </button>
+                        {outOfDate && (
+                            <button
+                                type="button"
+                                className={markClass}
+                                data-testid="mark-complete-again"
+                                disabled={markBlock !== null || saving}
+                                title={markBlock ?? 'Write the files again with the current set points'}
+                                onClick={() => { void runMarkComplete(m); }}
+                            >
+                                {saving ? 'Saving…' : '✓ Mark complete again'}
+                            </button>
+                        )}
+                    </>
+                ) : (
+                    <button
+                        type="button"
+                        className={markClass}
+                        data-testid="mark-complete"
+                        disabled={markBlock !== null || saving}
+                        title={markBlock ?? 'Write the model files and mark it complete'}
+                        onClick={() => { void runMarkComplete(m); }}
+                    >
+                        {saving ? 'Saving…' : '✓ Mark complete'}
+                    </button>
+                ))}
             </div>
         );
     };
@@ -3691,9 +3712,11 @@ export default function BuildModelWindow() {
      *  "▶ Train sensor · n of m" that trains every model of the sensor that needs
      *  it (I → R → C, up-to-date ones skipped), a ▾ menu ("Train all N models" /
      *  "<Kind> only" — "Re-train …" once trained before, see `sensorTrainMenuCopy`)
-     *  and the line under it saying what it will do or why not. */
-    const renderSensorTrain = () => {
-        const cands = orderedDetail.map(candidateOf);
+     *  and ONE short line under it saying what it will do. The reason a model can't
+     *  train is said once, on its own board — this line only points there (the
+     *  button's tooltip keeps the full reason). Filled only while it is the pane's
+     *  primary action (`primaryActionOf`), a ghost otherwise. */
+    const renderSensorTrain = (cands: readonly TrainCandidate[], filled: boolean) => {
         const plans = new Map(cands.map(c => [c.id, c.plan]));
         const ready = orderedDetail.filter(m => plans.get(m.id)?.kind === 'ready');
         const up = orderedDetail.filter(m => plans.get(m.id)?.kind === 'upToDate');
@@ -3702,7 +3725,12 @@ export default function BuildModelWindow() {
             const p = plans.get(m.id);
             return p && p.kind !== 'ready' ? p.reason : '';
         };
-        const letter = (m: FailureModel) => KIND_ABBREV[m.kind];
+        const name = (m: FailureModel) => KIND_TAB_LABEL[m.kind];
+        const names = (list: FailureModel[], sep: string) => list.map(name).join(sep);
+        /** "Trains the Relation model", "Trains Individual + Relation model". */
+        const trains = (list: FailureModel[]) => `Trains ${list.length === 1 && list[0].kind === 'relationship' ? 'the ' : ''}${names(list, ' + ')}`;
+        /** The full reason, for the button's tooltip. */
+        const cantDetail = `Can't train: ${cant.map(m => `${name(m)} — ${whyOf(m)}`).join(' · ')}`;
         const thisRunning = queue.isRunning && orderedDetail.some(m => queue.itemOf(m.id)?.state === 'running');
         const inRun = orderedDetail.filter(m => queue.isLocked(m.id));
         // No workspace running condition at all (an invalid period has its own, more specific reason per model).
@@ -3714,15 +3742,21 @@ export default function BuildModelWindow() {
         else if (inRun.length) why = `${inRun.length} model${inRun.length === 1 ? '' : 's'} of this sensor queued in the run`;
         else if (rcBlocks) { why = TRAIN_NEEDS_RUNNING_CONDITION; tone = 'warn'; }
         else if (ready.length === 0 && cant.length === 0) why = `${up.length} model${up.length === 1 ? '' : 's'} up to date — nothing to train`;
-        else if (ready.length === 0) { why = `Can't train: ${cant.map(m => `${KIND_LABEL[m.kind]} — ${whyOf(m)}`).join(' · ')}`; tone = 'warn'; }
-        else if (cant.length) { why = `Trains ${ready.map(letter).join(' + ')} · skips ${cant.map(m => `${letter(m)} (${whyOf(m)})`).join(', ')}`; tone = 'warn'; }
-        else if (up.length) why = `Trains ${ready.map(letter).join(' + ')} · ${up.map(letter).join(', ')} up to date, skipped`;
-        else why = `Trains ${ready.map(m => KIND_LABEL[m.kind]).join(' + ')} · ≈ ${formatTrainSeconds(roughTrainSeconds(ready.map(m => m.kind)))}`;
+        else if (ready.length === 0) {
+            why = cant.some(m => m.id === activeModel?.id)
+                ? "Can't train · see below"
+                : `${names(cant, ', ')} can't train · see ${cant.length === 1 ? 'its tab' : 'their tabs'}`;
+            tone = 'warn';
+        }
+        else if (cant.length) { why = `${trains(ready)} · ${names(cant, ', ')} can't train, skipped`; tone = 'warn'; }
+        else if (up.length) why = `${trains(ready)} · ${names(up, ', ')} up to date, skipped`;
+        else why = `${trains(ready)} · ≈ ${formatTrainSeconds(roughTrainSeconds(ready.map(m => m.kind)))}`;
         const busy = !queue.canStart;
         const title = queue.stale ? TRAIN_STALE_MESSAGE
             : queue.isRunning ? TRAIN_RUN_ACTIVE_REASON
             : rcBlocks ? TRAIN_NEEDS_RUNNING_CONDITION
-            : ready.length === 0 ? why
+            : ready.length === 0 ? (cant.length ? cantDetail : why)
+            : cant.length ? cantDetail
             : undefined;
         // Menu copy: "Re-train" is only said about a model that has a train record
         // (`lastTrainedAt` — what `isModelStale` / the up-to-date rule read as "was trained").
@@ -3746,6 +3780,7 @@ export default function BuildModelWindow() {
         return (
             <SensorTrainButton
                 buttonRef={trainSensorBtnRef}
+                filled={filled}
                 label={thisRunning ? <><Loader2 size={12} className="pm-spin" aria-hidden="true" /> Training…</> : `▶ Train sensor · ${ready.length} of ${orderedDetail.length}`}
                 disabled={busy || ready.length === 0}
                 title={title}
@@ -3797,6 +3832,10 @@ export default function BuildModelWindow() {
         const stale = isModelStale(activeModel);
         const healthBlock = healthPageBlock(activeModel);
         const training = trainStatus[activeModel.id] === 'loading';
+        // One plan per model of the sensor, computed once: the Train sensor button and
+        // the one-filled-button rule both read it.
+        const cands = orderedDetail.map(candidateOf);
+        const primary = primaryActionOf(activeModel, page, cands);
         return (
             <>
                 <div className="bmw-dhead">
@@ -3826,6 +3865,9 @@ export default function BuildModelWindow() {
                             })}
                         </div>
                     </div>
+                    {/* ONE control group — category switch · page switch · Train sensor — that
+                        moves as a row under the name on a narrow pane (never one control per row). */}
+                    <div className="wbx-dh-ctl" data-testid="detail-controls">
                     <div
                         role="group"
                         aria-label="Category"
@@ -3852,13 +3894,12 @@ export default function BuildModelWindow() {
                     </div>
                     <PageSwitch
                         page={page}
-                        modelFitDone={!!activeModel.lastTrainedAt && !stale}
-                        healthDone={isModelDone(activeModel)}
                         healthDisabled={healthBlock !== null}
                         healthDisabledTitle={healthBlock ?? undefined}
                         onPage={p => setPage(activeModel, p)}
                     />
-                    {renderSensorTrain()}
+                    {renderSensorTrain(cands, primary === 'train')}
+                    </div>
                 </div>
 
                 {categoryWarn?.key === selectedSensorKey && (
@@ -3870,8 +3911,8 @@ export default function BuildModelWindow() {
                 <div role="tablist" className="f4-tabs">
                     {orderedDetail.map(m => {
                         const selected = m.id === activeModel.id;
-                        const badge = gateBadge(m);
-                        const st = dotStateOf(m);
+                        // No text pill on a tab — ONE dot in the list's colours, the words in the tooltip.
+                        const { dot, words } = tabDotOf(m, dotStateOf(m));
                         return (
                             <button
                                 key={m.id}
@@ -3880,17 +3921,18 @@ export default function BuildModelWindow() {
                                 aria-selected={selected}
                                 className={`f4-tab${selected ? ' f4-tab--on' : ''}`}
                                 style={{ '--kc': KIND_COLOR[m.kind] } as CSSProperties}
-                                title={`${KIND_LABEL[m.kind]} · ${isModelDone(m) ? 'Complete' : 'Incomplete'}`}
+                                title={`${KIND_TAB_LABEL[m.kind]} · ${words}`}
                                 onClick={() => setActiveTab(prev => ({ ...prev, [selectedSensorKey!]: m.id }))}
                             >
                                 <span className={`f4-kmini model-kind-icon--${m.kind}`} aria-hidden="true">{KIND_ABBREV[m.kind]}</span>
-                                <span className="f4-tab-l">{KIND_LABEL[m.kind]}</span>
-                                <span className={`f4-sdot${isModelDone(m) ? ' f4-sdot--done' : ''}`} />
-                                {m.id in drafts && <span className="f4-dirty" title="Unsaved changes">edited</span>}
-                                {badge && <GateBadgePill text={badge} testId={`condition-badge-${m.id}`} title={gateReasonOf(m) ?? undefined} />}
-                                {!badge && tabPillOf(m, st) && (
-                                    <span data-testid={`tab-status-${m.id}`} aria-hidden="true" className={`f4-pill ${tabPillOf(m, st)!.cls}`}>{tabPillOf(m, st)!.text}</span>
-                                )}
+                                <span className="f4-tab-l">{KIND_TAB_LABEL[m.kind]}</span>
+                                <span
+                                    className={`f4-sdot${dot ? ` f4-sdot--${dot}` : ''}`}
+                                    data-testid={`tab-status-${m.id}`}
+                                    data-dot={dot ?? 'none'}
+                                    title={words}
+                                    aria-hidden="true"
+                                />
                             </button>
                         );
                     })}
@@ -3900,7 +3942,7 @@ export default function BuildModelWindow() {
                 <div role="tabpanel" data-testid={`model-tab-panel-${activeModel.id}`} style={{ display: 'contents' }}>
                     {/* One scroll area for settings + banner + the page body, so the
                         footer below always stays in view however tall the charts are. */}
-                    <div className="wb2-scroll" data-testid="wb-scroll" data-page={page}>
+                    <WorkbenchScroll resetKey={`${activeModel.id}:${page}`} page={page}>
                         {page === 'model' && renderModelSettings(activeModel)}
                         {stale && (
                             <StaleBanner
@@ -3927,7 +3969,6 @@ export default function BuildModelWindow() {
                                 onSetPointsCommit={onSpCommit}
                                 attemptIssues={attemptIssues[activeModel.id] ?? null}
                                 save={saveInfoFor(activeModel)}
-                                filesOutOfDate={filesOutOfDateFor(activeModel)}
                                 onRetrain={onRetrainActive}
                                 retrainDisabledReason={retrainBlockOf(activeModel)}
                                 onRetryPreview={healthPreview.retry}
@@ -3935,8 +3976,8 @@ export default function BuildModelWindow() {
                                 testsChanged={testsChangedState(activeModel, gateFg)}
                             />
                         )}
-                    </div>
-                    {renderFooter(activeModel, page)}
+                    </WorkbenchScroll>
+                    {renderFooter(activeModel, page, primary)}
                 </div>
             </>
         );
@@ -3965,7 +4006,7 @@ export default function BuildModelWindow() {
         <div className="flex flex-col h-screen overflow-hidden" style={{ backgroundColor: 'var(--card-bg)', color: 'var(--text-primary)' }}>
             <div data-tauri-drag-region className="flex justify-between items-center gap-3 shrink-0" style={{ padding: '12px 16px', backgroundColor: 'var(--card-bg)', borderBottom: '1px solid var(--border)' }}>
                 <h2 className="pointer-events-none" style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>
-                    Build Model — Overview
+                    Build Model
                 </h2>
                 {/* The 5-step progress bar that sat here was removed on 2026-10-09 at the
                     user's request: building a model goes back and forth all the time, so
@@ -4052,11 +4093,8 @@ export default function BuildModelWindow() {
                     </div>
                 )}
 
-                {!rcConfigured && blockedByCondition > 0 && (
-                    <div data-testid="rc-blocked-summary" className="f4-reason" style={{ margin: '8px 20px 0' }}>
-                        ⚠ {blockedByCondition} of {totalModelsCount} model{totalModelsCount === 1 ? '' : 's'} can't be built yet — they follow the workspace or have no condition of their own.
-                    </div>
-                )}
+                {/* The "N of M models can't be built yet" line that sat here is gone
+                    (workbench redesign 2026-10-10): the card above and each model's footer say it. */}
 
                 {categoryNotice && categoryNotice.length > 0 && (() => {
                     // One entry per sensor (the change list is per model). The

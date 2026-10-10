@@ -383,7 +383,7 @@ describe('(3) lastTrainedAt / trainedFingerprint survive a save + reload', () =>
         expect(h.invokes.filter(c => c.cmd === 'compute_sensor_stats')).toHaveLength(2);
     });
 
-    it('a Complete model keeps its training metadata through reload and shows "Last trained …"', async () => {
+    it('a Complete model keeps its training metadata through reload and its footer says "Trained <date>" (one Workbench date format)', async () => {
         writeDisk(wsState(currentFg([dashModel({ id: 'i1' })])));
         await mountBuildModel();
         await clickTrain();
@@ -394,7 +394,7 @@ describe('(3) lastTrainedAt / trainedFingerprint survive a save + reload', () =>
         await mountBuildModel();
         expect(diskModel('i1').lastTrainedAt).toBeTruthy();
         expect(pill()).toBe('Complete');
-        expect(footerStatus()).toMatch(/^Last trained /);
+        expect(footerStatus()).toMatch(/^Trained \d{1,2} [A-Z][a-z]{2} \d{4} \d{2}:\d{2}( · scored on \d+ periods?)?$/);
         // Un-marking brings it straight back to Trained (the metadata was never lost).
         await markIncompleteFromHealthPage();
         expect(pill()).toBe('Trained');
@@ -522,7 +522,7 @@ describe('(5) pill / footer / Mark complete agree with the results area', () => 
 
         fireEvent.click(screen.getByText('Model settings', { selector: 'b' }));
         fireEvent.click(screen.getByRole('button', { name: 'Strict' }));
-        expect(screen.getByText('edited')).toBeTruthy(); // really a pending draft
+        expect(screen.getByTestId('save-changes')).toBeTruthy(); // really a pending draft
         expect(screen.queryByTestId('results-chart')).toBeNull();
         expect(markCompleteBtn().disabled).toBe(true);
     });

@@ -164,21 +164,23 @@ describe('hover: nearestIndex / hoverIndexFromAxisEvent / readout', () => {
 
     it('readoutAt: time, raw value / residual and score of one point; null outside the series', () => {
         const ind = makeSetPointAwarePreview({ kind: 'individual', set_points: { lower: 1, upper: 9 } }).series;
-        expect(readoutAt(ind, 3)).toEqual({ time: TS[3], valueLabel: 'value', value: 6.2, score: 60 });
+        // The time is printed in the ONE Workbench date format ("1 Jan 2026 03:00"), never the raw CSV text.
+        expect(TS[3]).toBe('2026-01-01 03:00:00');
+        expect(readoutAt(ind, 3)).toEqual({ time: '1 Jan 2026 03:00', valueLabel: 'value', value: 6.2, score: 60 });
         const rel = makeSetPointAwarePreview({ kind: 'relationship', set_points: { residual_at_80_lower: -1, residual_at_80_upper: 1, residual_at_0_lower: -2, residual_at_0_upper: 2 } }).series;
-        expect(readoutAt(rel, 0)).toEqual({ time: TS[0], valueLabel: 'residual', value: -0.1, score: 100 });
+        expect(readoutAt(rel, 0)).toEqual({ time: '1 Jan 2026 00:00', valueLabel: 'residual', value: -0.1, score: 100 });
         const clu = makeSetPointAwarePreview({ kind: 'clustering', n_clusters: 2, set_points: { outer_sd: 5 } }).series;
-        expect(readoutAt(clu, 4)).toEqual({ time: TS[4], valueLabel: null, value: null, score: 30 });
+        expect(readoutAt(clu, 4)).toEqual({ time: '1 Jan 2026 04:00', valueLabel: null, value: null, score: 30 });
         expect(readoutAt(ind, null)).toBeNull();
         expect(readoutAt(ind, 99)).toBeNull();
     });
 
     it('readoutText: "time · value · score", "not running" for a row without a score, "" for nothing', () => {
         const ind = makeSetPointAwarePreview({ kind: 'individual', set_points: { lower: 1, upper: 9 } }).series;
-        expect(readoutText(readoutAt(ind, 3), 'bar')).toBe(`${TS[3]} · value 6.20 bar · score 60`);
-        expect(readoutText(readoutAt(ind, 3), '')).toBe(`${TS[3]} · value 6.20 · score 60`);
+        expect(readoutText(readoutAt(ind, 3), 'bar')).toBe('1 Jan 2026 03:00 · value 6.20 bar · score 60');
+        expect(readoutText(readoutAt(ind, 3), '')).toBe('1 Jan 2026 03:00 · value 6.20 · score 60');
         const noScore = makeHealthPreview({ kind: 'individual' }).series;
-        expect(readoutText(readoutAt(noScore, 1), 'bar')).toBe(`${TS[1]} · not running`);
+        expect(readoutText(readoutAt(noScore, 1), 'bar')).toBe('1 Jan 2026 01:00 · not running');
         expect(readoutText(null, 'bar')).toBe('');
     });
 });

@@ -184,7 +184,7 @@ describe('model-setting triggers (Save changes)', () => {
         const before = diskModel('r1');
         await mountWindows();
         selectSensor('tag1');
-        selectKindTab('Relationship');
+        selectKindTab('Relation model');
         await waitForCharts();
         expect(pill()).toBe('Complete');
         openSettings();
@@ -203,7 +203,7 @@ describe('model-setting triggers (Save changes)', () => {
         const before = diskModel('r1');
         await mountWindows();
         selectSensor('tag1');
-        selectKindTab('Relationship');
+        selectKindTab('Relation model');
         await settle(500);
         openSettings();
         fireEvent.click(bmw().getByRole('button', { name: 'Strict' }));
@@ -306,7 +306,7 @@ describe('NOT triggers: the model stays Complete', () => {
         expect(diskModel('i1').status).toBe(true);
 
         // Relationship scatter X selector writes scatterXSensor immediately, no demotion
-        selectKindTab('Relationship');
+        selectKindTab('Relation model');
         await waitForCharts();
         expect(pill()).toBe('Complete');
         const xs = within(bmw().getByTestId('fit-x-selector'));
@@ -355,18 +355,20 @@ describe('ONE truth: Dashboard dot, Build Model dot, tab pill, page switch', () 
         // trained, set points empty
         await train();
         await openHealth();
-        await waitFor(() => expect(bmw().getByTestId('tab-status-i1').textContent).toBe('Set points needed'));
+        await waitFor(() => expect(bmw().getByTestId('tab-status-i1').getAttribute('title')).toBe('Set points needed'));
         expect(bmwDot('i1')).toEqual({ state: 'trained', colour: expect.any(String) });
         const trainedColour = bmwDot('i1').colour;
         // 2026-10-04: the Dashboard dot reads the persisted verdict too - "Set points needed" is
         // the yellow "need" dot there, same colour as the Build Model list (it used to be the
         // plain "trained" dot because the verdict only lived in the Build Model window).
         await waitFor(() => expect(dashDot(1, 'tag1', 'individual')).toBe('need'));
-        expect(bmw().getByTestId('page-model-done')).toBeTruthy();
+        // the page switch never carries a tick or a number; the status words are the footer's
+        expect(bmwEl().querySelector('[data-testid="page-model-done"]')).toBeNull();
+        expect(bmw().getByTestId('page-switch').textContent).toBe('Model fitHealth score');
 
         // an invalid set point -> "Fix set point" (red) in Build Model
         await enterSp({ 'sp-lower': '49', 'sp-upper': '90' });
-        await waitFor(() => expect(bmw().getByTestId('tab-status-i1').textContent).toBe('Fix set point'));
+        await waitFor(() => expect(bmw().getByTestId('tab-status-i1').getAttribute('title')).toBe('Fix set point'));
         expect(bmwDot('i1').colour).not.toBe(trainedColour);
 
         // valid
@@ -380,7 +382,8 @@ describe('ONE truth: Dashboard dot, Build Model dot, tab pill, page switch', () 
         await waitFor(() => expect(bmw().getByTestId('save-ok')).toBeTruthy());
         expect(bmwDot('i1').state).toBe('complete');
         await waitFor(() => expect(dashDot(1, 'tag1', 'individual')).toBe('complete'));
-        expect(bmw().getByTestId('page-health-done')).toBeTruthy();
+        expect(bmwEl().querySelector('[data-testid="page-health-done"]')).toBeNull();
+        expect(bmw().getByTestId('footer-pill').textContent).toBe('Complete');
 
         // complete but changed after saving: still Complete everywhere + the hint
         await enterSp({ 'sp-lower': '11' });
@@ -410,7 +413,7 @@ describe('ONE truth: Dashboard dot, Build Model dot, tab pill, page switch', () 
         selectSensor('tag1');
         await settle(300);
         await openHealth();
-        await waitFor(() => expect(bmw().getByTestId('tab-status-i1').textContent).toBe('Fix set point'));
+        await waitFor(() => expect(bmw().getByTestId('tab-status-i1').getAttribute('title')).toBe('Fix set point'));
         openDashFgTab();
         expect(bmwDot('i1').colour).toBe('bad');
         expect(dashDot(1, 'tag1', 'individual')).toBe('bad');

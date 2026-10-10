@@ -515,7 +515,11 @@ describe.each(['individual', 'relationship', 'clustering'] as Kind[])('cross-fea
         expect(fg.runningConditionFilters).toEqual([expect.objectContaining({ sensor: 'TAG2', operation: 'greater_than', value1: '10' })]);
         // saved as id / start / end and NOTHING else
         expect(fg.runningConditionTestPeriods).toEqual([{ id: expect.any(String), start: '2026-01-01T00:00', end: '2026-01-03T00:00' }]);
-        await waitFor(() => expect(bmw().getByTestId('rc-card-cond').textContent).toMatch(/TAG2/));
+        // the card is ONE line once set; the chips are under "Details"
+        await waitFor(() => expect(bmw().getByTestId('rc-card-cond').textContent).toBe('When running: 1 condition'));
+        expect(bmw().getByTestId('rc-card-test').textContent).toBe('Scoring 1 period');
+        fireEvent.click(bmw().getByTestId('rc-card-details'));
+        expect(bmw().getByTestId('rc-card-cond').textContent).toMatch(/TAG2/);
         expect(bmw().getByTestId('rc-card-test-chip').textContent).toMatch(/^S1 · /);
 
         // 5) settings -> Train -> Model fit -> Health score -> set points -> Mark complete.
@@ -538,7 +542,9 @@ describe.each(['individual', 'relationship', 'clustering'] as Kind[])('cross-fea
         expect(be.cmds('export_model_files').slice(-1)[0].args.request.test_periods).toEqual([
             { start: '2026-01-01T00:00', end: '2026-01-03T00:00' },
         ]);
-        expect(bmw().getByTestId('scored-pill').textContent).toBe('Scored · 1');
+        // no "Scored · N" pill: the saved message is the footer's one sentence
+        expect(bmw().queryByTestId('scored-pill')).toBeNull();
+        expect(bmw().getByTestId('save-ok').textContent).toMatch(/^Files saved \d{1,2} [A-Z][a-z]{2} \d{4} \d{2}:\d{2} · /);
 
         // 6) The special sensor is now locked in Manage (a model uses it).
         if (!roots.has('add-sensor')) await openAddSensorWindow();

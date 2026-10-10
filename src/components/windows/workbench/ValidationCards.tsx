@@ -12,7 +12,7 @@ import {
     trainDaysWarning,
     type TestsChangedState,
 } from '../../../utils/trainTestValidation';
-import { formatDate, formatPeriodChip, parseLocal } from '../periodDisplay';
+import { formatPeriodChip, formatStamp } from '../periodDisplay';
 import { fmtNum } from './chartTheme';
 
 /*
@@ -28,7 +28,6 @@ import { fmtNum } from './chartTheme';
  *   TestResultsCard   Health score page ("Scoring results"): two neutral facts
  *                     per scoring period — % of running time below 80 and the
  *                     lowest score held for 1 h, with its date.
- *   ScoredPill        "Scored · N", in the Workbench footer only.
  *   TrainDaysNotice   amber "below the recommended train running time" note.
  *   TestsChangedBanner  "Scoring periods changed / removed — Mark complete again".
  *
@@ -49,12 +48,9 @@ import { fmtNum } from './chartTheme';
  *  `DROP_SUSTAIN_HOURS`. */
 export const DROP_SUSTAIN_HOURS = 1;
 
-/** "3 Feb 2026 14:05" (no seconds) — the Step-1 chips' date style plus the time. */
+/** "3 Feb 2026 14:05" (no seconds) — the ONE Workbench date format (`formatStamp`). */
 export function stamp(s: string | null | undefined): string {
-    const ms = parseLocal(s);
-    if (ms === null) return s ?? '—';
-    const d = new Date(ms);
-    return `${formatDate(s)} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+    return s == null ? '—' : formatStamp(s);
 }
 
 const range = (a: string | null, b: string | null) => formatPeriodChip({ id: '', start: a ?? '', end: b ?? '' });
@@ -69,14 +65,6 @@ const hasTrainOverlap = (t: TestPeriodResult) => (t.train_rows ?? 0) > 0;
 /** Where a model's scoring periods are edited — Workspace mode vs its own Custom settings. */
 export const testPeriodsWhere = (custom: boolean) =>
     custom ? 'Model settings → Training data (Custom)' : 'Running condition → Edit';
-
-export function ScoredPill({ n }: { n: number }) {
-    return (
-        <span className="f4-pill f4-pill--grey" data-testid="scored-pill" title="Scoring periods the trained model is scored on — for reading only">
-            Scored · {n}
-        </span>
-    );
-}
 
 function Swatch({ kind }: { kind: 'train' | 'score' }) {
     return <i className={`tpe-sw ${kind === 'train' ? 'tpe-sw--tr' : 'tpe-sw--te'}`} aria-hidden="true" />;

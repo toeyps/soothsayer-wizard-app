@@ -70,9 +70,9 @@ export interface HealthScorePageProps extends WorkbenchPageProps {
     /** Issues Rust returned when the last Mark complete was refused (shown in
      *  Checks until the set points change); `null` = show the live preview's. */
     attemptIssues: HealthIssue[] | null;
+    /** Only the save IN PROGRESS / a FAILED save show on the page; a successful one
+     *  is the footer sentence. */
     save: SaveInfo;
-    /** The model is Complete but its set points differ from the exported files. */
-    filesOutOfDate: boolean;
     /** "Re-train to recompute" (Relationship fit gone from memory). */
     onRetrain: () => void;
     /** Why the Re-train buttons cannot train now (a training run is active, or
