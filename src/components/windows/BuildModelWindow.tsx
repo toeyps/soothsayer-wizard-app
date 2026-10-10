@@ -43,7 +43,7 @@ import { useSubModelFits } from "./useSubModelFits";
 import ModelFitPage from "./workbench/ModelFitPage";
 import { CLUSTER_COLORS as CLUSTER_PALETTE, TYPED_DECIMALS_MAX, fmtClusterBound, shortDecimals } from "./workbench/chartTheme";
 import HealthScorePage from "./workbench/HealthScorePage";
-import { PageSwitch, SaveErrorNotice, StaleBanner, StateBoard, TrainSensorLink, WorkbenchScroll } from "./workbench/WorkbenchShellParts";
+import { FIT_GONE_WORDS, FitGoneBoard, PageSwitch, SaveErrorNotice, StaleBanner, StateBoard, TrainSensorLink, WorkbenchScroll, type FitGoneActions } from "./workbench/WorkbenchShellParts";
 import { buildCheckLines, healthVerdict, isBlockingIssue, sameSetPoints, verdictOfIssues, type HealthVerdict } from "./workbench/healthChecks";
 import type { SaveInfo, WorkbenchPage } from "./workbench/workbenchTypes";
 import { isPickerSurfaceOpen } from "../sensor/SensorPicker";
@@ -216,21 +216,36 @@ const TAB_WORDS: Record<ModelDotState, string> = {
 };
 /** A run of this session failed: red dot on the tab and in the list. */
 const TRAIN_FAILED_WORDS = 'Training failed';
-/** The Relation-model fit Rust held is gone (NOT_FITTED): the model must train again.
- *  Tab tooltip, board title and the start of the footer sentence. */
-const FIT_GONE_WORDS = 'Fit no longer in memory';
-/** Why Mark complete is blocked then (the footer turns "Train sensor ↑" into its link). */
-const FIT_GONE_BLOCK_REASON = `${FIT_GONE_WORDS} · re-train with Train sensor ↑`;
+// (`FIT_GONE_WORDS` — the Relation-model fit Rust held is gone, NOT_FITTED: tab tooltip,
+// board title and the start of the footer sentence — lives next to the board itself.)
+/** Why Mark complete is blocked then, as the button's tooltip (the footer sentence turns
+ *  "load it again" — and, for a model that is not Complete, "Train sensor ↑" — into links).
+ *  A Complete model is never trained by Train sensor, so its reason does not name it. */
+const FIT_GONE_BLOCK_REASON = `${FIT_GONE_WORDS} · load it again, or re-train with Train sensor ↑`;
+const FIT_GONE_BLOCK_REASON_COMPLETE = `${FIT_GONE_WORDS} · load it again first`;
+/** Mark complete answered NOT_FITTED: the files need the fit Rust no longer holds. */
+const FIT_GONE_SAVE_MESSAGE = 'The fitted Relation model was no longer in memory, so its files were not written. Mark complete again once it is loaded.';
+/** "Load it again" while Mark complete is writing this model's files (it runs the engine too). */
+const FIT_RELOAD_SAVING_REASON = 'Wait for the save to finish';
 /** Mark complete while Rust is still answering for what was just typed (a moment). */
 const CHECKING_SET_POINTS = 'Checking the set points…';
 /** Mark complete while the health score could not be loaded (its red card has the Retry). */
 const PREVIEW_FAILED_BLOCK_REASON = 'The health score did not load · Retry above, then Mark complete';
+/** ...and when it could not be loaded because the dataset was replaced (STALE_SESSION):
+ *  asking again cannot help, so that card has NO Retry — the footer must not point at one. */
+const PREVIEW_STALE_BLOCK_REASON = TRAIN_STALE_MESSAGE;
 /** Next to every Model-settings field that is part of the training inputs
  *  (training data, predictors, sensors, clusters, stiffness): changing it sets a
  *  Complete model back to Incomplete (`applyIncompleteRule`) — say so up front. */
 const IncompleteHint = () => (
     <span className="wb2-aff" data-testid="incomplete-hint">changing it sets the model to Incomplete</span>
 );
+/** The most clusters a Clustering model can be SET to (user decision 2026-10-10; it was 8).
+ *  Only the stepper is capped: a model saved earlier with more keeps its count untouched —
+ *  clamping it on open would change its train fingerprint and set it back to Incomplete —
+ *  it just cannot be raised further ("−" still works). */
+const MAX_CLUSTERS = 5;
+const MAX_CLUSTERS_REASON = `At most ${MAX_CLUSTERS} clusters`;
 /** Stable empty list for `useSubModelFits` when the active model is not a Relationship. */
 const NO_PREDICTORS: string[] = [];
 /** Shown when a Train finds the dataset replaced since this window opened. */
@@ -577,6 +592,8 @@ export default function BuildModelWindow() {
     const [notFittedIds, setNotFittedIds] = useState<ReadonlySet<string>>(() => new Set());
     /** `id::fingerprint` already re-fitted automatically after a NOT_FITTED (once each). */
     const refitTriedRef = useRef<Set<string>>(new Set());
+    /** Models whose "Load it again" is under way (double-click guard). */
+    const fitReloadingRef = useRef<Set<string>>(new Set());
     /** Models whose first-open set-point snapshot was already written (once per model). */
     const setPointsSeededRef = useRef<Set<string>>(new Set());
 
@@ -918,6 +935,7 @@ export default function BuildModelWindow() {
                 queueReset();
                 setNotFittedIds(new Set());
                 refitTriedRef.current = new Set();
+                fitReloadingRef.current = new Set();
                 setTrainAllView(null);
                 setIncludeUpToDate(false);
                 setCloseAsk(false);
@@ -1622,16 +1640,18 @@ export default function BuildModelWindow() {
             // for the model on screen (the one preview there is): a training run
             // must not refetch the open model's charts after every OTHER model.
             if (activeModelIdRef.current === id) setHealthRevision(r => r + 1);
+            // Rust holds the fit again (an explicit train, the silent re-fit or "Load it
+            // again"): no longer "fit gone". Should the next preview still answer
+            // NOT_FITTED, the effect below marks it again.
+            setNotFittedIds(prev => {
+                if (!prev.has(id)) return prev;
+                const rest = new Set(prev);
+                rest.delete(id);
+                return rest;
+            });
             if (opts.persistMeta) {
-                // An explicit train re-filled the fit: no longer "fit gone", and a later
-                // NOT_FITTED of this model may be re-fitted automatically again. (A silent
-                // re-fit clears the mark only once its preview loads — see the effect below.)
-                setNotFittedIds(prev => {
-                    if (!prev.has(id)) return prev;
-                    const rest = new Set(prev);
-                    rest.delete(id);
-                    return rest;
-                });
+                // An explicit train: a later NOT_FITTED of this model may be re-fitted
+                // automatically again.
                 for (const k of [...refitTriedRef.current]) if (k.startsWith(`${id}::`)) refitTriedRef.current.delete(k);
                 await persist((models, groups) => ({
                     groups,
@@ -1741,6 +1761,48 @@ export default function BuildModelWindow() {
     /** Re-train / Try again / the ▾ menu's "Train only…": exactly this model, up to date or not. */
     const trainOnly = (m: FailureModel) => { queue.start([candidateOf(m)], { includeUpToDate: true, source: 'subset' }); };
 
+    /** Why "Load it again" cannot run right now, or null: one engine call at a time. */
+    const fitReloadBlock = (m: FailureModel): string | null =>
+        queue.stale ? TRAIN_STALE_MESSAGE
+            : queue.isRunning ? TRAIN_RUN_ACTIVE_REASON
+            : saveInfo[m.id]?.phase === 'running' ? FIT_RELOAD_SAVING_REASON
+            : null;
+    /** "Load it again" on the "Fit no longer in memory" boards (and the footer): the
+     *  SAME silent re-fit the window runs by itself the first time a fit is lost
+     *  (`persistMeta: false`), asked for by the user once that automatic try is used up.
+     *  Nothing about the model changed, so NOTHING is written: status, `lastTrainedAt`
+     *  and the fingerprint stay — a Complete model stays Complete (Train sensor never
+     *  trains one, and a re-train would set it back to Incomplete). The board reads
+     *  "Loading the Relation model…" meanwhile; a load that fails comes back to the
+     *  board with its reason (`trainError`). */
+    const reloadFit = (id: string) => {
+        const m = allModels.find(x => x.id === id);
+        if (!m || fitReloadBlock(m) !== null || buildBlockReason(m) !== null) return;
+        if (trainStatus[id] === 'loading' || fitReloadingRef.current.has(id)) return;
+        // Only a model that is trained and still current has a fit to load again.
+        const fp = computeTrainFingerprint(m, gateFg);
+        if (!m.lastTrainedAt || m.trainedFingerprint !== fp) return;
+        const ws = workspaceIdRef.current;
+        const before = autoRecomputeRef.current;
+        fitReloadingRef.current.add(id);
+        const p = (async (): Promise<TrainOutcome> => {
+            try {
+                // Another model's silent load may still be running: never two engine calls at once.
+                if (before) await before.catch(() => undefined);
+                if (workspaceIdRef.current !== ws || queueRef.current.isRunningNow()) return { ok: false, abandoned: true };
+                const out = await executeTrain(m, fp, { persistMeta: false });
+                // Loaded: should this fit be lost again later, it is re-fitted automatically once more.
+                if (out.ok) for (const k of [...refitTriedRef.current]) if (k.startsWith(`${id}::`)) refitTriedRef.current.delete(k);
+                return out;
+            } finally {
+                fitReloadingRef.current.delete(id);
+            }
+        })();
+        // A training run started meanwhile waits for it (`trainForQueue`).
+        autoRecomputeRef.current = p;
+        void p.finally(() => { if (autoRecomputeRef.current === p) autoRecomputeRef.current = null; });
+    };
+
     // (`NOT_TRAINED_BLOCK_REASON` — the text shown, and the reason
     // `runMarkComplete` blocks on, when the gate passes but the model is not
     // Trained-and-fresh — lives in `utils/modelStatus.ts` so the Workbench's
@@ -1818,7 +1880,7 @@ export default function BuildModelWindow() {
             if (draftBlock !== null) return fail(draftBlock);
         }
         completeRunningRef.current.add(m.id);
-        setSaveInfo(prev => ({ ...prev, [id]: { phase: 'running', slow: m.kind === 'relationship' } }));
+        setSaveInfo(prev => ({ ...prev, [id]: { phase: 'running' } }));
         setAttemptIssues(prev => ({ ...prev, [id]: null }));
         // The model's fingerprint at CLICK time: the files carry exactly this model, so the
         // save below is refused when the model on disk no longer has it (re-configured and
@@ -1848,7 +1910,17 @@ export default function BuildModelWindow() {
                 // this window points at now.
                 if (!res.ok) {
                     if (res.reason === 'validation') return fail('Some set points are not valid — fix them in Checks first.', res.issues);
-                    if (res.code === 'NOT_FITTED') return fail('Re-train first — the fitted Relation model is no longer in memory.');
+                    if (res.code === 'NOT_FITTED') {
+                        // The page still shows a valid preview, so Mark complete would stay
+                        // enabled and fail the same way on every click: mark the fit as gone
+                        // and ask the preview again (it answers NOT_FITTED too — the fit is
+                        // then loaded again silently once, or the board offers "Load it again").
+                        if (stillHere()) {
+                            setNotFittedIds(prev => (prev.has(id) ? prev : new Set(prev).add(id)));
+                            setHealthRevision(r => r + 1);
+                        }
+                        return fail(FIT_GONE_SAVE_MESSAGE);
+                    }
                     if (res.code === 'STALE_SESSION') return fail('The data in this window is out of date. Close it and open Build Model again from the Dashboard.');
                     return fail(res.error ?? 'The model could not be saved.');
                 }
@@ -1869,7 +1941,7 @@ export default function BuildModelWindow() {
                     delete rest[id];
                     writeSpDrafts(rest);
                 }
-                setSaveInfo(prev => ({ ...prev, [id]: { phase: 'ok', outputDir: res.outputDir, files: res.files.map(f => ({ file_name: f.file_name, path: f.path })), at: record.at } }));
+                setSaveInfo(prev => ({ ...prev, [id]: { phase: 'ok', outputDir: res.outputDir, at: record.at } }));
                 return null;
             } catch (e) {
                 return fail(e instanceof Error ? e.message : String(e));
@@ -2429,6 +2501,7 @@ export default function BuildModelWindow() {
         compare: () => void;
         spChange: (next: HealthSetPoints, commit?: boolean) => void;
         spCommit: () => void;
+        reloadFit: () => void;
     } | null>(null);
     const onRunDetails = useCallback(() => actionsRef.current?.runDetails(), []);
     const onRunCancel = useCallback(() => actionsRef.current?.runCancel(), []);
@@ -2439,6 +2512,8 @@ export default function BuildModelWindow() {
     const onCompare = useCallback(() => actionsRef.current?.compare(), []);
     const onSpChange = useCallback((next: HealthSetPoints, commit?: boolean) => actionsRef.current?.spChange(next, commit), []);
     const onSpCommit = useCallback(() => actionsRef.current?.spCommit(), []);
+    /** "Load it again" of the model on screen (stable: the Health score page is memoised). */
+    const onReloadFit = useCallback(() => actionsRef.current?.reloadFit(), []);
     /** "Train sensor ↑": every sentence's link to the ONE place to train. */
     const focusTrainSensor = useCallback(() => { trainSensorBtnRef.current?.focus(); }, []);
     // The focused "Save changes" disappears once its draft is saved: the focus used to
@@ -2535,6 +2610,7 @@ export default function BuildModelWindow() {
         compare: () => { if (!queueRef.current.isRunningNow()) openCompare(); },
         spChange: (next: HealthSetPoints, commit?: boolean) => { if (activeModel) changeSetPoints(activeModel, next, commit); },
         spCommit: () => { void commitSetPointDrafts(); },
+        reloadFit: () => { if (activeModel) reloadFit(activeModel.id); },
     };
     /** The Relation-model fit Rust held for a trained model is gone (NOT_FITTED was
      *  answered for it in this session and it has not been fitted again since): it
@@ -2542,11 +2618,25 @@ export default function BuildModelWindow() {
      *  (`candidateOf`). Known for EVERY model the window was told NOT_FITTED about, not
      *  only the one on screen; a fit dropped for a model that has not been opened since
      *  is only found out when it is opened (finding out takes a request). Not while it
-     *  is being fitted again; and for the model on screen it is the LIVE answer (the mark
-     *  in `notFittedIds` outlives a silent re-fit until the next preview has loaded). */
+     *  is being fitted again. For the model on screen: the LIVE answer, or — until an
+     *  answer for it is there (its tab was just opened again) — its own mark, so a
+     *  fit-gone model never reads "Trained" for the moment the request takes. (Every
+     *  successful fit clears the mark, see `executeTrain`.) */
     const fitGoneOf = (m: FailureModel): boolean =>
         trainStatus[m.id] !== 'loading'
-        && (activeModel?.id === m.id ? healthPreview.notFitted : notFittedIds.has(m.id));
+        && (activeModel?.id === m.id
+            ? healthPreview.notFitted || (notFittedIds.has(m.id) && !healthPreview.data)
+            : notFittedIds.has(m.id));
+    /** What the "Fit no longer in memory" board of the model ON SCREEN offers: "Load it
+     *  again" for every status, and "Train sensor ↑" only for a model it really trains —
+     *  a Complete model is "up to date" for Train sensor, so that link would do nothing. */
+    const fitGoneActionsOf = (m: FailureModel): FitGoneActions => ({
+        onReload: onReloadFit,
+        reloadDisabledReason: fitReloadBlock(m) ?? undefined,
+        onGoTrainSensor: isModelDone(m) ? undefined : focusTrainSensor,
+        // A load (or a train) of it that failed since.
+        error: trainError[m.id] ?? null,
+    });
     /** "Set points needed" list chip: only after a run trained something here. */
     const spCount = sensorGroupsAll.filter(sg => sg.models.some(needSetPoints)).length;
     const showSpChip = !!queue.lastTrained && queue.lastTrained.ids.length > 0 && spCount > 0;
@@ -3042,7 +3132,16 @@ export default function BuildModelWindow() {
                         <span className="bmw-step">
                             <button type="button" aria-label="Fewer clusters" onClick={() => patchDraft(m, { numClusters: Math.max(1, d.numClusters - 1) })}>−</button>
                             <span>{d.numClusters}</span>
-                            <button type="button" aria-label="More clusters" onClick={() => patchDraft(m, { numClusters: Math.min(8, d.numClusters + 1) })}>+</button>
+                            {/* Never `Math.min(MAX_CLUSTERS, …)`: that would LOWER a legacy model that has more. */}
+                            <button
+                                type="button"
+                                aria-label="More clusters"
+                                disabled={d.numClusters >= MAX_CLUSTERS}
+                                title={d.numClusters >= MAX_CLUSTERS ? MAX_CLUSTERS_REASON : undefined}
+                                onClick={() => { if (d.numClusters < MAX_CLUSTERS) patchDraft(m, { numClusters: d.numClusters + 1 }); }}
+                            >
+                                +
+                            </button>
                         </span>
                     </div>
                     {/* 🆕 2026-09-30 [cluster-range slider port]: always shown
@@ -3346,8 +3445,8 @@ export default function BuildModelWindow() {
      *  "N items to fix" list with jump-to-field links (reuses `missingItems`'
      *  wording) · running -> progress · never trained -> "Not trained yet" ·
      *  stale -> "Out of date" charts (or a message when there is nothing to
-     *  draw) · Relationship fit gone from memory -> "Re-train to recompute" ·
-     *  otherwise the charts. */
+     *  draw) · Relationship fit gone from memory -> the "Fit no longer in memory"
+     *  board ("Load it again") · otherwise the charts. */
     /** "Train sensor ↑": the text link every sentence uses to point at the ONE place
      *  to train (it focuses the header's Train sensor button). */
     const trainSensorLink = (testId: string) => <TrainSensorLink testId={testId} onClick={focusTrainSensor} />;
@@ -3462,6 +3561,22 @@ export default function BuildModelWindow() {
                 : board('results-loading', 'run', `Loading the ${kindModelName(m.kind)}…`, 'The charts appear here when it is ready.');
         }
         const err = trainError[m.id];
+        // The fit is gone: ONE board, whatever came after it — a load that failed is its
+        // reason line, never the "Training failed" board (whose "Train sensor ↑" cannot
+        // train a Complete model).
+        if (healthPreview.notFitted && m.lastTrainedAt && !isModelStale(m)) {
+            return (
+                <div className="bmw-stage">
+                    <FitGoneBoard
+                        testId="results-not-fitted"
+                        linkTestId="board-load-fit"
+                        trainTestId="board-train-sensor"
+                        tail="The charts come back when it is loaded."
+                        actions={fitGoneActionsOf(m)}
+                    />
+                </div>
+            );
+        }
         if (err) {
             return board('results-error', 'bad', 'Training failed',
                 <>Fix the problem, then train again with {trainSensorLink('board-train-sensor')}. The model keeps its last state.</>, err);
@@ -3480,11 +3595,6 @@ export default function BuildModelWindow() {
                 </div>
             ) : board('results-stale', 'plain', 'Out of date',
                 <>Settings changed — re-train with {trainSensorLink('board-train-sensor')} to see the result.</>);
-        }
-        if (healthPreview.notFitted) {
-            // No Re-train button of its own: the board points at the one place to train.
-            return board('results-not-fitted', 'plain', FIT_GONE_WORDS,
-                <>The fitted Relation model is no longer in memory (the data was reloaded or a special sensor changed). Re-train it with {trainSensorLink('board-train-sensor')} — the charts come back when it finishes.</>);
         }
         if (healthPreview.error && !healthPreview.data) {
             return board('results-health-error', 'bad', "Couldn't load the charts", undefined, healthPreview.error);
@@ -3533,14 +3643,18 @@ export default function BuildModelWindow() {
         const noTest = markCompleteBlockReason(effectiveModelFor(m), gateFg);
         if (noTest !== null) return noTest;
         if (!trainedFreshFor(effectiveModelFor(m), gateFg, specialRecipes)) return NOT_TRAINED_BLOCK_REASON;
+        // The fit is gone (a load of it that failed included): its own reason, which names
+        // only what works for this model.
+        if (fitGoneOf(m)) return isModelDone(m) ? FIT_GONE_BLOCK_REASON_COMPLETE : FIT_GONE_BLOCK_REASON;
         if (trainError[m.id]) return "Couldn't refresh the result — fix the problem, then re-train.";
-        if (fitGoneOf(m)) return FIT_GONE_BLOCK_REASON;
         const data = healthPreview.data;
         if (!data) {
             // Being worked out (the model is loaded again, or Rust is answering): a moment.
             if (healthPreview.loading || trainStatus[m.id] === 'loading' || !healthPreview.error) return CHECKING_SET_POINTS;
-            // It failed: the red card on the page has the reason and the Retry; the footer says what to do.
-            return PREVIEW_FAILED_BLOCK_REASON;
+            // It failed: the red card on the page has the reason and the Retry; the footer says
+            // what to do. After the dataset was replaced there is no Retry (asking again cannot
+            // help): the footer says what does.
+            return healthPreview.errorCode === 'STALE_SESSION' ? PREVIEW_STALE_BLOCK_REASON : PREVIEW_FAILED_BLOCK_REASON;
         }
         if (healthPreview.loading) return CHECKING_SET_POINTS;
         if (!data.valid) {
@@ -3564,7 +3678,7 @@ export default function BuildModelWindow() {
         // scoring periods makes it Incomplete without touching
         // this session's record, and the old message would then be misleading.
         (saveInfo[m.id]?.phase === 'ok' && !isModelDone(m) ? undefined : saveInfo[m.id]) ?? (m.healthExport && isModelDone(m)
-            ? { phase: 'ok', outputDir: m.healthExport.outputDir, files: null, at: m.healthExport.at }
+            ? { phase: 'ok', outputDir: m.healthExport.outputDir, at: m.healthExport.at }
             : { phase: 'idle' });
     /** Complete, but the set points on screen differ from the ones the files were written with. */
     const filesOutOfDateFor = (m: FailureModel): boolean =>
@@ -3619,8 +3733,9 @@ export default function BuildModelWindow() {
         // state even though the PERSISTED fields still say "fresh" (nothing
         // was written back on failure).
         const hasSessionError = !!trainError[m.id];
-        // The fit Rust held is gone: trained on paper, but it must train again.
-        const fitGone = trainedFresh && fitGoneOf(m);
+        // The fit Rust held is gone: trained on paper (or Complete — `trainedFresh` is
+        // only said of a model that is not), but the fit must be loaded or trained again.
+        const fitGone = (trainedFresh || done) && fitGoneOf(m);
         const pillState: 'complete' | 'trained' | 'incomplete' =
             done ? 'complete' : (trainedFresh && !hasSessionError && reason === null && !fitGone) ? 'trained' : 'incomplete';
         const pillLabel = pillState === 'complete' ? 'Complete' : pillState === 'trained' ? 'Trained' : 'Incomplete';
@@ -3649,11 +3764,30 @@ export default function BuildModelWindow() {
             ? <span data-testid="save-ok">Files saved <Stamp at={saved.at} /> · <span className="hs-path" data-testid="footer-saved-path" title={saved.outputDir}>{shortOutputDir(saved.outputDir)}</span></span>
             : null;
 
+        // The fit-gone sentence of BOTH pages: "load it again" as a link, and — only for a
+        // model Train sensor really trains (not Complete) — "Train sensor ↑".
+        const reloadBlock = fitReloadBlock(m);
+        const fitGoneLine: ReactNode = (
+            <>
+                {FIT_GONE_WORDS} ·{' '}
+                <button
+                    type="button"
+                    className="tq-inline-link"
+                    data-testid="footer-load-fit"
+                    disabled={reloadBlock !== null}
+                    title={reloadBlock ?? undefined}
+                    onClick={() => reloadFit(m.id)}
+                >
+                    load it again
+                </button>
+                {!done && <>, or re-train with {goTrainSensor}</>}
+            </>
+        );
         // Why Mark complete is disabled, as the sentence shows it: the fit-gone reason gets
-        // its "Train sensor ↑" link; the moment Rust is still checking what was typed is not
+        // its links; the moment Rust is still checking what was typed is not
         // a reason worth replacing a Complete model's sentence for.
         const blockWhy: ReactNode = markBlock === null || markBlock === CHECKING_SET_POINTS ? null
-            : markBlock === FIT_GONE_BLOCK_REASON ? <>{FIT_GONE_WORDS} · re-train with {goTrainSensor}</>
+            : markBlock === FIT_GONE_BLOCK_REASON || markBlock === FIT_GONE_BLOCK_REASON_COMPLETE ? fitGoneLine
             : markBlock;
         // The ONE sentence (first match wins).
         let line: ReactNode;
@@ -3668,6 +3802,9 @@ export default function BuildModelWindow() {
             else if (done && outOfDate && blockWhy !== null) { line = <>Files out of date · {blockWhy}</>; tone = 'warn'; lineId = 'files-out-of-date'; }
             else if (savePhase === 'error') { line = 'Not saved · fix it, then Mark complete again'; tone = 'bad'; }
             else if (done && outOfDate) { line = 'Files out of date — set points changed after saving · Mark complete again to update them'; tone = 'warn'; lineId = 'files-out-of-date'; }
+            // A Complete model whose fit is gone stays Complete — but the page cannot score
+            // until the fit is loaded again: say that, not only "Files saved …".
+            else if (done && fitGone) { line = fitGoneLine; tone = 'warn'; }
             else if (done) line = savedLine ?? trainedLine ?? identityLine;
             else line = 'Set points valid — check the score chart, then Mark complete';
         } else if (qItem && locked) {
@@ -3677,9 +3814,11 @@ export default function BuildModelWindow() {
         } else if (reason) { line = reason; tone = 'warn'; lineId = 'build-block-reason'; }
         // An unsaved draft is said here, once (the tab carries no "edited" pill).
         else if (hasDraft) line = `Unsaved changes to the ${kindModelName(m.kind)}`;
+        // The fit is gone (for a Complete model too, and before "Training failed": a load
+        // that failed is the board's reason line).
+        else if (fitGone) { line = fitGoneLine; tone = 'warn'; }
         else if (done) line = trainedLine ?? identityLine;
         else if (hasSessionError) { line = <>Training failed · fix the problem, then {goTrainSensor}</>; tone = 'bad'; }
-        else if (fitGone) { line = <>{FIT_GONE_WORDS} · re-train with {goTrainSensor}</>; tone = 'warn'; }
         else if (trainedFresh) line = <>{trainedLine} · check the charts, then set the health set points</>;
         else if (stale) { line = <>Settings changed · re-train with {goTrainSensor}</>; tone = 'warn'; }
         // Also why "Next: Health score →" is disabled.
@@ -4027,7 +4166,8 @@ export default function BuildModelWindow() {
                                 onSetPointsCommit={onSpCommit}
                                 attemptIssues={attemptIssues[activeModel.id] ?? null}
                                 save={saveInfoFor(activeModel)}
-                                onGoTrainSensor={focusTrainSensor}
+                                fitGone={fitGoneActionsOf(activeModel)}
+                                fitLoading={training}
                                 onRetryPreview={healthPreview.retry}
                                 onRetryTestScoring={healthPreview.retryTestScoring}
                                 testsChanged={testsChangedState(activeModel, gateFg)}

@@ -24,7 +24,7 @@ import {
     wallClockMs,
     type HLine,
 } from '../components/windows/workbench/healthCharts';
-import { CHART, CLUSTER_COLORS, fmtClusterBound, fmtNum } from '../components/windows/workbench/chartTheme';
+import { CHART, CLUSTER_COLORS, fmtClusterBound, fmtNum, fmtNumCol } from '../components/windows/workbench/chartTheme';
 import { fmtNum as fmtNumApp } from '../components/sensor/sensorInfo';
 import { formatDataStamp } from '../components/windows/periodDisplay';
 import { makeClusterStat, makeHealthPreview } from './helpers/healthPreviewFixture';
@@ -834,6 +834,25 @@ describe('Clustering chart', () => {
         const o: any = buildTimeSeriesOption({ timestamps: ['2026-01-01 00:00:00'], lines: [{ name: 'V', values: [1], color: '#fff' }] });
         expect(o.tooltip.valueFormatter(0.0002)).toBe('0.0002');
         expect(o.tooltip.valueFormatter(null)).toBe('');
+    });
+
+    // Table COLUMNS of computed values (train / scoring metrics, the automatic set-point rows) must
+    // line up on the decimal point: the app formatter's own fixed-3-decimals form.
+    it('fmtNumCol: the column form of the same formatter — always 3 decimals, a non-zero value still never reads as 0', () => {
+        for (const v of [0, 1, 4.5, 12.5, 150.25, 1234.5678, 0.4567, 0.0002, -0.00004, 12345678901, -3.14159]) {
+            expect(fmtNumCol(v), String(v)).toBe(fmtNumApp(v, true));
+        }
+        expect(fmtNumCol(5)).toBe('5.000');
+        expect(fmtNumCol(0.91)).toBe('0.910');
+        expect(fmtNumCol(12.5)).toBe('12.500');
+        expect(fmtNumCol(1234.5678)).toBe('1,234.568');
+        expect(fmtNumCol(0)).toBe('0.000');
+        expect(fmtNumCol(-0)).toBe('0.000'); // never "-0.000"
+        expect(fmtNumCol(0.0002)).toBe('0.000200'); // not "0.000"
+        expect(fmtNumCol(-0.00004)).toBe('-0.0000400');
+        expect(fmtNumCol(null)).toBe('—');
+        expect(fmtNumCol(undefined)).toBe('—');
+        expect(fmtNumCol(NaN)).toBe('—');
     });
 
     it('the rings are green (1×, solid) and amber (3×, dashed)', () => {

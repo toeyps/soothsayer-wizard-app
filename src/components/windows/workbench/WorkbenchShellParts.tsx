@@ -48,6 +48,66 @@ export function StateBoard({ testId, tone = 'plain', title, text, detail, classN
     );
 }
 
+/** What the "Fit no longer in memory" board of both pages can do about it. */
+export interface FitGoneActions {
+    /** "Load it again": fit the same Relation model again from the same settings.
+     *  Nothing about the model changed, so nothing is saved and its status stays
+     *  (a Complete model stays Complete). Must be stable (the pages are memoised). */
+    onReload: () => void;
+    /** Why "Load it again" cannot run right now (a training run owns the engine). */
+    reloadDisabledReason?: string;
+    /** "Train sensor ↑" — only for a model Train sensor really trains (not Complete:
+     *  a Complete model is "up to date" there and is never trained by it). */
+    onGoTrainSensor?: () => void;
+    /** Why the last load did not work, or null. */
+    error?: string | null;
+}
+
+/** Title of the board, the tab tooltip and the start of the footer sentence. */
+export const FIT_GONE_WORDS = 'Fit no longer in memory';
+
+/**
+ * The Relation-model fit Rust held is gone (NOT_FITTED). ONE board for both pages:
+ * the model itself did not change, so the way back is "Load it again" (a text
+ * link — the board has no button of its own). `tail` says what comes back.
+ */
+export function FitGoneBoard({ testId, linkTestId, trainTestId, className, tail, actions }: {
+    testId: string;
+    linkTestId: string;
+    trainTestId: string;
+    className?: string;
+    tail: string;
+    actions: FitGoneActions;
+}) {
+    const { onReload, reloadDisabledReason, onGoTrainSensor, error } = actions;
+    return (
+        <StateBoard
+            testId={testId}
+            className={className}
+            tone={error ? 'bad' : 'plain'}
+            title={FIT_GONE_WORDS}
+            text={(
+                <>
+                    The fitted Relation model is no longer in memory (the data was reloaded, a special sensor changed, or many Relation models were opened). Nothing about the model changed —{' '}
+                    <button
+                        type="button"
+                        className="tq-inline-link"
+                        data-testid={linkTestId}
+                        disabled={!!reloadDisabledReason}
+                        title={reloadDisabledReason}
+                        onClick={onReload}
+                    >
+                        Load it again
+                    </button>
+                    {onGoTrainSensor && <>, or re-train it with <TrainSensorLink testId={trainTestId} onClick={onGoTrainSensor} /></>}
+                    . {tail}
+                </>
+            )}
+            detail={error ? `The last attempt did not work: ${error}` : undefined}
+        />
+    );
+}
+
 interface PageSwitchProps {
     page: WorkbenchPage;
     /** The Health score page cannot be opened right now. */

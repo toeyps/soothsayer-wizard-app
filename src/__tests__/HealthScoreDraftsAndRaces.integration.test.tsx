@@ -247,9 +247,10 @@ describe('compute_health_preview traffic', () => {
 
 describe('errors from Rust', () => {
     // Phase 4 review: a NOT_FITTED fit (e.g. evicted from Rust's fit cache during a long Train all) is
-    // re-fitted automatically ONCE per model + fingerprint; losing the same fit again points at Train
-    // sensor (workbench-redesign §4: no Re-train button in the pane; the model counts as "needs training").
-    it('NOT_FITTED (Relationship fit dropped from Rust memory): re-fitted once automatically; a second loss -> "Fit no longer in memory" on both pages, pointing at Train sensor; Train sensor recovers', async () => {
+    // re-fitted automatically ONCE per model + fingerprint; losing the same fit again shows the board
+    // (workbench-redesign §4: no Re-train button in the pane; the model counts as "needs training") with
+    // "Load it again" — the same silent re-fit, asked for by the user — next to "Train sensor ↑".
+    it('NOT_FITTED (Relationship fit dropped from Rust memory): re-fitted once automatically; a second loss -> "Fit no longer in memory" on both pages; "Load it again" recovers without re-training (nothing written)', async () => {
         writeDisk(trainedWs());
         await mountWindows();
         selectSensor('tag1');
@@ -272,7 +273,7 @@ describe('errors from Rust', () => {
         await settle(400);
         expect(fits()).toBe(before + 1);
         expect(markBtn().disabled).toBe(true);
-        expect(bmw().getByTestId('mark-block-reason').textContent).toBe('Fit no longer in memory · re-train with Train sensor ↑');
+        expect(bmw().getByTestId('mark-block-reason').textContent).toBe('Fit no longer in memory · load it again, or re-train with Train sensor ↑');
         expect(bmw().queryByTestId('health-not-fitted-retrain')).toBeNull();
         const trainSensor = () => bmw().getByTestId('train-sensor') as HTMLButtonElement;
         // it counts as "needs training": Train sensor is the one filled button, and the link leads to it
@@ -285,13 +286,20 @@ describe('errors from Rust', () => {
         await settle(50);
         expect(bmw().getByTestId('results-not-fitted').textContent).toMatch(/^Fit no longer in memory/);
         expect(bmw().queryByTestId('results-not-fitted-retrain')).toBeNull();
-        expect(bmw().getByTestId('footer-status').textContent).toBe('Fit no longer in memory · re-train with Train sensor ↑');
+        expect(bmw().getByTestId('footer-status').textContent).toBe('Fit no longer in memory · load it again, or re-train with Train sensor ↑');
         fireEvent.click(bmw().getByTestId('page-health'));
         await settle(50);
-        await act(async () => { fireEvent.click(trainSensor()); });
+        // "Load it again": ONE more fit of the same model, and the page is back — the model on disk
+        // is exactly what it was (not re-trained: same train time and fingerprint, status untouched).
+        const onDisk = { ...diskModel('r1') };
+        await act(async () => { fireEvent.click(bmw().getByTestId('health-load-fit')); });
         await settle(400);
         await settle(400);
         await waitFor(() => expect(bmw().getByTestId('check-valid')).toBeTruthy());
+        expect(fits()).toBe(before + 2);
+        expect(bmw().queryByTestId('health-not-fitted')).toBeNull();
+        expect(diskModel('r1')).toMatchObject({ status: onDisk.status, lastTrainedAt: onDisk.lastTrainedAt, trainedFingerprint: onDisk.trainedFingerprint });
+        expect(markBtn().disabled).toBe(false);
     });
 
     it('a dataset reload (new session) -> STALE_SESSION is shown, never another dataset\'s numbers', async () => {

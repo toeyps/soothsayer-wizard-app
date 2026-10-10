@@ -8,7 +8,7 @@ import type {
 import type { HealthIssue, HealthPreview } from '../../../types/health';
 import { canResetToMaster, resetToMaster, setPointSource, type SetPointSide } from '../../../utils/healthSetPoints';
 import { fmtNumExact } from '../../sensor/sensorInfo';
-import { fmtNum } from './chartTheme';
+import { fmtNumCol } from './chartTheme';
 import { fieldState, formatSetPointText, RING_QUICK, stepRing, type FieldState, type HealthVerdict } from './healthChecks';
 
 /*
@@ -24,7 +24,8 @@ import { fieldState, formatSetPointText, RING_QUICK, stepRing, type FieldState, 
  *   ─────
  *   the Checks (`children`) — the same card, no second header
  *
- * Values the program computes are plain TEXT (`fmtNum`): nothing that looks like
+ * Values the program computes are plain TEXT (`fmtNumCol` — the computed-value format
+ * with a fixed 3 decimals, so the Lower / Upper columns line up): nothing that looks like
  * an input is one. The user's points are the only boxes; they keep the user's
  * own text while typing, and a typed value shown as text (the "Use master H 4.5"
  * link) is printed in its exact shortest form (`fmtNumExact` — never padded to
@@ -239,9 +240,9 @@ function IndividualRows({ data, sp, unit, issues, onChange, onCommit }: RowsProp
         <>
             <Table sides>
                 <Row score={100} tone="ok" testId="rung-100" band={<Band what="within ±1SD" who="automatic" />}
-                    lower={<Ro testId="ro-l1">{fmtNum(st.boundary_1sd[0])}</Ro>} upper={<Ro testId="ro-u1">{fmtNum(st.boundary_1sd[1])}</Ro>} />
+                    lower={<Ro testId="ro-l1">{fmtNumCol(st.boundary_1sd[0])}</Ro>} upper={<Ro testId="ro-u1">{fmtNumCol(st.boundary_1sd[1])}</Ro>} />
                 <Row score={80} tone="warn" testId="rung-80" band={<Band what="at ±3SD" who="automatic" />}
-                    lower={<Ro testId="ro-l3">{fmtNum(st.boundary_3sd[0])}</Ro>} upper={<Ro testId="ro-u3">{fmtNum(st.boundary_3sd[1])}</Ro>} />
+                    lower={<Ro testId="ro-l3">{fmtNumCol(st.boundary_3sd[0])}</Ro>} upper={<Ro testId="ro-u3">{fmtNumCol(st.boundary_3sd[1])}</Ro>} />
                 <Row score={0} tone="danger" testId="rung-0" band={<Band what="at L / H" who="you set them" />}
                     lower={field('lower')} upper={field('upper')} />
             </Table>
@@ -274,7 +275,7 @@ function RelationshipRows({ data, sp, unit, issues, onChange, onCommit }: RowsPr
         <>
             <Table sides>
                 <Row score={100} tone="ok" testId="rung-100" band={<Band what="within ±2RMSE" who="automatic" />}
-                    lower={<Ro testId="ro-l2">−{fmtNum(w)}</Ro>} upper={<Ro testId="ro-u2">+{fmtNum(w)}</Ro>} />
+                    lower={<Ro testId="ro-l2">−{fmtNumCol(w)}</Ro>} upper={<Ro testId="ro-u2">+{fmtNumCol(w)}</Ro>} />
                 <Row score={80} tone="warn" testId="rung-80" band={<Band what="residual at 80" who="you set them" />}
                     lower={field('residualAt80Lower', 'residual_at_80_lower', 'Lower residual at score 80')}
                     upper={field('residualAt80Upper', 'residual_at_80_upper', 'Upper residual at score 80')} />

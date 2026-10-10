@@ -266,12 +266,12 @@ const healthCalls = () => mockInvoke.mock.calls.filter(c => c[0] === 'compute_he
  *  only then settles on the "Fit no longer in memory" state. Waits until that board is on screen and
  *  the fake Rust has been quiet for a moment (longer than the preview's debounce), so nothing is
  *  asserted in the moment between the first answer and the re-fit. */
-const fitGoneSettled = async () => {
+const fitGoneSettled = async (boardId: 'results-not-fitted' | 'health-not-fitted' = 'results-not-fitted') => {
     for (let i = 0; i < 12; i++) {
-        await waitFor(() => expect(screen.getByTestId('results-not-fitted')).toBeTruthy(), { timeout: 3000 });
+        await waitFor(() => expect(screen.getByTestId(boardId)).toBeTruthy(), { timeout: 3000 });
         const calls = mockInvoke.mock.calls.length;
         await act(async () => { await new Promise(r => setTimeout(r, 400)); });
-        if (mockInvoke.mock.calls.length === calls && screen.queryByTestId('results-not-fitted')) return;
+        if (mockInvoke.mock.calls.length === calls && screen.queryByTestId(boardId)) return;
     }
     throw new Error('the "Fit no longer in memory" state never settled');
 };
@@ -2023,6 +2023,76 @@ describe('Cluster-range slider (2026-09-30 port)', () => {
         await act(async () => { fireEvent.click(screen.getByText('Save changes')); await Promise.resolve(); await Promise.resolve(); });
         const m = (await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value).failureGroupState.models[0];
         expect(m).toMatchObject({ criteriaSensor: '', numClusters: 1, clusterRanges: [] });
+    });
+
+    // User decision 2026-10-10: a Clustering model has at most 5 clusters (the stepper went to 8).
+    it('the cluster-count stepper stops at 5: "More clusters" is disabled there with "At most 5 clusters"; "Fewer clusters" still works', async () => {
+        const clu = makeModel({
+            id: 'c1', kind: 'clustering', targetSensor: '', xSensor: 'TAG1', ySensor: 'TAG2', criteriaSensor: 'TAG3',
+            numClusters: 4, clusterRanges: [{ min: 0, max: 2 }, { min: 2, max: 5 }, { min: 5, max: 7 }, { min: 7, max: 10 }],
+        });
+        render(<BuildModelWindow />);
+        await deliverData({ failureGroupState: { groups: [makeGroup()], models: [clu] } });
+        statefulUpdateMock([clu]);
+        openSettings();
+        await flush();
+        const more = () => screen.getByRole('button', { name: 'More clusters' }) as HTMLButtonElement;
+        const fewer = () => screen.getByRole('button', { name: 'Fewer clusters' }) as HTMLButtonElement;
+        const count = () => fewer().nextElementSibling!.textContent;
+        expect(count()).toBe('4');
+        expect(more().disabled).toBe(false);
+        expect(more().title).toBe('');
+        fireEvent.click(more());
+        await flush();
+        expect(count()).toBe('5');
+        expect(more().disabled).toBe(true);
+        expect(more().title).toBe('At most 5 clusters');
+        fireEvent.click(more()); // a click that gets through anyway changes nothing
+        await flush();
+        expect(count()).toBe('5');
+        fireEvent.click(fewer());
+        await flush();
+        expect(count()).toBe('4');
+        expect(more().disabled).toBe(false);
+    });
+
+    it('a model saved earlier with MORE than 5 clusters opens unchanged (no clamp: that would change its fingerprint and set it Incomplete) — it only cannot be raised; "Fewer clusters" lowers it', async () => {
+        const six = Array.from({ length: 6 }, (_, i) => ({ min: i * 10, max: (i + 1) * 10 }));
+        const clu = withTrained(makeModel({
+            id: 'c1', kind: 'clustering', targetSensor: '', xSensor: 'TAG1', ySensor: 'TAG2', criteriaSensor: 'TAG3',
+            numClusters: 6, clusterRanges: six, status: true,
+        }));
+        statefulUpdateMock([clu]);
+        render(<BuildModelWindow />);
+        await deliverData({ failureGroupState: { groups: [makeGroup()], models: [clu] } });
+        await flush();
+        await act(async () => { await new Promise(r => setTimeout(r, 50)); });
+        // opened: still 6, still Complete and up to date, no draft, and nothing changed it on disk
+        expect(screen.getByTestId('footer-pill').textContent).toBe('Complete');
+        expect(screen.queryByTestId('save-changes')).toBeNull();
+        for (const r of mockUpdateWorkspaceData.mock.results) {
+            const m = (await r.value).failureGroupState.models[0];
+            expect(m).toMatchObject({ numClusters: 6, clusterRanges: six, status: true, trainedFingerprint: clu.trainedFingerprint });
+        }
+        // it trains / previews with its own 6
+        const fit = mockInvoke.mock.calls.filter(c => c[0] === 'compute_clustering_preview').pop();
+        expect((fit![1] as any).n_clusters).toBe(6);
+        openSettings();
+        await flush();
+        const more = () => screen.getByRole('button', { name: 'More clusters' }) as HTMLButtonElement;
+        const fewer = () => screen.getByRole('button', { name: 'Fewer clusters' }) as HTMLButtonElement;
+        expect(fewer().nextElementSibling!.textContent).toBe('6');
+        expect(more().disabled).toBe(true);
+        expect(more().title).toBe('At most 5 clusters');
+        fireEvent.click(more());
+        await flush();
+        expect(fewer().nextElementSibling!.textContent).toBe('6'); // never lowered by "+", never raised
+        expect(screen.queryByTestId('save-changes')).toBeNull();
+        fireEvent.click(fewer());
+        await flush();
+        expect(fewer().nextElementSibling!.textContent).toBe('5');
+        expect(more().disabled).toBe(true); // 5 is the most it can be set to
+        expect(screen.getByTestId('save-changes')).toBeTruthy();
     });
 
     it('2+ clusters with no criteria sensor is an item to fix (Train would be refused); setting Clusters to 1 clears it', async () => {
@@ -3893,9 +3963,10 @@ describe('Workbench two pages — shell + Model fit page (health score 3b-1)', (
             expect(screen.queryByTestId('chart-overlay-ts')).toBeNull();
         });
 
-        // SPEC §4 NOT_FITTED: no in-pane Re-train button — ONE board with "Train sensor ↑", and the
-        // model counts as "needs training" (Train sensor filled, footer, pill, tab words).
-        it('a Relationship whose fit is gone from Rust (NOT_FITTED): one board with a "Train sensor ↑" link, no Re-train button; it counts as needing training and Train sensor trains it again', async () => {
+        // SPEC §4 NOT_FITTED: no in-pane Re-train button — ONE board with text links ("Load it
+        // again", and "Train sensor ↑" for a model it trains), and the model counts as "needs
+        // training" (Train sensor filled, footer, pill, tab words).
+        it('a Relationship whose fit is gone from Rust (NOT_FITTED): one board with "Load it again" + "Train sensor ↑" links, no Re-train button; it counts as needing training and Train sensor trains it again', async () => {
             mockInvoke.mockImplementation((cmd: string, args?: any) =>
                 cmd === 'compute_health_preview' ? Promise.reject('NOT_FITTED: no fitted model for this key') : defaultInvoke(cmd, args));
             const rel = trainedRel();
@@ -3905,16 +3976,18 @@ describe('Workbench two pages — shell + Model fit page (health score 3b-1)', (
             const b = screen.getByTestId('results-not-fitted');
             expect(b.className).toContain('wbx-msg');
             expect(b.querySelector('.wbx-msg-t')!.textContent).toBe('Fit no longer in memory');
-            expect(b.querySelector('.wbx-msg-s')!.textContent).toBe('The fitted Relation model is no longer in memory (the data was reloaded or a special sensor changed). Re-train it with Train sensor ↑ — the charts come back when it finishes.');
+            expect(b.querySelector('.wbx-msg-s')!.textContent).toBe('The fitted Relation model is no longer in memory (the data was reloaded, a special sensor changed, or many Relation models were opened). Nothing about the model changed — Load it again, or re-train it with Train sensor ↑. The charts come back when it is loaded.');
             expect(screen.queryByTestId('results-not-fitted-retrain')).toBeNull();
-            expect(b.querySelectorAll('button')).toHaveLength(1);
+            expect(Array.from(b.querySelectorAll('button')).map(x => x.getAttribute('data-testid'))).toEqual(['board-load-fit', 'board-train-sensor']);
+            expect(b.querySelector('.rcx-btn')).toBeNull(); // text links only
             expect(screen.queryByTestId('results-chart')).toBeNull();
             // "needs training" everywhere it is said
             expect(screen.getByTestId('wb-footer').getAttribute('data-primary')).toBe('train');
             expect(trainSensorBtn().className).toContain('rcx-btn--pri');
             expect(trainSensorBtn().textContent).toBe('▶ Train sensor · 1 of 1');
             const line = screen.getByTestId('footer-status');
-            expect(line.textContent).toBe('Fit no longer in memory · re-train with Train sensor ↑');
+            expect(line.textContent).toBe('Fit no longer in memory · load it again, or re-train with Train sensor ↑');
+            expect(within(line).getByTestId('footer-load-fit').className).toBe('tq-inline-link');
             expect(line.getAttribute('data-tone')).toBe('warn');
             expect(screen.getByTestId('footer-pill').textContent).toBe('Incomplete'); // not "Trained"
             expect(screen.getByRole('tab', { name: /Relation model/ }).getAttribute('aria-label')).toBe('Relation model, Fit no longer in memory');
@@ -3926,6 +3999,115 @@ describe('Workbench two pages — shell + Model fit page (health score 3b-1)', (
             mockInvoke.mockClear();
             await act(async () => { fireEvent.click(trainSensorBtn()); await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
             expect(mockInvoke).toHaveBeenCalledWith('preview_relationship_model', expect.objectContaining({ cache_key: expect.stringContaining('r1::') }));
+        });
+
+        // Review of 8626f78 (must-fix): a COMPLETE model is "up to date" for Train sensor
+        // (`classifyTrainPlan`), so the board's "Train sensor ↑" pointed at a disabled button — a
+        // dead end reached by opening the same Relation model a third time in a workspace with
+        // more Relation models than the Rust fit cache holds. Nothing about the model changed:
+        // "Load it again" re-runs the silent re-fit — no write, status and fingerprint untouched.
+        it('a COMPLETE Relation model whose fit is gone: "Load it again" (and no Train sensor link, which cannot train it) fits it again silently — still Complete, nothing re-trained; a load that fails comes back to the board with its reason', async () => {
+            let gone = true;
+            let fitMode: 'ok' | 'hold' | 'fail' = 'ok';
+            let release: () => void = () => {};
+            mockInvoke.mockImplementation((cmd: string, args?: any) => {
+                if (cmd === 'compute_health_preview' && gone) return Promise.reject('NOT_FITTED: no fitted model for this key');
+                if (cmd === 'preview_relationship_model' && fitMode === 'fail') return Promise.reject(new Error('the engine stopped'));
+                if (cmd === 'preview_relationship_model' && fitMode === 'hold') return new Promise(res => { release = () => res(defaultInvoke(cmd, args)); });
+                return defaultInvoke(cmd, args);
+            });
+            const rel = trainedRel({ status: true });
+            await mount([rel]);
+            await fitGoneSettled();
+            const fits = () => mockInvoke.mock.calls.filter(c => c[0] === 'preview_relationship_model');
+            const before = fits().length;
+            const board = () => screen.getByTestId('results-not-fitted');
+            const tabLabel = () => screen.getByRole('tab', { name: /Relation model/ }).getAttribute('aria-label');
+            const clickLoad = () => act(async () => { fireEvent.click(within(board()).getByTestId('board-load-fit')); await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+            expect(board().querySelector('.wbx-msg-s')!.textContent).toBe('The fitted Relation model is no longer in memory (the data was reloaded, a special sensor changed, or many Relation models were opened). Nothing about the model changed — Load it again. The charts come back when it is loaded.');
+            // no link that cannot work: Train sensor never trains a Complete model
+            expect(within(board()).queryByTestId('board-train-sensor')).toBeNull();
+            expect(board().querySelectorAll('button')).toHaveLength(1);
+            expect(trainSensorBtn().disabled).toBe(true);
+            expect(trainSensorBtn().textContent).toBe('▶ Train sensor · 0 of 1');
+            expect(trainSensorWhy()).toBe('1 model up to date — nothing to train');
+            // it is still Complete, and the footer says what is wrong (not only "Trained …")
+            expect(screen.getByTestId('footer-pill').textContent).toBe('Complete');
+            const line = screen.getByTestId('footer-status');
+            expect(line.textContent).toBe('Fit no longer in memory · load it again');
+            expect(line.getAttribute('data-tone')).toBe('warn');
+            expect(within(line).queryByTestId('footer-train-sensor')).toBeNull();
+            expect(tabLabel()).toBe('Relation model, Complete · Fit no longer in memory');
+
+            // 1) a load that FAILS: back on the same board, red, with the reason — never "Training failed"
+            mockUpdateWorkspaceData.mockClear();
+            fitMode = 'fail';
+            await clickLoad();
+            await waitFor(() => expect(board().querySelector('.wbx-msg-d')).not.toBeNull());
+            expect(board().querySelector('.wbx-msg-d')!.textContent).toBe('The last attempt did not work: the engine stopped');
+            expect(board().className).toContain('wbx-msg--bad');
+            expect(screen.queryByTestId('results-error')).toBeNull();
+            expect(fits()).toHaveLength(before + 1);
+            expect(screen.getByTestId('footer-pill').textContent).toBe('Complete');
+            expect(screen.getByTestId('footer-status').textContent).toBe('Fit no longer in memory · load it again');
+
+            // 2) a load that works: "Loading the Relation model…" meanwhile, then the charts
+            fitMode = 'hold';
+            await clickLoad();
+            await waitFor(() => expect(screen.getByTestId('results-loading')).toBeTruthy());
+            expect(screen.getByTestId('results-loading').querySelector('.wbx-msg-t')!.textContent).toBe('Loading the Relation model…');
+            expect(screen.queryByTestId('results-not-fitted')).toBeNull();
+            expect(fits()).toHaveLength(before + 2);
+            expect((fits().pop()![1] as any).cache_key).toBe(`r1::${rel.trainedFingerprint}`); // the SAME fit, not a new train
+            gone = false;
+            fitMode = 'ok';
+            await act(async () => { release(); await Promise.resolve(); await Promise.resolve(); });
+            await chartsReady();
+            expect(screen.queryByTestId('results-not-fitted')).toBeNull();
+            expect(screen.getByTestId('footer-pill').textContent).toBe('Complete');
+            await waitFor(() => expect(tabLabel()).toBe('Relation model, Complete'));
+            // nothing about the model was written by either load: status, train time and fingerprint stay
+            for (const r of mockUpdateWorkspaceData.mock.results) {
+                const m = (await r.value).failureGroupState.models[0];
+                expect(m.status).toBe(true);
+                expect(m.lastTrainedAt).toBe(rel.lastTrainedAt);
+                expect(m.trainedFingerprint).toBe(rel.trainedFingerprint);
+            }
+        });
+
+        // Review of 8626f78 (should-fix 1 + 8): the mark is per MODEL, not only "what the open tab
+        // was last told".
+        it('the fit-gone mark is kept for a tab that is not open, shows at once when its tab is opened again, and is dropped when the window is re-pointed at another workspace with the same model ids', async () => {
+            let gone = true;
+            mockInvoke.mockImplementation((cmd: string, args?: any) =>
+                cmd === 'compute_health_preview' && gone && args?.request?.kind === 'relationship'
+                    ? Promise.reject('NOT_FITTED: no fitted model for this key') : defaultInvoke(cmd, args));
+            const ind = withTrained(makeModel());
+            const rel = trainedRel();
+            await mount([ind, rel]);
+            const relTab = () => screen.getByRole('tab', { name: /Relation model/ });
+            fireEvent.click(relTab());
+            await fitGoneSettled();
+            expect(relTab().getAttribute('aria-label')).toBe('Relation model, Fit no longer in memory');
+            // another tab of the sensor: the Relation model is still known as fit-gone, and still planned as ready
+            fireEvent.click(screen.getByRole('tab', { name: /Individual/ }));
+            await chartsReady();
+            expect(relTab().getAttribute('aria-label')).toBe('Relation model, Fit no longer in memory');
+            expect(trainSensorBtn().textContent).toBe('▶ Train sensor · 1 of 2');
+            // back on its tab: BEFORE the next NOT_FITTED answer lands it must not read "Trained"
+            fireEvent.click(relTab());
+            expect(relTab().getAttribute('aria-label')).toBe('Relation model, Fit no longer in memory');
+            expect(screen.getByTestId('footer-pill').textContent).toBe('Incomplete');
+            expect(screen.getByTestId('footer-status').textContent).toBe('Fit no longer in memory · load it again, or re-train with Train sensor ↑');
+            await fitGoneSettled();
+            // a duplicated workspace: same model ids, another project — its models are not fit-gone
+            gone = false;
+            await deliverData({ id: 'ws2', failureGroupState: { groups: [makeGroup()], models: [ind, rel] } }, { workspaceId: 'ws2' });
+            fireEvent.click(relTab());
+            expect(relTab().getAttribute('aria-label')).toBe('Relation model, Trained');
+            expect(screen.queryByTestId('results-not-fitted')).toBeNull();
+            await chartsReady();
+            expect(trainSensorBtn().textContent).toBe('▶ Train sensor · 0 of 2');
         });
 
         it('another preview failure is reported in place of the charts', async () => {
@@ -4410,7 +4592,6 @@ describe('Health score page - Mark complete (the ONLY way a model becomes Comple
     });
 
     it.each([
-        ['NOT_FITTED: no fitted model for this key', /Re-train first/],
         ['STALE_SESSION: the dataset was reloaded', /out of date/],
         ['sidecar crashed', /sidecar crashed/],
     ])('an export error (%s) keeps the model Incomplete and says what to do', async (rejection, text) => {
@@ -4425,6 +4606,44 @@ describe('Health score page - Mark complete (the ONLY way a model becomes Comple
         await waitFor(() => expect(screen.getByTestId('save-error').textContent).toMatch(text));
         expect(mockUpdateWorkspaceData).not.toHaveBeenCalled();
         expect(hsMarkBtn().disabled).toBe(false); // can retry
+    });
+
+    // Review of 8626f78 (should-fix 3): the page still showed a valid preview, so Mark complete
+    // stayed enabled and failed the same way on every click.
+    it('the export answers NOT_FITTED: the fit is marked gone and the preview asked again — the "Load it again" board appears and Mark complete is disabled with that reason; loading it brings Mark complete back', async () => {
+        let gone = false;
+        let exportFails = true;
+        mockInvoke.mockImplementation((cmd: string, args?: any) => {
+            if (cmd === 'export_model_files' && exportFails) { gone = true; return Promise.reject('NOT_FITTED: no fitted model for this key'); }
+            if (cmd === 'compute_health_preview' && gone) return Promise.reject('NOT_FITTED: no fitted model for this key');
+            return healthInvoke(cmd, args);
+        });
+        const rel = HS_REL({ healthSetPoints: { kind: 'relationship', residualAt80Lower: -1.5, residualAt80Upper: 1.5, residualAt0Lower: -3, residualAt0Upper: 3 } });
+        statefulUpdateMock([rel]);
+        render(<BuildModelWindow />);
+        await deliverData({ failureGroupState: { groups: [makeGroup()], models: [rel] } });
+        await openHealthPage();
+        await waitFor(() => expect(hsMarkBtn().disabled).toBe(false));
+        const fits = () => mockInvoke.mock.calls.filter(c => c[0] === 'preview_relationship_model').length;
+        const before = fits();
+        await hsClickMark();
+        await waitFor(() => expect(screen.getByTestId('save-error').textContent).toBe('The model was not saved. The fitted Relation model was no longer in memory, so its files were not written. Mark complete again once it is loaded.'));
+        // asked again -> NOT_FITTED -> ONE silent re-fit -> still gone -> the board
+        await fitGoneSettled('health-not-fitted');
+        expect(fits()).toBe(before + 1);
+        expect(hsMarkBtn().disabled).toBe(true);
+        expect(hsMarkBtn().title).toBe('Fit no longer in memory · load it again, or re-train with Train sensor ↑');
+        expect(screen.getByTestId('mark-block-reason').textContent).toBe('Fit no longer in memory · load it again, or re-train with Train sensor ↑');
+        expect(screen.getByTestId('footer-pill').textContent).toBe('Incomplete');
+        expect(mockInvoke.mock.calls.filter(c => c[0] === 'export_model_files')).toHaveLength(1);
+        // "Load it again": the set points come back and Mark complete works
+        gone = false;
+        exportFails = false;
+        await act(async () => { fireEvent.click(screen.getByTestId('health-load-fit')); await Promise.resolve(); await Promise.resolve(); });
+        await waitFor(() => expect(screen.getByTestId('set-points-card')).toBeTruthy());
+        await waitFor(() => expect(hsMarkBtn().disabled).toBe(false));
+        await hsClickMark();
+        await waitFor(() => expect(screen.getByTestId('footer-pill').textContent).toBe('Complete'));
     });
 
     it('a double click starts ONE export (guarded), disables the button and says "Saving the model files…" in the FOOTER only (no card on the page) until it finishes', async () => {
@@ -4628,7 +4847,7 @@ describe('Health score page - edge cases', () => {
         expect((screen.getByTestId('page-health') as HTMLButtonElement).title).toBe('Re-train first');
     });
 
-    it('NOT_FITTED (Relationship fit gone from Rust\'s memory) on the Health score page: the board with "Train sensor ↑", Mark complete disabled with that reason, Train sensor filled and Mark complete a ghost', async () => {
+    it('NOT_FITTED (Relationship fit gone from Rust\'s memory) on the Health score page: the board with "Load it again" + "Train sensor ↑", Mark complete disabled with that reason, Train sensor filled and Mark complete a ghost', async () => {
         mockInvoke.mockImplementation((cmd: string, args?: any) => cmd === 'compute_health_preview'
             ? Promise.reject('NOT_FITTED: no fitted model for this key') : healthInvoke(cmd, args));
         const rel = HS_REL();
@@ -4638,16 +4857,19 @@ describe('Health score page - edge cases', () => {
         await fitGoneSettled(); // (the fit is re-filled once automatically first; the mock keeps answering NOT_FITTED)
         fireEvent.click(screen.getByTestId('page-health'));
         await waitFor(() => expect(screen.getByTestId('health-not-fitted')).toBeTruthy());
-        await waitFor(() => expect(screen.getByTestId('mark-block-reason').textContent).toBe('Fit no longer in memory · re-train with Train sensor ↑'));
+        await waitFor(() => expect(screen.getByTestId('mark-block-reason').textContent).toBe('Fit no longer in memory · load it again, or re-train with Train sensor ↑'));
         const board = screen.getByTestId('health-not-fitted');
         expect(board.querySelector('.wbx-msg-t')!.textContent).toBe('Fit no longer in memory');
+        expect(board.querySelector('.wbx-msg-s')!.textContent).toBe('The fitted Relation model is no longer in memory (the data was reloaded, a special sensor changed, or many Relation models were opened). Nothing about the model changed — Load it again, or re-train it with Train sensor ↑. Your set points are kept and scored again when it is loaded.');
+        expect(within(board).getByTestId('health-load-fit').textContent).toBe('Load it again');
         expect(screen.queryByTestId('health-not-fitted-retrain')).toBeNull();
         expect(within(screen.getByTestId('health-page')).queryByRole('button', { name: /Re-train/ })).toBeNull();
         // the reason is in the footer, with the link to the one place to train
         const why = screen.getByTestId('mark-block-reason');
         const mark = screen.getByTestId('mark-complete') as HTMLButtonElement;
         expect(mark.disabled).toBe(true);
-        expect(mark.title).toBe('Fit no longer in memory · re-train with Train sensor ↑');
+        expect(mark.title).toBe('Fit no longer in memory · load it again, or re-train with Train sensor ↑');
+        expect(within(why).getByTestId('footer-load-fit').textContent).toBe('load it again');
         // ONE filled button: this model must train again -> Train sensor; Mark complete is a ghost
         expect(screen.getByTestId('wb-footer').getAttribute('data-primary')).toBe('train');
         expect(trainSensorBtn().className).toContain('rcx-btn--pri');
@@ -4659,6 +4881,71 @@ describe('Health score page - edge cases', () => {
         (document.activeElement as HTMLElement).blur();
         fireEvent.click(within(why).getByTestId('footer-train-sensor'));
         expect(document.activeElement).toBe(trainSensorBtn());
+    });
+
+    // Review of 8626f78 (must-fix), the Health score page half.
+    it('a COMPLETE Relation model whose fit is gone, on the Health score page: only "Load it again" (board and footer); a load that fails says why; loading it brings the set points back — still Complete, nothing re-trained', async () => {
+        let gone = true;
+        let fitMode: 'ok' | 'hold' | 'fail' = 'ok';
+        let release: () => void = () => {};
+        mockInvoke.mockImplementation((cmd: string, args?: any) => {
+            if (cmd === 'compute_health_preview' && gone) return Promise.reject('NOT_FITTED: no fitted model for this key');
+            if (cmd === 'preview_relationship_model' && fitMode === 'fail') return Promise.reject(new Error('the engine stopped'));
+            if (cmd === 'preview_relationship_model' && fitMode === 'hold') return new Promise(res => { release = () => res(healthInvoke(cmd, args)); });
+            return healthInvoke(cmd, args);
+        });
+        const sp = { kind: 'relationship', residualAt80Lower: -1.5, residualAt80Upper: 1.5, residualAt0Lower: -3, residualAt0Upper: 3 };
+        const rel = HS_REL({ status: true, healthSetPoints: sp, healthExport: { at: '2026-10-04T01:00:00.000Z', outputDir: 'C:/data/workspaces/ws1/output', setPoints: sp } });
+        statefulUpdateMock([rel]);
+        render(<BuildModelWindow />);
+        await deliverData({ failureGroupState: { groups: [makeGroup()], models: [rel] } });
+        await fitGoneSettled();
+        fireEvent.click(screen.getByTestId('page-health'));
+        await waitFor(() => expect(screen.getByTestId('health-not-fitted')).toBeTruthy());
+        const board = () => screen.getByTestId('health-not-fitted');
+        const fits = () => mockInvoke.mock.calls.filter(c => c[0] === 'preview_relationship_model');
+        const before = fits().length;
+        expect(board().querySelector('.wbx-msg-s')!.textContent).toBe('The fitted Relation model is no longer in memory (the data was reloaded, a special sensor changed, or many Relation models were opened). Nothing about the model changed — Load it again. Your set points are kept and scored again when it is loaded.');
+        expect(within(board()).queryByTestId('health-go-train-sensor')).toBeNull();
+        expect(within(board()).getAllByRole('button')).toHaveLength(1);
+        expect(trainSensorBtn().disabled).toBe(true); // "0 of 1 · up to date": it could not have trained it
+        expect(screen.getByTestId('footer-pill').textContent).toBe('Complete');
+        const line = () => screen.getByTestId('footer-status');
+        expect(line().textContent).toBe('Fit no longer in memory · load it again');
+        expect(within(line()).queryByTestId('footer-train-sensor')).toBeNull();
+        expect(screen.queryByTestId('mark-complete')).toBeNull();
+        mockUpdateWorkspaceData.mockClear();
+
+        // a load that fails
+        fitMode = 'fail';
+        await act(async () => { fireEvent.click(within(board()).getByTestId('health-load-fit')); await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+        await waitFor(() => expect(board().querySelector('.wbx-msg-d')).not.toBeNull());
+        expect(board().querySelector('.wbx-msg-d')!.textContent).toBe('The last attempt did not work: the engine stopped');
+        expect(screen.getByTestId('footer-pill').textContent).toBe('Complete');
+        expect(line().textContent).toBe('Fit no longer in memory · load it again');
+
+        // the footer's link does the same; this time it loads
+        fitMode = 'hold';
+        await act(async () => { fireEvent.click(within(line()).getByTestId('footer-load-fit')); await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+        await waitFor(() => expect(screen.getByTestId('health-loading')).toBeTruthy());
+        expect(screen.getByTestId('health-loading').querySelector('.wbx-msg-t')!.textContent).toBe('Loading the Relation model…');
+        expect(screen.queryByTestId('health-not-fitted')).toBeNull();
+        expect(fits()).toHaveLength(before + 2);
+        expect((fits().pop()![1] as any).cache_key).toBe(`r1::${rel.trainedFingerprint}`);
+        gone = false;
+        fitMode = 'ok';
+        await act(async () => { release(); await Promise.resolve(); await Promise.resolve(); });
+        await waitFor(() => expect(screen.getByTestId('set-points-card')).toBeTruthy());
+        await waitFor(() => expect(screen.getByTestId('save-ok')).toBeTruthy()); // "Files saved …" again
+        expect(screen.getByTestId('footer-pill').textContent).toBe('Complete');
+        expect(screen.getByTestId('mark-incomplete')).toBeTruthy();
+        expect(mockInvoke.mock.calls.filter(c => c[0] === 'export_model_files')).toHaveLength(0);
+        for (const r of mockUpdateWorkspaceData.mock.results) {
+            const m = (await r.value).failureGroupState.models[0];
+            expect(m.status).toBe(true);
+            expect(m.lastTrainedAt).toBe(rel.lastTrainedAt);
+            expect(m.trainedFingerprint).toBe(rel.trainedFingerprint);
+        }
     });
 });
 
@@ -6065,7 +6352,7 @@ describe('train queue wiring — review fixes (phase 4)', () => {
         await waitFor(() => expect((screen.getByTestId('compare-predictors') as HTMLButtonElement).disabled).toBe(false));
     });
 
-    it('NOT_FITTED during a run: no Re-train button on either page — the boards point at Train sensor, which is disabled with the run\'s reason', async () => {
+    it('NOT_FITTED during a run: no Re-train button on either page — "Load it again" and Train sensor are both disabled with the run\'s reason (one engine call at a time)', async () => {
         const base = (cmd: string, args?: any) => cmd === 'compute_health_preview'
             ? Promise.reject('NOT_FITTED: no fitted model for this key') : healthInvoke(cmd, args);
         mockInvoke.mockImplementation(base);
@@ -6073,9 +6360,10 @@ describe('train queue wiring — review fixes (phase 4)', () => {
         const release = hold('TAG2', base);
         await mountModels([IND2(), rel]);
         fireEvent.click(screen.getAllByTestId('sensor-row-label').find(e => e.textContent?.includes('TAG3'))!);
-        await waitFor(() => expect(screen.getByTestId('results-not-fitted')).toBeTruthy());
+        await fitGoneSettled(); // (after the one silent re-fit, which this fake Rust answers NOT_FITTED again)
         expect(screen.queryByTestId('results-not-fitted-retrain')).toBeNull();
         expect(trainSensorBtn().disabled).toBe(false);
+        expect((screen.getByTestId('board-load-fit') as HTMLButtonElement).disabled).toBe(false);
         // A run (i2 first, held); r3 — planned ready because its fit is gone — is taken out of it again.
         await act(async () => { fireEvent.click(screen.getByTestId('train-all')); });
         await act(async () => { fireEvent.click(screen.getByTestId('train-all-start')); await Promise.resolve(); });
@@ -6083,14 +6371,23 @@ describe('train queue wiring — review fixes (phase 4)', () => {
         fireEvent.click(screen.getByTestId('train-all-close'));
         await flush();
         await waitFor(() => expect(screen.getByTestId('results-not-fitted')).toBeTruthy());
-        expect(screen.getByTestId('results-not-fitted').querySelectorAll('button')).toHaveLength(1); // only the text link
+        expect(screen.getByTestId('results-not-fitted').querySelectorAll('button')).toHaveLength(2); // only the two text links
         expect(trainSensorBtn().disabled).toBe(true);
         expect(trainSensorBtn().title).toBe('Wait for the training run to finish');
+        const fitsBefore = mockInvoke.mock.calls.filter(c => c[0] === 'preview_relationship_model').length;
+        const load = screen.getByTestId('board-load-fit') as HTMLButtonElement;
+        expect(load.disabled).toBe(true);
+        expect(load.title).toBe('Wait for the training run to finish');
+        fireEvent.click(load);
+        await flush();
+        expect(mockInvoke.mock.calls.filter(c => c[0] === 'preview_relationship_model')).toHaveLength(fitsBefore);
         // The Health score page: the same board, and Mark complete waits for the run.
         fireEvent.click(screen.getByTestId('page-health'));
         await flush();
         await waitFor(() => expect(screen.getByTestId('health-not-fitted')).toBeTruthy());
         expect(screen.queryByTestId('health-not-fitted-retrain')).toBeNull();
+        expect((screen.getByTestId('health-load-fit') as HTMLButtonElement).disabled).toBe(true);
+        expect((screen.getByTestId('health-load-fit') as HTMLButtonElement).title).toBe('Wait for the training run to finish');
         expect((screen.getByTestId('mark-complete') as HTMLButtonElement).disabled).toBe(true);
         expect(screen.getByTestId('mark-block-reason').textContent).toBe('Wait for the training run to finish');
         await release();
@@ -6465,6 +6762,26 @@ describe('Workbench redesign §1 — the page spine', () => {
             fireEvent.click(screen.getByTestId('health-retry'));
             await waitFor(() => expect(screen.queryByTestId('health-error')).toBeNull());
             await waitFor(() => expect(hsMarkBtn().disabled).toBe(false));
+        });
+
+        // Review of 8626f78 (should-fix 2): after the dataset was replaced the red card has NO
+        // Retry — the footer must not point at one.
+        it('the health score failed to load with STALE_SESSION (the dataset was replaced): no Retry on the card, and the footer says to close and reopen — it never points at a Retry that is not there', async () => {
+            await hsMount([HS_IND()]);
+            await openHealthPage();
+            await waitFor(() => expect(hsMarkBtn().disabled).toBe(false));
+            mockInvoke.mockImplementation((cmd: string, args?: any) =>
+                cmd === 'compute_health_preview' ? Promise.reject('STALE_SESSION: the dataset was reloaded') : healthInvoke(cmd, args));
+            hsType('sp-upper', '9.5');
+            await waitFor(() => expect(screen.getByTestId('health-error')).toBeTruthy());
+            expect(screen.queryByTestId('health-retry')).toBeNull();
+            const why = screen.getByTestId('mark-block-reason');
+            expect(why.textContent).toBe('The data in this window is out of date. Close it and open Build Model again from the Dashboard.');
+            expect(why.textContent).not.toMatch(/Retry/);
+            expect(hsMarkBtn().disabled).toBe(true);
+            expect(hsMarkBtn().title).toBe('The data in this window is out of date. Close it and open Build Model again from the Dashboard.');
+            // the input typed in is still there (the page was not replaced by a board)
+            expect(hsInput('sp-upper').value).toBe('9.5');
         });
 
         it('a Complete model with files out of date whose new set point is NOT valid: "Mark complete again" is disabled and the footer says why', async () => {

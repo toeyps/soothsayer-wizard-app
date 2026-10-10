@@ -13,7 +13,7 @@ import {
     type TestsChangedState,
 } from '../../../utils/trainTestValidation';
 import { formatDataStamp, formatPeriodChip } from '../periodDisplay';
-import { fmtNum } from './chartTheme';
+import { fmtNumCol } from './chartTheme';
 
 /*
  * Train periods and scoring periods (SPEC FINAL 2026-10-07,
@@ -59,8 +59,11 @@ const days1 = (d: number) => `${(Math.round(d * 10) / 10).toFixed(1)} d`;
 /** S-number of the result at list position `i` (see the header comment). */
 const tNum = (t: TestPeriodResult, i: number, numbers?: readonly number[] | null) => testNumberFor(numbers, t.index, i);
 const pct = (x: number | null | undefined) => (x == null || !Number.isFinite(x) ? '—' : `${x.toFixed(1)}%`);
+/** A signed COLUMN value ("+0.412", "−"-less negatives as the formatter prints them): the
+ *  column format (3 decimals, lines up); a non-zero value never reads as 0, so a positive
+ *  one always carries its "+". */
 const signed = (x: number | null | undefined, unit = '') =>
-    x == null || !Number.isFinite(x) ? '—' : `${x > 0 && fmtNum(x) !== '0.000' ? '+' : ''}${fmtNum(x)}${unit}`;
+    x == null || !Number.isFinite(x) ? '—' : `${x > 0 ? '+' : ''}${fmtNumCol(x)}${unit}`;
 const hasTrainOverlap = (t: TestPeriodResult) => (t.train_rows ?? 0) > 0;
 
 /** Where a model's scoring periods are edited — Workspace mode vs its own Custom settings. */
@@ -182,25 +185,26 @@ export function TrainTestCard({ data, unit, side = false, custom = false, testNu
         cols = ['R²', 'RMSE', 'Residual mean · SD', 'RMSE ÷ train'];
         trainCells = (
             <>
-                <td className="n">{fmtNum(tr.r2)}</td>
-                <td className="n">{fmtNum(tr.rmse)}{u}</td>
-                <td className="n">{signed(tr.residual_mean)} · {fmtNum(tr.residual_sd)}</td>
+                <td className="n">{fmtNumCol(tr.r2)}</td>
+                <td className="n">{fmtNumCol(tr.rmse)}{u}</td>
+                <td className="n">{signed(tr.residual_mean)} · {fmtNumCol(tr.residual_sd)}</td>
                 <td className="n vt-dim">1.00</td>
             </>
         );
-        // Every scoring period shows the same four numbers — nothing is judged.
+        // Every scoring period shows the same four numbers — nothing is judged. The numbers
+        // of a column share ONE format (3 decimals) so train and scoring rows line up.
         testCells = t => (
             <>
-                <td className="n">{fmtNum(t.r2)}</td>
-                <td className="n">{fmtNum(t.rmse)}{u}</td>
-                <td className="n">{signed(t.residual_mean)} · {fmtNum(t.residual_sd)}</td>
+                <td className="n">{fmtNumCol(t.r2)}</td>
+                <td className="n">{fmtNumCol(t.rmse)}{u}</td>
+                <td className="n">{signed(t.residual_mean)} · {fmtNumCol(t.residual_sd)}</td>
                 <td className="n" data-testid="vt-rmse-ratio">{tr.rmse && t.rmse != null ? (t.rmse / tr.rmse).toFixed(2) : '—'}</td>
             </>
         );
         note = 'RMSE ÷ train near 1: the model predicts that period as well as its training rows. Residual mean: how far actual sits from the prediction, on average.';
     } else if (data.kind === 'individual') {
         cols = ['Rows within ±3SD', 'Mean shift'];
-        trainCells = <><td className="n">{pct(tr.within_3sd_pct)}</td><td className="n vt-dim">0 SD</td></>;
+        trainCells = <><td className="n">{pct(tr.within_3sd_pct)}</td><td className="n vt-dim">0.000 SD</td></>;
         testCells = t => <><td className="n">{pct(t.within_3sd_pct)}</td><td className="n">{signed(t.mean_shift_sd, ' SD')}</td></>;
         note = 'Mean shift is in train SDs: how far the period moved away from the train rows.';
     } else {

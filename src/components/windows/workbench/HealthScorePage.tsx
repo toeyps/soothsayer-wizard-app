@@ -27,7 +27,7 @@ import {
 import { narrowScopes, scopesOf, sensorAxisTitle, type TimeScopes } from './healthCharts';
 import { formatDataStamp } from '../periodDisplay';
 import { SlowScoringNotice, TestResultsCard, TestsChangedBanner } from './ValidationCards';
-import { StateBoard, TrainSensorLink } from './WorkbenchShellParts';
+import { FitGoneBoard, StateBoard } from './WorkbenchShellParts';
 import type { HealthScorePageProps, SaveInfo } from './workbenchTypes';
 
 /*
@@ -59,7 +59,16 @@ import type { HealthScorePageProps, SaveInfo } from './workbenchTypes';
  *  render (model, set points, save record, tests-changed state, scoring-period numbers)
  *  by value, everything else by identity — the callbacks must be stable. */
 export function sameHealthScoreProps(a: HealthScorePageProps, b: HealthScorePageProps): boolean {
-    return samePageProps(a, b, ['model', 'setPoints', 'save', 'testsChanged', 'testNumbers', 'attemptIssues']);
+    const { fitGone: fa, ...ra } = a;
+    const { fitGone: fb, ...rb } = b;
+    return sameFitGone(fa, fb)
+        && samePageProps(ra, rb, ['model', 'setPoints', 'save', 'testsChanged', 'testNumbers', 'attemptIssues']);
+}
+
+/** `fitGone` is rebuilt by the window on every render: same when its fields are. */
+function sameFitGone(a: HealthScorePageProps['fitGone'], b: HealthScorePageProps['fitGone']): boolean {
+    return a.onReload === b.onReload && a.onGoTrainSensor === b.onGoTrainSensor
+        && (a.reloadDisabledReason ?? null) === (b.reloadDisabledReason ?? null) && (a.error ?? null) === (b.error ?? null);
 }
 
 /** A save that has been running this long gets a line on the page; until then
@@ -88,7 +97,12 @@ function HealthScorePage(props: HealthScorePageProps) {
     // red card with its Retry instead of being replaced (QA fix, 2026-10-04).
     // A Relation-model fit that is gone from memory (NOT_FITTED) has its own board.
     const failed = !preview.data && !preview.notFitted && !!preview.error;
-    const errorMode = failed && !!preview.lastData;
+    // The NEXT request after a failure (Retry, or a set point typed under the red card)
+    // clears `error` while `data` is still null: the page must stay exactly where it is
+    // — replacing it by the "Loading…" board would unmount the input being typed in.
+    const asking = !preview.data && !preview.error && preview.loading && !!preview.lastData;
+    // The page is drawn from the last good answer, which does not describe what is typed.
+    const errorMode = (failed || asking) && !!preview.lastData;
     const data = preview.data ?? (errorMode ? preview.lastData ?? null : null);
     // Train / scoring scopes on the time charts (null = no scoring periods sent).
     // Memoised on the payload so a hover re-render never rebuilds the time charts.
@@ -117,8 +131,22 @@ function HealthScorePage(props: HealthScorePageProps) {
             <span className="wb2-sp" />
             {canRetry && <button type="button" className="rcx-btn rcx-btn--sm" data-testid="health-retry" onClick={props.onRetryPreview}>Retry</button>}
         </div>
+    ) : asking ? (
+        // Same place as the red card it follows, so nothing under it moves.
+        <div className="hs-save hs-full" role="status" data-testid="health-asking">
+            <Loader2 size={14} className="pm-spin" aria-hidden="true" />
+            <span><b>Loading the health score again…</b> the score and Checks are not available until it loads</span>
+        </div>
     ) : null;
-    const goTrain = (testId: string) => <TrainSensorLink testId={testId} onClick={props.onGoTrainSensor} />;
+    const loadingBoard = (
+        <StateBoard
+            testId="health-loading"
+            className="hs-full hs-stateboard"
+            tone="run"
+            title={`Loading the ${model.kind === 'relationship' ? 'Relation model' : `${model.kind === 'clustering' ? 'Clustering' : 'Individual'} model`}…`}
+            text="The set points and the score appear here when it is ready."
+        />
+    );
 
     if (!data) {
         return (
@@ -127,22 +155,20 @@ function HealthScorePage(props: HealthScorePageProps) {
                 <SlowScoringNotice show={props.slowScoring} />
                 {errorCard}
                 {preview.notFitted ? (
-                    // No Re-train button here: the board points at the one place to train.
-                    <StateBoard
-                        testId="health-not-fitted"
-                        className="hs-full hs-stateboard"
-                        title="Fit no longer in memory"
-                        text={<>The fitted Relation model is no longer in memory (the data was reloaded or a special sensor changed). Re-train it with {goTrain('health-go-train-sensor')} — your set points are kept and scored again when it finishes.</>}
-                    />
-                ) : !failed && (
-                    <StateBoard
-                        testId="health-loading"
-                        className="hs-full hs-stateboard"
-                        tone="run"
-                        title={`Loading the ${model.kind === 'relationship' ? 'Relation model' : `${model.kind === 'clustering' ? 'Clustering' : 'Individual'} model`}…`}
-                        text="The set points and the score appear here when it is ready."
-                    />
-                )}
+                    // The fit is being loaded again (silently, or "Load it again"): say so.
+                    // Otherwise ONE board, no button of its own: "Load it again" (nothing
+                    // about the model changed) and, when it trains this model, "Train sensor ↑".
+                    props.fitLoading ? loadingBoard : (
+                        <FitGoneBoard
+                            testId="health-not-fitted"
+                            linkTestId="health-load-fit"
+                            trainTestId="health-go-train-sensor"
+                            className="hs-full hs-stateboard"
+                            tail="Your set points are kept and scored again when it is loaded."
+                            actions={props.fitGone}
+                        />
+                    )
+                ) : !failed && loadingBoard}
             </div>
         );
     }
@@ -159,11 +185,6 @@ function HealthScorePage(props: HealthScorePageProps) {
             <SlowScoringNotice show={props.slowScoring} />
             {errorCard}
             <TestsChangedBanner state={props.testsChanged} />
-            {preview.notFitted && (
-                <div className="wb2-stale hs-full" role="status" data-testid="health-not-fitted-banner">
-                    <span><b>Fit no longer in memory.</b> The chart below is the last result. Re-train the Relation model with {goTrain('health-go-train-sensor')} — your set points are kept.</span>
-                </div>
-            )}
             <SetPointChart
                 data={data}
                 props={props}

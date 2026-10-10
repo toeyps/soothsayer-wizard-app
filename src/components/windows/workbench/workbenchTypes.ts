@@ -2,6 +2,7 @@ import type { FailureModel, HealthSetPoints } from '../../../types';
 import type { HealthIssue } from '../../../types/health';
 import type { UseHealthPreviewResult } from '../../../hooks/useHealthPreview';
 import type { TestsChangedState } from '../../../utils/trainTestValidation';
+import type { FitGoneActions } from './WorkbenchShellParts';
 
 /*
  * Contract of the Build Model Workbench's two per-model pages (health score
@@ -49,11 +50,10 @@ export interface WorkbenchPageProps {
 /** What the page tells about the model's saved files ("Mark complete" writes them). */
 export type SaveInfo =
     | { phase: 'idle' }
-    /** `slow`: Relationship re-runs the sidecar and scores the scoring periods (15 s or more, longer the first time). */
-    | { phase: 'running'; slow: boolean }
-    /** `files` is `null` when only the persisted record is known (the model was
-     *  completed in an earlier session): the folder and time, not the file list. */
-    | { phase: 'ok'; outputDir: string; files: { file_name: string; path: string }[] | null; at: string }
+    | { phase: 'running' }
+    /** The folder the files were written to and when (this session's save, or the
+     *  model's persisted export record). */
+    | { phase: 'ok'; outputDir: string; at: string }
     | { phase: 'error'; message: string };
 
 export interface HealthScorePageProps extends WorkbenchPageProps {
@@ -69,10 +69,15 @@ export interface HealthScorePageProps extends WorkbenchPageProps {
     /** Only a FAILED save (and a save that is taking long) shows on the page; a save in
      *  progress and a successful one are the footer sentence. */
     save: SaveInfo;
-    /** "Train sensor ↑" (the Relation-model fit is no longer in memory): move the
-     *  focus to the header's Train sensor button — the ONE place to train. The page
-     *  has no Re-train button of its own. Must be stable (the page is memoised). */
-    onGoTrainSensor: () => void;
+    /** The Relation-model fit is no longer in memory (`preview.notFitted`): what the
+     *  board offers — "Load it again" (same model, nothing saved, status untouched)
+     *  and, for a model that is not Complete, "Train sensor ↑". The page has no
+     *  Re-train button of its own. Compared by value (the page is memoised); its
+     *  callbacks must be stable. */
+    fitGone: FitGoneActions;
+    /** This model's fit is being loaded right now (the silent re-fit, or "Load it
+     *  again"): the board reads "Loading the Relation model…" meanwhile. */
+    fitLoading?: boolean;
     /** The error banner's Retry: ask `compute_health_preview` again. */
     onRetryPreview?: () => void;
     /** The `test_scoring_failed` notice's "Try again": same, but also tells Rust to

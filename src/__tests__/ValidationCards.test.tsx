@@ -74,20 +74,33 @@ describe('TrainTestCard (Model fit page: "Train and scoring periods")', () => {
         const train = screen.getByTestId('train-test-row-train');
         expect(train.textContent).toContain('Train');
         expect(train.textContent).toContain('40.2 d · 1,200 rows');
-        // computed values read through the app's ONE number formatter (2026-10-10): up to 3 decimals,
-        // never padded — "0.91", "2 bar" (they were "0.910", "2.00 bar" from the Workbench's old one)
+        // The numbers of a COLUMN line up on the decimal point: the app formatter's fixed-3-decimals
+        // form (DESIGN_SYSTEM §4 "where a column must line up") — "0.910" over "0.800", "2.000 bar"
+        // over "3.000 bar" (unpadded "0.91" / "2 bar" / "0.8" made a ragged column).
         const cells = (row: HTMLElement) => [...row.querySelectorAll('td')].slice(1).map(td => td.textContent);
-        expect(cells(train).slice(0, 3)).toEqual(['0.91', '2 bar', '+0.01 · 1.9']);
+        expect(cells(train).slice(0, 3)).toEqual(['0.910', '2.000 bar', '+0.010 · 1.900']);
         const s1 = screen.getByTestId('train-test-row-1');
         expect(s1.querySelector('.vt-scope b')!.textContent).toBe('S1');
-        expect(cells(s1).slice(0, 3)).toEqual(['0.8', '3 bar', '+0.5 · 2.9']);
+        expect(cells(s1).slice(0, 3)).toEqual(['0.800', '3.000 bar', '+0.500 · 2.900']);
         expect(within(s1).getByTestId('vt-rmse-ratio').textContent).toBe('1.50');
+    });
+
+    it('column numbers: a non-zero value never reads as 0 (tiny values keep 3 significant digits), a positive one always carries "+", zero has no sign', () => {
+        render(<TrainTestCard data={withV('relationship', { tests: [
+            makeTestResult({ r2: 0.00012, rmse: 1234.5, residual_mean: 0.0004, residual_sd: 0 }),
+            makeTestResult({ index: 2, r2: 1, rmse: 0.5, residual_mean: 0, residual_sd: 12 }),
+            makeTestResult({ index: 3, r2: null as any, rmse: null as any, residual_mean: -0.0004, residual_sd: null as any }),
+        ] })} unit="" />);
+        const cells = (n: number) => [...screen.getByTestId(`train-test-row-${n}`).querySelectorAll('td')].slice(1, 4).map(td => td.textContent);
+        expect(cells(1)).toEqual(['0.000120', '1,234.500', '+0.000400 · 0.000']);
+        expect(cells(2)).toEqual(['1.000', '0.500', '0.000 · 12.000']);
+        expect(cells(3)).toEqual(['—', '—', '-0.000400 · —']);
     });
 
     it('Relation model: a period the model fits badly shows the SAME four numbers (no "shift" row, nothing hidden)', () => {
         render(<TrainTestCard data={withV('relationship', { tests: [makeTestResult({ r2: 0.1, rmse: 9, residual_mean: -5, residual_sd: 4 })] })} unit="bar" />);
         const s1 = screen.getByTestId('train-test-row-1');
-        expect([...s1.querySelectorAll('td')].slice(1, 4).map(td => td.textContent)).toEqual(['0.1', '9 bar', '-5 · 4']);
+        expect([...s1.querySelectorAll('td')].slice(1, 4).map(td => td.textContent)).toEqual(['0.100', '9.000 bar', '-5.000 · 4.000']);
         expect(within(s1).getByTestId('vt-rmse-ratio').textContent).toBe('4.50');
         expect(screen.queryByTestId('vt-shift')).toBeNull();
         expect(screen.queryByTestId('vt-shift-ratio')).toBeNull();
@@ -98,7 +111,9 @@ describe('TrainTestCard (Model fit page: "Train and scoring periods")', () => {
         expect(screen.getByTestId('train-test-row-train').textContent).toContain('99.6%');
         const s1 = screen.getByTestId('train-test-row-1');
         expect(s1.textContent).toContain('97.3%'); // one decimal
-        expect(s1.textContent).toContain('+0.4 SD');
+        expect(s1.textContent).toContain('+0.400 SD');
+        // the train row's reference value has the column's decimals too
+        expect([...screen.getByTestId('train-test-row-train').querySelectorAll('td')].pop()!.textContent).toBe('0.000 SD');
         // side column: not capped full-width
         expect(screen.getByTestId('train-test-card').className).not.toContain('wb2-full');
     });
@@ -316,7 +331,7 @@ describe('S-numbers of the ORIGINAL list, scoring failed, slow-scoring hint', ()
 
     it('test_scoring_failed: the "Train and scoring periods" card keeps the train row, marks each period "Not scored" and shows the amber notice', () => {
         render(<TrainTestCard data={unscored()} unit="bar" />);
-        expect(screen.getByTestId('train-test-row-train').querySelectorAll('td')[1].textContent).toBe('0.91');
+        expect(screen.getByTestId('train-test-row-train').querySelectorAll('td')[1].textContent).toBe('0.910');
         expect(screen.getByTestId('train-test-row-1').textContent).toContain('Not scored');
         expect(screen.getByTestId('test-scoring-failed').textContent).toContain(TEST_SCORING_FAILED_TEXT);
         // no Retry button without a handler

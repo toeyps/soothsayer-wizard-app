@@ -124,6 +124,18 @@ export function fmtNum(v: number | null | undefined): string {
     return fmtNumApp(v === 0 ? 0 : v);
 }
 
+/**
+ * `fmtNum` for a COMPUTED value in a table COLUMN that must line up on the decimal point (the
+ * train / scoring metrics table, the automatic rows of the set-points table): always 3 decimals
+ * ("5.000", "0.910") — the app formatter's own `fixed3` form (DESIGN_SYSTEM §4 "Numbers"), so a
+ * non-zero value still never reads as 0 ("0.000120"). Never for a value the user typed (that one
+ * stays exactly as typed, `fmtNumExact`), and not for a number standing alone in a sentence.
+ */
+export function fmtNumCol(v: number | null | undefined): string {
+    if (v === null || v === undefined || !Number.isFinite(v)) return '—';
+    return fmtNumApp(v === 0 ? 0 : v, true);
+}
+
 /*
  * A stored number that the USER typed (a cluster range boundary, a set point), for display.
  * `fmtNumExact` keeps every decimal of its shortest form — never padded ("4.6", not "4.60"),

@@ -3236,6 +3236,8 @@ body {
 .bmw-step { display: inline-flex; align-items: center; border: 1px solid var(--border-strong); border-radius: 7px; overflow: hidden; height: 28px; }
 .bmw-step button { font: inherit; background: var(--input-bg); border: 0; color: var(--text-primary); width: 26px; height: 100%; cursor: pointer; }
 .bmw-step button:hover { background: var(--hover-bg); }
+/* The count cannot go further (at most 5 clusters): faint, no hover, its tooltip says why. */
+.bmw-step button:disabled, .bmw-step button:disabled:hover { color: var(--text-faint); background: var(--input-bg); cursor: default; }
 .bmw-step span { min-width: 28px; text-align: center; font-family: var(--mono); font-size: 0.76rem; }
 
 /* 🆕 2026-09-30 [cluster-range slider port, alignment fix]: Clustering is the

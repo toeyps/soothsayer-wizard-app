@@ -40,6 +40,7 @@ interface Opts extends Partial<HealthScorePageProps> {
 const onChange = vi.fn();
 const onCommit = vi.fn();
 const onGoTrain = vi.fn();
+const onReload = vi.fn();
 
 /** The page, with the set points held in state like the container holds its draft, plus spies. */
 function Harness({ kind = 'individual', sp, data, ...rest }: Opts) {
@@ -56,7 +57,7 @@ function Harness({ kind = 'individual', sp, data, ...rest }: Opts) {
             onSetPointsCommit={onCommit}
             attemptIssues={null}
             save={{ phase: 'idle' }}
-            onGoTrainSensor={onGoTrain}
+            fitGone={{ onReload, onGoTrainSensor: onGoTrain }}
             {...rest}
         />
     );
@@ -81,6 +82,7 @@ beforeEach(() => {
     onChange.mockClear();
     onCommit.mockClear();
     onGoTrain.mockClear();
+    onReload.mockClear();
 });
 afterEach(cleanup);
 
@@ -92,8 +94,8 @@ describe('Individual: the set-point table (100 / 80 / 0)', () => {
         const table = within(card).getByRole('table', { name: 'Health set points' });
         expect(within(table).getAllByRole('columnheader').map(h => h.textContent)).toEqual(['Score', 'Band', 'Lower', 'Upper']);
         expect(within(table).getAllByRole('row')).toHaveLength(4); // head + 100 / 80 / 0
-        expect(within(card).getByTestId('rung-100').textContent).toBe('100within ±1SD · automatic46');
-        expect(within(card).getByTestId('rung-80').textContent).toBe('80at ±3SD · automatic28');
+        expect(within(card).getByTestId('rung-100').textContent).toBe('100within ±1SD · automatic4.0006.000');
+        expect(within(card).getByTestId('rung-80').textContent).toBe('80at ±3SD · automatic2.0008.000');
         expect(within(card).getByTestId('rung-0').textContent).toMatch(/^0at L \/ H · you set them/);
         // automatic values: text, never something that looks like an input
         for (const id of ['ro-l1', 'ro-u1', 'ro-l3', 'ro-u3']) {
@@ -102,7 +104,7 @@ describe('Individual: the set-point table (100 / 80 / 0)', () => {
             expect(el.className).toBe('hsx-ro');
             expect(el.closest('.hs-num')).toBeNull();
         }
-        expect([screen.getByTestId('ro-l1'), screen.getByTestId('ro-u1'), screen.getByTestId('ro-l3'), screen.getByTestId('ro-u3')].map(e => e.textContent)).toEqual(['4', '6', '2', '8']);
+        expect([screen.getByTestId('ro-l1'), screen.getByTestId('ro-u1'), screen.getByTestId('ro-l3'), screen.getByTestId('ro-u3')].map(e => e.textContent)).toEqual(['4.000', '6.000', '2.000', '8.000']);
         expect(card.querySelectorAll('input')).toHaveLength(2);
         // no locks, no boxed rungs, no source chips any more
         expect(card.querySelectorAll('svg.lucide-lock')).toHaveLength(0);
@@ -727,33 +729,86 @@ describe('states of the preview', () => {
         expect(screen.getByTestId('health-loading')).toBeTruthy();
     });
 
-    // SPEC §4: no in-pane Re-train button — the board points at "Train sensor ↑".
-    it('NOT_FITTED with nothing to show: ONE board, no Re-train button, a "Train sensor ↑" text link', () => {
-        mount({ data: null, preview: { data: null, loading: false, error: 'no fit', errorCode: 'NOT_FITTED', notFitted: true, needsRetrain: true, idle: null } });
+    // SPEC §4: no in-pane Re-train button. Nothing about the model changed, so the board's way
+    // back is the text link "Load it again" (review of 8626f78: "Train sensor ↑" alone was a dead
+    // end for a Complete model — Train sensor never trains one).
+    /** What the real hook returns after NOT_FITTED: no data, and (when there was one) the last answer. */
+    const notFitted = (last: HealthPreview | null = null) => ({
+        data: null, lastData: last, loading: false, error: 'no fit', errorCode: 'NOT_FITTED' as const, notFitted: true, needsRetrain: true, idle: null as null,
+    });
+
+    it('NOT_FITTED, a model that is NOT Complete: ONE board, no button of its own — "Load it again" and "Train sensor ↑" as text links', () => {
+        mount({ kind: 'relationship', sp: REL_VALID, data: null, preview: notFitted() });
         const board = screen.getByTestId('health-not-fitted');
         expect(board.className).toMatch(/\bwbx-msg\b/);
+        expect(board.className).not.toMatch(/wbx-msg--bad/);
         expect(board.querySelector('.wbx-msg-t')!.textContent).toBe('Fit no longer in memory');
-        expect(board.textContent).toMatch(/Re-train it with Train sensor ↑ — your set points are kept/);
+        expect(board.querySelector('.wbx-msg-s')!.textContent).toBe('The fitted Relation model is no longer in memory (the data was reloaded, a special sensor changed, or many Relation models were opened). Nothing about the model changed — Load it again, or re-train it with Train sensor ↑. Your set points are kept and scored again when it is loaded.');
+        expect(board.querySelector('.wbx-msg-d')).toBeNull();
         expect(screen.queryByTestId('health-not-fitted-retrain')).toBeNull();
         expect(screen.queryByRole('button', { name: /^↻|Re-train$/ })).toBeNull();
+        expect(board.querySelector('.rcx-btn, .bmw-btn-ok, .f4-btn-save')).toBeNull();
+        const load = within(board).getByTestId('health-load-fit') as HTMLButtonElement;
+        expect(load.className).toBe('tq-inline-link');
+        expect(load.textContent).toBe('Load it again');
+        expect(load.disabled).toBe(false);
         const link = within(board).getByTestId('health-go-train-sensor');
         expect(link.className).toBe('tq-inline-link');
         expect(link.textContent).toBe('Train sensor ↑');
-        expect(within(board).getAllByRole('button')).toHaveLength(1);
+        expect(within(board).getAllByRole('button')).toHaveLength(2);
+        fireEvent.click(load);
+        expect(onReload).toHaveBeenCalledTimes(1);
+        expect(onGoTrain).not.toHaveBeenCalled();
         fireEvent.click(link);
         expect(onGoTrain).toHaveBeenCalledTimes(1);
         expect(screen.queryByTestId('health-error')).toBeNull(); // not the red "couldn't load" card
     });
 
-    it('NOT_FITTED while the last charts are still held: a line above them with the same text link, no button of its own', () => {
-        const d = previewFor('individual', IND_VALID);
-        mount({ sp: IND_VALID, preview: { data: d, loading: false, error: 'no fit', errorCode: 'NOT_FITTED', notFitted: true, needsRetrain: true, idle: null } });
-        const banner = screen.getByTestId('health-not-fitted-banner');
-        expect(banner.textContent).toMatch(/Fit no longer in memory\. The chart below is the last result\. Re-train the Relation model with Train sensor ↑/);
-        expect(banner.querySelector('.rcx-btn')).toBeNull();
-        fireEvent.click(within(banner).getByTestId('health-go-train-sensor'));
-        expect(onGoTrain).toHaveBeenCalledTimes(1);
-        expect(screen.getByTestId('set-points-card')).toBeTruthy();
+    it('NOT_FITTED, a COMPLETE model (no onGoTrainSensor): only "Load it again" — never a link that cannot work', () => {
+        mount({ kind: 'relationship', sp: REL_VALID, data: null, preview: notFitted(), fitGone: { onReload } });
+        const board = screen.getByTestId('health-not-fitted');
+        expect(within(board).queryByTestId('health-go-train-sensor')).toBeNull();
+        expect(board.textContent).not.toMatch(/Train sensor/);
+        expect(board.querySelector('.wbx-msg-s')!.textContent).toMatch(/Nothing about the model changed — Load it again\. Your set points are kept/);
+        expect(within(board).getAllByRole('button')).toHaveLength(1);
+        fireEvent.click(within(board).getByTestId('health-load-fit'));
+        expect(onReload).toHaveBeenCalledTimes(1);
+    });
+
+    it('NOT_FITTED while the fit is being loaded again: "Loading the Relation model…", no fit-gone board', () => {
+        mount({ kind: 'relationship', sp: REL_VALID, data: null, preview: notFitted(), fitLoading: true });
+        expect(screen.queryByTestId('health-not-fitted')).toBeNull();
+        expect(screen.getByTestId('health-loading').querySelector('.wbx-msg-t')!.textContent).toBe('Loading the Relation model…');
+        expect(screen.queryByTestId('health-load-fit')).toBeNull();
+    });
+
+    it('NOT_FITTED after a load that failed: back on the board, red, with the reason — and "Load it again" still there', () => {
+        mount({ kind: 'relationship', sp: REL_VALID, data: null, preview: notFitted(), fitGone: { onReload, error: 'The Relation model engine stopped.' } });
+        const board = screen.getByTestId('health-not-fitted');
+        expect(board.className).toMatch(/wbx-msg--bad/);
+        expect(board.querySelector('.wbx-msg-d')!.textContent).toBe('The last attempt did not work: The Relation model engine stopped.');
+        fireEvent.click(within(board).getByTestId('health-load-fit'));
+        expect(onReload).toHaveBeenCalledTimes(1);
+    });
+
+    it('"Load it again" is disabled, with the reason as its tooltip, while it cannot run (a training run is active)', () => {
+        mount({ kind: 'relationship', sp: REL_VALID, data: null, preview: notFitted(), fitGone: { onReload, reloadDisabledReason: 'Wait for the training run to finish' } });
+        const load = screen.getByTestId('health-load-fit') as HTMLButtonElement;
+        expect(load.disabled).toBe(true);
+        expect(load.title).toBe('Wait for the training run to finish');
+        fireEvent.click(load);
+        expect(onReload).not.toHaveBeenCalled();
+    });
+
+    // The hook never returns `data` together with `notFitted` (a failed request sets `data`
+    // to null): with the last answer still held, NOT_FITTED is the board — there is no
+    // "line above the last charts" state (the unreachable `health-not-fitted-banner` is gone).
+    it('NOT_FITTED with an earlier answer held (what the hook really returns): the board, not the old charts', () => {
+        mount({ kind: 'relationship', sp: REL_VALID, preview: notFitted(previewFor('relationship', REL_VALID)) });
+        expect(screen.getByTestId('health-not-fitted')).toBeTruthy();
+        expect(screen.queryByTestId('health-not-fitted-banner')).toBeNull();
+        expect(screen.queryByTestId('set-points-card')).toBeNull();
+        expect(screen.queryByTestId('chart-card-score')).toBeNull();
     });
 
     it('another error with nothing to show: the red card with the reason', () => {
@@ -788,7 +843,7 @@ describe('saved files: progress, result and "changed after saving"', () => {
     it('running: no "Saving…" card on the page; one appears only once the save has been running for a while', () => {
         vi.useFakeTimers();
         try {
-            save({ phase: 'running', slow: false });
+            save({ phase: 'running' });
             expect(screen.queryByTestId('save-running')).toBeNull();
             expect(screen.getByTestId('health-page').querySelector('.hs-save')).toBeNull();
             expect(screen.getByTestId('health-page').textContent).not.toMatch(/Saving/);
@@ -798,7 +853,7 @@ describe('saved files: progress, result and "changed after saving"', () => {
             expect(screen.getByTestId('save-running').textContent).toBe('Still saving… Writing the model files is taking longer than usual.');
             cleanup();
             // a Relation model: not at once either (it used to show the card from the first moment)
-            mount({ kind: 'relationship', sp: REL_VALID, save: { phase: 'running', slow: true } });
+            mount({ kind: 'relationship', sp: REL_VALID, save: { phase: 'running' } });
             expect(screen.queryByTestId('save-running')).toBeNull();
             act(() => { vi.advanceTimersByTime(SLOW_SAVE_NOTICE_MS); });
             expect(screen.getByTestId('save-running').textContent).toMatch(/Still saving….*longer than 15 seconds, especially the first time/);
@@ -810,7 +865,7 @@ describe('saved files: progress, result and "changed after saving"', () => {
     it('the slow-save line goes as soon as the save ends', () => {
         vi.useFakeTimers();
         try {
-            const { rerender } = render(<Harness sp={IND_VALID} save={{ phase: 'running', slow: false }} />);
+            const { rerender } = render(<Harness sp={IND_VALID} save={{ phase: 'running' }} />);
             act(() => { vi.advanceTimersByTime(SLOW_SAVE_NOTICE_MS); });
             expect(screen.getByTestId('save-running')).toBeTruthy();
             rerender(<Harness sp={IND_VALID} save={{ phase: 'idle' }} />);
@@ -823,17 +878,14 @@ describe('saved files: progress, result and "changed after saving"', () => {
     // Workbench redesign §1: a SUCCESSFUL save has no banner on the page — it is the
     // footer sentence ("Files saved <date> · <folder>", BuildModelWindow.test.tsx).
     it('ok: NO "Saved N files to …" / "Files saved to …" banner on the page (this session or an earlier one)', () => {
-        save({
-            phase: 'ok', outputDir: 'C:/data/workspaces/ws1/output', at: '2026-10-08T20:31:00',
-            files: [{ file_name: 'REL_INFO_a.json', path: 'C:/o/REL_INFO_a.json' }, { file_name: 'REL_DATASET_a.csv', path: 'C:/o/REL_DATASET_a.csv' }],
-        });
+        save({ phase: 'ok', outputDir: 'C:/data/workspaces/ws1/output', at: '2026-10-08T20:31:00' });
         const page = screen.getByTestId('health-page');
         expect(screen.queryByTestId('save-ok')).toBeNull();
         expect(screen.queryByTestId('save-files')).toBeNull();
         expect(page.querySelector('.hs-save')).toBeNull();
         expect(page.textContent).not.toMatch(/Files saved|Saved 2 files|workspaces\/ws1/);
         cleanup();
-        save({ phase: 'ok', outputDir: 'C:/o', at: 'earlier', files: null });
+        save({ phase: 'ok', outputDir: 'C:/o', at: 'earlier' });
         expect(screen.getByTestId('health-page').querySelector('.hs-save')).toBeNull();
         expect(screen.getByTestId('health-page').textContent).not.toMatch(/Files saved/);
     });
@@ -904,6 +956,47 @@ describe('a failed request keeps the page (QA 2026-10-04)', () => {
         mount({ sp: IND_VALID, preview: failed(null, previewFor('individual', IND_VALID)), onRetryPreview: onRetry });
         type('sp-upper', '9.5');
         expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ upper: 9.5 }), undefined);
+    });
+
+    // Review of 8626f78: a new request clears `error` while `data` is still null (the hook), and the
+    // whole page used to be replaced by the "Loading…" board — the first key typed under the red
+    // card unmounted the input it was typed in.
+    it('the NEXT request after a failure (typing under the red card, Retry): the page stays — same input, still focused; a quiet "Loading again" line takes the red card\'s place', () => {
+        const last = previewFor('individual', IND_VALID);
+        const { rerender } = render(<Harness sp={IND_VALID} preview={failed(null, last)} onRetryPreview={onRetry} />);
+        const before = input('sp-upper');
+        before.focus();
+        type('sp-upper', '9.5');
+        // what the hook returns for the request that keystroke starts: error cleared, data still null
+        rerender(<Harness sp={IND_VALID} preview={{ ...failed(null, last), loading: true, error: null, errorCode: null }} onRetryPreview={onRetry} />);
+        expect(screen.queryByTestId('health-loading')).toBeNull();
+        expect(input('sp-upper')).toBe(before); // the SAME element: never unmounted
+        expect(document.activeElement).toBe(before);
+        expect(before.value).toBe('9.5');
+        expect(screen.queryByTestId('health-error')).toBeNull();
+        const line = screen.getByTestId('health-asking');
+        expect(line.getAttribute('role')).toBe('status');
+        expect(line.textContent).toBe('Loading the health score again… the score and Checks are not available until it loads');
+        // nothing is judged from the old answer meanwhile
+        expect(screen.queryByTestId('hs-verdict')).toBeNull();
+        expect(screen.getByTestId('checks-unavailable')).toBeTruthy();
+        expect(screen.getByTestId('score-locked')).toBeTruthy();
+        // it fails again: the red card is back, the input is still the same one
+        rerender(<Harness sp={IND_VALID} preview={failed(null, last)} onRetryPreview={onRetry} />);
+        expect(screen.getByTestId('health-error')).toBeTruthy();
+        expect(input('sp-upper')).toBe(before);
+        // ...or it loads: the page judges again
+        rerender(<Harness sp={IND_VALID} preview={{ data: last, lastData: last, loading: false, error: null, errorCode: null, notFitted: false, needsRetrain: false, idle: null }} onRetryPreview={onRetry} />);
+        expect(screen.queryByTestId('health-asking')).toBeNull();
+        expect(screen.queryByTestId('health-error')).toBeNull();
+        expect(input('sp-upper')).toBe(before);
+        expect(screen.getByTestId('chart-card-score')).toBeTruthy();
+    });
+
+    it('a first load (no earlier answer) is still the "Loading…" board, not the quiet line', () => {
+        mount({ data: null, preview: { data: null, lastData: null, loading: true, error: null, errorCode: null, notFitted: false, needsRetrain: false, idle: null } });
+        expect(screen.getByTestId('health-loading')).toBeTruthy();
+        expect(screen.queryByTestId('health-asking')).toBeNull();
     });
 
     it('STALE_SESSION: the same banner but NO Retry (asking again cannot help; the dataset changed)', () => {
@@ -1161,7 +1254,7 @@ describe('memo (customer items 8 + 9: a training run must not redraw these chart
             preview: { data: previewFor('individual', sp), loading: false, error: null, errorCode: null, notFitted: false, needsRetrain: false, idle: null } as any,
             unit: 'bar',
             setPoints: sp, onSetPointsChange: onChange, onSetPointsCommit: onCommit, attemptIssues: null,
-            save: { phase: 'idle' }, onGoTrainSensor: onGoTrain,
+            save: { phase: 'idle' }, fitGone: { onReload, onGoTrainSensor: onGoTrain },
             ...over,
         };
     };
@@ -1180,7 +1273,16 @@ describe('memo (customer items 8 + 9: a training run must not redraw these chart
     it('the comparator covers every prop: a new callback, a new reason or a changed preview field is a change', () => {
         const a = props();
         expect(sameHealthScoreProps(a, { ...a })).toBe(true);
-        expect(sameHealthScoreProps(a, { ...a, onGoTrainSensor: () => {} })).toBe(false);
+        // `fitGone` is rebuilt by the window on every render: equal fields = no change...
+        expect(sameHealthScoreProps(a, { ...a, fitGone: { ...a.fitGone } })).toBe(true);
+        expect(sameHealthScoreProps(a, { ...a, fitGone: { ...a.fitGone, error: null, reloadDisabledReason: undefined } })).toBe(true);
+        // ...and each of its fields counts (a callback, the link that appears / goes, the reasons)
+        expect(sameHealthScoreProps(a, { ...a, fitGone: { ...a.fitGone, onReload: () => {} } })).toBe(false);
+        expect(sameHealthScoreProps(a, { ...a, fitGone: { onReload } })).toBe(false);
+        expect(sameHealthScoreProps(a, { ...a, fitGone: { ...a.fitGone, error: 'boom' } })).toBe(false);
+        expect(sameHealthScoreProps(a, { ...a, fitGone: { ...a.fitGone, reloadDisabledReason: 'Wait for the training run to finish' } })).toBe(false);
+        expect(sameHealthScoreProps(a, { ...a, fitLoading: true })).toBe(false);
+        expect(sameHealthScoreProps(a, { ...a, onSetPointsCommit: () => {} })).toBe(false);
         expect(sameHealthScoreProps(a, { ...a, preview: { ...a.preview, loading: true } })).toBe(false);
         expect(sameHealthScoreProps(a, { ...a, setPoints: { ...IND_VALID, lower: 2 } as HealthSetPoints })).toBe(false);
     });

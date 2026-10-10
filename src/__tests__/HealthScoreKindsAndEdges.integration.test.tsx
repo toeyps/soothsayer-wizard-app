@@ -408,7 +408,7 @@ describe('Mark complete (Health score page) is the only way a model becomes Comp
         expect(diskModel('i1').status).toBe(false);
     });
 
-    it('Relationship whose fit is no longer in Rust memory: Mark complete is refused (re-train first), no files, still Incomplete', async () => {
+    it('Relationship whose fit is no longer in Rust memory: Mark complete is refused (no files, still Incomplete) and says why; the fit is then loaded again by itself, so the next Mark complete works', async () => {
         writeDisk(wsTrained({}, [model({ id: 'r1', kind: 'relationship', predictorSensors: ['TAG3'], healthSetPoints: REL_SP })]));
         await mountWindows();
         selectSensor('tag1');
@@ -420,7 +420,14 @@ describe('Mark complete (Health score page) is the only way a model becomes Comp
         await settle(400);
         expect(env.backend!.cmds('export_model_files')).toHaveLength(0);
         expect(diskModel('r1').status).toBe(false);
-        expect(bmwEl().textContent).toMatch(/Re-train/);
+        expect(bmw().getByTestId('save-error').textContent).toMatch(/was no longer in memory, so its files were not written/);
+        // The refusal marks the fit as gone and asks the preview again: NOT_FITTED -> the one
+        // silent re-fit -> the page is back and Mark complete can be pressed again (it used to stay
+        // enabled on the old preview and fail the same way on every click).
+        await settle(400);
+        await waitFor(() => expect(markBtn().disabled).toBe(false));
+        await act(async () => { fireEvent.click(markBtn()); });
+        await waitFor(() => expect(diskModel('r1').status).toBe(true));
     });
 });
 
