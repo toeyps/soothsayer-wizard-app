@@ -807,6 +807,7 @@ fn finish_train(state: &AppState, d: &ColumnarData, parsed: serde_json::Value, e
         Some("m1::fp".into()),
         Some(100),
         extra_rows,
+        &|_| {},
     )
     .unwrap()
 }
@@ -893,7 +894,7 @@ fn train_prewarm_is_not_stored_for_a_fit_that_was_not_cached() {
     let x: Vec<Vec<f64>> = rows.iter().map(|&r| vec![d.columns[1][r as usize]]).collect();
     let resp = crate::finish_relationship_response_ex(
         &state, stamp, train_response(&d, Some(&extra_rows)), &["X".to_string()], "Y", 1.0,
-        &rows, &y, &x, Some("m1::fp".into()), Some(100), &extra_rows,
+        &rows, &y, &x, Some("m1::fp".into()), Some(100), &extra_rows, &|_| {},
     )
     .unwrap();
     assert_eq!(resp["cached"], false);

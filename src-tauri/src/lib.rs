@@ -817,8 +817,16 @@ fn log_sidecar_start_failure(app: &tauri::AppHandle, line: &str) {
 
 // ── What the USER reads when the Relation model engine fails ──────────────
 // Every error below can reach the UI (Train, Compare predictors, Mark
-// complete). They name the thing "the Relation model engine" and keep the
-// technical detail (OS error, engine output) AFTER the sentence for support.
+// complete). They name the thing "the Relation model engine".
+//
+// User decision 2026-10-10: the engine's OWN text (its error message, its
+// traceback, its stderr, its raw output) is NEVER shown - a library exception
+// can carry Python / library / algorithm names, and the algorithm name is
+// confidential. The user reads one fixed, Rust-authored sentence; the engine's
+// text goes to the permanent error log (source tag `sidecar`, bounded). There
+// is no pass-through and no allow-list: unknown text never reaches the UI.
+// Only Rust-authored detail (a missing field name, a length mismatch) and the
+// OS error of a failed start stay in the message.
 
 /// The engine could not be started. `unbuilt` = it is missing / not runnable.
 fn engine_start_error(os_error: &str, unbuilt: bool) -> String {
@@ -832,29 +840,185 @@ fn engine_start_error(os_error: &str, unbuilt: bool) -> String {
     }
 }
 
+/// The engine answered with its own error. Fixed text: the engine's message is
+/// never shown (see the note above).
+const ENGINE_FIT_FAILED: &str =
+    "The Relation model engine could not fit this model. The details are in the error log.";
+/// The engine ended without printing an answer and said nothing on stderr.
+const ENGINE_NO_OUTPUT: &str = "The Relation model engine stopped without returning a result.";
+/// Same, when it left something on stderr (now in the log).
+const ENGINE_NO_OUTPUT_LOGGED: &str =
+    "The Relation model engine stopped without returning a result. The details are in the error log.";
+/// The engine's answer is not JSON of the expected shape.
+const ENGINE_UNREADABLE: &str =
+    "The Relation model engine returned an answer that could not be read. The details are in the error log.";
+
+// Byte budgets of one engine-failure log entry. Their worst-case sum (plus the
+// labels and the truncation markers) stays under [`ERROR_LOG_DETAIL_MAX`].
+/// The engine's `error` text (start kept).
+const ENGINE_LOG_ERROR_MAX: usize = 1024;
+/// The engine's `trace` (END kept: a traceback names the exception last).
+const ENGINE_LOG_TRACE_MAX: usize = 2560;
+/// stderr of a run without an answer (END kept, same reason).
+const ENGINE_LOG_STDERR_MAX: usize = 3584;
+/// The parse error of an unreadable answer.
+const ENGINE_LOG_PARSE_ERROR_MAX: usize = 256;
+/// The raw stdout of an unreadable answer (start kept) - it can be megabytes.
+const ENGINE_LOG_RAW_MAX: usize = 3072;
+
+/// One engine failure, split into what the USER reads and what the LOG keeps.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct EngineFailure {
+    /// A fixed, Rust-authored sentence. Never contains engine text.
+    user: &'static str,
+    /// The log line (developer wording, Rust-authored).
+    log_message: String,
+    /// The engine's own text, bounded (see the `ENGINE_LOG_*_MAX` budgets).
+    log_detail: Option<String>,
+}
+
+/// The last `max` bytes of `s` (cut on a char boundary) after
+/// "(N bytes truncated) …"; unchanged when it already fits.
+fn truncate_log_tail(s: &str, max: usize) -> std::borrow::Cow<'_, str> {
+    if s.len() <= max {
+        return std::borrow::Cow::Borrowed(s);
+    }
+    let mut start = s.len() - max;
+    while !s.is_char_boundary(start) {
+        start += 1;
+    }
+    std::borrow::Cow::Owned(format!("({start} bytes truncated) …{}", &s[start..]))
+}
+
 /// The engine ended without printing an answer; `stderr` = what it said instead.
-fn engine_no_output_error(stderr: &str) -> String {
+fn engine_no_output_failure(step: &str, stderr: &str) -> EngineFailure {
     let stderr = stderr.trim();
-    if stderr.is_empty() {
-        "The Relation model engine stopped without returning a result.".to_string()
-    } else {
-        format!("The Relation model engine stopped without returning a result. Detail: {stderr}")
+    EngineFailure {
+        user: if stderr.is_empty() { ENGINE_NO_OUTPUT } else { ENGINE_NO_OUTPUT_LOGGED },
+        log_message: format!("Relation model engine (sidecar) returned no output [{step}]"),
+        log_detail: (!stderr.is_empty())
+            .then(|| format!("stderr: {}", truncate_log_tail(stderr, ENGINE_LOG_STDERR_MAX))),
     }
 }
 
 /// The engine's answer is not valid JSON of the expected shape.
-fn engine_unreadable_answer_error(parse_error: &dyn std::fmt::Display, raw: &str) -> String {
-    format!("The Relation model engine returned an answer that could not be read: {parse_error} (raw: {raw})")
+fn engine_unreadable_answer_failure(step: &str, parse_error: &dyn std::fmt::Display, raw: &str) -> EngineFailure {
+    let parse_error = parse_error.to_string();
+    EngineFailure {
+        user: ENGINE_UNREADABLE,
+        log_message: format!("Relation model engine (sidecar) output could not be parsed [{step}]"),
+        log_detail: Some(format!(
+            "parse error: {}\nraw: {}",
+            truncate_log_detail(&parse_error, ENGINE_LOG_PARSE_ERROR_MAX),
+            truncate_log_detail(raw.trim(), ENGINE_LOG_RAW_MAX),
+        )),
+    }
 }
 
-/// The engine answered with its own error (`err` is passed through as-is).
-fn engine_reported_error(err: &str) -> String {
-    format!("The Relation model engine reported an error: {err}")
+/// The engine answered with its own `error` (+ optional `trace`).
+fn engine_reported_failure(step: &str, err: &str, trace: Option<&str>) -> EngineFailure {
+    let mut detail = format!("error: {}", truncate_log_detail(err.trim(), ENGINE_LOG_ERROR_MAX));
+    if let Some(trace) = trace.map(str::trim).filter(|t| !t.is_empty()) {
+        detail.push_str("\ntrace: ");
+        detail.push_str(&truncate_log_tail(trace, ENGINE_LOG_TRACE_MAX));
+    }
+    EngineFailure {
+        user: ENGINE_FIT_FAILED,
+        log_message: format!("Relation model engine (sidecar) reported an error [{step}]"),
+        log_detail: Some(detail),
+    }
+}
+
+/// Replace the engine's own error in a JSON answer by the fixed user sentence,
+/// IN PLACE, and hand back what to log. The answer keeps its shape (`error` is
+/// still there and still a string - the frontend shows it as the message);
+/// `trace` is always removed. An answer that is not a JSON object at all (it
+/// could be bare text) becomes `{ "error": <unreadable sentence> }`. `None` =
+/// the answer carries no error.
+fn take_engine_error(parsed: &mut serde_json::Value, step: &str) -> Option<EngineFailure> {
+    let Some(obj) = parsed.as_object_mut() else {
+        let failure = engine_unreadable_answer_failure(step, &"the answer is not a JSON object", &parsed.to_string());
+        *parsed = serde_json::json!({ "error": failure.user });
+        return Some(failure);
+    };
+    let trace = obj.remove("trace");
+    let err = obj.get("error").filter(|e| !e.is_null())?;
+    // Not a string (never sent by the engine): log its JSON text.
+    let text = |v: &serde_json::Value| v.as_str().map(str::to_owned).unwrap_or_else(|| v.to_string());
+    let failure = engine_reported_failure(step, &text(err), trace.as_ref().map(text).as_deref());
+    obj.insert("error".into(), serde_json::Value::String(failure.user.into()));
+    Some(failure)
+}
+
+/// Best effort (never fails, never more than one bounded entry): one engine
+/// failure appended to the error log at `path`, source tag `sidecar`.
+fn write_engine_failure(path: &std::path::Path, failure: &EngineFailure) {
+    append_error_line(path, "sidecar", &failure.log_message, failure.log_detail.as_deref());
+}
+
+/// Best effort: the permanent error log + stderr (the `tauri dev` console).
+fn log_engine_failure(app: &tauri::AppHandle, failure: &EngineFailure) {
+    eprintln!("{}", failure.log_message);
+    if let Some(detail) = &failure.log_detail {
+        eprintln!("{detail}");
+    }
+    if let Ok(path) = error_log_path(app) {
+        write_engine_failure(&path, failure);
+    }
+}
+
+/// Log `failure` and return the sentence the user reads.
+fn report_engine_failure(app: &tauri::AppHandle, failure: EngineFailure) -> String {
+    log_engine_failure(app, &failure);
+    failure.user.to_string()
 }
 
 /// A required field is absent from the engine's answer.
 fn engine_missing_field_error(field: &str) -> String {
     format!("The Relation model engine's answer is incomplete: missing {field}")
+}
+
+/// The engine's `train_relationship` answer.
+#[derive(Deserialize)]
+struct SidecarTrainResponse {
+    r2: Option<f64>,
+    rmse2: Option<f64>,
+    model_path: Option<String>,
+    /// Per-row LinearGAM predictions, NaN-cleaned (None) and rounded to
+    /// 3 decimals by `backend.py::train_relationship`. Length matches
+    /// the surviving-row count we sent over.
+    predicted: Option<Vec<Option<f64>>>,
+    /// Per-row residuals (`y - predicted`), same shape as `predicted`.
+    residual: Option<Vec<Option<f64>>>,
+    /// Train/Test validation: the train-only model's (raw) predictions for
+    /// `X_extra`, same order.
+    predicted_extra: Option<Vec<Option<f64>>>,
+    /// The engine's own error / traceback: LOG ONLY, never shown.
+    error: Option<String>,
+    trace: Option<String>,
+}
+
+/// What the engine printed for `step`, as JSON of type `T`. No output or an
+/// unreadable answer is a failure (user sentence + log entry).
+fn read_engine_answer<T: serde::de::DeserializeOwned>(
+    step: &str,
+    stdout: &str,
+    stderr: &str,
+) -> Result<T, EngineFailure> {
+    if stdout.trim().is_empty() {
+        return Err(engine_no_output_failure(step, stderr));
+    }
+    serde_json::from_str(stdout.trim()).map_err(|e| engine_unreadable_answer_failure(step, &e, stdout))
+}
+
+/// The engine's `train_relationship` answer; its own `error` is a failure too.
+fn read_train_answer(stdout: &str, stderr: &str) -> Result<SidecarTrainResponse, EngineFailure> {
+    const STEP: &str = "train_relationship";
+    let resp: SidecarTrainResponse = read_engine_answer(STEP, stdout, stderr)?;
+    match &resp.error {
+        Some(err) => Err(engine_reported_failure(STEP, err, resp.trace.as_deref())),
+        None => Ok(resp),
+    }
 }
 
 #[cfg(test)]
@@ -916,21 +1080,197 @@ mod engine_wording_tests {
         );
     }
 
+    // ---------- the engine's own text never reaches the user (2026-10-10) ----------
+
+    /// What a library exception can look like: every word here is forbidden in
+    /// the UI (the last one is the confidential algorithm name).
+    const NASTY: &str = "pygam LinearGAM did not converge (numpy.linalg.LinAlgError) - Python sidecar backend.py";
+    const NASTY_TRACE: &str = "Traceback (most recent call last):\n  File \"backend.py\", line 180, in \
+         preview_relationship\n    model = pygam.LinearGAM(lam=lamb).fit(Xi, y)\nnumpy.linalg.LinAlgError: SVD did not converge";
+    /// Engine / library words on top of [`DEV_WORDS`].
+    const ENGINE_WORDS: [&str; 7] = ["pygam", "GAM", "numpy", "LinAlgError", "Traceback", "converge", "SVD"];
+
+    fn assert_no_engine_text(shown: &str) {
+        for w in DEV_WORDS.iter().chain(&ENGINE_WORDS) {
+            assert!(!shown.contains(w), "engine wording ({w}) shown to the user: {shown}");
+        }
+    }
+
+    /// The whole log entry of `f` as it is written (message + detail).
+    fn entry(f: &EngineFailure) -> String {
+        format!("{}\n{}", f.log_message, f.log_detail.as_deref().unwrap_or(""))
+    }
+
+    fn assert_logged(f: &EngineFailure, words: &[&str]) {
+        let e = entry(f);
+        for w in words {
+            assert!(e.contains(w), "the log lost the detail ({w}): {e}");
+        }
+        assert!(e.len() <= ERROR_LOG_DETAIL_MAX, "log entry of {} bytes", e.len());
+        assert!(f.log_message.contains("sidecar"), "developer wording in the log line: {}", f.log_message);
+    }
+
     #[test]
-    fn engine_failures_keep_their_detail_after_a_user_readable_sentence() {
-        let quiet = engine_no_output_error("  \n");
-        assert_eq!(quiet, "The Relation model engine stopped without returning a result.");
-        let loud = engine_no_output_error("  MemoryError: out of memory\n");
-        assert!(loud.ends_with("Detail: MemoryError: out of memory"), "{loud}");
-        let unreadable = engine_unreadable_answer_error(&"EOF while parsing a value", "{\"r2\":");
-        assert!(unreadable.contains("could not be read: EOF while parsing a value") && unreadable.contains("(raw: {\"r2\":)"));
-        let reported = engine_reported_error("X has 3 rows but y has 4");
-        assert!(reported.ends_with("reported an error: X has 3 rows but y has 4"));
+    fn a_run_without_an_answer_shows_no_stderr_but_logs_it() {
+        let quiet = engine_no_output_failure("preview_relationship", "  \n");
+        assert_eq!(quiet.user, "The Relation model engine stopped without returning a result.");
+        assert_eq!(quiet.log_detail, None, "nothing to log but the line itself");
+        assert!(quiet.log_message.ends_with("[preview_relationship]"));
+        // stderr can be a full traceback.
+        let loud = engine_no_output_failure("train_relationship", &format!("  {NASTY_TRACE}\n"));
+        assert_eq!(
+            loud.user,
+            "The Relation model engine stopped without returning a result. The details are in the error log."
+        );
+        assert_logged(&loud, &["Traceback", "pygam.LinearGAM", "LinAlgError: SVD did not converge"]);
+        for f in [&quiet, &loud] {
+            assert_user_wording(f.user);
+            assert_no_engine_text(f.user);
+        }
+    }
+
+    #[test]
+    fn an_unreadable_answer_shows_neither_the_parse_error_nor_the_raw_output() {
+        let raw = format!("{NASTY}\n{{\"r2\":");
+        let f = engine_unreadable_answer_failure("train_relationship", &"EOF while parsing a value", &raw);
+        assert_eq!(
+            f.user,
+            "The Relation model engine returned an answer that could not be read. The details are in the error log."
+        );
+        assert_user_wording(f.user);
+        assert_no_engine_text(f.user);
+        assert!(!f.user.contains("EOF") && !f.user.contains("raw"));
+        assert_logged(&f, &["parse error: EOF while parsing a value", "raw: pygam LinearGAM", "{\"r2\":"]);
+    }
+
+    #[test]
+    fn an_engine_error_shows_the_fixed_sentence_and_logs_error_and_trace() {
+        let f = engine_reported_failure("train_relationship", NASTY, Some(NASTY_TRACE));
+        assert_eq!(f.user, "The Relation model engine could not fit this model. The details are in the error log.");
+        assert_user_wording(f.user);
+        assert_no_engine_text(f.user);
+        assert_logged(&f, &[NASTY, "trace: Traceback", "SVD did not converge"]);
+        // No trace (the "Unknown action" answer has none): just the error.
+        let bare = engine_reported_failure("train_relationship", "Unknown action: 'x'", None);
+        assert_eq!(bare.log_detail.as_deref(), Some("error: Unknown action: 'x'"));
+        // The engine's own KNOWN validation messages get no special treatment:
+        // they are internal mismatches the user cannot act on.
+        for known in [
+            "X has 3 rows but y has 4",
+            "X has 2 columns but 3 predictors named",
+            "X_extra has 2 columns but the model has 3 predictors",
+            "Unknown action: 'preview_relationship'",
+        ] {
+            let f = engine_reported_failure("preview_relationship", known, None);
+            assert_eq!(f.user, ENGINE_FIT_FAILED, "{known}");
+            assert_logged(&f, &[known]);
+        }
+    }
+
+    #[test]
+    fn every_engine_log_entry_is_bounded() {
+        // "ก" is 3 bytes: the cuts must land on char boundaries (no panic).
+        let huge = "ก1.5, ".repeat(400_000);
+        for f in [
+            engine_no_output_failure("s", &huge),
+            engine_unreadable_answer_failure("s", &huge, &huge),
+            engine_reported_failure("s", &huge, Some(&huge)),
+        ] {
+            let e = entry(&f);
+            assert!(e.len() <= ERROR_LOG_DETAIL_MAX, "{}: {} bytes", f.log_message, e.len());
+            assert!(e.contains("bytes truncated)"), "{}", f.log_message);
+        }
+    }
+
+    #[test]
+    fn truncate_log_tail_keeps_the_end_on_a_char_boundary() {
+        assert_eq!(truncate_log_tail("short", 10), "short");
+        assert_eq!(truncate_log_tail("exactly10!", 10), "exactly10!");
+        assert_eq!(truncate_log_tail("abcdefghijk", 4), "(7 bytes truncated) …hijk");
+        // A cut inside "ข" moves forward to the next boundary.
+        assert_eq!(truncate_log_tail("กขค", 4), "(6 bytes truncated) …ค");
+        assert_eq!(truncate_log_tail("กขค", 2), "(9 bytes truncated) …");
+        assert_eq!(truncate_log_tail("", 0), "");
+    }
+
+    #[test]
+    fn a_preview_answer_with_an_engine_error_keeps_its_shape_but_not_the_text() {
+        let mut parsed = serde_json::json!({ "error": NASTY, "trace": NASTY_TRACE, "request": "r" });
+        let f = take_engine_error(&mut parsed, "preview_relationship").expect("an error answer");
+        assert_eq!(parsed, serde_json::json!({ "error": ENGINE_FIT_FAILED, "request": "r" }), "`error` stays a string, `trace` is gone");
+        assert_no_engine_text(&parsed.to_string());
+        assert_logged(&f, &[NASTY, "SVD did not converge"]);
+        assert!(f.log_message.ends_with("[preview_relationship]"));
+        // A good answer is untouched and logs nothing - but a stray `trace` never ships.
+        let mut good = serde_json::json!({ "r2_per_step": [0.5], "trace": NASTY_TRACE });
+        assert_eq!(take_engine_error(&mut good, "s"), None);
+        assert_eq!(good, serde_json::json!({ "r2_per_step": [0.5] }));
+        let mut null_error = serde_json::json!({ "error": null, "predicted": [] });
+        assert_eq!(take_engine_error(&mut null_error, "s"), None);
+        assert_eq!(null_error, serde_json::json!({ "error": null, "predicted": [] }));
+        // A non-string `error` and an answer that is not an object: fixed text too.
+        let mut odd = serde_json::json!({ "error": { "why": NASTY } });
+        let f = take_engine_error(&mut odd, "s").unwrap();
+        assert_eq!(odd, serde_json::json!({ "error": ENGINE_FIT_FAILED }));
+        assert_logged(&f, &["pygam LinearGAM"]);
+        let mut bare = serde_json::json!(NASTY);
+        let f = take_engine_error(&mut bare, "s").unwrap();
+        assert_eq!(bare, serde_json::json!({ "error": ENGINE_UNREADABLE }));
+        assert_logged(&f, &["not a JSON object", "pygam LinearGAM"]);
+    }
+
+    #[test]
+    fn a_train_answer_with_an_engine_error_fails_with_the_fixed_sentence() {
+        let stdout = serde_json::json!({ "error": NASTY, "trace": NASTY_TRACE }).to_string();
+        let f = read_train_answer(&stdout, "").err().expect("an error answer");
+        assert_eq!(f.user, ENGINE_FIT_FAILED);
+        assert_no_engine_text(f.user);
+        assert_logged(&f, &[NASTY, "trace: Traceback"]);
+        assert!(f.log_message.ends_with("[train_relationship]"));
+        // No output at all: the stderr traceback is logged, not shown.
+        let f = read_train_answer("  \n", NASTY_TRACE).err().unwrap();
+        assert_eq!(f.user, ENGINE_NO_OUTPUT_LOGGED);
+        assert_logged(&f, &["stderr: Traceback"]);
+        assert_eq!(read_train_answer("", "").err().unwrap().user, ENGINE_NO_OUTPUT);
+        // Not JSON / the wrong shape: the raw output is logged, not shown.
+        let f = read_train_answer(&format!("{NASTY} {{"), "").err().unwrap();
+        assert_eq!(f.user, ENGINE_UNREADABLE);
+        assert_no_engine_text(f.user);
+        assert_logged(&f, &["parse error: ", "raw: pygam LinearGAM"]);
+        let f = read_train_answer(r#"{"r2": "pygam"}"#, "").err().unwrap();
+        assert_eq!(f.user, ENGINE_UNREADABLE);
+        // A good answer still parses (surrounding whitespace is fine).
+        let ok = read_train_answer("\n{\"r2\": 0.9, \"rmse2\": 1.5, \"model_path\": \"m.pkl\", \"predicted\": [1.0, null], \"residual\": [0.0, null]}\n", "noise")
+            .ok()
+            .expect("a good answer");
+        assert_eq!((ok.r2, ok.rmse2, ok.model_path.as_deref()), (Some(0.9), Some(1.5), Some("m.pkl")));
+        assert_eq!(ok.predicted, Some(vec![Some(1.0), None]));
+        assert!(ok.predicted_extra.is_none() && ok.error.is_none() && ok.trace.is_none());
+    }
+
+    #[test]
+    fn the_log_file_gets_the_engine_text_under_the_sidecar_tag() {
+        let dir = std::env::temp_dir().join(format!("wizard-engine-log-{}-{:?}", std::process::id(), std::thread::current().id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("frontend-errors.log");
+        let f = engine_reported_failure("preview_relationship", NASTY, Some(NASTY_TRACE));
+        write_engine_failure(&path, &f);
+        let quiet = engine_no_output_failure("train_relationship", "");
+        write_engine_failure(&path, &quiet);
+        let log = std::fs::read_to_string(&path).unwrap();
+        assert!(log.contains("[sidecar] Relation model engine (sidecar) reported an error [preview_relationship]"), "{log}");
+        assert!(log.contains(&format!("error: {NASTY}")) && log.contains("numpy.linalg.LinAlgError: SVD did not converge"), "{log}");
+        assert!(log.contains("[sidecar] Relation model engine (sidecar) returned no output [train_relationship]"), "{log}");
+        // Best effort: a path that cannot be written is silently skipped.
+        write_engine_failure(&dir.join("no-such-dir").join("x.log"), &f);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rust_authored_engine_messages_keep_their_detail() {
         let missing = engine_missing_field_error("rmse2");
         assert!(missing.ends_with("missing rmse2"));
-        for msg in [&quiet, &loud, &unreadable, &reported, &missing] {
-            assert_user_wording(msg);
-        }
+        assert_user_wording(&missing);
     }
 }
 
@@ -1798,18 +2138,19 @@ async fn preview_relationship_model(
         }
     }
 
-    if stdout_buf.trim().is_empty() {
-        return Err(engine_no_output_error(&stderr_buf));
-    }
-
-    let parsed = serde_json::from_str::<serde_json::Value>(stdout_buf.trim())
-        .map_err(|e| engine_unreadable_answer_error(&e, &stdout_buf))?;
+    // The engine's own text (stderr, raw output, its `error` / `trace`) goes to
+    // the error log; the user only ever reads a fixed sentence.
+    let parsed: serde_json::Value = read_engine_answer(PREVIEW_ENGINE_STEP, &stdout_buf, &stderr_buf)
+        .map_err(|failure| report_engine_failure(&app, failure))?;
 
     finish_relationship_response_ex(
         &state, stamp, parsed, &predictors, &target, lambda, &row_idx, &y_vector, &x_matrix, cache_key,
-        max_points, &extra_rows,
+        max_points, &extra_rows, &|failure| log_engine_failure(&app, failure),
     )
 }
+
+/// Log label of the `preview_relationship` engine run.
+const PREVIEW_ENGINE_STEP: &str = "preview_relationship";
 
 /// Everything `preview_relationship_model` does once the sidecar has answered:
 /// cache the FULL-resolution fit + attach the bounded `health_preview` (when
@@ -1823,9 +2164,14 @@ async fn preview_relationship_model(
 /// and of the prediction always kept), `residual` is dropped (nobody reads it)
 /// and `n_rows` carries the real row count. Without `max_points` the arrays stay
 /// full (and `residual` stays) exactly as before. `r2_per_step` /
-/// `rmse2_per_step`, `error`, `cache_key`, `cached`, `health_preview` are never
+/// `rmse2_per_step`, `cache_key`, `cached`, `health_preview` are never
 /// touched. The cache always holds the FULL arrays (built from the unshaped
 /// response), so the health preview keeps scoring every row.
+///
+/// Engine errors (2026-10-10): an answer with the engine's own `error` keeps
+/// the `error` key (a string - the frontend shows it as the message) but its
+/// VALUE is the fixed sentence of [`take_engine_error`] and `trace` is removed;
+/// the engine's text is handed to `log_engine` instead (the error log).
 #[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 fn finish_relationship_response(
@@ -1843,7 +2189,7 @@ fn finish_relationship_response(
 ) -> Result<serde_json::Value, String> {
     finish_relationship_response_ex(
         state, stamp, parsed, predictors, target, lambda, row_idx, y_vector, x_matrix, cache_key,
-        max_points, &[],
+        max_points, &[], &|_| {},
     )
 }
 
@@ -1867,7 +2213,12 @@ fn finish_relationship_response_ex(
     cache_key: Option<String>,
     max_points: Option<usize>,
     extra_rows: &[u32],
+    log_engine: &dyn Fn(&EngineFailure),
 ) -> Result<serde_json::Value, String> {
+    // First of all: the engine's own error text never leaves this function.
+    if let Some(failure) = take_engine_error(&mut parsed, PREVIEW_ENGINE_STEP) {
+        log_engine(&failure);
+    }
     let predicted_extra: Option<Vec<f64>> = parsed
         .as_object_mut()
         .and_then(|o| o.remove("predicted_extra"))
@@ -3120,34 +3471,10 @@ async fn write_relationship_files(
         }
     }
 
-    if stdout_buf.trim().is_empty() {
-        return Err(engine_no_output_error(&stderr_buf).into());
-    }
-
-    #[derive(Deserialize)]
-    struct SidecarTrainResponse {
-        r2: Option<f64>,
-        rmse2: Option<f64>,
-        model_path: Option<String>,
-        /// Per-row LinearGAM predictions, NaN-cleaned (None) and rounded to
-        /// 3 decimals by `backend.py::train_relationship`. Length matches
-        /// the surviving-row count we sent over.
-        predicted: Option<Vec<Option<f64>>>,
-        /// Per-row residuals (`y - predicted`), same shape as `predicted`.
-        residual: Option<Vec<Option<f64>>>,
-        /// Train/Test validation: the train-only model's (raw) predictions for
-        /// `X_extra`, same order.
-        predicted_extra: Option<Vec<Option<f64>>>,
-        error: Option<String>,
-        #[allow(dead_code)]
-        trace: Option<String>,
-    }
-
-    let resp: SidecarTrainResponse = serde_json::from_str(stdout_buf.trim())
-        .map_err(|e| engine_unreadable_answer_error(&e, &stdout_buf))?;
-    if let Some(err) = resp.error {
-        return Err(engine_reported_error(&err).into());
-    }
+    // No output, an unreadable answer or the engine's own error: the user gets
+    // a fixed sentence, the engine's text goes to the error log.
+    let resp = read_train_answer(&stdout_buf, &stderr_buf)
+        .map_err(|failure| report_engine_failure(app, failure))?;
     let r2 = resp.r2.ok_or_else(|| engine_missing_field_error("r2"))?;
     let rmse2 = resp.rmse2.ok_or_else(|| engine_missing_field_error("rmse2"))?;
 
@@ -7459,8 +7786,9 @@ fn arm_timeout<F: FnOnce() + Send + 'static>(
 /// Its errors (and [`parse_predicted_extra`]'s) are LOG-ONLY: the one caller,
 /// [`score_test_rows`], writes them to the error log and shows the user the
 /// fixed warning of the failure's kind instead. That is why they keep the
-/// developer word "sidecar"; a caller that shows them to the user must use the
-/// `engine_*_error` wording instead.
+/// developer word "sidecar" and the engine's own text; a caller that shows an
+/// error to the user must go through the fixed sentences of `EngineFailure`
+/// instead (engine text is never shown).
 async fn run_sidecar_json(
     app: &tauri::AppHandle,
     payload: &serde_json::Value,
@@ -9809,14 +10137,82 @@ mod relationship_response_tests {
         assert!(resp.get("cache_key").is_none());
         assert!(resp.get("cached").is_none());
         assert!(resp.get("health_preview").is_none());
-        // An error response passes through (still gets a bounded raw sample + n_rows).
+        // An error response keeps its shape (still gets a bounded raw sample +
+        // n_rows), but the engine's own text is replaced by the fixed sentence.
         let err = run(&f, &state, serde_json::json!({"error": "boom", "trace": "t"}), Some("k"), Some(100));
-        assert_eq!(err["error"], serde_json::json!("boom"));
-        assert_eq!(err["trace"], serde_json::json!("t"));
+        assert_eq!(err["error"], serde_json::json!(ENGINE_FIT_FAILED));
+        assert!(err.get("trace").is_none(), "the traceback is never shipped");
         assert_eq!(err["n_rows"], serde_json::json!(2000));
         assert!(err.get("predicted").is_none());
         assert!(err.get("cache_key").is_none(), "an error is never cached");
         assert!(state.0.read().unwrap().as_ref().unwrap().rel_cache.is_empty());
+    }
+
+    #[test]
+    fn an_engine_error_never_reaches_the_frontend_and_is_logged_once() {
+        // User decision 2026-10-10: a library exception can name Python, a
+        // library or the (confidential) algorithm.
+        let nasty = "pygam LinearGAM: PIRLS did not converge (numpy.linalg.LinAlgError) in the Python sidecar";
+        let trace = "Traceback (most recent call last):\n  File \"backend.py\", line 180\nnumpy.linalg.LinAlgError: SVD";
+        let f = fixture(300);
+        let state = state_for(f.n);
+        let rows: Vec<u32> = (0..f.n as u32).collect();
+        let logged = std::sync::Mutex::new(Vec::<EngineFailure>::new());
+        let resp = finish_relationship_response_ex(
+            &state,
+            session_stamp(&state).unwrap().unwrap(),
+            serde_json::json!({ "error": nasty, "trace": trace }),
+            &["X1".to_string(), "X2".to_string()],
+            "Y",
+            1000.0,
+            &rows,
+            &f.y,
+            &f.x,
+            Some("k".into()),
+            Some(100),
+            &[],
+            &|failure| logged.lock().unwrap().push(failure.clone()),
+        )
+        .unwrap();
+        // What the frontend shows as the message: the fixed sentence, a string.
+        assert_eq!(
+            resp["error"],
+            serde_json::json!("The Relation model engine could not fit this model. The details are in the error log.")
+        );
+        let shipped = resp.to_string();
+        for word in ["idecar", "ython", "pygam", "GAM", "numpy", "LinAlgError", "Traceback", "backend", "PIRLS", "trace"] {
+            assert!(!shipped.contains(word), "{word} reached the frontend: {shipped}");
+        }
+        assert_eq!(resp["n_rows"], serde_json::json!(300), "the answer keeps its shape");
+        assert!(resp.get("cache_key").is_none() && state.0.read().unwrap().as_ref().unwrap().rel_cache.is_empty());
+        // The log got the real text, once, bounded, under the preview step.
+        let logged = logged.lock().unwrap();
+        assert_eq!(logged.len(), 1);
+        let detail = logged[0].log_detail.as_deref().unwrap();
+        assert!(detail.contains(nasty) && detail.contains("numpy.linalg.LinAlgError: SVD"), "{detail}");
+        assert!(logged[0].log_message.ends_with("[preview_relationship]"));
+        assert!(logged[0].log_message.len() + detail.len() <= ERROR_LOG_DETAIL_MAX);
+        // A good answer logs nothing.
+        drop(logged);
+        let logged = std::sync::Mutex::new(0usize);
+        let ok = finish_relationship_response_ex(
+            &state,
+            session_stamp(&state).unwrap().unwrap(),
+            sidecar_response(&f),
+            &["X1".to_string(), "X2".to_string()],
+            "Y",
+            1000.0,
+            &rows,
+            &f.y,
+            &f.x,
+            None,
+            Some(100),
+            &[],
+            &|_| *logged.lock().unwrap() += 1,
+        )
+        .unwrap();
+        assert!(ok.get("error").is_none());
+        assert_eq!(*logged.lock().unwrap(), 0);
     }
 
     #[test]
