@@ -1,7 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { mk } from './helpers/failureModelFixture';
 import type { FailureGroupStateSlice, FailureModel, TestPeriod, WorkspaceState } from '../types';
-import { applyIncompleteRule, applyRecipeRule, modelsWithChangedInputs, modelsWithChangedTests, recipesDiffer } from '../utils/incompleteRule';
+import {
+    applyIncompleteRule, applyRecipeRule, changedScoringPeriodIds, changedTrainInputIds, modelsWithChangedInputs, modelsWithChangedTests, recipesDiffer,
+} from '../utils/incompleteRule';
 import { isModelComplete, isModelStale, modelDotState, modelSetPointFlag, NOT_TRAINED_BLOCK_REASON } from '../utils/modelStatus';
 import { computeTrainFingerprint } from '../utils/trainFingerprint';
 import { toScoringPeriod, toScoringPeriods } from '../utils/timePeriods';
@@ -189,6 +191,48 @@ describe('applyIncompleteRule - the WORKSPACE running condition Apply', () => {
         const prev = ws(slice(models));
         const once = applyIncompleteRule(prev, ws(slice(models, { runningConditionCombine: 'or' })));
         expect(applyIncompleteRule(prev, once)).toBe(once);
+    });
+});
+
+// The two comparisons are also exported at SLICE level, so a caller that only PREDICTS a write
+// (the Running-condition settings' impact line, `runningConditionImpact`) runs the same rule.
+describe('changedTrainInputIds / changedScoringPeriodIds - the comparisons behind the rule, on two slices', () => {
+    const wsModel = (id: string) => ({ ...individual(), id });
+    const customModel = (id: string): FailureModel => ({
+        ...individual(), id, runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true,
+        customTestPeriods: [{ id: 'own', start: '2025-03-01T00:00', end: '2025-03-31T23:59' }],
+    });
+    const models = [wsModel('ws-a'), wsModel('ws-b'), customModel('custom')];
+    const SCORE: TestPeriod[] = [{ id: 's', start: '2025-07-01T00:00', end: '2025-07-31T23:59' }];
+
+    it('are exactly what the state-level functions (and so the write) use', () => {
+        const before = slice(models, { runningConditionTestPeriods: SCORE });
+        const cases: Partial<FailureGroupStateSlice>[] = [
+            { runningConditionCombine: 'or' },
+            { runningConditionTestPeriods: [] },
+            { runningConditionNoneConfirmed: false, runningConditionFilters: [cond('1200')], runningConditionTestPeriods: [{ ...SCORE[0], end: '2025-07-15T23:59' }] },
+            {},
+        ];
+        for (const over of cases) {
+            const after = slice(models, { runningConditionTestPeriods: SCORE, ...over });
+            expect(changedTrainInputIds(before, after)).toEqual(modelsWithChangedInputs(ws(before), ws(after)));
+            expect(changedScoringPeriodIds(before, after)).toEqual(modelsWithChangedTests(ws(before), ws(after)));
+        }
+    });
+
+    it('a workspace change reaches the Workspace-mode models only', () => {
+        const before = slice(models, { runningConditionTestPeriods: SCORE });
+        expect(changedTrainInputIds(before, slice(models, { runningConditionTestPeriods: SCORE, runningConditionCombine: 'or' }))).toEqual(['ws-a', 'ws-b']);
+        expect(changedScoringPeriodIds(before, slice(models, { runningConditionTestPeriods: [] }))).toEqual(['ws-a', 'ws-b']);
+        expect(changedTrainInputIds(before, before)).toEqual([]);
+        expect(changedScoringPeriodIds(before, before)).toEqual([]);
+    });
+
+    it('a slice without the running-condition fields reads as their defaults (no throw)', () => {
+        const bare = { models: [wsModel('ws-a')] };
+        expect(changedTrainInputIds(bare, bare)).toEqual([]);
+        expect(changedTrainInputIds(bare, { ...bare, runningConditionNoneConfirmed: true })).toEqual(['ws-a']);
+        expect(changedScoringPeriodIds(bare, { ...bare, runningConditionTestPeriods: SCORE })).toEqual(['ws-a']);
     });
 });
 

@@ -4,6 +4,7 @@ import { fmtNum } from './chartTheme';
 import { parseTimestamps } from './healthCharts';
 import { formatDataStamp } from '../periodDisplay';
 import { TEST_SCORING_ISSUE_CODES } from '../../../utils/trainTestValidation';
+import { scoringIssueMessage } from '../../../utils/timePeriods';
 
 /*
  * Pure helpers of the Health score page (health score phase 3b-2, 2026-10-04):
@@ -88,8 +89,10 @@ const REL_POINT_LABEL: Record<string, string> = {
 const REL_POINT_ORDER = Object.keys(REL_POINT_LABEL);
 
 /** Rust's issues as Checks lines. Relationship: two or more `required` issues for
- *  its four points collapse into ONE line ("Enter 4 empty points: lower 80, ..."). */
-export function buildCheckLines(kind: HealthPreview['kind'], issues: readonly HealthIssue[]): CheckLine[] {
+ *  its four points collapse into ONE line ("Enter 4 empty points: lower 80, ...").
+ *  `testNumbers` is `testPeriodsWirePlan(...).numbers` of the scoring periods that
+ *  were sent (see `scoringIssueMessage`). */
+export function buildCheckLines(kind: HealthPreview['kind'], issues: readonly HealthIssue[], testNumbers?: readonly number[] | null): CheckLine[] {
     const tone = (i: HealthIssue): 'need' | 'bad' => (i.code === 'required' || i.severity === 'warning' ? 'need' : 'bad');
     const lines: CheckLine[] = [];
     let collapsed = false;
@@ -114,7 +117,9 @@ export function buildCheckLines(kind: HealthPreview['kind'], issues: readonly He
             });
             return;
         }
-        lines.push({ key: `${i.code}:${i.field}:${n}`, tone: tone(i), text: i.message, ...(i.severity === 'warning' ? { warning: true } : {}) });
+        // An issue about one scoring period names it by the S-number the user sees
+        // (Rust numbers the periods it RECEIVED — invalid ones are not sent).
+        lines.push({ key: `${i.code}:${i.field}:${n}`, tone: tone(i), text: scoringIssueMessage(i, testNumbers), ...(i.severity === 'warning' ? { warning: true } : {}) });
     });
     return lines;
 }

@@ -127,7 +127,7 @@ describe('workspace Running condition triggers (Apply in the modal)', () => {
                 { id: 'p1', start: '2026-01-01T05:00', end: '2026-01-03T00:00' },
                 { id: 'p2', start: '2026-01-03T00:01', end: '2026-01-05T00:00' },
             ] },
-            edit: m => { fireEvent.click(m.getByRole('button', { name: 'Remove period 2' })); },
+            edit: m => { fireEvent.click(m.getByRole('button', { name: 'Remove P2' })); },
         },
     ];
     for (const c of cases) {
@@ -247,7 +247,7 @@ describe('model-setting triggers (Save changes)', () => {
         await settle(400);
         expect(pill()).toBe('Complete');
         openSettings();
-        fireEvent.change(bmwEl().querySelector('.f4-cond-v') as HTMLElement, { target: { value: '7' } });
+        fireEvent.change(bmwEl().querySelector('[data-testid="custom-condition"] input[aria-label="Value"]') as HTMLElement, { target: { value: '7' } });
         await saveChanges();
         await expectDemoted('u2', before, { group: 2, key: 'tag4', kind: 'individual' });
         expect(['i1', 'r1', 'c1', 'u1'].map(id => diskModel(id).status)).toEqual([true, true, true, true]);

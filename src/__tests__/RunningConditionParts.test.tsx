@@ -1,7 +1,7 @@
-import { describe, it, expect, afterEach } from 'vitest';
-import { render, screen, cleanup } from '@testing-library/react';
-import { PeriodCoverageBar, RuleSentence } from '../components/windows/RunningConditionParts';
-import type { WorkspaceSensorFilter } from '../types';
+import { describe, it, expect, afterEach, vi } from 'vitest';
+import { render, screen, cleanup, fireEvent } from '@testing-library/react';
+import { PeriodCoverageBar, TrainHighlightWarnings } from '../components/windows/RunningConditionParts';
+import type { TimeHighlight } from '../types';
 
 afterEach(cleanup);
 
@@ -12,8 +12,6 @@ const P3 = [
     p('b', '2025-06-01T00:00', '2025-07-31T23:59'),
     p('c', '2025-11-03T06:00', '2025-12-19T18:00'),
 ];
-const f = (sensor: string, operation: WorkspaceSensorFilter['operation'], value1: string): WorkspaceSensorFilter =>
-    ({ id: `f-${sensor}`, sensor, operation, value1, value2: '' });
 
 describe('PeriodCoverageBar', () => {
     it('shows the mockup caption "166 of 455 days used" between Jan 2025 and Mar 2026, one block per period', () => {
@@ -52,70 +50,6 @@ describe('PeriodCoverageBar', () => {
         />);
         expect(container.querySelectorAll('.f4-strip i.ovl')).toHaveLength(1);
         expect(container.querySelectorAll('.f4-strip i.bad')).toHaveLength(1);
-    });
-});
-
-describe('RuleSentence (settings modal summary)', () => {
-    const desc = (t: string) => ({ I_MOT_A: 'Motor current', PT_2041: 'Pump pressure' } as Record<string, string>)[t] ?? '';
-    const unit = (t: string) => ({ I_MOT_A: 'A', PT_2041: 'bar' } as Record<string, string>)[t] ?? '';
-    const two = [
-        p('a', '2026-01-01T00:00', '2026-03-31T23:59'),
-        p('b', '2026-04-15T00:00', ''),
-    ];
-
-    it('"Train on rows inside <dates> OR <dates> AND <conditions>" with readable dates, names and units', () => {
-        const { container } = render(
-            <RuleSentence periods={two} filters={[f('I_MOT_A', 'greater_than', '12'), f('PT_2041', 'less_than', '2.4')]} combine="and" none={false} getLabel={desc} getUnit={unit} />,
-        );
-        const box = screen.getByTestId('rule-sentence');
-        expect(box.className).toContain('rcm-sentence');
-        expect(box.textContent).toBe('Train on rows inside 1 Jan 2026 → 31 Mar 2026OR15 Apr 2026 → EndANDMotor current > 12 AANDPump pressure < 2.4 bar');
-        expect(Array.from(container.querySelectorAll('.f4-op')).map(c => c.textContent)).toEqual(['OR', 'AND', 'AND']);
-        expect(container.querySelectorAll('.f4-op--or')).toHaveLength(1); // only the period OR is blue
-    });
-
-    it('Match OR joins the conditions with OR', () => {
-        const { container } = render(
-            <RuleSentence periods={[two[0]]} filters={[f('I_MOT_A', 'greater_than', '12'), f('PT_2041', 'greater_than', '2')]} combine="or" none={false} getLabel={desc} getUnit={unit} />,
-        );
-        expect(Array.from(container.querySelectorAll('.f4-op')).map(c => c.textContent)).toEqual(['AND', 'OR']);
-    });
-
-    it('no train period = "No train period — add one" in amber (Train/Test validation: never "any time" / the whole dataset)', () => {
-        render(<RuleSentence periods={[]} filters={[f('I_MOT_A', 'greater_than', '12')]} combine="and" none={false} getLabel={desc} getUnit={unit} />);
-        const box = screen.getByTestId('rule-sentence');
-        expect(box.textContent).toBe('No train period — add one; models learn only from the train periods.');
-        expect(screen.getByTestId('rule-no-train').className).toContain('rcm-sentence-miss');
-        expect(box.textContent).not.toContain('any time');
-    });
-
-    it('use-all-rows = "every row (no condition)"; nothing set = "not set yet" (amber)', () => {
-        const { rerender, container } = render(<RuleSentence periods={[two[0]]} filters={[]} combine="and" none getLabel={desc} getUnit={unit} />);
-        expect(screen.getByTestId('rule-sentence').textContent).toContain('every row (no condition)');
-        rerender(<RuleSentence periods={[two[0]]} filters={[]} combine="and" none={false} getLabel={desc} getUnit={unit} />);
-        expect(screen.getByTestId('rule-sentence').textContent).toContain('not set yet');
-        expect(container.querySelector('.rcm-sentence-miss')).not.toBeNull();
-    });
-
-    it('invalid periods and conditions the build would not apply (incomplete / sensor missing from the dataset) are left out', () => {
-        render(
-            <RuleSentence
-                periods={[two[0], p('x', '2026-06-01T00:00', '2026-05-20T23:59')]}
-                filters={[f('I_MOT_A', 'greater_than', '12'), f('PT_2041', 'greater_than', ''), f('GONE', 'greater_than', '3')]}
-                combine="and" none={false} headers={['I_MOT_A', 'PT_2041']} getLabel={desc} getUnit={unit}
-            />,
-        );
-        const t = screen.getByTestId('rule-sentence').textContent!;
-        expect(t).toContain('1 Jan 2026 → 31 Mar 2026');
-        expect(t).not.toContain('2026-06-01');
-        expect(t).toContain('Motor current > 12 A');
-        expect(t).not.toContain('Pump pressure');
-        expect(t).not.toContain('GONE');
-    });
-
-    it('a sensor without a description falls back to its tag; between shows both bounds', () => {
-        render(<RuleSentence periods={[two[0]]} filters={[{ ...f('X_TAG', 'between', '1'), value2: '5' }]} combine="and" none={false} getLabel={desc} getUnit={unit} />);
-        expect(screen.getByTestId('rule-sentence').textContent).toContain('X_TAG between 1–5');
     });
 });
 
@@ -160,5 +94,35 @@ describe('PeriodCoverageBar with scoring periods (two lanes)', () => {
         const { container } = render(<PeriodCoverageBar periods={train} bounds={B2} />);
         expect(container.querySelector('.f4-strip--tt')).toBeNull();
         expect(screen.getByTestId('period-coverage-days').textContent).toBe('90 of 365 days used');
+    });
+});
+
+describe('TrainHighlightWarnings (one amber line under the train rows)', () => {
+    const train = [p('a', '2026-01-01T00:00', '2026-03-31T23:59')];
+    const hl = (over: Partial<TimeHighlight> = {}): TimeHighlight =>
+        ({ id: 'h1', label: 'Trip', start: '2026-02-10T00:00', end: '2026-02-12T00:00', color: '#f00', enabled: true, ...over } as TimeHighlight);
+
+    it('names the train period and the highlight, with "Remove the overlap" as an inline link (no box, no button chrome)', () => {
+        const onPeriodsChange = vi.fn();
+        render(<TrainHighlightWarnings periods={train} highlights={[hl()]} onPeriodsChange={onPeriodsChange} />);
+        const line = screen.getByTestId('train-hl-warning');
+        expect(line.className).toBe('tpe-hlwarn');
+        expect(line.getAttribute('role')).toBe('status');
+        expect(line.textContent).toBe('Train P1 overlaps the highlight “Trip” — if something was wrong at that time, leave it out.Remove the overlap');
+        const fix = screen.getByTestId('train-hl-split');
+        expect(fix.className).toBe('f4-link');
+        fireEvent.click(fix);
+        // the highlight's time is cut out of the train period: two periods around it
+        const next = onPeriodsChange.mock.calls[0][0] as { start: string; end: string }[];
+        expect(next).toHaveLength(2);
+        expect(next[0].start).toBe('2026-01-01T00:00');
+        expect(next[1].end).toBe('2026-03-31T23:59');
+    });
+
+    it('nothing when no train period overlaps a highlight, or the highlight is switched off', () => {
+        const { container, rerender } = render(<TrainHighlightWarnings periods={train} highlights={[hl({ start: '2026-05-01T00:00', end: '2026-05-02T00:00' })]} onPeriodsChange={vi.fn()} />);
+        expect(container.textContent).toBe('');
+        rerender(<TrainHighlightWarnings periods={train} highlights={[hl({ enabled: false })]} onPeriodsChange={vi.fn()} />);
+        expect(container.textContent).toBe('');
     });
 });

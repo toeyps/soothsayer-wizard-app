@@ -92,15 +92,31 @@ export function testsChangedNotice(models: FailureModel[], fg: RunningConditionF
     return count === 0 ? null : { count, allRemoved: removed === count };
 }
 
-/** The notice text: "Scoring periods changed — N complete model(s) need Mark
- *  complete again" (or "Scoring periods removed — …" when every one of them
- *  lost all its scoring periods). */
-export function testsChangedNoticeText(n: TestsChangedNotice): string {
-    const models = `${n.count} complete model${n.count === 1 ? '' : 's'}`;
-    const need = n.count === 1 ? 'needs' : 'need';
+/**
+ * The notice under the running-condition line, in two parts so the UI can set
+ * the headline in bold: `headline` (no full stop) and `rest` (one sentence).
+ *   "Scoring periods changed — 3 complete models need Mark complete again" +
+ *   "They were re-scored with the same trained model, not re-trained."
+ * When every one of them lost ALL its scoring periods nothing was re-scored:
+ *   "Scoring periods removed — 1 complete model needs a scoring period and Mark
+ *   complete again" + "It was not re-trained."
+ */
+export function testsChangedNoticeParts(n: TestsChangedNotice): { headline: string; rest: string } {
+    const one = n.count === 1;
+    const models = `${n.count} complete model${one ? '' : 's'}`;
+    const need = one ? 'needs' : 'need';
+    const they = one ? 'It was' : 'They were';
     return n.allRemoved
-        ? `Scoring periods removed — ${models} ${need} a scoring period and Mark complete again`
-        : `Scoring periods changed — ${models} ${need} Mark complete again`;
+        ? { headline: `Scoring periods removed — ${models} ${need} a scoring period and Mark complete again`, rest: `${they} not re-trained.` }
+        : { headline: `Scoring periods changed — ${models} ${need} Mark complete again`, rest: `${they} re-scored with the same trained model, not re-trained.` };
+}
+
+/** The whole notice as one string (workbench redesign §5 "After Apply"):
+ *  "Scoring periods changed — N complete models need Mark complete again. They
+ *  were re-scored with the same trained model, not re-trained." */
+export function testsChangedNoticeText(n: TestsChangedNotice): string {
+    const { headline, rest } = testsChangedNoticeParts(n);
+    return `${headline}. ${rest}`;
 }
 
 /** Stable code of the WARNING issue `compute_health_preview` adds when the

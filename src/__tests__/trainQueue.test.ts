@@ -27,7 +27,7 @@ import {
     NO_TRAIN_PERIOD_REASON,
     NO_TRAIN_PERIOD_REASON_CUSTOM,
 } from '../utils/runningCondition';
-import { testPeriodsError } from '../utils/timePeriods';
+import { testPeriodsError, validatePeriods } from '../utils/timePeriods';
 import type { TrainCandidate, TrainQueueItem, TrainRun } from '../types/trainQueue';
 
 const run = (items: TrainQueueItem[], over: Partial<TrainRun> = {}): TrainRun => ({
@@ -77,8 +77,11 @@ describe('preflightReason', () => {
     });
 
     it('an invalid train period keeps its specifics', () => {
-        expect(preflightReason('Period 2 ends before it starts.')).toEqual({ text: 'train period 2 ends before it starts', fix: 'runningCondition' });
-        expect(preflightReason('Period 1 has an invalid start date.', { customMode: true }).fix).toBe('settings');
+        expect(preflightReason('P2 ends before it starts.')).toEqual({ text: 'train period P2 ends before it starts', fix: 'runningCondition' });
+        expect(preflightReason('P1 has an invalid start date.', { customMode: true }).fix).toBe('settings');
+        // the real text `validatePeriods` produces, end to end (never "Period 2")
+        const real = validatePeriods([{ id: 'a', start: '2026-01-01T00:00', end: '2026-01-31T23:59' }, { id: 'b', start: '2026-03-01T00:00', end: '2026-02-01T00:00' }])[1].reason!;
+        expect(preflightReason(real)).toEqual({ text: 'train period P2 ends before it starts', fix: 'runningCondition' });
     });
 
     it('anything else: no trailing full stop, lower-case start', () => {
@@ -249,6 +252,8 @@ describe('trainButtonsBlockedReason', () => {
     it('stale first, then running condition, then nothing ready', () => {
         expect(trainButtonsBlockedReason({ ...base, stale: true, runningConditionSet: false })).toBe(TRAIN_STALE_MESSAGE);
         expect(trainButtonsBlockedReason({ ...base, runningConditionSet: false })).toBe(TRAIN_NEEDS_RUNNING_CONDITION);
+        // the step bar is gone: the reason no longer ends "(Step 1)"
+        expect(TRAIN_NEEDS_RUNNING_CONDITION).toBe('Set the running condition first.');
         expect(trainButtonsBlockedReason({ ...base, readyCount: 0 })).toBe(TRAIN_NOTHING_READY);
         expect(trainButtonsBlockedReason(base)).toBeNull();
     });

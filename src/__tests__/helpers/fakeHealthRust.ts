@@ -36,6 +36,14 @@
  *    Invalid = `ok:false` + `validation`, nothing written. Files land in the
  *    shared in-memory file map under `workspaces/{id}/output/...`.
  *  - `get_model_output_dir` (`workspace_id`).
+ *  - `count_period_rows` (`periods`, `filter`, `expected_generation`;
+ *    `rename_all = snake_case`): a port of `period_counts.rs` — per period the
+ *    rows inside it (bounds inclusive, blank / null = open) and how many pass
+ *    the running condition (`filter.value_filters` + `combine` ONLY: the
+ *    filter's own time fields are ignored), `running_days` = rows x the median
+ *    sample interval (one decimal), `union` over the valid periods with a row
+ *    counted once. An uncountable period is `valid: false` + zeroes, never an
+ *    error. `STALE_SESSION` (checked first), `BAD_REQUEST` above 64 periods.
  *  - Tauri arg-key casing: an unexpected or missing top-level key rejects.
  *  - Scoring periods (`test_periods`, on the request of `compute_health_preview`
  *    / `export_model_files` and as an argument of `preview_relationship_model`):
@@ -342,7 +350,11 @@ const SIGNATURES: Record<string, { required: string[]; optional?: string[] }> = 
     compute_sensor_stats: { required: ['sensor'], optional: ['filter'] },
     get_dataset_time_bounds: { required: [], optional: ['filter'] },
     get_session_generation: { required: [] },
+    count_period_rows: { required: ['periods'], optional: ['filter', 'expected_generation'] }, // rename_all = snake_case
 };
+
+/** `period_counts::MAX_PERIODS`. */
+const MAX_COUNT_PERIODS = 64;
 
 interface RelFit {
     target: string;
@@ -867,9 +879,75 @@ export function createFakeHealthRust(opts: FakeHealthRustOptions) {
         return { X, y, rows, predicted: last, r2_per_step: r2s, rmse2_per_step: rm2, lambda };
     };
 
+    /**
+     * `period_counts::count` (the Running-condition modal's per-period counts):
+     * ONE pass over the rows for all periods together; bounds inclusive, blank /
+     * null = open; a row without a parseable timestamp is in no period; only the
+     * filter's `value_filters` + `combine` are read (its own time fields are
+     * ignored); an uncountable period is answered `valid: false` with zeroes and
+     * left out of `union`; `union` counts a row inside two periods once;
+     * `running_days` = rows x the median sample interval, one decimal.
+     */
+    const countPeriodRows = (a: Args) => {
+        const periods: any[] = Array.isArray(a.periods) ? a.periods : [];
+        if (periods.length > MAX_COUNT_PERIODS) {
+            throw `BAD_REQUEST: too many periods (${periods.length}); at most ${MAX_COUNT_PERIODS} can be counted in one call`;
+        }
+        const cond = resolveFilter(a.filter ? { value_filters: a.filter.value_filters ?? [], combine: a.filter.combine } : null);
+        const blank = (v: unknown): string | null => (typeof v === 'string' && v.trim() ? v.trim() : null);
+        const out = periods.map((p, i) => {
+            const start = blank(p?.start);
+            const end = blank(p?.end);
+            const s = start === null ? null : tsMicros(start);
+            const e = end === null ? null : tsMicros(end);
+            const invalid_reason = start !== null && s === null ? 'start_unparseable'
+                : end !== null && e === null ? 'end_unparseable'
+                : s !== null && e !== null && s > e ? 'ends_before_start'
+                : null;
+            return { index: i + 1, start, end, valid: invalid_reason === null, invalid_reason, rows_in_period: 0, running_rows: 0, running_days: 0, lo: s, hi: e };
+        });
+        const ts = tsParsed();
+        let unionIn = 0;
+        let unionRunning = 0;
+        if (out.some(p => p.valid)) {
+            for (let r = 0; r < nRows(); r++) {
+                const t = ts[r];
+                if (t === null) continue;
+                const inside = out.filter(p => p.valid && (p.lo === null || t >= p.lo) && (p.hi === null || t <= p.hi));
+                if (inside.length === 0) continue;
+                const running = cond.noop || cond.keeps(r);
+                unionIn++;
+                if (running) unionRunning++;
+                for (const p of inside) {
+                    p.rows_in_period++;
+                    if (running) p.running_rows++;
+                }
+            }
+        }
+        // `median_interval_seconds`: the median positive gap between consecutive valid timestamps.
+        const sorted = (ts.filter(t => t !== null) as number[]).sort((x, y) => x - y);
+        const gaps: number[] = [];
+        for (let i = 1; i < sorted.length; i++) if (sorted[i] > sorted[i - 1]) gaps.push(sorted[i] - sorted[i - 1]);
+        gaps.sort((x, y) => x - y);
+        const interval_secs = sorted.length < 2 || gaps.length === 0 ? null
+            : (gaps.length % 2 ? gaps[(gaps.length - 1) / 2] : (gaps[gaps.length / 2 - 1] + gaps[gaps.length / 2]) / 2) / 1000;
+        const daysOf = (rows: number) => (interval_secs === null ? 0 : Math.round((rows * interval_secs / 86_400) * 10) / 10);
+        return {
+            total_rows: nRows(),
+            interval_secs,
+            periods: out.map(({ lo: _lo, hi: _hi, ...p }) => ({ ...p, running_days: daysOf(p.running_rows) })),
+            union: { rows_in_period: unionIn, running_rows: unionRunning, running_days: daysOf(unionRunning) },
+        };
+    };
+
     const run = async (cmd: string, a: Args, entry: { held?: boolean }): Promise<unknown> => {
         switch (cmd) {
             case 'get_session_generation': return generation;
+            case 'count_period_rows':
+                // The generation is checked before the request (a stale window is told it is
+                // stale, not that its request is too long).
+                checkGeneration(a.expected_generation);
+                return countPeriodRows(a);
             case 'get_dataset_time_bounds': return { min: data.timestamps[0] ?? null, max: data.timestamps[nRows() - 1] ?? null };
             case 'compute_sensor_stats': {
                 const c = col(a.sensor);

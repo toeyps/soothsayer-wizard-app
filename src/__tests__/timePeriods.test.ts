@@ -3,6 +3,7 @@ import type { TimePeriod } from '../types';
 import {
     validatePeriods, sortPeriods, mergeOverlapping, nextDefaultPeriod,
     isRangeFullyCovered, toFilterRanges,
+    periodReasonTexts, faultSide, fixPeriodFirstText, firstInvalidPeriodNumber, firstInvalidTestPeriodNumber, validateTestPeriods,
 } from '../utils/timePeriods';
 
 const p = (id: string, start: string, end: string): TimePeriod => ({ id, start, end });
@@ -15,12 +16,12 @@ describe('validatePeriods', () => {
     it('open start only on first, open end only on last', () => {
         const s = validatePeriods([p('a', '2025-01-01T00:00', ''), p('b', '', '2025-02-01T00:00')]);
         expect(s[0].invalid).toBe(true);
-        expect(s[0].reason).toMatch(/Period 1 needs an end/);
+        expect(s[0].reason).toBe('P1 needs an end date.');
         expect(s[1].invalid).toBe(true);
-        expect(s[1].reason).toMatch(/Period 2 needs a start/);
+        expect(s[1].reason).toBe('P2 needs a start date.');
     });
     it('end before start is invalid; equal is fine', () => {
-        expect(validatePeriods([p('a', '2025-02-01T00:00', '2025-01-01T00:00')])[0]).toMatchObject({ invalid: true, reason: 'Period 1 ends before it starts.' });
+        expect(validatePeriods([p('a', '2025-02-01T00:00', '2025-01-01T00:00')])[0]).toMatchObject({ invalid: true, reason: 'P1 ends before it starts.' });
         expect(validatePeriods([p('a', '2025-01-01T00:00', '2025-01-01T00:00')])[0].invalid).toBe(false);
     });
     it('unparseable bound is invalid', () => {
@@ -41,6 +42,56 @@ describe('validatePeriods', () => {
         const s = validatePeriods([p('a', '2025-02-01T00:00', '2025-01-01T00:00'), p('b', '2025-01-15T00:00', '2025-03-01T00:00')]);
         expect(s[0].invalid).toBe(true);
         expect(s[1].overlapsPrev).toBe(false);
+    });
+});
+
+// Workbench redesign §5: a period is named by its list number — "P1", "S1" — never "Period 1";
+// the row's own reason line has no full stop and says what to do where that is known.
+describe('period reasons say P<n> / S<n> (workbench redesign §5)', () => {
+    it('no train-period reason says "Period N" any more', () => {
+        const all = validatePeriods([
+            p('a', 'garbage', '2025-01-05T00:00'), p('b', '2025-01-06T00:00', 'nope'), p('c', '', '2025-02-01T00:00'),
+            p('d', '2025-03-01T00:00', ''), p('e', '2025-05-11T00:00', '2025-05-01T00:00'), p('f', '2025-06-01T00:00', '2025-06-30T23:59'),
+        ]);
+        expect(all.map(s => s.reason)).toEqual([
+            'P1 has an invalid start date.', 'P2 has an invalid end date.', 'P3 needs a start date.',
+            'P4 needs an end date.', 'P5 ends before it starts.', undefined,
+        ]);
+        expect(all.map(s => s.fault)).toEqual(['start-invalid', 'end-invalid', 'start-missing', 'end-missing', 'ends-before-start', undefined]);
+        for (const s of all) expect(`${s.reason ?? ''} ${s.rowReason ?? ''}`).not.toMatch(/Period \d/);
+    });
+    it('the row line of "ends before it starts" names the date to get past, in the Workbench date format', () => {
+        const [, bad] = validatePeriods([p('a', '2026-01-01T00:00', '2026-03-31T23:59'), p('b', '2026-05-11T00:00', '2026-05-01T23:59')]);
+        expect(bad.reason).toBe('P2 ends before it starts.');
+        expect(bad.rowReason).toBe('P2 ends before it starts — pick an end after 11 May 2026');
+        // a start that is not at midnight keeps its time
+        expect(validatePeriods([p('a', '2026-05-11T06:30', '2026-05-01T00:00')])[0].rowReason).toBe('P1 ends before it starts — pick an end after 11 May 2026 06:30');
+    });
+    it('the other row lines are the reason without its full stop; a valid period has none', () => {
+        const s = validatePeriods([p('a', '2025-01-01T00:00', ''), p('b', '', '2025-02-01T00:00')]);
+        expect(s.map(x => x.rowReason)).toEqual(['P1 needs an end date', 'P2 needs a start date']);
+        expect(validatePeriods([p('a', '', '')])[0]).toEqual({ invalid: false, reason: undefined, rowReason: undefined, fault: undefined, overlapsPrev: false });
+    });
+    it('scoring periods get the same two texts, named S<n>', () => {
+        const st = validateTestPeriods([{ id: 't1', start: '2026-01-01T00:00', end: '2026-01-31T23:59' }, { id: 't2', start: '2026-05-11T00:00', end: '2026-05-01T00:00' }, { id: 't3', start: '', end: '2026-05-01T00:00' }]);
+        expect(st[0]).toEqual({ invalid: false, reason: undefined });
+        expect(st[1]).toEqual({ invalid: true, reason: 'S2 ends before it starts.', rowReason: 'S2 ends before it starts — pick an end after 11 May 2026', fault: 'ends-before-start' });
+        expect(st[2]).toEqual({ invalid: true, reason: 'S3 needs a start date.', rowReason: 'S3 needs a start date', fault: 'start-missing' });
+    });
+    it('periodReasonTexts / faultSide / fixPeriodFirstText', () => {
+        expect(periodReasonTexts('P3', 'end-invalid')).toEqual({ reason: 'P3 has an invalid end date.', rowReason: 'P3 has an invalid end date' });
+        // a start that cannot be printed as a date: no hint is invented
+        expect(periodReasonTexts('P1', 'ends-before-start', '')).toEqual({ reason: 'P1 ends before it starts.', rowReason: 'P1 ends before it starts' });
+        expect((['start-invalid', 'start-missing', 'end-invalid', 'end-missing', 'ends-before-start'] as const).map(faultSide)).toEqual(['start', 'start', 'end', 'end', 'end']);
+        expect(fixPeriodFirstText('P2')).toBe('Fix P2 before applying');
+        expect(fixPeriodFirstText('S1', 'saving')).toBe('Fix S1 before saving');
+    });
+    it('firstInvalidPeriodNumber / firstInvalidTestPeriodNumber give the list number, or null', () => {
+        expect(firstInvalidPeriodNumber([p('a', '2025-01-01T00:00', '2025-01-31T23:59'), p('b', '2025-03-01T00:00', '2025-02-01T00:00')])).toBe(2);
+        expect(firstInvalidPeriodNumber([p('a', '', '')])).toBeNull();
+        expect(firstInvalidPeriodNumber([])).toBeNull();
+        expect(firstInvalidTestPeriodNumber([{ id: 't', start: '2026-01-01T00:00', end: '2026-01-31T23:59' }, { id: 'u', start: '', end: '' }])).toBe(2);
+        expect(firstInvalidTestPeriodNumber([])).toBeNull();
     });
 });
 

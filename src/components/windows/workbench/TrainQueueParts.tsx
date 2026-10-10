@@ -38,11 +38,6 @@ export const TRAIN_KIND_LABEL: Record<ModelKind, string> = {
 };
 const KIND_LETTER: Record<ModelKind, string> = { individual: 'I', relationship: 'R', clustering: 'C' };
 
-/** A train reason as the user reads it. The 5-step bar is gone (2026-10-09), so
- *  no text may point at "Step 1" — the shared reason constant in
- *  `utils/trainQueue.ts` still carries it. */
-export const trainReasonText = (reason: string): string => reason.replace(/\s*\(Step 1\)/g, '');
-
 /** One model as the train parts show it. */
 export interface TrainRowModel {
     id: string;
@@ -122,7 +117,7 @@ export function TrainAllBar({ counts, running, reason, reasonTone, onOpen }: {
                 className="rcx-btn tq-all-btn"
                 data-testid="train-all"
                 disabled={running || reason !== null}
-                title={reason ? trainReasonText(reason) : undefined}
+                title={reason ?? undefined}
                 onClick={onOpen}
             >
                 {running ? <><Loader2 size={12} className="pm-spin" aria-hidden="true" /> Training…</> : '▶ Train all'}
@@ -132,7 +127,7 @@ export function TrainAllBar({ counts, running, reason, reasonTone, onOpen }: {
                 <span><b>{counts.upToDate}</b> up to date</span>
                 <span><b>{counts.missing}</b> can't train</span>
             </div>
-            {reason && <div className={`tq-why tq-why--${reasonTone}`} data-testid="train-all-reason" role={reasonTone === 'danger' ? 'alert' : undefined}>{trainReasonText(reason)}</div>}
+            {reason && <div className={`tq-why tq-why--${reasonTone}`} data-testid="train-all-reason" role={reasonTone === 'danger' ? 'alert' : undefined}>{reason}</div>}
         </div>
     );
 }
@@ -238,7 +233,7 @@ export function SensorTrainButton({ label, filled, disabled, title, why, whyTone
                     className={`rcx-btn${tone} tq-split-main`}
                     data-testid="train-sensor"
                     disabled={disabled}
-                    title={title ? trainReasonText(title) : undefined}
+                    title={title ?? undefined}
                     onClick={onTrain}
                 >
                     {label}
@@ -274,7 +269,7 @@ export function SensorTrainButton({ label, filled, disabled, title, why, whyTone
                     </div>
                 )}
             </div>
-            <div className={`tq-why tq-why--${whyTone}`} data-testid="train-sensor-why">{trainReasonText(why)}</div>
+            <div className={`tq-why tq-why--${whyTone}`} data-testid="train-sensor-why">{why}</div>
         </div>
     );
 }

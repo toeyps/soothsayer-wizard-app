@@ -19,7 +19,7 @@ export type TrainFixTarget =
     | 'settings'
     /** The sensor header's Performance / Condition switch. */
     | 'category'
-    /** The workspace Running condition (Step 1 → Edit…). */
+    /** The workspace Running condition (the line / card under the title → Edit). */
     | 'runningCondition';
 
 /** A model's train plan, classified BEFORE a run (never during one). */

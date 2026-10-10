@@ -157,7 +157,7 @@ export function RunningConditionCard({ state, periods, filters, combine, noneCon
                 <div className="rcc-num" aria-hidden="true">!</div>
                 <div className="rcc-main">
                     <div className="rcc-kicker">Running condition</div>
-                    <h3 data-testid="rc-card-title">Period {bad + 1} needs fixing</h3>
+                    <h3 data-testid="rc-card-title">P{bad + 1} needs fixing</h3>
                     <p data-testid="rc-card-reason">{status[bad]?.reason ?? 'Fix the training period dates.'} Models can't be trained until it's fixed.</p>
                     <div className="rcc-rows"><span className="rcc-lbl">Train</span><PeriodChips periods={periods} /></div>
                 </div>

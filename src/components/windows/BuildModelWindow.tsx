@@ -13,7 +13,9 @@ import { withFailureGroupState } from "../../utils/failureGroupState";
 import { modelSensorKey, groupModelsBySensor, sensorCategory, setSensorCategory, type SensorModelGroup } from "../../utils/modelGrouping";
 import { normalizeCategories, flagLegacyGate, migratePeriods } from "../../utils/workspaceMigrations";
 import { findSameSensorNameConflict, suggestDistinctModelName } from "../../utils/modelNames";
-import { CATEGORY_BLOCK_REASON, getBuildBlockReason, isRunningConditionConfigured, isWorkspaceRunningConditionConfigured, effectiveRunningCondition, markCompleteBlockReason, runningConditionApplyBlock, seedCustomFromWorkspace, type RunningConditionFg } from "../../utils/runningCondition";
+import { CATEGORY_BLOCK_REASON, customBlockText, customSummaryText, getBuildBlock, getBuildBlockReason, isRunningConditionConfigured, isWorkspaceRunningConditionConfigured, effectiveRunningCondition, markCompleteBlockReason, runningConditionApplyBlock, seedCustomFromWorkspace, type RunningConditionFg } from "../../utils/runningCondition";
+import { modelsStillNeedingTraining, retrainNoticeParts, runningConditionImpact } from "../../utils/runningConditionImpact";
+import { usePeriodCounts } from "../../hooks/usePeriodCounts";
 import { computeTrainFingerprint, isModelTrainedFresh as trainedFreshFor } from "../../utils/trainFingerprint";
 import { buildPreviewFilterPayload } from "../../utils/trainingScope";
 import { applyIncompleteRule } from "../../utils/incompleteRule";
@@ -26,7 +28,7 @@ import { useSensorMetaMap, normalizeSensorTag } from "../../hooks/useSensorMetaM
 import { useDatasetTimeBounds } from "../../hooks/useDatasetTimeBounds";
 import { useHealthPreview } from "../../hooks/useHealthPreview";
 import { validatePeriods, testPeriodsKey, testPeriodsError, testPeriodsWirePlan, toScoringPeriods, toTestPeriodsWire } from "../../utils/timePeriods";
-import { SLOW_TEST_SCORING_TEXT, testsChangedNotice, testsChangedNoticeText, testsChangedState } from "../../utils/trainTestValidation";
+import { SLOW_TEST_SCORING_TEXT, testsChangedNotice, testsChangedNoticeParts, testsChangedState } from "../../utils/trainTestValidation";
 import { STIFFNESS_OPTIONS, STIFFNESS_DEFAULT, stiffnessLabel, snapStiffness } from "../reports/pmReportTypes";
 import RunningConditionPanel, { RunningConditionPills } from "./RunningConditionPanel";
 import { RunningConditionCard, type RcStepState } from "./RunningConditionCard";
@@ -34,9 +36,7 @@ import { useRowCountPreview } from "./useRowCountPreview";
 import { SensorPickerModal } from "./SensorPickers";
 import { SensorInline, SensorLabel } from "../sensor/SensorLabel";
 import { SensorMetaContext, fmtNumText, sensorHaystack, sensorTitle, useLayeredSensorLookup } from "../sensor/sensorInfo";
-import TimePeriodsEditor from "./TimePeriodsEditor";
-import TestPeriodsEditor from "./TestPeriodsEditor";
-import { TrainHighlightWarnings } from "./RunningConditionParts";
+import { useModalFocus } from "./useModalFocus";
 import { estimateRunningDays, formatStamp } from "./periodDisplay";
 import SubModelsModal from "./SubModelsModal";
 import { useSubModelFits } from "./useSubModelFits";
@@ -47,7 +47,7 @@ import { FIT_GONE_WORDS, FitGoneBoard, PageSwitch, SaveErrorNotice, StaleBanner,
 import { buildCheckLines, healthVerdict, isBlockingIssue, sameSetPoints, verdictOfIssues, type HealthVerdict } from "./workbench/healthChecks";
 import type { SaveInfo, WorkbenchPage } from "./workbench/workbenchTypes";
 import { isPickerSurfaceOpen } from "../sensor/SensorPicker";
-import { CloseRunDialog, LockedSettingsHeader, QueuedCard, RunSetPointsBanner, RunStrip, SensorTrainButton, sensorTrainMenuCopy, TrainAllBar, TrainAllModal, trainReasonText, type TrainGroupInfo, type TrainMenuItem, type TrainReasonTone, type TrainRowModel } from "./workbench/TrainQueueParts";
+import { CloseRunDialog, LockedSettingsHeader, QueuedCard, RunSetPointsBanner, RunStrip, SensorTrainButton, sensorTrainMenuCopy, TrainAllBar, TrainAllModal, type TrainGroupInfo, type TrainMenuItem, type TrainReasonTone, type TrainRowModel } from "./workbench/TrainQueueParts";
 import { useTrainQueue } from "../../hooks/useTrainQueue";
 import type { TrainCandidate, TrainFixTarget, TrainOutcome } from "../../types/trainQueue";
 import { classifyTrainPlan, countTrainPlans, formatTrainSeconds, isStaleTrainError, preflightReason, ROUGH_TRAIN_SECONDS, roughTrainSeconds, trainButtonsBlockedReason, TRAIN_NEEDS_RUNNING_CONDITION, TRAIN_STALE_MESSAGE } from "../../utils/trainQueue";
@@ -331,6 +331,9 @@ function flushFocusedInput(): void {
     if (active instanceof HTMLElement && typeof active.blur === 'function') active.blur();
 }
 
+/** One shared empty list, so a hook input does not change identity per render. */
+const NO_PERIODS: TimePeriod[] = [];
+
 /** 🆕 2026-10-03: the four workspace Running condition fields the settings modal
  *  edits as ONE local draft (nothing is written until Apply — see
  *  `applyRcDraft`). Same shape `persistRunningCondition` takes. */
@@ -455,6 +458,17 @@ export default function BuildModelWindow() {
     // Inline "Discard changes?" row, shown instead of closing when X/backdrop
     // is used with an unapplied draft.
     const [rcDiscardPrompt, setRcDiscardPrompt] = useState(false);
+    // Models an Apply made in THIS session sent back to training: the notice
+    // under the running-condition line counts the ones still not trained again
+    // (`modelsStillNeedingTraining`). Session-only by decision — the amber dots
+    // in the list are what persists.
+    const [rcRetrainIds, setRcRetrainIds] = useState<string[]>([]);
+    // What the gate reads (`gateFg`, built further down) and the special-sensor
+    // recipes, for `applyRcDraft` (a stable callback defined before them).
+    const gateFgRef = useRef<RunningConditionFg>(null);
+    const specialRecipesRef = useRef<SpecialSensorRecipe[] | null>(null);
+    // The Running-condition dialog element (focus on open, Tab kept inside).
+    const rcDialogRef = useRef<HTMLDivElement>(null);
     // "No condition - use all rows" was explicitly confirmed for the workspace
     // (Feature 4, soft gate A). Mirrors failureGroupState.runningConditionNoneConfirmed.
     const [runningConditionNoneConfirmed, setRunningConditionNoneConfirmed] = useState(false);
@@ -909,6 +923,8 @@ export default function BuildModelWindow() {
                 setRcDraftState(null);
                 setRcPeriodTyping(false);
                 setRcDiscardPrompt(false);
+                // The "need training again" notice belonged to the old workspace too.
+                setRcRetrainIds([]);
                 setTrainResults({});
                 setTrainStatus({});
                 setTrainError({});
@@ -1187,6 +1203,11 @@ export default function BuildModelWindow() {
         // (a missing date, or an end before its start) keeps the modal open; the
         // footer says why.
         if (runningConditionApplyBlock(d.periods, d.testPeriods) !== null) return;
+        // The models this Apply sends back to training (the same answer the impact
+        // line next to Apply showed): kept for the notice under the running-condition
+        // line. Models an earlier Apply of this session already sent back stay listed.
+        const retrain = runningConditionImpact(gateFgRef.current, d, { recipes: specialRecipesRef.current ?? undefined }).retrainIds;
+        if (retrain.length > 0) setRcRetrainIds(prev => [...new Set([...prev, ...retrain])]);
         // Optimistic local mirror (the persisted state vars) so the Step-1 card and
         // the gate are right the moment the modal closes; the write's own
         // `applyFg` then confirms it from disk.
@@ -1229,6 +1250,8 @@ export default function BuildModelWindow() {
         models: allModels, runningConditionFilters, runningConditionCombine,
         runningConditionTimePeriods, runningConditionNoneConfirmed, runningConditionTestPeriods,
     };
+    gateFgRef.current = gateFg;
+    specialRecipesRef.current = specialRecipes;
     const gateHeaders = allSensors.length ? allSensors : null;
     // 🆕 2026-09-30 QA fix (bug 3): judge the DRAFT-merged model
     // (`effectiveModelFor`, defined below — closures resolve it fine, it's
@@ -1246,6 +1269,17 @@ export default function BuildModelWindow() {
     // draft that just broke the condition; unblocks one that just fixed it,
     // without waiting for Save).
     const gateReasonOf = (m: FailureModel): string | null => getBuildBlockReason(effectiveModelFor(m), gateFg, gateHeaders);
+    /** The gate reason as the model's OWN page words it. A Custom model's own
+     *  running condition is fixed inside its Model settings, so the wording says
+     *  where: "Own running condition: P1 ends before it starts. Fix it in Model
+     *  settings", or "Fix P1's end above" while that section is open
+     *  (`customBlockText`). Any other text is returned unchanged. */
+    const ownGateText = (m: FailureModel, text: string | null): string | null => {
+        if (text === null) return null;
+        const block = getBuildBlock(effectiveModelFor(m), gateFg, gateHeaders);
+        if (!block || block.mode !== 'custom' || block.kind === 'category' || block.reason !== text) return text;
+        return customBlockText(block, { settingsOpen: isSettingsOpen(m) });
+    };
     const rcConfigured = isWorkspaceRunningConditionConfigured(gateFg, gateHeaders);
     const needsCondition = (m: FailureModel): boolean => !isRunningConditionConfigured(m, gateFg, gateHeaders);
     const legacyCompleteCount = allModels.filter(m => m.status).length;
@@ -1330,8 +1364,12 @@ export default function BuildModelWindow() {
         // below), so the collapsed summary shows what's actually configured
         // instead of a flat "Custom data" that never changed.
         if (d.runningConditionMode === 'custom') {
-            const condLabel = d.customNoneConfirmed ? 'no cond' : `${d.customFilters.length} cond`;
-            parts.push(`Custom · ${condLabel} · ${d.customPeriods.length} train · ${d.customTestPeriods.length} scoring`);
+            parts.push(customSummaryText({
+                noneConfirmed: d.customNoneConfirmed,
+                conditions: d.customFilters.length,
+                trainPeriods: d.customPeriods.length,
+                scoringPeriods: d.customTestPeriods.length,
+            }));
         } else {
             parts.push('Workspace data');
         }
@@ -1498,6 +1536,13 @@ export default function BuildModelWindow() {
     /** A Custom-mode model whose OWN running condition is what blocks it: the fix is inside Model settings. */
     const customFixInside = (m: FailureModel): boolean =>
         draftOf(m).runningConditionMode === 'custom' && categoryOf(m) !== null && gateReasonOf(m) !== null;
+    /** "Model settings" of this model is open on screen. It opens by itself when
+     *  the thing to fix is INSIDE it (a missing setting, or a Custom model's own
+     *  running condition — that panel lives in this section); the user's own open /
+     *  close (the override) wins; a model queued or training in the run shows the
+     *  locked one-line header instead. */
+    const isSettingsOpen = (m: FailureModel): boolean =>
+        !queue.isLocked(m.id) && (settingsOpenOverride[m.id] ?? (missingItems(m).length > 0 || customFixInside(m)));
     const incompleteItems = (m: FailureModel): { text: string; onClick: () => void }[] => {
         const items = missingItems(m).map(text => ({
             text,
@@ -1517,7 +1562,7 @@ export default function BuildModelWindow() {
         if (gr && categoryOf(m) !== null) {
             const isCustom = draftOf(m).runningConditionMode === 'custom';
             items.push({
-                text: gr,
+                text: ownGateText(m, gr) ?? gr,
                 onClick: () => isCustom
                     ? setSettingsOpenOverride(prev => ({ ...prev, [m.id]: true }))
                     : setRcFilterOpen(true),
@@ -2410,11 +2455,13 @@ export default function BuildModelWindow() {
     // an invalid one (and its error) is dropped, never shown on — or written into — another model.
     useEffect(() => { setBoundaryEdit(null); }, [activeModel?.id]);
 
-    // ---- Running condition: row-count previews (2026-10-03) ----
-    // Two instances of the same hook: one for the PERSISTED condition (the
-    // Step-1 card) and one for the modal's DRAFT (what Apply would commit).
-    // They share a cache, so opening the modal on an unedited draft costs no
-    // query, and the draft one waits for typing to settle.
+    // ---- Running condition: row counts ----
+    // The one-line card shows the PERSISTED condition's row count
+    // (`useRowCountPreview`). The settings modal and a Custom model's own panel
+    // show per-period running-row counts of what is being edited
+    // (`usePeriodCounts`, one instance each): nothing is asked while they are
+    // closed, a changing draft is debounced, and a settled draft costs at most
+    // two calls.
     const rowCountCache = useRef(new Map<string, number>());
     const rcCountSensor = allSensors[0] ?? null;
     const persistedCountFilter = useMemo(
@@ -2434,15 +2481,22 @@ export default function BuildModelWindow() {
         [rcDraft, runningConditionFilters, runningConditionCombine, runningConditionNoneConfirmed, runningConditionTimePeriods, allSensors],
     );
     const persistedPeriodsInvalid = validatePeriods(runningConditionTimePeriods).some(st => st.invalid);
-    const draftPeriodsInvalid = validatePeriods((rcDraft ?? { periods: runningConditionTimePeriods }).periods).some(st => st.invalid);
     const persistedRows = useRowCountPreview({
         // No train period = nothing is trained on (rule 1): no whole-dataset count.
         enabled: !loading && rcConfigured && !persistedPeriodsInvalid && runningConditionTimePeriods.length > 0,
         workspaceId, sensor: rcCountSensor, filter: persistedCountFilter, cache: rowCountCache,
     });
-    const draftRows = useRowCountPreview({
-        enabled: !loading && rcFilterOpen && !draftPeriodsInvalid && (rcDraft ?? { periods: runningConditionTimePeriods }).periods.length > 0,
-        workspaceId, sensor: rcCountSensor, filter: draftCountFilter, cache: rowCountCache, debounceMs: 300,
+    // The modal's DRAFT (what Apply would commit). The lists are the draft's own
+    // arrays (stable until the draft changes), the filter is memoised above.
+    const rcCountPeriods = rcDraft ? rcDraft.periods : runningConditionTimePeriods;
+    const rcCountTests = rcDraft ? rcDraft.testPeriods : runningConditionTestPeriods;
+    const rcCounts = usePeriodCounts({
+        enabled: !loading && rcFilterOpen,
+        workspaceId,
+        trainPeriods: rcCountPeriods,
+        scoringPeriods: rcCountTests,
+        filter: draftCountFilter,
+        expectedGeneration: generation,
     });
     // Train running time of the ACTIVE Custom model (its own condition + train
     // periods, draft included) for the amber "below the recommended train time"
@@ -2460,11 +2514,45 @@ export default function BuildModelWindow() {
         debounceMs: 300,
     });
 
+    // A Custom model's OWN running condition, as drafted, while its panel is on
+    // screen (Custom mode + Model settings open): its own period counts, asked
+    // only then. `activeCustomDraft` keeps one identity per draft / saved model,
+    // so the hook's inputs do not change on unrelated renders.
+    const activeDraftEntry = activeModel ? drafts[activeModel.id] : undefined;
+    const activeCustomDraft = useMemo(
+        () => (activeModel ? (activeDraftEntry ?? draftFromModel(activeModel)) : null),
+        [activeModel, activeDraftEntry],
+    );
+    const customPanelOpen = !!activeModel && activeCustomDraft?.runningConditionMode === 'custom' && isSettingsOpen(activeModel);
+    const customCountFilter = useMemo(
+        () => (activeCustomDraft && activeCustomDraft.runningConditionMode === 'custom'
+            ? buildPreviewFilterPayload(
+                { filters: activeCustomDraft.customFilters, combine: activeCustomDraft.customCombine, noneConfirmed: activeCustomDraft.customNoneConfirmed, periods: activeCustomDraft.customPeriods },
+                gateHeaders,
+            )
+            : null),
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+        [activeCustomDraft, allSensors],
+    );
+    const customCounts = usePeriodCounts({
+        enabled: !loading && customPanelOpen,
+        workspaceId,
+        trainPeriods: activeCustomDraft?.customPeriods ?? NO_PERIODS,
+        scoringPeriods: activeCustomDraft?.customTestPeriods ?? NO_PERIODS,
+        filter: customCountFilter,
+        expectedGeneration: generation,
+    });
+
     // The Dashboard may have changed its highlights since this window opened:
-    // re-read them whenever the Running condition settings open.
+    // re-read them whenever the Running condition settings open — and whenever a
+    // Custom model's own panel is shown (its train-overlap line reads them too).
+    // One cheap read of the workspace file.
     useEffect(() => {
-        if (rcFilterOpen) void refreshHighlights();
-    }, [rcFilterOpen, refreshHighlights]);
+        if (rcFilterOpen || customPanelOpen) void refreshHighlights();
+    }, [rcFilterOpen, customPanelOpen, refreshHighlights]);
+
+    // Keyboard focus of the modal: the first field on open, Tab kept inside.
+    useModalFocus(rcDialogRef, rcFilterOpen, '[data-testid="rc-panel"]');
 
     // Esc closes the Running condition modal — through the same dirty-draft
     // guard as X / backdrop. Registered in the CAPTURE phase and ignored while a
@@ -3179,159 +3267,48 @@ export default function BuildModelWindow() {
                 )}
             </div>
 
-            {/* 🆕 2026-09-30 [Custom running-condition editor port]: a direct
-                port of PredictiveModelBuild.tsx's own Custom section (periods
-                via TimePeriodsEditor, conditions via SensorPickerModal
-                single (the shared single picker), AND/OR via .f4-seg--andor, "No condition" via
-                .f4-nofilter) — SPEC decision #2 says this is bound to the
-                draft/Save-changes flow, unlike the PM page's own autosaved
-                version, so every field below reads/writes `d`/`patchDraft`,
-                never its own component state. Sibling of `.f4-fld--traindata`
-                (not nested inside it — the narrow 170px field has no room for
-                this), `flex: 1 1 100%` (App.css `.rc-custom`) so it wraps
-                onto its own full-width row in flex mode, and spans every
-                column in Clustering's grid mode. */}
+            {/* A Custom model's OWN running condition (workbench redesign §5): the same
+                panel as the workspace settings — timeline, rows and states — bound to
+                the model's DRAFT (saved with Save changes, never on its own). A sibling
+                of `.f4-fld--traindata`, on its own full-width row (`.rc-custom`). */}
             {d.runningConditionMode === 'custom' && (
                 <div className="rc-custom" data-testid="custom-rc-editor">
                     {seedNoteFor[m.id] && (
-                        <div data-testid="pm-seed-note" className="f4-seed">
+                        <div data-testid="pm-seed-note" className="rcx-line rc-seed">
                             <span>
                                 Copied <b>{seedNoteFor[m.id]!.periods} train period{seedNoteFor[m.id]!.periods === 1 ? '' : 's'}</b>, <b>{seedNoteFor[m.id]!.tests} scoring period{seedNoteFor[m.id]!.tests === 1 ? '' : 's'}</b> and {seedNoteFor[m.id]!.conditions} condition{seedNoteFor[m.id]!.conditions === 1 ? '' : 's'} from Workspace. Edits here affect only this model.
                             </span>
                             <button type="button" className="f4-x" aria-label="Dismiss" onClick={() => setSeedNoteFor(prev => ({ ...prev, [m.id]: null }))}><X size={12} /></button>
                         </div>
                     )}
-
-                    <div className="f4-side-blk" data-testid="custom-periods">
-                        <div className="f4-slabel">
-                            <span><i className="tpe-sw tpe-sw--tr" aria-hidden="true" /> Train periods <span className="f4-count">{d.customPeriods.length}</span></span>
-                            <span className="f4-note f4-note--faint">required · healthy running time only</span>
-                        </div>
-                        <div className="rc-scroll">
-                            <TimePeriodsEditor compact periods={d.customPeriods} onChange={periods => patchDraft(m, { customPeriods: periods })} bounds={datasetBounds} tests={d.customTestPeriods} />
-                        </div>
-                        <TrainHighlightWarnings periods={d.customPeriods} highlights={dashHighlights} onPeriodsChange={periods => patchDraft(m, { customPeriods: periods })} />
-                    </div>
-
-                    <div className="f4-side-blk" data-testid="custom-test-periods">
-                        <div className="f4-slabel">
-                            <span><i className="tpe-sw tpe-sw--te" aria-hidden="true" /> Scoring periods <span className="f4-count">{d.customTestPeriods.length}</span></span>
-                            <span className="f4-note f4-note--faint">the trained model gives a health score for this time · needed before Mark complete · may include train time</span>
-                        </div>
-                        <TestPeriodsEditor
-                            compact
-                            blocks="save"
-                            tests={d.customTestPeriods}
-                            train={d.customPeriods}
-                            onChange={tests => patchDraft(m, { customTestPeriods: tests })}
-                            bounds={datasetBounds}
-                        />
-                    </div>
-
-                    <div className="f4-side-blk">
-                        <div className="f4-slabel">
-                            <span>Running condition</span>
-                            {!d.customNoneConfirmed && (
-                                <div className="f4-seg f4-seg--andor" role="group" aria-label="Match">
-                                    {(['and', 'or'] as const).map(mode => (
-                                        <button
-                                            key={mode}
-                                            type="button"
-                                            className={d.customCombine === mode ? 'on' : undefined}
-                                            aria-pressed={d.customCombine === mode}
-                                            onClick={() => patchDraft(m, { customCombine: mode })}
-                                        >
-                                            {mode.toUpperCase()}
-                                        </button>
-                                    ))}
-                                </div>
-                            )}
-                        </div>
-
-                        {d.customNoneConfirmed ? (
-                            <div className="f4-nofilter">
-                                <span className="f4-pill f4-pill--ok">✓ No condition — all rows</span>
-                                <div data-testid="custom-none-warning" className="f4-note" style={{ fontSize: '11px' }}>
-                                    Idle periods stay in training.{d.customFilters.length > 0 && ' Saved conditions are kept but not applied.'}
-                                </div>
-                                <div className="f4-acts">
-                                    <button type="button" className="f4-btn f4-btn--small" onClick={() => patchDraft(m, { customNoneConfirmed: false })}>Switch to conditions</button>
-                                </div>
-                            </div>
-                        ) : (
-                            <>
-                                {d.customFilters.length === 0 && (
-                                    <div role="alert" data-testid="custom-condition-required" className="f4-callout f4-callout--compact">
-                                        <div><b>Required.</b> Add at least one condition, or confirm that this machine always runs.</div>
-                                    </div>
-                                )}
-                                <div className="rc-scroll">
-                                    {d.customFilters.map(f => (
-                                        <div key={f.id} className="f4-cond f4-cond--compact">
-                                            <div className="f4-cond-s">
-                                                <SensorPickerModal
-                                                    sensors={allSensors}
-                                                    getComponent={getComponent}
-                                                    single
-                                                    value={f.sensor}
-                                                    onSelect={sensor => patchDraft(m, { customFilters: d.customFilters.map(x => x.id === f.id ? { ...x, sensor } : x) })}
-                                                    noun="sensor"
-                                                />
-                                            </div>
-                                            <select
-                                                className="f4-cond-o"
-                                                aria-label="Operator"
-                                                value={f.operation}
-                                                onChange={e => patchDraft(m, { customFilters: d.customFilters.map(x => x.id === f.id ? { ...x, operation: e.target.value as WorkspaceSensorFilter['operation'] } : x) })}
-                                            >
-                                                <option value="greater_than">&gt;</option>
-                                                <option value="less_than">&lt;</option>
-                                                <option value="between">between</option>
-                                                <option value="equals">=</option>
-                                            </select>
-                                            <input
-                                                type="number"
-                                                className="f4-cond-v"
-                                                value={f.value1}
-                                                onChange={e => patchDraft(m, { customFilters: d.customFilters.map(x => x.id === f.id ? { ...x, value1: e.target.value } : x) })}
-                                                placeholder="val"
-                                            />
-                                            {f.operation === 'between' && (
-                                                <input
-                                                    type="number"
-                                                    className="f4-cond-v"
-                                                    value={f.value2}
-                                                    onChange={e => patchDraft(m, { customFilters: d.customFilters.map(x => x.id === f.id ? { ...x, value2: e.target.value } : x) })}
-                                                    placeholder="max"
-                                                />
-                                            )}
-                                            <button type="button" className="f4-x" onClick={() => patchDraft(m, { customFilters: d.customFilters.filter(x => x.id !== f.id) })} title="Remove condition" aria-label="Remove condition">
-                                                <X size={11} />
-                                            </button>
-                                        </div>
-                                    ))}
-                                </div>
-                                <div className="f4-acts">
-                                    <button
-                                        type="button"
-                                        className="f4-btn f4-btn--small"
-                                        disabled={allSensors.length === 0}
-                                        onClick={() => patchDraft(m, {
-                                            customNoneConfirmed: false,
-                                            customFilters: [...d.customFilters, {
-                                                id: `rcf-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-                                                sensor: allSensors[0] ?? '', operation: 'greater_than', value1: '', value2: '',
-                                            }],
-                                        })}
-                                    >
-                                        + Add condition
-                                    </button>
-                                    <button type="button" className="f4-btn f4-btn--plain f4-btn--small" onClick={() => patchDraft(m, { customNoneConfirmed: true })}>No condition — use all rows</button>
-                                </div>
-                            </>
-                        )}
-                    </div>
-                    <div className="f4-foot-note">Only this model · the workspace default is untouched.</div>
+                    <RunningConditionPanel
+                        scope="custom"
+                        configured={isRunningConditionConfigured(effectiveModelFor(m), gateFg, gateHeaders)}
+                        periods={d.customPeriods}
+                        onPeriodsChange={periods => patchDraft(m, { customPeriods: periods })}
+                        bounds={datasetBounds}
+                        filters={d.customFilters}
+                        combine={d.customCombine}
+                        noneConfirmed={d.customNoneConfirmed}
+                        onNoneChange={none => patchDraft(m, { customNoneConfirmed: none })}
+                        onCombineChange={mode => patchDraft(m, { customCombine: mode })}
+                        onAddFilter={() => patchDraft(m, {
+                            customNoneConfirmed: false,
+                            customFilters: [...d.customFilters, {
+                                id: `rcf-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                                sensor: allSensors[0] ?? '', operation: 'greater_than', value1: '', value2: '',
+                            }],
+                        })}
+                        onUpdateFilter={(id, patch) => patchDraft(m, { customFilters: d.customFilters.map(x => (x.id === id ? { ...x, ...patch } : x)) })}
+                        onRemoveFilter={id => patchDraft(m, { customFilters: d.customFilters.filter(x => x.id !== id) })}
+                        sensors={allSensors}
+                        getComponent={getComponent}
+                        getUnit={getUnit}
+                        counts={activeModel?.id === m.id ? customCounts : undefined}
+                        testPeriods={d.customTestPeriods}
+                        onTestPeriodsChange={tests => patchDraft(m, { customTestPeriods: tests })}
+                        highlights={dashHighlights}
+                    />
                 </div>
             )}
         </>
@@ -3350,10 +3327,7 @@ export default function BuildModelWindow() {
             );
         }
         const missing = missingItems(m);
-        // Opens by itself when the thing to fix is INSIDE it: a missing setting, or a
-        // Custom model's own running condition (that editor lives in this section).
-        // The user's own open / close (the override) still wins.
-        const isOpen = settingsOpenOverride[m.id] ?? (missing.length > 0 || customFixInside(m));
+        const isOpen = isSettingsOpen(m);
         const toggle = () => setSettingsOpenOverride(prev => ({ ...prev, [m.id]: !isOpen }));
         return (
             <div className={`bmw-sets${isOpen ? ' bmw-sets--open' : ''}`}>
@@ -3502,7 +3476,7 @@ export default function BuildModelWindow() {
             // all gets its reason instead of a link that would do nothing.
             return reason !== null
                 ? board('results-placeholder', 'plain', 'Marked complete',
-                    "It has no charts to show, and it can't be trained yet.", trainReasonText(reason))
+                    "It has no charts to show, and it can't be trained yet.", ownGateText(m, reason))
                 : board('results-placeholder', 'plain', 'Marked complete',
                     <>To see its charts, train it from the {trainMenuLink('board-train-menu')} menu (“{KIND_TAB_LABEL[m.kind]} only”). It then needs Mark complete again.</>);
         }
@@ -3788,7 +3762,7 @@ export default function BuildModelWindow() {
         // a reason worth replacing a Complete model's sentence for.
         const blockWhy: ReactNode = markBlock === null || markBlock === CHECKING_SET_POINTS ? null
             : markBlock === FIT_GONE_BLOCK_REASON || markBlock === FIT_GONE_BLOCK_REASON_COMPLETE ? fitGoneLine
-            : markBlock;
+            : ownGateText(m, markBlock);
         // The ONE sentence (first match wins).
         let line: ReactNode;
         let tone: 'plain' | 'warn' | 'bad' = 'plain';
@@ -3811,7 +3785,7 @@ export default function BuildModelWindow() {
             line = qItem.state === 'running'
                 ? <><Loader2 size={11} className="pm-spin" aria-hidden="true" /> Training now · about {formatTrainSeconds(ROUGH_TRAIN_SECONDS[m.kind])}</>
                 : `Queued in the run · ${queue.queuePositionOf(m.id) === 1 ? 'next' : `#${queue.queuePositionOf(m.id)}`}`;
-        } else if (reason) { line = reason; tone = 'warn'; lineId = 'build-block-reason'; }
+        } else if (reason) { line = ownGateText(m, reason); tone = 'warn'; lineId = 'build-block-reason'; }
         // An unsaved draft is said here, once (the tab carries no "edited" pill).
         else if (hasDraft) line = `Unsaved changes to the ${kindModelName(m.kind)}`;
         // The fit is gone (for a Complete model too, and before "Training failed": a load
@@ -4193,6 +4167,14 @@ export default function BuildModelWindow() {
     const rcApplyBlock = runningConditionApplyBlock(rcView.periods, rcView.testPeriods);
     const rcApplyEnabled = rcApplyBlock === null && (rcDirty || rcPeriodTyping);
     const rcTestsNotice = testsChangedNotice(allModels, gateFg);
+    const rcRetrainLeft = rcRetrainIds.length > 0
+        ? modelsStillNeedingTraining(rcRetrainIds, allModels, gateFg, specialRecipes ?? undefined)
+        : [];
+    // What applying the draft does to the models (never blocks Apply). Only
+    // worked out while the modal is open on an edited draft.
+    const rcImpact = rcFilterOpen && rcDirty && rcDraft
+        ? runningConditionImpact(gateFg, rcDraft, { recipes: specialRecipes ?? undefined })
+        : null;
     const rcViewConfigured = isWorkspaceRunningConditionConfigured(
         { runningConditionFilters: rcView.filters, runningConditionNoneConfirmed: rcView.noneConfirmed },
         gateHeaders,
@@ -4251,13 +4233,24 @@ export default function BuildModelWindow() {
                         onTrainNotStarted={onRunNotStarted}
                     />
                 )}
-                {rcTestsNotice && (
-                    <div className="wb2-stale vt-rcnotice" role="status" data-testid="tests-changed-notice">
-                        <span>
-                            <b>{testsChangedNoticeText(rcTestsNotice)}</b>. {rcTestsNotice.count === 1 ? 'It was' : 'They were'} not re-trained.
-                        </span>
-                    </div>
-                )}
+                {/* After Apply (session-only): the models an Apply sent back to training
+                    that are still not trained again. It goes away by itself once they are. */}
+                {rcRetrainLeft.length > 0 && (() => {
+                    const n = retrainNoticeParts(rcRetrainLeft.length);
+                    return (
+                        <div className="rc-notice" role="status" data-testid="rc-retrain-notice">
+                            <b>{n.headline}.</b> {n.rest}
+                        </div>
+                    );
+                })()}
+                {rcTestsNotice && (() => {
+                    const n = testsChangedNoticeParts(rcTestsNotice);
+                    return (
+                        <div className="rc-notice" role="status" data-testid="tests-changed-notice">
+                            <b>{n.headline}.</b> {n.rest}
+                        </div>
+                    );
+                })()}
 
                 {rcLegacyNotice === 'pending' && !rcConfigured && !legacyRemindLater && (
                     <div
@@ -4403,10 +4396,12 @@ export default function BuildModelWindow() {
                 // `requestCloseRc`, which `flushFocusedInput()`s first (a
                 // half-typed period date commits on blur only — 2026-09-30
                 // data-loss fix) and then asks before discarding a dirty draft.
-                // Same day: the body was redesigned (two columns + live row
-                // count, mockup 1pp59aydphzaDu2R1SvKGh) — see RunningConditionPanel.
+                // 2026-10-10 (workbench redesign §5): one column, 980 px — a timeline
+                // hero, one-line rows, no preview column — see RunningConditionPanel.
+                // Focus goes to the first field on open and Tab stays inside
+                // (`useModalFocus`); Esc is `requestCloseRc` (see the effect above).
                 <div className="bmw-modal-backdrop" role="presentation" onClick={requestCloseRc}>
-                    <div className="bmw-modal bmw-modal--rc" onClick={e => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Running condition">
+                    <div ref={rcDialogRef} tabIndex={-1} className="bmw-modal bmw-modal--rc" onClick={e => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Running condition">
                         <div className="bmw-modal-head rcm-head">
                             <div className="rcm-head-t">
                                 <h2>Running condition</h2>
@@ -4422,10 +4417,10 @@ export default function BuildModelWindow() {
                                 <X size={16} />
                             </button>
                         </div>
-                        {/* `display: contents` wrapper: only here to notice a period date
-                            being typed into (change) / committed (blur) — see rcPeriodTyping. */}
+                        {/* The scrolling body. It also notices a period date being typed
+                            into (change) / committed (blur) — see rcPeriodTyping. */}
                         <div
-                            style={{ display: 'contents' }}
+                            className="rcm-scroll"
                             onChange={e => { if ((e.target as HTMLElement).closest('[data-testid="time-periods-editor"], [data-testid="test-periods-editor"]')) setRcPeriodTyping(true); }}
                             onBlur={e => { if ((e.target as HTMLElement).closest('[data-testid="time-periods-editor"], [data-testid="test-periods-editor"]')) setRcPeriodTyping(false); }}
                         >
@@ -4443,10 +4438,9 @@ export default function BuildModelWindow() {
                                 onUpdateFilter={updateRunningConditionFilter}
                                 onRemoveFilter={removeRunningConditionFilter}
                                 sensors={allSensors}
-                                getDesc={getDesc}
                                 getComponent={getComponent}
                                 getUnit={getUnit}
-                                preview={draftRows}
+                                counts={rcCounts}
                                 testPeriods={rcView.testPeriods}
                                 onTestPeriodsChange={updateRunningConditionTestPeriods}
                                 highlights={dashHighlights}
@@ -4469,19 +4463,30 @@ export default function BuildModelWindow() {
                                         data-testid="rc-apply"
                                         className="filter-apply-btn"
                                         disabled={!rcApplyEnabled}
-                                        title={rcApplyBlock?.reason}
+                                        title={rcApplyBlock?.footer}
                                         onClick={applyRcDraft}
                                     >
                                         <Check size={12} /> Apply
                                     </button>
                                     <button type="button" data-testid="rc-cancel" className="f4-btn f4-btn--plain" onClick={closeRc}>Cancel</button>
                                     <span className="filter-panel-spacer" />
-                                    {rcApplyBlock?.kind === 'no-train' ? (
-                                        <span data-testid="rc-apply-block" data-kind="no-train" className="filter-dirty-hint tpe-block-hint">{rcApplyBlock.reason}</span>
-                                    ) : rcApplyBlock?.kind === 'invalid-test' ? (
-                                        <span data-testid="rc-apply-block" data-kind="invalid-test" className="filter-dirty-hint tpe-block-hint tpe-block-hint--bad">{rcApplyBlock.reason}</span>
-                                    ) : (rcDirty || rcPeriodTyping) && (
-                                        <span data-testid="rc-dirty-hint" className="filter-dirty-hint">Changes not applied yet</span>
+                                    {rcApplyBlock ? (
+                                        // Why Apply is disabled: "Fix P2 before applying" (red),
+                                        // "Add a train period" (amber), "Fix S1 before applying" (red).
+                                        <span
+                                            data-testid="rc-apply-block"
+                                            data-kind={rcApplyBlock.kind}
+                                            role="alert"
+                                            className={`rc-impact ${rcApplyBlock.kind === 'no-train' ? 'rc-impact--amber' : 'rc-impact--bad'}`}
+                                        >
+                                            <span>{rcApplyBlock.footer}</span>
+                                        </span>
+                                    ) : rcImpact && (
+                                        // What applying does to the models (never blocks Apply).
+                                        <span data-testid="rc-impact" data-tone={rcImpact.tone} role="status" className={`rc-impact rc-impact--${rcImpact.tone}`}>
+                                            <span>{rcImpact.text}</span>
+                                            {rcImpact.quiet && <span data-testid="rc-impact-quiet">{rcImpact.quiet}</span>}
+                                        </span>
                                     )}
                                 </>
                             )}

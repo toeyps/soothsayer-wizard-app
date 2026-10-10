@@ -64,12 +64,20 @@ function normalizedSlice(state: WorkspaceState): FailureGroupStateSlice | undefi
     return migratePeriods(state).failureGroupState;
 }
 
-/** Ids of the models in `next` whose training inputs differ from `prev`
- *  (models that only exist on one side are ignored — nothing to compare). */
-export function modelsWithChangedInputs(prev: WorkspaceState, next: WorkspaceState): string[] {
-    const prevFg = normalizedSlice(prev);
-    const nextFg = normalizedSlice(next);
-    if (!prevFg || !nextFg) return [];
+/** The slice shape the two comparisons below read: the models plus whatever
+ *  running-condition fields are there (a missing one reads as its default). */
+type RuleSlice = Partial<FailureGroupStateSlice> & { models: FailureModel[] };
+
+/**
+ * THE comparison behind "training inputs changed": ids of the models in
+ * `nextFg` whose `changeFingerprint` differs from the same model in `prevFg`
+ * (models that only exist on one side are ignored — nothing to compare).
+ * Slice-level so that a caller that only PREDICTS a write — the
+ * Running-condition settings' "Applying sets N models back to Incomplete"
+ * line (`runningConditionImpact`) — runs the very rule the write will run,
+ * not a copy of it.
+ */
+export function changedTrainInputIds(prevFg: RuleSlice, nextFg: RuleSlice): string[] {
     const before = new Map(prevFg.models.map(m => [m.id, m]));
     const changed: string[] = [];
     for (const m of nextFg.models) {
@@ -78,6 +86,34 @@ export function modelsWithChangedInputs(prev: WorkspaceState, next: WorkspaceSta
         if (changeFingerprint(old, prevFg) !== changeFingerprint(m, nextFg)) changed.push(m.id);
     }
     return changed;
+}
+
+/**
+ * THE comparison behind "scoring periods changed": ids of the models in
+ * `nextFg` whose EFFECTIVE scoring periods (`testPeriodsKey` — start / end in
+ * list order, nothing else) differ from the same model in `prevFg`. Slice-level
+ * for the same reason as `changedTrainInputIds`.
+ */
+export function changedScoringPeriodIds(prevFg: RuleSlice, nextFg: RuleSlice): string[] {
+    const before = new Map(prevFg.models.map(m => [m.id, m]));
+    const changed: string[] = [];
+    for (const m of nextFg.models) {
+        const old = before.get(m.id);
+        if (!old) continue;
+        const a = testPeriodsKey(effectiveRunningCondition(old, prevFg).testPeriods);
+        const b = testPeriodsKey(effectiveRunningCondition(m, nextFg).testPeriods);
+        if (a !== b) changed.push(m.id);
+    }
+    return changed;
+}
+
+/** Ids of the models in `next` whose training inputs differ from `prev`
+ *  (models that only exist on one side are ignored — nothing to compare). */
+export function modelsWithChangedInputs(prev: WorkspaceState, next: WorkspaceState): string[] {
+    const prevFg = normalizedSlice(prev);
+    const nextFg = normalizedSlice(next);
+    if (!prevFg || !nextFg) return [];
+    return changedTrainInputIds(prevFg, nextFg);
 }
 
 /**
@@ -92,16 +128,7 @@ export function modelsWithChangedTests(prev: WorkspaceState, next: WorkspaceStat
     const prevFg = prev.failureGroupState;
     const nextFg = next.failureGroupState;
     if (!prevFg || !nextFg || !Array.isArray(prevFg.models) || !Array.isArray(nextFg.models)) return [];
-    const before = new Map(prevFg.models.map(m => [m.id, m]));
-    const changed: string[] = [];
-    for (const m of nextFg.models) {
-        const old = before.get(m.id);
-        if (!old) continue;
-        const a = testPeriodsKey(effectiveRunningCondition(old, prevFg).testPeriods);
-        const b = testPeriodsKey(effectiveRunningCondition(m, nextFg).testPeriods);
-        if (a !== b) changed.push(m.id);
-    }
-    return changed;
+    return changedScoringPeriodIds(prevFg, nextFg);
 }
 
 export interface IncompleteRuleOptions {

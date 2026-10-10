@@ -11,6 +11,7 @@ vi.mock('@tauri-apps/api/core', () => ({
 
 import { useHealthPreview, type UseHealthPreviewOptions } from '../hooks/useHealthPreview';
 import { computeTrainFingerprint } from '../utils/trainFingerprint';
+import { HEALTH_ERROR_TEXT } from '../utils/completeModel';
 
 const fg: FailureGroupStateSlice = {
     groups: [], models: [],
@@ -154,7 +155,9 @@ describe('useHealthPreview', () => {
                 const { result } = renderHook(() => useHealthPreview(opts()));
                 await settle();
                 expect(result.current.errorCode).toBe(code);
-                expect(result.current.error).toBe(text.slice(code.length + 2));
+                // NOT_FITTED is worded by the UI ("Fit no longer in memory — load it again."),
+                // never by Rust's "this Relationship model …"; the other codes keep Rust's text.
+                expect(result.current.error).toBe(code === 'NOT_FITTED' ? HEALTH_ERROR_TEXT.NOT_FITTED : text.slice(code.length + 2));
                 expect(result.current.data).toBeNull();
                 expect(result.current.loading).toBe(false);
             });

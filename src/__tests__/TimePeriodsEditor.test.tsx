@@ -1,12 +1,29 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup } from '@testing-library/react';
 import TimePeriodsEditor from '../components/windows/TimePeriodsEditor';
+import type { PeriodCountsState } from '../utils/periodCounts';
+import type { PeriodCount, PeriodCounts } from '../types/periodCounts';
 
 afterEach(cleanup);
 
 const bounds = { min: '2026-01-01 00:00:00', max: '2026-03-15 12:00:00' };
 
-describe('TimePeriodsEditor', () => {
+const A = { id: 'a', start: '2026-01-01T00:00', end: '2026-01-31T23:59' };
+const B = { id: 'b', start: '2026-02-15T00:00', end: '2026-03-10T23:59' };
+
+/** One counted period, as `count_period_rows` answers it. */
+const counted = (index: number, p: { start: string; end: string }, runningDays: number): PeriodCount => ({
+    index, start: p.start || null, end: p.end || null, valid: true, invalid_reason: null,
+    rows_in_period: 1000, running_rows: 800, running_days: runningDays,
+});
+const answer = (periods: PeriodCount[]): PeriodCounts => ({
+    total_rows: 25_880, interval_secs: 300, periods,
+    union: { rows_in_period: 2000, running_rows: 1600, running_days: periods.reduce((s, p) => s + p.running_days, 0) },
+});
+const state = (status: PeriodCountsState['status'], train: PeriodCounts | null): PeriodCountsState =>
+    ({ status, train, scoring: null, error: status === 'error' ? 'boom' : null, errorCode: null });
+
+describe('TimePeriodsEditor — adding and committing', () => {
     it('empty list: asks for a train period; Add seeds the first period from the data start to that month end', () => {
         const onChange = vi.fn();
         render(<TimePeriodsEditor periods={[]} onChange={onChange} bounds={bounds} />);
@@ -45,7 +62,7 @@ describe('TimePeriodsEditor', () => {
             periods={[{ id: 'b', start: '2026-03-01T00:00', end: '2026-03-31T23:59' }, { id: 'a', start: '2026-01-01T00:00', end: '2026-01-31T23:59' }]}
             onChange={onChange}
         />);
-        const start = screen.getByLabelText('Period 1 start');
+        const start = screen.getByLabelText('P1 start');
         fireEvent.change(start, { target: { value: '2026-03-02T00:00' } });
         expect(onChange).not.toHaveBeenCalled();
         fireEvent.keyDown(start, { key: 'Enter' });
@@ -55,207 +72,170 @@ describe('TimePeriodsEditor', () => {
 
     it('blur without any edit does not call onChange', () => {
         const onChange = vi.fn();
-        render(<TimePeriodsEditor periods={[{ id: 'a', start: '2026-01-01T00:00', end: '2026-01-31T23:59' }]} onChange={onChange} />);
-        fireEvent.blur(screen.getByLabelText('Period 1 end'));
+        render(<TimePeriodsEditor periods={[A]} onChange={onChange} />);
+        fireEvent.blur(screen.getByLabelText('P1 end'));
         expect(onChange).not.toHaveBeenCalled();
     });
 
-    it('touching periods (23:59 -> next 00:00) are not an overlap', () => {
-        render(<TimePeriodsEditor
-            periods={[{ id: 'a', start: '2026-01-01T00:00', end: '2026-01-31T23:59' }, { id: 'b', start: '2026-02-01T00:00', end: '2026-02-28T23:59' }]}
-            onChange={vi.fn()}
-        />);
-        expect(screen.queryByTestId('period-overlap-2')).toBeNull();
+    it('an unfinished (blank) draft value does not swap the input for the open-ended box mid-typing', () => {
+        render(<TimePeriodsEditor periods={[A]} onChange={vi.fn()} bounds={bounds} />);
+        fireEvent.change(screen.getByLabelText('P1 start'), { target: { value: '' } });
+        // still the input — the box only appears once the COMMITTED value is blank
+        expect(screen.getByLabelText('P1 start')).toBeTruthy();
+        expect(screen.queryByTestId('period-open-start')).toBeNull();
     });
 });
 
-describe('TimePeriodsEditor - wide period cards (Running condition modal, mockup 1pp59aydphzaDu2R1SvKGh)', () => {
-    const A = { id: 'a', start: '2026-01-01T00:00', end: '2026-01-31T23:59' };
-    const B = { id: 'b', start: '2026-02-15T00:00', end: '2026-03-10T23:59' };
-
-    it('each period is a card: "P1", start, arrow, end, duration in days, delete', () => {
+describe('TimePeriodsEditor — one quiet line per period (workbench redesign §5)', () => {
+    it('a row is "P1 · start → end · days · bin"; nothing says "Period 1" (not even the accessible names)', () => {
         render(<TimePeriodsEditor periods={[A]} onChange={vi.fn()} bounds={bounds} />);
         const row = screen.getByTestId('period-row-1');
-        expect(row.className).toContain('rcm-per');
+        expect(row.className).toBe('rcm-per');
         expect(row.querySelector('.rcm-pn')!.textContent).toBe('P1');
         expect(row.querySelector('.rcm-arrow')!.textContent).toBe('→');
-        expect(row.querySelector('.rcm-dur')!.textContent).toBe('31 d'); // 1 Jan 00:00 -> 31 Jan 23:59, rounded
-        expect(screen.getByLabelText('Remove period 1').className).toContain('rcm-ib');
-        expect(screen.getByLabelText('Period 1 start')).toBeTruthy();
+        // 1 Jan 00:00 -> 31 Jan 23:59, rounded; no count yet -> calendar days only
+        expect(screen.getByTestId('period-days-1').textContent).toBe('31 d');
+        expect(screen.queryByTestId('period-running-1')).toBeNull();
+        expect(screen.getByLabelText('Remove P1').className).toContain('rcm-ib');
+        expect(screen.getByLabelText('P1 start')).toBeTruthy();
+        expect(screen.getByLabelText('P1 end')).toBeTruthy();
         expect(screen.getAllByLabelText('Open date picker')).toHaveLength(2); // one calendar button per field
+        expect(document.body.innerHTML).not.toMatch(/Period 1/i);
     });
 
-    it('deleting a card reports the list without it', () => {
+    it('no coverage strip and no "new period starts after" hint in the list any more (the timeline hero is above it)', () => {
+        render(<TimePeriodsEditor periods={[A]} onChange={vi.fn()} bounds={bounds} />);
+        expect(screen.queryByTestId('period-coverage')).toBeNull();
+        expect(document.querySelector('.f4-strip')).toBeNull();
+        expect(screen.getByTestId('time-periods-editor').textContent).not.toMatch(/starts after the last one/);
+    });
+
+    it('with a count: "81 d · 69 d running" style — each row finds its own number by its bounds', () => {
+        render(<TimePeriodsEditor
+            periods={[A, B]}
+            onChange={vi.fn()}
+            bounds={bounds}
+            counts={state('ok', answer([counted(0, A, 26.4), counted(1, B, 7.25)]))}
+        />);
+        expect(screen.getByTestId('period-days-1').textContent).toBe('31 d · 26 d running');
+        expect(screen.getByTestId('period-days-2').textContent).toBe('24 d · 7.3 d running');
+        expect(screen.getByTestId('period-running-1').getAttribute('data-stale')).toBeNull();
+    });
+
+    it('while a new count is on its way the previous numbers stay, dimmed — no flicker to a blank', () => {
+        render(<TimePeriodsEditor periods={[A]} onChange={vi.fn()} bounds={bounds} counts={state('loading', answer([counted(0, A, 26.4)]))} />);
+        const running = screen.getByTestId('period-running-1');
+        expect(running.textContent).toBe(' · 26 d running');
+        expect(running.getAttribute('data-stale')).toBe('true');
+        expect(running.className).toContain('rct-stale');
+    });
+
+    it('a failed count shows the calendar days only — never an error in the row', () => {
+        render(<TimePeriodsEditor periods={[A]} onChange={vi.fn()} bounds={bounds} counts={state('error', null)} />);
+        expect(screen.getByTestId('period-days-1').textContent).toBe('31 d');
+    });
+
+    it('a period being typed loses its running days until the new count lands (the count is for the old dates)', () => {
+        render(<TimePeriodsEditor periods={[A]} onChange={vi.fn()} bounds={bounds} counts={state('ok', answer([counted(0, A, 26.4)]))} />);
+        fireEvent.change(screen.getByLabelText('P1 end'), { target: { value: '2026-01-20T23:59' } });
+        expect(screen.getByTestId('period-days-1').textContent).toBe('20 d');
+    });
+
+    it('deleting a row reports the list without it', () => {
         const onChange = vi.fn();
         render(<TimePeriodsEditor periods={[A, B]} onChange={onChange} bounds={bounds} />);
-        fireEvent.click(screen.getByLabelText('Remove period 1'));
+        fireEvent.click(screen.getByLabelText('Remove P1'));
         expect(onChange.mock.calls[0][0]).toEqual([B]);
     });
 
-    it('the modal keeps the coverage strip above the cards (restored — it was removed by mistake on 2026-10-03)', () => {
-        render(<TimePeriodsEditor periods={[A]} onChange={vi.fn()} bounds={bounds} />);
-        const cov = screen.getByTestId('period-coverage');
-        expect(cov.className).toContain('rcm-cov');
-        expect(document.querySelector('.f4-strip')).not.toBeNull();
-        expect(cov.compareDocumentPosition(screen.getByTestId('period-row-1')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-        expect(screen.getByTestId('period-coverage-days').textContent).toMatch(/ of 74 days used$/);
-    });
-
-    it('no strip without dataset bounds, nor with an empty list', () => {
-        render(<TimePeriodsEditor periods={[A]} onChange={vi.fn()} bounds={null} />);
-        expect(screen.queryByTestId('period-coverage')).toBeNull();
-        cleanup();
+    it('empty state: one amber line "No train period yet — add at least one" (no box, never "the whole dataset") and the Add button', () => {
         render(<TimePeriodsEditor periods={[]} onChange={vi.fn()} bounds={bounds} />);
-        expect(screen.queryByTestId('period-coverage')).toBeNull();
-    });
-
-    it('empty state (Train/Test validation): an amber "No train period yet" note — never "the whole dataset" — plus the dashed "Add train period" button', () => {
-        render(<TimePeriodsEditor periods={[]} onChange={vi.fn()} bounds={bounds} />);
-        const box = screen.getByTestId('periods-empty');
-        expect(box.className).toContain('rcm-none--warn');
-        expect(box.textContent).toBe('No train period yet — add at least one. Models learn only from the train periods.');
-        expect(box.textContent).not.toContain('whole dataset');
+        const line = screen.getByTestId('periods-empty');
+        expect(line.className).toBe('rcx-line rcx-line--warn');
+        expect(line.textContent).toBe('No train period yet — add at least one');
         const add = screen.getByTestId('period-add');
         expect(add.className).toContain('rcm-add');
         expect(add.textContent).toBe('Add train period');
     });
 
-    it('with scoring periods, the strip is shown even before the first train period (scoring lane only)', () => {
-        render(<TimePeriodsEditor periods={[]} onChange={vi.fn()} bounds={bounds} tests={[{ id: 't', start: '2026-02-01T00:00', end: '2026-02-11T00:00' }]} />);
-        expect(screen.getByTestId('period-coverage-days').textContent).toBe('0 d train · 10 d scoring');
-        expect(screen.getAllByTestId('period-coverage-test')).toHaveLength(1);
+    it('open ends read "Start of data" / "End of data" with Set date; Set date fills the dataset bound', () => {
+        const onChange = vi.fn();
+        render(<TimePeriodsEditor periods={[{ id: 'a', start: '', end: '' }]} onChange={onChange} bounds={bounds} />);
+        expect(screen.getByTestId('period-open-start').textContent).toContain('Start of data');
+        expect(screen.getByTestId('period-open-end').textContent).toContain('End of data');
+        expect(screen.getByTestId('period-days-1').textContent).toBe('74 d'); // the whole dataset
+        fireEvent.click(screen.getByLabelText('Set end date'));
+        expect(onChange.mock.calls[0][0]).toEqual([{ id: 'a', start: '', end: '2026-03-15T12:00' }]);
     });
 
-    it('compact empty state reads "No train period — add one to train" (not "No limit — full dataset")', () => {
-        render(<TimePeriodsEditor compact periods={[]} onChange={vi.fn()} bounds={bounds} />);
-        expect(screen.getByTestId('periods-empty').textContent).toBe('No train period — add one to train+ Add train period');
-    });
-
-    it('the first period start / last period end have an x that makes that side open-ended', () => {
+    it('the × on the first start / last end switches it back to open-ended', () => {
         const onChange = vi.fn();
         render(<TimePeriodsEditor periods={[A, B]} onChange={onChange} bounds={bounds} />);
-        expect(screen.getAllByTestId('period-open-toggle-start')).toHaveLength(1); // first row only
-        expect(screen.getAllByTestId('period-open-toggle-end')).toHaveLength(1); // last row only
-        expect(screen.getByTestId('period-open-toggle-start').textContent).toBe(''); // an x icon, not the compact arrow glyph
-        fireEvent.click(screen.getByTestId('period-open-toggle-start'));
-        expect(onChange.mock.calls[0][0][0]).toMatchObject({ id: 'a', start: '' });
+        // only the first period's start and the last period's end can be open
+        expect(screen.getAllByTestId('period-open-toggle-start')).toHaveLength(1);
+        expect(screen.getAllByTestId('period-open-toggle-end')).toHaveLength(1);
         fireEvent.click(screen.getByTestId('period-open-toggle-end'));
-        expect(onChange.mock.calls[1][0][1]).toMatchObject({ id: 'b', end: '' });
+        expect(onChange.mock.calls[0][0][1]).toEqual({ ...B, end: '' });
     });
 
-    it('an open side reads "Start of data" / "End of data" with a "Set date" button that commits the dataset bound', () => {
-        const onChange = vi.fn();
-        render(<TimePeriodsEditor periods={[{ ...A, start: '' }]} onChange={onChange} bounds={bounds} />);
-        expect(screen.getByTestId('period-open-start').textContent).toContain('Start of data');
-        expect(screen.getByTestId('period-open-start').textContent).not.toContain('⟵');
-        expect(screen.getByTestId('period-open-start').className).toContain('f4-openb');
-        fireEvent.click(screen.getByLabelText('Set start date'));
-        expect(onChange.mock.calls[0][0][0]).toMatchObject({ id: 'a', start: '2026-01-01T00:00' });
-    });
-
-    it('an open END reads "End of data" and Set date commits the dataset end', () => {
-        const onChange = vi.fn();
-        render(<TimePeriodsEditor periods={[{ ...A, end: '' }]} onChange={onChange} bounds={bounds} />);
-        expect(screen.getByTestId('period-open-end').textContent).toContain('End of data');
-        fireEvent.click(screen.getByLabelText('Set end date'));
-        expect(onChange.mock.calls[0][0][0]).toMatchObject({ id: 'a', end: '2026-03-15T12:00' });
-    });
-
-    it('an unfinished (blank) draft value does not swap the input for the open-ended box mid-typing', () => {
-        render(<TimePeriodsEditor periods={[A]} onChange={vi.fn()} bounds={bounds} />);
-        const start = screen.getByLabelText('Period 1 start');
-        fireEvent.change(start, { target: { value: '' } }); // datetime-local reports '' while a date is half-typed
-        expect(screen.getByLabelText('Period 1 start')).toBeTruthy();
-        expect(screen.queryByTestId('period-open-start')).toBeNull();
-    });
-
-    it('overlap: yellow frame on the LATER card with "Overlaps P1 by N d" and a "Merge into one" button', () => {
-        const onChange = vi.fn();
-        render(<TimePeriodsEditor periods={[A, { id: 'c', start: '2026-01-20T00:00', end: '2026-02-10T00:00' }]} onChange={onChange} bounds={bounds} />);
-        const row = screen.getByTestId('period-row-2');
-        expect(row.className).toContain('rcm-per--ovl');
-        expect(screen.getByTestId('period-row-1').className).not.toContain('rcm-per--ovl');
-        expect(screen.getByTestId('period-overlap-2').textContent).toBe('Overlaps P1 by 12 d — rows in both are used once.Merge into one');
-        fireEvent.click(screen.getByTestId('period-merge-2'));
-        expect(onChange.mock.calls[0][0]).toEqual([{ id: 'a', start: A.start, end: '2026-02-10T00:00' }]);
-    });
-
-    it('invalid (end before start): red frame, "—" duration, red end field and the reason', () => {
-        render(<TimePeriodsEditor periods={[{ id: 'x', start: '2026-02-01T00:00', end: '2026-01-05T00:00' }]} onChange={vi.fn()} bounds={bounds} />);
-        const row = screen.getByTestId('period-row-1');
-        expect(row.className).toContain('rcm-per--bad');
-        expect(row.querySelector('.rcm-dur')!.textContent).toBe('—');
-        expect(screen.getByTestId('period-invalid-1').textContent).toBe('End is before start — pick an end after 1 Feb 2026. This period is ignored and building is blocked until fixed.');
-        expect(screen.getByTestId('period-invalid-1').className).toContain('rcm-permsg--bad');
-        expect(row.querySelector('.f4-dtw--bad')).not.toBeNull();
-    });
-
-    it('a blank bound where none is allowed (open end on a NON-last period) is invalid with the validatePeriods reason', () => {
-        render(<TimePeriodsEditor periods={[{ id: 'a', start: '2026-01-01T00:00', end: '' }, B]} onChange={vi.fn()} bounds={bounds} />);
-        expect(screen.getByTestId('period-invalid-1').textContent).toContain('Period 1 needs an end date.');
-        expect(screen.getByTestId('period-row-1').className).toContain('rcm-per--bad');
-    });
-
-    it('Add is disabled with the "Periods already cover all data" note once everything is covered', () => {
-        render(<TimePeriodsEditor periods={[{ id: 'a', start: '2025-12-01T00:00', end: '2026-03-31T23:59' }]} onChange={vi.fn()} bounds={bounds} />);
+    it('Add is disabled once everything is covered', () => {
+        render(<TimePeriodsEditor periods={[{ id: 'a', start: '', end: '' }]} onChange={vi.fn()} bounds={bounds} />);
         expect((screen.getByTestId('period-add') as HTMLButtonElement).disabled).toBe(true);
-        expect(screen.getByText('Periods already cover all data')).toBeTruthy();
-    });
-
-    it('the hint next to Add says where the new period starts', () => {
-        render(<TimePeriodsEditor periods={[A]} onChange={vi.fn()} bounds={bounds} />);
-        expect(screen.getByText('new period starts after the last one')).toBeTruthy();
     });
 });
 
-describe('TimePeriodsEditor - compact (300 px sidebar) rows', () => {
-    const A = { id: 'a', start: '2026-01-01T00:00', end: '2026-01-31T23:59' };
-    const B = { id: 'b', start: '2026-02-15T00:00', end: '2026-03-10T23:59' };
-
-    it('rows start collapsed: label + day count, no inputs; the header expands ONE row at a time', () => {
-        render(<TimePeriodsEditor compact periods={[A, B]} onChange={vi.fn()} bounds={bounds} />);
-        expect(screen.queryByLabelText('Period 1 start')).toBeNull();
-        expect(screen.getByTestId('period-row-1').textContent).toContain('1 Jan – 31 Jan 2026');
-        expect(screen.getByTestId('period-row-1').querySelector('.f4-count')!.textContent).toBe('31 d');
-        fireEvent.click(screen.getByTestId('period-toggle-1'));
-        expect(screen.getByLabelText('Period 1 start')).toBeTruthy();
-        expect(screen.getByText('From')).toBeTruthy();
-        expect(screen.getByText('To')).toBeTruthy();
-        fireEvent.click(screen.getByTestId('period-toggle-2'));
-        expect(screen.queryByLabelText('Period 1 start')).toBeNull(); // accordion
-        expect(screen.getByLabelText('Period 2 start')).toBeTruthy();
+describe('TimePeriodsEditor — invalid and overlapping periods', () => {
+    it('end before start: thin red edge on the row, the END field red, "—" for the days and ONE reason line that names P2', () => {
+        render(<TimePeriodsEditor
+            periods={[A, { id: 'b', start: '2026-05-11T00:00', end: '2026-05-01T00:00' }]}
+            onChange={vi.fn()}
+            bounds={bounds}
+        />);
+        const row = screen.getByTestId('period-row-2');
+        expect(row.className).toContain('rcm-per--bad');
+        expect(row.getAttribute('data-invalid')).toBe('true');
+        expect(screen.getByTestId('period-days-2').textContent).toBe('—');
+        const end = screen.getByLabelText('P2 end');
+        expect(end.closest('.f4-dtw')!.className).toContain('f4-dtw--bad');
+        expect(end.getAttribute('aria-invalid')).toBe('true');
+        expect(screen.getByLabelText('P2 start').closest('.f4-dtw')!.className).not.toContain('f4-dtw--bad');
+        const reason = screen.getByTestId('period-invalid-2');
+        expect(reason.getAttribute('role')).toBe('alert');
+        expect(reason.textContent).toBe('P2 ends before it starts — pick an end after 11 May 2026');
+        // the valid row is untouched
+        expect(screen.getByTestId('period-row-1').className).toBe('rcm-per');
+        expect(screen.queryByTestId('period-invalid-1')).toBeNull();
     });
 
-    it('Done collapses, Remove period deletes the row', () => {
+    it('an open end on a period that is not the last: the reason says what it needs, the open END box is the red one', () => {
+        render(<TimePeriodsEditor
+            periods={[{ id: 'a', start: '2026-01-01T00:00', end: '' }, B]}
+            onChange={vi.fn()}
+            bounds={bounds}
+        />);
+        expect(screen.getByTestId('period-invalid-1').textContent).toBe('P1 needs an end date');
+        expect(screen.getByTestId('period-open-end').className).toContain('f4-openb--bad');
+        expect(screen.getByTestId('period-invalid-1').textContent).not.toMatch(/Period/);
+    });
+
+    it('overlap: one quiet line under the LATER row with "Merge into one" inline — not a frame, not a block', () => {
         const onChange = vi.fn();
-        render(<TimePeriodsEditor compact periods={[A]} onChange={onChange} bounds={bounds} />);
-        fireEvent.click(screen.getByTestId('period-toggle-1'));
-        fireEvent.click(screen.getByText('Done'));
-        expect(screen.queryByLabelText('Period 1 start')).toBeNull();
-        fireEvent.click(screen.getByTestId('period-toggle-1'));
-        fireEvent.click(screen.getByText('Remove period'));
-        expect(onChange.mock.calls[0][0]).toEqual([]);
+        const C = { id: 'c', start: '2026-01-20T00:00', end: '2026-02-10T23:59' };
+        render(<TimePeriodsEditor periods={[A, C]} onChange={onChange} bounds={bounds} />);
+        const note = screen.getByTestId('period-overlap-2');
+        expect(note.className).toBe('rcm-permsg');
+        expect(note.textContent).toBe('P2 overlaps P1 by 12 d — rows in both are used once.Merge into one');
+        expect(screen.getByTestId('period-row-2').className).toBe('rcm-per'); // no coloured frame
+        expect(screen.queryByTestId('period-overlap-1')).toBeNull();
+        fireEvent.click(screen.getByTestId('period-merge-2'));
+        expect(onChange.mock.calls[0][0]).toEqual([{ id: 'a', start: A.start, end: C.end }]);
     });
 
-    it('a newly added period opens expanded', () => {
-        const onChange = vi.fn();
-        const { rerender } = render(<TimePeriodsEditor compact periods={[A]} onChange={onChange} bounds={bounds} />);
-        fireEvent.click(screen.getByTestId('period-add'));
-        const next = onChange.mock.calls[0][0];
-        rerender(<TimePeriodsEditor compact periods={next} onChange={onChange} bounds={bounds} />);
-        expect(screen.getByLabelText('Period 2 start')).toBeTruthy();
-    });
-
-    it('an invalid row is labelled "Invalid period" and carries the red row + message', () => {
-        render(<TimePeriodsEditor compact periods={[{ id: 'x', start: '2026-02-01T00:00', end: '2026-01-05T00:00' }]} onChange={vi.fn()} bounds={bounds} />);
-        expect(screen.getByTestId('period-row-1').className).toContain('f4-crow--bad');
-        expect(screen.getByTestId('period-row-1').textContent).toContain('Invalid period');
-        expect(screen.getByTestId('period-invalid-1').className).toContain('f4-cmsg--bad');
-    });
-
-    it('overlap shows the compact amber message with Merge', () => {
-        render(<TimePeriodsEditor compact periods={[A, { id: 'c', start: '2026-01-20T00:00', end: '2026-02-10T00:00' }]} onChange={vi.fn()} bounds={bounds} />);
-        expect(screen.getByTestId('period-row-2').className).toContain('f4-crow--ovl');
-        expect(screen.getByTestId('period-merge-2')).toBeTruthy();
+    it('touching periods (23:59 -> next 00:00) are not an overlap', () => {
+        render(<TimePeriodsEditor
+            periods={[A, { id: 'b', start: '2026-02-01T00:00', end: '2026-02-28T23:59' }]}
+            onChange={vi.fn()}
+        />);
+        expect(screen.queryByTestId('period-overlap-2')).toBeNull();
     });
 });

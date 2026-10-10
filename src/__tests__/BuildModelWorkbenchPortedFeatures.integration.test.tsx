@@ -384,14 +384,14 @@ describe('(1) a Custom running condition saved from the Workbench vs. Dashboard\
 
             openSettings();
             fireEvent.click(bmw().getByRole('button', { name: 'Custom' }));
-            fireEvent.click(bmw().getByText('+ Add condition'));
-            fireEvent.change(bmw().getByPlaceholderText('val'), { target: { value: '42' } });
+            fireEvent.click(bmw().getByTestId('rc-add-condition'));
+            fireEvent.change(bmw().getByPlaceholderText('value'), { target: { value: '42' } });
 
             // Dashboard writes (and broadcasts, origin 'dashboard') while the
             // Custom editor has unsaved edits — `applyFg` must not wipe drafts.
             await act(async () => { fireEvent.click(screen.getByText('dash-rename-fg1')); });
             await settle(30);
-            expect((bmw().getByPlaceholderText('val') as HTMLInputElement).value).toBe('42');
+            expect((bmw().getByPlaceholderText('value') as HTMLInputElement).value).toBe('42');
             expect(bmw().getByTestId('footer-status').textContent).toMatch(/Unsaved changes/);
             expect(diskModel('i1').runningConditionMode).toBe('workspace'); // not committed by the broadcast
 
@@ -432,14 +432,14 @@ describe('(2) Custom condition/period: Save changes -> close -> reopen -> Train 
         fireEvent.click(bmw().getByRole('button', { name: 'Custom' }));
         expect(bmw().getByTestId('pm-seed-note')).toBeTruthy();
         // Edit the seeded row instead of keeping the workspace copy.
-        fireEvent.change(bmw().getByPlaceholderText('val'), { target: { value: '42' } });
-        fireEvent.change(bmw().getByLabelText('Operator'), { target: { value: 'greater_than' } });
+        fireEvent.change(bmw().getByPlaceholderText('value'), { target: { value: '42' } });
+        fireEvent.click(bmw().getByLabelText('Greater than'));
 
         // A period typed live: Add (defaults from the dataset bounds, row
         // auto-expands in compact mode), then type a new end and blur.
         const periods = within(bmw().getByTestId('custom-periods'));
         fireEvent.click(periods.getByTestId('period-add'));
-        const end = periods.getByLabelText('Period 1 end') as HTMLInputElement;
+        const end = periods.getByLabelText('P1 end') as HTMLInputElement;
         fireEvent.change(end, { target: { value: '2026-03-15T12:00' } });
         fireEvent.blur(end);
 
@@ -460,7 +460,7 @@ describe('(2) Custom condition/period: Save changes -> close -> reopen -> Train 
         openSettings();
         // Custom already has its own rows — no re-seed, no seed note, the saved value.
         expect(bmw().queryByTestId('pm-seed-note')).toBeNull();
-        expect((bmw().getByPlaceholderText('val') as HTMLInputElement).value).toBe('42');
+        expect((bmw().getByPlaceholderText('value') as HTMLInputElement).value).toBe('42');
 
         await clickTrain();
         // Train's query is the last FILTERED one: the row counts (Step-1 card, and since
@@ -739,7 +739,7 @@ describe('(5b) the running-condition gate judges the PERSISTED model, not the pe
         await mountBuildModel();
         openSettings();
         fireEvent.click(bmw().getByRole('button', { name: 'Custom' }));
-        expect(bmw().getByTestId('custom-condition-required')).toBeTruthy();
+        expect(bmw().getByTestId('rc-unset-warning')).toBeTruthy();
 
         const before = statsCalls('TAG1').length; // the Step-1 card's own row count is already in here
         await act(async () => { fireEvent.click(bmw().getByTestId('train-sensor')); });
@@ -752,9 +752,9 @@ describe('(5b) the running-condition gate judges the PERSISTED model, not the pe
         writeDisk(wsState([dashModel({ id: 'i1', runningConditionMode: 'custom', filterTimePeriods: ALL_TIME_TRAIN })]));
         await mountBuildModel();
         openSettings();
-        fireEvent.click(bmw().getByText('+ Add condition'));
-        fireEvent.change(bmw().getByPlaceholderText('val'), { target: { value: '42' } });
-        expect(bmw().queryByTestId('custom-condition-required')).toBeNull();
+        fireEvent.click(bmw().getByTestId('rc-add-condition'));
+        fireEvent.change(bmw().getByPlaceholderText('value'), { target: { value: '42' } });
+        expect(bmw().queryByTestId('rc-unset-warning')).toBeNull();
         expect((bmw().getByTestId('train-sensor') as HTMLButtonElement).disabled).toBe(false);
     });
 
@@ -767,7 +767,7 @@ describe('(5b) the running-condition gate judges the PERSISTED model, not the pe
         writeDisk(wsState([dashModel({ id: 'i1', runningConditionMode: 'custom' })]));
         await mountBuildModel();
         const results = within(bmw().getByTestId('results-incomplete'));
-        fireEvent.click(results.getByText('Set a running condition first, or choose "No condition — use all rows".'));
+        fireEvent.click(results.getByText('Set a condition above, or choose Use all rows'));
         expect(screen.queryByRole('dialog', { name: 'Running condition' })).toBeNull();
         expect(bmw().getByTestId('custom-rc-editor')).toBeTruthy();
     });

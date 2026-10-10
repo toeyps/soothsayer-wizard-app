@@ -276,7 +276,7 @@ describe('a workspace saved before "just score it" (scoring periods with label /
 
         // Both windows say so.
         expect(bmw().getByTestId('tests-changed-notice').textContent)
-            .toBe('Scoring periods changed — 1 complete model needs Mark complete again. It was not re-trained.');
+            .toBe('Scoring periods changed — 1 complete model needs Mark complete again. It was re-scored with the same trained model, not re-trained.');
         expect(chips()[1]).toBe('S2 · 2 Jan 2026 → 2 Jan 2026 20:00');
         expect(pill()).not.toBe('Complete');
         expect(bmwDot('i1').state).not.toBe('complete');

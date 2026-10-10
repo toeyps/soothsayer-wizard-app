@@ -5,11 +5,12 @@ import {
     periodsOverlap, testTrainOverlaps, trainOverlapDays, testIncludesTrainNote,
     trainHighlightOverlaps, removeRangeFromPeriods, removeHighlightOverlap, validatePeriods,
     testPeriodsWirePlan, testNumberFor, toScoringPeriod, toScoringPeriods,
+    scoringIssueTarget, scoringIssueMessage,
 } from '../utils/timePeriods';
 import * as timePeriods from '../utils/timePeriods';
 import {
     RECOMMENDED_TRAIN_DAYS, isBelowRecommendedTrainDays, trainDaysWarning,
-    testsChangedState, testsChangedBannerText, testsChangedNotice, testsChangedNoticeText,
+    testsChangedState, testsChangedBannerText, testsChangedNotice, testsChangedNoticeText, testsChangedNoticeParts,
     testScoringFailure, TEST_SCORING_FAILED_CODE, TEST_SCORING_OUTDATED_CODE, TEST_SCORING_TOO_LARGE_CODE, isTestScoringRetryable,
     TEST_SCORING_FAILED_TEXT, TEST_SCORING_OUTDATED_TEXT, SLOW_TEST_SCORING_TEXT,
 } from '../utils/trainTestValidation';
@@ -60,7 +61,8 @@ describe('validateTestPeriods / testPeriodsError', () => {
     });
     it('a status is only { invalid, reason } — there is no event-time check any more', () => {
         expect(validateTestPeriods([tp()])).toEqual([{ invalid: false, reason: undefined }]);
-        expect(Object.keys(validateTestPeriods([tp({ end: '' })])[0]).sort()).toEqual(['invalid', 'reason']);
+        // an invalid one also says what is wrong (`fault`) and carries its row line — still nothing about an event
+        expect(Object.keys(validateTestPeriods([tp({ end: '' })])[0]).sort()).toEqual(['fault', 'invalid', 'reason', 'rowReason']);
     });
     it('a legacy label / event time never makes an old period invalid (even an event time outside it, or garbage)', () => {
         const old = [
@@ -113,6 +115,36 @@ describe('toTestPeriodsWire / testPeriodsKey', () => {
         expect(testNumberFor([1, 3], 9, 1)).toBe(3);   // unknown wire index -> by position
         expect(testNumberFor(null, 7, 0)).toBe(1);     // no mapping -> position
         expect(testNumberFor(undefined, undefined, 2)).toBe(3);
+    });
+
+    // Rust numbers a scoring period by its position in the list it RECEIVED; invalid periods are
+    // dropped before sending, so the number has to be mapped back to the list the user sees.
+    it('scoringIssueTarget maps test_period_<n>_start/_end back to the S-number of the full list', () => {
+        // [S1 invalid, S2, S3 invalid, S4] -> sent as [S2, S4]
+        const list = [tp({ end: '' }), tp(), tp({ start: 'x' }), tp({ start: '2026-03-01T00:00', end: '2026-03-31T23:59' })];
+        const { numbers } = testPeriodsWirePlan(list);
+        expect(numbers).toEqual([2, 4]);
+        expect(scoringIssueTarget('test_period_1_end', numbers)).toEqual({ wireIndex: 1, number: 2, side: 'end' });
+        expect(scoringIssueTarget('test_period_2_start', numbers)).toEqual({ wireIndex: 2, number: 4, side: 'start' });
+        // nothing was dropped / no mapping at hand: the wire position is the number
+        expect(scoringIssueTarget('test_period_3_end', [1, 2, 3])).toEqual({ wireIndex: 3, number: 3, side: 'end' });
+        expect(scoringIssueTarget('test_period_2_start')).toEqual({ wireIndex: 2, number: 2, side: 'start' });
+        expect(scoringIssueTarget('test_period_5_end', numbers)?.number).toBe(5); // not covered by the mapping
+    });
+    it('scoringIssueTarget is null for every other field', () => {
+        for (const field of ['lower', 'test_periods', 'test_period_0_end', 'test_period_x_end', 'test_period_1_middle', 'cluster_1', '', null, undefined]) {
+            expect(scoringIssueTarget(field as string)).toBeNull();
+        }
+    });
+    it('scoringIssueMessage rewrites the S-number inside Rust own message; other issues are untouched', () => {
+        const numbers = [2, 4];
+        expect(scoringIssueMessage({ field: 'test_period_1_end', message: 'Scoring period S1 ends before it starts.' }, numbers)).toBe('Scoring period S2 ends before it starts.');
+        expect(scoringIssueMessage({ field: 'test_period_2_start', message: "Scoring period S2: the start time '31/12/2026' is not a valid date and time." }, numbers))
+            .toBe("Scoring period S4: the start time '31/12/2026' is not a valid date and time.");
+        // only the whole token "S1" is rewritten — "S12" elsewhere in the text is left alone
+        expect(scoringIssueMessage({ field: 'test_period_1_end', message: 'Scoring period S1 ends before it starts (S12 is fine).' }, [3])).toBe('Scoring period S3 ends before it starts (S12 is fine).');
+        expect(scoringIssueMessage({ field: 'test_period_1_end', message: 'Scoring period S1 ends before it starts.' }, [1, 2])).toBe('Scoring period S1 ends before it starts.');
+        expect(scoringIssueMessage({ field: 'lower', message: 'L must be below S1.' }, numbers)).toBe('L must be below S1.');
     });
 
     it('key = start / end in list order; the id and every legacy key are ignored', () => {
@@ -253,11 +285,25 @@ describe('"scoring periods changed" banners (SPEC rule 8)', () => {
         expect(testsChangedNotice([mk({ id: 'x' })], fg())).toBeNull();
         const n = testsChangedNotice([stamped({ id: 'a' }), stamped({ id: 'b' }), mk({ id: 'c' })], fg());
         expect(n).toEqual({ count: 2, allRemoved: false });
-        expect(testsChangedNoticeText(n!)).toBe('Scoring periods changed — 2 complete models need Mark complete again');
-        expect(testsChangedNoticeText({ count: 1, allRemoved: false })).toBe('Scoring periods changed — 1 complete model needs Mark complete again');
+        // Workbench redesign §5 "After Apply": the reworded notice says they were re-scored, not re-trained.
+        expect(testsChangedNoticeText(n!)).toBe('Scoring periods changed — 2 complete models need Mark complete again. They were re-scored with the same trained model, not re-trained.');
+        expect(testsChangedNoticeText({ count: 1, allRemoved: false })).toBe('Scoring periods changed — 1 complete model needs Mark complete again. It was re-scored with the same trained model, not re-trained.');
         const r = testsChangedNotice([stamped()], fg({ runningConditionTestPeriods: [] }));
         expect(r).toEqual({ count: 1, allRemoved: true });
-        expect(testsChangedNoticeText(r!)).toBe('Scoring periods removed — 1 complete model needs a scoring period and Mark complete again');
+        // every scoring period removed: nothing was re-scored, so the notice does not claim it
+        expect(testsChangedNoticeText(r!)).toBe('Scoring periods removed — 1 complete model needs a scoring period and Mark complete again. It was not re-trained.');
+        expect(testsChangedNoticeText({ count: 3, allRemoved: true })).toBe('Scoring periods removed — 3 complete models need a scoring period and Mark complete again. They were not re-trained.');
+    });
+    it('the notice in two parts (bold headline + one sentence); the text is exactly "headline. rest"', () => {
+        expect(testsChangedNoticeParts({ count: 3, allRemoved: false })).toEqual({
+            headline: 'Scoring periods changed — 3 complete models need Mark complete again',
+            rest: 'They were re-scored with the same trained model, not re-trained.',
+        });
+        for (const n of [{ count: 1, allRemoved: false }, { count: 4, allRemoved: true }]) {
+            const parts = testsChangedNoticeParts(n);
+            expect(testsChangedNoticeText(n)).toBe(`${parts.headline}. ${parts.rest}`);
+            expect(parts.headline).not.toMatch(/\.$/);
+        }
     });
 });
 

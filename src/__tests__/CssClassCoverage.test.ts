@@ -72,8 +72,7 @@ const DYNAMIC_ENUMS: Record<string, readonly string[]> = {
     'model-kind-icon--': ['individual', 'relationship', 'clustering'],
     'model-status-pill--': ['complete', 'trained', 'incomplete'],               // BuildModelWindow pillState
     'f4-kb-dot--': ['trained', 'complete', 'need', 'bad'],                       // dotStatusFor + DOT_CLASS
-    'f4-crow--': ['bad', 'ovl'],                                                 // TimePeriodsEditor rowClass
-    'f4-cmsg--': ['bad', 'ovl'],                                                 // TimePeriodsEditor message(…, 'cmsg')
+    'rc-impact--': ['amber', 'grey'],                                             // BuildModelWindow: the impact line next to Apply (tone)
     'wb2-card--': ['tall', 'xtall', 'hs'],                                       // ChartCardSize minus 'normal'
     'hs-chk--': ['ok', 'need', 'bad'],
     'hsx-row--': ['ok', 'warn', 'danger'],                                       // SetPointsCard Row tone
@@ -206,8 +205,8 @@ describe('CSS class coverage (static — jsdom cannot see App.css)', () => {
         expect(unstyled).toEqual([]);
         // and each enum prefix is really still composed somewhere (otherwise drop it from the map)
         const all = FILES.map(f => f.code).join('\n');
-        // gutter-* is produced by split.js; f4-cmsg--* is built as `f4-${cls}--bad` with cls = 'cmsg'
-        const builtElsewhere = new Set(['gutter-', 'f4-cmsg--']);
+        // gutter-* is produced by split.js
+        const builtElsewhere = new Set(['gutter-']);
         const unused = Object.keys(DYNAMIC_ENUMS).filter(p => !builtElsewhere.has(p) && !all.includes(`${p}\${`));
         expect(unused).toEqual([]);
     });

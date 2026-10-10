@@ -38,6 +38,17 @@ describe('healthVerdict / verdictOfIssues', () => {
 });
 
 describe('buildCheckLines', () => {
+    it('an issue about one scoring period names the period the USER sees (invalid periods are not sent, so Rust counts differently)', () => {
+        // The list on screen is [S1 invalid, S2]: only S2 was sent, so Rust calls it "S1".
+        const rust = issue('ends_before_start', 'test_period_1_end', 'Scoring period S1 ends before it starts.');
+        expect(buildCheckLines('individual', [rust], [2]).map(l => l.text)).toEqual(['Scoring period S2 ends before it starts.']);
+        // without the numbers (or when they agree) Rust's message is shown as it is
+        expect(buildCheckLines('individual', [rust]).map(l => l.text)).toEqual(['Scoring period S1 ends before it starts.']);
+        expect(buildCheckLines('individual', [rust], [1]).map(l => l.text)).toEqual(['Scoring period S1 ends before it starts.']);
+        // any other issue is untouched by the numbers
+        expect(buildCheckLines('individual', [issue('required', 'upper', 'Enter H (S1)')], [2]).map(l => l.text)).toEqual(['Enter H (S1)']);
+    });
+
     it('shows one line per Rust issue, with Rust\'s own message; empty = amber, rejected = red', () => {
         const lines = buildCheckLines('individual', [issue('required', 'upper', 'Enter H'), issue('lower_inside_3sd', 'lower', 'L is inside 3σ')]);
         expect(lines.map(l => [l.tone, l.text])).toEqual([['need', 'Enter H'], ['bad', 'L is inside 3σ']]);

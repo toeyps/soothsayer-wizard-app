@@ -115,7 +115,7 @@ const BUILD_DATA = {
     metadata: { headers: ['timestamp', ...HEADERS], total_rows: 100 },
 };
 const LEGACY_KEYS = ['runningConditionTimeStart', 'runningConditionTimeEnd', 'filterTimeStart', 'filterTimeEnd'];
-const GATE_REASON = 'Set a running condition first, or choose "No condition — use all rows".';
+const GATE_REASON = 'Set the running condition first — a condition, or Use all rows';
 const COND = { id: 'rc1', sensor: 'TAG2', operation: 'greater_than', value1: '10', value2: '' };
 
 /** A model exactly as a v0.6.0 (pre-Feature-4) workspace stored it. */
@@ -204,7 +204,7 @@ const trainBtn = () => screen.getByTestId('train-sensor') as HTMLButtonElement;
 /** Train sensor's title for a sensor whose one model the gate blocks: the "set the running condition"
  *  reason while Step 1 is not set at all, else the model's reason in the preflight wording. */
 const blockedTitle = (reason: string) => screen.getByTestId('rc-card').getAttribute('data-state') === 'unset'
-    ? TRAIN_NEEDS_RUNNING_CONDITION.replace(' (Step 1)', '') // the step bar is gone: nothing on screen says "Step 1"
+    ? TRAIN_NEEDS_RUNNING_CONDITION
     : `Can't train: Individual — ${preflightReason(reason).text}`;
 
 /*
@@ -335,7 +335,7 @@ describe('(1) opening a v1 (pre-Feature-4) workspace', () => {
         expect(screen.getByTestId('rc-card').getAttribute('data-state')).toBe('unset');
         expect(rcModal()).toBeTruthy();
         expect(screen.getByTestId('rc-required-pill')).toBeTruthy();
-        expect(screen.getAllByLabelText('Period 1 end').map(e => (e as HTMLInputElement).value)).toContain('2026-06-30T23:59');
+        expect(screen.getAllByLabelText('P1 end').map(e => (e as HTMLInputElement).value)).toContain('2026-06-30T23:59');
         openFirstRow();
         expect(screen.getByTestId('build-block-reason').textContent).toBe(GATE_REASON);
 
@@ -429,7 +429,7 @@ describe('(2) the Workbench footer reason and the Train button agree with the sh
         selectSensorRow(0);
         expect(trainBtn().disabled).toBe(false);
         await otherWindowWrites({ models: [model({ id: 'i1', runningConditionMode: 'custom', customRunningConditionFilters: [], filterTimePeriods: ALL_TIME_TRAIN })] });
-        expect(screen.getByTestId('build-block-reason').textContent).toBe(GATE_REASON);
+        expect(screen.getByTestId('build-block-reason').textContent).toBe('Set a condition above, or choose Use all rows'); // its OWN condition, and Model settings opened by itself: the reason says where to fix it
         expect(trainBtn().disabled).toBe(true);
     });
 });

@@ -49,7 +49,9 @@ export interface UseHealthPreviewResult {
     error: string | null;
     /** Stable Rust code of the last failure (`NOT_FITTED`, `NO_DATA`, ...), or `null`. */
     errorCode: HealthErrorCode | null;
-    /** The Relationship fit is gone from Rust's memory — show "Re-train to recompute". */
+    /** The Relation-model fit is gone from Rust's memory — the pages show the
+     *  "Fit no longer in memory" board ("Load it again"; a model that is not
+     *  Complete can also be re-trained with Train sensor). */
     notFitted: boolean;
     /** Same as `notFitted`; the name the train flow uses. */
     needsRetrain: boolean;

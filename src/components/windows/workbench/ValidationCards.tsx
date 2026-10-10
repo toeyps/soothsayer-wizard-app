@@ -1,7 +1,7 @@
 import { Fragment, type ReactNode } from 'react';
 import { Loader2 } from 'lucide-react';
 import type { HealthIssue, HealthPreview, TestPeriodResult } from '../../../types/health';
-import { testIncludesTrainNote, testNumberFor } from '../../../utils/timePeriods';
+import { scoringIssueMessage, testIncludesTrainNote, testNumberFor } from '../../../utils/timePeriods';
 import {
     SLOW_TEST_SCORING_TEXT,
     TEST_SCORING_FAILED_TEXT,
@@ -100,13 +100,13 @@ export function TrainDaysNotice({ days }: { days: number | null | undefined }) {
  *  `test_scoring_failed`), or without the retry for `test_scoring_outdated` /
  *  `test_scoring_too_large` (retrying cannot help). For reading only;
  *  `onRetry` asks for the preview again. */
-export function TestScoringFailedNotice({ issue, onRetry }: { issue: HealthIssue; onRetry?: () => void }) {
+export function TestScoringFailedNotice({ issue, onRetry, testNumbers }: { issue: HealthIssue; onRetry?: () => void; testNumbers?: readonly number[] | null }) {
     const retryable = isTestScoringRetryable(issue);
     return (
         <div className="vt-fail" role="status" data-testid="test-scoring-failed">
             <span>
                 <b>{retryable ? TEST_SCORING_FAILED_TEXT : TEST_SCORING_OUTDATED_TEXT}</b>
-                {issue.message && <small>{issue.message}</small>}
+                {issue.message && <small>{scoringIssueMessage(issue, testNumbers)}</small>}
             </span>
             {onRetry && retryable && (
                 <button type="button" className="rcx-btn rcx-btn--sm" data-testid="test-scoring-retry" onClick={onRetry}>Try again</button>
@@ -250,7 +250,7 @@ export function TrainTestCard({ data, unit, side = false, custom = false, testNu
                     })}
                 </tbody>
             </table>
-            {failed && <TestScoringFailedNotice issue={failed} onRetry={onRetry} />}
+            {failed && <TestScoringFailedNotice issue={failed} onRetry={onRetry} testNumbers={testNumbers} />}
             <div className="vt-note">{note}</div>
         </section>
     );
@@ -288,7 +288,7 @@ export function TestResultsCard({ data, scoreReady, unavailable = false, custom 
                     <b>No scoring period.</b> Add one in {testPeriodsWhere(custom)} — Mark complete needs at least one.
                 </div>
             ) : failed ? (
-                <TestScoringFailedNotice issue={failed} onRetry={onRetry} />
+                <TestScoringFailedNotice issue={failed} onRetry={onRetry} testNumbers={testNumbers} />
             ) : !scoreReady ? (
                 <div className="vt-quiet" data-testid="test-results-pending">
                     {unavailable ? 'Not available until the health score loads' : 'Scored once the set points are valid'}

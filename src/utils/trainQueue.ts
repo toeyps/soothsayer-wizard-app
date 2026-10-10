@@ -48,8 +48,9 @@ export const DUPLICATE_NAME_BLOCK_REASON = 'Model name is already used by anothe
 export const TRAIN_STALE_MESSAGE =
     'The data in this window is out of date. Close it and open Build Model again from the Dashboard.';
 
-/** Why both Train buttons are disabled when the workspace running condition is not set. */
-export const TRAIN_NEEDS_RUNNING_CONDITION = 'Set the running condition first (Step 1).';
+/** Why both Train buttons are disabled when the workspace running condition is not set.
+ *  (The step bar is gone since 2026-10-09: no text says "Step 1".) */
+export const TRAIN_NEEDS_RUNNING_CONDITION = 'Set the running condition first.';
 
 /** Why both Train buttons are disabled when no model is ready. */
 export const TRAIN_NOTHING_READY = 'Nothing is ready to train.';
@@ -71,11 +72,12 @@ const MISSING_ITEM_PHRASES: Record<string, string> = {
 
 /** A sentence → a phrase that reads after "Can't train — ": no trailing full
  *  stop, first letter lower-cased unless it starts an identifier ("S1", "Y").
- *  "S1 needs a start date." (`validateTestPeriods`) reads "scoring period S1
- *  needs a start date". */
+ *  "P2 ends before it starts." (`validatePeriods`) reads "train period P2 ends
+ *  before it starts"; "S1 needs a start date." (`validateTestPeriods`) reads
+ *  "scoring period S1 needs a start date". */
 function toPhrase(text: string): string {
     let t = text.trim().replace(/\.+$/, '');
-    t = t.replace(/^Period (\d+)\b/, 'Train period $1');
+    t = t.replace(/^(P\d+)\b/, 'Train period $1');
     t = t.replace(/^(S\d+)\b/, 'Scoring period $1');
     if (/^[A-Z][a-z]/.test(t)) t = t[0].toLowerCase() + t.slice(1);
     return t;
@@ -113,9 +115,9 @@ export function preflightReason(
     }
     if (blockReason === NO_TRAIN_PERIOD_REASON) return { text: 'no train period', fix: 'runningCondition' };
     if (blockReason === NO_TRAIN_PERIOD_REASON_CUSTOM) return { text: 'no train period in its own training data', fix: 'settings' };
-    // Invalid train periods ("Period 2 ends before it starts.") come from the gate;
+    // Invalid train periods ("P2 ends before it starts.") come from the gate;
     // invalid Custom scoring periods ("S1 needs a start date.") from Save's own check.
-    if (/^Period \d+\b/.test(blockReason)) return { text: toPhrase(blockReason), fix: rcFix };
+    if (/^P\d+\b/.test(blockReason)) return { text: toPhrase(blockReason), fix: rcFix };
     return { text: toPhrase(blockReason), fix: 'settings' };
 }
 

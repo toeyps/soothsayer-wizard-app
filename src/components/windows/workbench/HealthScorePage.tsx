@@ -205,7 +205,7 @@ function HealthScorePage(props: HealthScorePageProps) {
                     onChange={props.onSetPointsChange}
                     onCommit={props.onSetPointsCommit}
                 >
-                    <ChecksCard kind={data.kind} issues={issues} verdict={verdict} unavailable={errorMode} />
+                    <ChecksCard kind={data.kind} issues={issues} verdict={verdict} unavailable={errorMode} testNumbers={testNumbers} />
                 </SetPointsCard>
             </div>
             {/* "Changed after saving" is said ONCE — the footer sentence, next to its

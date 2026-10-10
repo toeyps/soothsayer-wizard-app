@@ -1,11 +1,29 @@
 import type { TestPeriod, TimeHighlight, TimePeriod } from '../types';
-import type { TestPeriodWire } from '../types/health';
+import type { HealthIssue, TestPeriodWire } from '../types/health';
+import { formatBound, parseLocal } from './workbenchDate';
+
+/** What is wrong with an invalid period (stable; the UI may key on it — e.g.
+ *  which date field to mark red). */
+export type PeriodFault =
+    | 'start-invalid'
+    | 'end-invalid'
+    | 'start-missing'
+    | 'end-missing'
+    | 'ends-before-start';
 
 export interface PeriodStatus {
     /** Unparseable bound, end before start, or an open end where none is allowed. */
     invalid: boolean;
-    /** User-facing reason when `invalid`. */
+    /** Short sentence when `invalid`, naming the period by its list number:
+     *  "P2 ends before it starts." Used by the gates and wherever the reason is
+     *  followed by another sentence ("… Fix it in Model settings"). */
     reason?: string;
+    /** The ONE reason line under the period's own row when `invalid` (no full
+     *  stop, and a hint what to do where there is one): "P2 ends before it
+     *  starts — pick an end after 11 May 2026", "P2 needs a start date". */
+    rowReason?: string;
+    /** What is wrong, when `invalid`. */
+    fault?: PeriodFault;
     /** Starts strictly before the previous period ends (touching is NOT overlap). */
     overlapsPrev: boolean;
 }
@@ -19,12 +37,41 @@ const MINUTE = 60_000;
 
 /** Epoch ms of a `datetime-local` / ISO-ish string as LOCAL time; null if empty
  *  or unparseable. Date-only strings are read as local midnight. */
-function toMs(s: string): number | null {
-    const t = (s ?? '').trim();
-    if (!t) return null;
-    const norm = /^\d{4}-\d{2}-\d{2}$/.test(t) ? `${t}T00:00` : t.replace(' ', 'T');
-    const ms = new Date(norm).getTime();
-    return Number.isNaN(ms) ? null : ms;
+const toMs = parseLocal;
+
+const FAULT_WORDS: Record<PeriodFault, string> = {
+    'start-invalid': 'has an invalid start date',
+    'end-invalid': 'has an invalid end date',
+    'start-missing': 'needs a start date',
+    'end-missing': 'needs an end date',
+    'ends-before-start': 'ends before it starts',
+};
+
+/**
+ * The two texts of one invalid period. `name` is the period as the user sees
+ * it — "P2" (train period, by list position) or "S1" (scoring period) — never
+ * "Period 2". `reason` is the short sentence ("P2 ends before it starts.");
+ * `rowReason` the one line under the row, with what to do when that is known
+ * ("P2 ends before it starts — pick an end after 11 May 2026"; the date is the
+ * period's own start in the Workbench date format).
+ */
+export function periodReasonTexts(name: string, fault: PeriodFault, start?: string | null): { reason: string; rowReason: string } {
+    const core = `${name} ${FAULT_WORDS[fault]}`;
+    const after = fault === 'ends-before-start' ? formatBound(start, 'start') : '';
+    return { reason: `${core}.`, rowReason: after ? `${core} — pick an end after ${after}` : core };
+}
+
+/** The date field a fault is about (for "Fix P1's end above" and for marking
+ *  the field red). */
+export function faultSide(fault: PeriodFault): 'start' | 'end' {
+    return fault === 'start-invalid' || fault === 'start-missing' ? 'start' : 'end';
+}
+
+/** Footer line of the Running-condition settings while a period is invalid:
+ *  "Fix P2 before applying" (`action` = "saving" for a model's own Custom
+ *  lists, which are saved with Save changes). */
+export function fixPeriodFirstText(name: string, action: 'applying' | 'saving' = 'applying'): string {
+    return `Fix ${name} before ${action}`;
 }
 
 const pad = (n: number) => String(n).padStart(2, '0');
@@ -43,7 +90,8 @@ export function newPeriodId(): string {
 /**
  * Per-period validity + overlap with the previous period (list order — call on
  * a sorted list). Open ends ('') are valid only on the first period's start
- * and the last period's end.
+ * and the last period's end. Reasons name a train period "P1", "P2" … by its
+ * list position (workbench redesign 2026-10: never "Period 1").
  */
 export function validatePeriods(list: TimePeriod[]): PeriodStatus[] {
     const parsed = list.map((p) => ({ s: toMs(p.start), e: toMs(p.end) }));
@@ -51,23 +99,30 @@ export function validatePeriods(list: TimePeriod[]): PeriodStatus[] {
         const { s, e } = parsed[i];
         const startBlank = !(p.start ?? '').trim();
         const endBlank = !(p.end ?? '').trim();
-        let reason: string | undefined;
-        if (!startBlank && s === null) reason = `Period ${i + 1} has an invalid start date.`;
-        else if (!endBlank && e === null) reason = `Period ${i + 1} has an invalid end date.`;
-        else if (startBlank && i !== 0) reason = `Period ${i + 1} needs a start date.`;
-        else if (endBlank && i !== list.length - 1) reason = `Period ${i + 1} needs an end date.`;
-        else if (s !== null && e !== null && e < s) reason = `Period ${i + 1} ends before it starts.`;
+        let fault: PeriodFault | undefined;
+        if (!startBlank && s === null) fault = 'start-invalid';
+        else if (!endBlank && e === null) fault = 'end-invalid';
+        else if (startBlank && i !== 0) fault = 'start-missing';
+        else if (endBlank && i !== list.length - 1) fault = 'end-missing';
+        else if (s !== null && e !== null && e < s) fault = 'ends-before-start';
+        const texts = fault ? periodReasonTexts(`P${i + 1}`, fault, p.start) : undefined;
 
         let overlapsPrev = false;
-        if (!reason && i > 0 && !statusInvalidAt(list, parsed, i - 1)) {
+        if (!fault && i > 0 && !statusInvalidAt(list, parsed, i - 1)) {
             const prevEnd = parsed[i - 1].e;
             const prevOpenEnd = !(list[i - 1].end ?? '').trim();
             const curStart = s; // null = open start
             if (prevOpenEnd || curStart === null) overlapsPrev = true;
             else if (prevEnd !== null && curStart < prevEnd) overlapsPrev = true;
         }
-        return { invalid: !!reason, reason, overlapsPrev };
+        return { invalid: !!fault, reason: texts?.reason, rowReason: texts?.rowReason, fault, overlapsPrev };
     });
+}
+
+/** 1-based list number of the first invalid train period (its P-number), or null. */
+export function firstInvalidPeriodNumber(list: TimePeriod[]): number | null {
+    const i = validatePeriods(list).findIndex(s => s.invalid);
+    return i < 0 ? null : i + 1;
 }
 
 /** Cheap "is the previous period itself unparseable / reversed" check used to
@@ -210,7 +265,14 @@ export function toScoringPeriods(list: readonly TestPeriod[] | null | undefined)
 export interface TestPeriodStatus {
     /** Start/end missing or unparseable, or end before start. Blocks Apply. */
     invalid: boolean;
+    /** Short sentence when `invalid`: "S2 ends before it starts." */
     reason?: string;
+    /** The one reason line under the row when `invalid` (see
+     *  `PeriodStatus.rowReason`): "S2 ends before it starts — pick an end
+     *  after 11 May 2026". */
+    rowReason?: string;
+    /** What is wrong, when `invalid`. */
+    fault?: PeriodFault;
 }
 
 /**
@@ -227,14 +289,21 @@ export function validateTestPeriods(list: TestPeriod[]): TestPeriodStatus[] {
         const endBlank = !(t.end ?? '').trim();
         const s = toMs(t.start);
         const e = toMs(t.end);
-        let reason: string | undefined;
-        if (startBlank) reason = `S${n} needs a start date.`;
-        else if (endBlank) reason = `S${n} needs an end date.`;
-        else if (s === null) reason = `S${n} has an invalid start date.`;
-        else if (e === null) reason = `S${n} has an invalid end date.`;
-        else if (e < s) reason = `S${n} ends before it starts.`;
-        return { invalid: !!reason, reason };
+        let fault: PeriodFault | undefined;
+        if (startBlank) fault = 'start-missing';
+        else if (endBlank) fault = 'end-missing';
+        else if (s === null) fault = 'start-invalid';
+        else if (e === null) fault = 'end-invalid';
+        else if (e < s) fault = 'ends-before-start';
+        if (!fault) return { invalid: false, reason: undefined };
+        return { invalid: true, ...periodReasonTexts(`S${n}`, fault, t.start), fault };
     });
+}
+
+/** 1-based list number of the first invalid scoring period (its S-number), or null. */
+export function firstInvalidTestPeriodNumber(list: TestPeriod[]): number | null {
+    const i = validateTestPeriods(list).findIndex(s => s.invalid);
+    return i < 0 ? null : i + 1;
 }
 
 /** First problem in a scoring-period list, or null. */
@@ -297,6 +366,48 @@ export function testNumberFor(
     if (numbers && typeof wireIndex === 'number' && valid(numbers[wireIndex - 1])) return numbers[wireIndex - 1];
     if (numbers && valid(numbers[position])) return numbers[position];
     return position + 1;
+}
+
+/** `test_period_<n>_start` / `test_period_<n>_end` — the `field` of an issue
+ *  Rust raises about one scoring period (`health_validation.rs`). */
+const TEST_PERIOD_FIELD_RE = /^test_period_(\d+)_(start|end)$/;
+
+/** Which scoring period an issue from Rust is about. */
+export interface ScoringIssueTarget {
+    /** 1-based position in the `test_periods` that were SENT (Rust's `<n>`). */
+    wireIndex: number;
+    /** The S-number the user sees: the period's position in the FULL list. */
+    number: number;
+    side: 'start' | 'end';
+}
+
+/**
+ * Maps the `field` of a Rust issue about a scoring period back to the period
+ * the user sees. Rust numbers by position in the list it RECEIVED, and invalid
+ * periods are dropped before sending (`testPeriodsWirePlan`), so with the list
+ * [S1 invalid, S2] an issue on `test_period_1_end` is about **S2**. `numbers`
+ * is `testPeriodsWirePlan(...).numbers` of the list that was sent; without it
+ * (or when it does not cover the index) the wire position is the number.
+ * `null` for any other field (`lower`, `test_periods`, …).
+ */
+export function scoringIssueTarget(field: string | null | undefined, numbers?: readonly number[] | null): ScoringIssueTarget | null {
+    const m = TEST_PERIOD_FIELD_RE.exec((field ?? '').trim());
+    if (!m) return null;
+    const wireIndex = Number(m[1]);
+    if (!Number.isInteger(wireIndex) || wireIndex < 1) return null;
+    return { wireIndex, number: testNumberFor(numbers, wireIndex, wireIndex - 1), side: m[2] as 'start' | 'end' };
+}
+
+/**
+ * The text to SHOW for an issue: Rust's own `message`, with the wire number of
+ * a scoring period ("Scoring period S1 ends before it starts.") replaced by
+ * the S-number of the list the user sees ("Scoring period S2 …"). Every other
+ * issue's message is returned unchanged.
+ */
+export function scoringIssueMessage(issue: Pick<HealthIssue, 'field' | 'message'>, numbers?: readonly number[] | null): string {
+    const target = scoringIssueTarget(issue.field, numbers);
+    if (!target || target.number === target.wireIndex) return issue.message;
+    return issue.message.replace(new RegExp(`\\bS${target.wireIndex}\\b`, 'g'), `S${target.number}`);
 }
 
 /**

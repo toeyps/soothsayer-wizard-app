@@ -1,7 +1,10 @@
 import type { FailureGroupStateSlice, FailureModel, TestPeriod, TimePeriod, WorkspaceSensorFilter } from '../types';
 import { normalizeSensorTag } from '../hooks/useSensorMetaMap';
 import { modelSensorKey, sensorCategory } from './modelGrouping';
-import { newPeriodId, testPeriodsError, toScoringPeriod, validatePeriods } from './timePeriods';
+import {
+    firstInvalidTestPeriodNumber, fixPeriodFirstText, newPeriodId, faultSide, testPeriodsError, toScoringPeriod, validatePeriods,
+    type PeriodFault,
+} from './timePeriods';
 
 /** The parts of the failure-group slice these helpers read. */
 export type RunningConditionFg = Partial<FailureGroupStateSlice> | null | undefined;
@@ -83,8 +86,9 @@ export function isRunningConditionConfigured(model: FailureModel, fg: RunningCon
 export const CATEGORY_BLOCK_REASON = 'Pick a category on the sensor header.';
 
 /** The effective running condition is not configured (no condition and no
- *  explicit "No condition — use all rows"). */
-export const NO_RUNNING_CONDITION_REASON = 'Set a running condition first, or choose "No condition — use all rows".';
+ *  explicit "Use all rows"). Gate copy of the workbench redesign (2026-10-10):
+ *  it names the two ways out and never says "Step 1". */
+export const NO_RUNNING_CONDITION_REASON = 'Set the running condition first — a condition, or Use all rows';
 
 /** No train period, Workspace-mode model (SPEC rule 1). */
 export const NO_TRAIN_PERIOD_REASON =
@@ -94,9 +98,23 @@ export const NO_TRAIN_PERIOD_REASON_CUSTOM =
     'Add a train period in Model settings → Training data (Custom) — pick times the machine was healthy.';
 
 /**
- * The ONE gate for Train, Mark complete and re-train. Returns the first
- * blocking reason as user-facing text, else null. Order: category -> running
- * condition -> invalid train period -> no train period.
+ * Why a model cannot train, as data. `reason` is the user-facing sentence
+ * `getBuildBlockReason` returns; `kind` lets a caller tell the blockers apart
+ * without reading the text, and an invalid train period also says WHICH one
+ * (its P-number) and what is wrong with it.
+ */
+export type BuildBlock =
+    | { kind: 'category'; mode: 'workspace' | 'custom'; reason: string }
+    | { kind: 'no-condition'; mode: 'workspace' | 'custom'; reason: string }
+    | { kind: 'invalid-train'; mode: 'workspace' | 'custom'; reason: string; periodNumber: number; fault: PeriodFault; rowReason: string }
+    | { kind: 'no-train'; mode: 'workspace' | 'custom'; reason: string };
+
+/**
+ * The ONE gate for Train, Mark complete and re-train, as data (see
+ * `BuildBlock`), else null. Order: category -> running condition -> invalid
+ * train period -> no train period. `mode` is the model's own
+ * `runningConditionMode` — in 'custom' the fix is inside its Model settings
+ * (`customBlockText`), in 'workspace' it is the Running-condition settings.
  *
  * Train/Test validation (SPEC rule 1, 2026-10-07): at least one TRAIN period is
  * required — the old "no period = whole dataset" default is gone. Any period
@@ -105,18 +123,84 @@ export const NO_TRAIN_PERIOD_REASON_CUSTOM =
  * Scoring periods are NOT needed to train (`markCompleteBlockReason` asks for
  * them).
  */
-export function getBuildBlockReason(model: FailureModel, fg: RunningConditionFg, headers?: string[] | null): string | null {
-    const category = model.category ?? sensorCategory(fg?.models ?? [], modelSensorKey(model));
-    if (category == null) return CATEGORY_BLOCK_REASON;
-    if (!isRunningConditionConfigured(model, fg, headers)) {
-        return NO_RUNNING_CONDITION_REASON;
-    }
+export function getBuildBlock(model: FailureModel, fg: RunningConditionFg, headers?: string[] | null): BuildBlock | null {
     const eff = effectiveRunningCondition(model, fg);
-    const bad = validatePeriods(eff.periods).find((s) => s.invalid);
-    if (bad) return bad.reason ?? 'Fix the training period dates.';
-    if (eff.periods.length === 0) return eff.mode === 'custom' ? NO_TRAIN_PERIOD_REASON_CUSTOM : NO_TRAIN_PERIOD_REASON;
+    const mode = eff.mode;
+    const category = model.category ?? sensorCategory(fg?.models ?? [], modelSensorKey(model));
+    if (category == null) return { kind: 'category', mode, reason: CATEGORY_BLOCK_REASON };
+    if (!isRunningConditionConfigured(model, fg, headers)) {
+        return { kind: 'no-condition', mode, reason: NO_RUNNING_CONDITION_REASON };
+    }
+    const status = validatePeriods(eff.periods);
+    const i = status.findIndex((s) => s.invalid);
+    if (i >= 0) {
+        const bad = status[i];
+        const reason = bad.reason ?? 'Fix the training period dates.';
+        return {
+            kind: 'invalid-train', mode, reason, periodNumber: i + 1,
+            fault: bad.fault ?? 'ends-before-start',
+            rowReason: bad.rowReason ?? reason.replace(/\.$/, ''),
+        };
+    }
+    if (eff.periods.length === 0) {
+        return { kind: 'no-train', mode, reason: mode === 'custom' ? NO_TRAIN_PERIOD_REASON_CUSTOM : NO_TRAIN_PERIOD_REASON };
+    }
     return null;
 }
+
+/** `getBuildBlock` as the first blocking reason in user-facing text, else null. */
+export function getBuildBlockReason(model: FailureModel, fg: RunningConditionFg, headers?: string[] | null): string | null {
+    return getBuildBlock(model, fg, headers)?.reason ?? null;
+}
+
+/**
+ * The reason line of a model whose OWN (Custom) running condition blocks it
+ * (workbench redesign §5 "Custom running condition"). The fix is inside the
+ * model's Model settings, so the wording depends on whether that section is
+ * open:
+ *   - closed: "Own running condition: P1 ends before it starts. Fix it in Model settings"
+ *   - open:   "Fix P1's end above"
+ * The other two blockers follow the same pattern ("Own running condition: no
+ * train period. Fix it in Model settings" / "Add a train period above"; "Own
+ * running condition: not set. Fix it in Model settings" / "Set a condition
+ * above, or choose Use all rows"). A `category` block — and any block of a
+ * Workspace-mode model — is not about the model's own condition: its plain
+ * `reason` is returned.
+ */
+export function customBlockText(block: BuildBlock, opts: { settingsOpen: boolean }): string {
+    if (block.mode !== 'custom' || block.kind === 'category') return block.reason;
+    if (opts.settingsOpen) {
+        if (block.kind === 'invalid-train') return `Fix P${block.periodNumber}'s ${faultSide(block.fault)} above`;
+        if (block.kind === 'no-train') return 'Add a train period above';
+        return 'Set a condition above, or choose Use all rows';
+    }
+    const what = block.kind === 'invalid-train' ? block.reason
+        : block.kind === 'no-train' ? 'no train period.'
+        : 'not set.';
+    return `Own running condition: ${what} Fix it in Model settings`;
+}
+
+/** Collapsed Model-settings summary of a Custom-mode model's own running
+ *  condition: "Custom · 1 condition · 1 train · 0 scoring" ("Custom · all rows
+ *  · …" when it uses all rows). */
+export function customSummaryText(own: { noneConfirmed: boolean; conditions: number; trainPeriods: number; scoringPeriods: number }): string {
+    const cond = own.noneConfirmed ? 'all rows' : `${own.conditions} condition${own.conditions === 1 ? '' : 's'}`;
+    return `Custom · ${cond} · ${own.trainPeriods} train · ${own.scoringPeriods} scoring`;
+}
+
+/** Empty state of the Train periods section (Running-condition settings and a
+ *  model's own Custom panel). */
+export const NO_TRAIN_PERIOD_EMPTY_TEXT = 'No train period yet — add at least one';
+
+/** The quiet grey note of the Scoring periods section while it is empty. It
+ *  never blocks: `action` is what the surrounding form does — "apply" in the
+ *  Running-condition settings, "save" in a model's own Custom panel. */
+export function noScoringPeriodNote(action: 'apply' | 'save' = 'apply'): string {
+    return `No scoring period yet — you can train and ${action} now; Mark complete needs at least one.`;
+}
+
+/** Last line of a model's own Custom panel. */
+export const CUSTOM_PANEL_FOOTNOTE = 'Only this model · the workspace default is untouched · saved with Save changes';
 
 /** No scoring period, Workspace-mode model. */
 export const NO_TEST_PERIOD_REASON = 'Add a scoring period before marking complete (Running condition → Edit).';
@@ -137,11 +221,18 @@ export function markCompleteBlockReason(model: FailureModel, fg: RunningConditio
     return null;
 }
 
-/** Why the Running-condition settings modal's Apply is disabled. */
+/**
+ * Why the Running-condition settings modal's Apply is disabled.
+ *  - `reason`: the short sentence about the period ("P2 ends before it starts.").
+ *  - `footer`: the red line next to the disabled button — "Fix P2 before
+ *    applying" / "Add a train period" / "Fix S1 before applying".
+ *  - `periodNumber`: the P-number (`invalid-train`) or S-number
+ *    (`invalid-test`) of the first invalid period.
+ */
 export type RunningConditionApplyBlock =
-    | { kind: 'invalid-train'; reason: string }
-    | { kind: 'no-train'; reason: string }
-    | { kind: 'invalid-test'; reason: string };
+    | { kind: 'invalid-train'; reason: string; footer: string; periodNumber: number }
+    | { kind: 'no-train'; reason: string; footer: string }
+    | { kind: 'invalid-test'; reason: string; footer: string; periodNumber: number };
 
 /** Short hint shown next to the disabled Apply when there is no train period. */
 export const ADD_TRAIN_PERIOD_HINT = 'Add a train period';
@@ -154,13 +245,35 @@ export const ADD_TRAIN_PERIOD_HINT = 'Add a train period';
  * that overlaps a train period does NOT, neither does having NO scoring period
  * (only Mark complete needs one), and neither does a train period overlapping
  * a highlight (rule 4).
+ *
+ * `action` only changes the footer wording: "applying" for the settings modal,
+ * "saving" for a model's own Custom lists (saved with Save changes).
  */
-export function runningConditionApplyBlock(periods: TimePeriod[], testPeriods: TestPeriod[] = []): RunningConditionApplyBlock | null {
-    const bad = validatePeriods(periods).find((s) => s.invalid);
-    if (bad) return { kind: 'invalid-train', reason: bad.reason ?? 'Fix the invalid training period first.' };
-    if (periods.length === 0) return { kind: 'no-train', reason: ADD_TRAIN_PERIOD_HINT };
-    const badTest = testPeriodsError(testPeriods);
-    if (badTest) return { kind: 'invalid-test', reason: badTest };
+export function runningConditionApplyBlock(
+    periods: TimePeriod[],
+    testPeriods: TestPeriod[] = [],
+    action: 'applying' | 'saving' = 'applying',
+): RunningConditionApplyBlock | null {
+    const status = validatePeriods(periods);
+    const i = status.findIndex((s) => s.invalid);
+    if (i >= 0) {
+        return {
+            kind: 'invalid-train',
+            reason: status[i].reason ?? 'Fix the invalid training period first.',
+            footer: fixPeriodFirstText(`P${i + 1}`, action),
+            periodNumber: i + 1,
+        };
+    }
+    if (periods.length === 0) return { kind: 'no-train', reason: ADD_TRAIN_PERIOD_HINT, footer: ADD_TRAIN_PERIOD_HINT };
+    const n = firstInvalidTestPeriodNumber(testPeriods);
+    if (n !== null) {
+        return {
+            kind: 'invalid-test',
+            reason: testPeriodsError(testPeriods) ?? 'Fix the scoring periods.',
+            footer: fixPeriodFirstText(`S${n}`, action),
+            periodNumber: n,
+        };
+    }
     return null;
 }
 

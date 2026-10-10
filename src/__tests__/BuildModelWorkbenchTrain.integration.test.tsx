@@ -630,8 +630,8 @@ describe('(6) a Custom running-condition edited live in the Workbench (not pre-s
         expect(screen.getByTestId('pm-seed-note').textContent).toMatch(/1 train period/);
         expect(screen.getByTestId('pm-seed-note').textContent).toMatch(/0 conditions/);
 
-        fireEvent.click(screen.getByText('+ Add condition'));
-        fireEvent.change(screen.getByPlaceholderText('val'), { target: { value: '42' } });
+        fireEvent.click(screen.getByTestId('rc-add-condition'));
+        fireEvent.change(screen.getByPlaceholderText('value'), { target: { value: '42' } });
 
         await clickTrain();
 
@@ -660,11 +660,11 @@ describe('(6) a Custom running-condition edited live in the Workbench (not pre-s
         await mountBuildModel();
         fireEvent.click(screen.getByText('Model settings', { selector: 'b' }));
         fireEvent.click(screen.getByRole('button', { name: 'Custom' }));
-        fireEvent.click(screen.getByText('+ Add condition'));
-        fireEvent.click(screen.getByText('No condition — use all rows'));
+        fireEvent.click(screen.getByTestId('rc-add-condition'));
+        fireEvent.click(screen.getByTestId('rc-mode-none'));
         fireEvent.click(screen.getByText('Model settings', { selector: 'b' })); // collapse
         // 1 train period: the workspace train period was copied on the switch (2026-10-07),
         // and the workspace scoring periods with it.
-        expect(screen.getByText(/Custom · no cond · 1 train · \d+ scoring$/)).toBeTruthy();
+        expect(screen.getByText(/Custom · all rows · 1 train · \d+ scoring$/)).toBeTruthy();
     });
 });

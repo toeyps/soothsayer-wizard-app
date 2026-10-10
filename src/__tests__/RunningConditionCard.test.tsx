@@ -79,7 +79,7 @@ describe('RunningConditionCard — Not set', () => {
 describe('RunningConditionCard — Invalid period', () => {
     const bad = [p('a', '2026-01-01T00:00', '2026-03-31T23:59'), p('x', '2026-05-30T00:00', '2026-04-10T23:59')];
 
-    it('red card: "Period N needs fixing", the validatePeriods reason, the period chips (broken one flagged) and a "Fix period" button', () => {
+    it('red card: "P N needs fixing", the validatePeriods reason, the period chips (broken one flagged) and a "Fix period" button', () => {
         const onOpen = card({ state: 'invalid', periods: bad });
         const c = screen.getByTestId('rc-card');
         expect(c.getAttribute('data-state')).toBe('invalid');
@@ -90,8 +90,8 @@ describe('RunningConditionCard — Invalid period', () => {
         expect(c.textContent).not.toMatch(/Step\s*1/i);
         expect(c.className).not.toContain('rcc-line');
         expect(screen.queryByTestId('rc-card-details')).toBeNull();
-        expect(screen.getByTestId('rc-card-title').textContent).toBe('Period 2 needs fixing');
-        expect(screen.getByTestId('rc-card-reason').textContent).toBe("Period 2 ends before it starts. Models can't be trained until it's fixed.");
+        expect(screen.getByTestId('rc-card-title').textContent).toBe('P2 needs fixing');
+        expect(screen.getByTestId('rc-card-reason').textContent).toBe("P2 ends before it starts. Models can't be trained until it's fixed.");
         const chips = screen.getAllByTestId('rc-card-period-chip');
         expect(chips.map(x => x.textContent)).toEqual(['P1 · 1 Jan 2026 → 31 Mar 2026', '⚠ P2 · 30 May 2026 → 10 Apr 2026']);
         expect(chips[1].className).toContain('rcc-chip--bad');
@@ -105,8 +105,8 @@ describe('RunningConditionCard — Invalid period', () => {
 
     it('names the FIRST broken period', () => {
         card({ state: 'invalid', periods: [p('a', '2026-01-01T00:00', ''), p('b', '2026-05-01T00:00', '2026-06-01T23:59')] });
-        expect(screen.getByTestId('rc-card-title').textContent).toBe('Period 1 needs fixing');
-        expect(screen.getByTestId('rc-card-reason').textContent).toContain('Period 1 needs an end date.');
+        expect(screen.getByTestId('rc-card-title').textContent).toBe('P1 needs fixing');
+        expect(screen.getByTestId('rc-card-reason').textContent).toContain('P1 needs an end date.');
     });
 });
 

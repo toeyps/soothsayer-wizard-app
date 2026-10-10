@@ -162,7 +162,10 @@ describe('completeModel', () => {
 
 describe('parseHealthError', () => {
     it('splits a known prefix from the message', () => {
-        expect(parseHealthError('NOT_FITTED: train first')).toEqual({ code: 'NOT_FITTED', message: 'train first' });
+        // NOT_FITTED: the Workbench's own words, never Rust's "this Relationship model … train it first"
+        expect(parseHealthError('NOT_FITTED: this Relationship model has no fit in memory (not trained yet, or the data changed) - train it first'))
+            .toEqual({ code: 'NOT_FITTED', message: 'Fit no longer in memory — load it again.' });
+        expect(HEALTH_ERROR_TEXT.NOT_FITTED).not.toMatch(/Relationship|re-?train|train it/i);
         expect(parseHealthError(new Error('NO_DATA: nothing in scope'))).toEqual({ code: 'NO_DATA', message: 'nothing in scope' });
         expect(parseHealthError('VALIDATION: a; b')).toEqual({ code: 'VALIDATION', message: 'a; b' });
     });
@@ -182,7 +185,7 @@ describe('parseHealthError', () => {
 
 describe('export error prefixes (QA/coordinator 2026-10-04)', () => {
     for (const [text, code, msg] of [
-        ['NOT_FITTED: the cache key belongs to another model', 'NOT_FITTED', 'the cache key belongs to another model'],
+        ['NOT_FITTED: the cache key belongs to another model', 'NOT_FITTED', 'Fit no longer in memory — load it again.'],
         ['STALE_SESSION: dataset reloaded', 'STALE_SESSION', 'dataset reloaded'],
         ['BAD_REQUEST: Sensor not found: T', 'BAD_REQUEST', 'Sensor not found: T'],
         ['NO_DATA: no rows in scope', 'NO_DATA', 'no rows in scope'],

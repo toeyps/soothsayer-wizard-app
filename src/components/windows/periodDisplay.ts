@@ -1,5 +1,6 @@
 import type { TimePeriod, WorkspaceSensorFilter } from '../../types';
 import { validatePeriods } from '../../utils/timePeriods';
+import { MONTHS_SHORT, clockText, dateText, formatDataStamp, formatStamp, parseLocal } from '../../utils/workbenchDate';
 import { fmtNumText } from '../sensor/sensorInfo';
 
 /*
@@ -10,29 +11,21 @@ import { fmtNumText } from '../sensor/sensorInfo';
  */
 
 export const DAY_MS = 86_400_000;
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-const pad = (n: number) => String(n).padStart(2, '0');
+
+// The Workbench date format and the local-time parser live in `utils/workbenchDate.ts`
+// since 2026-10-10 (the pure period helpers in `utils/` print dates with them too);
+// re-exported here so components keep importing them from this file.
+export { parseLocal, formatStamp, formatDataStamp };
+const MONTHS = MONTHS_SHORT;
 
 export interface DataBounds {
     min: string | null | undefined;
     max: string | null | undefined;
 }
 
-/** Epoch ms of a `datetime-local` / ISO-ish string as LOCAL time; null if blank/unparseable. */
-export function parseLocal(s: string | null | undefined): number | null {
-    const t = (s ?? '').trim();
-    if (!t) return null;
-    const norm = /^\d{4}-\d{2}-\d{2}$/.test(t) ? `${t}T00:00` : t.replace(' ', 'T');
-    const ms = new Date(norm).getTime();
-    return Number.isNaN(ms) ? null : ms;
-}
-
 const isBlank = (s: string | null | undefined) => !(s ?? '').trim();
-const hhmm = (ms: number) => `${pad(new Date(ms).getHours())}:${pad(new Date(ms).getMinutes())}`;
-const dateTxt = (ms: number, withYear: boolean) => {
-    const d = new Date(ms);
-    return `${d.getDate()} ${MONTHS[d.getMonth()]}${withYear ? ` ${d.getFullYear()}` : ''}`;
-};
+const hhmm = clockText;
+const dateTxt = dateText;
 
 /** Dataset extent as epoch ms, or null when either side is unknown. */
 export function boundsMs(b: DataBounds | null | undefined): { t0: number; t1: number } | null {
@@ -88,51 +81,6 @@ export function formatPeriodChip(p: TimePeriod): string {
 export function formatDate(s: string | null | undefined): string {
     const ms = parseLocal(s);
     return ms === null ? (s ?? '') : dateTxt(ms, true);
-}
-
-/**
- * THE Workbench date-and-time format: "9 Feb 2026 23:50" (24 h, no seconds,
- * local time; SPEC workbench-redesign §1 "One date format"). Takes a CSV / ISO
- * timestamp string or epoch ms; text that is not a date is returned as it is.
- * Show it in mono (`.wbx-dt`).
- */
-export function formatStamp(v: string | number | null | undefined): string {
-    const ms = typeof v === 'number' ? (Number.isFinite(v) ? v : null) : parseLocal(v);
-    if (ms === null) return typeof v === 'string' ? v : '—';
-    return `${dateTxt(ms, true)} ${hhmm(ms)}`;
-}
-
-/** `YYYY-MM-DD[ T]HH:MM[:SS[.fff]]` with an optional `Z` / `+07:00` offset. */
-const DATA_STAMP_RE = /^(\d{4})[-/](\d{1,2})[-/](\d{1,2})(?:[T ]+(\d{1,2}):(\d{2})(?::(\d{2})(?:[.,]\d+)?)?)?\s*(?:Z|[+-]\d{2}(?::?\d{2})?)?$/i;
-
-/**
- * `formatStamp` for a timestamp that is DATA (a CSV row's time, as Rust hands it
- * back: the lowest-score time, the hover read-out, a scoring period's lowest).
- * Formatted from the text's OWN wall-clock parts — it is never passed through a
- * `Date`, so an explicit offset ("2026-02-09T23:50:00+07:00") reads "9 Feb 2026
- * 23:50" on a PC in any time zone (review of 452d5c2, item 6b). `formatStamp`
- * stays for instants the APP recorded in UTC ("Trained …", "Files saved …"), which
- * must show in local time.
- *
- * `seconds: true` (hover read-outs) adds ":SS" when the stamp's seconds are not
- * zero, so neighbouring points of sub-minute data do not read as the same time.
- * Text in another shape goes through `formatStamp` (read as local time, which
- * also shows its own clock); text that is not a date is returned as it is.
- */
-export function formatDataStamp(text: string | null | undefined, opts: { seconds?: boolean } = {}): string {
-    if (text == null) return '—';
-    const t = text.trim();
-    if (!t) return text;
-    const m = DATA_STAMP_RE.exec(t);
-    const month = m ? Number(m[2]) : 0;
-    if (!m || month < 1 || month > 12) {
-        const ms = parseLocal(t);
-        if (ms === null) return t;
-        const sec = new Date(ms).getSeconds();
-        return `${dateTxt(ms, true)} ${hhmm(ms)}${opts.seconds && sec !== 0 ? `:${pad(sec)}` : ''}`;
-    }
-    const sec = Number(m[6] ?? 0);
-    return `${Number(m[3])} ${MONTHS[month - 1]} ${m[1]} ${pad(Number(m[4] ?? 0))}:${m[5] ?? '00'}${opts.seconds && sec !== 0 ? `:${pad(sec)}` : ''}`;
 }
 
 /** Whole days a period spans (open ends resolve to the dataset bounds); null if unknowable or reversed. */
@@ -309,12 +257,4 @@ export function conditionChipParts(
         name: (label ? label(f.sensor) : '') || f.sensor,
         rest: `${conditionSymbol(f.operation)} ${value}${u ? ` ${u}` : ''}`,
     };
-}
-
-export interface RuleInput {
-    periods: TimePeriod[];
-    filters: WorkspaceSensorFilter[];
-    combine: 'and' | 'or';
-    /** "No condition — use all rows" is active. */
-    none: boolean;
 }

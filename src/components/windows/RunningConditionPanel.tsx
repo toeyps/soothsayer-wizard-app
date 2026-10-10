@@ -1,28 +1,33 @@
-import { Fragment } from 'react';
+import { Fragment, type KeyboardEvent } from 'react';
 import { Plus, X } from 'lucide-react';
 import type { TestPeriod, TimeHighlight, TimePeriod, WorkspaceSensorFilter } from '../../types';
-import { isCompleteCondition } from '../../utils/runningCondition';
+import { PERIOD_COUNTS_IDLE, type PeriodCountsState } from '../../utils/periodCounts';
+import { CUSTOM_PANEL_FOOTNOTE, isCompleteCondition } from '../../utils/runningCondition';
 import { validatePeriods } from '../../utils/timePeriods';
-import { RECOMMENDED_TRAIN_DAYS, trainDaysWarning } from '../../utils/trainTestValidation';
-import { estimateRunningDays } from './periodDisplay';
 import { SensorPickerModal } from './SensorPickers';
-import { RuleSentence, TrainHighlightWarnings } from './RunningConditionParts';
+import { TrainHighlightWarnings } from './RunningConditionParts';
+import RunningConditionTimeline from './RunningConditionTimeline';
 import TestPeriodsEditor from './TestPeriodsEditor';
 import TimePeriodsEditor, { type PeriodBounds } from './TimePeriodsEditor';
-import { formatPercent, type RowCountPreview } from './useRowCountPreview';
 
 /*
- * Body of BuildModelWindow's "Running condition" settings modal — the
- * 2026-10-03 redesign (approved mockup 1pp59aydphzaDu2R1SvKGh): two columns.
- *   left   "1 Which time"  (TRAIN period cards + SCORING period rows — start →
- *          end only since 2026-10-10, "just score it")  and
- *          "2 When the plant is running"
- *          (two choice cards, condition rows, AND/OR pill between rows)
- *   right  "Data used for training": row count + bar, summary sentence, the
- *          scoring-period count, the recommended-train-days note, warnings
- * Presentation only: every value and handler arrives through props from
- * BuildModelWindow, which feeds it the modal's local DRAFT (nothing here
- * writes anything — Apply lives in the modal footer).
+ * The Running-condition settings (workbench redesign SPEC §5,
+ * docs/design/handoff/workbench-redesign/README.md) — ONE column, used twice:
+ *
+ *   - `scope="workspace"`: the body of BuildModelWindow's Running condition
+ *     modal (the workspace default; Apply lives in the modal footer);
+ *   - `scope="custom"`: a Custom model's own running condition inside its
+ *     Model settings (saved with Save changes) — the same timeline, rows and
+ *     states, ending with one footnote.
+ *
+ *   [ timeline hero: month axis · Train lane (P1 P2) · Score lane (S1 S2) · ONE caption ]
+ *   Train periods              one eyebrow line · one quiet line per period
+ *   Scoring periods            one eyebrow line · one quiet line per period
+ *   When the plant is running  one eyebrow line · one radio row · one-line conditions
+ *
+ * No right-hand preview column (the row count lives in the caption) and no
+ * callout boxes. Presentation only: every value and handler arrives through
+ * props, and nothing here writes anything.
  */
 
 type Operation = WorkspaceSensorFilter['operation'];
@@ -53,9 +58,19 @@ export function RunningConditionPills({ configured, noneConfirmed, conditionCoun
     );
 }
 
-interface RunningConditionPanelProps {
-    /** Workspace running condition (as drafted) is configured. */
+const MODES = [
+    ['condition', 'Only when running', 'keep rows that meet a condition'],
+    ['none', 'Use all rows', 'idle and shutdown time included'],
+] as const;
+
+export interface RunningConditionPanelProps {
+    /** `workspace` (default): the modal's draft. `custom`: one model's own
+     *  running condition — different test ids on the root and the sections,
+     *  "save" wording, and the footnote at the end. */
+    scope?: 'workspace' | 'custom';
+    /** The running condition (as drafted) is configured. */
     configured: boolean;
+    /** TRAIN periods. */
     periods: TimePeriod[];
     onPeriodsChange: (next: TimePeriod[]) => void;
     bounds: PeriodBounds | null;
@@ -68,265 +83,228 @@ interface RunningConditionPanelProps {
     onUpdateFilter: (id: string, patch: Partial<WorkspaceSensorFilter>) => void;
     onRemoveFilter: (id: string) => void;
     sensors: string[];
-    getDesc: (tag: string) => string;
     getComponent: (tag: string) => string;
     getUnit: (tag: string) => string;
-    /** Row count of what Apply would commit (the draft). */
-    preview: RowCountPreview;
-    /** Scoring periods (draft) — the time the trained model gives a health score
-     *  for; never trained on. */
+    /** Per-period running-row counts of what is on screen (`usePeriodCounts`).
+     *  Omitted = calendar days only. */
+    counts?: PeriodCountsState;
+    /** SCORING periods — the time the trained model gives a health score for;
+     *  never trained on. */
     testPeriods: TestPeriod[];
     onTestPeriodsChange: (next: TestPeriod[]) => void;
     /** The workspace's Dashboard time highlights — only for the TRAIN-period
-     *  overlap warning ("Remove the overlap"). */
+     *  overlap line ("Remove the overlap"). */
     highlights: TimeHighlight[];
 }
 
 export default function RunningConditionPanel({
-    configured, periods, onPeriodsChange, bounds, filters, combine, noneConfirmed,
-    onNoneChange, onCombineChange, onAddFilter, onUpdateFilter, onRemoveFilter, sensors, getDesc, getComponent, getUnit,
-    preview, testPeriods, onTestPeriodsChange, highlights,
+    scope = 'workspace', configured, periods, onPeriodsChange, bounds, filters, combine, noneConfirmed,
+    onNoneChange, onCombineChange, onAddFilter, onUpdateFilter, onRemoveFilter, sensors, getComponent, getUnit,
+    counts = PERIOD_COUNTS_IDLE, testPeriods, onTestPeriodsChange, highlights,
 }: RunningConditionPanelProps) {
-    const status = validatePeriods(periods);
-    const firstBad = status.findIndex(s => s.invalid);
-    const validCount = status.filter(s => !s.invalid).length;
+    const custom = scope === 'custom';
+    const validCount = validatePeriods(periods).filter(s => !s.invalid).length;
     const headers = sensors.length ? sensors : null;
-    const label = (tag: string) => getDesc(tag) || tag;
+    // Test ids of the two uses differ, so both can be on screen at once (the
+    // workspace modal over a Custom model's open settings).
+    const id = (workspace: string, own: string) => (custom ? own : workspace);
 
-    // No train period = nothing to train on (rule 1): never show a whole-dataset count.
-    const noTrain = periods.length === 0;
-    const hasCount = !noTrain && preview.used !== null && preview.total !== null && (preview.status === 'ok' || preview.status === 'loading');
-    const pct = hasCount && preview.total ? Math.min(100, ((preview.used ?? 0) / preview.total) * 100) : 0;
-    // Recommended train running time (rule 12 — amber only, never a block),
-    // estimated from the draft's row count until Rust has the exact figure.
-    const trainDays = hasCount && preview.status === 'ok' ? estimateRunningDays(preview.used, preview.total, bounds) : null;
-    const daysWarning = trainDaysWarning(trainDays);
+    const setMode = (none: boolean) => { if (none !== noneConfirmed) onNoneChange(none); };
+    /** A radio row: the arrow keys move the choice, like a native radio group. */
+    const onModeKey = (e: KeyboardEvent<HTMLDivElement>) => {
+        if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) return;
+        e.preventDefault();
+        const next = !noneConfirmed;
+        setMode(next);
+        const el = e.currentTarget.querySelector<HTMLElement>(`[data-mode="${next ? 'none' : 'condition'}"]`);
+        el?.focus();
+    };
 
     return (
-        <div data-testid="rc-panel" className="rcm-body">
-            <div className="rcm-form">
-                <section className="rcm-step" data-testid="rc-periods">
-                    <div className="rcm-step-h">
-                        <span className="rcm-num">1</span>
-                        <b>Which time</b>
-                        <span className="rcm-q">Train periods teach the model what normal looks like · scoring periods are the time it gives a health score for</span>
-                    </div>
-                    <div className="tpe-sub" data-testid="rc-train-head">
-                        <i className="tpe-sw tpe-sw--tr" aria-hidden="true" /><b>Train periods</b><span>required · at least one · a row inside any period is used</span>
-                    </div>
-                    <div className="tpe-callout" data-testid="rc-train-callout">
-                        <b>Pick only times when the machine was healthy and running normally.</b> The model learns these rows as “normal” — a period with a problem in it teaches the model that the problem is normal, and the health score will miss it later.
-                    </div>
-                    <TimePeriodsEditor periods={periods} onChange={onPeriodsChange} bounds={bounds} tests={testPeriods} />
-                    <TrainHighlightWarnings periods={periods} highlights={highlights} onPeriodsChange={onPeriodsChange} />
+        <div data-testid={id('rc-panel', 'custom-rc-panel')} className={`rcm-body${custom ? ' rcm-body--own' : ''}`}>
+            <RunningConditionTimeline periods={periods} tests={testPeriods} bounds={bounds} counts={counts} />
 
-                    <div className="tpe-sub tpe-sub--te" data-testid="rc-test-head">
-                        <i className="tpe-sw tpe-sw--te" aria-hidden="true" /><b>Scoring periods</b><span>the trained model gives a health score for this time — you read it on the score chart · needed before Mark complete · may include train time</span>
-                    </div>
-                    <TestPeriodsEditor
-                        tests={testPeriods}
-                        train={periods}
-                        onChange={onTestPeriodsChange}
-                        bounds={bounds}
-                    />
-                </section>
-
-                <section className="rcm-step" data-testid="rc-condition">
-                    <div className="rcm-step-h">
-                        <span className="rcm-num">2</span>
-                        <b>When the plant is running</b>
-                        <span className="rcm-q">required to build a model</span>
-                    </div>
-
-                    {/* Value conditions vs. an explicit "No condition" — exactly one is
-                        active; a running condition is REQUIRED before any model can be
-                        built (soft gate A). "Use all rows" clears nothing stored, it
-                        just stops the saved conditions applying. */}
-                    <div role="group" aria-label="Condition mode" className="rcm-mode">
-                        {([
-                            ['condition', 'Only when running', 'Keep rows that meet a condition, e.g. power above a level'],
-                            ['none', 'Use all rows', 'No condition — idle and shutdown time included'],
-                        ] as const).map(([mode, title, hint]) => {
-                            const active = (mode === 'none') === noneConfirmed;
-                            return (
-                                <button
-                                    key={mode}
-                                    type="button"
-                                    data-testid={`rc-mode-${mode}`}
-                                    className={`rcm-mcard${active ? ' rcm-mcard--on' : ''}`}
-                                    aria-pressed={active}
-                                    onClick={() => { if ((mode === 'none') !== noneConfirmed) onNoneChange(mode === 'none'); }}
-                                >
-                                    <span className="rcm-rd" aria-hidden="true" />
-                                    <span><b>{title}</b><small>{hint}</small></span>
-                                </button>
-                            );
-                        })}
-                    </div>
-
-                    {noneConfirmed ? (
-                        <div data-testid="rc-none-note" className="rcm-none">
-                            <span>
-                                <b>Every row inside the training periods is used</b>, idle time included.{' '}
-                                {validCount > 0
-                                    ? `The ${validCount} train period${validCount > 1 ? 's' : ''} above still limit${validCount > 1 ? '' : 's'} the time.`
-                                    : 'There is no train period yet — add one above.'}
-                                {filters.length > 0 && ' Your saved conditions are kept but not applied.'}
-                            </span>
-                        </div>
-                    ) : (
-                        <>
-                            <div className="rcm-conds">
-                                {filters.length === 0 && (
-                                    <div className="rcm-none" data-testid="rc-no-conditions">
-                                        <span>Add a condition that tells running from idle — for example <b>active power &gt; a level</b>.</span>
-                                    </div>
-                                )}
-                                {filters.map((f, i) => {
-                                    const incomplete = !isCompleteCondition(f, headers);
-                                    const unit = getUnit(f.sensor);
-                                    return (
-                                        <Fragment key={f.id}>
-                                            {i > 0 && (
-                                                <div className="rcm-join">
-                                                    <button
-                                                        type="button"
-                                                        className="rcm-joinbtn"
-                                                        data-testid="rc-combine"
-                                                        title="Switch between AND / OR"
-                                                        aria-label={`Conditions are combined with ${combine.toUpperCase()} — click to switch to ${combine === 'and' ? 'OR' : 'AND'}`}
-                                                        onClick={() => onCombineChange(combine === 'and' ? 'or' : 'and')}
-                                                    >
-                                                        {combine.toUpperCase()}
-                                                    </button>
-                                                    <small data-testid="rc-combine-caption">{combine === 'and' ? 'both must be true' : 'either one is enough'}</small>
-                                                </div>
-                                            )}
-                                            <div className={`rcm-cond${f.operation === 'between' ? ' rcm-cond--between' : ''}${incomplete ? ' rcm-cond--incomplete' : ''}`} data-testid={`rc-cond-${i + 1}`}>
-                                                <div className="rcm-cond-s">
-                                                    <SensorPickerModal
-                                                        sensors={sensors}
-                                                        getComponent={getComponent}
-                                                        single
-                                                        value={f.sensor}
-                                                        onSelect={sensor => onUpdateFilter(f.id, { sensor })}
-                                                        noun="sensor"
-                                                    />
-                                                    {/* Customer item 3: the component is a small outlined chip after the
-                                                        picker (it drops under it in rows narrower than ~480 px). */}
-                                                    {getComponent(f.sensor) && <span className="comp-chip rcm-comp-chip">{getComponent(f.sensor)}</span>}
-                                                </div>
-                                                <div role="group" aria-label="Condition operator" className="rcm-ops">
-                                                    {OPERATORS.map(o => (
-                                                        <button
-                                                            key={o.op}
-                                                            type="button"
-                                                            className={f.operation === o.op ? 'on' : undefined}
-                                                            aria-pressed={f.operation === o.op}
-                                                            aria-label={o.label}
-                                                            title={o.label}
-                                                            onClick={() => { if (f.operation !== o.op) onUpdateFilter(f.id, { operation: o.op }); }}
-                                                        >
-                                                            {o.glyph}
-                                                        </button>
-                                                    ))}
-                                                </div>
-                                                <div className="rcm-vals">
-                                                    <label className={`rcm-val${!(f.value1 ?? '').trim() ? ' rcm-val--empty' : ''}`}>
-                                                        <input
-                                                            type="number"
-                                                            value={f.value1}
-                                                            aria-label={f.operation === 'between' ? 'Minimum value' : 'Value'}
-                                                            placeholder={f.operation === 'between' ? 'min' : 'value'}
-                                                            onChange={e => onUpdateFilter(f.id, { value1: e.target.value })}
-                                                        />
-                                                        {f.operation !== 'between' && unit && <span>{unit}</span>}
-                                                    </label>
-                                                    {f.operation === 'between' && (
-                                                        <>
-                                                            <span className="rcm-dash" aria-hidden="true">–</span>
-                                                            <label className={`rcm-val${!(f.value2 ?? '').trim() ? ' rcm-val--empty' : ''}`}>
-                                                                <input
-                                                                    type="number"
-                                                                    value={f.value2}
-                                                                    aria-label="Maximum value"
-                                                                    placeholder="max"
-                                                                    onChange={e => onUpdateFilter(f.id, { value2: e.target.value })}
-                                                                />
-                                                                {unit && <span>{unit}</span>}
-                                                            </label>
-                                                        </>
-                                                    )}
-                                                </div>
-                                                <button type="button" className="rcm-ib" onClick={() => onRemoveFilter(f.id)} title="Remove condition" aria-label="Remove condition">
-                                                    <X size={14} aria-hidden="true" />
-                                                </button>
-                                            </div>
-                                        </Fragment>
-                                    );
-                                })}
-                            </div>
-                            <button type="button" className="rcm-add" data-testid="rc-add-condition" onClick={onAddFilter} disabled={sensors.length === 0}>
-                                <Plus size={13} aria-hidden="true" />Add condition
-                            </button>
-                        </>
-                    )}
-                </section>
-            </div>
-
-            <aside className="rcm-preview" data-testid="rc-preview" aria-label="Data used for training">
-                <div className="rcm-pv-h">Data used for training <span className="tpe-pvsub">train periods only</span></div>
-                <div className="rcm-big" data-testid="rc-preview-count" aria-live="polite">
-                    {noTrain ? (
-                        <><b>0</b><span data-testid="rc-preview-no-train">rows — add a train period</span></>
-                    ) : hasCount ? (
-                        <>
-                            <b className={preview.status === 'loading' ? 'rcm-stale' : undefined}>{(preview.used ?? 0).toLocaleString()}</b>
-                            <span>of {(preview.total ?? 0).toLocaleString()} rows · {formatPercent(preview.used, preview.total)}</span>
-                        </>
-                    ) : preview.status === 'loading' ? (
-                        <span data-testid="rc-preview-loading">Counting rows…</span>
-                    ) : preview.status === 'error' ? (
-                        <span data-testid="rc-preview-error" className="rcm-pv-muted">Couldn't count the rows right now.</span>
-                    ) : (
-                        <span data-testid="rc-preview-idle" className="rcm-pv-muted">{firstBad >= 0 ? 'Fix the period to see the row count.' : '—'}</span>
-                    )}
+            <section className="rcx-sec" data-testid={id('rc-periods', 'custom-periods')}>
+                <div className="rcx-sec-h" data-testid="rc-train-head">
+                    <i className="tpe-sw tpe-sw--tr" aria-hidden="true" />
+                    <b>Train periods</b>
+                    <span>only healthy, normal running time — the model learns what normal looks like from it. At least one.</span>
                 </div>
-                <div className="rcm-meter" role="img" aria-label="Share of rows used"><span style={{ width: `${pct}%` }} /></div>
-                <RuleSentence
+                <TimePeriodsEditor
                     periods={periods}
-                    filters={filters}
-                    combine={combine}
-                    none={noneConfirmed}
-                    headers={headers}
-                    getLabel={label}
-                    getUnit={getUnit}
+                    onChange={onPeriodsChange}
+                    bounds={bounds}
+                    counts={counts}
+                    afterRows={<TrainHighlightWarnings periods={periods} highlights={highlights} onPeriodsChange={onPeriodsChange} />}
                 />
-                {testPeriods.length > 0 ? (
-                    <div className="tpe-pvtest" data-testid="rc-preview-tests">
-                        <span className="tpe-pvtest-l"><i className="tpe-sw tpe-sw--te" aria-hidden="true" />Scoring</span>
-                        <b>{testPeriods.length}</b>
-                        <span>period{testPeriods.length === 1 ? '' : 's'}</span>
+            </section>
+
+            <section className="rcx-sec" data-testid={id('rc-scoring', 'custom-test-periods')}>
+                <div className="rcx-sec-h" data-testid="rc-test-head">
+                    <i className="tpe-sw tpe-sw--te" aria-hidden="true" />
+                    <b>Scoring periods</b>
+                    <span>the trained model gives a health score for this time — you read it on the score chart. Needed before Mark complete; may include train time.</span>
+                </div>
+                <TestPeriodsEditor
+                    tests={testPeriods}
+                    train={periods}
+                    onChange={onTestPeriodsChange}
+                    bounds={bounds}
+                    blocks={custom ? 'save' : 'apply'}
+                    counts={counts}
+                />
+            </section>
+
+            <section className="rcx-sec" data-testid={id('rc-condition', 'custom-condition')}>
+                <div className="rcx-sec-h">
+                    <b>When the plant is running</b>
+                    <span>rows outside the condition are not used for training or scoring. Required.</span>
+                </div>
+
+                {/* Value conditions vs. an explicit "Use all rows" — exactly one is
+                    active; a running condition is REQUIRED before any model can
+                    train. "Use all rows" clears nothing stored, it just stops the
+                    saved conditions applying. */}
+                <div role="radiogroup" aria-label="Condition mode" className="rcx-mode" onKeyDown={onModeKey}>
+                    {MODES.map(([mode, title, hint]) => {
+                        const active = (mode === 'none') === noneConfirmed;
+                        return (
+                            <button
+                                key={mode}
+                                type="button"
+                                role="radio"
+                                data-testid={`rc-mode-${mode}`}
+                                data-mode={mode}
+                                className={`rcx-radio${active ? ' rcx-radio--on' : ''}`}
+                                aria-checked={active}
+                                tabIndex={active ? 0 : -1}
+                                onClick={() => setMode(mode === 'none')}
+                            >
+                                <span className="rcm-rd" aria-hidden="true" />
+                                <b>{title}</b>
+                                <small>· {hint}</small>
+                            </button>
+                        );
+                    })}
+                </div>
+
+                {noneConfirmed ? (
+                    <div data-testid="rc-none-note" className="rcx-line">
+                        Every row inside the train periods is used, idle time included.{' '}
+                        {validCount > 0
+                            ? `The ${validCount} train period${validCount > 1 ? 's' : ''} above still limit${validCount > 1 ? '' : 's'} the time.`
+                            : 'There is no train period yet — add one above.'}
+                        {filters.length > 0 && ' Your saved conditions are kept but not applied.'}
                     </div>
                 ) : (
-                    <div className="tpe-pvtest tpe-pvtest--none" data-testid="rc-preview-tests">
-                        No scoring period yet — you can train, but Mark complete needs one.
-                    </div>
-                )}
-                <div className={`tpe-min${daysWarning ? ' tpe-min--warn' : ''}`} data-testid="rc-min-data">
-                    {daysWarning ?? `At least ${RECOMMENDED_TRAIN_DAYS} d of train running time is recommended${trainDays !== null ? ` (about ${Math.round(trainDays)} d now)` : ''}.`}
-                </div>
-                {firstBad >= 0 && (
-                    <div data-testid="rc-invalid-reason" className="rcm-warn rcm-warn--bad">
-                        ⚠ {status[firstBad].reason ?? `Period ${firstBad + 1} is invalid.`} Models that follow this setting can't be built until it's fixed.
-                    </div>
+                    <>
+                        <div className="rcm-conds">
+                            {filters.length === 0 && (
+                                <div className="rcx-line" data-testid="rc-no-conditions">
+                                    Add a condition that tells running from idle — for example <b>active power &gt; a level</b>.
+                                </div>
+                            )}
+                            {filters.map((f, i) => {
+                                const incomplete = !isCompleteCondition(f, headers);
+                                const unit = getUnit(f.sensor);
+                                return (
+                                    <Fragment key={f.id}>
+                                        {i > 0 && (
+                                            <div className="rcm-join">
+                                                <button
+                                                    type="button"
+                                                    className="rcm-joinbtn"
+                                                    data-testid="rc-combine"
+                                                    title="Switch between AND / OR"
+                                                    aria-label={`Conditions are combined with ${combine.toUpperCase()} — click to switch to ${combine === 'and' ? 'OR' : 'AND'}`}
+                                                    onClick={() => onCombineChange(combine === 'and' ? 'or' : 'and')}
+                                                >
+                                                    {combine.toUpperCase()}
+                                                </button>
+                                                <small data-testid="rc-combine-caption">{combine === 'and' ? 'both must be true' : 'either one is enough'}</small>
+                                            </div>
+                                        )}
+                                        {/* ONE line: [sensor] [> < ↔ =] [value unit] [✕]. No component chip
+                                            (the picker's rows show the component); the sensor trigger is
+                                            capped (~360 px) so the value input never clips. */}
+                                        <div
+                                            className={`rcm-cond${f.operation === 'between' ? ' rcm-cond--between' : ''}${incomplete ? ' rcm-cond--incomplete' : ''}`}
+                                            data-testid={`rc-cond-${i + 1}`}
+                                            data-incomplete={incomplete ? 'true' : undefined}
+                                        >
+                                            <div className="rcm-cond-s">
+                                                <SensorPickerModal
+                                                    sensors={sensors}
+                                                    getComponent={getComponent}
+                                                    single
+                                                    value={f.sensor}
+                                                    onSelect={sensor => onUpdateFilter(f.id, { sensor })}
+                                                    noun="sensor"
+                                                />
+                                            </div>
+                                            <div role="group" aria-label="Condition operator" className="rcm-ops">
+                                                {OPERATORS.map(o => (
+                                                    <button
+                                                        key={o.op}
+                                                        type="button"
+                                                        className={f.operation === o.op ? 'on' : undefined}
+                                                        aria-pressed={f.operation === o.op}
+                                                        aria-label={o.label}
+                                                        title={o.label}
+                                                        onClick={() => { if (f.operation !== o.op) onUpdateFilter(f.id, { operation: o.op }); }}
+                                                    >
+                                                        {o.glyph}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                            <div className="rcm-vals">
+                                                <label className={`rcm-val${!(f.value1 ?? '').trim() ? ' rcm-val--empty' : ''}`}>
+                                                    <input
+                                                        type="number"
+                                                        value={f.value1}
+                                                        aria-label={f.operation === 'between' ? 'Minimum value' : 'Value'}
+                                                        placeholder={f.operation === 'between' ? 'min' : 'value'}
+                                                        onChange={e => onUpdateFilter(f.id, { value1: e.target.value })}
+                                                    />
+                                                    {f.operation !== 'between' && unit && <span>{unit}</span>}
+                                                </label>
+                                                {f.operation === 'between' && (
+                                                    <>
+                                                        <span className="rcm-dash" aria-hidden="true">–</span>
+                                                        <label className={`rcm-val${!(f.value2 ?? '').trim() ? ' rcm-val--empty' : ''}`}>
+                                                            <input
+                                                                type="number"
+                                                                value={f.value2}
+                                                                aria-label="Maximum value"
+                                                                placeholder="max"
+                                                                onChange={e => onUpdateFilter(f.id, { value2: e.target.value })}
+                                                            />
+                                                            {unit && <span>{unit}</span>}
+                                                        </label>
+                                                    </>
+                                                )}
+                                            </div>
+                                            <button type="button" className="rcm-ib" onClick={() => onRemoveFilter(f.id)} title="Remove condition" aria-label="Remove condition">
+                                                <X size={14} aria-hidden="true" />
+                                            </button>
+                                        </div>
+                                    </Fragment>
+                                );
+                            })}
+                        </div>
+                        <button type="button" className="rcm-add" data-testid="rc-add-condition" onClick={onAddFilter} disabled={sensors.length === 0}>
+                            <Plus size={13} aria-hidden="true" />Add condition
+                        </button>
+                    </>
                 )}
                 {!configured && (
-                    <div data-testid="rc-unset-warning" className="rcm-warn">
-                        Choose “Only when running” with a condition, or “Use all rows”, before building a model.
+                    <div data-testid="rc-unset-warning" className="rcx-line rcx-line--warn">
+                        Choose “Only when running” with a condition, or “Use all rows”, before training a model.
                     </div>
                 )}
-            </aside>
+            </section>
+
+            {custom && <div className="rcx-footnote" data-testid="custom-rc-footnote">{CUSTOM_PANEL_FOOTNOTE}</div>}
         </div>
     );
 }

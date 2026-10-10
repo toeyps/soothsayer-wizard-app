@@ -1,7 +1,10 @@
 import { useEffect, useState } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 import type { TestPeriod, TimePeriod } from '../../types';
+import { PERIOD_COUNTS_IDLE, scoringRowModels, type PeriodCountsState } from '../../utils/periodCounts';
+import { noScoringPeriodNote } from '../../utils/runningCondition';
 import {
+    faultSide,
     newPeriodId,
     periodsOverlap,
     sortPeriods,
@@ -11,14 +14,13 @@ import {
     trainOverlapDays,
     validateTestPeriods,
 } from '../../utils/timePeriods';
-import { periodDays } from './periodDisplay';
 import type { PeriodBounds } from './TimePeriodsEditor';
 
 /*
  * The "Scoring periods" list ("test periods" until 2026-10-10 — the file, the
  * component and the test ids keep that name, like the storage keys do). Used by
  * the Running condition modal (workspace default) and by a Custom model's own
- * Model settings (`compact`).
+ * panel in Model settings — the same rows in both.
  *
  * "Just score it" (user decision 2026-10-09, SPEC
  * docs/design/handoff/workbench-redesign/README.md §2): a scoring period is
@@ -26,9 +28,12 @@ import type { PeriodBounds } from './TimePeriodsEditor';
  * the user reads the chart — there is no Normal / Known problem label, no event
  * time, no verdict and no "From Highlights" here any more.
  *
- * One row per period: S# · start → end · days · remove. A scoring period MAY
- * overlap the train periods: one quiet grey note says how many days of train
- * time it includes — never a block.
+ * One quiet line per period: S# · start → end · "35 d · 30 d running" · remove
+ * (the running days are Rust's per-period count, `counts`; while a new count is
+ * on its way the previous number stays, dimmed). A scoring period MAY overlap
+ * the train periods: one small grey line under the row says how many days of
+ * train time it includes — never a block. An invalid period gets a thin red
+ * left edge, a red date field and ONE reason line ("S1 needs an end date").
  *
  * Old workspaces: a period saved before 2026-10-10 may still carry `label` /
  * `eventTime` / `fromHighlight`. They are never shown, and every period this
@@ -86,8 +91,8 @@ const sortScoring = (list: TestPeriod[]): TestPeriod[] => toScoringPeriods(sortP
 function overlapNote(train: TimePeriod[], t: TestPeriod, i: number, bounds: { min: string; max: string } | null): string | null {
     if (!train.some(p => periodsOverlap(p, t))) return null;
     const days = trainOverlapDays(train, t, bounds);
-    if (days >= 1) return `${testIncludesTrainNote(i, days)}.`;
-    return `S${i + 1} includes less than 1 d of train running time — results include rows the model was trained on.`;
+    if (days >= 1) return testIncludesTrainNote(i, days);
+    return `S${i + 1} includes less than 1 d of train running time — results include rows the model was trained on`;
 }
 
 export interface TestPeriodsEditorProps {
@@ -99,15 +104,16 @@ export interface TestPeriodsEditorProps {
     onChange: (next: TestPeriod[]) => void;
     /** True dataset extent (`useDatasetTimeBounds`): defaults, min/max, day counts. */
     bounds?: PeriodBounds | null;
-    /** Narrow variant for a Custom model's Model settings. */
-    compact?: boolean;
-    /** What an invalid row blocks, for its message ("Fix it to apply" in the
-     *  Running condition modal, "Fix it to save" in a Custom model's settings,
-     *  where it blocks Save changes). Default `'apply'`. */
+    /** What the surrounding form does, for the empty note ("you can train and
+     *  apply now" in the Running-condition settings, "… and save now" in a
+     *  Custom model's own panel). Default `'apply'`. */
     blocks?: 'apply' | 'save';
+    /** Per-period running-row counts of the list (`usePeriodCounts`). Omitted =
+     *  the rows show their calendar days only. */
+    counts?: PeriodCountsState;
 }
 
-export default function TestPeriodsEditor({ tests, train, onChange, bounds, compact = false, blocks = 'apply' }: TestPeriodsEditorProps) {
+export default function TestPeriodsEditor({ tests, train, onChange, bounds, blocks = 'apply', counts = PERIOD_COUNTS_IDLE }: TestPeriodsEditorProps) {
     // The draft and the change check both work on the start / end only form, so a
     // legacy label on the incoming periods is neither drawn nor read as a change.
     const propsKey = JSON.stringify(toScoringPeriods(tests));
@@ -118,6 +124,7 @@ export default function TestPeriodsEditor({ tests, train, onChange, bounds, comp
     const maxAttr = toInputValue(bounds?.max) || undefined;
     const boundsForDays = minAttr && maxAttr ? { min: minAttr, max: maxAttr } : null;
     const statuses = validateTestPeriods(draft);
+    const rows = scoringRowModels(draft, boundsForDays, counts);
 
     const commit = (list: TestPeriod[]) => {
         const sorted = sortScoring(list);
@@ -133,6 +140,7 @@ export default function TestPeriodsEditor({ tests, train, onChange, bounds, comp
             <input
                 type="datetime-local"
                 aria-label={label}
+                aria-invalid={bad || undefined}
                 value={toInputValue(draft[i][which])}
                 min={minAttr}
                 max={maxAttr}
@@ -144,34 +152,38 @@ export default function TestPeriodsEditor({ tests, train, onChange, bounds, comp
     );
 
     return (
-        <div className={`tpe-periods${compact ? ' tpe-periods--compact' : ''}`} data-testid="test-periods-editor">
+        <div className="tpe-periods" data-testid="test-periods-editor">
             {draft.length === 0 && (
-                <div className="rcm-none rcm-none--warn" data-testid="tests-empty">
-                    <span><b>No scoring period yet.</b> You can train, but every model needs a scoring period before Mark complete.</span>
-                </div>
+                <div className="rcx-line" data-testid="tests-empty">{noScoringPeriodNote(blocks)}</div>
             )}
             {draft.map((t, i) => {
                 const n = i + 1;
                 const st = statuses[i];
-                const days = st.invalid ? null : periodDays(t, boundsForDays);
+                const row = rows[i];
                 const note = st.invalid ? null : overlapNote(train, t, i, boundsForDays);
-                const reversed = st.invalid && (st.reason ?? '').includes('ends before');
+                // The date field the fault is about goes red.
+                const badSide = st.invalid && st.fault ? faultSide(st.fault) : null;
                 return (
-                    <div key={t.id} className={`rcm-per tpe-per${st.invalid ? ' rcm-per--bad' : ''}`} data-testid={`test-row-${n}`}>
+                    <div key={t.id} className={`rcm-per${st.invalid ? ' rcm-per--bad' : ''}`} data-testid={`test-row-${n}`} data-invalid={st.invalid ? 'true' : undefined}>
                         <span className="rcm-pn tpe-pn">S{n}</span>
-                        {dateInput(i, 'start', `Scoring period ${n} start`)}
-                        <span className="rcm-arrow">→</span>
-                        <div className="f4-dt-end">{dateInput(i, 'end', `Scoring period ${n} end`, reversed)}</div>
-                        <span className="rcm-dur" data-testid={`test-days-${n}`}>{days === null ? '—' : `${days} d`}</span>
+                        {dateInput(i, 'start', `Scoring period ${n} start`, badSide === 'start')}
+                        <span className="rcm-arrow" aria-hidden="true">→</span>
+                        <div className="f4-dt-end">{dateInput(i, 'end', `Scoring period ${n} end`, badSide === 'end')}</div>
+                        <span className="rcm-dur" data-testid={`test-days-${n}`}>
+                            {row.daysText}
+                            {row.runningText && (
+                                <span className={`rcm-run${row.stale ? ' rct-stale' : ''}`} data-testid={`test-running-${n}`} data-stale={row.stale ? 'true' : undefined}> · {row.runningText}</span>
+                            )}
+                        </span>
                         <button type="button" className="rcm-ib" aria-label={`Remove scoring period ${n}`} title="Remove scoring period" onClick={() => commit(draft.filter((_, j) => j !== i))}>
                             <Trash2 size={14} aria-hidden="true" />
                         </button>
                         {st.invalid && (
                             <div role="alert" className="rcm-permsg rcm-permsg--bad" data-testid={`test-invalid-${n}`}>
-                                {st.reason} Fix it to {blocks}.
+                                {st.rowReason ?? st.reason ?? `S${n} is not valid`}
                             </div>
                         )}
-                        {note && <div className="tpe-info" data-testid={`test-overlap-${n}`}>{note}</div>}
+                        {note && <div className="rcm-permsg" data-testid={`test-overlap-${n}`}>{note}</div>}
                     </div>
                 );
             })}

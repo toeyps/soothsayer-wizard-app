@@ -259,8 +259,31 @@ function defaultInvoke(cmd: string, args?: any): Promise<unknown> {
         });
     }
     if (cmd === 'compute_health_preview') return Promise.resolve(makeHealthPreview(args?.request));
+    if (cmd === 'count_period_rows') return Promise.resolve(fakePeriodCounts(args));
     return Promise.resolve({});
 }
+/** `count_period_rows` stand-in (the Running-condition settings' per-period counts): every period
+ *  holds 1,000 rows; with a condition 800 of them are running (20 d), without one all are (25 d).
+ *  The dataset has 5,000 rows. */
+function fakePeriodCounts(args: any) {
+    const cond = !!args?.filter;
+    const periods = ((args?.periods ?? []) as { start?: string | null; end?: string | null }[]).map((p, i) => ({
+        index: i, start: p.start ?? null, end: p.end ?? null, valid: true, invalid_reason: null,
+        rows_in_period: 1000, running_rows: cond ? 800 : 1000, running_days: cond ? 20 : 25,
+    }));
+    return {
+        total_rows: 5000,
+        interval_secs: 300,
+        periods,
+        union: {
+            rows_in_period: 1000 * periods.length,
+            running_rows: periods.reduce((s, p) => s + p.running_rows, 0),
+            running_days: periods.reduce((s, p) => s + p.running_days, 0),
+        },
+    };
+}
+/** The `count_period_rows` calls so far: `[periods, filter]` per call. */
+const periodCountCalls = () => mockInvoke.mock.calls.filter(c => c[0] === 'count_period_rows').map(c => c[1] as { periods: { start: string | null; end: string | null }[]; filter: unknown; expected_generation: unknown });
 const healthCalls = () => mockInvoke.mock.calls.filter(c => c[0] === 'compute_health_preview').map(c => (c[1] as any).request);
 /** A Relation model whose preview keeps answering NOT_FITTED: the window re-fits it silently ONCE and
  *  only then settles on the "Fit no longer in memory" state. Waits until that board is on screen and
@@ -1265,7 +1288,7 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
     });
 
     describe('running-condition gate (Feature 4-B, unchanged logic)', () => {
-        const REASON = 'Set a running condition first, or choose "No condition — use all rows".';
+        const REASON = 'Set the running condition first — a condition, or Use all rows';
         const cond = [{ id: 'rcf1', sensor: 'TAG1', operation: 'greater_than', value1: '1200', value2: '' }];
         async function deliverGate(models: any[], extra: Record<string, any> = {}) {
             let disk: any = { id: 'ws1', failureGroupState: { groups: [makeGroup()], models, runningConditionNoneConfirmed: false, rcLegacyNotice: null, ...extra } };
@@ -1280,8 +1303,7 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             await deliverGate([makeModel()]);
             const train = trainButton();
             expect(train.disabled).toBe(true);
-            // (the shared constant still ends "(Step 1)"; nothing on screen may say it)
-            expect(TRAIN_NEEDS_RUNNING_CONDITION).toContain('Set the running condition first');
+            expect(TRAIN_NEEDS_RUNNING_CONDITION).toBe('Set the running condition first.');
             expect(train.title).toBe('Set the running condition first.');
             expect(trainSensorWhy()).toBe('Set the running condition first.');
             expect(screen.getByTestId('build-block-reason').textContent).toBe(REASON);
@@ -1393,7 +1415,7 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             expect(screen.queryByTestId('rc-blocked-summary')).toBeNull();
             expect(document.body.textContent).not.toMatch(/can't be built yet/);
             expect(screen.getByTestId('rc-card').getAttribute('data-state')).toBe('unset');
-            expect(screen.getByTestId('build-block-reason').textContent).toMatch(/Set a running condition first/);
+            expect(screen.getByTestId('build-block-reason').textContent).toMatch(/Set the running condition first/);
             cleanup();
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: { groups: [makeGroup()], models: [makeModel()], runningConditionNoneConfirmed: true } });
@@ -1658,7 +1680,7 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
                     runningConditionTimePeriods: [seededPeriod],
                 });
                 fireEvent.click(screen.getByTestId('rc-card-open'));
-                const endField = screen.getByLabelText('Period 1 end') as HTMLInputElement;
+                const endField = screen.getByLabelText('P1 end') as HTMLInputElement;
                 // A real user's mouse click moves focus to the field first —
                 // reproduce that (fireEvent.change alone does not) — then type,
                 // WITHOUT ever separately blurring/pressing Enter before the
@@ -1679,14 +1701,14 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
                 expect(screen.queryByRole('dialog', { name: 'Running condition' })).toBeNull();
 
                 fireEvent.click(screen.getByTestId('rc-card-open'));
-                expect((screen.getByLabelText('Period 1 end') as HTMLInputElement).value).toBe('2024-02-15T12:00');
+                expect((screen.getByLabelText('P1 end') as HTMLInputElement).value).toBe('2024-02-15T12:00');
             });
 
             it('(b) closing via X right after typing (no blur) commits the typed date into the draft, so the discard prompt appears instead of silently dropping it', async () => {
                 render(<BuildModelWindow />);
                 await deliverWithPeriod();
                 fireEvent.click(screen.getByTestId('rc-card-open'));
-                const endField = screen.getByLabelText('Period 1 end') as HTMLInputElement;
+                const endField = screen.getByLabelText('P1 end') as HTMLInputElement;
                 endField.focus();
                 fireEvent.change(endField, { target: { value: '2024-02-15T12:00' } });
 
@@ -1695,7 +1717,7 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
                 expect(screen.getByRole('dialog', { name: 'Running condition' })).toBeTruthy();
                 // "Keep editing" returns to the draft with the typed value intact.
                 fireEvent.click(screen.getByTestId('rc-discard-keep'));
-                expect((screen.getByLabelText('Period 1 end') as HTMLInputElement).value).toBe('2024-02-15T12:00');
+                expect((screen.getByLabelText('P1 end') as HTMLInputElement).value).toBe('2024-02-15T12:00');
                 expect(mockUpdateWorkspaceData).not.toHaveBeenCalled();
             });
 
@@ -1703,7 +1725,7 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
                 render(<BuildModelWindow />);
                 await deliverWithPeriod();
                 fireEvent.click(screen.getByTestId('rc-card-open'));
-                const endField = screen.getByLabelText('Period 1 end') as HTMLInputElement;
+                const endField = screen.getByLabelText('P1 end') as HTMLInputElement;
                 endField.focus();
                 fireEvent.change(endField, { target: { value: '2024-02-15T12:00' } });
 
@@ -1794,10 +1816,11 @@ describe('Custom running-condition editor (2026-09-30 port)', () => {
         expect(screen.getByTestId('custom-rc-editor')).toBeTruthy();
         // The workspace SCORING periods are copied too (seedCustomFromWorkspace).
         expect(screen.getByTestId('pm-seed-note').textContent).toMatch(/Copied 1 train period, 1 scoring period and 1 condition from Workspace/);
-        expect((screen.getByPlaceholderText('val') as HTMLInputElement).value).toBe('5');
+        const ownValue = () => within(screen.getByTestId('custom-condition')).getByLabelText('Value') as HTMLInputElement;
+        expect(ownValue().value).toBe('5');
         expect(within(screen.getByTestId('custom-test-periods')).getByTestId('test-row-1')).toBeTruthy();
 
-        fireEvent.change(screen.getByPlaceholderText('val'), { target: { value: '9' } });
+        fireEvent.change(ownValue(), { target: { value: '9' } });
         await act(async () => {
             fireEvent.click(screen.getByText('Save changes'));
             await Promise.resolve(); await Promise.resolve();
@@ -1826,30 +1849,132 @@ describe('Custom running-condition editor (2026-09-30 port)', () => {
         // Workspace never discarded it) and, because the draft's own custom
         // list is no longer empty, this second switch does not re-seed (no
         // note this time).
-        expect((screen.getByPlaceholderText('val') as HTMLInputElement).value).toBe('5');
+        expect((within(screen.getByTestId('custom-condition')).getByLabelText('Value') as HTMLInputElement).value).toBe('5');
         expect(screen.queryByTestId('pm-seed-note')).toBeNull();
     });
 
-    it('"No condition — use all rows", the AND/OR toggle, and the collapsed summary line ("Custom · N cond · M periods")', async () => {
+    it('"Use all rows", the AND/OR pill, and the collapsed summary line ("Custom · 2 conditions · 0 train · 0 scoring")', async () => {
         render(<BuildModelWindow />);
         // no workspace conditions/periods (train or scoring) set — nothing to seed
         await deliverData({ failureGroupState: { groups: [makeGroup()], models: [makeModel()], runningConditionTimePeriods: [], runningConditionTestPeriods: [] } });
         openSettings();
         fireEvent.click(screen.getByRole('button', { name: 'Custom' }));
         expect(screen.queryByTestId('pm-seed-note')).toBeNull();
+        const own = () => within(screen.getByTestId('custom-condition'));
 
-        fireEvent.click(screen.getByText('+ Add condition'));
-        fireEvent.click(screen.getByText('+ Add condition'));
-        const orBtn = screen.getByRole('button', { name: 'OR' });
-        fireEvent.click(orBtn);
-        expect(orBtn.className).toBe('on');
+        fireEvent.click(own().getByTestId('rc-add-condition'));
+        fireEvent.click(own().getByTestId('rc-add-condition'));
+        expect(own().getByTestId('rc-combine').textContent).toBe('AND');
+        fireEvent.click(own().getByTestId('rc-combine'));
+        expect(own().getByTestId('rc-combine').textContent).toBe('OR');
 
-        fireEvent.click(screen.getByText('No condition — use all rows'));
-        expect(screen.getByText('✓ No condition — all rows')).toBeTruthy();
-
-        // Collapse "Model settings" back and check the summary line.
+        // Collapse "Model settings" and check the summary line, then open it again.
         fireEvent.click(screen.getByText('Model settings', { selector: 'b' }));
-        expect(screen.getByText(/Custom · no cond · 0 train · 0 scoring/)).toBeTruthy();
+        expect(screen.getByText(/Custom · 2 conditions · 0 train · 0 scoring/)).toBeTruthy();
+        fireEvent.click(screen.getByText('Model settings', { selector: 'b' }));
+
+        fireEvent.click(own().getByTestId('rc-mode-none'));
+        expect(own().getByTestId('rc-mode-none').getAttribute('aria-checked')).toBe('true');
+        expect(own().getByTestId('rc-none-note').textContent).toContain('Your saved conditions are kept but not applied.');
+        fireEvent.click(screen.getByText('Model settings', { selector: 'b' }));
+        expect(screen.getByText(/Custom · all rows · 0 train · 0 scoring/)).toBeTruthy();
+    });
+
+    // Workbench redesign §5 "Custom running condition": a reason about the model's OWN running
+    // condition says where to fix it — and, once Model settings is open, points at the field.
+    it('own invalid train period: "Fix P1\'s end above" while Model settings is open, "Own running condition: P1 ends before it starts. Fix it in Model settings" once it is closed', async () => {
+        const own = makeModel({
+            runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true,
+            filterTimePeriods: [{ id: 'o1', start: '2026-03-01T00:00', end: '2026-02-01T00:00' }],
+        });
+        render(<BuildModelWindow />);
+        await deliverData({ failureGroupState: { groups: [makeGroup()], models: [own] } });
+        // the thing to fix is INSIDE Model settings: the section opened by itself
+        expect(screen.getByTestId('custom-rc-editor')).toBeTruthy();
+        const reason = () => screen.getByTestId('build-block-reason').textContent;
+        expect(reason()).toBe("Fix P1's end above");
+        expect(within(screen.getByTestId('custom-periods')).getByTestId('period-invalid-1').textContent).toBe('P1 ends before it starts — pick an end after 1 Mar 2026');
+        // the same words on the board's list of things to fix
+        expect(within(screen.getByTestId('results-incomplete')).getByText("Fix P1's end above")).toBeTruthy();
+
+        fireEvent.click(screen.getByText('Model settings', { selector: 'b' })); // close it
+        expect(screen.queryByTestId('custom-rc-editor')).toBeNull();
+        expect(reason()).toBe('Own running condition: P1 ends before it starts. Fix it in Model settings');
+        expect(trainSensorBtn().disabled).toBe(true);
+        expect(document.body.textContent).not.toMatch(/Period 1/);
+    });
+
+    it('own list without a train period / without a condition: "Add a train period above" and "Set a condition above, or choose Use all rows"', async () => {
+        const noTrain = makeModel({ runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true, filterTimePeriods: [] });
+        render(<BuildModelWindow />);
+        await deliverData({ failureGroupState: { groups: [makeGroup()], models: [noTrain] } });
+        const reason = () => screen.getByTestId('build-block-reason').textContent;
+        expect(reason()).toBe('Add a train period above');
+        expect(within(screen.getByTestId('custom-periods')).getByTestId('periods-empty').textContent).toBe('No train period yet — add at least one');
+        fireEvent.click(screen.getByText('Model settings', { selector: 'b' }));
+        expect(reason()).toBe('Own running condition: no train period. Fix it in Model settings');
+        fireEvent.click(screen.getByText('Model settings', { selector: 'b' }));
+
+        // add a train period -> the next thing missing is the condition
+        fireEvent.click(within(screen.getByTestId('custom-periods')).getByTestId('period-add'));
+        fireEvent.click(within(screen.getByTestId('custom-condition')).getByTestId('rc-mode-condition'));
+        expect(reason()).toBe('Set a condition above, or choose Use all rows');
+        expect(within(screen.getByTestId('custom-condition')).getByTestId('rc-unset-warning')).toBeTruthy();
+        fireEvent.click(screen.getByText('Model settings', { selector: 'b' }));
+        expect(reason()).toBe('Own running condition: not set. Fix it in Model settings');
+    });
+
+    it('a Workspace-mode model keeps the plain gate reason (the fix is in the workspace settings, not "above")', async () => {
+        render(<BuildModelWindow />);
+        await deliverData({ failureGroupState: {
+            groups: [makeGroup()], models: [makeModel()],
+            runningConditionTimePeriods: [{ id: 'p', start: '2026-03-01T00:00', end: '2026-02-01T00:00' }],
+        } });
+        expect(screen.getByTestId('build-block-reason').textContent).toBe('P1 ends before it starts.');
+    });
+
+    // Workbench redesign §5: the model's own running condition is the SAME panel as the
+    // workspace settings (timeline, one-line rows, caption), with its own period counts.
+    it("the model's own panel: timeline + rows + footnote, its own period counts asked only while it is on screen, and the highlights re-read when it is shown", async () => {
+        const ownCond = { id: 'c1', sensor: 'TAG2', operation: 'greater_than', value1: '7', value2: '' };
+        const ownTrain = [{ id: 'o1', start: '2026-02-01T00:00', end: '2026-02-28T23:59' }];
+        const ownScore = [{ id: 'o2', start: '2026-03-01T00:00', end: '2026-03-10T00:00' }];
+        const own = makeModel({
+            runningConditionMode: 'custom', customRunningConditionFilters: [ownCond],
+            filterTimePeriods: ownTrain, customTestPeriods: ownScore,
+        });
+        render(<BuildModelWindow />);
+        await deliverData({ failureGroupState: { groups: [makeGroup()], models: [own] } });
+        await flush();
+        // Model settings is closed (nothing to fix): nothing is counted, for this model or the workspace.
+        expect(screen.queryByTestId('custom-rc-editor')).toBeNull();
+        expect(periodCountCalls()).toHaveLength(0);
+        const loads = mockLoadWorkspaceData.mock.calls.length;
+
+        openSettings();
+        await waitFor(() => expect(periodCountCalls()).toHaveLength(2));
+        const [trainCall, scoreCall] = periodCountCalls();
+        // the MODEL's own lists and condition — never the workspace's
+        expect(trainCall.periods).toEqual([{ start: '2026-02-01T00:00', end: '2026-02-28T23:59' }]);
+        expect(scoreCall.periods).toEqual([{ start: '2026-03-01T00:00', end: '2026-03-10T00:00' }]);
+        expect(trainCall.filter).toEqual({ value_filters: [{ sensor: 'TAG2', operation: 'greater_than', value1: 7, value2: null }], combine: 'and' });
+        expect(Object.keys(trainCall).sort()).toEqual(['expected_generation', 'filter', 'periods']);
+        // ...and the Dashboard highlights are read again for its train-overlap line (one read)
+        expect(mockLoadWorkspaceData.mock.calls.length).toBe(loads + 1);
+
+        const editor = within(screen.getByTestId('custom-rc-editor'));
+        expect([...editor.getByTestId('custom-rc-panel').children].map(c => c.getAttribute('data-testid')))
+            .toEqual(['rc-timeline', 'custom-periods', 'custom-test-periods', 'custom-condition', 'custom-rc-footnote']);
+        await waitFor(() => expect(editor.getByTestId('rc-caption-rows').textContent).toBe('800 of 5,000 rows (16%) used for training'));
+        expect(editor.getByTestId('period-days-1').textContent).toBe('28 d · 20 d running');
+        expect(editor.getByTestId('test-days-1').textContent).toBe('9 d · 20 d running');
+        expect(editor.getByTestId('rc-timeline')).toBeTruthy(); // (no lanes here: this fixture has no dataset time range)
+        expect(editor.getByTestId('custom-rc-footnote').textContent).toBe('Only this model · the workspace default is untouched · saved with Save changes');
+
+        // Collapsing the section stops the counting; nothing more is asked while it is closed.
+        fireEvent.click(screen.getByText('Model settings', { selector: 'b' }));
+        await act(async () => { await new Promise(r => setTimeout(r, 450)); });
+        expect(periodCountCalls()).toHaveLength(2);
     });
 });
 
@@ -2547,9 +2672,9 @@ describe('Cluster-range slider (2026-09-30 port)', () => {
         });
     });
 
-    it('App.css gives Clustering its own row-aligned grid and a scrollable Custom running-condition editor', () => {
+    it('App.css gives Clustering its own row-aligned grid and the Custom running-condition panel its own full-width row', () => {
         expect(cssBlock('.bmw-sets-body--clustering')).toMatch(/display:\s*grid/);
-        expect(cssBlock('.rc-scroll')).toMatch(/overflow-y:\s*auto/);
+        expect(() => cssBlock('.rc-scroll')).toThrow(); // the scroll box of the old compact editor is gone
         expect(cssBlock('.rc-custom')).toMatch(/flex:\s*1 1 100%/);
     });
 });
@@ -2589,7 +2714,7 @@ describe('Running Condition Filter modal — open/close with ZERO edits must not
 
         fireEvent.click(screen.getByTestId('rc-card-open'));
         // Sanity: the modal actually shows the seeded condition before closing.
-        expect((screen.getByLabelText('Period 1 end') as HTMLInputElement).value).toBe(seededPeriod.end);
+        expect((screen.getByLabelText('P1 end') as HTMLInputElement).value).toBe(seededPeriod.end);
         expect(screen.getByDisplayValue('5')).toBeTruthy();
 
         fireEvent.click(screen.getByLabelText('Close')); // the modal's own X — zero edits made first
@@ -2598,7 +2723,7 @@ describe('Running Condition Filter modal — open/close with ZERO edits must not
         // Re-open and check what's actually shown now — this is what the
         // user sees and reports as "the setting doesn't stay".
         fireEvent.click(screen.getByTestId('rc-card-open'));
-        expect((screen.getByLabelText('Period 1 end') as HTMLInputElement).value).toBe(seededPeriod.end);
+        expect((screen.getByLabelText('P1 end') as HTMLInputElement).value).toBe(seededPeriod.end);
         expect(screen.getByDisplayValue('5')).toBeTruthy();
 
         // And the durable "disk" snapshot (what a reload / app relaunch would
@@ -2624,7 +2749,7 @@ describe('Running Condition Filter modal — open/close with ZERO edits must not
         await flush();
 
         fireEvent.click(screen.getByTestId('rc-card-open'));
-        expect((screen.getByLabelText('Period 1 end') as HTMLInputElement).value).toBe(seededPeriod.end);
+        expect((screen.getByLabelText('P1 end') as HTMLInputElement).value).toBe(seededPeriod.end);
         expect(screen.getByDisplayValue('5')).toBeTruthy();
 
         if (mockUpdateWorkspaceData.mock.calls.length > 0) {
@@ -2641,7 +2766,7 @@ describe('Running Condition Filter modal — open/close with ZERO edits must not
         statefulUpdateMock(fg.models, fg);
 
         fireEvent.click(screen.getByTestId('rc-card-open'));
-        expect((screen.getByLabelText('Period 1 end') as HTMLInputElement).value).toBe(seededPeriod.end);
+        expect((screen.getByLabelText('P1 end') as HTMLInputElement).value).toBe(seededPeriod.end);
 
         const preventDefault = vi.fn();
         await act(async () => {
@@ -2787,18 +2912,177 @@ describe('Running Condition Filter modal — draft + explicit Apply (2026-10-03)
         expect(barBefore).toMatch(/> 5/);
     });
 
-    it('Apply is disabled while clean, enabled + "Changes not applied yet" while dirty, and disabled again when the edit is reverted', async () => {
+    it('Apply is disabled while clean; while dirty it is enabled with the impact line next to it (which replaces "Changes not applied yet"); reverting the edit removes both', async () => {
         await openModal();
         expect(apply().disabled).toBe(true);
-        expect(screen.queryByTestId('rc-dirty-hint')).toBeNull();
+        expect(screen.queryByTestId('rc-impact')).toBeNull();
 
         fireEvent.change(screen.getByDisplayValue('5'), { target: { value: '9' } });
         expect(apply().disabled).toBe(false);
-        expect(screen.getByTestId('rc-dirty-hint').textContent).toBe('Changes not applied yet');
+        // the only model here was never trained: nobody is affected -> the grey line
+        const impact = screen.getByTestId('rc-impact');
+        expect(impact.textContent).toBe('No trained or complete model is affected by this change');
+        expect(impact.getAttribute('data-tone')).toBe('grey');
+        expect(screen.getByTestId('rc-modal-foot').textContent).not.toContain('Changes not applied yet');
+        expect(screen.queryByTestId('rc-dirty-hint')).toBeNull();
 
         fireEvent.change(screen.getByDisplayValue('9'), { target: { value: '5' } });
         expect(apply().disabled).toBe(true);
-        expect(screen.queryByTestId('rc-dirty-hint')).toBeNull();
+        expect(screen.queryByTestId('rc-impact')).toBeNull();
+    });
+
+    describe('change warnings: the impact line before Apply, the notice after it (workbench redesign §5)', () => {
+        /** A real workspace: a trained model, a Complete model, a Complete model on its OWN (Custom)
+         *  running condition and an untrained one — train records computed against this very state. */
+        const impactFg = () => {
+            const base = {
+                runningConditionNoneConfirmed: false,
+                runningConditionFilters: [seededFilter],
+                runningConditionCombine: 'or' as const,
+                runningConditionTimePeriods: [seededPeriod],
+                runningConditionTestPeriods: ONE_TEST,
+                rcLegacyNotice: null,
+            };
+            const raw = [
+                makeModel({ id: 'm1', name: 'Trained', targetSensor: 'TAG1' }),
+                makeModel({ id: 'm2', name: 'Complete', targetSensor: 'TAG2', status: true }),
+                makeModel({
+                    id: 'm3', name: 'Own', targetSensor: 'TAG3', status: true, runningConditionMode: 'custom',
+                    customRunningConditionNoneConfirmed: true, filterTimePeriods: [seededPeriod], customTestPeriods: ONE_TEST,
+                }),
+                makeModel({ id: 'm4', name: 'Untrained', kind: 'relationship', targetSensor: 'TAG1', predictorSensors: ['TAG2'] }),
+            ];
+            const models = raw.map(m => (m.id === 'm4' ? m : withTrained(m, { ...base, models: raw })));
+            return { groups: [makeGroup()], models, ...base };
+        };
+        const impact = () => screen.getByTestId('rc-impact');
+        const dlg = () => within(screen.getByRole('dialog', { name: 'Running condition' }));
+        const fireFg = async (payload: Record<string, any>) => {
+            await act(async () => {
+                for (const cb of listenCallbacks['failure-group-state-changed'] ?? []) cb({ payload });
+                await Promise.resolve();
+                await Promise.resolve();
+            });
+        };
+
+        it('the condition changed: amber "Applying sets 2 models back to Incomplete — they need training again" (Custom and untrained models are not counted); Apply stays enabled', async () => {
+            await openModal(impactFg());
+            fireEvent.change(screen.getByDisplayValue('5'), { target: { value: '9' } });
+            expect(impact().textContent).toBe('Applying sets 2 models back to Incomplete — they need training again');
+            expect(impact().getAttribute('data-tone')).toBe('amber');
+            expect(impact().className).toContain('rc-impact--amber');
+            expect(screen.queryByTestId('rc-impact-quiet')).toBeNull();
+            expect(apply().disabled).toBe(false);
+        });
+
+        it('a train period changed counts the same models', async () => {
+            await openModal(impactFg());
+            const end = dlg().getByLabelText('P1 end');
+            fireEvent.change(end, { target: { value: '2024-01-20T23:59' } });
+            fireEvent.blur(end);
+            expect(impact().textContent).toBe('Applying sets 2 models back to Incomplete — they need training again');
+        });
+
+        it('only the scoring periods changed: "1 complete model will need Mark complete again (re-score, no training)"', async () => {
+            await openModal(impactFg());
+            fireEvent.click(dlg().getByTestId('test-add'));
+            expect(impact().textContent).toBe('1 complete model will need Mark complete again (re-score, no training)');
+            expect(impact().getAttribute('data-tone')).toBe('amber');
+            expect(screen.queryByTestId('rc-impact-quiet')).toBeNull();
+            expect(apply().disabled).toBe(false);
+        });
+
+        it('both changed: the train line plus the quiet "The new scoring periods are scored when they are trained again"', async () => {
+            await openModal(impactFg());
+            fireEvent.click(dlg().getByTestId('test-add'));
+            fireEvent.change(screen.getByDisplayValue('5'), { target: { value: '9' } });
+            expect(impact().firstElementChild!.textContent).toBe('Applying sets 2 models back to Incomplete — they need training again');
+            expect(screen.getByTestId('rc-impact-quiet').textContent).toBe('The new scoring periods are scored when they are trained again');
+        });
+
+        it('an invalid period shows the red "Fix P1 before applying" instead of the impact line', async () => {
+            await openModal(impactFg());
+            const end = dlg().getByLabelText('P1 end');
+            fireEvent.change(end, { target: { value: '2023-01-01T00:00' } });
+            fireEvent.blur(end);
+            expect(screen.queryByTestId('rc-impact')).toBeNull();
+            expect(screen.getByTestId('rc-apply-block').textContent).toBe('Fix P1 before applying');
+        });
+
+        it('after Apply: the notice under the running-condition line counts the models still to train, and goes away once they are trained', async () => {
+            await openModal(impactFg());
+            expect(screen.queryByTestId('rc-retrain-notice')).toBeNull();
+            fireEvent.change(screen.getByDisplayValue('5'), { target: { value: '9' } });
+            fireEvent.click(apply());
+            await flush();
+            expect(writes()).toBe(1);
+            const written = (await mockUpdateWorkspaceData.mock.results[0].value).failureGroupState;
+            // the write itself sent the Complete Workspace-mode model back to Incomplete; the Custom one stays
+            expect(written.models.find((m: any) => m.id === 'm2').status).toBe(false);
+            expect(written.models.find((m: any) => m.id === 'm3').status).toBe(true);
+            const notice = () => screen.getByTestId('rc-retrain-notice');
+            expect(notice().textContent).toBe('Running condition changed — 2 models need training again. Use Train all, or Train sensor on each one; the amber dots in the list show which.');
+            expect(notice().getAttribute('role')).toBe('status');
+            // it sits right under the running-condition line
+            expect(screen.getByTestId('rc-card').compareDocumentPosition(notice()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+            // one of them is trained again (as another window would report it)
+            const trainedOn = (ids: string[]) => ({
+                ...written,
+                models: written.models.map((m: any) => (ids.includes(m.id)
+                    ? { ...m, lastTrainedAt: '2026-10-10T08:00:00.000Z', trainedFingerprint: computeTrainFingerprint(m, written) }
+                    : m)),
+            });
+            await fireFg({ ...trainedOn(['m1']), workspaceId: 'ws1', origin: 'dashboard' });
+            expect(notice().textContent).toBe('Running condition changed — 1 model needs training again. Use Train all, or Train sensor on it; the amber dot in the list shows which.');
+            // both trained: the notice is gone (session-only — nothing was stored for it)
+            await fireFg({ ...trainedOn(['m1', 'm2']), workspaceId: 'ws1', origin: 'dashboard' });
+            expect(screen.queryByTestId('rc-retrain-notice')).toBeNull();
+            expect(JSON.stringify(written)).not.toMatch(/retrain/i);
+        });
+
+        it('an Apply that affects no trained model leaves no notice', async () => {
+            await openModal(); // one untrained model
+            fireEvent.change(screen.getByDisplayValue('5'), { target: { value: '9' } });
+            fireEvent.click(apply());
+            await flush();
+            expect(writes()).toBe(1);
+            expect(screen.queryByTestId('rc-retrain-notice')).toBeNull();
+        });
+    });
+
+    it('keyboard: focus lands on the first field on open, Tab stays inside the dialog, Esc cancels and focus goes back to the opener', async () => {
+        render(<BuildModelWindow />);
+        await deliverData({ failureGroupState: fgSeed() });
+        const opener = screen.getByTestId('rc-card-open') as HTMLButtonElement;
+        opener.focus();
+        fireEvent.click(opener);
+        const dialog = screen.getByRole('dialog', { name: 'Running condition' });
+        // the first field of the body — not the header's Close button
+        expect(document.activeElement).toBe(within(dialog).getByLabelText('P1 start'));
+
+        const close = within(dialog).getByLabelText('Close');
+        const cancel = screen.getByTestId('rc-cancel');
+        // Shift+Tab on the first focusable wraps to the last one (Apply is disabled while clean)
+        close.focus();
+        fireEvent.keyDown(close, { key: 'Tab', shiftKey: true });
+        expect(document.activeElement).toBe(cancel);
+        // Tab on the last wraps to the first
+        fireEvent.keyDown(cancel, { key: 'Tab' });
+        expect(document.activeElement).toBe(close);
+        // Tab in the middle is left to the browser
+        const start = within(dialog).getByLabelText('P1 start');
+        start.focus();
+        fireEvent.keyDown(start, { key: 'Tab' });
+        expect(document.activeElement).toBe(start);
+        // focus that got out of the dialog is pulled back in
+        opener.focus();
+        fireEvent.keyDown(opener, { key: 'Tab' });
+        expect(dialog.contains(document.activeElement)).toBe(true);
+
+        fireEvent.keyDown(window, { key: 'Escape' });
+        expect(screen.queryByRole('dialog', { name: 'Running condition' })).toBeNull();
+        expect(document.activeElement).toBe(opener);
     });
 
     it('Apply writes ONCE with all four fields, broadcasts once, closes the modal, and a reopen shows the applied values', async () => {
@@ -2823,12 +3107,19 @@ describe('Running Condition Filter modal — draft + explicit Apply (2026-10-03)
         expect(apply().disabled).toBe(true); // a fresh open is clean
     });
 
-    it('Apply is disabled for an invalid training period (end before start) and the existing error text shows', async () => {
+    it('an invalid train period (end before start): the row says why, Apply is disabled with the red footer line "Fix P1 before applying"', async () => {
         await openModal();
-        const end = screen.getByLabelText('Period 1 end') as HTMLInputElement;
+        const end = screen.getByLabelText('P1 end') as HTMLInputElement;
         fireEvent.change(end, { target: { value: '2023-01-01T00:00' } });
         fireEvent.blur(end);
-        expect(screen.getByTestId('rc-invalid-reason')).toBeTruthy();
+        expect(screen.getByTestId('period-invalid-1').textContent).toBe('P1 ends before it starts — pick an end after 1 Jan 2024');
+        expect(screen.getByTestId('period-row-1').getAttribute('data-invalid')).toBe('true');
+        const block = screen.getByTestId('rc-apply-block');
+        expect(block.textContent).toBe('Fix P1 before applying');
+        expect(block.getAttribute('data-kind')).toBe('invalid-train');
+        expect(block.className).toContain('rc-impact--bad');
+        expect(screen.queryByTestId('rc-impact')).toBeNull();
+        expect(screen.getByRole('dialog', { name: 'Running condition' }).textContent).not.toMatch(/Period 1/);
         expect(apply().disabled).toBe(true);
         fireEvent.click(apply());
         await flush();
@@ -3009,14 +3300,16 @@ describe('Running condition Step 1 — header, card, settings modal preview (202
             fireEvent.click(screen.getByTestId('rc-card-open'));
             await flush();
             const dlg = within(screen.getByRole('dialog', { name: 'Running condition' }));
-            const modalDays = () => dlg.getByTestId('period-coverage-days').textContent;
+            // the modal has its own timeline hero (no coverage strip inside it any more)
+            expect(dlg.queryByTestId('period-coverage')).toBeNull();
+            const modalDays = () => dlg.getByTestId('rc-caption-train').textContent;
             const modalBefore = modalDays();
-            fireEvent.change(dlg.getByLabelText('Period 1 end'), { target: { value: '2026-02-10T23:59' } });
-            expect(modalDays()).not.toBe(modalBefore); // the modal strip follows the draft...
-            expect(cardDays()).toBe(persisted); // ...the card strip does not
-            fireEvent.blur(dlg.getByLabelText('Period 1 end')); // commit the typed date into the modal draft
+            fireEvent.change(dlg.getByLabelText('P1 end'), { target: { value: '2026-02-10T23:59' } });
+            expect(modalDays()).toBe(modalBefore); // typing alone moves nothing...
+            fireEvent.blur(dlg.getByLabelText('P1 end')); // ...the committed date moves the modal's timeline
             await flush();
-            expect(cardDays()).toBe(persisted); // still the persisted periods (draft committed, not applied)
+            expect(modalDays()).not.toBe(modalBefore);
+            expect(cardDays()).toBe(persisted); // the card strip is still the persisted periods (not applied)
 
             fireEvent.click(screen.getByTestId('rc-apply'));
             await flush();
@@ -3105,8 +3398,8 @@ describe('Running condition Step 1 — header, card, settings modal preview (202
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: setFg({ runningConditionTimePeriods: [periods[0], { id: 'x', start: '2026-06-01T00:00', end: '2026-05-20T23:59' }] }) });
             expect(state()).toBe('invalid');
-            expect(screen.getByTestId('rc-card-title').textContent).toBe('Period 2 needs fixing');
-            expect(screen.getByTestId('rc-card-reason').textContent).toContain('Period 2 ends before it starts.');
+            expect(screen.getByTestId('rc-card-title').textContent).toBe('P2 needs fixing');
+            expect(screen.getByTestId('rc-card-reason').textContent).toContain('P2 ends before it starts.');
             expect(screen.getByTestId('rc-card-open').textContent).toBe('Fix period');
             await act(async () => { await Promise.resolve(); });
             expect(statsCalls()).toHaveLength(0);
@@ -3137,7 +3430,7 @@ describe('Running condition Step 1 — header, card, settings modal preview (202
             expect(screen.getByTestId('results-rc-locked').textContent).toContain('Set the running condition first');
             expect(screen.getByTestId('results-rc-locked').textContent).toContain('can train until it is set — open Running condition ↑');
             expect(document.body.textContent).not.toMatch(/Step\s*1/i); // no text in the window says "Step 1"
-            const REASON = 'Set a running condition first, or choose "No condition — use all rows".';
+            const REASON = 'Set the running condition first — a condition, or Use all rows';
             const train = trainSensorBtn();
             expect(train.disabled).toBe(true);
             expect(train.title).toBe('Set the running condition first.');
@@ -3151,7 +3444,7 @@ describe('Running condition Step 1 — header, card, settings modal preview (202
             await deliverData({ failureGroupState: setFg({ runningConditionTimePeriods: [{ id: 'x', start: '2026-02-01T00:00', end: '2026-01-05T00:00' }] }) });
             expect(screen.getByTestId('results-rc-locked').textContent).toContain('Fix the running condition first');
             expect(trainSensorBtn().disabled).toBe(true);
-            expect(trainSensorBtn().title).toBe("Can't train: Individual — train period 1 ends before it starts");
+            expect(trainSensorBtn().title).toBe("Can't train: Individual — train period P1 ends before it starts");
             expect(screen.getByTestId('results-rc-locked-open').textContent).toBe('Running condition ↑');
         });
 
@@ -3163,7 +3456,7 @@ describe('Running condition Step 1 — header, card, settings modal preview (202
         });
     });
 
-    describe('settings modal: structure + live row-count preview of the DRAFT', () => {
+    describe('settings modal: structure + per-period counts of the DRAFT', () => {
         async function open(fg: Record<string, any> = setFg()) {
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: fg });
@@ -3172,97 +3465,116 @@ describe('Running condition Step 1 — header, card, settings modal preview (202
             await flush();
         }
 
-        it('is the two-column "Running condition" dialog: title + subtitle, step 1 / step 2 left, "Data used for training" right', async () => {
+        const caption = () => screen.getByTestId('rc-caption-rows').textContent;
+        /** `count_period_rows` held / answered per condition value. */
+        const countsWith = (running: (value1: number | undefined) => number | Promise<unknown> | Error) =>
+            mockInvoke.mockImplementation((cmd: string, args: any) => {
+                if (cmd !== 'count_period_rows') return defaultInvoke(cmd, args);
+                const r = running(args?.filter?.value_filters?.[0]?.value1);
+                if (r instanceof Error) return Promise.reject(r);
+                if (typeof r !== 'number') return r;
+                const base = fakePeriodCounts(args);
+                return Promise.resolve({ ...base, union: { ...base.union, running_rows: r } });
+            });
+
+        it('is the one-column "Running condition" dialog: title + subtitle, the timeline, three sections — no preview column', async () => {
             await open();
-            const dlg = within(screen.getByRole('dialog', { name: 'Running condition' }));
+            const dialog = screen.getByRole('dialog', { name: 'Running condition' });
+            const dlg = within(dialog);
+            expect(dialog.className).toContain('bmw-modal--rc');
             expect(dlg.getByRole('heading', { name: 'Running condition' })).toBeTruthy();
             expect(dlg.getByText('Default for every model · a model can use its own on its settings (Custom)')).toBeTruthy();
-            expect(dlg.getByText('Which time')).toBeTruthy();
-            expect(dlg.getByText('When the plant is running')).toBeTruthy();
-            expect(dlg.getByText('Data used for training')).toBeTruthy();
+            expect([...dialog.querySelectorAll('.rcx-sec-h b')].map(b => b.textContent)).toEqual(['Train periods', 'Scoring periods', 'When the plant is running']);
+            expect(dlg.getByTestId('rc-timeline')).toBeTruthy();
             expect(dlg.getByTestId('rc-count-pill').textContent).toBe('1 condition');
             expect(dlg.getAllByTestId(/^period-row-/)).toHaveLength(2);
-            // the old title and panel header are gone
+            // gone with the redesign: the right-hand column, the numbered steps, the callouts
+            expect(dlg.queryByTestId('rc-preview')).toBeNull();
+            expect(dialog.textContent).not.toMatch(/Data used for training|Which time/);
+            expect(dialog.querySelector('.tpe-callout, .rcm-preview, .rcm-num')).toBeNull();
             expect(screen.queryByText('Running Condition Filter')).toBeNull();
         });
 
-        it('shows the persisted count straight away on a clean open (no extra query: the card already asked)', async () => {
-            await open();
-            await waitFor(() => expect(screen.getByTestId('rc-preview-count').textContent).toBe('100of 100 rows · 100%'));
-            expect(statsCalls()).toHaveLength(2); // the card's filtered + unfiltered; opening the modal added none
+        it('nothing is counted while the modal is closed; opening it asks TWICE (train periods, scoring periods) with snake_case keys and only the condition as the filter', async () => {
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: setFg() });
+            await flush();
+            await act(async () => { await new Promise(r => setTimeout(r, 400)); });
+            expect(periodCountCalls()).toHaveLength(0);
+
+            fireEvent.click(screen.getByTestId('rc-card-open'));
+            await waitFor(() => expect(periodCountCalls()).toHaveLength(2));
+            const [train, scoring] = periodCountCalls();
+            expect(Object.keys(train).sort()).toEqual(['expected_generation', 'filter', 'periods']);
+            expect(train.periods).toEqual([{ start: '2026-01-01T00:00', end: '2026-03-31T23:59' }, { start: '2026-04-15T00:00', end: null }]);
+            expect(scoring.periods).toEqual(ONE_TEST.map(t => ({ start: t.start, end: t.end })));
+            // the count's filter is the condition only — never the time ranges
+            for (const c of [train, scoring]) {
+                expect(c.filter).toEqual({ value_filters: [{ sensor: 'TAG1', operation: 'greater_than', value1: 5, value2: null }], combine: 'and' });
+            }
+            await waitFor(() => expect(caption()).toBe('1,600 of 5,000 rows (32%) used for training'));
+            expect(screen.getByTestId('period-days-1').textContent).toMatch(/ d · 20 d running$/);
+            expect(screen.getByTestId('test-days-1').textContent).toMatch(/ d · 20 d running$/);
+            // settled: nothing more is asked
+            await act(async () => { await new Promise(r => setTimeout(r, 450)); });
+            expect(periodCountCalls()).toHaveLength(2);
         });
 
-        it('the preview asks for the DRAFT (what Apply would commit) after a pause, while the Step-1 card keeps the persisted numbers and chips', async () => {
+        it('typing several characters sends the counts ONCE for the final value (debounced, at most two calls), not per keystroke — the card behind keeps the persisted numbers', async () => {
             await open();
+            await waitFor(() => expect(periodCountCalls()).toHaveLength(2));
             fireEvent.click(screen.getByTestId('rc-card-details'));
-            const before = statsCalls().length;
             const cardBefore = screen.getByTestId('rc-card').textContent;
-            fireEvent.change(screen.getByDisplayValue('5'), { target: { value: '9' } });
-            // not on every keystroke: nothing new yet...
-            expect(statsCalls()).toHaveLength(before);
-            // ...then ONE query for the draft's filter (the unfiltered total is cached)
-            await waitFor(() => expect(statsCalls()).toHaveLength(before + 1), { timeout: 3000 });
-            expect(statsCalls()[before]).toEqual({
-                sensor: 'TAG1',
-                filter: {
-                    timestamp_ranges: [{ start: '2026-01-01T00:00', end: '2026-03-31T23:59' }, { start: '2026-04-15T00:00', end: null }],
-                    value_filters: [{ sensor: 'TAG1', operation: 'greater_than', value1: 9, value2: null }],
-                    combine: 'and',
-                },
-            });
-            expect(screen.getByTestId('rule-sentence').textContent).toContain('Pump Pressure > 9 bar'); // the sentence is the draft too
-            expect(screen.getByTestId('rc-card').textContent).toBe(cardBefore); // ...the card behind is persisted-only
+            const input = screen.getByDisplayValue('5');
+            for (const v of ['1', '12', '123']) fireEvent.change(input, { target: { value: v } });
+            expect(periodCountCalls()).toHaveLength(2); // nothing yet
+            await waitFor(() => expect(periodCountCalls()).toHaveLength(4), { timeout: 3000 });
+            await act(async () => { await new Promise(r => setTimeout(r, 450)); });
+            expect(periodCountCalls()).toHaveLength(4); // one settled draft = two calls, no more
+            for (const c of periodCountCalls().slice(2)) expect((c.filter as any).value_filters[0].value1).toBe(123);
+            expect(screen.getByTestId('rc-card').textContent).toBe(cardBefore);
             expect(screen.getByTestId('rc-card-cond-chip').textContent).toContain('> 5');
         });
 
-        it('typing several characters sends ONE query for the final value (debounced), not one per keystroke', async () => {
+        it('moving a scoring date re-counts the scoring periods only (the train side is remembered)', async () => {
             await open();
-            const before = statsCalls().length;
-            const input = screen.getByDisplayValue('5');
-            for (const v of ['1', '12', '123']) fireEvent.change(input, { target: { value: v } });
-            await waitFor(() => expect(statsCalls()).toHaveLength(before + 1), { timeout: 3000 });
+            await waitFor(() => expect(periodCountCalls()).toHaveLength(2));
+            const end = screen.getByLabelText('Scoring period 1 end') as HTMLInputElement;
+            const [d, t] = ONE_TEST[0].end.split('T');
+            const day = String(Math.max(1, Number(d.slice(8, 10)) - 1)).padStart(2, '0');
+            fireEvent.change(end, { target: { value: `${d.slice(0, 8)}${day}T${t}` } });
+            fireEvent.blur(end);
+            await waitFor(() => expect(periodCountCalls()).toHaveLength(3), { timeout: 3000 });
             await act(async () => { await new Promise(r => setTimeout(r, 450)); });
-            expect(statsCalls()).toHaveLength(before + 1);
-            expect(statsCalls()[before].filter.value_filters[0].value1).toBe(123);
+            expect(periodCountCalls()).toHaveLength(3);
+            expect(periodCountCalls()[2].periods).toHaveLength(1);
         });
 
-        it('a slow answer for an older draft never overwrites the newer one (stale response ignored)', async () => {
+        it('while a new count is on its way the previous numbers stay (dimmed); a slow answer for an older draft never overwrites the newer one', async () => {
             await open();
-            const release: Record<string, (v: unknown) => void> = {};
-            mockInvoke.mockImplementation((cmd: string, args: any) => {
-                if (cmd !== 'compute_sensor_stats') return Promise.resolve({});
-                const v = args?.filter?.value_filters?.[0]?.value1;
-                if (v === 7) return new Promise(res => { release.slow = res; }); // the OLD draft, held
-                if (v === 8) return Promise.resolve({ count: 42 });
-                return Promise.resolve({ count: 100 });
-            });
+            await waitFor(() => expect(caption()).toBe('1,600 of 5,000 rows (32%) used for training'));
+            const release: { slow?: (v: unknown) => void } = {};
+            countsWith(v => (v === 7 ? new Promise(res => { release.slow = res; }) : v === 8 ? 42 : 1600));
             fireEvent.change(screen.getByDisplayValue('5'), { target: { value: '7' } });
+            // the old numbers are kept, marked as being counted again — no flicker to "Counting rows…"
+            expect(caption()).toBe('1,600 of 5,000 rows (32%) used for training');
+            expect(screen.getByTestId('rc-caption-rows').getAttribute('data-stale')).toBe('true');
             await waitFor(() => expect(release.slow).toBeTruthy(), { timeout: 3000 });
             fireEvent.change(screen.getByDisplayValue('7'), { target: { value: '8' } });
-            await waitFor(() => expect(screen.getByTestId('rc-preview-count').textContent).toBe('42of 100 rows · 42%'), { timeout: 3000 });
-            await act(async () => { release.slow({ count: 99 }); });
-            expect(screen.getByTestId('rc-preview-count').textContent).toBe('42of 100 rows · 42%'); // the late "99" was dropped
+            await waitFor(() => expect(caption()).toBe('42 of 5,000 rows (<1%) used for training'), { timeout: 3000 });
+            await act(async () => { release.slow!({ ...fakePeriodCounts({ periods: [], filter: {} }), union: { rows_in_period: 99, running_rows: 99, running_days: 1 } }); });
+            expect(caption()).toBe('42 of 5,000 rows (<1%) used for training'); // the late answer was dropped
         });
 
-        it('a filter that keeps no rows (Rust errors) reads 0 rows, not a failure', async () => {
-            await open();
-            mockInvoke.mockImplementation((cmd: string, args: any) => {
-                if (cmd !== 'compute_sensor_stats') return Promise.resolve({});
-                return args?.filter?.value_filters?.[0]?.value1 === 9999
-                    ? Promise.reject(new Error("No valid numeric values for sensor 'TAG1'"))
-                    : Promise.resolve({ count: 100 });
-            });
-            fireEvent.change(screen.getByDisplayValue('5'), { target: { value: '9999' } });
-            await waitFor(() => expect(screen.getByTestId('rc-preview-count').textContent).toBe('0of 100 rows · 0%'), { timeout: 3000 });
-            expect(screen.queryByTestId('rc-preview-error')).toBeNull();
-        });
-
-        it('a failing count shows "Couldn\'t count the rows" in the preview and does not stop editing or Apply', async () => {
+        it('a failing count shows one quiet line instead of numbers and does not stop editing or Apply', async () => {
             const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
             await open();
-            mockInvoke.mockImplementation((cmd: string) => cmd === 'compute_sensor_stats' ? Promise.reject(new Error('boom')) : Promise.resolve({}));
+            await waitFor(() => expect(periodCountCalls()).toHaveLength(2));
+            countsWith(() => new Error('boom'));
             fireEvent.change(screen.getByDisplayValue('5'), { target: { value: '9' } });
-            await waitFor(() => expect(screen.getByTestId('rc-preview-error')).toBeTruthy(), { timeout: 3000 });
+            await waitFor(() => expect(caption()).toBe("Couldn't count the rows right now"), { timeout: 3000 });
+            expect(screen.getByTestId('rc-caption').getAttribute('data-rows')).toBe('error');
+            expect(screen.queryByTestId('period-running-1')).toBeNull(); // rows fall back to their calendar days
             expect((screen.getByTestId('rc-apply') as HTMLButtonElement).disabled).toBe(false);
             fireEvent.click(screen.getByTestId('rc-apply'));
             await flush();
@@ -3271,17 +3583,40 @@ describe('Running condition Step 1 — header, card, settings modal preview (202
             warn.mockRestore();
         });
 
-        it('an invalid draft period asks NO count query (it would silently drop the bad period) and says to fix it', async () => {
+        it('a window left over from another dataset (STALE_SESSION) is told to reopen — no numbers, Apply not blocked by it', async () => {
+            const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+            countsWith(() => new Error('STALE_SESSION: the dataset changed'));
             await open();
-            const before = statsCalls().length;
-            const end = screen.getByLabelText('Period 1 end') as HTMLInputElement;
+            await waitFor(() => expect(caption()).toBe('The data changed — close this window and open Build Model again to count the rows'), { timeout: 3000 });
+            fireEvent.change(screen.getByDisplayValue('5'), { target: { value: '9' } });
+            expect((screen.getByTestId('rc-apply') as HTMLButtonElement).disabled).toBe(false);
+            warn.mockRestore();
+        });
+
+        it('an invalid draft period is never sent (only the valid ones are counted); the caption says to fix it and Apply is blocked', async () => {
+            await open();
+            await waitFor(() => expect(periodCountCalls()).toHaveLength(2));
+            const end = screen.getByLabelText('P1 end') as HTMLInputElement;
             fireEvent.change(end, { target: { value: '2025-01-01T00:00' } });
             fireEvent.blur(end);
-            await waitFor(() => expect(screen.getByTestId('rc-preview-idle').textContent).toBe('Fix the period to see the row count.'));
-            await act(async () => { await new Promise(r => setTimeout(r, 450)); });
-            expect(statsCalls()).toHaveLength(before);
-            expect(screen.getByTestId('rc-invalid-reason').textContent).toContain('Period 1 ends before it starts.');
+            await waitFor(() => expect(caption()).toBe('fix the period to count the rows'));
+            await waitFor(() => expect(periodCountCalls()).toHaveLength(3), { timeout: 3000 });
+            // P1 is invalid: only P2 went out
+            expect(periodCountCalls()[2].periods).toEqual([{ start: '2026-04-15T00:00', end: null }]);
+            expect(screen.getByTestId('period-invalid-1').textContent).toMatch(/^P1 ends before it starts — pick an end after /);
+            expect(screen.getByTestId('rc-apply-block').textContent).toBe('Fix P1 before applying');
             expect(screen.getByTestId('rc-fix-period-pill')).toBeTruthy();
+            expect((screen.getByTestId('rc-apply') as HTMLButtonElement).disabled).toBe(true);
+        });
+
+        it('closing the modal stops the counting; opening it again counts afresh', async () => {
+            await open();
+            await waitFor(() => expect(periodCountCalls()).toHaveLength(2));
+            fireEvent.click(screen.getByTestId('rc-cancel'));
+            await act(async () => { await new Promise(r => setTimeout(r, 450)); });
+            expect(periodCountCalls()).toHaveLength(2);
+            fireEvent.click(screen.getByTestId('rc-card-open'));
+            await waitFor(() => expect(periodCountCalls()).toHaveLength(4));
         });
 
         it('Apply -> the Step-1 card (persisted) now shows the new condition and asks its own count for it', async () => {
@@ -3407,12 +3742,22 @@ describe('Running condition Step 1 — header, card, settings modal preview (202
     });
 
     it('App.css defines the new blocks (and the old rcbar / collapsible-header rules are gone)', () => {
-        for (const sel of ['.rcc-card', '.rcc-card--req', '.rcc-card--bad', '.rcc-card--ok', '.rcm-body', '.rcm-per', '.rcm-mcard', '.rcm-cond', '.rcm-joinbtn', '.rcm-preview', '.bmw-modal--rc']) {
+        for (const sel of ['.rcc-card', '.rcc-card--req', '.rcc-card--bad', '.rcc-card--ok', '.rcm-body', '.rcm-scroll', '.rcm-per', '.rcm-per--bad', '.rcm-cond', '.rcm-joinbtn', '.bmw-modal--rc',
+            '.rct', '.rct-lane', '.rct-blk', '.rct-cap', '.rcx-sec', '.rcx-sec-h', '.rcx-line', '.rcx-radio', '.rcx-footnote', '.rc-impact', '.rc-notice']) {
             expect(() => cssBlock(sel), sel).not.toThrow();
         }
         expect(cssBlock('.bmw-modal--rc')).toMatch(/display:\s*flex/);
-        expect(cssBlock('.rcm-body')).toMatch(/grid-template-columns:\s*minmax\(0, 1fr\) 340px/);
-        for (const gone of ['.bmw-rcbar', '.f4-rc', '.f4-rc-h', '.f4-prow', '.wb2-steps', '.wb2-stp', '.wb2-sn', '.wb2-sline']) {
+        // workbench redesign §5: 980 px, ONE scrolling column (no 340 px preview column)
+        expect(cssBlock('.bmw-modal--rc')).toMatch(/width:\s*min\(980px, 100%\)/);
+        expect(cssBlock('.rcm-scroll')).toMatch(/overflow-y:\s*auto/);
+        expect(cssBlock('.rcm-body')).not.toMatch(/grid-template-columns/);
+        // the sensor trigger of a condition row is capped (never the full row)
+        expect(cssBlock('.rcm-cond')).toMatch(/grid-template-columns:\s*minmax\(0, 360px\) auto 150px 28px/);
+        // an invalid period: a thin red left edge, not a filled box
+        expect(cssBlock('.rcm-per')).toMatch(/border-left:\s*2px solid transparent/);
+        expect(cssBlock('.rcm-per--bad')).toMatch(/border-left-color:\s*var\(--danger\)/);
+        expect(cssBlock('.rcm-per--bad')).not.toMatch(/background/);
+        for (const gone of ['.bmw-rcbar', '.f4-rc', '.f4-rc-h', '.f4-prow', '.wb2-steps', '.wb2-stp', '.wb2-sn', '.wb2-sline', '.rcm-preview', '.rcm-mcard', '.rcm-step', '.tpe-callout', '.rcm-sentence']) {
             expect(() => cssBlock(gone), gone).toThrow();
         }
     });
@@ -5278,10 +5623,11 @@ describe('Train periods and scoring periods in the Build Model window', () => {
             const end = () => dlg.getByLabelText('Scoring period 1 end');
             fireEvent.change(end(), { target: { value: '2023-12-01T00:00' } });
             fireEvent.blur(end());
-            expect(dlg.getByTestId('test-invalid-1').textContent).toContain('S1 ends before it starts. Fix it to apply.');
+            expect(dlg.getByTestId('test-invalid-1').textContent).toMatch(/^S1 ends before it starts — pick an end after /);
+            expect(dlg.getByTestId('test-row-1').getAttribute('data-invalid')).toBe('true');
             expect(apply().disabled).toBe(true);
             expect(screen.getByTestId('rc-apply-block').getAttribute('data-kind')).toBe('invalid-test');
-            expect(screen.getByTestId('rc-apply-block').textContent).toBe('S1 ends before it starts.');
+            expect(screen.getByTestId('rc-apply-block').textContent).toBe('Fix S1 before applying');
             fireEvent.click(apply());
             await flush();
             expect(mockUpdateWorkspaceData).not.toHaveBeenCalled();
@@ -5345,7 +5691,7 @@ describe('Train periods and scoring periods in the Build Model window', () => {
                 ]);
                 const dlg = within(screen.getByRole('dialog', { name: 'Running condition' }));
                 expect(dlg.getAllByTestId(/^test-row-\d+$/).map(r => r.querySelector('.tpe-pn')!.textContent)).toEqual(['S1', 'S2']);
-                expect(dlg.getByTestId('rc-preview-tests').textContent).toBe('Scoring2periods');
+                expect(dlg.getByTestId('rc-caption-scoring').textContent).toMatch(/^\d+ d scoring$/);
                 expect(screen.getByRole('dialog', { name: 'Running condition' }).textContent).not.toMatch(/Known problem|Bearing failure|event time/i);
                 expect(dlg.queryByTestId('test-invalid-1')).toBeNull();
                 expect(dlg.queryByTestId('test-invalid-2')).toBeNull();
@@ -5376,7 +5722,7 @@ describe('Train periods and scoring periods in the Build Model window', () => {
             it('editing something ELSE in the modal (a train period) and Apply also saves the scoring periods without the legacy keys', async () => {
                 await openModal(fgBase({ runningConditionTestPeriods: LEGACY_TESTS }));
                 const dlg = within(screen.getByRole('dialog', { name: 'Running condition' }));
-                const end = dlg.getByLabelText('Period 1 end');
+                const end = dlg.getByLabelText('P1 end');
                 fireEvent.change(end, { target: { value: '2024-01-25T00:00' } });
                 fireEvent.blur(end);
                 fireEvent.click(apply());
@@ -5510,7 +5856,7 @@ describe('Train periods and scoring periods in the Build Model window', () => {
         it('a notice under the Step-1 card counts the models that need Mark complete again', async () => {
             await hsMount([HS_IND({ status: false, testsChangedAt: '2026-10-07T01:00:00.000Z' })]);
             expect(screen.getByTestId('tests-changed-notice').textContent)
-                .toBe('Scoring periods changed — 1 complete model needs Mark complete again. It was not re-trained.');
+                .toBe('Scoring periods changed — 1 complete model needs Mark complete again. It was re-scored with the same trained model, not re-trained.');
         });
 
         it('the Health score page shows the banner; "removed" when no scoring period is left', async () => {
@@ -5547,7 +5893,7 @@ describe('Train periods and scoring periods in the Build Model window', () => {
             const tests = within(screen.getByTestId('custom-test-periods'));
             expect(screen.getByTestId('custom-test-periods').textContent).toContain('Scoring periods');
             expect(screen.getByTestId('custom-test-periods').textContent).not.toMatch(/Test periods|From Highlights|Known problem/);
-            expect(tests.getByTestId('test-periods-editor').className).toContain('tpe-periods--compact');
+            expect(tests.getByTestId('test-periods-editor').className).toBe('tpe-periods'); // the same rows as the workspace settings
             expect(tests.queryByTestId('test-from-hl')).toBeNull();
             fireEvent.click(tests.getByLabelText('Remove scoring period 1'));
             expect(tests.getByTestId('tests-empty')).toBeTruthy();
@@ -5610,7 +5956,7 @@ describe('Train periods and scoring periods — review fixes (2026-10-07)', () =
             const end = () => customTests().getByLabelText('Scoring period 1 end');
             fireEvent.change(end(), { target: { value: '2023-12-01T00:00' } });
             fireEvent.blur(end());
-            expect(customTests().getByTestId('test-invalid-1').textContent).toContain('S1 ends before it starts. Fix it to save.');
+            expect(customTests().getByTestId('test-invalid-1').textContent).toMatch(/^S1 ends before it starts — pick an end after /);
             const save = screen.getByText('Save changes') as HTMLButtonElement;
             expect(save.disabled).toBe(true);
             expect(screen.getByTestId('build-block-reason').textContent).toContain('S1 ends before it starts.');

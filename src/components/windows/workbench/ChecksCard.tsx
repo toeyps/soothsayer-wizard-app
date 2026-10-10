@@ -18,12 +18,16 @@ export interface ChecksCardProps {
     verdict: HealthVerdict | null;
     /** The health score could not be loaded: say nothing is being checked. */
     unavailable?: boolean;
+    /** S-number of each scoring period that was SENT
+     *  (`testPeriodsWirePlan(...).numbers`), so an issue about one of them names
+     *  the period the user sees. */
+    testNumbers?: readonly number[] | null;
 }
 
 const ICON = { need: Minus, bad: X } as const;
 
-export default function ChecksCard({ kind, issues, verdict, unavailable }: ChecksCardProps) {
-    const lines = buildCheckLines(kind, issues);
+export default function ChecksCard({ kind, issues, verdict, unavailable, testNumbers }: ChecksCardProps) {
+    const lines = buildCheckLines(kind, issues, testNumbers);
     return (
         <div className="hsx-checks-in" role="group" aria-label="Checks" data-testid="checks-card">
             {unavailable ? (
