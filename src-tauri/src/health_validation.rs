@@ -467,9 +467,11 @@ pub fn r3dp(x: f64) -> f64 {
 }
 
 /// Median sample interval of the dataset in seconds (`None` below 2 valid
-/// timestamps).
+/// timestamps). Constant for a loaded dataset and cached on it (computed at
+/// most once, normally by `load_csv`) - see
+/// [`ColumnarData::sample_interval_secs`]; this is never a scan per call.
 pub fn sample_interval_secs(data: &ColumnarData) -> Option<f64> {
-    crate::csv_processor::median_interval_seconds(&data.ts_parsed)
+    data.sample_interval_secs()
 }
 
 /// Consecutive scored rows that make [`DROP_SUSTAIN_HOURS`] of running time

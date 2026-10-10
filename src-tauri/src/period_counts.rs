@@ -519,8 +519,10 @@ mod tests {
 
     #[test]
     fn unsorted_timestamps_count_the_same() {
-        // A single-file load keeps the CSV's row order, which need not be
-        // chronological: the count never assumes sorted timestamps.
+        // A load orders rows by timestamp TEXT, which is time order only when
+        // every timestamp is written the same way (mixed formats are not, see
+        // `csv_processor`'s `loaded_timestamps_are_in_text_order_...` test):
+        // the count never assumes sorted timestamps.
         let n = 2 * ROWS_PER_DAY;
         let order: Vec<usize> = (0..n).map(|i| (i * 37) % n).collect(); // a permutation (37 and 288 coprime)
         let d = ColumnarData::from_parts(
@@ -575,6 +577,53 @@ mod tests {
         let c = count(&d, &[TimeRangeArg::default()], None).unwrap();
         assert_eq!(c.interval_secs, None);
         assert_eq!(nums(&c), vec![(1, 1, 0.0)]);
+    }
+
+    #[test]
+    fn repeated_counts_on_one_dataset_compute_the_sample_interval_at_most_once() {
+        use crate::csv_processor::{median_interval_runs, median_interval_seconds};
+        // The modal counts twice per settled draft (train periods, scoring
+        // periods) and again on every edit: the interval (two passes over the
+        // timestamps + a sort, more than the count itself) is the dataset's,
+        // not the request's.
+        let d = data();
+        let before = median_interval_runs();
+        let train = count(&d, &[period("2024-01-01T00:00", "2024-01-02T23:50")], Some(&running())).unwrap();
+        let scoring = count(&d, &[period("2024-01-03T00:00", "2024-01-04T23:50")], Some(&running())).unwrap();
+        let edited = count(&d, &[TimeRangeArg::default()], None).unwrap();
+        assert_eq!(median_interval_runs() - before, 1, "three counts, one interval computation");
+        // Same numbers as a fresh computation per call would give.
+        let fresh = median_interval_seconds(&d.ts_parsed);
+        assert_eq!(fresh, Some(600.0));
+        for c in [&train, &scoring, &edited] {
+            assert_eq!(c.interval_secs.map(f64::to_bits), fresh.map(f64::to_bits));
+        }
+        assert_eq!(nums(&train), vec![(288, 144, days_of(144, fresh))]);
+        assert_eq!(nums(&scoring), vec![(288, 144, 1.0)]);
+        assert_eq!(nums(&edited), vec![(576, 576, 4.0)]);
+
+        // A dataset whose interval is already known (as after `load_csv`, whose
+        // load report asks for it): a count computes nothing at all.
+        let loaded = data();
+        loaded.sample_interval_secs();
+        let before = median_interval_runs();
+        count(&loaded, &[TimeRangeArg::default()], Some(&running())).unwrap();
+        count(&loaded, &[TimeRangeArg::default()], None).unwrap();
+        assert_eq!(median_interval_runs(), before);
+
+        // An out-of-order dataset (the expensive, sorting branch) is no different.
+        let n = 2 * ROWS_PER_DAY;
+        let shuffled = ColumnarData::from_parts(
+            vec!["timestamp".into(), "RUN".into()],
+            (0..n).map(|i| Some(stamp((i * 37) % n))).collect(),
+            vec![vec![f64::NAN; n], vec![1.0; n]],
+        );
+        let before = median_interval_runs();
+        let a = count(&shuffled, &[TimeRangeArg::default()], None).unwrap();
+        let b = count(&shuffled, &[period("2024-01-02T00:00", "2024-01-02T23:50")], None).unwrap();
+        assert_eq!(median_interval_runs() - before, 1);
+        assert_eq!((a.interval_secs, b.interval_secs), (Some(600.0), Some(600.0)));
+        assert_eq!((nums(&a), nums(&b)), (vec![(288, 288, 2.0)], vec![(144, 144, 1.0)]));
     }
 
     #[test]

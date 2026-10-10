@@ -47,11 +47,23 @@ pub struct ColumnarData {
     /// Timestamps parsed ONCE at load to epoch microseconds ([`TS_MISSING`]
     /// when absent/unparseable). Filters compare against this — never
     /// re-parse `timestamps` per query.
+    ///
+    /// WRITE-ONCE: filled by [`ColumnarData::from_parts`] and never changed
+    /// afterwards (special sensors only add / replace / remove VALUE columns).
+    /// [`ColumnarData::sample_interval_secs`] caches a value derived from it,
+    /// so a future path that changes the timestamps of a loaded dataset must
+    /// build a NEW `ColumnarData` through `from_parts` (which starts with an
+    /// empty cache) instead of editing this vector in place.
     pub ts_parsed: Vec<i64>,
     /// `columns[c][r]` = value of column `c` at row `r`; NaN = missing.
     /// Every column has length `n_rows()`, including the timestamp
     /// column's all-NaN placeholder, so header indices map 1:1.
     pub columns: Vec<Vec<f64>>,
+    /// Cache of [`ColumnarData::sample_interval_secs`] (the median sample
+    /// interval of `ts_parsed`), filled by the first call. Private, so every
+    /// dataset outside this module is built by `from_parts` and starts empty:
+    /// the cache lives and dies with the dataset it describes.
+    sample_interval: std::sync::OnceLock<Option<f64>>,
 }
 
 impl ColumnarData {
@@ -85,11 +97,32 @@ impl ColumnarData {
             timestamps,
             ts_parsed,
             columns,
+            sample_interval: std::sync::OnceLock::new(),
         }
     }
 
     pub fn n_rows(&self) -> usize {
         self.timestamps.len()
+    }
+
+    /// Median sample interval of this dataset in seconds — exactly
+    /// [`median_interval_seconds`] of `ts_parsed` (`None` below 2 valid
+    /// timestamps / without a positive gap), computed AT MOST ONCE per dataset.
+    ///
+    /// The computation is two passes over `ts_parsed`, up to 2M gap samples
+    /// and a sort (plus a full sort of the timestamps when they are out of
+    /// order): several times the cost of the count scan / preview it
+    /// accompanies, and constant for a loaded dataset. `load_csv` fills the
+    /// cache while it builds the load report (off the session lock, on the
+    /// load's own blocking thread), so no later command pays for it.
+    ///
+    /// Never stale: the cache is a field of the dataset itself. A new load
+    /// installs a new `ColumnarData` (empty cache), and `ts_parsed` is
+    /// write-once (see its doc) — special sensors only touch value columns.
+    pub fn sample_interval_secs(&self) -> Option<f64> {
+        *self
+            .sample_interval
+            .get_or_init(|| median_interval_seconds(&self.ts_parsed))
     }
 
     #[inline]
@@ -520,6 +553,9 @@ pub fn read_csv_with_stats(path: &str) -> Result<ReadCsvResult, String> {
             timestamps,
             ts_parsed: Vec::new(), // filled post-merge by from_parts
             columns,
+            // Never read on this pre-merge value: the merge rebuilds the
+            // dataset through `from_parts`, with a cache of its own.
+            sample_interval: std::sync::OnceLock::new(),
         },
         parse_fail_counts,
         size_bytes: size,
@@ -1014,6 +1050,22 @@ fn ts_min_max(ts: &[i64]) -> Option<(i64, i64)> {
 /// Cap on how many consecutive-difference samples feed the median interval.
 const MAX_INTERVAL_SAMPLES: usize = 2_000_000;
 
+#[cfg(test)]
+thread_local! {
+    /// How many times [`median_interval_seconds`] ran ON THIS THREAD. Per
+    /// thread so that tests running in parallel cannot disturb each other's
+    /// count (the function is entered on its caller's thread).
+    static MEDIAN_INTERVAL_RUNS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Test probe: runs of [`median_interval_seconds`] on the calling thread so
+/// far. Tests pin "the interval is computed at most once per dataset" with the
+/// difference of two readings.
+#[cfg(test)]
+pub(crate) fn median_interval_runs() -> usize {
+    MEDIAN_INTERVAL_RUNS.with(|c| c.get())
+}
+
 /// Median positive gap, in seconds, between consecutive valid timestamps of
 /// the merged dataset. The merge orders rows by timestamp TEXT, which equals
 /// chronological order for a uniform format — but mixed formats could differ,
@@ -1022,7 +1074,12 @@ const MAX_INTERVAL_SAMPLES: usize = 2_000_000;
 /// than [`MAX_INTERVAL_SAMPLES`] gaps a deterministic stride sample is used.
 /// Equal neighbours (gap 0) are ignored. Even sample count: mean of the two
 /// middle gaps. `None` if fewer than 2 valid timestamps / no positive gap.
+///
+/// O(rows) + a sort: do NOT call this per query on a loaded dataset — read
+/// [`ColumnarData::sample_interval_secs`], which runs it once per dataset.
 pub(crate) fn median_interval_seconds(ts: &[i64]) -> Option<f64> {
+    #[cfg(test)]
+    MEDIAN_INTERVAL_RUNS.with(|c| c.set(c.get() + 1));
     let mut valid = 0usize;
     let mut sorted = true;
     let mut prev: Option<i64> = None;
@@ -1166,7 +1223,10 @@ pub fn build_load_report(merge_result: &MergeResult) -> CsvLoadReport {
         period_end: range.and_then(|(_, hi)| format_micros(hi)),
         period_start_micros: range.map(|(lo, _)| lo),
         period_end_micros: range.map(|(_, hi)| hi),
-        interval_seconds: median_interval_seconds(&data.ts_parsed),
+        // Fills the dataset's interval cache: `load_csv` builds this report
+        // before it installs the dataset, so the one computation happens here
+        // (on the load's blocking thread) and every later command reads it.
+        interval_seconds: data.sample_interval_secs(),
         missing_percent,
     }
 }
@@ -1329,6 +1389,7 @@ mod tests {
             timestamps,
             ts_parsed: Vec::new(),
             columns,
+            sample_interval: std::sync::OnceLock::new(),
         }
     }
 
@@ -1771,6 +1832,168 @@ mod tests {
         let a = median_interval_seconds(&ts);
         assert_eq!(a, median_interval_seconds(&ts));
         assert_eq!(a, Some(1.0));
+    }
+
+    // ── the per-dataset interval cache (`ColumnarData::sample_interval_secs`) ──
+
+    /// `n` rows `step_secs` apart; `shuffle` stores them out of order.
+    fn series(n: usize, step_secs: i64, shuffle: bool) -> ColumnarData {
+        let base = ts_to_micros(parse_timestamp("2024-01-01T00:00:00").unwrap());
+        let stamp = |i: usize| {
+            micros_to_naive(base + i as i64 * step_secs * 1_000_000)
+                .unwrap()
+                .format("%Y-%m-%dT%H:%M:%S")
+                .to_string()
+        };
+        // 7 is coprime with every `n` used below: a permutation.
+        let order: Vec<usize> = (0..n).map(|i| if shuffle { (i * 7) % n } else { i }).collect();
+        ColumnarData::from_parts(
+            vec!["timestamp".into(), "A".into()],
+            order.iter().map(|&i| Some(stamp(i))).collect(),
+            vec![vec![f64::NAN; n], vec![1.0; n]],
+        )
+    }
+
+    #[test]
+    fn cached_interval_equals_a_fresh_computation_bit_for_bit() {
+        let mut cases = vec![
+            series(500, 60, false),
+            series(500, 60, true), // out of order: the sorting branch
+            series(11, 7, false),  // even number of gaps
+            series(2, 3600, false),
+            series(1, 60, false), // no interval at all
+            series(0, 60, false),
+        ];
+        // Missing / unparseable timestamps and a duplicate in between.
+        cases.push(ColumnarData::from_parts(
+            vec!["timestamp".into(), "A".into()],
+            vec![
+                Some("2024-01-01T00:00:00".into()),
+                None,
+                Some("garbage".into()),
+                Some("2024-01-01T00:00:30".into()),
+                Some("2024-01-01T00:00:30".into()),
+                Some("2024-01-01T00:02:00".into()),
+            ],
+            vec![vec![f64::NAN; 6], vec![1.0; 6]],
+        ));
+        for (k, d) in cases.iter().enumerate() {
+            let fresh = median_interval_seconds(&d.ts_parsed);
+            let cached = d.sample_interval_secs();
+            assert_eq!(cached.map(f64::to_bits), fresh.map(f64::to_bits), "case {k}");
+            // ... and it stays that value on every later read.
+            assert_eq!(d.sample_interval_secs().map(f64::to_bits), fresh.map(f64::to_bits), "case {k}");
+        }
+        assert_eq!(cases[0].sample_interval_secs(), Some(60.0));
+        assert_eq!(cases[1].sample_interval_secs(), Some(60.0));
+        assert_eq!(cases[4].sample_interval_secs(), None);
+        assert_eq!(cases[6].sample_interval_secs(), Some(60.0), "gaps 30 s and 90 s");
+    }
+
+    #[test]
+    fn the_interval_is_computed_once_per_dataset_however_often_it_is_read() {
+        let d = series(300, 60, true);
+        let before = median_interval_runs();
+        for _ in 0..5 {
+            assert_eq!(d.sample_interval_secs(), Some(60.0));
+        }
+        assert_eq!(median_interval_runs() - before, 1);
+        // "No interval" is an answer too: it is not looked for again.
+        let none = series(1, 60, false);
+        let before = median_interval_runs();
+        for _ in 0..5 {
+            assert_eq!(none.sample_interval_secs(), None);
+        }
+        assert_eq!(median_interval_runs() - before, 1);
+    }
+
+    #[test]
+    fn a_new_dataset_never_inherits_the_interval_of_the_previous_one() {
+        // What a reload does: a NEW `ColumnarData` (via `from_parts`), whose
+        // cache starts empty - the old dataset's value cannot leak into it.
+        let old = series(100, 60, false);
+        assert_eq!(old.sample_interval_secs(), Some(60.0));
+        let before = median_interval_runs();
+        let new = series(100, 300, false);
+        assert_eq!(median_interval_runs(), before, "building a dataset computes nothing");
+        assert_eq!(new.sample_interval_secs(), Some(300.0));
+        assert_eq!(median_interval_runs() - before, 1, "computed afresh for the new dataset");
+        assert_eq!(old.sample_interval_secs(), Some(60.0));
+        // Rebuilding a dataset from another one's parts (the only way to change
+        // its timestamps) starts from an empty cache as well.
+        let mut ts = new.timestamps.clone();
+        ts.truncate(1);
+        let rebuilt = ColumnarData::from_parts(new.headers.clone(), ts, vec![vec![f64::NAN], vec![1.0]]);
+        assert_eq!(rebuilt.sample_interval_secs(), None);
+    }
+
+    #[test]
+    fn the_load_report_fills_the_cache_so_no_later_reader_computes() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut body = String::from("timestamp,S1\n");
+        for i in 0..30 {
+            body.push_str(&format!("2024-01-01 00:{:02}:00,{}\n", i * 2, i));
+        }
+        let single = write_csv(&dir, "one.csv", &body);
+        let second = write_csv(&dir, "two.csv", "timestamp,S2\n2024-01-01 02:00:00,1\n2024-01-01 02:02:00,2\n");
+        // Single-file fast path and the multi-file merge alike.
+        for paths in [vec![single.clone()], vec![single.clone(), second]] {
+            let before = median_interval_runs();
+            let (m, rep) = load(paths);
+            assert_eq!(median_interval_runs() - before, 1, "one computation per load");
+            assert_eq!(rep.interval_seconds, Some(120.0));
+            // The dataset `load_csv` installs is `m.data`: already answered.
+            assert_eq!(m.data.sample_interval_secs(), rep.interval_seconds);
+            assert_eq!(m.data.sample_interval_secs(), median_interval_seconds(&m.data.ts_parsed));
+            assert_eq!(median_interval_runs() - before, 2, "only the explicit fresh computation above");
+        }
+    }
+
+    #[test]
+    fn loaded_timestamps_are_in_text_order_which_is_time_order_for_one_format_only() {
+        // Documents WHEN `median_interval_seconds` takes its sorting branch.
+        // Every load path (single file and multi-file merge) orders rows by the
+        // timestamp TEXT, so a file whose rows are merely out of order is
+        // loaded in time order...
+        let shuffled = single(
+            vec!["timestamp", "A"],
+            vec![
+                (Some("2024-01-01 00:02:00"), vec![None, Some(2.0)]),
+                (Some("2024-01-01 00:00:00"), vec![None, Some(0.0)]),
+                (Some("2024-01-01 00:01:00"), vec![None, Some(1.0)]),
+            ],
+            vec![0, 0],
+        );
+        assert!(shuffled.data.ts_parsed.windows(2).all(|w| w[0] <= w[1]));
+        // ... and only timestamps written in MIXED ways within one dataset end
+        // up out of time order: here `T` and a space as the separator (a space
+        // sorts before `T`), likewise a mix of Buddhist-Era and Gregorian years
+        // (ordered by the text as written, converted afterwards).
+        let mixed = single(
+            vec!["timestamp", "A"],
+            vec![
+                (Some("2024-01-01T00:00:00"), vec![None, Some(0.0)]),
+                (Some("2024-01-01 00:01:00"), vec![None, Some(1.0)]),
+                (Some("2024-01-01T00:02:00"), vec![None, Some(2.0)]),
+                (Some("2024-01-01 00:03:00"), vec![None, Some(3.0)]),
+            ],
+            vec![0, 0],
+        );
+        assert!(!mixed.data.ts_parsed.windows(2).all(|w| w[0] <= w[1]));
+        let be_and_ce = single(
+            vec!["timestamp", "A"],
+            vec![
+                (Some("2567-01-01 00:00:00"), vec![None, Some(0.0)]), // BE 2567 = 2024
+                (Some("2024-01-01 00:01:00"), vec![None, Some(1.0)]),
+                (Some("2024-01-01 00:02:00"), vec![None, Some(2.0)]),
+            ],
+            vec![0, 0],
+        );
+        assert!(!be_and_ce.data.ts_parsed.windows(2).all(|w| w[0] <= w[1]));
+        // The interval is right either way (and cached either way).
+        for m in [&shuffled, &mixed, &be_and_ce] {
+            assert_eq!(m.data.sample_interval_secs(), Some(60.0));
+        }
     }
 
     #[test]

@@ -7551,6 +7551,147 @@ mod count_period_rows_tests {
         assert!(e.starts_with("BAD_REQUEST:"), "{e}");
         assert!(count_period_rows_in(&state, &many[..period_counts::MAX_PERIODS], None, Some(1)).is_ok());
     }
+
+    // ── the dataset's sample interval is computed once, not per call ──────
+
+    use crate::csv_processor::{median_interval_runs, median_interval_seconds};
+
+    /// `n` rows one minute apart with a `RUN` column of ones.
+    fn minute_rows(n: usize) -> ColumnarData {
+        ColumnarData::from_parts(
+            vec!["timestamp".into(), "RUN".into()],
+            (0..n).map(|i| Some(format!("2024-02-01T{:02}:{:02}:00", i / 60, i % 60))).collect(),
+            vec![vec![f64::NAN; n], vec![1.0; n]],
+        )
+    }
+
+    /// The loaded dataset's cached interval, its timestamps, and what a fresh
+    /// computation over those timestamps gives.
+    fn interval_facts(state: &AppState) -> (Option<f64>, Vec<i64>, Option<f64>) {
+        let lock = state.0.read().unwrap();
+        let data = &lock.as_ref().unwrap().data;
+        (data.sample_interval_secs(), data.ts_parsed.clone(), median_interval_seconds(&data.ts_parsed))
+    }
+
+    #[test]
+    fn two_calls_on_the_loaded_dataset_compute_the_sample_interval_at_most_once() {
+        let state = state_with(4);
+        let before = median_interval_runs();
+        // One settled draft of the modal = two calls (train periods, scoring
+        // periods); every later edit = two more.
+        let a = count_period_rows_in(&state, &day(), Some(&running()), Some(4)).unwrap();
+        let b = count_period_rows_in(&state, &day(), None, Some(4)).unwrap();
+        assert!(median_interval_runs() - before <= 1, "the interval belongs to the dataset, not to the call");
+        for _ in 0..4 {
+            count_period_rows_in(&state, &day(), Some(&running()), None).unwrap();
+        }
+        assert_eq!(median_interval_runs() - before, 1);
+        assert_eq!((a.interval_secs, b.interval_secs), (Some(600.0), Some(600.0)));
+        assert_eq!((a.periods[0].running_days, b.periods[0].running_days), (0.5, 1.0));
+        // Bit-identical to the value a computation per call returned.
+        let (cached, _, fresh) = interval_facts(&state);
+        assert_eq!(cached.map(f64::to_bits), fresh.map(f64::to_bits));
+        assert_eq!(a.interval_secs.map(f64::to_bits), fresh.map(f64::to_bits));
+    }
+
+    #[test]
+    fn a_newly_loaded_dataset_gets_its_own_interval_not_the_previous_ones() {
+        let state = state_with(4); // 10-minute rows
+        let old = count_period_rows_in(&state, &[TimeRangeArg::default()], None, None).unwrap();
+        assert_eq!((old.interval_secs, old.periods[0].running_days), (Some(600.0), 1.0));
+
+        // What `load_csv` does: build the load report (which asks for the
+        // interval - on the load's own thread, before any lock), then install.
+        let merged = csv_processor::MergeResult {
+            data: minute_rows(720),
+            warnings: vec![],
+            parse_fail_counts: vec![],
+            files: vec![],
+        };
+        let before = median_interval_runs();
+        let report = csv_processor::build_load_report(&merged);
+        assert_eq!(median_interval_runs() - before, 1, "computed afresh for the new dataset");
+        assert_eq!(report.interval_seconds, Some(60.0));
+        let generation = install_session(&state, merged.data, vec![]).unwrap();
+
+        let before = median_interval_runs();
+        let new = count_period_rows_in(&state, &[TimeRangeArg::default()], None, Some(generation)).unwrap();
+        let again = count_period_rows_in(&state, &[TimeRangeArg::default()], Some(&running()), Some(generation)).unwrap();
+        assert_eq!(median_interval_runs(), before, "after a real load nothing is computed under the session lock");
+        // 720 one-minute rows = half a day - with the OLD interval (600 s) it
+        // would have read 5.0 days.
+        assert_eq!((new.interval_secs, new.total_rows, new.periods[0].running_days), (Some(60.0), 720, 0.5));
+        assert_eq!(again, new);
+        assert_eq!(new.interval_secs, report.interval_seconds, "the load report and the modal agree");
+
+        // A dataset installed WITHOUT a load report (tests only) is still
+        // right: its first reader computes it, once.
+        install_session(&state, minute_rows(1), vec![]).unwrap();
+        let before = median_interval_runs();
+        let one = count_period_rows_in(&state, &[TimeRangeArg::default()], None, None).unwrap();
+        count_period_rows_in(&state, &[TimeRangeArg::default()], None, None).unwrap();
+        assert_eq!(median_interval_runs() - before, 1);
+        assert_eq!((one.interval_secs, one.periods[0].running_days), (None, 0.0));
+    }
+
+    #[test]
+    fn special_sensor_changes_keep_the_timestamps_and_the_cached_interval() {
+        // Add / recompute / remove of a special sensor are the only mutations of
+        // a loaded dataset, and they touch value columns only - so the cached
+        // interval stays the fresh one and never needs recomputing.
+        let state = state_with(4);
+        let first = count_period_rows_in(&state, &day(), Some(&running()), Some(4)).unwrap();
+        let (_, ts_before, _) = interval_facts(&state);
+        let before = median_interval_runs();
+        let steps: [&dyn Fn(); 3] = [
+            &|| {
+                commit_derived(&state, 4, Some(4), "Extra", vec![1.0; 144], false).unwrap();
+            },
+            &|| {
+                commit_derived(&state, 4, Some(4), "extra", vec![2.0; 144], true).unwrap();
+            },
+            &|| {
+                assert_eq!(remove_derived_in_state(&state, &["EXTRA".to_string()], Some(4)).unwrap(), 1);
+            },
+        ];
+        for (k, step) in steps.iter().enumerate() {
+            step();
+            let (cached, ts, fresh) = interval_facts(&state); // one fresh computation per step
+            assert_eq!(ts, ts_before, "step {k}: timestamps untouched");
+            assert_eq!(cached.map(f64::to_bits), fresh.map(f64::to_bits), "step {k}");
+            assert_eq!(count_period_rows_in(&state, &day(), Some(&running()), Some(4)).unwrap(), first, "step {k}");
+        }
+        assert_eq!(median_interval_runs() - before, steps.len(), "only the explicit fresh computations ran");
+    }
+
+    #[test]
+    fn health_previews_with_scoring_periods_reuse_the_interval_too() {
+        let state = state_with(4);
+        let request = health_preview::HealthPreviewRequest {
+            kind: "individual".into(),
+            target: Some("RUN".into()),
+            test_periods: Some(vec![health_validation::TestPeriodArg {
+                start: Some("2024-01-01T12:00".into()),
+                end: None,
+            }]),
+            ..Default::default()
+        };
+        let before = median_interval_runs();
+        let p1 = health_preview_in(&state, &request).unwrap();
+        let p2 = health_preview_in(&state, &request).unwrap();
+        // ... and the modal's count on the same dataset shares that one value.
+        let counted = count_period_rows_in(&state, &day(), None, None).unwrap();
+        assert_eq!(median_interval_runs() - before, 1, "two previews + a count, one computation");
+        let (_, _, fresh) = interval_facts(&state);
+        assert_eq!(counted.interval_secs.map(f64::to_bits), fresh.map(f64::to_bits));
+        for p in [&p1, &p2] {
+            let v = p.test_validation.as_ref().expect("scoring periods were sent");
+            assert_eq!(v.tests[0].rows, 72, "12:00 .. 23:50");
+            assert_eq!(v.tests[0].days, health_validation::days_of(72, fresh));
+            assert_eq!(v.tests[0].days, 0.5);
+            assert_eq!(v.train.days, health_validation::days_of(v.train.rows, fresh));
+        }
+    }
 }
 
 /// `{app_data}/workspaces/{workspace_id}/output` — the folder "Mark complete"
