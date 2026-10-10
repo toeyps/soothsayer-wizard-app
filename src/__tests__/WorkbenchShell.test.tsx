@@ -136,14 +136,34 @@ describe('StaleBanner', () => {
         expect(onGo).toHaveBeenCalledTimes(1);
     });
 
-    it('when Train sensor cannot train the model right now, the link still goes there and its tooltip says why', () => {
+    // Review of d828a88 (A2): "Train sensor ↑" was a dead link whenever Train sensor
+    // would not train THIS model — the sentence now says why (or when) instead.
+    it('when the model itself cannot train, the sentence says why and offers no link', () => {
         const onGo = vi.fn();
-        render(<StaleBanner blockedReason="Add at least 1 predictor" onGoTrainSensor={onGo} />);
-        const link = screen.getByTestId('stale-go-train') as HTMLButtonElement;
-        expect(link.title).toBe('Add at least 1 predictor');
-        expect(link.disabled).toBe(false);
-        fireEvent.click(link);
-        expect(onGo).toHaveBeenCalledTimes(1);
+        render(<StaleBanner cantTrain={{ kind: 'reason', text: 'Add at least 1 predictor.' }} onGoTrainSensor={onGo} />);
+        const b = screen.getByTestId('stale-banner');
+        expect(b.getAttribute('data-state')).toBe('blocked');
+        expect(screen.queryByTestId('stale-go-train')).toBeNull();
+        expect(b.querySelectorAll('button')).toHaveLength(0);
+        expect(screen.getByTestId('stale-cant-train').getAttribute('data-kind')).toBe('reason');
+        // the reason's own full stop is not doubled
+        expect(b.textContent).toBe("Settings or running condition changed — this model is Incomplete again. It can't be trained yet: Add at least 1 predictor. Your set points are kept.");
+    });
+
+    it('while a training run is active on other models it says when, and with out-of-date data it says that — never a link', () => {
+        const { rerender } = render(<StaleBanner cantTrain={{ kind: 'run', text: 'Wait for the training run to finish' }} onGoTrainSensor={() => {}} />);
+        expect(screen.getByTestId('stale-banner').textContent).toBe('Settings or running condition changed — this model is Incomplete again. Train it again when the training run finishes. Your set points are kept.');
+        expect(screen.queryByTestId('stale-go-train')).toBeNull();
+        rerender(<StaleBanner cantTrain={{ kind: 'stale', text: 'The data in this window is out of date. Close it and open Build Model again from the Dashboard.' }} onGoTrainSensor={() => {}} />);
+        expect(screen.getByTestId('stale-banner').textContent).toBe('Settings or running condition changed — this model is Incomplete again. The data in this window is out of date. Close it and open Build Model again from the Dashboard. Your set points are kept.');
+        expect(screen.getByTestId('stale-cant-train').getAttribute('data-kind')).toBe('stale');
+        expect(screen.queryByTestId('stale-go-train')).toBeNull();
+    });
+
+    it('a model that is training / queued says that first, whatever else blocks it', () => {
+        render(<StaleBanner training cantTrain={{ kind: 'run', text: 'x' }} onGoTrainSensor={() => {}} />);
+        expect(screen.getByTestId('stale-banner').getAttribute('data-state')).toBe('training');
+        expect(screen.queryByTestId('stale-cant-train')).toBeNull();
     });
 
     it('while it trains again, or waits in the run, it says so instead of pointing at Train sensor', () => {

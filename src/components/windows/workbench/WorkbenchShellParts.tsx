@@ -61,6 +61,11 @@ export interface FitGoneActions {
     onGoTrainSensor?: () => void;
     /** Why the last load did not work, or null. */
     error?: string | null;
+    /** The window knows the fit is gone (it was told NOT_FITTED for this model and
+     *  it has not been fitted again since) — also when the live answer of the page's
+     *  own request no longer says so (the tab was left and opened again after a load
+     *  that failed). */
+    gone?: boolean;
 }
 
 /** Title of the board, the tab tooltip and the start of the footer sentence. */
@@ -160,15 +165,25 @@ export function WorkbenchScroll({ resetKey, page, children }: { resetKey: string
     return <div ref={ref} className="wb2-scroll" data-testid="wb-scroll" data-page={page}>{children}</div>;
 }
 
+/** Why "Train sensor ↑" would not train an out-of-date model right now. */
+export interface StaleCantTrain {
+    /** `reason`: the model itself cannot train (`text` = why — a missing setting, its
+     *  running condition, a period outside the data). `run`: a training run is active
+     *  on other models. `stale`: the data in this window is out of date (`text` = the
+     *  whole sentence). */
+    kind: 'reason' | 'run' | 'stale';
+    text: string;
+}
+
 interface StaleBannerProps {
     /** The model is being trained again right now. */
     training?: boolean;
     /** The model is waiting in a training run (customer items 8 + 9). */
     queued?: boolean;
-    /** Why Train sensor cannot train this model right now (its gate, a run that is
-     *  active, out-of-date data): the link's tooltip. The link still moves the focus to
-     *  Train sensor, whose own line says the same. */
-    blockedReason?: string;
+    /** Train sensor would NOT train this model right now: the banner says why (or
+     *  when) instead of offering a link that would do nothing — or would start a run
+     *  that skips this very model. */
+    cantTrain?: StaleCantTrain;
     /** "Train sensor ↑": focus the header's Train sensor button. */
     onGoTrainSensor: () => void;
 }
@@ -177,17 +192,26 @@ interface StaleBannerProps {
  * "Settings or running condition changed — this model is Incomplete again. Train it
  * again with Train sensor ↑ to update the charts. Your set points are kept."
  * (SPEC workbench-redesign §6.) It has NO button of its own: the one place to train
- * is the header's Train sensor, and the sentence links there.
+ * is the header's Train sensor, and the sentence links there — unless Train sensor
+ * would not train this model right now (`cantTrain`): then the sentence says why
+ * ("It can't be trained yet: …"), or when ("…when the training run finishes").
  */
-export function StaleBanner({ training, queued, blockedReason, onGoTrainSensor }: StaleBannerProps) {
+export function StaleBanner({ training, queued, cantTrain, onGoTrainSensor }: StaleBannerProps) {
+    const state = training ? 'training' : queued ? 'queued' : cantTrain ? 'blocked' : 'stale';
     return (
-        <div className="wb2-stale" role="status" data-testid="stale-banner" data-state={training ? 'training' : queued ? 'queued' : 'stale'}>
+        <div className="wb2-stale" role="status" data-testid="stale-banner" data-state={state}>
             <span>
                 <b>Settings or running condition changed — this model is Incomplete again.</b>{' '}
-                {training ? 'Training it again now… ' : queued ? 'It is queued in the training run. ' : (
+                {training ? 'Training it again now… ' : queued ? 'It is queued in the training run. ' : cantTrain ? (
+                    <span data-testid="stale-cant-train" data-kind={cantTrain.kind}>
+                        {cantTrain.kind === 'run' ? 'Train it again when the training run finishes. '
+                            : cantTrain.kind === 'stale' ? `${cantTrain.text} `
+                            : `It can't be trained yet: ${cantTrain.text.trim().replace(/\.+$/, '')}. `}
+                    </span>
+                ) : (
                     <>
                         Train it again with{' '}
-                        <button type="button" className="tq-inline-link" data-testid="stale-go-train" title={blockedReason} onClick={onGoTrainSensor}>
+                        <button type="button" className="tq-inline-link" data-testid="stale-go-train" onClick={onGoTrainSensor}>
                             Train sensor ↑
                         </button>
                         {' '}to update the charts.{' '}

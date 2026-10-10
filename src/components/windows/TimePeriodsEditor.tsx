@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Calendar, Plus, Trash2, X } from 'lucide-react';
 import type { TimePeriod } from '../../types';
-import { PERIOD_COUNTS_IDLE, trainRowModels, type PeriodCountsState } from '../../utils/periodCounts';
+import { PERIOD_COUNTS_IDLE, noRunningRowsNote, trainRowModels, type PeriodCountsState } from '../../utils/periodCounts';
 import { NO_TRAIN_PERIOD_EMPTY_TEXT } from '../../utils/runningCondition';
 import {
-    faultSide,
+    faultOnSide,
     isRangeFullyCovered,
     mergeOverlapping,
     newPeriodId,
@@ -35,6 +35,13 @@ import { isCompleteDateInput, overlapDays, settleDateInput } from './periodDispl
  * count is on its way the previous number stays, dimmed. An invalid period gets
  * a thin red left edge, a red date field on the side that is wrong and ONE
  * reason line ("P2 ends before it starts — pick an end after 11 May 2026").
+ *
+ * Against the loaded data (2026-10-10, `bounds`): a period ENTIRELY outside the
+ * data's time range is invalid like a reversed one — both date fields red and
+ * "P1 is outside the data (1 Jan 2025 – 31 Dec 2025)"; one that is only partly
+ * inside gets a quiet amber note ("Only the part inside the data is used (data
+ * ends 31 Dec 2025)") and blocks nothing. A period whose settled count holds no
+ * running row while the others do gets "no running rows in P2" (amber).
  *
  * Typing a date (2026-10-10, review of a4acd7a): a date goes to the parent ON
  * CHANGE as soon as the field reports a complete one (`isCompleteDateInput`),
@@ -249,11 +256,15 @@ export default function TimePeriodsEditor({ periods, onChange, bounds, counts = 
         const end = p.end !== saved.end && !isCompleteDateInput(p.end) ? saved.end : p.end;
         return start === p.start && end === p.end ? p : { ...p, start, end };
     });
-    const statuses = validatePeriods(judged);
+    // Judged against the loaded data too (the dataset's own bounds, to the second).
+    const statuses = validatePeriods(judged, bounds);
     const minAttr = toInputValue(bounds?.min);
     const maxAttr = toInputValue(bounds?.max);
     const boundsForCover = minAttr && maxAttr ? { min: minAttr, max: maxAttr } : null;
-    const rows = trainRowModels(judged, boundsForCover, counts);
+    const rows = trainRowModels(judged, boundsForCover, counts, statuses.map(s => s.invalid));
+    // "no running rows in P2" is only a ROW's note while the other periods have
+    // rows; when none has, the one red line under the timeline says it.
+    const unionHasRows = (counts.train?.union.running_rows ?? 0) > 0;
 
     const next = judged.length === 0 ? firstDefaultPeriod(bounds) : nextDefaultPeriod(judged, maxAttr ?? null);
     const covered = isRangeFullyCovered(judged, boundsForCover);
@@ -270,8 +281,9 @@ export default function TimePeriodsEditor({ periods, onChange, bounds, counts = 
     const field = (i: number, which: 'start' | 'end') => {
         const p = draft[i];
         const st = statuses[i];
-        // The date field the fault is about goes red ("Fix P1's end").
-        const bad = st.invalid && !!st.fault && faultSide(st.fault) === which;
+        // The date field the fault is about goes red ("Fix P1's end"); both
+        // fields for a period that lies outside the data.
+        const bad = st.invalid && !!st.fault && faultOnSide(st.fault, which);
         return (
             <DateField
                 ariaLabel={`P${i + 1} ${which}`}
@@ -304,10 +316,17 @@ export default function TimePeriodsEditor({ periods, onChange, bounds, counts = 
                 </div>
             );
         }
+        const notes: ReactNode[] = [];
+        if (st.dataNote) {
+            notes.push(<div key="data" data-testid={`period-data-note-${i + 1}`} className="rcm-permsg rcm-permsg--warn">{st.dataNote}</div>);
+        }
+        if (rows[i].noRunningRows && unionHasRows) {
+            notes.push(<div key="rows" data-testid={`period-no-rows-${i + 1}`} className="rcm-permsg rcm-permsg--warn">{noRunningRowsNote(`P${i + 1}`)}</div>);
+        }
         if (st.overlapsPrev) {
             const d = overlapDays(judged[i - 1], p, boundsForCover);
-            return (
-                <div data-testid={`period-overlap-${i + 1}`} className="rcm-permsg">
+            notes.push(
+                <div key="overlap" data-testid={`period-overlap-${i + 1}`} className="rcm-permsg">
                     <span>P{i + 1} overlaps P{i}{d !== null ? ` by ${d} d` : ''} — rows in both are used once.</span>
                     <button
                         type="button"
@@ -320,10 +339,10 @@ export default function TimePeriodsEditor({ periods, onChange, bounds, counts = 
                     >
                         Merge into one
                     </button>
-                </div>
+                </div>,
             );
         }
-        return null;
+        return notes.length ? notes : null;
     };
 
     return (

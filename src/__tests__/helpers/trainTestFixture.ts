@@ -12,8 +12,21 @@ import type { TestPeriod, TimePeriod } from '../../types';
  */
 export const ALL_TIME_TRAIN: TimePeriod[] = [{ id: 'all-time', start: '', end: '' }];
 
-/** One closed scoring period (start → end only) — enough for Mark complete. */
-export const ONE_TEST: TestPeriod[] = [{ id: 'test-1', start: '2024-01-01T00:00', end: '2024-01-31T23:59' }];
+/**
+ * One closed scoring period (start → end only) — enough for Mark complete.
+ *
+ * January 2026: INSIDE the data of every integration dataset (the fake plant's
+ * 60 hourly rows from 1 Jan 2026, and the `2026-01-01 … 2026-12-31` bounds the
+ * mocked windows answer). Since 2026-10-10 a period that lies entirely outside
+ * the loaded data is invalid in the Running-condition settings (Apply / Save
+ * changes are disabled on it), so a fixture that is meant to be a NORMAL scoring
+ * period has to be inside it.
+ */
+export const ONE_TEST: TestPeriod[] = [{ id: 'test-1', start: '2026-01-01T00:00', end: '2026-01-31T23:59' }];
+
+/** The same period in January 2024 — for suites whose own train periods and
+ *  typed dates are in 2024 (they mock no dataset bounds, or bounds of their own). */
+export const ONE_TEST_2024: TestPeriod[] = [{ id: 'test-1', start: '2024-01-01T00:00', end: '2024-01-31T23:59' }];
 
 /**
  * The same kind of list as a workspace saved BEFORE 2026-10-10 holds it: the

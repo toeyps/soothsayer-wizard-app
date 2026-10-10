@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 import type { TestPeriod, TimePeriod } from '../../types';
-import { PERIOD_COUNTS_IDLE, scoringRowModels, type PeriodCountsState } from '../../utils/periodCounts';
+import { PERIOD_COUNTS_IDLE, noRunningRowsNote, scoringRowModels, type PeriodCountsState } from '../../utils/periodCounts';
 import { noScoringPeriodNote } from '../../utils/runningCondition';
 import {
-    faultSide,
+    faultOnSide,
     newPeriodId,
     periodsOverlap,
     sortPeriods,
@@ -35,6 +35,13 @@ import type { PeriodBounds } from './TimePeriodsEditor';
  * the train periods: one small grey line under the row says how many days of
  * train time it includes — never a block. An invalid period gets a thin red
  * left edge, a red date field and ONE reason line ("S1 needs an end date").
+ *
+ * Against the loaded data (2026-10-10, `bounds`): a scoring period ENTIRELY
+ * outside the data's time range is invalid ("S1 is outside the data (1 Jan 2025
+ * – 31 Dec 2025)", both fields red, blocks Apply / Save); one only partly
+ * inside gets a quiet amber note and blocks nothing; one whose settled count
+ * holds no running row gets "no running rows in S1" (amber — Mark complete's
+ * own rule about scored periods is unchanged).
  *
  * Old workspaces: a period saved before 2026-10-10 may still carry `label` /
  * `eventTime` / `fromHighlight`. They are never shown, and every period this
@@ -202,8 +209,9 @@ export default function TestPeriodsEditor({ tests, train, onChange, bounds, bloc
         const end = t.end !== was.end && !isCompleteDateInput(t.end) ? was.end : t.end;
         return start === t.start && end === t.end ? t : toScoringPeriod({ id: t.id, start, end });
     });
-    const statuses = validateTestPeriods(judged);
-    const rows = scoringRowModels(judged, boundsForDays, counts);
+    // Judged against the loaded data too (the dataset's own bounds, to the second).
+    const statuses = validateTestPeriods(judged, bounds);
+    const rows = scoringRowModels(judged, boundsForDays, counts, statuses.map(s => s.invalid));
 
     const dateInput = (i: number, which: 'start' | 'end', label: string, bad = false) => (
         <div className={`f4-dtw${bad ? ' f4-dtw--bad' : ''}`}>
@@ -231,14 +239,14 @@ export default function TestPeriodsEditor({ tests, train, onChange, bounds, bloc
                 const st = statuses[i];
                 const row = rows[i];
                 const note = st.invalid ? null : overlapNote(train, judged[i], i, boundsForDays);
-                // The date field the fault is about goes red.
-                const badSide = st.invalid && st.fault ? faultSide(st.fault) : null;
+                // The date field the fault is about goes red (both, for a period outside the data).
+                const fault = st.invalid ? st.fault : undefined;
                 return (
                     <div key={t.id} className={`rcm-per${st.invalid ? ' rcm-per--bad' : ''}`} data-testid={`test-row-${n}`} data-invalid={st.invalid ? 'true' : undefined}>
                         <span className="rcm-pn tpe-pn">S{n}</span>
-                        {dateInput(i, 'start', `Scoring period ${n} start`, badSide === 'start')}
+                        {dateInput(i, 'start', `Scoring period ${n} start`, !!fault && faultOnSide(fault, 'start'))}
                         <span className="rcm-arrow" aria-hidden="true">→</span>
-                        <div className="f4-dt-end">{dateInput(i, 'end', `Scoring period ${n} end`, badSide === 'end')}</div>
+                        <div className="f4-dt-end">{dateInput(i, 'end', `Scoring period ${n} end`, !!fault && faultOnSide(fault, 'end'))}</div>
                         <span className="rcm-dur" data-testid={`test-days-${n}`}>
                             {row.daysText}
                             {row.runningText && (
@@ -253,6 +261,8 @@ export default function TestPeriodsEditor({ tests, train, onChange, bounds, bloc
                                 {st.rowReason ?? st.reason ?? `S${n} is not valid`}
                             </div>
                         )}
+                        {!st.invalid && st.dataNote && <div className="rcm-permsg rcm-permsg--warn" data-testid={`test-data-note-${n}`}>{st.dataNote}</div>}
+                        {row.noRunningRows && <div className="rcm-permsg rcm-permsg--warn" data-testid={`test-no-rows-${n}`}>{noRunningRowsNote(`S${n}`)}</div>}
                         {note && <div className="rcm-permsg" data-testid={`test-overlap-${n}`}>{note}</div>}
                     </div>
                 );

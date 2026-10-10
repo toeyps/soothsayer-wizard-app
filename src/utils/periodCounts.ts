@@ -215,6 +215,40 @@ export function countedTrainRunningDays(state: PeriodCountsState): number | null
         : null;
 }
 
+/**
+ * Does an answer of the TRAIN call say "no row is left to train on"?
+ *
+ * `union.running_rows === 0` — with ONE exception. A row WITHOUT a readable
+ * timestamp is in no period for the count ("even a fully open period leaves
+ * them out", `period_counts.rs`), but a train period left open at BOTH ends
+ * means "no time limit" when training (`buildPreviewFilterPayload` sends no
+ * time filter then), so those undated rows ARE trained on. With a fully open
+ * period and undated rows in the dataset the count is therefore not the whole
+ * truth, and it must never be read as "nothing to train on".
+ */
+function zeroTrainRows(train: PeriodCounts | null): boolean {
+    if (!train || train.union.running_rows !== 0) return false;
+    const fullyOpen = train.periods.some(c => c.valid && isBlank(c.start) && isBlank(c.end));
+    return !(fullyOpen && train.total_rows > train.union.rows_in_period);
+}
+
+/**
+ * The counts are the request's own (`status: 'ok'` — never while loading, stale
+ * or failed) and the train periods TOGETHER hold no running row: nothing to
+ * train on (`zeroTrainRows`). The Running-condition settings disable Apply /
+ * Save changes on it and the gate blocks Train (`GateOptions.noTrainRows`).
+ * False when no train period was counted at all.
+ */
+export function countedNoTrainRows(state: PeriodCountsState): boolean {
+    return state.status === 'ok' && zeroTrainRows(state.train);
+}
+
+/** The quiet amber note of ONE period whose count is settled at zero running
+ *  rows: "no running rows in P2". */
+export function noRunningRowsNote(name: string): string {
+    return `no running rows in ${name}`;
+}
+
 /** The count of one period inside an answer, found by its own bounds (so a
  *  period keeps its numbers when another one is added, removed or re-ordered
  *  while the new answer is on its way). null when it was not counted. */
@@ -245,12 +279,15 @@ export interface PeriodRowModel {
     runningText: string | null;
     /** The numbers are being counted again (dim them). */
     stale: boolean;
+    /** Its count is SETTLED (the request's own answer) and it holds no running
+     *  row — the row's quiet amber note (`noRunningRowsNote`). */
+    noRunningRows: boolean;
     /** "P1 · 81 d · 69 d running" / "P1 · 81 d" / "P1 · —". */
     text: string;
 }
 
 function rowModel(name: string, number: number, period: { start: string; end: string }, invalid: boolean,
-    bounds: CountBounds | null | undefined, counts: PeriodCounts | null, stale: boolean): PeriodRowModel {
+    bounds: CountBounds | null | undefined, counts: PeriodCounts | null, stale: boolean, settled: boolean): PeriodRowModel {
     const calendarDays = invalid ? null : periodCalendarDays(period, bounds);
     const c = invalid ? null : countFor(counts, period);
     const daysText = calendarDays === null ? '—' : `${calendarDays} d`;
@@ -262,20 +299,23 @@ function rowModel(name: string, number: number, period: { start: string; end: st
         rowsInPeriod: c ? c.rows_in_period : null,
         daysText, runningText,
         stale: !!c && stale,
+        noRunningRows: !!c && settled && c.running_rows === 0,
         text: [name, daysText, runningText].filter(Boolean).join(' · '),
     };
 }
 
-/** One model per TRAIN period row, in list order (P1, P2 …). */
-export function trainRowModels(periods: readonly TimePeriod[], bounds: CountBounds | null | undefined, state: PeriodCountsState): PeriodRowModel[] {
-    const status = validatePeriods([...periods]);
-    return periods.map((p, i) => rowModel(`P${i + 1}`, i + 1, p, status[i].invalid, bounds, state.train, state.status === 'loading'));
+/** One model per TRAIN period row, in list order (P1, P2 …). `invalid` — the
+ *  editor's own per-row verdict (it also judges the rows against the loaded
+ *  data's range); default: the plain date rules. */
+export function trainRowModels(periods: readonly TimePeriod[], bounds: CountBounds | null | undefined, state: PeriodCountsState, invalid?: readonly boolean[]): PeriodRowModel[] {
+    const bad = invalid ?? validatePeriods([...periods]).map(s => s.invalid);
+    return periods.map((p, i) => rowModel(`P${i + 1}`, i + 1, p, !!bad[i], bounds, state.train, state.status === 'loading', state.status === 'ok'));
 }
 
-/** One model per SCORING period row, in list order (S1, S2 …). */
-export function scoringRowModels(tests: readonly TestPeriod[], bounds: CountBounds | null | undefined, state: PeriodCountsState): PeriodRowModel[] {
-    const status = validateTestPeriods([...tests]);
-    return tests.map((t, i) => rowModel(`S${i + 1}`, i + 1, t, status[i].invalid, bounds, state.scoring, state.status === 'loading'));
+/** One model per SCORING period row, in list order (S1, S2 …). `invalid` as in `trainRowModels`. */
+export function scoringRowModels(tests: readonly TestPeriod[], bounds: CountBounds | null | undefined, state: PeriodCountsState, invalid?: readonly boolean[]): PeriodRowModel[] {
+    const bad = invalid ?? validateTestPeriods([...tests]).map(s => s.invalid);
+    return tests.map((t, i) => rowModel(`S${i + 1}`, i + 1, t, !!bad[i], bounds, state.scoring, state.status === 'loading', state.status === 'ok'));
 }
 
 // ---------------------------------------------------------------------------
@@ -322,6 +362,10 @@ export interface RunningConditionCaption {
     belowRecommended: boolean;
     /** The amber sentence for it ("Only 12 d of train running time — …"), or null. */
     warning: string | null;
+    /** The count shown is SETTLED and the train periods together hold no running
+     *  row: the red "No rows match — nothing to train on" line, and Apply / Save
+     *  changes are disabled. Never while the count is loading, stale or failed. */
+    noRows: boolean;
     /** The parts joined with " · " — the whole caption as one line. */
     text: string;
 }
@@ -344,6 +388,9 @@ export const CAPTION_RECOMMENDED_TEXT = `≥ ${RECOMMENDED_TRAIN_DAYS} d recomme
  * row in the train periods (an incomplete condition is not sent), which would
  * read "N of N rows (100%) used for training" — so the rows part says "set the
  * condition to count the rows" instead and no running time is printed.
+ *
+ * A period entirely outside the loaded data (`bounds`) is invalid like any
+ * other: "fix the period to count the rows".
  */
 export function runningConditionCaption(input: {
     trainPeriods: readonly TimePeriod[];
@@ -355,8 +402,8 @@ export function runningConditionCaption(input: {
 }): RunningConditionCaption {
     const { trainPeriods, scoringPeriods, bounds, counts } = input;
     const configured = input.configured !== false;
-    const trainInvalid = validatePeriods([...trainPeriods]).map(s => s.invalid);
-    const scoringInvalid = validateTestPeriods([...scoringPeriods]).map(s => s.invalid);
+    const trainInvalid = validatePeriods([...trainPeriods], bounds).map(s => s.invalid);
+    const scoringInvalid = validateTestPeriods([...scoringPeriods], bounds).map(s => s.invalid);
     const noTrain = trainPeriods.length === 0;
     const anyTrainInvalid = trainInvalid.some(Boolean);
 
@@ -396,6 +443,7 @@ export function runningConditionCaption(input: {
         trainText, scoringText, rowsText: rowsLine, recommendedText,
         belowRecommended: isBelowRecommendedTrainDays(trainRunningDays),
         warning: trainDaysWarning(trainRunningDays),
+        noRows: rows.kind === 'counted' && !rows.stale && zeroTrainRows(counts.train),
         text: [trainText, scoringText, rowsLine, recommendedText].filter(Boolean).join(' · '),
     };
 }

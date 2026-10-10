@@ -794,6 +794,32 @@ describe('states of the preview', () => {
     // Phase D: the model's own load failed (NOT a lost fit), so no preview is asked for at
     // all — the page must not read "Loading…" for ever, and never offers a link that cannot work.
     const idlePreview = { data: null, lastData: null, loading: false, error: null, errorCode: null, notFitted: false, needsRetrain: false, idle: 'disabled' as const };
+
+    // Review of d828a88 (A4): after a fit-gone model's reload failed and the tab was left and
+    // opened again, no request is asked any more — `preview.notFitted` is no longer set — but
+    // the fit is still gone. The window says so (`fitGone.gone`), and the page must keep the
+    // "Fit no longer in memory" board the footer and the Model fit page show.
+    it.each([
+        ['a Complete model', undefined],
+        ['a model that is not Complete', onGoTrain],
+    ] as const)('%s whose fit is gone by the WINDOW\'s knowledge (no live NOT_FITTED): still the "Fit no longer in memory" board with the failed load as its reason', (_n, go) => {
+        mount({ kind: 'relationship', sp: REL_VALID, data: null, preview: idlePreview, fitGone: { onReload, onGoTrainSensor: go, error: 'The Relation model engine stopped.', gone: true } });
+        const board = screen.getByTestId('health-not-fitted');
+        expect(board.querySelector('.wbx-msg-t')!.textContent).toBe('Fit no longer in memory');
+        expect(board.querySelector('.wbx-msg-d')!.textContent).toBe('The last attempt did not work: The Relation model engine stopped.');
+        expect(screen.queryByTestId('health-load-failed')).toBeNull();
+        expect(screen.queryByTestId('health-train-failed')).toBeNull();
+        expect(screen.queryByTestId('health-error')).toBeNull();
+        expect(screen.queryByTestId('health-loading')).toBeNull();
+        fireEvent.click(within(board).getByTestId('health-load-fit'));
+        expect(onReload).toHaveBeenCalledTimes(1);
+    });
+
+    it('...and while that fit is being loaded again the page reads "Loading the Relation model…"', () => {
+        mount({ kind: 'relationship', sp: REL_VALID, data: null, preview: idlePreview, fitLoading: true, fitGone: { onReload, gone: true } });
+        expect(screen.getByTestId('health-loading').querySelector('.wbx-msg-t')!.textContent).toBe('Loading the Relation model…');
+        expect(screen.queryByTestId('health-not-fitted')).toBeNull();
+    });
     it.each([
         ['individual', 'Individual model'],
         ['relationship', 'Relation model'],

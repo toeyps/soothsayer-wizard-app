@@ -34,6 +34,12 @@ import { sensorTitle, useSensorLookup } from '../sensor/sensorInfo';
  * modal's caption prints for that condition (`cardRowsFromCounts`). It used to
  * be a count of the rows where the FIRST sensor has a value, which disagreed
  * with the modal whenever that sensor had gaps.
+ *
+ * Guards against "no data to train on" (user request 2026-10-10): a persisted
+ * train period that lies entirely outside the loaded data is an invalid period
+ * like any other ("P1 needs fixing" + "P1 is outside the data (…)"), and a
+ * settled count of ZERO running rows turns the line red — "0 rows — nothing to
+ * train on" (`noRows`). The card only shows it; the window blocks Train.
  */
 
 /** The card's row count: rows used for training of all the dataset's rows.
@@ -75,14 +81,21 @@ interface RunningConditionCardProps {
     onOpen: () => void;
     /** The PERSISTED workspace scoring periods. */
     testPeriods?: TestPeriod[];
+    /** The count of the persisted condition is settled and its train periods hold
+     *  no running row (`countedNoTrainRows`): the red "nothing to train on" state. */
+    noRows?: boolean;
 }
+
+/** What the card says instead of a share of rows when nothing can be trained on. */
+export const CARD_NO_ROWS_TEXT = 'rows — nothing to train on';
+const CARD_NO_ROWS_TITLE = 'No rows match the running condition inside the train periods — widen a train period or relax the condition';
 
 /** Train period chips; a broken period is drawn red. No train period at all is
  *  an AMBER "add one" chip — training is blocked until one exists (rule 1), but
  *  nothing is wrong yet, it is a step still to do (same amber as the modal's
  *  "Add a train period" Apply hint; red is kept for invalid input). */
-function PeriodChips({ periods }: { periods: TimePeriod[] }) {
-    const status = validatePeriods(periods);
+function PeriodChips({ periods, bounds }: { periods: TimePeriod[]; bounds?: DataBounds | null }) {
+    const status = validatePeriods(periods, bounds);
     if (periods.length === 0) {
         return <span className="rcc-chip rcc-chip--warn" data-testid="rc-card-period-chip">No train period — add one</span>;
     }
@@ -142,7 +155,7 @@ function trainSpan(periods: TimePeriod[]): string {
 
 const plural = (n: number, word: string) => `${word}${n === 1 ? '' : 's'}`;
 
-export function RunningConditionCard({ state, periods, filters, combine, noneConfirmed, headers, getDesc, getUnit, rows, bounds, onOpen, testPeriods = [] }: RunningConditionCardProps) {
+export function RunningConditionCard({ state, periods, filters, combine, noneConfirmed, headers, getDesc, getUnit, rows, bounds, onOpen, testPeriods = [], noRows = false }: RunningConditionCardProps) {
     const lookup = useSensorLookup();
     // Set = one line; "Details" unfolds the full grid (toggling re-renders this card only).
     const [detailsOpen, setDetailsOpen] = useState(false);
@@ -174,7 +187,9 @@ export function RunningConditionCard({ state, periods, filters, combine, noneCon
     }
 
     if (state === 'invalid') {
-        const status = validatePeriods(periods);
+        // The same rule the window's gate reads: date faults, and a period that
+        // lies entirely outside the loaded data.
+        const status = validatePeriods(periods, bounds);
         const bad = status.findIndex(s => s.invalid);
         return (
             <section className="rcc-card rcc-card--bad" data-testid="rc-card" data-state="invalid">
@@ -183,7 +198,7 @@ export function RunningConditionCard({ state, periods, filters, combine, noneCon
                     <div className="rcc-kicker">Running condition</div>
                     <h3 data-testid="rc-card-title">P{bad + 1} needs fixing</h3>
                     <p data-testid="rc-card-reason">{status[bad]?.reason ?? 'Fix the training period dates.'} Models can't be trained until it's fixed.</p>
-                    <div className="rcc-rows"><span className="rcc-lbl">Train</span><PeriodChips periods={periods} /></div>
+                    <div className="rcc-rows"><span className="rcc-lbl">Train</span><PeriodChips periods={periods} bounds={bounds} /></div>
                 </div>
                 <button type="button" className="rcx-btn rcx-btn--danger rcx-btn--lg" data-testid="rc-card-open" onClick={onOpen}>Fix period</button>
             </section>
@@ -201,8 +216,10 @@ export function RunningConditionCard({ state, periods, filters, combine, noneCon
         const nCond = complete.length;
         const badScoring = validateTestPeriods(testPeriods).filter(s => s.invalid).length;
         return (
-            <section className="rcc-card rcc-card--ok rcc-line" data-testid="rc-card" data-state="set" data-details="closed">
-                <div className="rcc-num rcc-num--ok rcc-num--sm" role="img" aria-label="Set · applies to every model" title="Set · applies to every model" data-testid="rc-card-tick"><Check size={13} aria-hidden="true" /></div>
+            <section className={`rcc-card ${noRows ? 'rcc-card--bad' : 'rcc-card--ok'} rcc-line`} data-testid="rc-card" data-state="set" data-details="closed" data-norows={noRows ? 'true' : undefined}>
+                {noRows
+                    ? <div className="rcc-num rcc-num--sm" role="img" aria-label="Nothing to train on" title={CARD_NO_ROWS_TITLE} data-testid="rc-card-tick">!</div>
+                    : <div className="rcc-num rcc-num--ok rcc-num--sm" role="img" aria-label="Set · applies to every model" title="Set · applies to every model" data-testid="rc-card-tick"><Check size={13} aria-hidden="true" /></div>}
                 <div className="rcc-line-main">
                     <b>Running condition</b>
                     <span className="rcc-line-sep" aria-hidden="true" />
@@ -224,6 +241,8 @@ export function RunningConditionCard({ state, periods, filters, combine, noneCon
                     <span className="rcc-line-item rcc-line-rows" data-testid="rc-card-use" aria-live="polite">
                         {noTrain ? (
                             <><b data-testid="rc-card-rows">0</b> <span data-testid="rc-card-no-train">rows — add a train period</span></>
+                        ) : noRows ? (
+                            <><b data-testid="rc-card-rows">0</b> <span className="rcc-line-bad" role="alert" data-testid="rc-card-no-rows" title={CARD_NO_ROWS_TITLE}>{CARD_NO_ROWS_TEXT}</span></>
                         ) : rows.status === 'idle' ? null : showCount ? (
                             <><b data-testid="rc-card-rows">{(rows.used ?? 0).toLocaleString()}</b> <span data-testid="rc-card-pct">rows · {percentText(rows.used, rows.total)}</span></>
                         ) : rows.status === 'error'
@@ -244,8 +263,10 @@ export function RunningConditionCard({ state, periods, filters, combine, noneCon
     }
 
     return (
-        <section className="rcc-card rcc-card--ok" data-testid="rc-card" data-state="set" data-details="open">
-            <div className="rcc-num rcc-num--ok"><Check size={16} aria-hidden="true" /></div>
+        <section className={`rcc-card ${noRows ? 'rcc-card--bad' : 'rcc-card--ok'}`} data-testid="rc-card" data-state="set" data-details="open" data-norows={noRows ? 'true' : undefined}>
+            {noRows
+                ? <div className="rcc-num" aria-hidden="true">!</div>
+                : <div className="rcc-num rcc-num--ok"><Check size={16} aria-hidden="true" /></div>}
             <div className="rcc-main">
                 <div className="rcc-kicker">
                     Running condition <span className="f4-pill f4-pill--ok" data-testid="rc-card-pill">Set</span>
@@ -256,7 +277,7 @@ export function RunningConditionCard({ state, periods, filters, combine, noneCon
                     </button>
                 </div>
                 <div className="rcc-grid">
-                    <div className="rcc-rows" data-testid="rc-card-time"><span className="rcc-lbl">Train</span><PeriodChips periods={periods} /></div>
+                    <div className="rcc-rows" data-testid="rc-card-time"><span className="rcc-lbl">Train</span><PeriodChips periods={periods} bounds={bounds} /></div>
                     <div className="rcc-rows" data-testid="rc-card-test"><span className="rcc-lbl">Scoring</span><ScoringChips tests={testPeriods} train={periods} /></div>
                     <div className="rcc-rows" data-testid="rc-card-cond">
                         <span className="rcc-lbl">When running</span>
@@ -282,6 +303,11 @@ export function RunningConditionCard({ state, periods, filters, combine, noneCon
                     <div className="rcc-use-n">
                         <b data-testid="rc-card-rows">0</b>
                         <span className="rcc-use-none" data-testid="rc-card-no-train">rows — add a train period</span>
+                    </div>
+                ) : noRows ? (
+                    <div className="rcc-use-n">
+                        <b data-testid="rc-card-rows">0</b>
+                        <span className="rcc-line-bad" role="alert" data-testid="rc-card-no-rows" title={CARD_NO_ROWS_TITLE}>{CARD_NO_ROWS_TEXT}</span>
                     </div>
                 ) : rows.status === 'idle' ? null : (
                     <>

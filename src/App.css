@@ -5032,6 +5032,8 @@ body {
 .rct-cap-quiet { color: var(--text-faint); }
 .rct-cap-min { color: var(--text-faint); margin-left: auto; }
 .rct-cap--warn .rct-cap-min { color: var(--warn); }
+/* The settled count says the train periods hold no running row: one red line under the caption. */
+.rct-norows { margin-top: 6px; font-size: 11.5px; line-height: 1.45; color: var(--danger); }
 /* numbers of the previous draft while a new count is on its way (kept, dimmed — no flicker) */
 .rct-stale { opacity: 0.45; }
 
@@ -5058,6 +5060,8 @@ body {
 .rcm-run { color: var(--text-faint); }
 .rcm-permsg { grid-column: 2 / -1; font-size: 11px; line-height: 1.45; color: var(--text-faint); display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; padding-bottom: 2px; }
 .rcm-permsg--bad { color: var(--danger); }
+/* A quiet amber note under a period row (partly outside the data, no running rows): never a block. */
+.rcm-permsg--warn { color: var(--warn); }
 .rcm-per .f4-dtw { height: 28px; border-radius: 6px; padding-right: 6px; }
 .rcm-per .f4-dtw input { font-size: 11.5px; padding-left: 7px; }
 .rcm-per .f4-openb { height: 28px; border-style: solid; border-radius: 6px; background: var(--bg-primary); font-size: 11.5px; padding: 0 8px; }

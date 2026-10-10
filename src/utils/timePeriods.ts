@@ -1,6 +1,6 @@
 import type { TestPeriod, TimeHighlight, TimePeriod } from '../types';
 import type { HealthIssue, TestPeriodWire } from '../types/health';
-import { formatBound, parseLocal } from './workbenchDate';
+import { dateText, formatBound, parseLocal } from './workbenchDate';
 
 /** What is wrong with an invalid period (stable; the UI may key on it — e.g.
  *  which date field to mark red). */
@@ -9,7 +9,18 @@ export type PeriodFault =
     | 'end-invalid'
     | 'start-missing'
     | 'end-missing'
-    | 'ends-before-start';
+    | 'ends-before-start'
+    /** Entirely outside the loaded data's time range (only judged when the
+     *  caller hands in the dataset bounds). */
+    | 'outside-data';
+
+/** The loaded dataset's first / last timestamp (`get_dataset_time_bounds`), as
+ *  the period rules read it. Unknown (missing / unparseable) = nothing is
+ *  judged against the data. */
+export interface PeriodDataBounds {
+    min?: string | null;
+    max?: string | null;
+}
 
 export interface PeriodStatus {
     /** Unparseable bound, end before start, or an open end where none is allowed. */
@@ -24,6 +35,10 @@ export interface PeriodStatus {
     rowReason?: string;
     /** What is wrong, when `invalid`. */
     fault?: PeriodFault;
+    /** A VALID period that reaches past the loaded data on one or both sides
+     *  (never a block): the quiet amber note under its row — "Only the part
+     *  inside the data is used (data ends 31 Dec 2025)". */
+    dataNote?: string;
     /** Starts strictly before the previous period ends (touching is NOT overlap). */
     overlapsPrev: boolean;
 }
@@ -45,7 +60,78 @@ const FAULT_WORDS: Record<PeriodFault, string> = {
     'start-missing': 'needs a start date',
     'end-missing': 'needs an end date',
     'ends-before-start': 'ends before it starts',
+    'outside-data': 'is outside the data',
 };
+
+// ---------------------------------------------------------------------------
+// Period vs the loaded data's time range (user request 2026-10-10: "the data is
+// 2025-01 … 2025-12 — a period chosen beyond that must be warned about at
+// once"). Pure: the bounds are the ones the window already holds for the
+// timeline, so judging costs no request. Unknown bounds = nothing is flagged.
+// ---------------------------------------------------------------------------
+
+/** The data's time range in epoch ms, or null while it is unknown. */
+function dataRangeMs(bounds: PeriodDataBounds | null | undefined): { min: number; max: number } | null {
+    const min = toMs(bounds?.min);
+    const max = toMs(bounds?.max);
+    return min === null || max === null || max < min ? null : { min, max };
+}
+
+const startOfDay = (ms: number): number => { const d = new Date(ms); d.setHours(0, 0, 0, 0); return d.getTime(); };
+const endOfDay = (ms: number): number => { const d = new Date(ms); d.setHours(23, 59, 59, 999); return d.getTime(); };
+
+/** How one period sits against the loaded data. */
+export interface PeriodDataFit {
+    /** No part of it is inside the data (it ends before the first row or starts
+     *  after the last one; an open bound runs to the data's edge). */
+    outside: boolean;
+    /** It reaches before the data's first day / past its last day. For a period
+     *  that is not `outside` this is the "partly outside" note; a bound on the
+     *  data's own first / last calendar day is not "past" it (a period typed to
+     *  23:59 of the last day of data that ends at 23:50 is not worth a note). */
+    before: boolean;
+    after: boolean;
+}
+
+/**
+ * Where a period sits against the loaded data, or null when that cannot be said
+ * (bounds unknown, or the period itself is unparseable / reversed — its own
+ * fault comes first).
+ */
+export function periodDataFit(p: { start: string; end: string }, bounds: PeriodDataBounds | null | undefined): PeriodDataFit | null {
+    const r = dataRangeMs(bounds);
+    const iv = interval(p);
+    if (!r || !iv) return null;
+    if (iv.e < r.min || iv.s > r.max) return { outside: true, before: iv.e < r.min, after: iv.s > r.max };
+    return {
+        outside: false,
+        before: Number.isFinite(iv.s) && iv.s < startOfDay(r.min),
+        after: Number.isFinite(iv.e) && iv.e > endOfDay(r.max),
+    };
+}
+
+/** "1 Jan 2025 – 31 Dec 2025": the data's range in the Workbench date format
+ *  (the time is added only when a side is not on its whole-day edge). */
+export function dataRangeText(bounds: PeriodDataBounds | null | undefined): string {
+    return `${formatBound(bounds?.min, 'start')} – ${formatBound(bounds?.max, 'end')}`;
+}
+
+/** The two texts of a period that is entirely outside the data:
+ *  "P1 is outside the data (1 Jan 2025 – 31 Dec 2025)" (+ a full stop for `reason`). */
+export function outsideDataTexts(name: string, bounds: PeriodDataBounds | null | undefined): { reason: string; rowReason: string } {
+    const core = `${name} ${FAULT_WORDS['outside-data']} (${dataRangeText(bounds)})`;
+    return { reason: `${core}.`, rowReason: core };
+}
+
+/** The quiet amber note of a period that is only PARTLY inside the data, or null. */
+export function partlyOutsideNote(fit: PeriodDataFit, bounds: PeriodDataBounds | null | undefined): string | null {
+    const r = dataRangeMs(bounds);
+    if (!r || fit.outside || (!fit.before && !fit.after)) return null;
+    const what = fit.before && fit.after ? `data runs ${dateText(r.min, true)} – ${dateText(r.max, true)}`
+        : fit.after ? `data ends ${dateText(r.max, true)}`
+        : `data starts ${dateText(r.min, true)}`;
+    return `Only the part inside the data is used (${what})`;
+}
 
 /**
  * The two texts of one invalid period. `name` is the period as the user sees
@@ -65,6 +151,12 @@ export function periodReasonTexts(name: string, fault: PeriodFault, start?: stri
  *  the field red). */
 export function faultSide(fault: PeriodFault): 'start' | 'end' {
     return fault === 'start-invalid' || fault === 'start-missing' ? 'start' : 'end';
+}
+
+/** Is this date field part of what is wrong? One side for a date fault; BOTH
+ *  fields for a period that lies outside the data (the whole period must move). */
+export function faultOnSide(fault: PeriodFault, side: 'start' | 'end'): boolean {
+    return fault === 'outside-data' || faultSide(fault) === side;
 }
 
 /** Footer line of the Running-condition settings while a period is invalid:
@@ -92,8 +184,15 @@ export function newPeriodId(): string {
  * a sorted list). Open ends ('') are valid only on the first period's start
  * and the last period's end. Reasons name a train period "P1", "P2" … by its
  * list position (workbench redesign 2026-10: never "Period 1").
+ *
+ * `bounds` (optional — the loaded dataset's time range): a period that is
+ * otherwise valid but lies ENTIRELY outside the data is invalid too
+ * (`fault: 'outside-data'`, "P1 is outside the data (1 Jan 2025 – 31 Dec
+ * 2025)"); one that is only partly inside stays valid and gets `dataNote`.
+ * Without bounds (no data loaded yet, or a caller that only shapes a request)
+ * nothing is judged against the data.
  */
-export function validatePeriods(list: TimePeriod[]): PeriodStatus[] {
+export function validatePeriods(list: TimePeriod[], bounds?: PeriodDataBounds | null): PeriodStatus[] {
     const parsed = list.map((p) => ({ s: toMs(p.start), e: toMs(p.end) }));
     return list.map((p, i) => {
         const { s, e } = parsed[i];
@@ -105,7 +204,12 @@ export function validatePeriods(list: TimePeriod[]): PeriodStatus[] {
         else if (startBlank && i !== 0) fault = 'start-missing';
         else if (endBlank && i !== list.length - 1) fault = 'end-missing';
         else if (s !== null && e !== null && e < s) fault = 'ends-before-start';
-        const texts = fault ? periodReasonTexts(`P${i + 1}`, fault, p.start) : undefined;
+        const fit = fault ? null : periodDataFit(p, bounds);
+        if (fit?.outside) fault = 'outside-data';
+        const texts = !fault ? undefined
+            : fault === 'outside-data' ? outsideDataTexts(`P${i + 1}`, bounds)
+            : periodReasonTexts(`P${i + 1}`, fault, p.start);
+        const dataNote = !fault && fit ? partlyOutsideNote(fit, bounds) ?? undefined : undefined;
 
         let overlapsPrev = false;
         if (!fault && i > 0 && !statusInvalidAt(list, parsed, i - 1)) {
@@ -115,13 +219,13 @@ export function validatePeriods(list: TimePeriod[]): PeriodStatus[] {
             if (prevOpenEnd || curStart === null) overlapsPrev = true;
             else if (prevEnd !== null && curStart < prevEnd) overlapsPrev = true;
         }
-        return { invalid: !!fault, reason: texts?.reason, rowReason: texts?.rowReason, fault, overlapsPrev };
+        return { invalid: !!fault, reason: texts?.reason, rowReason: texts?.rowReason, fault, dataNote, overlapsPrev };
     });
 }
 
 /** 1-based list number of the first invalid train period (its P-number), or null. */
-export function firstInvalidPeriodNumber(list: TimePeriod[]): number | null {
-    const i = validatePeriods(list).findIndex(s => s.invalid);
+export function firstInvalidPeriodNumber(list: TimePeriod[], bounds?: PeriodDataBounds | null): number | null {
+    const i = validatePeriods(list, bounds).findIndex(s => s.invalid);
     return i < 0 ? null : i + 1;
 }
 
@@ -273,6 +377,8 @@ export interface TestPeriodStatus {
     rowReason?: string;
     /** What is wrong, when `invalid`. */
     fault?: PeriodFault;
+    /** Valid, but only partly inside the loaded data (see `PeriodStatus.dataNote`). */
+    dataNote?: string;
 }
 
 /**
@@ -281,8 +387,11 @@ export interface TestPeriodStatus {
  * "% of running time below 80" are only meaningful on a closed range. Scoring
  * periods may overlap each other and train periods (never invalid for that).
  * The reason text names the period by its number ("S2 needs an end date.").
+ * `bounds` (optional): as in `validatePeriods` — a scoring period entirely
+ * outside the loaded data is invalid ("S1 is outside the data (…)"), one partly
+ * inside gets `dataNote`.
  */
-export function validateTestPeriods(list: TestPeriod[]): TestPeriodStatus[] {
+export function validateTestPeriods(list: TestPeriod[], bounds?: PeriodDataBounds | null): TestPeriodStatus[] {
     return list.map((t, i) => {
         const n = i + 1;
         const startBlank = !(t.start ?? '').trim();
@@ -295,20 +404,22 @@ export function validateTestPeriods(list: TestPeriod[]): TestPeriodStatus[] {
         else if (s === null) fault = 'start-invalid';
         else if (e === null) fault = 'end-invalid';
         else if (e < s) fault = 'ends-before-start';
-        if (!fault) return { invalid: false, reason: undefined };
+        const fit = fault ? null : periodDataFit(t, bounds);
+        if (fit?.outside) return { invalid: true, ...outsideDataTexts(`S${n}`, bounds), fault: 'outside-data' };
+        if (!fault) return { invalid: false, reason: undefined, dataNote: (fit && partlyOutsideNote(fit, bounds)) ?? undefined };
         return { invalid: true, ...periodReasonTexts(`S${n}`, fault, t.start), fault };
     });
 }
 
 /** 1-based list number of the first invalid scoring period (its S-number), or null. */
-export function firstInvalidTestPeriodNumber(list: TestPeriod[]): number | null {
-    const i = validateTestPeriods(list).findIndex(s => s.invalid);
+export function firstInvalidTestPeriodNumber(list: TestPeriod[], bounds?: PeriodDataBounds | null): number | null {
+    const i = validateTestPeriods(list, bounds).findIndex(s => s.invalid);
     return i < 0 ? null : i + 1;
 }
 
 /** First problem in a scoring-period list, or null. */
-export function testPeriodsError(list: TestPeriod[]): string | null {
-    for (const st of validateTestPeriods(list)) {
+export function testPeriodsError(list: TestPeriod[], bounds?: PeriodDataBounds | null): string | null {
+    for (const st of validateTestPeriods(list, bounds)) {
         if (st.invalid) return st.reason ?? 'Fix the scoring periods.';
     }
     return null;

@@ -68,7 +68,8 @@ export function sameHealthScoreProps(a: HealthScorePageProps, b: HealthScorePage
 /** `fitGone` is rebuilt by the window on every render: same when its fields are. */
 function sameFitGone(a: HealthScorePageProps['fitGone'], b: HealthScorePageProps['fitGone']): boolean {
     return a.onReload === b.onReload && a.onGoTrainSensor === b.onGoTrainSensor
-        && (a.reloadDisabledReason ?? null) === (b.reloadDisabledReason ?? null) && (a.error ?? null) === (b.error ?? null);
+        && (a.reloadDisabledReason ?? null) === (b.reloadDisabledReason ?? null) && (a.error ?? null) === (b.error ?? null)
+        && !!a.gone === !!b.gone;
 }
 
 /** A save that has been running this long gets a line on the page; until then
@@ -95,8 +96,12 @@ function HealthScorePage(props: HealthScorePageProps) {
     // A failed request leaves `preview.data` null, but when an earlier answer for this
     // model exists the page (inputs, charts) stays on screen from `lastData` under the
     // red card with its Retry instead of being replaced (QA fix, 2026-10-04).
-    // A Relation-model fit that is gone from memory (NOT_FITTED) has its own board.
-    const failed = !preview.data && !preview.notFitted && !!preview.error;
+    // A Relation-model fit that is gone from memory (NOT_FITTED) has its own board —
+    // by the live answer, or by what the window knows (`fitGone.gone`): after a load
+    // that failed and a tab switch away and back, no request is asked any more, so
+    // `preview.notFitted` is no longer set while the fit is still gone.
+    const fitIsGone = preview.notFitted || !!props.fitGone.gone;
+    const failed = !preview.data && !fitIsGone && !!preview.error;
     // The NEXT request after a failure (Retry, or a set point typed under the red card)
     // clears `error` while `data` is still null: the page must stay exactly where it is
     // — replacing it by the "Loading…" board would unmount the input being typed in.
@@ -151,7 +156,7 @@ function HealthScorePage(props: HealthScorePageProps) {
     if (!data) {
         // The model's own load (or train) failed in this session, so no preview is asked
         // for at all: without this the page would read "Loading…" for ever.
-        const loadError = !preview.notFitted && !props.fitLoading ? props.fitGone.error ?? null : null;
+        const loadError = !fitIsGone && !props.fitLoading ? props.fitGone.error ?? null : null;
         const kindName = model.kind === 'relationship' ? 'Relation model' : `${model.kind === 'clustering' ? 'Clustering' : 'Individual'} model`;
         return (
             <div className="wb2-board" data-testid="health-page">
@@ -182,7 +187,7 @@ function HealthScorePage(props: HealthScorePageProps) {
                             reloadDisabledReason={props.fitGone.reloadDisabledReason}
                         />
                     )
-                ) : preview.notFitted ? (
+                ) : fitIsGone ? (
                     // The fit is being loaded again (silently, or "Load it again"): say so.
                     // Otherwise ONE board, no button of its own: "Load it again" (nothing
                     // about the model changed) and, when it trains this model, "Train sensor ↑".

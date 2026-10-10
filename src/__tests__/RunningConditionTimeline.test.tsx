@@ -67,14 +67,24 @@ describe('timelineBlocks', () => {
         expect(b!.label).toMatch(/^P2 · /);
     });
 
-    it('an open end runs to the edge of the data; a period outside the data, or with an unreadable date, has no block', () => {
-        const [open, outside, junk] = timelineBlocks(
-            [p('a', '', ''), p('b', '2027-01-01T00:00', '2027-02-01T00:00'), p('c', 'not a date', '2026-02-01T00:00')],
-            [false, false, true], bounds, 'S',
+    it('an open end runs to the edge of the data; a period with an unreadable date has no block', () => {
+        const [open, junk] = timelineBlocks(
+            [p('a', '', ''), p('c', 'not a date', '2026-02-01T00:00')],
+            [false, true], bounds, 'S',
         );
         expect(open).toMatchObject({ name: 'S1', leftPct: 0, widthPct: 100, openStart: true, openEnd: true });
-        expect(outside).toBeNull();
         expect(junk).toBeNull();
+    });
+
+    it('a period entirely outside the data is a red sliver on the edge it lies beyond (always invalid)', () => {
+        const [after, before] = timelineBlocks(
+            [p('b', '2027-01-01T00:00', '2027-02-01T00:00'), p('d', '2020-01-01T00:00', '2020-02-01T00:00')],
+            [false, false], bounds, 'P',
+        );
+        expect(after).toMatchObject({ name: 'P1', invalid: true, outside: true, openStart: false, openEnd: false });
+        expect(after!.leftPct + after!.widthPct).toBeCloseTo(100, 5); // on the right edge
+        expect(after!.widthPct).toBeLessThan(2);
+        expect(before).toMatchObject({ name: 'P2', leftPct: 0, invalid: true, outside: true });
     });
 
     it('a reversed period is drawn over the time between its two dates, flagged invalid; no bounds = no blocks', () => {

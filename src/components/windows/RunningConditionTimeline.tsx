@@ -2,6 +2,7 @@ import { memo } from 'react';
 import type { TestPeriod, TimePeriod } from '../../types';
 import type { PeriodCountsState } from '../../utils/periodCounts';
 import { runningConditionCaption } from '../../utils/periodCounts';
+import { NO_TRAIN_ROWS_TEXT } from '../../utils/runningCondition';
 import { validatePeriods, validateTestPeriods } from '../../utils/timePeriods';
 import { MONTHS_SHORT, parseLocal } from '../../utils/workbenchDate';
 import { boundsMs, formatPeriod, type DataBounds } from './periodDisplay';
@@ -10,7 +11,10 @@ import { boundsMs, formatPeriod, type DataBounds } from './periodDisplay';
  * The timeline hero of the Running-condition settings (workbench redesign SPEC
  * §5): a month axis, a TRAIN lane (P1, P2 … in train blue) and a SCORE lane
  * (S1, S2 … dashed, in the scoring colour), an invalid period in red, and the
- * ONE caption under it (`runningConditionCaption`).
+ * ONE caption under it (`runningConditionCaption`). A period that lies entirely
+ * outside the loaded data is invalid too: a red sliver on the edge it lies
+ * beyond. When the settled count says the train periods hold no running row,
+ * one red line under the caption says there is nothing to train on.
  *
  * Plain DOM positioned in percent of the dataset's time range — no chart
  * library, nothing to resize. It draws the lists it is given: the row editors
@@ -59,15 +63,21 @@ export interface TimelineBlock {
     openEnd: boolean;
     /** Tooltip / accessible text: "P1 · 1 Jan – 28 Feb 2026". */
     label: string;
+    /** The period lies entirely outside the dataset: a sliver on that edge. */
+    outside?: boolean;
 }
+
+/** Width (in % of the lane) of the sliver that stands for a period outside the data. */
+const OUTSIDE_SLIVER_PCT = 1.2;
 
 const isBlank = (s: string | null | undefined) => !(s ?? '').trim();
 
 /**
  * Where each period sits on the dataset's time range. An open end resolves to
  * the dataset bound; a reversed period is drawn over the time between its two
- * dates (red); a period with an unreadable date, or one that lies wholly
- * outside the dataset, has no block (its row says what is wrong).
+ * dates (red); a period that lies wholly outside the dataset is a red sliver on
+ * the edge it lies beyond (`outside`, always invalid — its row says so); a
+ * period with an unreadable date has no block (its row says what is wrong).
  */
 export function timelineBlocks(
     list: readonly { start: string; end: string }[],
@@ -86,8 +96,21 @@ export function timelineBlocks(
         if (s === null || e === null) return null;
         const a = Math.max(b.t0, Math.min(s, e));
         const z = Math.min(b.t1, Math.max(s, e));
-        if (z < a) return null;
         const name = `${prefix}${i + 1}`;
+        if (z < a) {
+            // Nothing of it is inside the data: before the first row, or after the last.
+            const after = Math.min(s, e) > b.t1;
+            return {
+                name,
+                leftPct: after ? 100 - OUTSIDE_SLIVER_PCT : 0,
+                widthPct: OUTSIDE_SLIVER_PCT,
+                invalid: true,
+                openStart: false,
+                openEnd: false,
+                label: `${name} · ${formatPeriod({ id: name, start: p.start, end: p.end })}`,
+                outside: true,
+            };
+        }
         return {
             name,
             leftPct: ((a - b.t0) / span) * 100,
@@ -111,8 +134,9 @@ function Lane({ kind, title, blocks, empty }: { kind: 'train' | 'score'; title: 
                     className={`rct-blk${g.invalid ? ' bad' : ''}${g.openStart ? ' rct-blk--os' : ''}${g.openEnd ? ' rct-blk--oe' : ''}`}
                     data-testid={`rc-tl-${g.name}`}
                     data-invalid={g.invalid ? 'true' : undefined}
+                    data-outside={g.outside ? 'true' : undefined}
                     style={{ left: `${g.leftPct.toFixed(2)}%`, width: `${g.widthPct.toFixed(2)}%` }}
-                    title={g.invalid ? `${g.label} — not valid` : g.label}
+                    title={g.outside ? `${g.label} — outside the data` : g.invalid ? `${g.label} — not valid` : g.label}
                 >
                     {/* The name only when the block is wide enough to hold it. */}
                     {g.widthPct > 4 ? g.name : ''}
@@ -137,8 +161,8 @@ export interface RunningConditionTimelineProps {
 function RunningConditionTimeline({ periods, tests, bounds, counts, configured = true }: RunningConditionTimelineProps) {
     const b = boundsMs(bounds);
     const cap = runningConditionCaption({ trainPeriods: periods, scoringPeriods: tests, bounds, counts, configured });
-    const trainBlocks = timelineBlocks(periods, validatePeriods(periods).map(s => s.invalid), bounds, 'P');
-    const scoreBlocks = timelineBlocks(tests, validateTestPeriods(tests).map(s => s.invalid), bounds, 'S');
+    const trainBlocks = timelineBlocks(periods, validatePeriods(periods, bounds).map(s => s.invalid), bounds, 'P');
+    const scoreBlocks = timelineBlocks(tests, validateTestPeriods(tests, bounds).map(s => s.invalid), bounds, 'S');
     const rows = cap.rows;
     // The dataset this window was opened on is gone: one quiet line, never numbers.
     const errorLine = counts.errorCode === 'STALE_SESSION'
@@ -192,6 +216,11 @@ function RunningConditionTimeline({ periods, tests, bounds, counts, configured =
                     </span>
                 )}
             </div>
+            {cap.noRows && (
+                // The settled count of this very draft: no running row in the train
+                // periods. Apply / Save changes are disabled until it is fixed.
+                <div className="rct-norows" role="alert" data-testid="rc-no-rows">{NO_TRAIN_ROWS_TEXT}</div>
+            )}
         </section>
     );
 }

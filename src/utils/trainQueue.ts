@@ -19,6 +19,9 @@ import {
     NO_RUNNING_CONDITION_REASON,
     NO_TRAIN_PERIOD_REASON,
     NO_TRAIN_PERIOD_REASON_CUSTOM,
+    NO_TRAIN_ROWS_FOOTER,
+    NO_TRAIN_ROWS_REASON,
+    NO_TRAIN_ROWS_REASON_CUSTOM,
 } from './runningCondition';
 import type { ModelKind } from '../types';
 import type {
@@ -107,7 +110,10 @@ export function preflightReason(
     }
     if (blockReason === NO_TRAIN_PERIOD_REASON) return { text: 'No train period', fix: 'runningCondition' };
     if (blockReason === NO_TRAIN_PERIOD_REASON_CUSTOM) return { text: 'No train period in its own training data', fix: 'settings' };
-    // Invalid train periods ("P2 ends before it starts.") come from the gate;
+    // The counted train periods hold no running row (the data-range / zero-rows guard).
+    if (blockReason === NO_TRAIN_ROWS_REASON) return { text: NO_TRAIN_ROWS_FOOTER, fix: 'runningCondition' };
+    if (blockReason === NO_TRAIN_ROWS_REASON_CUSTOM) return { text: `${NO_TRAIN_ROWS_FOOTER} in its own training data`, fix: 'settings' };
+    // Invalid train periods ("P2 ends before it starts.", "P1 is outside the data (…).") come from the gate;
     // invalid Custom scoring periods ("S1 needs a start date.") from Save's own check.
     if (/^P\d+\b/.test(blockReason)) return { text: toReason(blockReason), fix: rcFix };
     return { text: toReason(blockReason), fix: 'settings' };

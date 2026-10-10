@@ -38,7 +38,9 @@ export function isBelowRecommendedTrainDays(trainDays: number | null | undefined
 
 /** The amber warning text, or null when there is enough (or unknown) train time.
  *  Pass the RUNNING days of the train rows (`test_validation.train.days`, or
- *  the row-count preview's figure). Never a block. */
+ *  — before a preview exists — `countedTrainRunningDays`: Rust's
+ *  `count_period_rows` figure the Running-condition caption prints). Never a
+ *  block. */
 export function trainDaysWarning(trainDays: number | null | undefined): string | null {
     if (!isBelowRecommendedTrainDays(trainDays)) return null;
     const d = Math.max(0, Math.round(trainDays as number));
