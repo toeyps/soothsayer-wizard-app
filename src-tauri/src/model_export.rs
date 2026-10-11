@@ -1085,7 +1085,7 @@ mod tests {
         assert_eq!(j["output_dir"], "/p");
     }
 
-    // ---------- 2026-10-04: orphaned staging sweep ----------
+    // ---------- orphaned staging sweep ----------
 
     fn orphan(ws: &Path, name: &str) -> PathBuf {
         let p = ws.join(name);
@@ -1179,7 +1179,7 @@ mod tests {
         assert!(!lock_active().contains(&root));
     }
 
-    // ---------- 2026-10-04: sensor names as file names ----------
+    // ---------- sensor names as file names ----------
 
     #[test]
     fn file_name_problem_flags_everything_that_cannot_be_a_safe_component() {
@@ -1241,7 +1241,7 @@ mod tests {
         assert!(unsafe_name_warnings(&[("target", "Fine name")]).is_empty());
     }
 
-    // ---------- 2026-10-04: overwriting another model's file ----------
+    // ---------- overwriting another model's file ----------
 
     fn rel_info(preds: &[&str]) -> String {
         let p: serde_json::Map<String, serde_json::Value> =

@@ -10,7 +10,7 @@
 //! to within 1e-9 on hand-computed fixtures (see `tests` below).
 //!
 //! `mean` and `sample_sd` are wired into `compute_sensor_stats` and the
-//! `train_individual_model` command (Phase 3). `population_sd`, `r2_score`,
+//! `train_individual_model` command. `population_sd`, `r2_score`,
 //! and `rmse` are kept available for future callers.
 
 /// Coefficient of determination (R²).

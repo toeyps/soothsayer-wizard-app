@@ -1,5 +1,5 @@
-//! Structured diagnostics for the special-sensor formula gate (customer batch
-//! 2026-10, item 6 — Formula editor + Quick build).
+//! Structured diagnostics for the special-sensor formula gate (Formula editor
+//! + Quick build).
 //!
 //! The VERDICT on a formula is still decided by the one gate in `lib.rs`
 //! (`check_formula_limits` → `resolve_formula_sources` → `compile_formula`):
@@ -15,7 +15,7 @@
 //! other BMP character that is the same as the character index.
 //!
 //! Also home of the legacy `round(x, n)` → `round(x * 10^n) / 10^n`
-//! converter (user decision 2026-10-09: auto-convert on load). It walks the
+//! converter (old workspaces are auto-converted on load). It walks the
 //! SAME call scan (`crate::excel_round_calls`) as the refusal, so a formula is
 //! converted exactly when, and exactly where, it would be refused.
 

@@ -88,12 +88,12 @@ pub fn multi_op_fn(op_id: &str) -> Result<MultiOpFn, String> {
 
 /// Does this multi operation need EVERY source value present for a row?
 ///
-/// Decided by the user 2026-10-03: `sum` is "all or nothing" — a row where any
+/// `sum` is "all or nothing" — a row where any
 /// source sensor is missing (NaN) has NO sum, exactly like `evaluate_formula`
 /// (a formula with a missing input is missing). A partial total (A+B with B
-/// missing silently returning A) looked like a wrong value. Every other multi
-/// op (`mean`, `median`) is an average-like statistic that is still meaningful
-/// over the remaining valid values, so it skips NaN sources instead.
+/// missing silently returning A) would look like a wrong value. Every other
+/// multi op (`mean`, `median`) is an average-like statistic that is still
+/// meaningful over the remaining valid values, so it skips NaN sources instead.
 pub fn multi_op_needs_all_inputs(op_id: &str) -> bool {
     op_id == "sum"
 }
@@ -244,8 +244,8 @@ mod tests {
         assert!(execute_single_op("bogus", 1.0, 1.0).is_err());
     }
 
-    // Regression guard: "product"/"subtract"/"divide" multi-op-with-base
-    // were removed from the multi registry (2026-08-06) but their names
+    // Regression guard: "product"/"subtract"/"divide" multi-ops with a base
+    // sensor are not in the multi registry, but their names
     // overlap with real single-op ids — confirm single-op "subtract"/
     // "divide" still work (they're a different feature: a sensor combined
     // with a fixed value, not "one sensor vs the rest").
@@ -305,11 +305,10 @@ mod tests {
     }
 
     // Regression guard: "product" (and "subtract"/"divide" as multi-ops
-    // with a base sensor) were removed from the multi registry entirely
-    // (2026-08-06, alongside their UI in SensorTooling.tsx). If either
+    // with a base sensor) are not in the multi registry. If either
     // ever silently comes back as valid here without the UI/type-layer
-    // support being restored too, calculate_new_sensor would accept a
-    // config the frontend can no longer construct — catch that drift.
+    // support too, calculate_new_sensor would accept a
+    // config the frontend cannot construct — catch that drift.
     #[test]
     fn multi_product_was_removed() {
         assert!(execute_multi_op("product", &[2.0, 3.0]).is_err());

@@ -1,12 +1,11 @@
-//! Scoring periods ("just score it", user decision 2026-10-09/10).
+//! Scoring periods ("just score it").
 //!
 //! A model is fitted ONLY on the training scope (healthy periods). A scoring
-//! period (wire name still `test_periods`) is nothing but a time range,
+//! period (wire name `test_periods`) is nothing but a time range,
 //! `start` -> `end`: the train-only model gives a health score for that time and
 //! the user reads the chart. Nothing is judged here - there is no Normal /
-//! Known-problem label, no event time, no lead time and no detection verdict any
-//! more (they were removed with the Workbench redesign; see
-//! `docs/design/handoff/workbench-redesign/README.md` section 2).
+//! Known-problem label, no event time, no lead time and no detection verdict
+//! (see `docs/design/handoff/workbench-redesign/README.md` section 2).
 //!
 //! This module is the one implementation of that maths. The three previews
 //! (`health_preview`) feed it the rows they already scored with the TRAIN-only
@@ -30,7 +29,7 @@
 //!     "lowest 0". `lowest_at` = the first row of that window.
 //!   * "Running time days" = rows x the dataset's median sample interval.
 //!
-//! Naming: the Rust types and the wire keys keep their original `test_*` names
+//! Naming: the Rust types and the wire keys keep their `test_*` names
 //! (`TestPeriodArg`, `test_periods`, `test_validation`, `tests`) so nothing on
 //! the wire is renamed; only the user-facing wording says "scoring period" and
 //! numbers them `S1`, `S2`, ... by list position.
@@ -273,7 +272,7 @@ pub const TEST_SCORING_FAILED: &str = "test_scoring_failed";
 pub const TEST_SCORING_OUTDATED: &str = "test_scoring_outdated";
 
 /// Warning code when the test periods have too many rows for the model cache's
-/// memory budget (2026-10-07, code review): retrying the same periods fails the
+/// memory budget: retrying the same periods fails the
 /// same way, so it gets its own code and the frontend offers no "Try again" --
 /// the user has to shorten or remove a test period.
 pub const TEST_SCORING_TOO_LARGE: &str = "test_scoring_too_large";
@@ -411,7 +410,7 @@ pub struct TrainBlock {
 }
 
 /// The result of one scoring period. Facts only - no label, no event time, no
-/// lead time and no verdict (removed 2026-10-10, "just score it").
+/// lead time and no verdict.
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct TestResult {
     /// 1-based position in the request's `test_periods` (`S1` = 1).

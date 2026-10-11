@@ -17,12 +17,12 @@ mod qa_health_internal;
 #[cfg(test)]
 #[path = "../tests/internal/train_test_validation_internal.rs"]
 mod train_test_validation_internal;
-// Special-sensor formula/operation QA sweep (2026-10-08, same arrangement).
+// Special-sensor formula/operation scenarios (same arrangement).
 #[cfg(test)]
 #[path = "../tests/internal/qa_special_sensor_internal.rs"]
 mod qa_special_sensor_internal;
 // Formula editor preview / coded gate / decimals / legacy round conversion
-// (customer batch 2026-10, item 6; same arrangement).
+// (same arrangement).
 #[cfg(test)]
 #[path = "../tests/internal/formula_preview_internal.rs"]
 mod formula_preview_internal;
@@ -144,8 +144,8 @@ fn validate_save_dir(p: &str) -> Result<(), String> {
 ///
 /// The user picks the destination via the OS-native save dialog, so the
 /// path itself is trusted to the extent the OS dialog vetted it. These
-/// commands exist because the `tauri-plugin-fs` scope (which Phase 2 will
-/// lock down to `$APPDATA/**`) would otherwise reject writes outside the
+/// commands exist because the `tauri-plugin-fs` scope (`$APPDATA/**`)
+/// would otherwise reject writes outside the
 /// scoped directories. Validation here defends against frontend bugs that
 /// might pass through a malicious string without dialog confirmation.
 ///
@@ -478,9 +478,9 @@ static LOAD_CSV_LOCK: tauri::async_runtime::Mutex<()> = tauri::async_runtime::Mu
 
 /// Parses + merges the CSVs and installs the dataset as the session.
 ///
-/// `async` + `spawn_blocking` (2026-10-04): a plain sync command runs on the
+/// `async` + `spawn_blocking`: a plain sync command runs on the
 /// main thread, which would also hold back the `csv-load-progress` events
-/// until the load was over. The parse itself is unchanged. Progress events are
+/// until the load was over. Progress events are
 /// a global broadcast (like every Tauri `emit`) and best-effort: a failed emit
 /// is ignored and can never fail the load.
 #[tauri::command(rename_all = "snake_case")]
@@ -661,7 +661,7 @@ struct SensorStats {
 /// & 3σ bounds across all non-null values of a given sensor in the currently
 /// loaded dataset.
 ///
-/// Phase 3 change: switched from population SD (ddof=0) to sample SD (ddof=1)
+/// Sample SD (ddof=1), not population SD (ddof=0),
 /// for parity with `wizard.py` which uses pandas `.std()`. The numerical
 /// difference is `sqrt(N/(N-1))` per σ — invisible at large N, slightly wider
 /// boundaries at small N.
@@ -781,8 +781,8 @@ fn spawn_sidecar(
 }
 
 /// Developer-only hint for a missing / stub sidecar binary. Goes to the error
-/// log and the dev console - NEVER into an error the UI shows (user decision
-/// 2026-10-10: user-readable text says "Relation model engine", never
+/// log and the dev console - NEVER into an error the UI shows
+/// (user-readable text says "Relation model engine", never
 /// "sidecar" / "Python" / the binary name).
 const SIDECAR_BUILD_HINT: &str = "The Python ML sidecar (src-tauri/bin/backend-<target>) is missing or is \
      an empty stub. Build it with src-tauri/python/build_sidecar.sh (or \
@@ -819,7 +819,7 @@ fn log_sidecar_start_failure(app: &tauri::AppHandle, line: &str) {
 // Every error below can reach the UI (Train, Compare predictors, Mark
 // complete). They name the thing "the Relation model engine".
 //
-// User decision 2026-10-10: the engine's OWN text (its error message, its
+// The engine's OWN text (its error message, its
 // traceback, its stderr, its raw output) is NEVER shown - a library exception
 // can carry Python / library / algorithm names, and the algorithm name is
 // confidential. The user reads one fixed, Rust-authored sentence; the engine's
@@ -1080,7 +1080,7 @@ mod engine_wording_tests {
         );
     }
 
-    // ---------- the engine's own text never reaches the user (2026-10-10) ----------
+    // ---------- the engine's own text never reaches the user ----------
 
     /// What a library exception can look like: every word here is forbidden in
     /// the UI (the last one is the confidential algorithm name).
@@ -1302,7 +1302,7 @@ struct PreviewFilter {
     /// opt into "or".
     #[serde(default)]
     combine: Option<String>,
-    /// Multiple training time periods (Feature 4). Kept if the row falls in ANY
+    /// Multiple training time periods. Kept if the row falls in ANY
     /// period. Mutually exclusive with the legacy `timestamp_start/_end` pair —
     /// sending both is a wiring bug and `ResolvedFilter::resolve` rejects it.
     #[serde(default)]
@@ -1741,7 +1741,7 @@ mod resolved_filter_tests {
         assert!(!resolved.or_combine);
     }
 
-    // ---- Feature 4: multiple time periods ----
+    // ---- multiple time periods ----
 
     fn ts_dataset() -> ColumnarData {
         // Rows at minute 0..=9 on 2020-01-01, plus a TS_MISSING row. A = row index.
@@ -1954,9 +1954,9 @@ mod resolved_filter_tests {
 ///
 /// When `filter` is provided, rows are first restricted to those matching
 /// the dashboard's timestamp range + value filters before NaN-dropping.
-/// `None` keeps the legacy "use all rows" behavior.
+/// `None` means "use all rows".
 ///
-/// **Health score additions (2026-10-03):** when `cache_key` is given (the
+/// **Health score:** when `cache_key` is given (the
 /// frontend sends `modelId + fingerprint`), the FULL-resolution fit (rows,
 /// actual, predicted, predictor columns, per-step scores) is cached in the
 /// session under that key — cleared by `load_csv`, bounded to a few entries —
@@ -1966,13 +1966,13 @@ mod resolved_filter_tests {
 /// `health_preview::HealthPreview`, no set points applied). `max_points` caps
 /// that bounded series (default 4000).
 ///
-/// **Response size (2026-10-04):** with `max_points` (every frontend call passes
+/// **Response size:** with `max_points` (every frontend call passes
 /// it) `predicted` / `predictor_raw` / `target_raw` are ONE aligned strided
 /// sample of at most `max_points` rows (extremes kept), `residual` is dropped and
 /// `n_rows` is the real row count - see [`finish_relationship_response`]. The
 /// session cache still gets the FULL arrays.
 ///
-/// **Train/Test pre-warm (2026-10-07):** `test_periods` (same wire as
+/// **Train/Test pre-warm:** `test_periods` (same wire as
 /// `compute_health_preview`: `[{start,end}]` - a legacy `label` / `event_time`
 /// is accepted and ignored; only used
 /// together with `cache_key`) makes the SAME sidecar run also predict the test
@@ -1980,9 +1980,9 @@ mod resolved_filter_tests {
 /// and seeds the fit's cached test-row predictions, so the `compute_health_preview`
 /// that follows needs no second ~15 s sidecar run. The rows are chosen by the
 /// same function as that preview's (`health_validation::extra_test_rows`).
-/// Absent / empty = identical to before; the response never carries the
+/// Absent / empty = no pre-warm; the response never carries the
 /// predictions. Best effort: an old sidecar that ignores `X_extra` just means the
-/// preview computes them lazily as before.
+/// preview computes them lazily.
 #[tauri::command(rename_all = "snake_case")]
 async fn preview_relationship_model(
     predictors: Vec<String>,
@@ -2003,7 +2003,7 @@ async fn preview_relationship_model(
     }
 
     // ── Build the projected, NaN-dropped (X, y) off the locked AppState. ──
-    // Phase 1 contract: the sidecar receives pre-cleaned arrays. Rust owns
+    // Contract: the sidecar receives pre-cleaned arrays. Rust owns
     // column projection and NaN/non-finite filtering.  `X` is n_rows × n_predictors,
     // `y` is n_rows.  We collect into owned data and drop the lock before any await.
     let (x_matrix, y_vector, row_idx, stamp, extra_rows, x_extra) = {
@@ -2158,17 +2158,17 @@ const PREVIEW_ENGINE_STEP: &str = "preview_relationship";
 /// (attach the cleaned raw X / y, bound the arrays). Split out of the command so
 /// it can be tested without a sidecar.
 ///
-/// Response contract (2026-10-04): with `max_points` the frontend never gets
+/// Response contract: with `max_points` the frontend never gets
 /// every row — `predicted` / `predictor_raw` / `target_raw` are one aligned,
 /// evenly strided sample of at most `max_points` rows (min and max of the target
 /// and of the prediction always kept), `residual` is dropped (nobody reads it)
 /// and `n_rows` carries the real row count. Without `max_points` the arrays stay
-/// full (and `residual` stays) exactly as before. `r2_per_step` /
+/// full (and `residual` stays). `r2_per_step` /
 /// `rmse2_per_step`, `cache_key`, `cached`, `health_preview` are never
 /// touched. The cache always holds the FULL arrays (built from the unshaped
 /// response), so the health preview keeps scoring every row.
 ///
-/// Engine errors (2026-10-10): an answer with the engine's own `error` keeps
+/// Engine errors: an answer with the engine's own `error` keeps
 /// the `error` key (a string - the frontend shows it as the message) but its
 /// VALUE is the fixed sentence of [`take_engine_error`] and `trace` is removed;
 /// the engine's text is handed to `log_engine` instead (the error log).
@@ -2415,7 +2415,7 @@ fn rel_fit_from_response(
     })
 }
 
-// ── Phase 3 / 4: Predictive-model save commands (Individual + Clustering) ──
+// ── Predictive-model save commands (Individual + Clustering) ──
 
 /// Scan a column; return (min_iso, max_iso) over the load-time-parsed
 /// timestamps of every row whose value at `value_idx` is finite. Falls back
@@ -2475,14 +2475,14 @@ pub struct IndividualModelInfo {
 ///
 /// Rounding is `metrics::round_metric` — identical to wizard.py's
 /// `round(x, 3)` whenever 3 decimals keep >= 4 significant digits, else 4
-/// significant digits — so a sensor with SD ~0.0004 no longer collapses its
+/// significant digits — so a sensor with SD ~0.0004 does not collapse its
 /// bands onto the mean (a zero health-score denominator downstream). The
 /// mean and the boundaries are rounded to at least as many decimals as the
 /// SD needs (`round_metric_scaled`) so a large mean with a tiny SD stays
-/// resolvable too; for any SD >= 1 this is exactly the old 3 decimals.
+/// resolvable too; for any SD >= 1 this is exactly 3 decimals.
 ///
 /// Constant sensor (SD = 0): every boundary equals the mean. Behaviour kept
-/// as-is on purpose — phase 2 (health score) must validate/guard it.
+/// as-is on purpose — the health score validates/guards it.
 fn individual_rounded_metrics(mean: f64, sd: f64) -> (f64, f64, [f64; 2], [f64; 2]) {
     use metrics::{round_metric, round_metric_scaled};
     let sd_r = round_metric(sd);
@@ -2940,12 +2940,8 @@ pub struct ClusteringModelInfo {
 /// (`assign_cluster`) reads with `.get()`.
 const CLUSTER_KEY_HIGHER: &str = "criteria_sensor_value_higher_than";
 const CLUSTER_KEY_LOWER: &str = "criteria_sensor_value_lower_than";
-/// LEGACY misspelling (`critera`, missing the `i`) this writer used to emit
-/// alone, kept "for parity with upstream wizard.py" — which is not in this
-/// repo, so that could not be confirmed. Emitted TOGETHER WITH the correct
-/// pair (same values) until the consumer is confirmed not to read it; then
-/// delete these two constants and the two `insert`s that use them in
-/// `build_cluster_info`.
+/// LEGACY misspelling (`critera`, missing the `i`). Emitted TOGETHER WITH the
+/// correct pair (same values): the consumer of the model files still reads it.
 const CLUSTER_KEY_HIGHER_LEGACY: &str = "critera_sensor_value_higher_than";
 const CLUSTER_KEY_LOWER_LEGACY: &str = "critera_sensor_value_lower_than";
 
@@ -3771,12 +3767,12 @@ struct SingleOperation {
 struct MultiOperation {
     #[serde(rename = "type")]
     op_type: String,
-    /// Round every result row to this many decimal places (customer batch
-    /// 2026-10, item 6: a rounded Average / Median block keeps its own
+    /// Round every result row to this many decimal places (a rounded Average /
+    /// Median block keeps its own
     /// decimals instead of a `round()` wrap). `(x * 10^d).round() / 10^d`,
     /// half away from zero like the single-op `round`. Absent / `null` = no
-    /// rounding, so every recipe saved before this field existed loads and
-    /// computes exactly as before. A whole number 0..=MAX_OPERATION_DECIMALS
+    /// rounding, so a recipe saved without this field loads and
+    /// computes unrounded. A whole number 0..=MAX_OPERATION_DECIMALS
     /// (read as a number so a `2.0` does not fail the whole command).
     #[serde(default)]
     decimals: Option<f64>,
@@ -3830,10 +3826,9 @@ fn resolve_sensor(headers: &[String], name: &str) -> Option<usize> {
 ///
 /// Collision rules (all comparisons trimmed + case-insensitive):
 /// * `replace == false` (create): the name must not exist at all — an
-///   existing column of that name, raw OR derived, is an `Err`. (Appending a
-///   second column used to be allowed, but every lookup in this file takes the
-///   FIRST header match, so the new values were stored and never read — the
-///   chart kept showing the old sensor's numbers.)
+///   existing column of that name, raw OR derived, is an `Err`. (A second
+///   column of the same name would be stored and never read: every lookup in
+///   this file takes the FIRST header match.)
 /// * `replace == true` (recompute after an edit/rename, and workspace-reopen
 ///   replay): a DERIVED column of that name is overwritten IN PLACE (position
 ///   kept, header takes the new casing); a RAW (imported) column of that name,
@@ -4468,9 +4463,9 @@ fn rename_formula_refs(formula: String, old_name: String, new_name: String) -> S
 /// chew the front of `$11PT1214A.PV` (a real pair of sensor names), turning
 /// it into `_0.PV`.
 ///
-/// Variable names are SHORT (`_0`, `_1`, ...; 2026-10-08) so the rewritten
-/// text stays about as long as what the user typed -- the old `__sensor_N`
-/// names pushed formulas under the app's own 4096-char limit past fasteval's
+/// Variable names are SHORT (`_0`, `_1`, ...) so the rewritten
+/// text stays about as long as what the user typed -- long generated names
+/// would push formulas under the app's own 4096-char limit past fasteval's
 /// limit on the rewritten text. Two guards keep a short name from ever
 /// meaning something the user did not write:
 ///   * the prefix is one `_` longer than the longest run of `_` in the text
@@ -4569,11 +4564,11 @@ fn is_formula_word_char(c: char) -> bool {
 /// instead of pre-rewriting the formula text, since `pow`'s two arguments can
 /// be arbitrary sub-expressions that a naive string rewrite can't safely
 /// re-bracket. `log(x)` stays fasteval's BASE-10 log (pinned behaviour);
-/// `ln(x)` is the natural log (added 2026-10-08).
+/// `ln(x)` is the natural log.
 ///
 /// A name/arity not listed here returns `None`, which fasteval reports as
-/// `Error::Undefined` -- `compile_formula` turns that into a refusal (it used
-/// to become an all-empty sensor).
+/// `Error::Undefined` -- `compile_formula` turns that into a refusal (never
+/// an all-empty sensor).
 fn eval_extra_math_fn(name: &str, args: &[f64]) -> Option<f64> {
     match (name, args) {
         ("sqrt", [x]) => Some(x.sqrt()),
@@ -4763,10 +4758,10 @@ mod special_sensor_tests {
 
     // ── the user's bug: delete then recreate ─────────────────────────
 
-    /// Reproduces "special sensor values don't match": create X, delete X in
-    /// the UI, create a NEW X with a different formula. Before the fix a
-    /// second column named X was appended and every lookup (FIRST match) read
-    /// the old deleted sensor's numbers.
+    /// "Special sensor values don't match": create X, delete X in
+    /// the UI, create a NEW X with a different formula. The new X must hold the
+    /// new formula's values (a second column named X appended next to the old
+    /// one would never be read: every lookup takes the FIRST match).
     #[test]
     fn recreate_after_remove_serves_the_new_values_on_first_lookup() {
         let mut data = dataset();
@@ -5195,7 +5190,7 @@ mod special_sensor_tests {
         assert!(col.iter().all(|v| !v.is_infinite()));
     }
 
-    // ── multi-op NaN semantics (decided 2026-10-03) ──────────────────
+    // ── multi-op NaN semantics ───────────────────────────────────────
 
     fn nan_dataset() -> ColumnarData {
         // row0: all valid, row1: B missing, row2: all missing
@@ -5245,7 +5240,7 @@ mod special_sensor_tests {
     }
 
     /// `$11PT1214A` is a textual prefix of `$11PT1214A.PV`; a string replace
-    /// of the shorter token used to mangle the longer one.
+    /// of the shorter token would mangle the longer one.
     #[test]
     fn formula_with_one_name_a_prefix_of_another_uses_the_right_columns() {
         let data = dataset_with(&["11PT1214A", "11PT1214A.PV"], vec![vec![1.0, 2.0], vec![100.0, 200.0]]);
@@ -5719,7 +5714,7 @@ struct FormulaValidationResult {
     error: Option<String>,
     referenced_sensors: Vec<String>,
     /// Stable issue code when invalid (same codes as `preview_formula`;
-    /// absent when valid). Added 2026-10-09, optional for old callers.
+    /// absent when valid). Optional for old callers.
     #[serde(skip_serializing_if = "Option::is_none")]
     code: Option<&'static str>,
     /// `[start, end)` of the problem in UTF-16 units of the formula, when it
@@ -5752,9 +5747,9 @@ fn check_formula_limits(formula: &str) -> Result<(), String> {
 /// The size gate as a coded issue (`too_long` / `too_deep`).
 ///
 /// The length is counted in UTF-16 code units — the same count as the
-/// editor's own `text.length` — not UTF-8 bytes (2026-10-09): a Thai sensor
-/// name is 3 bytes per character, so a byte count refused Thai formulas far
-/// below the 4,096 characters the editor promised. Still a hard bound: at
+/// editor's own `text.length` — not UTF-8 bytes: a Thai sensor
+/// name is 3 bytes per character, so a byte count would refuse Thai formulas
+/// far below the 4,096 characters the editor promises. Still a hard bound: at
 /// most 3 bytes per unit reach the parser.
 fn formula_limit_issue(formula: &str) -> Option<FormulaIssue> {
     use formula_diagnostics::{issue_at, TOO_DEEP, TOO_LONG};
@@ -6002,12 +5997,12 @@ const FORMULA_TRIAL_VALUE: f64 = 1.0;
 /// 1. Parse with a parser/slab sized for THIS formula: fasteval's defaults
 ///    (4096-byte text, 32 levels, 64 sub-expressions) are tighter than the
 ///    app's own `check_formula_limits` budget, so formulas the app accepts
-///    (a Spread over 33+ sensors, a long `+` chain, 40 nested brackets) used
-///    to fail with `SlabOverflow` / `TooLong` / `TooDeep`. The callers run
-///    `check_formula_limits` first, which still bounds every size here.
+///    (a Spread over 33+ sensors, a long `+` chain, 40 nested brackets) would
+///    otherwise fail with `SlabOverflow` / `TooLong` / `TooDeep`. The callers
+///    run `check_formula_limits` first, which still bounds every size here.
 /// 2. Trial-evaluate with every sensor = 1.0: an unknown name/function or a
 ///    wrong argument count is an evaluation ERROR (value-independent), which
-///    the row loop used to turn into "missing" on every row.
+///    a plain row loop would turn into "missing" on every row.
 /// 3. Refuse `round(<sensor expr>, <constant>)` -- see
 ///    [`check_round_argument_order`].
 ///
@@ -6015,8 +6010,8 @@ const FORMULA_TRIAL_VALUE: f64 = 1.0;
 /// check (like `agg_too_few`) — see [`create_only_formula_issue`]. A recipe
 /// saved before that refusal existed must still restore on replay / Save.
 ///
-/// A refusal is a [`FormulaIssue`]: the message every caller has always
-/// shown, plus a stable code and (where it can be located) a range in the
+/// A refusal is a [`FormulaIssue`]: the message every caller
+/// shows, plus a stable code and (where it can be located) a range in the
 /// user's text — see `formula_diagnostics`. Callers that only want the
 /// message use `?` into `String`.
 fn compile_formula(formula: &str) -> Result<CompiledFormula, FormulaIssue> {
@@ -6173,18 +6168,18 @@ fn formula_eval_error_message(
 /// Refuse `round(<expression with a sensor>, <constant>)`.
 ///
 /// fasteval's two-value round is `round(step, x)` -- it rounds `x` to the
-/// nearest multiple of `step` (`round(0.01, $A)` = $A to 2 decimals, the form
-/// the "Round to N decimals" wrap builds). Written the spreadsheet way,
+/// nearest multiple of `step` (`round(0.01, $A)` = $A to 2 decimals). Written
+/// the spreadsheet way,
 /// `round($A, 2)` therefore rounds the CONSTANT 2 to a multiple of $A and
-/// stores 0, A or 2A on every row -- silently. Decision (2026-10-08): REFUSE
-/// that shape with a message giving the formula to type, rather than
-/// reinterpret it: a rewrite would make `round(a, b)` mean two different
+/// stores 0, A or 2A on every row -- silently. That shape is REFUSED
+/// with a message giving the formula to type, rather than
+/// reinterpreted: a rewrite would make `round(a, b)` mean two different
 /// things depending on which side holds a sensor, while a refusal is never
 /// silent. `round(x)`, `round(step, $A)` and `round($A, $B)` (step taken from
-/// a sensor) are unchanged; a round with no sensor on either side is just a
+/// a sensor) are accepted; a round with no sensor on either side is just a
 /// constant and is left alone.
 ///
-/// 2026-10-09: the refusal stays, but OLD workspaces are now auto-converted
+/// OLD workspaces are auto-converted
 /// on reopen (`convert_legacy_formula`, the explicit rewrite to
 /// `round(x * 10^n) / 10^n`, never a silent reinterpretation by the engine).
 /// The refusal is code `round_excel`, ranged on the whole call.
@@ -6504,7 +6499,7 @@ fn formula_gate(
 /// editor's create-mode check), never on a recompute / replay: today only a
 /// division by a literal 0 (`div_zero`). Such a formula still evaluates — the
 /// divided part has no value on any row — so a recipe saved before the
-/// refusal existed (2026-10-09) keeps restoring instead of dropping into
+/// refusal existed keeps restoring instead of dropping into
 /// Repair and demoting the models trained on it.
 fn create_only_formula_issue(formula: &str) -> Option<FormulaIssue> {
     formula_diagnostics::division_by_zero(formula)
@@ -6661,7 +6656,7 @@ fn evaluate_formula(
 }
 
 // ---------------------------------------------------------------------------
-// Formula editor preview (customer batch 2026-10, item 6)
+// Formula editor preview
 // ---------------------------------------------------------------------------
 
 /// Default / ceiling of `preview_formula`'s downsampled series.
@@ -6965,8 +6960,8 @@ struct LegacyFormulaConversion {
 }
 
 /// Rewrite every spreadsheet-order `round(x, n)` in a stored formula to the
-/// engine form `round(x * 10^n) / 10^n` (`round(x)` for n = 0) — user
-/// decision 2026-10-09, run when an old workspace is reopened so its special
+/// engine form `round(x * 10^n) / 10^n` (`round(x)` for n = 0) — run when an
+/// old workspace is reopened so its special
 /// sensors restore instead of hitting the `round_excel` refusal. Pure text
 /// (no dataset, no generation); a formula without such a call comes back
 /// unchanged with `changed: false`. A call whose `n` is not a whole number
@@ -7246,7 +7241,7 @@ fn sample_dataset(
 }
 
 // ---------------------------------------------------------------------------
-// Health score (phase 2): bounded preview + "Mark complete" file export
+// Health score: bounded preview + "Mark complete" file export
 // ---------------------------------------------------------------------------
 
 /// Bounded, per-kind data for the Build Model "Model fit" and "Health score"
@@ -7264,7 +7259,7 @@ fn sample_dataset(
 ///
 /// `async` so the O(rows) pass never runs on the main thread.
 ///
-/// **Train/Test validation (2026-10-07):** with `test_periods` the response also
+/// **Train/Test validation:** with `test_periods` the response also
 /// carries `test_validation` (see `health_validation`). Individual / Clustering
 /// need nothing more. A Relationship test row outside the training scope needs
 /// the fit's prediction for it: the cache holds only the training rows'
@@ -7653,7 +7648,7 @@ fn plan_rel_extra_ex(
     })))
 }
 
-/// Test helper with the pre-2026-10-07 shape: the job when rows must be
+/// Test helper: the job when rows must be
 /// predicted (ignores the outdated flag; a failed marker reads as `None`).
 #[cfg(test)]
 fn plan_rel_extra(
@@ -8348,7 +8343,7 @@ async fn export_model_files_in(
     model_export::finalize_with(staging, &dirs.output_dir, outcome, warnings)
 }
 
-/// Health score phase 2: the session cache, the set-point values written into
+/// The session cache, the set-point values written into
 /// the `*_INFO_*.json` files, and the whole "Mark complete" export flow.
 #[cfg(test)]
 mod health_export_tests {
@@ -8425,7 +8420,7 @@ mod health_export_tests {
         let state = state_with(ds(vec![("S", s_values())]), 1);
         let e = health_preview_in(&state, &rel_request(Some("m1:abc"))).unwrap_err();
         assert!(e.starts_with("NOT_FITTED"), "{e}");
-        // Wording (user decision 2026-10-10): the kind is named "Relation model"
+        // Wording: the kind is named "Relation model"
         // wherever a user can read it - never "Relationship", never the algorithm.
         assert_eq!(
             e,
@@ -9214,7 +9209,7 @@ mod health_export_tests {
     }
 }
 
-/// QA-fix pass (2026-10-04): criteria bounds written verbatim, the derived
+/// Criteria bounds written verbatim, the derived
 /// epoch, the Relationship export pre-checks and the coded export refusals.
 #[cfg(test)]
 mod health_fix_tests {
@@ -9451,7 +9446,7 @@ mod health_fix_tests {
     }
 }
 
-/// Phase 1 of the Health-score work: output-file concept fixes (criteria key
+/// Output-file concept checks (criteria key
 /// spelling, small-band rounding) for the `*_INFO_*.json` model files.
 #[cfg(test)]
 mod model_info_output_tests {
@@ -9508,7 +9503,7 @@ mod model_info_output_tests {
 
     #[test]
     fn individual_constant_sensor_boundaries_equal_the_mean() {
-        // PINNED current behaviour (phase 2 must validate/guard it): SD = 0
+        // PINNED current behaviour (the health score validates/guards it): SD = 0
         // → every boundary equals the mean, so a band-width denominator is 0.
         let (m, s, b1, b3) = individual_rounded_metrics(7.25, 0.0);
         assert_eq!(m, 7.25);
@@ -9938,9 +9933,9 @@ pub fn run() {
         });
 }
 
-/// `preview_relationship_model`'s response contract (2026-10-04): bounded,
+/// `preview_relationship_model`'s response contract: bounded,
 /// aligned `predicted` / `predictor_raw` / `target_raw` + `n_rows` when
-/// `max_points` is given, full legacy arrays without it, and a session cache
+/// `max_points` is given, full arrays without it, and a session cache
 /// that always holds the FULL fit. Driven through `finish_relationship_response`
 /// with a fake sidecar response (the real command needs a sidecar process).
 #[cfg(test)]
@@ -10150,7 +10145,7 @@ mod relationship_response_tests {
 
     #[test]
     fn an_engine_error_never_reaches_the_frontend_and_is_logged_once() {
-        // User decision 2026-10-10: a library exception can name Python, a
+        // A library exception can name Python, a
         // library or the (confidential) algorithm.
         let nasty = "pygam LinearGAM: PIRLS did not converge (numpy.linalg.LinAlgError) in the Python sidecar";
         let trace = "Traceback (most recent call last):\n  File \"backend.py\", line 180\nnumpy.linalg.LinAlgError: SVD";

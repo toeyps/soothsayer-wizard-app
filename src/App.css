@@ -2,7 +2,7 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
 /* Tailwind v4 scans every non-ignored file for class names. A doc that quotes a Windows path
    containing a backslash followed by hex digits is read as a CSS escape with an impossible code
-   point and the whole build dies with "Invalid code point" (hit 2026-10-04). The app uses
+   point and the whole build dies with "Invalid code point". The app uses
    Tailwind classes only under src/, so docs and scripts are excluded. */
 @source not "../docs";
 @source not "../scripts";
@@ -67,23 +67,14 @@
     padding: 0;
 }
 
-/* Hidden AND non-interactive (2026-09-17, second pass — `opacity: 0` alone
-   left it invisible but still hoverable/clickable, so the browser's own
-   native tooltip ("Show local date and time picker") still popped up over
-   an invisible spot, which read as even more broken than before: no icon
-   to see, yet clearly something was still there). This pseudo-element is
-   drawn entirely by the browser engine itself (WebView2 here) — its actual
-   on-screen appearance can't be verified from this dev environment (no way
-   to open the real packaged app), so rather than keep guessing at filter/
-   opacity values, stop depending on it being visible OR interactive at
-   all. The lucide `<Calendar>` icon rendered next to each input (an
-   ordinary SVG this app already renders reliably everywhere) is the sole
-   calendar affordance now, wired to call the input's own `showPicker()` on
-   click — see Dashboard.tsx's Time
-   start/end and TIME RANGE inputs. `pointer-events: none` here means this
-   spot no longer intercepts hover/click at all — a click there now reaches
-   the input underneath instead (just focuses it, same as clicking anywhere
-   else in the box), and no native tooltip fires. */
+/* Hidden AND non-interactive. This pseudo-element is drawn entirely by the
+   browser engine itself (WebView2 here), so nothing depends on it being
+   visible or interactive: the lucide `<Calendar>` button rendered next to
+   each input is the sole calendar affordance, wired to call the input's own
+   `showPicker()` on click. `pointer-events: none` here means this spot does
+   not intercept hover/click at all — a click there reaches the input
+   underneath (just focuses it, same as clicking anywhere else in the box),
+   and no native tooltip fires. */
 .date-input-wrapper input::-webkit-calendar-picker-indicator {
     opacity: 0;
     pointer-events: none;
@@ -519,8 +510,8 @@ tr:hover {
     text-align: center;
     white-space: normal;
     /* `normal` (not `break-word`) so wrapping only happens at spaces —
-       "Control Chart" still wraps cleanly into two words, but a single
-       long word like "Sensors" no longer gets sliced into an orphaned
+       "Control Chart" wraps cleanly into two words, and a single
+       long word like "Sensors" is never sliced into an orphaned
        leftover letter on its own line. */
     word-break: normal;
     overflow-wrap: normal;
@@ -646,8 +637,6 @@ tr:hover {
 
 /* =============================================
    Shared form rows (Build Model Workbench)
-   (The standalone Predictive Model page and its page-level classes were
-   removed in health score phase 4, 2026-10-04.)
    ============================================= */
 
 .filter-row {
@@ -930,7 +919,7 @@ tr:hover {
     --cond: #8b5cf6;
     --cond-muted: rgba(139, 92, 246, 0.14);
     --warn-muted: oklch(0.78 0.14 75 / 0.16);
-    /* Feature 4 (running condition / training periods) — tokens from the approved mockups. */
+    /* Running condition / training periods tokens. */
     --warn-line: oklch(0.78 0.14 75 / 0.4);
     --danger-muted: oklch(0.68 0.2 25 / 0.12);
     --danger-line: oklch(0.68 0.2 25 / 0.45);
@@ -943,23 +932,13 @@ tr:hover {
     --kind-clu: oklch(0.72 0.12 200);
     --kind-clu-muted: oklch(0.72 0.12 200 / 0.16);
     /* Consolas named explicitly (DESIGN_SYSTEM §3.2): the installed app renders the fallback,
-     * so the fallback is the one designed for (customer items 3 + 4, 2026-10-09). */
+     * so the fallback is the one designed for. */
     --mono: 'JetBrains Mono', Consolas, ui-monospace, SFMono-Regular, Menlo, monospace;
 
-    /* ---- Visual refresh Phase 0 (2026-10-02) ----
-     * Added for the Dashboard/Build-Model visual refresh (see
-     * docs/PROJECT_HANDOVER.md's 2026-10-02 "HANDOFF INDEX" entry and the
-     * two SPEC FINAL entries it points to). Mirrors the approved prototype
-     * (https://claude.ai/artifact/F6hexAhUEpRrUWEUa2L1i3) value-for-value --
-     * named to match ITS `:root` (`--pop`, `--ki`/`--kr`/`--kc`, `--ok-m`)
-     * rather than this file's longer descriptive style, specifically so a
-     * later phase can lift the prototype's CSS almost verbatim instead of
-     * re-deriving names each time. Every value below was already present
-     * somewhere in this file under a different name (checked one-by-one,
-     * see each comment) -- aliased via var(...) rather than duplicated, so
-     * a future change to the base token still propagates. None of these
-     * replace or rename an existing token; nothing else in this file reads
-     * them yet except the new shared classes right below. */
+    /* ---- Shared design tokens ----
+     * Short names (`--pop`, `--ki`/`--kr`/`--kc`, `--ok-m`) aliased via var(...)
+     * onto the base tokens above rather than duplicated, so a change to a base
+     * token still propagates. */
     --pop: #17171c; /* distinct popover surface -- the prototype's own
         --pop, a touch lighter than --card-bg (#101012) / --input-bg
         (#16161a) so a floating popover still reads as "above" the card or
@@ -980,17 +959,16 @@ tr:hover {
         --perf-muted, but named without --perf's "Performance category"
         meaning -- for the new Complete/Trained status dot below and any
         future success pill outside the Performance/Condition axis */
-    /* Customer batch 2026-10 (item 5): the blue "next step" callout / assign
-     * bar — the accent hue at a hairline and a wash strength (the mockup's
-     * oklch(.68 .17 245 / .35) and / .08). */
+    /* The blue "next step" callout / assign bar — the accent hue at a
+     * hairline and a wash strength. */
     --accent-line: oklch(0.68 0.17 245 / 0.35);
     --accent-wash: oklch(0.68 0.17 245 / 0.08);
     --dot-empty: #26262c; /* neutral "no status yet" fill for the new
         kind-badge corner dot below -- not meaningful outside that one use,
         so it isn't generalised into a broader token */
-    /* Customer batch 2026-10 (item 6): the special-sensor Formula editor
+    /* The special-sensor Formula editor
      * (`SpecialSensorFormulaEditor.tsx`, DESIGN_SYSTEM §4.1). Functions are
-     * painted teal (`--fnc`, the mockup's own token), sensor references as
+     * painted teal (`--fnc`), sensor references as
      * accent chips, brackets cycle white → teal → violet → green by depth. */
     --fnc: oklch(0.78 0.12 200);
     --fnc-muted: oklch(0.78 0.12 200 / 0.14);
@@ -1550,10 +1528,9 @@ body {
     margin-top: 2px;
 }
 
-/* Called out next to the chart's own 🔍 zoom control (added 2026-09-22) —
-   clarifies that zoom only changes what's visible here, unlike the
-   Training scope panel's Time start/end, which changes what's queried and
-   trained on. Accent-tinted (not plain --chip-bg like .pm-count-pill) so
+/* Called out next to the chart's own zoom control —
+   clarifies that zoom only changes what's visible here.
+   Accent-tinted (not plain --chip-bg like .pm-count-pill) so
    it reads as "worth reading", not just another stat pill. */
 
 /* ── Expand button on each chart header ───────────────────────────── */
@@ -1565,10 +1542,8 @@ body {
     position: fixed;
     inset: 0;
     z-index: 1000;
-    /* 🆕 2026-10-02 [visual refresh Phase 4, look only]: same rgba(0,0,0,.55)
-       + blur(2px) glass-backdrop pattern as `.predictor-picker-backdrop`
-       above and `.bmw-modal-backdrop` (Phase 3) — matches the prototype's
-       `.scrim`, was a blue-tinted rgba(2,6,23,.55) + blur(4px) before. */
+    /* The app's glass-backdrop pattern: rgba(0,0,0,.55) + blur(2px), same as
+       `.predictor-picker-backdrop` above and `.bmw-modal-backdrop`. */
     background: rgba(0, 0, 0, 0.55);
     backdrop-filter: blur(2px);
     -webkit-backdrop-filter: blur(2px);
@@ -1644,9 +1619,7 @@ body {
     position: fixed;
     inset: 0;
     z-index: 1000;
-    /* 🆕 2026-10-02 [visual refresh Phase 4, look only]: same rgba(0,0,0,.55)
-       + blur(2px) glass-backdrop pattern as the other `.pm-*`/predictor-
-       picker backdrops above — see their comments for the full rationale. */
+    /* Same glass-backdrop pattern as the other backdrops above. */
     background: rgba(0, 0, 0, 0.55);
     backdrop-filter: blur(2px);
     -webkit-backdrop-filter: blur(2px);
@@ -2008,7 +1981,7 @@ body {
     border-radius: 12px;
     padding: 2px 9px;
 }
-/* Typeable inner boundary inside a value pill (2026-10-09) — exact values without dragging. */
+/* Typeable inner boundary inside a value pill — exact values without dragging. */
 .pm-cluster-bound-input {
     width: 9ch;
     min-width: 0;
@@ -2051,10 +2024,8 @@ body {
     display: flex;
     align-items: center;
     gap: 6px;
-    /* Visual refresh (2026-10-02): floating "glass" chrome over the chart
-     * canvas, matching the approved prototype's `.floatbar` (semi-
-     * transparent + blur + 10px radius) rather than a flat opaque card —
-     * look only, same position/contents as before. */
+    /* Floating "glass" chrome over the chart canvas (semi-transparent +
+     * blur + 10px radius) rather than a flat opaque card. */
     background: rgba(20, 20, 24, 0.9);
     backdrop-filter: blur(6px);
     padding: 5px 8px;
@@ -2069,9 +2040,8 @@ body {
     font-size: 11px;
 }
 
-/* "X"/"Y" moved out of the option text into its own small badge next to
-   each select (2026-09-22) — the axis no longer eats into the space a
-   sensor's description needs. */
+/* "X"/"Y" is its own small badge next to each picker, so the axis does
+   not eat into the space a sensor's description needs. */
 .scatter-regl-axis-badge {
     display: inline-flex;
     align-items: center;
@@ -2103,7 +2073,7 @@ body {
     display: flex;
     align-items: center;
     gap: 2px;
-    /* Visual refresh (2026-10-02) — see `.scatter-regl-controls` above. */
+    /* Glass chrome — see `.scatter-regl-controls` above. */
     background: rgba(20, 20, 24, 0.9);
     backdrop-filter: blur(6px);
     border: 1px solid var(--border-strong);
@@ -2152,11 +2122,11 @@ body {
     display: flex;
     flex-direction: column;
     gap: 6px;
-    /* Visual refresh (2026-10-02): the popover surface token, not a plain
+    /* The popover surface token, not a plain
      * card — this is a floating editor over the chart canvas, same family
-     * as `.popover-surface` even though it isn't portaled (it's already
-     * positioned within the chart's own non-scrolling wrapper, so it was
-     * never subject to the clipping bug that required a Portal). */
+     * as `.popover-surface` even though it isn't portaled (it's
+     * positioned within the chart's own non-scrolling wrapper, so it is
+     * never clipped by a scrolling ancestor). */
     background: var(--pop);
     border: 1px solid var(--border-strong);
     border-radius: 10px;
@@ -2247,7 +2217,7 @@ body {
     display: flex;
     align-items: center;
     gap: 2px;
-    /* Visual refresh (2026-10-02) — see `.scatter-regl-controls` above. */
+    /* Glass chrome — see `.scatter-regl-controls` above. */
     background: rgba(20, 20, 24, 0.9);
     backdrop-filter: blur(6px);
     border: 1px solid var(--border-strong);
@@ -2380,11 +2350,11 @@ body {
 }
 
 /* Tag Point list — one row per pinned tag under the chart toolbox (Line and
-   Scatter), each with its own × so a single tag can be removed (2026-10-08).
+   Scatter), each with its own × so a single tag can be removed.
    Same floating "glass" chrome as the toolbox above it.
    z-index 10 — deliberately BELOW the toolboxes (11): `.line-chart-toolbox`
    is its own stacking context, so its Zoom dropdown's z 12 only counts inside
-   it; at an equal 11 this later sibling painted over "Horizontal zoom" /
+   it; at an equal 11 this later sibling would paint over "Horizontal zoom" /
    "Zoom out". Scatter's axis editor (z 12, same parent) also stays on top. */
 .chart-tag-anchor {
     position: absolute;
@@ -2546,7 +2516,7 @@ body {
     user-select: none;
 }
 
-/* Cluster legend strip (customer batch phase 2, 2026-10-09) ------------
+/* Cluster legend strip ---------------------------------------------------
    Chips in the 36px strip above the matrix, left of the toolbox — never over
    the plot. One chip per cluster: ColourPicker swatch + name (renamable in
    place) + x. "Clear" shows at 2+ clusters. On overflow the chip row scrolls
@@ -2725,9 +2695,7 @@ body {
     border-radius: 6px;
     padding: 5px 9px;
     /* Bounded + wrapping instead of nowrap — a long sensor description would
-       otherwise render as one very long unbroken line (regression: used to
-       also get clipped by the cell's own overflow:hidden, see
-       .pair-regl-cell-slot). */
+       otherwise render as one very long unbroken line. */
     max-width: 220px;
     white-space: normal;
     z-index: 20;
@@ -2844,7 +2812,7 @@ body {
  * Do NOT reuse `.fg-group-badge` here — that class is a fixed 20-22px
  * circular digit avatar for a different, unrelated feature; putting a full
  * word like "Individual" inside it overflows the box and overlaps
- * neighboring text (this happened once — see PROJECT_HANDOVER.md). */
+ * neighboring text. */
 .model-kind-icon {
     width: 30px;
     height: 30px;
@@ -2915,9 +2883,8 @@ body {
     color: var(--text-faint);
 }
 
-/* Build Model Workbench Phase B: third pill state, between Incomplete and
-   Complete -- a preview ran successfully and is still current (not stale),
-   but the model hasn't been marked Complete yet. */
+/* Third pill state, between Incomplete and Complete -- the model is trained
+   and still current (not stale), but hasn't been marked Complete yet. */
 .model-status-pill--trained {
     background: var(--accent-muted);
     color: var(--accent-hi);
@@ -2961,9 +2928,8 @@ body {
 }
 
 /* =====================================================================
- * Feature 4 - Running Condition panel, Training periods, sensor rows.
- * Visual spec: the approved mockups time-ranges.html, rc-gate.html and
- * merged-fg-opus.html (sizes are the mockups' own). `f4-` prefix so none of
+ * Running Condition panel, Training periods, sensor rows.
+ * `f4-` prefix so none of
  * this collides with the older `.pm-*` / `.fg-*` classes.
  * ===================================================================== */
 
@@ -3055,11 +3021,8 @@ body {
 
 .f4-kinds { display: flex; gap: 4px; }
 .f4-kb { position: relative; width: 22px; height: 22px; border-radius: 6px; display: grid; place-items: center; font-size: 0.62rem; font-weight: 700; flex-shrink: 0; }
-/* Build Model Workbench Phase B: small status dot in the kind badge's
-   corner (left sensor list only) -- no dot = never trained, blue = Trained
-   (not stale, not Complete), green = Complete. `.f4-kb` is already
-   `position: relative`, so this is a plain absolutely-positioned corner dot,
-   not the mis-scoped `.sensor-autocomplete-icon` mistake from earlier. */
+/* Small status dot in the kind badge's corner. `.f4-kb` is
+   `position: relative`, so this is a plain absolutely-positioned corner dot. */
 .f4-kb-dot { position: absolute; right: -2px; bottom: -2px; width: 7px; height: 7px; border-radius: 50%; border: 1.5px solid var(--card-bg); }
 .f4-kb-dot--trained { background: var(--accent-hi); }
 .f4-kb-dot--complete { background: var(--ok); }
@@ -3081,14 +3044,9 @@ body {
 .f4-fgchip i { width: 6px; height: 6px; border-radius: 2px; flex-shrink: 0; }
 .f4-fgchip span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .f4-fgchip em { font-style: normal; font-family: var(--mono); font-size: 0.64rem; color: var(--text-faint); flex-shrink: 0; }
-/* 🆕 2026-10-02 [visual refresh Phase 3, look only]: flattened to match the
-   approved prototype's `.mtabs` (https://claude.ai/artifact/F6hexAhUEpRrUWEUa2L1i3)
-   -- a plain underline-tab strip with a single bottom border, no distinct
+/* A plain underline-tab strip with a single bottom border, no distinct
    background of its own (it reads as part of the detail pane, not a boxed-in
-   toolbar). Was `border-top` + `background: var(--bg-primary)`, which gave
-   it a "sunken bar" look the prototype doesn't have. No class renamed, no
-   JSX touched -- `.f4-tab`'s own underline-on-select styling (right below)
-   is unchanged. */
+   toolbar). `.f4-tab`'s own underline-on-select styling is right below. */
 .f4-tabs { display: flex; align-items: flex-end; gap: 2px; padding: 0 10px; border-bottom: 1px solid var(--border); }
 .f4-tab { display: inline-flex; align-items: center; gap: 7px; padding: 9px 10px 8px; border: 0; border-bottom: 2px solid transparent; margin-bottom: -1px; background: none; color: var(--text-secondary); font-size: 0.74rem; font-weight: 500; cursor: pointer; white-space: nowrap; }
 .f4-tab:hover { color: var(--text-primary); }
@@ -3128,16 +3086,11 @@ body {
 .f4-notice-x { align-self: start; font-size: 0.7rem; padding: 4px 9px; border-radius: 6px; border: 1px solid var(--border-strong); background: var(--surface-hi); color: var(--text-primary); cursor: pointer; }
 .f4-strike { text-decoration: line-through; color: var(--text-faint); }
 
-/* ── Build Model Workbench (Phase A layout, 2026-09-29) ──
-   Replaces the old "Group by Failure Group / Component / Model Type"
-   accordion overview with a master/detail layout (approved mockup
-   4jDz6AVCFMgTbxrGuFB9SN, Version 13). Reuses every existing f4- and
-   model- prefixed token and class it can (pills, tabs, readouts, chips,
-   the sticky footer) — these rules cover only what's genuinely new: the
-   (2026-10-03: the old running-condition summary bar is gone — see the
-   "Running condition Step 1" block at the end of this file), the two-pane grid, the left sensor
-   list, the collapsible "Model settings" section, the Phase-A results
-   placeholder, and the Running Condition edit modal. */
+/* ── Build Model Workbench layout ──
+   A master/detail layout. Reuses every f4- and model- prefixed token and
+   class it can (pills, tabs, readouts, chips, the sticky footer) — these
+   rules cover the two-pane grid, the left sensor list, the collapsible
+   "Model settings" section and the Running Condition edit modal. */
 .bmw-wb { flex: 1; min-height: 0; display: grid; }
 /* Sensor list hidden: the detail pane is the only column (the component also sets it inline). */
 .bmw-wb--nolist { grid-template-columns: minmax(0, 1fr); }
@@ -3167,13 +3120,8 @@ body {
 .bmw-dhead { padding: 14px 20px 12px; border-bottom: 1px solid var(--border); display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 12px; align-items: center; }
 .bmw-dhead h3 { margin: 0; font-size: 1rem; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .bmw-dmeta { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-top: 5px; }
-/* 🆕 2026-10-02 [visual refresh Phase 3, look only]: borderless "ghost"
-   icon button, matching the prototype's `.iconbtn` (no border, no filled
-   background until hovered) instead of the previous always-boxed look
-   (1px border + filled `--input-bg`). Only used for the sidebar ⇤/⇥
-   toggle in this file (grep-confirmed) -- hover/active behavior
-   unchanged, size/radius kept as-is (28px/7px, already close to the
-   prototype's 30px/8px). */
+/* Borderless "ghost" icon button (no border, no filled background until
+   hovered). Used for the sidebar ⇤/⇥ toggle. */
 .bmw-iconbtn { font: inherit; width: 28px; height: 28px; border-radius: 7px; border: 0; background: none; color: var(--text-secondary); cursor: pointer; display: grid; place-items: center; flex-shrink: 0; }
 .bmw-iconbtn:hover { background: var(--hover-bg); color: var(--text-primary); }
 .bmw-empty-detail { flex: 1; display: grid; place-items: center; color: var(--text-faint); font-size: 0.8rem; padding: 24px; text-align: center; }
@@ -3186,17 +3134,11 @@ body {
 .bmw-sets-sum { color: var(--text-secondary); font-family: var(--mono); font-size: 0.7rem; flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .bmw-sets-sp { flex: 1; }
 .bmw-sets-body { display: flex; flex-wrap: wrap; gap: 14px 18px; align-items: flex-end; padding: 2px 20px 14px 38px; }
-/* 🆕 2026-09-30 (issues 2/3, redesigned same day after the first pass still
-   looked disorganized in the real app — see the screenshot the user sent:
-   `.bmw-sets-kind`'s old `flex: 1 1 100%` forced it onto its own full-width
-   row, which in turn pushed Training data onto a THIRD, visually orphaned
-   row below it with a conspicuous gap — Model name ended up alone on row 1
-   only as a side effect, not by design. Fix: `.bmw-sets-kind` is now
-   `display: contents` — a pure JSX/semantic grouping with NO layout effect
-   of its own, so its children become ordinary flex items of `.bmw-sets-body`
-   directly, in ONE flow: Model name, then the kind-specific fields, then
-   Training data, wrapping to a second line only when the window is
-   genuinely too narrow to fit them — never a forced break. */
+/* `.bmw-sets-kind` is `display: contents` — a pure JSX/semantic grouping
+   with NO layout effect of its own, so its children are ordinary flex items
+   of `.bmw-sets-body` directly, in ONE flow: Model name, then the
+   kind-specific fields, then Training data, wrapping to a second line only
+   when the window is genuinely too narrow to fit them — never a forced break. */
 .f4-fld--name { flex: 1 1 260px; min-width: 220px; max-width: 380px; }
 .f4-fld--traindata { flex: 0 0 170px; min-width: 170px; }
 .bmw-sets-kind { display: contents; }
@@ -3209,19 +3151,14 @@ body {
 .bmw-step button:disabled, .bmw-step button:disabled:hover { color: var(--text-faint); background: var(--input-bg); cursor: default; }
 .bmw-step span { min-width: 28px; text-align: center; font-family: var(--mono); font-size: 0.76rem; }
 
-/* 🆕 2026-09-30 [cluster-range slider port, alignment fix]: Clustering is the
-   one kind whose 7 fields (name, X, Y, criteria, clusters, cluster ranges,
-   training data) regularly wrap onto a 2nd row even at a comfortable window
-   width — under plain flex-wrap each row's items have DIFFERENT flex-basis
-   values, so row 2's items never line up under row 1's (reads as two
-   unrelated stacked rows, not a grid — user-reported "ไม่สมมาตรกันเลย").
-   Individual/Relationship are NOT touched: they already fit on one row after
-   the `display: contents` fix above, so they have no row-2 to misalign.
-   Field DOM order is unchanged (name, X, Y, criteria, clusters, ranges,
-   training) — grid auto-placement fills left-to-right, top-to-bottom into
-   the 4 tracks below in that same order, so this is a pure CSS addition, no
-   JSX restructuring — applied via one conditional class on `.bmw-sets-body`
-   (`m.kind === 'clustering' ? ' bmw-sets-body--clustering' : ''`). */
+/* Clustering is the one kind whose 7 fields (name, X, Y, criteria, clusters,
+   cluster ranges, training data) regularly wrap onto a 2nd row even at a
+   comfortable window width — under plain flex-wrap each row's items have
+   DIFFERENT flex-basis values, so row 2's items would not line up under row
+   1's. A grid fixes that: field DOM order is name, X, Y, criteria, clusters,
+   ranges, training, and grid auto-placement fills left-to-right,
+   top-to-bottom into the 4 tracks below in that same order. Applied via one
+   conditional class on `.bmw-sets-body` (`bmw-sets-body--clustering`). */
 .bmw-sets-body--clustering {
     display: grid;
     grid-template-columns: minmax(200px, 1.3fr) minmax(140px, 1fr) minmax(140px, 1fr) minmax(140px, 1fr);
@@ -3258,18 +3195,13 @@ body {
 .bmw-btn-ok { font-size: 0.76rem; font-weight: 600; padding: 7px 14px; border-radius: 7px; border: 0; background: var(--ok); color: #04130a; cursor: pointer; white-space: nowrap; }
 .bmw-btn-ok:disabled { opacity: 0.4; cursor: not-allowed; }
 
-/* Build Model Workbench Phase B: Train/Re-train (footer, fixed slot) and the
-   "N items to fix" links inside the results area's incomplete-config state. */
+/* Train/Re-train (footer, fixed slot) and the "N items to fix" links inside
+   the results area's incomplete-config state. */
 .bmw-fix-link { background: none; border: 0; padding: 0; margin: 0; color: var(--warn); text-decoration: underline; cursor: pointer; font: inherit; font-size: 0.76rem; text-align: left; }
 .bmw-fix-link:hover { color: var(--text-primary); }
 
-/* 🆕 2026-10-02 [visual refresh Phase 3, look only]: added blur + bumped
-   opacity to match the prototype's own `.scrim` (rgba(0,0,0,.55) +
-   backdrop-filter: blur(2px)) and the same glass-backdrop pattern already
-   used elsewhere in this app (e.g. `.pm-chart-modal-backdrop`). The modal's
-   own content (`RunningConditionPanel`, out of scope this pass per the
-   brief -- dense, already reworked, real bugs found each time) is
-   untouched; only this wrapper's backdrop. */
+/* The app's glass-backdrop pattern (rgba(0,0,0,.55) + backdrop-filter:
+   blur(2px)), same as `.pm-chart-modal-backdrop`. */
 .bmw-modal-backdrop { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.55); backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px); display: grid; place-items: center; z-index: 50; padding: 20px; }
 .bmw-modal { width: min(720px, 100%); max-height: 85vh; overflow-y: auto; background: var(--card-bg); border: 1px solid var(--border-strong); border-radius: 12px; box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5); }
 .bmw-modal-head { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid var(--border); font-size: 0.82rem; font-weight: 600; }
@@ -3283,27 +3215,17 @@ body {
 
 
 /* =============================================
-   Visual refresh Phase 0 -- shared base classes (2026-10-02)
-   CSS/tokens-and-one-component foundation pass only -- see
-   docs/PROJECT_HANDOVER.md's 2026-10-02 "HANDOFF INDEX" entry (and the two
-   SPEC FINAL entries it points to) for the full redesign scope. Nothing
-   below is wired into any component yet; later phases consume these when
-   they touch Dashboard / FailureGroupsPanel / BuildModelWindow's look.
+   Shared base classes
    ============================================= */
 
-/* Kind badge + 3-state corner status dot, matching the approved prototype's
- * `.kb` / `.kb b` (`.kb b.done` / `.tr` / `.bl`). Deliberately a NEW,
- * standalone pair -- NOT a rename of either existing look-alike:
- *   - `.model-kind-icon`(--individual/--relationship/--clustering) already
- *     gives the plain colored I/R/C badge (no dot, no `position: relative`
- *     of its own) and has other call sites this pass doesn't want to risk.
- *   - BuildModelWindow.tsx's own `.f4-kb` / `.f4-kb-dot--trained/--complete`
- *     is kept exactly as-is (still the only thing that component renders) --
- *     it only has 2 colored dot states (no "needs setup"/blocked state).
- * `.kind-badge`/`.kind-badge-dot` is for the Dashboard's Failure Groups tab
- * (`FailureGroupsPanel.tsx`, SPEC FINAL 2026-09-29's "part 2", not yet
- * built) and any later page that wants the full 3-state dot (Needs setup /
- * Trained / Complete) without colliding with either class above. */
+/* Kind badge + corner status dot. A standalone pair, NOT a rename of either
+ * look-alike:
+ *   - `.model-kind-icon`(--individual/--relationship/--clustering) gives the
+ *     plain colored I/R/C badge (no dot, no `position: relative` of its own);
+ *   - `.f4-kb` / `.f4-kb-dot--*` is the badge + status dot that
+ *     BuildModelWindow.tsx and the Dashboard's Failure Groups tab render.
+ * `.kind-badge` is the I/R/C badge shell of the Dashboard's Failure Groups
+ * tab (`FailureGroupsPanel.tsx`) and the assignment sheet. */
 .kind-badge {
     position: relative;
     width: 22px;
@@ -3319,12 +3241,10 @@ body {
 .kind-badge--relationship { background: var(--kr-m); color: var(--kr); }
 .kind-badge--clustering { background: var(--kc-m); color: var(--kc); }
 
-/* Corner dot. No modifier = "no status yet" (neutral, matches the
- * prototype's own unset look). `--trained`/`--complete` intentionally use
- * the SAME tokens as `.f4-kb-dot--trained`/`--complete` (--accent-hi/--ok)
- * so the two badge families read as the same status language even though
- * they're separate classes. `--blocked` (warn/yellow, "Needs setup") has
- * no equivalent in `.f4-kb-dot` yet -- new state, prototype-only so far. */
+/* Corner dot. No modifier = "no status yet" (neutral). `--trained`/`--complete`
+ * use the SAME tokens as `.f4-kb-dot--trained`/`--complete` (--accent-hi/--ok)
+ * so the two badge families read as the same status language. `--blocked`
+ * is warn/yellow ("Needs setup"). */
 .kind-badge-dot {
     position: absolute;
     right: -3px;
@@ -3342,12 +3262,8 @@ body {
 
 /* Small monospace unit label rendered right after a sensor's name (e.g.
  * "Boiler drum level (mm)" -- the unit sits inline, not flush right).
- * Matches the prototype's `.unit`; named `.unit-badge` here (not the bare
- * `.unit` the prototype uses) since a single-word global class is riskier
- * to introduce into an existing ~4500-line stylesheet than a qualified
- * one, and nothing here currently uses the word "unit" for anything else
- * (checked). Not wired into any sensor row yet -- that is the Dashboard
- * visual-refresh phase's job per the SPEC FINAL entry. */
+ * Named `.unit-badge` (not a bare `.unit`) since a single-word global class
+ * is risky in a stylesheet this size. */
 .unit-badge {
     flex-shrink: 0;
     font-size: 0.66rem;
@@ -3375,16 +3291,14 @@ body {
 }
 
 /* =============================================
-   Visual refresh Phase 1 (2026-10-02) — Dashboard
-   "Sensor" tab: SensorSelection.tsx's row chrome,
-   the Selected Sensor list, Filter/Highlights tabs,
-   and the popovers now rendered through `Portal` +
-   `AnchoredPopover` (src/components/AnchoredPopover.tsx).
-   Look only — see docs/PROJECT_HANDOVER.md's matching
-   2026-10-02 entry. Reuses the Phase 0 tokens/classes
-   above (--pop, --ki/--kr/--kc, .unit-badge,
-   .popover-surface, .kind-badge) rather than adding new
-   ones where those already cover the need.
+   Dashboard "Sensor" tab: SensorSelection.tsx's
+   row chrome, the Selected Sensor list,
+   Filter/Highlights tabs, and the popovers
+   rendered through `Portal` + `AnchoredPopover`
+   (src/components/AnchoredPopover.tsx). Reuses
+   the shared tokens/classes above (--pop,
+   --ki/--kr/--kc, .unit-badge, .popover-surface,
+   .kind-badge).
    ============================================= */
 
 /* Generic padding for a popover built from `.popover-surface` +
@@ -3397,11 +3311,10 @@ body {
     overflow-y: auto;
 }
 
-/* Sensor/component row action buttons (🔔 alarm, 📁 add-to-failure-group,
- * and the Selected-Sensor list's 🎨 colour / pin-Y-axis / 🗑 remove) —
- * matches the prototype's `.mini`/`.iconbtn`: small, square, neutral until
- * hovered or active. Always rendered (not hover-reveal) per the locked
- * SPEC FINAL decision — this class only restyles them, it doesn't change
+/* Sensor/component row action buttons (alarm, add-to-failure-group,
+ * and the Selected-Sensor list's colour / pin-Y-axis / remove) —
+ * small, square, neutral until hovered or active. Always rendered (not
+ * hover-reveal) — this class only styles them, it doesn't change
  * when they're shown. */
 .row-action-btn {
     display: inline-flex;
@@ -3483,11 +3396,8 @@ body {
 }
 
 /* =============================================
-   Visual refresh Phase 2 (2026-10-02) — Dashboard
-   "Failure Groups" tab (FailureGroupsPanel.tsx).
-   Look only — see docs/PROJECT_HANDOVER.md's
-   matching 2026-10-02 entry and the SPEC FINAL
-   entries it points to. Reuses Phase 0/1
+   Dashboard "Failure Groups" tab
+   (FailureGroupsPanel.tsx). Reuses the shared
    tokens/classes rather than duplicating them:
    `.widget-header` + `.search-input-compact` (the
    search box, same shell as the Sensor tab),
@@ -3496,18 +3406,14 @@ body {
    `.text-btn`, `.fg-icon-btn`, `.fg-group-dot`,
    `.fg-group-color-*`, `.fg-group-card`,
    `.fg-build-model-btn`. The per-kind STATUS DOT on
-   the sensor row still uses the pre-existing
-   `.f4-kb-dot`/`--trained`/`--complete` classes
-   (NOT the newer `.kind-badge-dot`) — deliberately;
-   see FailureGroupsPanel.tsx's renderSensorRow doc
-   comment for why (a cross-window integration test
-   outside this pass's zone asserts that exact class
-   name). ============================================= */
+   the sensor row uses `.f4-kb-dot`/`--*` (NOT
+   `.kind-badge-dot`) — deliberately; see
+   FailureGroupsPanel.tsx's renderSensorRow comment
+   (a cross-window integration test asserts that
+   exact class name).
+   ============================================= */
 
-/* Summary chip -- "N of M models complete" (matches the approved
- * prototype's `.selchip`, reused verbatim as a dedicated class here since
- * `.selchip` itself was never added to this codebase -- only this tab
- * wants it so far). */
+/* Summary chip -- "N groups · M sensors assigned · x of y models complete". */
 .fg-summary-chip {
     display: flex;
     align-items: center;
@@ -3520,10 +3426,9 @@ body {
 }
 
 /* Status-dot legend under the summary chip -- purely decorative, explains
- * what the sensor row's I/R/C corner dot colors mean (matches the
- * prototype's `.legend`). Uses the same tokens as `.f4-kb-dot--trained`/
- * `--complete` so the legend never drifts from what the dot actually
- * renders. */
+ * what the sensor row's I/R/C corner dot colors mean. Uses the same tokens
+ * as `.f4-kb-dot--trained`/`--complete` so the legend never drifts from
+ * what the dot actually renders. */
 .fg-legend {
     display: flex;
     gap: 12px;
@@ -3546,7 +3451,7 @@ body {
 .fg-legend-dot--trained { background: var(--accent-hi); box-shadow: none; }
 .fg-legend-dot--complete { background: var(--ok); box-shadow: none; }
 
-/* Group header row -- "crow" in the approved prototype. Not a button (the
+/* Group header row. Not a button (the
  * row itself doesn't toggle anything -- only "Edit details" and the
  * per-sensor chevrons do), so plain flex chrome rather than a clickable
  * row shell. */
@@ -3577,10 +3482,10 @@ body {
     gap: 4px;
     flex-shrink: 0;
 }
-/* Trailing "done / total" counter, matching the prototype's `.crow .n`
- * (and the Sensor tab's own "selected / total" `.component-group-count`
- * pattern) -- a plain "0" when the group has no models yet (same
- * "hide the noisy 0/ prefix" rule `.component-group-count` already uses). */
+/* Trailing "done / total" counter (same pattern as the Sensor tab's own
+ * "selected / total" `.component-group-count`) -- a plain "0" when the
+ * group has no models yet (same "hide the noisy 0/ prefix" rule
+ * `.component-group-count` uses). */
 .fg-row-count {
     flex-shrink: 0;
     font-size: 0.7rem;
@@ -3593,8 +3498,7 @@ body {
     font-weight: 700;
 }
 
-/* "Edit details" panel -- `.gedit` in the prototype. Expands directly
- * under the group row, same as today, just restyled. */
+/* "Edit details" panel. Expands directly under the group row. */
 .fg-group-edit {
     border-top: 1px solid var(--border);
     padding: 10px 10px 10px 20px;
@@ -3610,8 +3514,7 @@ body {
     color: var(--ok);
 }
 
-/* Panel footer -- create-group + "Build Model ->" together (`.rfoot` in
- * the prototype). */
+/* Panel footer -- create-group + "Build Model ->" together. */
 .fg-footer {
     padding: 10px;
     border-top: 1px solid var(--border);
@@ -3638,19 +3541,12 @@ body {
 }
 
 /* =============================================
-   Visual refresh Phase 5 (2026-10-02) — STRUCTURAL
-   rebuild (not another token-only pass like Phases
-   0-4 above). Five areas whose markup/layout, not
-   just CSS values, now matches the approved
-   prototype: the chart's Time range bar, the Filter
-   panel, the Highlights panel (two columns instead
-   of stacked), the Add-to-Failure-Group popup
-   (widened — see its own comment below), and the Add
-   Special Sensor window. Functional behaviour,
-   props, handlers and state shape are unchanged —
-   see docs/PROJECT_HANDOVER.md's matching entry.
-   Reuses Phase 0 tokens (--pop, --ki/--kr/--kc,
-   .popover-surface, .kind-badge) wherever they fit.
+   The chart's Time range bar, the Filter panel,
+   the Highlights panel (two columns), the
+   Failure Group assignment sheet and the Add
+   Special Sensor window. Reuses the shared tokens
+   (--pop, --ki/--kr/--kc, .popover-surface,
+   .kind-badge) wherever they fit.
    ============================================= */
 
 /* ---- Time range bar (`.timebar`) ----
@@ -3685,7 +3581,7 @@ body {
     color: var(--text-primary);
 }
 /* Each input has its own `.timebar-cal` button right after it that opens
-   the native picker (2026-10-09; see Dashboard.tsx) — without this, the
+   the native picker (see Dashboard.tsx) — without this, the
    browser also draws its OWN calendar icon inside each (too-narrow)
    input, colliding with the date text. Same fix as `.date-input-wrapper`
    above. */
@@ -4175,11 +4071,7 @@ body {
 }
 
 /* ---- Add Special Sensor window (`AddSensorWindow.tsx` +
- * `SensorExplorer.tsx` + `SpecialSensorFormulaEditor.tsx`) ----
- * This window was never touched by Phases 0-4 — the biggest single
- * offender was `SensorExplorer.tsx`'s left-column sensor list, which
- * rendered in a hardcoded VS Code-dark palette (#18181b/#27272a/#3f3f46/
- * #eab308/#007fd4) that never read any of this app's own theme tokens. */
+ * `SensorExplorer.tsx` + `SpecialSensorFormulaEditor.tsx`) ---- */
 .special-sensor-tabs {
     display: inline-flex;
     background: var(--card-bg);
@@ -4345,9 +4237,8 @@ body {
     padding: 10px;
 }
 
-/* ---- Formula editor + Quick build (customer batch 2026-10, item 6;
- * `SpecialSensorFormulaEditor.tsx`, DESIGN_SYSTEM §4.1). Folded from the
- * approved mockup's merge-b2.css onto this file's tokens. Prefix `fx-`. ---- */
+/* ---- Formula editor + Quick build
+ * (`SpecialSensorFormulaEditor.tsx`, DESIGN_SYSTEM §4.1). Prefix `fx-`. ---- */
 .fx { display: grid; gap: 12px; align-content: start; container-type: inline-size; container-name: fx; }
 .fx-card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; min-width: 0; }
 .fx-card.repair { border-color: var(--warn-line); }
@@ -4575,14 +4466,12 @@ body {
 }
 
 /* =============================================
-   Failure Group Assignment sheet (2026-10-03)
+   Failure Group Assignment sheet
    FailureGroupAssignSheet.tsx -- the full-height sheet docked to the left edge
-   of the Dashboard's Sensors panel that replaced the old AnchoredPopover
-   "Add to failure group" menu, plus UndoToastStack.tsx and the highlight on
-   the sensor row being edited. Matches the approved first design
-   (claude.ai artifact KdzE1gT85kLhcTwgXWveGH, NOT the Matrix popover): a
-   matrix with one row per Failure Group and one column per model kind.
-   Reuses the existing tokens/classes (--pop, --ki/--kr/--kc, .popover-surface,
+   of the Dashboard's Sensors panel, plus UndoToastStack.tsx and the highlight
+   on the sensor row being edited. A matrix with one row per Failure Group and
+   one column per model kind.
+   Reuses the shared tokens/classes (--pop, --ki/--kr/--kc, .popover-surface,
    .kind-badge, .row-action-btn, .fg-group-color-*, .fg-group-dot,
    .sensor-row-tag) instead of adding new ones.
    Positioning: Portal + position: fixed with a rect measured from the Sensors
@@ -4945,11 +4834,9 @@ body {
 }
 
 /* =====================================================================
-   Running condition Step 1 (2026-10-03)
-   Build Model window: header step bar, the Step-1 card that replaced the
-   one-line summary bar, and the redesigned "Running condition" settings
-   modal. Approved mockups WKZxQbvJZLQiMLvMDEFoqq (page) and
-   1pp59aydphzaDu2R1SvKGh (modal). Prefixes: rcc- card,
+   Running condition
+   Build Model window: the Step-1 card and the "Running condition" settings
+   modal. Prefixes: rcc- card,
    rcm- modal, rcx- shared buttons. Uses the app's own tokens only.
    ===================================================================== */
 
@@ -4997,7 +4884,7 @@ body {
 /* results area while Step 1 is not done */
 /* (the locked state is a `.wbx-msg` board now — see the Workbench redesign block) */
 
-/* Running-condition settings (workbench redesign SPEC §5, 2026-10-10): the
+/* Running-condition settings: the
    workspace modal (980 px, header / ONE scrolling column / sticky footer) and a
    Custom model's own panel use the same body — a timeline hero, three sections
    with one eyebrow line each, one quiet line per period / condition. No right
@@ -5095,8 +4982,8 @@ body {
 .rcx-radio--on .rcm-rd { border-color: var(--accent-color); }
 .rcx-radio--on .rcm-rd::after { content: ''; width: 8px; height: 8px; border-radius: 50%; background: var(--accent-color); }
 .rcm-conds { display: flex; flex-direction: column; gap: 2px; margin-bottom: 6px; }
-/* The sensor trigger is capped at 360 px (never the full row — the 2026-09-22
-   full-width-picker trap), so the value input never clips. */
+/* The sensor trigger is capped at 360 px (never the full row), so the value
+   input never clips. */
 .rcm-cond { display: grid; grid-template-columns: minmax(0, 360px) auto 150px 28px; justify-content: start; gap: 8px; align-items: center; padding: 3px 0; }
 .rcm-cond--between { grid-template-columns: minmax(0, 360px) auto 236px 28px; }
 .rcm-cond-s { display: flex; min-width: 0; }
@@ -5146,12 +5033,10 @@ body {
 }
 
 /* =====================================================================
-   Build Model Workbench, two pages per model (health score phase 3b-1,
-   2026-10-04): header step bar, page switch, stale banner, chart cards and
-   the "Model fit" page. Final mockup EqqcM7miNdBmNMZAiQxtSA. Prefix wb2-.
-   Uses the app tokens only (mockup --tx -> --text-primary, --line ->
-   --border, --acc -> --accent-color, --hi -> --surface-hi and so on). The
-   Health score page (3b-2) adds its own hs- classes and reuses these cards.
+   Build Model Workbench, two pages per model: page switch, stale banner,
+   chart cards and the "Model fit" page. Prefix wb2-.
+   Uses the app tokens only. The
+   Health score page adds its own hs- classes and reuses these cards.
    ===================================================================== */
 .wb2-sp { flex: 1; }
 
@@ -5217,9 +5102,8 @@ body {
 .bmw-leg i { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 4px; }
 
 /* =====================================================================
-   Build Model Workbench, "Health score" page (health score phase 3b-2,
-   2026-10-04): set-point chart, the Health set points ladder, the Checks card
-   and the full-width score chart. Final mockup EqqcM7miNdBmNMZAiQxtSA. Prefix
+   Build Model Workbench, "Health score" page: set-point chart, the Health
+   set points table, the Checks and the full-width score chart. Prefix
    hs-. Reuses the wb2- cards, pills and tokens; no new colours.
    ===================================================================== */
 .hs-board { grid-template-columns: minmax(0, 1fr) 350px; }
@@ -5239,7 +5123,7 @@ body {
 
 /* Health set points: ONE small table (Score · Band · Lower · Upper). Computed values
    are plain text; the user's set points are the only boxes. The Checks sit in the
-   same card, under a hairline (workbench-redesign SPEC §4). Prefix hsx-. */
+   same card, under a hairline. Prefix hsx-. */
 .hsx-card { gap: 0; }
 .hsx-table { display: flex; flex-direction: column; }
 .hsx-row { display: grid; grid-template-columns: 34px minmax(0, 1fr) 84px 84px; gap: 8px; align-items: center; padding: 7px 0; border-top: 1px solid var(--border); }
@@ -5321,8 +5205,8 @@ body {
 }
 
 /* ===================================================================
- * Train periods and scoring periods (2026-10-07, SPEC FINAL
- * docs/design/handoff/train-test-validation/README.md, revised 2026-10-10 by
+ * Train periods and scoring periods (specs:
+ * docs/design/handoff/train-test-validation/README.md, revised by
  * docs/design/handoff/workbench-redesign/README.md §2 "just score it";
  * DESIGN_SYSTEM §4). Train = accent blue, scoring = magenta
  * oklch(.74 .16 340) (not a kind, category or state colour; the tokens and
@@ -5399,12 +5283,11 @@ body {
 .vt-fail small { display: block; margin-top: 2px; font-size: 11.5px; line-height: 1.5; color: var(--text-secondary); }
 
 /* =====================================================================
-   Customer items 3 + 4 (2026-10-09, SPEC FINAL
-   docs/design/handoff/customer-batch-2026-10/README.md §1; DESIGN_SYSTEM §4):
-   the ONE sensor label (`src/components/sensor/SensorLabel.tsx`), the ONE
+   The ONE sensor label (`src/components/sensor/SensorLabel.tsx`), the ONE
    sensor picker (`SensorPicker.tsx`) and the ONE colour picker
-   (`ColourPicker.tsx`), folded in from the mockup's scratch merge-a.css /
-   merge-a2.css onto this file's tokens. Fonts use the explicit stacks the
+   (`ColourPicker.tsx`) — spec:
+   docs/design/handoff/customer-batch-2026-10/README.md §1; DESIGN_SYSTEM §4.
+   Fonts use the explicit stacks the
    installed app really renders with (DESIGN_SYSTEM §3.2: Segoe UI / Consolas).
    ===================================================================== */
 
@@ -5433,7 +5316,7 @@ body {
     overflow: hidden;
     text-overflow: ellipsis;
 }
-/* The tag line is --text-secondary (review must-fix 6: --text-faint is only for
+/* The tag line is --text-secondary (--text-faint is only for
    placeholders and separators). */
 .sl-tag {
     flex-shrink: 0;
@@ -5884,8 +5767,7 @@ body {
     outline: none;
 }
 .cp-sw:hover { transform: scale(1.08); }
-/* "Current" ring = box-shadow, so `outline` stays free for :focus-visible
-   (review must-fix 4). */
+/* "Current" ring = box-shadow, so `outline` stays free for :focus-visible. */
 .cp-sw.sel { box-shadow: 0 0 0 2px var(--text-primary); }
 .cp-sw:focus-visible { outline: 2px solid var(--accent-hi); outline-offset: 2px; }
 .cp-chk { position: absolute; inset: 0; display: grid; place-items: center; color: #0b0b0d; }
@@ -5975,7 +5857,7 @@ body {
 /* Dashboard › Sensor tab rows: the label takes the room so ellipsis works. */
 .sensor-list-row .checkbox-wrapper { flex: 1; min-width: 0; }
 .sensor-row-label { flex: 1; min-width: 0; display: grid; cursor: pointer; }
-/* Failure Groups tab rows match the Sensor-tab row metrics (review ruling c). */
+/* Failure Groups tab rows match the Sensor-tab row metrics. */
 .fg-srow-btn {
     flex: 1;
     min-width: 0;
@@ -6069,7 +5951,7 @@ body {
 .highlights-fv .highlights-field { width: 100%; box-sizing: border-box; }
 .hl-unit { font-family: var(--mono); font-size: 10px; font-weight: 400; color: var(--text-secondary); }
 
-/* Scatter: compact X/Y pickers + inline axis titles (review ruling b). */
+/* Scatter: compact X/Y pickers + inline axis titles. */
 .scatter-pk { display: inline-flex; width: clamp(150px, 22vw, 300px); min-width: 0; }
 .scatter-axis-title {
     position: absolute;
@@ -6120,7 +6002,7 @@ body {
 .manage-ss-label { display: grid; }
 
 /* =====================================================================
-   Customer batch 2026-10, item 5 — Failure groups as Import step 3
+   Failure groups as Import step 3
    (docs/design/handoff/customer-batch-2026-10/README.md §3, DESIGN_SYSTEM
    §4.1). Step 3 screen, recent-project chip, Dashboard landing callout and
    the "Assign sensors" mode. Tokens only; group colours come from the
@@ -6269,7 +6151,7 @@ body {
 
 /* =====================================================================
    Build Model Workbench: Train sensor / Train all with a queue
-   (customer batch 2026-10, items 8 + 9; DESIGN_SYSTEM §4.1). Prefix tq-.
+   (DESIGN_SYSTEM §4.1). Prefix tq-.
    Buttons reuse .rcx-btn; colours are the existing tokens only.
    ===================================================================== */
 .tq-amber { color: var(--warn); }
@@ -6376,7 +6258,7 @@ body {
 .tq-link { font: inherit; font-size: 11px; font-weight: 600; color: var(--accent-hi); background: none; border: 0; padding: 0; cursor: pointer; white-space: nowrap; }
 .tq-link:hover { text-decoration: underline; }
 .tq-err { grid-column: 2 / -1; font-size: 11px; color: var(--danger); }
-/* The long reason of a "Skipped" row, on its own line under the row (SPEC workbench-redesign §6). */
+/* The long reason of a "Skipped" row, on its own line under the row. */
 .tq-err.tq-note { color: var(--warn); line-height: 1.4; }
 .tq-opt { display: flex; gap: 8px; align-items: flex-start; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 12px; color: var(--text-secondary); cursor: pointer; }
 .tq-opt input { margin-top: 2px; accent-color: var(--accent-color); }
@@ -6396,7 +6278,7 @@ body {
 
 
 /* =====================================================================
-   Build Model Workbench redesign — the page spine (2026-10-10, SPEC
+   Build Model Workbench — the page spine (spec:
    docs/design/handoff/workbench-redesign/README.md §1; DESIGN_SYSTEM §4
    "Build Model Workbench pages"). One line of workspace context, an
    identity-only header with ONE control group, one state dot per tab, one

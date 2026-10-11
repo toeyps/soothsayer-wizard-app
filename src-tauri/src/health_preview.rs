@@ -2054,7 +2054,7 @@ mod tests {
         assert!(j["series"]["value"].as_array().unwrap().iter().all(|v| v.is_number()));
     }
 
-    // ---------- 2026-10-04: canonical residual (the FILE's), coded errors, warnings ----------
+    // ---------- canonical residual (the FILE's), coded errors, warnings ----------
 
     #[test]
     fn file_residual_is_what_the_sidecar_writes_and_nan_for_missing() {

@@ -101,8 +101,8 @@ fn fmt_num(x: f64) -> String {
 
 /// A set point the USER supplied, echoed exactly as typed: the shortest text
 /// that reads back as the same number (`-2`, `4.6`, `0.05`, `4.61234`). Never
-/// padded, never rounded (a typed `4.61234` used to come back as `4.612`, which
-/// made "L = 4.612 must be below 4.612" style messages possible), and `-0`
+/// padded, never rounded (a typed `4.61234` echoed as `4.612` would make
+/// "L = 4.612 must be below 4.612" style messages possible), and `-0`
 /// prints as `0`.
 fn fmt_typed(x: f64) -> String {
     // Adding +0.0 turns -0.0 into 0.0 and changes nothing else.
@@ -1264,8 +1264,8 @@ impl RelCache {
     }
 
     /// Remove the least recently used entry TOGETHER with its test-row
-    /// predictions and its failed marker, so the next `total_bytes()` no longer
-    /// counts orphaned predictions (which used to evict more fits than needed).
+    /// predictions and its failed marker, so the next `total_bytes()` does not
+    /// count orphaned predictions (which would evict more fits than needed).
     fn evict_lru(&mut self) {
         if self.entries.is_empty() {
             return;
@@ -2335,9 +2335,9 @@ mod tests {
 
     #[test]
     fn merge_evicts_the_lru_fit_with_its_predictions_and_nothing_more() {
-        // Review fix 2026-10-07: merging 30 predictions (360 bytes) into "c" makes
-        // 1980 > 1700. Evicting "a" WITH its predictions leaves 640: only "a" goes.
-        // The old loop removed only a's fit (1840, still over) and so evicted "b" too.
+        // Merging 30 predictions (360 bytes) into "c" makes 1980 > 1700. Evicting
+        // "a" WITH its predictions leaves 640: only "a" goes. (Removing only a's
+        // fit would leave 1840, still over, and evict "b" too.)
         let mut c = cache_with_heavy_lru(1700);
         let rows: Vec<u32> = (0..30).collect();
         assert!(c.merge_extra("c", &w(&c, "c"), &rows, &[1.0; 30]));
@@ -2524,7 +2524,7 @@ mod tests {
         assert!(j["message"].as_str().unwrap().len() > 10);
     }
 
-    // ---------- 2026-10-04: non-finite set points ----------
+    // ---------- non-finite set points ----------
 
     #[test]
     fn non_finite_individual_set_points_are_refused_with_one_not_finite_issue_each() {
