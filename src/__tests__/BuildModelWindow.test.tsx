@@ -3573,7 +3573,7 @@ describe('Running condition Step 1 — header, card, settings modal preview (202
             expect(screen.getByTestId('rc-card-pct').textContent).toBe('rows · 32%');
         });
 
-        it('🆕 2026-10-03: Set card carries the small period strip (persisted periods, restored after 011675b dropped it); the modal draft moves its own strip only, Apply moves the card strip', async () => {
+        it('the Set card\'s Details view carries the small period strip (persisted periods); the one-line card has none; the modal draft moves its own strip only, Apply moves the card strip', async () => {
             const impl = (cmd: string) => cmd === 'get_dataset_time_bounds'
                 ? Promise.resolve({ min: '2025-01-01 00:00:00', max: '2026-07-31 23:50:00' })
                 : cmd === 'compute_sensor_stats' ? Promise.resolve({ count: 100 }) : Promise.resolve({});
@@ -3586,6 +3586,9 @@ describe('Running condition Step 1 — header, card, settings modal preview (202
             statefulUpdateMock(fg.models, fg);
             await flush();
             const cardCov = () => within(screen.getByTestId('rc-card')).getByTestId('period-coverage');
+            // The one-line card carries no strip (2026-10-11) — it is in the Details view.
+            expect(within(screen.getByTestId('rc-card')).queryByTestId('period-coverage')).toBeNull();
+            fireEvent.click(screen.getByTestId('rc-card-details'));
             expect(cardCov().querySelectorAll('.f4-strip i')).toHaveLength(2);
             expect(cardCov().textContent).toContain('Jan 2025');
             expect(cardCov().textContent).toContain('Jul 2026');

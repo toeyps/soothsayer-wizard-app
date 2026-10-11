@@ -138,7 +138,7 @@ describe('RunningConditionCard — Set: ONE line (workbench redesign §1)', () =
     const B = { min: '2025-01-01 00:00:00', max: '2026-07-31 23:50:00' };
     const S = (id: string, start: string, end: string): TestPeriod => ({ id, start, end });
 
-    it('✓ · Train n periods + span · Scoring n periods · When running: n conditions · rows · % · mini strip · Details · Edit', () => {
+    it('✓ · Train n periods + span · Scoring n periods · When running: n conditions · rows · % · Details · Edit — no period strip on the line', () => {
         const onOpen = card({
             bounds: B,
             periods: [p('a', '2026-01-01T00:00', '2026-03-31T23:59'), p('b', '2026-04-15T00:00', '2026-06-30T23:59')],
@@ -158,11 +158,9 @@ describe('RunningConditionCard — Set: ONE line (workbench redesign §1)', () =
         expect(screen.getByTestId('rc-card-cond').textContent).toBe('When running: 1 condition');
         expect(screen.getByTestId('rc-card-rows').textContent).toBe('11,066');
         expect(screen.getByTestId('rc-card-pct').textContent).toBe('rows · 21%');
-        // the mini strip: the same persisted periods, train lane + scoring lane
-        const strip = within(c).getByTestId('period-coverage');
-        expect(strip.className).toContain('f4-cov--mini');
-        expect(strip.querySelectorAll('.f4-strip i')).toHaveLength(4);
-        expect(c.querySelector('.rcc-line-strip')!.contains(strip)).toBe(true);
+        // No period strip on the line (user decision 2026-10-11) — it is in the Details view.
+        expect(within(c).queryByTestId('period-coverage')).toBeNull();
+        expect(c.querySelector('.rcc-line-strip')).toBeNull();
         // the full chips are NOT on the line
         expect(screen.queryByTestId('rc-card-period-chip')).toBeNull();
         expect(screen.queryByTestId('rc-card-test-chip')).toBeNull();
@@ -387,6 +385,7 @@ describe('RunningConditionCard — Set', () => {
                 <RunningConditionCard state="set" periods={[p('a', '2025-01-01T00:00', '2025-01-31T23:59')]} filters={[]} combine="and" noneConfirmed headers={[]}
                     getDesc={() => ''} getUnit={() => ''} rows={OK} bounds={B} onOpen={vi.fn()} />,
             );
+            openDetails(); // the strip lives in the Details view only
             const first = within(cov()).getByTestId('period-coverage-days').textContent;
             expect(first).toBe('31 d train · 0 d scoring');
             rerender(

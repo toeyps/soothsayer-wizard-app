@@ -19,8 +19,9 @@ import { sensorTitle, useSensorLookup } from '../sensor/sensorInfo';
  *
  * Once the running condition is SET the card is ONE line of workspace
  * context — ✓ · Train n periods + span · Scoring n periods · When running: n
- * conditions · rows · % · mini strip · Details · Edit. "Details" unfolds the
- * full grid in place. Unset and invalid stay loud cards with their own
+ * conditions · rows · % · Details · Edit. "Details" unfolds the full grid in
+ * place — that is where the period strip is; the line itself carries none
+ * (user decision 2026-10-11: it is visible on opening anyway). Unset and invalid stay loud cards with their own
  * button, marked "!" (there is no step number).
  *
  * The row count: "N rows · x%" is Rust's `count_period_rows` of the PERSISTED
@@ -285,10 +286,6 @@ export function RunningConditionCard({ state, periods, filters, combine, noneCon
                             : <span data-testid="rc-card-rows-loading">Counting rows…</span>}
                     </span>
                     {outsideLine}
-                </div>
-                {/* PERSISTED periods only, the same strip as the Details view. Hidden while the dataset bounds are unknown. */}
-                <div className="rcc-line-strip" title="Train (top lane) and scoring (bottom lane) periods across the dataset">
-                    <PeriodCoverageBar periods={periods} bounds={bounds} mini tests={testPeriods} />
                 </div>
                 <button type="button" ref={detailsBtnRef} className="rcx-btn rcx-btn--sm rcc-line-more" data-testid="rc-card-details" aria-expanded={false} onClick={() => toggleDetails(true)}>
                     Details <ChevronDown size={12} aria-hidden="true" />
