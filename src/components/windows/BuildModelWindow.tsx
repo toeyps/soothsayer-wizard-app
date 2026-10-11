@@ -307,9 +307,8 @@ interface SensorStats {
 type TrainResult =
     | { kind: 'individual'; stats: SensorStats }
     // `result.health_preview` is the bounded Relationship preview Rust returns
-    // when asked to cache the fit (no set points applied — draw it right away);
-    // `cacheKey` is the key that fit is cached under, for `compute_health_preview`.
-    | { kind: 'relationship'; result: RelationshipPreviewResult; predictorsAtApply: string[]; cacheKey: string }
+    // when asked to cache the fit (no set points applied — draw it right away).
+    | { kind: 'relationship'; result: RelationshipPreviewResult }
     | { kind: 'clustering'; preview: ClusteringPreview };
 
 interface TrainCacheEntry {
@@ -503,7 +502,6 @@ export default function BuildModelWindow() {
     // every broadcast.
     const rcAutoOpenedFor = useRef<string | null>(null);
     const [loading, setLoading] = useState(true);
-    const hydratedRef = useRef(false);
 
     // ---- Workbench left list (Phase A) ----
     const [leftGroupBy, setLeftGroupBy] = useState<LeftGroupBy>('fg');
@@ -1040,7 +1038,6 @@ export default function BuildModelWindow() {
             } catch (e) {
                 console.warn('Failed to hydrate failure-group state:', e);
             }
-            hydratedRef.current = true;
             setLoading(false);
         });
 
@@ -1974,7 +1971,7 @@ export default function BuildModelWindow() {
                     ...(trainTestPeriods ? { test_periods: trainTestPeriods } : {}),
                 });
                 if (r.error) throw new Error(r.error);
-                result = { kind: 'relationship', result: r, predictorsAtApply: [...merged.predictorSensors], cacheKey };
+                result = { kind: 'relationship', result: r };
             } else {
                 const effClusters = merged.numClusters ?? 3;
                 const r = await invoke<ClusteringPreview>('compute_clustering_preview', {
