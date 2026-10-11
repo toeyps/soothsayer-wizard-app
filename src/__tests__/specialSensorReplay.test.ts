@@ -100,7 +100,7 @@ describe('replaySpecialSensorRecipes', () => {
     });
 });
 
-// 2026-10-08: Rust now REFUSES a formula with an unknown name/function (it
+// Rust now REFUSES a formula with an unknown name/function (it
 // used to accept it and silently produce an all-empty sensor). A workspace
 // saved before that can hold such a recipe; on reopen it must fail like any
 // other broken recipe -- with Rust's reason -- not break the load.

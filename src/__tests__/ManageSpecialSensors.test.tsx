@@ -216,7 +216,7 @@ describe('ManageSpecialSensors -- edit lock (the expanded row)', () => {
     });
 });
 
-// 2026-10-08 (review S1): a sensor whose recipe could not be rebuilt this
+// A sensor whose recipe could not be rebuilt this
 // session is flagged on its row with an amber note (its editor -- now the
 // Formula editor on the Create tab -- unlocks the formula even under a lock;
 // covered in AddSensorWindow.test).

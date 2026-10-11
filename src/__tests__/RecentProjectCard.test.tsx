@@ -2,10 +2,10 @@
  * RecentProjectCard -- the Rename / Delete actions must never fall through to
  * "open the project".
  *
- * 2026-10-09 real-app bug (Tauri / WebView2): clicking the pencil or the red
- * trash on a recent-project card loaded the workspace instead. A plain
- * `fireEvent.click(renameButton)` always passed, because jsdom does no hit
- * testing. Root cause, reproduced in Chromium with real clicks: while the
+ * In the real app (Tauri / WebView2) clicking the pencil or the red
+ * trash on a recent-project card must not load the workspace. A plain
+ * `fireEvent.click(renameButton)` always passes, because jsdom does no hit
+ * testing. The hazard (seen in Chromium with real clicks): while the
  * actions were shown, the time label (opacity 0 -> its own stacking context)
  * painted ABOVE the buttons (opacity 1, no stacking context), so the click hit
  * the invisible "2 h ago" and bubbled to the card. Further fall-through paths:

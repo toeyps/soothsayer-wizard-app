@@ -2,15 +2,12 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, act, cleanup, waitFor, within } from '@testing-library/react';
 
 /*
- * Build Model Workbench Phase B QA (2026-09-29) — cross-zone integration for
+ * Cross-zone integration for
  * "Train in place" (`lastTrainedAt` / `trainedFingerprint`, see
  * `src/utils/trainFingerprint.ts` and BuildModelWindow.tsx's Workbench).
  *
  * Same harness as Feature4BuildFlow.integration.test.tsx: everything is REAL
  * except the Tauri boundary —
- *   (health score phase 4, 2026-10-04: the full-view Predictive Model page and
- *   its "Open full view" round trips were removed from the flow - the Workbench
- *   is the only place a model is trained, so their section (1) is gone;)
  *   - the real workspaceManager runs against an in-memory plugin-fs, so every
  *     read/write is an actual JSON round trip through the real write queue;
  *   - events go through one shared in-process bus (Tauri's global broadcast).
@@ -21,11 +18,8 @@ import { render, screen, fireEvent, act, cleanup, waitFor, within } from '@testi
  * fixture with `clusterRanges: []`; this file uses the model shape the
  * Dashboard ACTUALLY creates (`makeDefaultModelForKind`: three default
  * cluster ranges, `targetSensor: ''` for clustering), which is what exposed
- * the round-trip problems this file's tests documented as `it.fails`.
+ * the round-trip problems this file's tests pin.
  *
- * 🆕 2026-09-29 (bug-fix pass): all 9 `it.fails` below are fixed and flipped
- * to plain `it` — see each test's own "FIXED" comment for its root cause and
- * `docs/PROJECT_HANDOVER.md`'s matching dated entry for the full set.
  */
 
 const h = vi.hoisted(() => ({
@@ -118,7 +112,7 @@ import { emit } from '@tauri-apps/api/event';
 import { updateWorkspaceData, saveWorkspaceData, loadWorkspaceData, duplicateWorkspace } from '../workspaceManager';
 import { withFailureGroupState } from '../utils/failureGroupState';
 import { computeTrainFingerprint } from '../utils/trainFingerprint';
-// Since 2026-10-07: a train period is required to Train, a scoring period ("test period" until 2026-10-10) to Mark complete.
+// A train period is required to Train, a scoring period to Mark complete.
 import { ALL_TIME_TRAIN, ONE_TEST } from './helpers/trainTestFixture';
 
 // ── fixtures ────────────────────────────────────────────────────────────
@@ -140,7 +134,7 @@ const COND = { id: 'rc1', sensor: 'TAG2', operation: 'greater_than', value1: '10
 
 /** A model exactly as Dashboard.tsx's `makeDefaultModelForKind` creates it
  *  (3 default cluster ranges, `targetSensor: ''` + X = tag for clustering),
- *  plus the Feature 4 fields a current workspace carries. */
+ *  plus the fields a current workspace carries. */
 function dashModel(o: Record<string, unknown> & { kind?: string; tag?: string }) {
     const { tag = 'TAG1', kind = 'individual', ...rest } = o;
     return {
@@ -287,17 +281,15 @@ describe('(1) models whose record carries an empty clusterRanges list stay Train
 // ─────────────────────────────────────────────────────────────────────────
 
 describe('(2) a successful Train with no pending draft leaves the model Trained-and-fresh', () => {
-    // FIXED (qa 2026-09-29). the old `runTrainClick` (now `trainForQueue`) used to ALWAYS fingerprint
-    // `{ ...m, ...draftFields(m, draftOf(m)) }`, even when there was no draft
-    // (so nothing was committed) — for a clustering model with no criteria
-    // sensor `draftFields` yields `clusterRanges: []`, but the stored record
-    // keeps its 3 default ranges (Dashboard's `makeDefaultModelForKind`, or
-    // the PM page's persist when Y was picked there). `trainForQueue` now
-    // only merges draft fields when a draft is actually pending for that
-    // model id (`effectiveModelFor`) — with no draft, it trains against the
-    // persisted `m` directly, unmodified.
-    // 2026-10-09: `numClusters: 1` — with no criteria sensor only ONE cluster can train (Rust
-    // rejects n_clusters > 1 without one), and the Workbench now blocks 2+ with no criteria as an
+    // `trainForQueue` only merges draft fields when a draft is actually pending
+    // for that model id (`effectiveModelFor`) — with no draft it trains against
+    // the persisted `m` directly. Fingerprinting
+    // `{ ...m, ...draftFields(m, draftOf(m)) }` with no draft would differ from
+    // the stored record: for a clustering model with no criteria sensor
+    // `draftFields` yields `clusterRanges: []`, while the stored record keeps
+    // its 3 default ranges (Dashboard's `makeDefaultModelForKind`).
+    // `numClusters: 1` — with no criteria sensor only ONE cluster can train (Rust
+    // rejects n_clusters > 1 without one), and the Workbench blocks 2+ with no criteria as an
     // item to fix. The 3 stored default ranges are still there, which is what this pins.
     it('Clustering created on the Dashboard with Y picked (3 default cluster ranges, no criteria)', async () => {
         writeDisk(wsState(currentFg([dashModel({ id: 'c1', kind: 'clustering', ySensor: 'TAG3', numClusters: 1, rcMode: 'clustering', individualChecked: false })])));
@@ -309,11 +301,9 @@ describe('(2) a successful Train with no pending draft leaves the model Trained-
         expect(markCompleteBtn().disabled).toBe(false);
     });
 
-    // FIXED (qa 2026-09-29). Same root cause: `draftFromModel` snaps a
-    // legacy stiffness (e.g. the old default `1`) to 100 000, so the no-draft
-    // Train used to fingerprint 100 000 while the stored record (never
-    // committed) still said 1 -> stale immediately. Fixed by the same
-    // `trainForQueue`/`effectiveModelFor` change above.
+    // Same rule: `draftFromModel` snaps a legacy stiffness (e.g. `1`) to
+    // 100 000, so a no-draft Train must fingerprint the STORED value (1), not
+    // 100 000 — or the model would read as stale immediately.
     it('Relationship with a legacy (non-preset) stiffness', async () => {
         writeDisk(wsState(currentFg([dashModel({ id: 'r1', kind: 'relationship', predictorSensors: ['TAG2'], relStiffness: 1 })])));
         await mountBuildModel();
@@ -430,7 +420,6 @@ describe('(3) lastTrainedAt / trainedFingerprint survive a save + reload', () =>
 
 // ─────────────────────────────────────────────────────────────────────────
 // (4) a Train still in flight when the model / workspace goes away
-//     (SPEC FINAL: "train ค้างแล้ว model ถูกลบ/workspace เปลี่ยน → ทิ้งผล ไม่เขียนกลับ")
 // ─────────────────────────────────────────────────────────────────────────
 
 describe('(4) a slow Train that lands after its model or workspace is gone', () => {
@@ -460,7 +449,7 @@ describe('(4) a slow Train that lands after its model or workspace is gone', () 
         expect(screen.getByRole('heading', { level: 3 }).querySelector('.sl-desc')?.textContent).toBe('Pump Temp');
     });
 
-    // FIXED (qa 2026-09-29). `executeTrain` used to finish with
+    // `executeTrain` used to finish with
     // `persist(...)`, whose closure captured the OLD `workspaceId`; `persist`
     // then called `applyFg(next.failureGroupState)` unconditionally, so the
     // old project's models/running condition replaced the new project's in
@@ -485,7 +474,7 @@ describe('(4) a slow Train that lands after its model or workspace is gone', () 
         expect(screen.queryAllByTestId('sensor-row-label').map(e => e.querySelector('.sl-desc')?.textContent)).toEqual(['Motor Current']);
     });
 
-    // FIXED (qa 2026-09-29). Same path: the abandoned run used to still
+    // Same path: the abandoned run used to still
     // write lastTrainedAt/trainedFingerprint into the OLD workspace's file
     // after the window was re-pointed away from it — see the workspace-guard
     // fix above.
@@ -509,16 +498,13 @@ describe('(4) a slow Train that lands after its model or workspace is gone', () 
 // ─────────────────────────────────────────────────────────────────────────
 
 describe('(5) pill / footer / Mark complete agree with the results area', () => {
-    // FIXED (qa 2026-09-29). "Trained" used to be judged only from the
-    // STORED model, so an unsaved draft edit to a fingerprinted field
-    // (stiffness, predictors, Y, clusters, Workspace/Custom…) after training
-    // left the old chart on screen and "✓ Mark complete" enabled. SPEC FINAL
-    // results-area rule: "แก้ค่าหลัง train → ซ่อนกราฟเก่า แสดง 'Settings
-    // changed — re-train to see the result'". `isModelTrainedFresh`/
-    // `isModelStale` now compute the fingerprint against `effectiveModelFor`
-    // (the persisted model merged with any pending draft), so this is live
-    // the instant the draft changes — the persisted `trainedFingerprint`
-    // write itself still only ever happens through Train.
+    // "Trained" is judged against `effectiveModelFor` (the persisted model
+    // merged with any pending draft): an unsaved draft edit to a fingerprinted
+    // field (stiffness, predictors, Y, clusters, Workspace/Custom…) after
+    // training hides the old chart ("Settings changed — re-train to see the
+    // result") and disables Mark complete the instant the draft changes. The
+    // persisted `trainedFingerprint` write itself only ever happens through
+    // Train.
     it('an unsaved stiffness change after training hides the old chart and blocks Mark complete', async () => {
         writeDisk(wsState(currentFg([dashModel({ id: 'r1', kind: 'relationship', predictorSensors: ['TAG2'] })])));
         await mountBuildModel();
@@ -532,7 +518,7 @@ describe('(5) pill / footer / Mark complete agree with the results area', () => 
         expect(markCompleteBtn().disabled).toBe(true);
     });
 
-    // FIXED (qa 2026-09-29, low). When the silent auto-recompute on reopen
+    // When the silent auto-recompute on reopen
     // fails, the results area correctly showed the error (no chart), but the
     // footer still said "Check the chart, then mark it complete", the pill
     // said Trained, and Mark complete was enabled. The footer/pill/Mark-
@@ -552,7 +538,7 @@ describe('(5) pill / footer / Mark complete agree with the results area', () => 
         expect(markCompleteBtn().disabled).toBe(true);
     });
 
-    // FIXED (qa 2026-09-29, low). The fingerprint does not (and by design
+    // The fingerprint does not (and by design
     // should not) change when the gate starts blocking for a reason outside
     // the stored inputs (here: the condition's sensor disappears from the
     // dataset) — the results area already correctly lists "1 item to fix
@@ -605,16 +591,13 @@ describe('(5) pill / footer / Mark complete agree with the results area', () => 
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// (6) 🆕 2026-09-30: the Custom running-condition editor ported INTO the
-// Workbench (previously only settable on the full PM page). Every test above
-// only ever exercises a model whose custom fields were already pre-set on
-// disk before mount — none of them actually TYPE into the new editor and
-// then Train, which is exactly the path most likely to expose a stale-draft/
-// gate-ordering bug (the gate reads the PERSISTED model, not the draft — see
-// `gateReasonOf`/`buildBlockReason` — so a model that starts out gate-
-// satisfied in Workspace mode must stay clickable through Train even after
+// (6) The Custom running-condition editor in the Workbench. The tests above
+// only exercise a model whose custom fields were pre-set on disk before
+// mount; these TYPE into the editor and then Train — the path most likely
+// to expose a stale-draft / gate-ordering bug: a model that starts out
+// gate-satisfied in Workspace mode must stay clickable through Train after
 // switching to Custom in the draft, then commit-and-train against the NEWLY
-// TYPED condition, not an empty pre-set list).
+// TYPED condition, not an empty pre-set list.
 // ─────────────────────────────────────────────────────────────────────────
 
 describe('(6) a Custom running-condition edited live in the Workbench (not pre-set) actually feeds Train', () => {
@@ -631,7 +614,7 @@ describe('(6) a Custom running-condition edited live in the Workbench (not pre-s
         expect(screen.getByTestId('custom-rc-editor')).toBeTruthy();
         // The workspace has no conditions of its own (only "No condition"
         // confirmed), so the condition list starts empty — but its train
-        // period (required since 2026-10-07) is copied, so the seed note says so.
+        // period is copied, so the seed note says so.
         expect(screen.getByTestId('pm-seed-note').textContent).toMatch(/1 train period/);
         expect(screen.getByTestId('pm-seed-note').textContent).toMatch(/0 conditions/);
 
@@ -668,7 +651,7 @@ describe('(6) a Custom running-condition edited live in the Workbench (not pre-s
         fireEvent.click(screen.getByTestId('rc-add-condition'));
         fireEvent.click(screen.getByTestId('rc-mode-none'));
         fireEvent.click(screen.getByText('Model settings', { selector: 'b' })); // collapse
-        // 1 train period: the workspace train period was copied on the switch (2026-10-07),
+        // 1 train period: the workspace train period was copied on the switch,
         // and the workspace scoring periods with it.
         expect(screen.getByText(/Custom · all rows · 1 train · \d+ scoring$/)).toBeTruthy();
     });

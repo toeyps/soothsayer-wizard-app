@@ -10,7 +10,7 @@ afterEach(cleanup);
 
 /*
  * The Scoring periods list of the Running condition modal / a Custom model's
- * settings ("test periods" until 2026-10-10; the component keeps its name).
+ * settings.
  * SPEC docs/design/handoff/workbench-redesign/README.md §2 "just score it": a
  * scoring period is only start → end — no Normal / Known problem label, no
  * event time, no "From Highlights". §5: one quiet line per period (with Rust's
@@ -20,7 +20,7 @@ afterEach(cleanup);
 const bounds = { min: '2026-01-01 00:00:00', max: '2026-06-30 23:50:00' };
 const TRAIN: TimePeriod[] = [{ id: 'p1', start: '2026-01-01T00:00', end: '2026-01-31T23:59' }];
 const t = (id: string, start: string, end: string): TestPeriod => ({ id, start, end });
-/** A period as a workspace saved BEFORE 2026-10-10 stored it. */
+/** A period as a workspace saved BEFORE stored it. */
 const legacy = (id: string, start: string, end: string, over: Partial<TestPeriod> = {}): TestPeriod =>
     ({ id, start, end, label: 'problem', eventTime: '2026-02-10T08:00', fromHighlight: 'Bearing trip', ...over });
 
@@ -111,7 +111,7 @@ describe('TestPeriodsEditor (scoring periods)', () => {
         expect(buttons).toEqual(['Remove scoring period 1', 'Add scoring period']);
     });
 
-    // 2026-10-10 (review of a4acd7a, item 2): a COMPLETE date goes to the parent on change, so
+    // A COMPLETE date goes to the parent on change, so
     // the timeline, the counts and the impact line follow it before Apply can be pressed.
     it('a complete typed date is handed up at once; the blur after it hands nothing up again', () => {
         const onChange = live([t('a', '2026-02-01T00:00', '2026-02-15T00:00')]);

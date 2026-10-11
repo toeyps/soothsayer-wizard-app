@@ -4,7 +4,7 @@ import FilterPanel from '../components/dashboard/FilterPanel';
 import type { FilterState } from '../components/dashboard/FilterPanel';
 import { findPickerRow, openPickerSurface, pickSingle, rowTag } from './helpers/sensorPicker';
 
-// Customer item 3 (2026-10-09): each condition's sensor is the shared single picker
+// Each condition's sensor is the shared single picker
 // (trigger "Filter sensor" + anchored popover), not a native <select>.
 const sensorTriggers = () => screen.queryAllByRole('button', { name: 'Filter sensor' });
 const sensorValues = () => sensorTriggers().map(t => rowTag(t));
@@ -127,7 +127,7 @@ describe('FilterPanel', () => {
         expect((screen.getByPlaceholderText('value') as HTMLInputElement).value).toBe('5');
     });
 
-    // Regression (QA sweep, 2026-10-02): the local draft used to be
+    // Regression: the local draft used to be
     // re-derived from `filters` whenever `filters` differed from the
     // CURRENT DRAFT -- so a re-render that supplied an unrelated piece of
     // `filters` (e.g. the time period, changed by the Dashboard timebar's
@@ -157,7 +157,7 @@ describe('FilterPanel', () => {
         expect(screen.queryByText('No sensor filters applied.')).toBeNull();
     });
 
-    // Regression (QA sweep, 2026-10-02): switching away from "between" hid
+    // Regression: switching away from "between" hid
     // the max-value input but kept its draft value, so Apply still sent a
     // stale `value2` for an operator that no longer shows or uses it, and
     // switching back to "between" resurrected the old max.
@@ -277,7 +277,7 @@ describe('FilterPanel', () => {
         });
     });
 
-    // 2026-10-03: a special sensor was renamed / deleted in the Add Special Sensor
+    // A special sensor was renamed / deleted in the Add Special Sensor
     // window. The Dashboard rewrites the APPLIED filters itself; `sensorChange`
     // carries the same change into the panel's unapplied draft (the Dashboard
     // cannot see it), without throwing away unrelated unapplied typing.

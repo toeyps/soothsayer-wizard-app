@@ -22,7 +22,7 @@ import { makeClusterStat, makeHealthPreview } from './helpers/healthPreviewFixtu
 import type { ClusteringSeries, IndividualSeries, IndividualStats, RelationshipSeries } from '../types/health';
 
 /*
- * WHERE the labels of the Workbench charts end up (review of commit 0125190).
+ * WHERE the labels of the Workbench charts end up.
  *
  * The other chart tests read the option objects. That cannot see two labels
  * printed on top of each other, a tick added at a raw axis end, or a name left
@@ -119,7 +119,7 @@ function expectRoundEvenTicks(ticks: Txt[], axis: 'x' | 'y') {
 const TS5 = ['2026-01-01 00:00:00', '2026-01-01 01:00:00', '2026-01-01 02:00:00', '2026-01-01 03:00:00', '2026-01-01 04:00:00'];
 
 // ---------------------------------------------------------------------------
-// MUST-FIX 1 — "Actual" / "Predicted" did not follow their lines through a zoom
+// "Actual" / "Predicted" must not be left behind by a zoom
 // ---------------------------------------------------------------------------
 
 describe('Target vs predicted: no name is drawn on the plot, so none can be left beside the wrong line by a zoom', () => {
@@ -168,7 +168,7 @@ describe('Target vs predicted: no name is drawn on the plot, so none can be left
 });
 
 // ---------------------------------------------------------------------------
-// MUST-FIX 2 — ring-level names printed on each other for a cluster tilted up-right
+// Ring-level names must not print on each other for a cluster tilted up-right
 // ---------------------------------------------------------------------------
 
 describe('Clusters: the ring-level names never print on top of each other', () => {

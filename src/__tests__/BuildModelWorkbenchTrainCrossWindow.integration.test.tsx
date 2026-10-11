@@ -2,9 +2,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, act, cleanup, waitFor, within } from '@testing-library/react';
 
 /*
- * Build Model Workbench Phase B QA (2026-09-29) — Dashboard and the Build
+ * Dashboard and the Build
  * Model window side by side against ONE workspace file, checking the two
- * Phase B fields (`lastTrainedAt` / `trainedFingerprint`) and the Workbench's
+ * train fields (`lastTrainedAt` / `trainedFingerprint`) and the Workbench's
  * staleness against the class of bug CLAUDE.md documents for Dashboard's
  * `fgGroups`/`fgModels` mirror (a stale mirror overwriting another window's
  * fresher write).
@@ -114,7 +114,7 @@ import Dashboard from '../components/dashboard/Dashboard';
 import BuildModelWindow from '../components/windows/BuildModelWindow';
 import { computeTrainFingerprint } from '../utils/trainFingerprint';
 import type { WorkspaceState } from '../types';
-// Train/Test validation (2026-10-07): train period required to Train, test period to Mark complete.
+// Train/Test validation: train period required to Train, test period to Mark complete.
 import { ALL_TIME_TRAIN, ONE_TEST } from './helpers/trainTestFixture';
 
 const WS_FILE = 'workspaces/ws1.json';
@@ -264,7 +264,7 @@ describe('Workbench training metadata vs. a stale Dashboard mirror', () => {
         const modal = within(bmw().getByRole('dialog', { name: 'Running condition' }));
         await act(async () => { fireEvent.change(modal.getByPlaceholderText('value'), { target: { value: '20' } }); });
         await settle(30);
-        await act(async () => { fireEvent.click(modal.getByTestId('rc-apply')); }); // 2026-10-03: edits land only on Apply
+        await act(async () => { fireEvent.click(modal.getByTestId('rc-apply')); }); // Edits land only on Apply
         await settle(30);
         expect(readDisk().failureGroupState.runningConditionFilters[0].value1).toBe('20');
         expect(bmw().getByTestId('results-stale')).toBeTruthy();
@@ -290,7 +290,7 @@ describe('Workbench training metadata vs. a stale Dashboard mirror', () => {
         writeDisk(start());
         await mountBoth();
         await trainTag1();
-        // Another window (the PM page's parent-of-record, or any writer) switches
+        // Another window switches
         // the workspace to a real condition and broadcasts it with origin dashboard.
         const { updateWorkspaceData } = await import('../workspaceManager');
         const { withFailureGroupState } = await import('../utils/failureGroupState');

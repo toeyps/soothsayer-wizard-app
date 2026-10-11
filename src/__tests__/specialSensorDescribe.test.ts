@@ -21,7 +21,7 @@ describe('describeRecipe', () => {
         expect(describeRecipe(single('sqrt', 0))).toBe('sqrt(TAG1)');
     });
 
-    // 2026-10-08: the decimal count used to be dropped (`round(TAG1)` for every N).
+    // The decimal count used to be dropped (`round(TAG1)` for every N).
     it('"Round to decimals" includes how many decimals it keeps', () => {
         expect(describeRecipe(single('round', 0))).toBe('round(TAG1) to 0 decimals');
         expect(describeRecipe(single('round', 1))).toBe('round(TAG1) to 1 decimal');
@@ -29,7 +29,7 @@ describe('describeRecipe', () => {
     });
 });
 
-// Customer batch 2026-10, item 6: a rounded block keeps its own decimals, and
+// A rounded block keeps its own decimals, and
 // the Manage list / Inline labels read a human description.
 describe('describeRecipe: a rounded block', () => {
     it('says how many decimals it keeps (unrounded blocks read as before)', () => {

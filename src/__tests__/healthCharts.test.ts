@@ -71,7 +71,7 @@ describe('niceExtent', () => {
     });
 });
 
-// Review of 0125190, item 11: the chart's time axis used `new Date(text)`, so a CSV whose stamps
+// The chart's time axis used `new Date(text)`, so a CSV whose stamps
 // carry an offset ("…+07:00", "Z") was drawn shifted on a PC in another time zone — while the
 // read-outs beside it (`formatDataStamp`) showed the stamp's own clock.
 describe('wallClockMs / parseTimestamps: a stamp sits at its OWN wall-clock time', () => {
@@ -248,7 +248,7 @@ describe('buildTimeSeriesOption', () => {
         expect(unlabelled.grid.right).toBe(18);
     });
 
-    // Review of 0125190, must-fix 1: ECharts places a line's end label only while it animates the
+    // ECharts places a line's end label only while it animates the
     // line in, so after a zoom the name stayed behind and could sit beside the OTHER line. A data
     // line is therefore never named on the plot.
     it('a data line is NEVER named on the plot: no end label on any series, and no gutter kept for one', () => {
@@ -454,7 +454,7 @@ describe('Individual charts', () => {
         expect('min' in one.xAxis).toBe(false);
     });
 
-    // 🆕 2026-10-09 (real-app report): the Distribution chart's top y label read
+    // The Distribution chart's top y label read
     // "1,713.8000000000002" — the axis max was the raw max × 1.1, printed unformatted.
     it('Distribution: the y max is a nice round count and every value-axis label goes through the app formatter', () => {
         const p = ind();
@@ -546,8 +546,8 @@ describe('Relationship charts', () => {
         expect(o.series[1].lineStyle.color).toBe(CHART.predicted);
     });
 
-    // Review of 0125190, must-fix 1 (replaces "Actual / Predicted at the line ends"): the names are
-    // the card's own colour key (ModelFitPage); the chart draws no name that a zoom could misplace.
+    // The names are the card's own colour key (ModelFitPage); the chart draws
+    // no name that a zoom could misplace.
     it('Target vs predicted: the two lines carry NO name on the plot (the card keeps the Actual / Predicted colour key)', () => {
         const p = rel();
         const o: any = buildTargetVsPredictedOption(p.series as RelationshipSeries, '°C');
@@ -633,7 +633,7 @@ describe('Clustering chart', () => {
         for (const o of offsets(3)) expect(o[0]).toBe(0);
     });
 
-    // Review of 0125190, must-fix 2: with a fixed "first up, last down" the names of a cluster tilted
+    // With a fixed "first up, last down" the names of a cluster tilted
     // up to the right (positively correlated sensors — the usual shape) were pushed INTO each other:
     // there the 1× edge is the LOWEST point and the N× edge the highest.
     it('the stagger FOLLOWS THE DATA: the name whose ring edge is highest goes up, the lowest down — for a tilt either way', () => {

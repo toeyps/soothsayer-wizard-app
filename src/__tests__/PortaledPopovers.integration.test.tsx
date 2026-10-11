@@ -1,12 +1,12 @@
 /**
- * QA cross-cutting sweep for visual refresh Phase 1 (commit a4d3604):
+ * Cross-cutting checks of the portaled popovers:
  * the add-to-failure-group / alarm-setpoints popovers (SensorSelection) and
- * the two colour popovers (HighlightsPanel) moved from expanding inline in
- * a scrolling list to `AnchoredPopover` + `Portal` (position: fixed,
+ * the two colour popovers (HighlightsPanel) render through
+ * `AnchoredPopover` + `Portal` (position: fixed,
  * portaled into `#wizard-portal-root` on document.body).
- * (2026-10-03: the add-to-failure-group one is now the Failure Group
+ * (The add-to-failure-group one is the Failure Group
  * Assignment sheet — still portaled, but docked to the Sensors panel and not
- * dismissed by scroll/resize; its describe blocks below were re-pointed.)
+ * dismissed by scroll/resize.)
  *
  * Seam under test: each component's own open/close state <-> the shared
  * `AnchoredPopover`'s portal + scroll/resize self-close + click
@@ -22,7 +22,7 @@
  *   - the scroll-closes-itself listener is `capture: true` on window, so it
  *     sees EVERY element's scroll — including scrolls that happen inside
  *     the popover itself; `AnchoredPopover` now ignores those (see the
- *     regression cases at the bottom, fixed 2026-10-02).
+ *     regression cases at the bottom).
  *
  * Real ColorPlatePicker is used (not mocked) so the HighlightsPanel case
  * exercises the actual pointer-driven picker inside the portal.
@@ -92,7 +92,7 @@ function renderSensorSelection(overrides: Partial<React.ComponentProps<typeof Se
 const folderButtons = () => screen.getAllByTitle('Add to failure group');
 const sheet = () => screen.queryByTestId('fg-sheet');
 
-// 2026-10-03: the add-to-failure-group menu is no longer an AnchoredPopover — it
+// The add-to-failure-group menu is no longer an AnchoredPopover — it
 // is the full-height assignment sheet docked to the Sensors panel (still
 // portaled into #wizard-portal-root). The alarm-setpoints list is still an
 // AnchoredPopover, so this file keeps covering both: what a portal changes
@@ -198,7 +198,7 @@ describe('SensorSelection panels through Portal — interaction seam', () => {
         });
     });
 
-    // ── Regression tests for bugs QA found in Phase 1 (fixed 2026-10-02) ──
+    // ── Popover regressions ──
 
     describe('popover bugs fixed 2026-10-02 (re-pointed at the sheet where they still apply)', () => {
         // `AnchoredPopover`'s window-level `capture: true` scroll listener used
@@ -275,7 +275,7 @@ describe('HighlightsPanel colour popovers through Portal — interaction seam', 
         fireEvent.click(screen.getByTitle('Highlight colour'));
         const pop = openPopovers()[0];
         expect(pop).toBeTruthy();
-        // Shared ColourPicker (customer item 4): #ff0000 is not a palette colour, so "Custom
+        // Shared ColourPicker: #ff0000 is not a palette colour, so "Custom
         // colour" is open — its ColorPlatePicker root > SV square.
         const square = pop.querySelector('.cp-adv')!.firstElementChild!.firstElementChild as HTMLElement;
         square.getBoundingClientRect = () => ({ left: 0, top: 0, width: 100, height: 100, right: 100, bottom: 100, x: 0, y: 0, toJSON() {} }) as DOMRect;

@@ -1,14 +1,10 @@
 /**
- * Special sensors — "are the values right after an EDIT?" (qa-agent, 2026-10-08)
+ * Special sensors — "are the values right after an EDIT?"
  *
- * Customer report: "special sensor บัคเยอะมาก เช็คให้ละเอียดว่าค่าที่ cal
- * ถูกต้องไหม ถ้ามาแก้สมการ หลังจากสร้าง sensor ใหม่ไปแล้ว (function edit) cal
- * ถูกต้องใช่ไหม".
  *
  * Cross-zone seams covered here (each worker's own tests cover their half):
  *
- *  1. Quick build -> Rust formula contract (2026-10-09: the Formula editor's Quick
- *     build replaced `useCalculationEngine`): the formula strings `quickMulti`
+ *  1. Quick build -> Rust formula contract: the formula strings `quickMulti`
  *     BUILDS for combinations / chains / "then wrap" must be exactly the ones
  *     `src-tauri/tests/fixtures/special_sensor_formulas.json` lists — the Rust
  *     side (`tests/internal/qa_special_sensor_internal.rs` e01) proves each of
@@ -20,8 +16,7 @@
  *     a rename keeps every value; a failed edit rolls the NUMBERS back; and
  *     the recipe list that would be saved, replayed onto a fresh load (the
  *     workspace reopen), reproduces exactly the values that were on screen.
- *  3. Known bugs, first recorded as `it.fails`; all three fixed 2026-10-08
- *     (fe-logic-agent) and flipped to `it` ("regression:").
+ *  3. Regressions ("regression:").
  */
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/react';
@@ -272,21 +267,15 @@ describe('editing a special sensor after creation: every value equals a fresh ca
     });
 });
 
-// ── 3. Known bugs ─────────────────────────────────────────────────────────
+// ── 3. Regressions ─────────────────────────────────────────────────────────
 
 describe('known bugs, fixed 2026-10-08 (were it.fails)', () => {
     /**
-     * (History: the old SpecialSensorEditor; the Formula editor keeps a block a block.)
-     * BUG (MEDIUM, fe-ui-agent — SpecialSensorEditor.tsx, the `prevSourcesKey`
-     * effect that calls `engine.setOperationId(null)` on ANY source change):
-     * open an "Average all" sensor, add one more source, Save. The Average
-     * shortcut was silently cleared when the source list changed, so the form
-     * falls back to the default "+" operator chain and the saved sensor becomes
-     * A + B + C (a SUM) — the values roughly triple with no warning. Same for
-     * Sum/Median, and for removing a source from a 3-source average. Fix: only
-     * reset when the operation no longer applies — the op group changed
-     * (single <-> multi) or a base-sensor op lost its base — and keep
-     * sum/mean/median (and a single op when one source is swapped for another).
+     * An aggregate block stays a block when its sources change: open an
+     * "Average all" sensor, add one more source, Save — it must stay an Average
+     * (not fall back to a `+` chain, which would roughly triple the values with
+     * no warning). Same for Sum/Median, and for removing a source from a
+     * 3-source average.
      */
     it('regression: adding a source to an "Average all" sensor keeps it an average (not a silent switch to A + B + C)', () => {
         const avg: SpecialSensorRecipe = {
@@ -303,15 +292,9 @@ describe('known bugs, fixed 2026-10-08 (were it.fails)', () => {
     });
 
     /**
-     * BUG (LOW, fe-logic-agent — useFormulaEditor.ts `referencedSensors` uses
-     * `/\$\{([^}]+)\}|\$(\w+)/g`): `\w` is ASCII-only and has no `.`, so the
-     * "Referenced sensors" chips under the Create formula box disagree with the
-     * Rust tokenizer — `$11PT1214A.PV` is listed as `11PT1214A` (a DIFFERENT
-     * real sensor) and a bare Thai name is not listed at all. Display only (Rust
-     * computes the right thing), but it tells the user the wrong sensor is used.
-     * Fix: derive the chips from the same grammar as `scan_sensor_refs` (the
-     * Unicode `PARTIAL_REF` class already in this file, plus `.`), or from the
-     * `referenced_sensors` the `validate_formula` reply already carries.
+     * The "Referenced sensors" chips agree with the Rust tokenizer:
+     * `$11PT1214A.PV` is ONE sensor (not `11PT1214A`, a DIFFERENT real sensor)
+     * and a bare Thai name is listed.
      */
     it('regression: the Sensors row under the formula follows the Rust grammar (dotted and Thai bare names)', () => {
         render(
@@ -326,11 +309,8 @@ describe('known bugs, fixed 2026-10-08 (were it.fails)', () => {
     });
 
     /**
-     * BUG (LOW, fe-logic-agent — utils/specialSensorDescribe.ts): "Round to
-     * decimals" is described as `round(TAG1)` with the decimal count dropped, so
-     * the Manage list and the LOCKED editor (which shows only this text) cannot
-     * tell "round to 0" from "round to 3". Fix: `round(${sources}, ${op.value} dp)`
-     * (or similar) for `round`.
+     * "Round to decimals" is described WITH its decimal count, so the Manage
+     * list and the locked editor can tell "round to 0" from "round to 3".
      */
     it('regression: describeRecipe shows how many decimals a "Round to decimals" sensor keeps', () => {
         const r: SpecialSensorRecipe = {

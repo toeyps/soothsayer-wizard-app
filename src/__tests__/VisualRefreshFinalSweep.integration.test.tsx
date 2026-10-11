@@ -1,45 +1,23 @@
 /**
- * Final cross-cutting QA sweep of the whole 2026-10-02 visual refresh
- * (Phase 0 b6eebf3 -> Phase 4 ed518ae, plus the a4b53a6/ab5d9a3 popover
- * QA/fix cycle). Every phase verified itself with tsc/vitest/vite build
- * only, and jsdom never applies App.css — so nothing so far checked that the
- * four surfaces that now supposedly share ONE token/class set (Dashboard
- * Sensor tab, Dashboard Failure Groups tab, Build Model Workbench, PM full
- * page) actually agree with each other in the stylesheet, or that what the
- * components render still exists in it. This file covers that seam:
+ * Cross-cutting stylesheet checks. jsdom never applies App.css, so component
+ * tests cannot see whether the surfaces that share ONE token/class set
+ * (Dashboard Sensor tab, Dashboard Failure Groups tab, Build Model Workbench)
+ * agree with each other in the stylesheet, or that what the components render
+ * still exists in it:
  *
  *   1. CSS contract — the same semantic element (I/R/C kind colour, status
  *      dot colour, modal backdrop, popover surface) resolves to the same
- *      value on every surface, after resolving the Phase 0 `var(--…)`
- *      aliases back to their base tokens.
- *   2. Class contract — every class the refreshed components actually
- *      render (all dot states, legend, footer, edit panel, both portaled
- *      popovers) is defined in App.css, so a later rename can't silently
- *      leave an unstyled element (jsdom would never notice).
- *   3. Bugs found by this sweep (originally recorded as `it.fails`, per this
- *      repo's convention) — all 5 fixed 2026-10-02, tests now plain `it`:
- *        - the FG-tab legend showed a "Not trained" dot that no badge ever
- *          rendered (Phase 2 legend vs Phase C "no dot = never trained") —
- *          fixed by dropping the marker from the legend's "Not trained" entry;
- *        - (2026-10-03: the add-to-FG popover is now the docked Failure Group
- *          Assignment sheet — those cases were re-pointed at it, see below.)
- *        - SensorSelection's portaled popovers resurrected at a stale
- *          captured anchor after their row unmounted and remounted
- *          (collapse/expand, search filter-out/clear) — same class as fixed
- *          bug #6 (`colorPickerFor`), but in SensorSelection's own state —
- *          fixed by a shared visible-row-set effect;
- *        - a popover left open while the sensor search narrowed the list
- *          kept floating at its old coordinates (layout reflow, no scroll) —
- *          fixed by closing any open row popover on every search keystroke;
- *        - the Dashboard colour/pin-Y-axis popovers and the Highlights
- *          colour popover had the same stale-anchor bug via a chart-type
- *          round trip (Line -> Scatter -> Line / Line -> Pair Plot -> Line)
- *          — fixed by clearing their "…For" state when their popover can no
- *          longer legitimately be open;
- *        - the viewport clamp only ran once at mount, so a popover that
- *          GREW while open (creating a group from the add-to-FG menu) ran
- *          off the bottom of the window — fixed with a ResizeObserver on the
- *          popover element that re-runs the same clamp.
+ *      value on every surface, after resolving the `var(--…)` aliases back
+ *      to their base tokens.
+ *   2. Class contract — every class the components render (all dot states,
+ *      legend, footer, edit panel, the portaled popovers) is defined in
+ *      App.css, so a rename can't silently leave an unstyled element.
+ *   3. Regressions: the FG-tab legend never shows a dot no badge renders;
+ *      portaled popovers never resurrect at a stale captured anchor after
+ *      their row unmounts and remounts (collapse/expand, search
+ *      filter-out/clear) or after a chart-type round trip; a popover left
+ *      open while the search narrows the list closes; a popover that GROWS
+ *      while open is re-clamped to the viewport.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup, within } from '@testing-library/react';
@@ -102,7 +80,7 @@ function declsFor(selector: string): Record<string, string> {
     return out;
 }
 const ROOT = declsFor(':root');
-/** Resolves `var(--x)` (recursively) against :root so a Phase 0 alias compares equal to its base token. */
+/** Resolves `var(--x)` (recursively) against :root so an alias compares equal to its base token. */
 function resolve(value: string | undefined, seen = 0): string | undefined {
     if (value === undefined || seen > 10) return value;
     const next = value.replace(/var\((--[\w-]+)(?:,\s*([^)]*))?\)/g, (_, name: string, fallback?: string) => ROOT[name] ?? fallback ?? `<undefined ${name}>`);
@@ -133,7 +111,7 @@ const sensorMetadata: SensorMetadata[] = [
 
 /** FG panel props with one sensor per dot state: TAG1 untrained (I), TAG2 trained (R), TAG3 complete (C). */
 function fgPanelProps(overrides: Partial<React.ComponentProps<typeof FailureGroupsPanel>> = {}) {
-    // A train period is required for a trained (not blocked) dot since 2026-10-07.
+    // A train period is required for a trained (not blocked) dot.
     const runningConditionFg: Partial<FailureGroupStateSlice> = { runningConditionNoneConfirmed: true, runningConditionTimePeriods: [{ id: 'all-time', start: '', end: '' }] };
     const untrained = makeModel({ id: 'u', targetSensor: 'TAG1' });
     const toTrain = makeModel({ id: 't', kind: 'relationship', targetSensor: 'TAG2', predictorSensors: ['TAG1'] });
@@ -213,7 +191,7 @@ describe('CSS contract: the same semantic element renders the same on every refr
             expect(prop(`.fg-legend-dot--${state}`, 'background'), `legend ${state}`).toBe(dot);
             expect(prop(`.kind-badge-dot--${state}`, 'background'), `.kind-badge-dot ${state}`).toBe(dot);
         }
-        // The legend's neutral dot and the Phase 0 neutral dot share one fill.
+        // The legend's neutral dot and the kind badge's neutral dot share one fill.
         expect(prop('.fg-legend-dot', 'background')).toBe(prop('.kind-badge-dot', 'background'));
     });
 
@@ -225,10 +203,10 @@ describe('CSS contract: the same semantic element renders the same on every refr
 
     it('every modal backdrop on Dashboard and Build Model uses the one glass scrim (rgba(0,0,0,.55) + blur(2px)) after Phases 3/4', () => {
         const backdrops = [
-            '.bmw-modal-backdrop',          // Build Model: Running Condition modal (Phase 3)
-            '.pm-chart-modal-backdrop',     // Build Model: expand-chart modal (Phase 4)
-            '.pm-preview-modal-backdrop',   // Build Model: Sub-models modal (Phase 4)
-            '.pk-scrim',                    // shared SensorPicker multi modal (customer item 3, 2026-10-09)
+            '.bmw-modal-backdrop',          // Build Model: Running Condition modal
+            '.pm-chart-modal-backdrop',     // Build Model: expand-chart modal
+            '.pm-preview-modal-backdrop',   // Build Model: Sub-models modal
+            '.pk-scrim',                    // shared SensorPicker multi modal
             '.pair-regl-expand-backdrop',   // Dashboard: Pair Plot expanded cell (pre-existing)
         ];
         for (const sel of backdrops) {
@@ -265,23 +243,12 @@ describe('chart palette across surfaces (ECharts/WebGL literals — canvas canno
         expect(src('src/components/charts/ScatterChart.tsx')).toContain('[0.0627, 0.0627, 0.0706, 1.0]');
     });
 
-    // FIXED (2026-10-02). Phase 1 recoloured the Dashboard LineChart's
-    // axis/grid/tooltip literals away from the pre-refresh Tailwind slate
-    // palette (#94a3b8 / #334155 / navy tooltip rgba(30,41,59,…)), calling
-    // it "visibly off-palette". Phases 3/4 were CSS-only by brief (zero
-    // JSX/TS changes), so the SAME palette was left hardcoded in the ECharts
-    // option builders of BuildModelWindow.tsx (Relationship/Clustering
-    // result charts) and PredictiveModelBuild.tsx (three preview-chart
-    // builders, plus the Individual result's `meanColor` markLine). Net
-    // effect in the real app before this fix: inside ONE Workbench window,
-    // the Individual result (LineChart) showed the new neutral
-    // tooltip/grid while the Relationship/Clustering result showed the old
-    // navy one; same on the PM full page. Fixed by copying the exact
-    // literal values LineChart.tsx's Phase 1 fix already established
+    // The ECharts option builders use the app's neutral chart literals
     // (txtPrimary '#ededef', txtSecondary '#8c8c94', gridLine '#2a2a30',
     // tooltipBg 'rgba(23, 23, 28, 0.92)', tooltipBorder
-    // 'rgba(255, 255, 255, 0.12)') into every offending constant in both
-    // files — a pure color-literal swap, no option-building logic touched.
+    // 'rgba(255, 255, 255, 0.12)'), never the Tailwind slate palette
+    // (#94a3b8 / #334155 / navy tooltip rgba(30,41,59,…)) — so every chart
+    // in one window shows the same tooltip/grid.
     it('no chart option builder on Build Model still uses the pre-refresh slate palette Phase 1 removed from LineChart', () => {
         const offenders: string[] = [];
         for (const f of ['src/components/windows/BuildModelWindow.tsx', 'src/components/windows/SubModelsModal.tsx', 'src/components/windows/workbench/healthCharts.ts', 'src/components/windows/workbench/healthPageCharts.ts', 'src/components/windows/workbench/chartTheme.ts', 'src/components/charts/LineChart.tsx']) {
@@ -289,7 +256,7 @@ describe('chart palette across surfaces (ECharts/WebGL literals — canvas canno
             const hits = code.match(/'#(94a3b8|334155|f1f5f9)'|rgba\(30,\s*41,\s*59/g) ?? [];
             if (hits.length) offenders.push(`${f}: ${hits.length}`);
         }
-        expect(offenders).toEqual([]); // (before the fix: BuildModelWindow.tsx had 9 hits, the now-deleted PredictiveModelBuild.tsx 16)
+        expect(offenders).toEqual([]);
     });
 });
 
@@ -361,21 +328,14 @@ describe('class contract: every class the refreshed components render is defined
     });
 });
 
-// ── 3. known bugs ──────────────────────────────────────────────────────
+// ── 3. regressions ──────────────────────────────────────────────────────
 
 describe('FG tab legend vs the badges it explains', () => {
-    // FIXED (2026-10-02). Phase 2 added a legend copied from the approved
-    // prototype: "• Not trained  • Trained  • Complete", where the "Not
-    // trained" marker was a neutral grey ringed dot (`.fg-legend-dot`,
-    // --dot-empty + inset ring). In the prototype that matches `.kb b`,
-    // which is ALWAYS rendered (neutral when untrained). In the app, Phase C
-    // chose "no dot = never trained" (`dot !== 'none' && …` in
+    // The legend's "Not trained" entry has NO dot marker: the app renders
+    // "no dot = never trained" (`dot !== 'none' && …` in
     // FailureGroupsPanel.tsx's renderSensorRow, and Build Model's own left
-    // list does the same) — so the legend was explaining a grey dot that no
-    // badge on screen ever shows. Fixed by dropping the marker from the
-    // legend's "Not trained" entry (the smaller, lower-risk of the two
-    // sanctioned fixes — it doesn't touch any badge render path, just the
-    // legend that documents them).
+    // list does the same), so the legend must not explain a grey dot that
+    // no badge on screen shows.
     it('the legend\'s "Not trained" marker matches what an untrained badge actually renders', () => {
         const { container } = render(<FailureGroupsPanel {...fgPanelProps()} />);
         const legendNotTrained = screen.getByText('Not trained').querySelector('.fg-legend-dot');
@@ -387,7 +347,7 @@ describe('FG tab legend vs the badges it explains', () => {
 });
 
 describe('SensorSelection assignment sheet — never left open or resurrected over a row that is gone (same class as fixed bug #6)', () => {
-    // 2026-10-03: the add-to-FG AnchoredPopover (whose stale captured rect these
+    // The add-to-FG AnchoredPopover (whose stale captured rect these
     // tests used to pin) became the docked Failure Group Assignment sheet. The
     // failure mode is the same — a panel for a sensor whose row left the list,
     // popping back unasked — so the same three triggers are kept, now asserting
@@ -449,17 +409,13 @@ describe('HighlightsPanel colour popover — same stale-anchor resurrection via 
         chartType,
     });
 
-    // FIXED (2026-10-02) — the third component with the same pattern as the
-    // Dashboard colour/pin popovers (see Dashboard.test.tsx's
-    // "Line -> Scatter -> Line" tests): the popover's render is gated on
-    // `highlightApplies` (false on Pair Plot) but `highlightColorFor` /
-    // `highlightColorAnchor` weren't cleared when it turned false, so
-    // Line -> Pair Plot -> Line re-mounted the picker unasked at the old
-    // captured screen position (the panel's layout changed in between: the
-    // "Not shown on Pair Plot" banner appears above the list on Pair Plot).
-    // Fixed by an effect in HighlightsPanel.tsx keyed on
-    // `highlightApplies`/`valueHighlightApplies` that clears both colour
-    // popovers' "…For"/anchor state the moment either turns false.
+    // Same pattern as the Dashboard colour/pin popovers (see
+    // Dashboard.test.tsx's "Line -> Scatter -> Line" tests): the popover's
+    // render is gated on `highlightApplies` (false on Pair Plot), and its
+    // open state is cleared the moment that turns false — so
+    // Line -> Pair Plot -> Line never re-mounts the picker unasked at the
+    // old captured screen position (the panel's layout changes in between:
+    // the "Not shown on Pair Plot" banner appears above the list).
     it('Line -> Pair Plot -> Line does not resurrect the time-highlight colour popover unasked', () => {
         const { rerender } = render(<HighlightsPanel {...hlProps('line')} />);
         const swatch = screen.getByTitle('Highlight colour');
@@ -474,7 +430,7 @@ describe('HighlightsPanel colour popover — same stale-anchor resurrection via 
 });
 
 describe('AnchoredPopover viewport clamp (direct consumer)', () => {
-    // 2026-10-03: this block used to also pin the clamp against the add-to-FG
+    // This block used to also pin the clamp against the add-to-FG
     // menu GROWING while open (creating a group added a row; a ResizeObserver
     // re-ran the clamp). That menu is now the docked assignment sheet, which is
     // sized by the Sensors panel instead of clamped near an anchor, so those two
@@ -496,7 +452,7 @@ describe('AnchoredPopover viewport clamp (direct consumer)', () => {
             </AnchoredPopover>,
         );
         const pop = openPopovers()[0];
-        // Flipped above the anchor: since the 2026-10-09 review fix it is anchored by its BOTTOM
+        // Flipped above the anchor: it is anchored by its BOTTOM
         // edge (6 px over the anchor) so it grows upward from the trigger.
         expect(pop.dataset.placement).toBe('above');
         expect(pop.style.top).toBe('auto');

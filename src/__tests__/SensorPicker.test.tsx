@@ -6,8 +6,6 @@ import { SensorMetaProvider } from '../components/sensor/SensorLabel';
 import type { SensorMetadata } from '../types';
 import { findPickerRow, openPickerSurface, pickerRows, pickerSearch, rowTag } from './helpers/sensorPicker';
 
-// Customer item 3 (SPEC FINAL 2026-10-09 §1, DESIGN_SYSTEM §4 "Sensor picking — ONE picker").
-
 afterEach(() => {
     cleanup();
     document.getElementById('wizard-portal-root')?.remove();
@@ -214,7 +212,7 @@ describe('SensorPickerSingle', () => {
         expect(trigger().querySelector('.pk-ph--none')?.textContent).toBe('None');
     });
 
-    // 🆕 2026-10-09 (real-app test): an optional picker can be cleared from its trigger.
+    // An optional picker can be cleared from its trigger.
     it('allowNone + a value: a × on the trigger clears it without opening the list, and focus stays on the trigger', () => {
         const onSelect = vi.fn();
         render(<Single allowNone placeholder="None" initial="TT101" onSelect={onSelect} />);

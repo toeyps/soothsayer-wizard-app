@@ -2,9 +2,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, cleanup, fireEvent, waitFor } from '@testing-library/react';
 
 /*
- * Workbench redesign, Phase B close-out (QA, 2026-10-10) — SPEC
+ * Spec:
  * docs/design/handoff/workbench-redesign/README.md §4 "NOT_FITTED" and the
- * 0ce26a9 review fix "Load it again" (a Complete model stays Complete).
+ * "Load it again" (a Complete model stays Complete).
  *
  * The Relation-model fit Rust held is gone. Seen across BOTH windows on one
  * in-memory workspace file (real Dashboard, real Build Model window, real

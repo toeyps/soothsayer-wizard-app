@@ -1,15 +1,15 @@
 /**
- * QA cross-cutting sweep of the 2026-10-02 visual-refresh **Phase 5**
+ * Cross-cutting checks of five rebuilt surfaces
  * structural rebuild (real JSX rewrites, not CSS-value-only): the Dashboard
  * `.timebar`, the rewritten FilterPanel / HighlightsPanel, the Add-to-FG
- * popover widened to 380px (2026-10-03: since replaced by the Failure Group
+ * popover (now the Failure Group
  * Assignment sheet, section 1 below), and the rewritten Add Special Sensor window
  * (AddSensorWindow + SensorExplorer + SensorTooling).
  *
  * Every worker test for those files mocks the neighbours away (Dashboard.test
  * stubs FilterPanel/HighlightsPanel/SensorSelection; AddSensorWindow.test stubs
  * SensorExplorer/SensorTooling). This file mounts the REAL pieces together and
- * probes the bug class this session kept hitting: popovers/layout state that
+ * probes one bug class: popovers/layout state that
  * goes stale when the thing around them changes.
  *
  *   1. Add-to-FG popover at 380px vs AnchoredPopover's viewport clamp/flip.
@@ -227,7 +227,7 @@ function chartBtn(label: 'Line' | 'Scatter' | 'Pair Plot'): HTMLButtonElement {
 
 // =============================================================================
 // 1. Failure Group Assignment sheet vs the viewport
-//    (replaced the 380px AnchoredPopover add-to-FG menu on 2026-10-03; the old
+//    (replaced the 380px AnchoredPopover add-to-FG menu; the old
 //    popover-clamp cases went with it)
 // =============================================================================
 
@@ -322,7 +322,7 @@ describe('2. Add Special Sensor window layout at small window sizes', () => {
         expect(css('.special-sensor-footer')['flex-shrink']).toBe('0');
         expect(css('.special-sensor-footer-hint')['min-width']).toBe('0');
         // Long sensor names ellipsize instead of widening the fixed column.
-        // (customer item 3: the row is the stacked SensorLabel; its description line ellipsises)
+        // (the row is the stacked SensorLabel; its description line ellipsises)
         expect(css('.sl-desc')['overflow']).toBe('hidden');
         expect(css('.special-sensor-row-main')['min-width']).toBe('0');
     });
@@ -343,14 +343,11 @@ describe('2. Add Special Sensor window layout at small window sizes', () => {
         expect(narrow?.[1]).toContain('grid-template-columns: 230px minmax(0, 1fr)');
     });
 
-    // LOW, regression of an old guarantee: Split.js used `minSize: [300, 150]`
-    // so the right (Tooling) pane never went below 150px while the window was
-    // wide enough. The new fixed grid gives the right track `minmax(0, 1fr)`,
-    // and the add-sensor WebviewWindow sets no minWidth/minHeight (decorations:
-    // false; nothing in this app sets a window min size), so shrinking the
-    // window narrows ONLY the Tooling pane — to 0 at a 320px-wide window.
-    // Fix by EITHER giving the window a minWidth (>= 320 + 150) OR a right-
-    // track floor; this test accepts either.
+    // The right (Tooling) pane must keep a floor: the fixed grid gives the
+    // right track `minmax(0, 1fr)`, so without a window minWidth
+    // (>= 320 + 150) or a right-track floor, shrinking the window would
+    // narrow ONLY the Tooling pane — to 0 at a 320px-wide window. This test
+    // accepts either guard.
     it('the Tooling pane keeps at least the 150px floor Split.js used to enforce at the smallest size the window can be resized to', async () => {
         renderDashboard();
         fireEvent.click(screen.getByText('Add Special Sensor'));
@@ -452,7 +449,7 @@ describe('3. Highlights panel: dim state and colour popovers through rapid chart
         expect(!!timeCol.querySelector('.highlights-note')).toBe(k === 'pair');
         expect(!!valueCol.querySelector('.highlights-note')).toBe(k !== 'scatter');
         // The Band / Line colour switch (and its Scatter-only "Not adjustable
-        // here" note) was removed 2026-10-08 -- bands only on Line now.
+        // here" note) was removed -- bands only on Line now.
         expect(timeCol.querySelector('.highlights-inline-note')).toBeNull();
         expect(timeCol.querySelectorAll('.highlights-seg button')).toHaveLength(0);
         // Exactly one chart-type button is active — the one we expect.
@@ -485,7 +482,7 @@ describe('3. Highlights panel: dim state and colour popovers through rapid chart
     /** Scripted swatch geometry that MOVES with the column's layout: the
      *  inert-column banner sits above the chip list in the same column,
      *  pushing the swatch down. (A Scatter-only inline note used to do the
-     *  same; it went away with the Band / Line colour switch, 2026-10-08.) */
+     *  same; it went away with the Band / Line colour switch.) */
     function layoutAwareSwatches() {
         rectFor = (el) => {
             if (!(el instanceof HTMLElement) || !el.classList.contains('cp-hit')) return null;
@@ -775,7 +772,7 @@ describe('5. Time range bar: "Reset period" resets ONLY the period (judged on th
     // clicking Reset period while the Filter tab has an UN-applied condition
     // (both are on screen at once) silently discards the drafted condition —
     // the same happens for Apply-relative-range or editing Start/End. Not
-    // introduced by Phase 5 (the sync effect pre-dates it), but it is
+    // a rebuild regression (the sync effect is older), but it is
     // exactly "Reset period touched something other than the period".
     // LOW-MEDIUM: user-typed work lost with no warning.
     it('an UN-applied Filter-tab condition survives a Reset period click', () => {

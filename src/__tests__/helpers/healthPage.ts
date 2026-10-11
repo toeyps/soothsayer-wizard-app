@@ -3,7 +3,7 @@ import { act, fireEvent, screen, waitFor, type BoundFunctions, type queries } fr
 
 /**
  * Drives the Build Model Workbench's Health score page from an integration
- * test (health score phase 3b-2): since 3b-2 a model is completed ONLY there
+ * test: since 3b-2 a model is completed ONLY there
  * ("Mark complete" no longer exists on the Model fit page), so every test that
  * used to click the footer button goes through these.
  *

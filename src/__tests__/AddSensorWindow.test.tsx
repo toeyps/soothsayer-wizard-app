@@ -373,7 +373,7 @@ describe('AddSensorWindow', () => {
         expect(mockEmit).toHaveBeenCalledWith('add-sensor-selection', expect.objectContaining({
             sensors: ['FORMULA1'],
         }));
-        // 2026-09-01: the recipe (not just the metadata) is what lets a
+        // The recipe (not just the metadata) is what lets a
         // reopened workspace recreate this column — see
         // WorkspaceState.specialSensorRecipes.
         expect(mockEmit).toHaveBeenCalledWith('add-sensor-selection', expect.objectContaining({
@@ -714,7 +714,7 @@ describe('AddSensorWindow', () => {
         expect(mockEmit).not.toHaveBeenCalledWith('update-special-sensor', expect.anything());
     });
 
-    // 2026-10-08: Rust now refuses an unknown function/name at compute time with
+    // Rust now refuses an unknown function/name at compute time with
     // a readable error -- it must reach the user, with no "Updated" toast.
     it('a recompute refused by Rust (unknown function) shows Rust’s message in the editor and no "Updated" toast', async () => {
         mockInvoke.mockImplementation((cmd: string, args?: any) => {
@@ -960,7 +960,7 @@ describe('AddSensorWindow', () => {
         expect(mockInvoke).not.toHaveBeenCalledWith('rename_formula_refs', expect.anything());
     });
 
-    // Visual refresh Phase 5 (2026-10-02): the Create tab's footer close
+    // The Create tab's footer close
     // button is now labelled "Cancel" (matching the approved prototype's
     // `.mf` footer -- Cancel + Add sensor), not "Close" -- "Close" is still
     // used, unchanged, on the Manage tab (see the multi-project isolation
@@ -1017,7 +1017,7 @@ describe('AddSensorWindow multi-project isolation', () => {
 });
 
 // ═════════════════════════════════════════════════════════════════════════
-// 2026-10-03 -- special sensor fixes: real column removal, name validation,
+// Real column removal, name validation,
 // plot delta, rename cleanup. These run against a FAKE BACKEND that enforces
 // the same rules as the Rust side (`store_derived_column`,
 // `remove_sensor_columns`), so "creating X again only works because the old X
@@ -1133,7 +1133,7 @@ describe('AddSensorWindow: create -- name validation, double submit, backend err
         expect(mockEmit).not.toHaveBeenCalledWith('add-sensor-selection', expect.anything());
     });
 
-    // 2026-10-08: `canAdd` ignored the typed formula's validate_formula result.
+    // `canAdd` ignored the typed formula's validate_formula result.
     it('a formula with an issue keeps Add disabled and the footer REPEATS the message; fixing it re-enables Add', async () => {
         mockInvoke.mockImplementation(fakeRust().invoke);
         await openWindow();
@@ -1499,7 +1499,7 @@ describe('AddSensorWindow: rename drops the OLD column, last', () => {
         errSpy.mockRestore();
     });
 
-    // 2026-10-08: while the lookup is down every sensor shows locked (a guess of
+    // While the lookup is down every sensor shows locked (a guess of
     // "nothing depends on it" is unsafe), so the rename never leaves the editor;
     // what DOES leave it -- a description-only save -- no longer recomputes at
     // all, so it needs no lookup and goes through without touching a column.
@@ -1619,7 +1619,7 @@ describe('AddSensorWindow: delete protection follows models that change while th
 });
 
 // ═════════════════════════════════════════════════════════════════════════
-// 2026-10-03 (second pass) -- QA's 14 findings.
+// QA's 14 findings.
 //
 //   * every special-sensor mutation (create, edit/rename, delete-commit) goes
 //     through ONE serial queue, with its checks done inside the task against
@@ -2272,7 +2272,7 @@ describe('AddSensorWindow: a failed edit is rolled back', () => {
 
 
 // ═════════════════════════════════════════════════════════════════════════
-// 2026-10-03 -- EDIT LOCK. A special sensor that a model (or the workspace
+// EDIT LOCK. A special sensor that a model (or the workspace
 // Running condition, or a sensor built on it that one of them uses) depends on
 // can no longer be renamed or have its values changed -- only its description /
 // unit / component. Enforced inside the serial queue against models re-read
@@ -2468,7 +2468,7 @@ describe('AddSensorWindow: edit lock for sensors a model uses', () => {
 });
 
 // ═════════════════════════════════════════════════════════════════════════
-// 2026-10-03 -- the window is BOUND to the dataset it was handed. The Dashboard
+// The window is BOUND to the dataset it was handed. The Dashboard
 // sends `generation` (from `load_csv`) with `sensors-data`; every guarded Rust
 // command carries it as `expectedGeneration`; a STALE_SESSION refusal stops the
 // task without rollback; a different project / dataset resets the whole window
@@ -2796,7 +2796,7 @@ describe('AddSensorWindow: bound to the dataset generation', () => {
 });
 
 // ═════════════════════════════════════════════════════════════════════════
-// 2026-10-08 (review S1) -- a special sensor whose recipe could not be rebuilt
+// A special sensor whose recipe could not be rebuilt
 // on reopen (Rust now refuses it, e.g. `round($TAG1, 2)`) has no column. Under
 // the edit lock that used to be a dead end: formula frozen, Delete off. Now its
 // formula/sources can be fixed (generation-pinned, rolled back on failure); the
@@ -2904,7 +2904,7 @@ describe('AddSensorWindow: fixing a special sensor that could not be restored', 
         expect(mockEmit).toHaveBeenCalledWith('update-special-sensor', expect.objectContaining({
             recipe: badA, recomputed: [], metadata: expect.objectContaining({ tag: 'A', description: 'Rounded pressure' }),
         }));
-        // Nothing was recomputed, so no model is touched (MUST-FIX 2).
+        // Nothing was recomputed, so no model is touched.
         const sent = mockEmit.mock.calls.find(c => c[0] === 'update-special-sensor')![1];
         expect(sent.repaired).toBeUndefined();
         expect(sent.affectedTags).toBeUndefined();
@@ -2993,7 +2993,7 @@ describe('AddSensorWindow: fixing a special sensor that could not be restored', 
         expect(rust.calls.filter(c => c.cmd === 'evaluate_formula').map(c => c.args.expectedGeneration)).toEqual([g]);
         expect(rust.has('A')).toBe(true);
     });
-    // MUST-FIX 1 (2026-10-08 review): A = round($TAG1, 2) is refused on reopen,
+    // A = round($TAG1, 2) is refused on reopen,
     // B = round(${A}, 2) is skipped, a model uses B. Fixing A must keep the fix
     // even though B's OWN formula is refused too -- B is reported and shows up
     // as broken on its own; nothing typed is lost and A is not rolled back.
@@ -3033,7 +3033,7 @@ describe('AddSensorWindow: fixing a special sensor that could not be restored', 
         expect(screen.queryByTestId('not-restored-B')).toBeNull();
     });
 
-    // MUST-FIX 1a: when a repair fails AFTER the fix was written (here: a
+    // When a repair fails AFTER the fix was written (here: a
     // sensor built on A that HAD a column cannot be recomputed), the rollback
     // REMOVES A's new column -- recomputing A's original recipe is refused by
     // Rust before it writes, which used to leave the rejected fix's values in

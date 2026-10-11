@@ -1,6 +1,6 @@
-//! Formula editor + Quick build, Rust side (customer batch 2026-10, item 6):
+//! Formula editor + Quick build, Rust side:
 //! `preview_formula`, the coded formula gate, `multiOp.decimals`, and the
-//! legacy `round(x, n)` conversion (user decision 2026-10-09).
+//! legacy `round(x, n)` conversion.
 //!
 //! In-crate (included from `lib.rs` under `cfg(test)`, like the other files in
 //! `tests/internal/`) because every function here is private.
@@ -12,7 +12,7 @@
 //!   and the preview's numbers are the numbers the sensor will hold;
 //! * the preview is bounded on a large dataset; generation pinning → STALE;
 //! * `decimals` rounds exactly `(x * 10^n).round() / 10^n`, and a recipe
-//!   saved before the field existed computes bit-for-bit as before;
+//!   saved without the field computes unrounded;
 //! * the converter's output compiles, rounds exactly, is idempotent, leaves
 //!   other formulas alone, and a formula with another error stays refused;
 //! * `div_zero` / `agg_too_few` are CREATE-only: a replay / Save (`replace`)

@@ -1,4 +1,4 @@
-//! Health score phase 2 — contract tests through the PUBLIC `health_score`
+//! Health score — contract tests through the PUBLIC `health_score`
 //! surface (what any outside consumer of the model files can rely on):
 //! the knots of every score, the validation codes the UI keys on, and the
 //! JSON shape of the issues / summary. The heavier flows (session cache,

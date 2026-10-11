@@ -1,12 +1,12 @@
-//! QA sweep (2026-10-04) — Health score, Rust side, PRIVATE surface.
+//! Health score, Rust side, PRIVATE surface.
 //!
 //! Included from `lib.rs` as a `#[cfg(test)]` child module (one `#[path]`
 //! line) because `health_preview`, `model_export`, the session/cache helpers
 //! and the file writers are private to the crate; the file itself lives under
-//! `src-tauri/tests/internal/` (QA's write zone, and not auto-discovered by
+//! `src-tauri/tests/internal/` (not auto-discovered by
 //! cargo as an integration-test target).
 //!
-//! Covers what the worker's own in-module tests did not:
+//! Covers what the in-module tests do not:
 //!   A. rounding consistency — write the model file through the export core,
 //!      read it back, re-score every row with an independent reference and
 //!      compare with the preview (Individual / Clustering / Relationship);
@@ -20,10 +20,9 @@
 //!   F. REAL-DATA smoke tests (`#[ignore]`d — run explicitly, skip gracefully
 //!      when the file / sidecar binary is missing).
 //!
-//! Known bugs are pinned as tests asserting the CORRECT behaviour, marked
-//! ignored with a BUG reason (project convention) until fixed. All seven found
-//! by this sweep were FIXED 2026-10-04; their tests (`bug_*`) now run normally
-//! and keep guarding the fix.
+//! A known bug is pinned as a test asserting the CORRECT behaviour, marked
+//! ignored with a BUG reason (project convention) until fixed. The `bug_*`
+//! tests guard bugs this file found.
 
 #![allow(clippy::too_many_arguments)]
 
@@ -447,13 +446,11 @@ fn a2_clustering_file_rescoring_matches_preview_for_every_row() {
     assert_eq!(mism, 0, "{mism}/{total} rows differ between preview and the CLUS_INFO file");
 }
 
-/// FIXED 2026-10-04 (was a bug): `build_cluster_info` wrote the criteria range bounds through
-/// `round_metric` (lib.rs:2172-2182), but the preview / fit assign rows with
-/// the UNROUNDED bounds. A bound with more than 3 decimals (e.g. 10.12345 ->
-/// 10.123, or 0.00012345 -> 0.0001235 which even rounds UP) makes a
-/// consumer of `CLUS_INFO` put the rows between the two values in a
-/// different cluster than the one the user saw scored. Range bounds are user
-/// inputs, not metrics — they should be written verbatim.
+/// Criteria range bounds are written to `CLUS_INFO` verbatim — they are user
+/// inputs, not metrics. Rounded (e.g. 10.12345 -> 10.123, or 0.00012345 ->
+/// 0.0001235, which even rounds UP), a consumer of the file would put the
+/// rows between the two values in a different cluster than the one the user
+/// saw scored (the preview / fit assign rows with the UNROUNDED bounds).
 #[test]
 fn bug_a2_clustering_criteria_bounds_with_many_decimals_must_round_trip() {
     // Most rows uniform; every 10th sits between a raw bound and its rounded
@@ -598,15 +595,12 @@ fn a3_relationship_2rmse_in_the_file_equals_the_preview_w_and_scores_agree_close
     }
 }
 
-/// FIXED 2026-10-04 (decision: the FILE is canonical — the preview now scores
-/// `health_preview::file_residual`, the same number the sidecar writes). Was: the preview scored the UNROUNDED residual `actual − predicted`
-/// (health_preview.rs:545-554, and `relationship_stats` builds residual
-/// stats from the unrounded prediction at line 482) while the export writes
-/// `RESIDUAL = round(actual − round(predicted))` to REL_DATASET_*.csv
-/// (backend.py:197-198). A consumer re-scoring from the file gets slightly
-/// different scores for most rows outside the 100-band, and a row whose
-/// residual sits within ~0.0005 of a knot can change band. Fix: score
-/// `actual − round_metric(predicted)` (rounded like the file) in the preview.
+/// The FILE is canonical: the preview scores `health_preview::file_residual`,
+/// the same number the sidecar writes (`RESIDUAL = round(actual −
+/// round(predicted))` in REL_DATASET_*.csv). Scoring the UNROUNDED residual
+/// instead would give a consumer re-scoring from the file slightly different
+/// scores for most rows outside the 100-band, and a row whose residual sits
+/// within ~0.0005 of a knot could change band.
 #[test]
 fn bug_a3_relationship_scores_must_be_reproducible_from_rel_dataset() {
     for scale in [1.0, 0.001, 1000.0] {
@@ -898,17 +892,15 @@ fn rel_req(key: &str, gen: Option<u64>) -> HealthPreviewRequest {
     }
 }
 
-/// FIXED 2026-10-04 (derived epoch + `SessionStamp`; `store_rel_fit` now takes
-/// the stamp a Train captured). Was: a special sensor recomputed in place (`commit_derived`
-/// with `replace=true`, lib.rs:3016-3040) clears the cache but does NOT bump
-/// the session generation. A Relationship Train that read the OLD column
-/// before the recompute and returns from the ~15 s sidecar run afterwards is
-/// then stored by `store_rel_fit` (lib.rs:480-491, generation still matches)
-/// — and `compute_health_preview` serves that stale fit under the same key
+/// A fit is only cached while the derived epoch is unchanged (`SessionStamp`;
+/// `store_rel_fit` takes the stamp a Train captured). A special sensor
+/// recomputed in place (`commit_derived` with `replace=true`) clears the cache
+/// but does NOT bump the session generation, so without the epoch a
+/// Relationship Train that read the OLD column before the recompute and
+/// returns from the ~15 s sidecar run afterwards would be stored — and
+/// `compute_health_preview` would serve that stale fit under the same key
 /// forever (the frontend's cache key = model id + train fingerprint, which
 /// does not include special-sensor formulas). Same for `remove_derived_in_state`.
-/// Fix idea: a per-session "derived epoch" captured with the generation and
-/// re-checked in `store_rel_fit`.
 #[test]
 fn bug_c1_fit_straddling_a_special_sensor_recompute_must_not_be_cached() {
     let state = state_with(ds(vec![("X", vec![1.0; 50]), ("Y", vec![2.0; 50])]), 4);
@@ -1150,12 +1142,11 @@ fn d5_multi_file_commit_with_a_locked_middle_file_restores_every_previous_file()
     assert!(leftovers(app.path()).is_empty(), "{:?}", leftovers(app.path()));
 }
 
-/// FIXED 2026-10-04 (`Staging::create` sweeps; a backup is restored when its final file is missing). Was: an interrupted export (process killed / power loss between
-/// `Staging::create` and its `Drop`) leaves `{ws}/.staging-*` behind —
-/// possibly holding a `.backup` of the user's previous files — and nothing
-/// ever sweeps it (model_export.rs:183-215). Suggest: sweep stale
-/// `.staging-*` dirs (other PIDs / older than N minutes) in
-/// `prepare_workspace`.
+/// `Staging::create` sweeps stale `.staging-*` dirs, and a backup is restored
+/// when its final file is missing: an interrupted export (process killed /
+/// power loss between `Staging::create` and its `Drop`) leaves
+/// `{ws}/.staging-*` behind — possibly holding a `.backup` of the user's
+/// previous files.
 #[test]
 fn bug_d6_orphan_staging_dirs_are_swept_on_the_next_export() {
     let d = ind_dataset();
@@ -1508,14 +1499,11 @@ fn e3_error_codes_for_bad_requests_are_prefixed() {
     }
 }
 
-/// FIXED 2026-10-04 (`check_*_request` in health_preview.rs). Was: `compute_health_preview` promised stable `CODE: ...` prefixes
-/// (`BAD_REQUEST`, `NO_DATA`, ...) but several bad-request paths return the
-/// raw message: an unknown clustering sensor ("Sensor not found: X", from
-/// `clustering_preview_in` which runs BEFORE health_preview.rs:693's coded
-/// lookup), a ranges/n_clusters mismatch, a missing criteria sensor, and any
-/// invalid training-scope filter (`ResolvedFilter::resolve(...)?` at
-/// health_preview.rs:352 / 695). The UI (`parseHealthError`) then cannot
-/// classify them.
+/// `compute_health_preview` answers every bad request with a stable
+/// `CODE: ...` prefix (`BAD_REQUEST`, `NO_DATA`, ...; `check_*_request` in
+/// health_preview.rs) — an unknown clustering sensor, a ranges/n_clusters
+/// mismatch, a missing criteria sensor and any invalid training-scope filter
+/// included — so the UI (`parseHealthError`) can classify them.
 #[test]
 fn bug_e3_every_bad_request_error_is_coded() {
     let d = scope_data();

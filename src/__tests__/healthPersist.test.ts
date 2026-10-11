@@ -24,7 +24,7 @@ import { computeTrainFingerprint } from '../utils/trainFingerprint';
 import type { TestPeriod } from '../types';
 import { LEGACY_TESTS } from './helpers/trainTestFixture';
 
-// A scoring period is start → end only ("just score it", 2026-10-10).
+// A scoring period is start → end only.
 const TEST: TestPeriod = { id: 't1', start: '2026-01-01T00:00', end: '2026-01-31T23:59' };
 // A train period is required to train and a scoring period to Mark complete.
 const baseFg = (models: FailureModel[]): FailureGroupStateSlice => ({
@@ -152,7 +152,7 @@ describe('persistModelComplete', () => {
 });
 
 // ---------------------------------------------------------------------------
-// QA fixes 2026-10-04: races of a long export, and the persisted verdict
+// Races of a long export, and the persisted verdict
 // ---------------------------------------------------------------------------
 
 describe('persistModelComplete - changes made while the export ran (QA 2026-10-04)', () => {

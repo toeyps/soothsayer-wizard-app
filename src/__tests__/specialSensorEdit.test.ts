@@ -187,7 +187,7 @@ describe('runSpecialSensorEdit -- outcome', () => {
 
 
 // ═════════════════════════════════════════════════════════════════════════
-// Edit lock (2026-10-03): a sensor used by a model cannot be renamed or have
+// Edit lock: a sensor used by a model cannot be renamed or have
 // its values changed -- decided in the read-only phase, before any column is
 // touched.
 // ═════════════════════════════════════════════════════════════════════════
@@ -333,7 +333,7 @@ describe('recipesEquivalent', () => {
     });
 });
 
-// 2026-10-08 (review MUST-FIX 1): REPAIR mode -- the edited sensor had no
+// REPAIR mode -- the edited sensor had no
 // column (its recipe was refused on reopen) and everything built on it was
 // skipped. A rollback must REMOVE what the edit created (recomputing the
 // known-bad original is refused before it writes and left the rejected fix's

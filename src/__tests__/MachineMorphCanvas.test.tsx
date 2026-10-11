@@ -317,7 +317,7 @@ describe('simulated sensors', () => {
 });
 
 describe('callout card fit', () => {
-  // Measured in Chromium (canvas measureText) on 2026-10-08, worst of the
+  // Measured in Chromium (canvas measureText), worst of the
   // loaded web font (Inter 600 11px) and the Windows fallback the installed
   // app uses under its CSP (Segoe UI 600 11px). Add a row when you add a
   // trending sensor — the test below fails until you do.

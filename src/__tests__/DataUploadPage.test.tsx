@@ -24,7 +24,7 @@ vi.mock('../errorReporter', async (importOriginal) => {
 // Mocks
 // ─────────────────────────────────────────────────────────────────────────
 
-// 2026-10-04: deleting a project confirms IN THE ROW now, not through a Tauri
+// Deleting a project confirms IN THE ROW now, not through a Tauri
 // `ask` dialog -- so no `ask` mock here (A6/A6b assert the in-row flow).
 const mockDialogMessage = vi.fn();
 vi.mock('@tauri-apps/plugin-dialog', () => ({
@@ -204,8 +204,8 @@ const renderPage = () => render(<DataUploadPage onDataReady={onDataReady} />);
 
 const newProjectButton = () => screen.getByRole('button', { name: /New project/ });
 
-/** The primary button of step 1 and of step 2 (customer batch 2026-10, item 5:
- *  step 2 says "Continue" again — it leads to step 3, Failure groups). */
+/** The primary button of step 1 and of step 2 (step 2 says "Continue" —
+ *  it leads to step 3, Failure groups). */
 const continueButton = () =>
   screen.getByText('Continue').closest('button') as HTMLButtonElement;
 
@@ -509,7 +509,7 @@ describe('C. Dataset parse', () => {
     renderAtStep2();
 
     expect(screen.getByText(/Buddhist-Era year/)).toBeTruthy();
-    // 2026-10-04: the box is headed "Fixed while reading"
+    // The box is headed "Fixed while reading"
     expect(screen.getByText('Fixed while reading')).toBeTruthy();
   });
 
@@ -649,7 +649,7 @@ describe('E. Open Dashboard button', () => {
     renderAtStep2();
 
     expect(continueButton().disabled).toBe(true);
-    // Open Dashboard moved to step 3 (customer batch 2026-10, item 5)
+    // Open Dashboard moved to step 3
     expect(screen.queryByText('Open Dashboard')).toBeNull();
   });
 
@@ -732,7 +732,7 @@ describe('E. Open Dashboard button', () => {
 });
 
 // ═════════════════════════════════════════════════════════════════════════
-// S. Step 3 "Failure groups" (customer batch 2026-10, item 5)
+// S. Step 3 "Failure groups"
 // ═════════════════════════════════════════════════════════════════════════
 
 describe('S. Step 3 "Failure groups"', () => {
@@ -1129,7 +1129,7 @@ describe('F. Load workspace flow', () => {
       dismissAllErrors();
     });
 
-    // Customer batch 2026-10 (item 6), user decision 2026-10-09: a legacy spreadsheet-style
+    // A legacy spreadsheet-style
     // `round($A, 2)` is converted on open, BEFORE the replay; the conversion is saved in one
     // write (models trained on it back to Incomplete) and the Dashboard gets the WRITTEN state.
     it('F-legacy. round($A, 2) is converted before the replay, the replay runs the converted text, the conversion is saved, the Dashboard gets the written state and the user is told why the values changed', async () => {
@@ -1265,7 +1265,7 @@ describe('F. Load workspace flow', () => {
 
       await waitFor(() => expect(onDataReady).toHaveBeenCalledTimes(1));
       expect(mockInvoke).toHaveBeenCalledWith('evaluate_formula',
-        // `replace: true` since 2026-09-07: recomputing a recipe has to
+        // `replace: true`: recomputing a recipe has to
         // overwrite the column of that name rather than append a second,
         // unreachable one. On a fresh load there is nothing to replace.
         { formula: '$sensor_a * 2', customName: 'CALC1', replace: true });
@@ -1325,7 +1325,7 @@ describe('F. Load workspace flow', () => {
       await waitFor(() => expect(onDataReady).toHaveBeenCalledTimes(1));
       // The second (valid) recipe still got replayed.
       expect(mockInvoke).toHaveBeenCalledWith('evaluate_formula',
-        // `replace: true` since 2026-09-07: recomputing a recipe has to
+        // `replace: true`: recomputing a recipe has to
         // overwrite the column of that name rather than append a second,
         // unreachable one. On a fresh load there is nothing to replace.
         { formula: '$sensor_a * 2', customName: 'CALC1', replace: true });
@@ -1336,7 +1336,7 @@ describe('F. Load workspace flow', () => {
       expect(errors[0].message).toContain('BROKEN1');
     });
 
-    // 2026-10-03: a recipe that can't be rebuilt used to leave a ghost -- still
+    // A recipe that can't be rebuilt used to leave a ghost -- still
     // plotted, no data -- and everything built on it failed one by one (or,
     // worse, read some other column of the same name).
     it('F35. a recipe built ON a failed one is skipped (never sent to the backend), reported in the same single toast, and every no-data sensor is dropped from the plotted selection while its recipe is kept', async () => {
@@ -1376,7 +1376,7 @@ describe('F. Load workspace flow', () => {
       expect(errors[0].message).toContain("couldn't be restored: BROKEN1");
       expect(errors[0].message).toMatch(/Skipped.*DEP1/);
       // Never promises the skipped ones come back on their own: only those
-      // whose own formula is still accepted do (2026-10-08 review).
+      // whose own formula is still accepted do.
       expect(errors[0].message).toMatch(/To fix: .*Manage.*correct the formula\. Fixing it also rebuilds the skipped ones whose own formulas are still accepted; any that are not are then marked in Manage to fix the same way\./);
       expect(errors[0].message).not.toMatch(/come back by themselves/);
 
@@ -1387,7 +1387,7 @@ describe('F. Load workspace flow', () => {
       expect(stateArg.specialSensorRecipes.map((r: any) => r.tag)).toEqual(['BROKEN1', 'DEP1', 'CALC1']);
     });
 
-    // 2026-10-08: Rust now refuses a formula with an unknown name/function at
+    // Rust now refuses a formula with an unknown name/function at
     // compute time. A workspace saved earlier can hold one that used to be
     // accepted and silently produced an empty sensor (`$A * pi`).
     it('F35b. a saved formula Rust now refuses (`$sensor_a * pi`) does not break the open: the toast names the sensor WITH Rust’s reason, it is dropped from the plot and its recipe is kept to fix in Manage', async () => {
@@ -1419,7 +1419,7 @@ describe('F. Load workspace flow', () => {
       expect(errors).toHaveLength(1);
       expect(errors[0].source).toBe('special-sensor-restore');
       expect(errors[0].message).toContain(`couldn't be restored: CIRCLE (${PI_MSG})`);
-      // ...and says what to DO about it (review S1, 2026-10-08): the fix is
+      // ...and says what to DO about it: the fix is
       // editing the formula in Manage, which works even under a model's lock.
       expect(errors[0].message).toContain('To fix: on the Dashboard open Add Special Sensor > Manage and edit it (pencil) to correct the formula.');
       expect(errors[0].message).not.toMatch(/skipped ones/);
@@ -1836,7 +1836,7 @@ describe('J. Onboarding flow', () => {
 
 
 // ═════════════════════════════════════════════════════════════════════════
-// K. 2026-10-03 -- dataset generation + "latest click wins"
+// K. Dataset generation + "latest click wins"
 //   `load_csv` returns the generation of the Rust session it installed; the
 //   page hands it to the Dashboard (inside the metadata), pins every recipe
 //   replay command to it, and -- because the Rust session is ONE shared object
@@ -2041,7 +2041,7 @@ describe('K. dataset generation and latest-click-wins', () => {
 });
 
 // ═════════════════════════════════════════════════════════════════════════
-// L. 2026-10-04 -- the "Get started" page (step 0): hero, recent-project
+// L. The "Get started" page (step 0): hero, recent-project
 //    cards (rename / delete in the row), search, empty state, Ctrl+N.
 // ═════════════════════════════════════════════════════════════════════════
 
@@ -2431,7 +2431,7 @@ describe('L. Get started page (step 0)', () => {
 
 
 // ═════════════════════════════════════════════════════════════════════════
-// M-Q. 2026-10-04 -- Import page redesign, phase C: the setup rail and steps
+// M-Q. The setup rail and steps
 //      1-2 ("Name your project" / "Add your sensor data"). Behaviour of
 //      loading / mapping / replay is covered by the groups above; these
 //      cover the presentation: rail, name step, read progress, summary cards,
@@ -2441,7 +2441,7 @@ describe('L. Get started page (step 0)', () => {
 const DAY_US = 86_400_000_000;
 const T0_US = Date.UTC(2025, 0, 1) * 1000;
 
-/** A report carrying every field the Rust side now sends (phase R). */
+/** A report carrying every field the Rust side now sends. */
 const FULL_REPORT: CsvLoadReport = {
   ...FAKE_REPORT,
   total_rows: 159264,

@@ -16,7 +16,7 @@ import type { TestPeriod, TimePeriod } from '../types';
 afterEach(cleanup);
 
 /*
- * "No data to train on" is stopped at the UI (user request 2026-10-10) — what the
+ * "No data to train on" is stopped at the UI — what the
  * Running-condition rows, the timeline and the one-line card SHOW:
  *   - a period entirely outside the loaded data that is NEW / CHANGED in the
  *     draft: red edge, both date fields red, ONE reason line, a red sliver on

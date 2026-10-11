@@ -1,8 +1,5 @@
-//! QA sweep (2026-10-08) — SPECIAL SENSORS, Rust side, PRIVATE surface.
-//!
-//! Customer report: "special sensor บัคเยอะมาก เช็คให้ละเอียดว่าค่าที่ cal
-//! ถูกต้องไหม ถ้ามาแก้สมการ หลังจากสร้าง sensor ใหม่ไปแล้ว (function edit) cal
-//! ถูกต้องใช่ไหม".
+//! SPECIAL SENSORS, Rust side, PRIVATE surface: are the computed values right,
+//! also after a sensor is EDITED?
 //!
 //! Included from `lib.rs` as a `#[cfg(test)]` child module (its own `#[path]`
 //! line, like `qa_health_internal`), so it can reach the private formula engine
@@ -18,7 +15,7 @@
 //!      division by zero, sensor names with spaces / Thai / special chars;
 //!   B. operation sensors — every single op, Sum (all-or-nothing) vs
 //!      Mean/Median (skip missing), all-missing rows;
-//!   C. EDIT after creation (the customer's main concern) — edit a sensor that
+//!   C. EDIT after creation — edit a sensor that
 //!      others are built on, recompute in build order exactly the way the
 //!      frontend does (`replace: true`, `customName` = tag), then verify EVERY
 //!      row of every affected sensor, in the raw columns, the line-chart view
@@ -29,17 +26,13 @@
 //!   D. reopen — real CSV files (two files merged by timestamp, Buddhist-Era
 //!      years incl. the BE leap day 2567-02-29), recipes replayed onto a fresh
 //!      load must reproduce the edited values bit-for-bit;
-//!   E. the formula strings the FRONTEND builds (`useCalculationEngine`) for
+//!   E. the formula strings the FRONTEND builds for
 //!      shortcuts / chains / "then apply" wraps, read from the shared fixture
 //!      `tests/fixtures/special_sensor_formulas.json` (the TS side pins that
 //!      it builds exactly these strings) and evaluated here numerically.
 //!
-//! Known bugs are pinned as tests asserting the CORRECT behaviour, marked
-//! `#[ignore = "BUG: ..."]` (project convention) until fixed. Fixed in Rust on
-//! 2026-10-08 (rust-agent) and un-ignored: a09 (`ln`), a10 (unknown name or
-//! function is refused), a11 (`round($A, 2)` is refused with the formula to
-//! type), a12 (Spread over 33+ sensors), a13 (long formulas), e02 (frontend
-//! round wrap, `useCalculationEngine.ts`, fixed 2026-10-08).
+//! A known bug is pinned as a test asserting the CORRECT behaviour, marked
+//! `#[ignore = "BUG: ..."]` (project convention) until fixed.
 
 #![allow(clippy::type_complexity)]
 
@@ -433,7 +426,7 @@ fn a10_bug_unknown_identifier_or_function_is_refused() {
     }
 }
 
-/// Follow-up to a10 (fixed 2026-10-08): the refusal names the problem, and the
+/// Follow-up to a10: the refusal names the problem, and the
 /// editor's live check (`validate_formula`) gives the SAME verdict and text.
 #[test]
 fn a10b_the_refusal_names_the_problem_and_matches_the_editor_check() {
@@ -457,17 +450,11 @@ fn a10b_the_refusal_names_the_problem_and_matches_the_editor_check() {
     assert!(eval(&data, "($A - $A) / ($B - $B)").unwrap().iter().all(|v| v.is_nan()));
 }
 
-/// BUG (HIGH): `round(x, n)` (Excel / Python / JS-like "round to n decimals")
-/// is listed in the help as `round` with no signature; fasteval reads the two
+/// `round(x, n)` written the spreadsheet way: fasteval reads the two
 /// arguments the other way round — `round(modulus, x)` — so `round($A, 2)`
-/// rounds the CONSTANT 2 to a multiple of A: every row is garbage (0, A or 2A),
-/// with no error. Fix (lib.rs `prepare_formula_for_eval` / help text): either
-/// document `round(0.01, x)` in the help and reject a two-argument `round`
-/// whose SECOND argument is a bare integer constant, or provide an explicit
-/// `round_dp(x, n)` custom function and steer users to it.
-///
-/// FIXED 2026-10-08 by REFUSING the shape (never silently wrong) with the exact
-/// formula to type instead; that suggested formula rounds to 2 decimals.
+/// would round the CONSTANT 2 to a multiple of A: every row garbage (0, A or
+/// 2A), with no error. The shape is REFUSED (never silently wrong) with the
+/// exact formula to type instead; that suggested formula rounds to 2 decimals.
 #[test]
 fn a11_bug_round_with_decimals_rounds_the_sensor() {
     let data = dataset(15);
@@ -531,7 +518,7 @@ fn a13_bug_a_formula_under_the_app_length_limit_evaluates() {
     assert_eq!(got[1], n as f64);
 }
 
-/// Follow-up to a12/a13 (fixed 2026-10-08): the only size limit left is the
+/// Follow-up to a12/a13: the only size limit is the
 /// app's own `check_formula_limits` (4096 chars as typed, 64 bracket levels).
 #[test]
 fn a12b_the_only_formula_size_limit_left_is_the_apps_own() {
@@ -633,7 +620,7 @@ fn b02_round_to_decimals_stays_within_half_a_unit_of_the_source() {
 }
 
 /// Sum is all-or-nothing; Mean and Median skip missing sources; an all-missing
-/// row is missing for every op (user decision 2026-10-03).
+/// row is missing for every op.
 #[test]
 fn b03_sum_mean_median_missing_value_rules_on_2_to_6_sources() {
     let data = dataset(23);
@@ -1221,14 +1208,11 @@ fn e01_every_formula_the_frontend_engine_builds_evaluates_to_the_intended_math()
     }
 }
 
-/// BUG (LOW): the "Then apply → Round to N decimals" wrap builds
-/// `round(0.01, expr)` (fasteval = `(x / 0.01).round() * 0.01`), which stores
-/// values like 1.1300000000000001 instead of 1.13; the single-sensor "Round to
-/// decimals" OPERATION (`(x * 100).round() / 100`) stores the exact nearest
-/// double. Same user intent, two different stored values; tooltips/exports
-/// show the long tail. Fix (`applyWrap` in useCalculationEngine.ts): emit
-/// `round(expr * 100) / 100` (i.e. `round(x * 10^n) / 10^n`).
-/// Fixed 2026-10-08: the wrap now emits `round(expr * 10^n) / 10^n`.
+/// The "Round to N decimals" wrap emits `round(expr * 10^n) / 10^n`, which
+/// stores the exact nearest double (1.13) — like the single-sensor "Round to
+/// decimals" OPERATION (`(x * 100).round() / 100`). A `round(0.01, expr)` wrap
+/// (fasteval = `(x / 0.01).round() * 0.01`) would store values like
+/// 1.1300000000000001.
 #[test]
 fn e02_bug_round_wrap_stores_the_nearest_double_to_the_decimal_value() {
     let data = ColumnarData::from_parts(

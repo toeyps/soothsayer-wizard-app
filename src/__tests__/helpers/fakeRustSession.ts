@@ -129,7 +129,7 @@ const finite = (v: number) => (Number.isFinite(v) ? v : NaN);
 export const FORMULA_FUNCTION_LIST =
     'abs, sqrt, pow, exp, ln, log (base 10), log10, round, min, max, ceil, floor, sin, cos, tan, pi(), e()';
 
-// fasteval semantics (qa 2026-10-08): `round(x)` = nearest integer, `round(modulus, x)`
+// fasteval semantics: `round(x)` = nearest integer, `round(modulus, x)`
 // = nearest multiple of modulus, both half AWAY from zero (Rust `f64::round`, unlike
 // JS `Math.round`); `log(x)` is BASE 10 and `log(base, x)` takes the base first.
 const rustRound = (v: number) => Math.sign(v) * Math.round(Math.abs(v));
@@ -165,7 +165,7 @@ export function prepareFormula(formula: string): { expr: string; safe: string[] 
 const refToken = (name: string) => (/^[\p{Alphabetic}\p{N}_]+$/u.test(name) ? `$${name}` : `\${${name}}`);
 
 /**
- * lib.rs `compile_formula` (2026-10-08), the ONE gate `validate_formula` and
+ * lib.rs `compile_formula`, the ONE gate `validate_formula` and
  * `evaluate_formula` share: parse, then a trial evaluation with every sensor =
  * 1 so an unknown name/function is an ERROR (it used to turn every row into
  * "missing"), then the `round($A, 2)` refusal. Messages mirror Rust's for the
@@ -231,7 +231,7 @@ const SIGNATURES: Record<string, { required: string[]; optional?: string[] }> = 
     get_session_generation: { required: [] },
     extract_formula_refs: { required: ['formulas'] },
     rename_formula_refs: { required: ['formula', 'oldName', 'newName'] },
-    // 2026-10-08: optional `expectedGeneration` (camelCase), like the sibling
+    // Optional `expectedGeneration` (camelCase), like the sibling
     // special-sensor commands -- mismatch / nothing loaded = STALE_SESSION.
     validate_formula: { required: ['formula'], optional: ['expectedGeneration'] },
     load_csv: { required: ['paths'] },
@@ -521,7 +521,7 @@ export function createFakeRust(raw: RawCsv, opts: FakeRustOptions = {}) {
             case 'validate_formula': {
                 checkExpected(args);
                 const refs = rustExtractRefs(args.formula);
-                // lib.rs `FORMULA_NO_REFS_ERROR` (2026-10-08): same answer Create gives.
+                // lib.rs `FORMULA_NO_REFS_ERROR`: same answer Create gives.
                 if (refs.length === 0) {
                     return { valid: false, error: 'Formula contains no sensor references. Use $SensorName or ${Sensor Name} syntax.', referenced_sensors: refs };
                 }

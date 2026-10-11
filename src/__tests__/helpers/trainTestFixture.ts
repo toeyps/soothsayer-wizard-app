@@ -22,13 +22,13 @@ export const ALL_TIME_TRAIN: TimePeriod[] = [{ id: 'all-time', start: '', end: '
  * must never get in the way — a SAVED period outside the data only warns (it
  * never blocks Apply, Save changes, Train or Mark complete; only a period that
  * is added or changed in a draft is judged against the data). For one day in
- * 2026-10-10 the stricter rule of 1e8cc7d forced this fixture into 2026; it is
+ * the stricter rule of 1e8cc7d forced this fixture into 2026; it is
  * back so every suite that uses it keeps proving the tolerance.
  */
 export const ONE_TEST: TestPeriod[] = [{ id: 'test-1', start: '2024-01-01T00:00', end: '2024-01-31T23:59' }];
 
 /**
- * The same kind of list as a workspace saved BEFORE 2026-10-10 holds it: the
+ * The same kind of list as a workspace saved BEFORE holds it: the
  * periods still carry the removed `label` / `eventTime` / `fromHighlight` keys.
  * Such a workspace must load, stay Complete and score exactly like one without
  * them (the keys are read-only legacy: ignored everywhere, never sent to Rust,

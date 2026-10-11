@@ -17,8 +17,8 @@ vi.mock('../components/charts/ResponsiveECharts', () => ({
         />
     ),
 }));
-// The Fit chart's X selector is the REAL shared compact single picker (customer item 3,
-// 2026-10-09); its own behaviour is tested in SensorPicker.test.tsx.
+// The Fit chart's X selector is the REAL shared compact single picker;
+// its own behaviour is tested in SensorPicker.test.tsx.
 
 import ModelFitPage from '../components/windows/workbench/ModelFitPage';
 import { SensorMetaProvider } from '../components/sensor/SensorLabel';
@@ -180,7 +180,7 @@ describe('ModelFitPage — Relationship', () => {
         expect(p.onCompare).toHaveBeenCalledTimes(1);
     });
 
-    // Review of 0125190, item 10: these read through the Workbench's own older formatter, which
+    // These read through the Workbench's own older formatter, which
     // printed a non-zero value below 0.0005 as "0.000" (the app's rule: never show a non-zero as 0).
     it('a tiny non-zero statistic never reads as zero: "0.0002", not "0.000"', () => {
         const base = makeHealthPreview({ kind: 'relationship', target: 'T1', predictors: ['A'] });
@@ -198,7 +198,7 @@ describe('ModelFitPage — Relationship', () => {
         expect(screen.getAllByTestId('chart-outdated')).toHaveLength(3);
     });
 
-    // Review of 0125190, must-fix 1: "Actual" / "Predicted" drawn at the line ends did not follow
+    // "Actual" / "Predicted" drawn at the line ends did not follow
     // their lines through a wheel-zoom or a drag (a name could end up beside the OTHER line), and
     // with the legend gone they were the only key. The card now keeps a fixed two-item colour key.
     it('Target vs predicted keeps a fixed "Actual" / "Predicted" colour key under the chart, and draws NO name on the plot', () => {
@@ -270,7 +270,7 @@ describe('ModelFitPage — Clustering', () => {
         expect(screen.getByTestId('cluster-row-2').textContent).toBe('Cluster 2 · 33.6 – 4.6123442 rows');
     });
 
-    // Design rule (workbench-redesign phase D): a name drawn on the chart is the ONLY key
+    // A name drawn on the chart is the ONLY key
     // only on a chart that cannot zoom or pan. The Clusters chart zooms on both axes and a
     // ring's name leaves the view with the ring's edge — so the rings also get a fixed key.
     it('the rings are named on the chart, once per level, AND in a fixed key under it (the chart zooms and pans)', () => {

@@ -2,9 +2,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 
 /*
- * Health score QA sweep (2026-10-04) — "Incomplete immediately" end to end, and
+ * Health score — "Incomplete immediately" end to end, and
  * the ONE status truth across the Dashboard Failure Groups panel, the Build
- * Model list dot, the kind tab pill, and the page switch (the header step bar was removed 2026-10-09).
+ * Model list dot, the kind tab pill, and the page switch.
  *
  * Every trigger the SPEC lists (training period, Running condition Workspace /
  * Custom, condition edit, AND/OR, "no condition", periods, predictors, Y /
@@ -120,7 +120,7 @@ describe('workspace Running condition triggers (Apply in the modal)', () => {
         },
         { name: 'condition removed', edit: m => { fireEvent.click(m.getByRole('button', { name: 'Remove condition' })); } },
         {
-            // Train/Test validation (2026-10-07): at least one train period is required, so
+            // Train/Test validation: at least one train period is required, so
             // removing the ONLY one cannot be applied any more — remove one of two instead.
             name: 'a training period removed',
             fg: { runningConditionTimePeriods: [
@@ -310,7 +310,7 @@ describe('NOT triggers: the model stays Complete', () => {
         await waitForCharts();
         expect(pill()).toBe('Complete');
         const xs = within(bmw().getByTestId('fit-x-selector'));
-        // Customer item 3: the compact single picker (anchored popover), not a type-ahead box.
+        // The compact single picker (anchored popover), not a type-ahead box.
         pickSingle(xs.getByRole('button', { name: 'X sensor' }), 'TAG2');
         await settle(100);
         expect(diskModel('r1').scatterXSensor).toBe('TAG2');
@@ -358,7 +358,7 @@ describe('ONE truth: Dashboard dot, Build Model dot, tab pill, page switch', () 
         await waitFor(() => expect(bmw().getByTestId('tab-status-i1').getAttribute('title')).toBe('Set points needed'));
         expect(bmwDot('i1')).toEqual({ state: 'trained', colour: expect.any(String) });
         const trainedColour = bmwDot('i1').colour;
-        // 2026-10-04: the Dashboard dot reads the persisted verdict too - "Set points needed" is
+        // The Dashboard dot reads the persisted verdict too - "Set points needed" is
         // the yellow "need" dot there, same colour as the Build Model list (it used to be the
         // plain "trained" dot because the verdict only lived in the Build Model window).
         await waitFor(() => expect(dashDot(1, 'tag1', 'individual')).toBe('need'));
@@ -402,11 +402,10 @@ describe('ONE truth: Dashboard dot, Build Model dot, tab pill, page switch', () 
         expect(bmwEl().querySelector('[data-testid="page-model-done"]')).toBeNull();
     });
 
-    // Was a KNOWN GAP (LOW, "not done" in the 3b-2 handover entry): Build Model showed a
-    // trained model whose set points Rust rejects as RED ("Fix set point") but the Dashboard's
-    // Failure Groups panel kept drawing the plain "trained" dot, because the verdict was
-    // session-only state of the Build Model window. Fixed 2026-10-04: the verdict is persisted
-    // on the model (`healthVerdict`) and every surface reads it through `modelSetPointFlag`.
+    // The validation verdict is persisted on the model (`healthVerdict`) and every
+    // surface reads it through `modelSetPointFlag`: a trained model whose set points
+    // Rust rejects is RED ("Fix set point") in Build Model AND on the Dashboard's
+    // Failure Groups panel.
     it('the Dashboard Failure Groups dot shows "Fix set point" (red) like the Build Model list when the saved set points are rejected', async () => {
         writeDisk(wsTrained({}, [model({ id: 'i1', kind: 'individual', healthSetPoints: { kind: 'individual', lower: 49, upper: 90, masterLower: null, masterUpper: null } })]));
         await mountWindows();

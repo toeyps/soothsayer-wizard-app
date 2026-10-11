@@ -3,7 +3,7 @@ import type { TestPeriodResult, ValidationResult } from '../../types/health';
 /**
  * Scoring-period fixtures for UI tests: a `HealthPreview.test_validation`
  * payload as Rust returns it (`health_validation.rs`, "just score it"
- * 2026-10-10 — a result is facts only: no `label`, `event_time`, `lead_days`
+ * A result is facts only: no `label`, `event_time`, `lead_days`
  * or `first_below_80`). Small, hand-checkable numbers.
  */
 

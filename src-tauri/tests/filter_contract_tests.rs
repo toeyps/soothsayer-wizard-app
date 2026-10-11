@@ -1,4 +1,4 @@
-//! Feature 4 QA: the TS <-> Rust contract for the training/preview filter
+//! The TS <-> Rust contract for the training/preview filter
 //! (`timestamp_ranges`, value conditions, AND/OR `combine`).
 //!
 //! The real `PreviewFilter` / `DataFilter` / `TimeRangeArg` structs are
@@ -18,7 +18,7 @@
 //!   3. Every non-null bound the frontend can send parses with the SAME
 //!      `csv_processor::parse_timestamp` the real filter uses — the real
 //!      resolver turns an unparseable bound into an error, so a format the
-//!      frontend produces but Rust can't read would break every PM query.
+//!      frontend produces but Rust can't read would break every model query.
 
 use serde::Deserialize;
 use std::collections::BTreeSet;

@@ -3,12 +3,11 @@ import { render, screen, fireEvent, act, cleanup, waitFor, within } from '@testi
 import contract from '../../src-tauri/tests/fixtures/filter_contract.json';
 
 /*
- * Feature 4 QA (2026-09-24) — cross-zone integration for the Build Model flow.
+ * Cross-zone integration for the Build Model flow.
  *
  * Unlike BuildModelWindow.test.tsx (which mocks `workspaceManager`), everything
- * here is REAL except the Tauri boundary (health score phase 4, 2026-10-04: the
- * full-view Predictive Model page was removed - the Workbench's Train button is
- * now the path whose payloads are checked):
+ * here is REAL except the Tauri boundary (the Workbench's Train button is
+ * the path whose payloads are checked):
  *   - the real workspaceManager runs against an in-memory plugin-fs, so every
  *     read/write is an actual JSON round trip through the real write queue and
  *     `migrateFailureGroupState`;
@@ -97,7 +96,7 @@ import { updateWorkspaceData } from '../workspaceManager';
 import { withFailureGroupState } from '../utils/failureGroupState';
 import { getBuildBlockReason } from '../utils/runningCondition';
 import { preflightReason, TRAIN_NEEDS_RUNNING_CONDITION } from '../utils/trainQueue';
-// Since 2026-10-07: a train period is required to Train, a scoring period ("test period" until 2026-10-10) to Mark complete.
+// A train period is required to Train, a scoring period to Mark complete.
 import { ALL_TIME_TRAIN, ONE_TEST } from './helpers/trainTestFixture';
 
 // ── fixtures ────────────────────────────────────────────────────────────
@@ -131,7 +130,7 @@ function v1Model(o: Record<string, unknown>) {
     };
 }
 
-/** A model in the current (Feature 4) shape. */
+/** A model in the current shape. */
 /** Set points the `makeSetPointAwarePreview` fixture accepts (Individual 3SD band 2..8): Mark complete needs them. */
 const VALID_SP = { kind: 'individual', lower: 1, upper: 9, masterLower: 1, masterUpper: 9 };
 
@@ -166,9 +165,7 @@ async function settle(ms = 0) {
 }
 
 /** Mount the window; a stand-in for Dashboard answers its data request.
- *  Waits for the Workbench's one-line Running Condition bar (2026-09-29
- *  Phase A — the always-visible inline "Running Condition Filter" panel this
- *  used to wait for now only exists inside the "Edit…" modal). */
+ *  Waits for the Workbench's running-condition card. */
 async function mountBuildModel() {
     render(<BuildModelWindow />);
     await waitFor(() => expect(screen.getByTestId('rc-card')).toBeTruthy());
@@ -199,7 +196,7 @@ async function otherWindowWrites(patch: Record<string, unknown>, origin = 'dashb
  *  its first model tab — Individual when it has one). */
 const selectSensorRow = (rowIndex = 0) => fireEvent.click(screen.getAllByTestId('sensor-row-label')[rowIndex]);
 const openFirstRow = () => { closeRcModal(); selectSensorRow(0); };
-/** The detail header's Train sensor (customer batch 2026-10, items 8 + 9) — replaced the footer's "▶ Train model". */
+/** The detail header's Train sensor — replaced the footer's "▶ Train model". */
 const trainBtn = () => screen.getByTestId('train-sensor') as HTMLButtonElement;
 /** Train sensor's title for a sensor whose one model the gate blocks: the "set the running condition"
  *  reason while Step 1 is not set at all, else the model's reason in the preflight wording. */
@@ -208,21 +205,16 @@ const blockedTitle = (reason: string) => screen.getByTestId('rc-card').getAttrib
     : `Can't train: Individual — ${preflightReason(reason).text}`;
 
 /*
- * Which `compute_sensor_stats` call is Train's? (flake fixed 2026-10-10)
+ * Which `compute_sensor_stats` call is Train's?
  *
- * Until 2026-10-10 the window ALSO called `compute_sensor_stats` for its "rows
- * used" counts, always on the FIRST dataset sensor (`HEADERS[0]` = TAG1), and
- * for an active Custom-mode model that count was debounced 300 ms - on a loaded
- * machine it landed AFTER Train's own call, so "the newest stats call" was the
- * count's, not what Train sent. Those counts now go through
- * `count_period_rows`, but other callers remain (the cluster-range slider's
- * criteria stats, a silent re-run), so the rule stays: a test never reads "the
+ * Train is not the only caller of `compute_sensor_stats` (the cluster-range
+ * slider's criteria stats, a silent re-run), so a test never reads "the
  * newest call" and never sleeps a fixed time:
  *   - it takes a mark (`h.invokes.length`) right before the Train click and
  *     waits for the FIRST matching call recorded after it (`trainCall`);
- *   - where the count could match too, the trained model's target is a sensor
- *     that is not `HEADERS[0]`, and the predicate names that sensor - the count
- *     can then never be mistaken for Train's call, whatever the timing.
+ *   - where another call could match too, the trained model's target is a sensor
+ *     that is not `HEADERS[0]`, and the predicate names that sensor - the other
+ *     call can then never be mistaken for Train's, whatever the timing.
  */
 const firstSince = (mark: number, cmd: string, pred: (a: any) => boolean = () => true) =>
     h.invokes.slice(mark).find(c => c.cmd === cmd && pred(c.args));
@@ -330,7 +322,7 @@ describe('(1) opening a v1 (pre-Feature-4) workspace', () => {
         // What the user sees is the stored result.
         expect(screen.getByTestId('rc-legacy-banner')).toBeTruthy();
         expect(screen.getByTestId('category-normalisation-notice')).toBeTruthy();
-        // Workbench (Phase A): the always-visible Running Condition bar says
+        // Workbench: the always-visible Running Condition bar says
         // Required, and the unset workspace auto-opened the Edit… modal, which
         // holds the same RunningConditionPanel the old inline card showed.
         expect(screen.getByTestId('rc-card').getAttribute('data-state')).toBe('unset');
@@ -526,7 +518,7 @@ describe('(3) Train sends one filter to stats and every fit path - and it matche
         await trained('i1');
     });
 
-    // FIXED 2026-09-24 (was a known bug). The gate
+    // The gate
     // (`isCompleteCondition`) ignores a `between` row whose max is empty, but
     // `dashboardFilterPayload` only drops rows with an empty value1, so the row
     // still goes to Rust as `between(v1, null)` - and Rust's `keeps()` treats
@@ -604,7 +596,7 @@ describe('(4) old time keys re-added by a stale writer', () => {
 // ─────────────────────────────────────────────────────────────────────────
 
 describe('a brand-new workspace (never opened before Feature 4)', () => {
-    // FIXED 2026-09-24. Models are only ever created on the Dashboard, so the
+    // Models are only ever created on the Dashboard, so the
     // Build Model window is always opened for the first time with models
     // present. Dashboard's first-model creation now seeds `rcLegacyNotice: null`
     // (see Feature4CrossWindow's end-to-end test), so `flagLegacyGate` leaves it
@@ -623,12 +615,12 @@ describe('a brand-new workspace (never opened before Feature 4)', () => {
 });
 
 describe('reason text consistency', () => {
-    // FIXED (was a cosmetic known bug, qa 2026-09-24). For a missing category the
+    // For a missing category the
     // Overview footer used to show `modelBlockReason`'s text ("...sensor
     // header", no period) while the status control and Mark complete used
     // `getBuildBlockReason` ("...sensor header."), so the two surfaces
     // disagreed on the same model.
-    // Workbench (Phase A, 2026-09-29): the clickable status pill that carried
+    // Workbench: the clickable status pill that carried
     // the gate reason as its tooltip was replaced by the separate
     // "✓ Mark complete" button, which carries the same `gateReasonOf` title.
     it('Overview Build reason and the shared gate reason are the same string for a model without a category', async () => {
@@ -642,7 +634,7 @@ describe('reason text consistency', () => {
         expect((screen.getByTestId('page-health') as HTMLButtonElement).disabled).toBe(true);
         const train = trainBtn();
         expect(train.disabled).toBe(true);
-        // Same reason, in the preflight wording (customer items 8 + 9: "above" reads wrong there).
+        // Same reason, in the preflight wording ("above" reads wrong there).
         expect(train.title).toBe(blockedTitle(footer!));
         // The results area lists the same single blocker, not "Not trained yet".
         expect(within(screen.getByTestId('results-incomplete')).getByText('Pick a category')).toBeTruthy();

@@ -22,8 +22,7 @@ import { classifyTrainPlan, noRowsTrainError, preflightReason } from '../utils/t
 import { mk } from './helpers/failureModelFixture';
 
 /*
- * "No data to train on" is stopped at the UI (user request 2026-10-10; the rule
- * was revised the same day after the review of 1e8cc7d — "stop a train that has
+ * "No data to train on" is stopped at the UI ("stop a train that has
  * no data and warn at once when a period is chosen beyond the data, NOT take
  * away results that already exist"):
  *   B1 — a period against the loaded data's time range (pure, from the dataset
@@ -340,7 +339,7 @@ describe('getBuildBlock with the data guards (the PERSISTED state)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// A model that HAS results but no row in the loaded data (2026-10-11): the words
+// A model that HAS results but no row in the loaded data: the words
 // ---------------------------------------------------------------------------
 
 describe('"No data for this model in the loaded file" — the texts of a trained / Complete model with no row in the data', () => {

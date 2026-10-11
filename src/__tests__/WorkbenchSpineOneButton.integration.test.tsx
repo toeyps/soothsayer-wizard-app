@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, cleanup, fireEvent, waitFor, within } from '@testing-library/react';
 
 /*
- * Workbench redesign, Phase B close-out (QA, 2026-10-10) — SPEC
+ * Spec:
  * docs/design/handoff/workbench-redesign/README.md §1 "the page spine".
  *
  * The two rules of the spine, followed through REAL flows on ONE in-memory

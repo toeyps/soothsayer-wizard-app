@@ -474,7 +474,7 @@ describe('LineChart option building', () => {
             expect(html).not.toContain('undefined');
         });
 
-        // Customer item 3 (2026-10-09): inline label (description then tag, no brackets), value +
+        // Inline label (description then tag, no brackets), value +
         // unit right in the series colour, thousands separators.
         it('each row is the Inline label + value + unit in the series colour, with thousands separators', () => {
             const columnar = columnarOf(['A'], 3);
@@ -533,7 +533,7 @@ describe('LineChart option building', () => {
     });
 
     it('colors the axis with the fixed dark palette', () => {
-        // Visual refresh (2026-10-02): recoloured from a leftover slate-blue
+        // Visual refresh: recoloured from a leftover slate-blue
         // palette to match the app's own `--text-secondary` token value —
         // see LineChart.tsx's matching comment.
         const columnar = columnarOf(['A'], 3);
@@ -610,7 +610,7 @@ describe('Tag Point (click a point on the chart to compare it with others)', () 
         expect(markPoint.data[0].label.formatter).toContain('①');
     });
 
-    // Customer item 3 (review ruling a): the tag-point box is ECharts rich text — a description
+    // The tag-point box is ECharts rich text — a description
     // segment (200 px, truncates), the tag segment, then a fixed right-aligned value column.
     it('the tag-point box lists each sensor as description + tag + right-aligned value (rich text)', () => {
         const columnar = columnarOf(headers, 5);

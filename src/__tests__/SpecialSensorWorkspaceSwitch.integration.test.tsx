@@ -1,7 +1,7 @@
 /**
- * Special sensors across a WORKSPACE SWITCH (qa-agent, 2026-10-03).
+ * Special sensors across a WORKSPACE SWITCH.
  *
- * User report (never re-verified after the 2026-10-03 special-sensor rewrite):
+ * User report:
  * "special sensors of workspace A show up when I open workspace B".
  *
  * Mounts the REAL App (so the real DataUploadPage -> Dashboard hand-off, the
@@ -22,11 +22,11 @@
  * late -- the CLAUDE.md "multi-project isolation" note calls closing them the
  * mitigation, not a structural fix, and this is what it has to cover.
  *
- * Bugs were recorded as `it.fails` with the repro in the title. 2026-10-03: ALL 14
- * are fixed (dataset generation pinned on every guarded Rust command, STALE_SESSION
+ * What keeps the windows apart
+ * (dataset generation pinned on every guarded Rust command, STALE_SESSION
  * handling, window epoch, `workspace-closing`, latest-click-wins on load, autosave
- * flush on Back) and are plain `it`s now -- the `// BUG` comments above them are
- * the original repro notes. Section `2b-guard` covers the case where BOTH the
+ * flush on Back) is what these tests pin -- the comment above each one is
+ * the scenario it guards against. Section `2b-guard` covers the case where BOTH the
  * window close and the `workspace-closing` broadcast are lost, i.e. only the Rust
  * generation guard is left.
  */
@@ -390,7 +390,7 @@ const createBody = () => win!.container.querySelector('.special-sensor-body') as
 
 function explorerRow(tag: string): HTMLElement | undefined {
     const rows = Array.from(createBody().querySelectorAll('.special-sensor-row')) as HTMLElement[];
-    // Rows are the stacked SensorLabel (customer item 3): the tag line, or the description slot
+    // Rows are the stacked SensorLabel: the tag line, or the description slot
     // when the sensor has no description.
     return rows.find(r => (r.querySelector('.sl-tag')?.textContent ?? r.querySelector('.sl-desc')?.textContent) === tag);
 }
@@ -731,7 +731,7 @@ describe('2b. A\'s still-alive window, NOT re-pointed, acting after B is loaded'
         await expectSessionIs(RAW_B, B_RECIPES);
     });
 
-    // BUG (low-medium): a create in the stale window adds an orphan derived
+    // Guards against: a create in the stale window adds an orphan derived
     // column to B's session (B's Dashboard drops the A-scoped event). The name
     // is then taken in B's session: B creating its own "S9" fails with
     // "already exists" for a sensor B never had.
@@ -827,7 +827,7 @@ describe('2c. A\'s still-alive window RE-POINTED to B (B\'s "Add special sensor"
         expect(ws(B_ID).specialSensorRecipes).toEqual(B_RECIPES);
     });
 
-    // BUG (medium): the `sensors-data` handler resets only the deletions. The
+    // Guards against: the `sensors-data` handler resets only the deletions. The
     // Create form keeps A's picked sources, the "+" chain, Name, Description,
     // Unit and Component (both this window's copy and SensorTooling's own
     // state -- `formKey` is not bumped), so the next "Add sensor" click builds
@@ -845,7 +845,7 @@ describe('2c. A\'s still-alive window RE-POINTED to B (B\'s "Add special sensor"
         expect(Array.from(createBody().querySelectorAll('input')).map(i => (i as HTMLInputElement).value)).not.toContain('Draft');
     });
 
-    // BUG (high when names collide): `editingTag` and the open editor's
+    // Guards against: `editingTag` and the open editor's
     // draft survive the re-point. B has its own S2, so the row still exists
     // and the editor stays open on A's draft; Save writes it into B's S2 --
     // recomputing B's column and B's recipe with A's formula.
@@ -864,7 +864,7 @@ describe('2c. A\'s still-alive window RE-POINTED to B (B\'s "Add special sensor"
         expect(stillOpen).toBe(false);
     });
 
-    // BUG (high): the serial queue is not drained/cancelled on re-point and
+    // Guards against: the serial queue is not drained/cancelled on re-point and
     // every task reads `workspaceIdRef.current` at EMIT time. A create queued
     // in A runs after the re-point against B's session and is announced with
     // B's id -- B's Dashboard adopts A's sensor (recipe + metadata) into B's
@@ -892,7 +892,7 @@ describe('2c. A\'s still-alive window RE-POINTED to B (B\'s "Add special sensor"
         expect(rust.has('N')).toBe(false);
     });
 
-    // BUG (high): a delete commit that has STARTED (re-reading the workspace
+    // Guards against: a delete commit that has STARTED (re-reading the workspace
     // file) when the window is re-pointed carries on with B's recipes, drops
     // B's same-named column and emits `delete-special-sensors` with B's id --
     // B's Dashboard deletes its own S2 recipe and metadata.
@@ -911,7 +911,7 @@ describe('2c. A\'s still-alive window RE-POINTED to B (B\'s "Add special sensor"
         await expectSessionIs(RAW_B, B_RECIPES);
     });
 
-    // BUG (high): same for an edit already past the click: its first await
+    // Guards against: same for an edit already past the click: its first await
     // (re-reading the models from A's file) resolves after the re-point, so it
     // runs `runSpecialSensorEdit` over B's recipes with A's draft, overwrites
     // B's S2 column and emits `update-special-sensor` with B's id.
@@ -930,7 +930,7 @@ describe('2c. A\'s still-alive window RE-POINTED to B (B\'s "Add special sensor"
         await expectSessionIs(RAW_B, B_RECIPES);
     });
 
-    // BUG (high): rename variant -- B's S2 is renamed to S3 in B's file (and
+    // Guards against: rename variant -- B's S2 is renamed to S3 in B's file (and
     // its old column removed) by a rename the user made in A.
     it('A\'s window: rename S2 -> S3 while the model re-read of A\'s file is slow -> switch to B, re-point, the read completes -> B\'s own S2 is renamed to S3 in B\'s file and session', async () => {
         await switchWithWindowsLeftOpen(wsB(), async () => {
@@ -947,7 +947,7 @@ describe('2c. A\'s still-alive window RE-POINTED to B (B\'s "Add special sensor"
         await expectSessionIs(RAW_B, B_RECIPES);
     });
 
-    // BUG (low -- UI only; delete/edit re-read the file inside their task):
+    // Guards against: 
     // a models re-read for A that started before the re-point (A's Build Model
     // window broadcast) applies after it, so B's Manage tab shows A's model.
     it('A\'s window: A\'s Build Model broadcasts a change, the window\'s re-read of A\'s file is slow -> switch to B, re-point, the read completes -> B\'s Manage tab shows B\'s S1 as locked by A\'s "Alpha model"', async () => {
@@ -965,7 +965,7 @@ describe('2c. A\'s still-alive window RE-POINTED to B (B\'s "Add special sensor"
         expect(W().queryByTestId('edit-lock-banner')).toBeNull();
     });
 
-    // BUG (low -- needs an IPC delay across a whole switch): `sensors-data`
+    // Guards against: `sensors-data`
     // is accepted from ANY workspace, so a late copy of A's re-points the
     // window back to A while B is on screen.
     it('a `sensors-data` for A delivered late (after the window was re-pointed to B) re-points the window back to A -- it lists A\'s "Alpha" recipes while B is open', async () => {
@@ -1182,7 +1182,7 @@ describe('6. B\'s load_csv fails or is slow', () => {
         await expectSessionIs(RAW_B, B_RECIPES);
     });
 
-    // BUG (medium): `handleLoadWorkspace` has no "latest click wins" guard.
+    // Guards against: `handleLoadWorkspace` has no "latest click wins" guard.
     // Its focus fallback clears the loading overlay when the window regains
     // focus > 2 s into a load (meant for the sub-window hand-off), so during a
     // slow load a second workspace can be clicked. The two loads then
@@ -1224,7 +1224,7 @@ describe('6. B\'s load_csv fails or is slow', () => {
 // ═════════════════════════════════════════════════════════════════════════
 
 describe('7. other state carried across a switch', () => {
-    // BUG (medium, data loss -- not special-sensor specific): the Dashboard's
+    // Guards against: the Dashboard's
     // autosave is a 250 ms debounce whose timer is CLEARED on unmount, and
     // "Back to Import" just unmounts it (the flush-before-close path only
     // covers closing the OS window). A special sensor created right before

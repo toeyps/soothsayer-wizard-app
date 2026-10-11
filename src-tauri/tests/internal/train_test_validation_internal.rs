@@ -1,12 +1,11 @@
-//! Scoring periods (Train/Test validation 2026-10-07, reduced to "just score
-//! it" on 2026-10-10) — Rust side, PRIVATE surface.
+//! Scoring periods ("just score it") — Rust side, PRIVATE surface.
 //!
 //! Included from `lib.rs` as a `#[cfg(test)]` child module (one `#[path]` line,
 //! like `qa_health_internal`) because the previews, the export and the session
 //! cache helpers are private to the crate.
 //!
 //! A scoring period is only start -> end: there is no Normal / Known-problem
-//! label, no event time, no lead time and no detection any more.
+//! label, no event time, no lead time and no detection.
 //!
 //! Every scenario is a regular synthetic series whose expected numbers follow
 //! from how it is built (10-minute rows, 144 rows = 1 day):
@@ -435,8 +434,8 @@ fn bad_test_periods_become_structured_issues_and_the_period_is_skipped() {
 
 #[test]
 fn a_legacy_label_or_event_time_on_the_wire_changes_nothing() {
-    // The request of a frontend from before 2026-10-10, with an event time that
-    // used to be refused (outside the period) and a label that never existed.
+    // A legacy request shape: an event time outside the period and a label —
+    // both accepted on the wire and never read.
     let d = ind_data(400, 0..0);
     let make = |periods: serde_json::Value| -> HealthPreviewRequest {
         serde_json::from_value(serde_json::json!({
@@ -956,7 +955,7 @@ fn outdated_sidecar_gets_its_own_user_facing_wording() {
         assert!(!old.contains(dev), "no developer wording ({dev}) in: {old}");
     }
     let p = crate::health_preview_with_outcome(&state, &rel_req(vec![tp(288, 575)]), Some(TestScoringFailure::Outdated)).unwrap();
-    // Its own code (review fix 3, 2026-10-07): a retry cannot help, so the
+    // Its own code: a retry cannot help, so the
     // frontend shows no "Try again" for it.
     let w = p.validation.iter().find(|i| i.code == "test_scoring_outdated").unwrap();
     assert!(w.message.contains("out of date"));
@@ -996,8 +995,8 @@ fn predictions_over_the_cache_budget_are_reported_not_stored_and_not_an_error() 
 
 #[test]
 fn unscored_tests_still_report_their_rows_and_days() {
-    // Review fix 2026-10-07: a period fully outside the training scope has no
-    // prediction after a failure; it used to report 0 rows / 0 days.
+    // A period fully outside the training scope has no
+    // prediction after a failure; it must not report 0 rows / 0 days.
     let (state, _d) = rel_state();
     let req = rel_req(vec![tp(288, 575), tp(144, 431)]);
     let p = crate::health_preview_with_outcome(&state, &req, Some(TestScoringFailure::EngineError)).unwrap();
@@ -1209,8 +1208,8 @@ fn has_marker(state: &AppState, key: &str) -> bool {
 
 #[test]
 fn a_remembered_failure_applies_only_to_the_same_missing_rows() {
-    // Review fix 2026-10-07 (third review): the marker used to be per fit, so
-    // after a failure ANY change of the test periods answered "failed" at once.
+    // The failed marker is per set of missing rows, not per fit: after a
+    // failure a change of the test periods must not answer "failed" at once.
     let (state, d) = rel_state();
     let serial = tauri::async_runtime::Mutex::new(());
     let outdated = AtomicBool::new(false);
@@ -1237,7 +1236,7 @@ fn a_remembered_failure_applies_only_to_the_same_missing_rows() {
 
 #[test]
 fn the_logged_reason_is_bounded() {
-    // Review fix 2026-10-07: a parse error carries the engine's whole stdout.
+    // A parse error carries the engine's whole stdout.
     let (state, _d) = rel_state();
     let serial = tauri::async_runtime::Mutex::new(());
     let outdated = AtomicBool::new(false);
@@ -1287,7 +1286,7 @@ fn the_log_is_written_after_the_prediction_lock_is_released() {
 
 #[test]
 fn a_same_key_retrain_during_the_run_never_receives_the_old_fits_predictions() {
-    // Review fix 2026-10-07 (third review): the job now carries its fit's identity.
+    // The job carries its fit's identity.
     let (state, d) = rel_state();
     let serial = tauri::async_runtime::Mutex::new(());
     let outdated = AtomicBool::new(false);
@@ -1383,7 +1382,7 @@ fn a_sidecar_timeout_fires_once_and_a_finished_run_cancels_it() {
 
 #[test]
 fn the_preview_and_the_prediction_step_select_the_same_test_rows() {
-    // Review fix 2026-10-07: relationship_preview_ex uses the shared selection.
+    // relationship_preview_ex uses the shared selection.
     let d = rel_data();
     let fit = rel_fit(&d);
     let tests = vec![tp(144, 431), tp(576, 600)];

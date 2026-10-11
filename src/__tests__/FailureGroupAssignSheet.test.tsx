@@ -1,5 +1,5 @@
 /**
- * FailureGroupAssignSheet (2026-10-03) — the full-height "Failure Group
+ * FailureGroupAssignSheet — the full-height "Failure Group
  * Assignment" sheet that replaced the old add-to-failure-group popover.
  * Rendered directly here (the seam with the sensor list — open / switch / step /
  * dismiss / placement — is covered in SensorSelection.test.tsx).
@@ -153,7 +153,7 @@ describe('FailureGroupAssignSheet', () => {
             expect(header('clustering')).toBe('none');
         });
 
-        // User decision 2026-10-10: the kind is "Relation model" in the whole app.
+        // The kind is "Relation model" in the whole app.
         it('names the kinds Individual / Relation model / Clustering — header, cell names and tooltips; the letter badges stay I / R / C', () => {
             // r1 only in Group B here, so removing it is the "deletes the model" case.
             renderSheet({ fgModels: [model({ id: 'r1', kind: 'relationship', groupNos: [2] })] });

@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, act, cleanup, waitFor, within } from '@testing-library/react';
 
 /*
- * Feature 4 QA (2026-09-24) — Dashboard and the Build Model window running
+ * Dashboard and the Build Model window running
  * side by side against ONE workspace file.
  *
  * Both real components are mounted at once (they are separate OS windows in
@@ -169,7 +169,7 @@ async function mountBoth() {
             <div data-testid="build-model-window"><BuildModelWindow /></div>
         </>,
     );
-    // Workbench (2026-09-29 Phase A): wait for the one-line Running Condition
+    // Workbench: wait for the one-line Running Condition
     // bar — the inline "Running Condition Filter" panel now lives only in the
     // Edit… modal (auto-opened when the workspace condition is unset).
     await waitFor(() => expect(within(screen.getByTestId('build-model-window')).getByTestId('rc-card')).toBeTruthy());
@@ -257,14 +257,11 @@ describe('(5) a sensor category set in Build Model survives Dashboard edits', ()
         });
     }
 
-    // FIXED 2026-09-24 (was a known bug). Phase 0 moved the
-    // toggle / create-group / delete-model writers to "compute on disk", but
-    // renameGroup / updateGroupDetails / createEmptyGroup / deleteGroup still
-    // call `persistFailureGroupState(groups, fgModels)`, which writes the
-    // Dashboard MIRROR's whole models array over disk. With a stale mirror
-    // (lost broadcast) that reverts another window's model edits — here the
-    // sensor category. The one-time normalisation will not repair it either:
-    // its notice is already set, so it never re-runs.
+    // Every group writer (renameGroup / updateGroupDetails /
+    // createEmptyGroup / deleteGroup) computes against DISK, like toggle /
+    // create-group / delete-model: with a stale mirror (lost broadcast) it
+    // must not write the mirror's models array over another window's model
+    // edits — here the sensor category.
     it('renaming a group on the Dashboard with a stale mirror keeps the category Build Model set', async () => {
         writeDisk(start());
         await mountBoth();
@@ -318,7 +315,7 @@ describe('(4) Dashboard opened on the v1 file, Build Model migrates it underneat
         await mountBoth();
         await act(async () => { fireEvent.click(screen.getByText('dash-rename-fg1')); });
         await settle(20);
-        // FIXED 2026-09-24: rename is computed against DISK, so the mirror's
+        // Rename is computed against DISK, so the mirror's
         // (v1, old-keys) models are never written over the migrated ones.
         const raw = h.files.get(WS_FILE)!;
         for (const k of LEGACY_KEYS) expect(raw).not.toContain(`"${k}"`);

@@ -149,7 +149,7 @@ export function makeHealthPreview(req: HealthPreviewRequest | Record<string, any
 }
 
 // ---------------------------------------------------------------------------
-// Set-point-aware answers (health score phase 3b-2)
+// Set-point-aware answers
 // ---------------------------------------------------------------------------
 
 const REQUIRED_MSG: Record<string, string> = {

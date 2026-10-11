@@ -186,7 +186,7 @@ describe('hover: nearestIndex / hoverIndexFromAxisEvent / readout', () => {
         expect(readoutAt(ind, 99)).toBeNull();
     });
 
-    // Review of 452d5c2, item 6: the hover read-out lost the seconds, so the points of
+    // The hover read-out lost the seconds, so the points of
     // sub-minute data all read as the same time; and the time went through `new Date`.
     it('readoutAt shows seconds when the stamp has them (sub-minute data), and only then', () => {
         const base = makeSetPointAwarePreview({ kind: 'individual', set_points: { lower: 1, upper: 9 } }).series;

@@ -71,7 +71,7 @@ describe('buildIndividualSetPointOption (raw value over time, no histogram)', ()
         expect(typedText(100)).toBe('100');
     });
 
-    // Review of 0125190, item 9: "L -200" (ASCII hyphen) sat next to "−1SD" and "0 · −9" (a real
+    // "L -200" (ASCII hyphen) sat next to "−1SD" and "0 · −9" (a real
     // minus sign); and a negative zero printed "-0".
     it('a negative set point carries a real minus sign (U+2212) like every other chart label; a negative zero reads "0"', () => {
         const label = (sp: any, side: 'H' | 'L') => lines(ind({ kind: 'individual', ...sp })).find((l: any) => l.label?.startsWith(`${side} `)).label;
@@ -260,7 +260,7 @@ describe('buildClusterSetPointOption (points + 1x, 3x and N x rings of EVERY clu
         expect(nLabel(3.61234)).toBe('3.61234× · 0');
     });
 
-    // Review of 0125190, must-fix 2 — on this chart with all three levels.
+    // On this chart with all three levels.
     it('the three level names move APART for a cluster tilted up to the right: "N× · 0" up, "1× · 100" down (never into each other)', () => {
         const tilted = [1, 2, 3].map(i => makeClusterStat(i, { x_center: 10 * i, y_center: 20 + i, x_sd: 4, y_sd: 0.3, angle_deg: 2 }));
         const opt = buildClusterSetPointOption(cluSeries, tilted, { kind: 'clustering', outerSd: 5 }, { x: 'X', y: 'Y' }) as any;

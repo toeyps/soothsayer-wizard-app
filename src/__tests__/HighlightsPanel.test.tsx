@@ -14,7 +14,7 @@ import HighlightsPanel from '../components/dashboard/HighlightsPanel';
 import { SensorMetaProvider } from '../components/sensor/SensorLabel';
 import { findPickerRow, openPickerSurface, pickSingle, rowTag } from './helpers/sensorPicker';
 
-// Customer item 4 (2026-10-09): colours are picked with the shared ColourPicker (the swatch is
+// Colours are picked with the shared ColourPicker (the swatch is
 // the button; a palette pick applies immediately). Its own behaviour is in ColourPicker.test.tsx.
 const swatch = (name: RegExp | string) => screen.getByRole('button', { name });
 const paletteSwatch = (hex: string) => document.querySelector(`.cp-pop .cp-sw[title^="${hex}"]`) as HTMLElement;
@@ -117,7 +117,7 @@ describe('HighlightsPanel', () => {
             expect(onRecolorTimeHighlight).toHaveBeenCalledWith('h1', '#8b5cf6');
         });
 
-        // Visual refresh (2026-10-02): this popover now renders through
+        // Visual refresh: this popover now renders through
         // `AnchoredPopover`/`Portal` (escapes this panel's own scrolling,
         // same reasoning as every other popover in the visual-refresh
         // spec) instead of expanding inline, flexbox-aligned, below the
@@ -323,14 +323,11 @@ describe('HighlightsPanel', () => {
             expect(screen.queryByDisplayValue('Startup')).toBeNull();
         });
 
-        // Regression (QA sweep, 2026-10-02): the "By time" column never
-        // becomes disabled on a Line <-> Scatter switch (only Pair Plot
-        // disables it), but Scatter inserts/removes its own inline note
-        // above the chip list, shifting the swatch's on-screen position.
-        // The earlier fix only cleared the open popover/rename draft when
-        // the column became DISABLED, so this pair of switches (column
-        // stays enabled throughout) used to leave a stale popover/draft
-        // behind. Fixed by clearing on ANY chartType change.
+        // The "By time" column never becomes disabled on a Line <-> Scatter
+        // switch (only Pair Plot disables it), but Scatter inserts/removes
+        // its own inline note above the chip list, shifting the swatch's
+        // on-screen position. So the open popover / rename draft is cleared
+        // on ANY chartType change, not only when the column becomes disabled.
         it('closes an already-open colour picker on a Line -> Scatter switch too, even though the column never becomes disabled', () => {
             const timeHighlights: TimeHighlight[] = [
                 { id: 'h1', start: '2026-01-01T00:00', end: '2026-01-01T01:00', label: 'Startup', color: '#ff0000', enabled: true },

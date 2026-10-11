@@ -214,7 +214,7 @@ describe('period rows: "P1 · 81 d · 69 d running"', () => {
 });
 
 // The running-condition card and the amber "below the recommended train time" note read the
-// SAME figure the caption prints (review of a4acd7a, item 5).
+// SAME figure the caption prints.
 describe('countedTrainRunningDays', () => {
     it('the train union running days of a settled count', () => {
         expect(countedTrainRunningDays(state())).toBe(99.9);
@@ -273,7 +273,7 @@ describe('runningConditionCaption (the one line under the timeline)', () => {
         expect(c.trainText).toBe('81 d train');
         expect(c.trainRunningDays).toBeNull();
     });
-    // Review of a4acd7a, item 6: "Only when running" without a complete condition. No condition
+    // "Only when running" without a complete condition. No condition
     // is sent then, so Rust counts EVERY row of the periods — "N of N rows (100%) used for
     // training" next to a header pill that says "Required".
     it('the running condition is not configured yet: "set the condition to count the rows" — no rows, no percent and no running time, whatever the counts say', () => {

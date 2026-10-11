@@ -5,7 +5,7 @@ import * as periodDisplay from '../components/windows/periodDisplay';
 /*
  * The Workbench date format ("9 Feb 2026 23:50") moved from
  * `components/windows/periodDisplay.ts` to `utils/workbenchDate.ts`
- * (2026-10-10) so the pure period helpers can print dates with it.
+ * so the pure period helpers can print dates with it.
  * `periodDisplay.test.ts` keeps testing the format through the re-exports;
  * this file covers the move itself and the new sentence helper.
  */

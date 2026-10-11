@@ -1,7 +1,7 @@
 import type { FakeHealthRust } from './fakeHealthRust';
 
 /**
- * Shared environment of the health-score integration tests (QA, 2026-10-04):
+ * Shared environment of the health-score integration tests:
  * ONE in-memory plugin-fs (workspace JSON + exported model files), ONE plugin-store,
  * ONE Tauri event bus (every window mounted in the test talks over it, with an
  * optional `drop` switch to lose broadcasts), the fake Rust backend

@@ -6,8 +6,6 @@ import { LINE_CHART_COLORS } from '../components/charts/LineChart';
 // @ts-expect-error - @types/node is not installed; vitest runs in Node so this resolves at runtime
 import { readFileSync } from 'node:fs';
 
-// Customer item 4 (SPEC FINAL 2026-10-09 §1, DESIGN_SYSTEM §4 "Colour picking — ONE picker").
-
 afterEach(() => {
     cleanup();
     document.getElementById('wizard-portal-root')?.remove();
@@ -239,7 +237,7 @@ describe('ColourPicker', () => {
         expect(document.querySelector('input[type="color"]')).toBeNull();
     });
 
-    // Real-app bug (2026-10-11): with a long sensor name the popover's implicit `auto` grid column
+    // Real-app bug: with a long sensor name the popover's implicit `auto` grid column
     // grew to the heading's full nowrap width (372 px inside a 228 px popover), the swatch grid
     // stretched across it and the swatches came out twice their size, spilling out of the surface.
     // jsdom has no layout, so this pins the CSS rule that keeps the column at the popover's width.

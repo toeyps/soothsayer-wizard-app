@@ -10,7 +10,7 @@ import { ALL_TIME_TRAIN, ONE_TEST } from './trainTestFixture';
 import { rowTag } from './sensorPicker';
 
 /**
- * Drivers for the health-score integration tests (QA, 2026-10-04): mount the
+ * Drivers for the health-score integration tests: mount the
  * REAL Dashboard and the REAL Build Model window side by side over the shared
  * environment of `healthEnv.tsx`, seed workspaces on the in-memory disk, and
  * drive the Workbench's two pages the way a user does.
@@ -25,7 +25,7 @@ export const COND = { id: 'rc1', sensor: 'TAG2', operation: 'greater_than', valu
 export const BASE_FG = {
     groups: [{ no: 0, name: 'Not in Group' }, { no: 1, name: 'FG-A' }, { no: 2, name: 'FG-B' }],
     runningConditionCombine: 'and',
-    // Train/Test validation (2026-10-07): a train period is required to Train,
+    // Train/Test validation: a train period is required to Train,
     // a test period to Mark complete.
     runningConditionTimePeriods: ALL_TIME_TRAIN,
     runningConditionTestPeriods: ONE_TEST,
@@ -154,7 +154,7 @@ export async function waitForCharts() {
 }
 
 /** Train exactly the ACTIVE model (the old per-model Train / Re-train): the header's
- *  Train sensor ▾ menu → "Train only the <kind> model" (customer batch 2026-10,
+ *  Train sensor ▾ menu → "Train only the <kind> model" (
  *  items 8 + 9 — the footer button is gone; every train goes through the queue). */
 export async function train() {
     const tab = bmw().getAllByRole('tab').find(t => t.getAttribute('aria-selected') === 'true');
@@ -236,7 +236,7 @@ export async function saveChanges() {
     await settle(50);
 }
 
-/** Pick sensors in an open shared sensor picker (customer item 3, 2026-10-09):
+/** Pick sensors in an open shared sensor picker:
  *  multi = the "Select {noun}" modal (tick rows + OK); single = the anchored popover named
  *  after the field (one click picks and closes). */
 export async function pickInModal(noun: string, tags: string[], single = false) {

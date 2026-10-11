@@ -10,7 +10,7 @@ const p = (id: string, start: string, end: string) => ({ id, start, end });
 const f = (sensor: string, operation: WorkspaceSensorFilter['operation'], value1: string, value2 = ''): WorkspaceSensorFilter =>
     ({ id: `f-${sensor}`, sensor, operation, value1, value2 });
 
-// What the period editors commit while a date is being typed (review of a4acd7a, items 2 + 3).
+// What the period editors commit while a date is being typed.
 describe('isCompleteDateInput / settleDateInput (typing a date in a period row)', () => {
     it('a complete datetime-local value is complete (seconds allowed)', () => {
         expect(isCompleteDateInput('2026-02-09T23:50')).toBe(true);

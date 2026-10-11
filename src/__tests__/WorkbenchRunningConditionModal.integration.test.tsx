@@ -2,9 +2,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, cleanup, fireEvent, waitFor, within } from '@testing-library/react';
 
 /*
- * Workbench redesign, phase C close-out (QA, 2026-10-11) — SPEC
+ * Spec:
  * docs/design/handoff/workbench-redesign/README.md §5 (running-condition modal),
- * commits a4acd7a + b0bcf1a. Real Dashboard + real Build Model window + real
+ * with the real Dashboard + real Build Model window + real
  * `workspaceManager` on one in-memory workspace file, the fake Rust backend
  * with its REAL `count_period_rows`:
  *

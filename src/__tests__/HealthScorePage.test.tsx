@@ -501,7 +501,7 @@ describe('Health score chart', () => {
         expect(screen.getByTestId('share-share_80_100').textContent).toBe('80–100100.0%');
     });
 
-    // Review of 0125190, item 6: the rule was on the share column only — the same card's subtitle
+    // The rule was on the share column only — the same card's subtitle
     // printed `toFixed(1)`: "below 80 for 0.0%" next to a "< 0.1%" share.
     it('the subtitle follows the same rule: "below 80 for < 0.1% of scored rows", never "0.0%" for a share that is not zero', () => {
         const d = previewFor('individual', IND_VALID);
@@ -729,8 +729,8 @@ describe('states of the preview', () => {
         expect(screen.getByTestId('health-loading')).toBeTruthy();
     });
 
-    // SPEC §4: no in-pane Re-train button. Nothing about the model changed, so the board's way
-    // back is the text link "Load it again" (review of 8626f78: "Train sensor ↑" alone was a dead
+    // No in-pane Re-train button. Nothing about the model changed, so the board's way
+    // back is the text link "Load it again" ("Train sensor ↑" alone would be a dead
     // end for a Complete model — Train sensor never trains one).
     /** What the real hook returns after NOT_FITTED: no data, and (when there was one) the last answer. */
     const notFitted = (last: HealthPreview | null = null) => ({
@@ -791,11 +791,11 @@ describe('states of the preview', () => {
         expect(onReload).toHaveBeenCalledTimes(1);
     });
 
-    // Phase D: the model's own load failed (NOT a lost fit), so no preview is asked for at
+    // The model's own load failed (NOT a lost fit), so no preview is asked for at
     // all — the page must not read "Loading…" for ever, and never offers a link that cannot work.
     const idlePreview = { data: null, lastData: null, loading: false, error: null, errorCode: null, notFitted: false, needsRetrain: false, idle: 'disabled' as const };
 
-    // Review of d828a88 (A4): after a fit-gone model's reload failed and the tab was left and
+    // After a fit-gone model's reload failed and the tab was left and
     // opened again, no request is asked any more — `preview.notFitted` is no longer set — but
     // the fit is still gone. The window says so (`fitGone.gone`), and the page must keep the
     // "Fit no longer in memory" board the footer and the Model fit page show.
@@ -912,7 +912,7 @@ describe('saved files: progress, result and "changed after saving"', () => {
         expect(screen.queryByTestId('save-error')).toBeNull();
     });
 
-    // SPEC §4: saving is the FOOTER only — no card on the page, unless the save is slow.
+    // Saving is the FOOTER only — no card on the page, unless the save is slow.
     it('running: no "Saving…" card on the page; one appears only once the save has been running for a while', () => {
         vi.useFakeTimers();
         try {
@@ -1031,7 +1031,7 @@ describe('a failed request keeps the page (QA 2026-10-04)', () => {
         expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ upper: 9.5 }), undefined);
     });
 
-    // Review of 8626f78: a new request clears `error` while `data` is still null (the hook), and the
+    // A new request clears `error` while `data` is still null (the hook), and the
     // whole page used to be replaced by the "Loading…" board — the first key typed under the red
     // card unmounted the input it was typed in.
     it('the NEXT request after a failure (typing under the red card, Retry): the page stays — same input, still focused; a quiet "Loading again" line takes the red card\'s place', () => {
@@ -1200,7 +1200,7 @@ describe('Scoring periods on the Health score page ("just score it", 2026-10-10)
         expect(scoreChart().option.series.map((x: any) => x.name)).not.toContain('__scopes');
     });
 
-    // Review of 0125190, item 5: many periods printed "TRAIN P1" … "TRAIN P20" on each other.
+    // Many periods printed "TRAIN P1" … "TRAIN P20" on each other.
     it('several train periods: "TRAIN" once then numbers; two periods at the same time print ONE name; the chart beside the set-points card spaces its names for the narrower plot', () => {
         const hhmm = (m: number) => `2026-01-01T${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
         // 16 short train periods over the 4 hours of data

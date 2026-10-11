@@ -2,8 +2,8 @@ import { createFakeRust, type FakeRust, type RawCsv } from './fakeRustSession';
 import { createFakeHealthRust, type FakeHealthRust, type HealthDataset } from './fakeHealthRust';
 
 /**
- * ONE fake Rust backend for the cross-feature smoke tests (qa-agent, 2026-10-04
- * final sweep): the special-sensor session fake (`fakeRustSession.ts` — load_csv,
+ * ONE fake Rust backend for the cross-feature smoke tests:
+ * the special-sensor session fake (`fakeRustSession.ts` — load_csv,
  * derived columns, formula refs, chart data, generation guard) and the health
  * fake (`fakeHealthRust.ts` — stats, previews, health score, Mark-complete
  * export) behind a single `invoke`, kept on the SAME data:

@@ -71,7 +71,7 @@ describe('renameTagInRecord', () => {
 
 describe('renameTagInModels', () => {
     it('renames every one of the six sensor-bearing fields', () => {
-        // 2026-09-15: was seven, including `pmSensorFilters` -- that field
+        // Was seven, including `pmSensorFilters` -- that field
         // moved off FailureModel entirely to the workspace-wide
         // `runningConditionFilters` (see the describe block below for its
         // own rename helper).
@@ -112,11 +112,8 @@ describe('renameTagInModels', () => {
         expect(renamed.targetSensor).toBe('NEW');
     });
 
-    // 🆕 2026-09-30 (QA fix): customRunningConditionFilters (2026-09-23's
-    // per-model Workspace/Custom override) was never rewritten by a rename —
-    // this gap pre-dated the Workbench's own Custom editor and only became
-    // visible once that editor made these conditions actually editable in
-    // the app (also this QA pass).
+    // A rename also rewrites `customRunningConditionFilters` — each model's
+    // own per-condition sensor (the per-model Workspace/Custom override).
     it('renames a matching sensor inside customRunningConditionFilters, case-insensitively, and leaves other conditions alone', () => {
         const model = makeModel({
             runningConditionMode: 'custom',
@@ -230,7 +227,7 @@ describe('renameTagInRecipes', () => {
     });
 });
 
-// ── 2026-10-03 (second pass) ────────────────────────────────────────────────
+// ── (second pass) ────────────────────────────────────────────────
 describe('removeTagsFromFilters', () => {
     const f = (id: string, sensor: string) => ({ id, sensor, operation: 'greater_than' as const, value1: '1', value2: '' });
 

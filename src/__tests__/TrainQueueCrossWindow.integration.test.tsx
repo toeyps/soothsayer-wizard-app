@@ -2,8 +2,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 
 /*
- * Train sensor / Train all queue (customer batch 2026-10, items 8 + 9) — QA
- * sweep across the windows (2026-10-09).
+ * Train sensor / Train all queue — QA
+ * sweep across the windows.
  *
  * The queue's rules are unit-tested in useTrainQueue.test.ts / trainQueue.test.ts,
  * its parts in TrainQueueParts.test.tsx and its wiring into the Build Model
@@ -317,7 +317,7 @@ describe('(a) the Dashboard goes away (Back to Import) while Train all runs', ()
         expect(env.files.get(wsFile('ws1'))).toBe(ws1Settled);
     });
 
-    // Regression (found in the 2026-10-09 QA sweep): `workspace-closing` sets
+    // Regression: `workspace-closing` sets
     // `closeBypassRef`, and the re-point branch (`switched`) must clear it again.
     // Otherwise a window that outlived its project's close (best-effort IPC, or a
     // hung Mark complete held it open) and was re-pointed at the next project

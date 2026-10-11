@@ -1,9 +1,9 @@
 /**
- * Special sensors, end to end across windows (qa-agent, 2026-10-03).
+ * Special sensors, end to end across windows.
  *
  * Mounts the REAL Dashboard and the REAL Add Special Sensor window (with the
  * real SensorExplorer / Formula editor + Quick build / ManageSpecialSensors
- * -- customer batch 2026-10, item 6 -- and the real DataUploadPage for workspace-reopen
+ * and the real DataUploadPage for workspace-reopen
  * replay) side by side in one document, connected by a shared fake Tauri
  * event bus (every payload is structured-cloned, like real IPC), against a
  * fake Rust session that holds real column VALUES and enforces the same rules
@@ -16,11 +16,8 @@
  *   - every column the UI removed is gone from the session;
  *   - every recipe only reads sensors that exist.
  *
- * Bugs found were first recorded as `it.fails` with the exact repro in the
- * title; the app fixes (2026-10-03, second pass) flipped them to plain `it`s.
- * Tests titled "regression:" are those former `it.fails`. Five of them needed
- * their SETUP or an intermediate expectation corrected because the fix changes
- * a premise the original encoded -- each says so in a "Note (fix pass)" comment.
+ * Tests titled "regression:" pin bugs this file found; a "Note (fix pass)"
+ * comment says where the fix changed a premise of the original repro.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, act, cleanup, within } from '@testing-library/react';
@@ -309,7 +306,7 @@ const createBody = () => win!.container.querySelector('.special-sensor-body') as
 
 function explorerRow(tag: string): HTMLElement | undefined {
     const rows = Array.from(createBody().querySelectorAll('.special-sensor-row')) as HTMLElement[];
-    // Rows are the stacked SensorLabel (customer item 3): the tag line, or the description slot
+    // Rows are the stacked SensorLabel: the tag line, or the description slot
     // when the sensor has no description.
     return rows.find(r => (r.querySelector('.sl-tag')?.textContent ?? r.querySelector('.sl-desc')?.textContent) === tag);
 }
@@ -598,7 +595,7 @@ describe('1b. create via operation, Sum vs Mean with a missing source, Pair Plot
         expect((await persistedRecipes()).map(r => r.tag)).toEqual(['P5']);
     });
 
-    // Was a BUG (low, cosmetic): the window's own "on chart" mirror merges without
+    // Guards against: the window's own "on chart" mirror merges without
     // the Pair Plot cap, so Manage shows the badge for a sensor the Dashboard
     // refused to plot.
     it('regression: Pair Plot at 4 sensors -> create P5 (not plotted) -> Manage tab still shows P5 as "on chart"', async () => {
@@ -638,7 +635,7 @@ describe('1b. create via operation, Sum vs Mean with a missing source, Pair Plot
 });
 
 describe('1c. the Create form after a successful Add', () => {
-    // Was a BUG (medium -- reads as "did my sensor fail?"): AddSensorWindow resets
+    // Guards against: AddSensorWindow resets
     // ITS copy of the form after an Add, but SensorTooling keeps its own
     // engine/formula-editor state; `setSelectedSensors([])` hands it a new
     // array, its build result re-memoizes, and it re-submits the old formula
@@ -823,7 +820,7 @@ describe('2b. delete protection', () => {
         expect(deleteBtn('A').disabled).toBe(true);
     });
 
-    // Was a BUG (medium): the dependency check happens at CLICK time only. The
+    // Guards against: the dependency check happens at CLICK time only. The
     // commit 8 s later drops the column regardless of what started using the
     // sensor in between.
     it('regression: delete A (Manage) -> within the 8 s undo window Build Model makes A a model\'s target -> the delete still commits and drops A\'s column from under the model', async () => {
@@ -857,7 +854,7 @@ describe('2b. delete protection', () => {
         expect((await persistedRecipes()).map(r => r.tag)).toEqual(['A']);
     });
 
-    // Was a BUG (medium): the Explorer on the Create tab lists the full `sensors`
+    // Guards against: the Explorer on the Create tab lists the full `sensors`
     // list, not `liveSensors`, so a sensor inside its undo window can still be
     // picked as a SOURCE. Its delete then commits under the new sensor.
     // Note (fix pass): the original PICKED A in the Explorer while it was inside
@@ -885,9 +882,9 @@ describe('2b. delete protection', () => {
         await expectConsistent(recipes);
     });
 
-    // Was a KNOWN GAP, made worse (high for model results): delete-protection does
+    // Guards against: delete-protection does
     // not look at the workspace Running Condition (documented "not wired up"
-    // in specialSensorRename.ts). Before 2026-10-03 the stale column lingered;
+    // in specialSensorRename.ts). Before the stale column lingered;
     // now it is really dropped, and Rust's ResolvedFilter silently DROPS a
     // condition on an unknown sensor -- so every model trains on different rows.
     it('regression (was a known gap): a special sensor used in the workspace Running Condition cannot be deleted -> its column stays and the condition keeps filtering', async () => {
@@ -963,7 +960,7 @@ describe('3. rename', () => {
         await expectConsistent(recipes);
     });
 
-    // 2026-10-03 (edit lock): these two used to assert that renaming a sensor a
+    // These two used to assert that renaming a sensor a
     // model uses is CARRIED INTO the model (and that the window protected the
     // new name from deletion before the Dashboard's broadcast landed). The user
     // decided instead that a model-used sensor cannot be renamed at all (a
@@ -995,7 +992,7 @@ describe('3. rename', () => {
         expect(deleteBtn('A').disabled).toBe(true);
     });
 
-    // Was a BUG (medium): Dashboard's rename handler re-keys selection, colours,
+    // Guards against: Dashboard's rename handler re-keys selection, colours,
     // axes, scatter, highlights and models -- but NOT its own Filter tab.
     // The condition keeps naming A; the rename drops A's column; Rust's
     // ResolvedFilter silently drops a condition on an unknown sensor, so the
@@ -1119,7 +1116,7 @@ describe('4. editing a sensor others depend on', () => {
         await expectConsistent(await persistedRecipes());
     });
 
-    // Was a BUG (medium): `dependentsToRecompute` returns the dependents in the
+    // Guards against: `dependentsToRecompute` returns the dependents in the
     // stored ARRAY order, and `recomputeSpecialSensors` runs them in that
     // order. A workspace saved before today's ordering fix (or any list not
     // in build order) recomputes C before B, so C is built from B's OLD
@@ -1428,7 +1425,7 @@ describe('8. interleavings', () => {
         await expectConsistent(recipes);
     });
 
-    // Was a BUG (medium-low, needs a slow recompute -- seconds on a big CSV): the
+    // Guards against: the
     // rename's collision check runs BEFORE its recompute, and the Create tab
     // does not know a rename to that name is in flight. The rename's
     // `replace: true` recompute then OVERWRITES the freshly created sensor's
@@ -1456,7 +1453,7 @@ describe('8. interleavings', () => {
         await expectConsistent(recipes);
     });
 
-    // Was a BUG (low, design-level): the window keeps whichever
+    // Guards against: the window keeps whichever
     // `failure-group-state-changed` arrived LAST, with no ordering/version.
     // Two writers (Dashboard echo + Build Model) can deliver out of order.
     it('regression: Build Model\'s "model m1 now uses A" and an older FG broadcast arrive out of order -> the window ends on the older list and lets A be deleted', async () => {
@@ -1473,7 +1470,7 @@ describe('8. interleavings', () => {
         expect(deleteBtn('A').disabled).toBe(true);
     });
 
-    // Was a BUG (medium): an edit (no rename) that fails on the 2nd downstream
+    // Guards against: an edit (no rename) that fails on the 2nd downstream
     // recompute has ALREADY overwritten the edited sensor (and the 1st
     // downstream) in place with the NEW formula's values -- there is no
     // rollback -- while the window and the Dashboard keep the OLD recipe.
@@ -1530,7 +1527,7 @@ describe('8. interleavings', () => {
         await expectConsistent(await persistedRecipes());
     });
 
-    // Was a BUG (low, needs a recompute slower than the 8 s undo window): Delete is
+    // Guards against: Delete is
     // not locked while an edit is recomputing. Deleting a downstream sensor
     // and letting the undo window expire drops its column; the edit's
     // `replace: true` recompute of that sensor then APPENDS it again -- an
@@ -1565,7 +1562,7 @@ describe('8. interleavings', () => {
 });
 
 // ═════════════════════════════════════════════════════════════════════════
-// 9. Edit lock (2026-10-03) -- a special sensor used by a model cannot be
+// 9. Edit lock -- a special sensor used by a model cannot be
 //    edited / renamed / deleted; only its description, unit and component can
 //    change. Real Dashboard + real window + fake Rust session.
 // ═════════════════════════════════════════════════════════════════════════

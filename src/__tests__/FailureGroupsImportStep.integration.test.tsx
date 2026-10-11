@@ -2,8 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 
 /*
- * Customer batch 2026-10 phase 3 (item 5: Failure groups = Import step 3) —
- * qa-agent closing sweep, 2026-10-09.
+ * Failure groups as Import step 3.
  *
  * The workers' unit tests each stop at their own seam: `DataUploadPage.test`
  * mocks `workspaceManager` (so the chip never sees a real recent entry),

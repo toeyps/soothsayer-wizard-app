@@ -99,7 +99,7 @@ describe('buildSpecialSensorUsage', () => {
     });
 
     it('blocks a sensor named in any of the six model sensor fields', () => {
-        // 2026-09-15: was seven, including `pmSensorFilters` -- that field
+        // Was seven, including `pmSensorFilters` -- that field
         // moved off FailureModel to the workspace-wide
         // `runningConditionFilters`, which this delete-check does NOT yet
         // cover (a known, scoped gap -- see specialSensorDeps.ts's own
@@ -324,7 +324,7 @@ describe('reorderRecipesByTags', () => {
     });
 });
 
-// ── 2026-10-03 (second pass): running condition + build-order recompute ─────
+// ── (second pass): running condition + build-order recompute ─────
 
 describe('buildSpecialSensorUsage -- the Running condition', () => {
     const cond = (sensor: string) => ({ id: `c-${sensor}`, sensor, operation: 'greater_than' as const, value1: '3', value2: '' });
@@ -395,7 +395,7 @@ describe('dependentsToRecompute -- build order', () => {
 
 
 // ═════════════════════════════════════════════════════════════════════════
-// Edit lock (2026-10-03): a special sensor used by a model is locked.
+// Edit lock: a special sensor used by a model is locked.
 // ═════════════════════════════════════════════════════════════════════════
 
 describe('buildSpecialSensorUsage -- editLock', () => {
@@ -558,7 +558,7 @@ describe('describeEditLock -- wording', () => {
     });
 });
 
-// 2026-10-08 (review S1): which special sensors have no column in the session,
+// Which special sensors have no column in the session,
 // split like the reopen replay splits them.
 describe('findUnrestoredSpecialSensors', () => {
     const f = (tag: string, formula: string): SpecialSensorRecipe => ({ kind: 'formula', tag, formula });

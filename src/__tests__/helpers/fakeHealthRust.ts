@@ -1,9 +1,9 @@
 /**
- * A fake Rust backend for the health-score integration tests (QA, 2026-10-04).
+ * A fake Rust backend for the health-score integration tests.
  *
  * It is a small, faithful TypeScript port of the REAL Rust contract — written
  * from `src-tauri/src/{health_score,health_preview,model_export,lib}.rs` and the
- * phase-2 handover entry, NOT from the app's own TypeScript — so a frontend that
+ * Rust doc comments, NOT from the app's own TypeScript — so a frontend that
  * assumes something Rust does not do shows up as a wrong number / wrong error:
  *
  *  - Session: `load_csv` (via `loadDataset`) starts a NEW session: generation
@@ -49,7 +49,7 @@
  *    / `export_model_files` and as an argument of `preview_relationship_model`):
  *    each item is `{ start, end }`. ONE deliberate difference from real Rust:
  *    Rust still ACCEPTS and ignores a legacy `label` / `event_time`, but the
- *    frontend must not send them any more (2026-10-10, "just score it"), so
+ *    frontend must not send them, so
  *    this fake REJECTS any other key — a caller that still sends one fails its
  *    test instead of passing unnoticed. (The fake does not compute
  *    `test_validation`; tests that need one use `helpers/validationFixture.ts`.)

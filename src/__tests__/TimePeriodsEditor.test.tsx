@@ -73,7 +73,7 @@ describe('TimePeriodsEditor — adding and committing', () => {
         expect(onChange.mock.calls[0][0][1]).toMatchObject({ start: '2026-03-01T00:00', end: '2026-03-15T12:00' });
     });
 
-    // 2026-10-10 (review of a4acd7a, item 2): a COMPLETE date goes to the parent on change —
+    // A COMPLETE date goes to the parent on change —
     // the timeline, the counts and the impact line follow it before Apply can be pressed.
     it('a complete typed date is handed up at once, in the order on screen; the row being typed in does not move until blur / Enter sorts', () => {
         const onChange = vi.fn();
@@ -159,7 +159,7 @@ describe('TimePeriodsEditor — adding and committing', () => {
         expect(onPending).toHaveBeenLastCalledWith(null);
     });
 
-    // Review of a4acd7a, item 3: a real datetime-local reports '' as soon as ONE segment is
+    // A real datetime-local reports '' as soon as ONE segment is
     // cleared, and '' is a VALID value on P1's start / the last period's end ("Start of data").
     it('clearing P1 start (or the last end) by typing never opens the bound: blur and Enter put the date back; only the × opens it', () => {
         const onChange = vi.fn();

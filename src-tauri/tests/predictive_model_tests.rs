@@ -1,15 +1,15 @@
-//! Phase 6 QA tests for the Hybrid Rust/Python predictive-model port.
+//! Tests for the Hybrid Rust/Python predictive-model code.
 //!
 //! These tests cover what is testable in pure Rust without spinning up a
 //! Tauri app instance or running the actual Nuitka-compiled sidecar:
 //!
 //!   1. `clustering::fit_single_cluster_ellipse` end-to-end via the public
 //!      module surface (parity check on a hand-prepared 2D Gaussian).
-//!   2. JSON-contract shape verification for the new sidecar response
+//!   2. JSON-contract shape verification for the sidecar response
 //!      (`preview_relationship` / `train_relationship`). The harness
-//!      simulates a sidecar response payload and checks that the new field
+//!      simulates a sidecar response payload and checks that the field
 //!      names + types match the wizard contract.
-//!   3. Round-trip JSON serialisation of the new public structs
+//!   3. Round-trip JSON serialisation of the public structs
 //!      `IndividualModelInfo`, `ClusteringPreview`, `ClusteringModelInfo`,
 //!      `RelationshipTrainResult` (catches accidental field renames).
 
@@ -46,7 +46,7 @@ fn ellipse_fit_errors_on_empty() {
 }
 
 // ────────────────────────────────────────────────────────────────────────
-// 2. Sidecar JSON contract — Phase 1/5 final shape (no legacy fields).
+// 2. Sidecar JSON contract.
 //    We simulate what the Python sidecar would emit and confirm Rust can
 //    parse it under the documented schema. This catches drift between the
 //    sidecar response and the Rust-side parser used by the train/preview
@@ -84,8 +84,8 @@ fn preview_relationship_response_shape_parses_cleanly() {
 
 #[test]
 fn preview_relationship_no_legacy_fields_required() {
-    // Confirm the new shape parses WITHOUT the legacy `output / r2_dict /
-    // rmse2_dict` fields (Phase 5 dropped them).
+    // Confirm the shape parses WITHOUT the legacy `output / r2_dict /
+    // rmse2_dict` fields.
     let payload = r#"{
         "request": "PreviewModel/relationship",
         "r2_per_step": [],

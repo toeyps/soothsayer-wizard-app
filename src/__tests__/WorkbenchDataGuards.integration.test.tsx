@@ -3,7 +3,7 @@ import { act, cleanup, fireEvent, waitFor, within } from '@testing-library/react
 
 /*
  * "No data to train on" guards, rules R1–R5 of 88f15cc (QA close-out,
- * 2026-10-11 — the commit that was NOT code-reviewed again). Real Dashboard +
+ * The commit that was NOT code-reviewed again). Real Dashboard +
  * real Build Model window + real `workspaceManager` on in-memory workspace
  * files, the fake Rust backend with its real `get_dataset_time_bounds`,
  * `count_period_rows` and train commands.
@@ -646,7 +646,7 @@ describe('R5 — the guards never touch what READS a model', () => {
         expect(bmwDot('i3').state).toBe('complete');
         expect(dashDot(1, 'tag3', 'individual')).toBe('complete');
         selectSensor('tag3');
-        // (2026-10-11) its data is not in this file: ONE board says exactly that — not "Couldn't load
+        // its data is not in this file: ONE board says exactly that — not "Couldn't load
         // the model · Load it again", which could never work
         await waitFor(() => expect(bmw().getByTestId('results-no-data')).toBeTruthy(), { timeout: 4000 });
         await settle(400);
@@ -739,14 +739,11 @@ describe('R5 — the guards never touch what READS a model', () => {
     });
 
     // -----------------------------------------------------------------------
-    // FIXED 2026-10-11 (were the two `it.fails` "KNOWN GAP" of the QA close-out):
-    // a board never offers a link to a control that is disabled (SPEC §6 /
-    // d828a88). The state itself is now described truthfully — ONE "No data for
-    // this model in the loaded file" board whose only link is the place where it
-    // is fixed — instead of "Couldn't load… / the Train sensor ▾ menu" (Complete)
-    // and "Training failed … Train sensor ↑" (Trained).
+    // A board never offers a link to a control that is disabled. The state is
+    // described truthfully — ONE "No data for this model in the loaded file"
+    // board whose only link is the place where it is fixed.
     //
-    // Reproduction (both): a workspace whose saved train periods all lie outside
+    // Scenario (both): a workspace whose saved train periods all lie outside
     // the loaded data (saved on a 2025 CSV, opened with a 2027 CSV) holding a
     // model that already has results. Open Build Model and select that model.
     // -----------------------------------------------------------------------

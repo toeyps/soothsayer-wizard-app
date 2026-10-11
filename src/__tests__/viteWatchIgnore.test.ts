@@ -3,7 +3,7 @@ import cfg from '../../vite.config.ts?raw';
 
 // A change to any file Vite watches but the app does not import makes Vite
 // full-reload the webview, which drops the open workspace back to the Import
-// page during `tauri dev` (verified 2026-10-04: `touch CLAUDE.md` alone did it).
+// page during `tauri dev`.
 // Docs/tests/scripts/Rust edits must stay unwatched. Read as text because the
 // config lives in the node tsconfig project, not the app's.
 const watchBlock = cfg.slice(cfg.indexOf('watch:'));

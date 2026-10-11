@@ -51,7 +51,7 @@ function makeProps(overrides: Partial<React.ComponentProps<typeof FailureGroupsP
     };
 }
 
-/** Sensor lines are collapsed by default (Feature 4-A) -- opens them all. */
+/** Sensor lines are collapsed by default -- opens them all. */
 const expandAll = () => {
     document.querySelectorAll('[aria-expanded="false"]').forEach(b => fireEvent.click(b));
 };
@@ -104,11 +104,8 @@ describe('FailureGroupsPanel', () => {
         });
     });
 
-    // 2026-10-02 (Visual refresh Phase 2): the header's old "sensors /
-    // models / groups" 3-stat line was replaced by a single "N of M models
-    // complete" summary chip, matching the approved prototype's `.selchip`
-    // (SPEC FINAL 2026-09-30's locked "search -> summary chip -> group
-    // rows" structure) — see FailureGroupsPanel.tsx's render for the chip.
+    // The header shows one summary chip — see FailureGroupsPanel.tsx's
+    // render for the chip.
     it('shows "N groups · M sensors assigned · x of y models complete" in the header chip (customer batch 2026-10, item 5)', () => {
         const fgModels = [makeModel({ id: 'm1', status: true }), makeModel({ id: 'm2', status: false })];
         const { container } = render(<FailureGroupsPanel {...makeProps({ fgModels })} />);
@@ -152,7 +149,7 @@ describe('FailureGroupsPanel', () => {
     });
 
     it('lists every model in the group by name, without any Complete/Incomplete status (removed per user request)', () => {
-        // 2026-08-31: the tag is now always appended (see the "shows the
+        // The tag is now always appended (see the "shows the
         // model name when one is set" test below), so the visible text is
         // "name (tag)" rather than the bare name.
         const fgModels = [makeModel({ id: 'm1', name: 'Bearing model', status: true }), makeModel({ id: 'm2', name: 'Temp model', status: false })];
@@ -160,7 +157,7 @@ describe('FailureGroupsPanel', () => {
         expect(modelLabels()).toEqual([]); // collapsed: the sensor shows once, not its models
         expandAll();
         expect(modelLabels()).toEqual(['Bearing model (TAG1)', 'Temp model (TAG1)']);
-        // 2026-10-02 reskin: the header's status-dot legend has its own
+        // The header's status-dot legend has its own
         // static "Complete" label now (unrelated to any per-model text),
         // so this only checks no ADDITIONAL "Complete" text shows up next
         // to a model row — the legend's one instance is expected.
@@ -174,9 +171,8 @@ describe('FailureGroupsPanel', () => {
             makeModel({ id: 'm2', kind: 'relationship', predictorSensors: ['TAG2'] }),
         ];
         render(<FailureGroupsPanel {...makeProps({ fgModels })} />);
-        // The collapsed sensor line already carries one chip per kind that
-        // exists. 2026-10-02 reskin: badge shell is `.kind-badge` (the
-        // Phase 0 class built for this tab) instead of `.model-kind-icon`.
+        // The collapsed sensor line carries one chip per kind that
+        // exists; the badge shell is `.kind-badge`.
         const individualBadge = screen.getByText('I', { selector: '.kind-badge' });
         const relationshipBadge = screen.getByText('R', { selector: '.kind-badge' });
         expect(screen.queryByText('C', { selector: '.kind-badge' })).toBeNull(); // no Clustering model -> no chip
@@ -184,14 +180,12 @@ describe('FailureGroupsPanel', () => {
         expect(relationshipBadge.className).toContain('kind-badge--relationship');
     });
 
-    // Phase C of the Build Model Workbench redesign (2026-09-30, SPEC FINAL):
-    // a small status dot at the corner of the I/R/C badge — no dot = never
+    // A small status dot at the corner of the I/R/C badge — no dot = never
     // trained, blue = Trained (fingerprint fresh, not Complete), green =
-    // Complete. Reuses the exact same `isModelTrainedFresh` +
-    // `getBuildBlockReason` combination BuildModelWindow.tsx's own dot/pill
-    // use, so the two views can never disagree.
+    // Complete. Same status rules as BuildModelWindow.tsx's own dot/pill,
+    // so the two views can never disagree.
     describe('status dot on the I/R/C badge', () => {
-        // 2026-10-02 reskin: badge shell is `.kind-badge` now (see "shows a
+        // Badge shell is `.kind-badge` now (see "shows a
         // colored kind badge" above) — the dot itself deliberately KEPT its
         // `.f4-kb-dot` class (see FailureGroupsPanel.tsx's renderSensorRow
         // doc comment: a cross-window integration test outside this pass's
@@ -234,7 +228,7 @@ describe('FailureGroupsPanel', () => {
             expect(dot!.className).toContain('f4-kb-dot--complete');
         });
 
-        // 🆕 2026-10-03 (health score phase 3a): the same single definition
+        // The same single definition
         // (`utils/modelStatus.ts`) the Build Model window reads — a Complete
         // model whose inputs no longer match its train record is NOT complete.
         describe('Complete but out of date (inputs changed since it was trained)', () => {
@@ -258,7 +252,7 @@ describe('FailureGroupsPanel', () => {
                 expect(screen.getByText('FG-1').closest('.fg-row')!.querySelector('.fg-row-count')!.textContent).toBe('0 / 1');
             });
 
-            // Customer batch 2026-10 (item 6): a special sensor the model was trained on changed
+            // A special sensor the model was trained on changed
             // its formula since -> out of date here too, once the panel is given the recipes.
             it('a special sensor the model was trained on changed its formula -> no green dot (the recipes are passed in)', () => {
                 const trainedOn = [{ kind: 'formula' as const, tag: 'TAG1', formula: '$RAW * 2' }];
@@ -282,7 +276,7 @@ describe('FailureGroupsPanel', () => {
             });
         });
 
-        // 2026-10-04 (QA fix): the Dashboard dot reads the verdict PERSISTED on the model
+        // The Dashboard dot reads the verdict PERSISTED on the model
         // (`healthVerdict`), the same value the Build Model list dot / tab pill read.
         describe('a trained model whose saved set points were judged (persisted healthVerdict)', () => {
             const rc: Partial<FailureGroupStateSlice> = { runningConditionNoneConfirmed: true, runningConditionTimePeriods: ALL_TIME_TRAIN };
@@ -408,7 +402,7 @@ describe('FailureGroupsPanel', () => {
             expect(screen.getByText('C', { selector: '.kind-badge' })).toBeTruthy();
         });
 
-        // User decision 2026-10-10: the kind is "Relation model" in the whole app; the
+        // The kind is "Relation model" in the whole app; the
         // letter on the badge stays R.
         it('the kind badges say Individual / Relation model / Clustering on hover — on the sensor line and on each model row', () => {
             const fgModels = [
@@ -474,10 +468,8 @@ describe('FailureGroupsPanel', () => {
             expect(screen.queryByTestId('fg-sensor-row-1:tag1')).toBeNull();
         });
 
-        // 2026-10-02 (Visual refresh Phase 2): unit badge next to the
-        // sensor row's name, matching the Sensor tab's own convention
-        // (`.unit-badge`, SPEC FINAL 2026-09-30: "ป้ายหน่วยอยู่ติดท้ายชื่อ
-        // sensor").
+        // Unit badge next to the sensor row's name, matching the Sensor
+        // tab's own convention (`.unit-badge`).
         it('shows the sensor\'s unit as a badge next to the row label', () => {
             render(<FailureGroupsPanel {...makeProps()} />);
             expect(screen.getByText('bar', { selector: '.unit-badge' })).toBeTruthy();
@@ -489,7 +481,7 @@ describe('FailureGroupsPanel', () => {
         });
     });
 
-    // 2026-10-02 (Visual refresh Phase 2, SPEC FINAL 2026-09-30): the
+    // The
     // locked structural rule for this tab opens with a search box, same as
     // the Sensor tab's own ("tab Failure Groups ใช้โครงเดียวกับ tab
     // Sensors ... ค้นหา -> ชิปสรุป -> แถวกลุ่ม..."). Display/filter only.
@@ -597,13 +589,9 @@ describe('FailureGroupsPanel', () => {
         expect(onOpenBuildModel).toHaveBeenCalledTimes(1);
     });
 
-    // 2026-08-31: this "Edit details" panel (Name + Description +
-    // Recommendation together) moved here from Build Model window
-    // entirely, per explicit user request ("ส่วนของ edit detail ต้องอยู่
-    // ที่ dashboard ด้วย") — not duplicated between the two. Name isn't
-    // independently editable from the rest, mirroring Build Model's own
-    // reasoning: "the name should only be editable together with the rest
-    // of the detail, not separate from it".
+    // The "Edit details" panel edits Name + Description +
+    // Recommendation together; Name isn't independently editable from
+    // the rest.
     describe('editing group details ("Edit details" panel)', () => {
         it('the group name is plain text, not independently clickable-to-rename', () => {
             render(<FailureGroupsPanel {...makeProps()} />);

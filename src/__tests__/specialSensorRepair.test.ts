@@ -5,7 +5,7 @@ import { isModelComplete, isModelStale } from '../utils/modelStatus';
 import { isModelTrainedFresh, computeTrainFingerprint } from '../utils/trainFingerprint';
 import { mk } from './helpers/failureModelFixture';
 
-// 2026-10-08 (review MUST-FIX 2): fixing a special sensor that could not be
+// Fixing a special sensor that could not be
 // restored gives it NEW values, but no train fingerprint covers special-sensor
 // recipes -- so the models trained on it are demoted explicitly.
 
@@ -93,7 +93,7 @@ describe('demoteModelsTrainedOnSensors', () => {
     });
 });
 
-// 2026-10-09: the "trains on" list is shared with specialSensorSignature.ts.
+// The "trains on" list is shared with specialSensorSignature.ts.
 describe('trainingSensorsOf', () => {
     it('lists target, predictors, X / Y / criteria and the effective running condition (blanks dropped, scatter X excluded)', () => {
         const m = mk({ id: 'r', targetSensor: 'T', predictorSensors: ['P1', ' '], xSensor: 'X', ySensor: '', criteriaSensor: 'C', scatterXSensor: 'SX' });

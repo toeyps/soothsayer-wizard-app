@@ -1,7 +1,6 @@
 // @vitest-environment node
 /**
- * Static IPC contract between the frontend and `src-tauri/src/lib.rs`
- * (qa-agent, 2026-10-04 final sweep after health score phase 4).
+ * Static IPC contract between the frontend and `src-tauri/src/lib.rs`.
  *
  * Mocked `invoke` in component tests can never notice that a command is not
  * registered, or that an argument key has the wrong casing (CLAUDE.md: "the
@@ -11,7 +10,7 @@
  *
  *  1. every command the frontend calls is in `generate_handler![...]`;
  *  2. every registered command is either called or on the explicit
- *     "intentionally unused" list (so a removal like phase 4's leaves no
+ *     "intentionally unused" list (so a removal leaves no
  *     silently dead command behind without a decision);
  *  3. at every call site that passes an object literal, every top-level key
  *     is a parameter of the Rust command in the casing Tauri will accept, and
@@ -44,9 +43,8 @@ const INTENTIONALLY_UNCALLED = new Set([
     'train_individual_model', 'train_clustering_model', 'train_relationship_model',
     // Diagnostic; no caller since the upload page stopped re-checking loaded paths.
     'get_loaded_paths',
-    // Writes bytes to a user-picked path outside the $APPDATA fs scope. Its last caller (the
-    // Pair Plot's CSV export of brushed rows, via the deleted `writeUserTextFile`) was removed in
-    // customer-batch phase 2 (2026-10-09). Kept for future user-picked exports — user decision pending.
+    // Writes bytes to a user-picked path outside the $APPDATA fs scope. It has no
+    // caller; kept for future user-picked exports — user decision pending.
     'write_user_file',
 ]);
 

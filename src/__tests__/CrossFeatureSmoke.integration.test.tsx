@@ -2,11 +2,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 
 /*
- * Cross-feature smoke through the REAL components (qa-agent, 2026-10-04 final
- * sweep after health score phase 4 removed the full-view PM page).
+ * Cross-feature smoke through the REAL components.
  *
- * ONE long user journey per model kind that chains the features built this
- * week, with nothing but Tauri and the Rust backend faked:
+ * ONE long user journey per model kind that chains the app's features,
+ * with nothing but Tauri and the Rust backend faked:
  *
  *   real App (DataUploadPage import: Create project -> browse -> Parse -> Continue)
  *   -> real Dashboard -> "Add special sensor" spawns the REAL Add Special Sensor
@@ -377,12 +376,12 @@ async function setRunningCondition() {
     await pickInModal('sensor', ['TAG2'], true);
     fireEvent.click(cond.getByRole('button', { name: 'Greater than' }));
     fireEvent.change(cond.getByLabelText('Value'), { target: { value: '10' } });
-    // Train/Test validation (2026-10-07): a train period is required to Train.
+    // Train/Test validation: a train period is required to Train.
     if (dlg.queryByTestId('periods-empty')) {
         await act(async () => { fireEvent.click(dlg.getByTestId('period-add')); });
     }
     // ...and a SCORING period before Mark complete: start -> end only ("just score
-    // it", 2026-10-10 - no label, no event time), typed through the real Scoring
+    // it" - no label, no event time), typed through the real Scoring
     // periods editor (dates commit on blur).
     if (dlg.queryByTestId('tests-empty')) {
         await act(async () => { fireEvent.click(dlg.getByTestId('test-add')); });
@@ -607,7 +606,7 @@ describe.each(['individual', 'relationship', 'clustering'] as Kind[])('cross-fea
 
         // 10) Back -> delete A: workspace file + model output folder gone; B untouched.
         await backToImport();
-        // 2026-10-04: the delete confirms in the row -- trash button, then [Delete].
+        // The delete confirms in the row -- trash button, then [Delete].
         await act(async () => { fireEvent.click(app().getByLabelText('Delete project Alpha')); });
         expect(env.files.has(`workspaces/${A}.json`), 'nothing deleted before the in-row confirm').toBe(true);
         await act(async () => { fireEvent.click(within(app().getByRole('alertdialog')).getByRole('button', { name: 'Delete' })); });
@@ -681,7 +680,7 @@ describe('Dashboard VIS behaviour around a special sensor no model uses', () => 
         await settle(200);
         dataTab('Highlights');
         await settle();
-        // Customer item 3: "Colour by…" is the shared single picker.
+        // "Colour by…" is the shared single picker.
         const hlTrigger = () => Array.from(document.querySelectorAll<HTMLElement>('button.pk-trigger[aria-label="Colour by"]')).pop()!;
         pickSingle(hlTrigger(), 'SP2');
         await settle();
@@ -820,7 +819,7 @@ describe('leaving the workspace while a Relationship Mark complete is still savi
         expect(rejections, 'unhandled rejections').toEqual([]);
     });
 
-    // Regression (fixed 2026-10-04): `runMarkComplete` used to bail out with
+    // Regression: `runMarkComplete` used to bail out with
     // 'The workspace changed.' AFTER `completeModel` had already written the model
     // files, so a window re-pointed at workspace B mid-export dropped A's Complete.
     // The save now always goes to the workspace id captured at click time; only the

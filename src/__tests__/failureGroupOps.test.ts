@@ -10,7 +10,7 @@ import {
 import { failureGroupMetaFields, recentProjectFgChip } from '../utils/failureGroupSummary';
 
 /**
- * The one place a Failure Group record is shaped (customer batch 2026-10,
+ * The one place a Failure Group record is shaped (
  * item 5): Import step 3 and the Dashboard's Failure Groups tab must produce
  * identical groups.
  */

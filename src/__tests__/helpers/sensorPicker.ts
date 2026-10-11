@@ -1,8 +1,8 @@
 import { fireEvent } from '@testing-library/react';
 
 /**
- * Drives the REAL shared sensor picker (`src/components/sensor/SensorPicker.tsx`, customer item 3,
- * 2026-10-09) from tests: single = trigger + anchored popover, multi = "Add…" + modal + OK.
+ * Drives the REAL shared sensor picker (`src/components/sensor/SensorPicker.tsx`)
+ * from tests: single = trigger + anchored popover, multi = "Add…" + modal + OK.
  * Rows render through `Portal` (`#wizard-portal-root`), so lookups go through `document`.
  */
 

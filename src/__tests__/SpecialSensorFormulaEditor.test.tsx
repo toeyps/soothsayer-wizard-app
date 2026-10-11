@@ -18,7 +18,7 @@ import type { FormulaPreviewResult } from '../types/formula';
 import { findPickerRow, pickMulti } from './helpers/sensorPicker';
 
 /**
- * The special-sensor Formula editor + Quick build (customer batch 2026-10, item 6) against the
+ * The special-sensor Formula editor + Quick build against the
  * REAL logic (tokenizer, front-end check, fixes, Quick build generators, usePreviewFormula) with
  * only `invoke` mocked: the painted mirror, autocomplete keys, fix buttons, wrap / unwrap,
  * Quick build per pick count, block vs formula, "Round the result", and the Locked / Repair states.

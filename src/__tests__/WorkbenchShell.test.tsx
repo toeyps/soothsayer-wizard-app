@@ -136,7 +136,7 @@ describe('StaleBanner', () => {
         expect(onGo).toHaveBeenCalledTimes(1);
     });
 
-    // Review of d828a88 (A2): "Train sensor ↑" was a dead link whenever Train sensor
+    // "Train sensor ↑" was a dead link whenever Train sensor
     // would not train THIS model — the sentence now says why (or when) instead.
     it('when the model itself cannot train, the sentence says why and offers no link', () => {
         const onGo = vi.fn();

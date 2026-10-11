@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 
 /*
- * Health score QA sweep (2026-10-04) — per-kind specifics and edge cases with
+ * Health score — per-kind specifics and edge cases with
  * the REAL Dashboard + Build Model window on the fake Rust health backend:
  *   - Individual master-data prefill: both / one / no alarm, special sensor,
  *     first-open snapshot of an old model (written once, never written back to
@@ -11,7 +11,7 @@ import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-libra
  *     -> Re-train, Compare predictors, signs / asymmetric points.
  *   - Clustering: stepper / quick buttons, criteria ranges changed elsewhere.
  *   - Mark complete is the ONLY way to Complete (no full-view page / Finish
- *     control exists any more - health score phase 4, 2026-10-04).
+ *     control exists).
  *   - Misc: long / unicode names, empty units, malformed previews, tiny numbers,
  *     keyboard, accessible names.
  */
@@ -362,7 +362,7 @@ describe('Clustering specifics', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Mark complete is the only road to Complete (the PM page + Finish were removed in phase 4)
+// Mark complete is the only road to Complete
 // ---------------------------------------------------------------------------
 
 describe('Mark complete (Health score page) is the only way a model becomes Complete', () => {
@@ -499,9 +499,9 @@ describe('misc edges', () => {
         expect(bmw().getByRole('button', { name: 'Larger' })).toBeTruthy();
     });
 
-    // FIXED 2026-10-04 (was `it.fails`): each visible label keeps its text and carries a screen-reader-only suffix
+    // Each visible label keeps its text and carries a screen-reader-only suffix
     // ("Lower residual at score 80" ...), so the four accessible names are distinct.
-    // A11Y BUG (LOW) — the four Relationship inputs are labelled "Lower", "Upper",
+    // Guards against: the four Relationship inputs are labelled "Lower", "Upper",
     // "Lower", "Upper" (SetPointsCard.tsx:229-236): the 80-point and the 0-point of the
     // same side share one accessible name, so a screen reader (or a label search) cannot
     // tell them apart.
@@ -516,13 +516,13 @@ describe('misc edges', () => {
         expect(new Set(names).size).toBe(4);
     });
 
-    // FIXED 2026-10-04 (was `it.fails`): `formatSetPointText` shows the full-precision value (round-trip safe).
-    // BUG (LOW–MEDIUM) — set points of small-magnitude sensors are DISPLAYED rounded to 6
+    // `formatSetPointText` shows the full-precision value (round-trip safe).
+    // Guards against: set points of small-magnitude sensors are DISPLAYED rounded to 6
     // decimals (`toText` in SetPointsCard.tsx:52: `String(+v.toFixed(6))`). A stored
     // 0.0000004 (or a residual point of -4e-7) re-opens as "0", and 0.00012345 as
     // "0.000123", while the model (and the exported file) keep the real value — the page
-    // shows a different number than the one that is used. Phase 1 explicitly added
-    // 4-significant-digit rounding for such sensors; the input should not lose them.
+    // shows a different number than the one that is used. The model files keep
+    // 4 significant digits for such sensors; the input must not lose them.
     it('BUG: a tiny stored set point (4e-7) is shown as itself, not as "0", when the Health page opens', async () => {
         const ds = plantDataset();
         ds.headers.push('VIB');

@@ -1,8 +1,7 @@
-//! QA sweep (2026-10-04) — Health score formulas, validation, bounded-data
+//! Health score formulas, validation, bounded-data
 //! helpers and the Relationship cache, attacked through the PUBLIC
 //! `health_score` surface with INDEPENDENT reference implementations written
-//! from the SPEC FINAL / concept entries in `docs/PROJECT_HANDOVER.md`, not
-//! from the worker's code:
+//! from the health-score concept, not from the production code:
 //!
 //!   * every kind is a piecewise-linear curve through fixed knots, evaluated
 //!     here with a generic sorted-knot interpolator (`interp`) instead of the
@@ -12,9 +11,8 @@
 //!   * thousands of generated cases (deterministic xorshift PRNG — no `rand`
 //!     dependency) plus hand-picked knots / ulp neighbours / NaN / inf.
 //!
-//! Known bugs are pinned as tests that assert the CORRECT behaviour and are
-//! marked ignored with a BUG reason (project convention) until fixed; the
-//! two non-finite-set-point bugs below were fixed 2026-10-04 and run normally.
+//! A known bug is pinned as a test that asserts the CORRECT behaviour and is
+//! marked ignored with a BUG reason (project convention) until fixed.
 
 use tauri_app_lib::clustering::fit_single_cluster_ellipse;
 use tauri_app_lib::health_score::*;
@@ -606,12 +604,12 @@ fn individual_validation_degenerate_bands_never_panic() {
     }
 }
 
-/// FIXED 2026-10-04 (was: `validate_individual` accepted a NaN L or H — every
-/// comparison with NaN is false, so no rule fired and scores beyond 3σ came
+/// Individual refuses a non-finite L / H with code `not_finite`, like
+/// Clustering (`outer_sd_not_a_number`): every comparison with NaN is false,
+/// so without the check no rule would fire and scores beyond 3σ would come
 /// back as `Some(NaN)`, breaking the "None = unscored, otherwise 0..=100"
-/// contract). Individual now refuses non-finite L / H with code `not_finite`,
-/// like Clustering (`outer_sd_not_a_number`). Not reachable from the frontend
-/// (JSON cannot carry NaN) but `train_individual_model` / export rely on it.
+/// contract. Not reachable from the frontend (JSON cannot carry NaN) but
+/// `train_individual_model` / export rely on it.
 #[test]
 fn bug_individual_validation_must_reject_nan_set_points() {
     let b = band100();
@@ -660,8 +658,7 @@ fn non_finite_set_points_get_the_not_finite_code_on_the_right_field() {
     }
 }
 
-/// FIXED 2026-10-04 (was: infinite 0-points passed Individual and Relationship
-/// validation; the curve then never reached 0). Every kind refuses them now.
+/// Every kind refuses an infinite 0-point (the curve would never reach 0).
 #[test]
 fn bug_infinite_zero_points_must_be_rejected_like_clustering_does() {
     let v = validate_individual(&band100(), &sp_ind(f64::NEG_INFINITY, 160.0));
@@ -692,7 +689,7 @@ fn relationship_validation_matrix() {
         (sp_rel(-3.0, 3.0, 5.0, 5.0), vec!["must_be_negative"]),
         (sp_rel(0.0, 3.0, -5.0, 5.0), vec!["must_be_negative"]),
         (sp_rel(-3.0, 0.0, -5.0, 5.0), vec!["must_be_positive"]),
-        // NaN now has its own stable code (was `must_be_negative`, 2026-10-04) —
+        // NaN has its own stable code —
         // the same one every kind uses for a non-finite set point.
         (sp_rel(f64::NAN, 3.0, -5.0, 5.0), vec!["not_finite"]),
     ];

@@ -206,7 +206,7 @@ describe('buildHealthPreviewRequest', () => {
         expect(healthInputsMissing(mk({ id: 'a', kind: 'clustering', xSensor: '', ySensor: 'Y' }))).toMatch(/X sensor/);
     });
 
-    // 2026-10-09: mirrors Rust's "criteria_sensor is required when n_clusters > 1".
+    // Mirrors Rust's "criteria_sensor is required when n_clusters > 1".
     it('Clustering with 2+ clusters and no criteria sensor is missing an input (no request); 1 cluster or a criteria sensor is fine', () => {
         const base = { id: 'c', kind: 'clustering' as const, xSensor: 'X', ySensor: 'Y' };
         expect(healthInputsMissing(mk({ ...base, numClusters: 2, criteriaSensor: '' }))).toBe(CLUSTERS_NEED_CRITERIA);
@@ -265,7 +265,7 @@ describe('buildModelFilesRequest', () => {
 });
 
 describe('test_periods — scoring periods are sent as start / end only ("just score it", 2026-10-10)', () => {
-    // The workspace list as a workspace saved BEFORE 2026-10-10 holds it: the removed
+    // The workspace list as a workspace saved BEFORE holds it: the removed
     // label / event time / highlight caption are still on the periods. None of it may be sent.
     const wsTests = [
         { id: 'w1', start: '2026-01-01T00:00', end: '2026-01-31T23:59', label: 'normal' as const },
@@ -328,7 +328,7 @@ describe('test_periods — scoring periods are sent as start / end only ("just s
 });
 
 // End to end against the fake Rust backend (a port of the real contract): a workspace
-// saved before 2026-10-10 — scoring periods still carrying label / eventTime — is scored.
+// saved before — scoring periods still carrying label / eventTime — is scored.
 describe('an old workspace is scored like a new one (request -> fake Rust)', () => {
     const data = plantDataset();
     const model = mk({ id: 'i', kind: 'individual', targetSensor: 'TAG1', category: 'condition' });
@@ -373,7 +373,7 @@ describe('an old workspace is scored like a new one (request -> fake Rust)', () 
 
     // Real Rust deserialises `test_periods` as `Vec<TestPeriodArg>`: an item that is not a
     // struct (null, a string, a number) makes serde refuse the whole call. The fake used to let
-    // a `null` item through as "no extra keys" (QA 2026-10-10).
+    // a `null` item through as "no extra keys".
     it('guard: the fake REJECTS a list item that is not a period object (null / string / number / list), on all three commands', async () => {
         const rust = createFakeHealthRust({ datasets: { plant: data } });
         const good = { start: '2024-01-01T00:00', end: '2024-01-31T23:59' };

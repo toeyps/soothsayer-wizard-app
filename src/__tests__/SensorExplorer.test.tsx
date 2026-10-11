@@ -53,7 +53,7 @@ describe('SensorExplorer', () => {
         expect(onToggleSensor).toHaveBeenCalledWith('TAG1');
     });
 
-    // Customer batch 2026-10 (item 6): a click PICKS the row for Quick build — a "Picked" pill
+    // A click PICKS the row for Quick build — a "Picked" pill
     // (was "Added" while rows were sources), a + icon otherwise; the group header counts picks.
     it('shows a "Picked" pill for a picked sensor and a + icon for one that is not; the group counts the picks', () => {
         render(<SensorExplorer {...makeProps({ selectedSensors: ['TAG1'] })} />);
@@ -89,7 +89,7 @@ describe('SensorExplorer', () => {
         expect(screen.queryByText('undefined')).toBeNull();
     });
 
-    // Customer item 3 (2026-10-09): Explorer rows are the stacked SensorLabel.
+    // Explorer rows are the stacked SensorLabel.
     it('rows are the stacked SensorLabel (description + unit chip, tag on line 2); a tag with no description stands alone', () => {
         render(<SensorExplorer {...makeProps()} />);
         fireEvent.click(screen.getByText('Pump'));

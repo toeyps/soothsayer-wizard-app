@@ -2,10 +2,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, cleanup, fireEvent, waitFor, within } from '@testing-library/react';
 
 /*
- * Workbench redesign, Phase A — "just score it" (SPEC
- * docs/design/handoff/workbench-redesign/README.md §2, QA 2026-10-10).
+ * "Just score it" (spec
+ * docs/design/handoff/workbench-redesign/README.md §2).
  *
- * ONE journey across every zone the phase touched, on a workspace saved BEFORE
+ * ONE journey across every zone it touches, on a workspace saved BEFORE
  * the change: its scoring periods ("test periods" then) still carry `label`,
  * `eventTime` and `fromHighlight`, on the workspace list AND on a Custom-mode
  * model's own list.
@@ -21,7 +21,7 @@ import { act, cleanup, fireEvent, waitFor, within } from '@testing-library/react
  * here as part of the journey (not re-tested in depth):
  *   - the card / modal showing plain S1, S2 for a legacy list, and Apply writing
  *     id / start / end only: BuildModelWindow.test.tsx ("a workspace saved
- *     before 2026-10-10"), against a MOCKED workspaceManager;
+ *     before"), against a MOCKED workspaceManager;
  *   - the neutral tiles' wording: ValidationCards.test.tsx;
  *   - the `testsChangedAt` rule: incompleteRule.test.ts / healthPersist.test.ts;
  *   - the wire shape: healthRequest.test.ts / completeModel.test.ts.
@@ -72,7 +72,7 @@ vi.setConfig({ testTimeout: 30_000 });
 // ── the old workspace ────────────────────────────────────────────────────
 // The plant dataset is 60 hourly rows from 2026-01-01 00:00 (to 2026-01-03 11:00).
 
-/** Workspace scoring periods exactly as a build before 2026-10-10 saved them. */
+/** Workspace scoring periods exactly as a build before saved them. */
 const OLD_WS_TESTS = [
     { id: 'old-1', start: '2026-01-01T12:00', end: '2026-01-01T23:00', label: 'normal' },
     { id: 'old-2', start: '2026-01-02T00:00', end: '2026-01-03T00:00', label: 'problem', eventTime: '2026-01-02T18:00', fromHighlight: 'Bearing failure' },
@@ -108,7 +108,7 @@ function oldWorkspace() {
  * The fake backend does not compute `test_validation` (see its header), so the
  * health preview is answered with one built FROM THE REQUEST'S `test_periods` —
  * one result per item sent, echoing its start / end, in the shape
- * `health_validation.rs` returns since 2026-10-10 (facts only). The request has
+ * `health_validation.rs` returns (facts only). The request has
  * already passed the fake's own "start / end only" check by then.
  */
 const FACTS = [

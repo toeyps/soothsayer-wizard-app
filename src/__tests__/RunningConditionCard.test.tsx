@@ -47,7 +47,7 @@ function detailsCard(over: Partial<React.ComponentProps<typeof RunningConditionC
 }
 
 // The card's two numbers are Rust's `count_period_rows` of the persisted condition — the
-// same source as the settings modal's caption (review of a4acd7a, item 5).
+// same source as the settings modal's caption.
 describe('cardRowsFromCounts', () => {
     const TRAIN: PeriodCounts = {
         total_rows: 52_340, interval_secs: 600, periods: [],
@@ -81,7 +81,7 @@ describe('RunningConditionCard — Not set', () => {
         // a card, never the one line; no Details to unfold
         expect(c.className).not.toContain('rcc-line');
         expect(screen.queryByTestId('rc-card-details')).toBeNull();
-        // Customer items 8 + 9: an amber "Not set" pill (both Train buttons are disabled until it is set).
+        // An amber "Not set" pill (both Train buttons are disabled until it is set).
         expect(screen.getByTestId('rc-card-pill').textContent).toBe('Not set');
         expect(screen.getByTestId('rc-card-pill').className).toContain('f4-pill--warn');
         expect(within(c).getByRole('heading', { name: 'Set the running condition' })).toBeTruthy();
@@ -239,7 +239,7 @@ describe('RunningConditionCard — Set: ONE line (workbench redesign §1)', () =
         expect(screen.getByTestId('rc-card-rows').textContent).toBe('11,066');
     });
 
-    // Review of 452d5c2 (accessibility): "Details" / "Hide details" are two elements in two
+    // "Details" / "Hide details" are two elements in two
     // trees, so the focus used to drop to <body> on every toggle.
     it('"Details" is ONE control to the keyboard: after each toggle the focus is on it, with aria-expanded flipped', () => {
         card({ bounds: B });
@@ -317,7 +317,7 @@ describe('RunningConditionCard — Set', () => {
             filters: [f('f1', 'POWER', 'greater_than', '4000'), f('f2', 'SPEED', 'between', '2900', '3100')],
         });
         const chips = screen.getAllByTestId('rc-card-cond-chip');
-        // Customer item 3: Inline label (description then tag) + the condition in mono, with
+        // Inline label (description then tag) + the condition in mono, with
         // thousands separators; the full name + condition in the title.
         expect(chips.map(x => x.textContent)).toEqual(['GENERATOR ACTIVE POWERPOWER > 4,000 kW', 'TURBINE SPEEDSPEED between 2,900–3,100 RPM']);
         expect(chips[0].querySelector('.sl-desc')!.textContent).toBe('GENERATOR ACTIVE POWER');
@@ -405,7 +405,7 @@ describe('RunningConditionCard — Set', () => {
         it('two lanes: train on top, scoring below (every scoring block the same, none hatched); caption "N d train · M d scoring"', () => {
             detailsCard({ bounds: B, periods: [p('a', '2026-01-01T00:00', '2026-03-31T23:59')], testPeriods: [
                 { id: 't1', start: '2026-01-01T00:00', end: '2026-06-30T23:59' },
-                // a period saved before 2026-10-10 still carries a label: drawn like the other one
+                // a period saved before still carries a label: drawn like the other one
                 { id: 't2', start: '2026-07-01T00:00', end: '2026-07-10T00:00', label: 'problem' },
             ] });
             expect(cov().querySelector('.f4-strip--tt')).not.toBeNull();

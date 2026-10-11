@@ -1,8 +1,8 @@
 // @vitest-environment node
 /**
- * Wording guard for everything a user can read (fe-ui-agent, 2026-10-10).
+ * Wording guard for everything a user can read.
  *
- * User decision 2026-10-10: the whole app says "Relation model" — never
+ * The whole app says "Relation model" — never
  * "Relationship" / "Relationship model" — and the words of the machinery
  * ("sidecar", "Python") and the confidential algorithm name never reach the
  * screen (CLAUDE.md: "the UI must say Relation model").

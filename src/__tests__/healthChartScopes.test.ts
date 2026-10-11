@@ -25,15 +25,15 @@ import { makeTestResult, makeValidation } from './helpers/validationFixture';
 import type { IndividualSeries, IndividualStats, RelationshipSeries, RelationshipStats } from '../types/health';
 
 /*
- * The train / scoring time scopes every Workbench time chart draws (SPEC
- * 2026-10-07 "Screens and UI", revised 2026-10-10 by workbench-redesign §2
+ * The train / scoring time scopes every Workbench time chart draws
+ * (workbench-redesign §2
  * "just score it": a scoring period is only start → end, so there is NO
- * Known-problem hatch and NO EVENT line any more). All through the pure option
+ * Known-problem hatch and NO EVENT line). All through the pure option
  * builders — `TimeSeriesSpec.scopes`, never a module setter.
  *
- * workbench-redesign §3 (2026-10-10): the scopes are NAMED in a thin strip above
+ * workbench-redesign §3: the scopes are NAMED in a thin strip above
  * the plot (train on the upper lane, scoring periods on the lower one, plain
- * coloured text) — there is no pill inside the plot any more — and the
+ * coloured text) — there is no pill inside the plot — and the
  * reference-line labels sit at the right edge, outside the plot.
  */
 
@@ -92,7 +92,7 @@ describe('scopesOf (HealthPreview.test_validation -> chart scopes)', () => {
     });
 
     it('a legacy label / event time that still arrives on a result is ignored: plain "S1", no event', () => {
-        // An answer shaped like the pre-2026-10-10 backend's (the type no longer has these keys).
+        // An answer that still carries the legacy keys (the type does not have them).
         const old = { ...makeTestResult(), label: 'problem', event_time: '2026-01-01T03:30', lead_days: 2, first_below_80: '2026-01-01 03:10:00' };
         const s = scopesOf(makeValidation({ tests: [old] }))!;
         expect(s.ranges[1]).toEqual({ kind: 'score', start: old.start, end: old.end, label: 'S1', short: 'S1' });
@@ -172,7 +172,7 @@ describe('buildTimeSeriesOption with scopes', () => {
         expect(Object.keys(CHART)).not.toContain('scopePillBg');
     });
 
-    // Review of 0125190, item 5: SPEC §3 writes the strip as `TRAIN P1 P2` — the word once.
+    // SPEC §3 writes the strip as `TRAIN P1 P2` — the word once.
     it('strip names per scope: one train period = "TRAIN"; several = "TRAIN P1" then "P2", "P3" (the word ONCE); scoring periods = "S1", "S2"', () => {
         const v = makeValidation({
             train_ranges: [{ start: '2026-01-01T00:00', end: '2026-01-01T00:30' }, { start: '2026-01-01T01:00', end: '2026-01-01T02:00' }],

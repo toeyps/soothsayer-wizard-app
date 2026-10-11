@@ -12,7 +12,7 @@ import { completeModel, getModelOutputDir, HEALTH_ERROR_TEXT, parseHealthError }
 
 // An open-ended train period (= no time filter on the wire) and one scoring
 // period, which Mark complete requires. The period is deliberately in the shape
-// a workspace saved BEFORE 2026-10-10 holds it (the removed `label` /
+// a workspace saved BEFORE holds it (the removed `label` /
 // `eventTime` / `fromHighlight` still on it): every request below must carry
 // start / end ONLY — an old workspace is validated and exported like a new one.
 const fg: FailureGroupStateSlice = {

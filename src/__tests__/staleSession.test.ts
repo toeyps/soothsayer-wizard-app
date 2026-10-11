@@ -35,8 +35,8 @@ describe('bindToGeneration', () => {
         return { calls, invoker };
     };
 
-    // 2026-10-08: `validate_formula` joined them (read-only, but it must not
-    // check a formula against another project's columns). 2026-10-09:
+    // `validate_formula` joined them (read-only, but it must not
+    // check a formula against another project's columns).:
     // `preview_formula` (the Formula editor's live check) too;
     // `convert_legacy_formula` is pure text and stays unguarded.
     it('stamps expectedGeneration (camelCase) on exactly the five guarded commands', async () => {

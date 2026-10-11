@@ -2,9 +2,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 
 /*
- * Customer batch 2026-10, PHASE 5 (special-sensor Formula editor + Quick build,
- * legacy `round($A, n)` conversion, `trainedFormulas` recipe staleness) --
- * qa-agent closing sweep, 2026-10-09.
+ * Special-sensor Formula editor + Quick build,
+ * legacy `round($A, n)` conversion, `trainedFormulas` recipe staleness.
  *
  * The workers' unit tests stop at their own seams: `legacyFormulaConversion.test`
  * runs the pure converter / `applyLegacyConversion` on hand-made states,
@@ -15,7 +14,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
  * DataUploadPage, Dashboard, Add Special Sensor window, Build Model window and
  * workspaceManager; only Tauri is faked (in-memory plugin-fs / plugin-store /
  * event bus from `helpers/healthEnv`, the dataset session + health backend from
- * `helpers/crossFeatureBackend`) plus the two Rust commands this phase added
+ * `helpers/crossFeatureBackend`) plus two Rust commands
  * (`convert_legacy_formula`, `preview_formula`), modelled below on lib.rs /
  * formula_diagnostics.rs.
  *
@@ -412,7 +411,7 @@ describe('(a) opening an old workspace with a legacy round($TAG1, 2) special sen
         await backToImport();
 
         // Turn the file into an OLD workspace: SPR = round($TAG1, 2) (the spreadsheet order, which the
-        // engine refuses since 2026-10-08), an Individual model on SPR and one on TAG1, both trained
+        // engine refuses), an Individual model on SPR and one on TAG1, both trained
         // (fresh fingerprints, no `trainedFormulas` snapshot -- written before it existed) and Complete.
         const ws = disk(A);
         const slice: any = { ...ws.failureGroupState, ...BASE_FG, groups: [{ no: 0, name: 'Not in Group' }, { no: 1, name: 'FG-A' }] };

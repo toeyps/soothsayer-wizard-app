@@ -132,7 +132,7 @@ describe('computeTrainFingerprint', () => {
         expect(computeTrainFingerprint(a, f)).not.toBe(computeTrainFingerprint(b, f));
     });
 
-    // ─── QA fixes, 2026-09-29 (see docs/PROJECT_HANDOVER.md's matching entry) ───
+    // ─── More fingerprint rules ───
 
     it('ignores clusterRanges entirely when there is no criteria sensor, for every kind (a range list is meaningless without one)', () => {
         const noCriteriaA = mk({ id: 'm1', kind: 'clustering', xSensor: 'X1', ySensor: 'Y1', criteriaSensor: '', clusterRanges: [] });

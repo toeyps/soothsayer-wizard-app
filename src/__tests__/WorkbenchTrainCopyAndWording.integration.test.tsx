@@ -2,9 +2,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 
 /*
- * Workbench redesign close-out (QA, 2026-10-11): phase D (Train copy + page
- * states, d828a88), the app-wide "Relation model" wording (3ff0a26) and the
- * engine messages Rust now sends (b2cbdff, 717a45c). Real Dashboard + real
+ * Train copy + page
+ * states, the app-wide "Relation model" wording and the
+ * engine messages Rust sends. Real Dashboard + real
  * Build Model window + real `workspaceManager` on one in-memory workspace
  * file, the fake Rust backend.
  *
@@ -25,7 +25,7 @@ import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-libra
  *   - a Complete Relation model whose fit Rust dropped (NOT_FITTED) + "Load it
  *     again": `WorkbenchFitLostCrossWindow.integration.test.tsx` (a) / (c);
  *   - every menu label / state line / board per kind in one window with mocked
- *     storage: `BuildModelWindow.test.tsx` (phase D blocks), `TrainQueueParts.test.tsx`;
+ *     storage: `BuildModelWindow.test.tsx`, `TrainQueueParts.test.tsx`;
  *   - the source scan for forbidden words: `UserFacingWording.test.ts`.
  */
 
@@ -129,7 +129,7 @@ async function otherWriter(patch: Record<string, unknown>) {
     await settle(50);
 }
 
-// What Rust sends when the Relation model engine fails (src-tauri/src/lib.rs, 2026-10-10).
+// What Rust sends when the Relation model engine fails.
 const ENGINE_FIT_FAILED = 'The Relation model engine could not fit this model. The details are in the error log.';
 const ENGINE_NO_OUTPUT = 'The Relation model engine stopped without returning a result. The details are in the error log.';
 const ENGINE_NO_START = 'The Relation model engine could not start: it is missing from this installation or is damaged. Please reinstall or update the app. Detail: program not found';

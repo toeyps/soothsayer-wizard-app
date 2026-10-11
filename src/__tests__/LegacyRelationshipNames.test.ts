@@ -1,7 +1,7 @@
 /**
- * A workspace saved BEFORE the 2026-10-10 wording change ("Relationship" ->
+ * A workspace saved BEFORE the wording change ("Relationship" ->
  * "Relation model" in every label) must open exactly as it was saved
- * (fe-ui-agent, 2026-10-10).
+ *.
  *
  * The old "Use '<name> (Relationship)'" suggestion wrote names such as
  * "TAG1 (Relationship)" into saved models. A model's name is the user's data:

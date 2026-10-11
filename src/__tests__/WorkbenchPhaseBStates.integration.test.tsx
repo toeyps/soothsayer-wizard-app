@@ -2,9 +2,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, cleanup, fireEvent, waitFor } from '@testing-library/react';
 
 /*
- * Workbench redesign, Phase B close-out (QA, 2026-10-10) — SPEC
+ * Spec:
  * docs/design/handoff/workbench-redesign/README.md §1, §3, §4, and the user's
- * "at most 5 clusters" decision (0ce26a9). Real Dashboard + real Build Model
+ * "at most 5 clusters" rule. Real Dashboard + real Build Model
  * window + real `workspaceManager` on one in-memory workspace file, the fake
  * Rust health backend:
  *

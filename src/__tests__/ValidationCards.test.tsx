@@ -18,8 +18,8 @@ afterEach(cleanup);
 
 /*
  * Scoring periods — "just score it" (SPEC
- * docs/design/handoff/workbench-redesign/README.md §2, user decision
- * 2026-10-09): the "Train and scoring periods" card of the Model fit page and
+ * docs/design/handoff/workbench-redesign/README.md §2):
+ * the "Train and scoring periods" card of the Model fit page and
  * the "Scoring results" tiles of the Health score page. A scoring period is
  * only start → end, so nothing here labels a period (Normal / Known problem),
  * shows an event or lead time, or judges a result (no green / amber verdict).

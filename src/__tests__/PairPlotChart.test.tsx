@@ -182,7 +182,7 @@ describe('PairPlotChart', () => {
                 { tag: 'B', description: '', unit: '', component: '' }, // known tag, blank description
             ];
 
-            // Customer item 3 (2026-10-09): at rest the tag alone (mono, dotted underline); the
+            // At rest the tag alone (mono, dotted underline); the
             // hover / focus card is the stacked label (description, unit chip, tag) + a component chip.
             it('marks the top (column) label hoverable; its card is the stacked label + unit + component chip', () => {
                 const { container } = render(<PairPlotChart data={data} sensors={['A', 'B']} headers={headers} sensorMetadata={sensorMetadata} />);
@@ -387,7 +387,7 @@ describe('PairPlotChart', () => {
             expect(legend.closest('.pair-regl-grid')).toBeNull(); // never inside (over) the matrix
             expect(within(legend).getByRole('list', { name: 'Clusters' })).toBeTruthy();
             expect(chipNames()).toEqual(['Cluster 1']);
-            // Customer item 4 / SPEC §2: the default is the matching ColourPicker PALETTE swatch (amber #f59e0b).
+            // The default is the matching ColourPicker PALETTE swatch (amber #f59e0b).
             expect(swatchBg('Cluster 1')).toBe('rgb(245, 158, 11)');
             expect(within(legend).getByRole('button', { name: 'Remove Cluster 1' })).toBeTruthy();
             expect(document.querySelector('input[type="color"]')).toBeNull();
@@ -838,7 +838,7 @@ describe('PairPlotChart', () => {
         fireEvent.click(screen.getByText('hover-A-B'));
         expect(container.querySelector('.scatter-regl-tooltip-title')).toBeNull();
         expect(screen.queryByText(/^Row /)).toBeNull();
-        // Customer item 3: inline label + value (the one en-US formatter, up to 3 decimals).
+        // Inline label + value (the one en-US formatter, up to 3 decimals).
         expect(screen.getByText('1.235')).toBeTruthy();
         expect(screen.getByText('9.877')).toBeTruthy();
     });
@@ -876,7 +876,7 @@ describe('PairPlotChart', () => {
 
 });
 
-// 2026-10-09 real-app feedback: "the ↺ button does nothing". Besides the
+// "the ↺ button does nothing". Besides the
 // cell-side redraw fix (PairPlotCell.test.tsx), the button now says when it
 // has nothing to undo instead of silently doing nothing.
 describe('PairPlotChart — toolbox ↺ (reset zoom and pan)', () => {

@@ -22,7 +22,7 @@ import type { TrainQueueItem, TrainRun } from '../types/trainQueue';
 import { sameModelFitProps, type ModelFitPageProps } from '../components/windows/workbench/ModelFitPage';
 
 /*
- * Train sensor / Train all with a queue (customer batch 2026-10, items 8 + 9) —
+ * Train sensor / Train all with a queue —
  * the presentational parts on their own. The wiring (the queue driving the
  * window's train, locks, the close dialog, STALE) is covered in
  * BuildModelWindow.test.tsx's "train queue" block.
@@ -83,7 +83,7 @@ describe('TrainAllBar', () => {
     });
 });
 
-// The ▾ menu's copy (user decision 2026-10-10; state lines SPEC workbench-redesign §6):
+// The ▾ menu's copy:
 // "Re-train" is only said about a model that has been trained before; the all-row says it
 // only when EVERY model of the sensor has. Every model row carries a small state line.
 describe('sensorTrainMenuCopy', () => {
@@ -200,7 +200,7 @@ describe('SensorTrainButton', () => {
         fireEvent.click(toggle);
         expect(toggle.getAttribute('aria-expanded')).toBe('true');
         expect((screen.getByTestId('train-menu-only-relationship') as HTMLButtonElement).disabled).toBe(true);
-        // Every row: its name, then its small state line (SPEC §6).
+        // Every row: its name, then its small state line.
         expect(screen.getByTestId('train-menu-only-relationship').querySelector('small')!.textContent).toBe('Add at least 1 predictor');
         expect(screen.getByTestId('train-menu-retrain-all').querySelector('small')!.textContent).toBe('Includes the 1 up to date');
         fireEvent.keyDown(window, { key: 'Escape' });
@@ -328,7 +328,7 @@ describe('RunStrip', () => {
     });
 });
 
-// CLAUDE.md naming rule (review of a4acd7a, item 7): the tabs and the Train menu said
+// CLAUDE.md naming rule: the tabs and the Train menu said
 // "Relation model" while the run strip, the Train-all rows and the close dialog still
 // said "Relationship".
 describe('a Relation model is named "Relation model" everywhere in the run UI', () => {

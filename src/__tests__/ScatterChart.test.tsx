@@ -45,7 +45,7 @@ class MockResizeObserver {
 import ScatterChart from '../components/charts/ScatterChart';
 import { findPickerRow, openPickerSurface, pickSingle, rowTag } from './helpers/sensorPicker';
 
-// Customer item 3 (2026-10-09): X / Y are the shared compact single pickers (not native selects).
+// X / Y are the shared compact single pickers (not native selects).
 const axisTriggers = () => [screen.getByRole('button', { name: 'X sensor' }), screen.getByRole('button', { name: 'Y sensor' })];
 
 function last<T>(arr: T[]): T {
@@ -129,7 +129,7 @@ describe('ScatterChart', () => {
         // preserve, so this must match the canvas's own ratio to fill the
         // whole chart area instead of showing black bars on the sides.
         expect(opts.aspectRatio).toBe(expectedWidth / expectedHeight);
-        // Visual refresh (2026-10-02): recoloured from a leftover navy
+        // Visual refresh: recoloured from a leftover navy
         // slate-900 to match the app's own `--card-bg` — see ScatterChart.tsx's
         // matching comment.
         expect(opts.backgroundColor).toEqual([0.0627, 0.0627, 0.0706, 1.0]);
@@ -468,7 +468,7 @@ describe('ScatterChart', () => {
         expect(tooltip).toBeTruthy();
         expect(tooltip.querySelector('.scatter-regl-tooltip-title')).toBeNull();
         expect(tooltip.textContent).not.toContain('Row');
-        // Customer item 3: inline label + value (the one en-US formatter) per row.
+        // Inline label + value (the one en-US formatter) per row.
         const vals = [...tooltip.querySelectorAll('.tt-row')].map(r => [rowTag(r), r.querySelector('.tt-val')?.textContent]);
         expect(vals).toEqual([['A', '1'], ['B', '10']]);
         expect(tooltip.textContent).toContain('t0');
@@ -492,7 +492,7 @@ describe('ScatterChart', () => {
         expect(container.querySelector('.scatter-regl-tooltip')).toBeNull();
     });
 
-    // Customer item 3 (review ruling b, 2026-10-09): Scatter's axis titles have room — they are the
+    // Scatter's axis titles have room — they are the
     // Inline label (description then tag) + the unit, with the full name in `title`.
     describe('axis titles: Inline label + unit', () => {
         const sensorMetadata = [
@@ -518,7 +518,7 @@ describe('ScatterChart', () => {
         });
     });
 
-    // 2026-10-09 (customer item 3): the native X / Y selects of 2026-09-22 are retired — the
+    // The native X / Y selects of are retired — the
     // compact single picker shows the Inline label and opens an anchored popover scoped to the
     // sensors on the chart; Y opens right-aligned so it stays inside the chart.
     describe('X/Y sensor pickers', () => {

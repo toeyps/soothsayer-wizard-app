@@ -19,7 +19,7 @@ import { mk } from './helpers/failureModelFixture';
 import { LEGACY_TESTS } from './helpers/trainTestFixture';
 import { computeTrainFingerprint } from '../utils/trainFingerprint';
 
-/** A scoring period: start → end only ("just score it", 2026-10-10). */
+/** A scoring period: start → end only. */
 const tp = (over: Partial<TestPeriod> = {}): TestPeriod => ({ id: 't', start: '2026-01-01T00:00', end: '2026-01-31T23:59', ...over });
 const per = (start: string, end: string, id = 'p'): TimePeriod => ({ id, start, end });
 const hl = (start: string, end: string, over: Partial<TimeHighlight> = {}): TimeHighlight => ({ id: 'h', start, end, label: 'Overhaul', color: '#f00', enabled: true, ...over });

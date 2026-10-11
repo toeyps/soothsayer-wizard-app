@@ -37,7 +37,7 @@ async function freshModule() {
 }
 
 /** Where every workspace save LANDED, in order: `[path, content]`. A save writes
- *  a temp sibling and renames it over the real file (2026-10-07, so another
+ *  a temp sibling and renames it over the real file (so another
  *  window never reads a half-written file); a direct write (the fallback when
  *  the rename is refused) counts as landing at its own path. */
 function savedFiles(): Array<[string, string]> {
@@ -332,7 +332,7 @@ describe('loadWorkspaceData', () => {
             }));
             const { loadWorkspaceData } = await freshModule();
             const result = await loadWorkspaceData('ws1');
-            // Only the (2026-10-03) empty set points are added; nothing else changes.
+            // Only the empty set points are added; nothing else changes.
             expect(result?.failureGroupState?.models).toEqual([
                 { ...models[0], healthSetPoints: { kind: 'individual', lower: null, upper: null } },
             ]);
@@ -566,7 +566,7 @@ describe('loadWorkspaceData', () => {
             expect(matched.predictorSensors).toEqual(['TAG9']);
             expect(matched.numClusters).toBe(5);
             expect(unmatched.relModelName).toBe('');
-            // 2026-10-09: a defaulted model starts with ONE cluster (2+ need a criteria sensor).
+            // A defaulted model starts with ONE cluster (2+ need a criteria sensor).
             expect(unmatched.numClusters).toBe(1);
             expect(unmatched.clusterRanges).toEqual([]);
             expect(unmatched.predictorSensors).toEqual([]);
@@ -680,7 +680,7 @@ describe('updateWorkspaceData', () => {
         expect(writeCount).toBe(2); // neither write was dropped
     });
 
-    // 🆕 2026-10-02 [data-loss fix — real root cause of the repeated
+    // [data-loss fix — real root cause of the repeated
     // "Running Condition Filter edit, then it's gone" reports]: a plain
     // `loadWorkspaceData()` call (not an `updateWorkspaceData` read-modify-
     // write) used to be a bare, unqueued read -- it could start and finish
@@ -775,7 +775,7 @@ describe('updateWorkspaceData', () => {
         const { withFailureGroupState } = await import('../utils/failureGroupState');
         const { patchModelHealthSetPoints } = await import('../utils/healthSetPoints');
 
-        // Window A: the (phase 3) set-points editor.
+        // Window A: the set-points editor.
         const a = updateWorkspaceData('ws1', prev => withFailureGroupState(prev, {
             models: patchModelHealthSetPoints(prev.failureGroupState!.models, 'm1', { kind: 'clustering', outerSd: 5 }),
         }));
@@ -871,7 +871,7 @@ describe('updateWorkspaceData applies the Incomplete-immediately rule to every w
         expect(next!.failureGroupState!.models[0].status).toBe(true);
     });
 
-    // "Just score it" (2026-10-10, SPEC workbench-redesign §2): a scoring period is only
+    // "Just score it": a scoring period is only
     // start -> end. A workspace saved BEFORE that still has `label` / `eventTime` /
     // `fromHighlight` on its periods: it must load, stay Complete, and never be sent back to
     // "Mark complete again" just because those keys stop counting or get dropped by an edit.
@@ -973,7 +973,7 @@ describe('deleteWorkspace', () => {
         expect(mockStoreSet).not.toHaveBeenCalled();
     });
 
-    // 2026-10-03 (health score): "Mark complete" writes model files into
+    // "Mark complete" writes model files into
     // `{app_data}/workspaces/{id}/output`; deleting the workspace must remove
     // that folder too, not only `{id}.json`.
     describe('model output folder cleanup', () => {
@@ -1236,7 +1236,7 @@ describe('recent-project Failure Group fields (customer batch 2026-10, item 5)',
     });
 });
 
-// Customer batch 2026-10, item 6: the legacy `round($A, 2)` auto-conversion
+// The legacy `round($A, 2)` auto-conversion
 // on workspace open is persisted in ONE write (new text + model demotion), and
 // writes nothing at all when there was nothing to convert.
 describe('saveLegacyFormulaConversion', () => {

@@ -62,12 +62,10 @@ describe('SensorSelection', () => {
         expect(screen.getByText('1')).toBeTruthy(); // Uncategorized: TAG3
     });
 
-    // Visual refresh (2026-10-02): the component header's counter reads
-    // "selected / total" (e.g. "2 / 8") once at least one sensor in that
-    // component is on the chart — not an "N on chart" label, per the
-    // locked SPEC FINAL decision. With nothing selected (the test above)
-    // it still reads as a bare total — matching the approved prototype's
-    // own counter, which hides the "0 / " prefix.
+    // The component header's counter reads "selected / total" (e.g.
+    // "2 / 8") once at least one sensor in that component is on the
+    // chart. With nothing selected (the test above) it reads as a bare
+    // total (no "0 / " prefix).
     it('once a sensor is selected, the component counter reads "selected / total"', () => {
         render(<SensorSelection {...makeProps({ selectedSensors: ['TAG1'] })} />);
         // "1" (selected) bolded, " / 2" (total) — getByText matches the
@@ -224,11 +222,8 @@ describe('SensorSelection', () => {
             expect(onToggleAlarmLine).toHaveBeenCalledWith('TAG1', 'H');
         });
 
-        // Visual refresh (2026-10-02): this popover now renders through
-        // `AnchoredPopover`/`Portal` instead of expanding inline within the
-        // scrolling sensor list, so it can't be clipped by the list's own
-        // overflow — see docs/PROJECT_HANDOVER.md's 2026-09-30 SPEC FINAL
-        // entry ("popover ทุกตัว ... ต้องเรนเดอร์ผ่าน portal").
+        // This popover renders through `AnchoredPopover`/`Portal`, so it
+        // can't be clipped by the scrolling sensor list's own overflow.
         it('renders outside the scrolling sensor list (via Portal), not nested inside it', () => {
             const { container } = render(<SensorSelection {...makeProps()} />);
             expandPump();
@@ -240,7 +235,7 @@ describe('SensorSelection', () => {
         });
     });
 
-    // 2026-08-31 redesign: a sensor's membership is now per (group, kind)
+    // A sensor's membership is now per (group, kind)
     // pair, not just per group — a sensor can carry more than one model
     // kind at once (e.g. both Individual and Relationship). Chips and the
     // group menu's toggle controls were updated accordingly.
@@ -284,7 +279,7 @@ describe('SensorSelection', () => {
         });
     });
 
-    // 2026-09-03 perf: membership moved from a per-row scan of every model
+    // Membership moved from a per-row scan of every model
     // into one memoized index keyed by sensor tag. These two cases pin the
     // identification rules the index has to encode, since getting either
     // wrong would silently show a sensor as belonging to nothing.
@@ -326,9 +321,8 @@ describe('SensorSelection', () => {
         });
     });
 
-    // Visual refresh (2026-10-02): the unit sits right after the sensor's
-    // name as a `.unit-badge` (inline, not right-aligned at the row's far
-    // edge) — a locked SPEC FINAL decision.
+    // The unit sits right after the sensor's name as a `.unit-badge`
+    // (inline, not right-aligned at the row's far edge).
     it('shows the sensor unit as a .unit-badge right after its name', () => {
         render(<SensorSelection {...makeProps()} />);
         expandPump();
@@ -336,7 +330,7 @@ describe('SensorSelection', () => {
         expect(badge.className).toContain('unit-badge');
     });
 
-    // Customer item 3 (2026-10-09): every row is the shared stacked SensorLabel.
+    // Every row is the shared stacked SensorLabel.
     it('rows are the stacked SensorLabel: description + unit chip, tag on line 2, full name in the title', () => {
         render(<SensorSelection {...makeProps()} />);
         expandPump();
@@ -364,7 +358,7 @@ describe('SensorSelection', () => {
         expect(screen.queryByText('Pump Temp')).toBeNull();
     });
 
-    // 2026-10-03: the old AnchoredPopover "Add to failure group" menu was
+    // The old AnchoredPopover "Add to failure group" menu was
     // replaced by a full-height sheet docked to the Sensors panel's left edge
     // (FailureGroupAssignSheet). Its own matrix / rename / delete / create
     // behaviour is covered in FailureGroupAssignSheet.test.tsx; these cover the

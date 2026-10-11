@@ -14,7 +14,7 @@ import { LEGACY_TESTS } from './helpers/trainTestFixture';
 const slice = (models: FailureModel[], over: Partial<FailureGroupStateSlice> = {}): FailureGroupStateSlice => ({
     groups: [], models,
     runningConditionFilters: [], runningConditionCombine: 'and',
-    // A train period is required to train since the Train/Test change (2026-10-07).
+    // A train period is required to train.
     runningConditionTimePeriods: [{ id: 'w-train', start: '2025-01-01T00:00', end: '2025-12-31T23:59' }], runningConditionNoneConfirmed: true,
     rcLegacyNotice: null,
     ...over,
@@ -356,7 +356,7 @@ describe('modelSetPointFlag - what the saved verdict says about a TRAINED model'
 
 describe('applyIncompleteRule - changing ONLY scoring periods (SPEC rules 8 & 9)', () => {
     const NOW = '2026-10-07T10:00:00.000Z';
-    // A scoring period is start → end only ("just score it", 2026-10-10).
+    // A scoring period is start → end only.
     const t1: TestPeriod = { id: 't1', start: '2026-01-01T00:00', end: '2026-01-31T23:59' };
     const t2: TestPeriod = { id: 't2', start: '2026-03-01T00:00', end: '2026-03-31T23:59' };
     const fgBase = slice([]);
@@ -564,7 +564,7 @@ describe('applyIncompleteRule - changing ONLY scoring periods (SPEC rules 8 & 9)
     });
 });
 
-// Customer batch 2026-10, item 6 (user decision): a special sensor's recipe is
+// A special sensor's recipe is
 // a training input too. Full coverage in specialSensorSignature.test.ts.
 describe('applyIncompleteRule - special-sensor recipes', () => {
     const withRecipes = (fg: FailureGroupStateSlice, formula: string): WorkspaceState =>

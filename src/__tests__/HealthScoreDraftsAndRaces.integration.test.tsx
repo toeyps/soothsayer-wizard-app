@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
 
 /*
- * Health score QA sweep (2026-10-04) — set-point drafts (persist / flush / never
+ * Health score — set-point drafts (persist / flush / never
  * lost / never overwritten), the preview hook's debounce and race guards seen
  * through the REAL page, every error path, and the "Mark complete" races and
  * failures (double click, close while saving, switch while saving, a slow
@@ -246,7 +246,7 @@ describe('compute_health_preview traffic', () => {
 // ---------------------------------------------------------------------------
 
 describe('errors from Rust', () => {
-    // Phase 4 review: a NOT_FITTED fit (e.g. evicted from Rust's fit cache during a long Train all) is
+    // A NOT_FITTED fit (e.g. evicted from Rust's fit cache during a long Train all) is
     // re-fitted automatically ONCE per model + fingerprint; losing the same fit again shows the board
     // (workbench-redesign §4: no Re-train button in the pane; the model counts as "needs training") with
     // "Load it again" — the same silent re-fit, asked for by the user — next to "Train sensor ↑".
@@ -324,9 +324,9 @@ describe('errors from Rust', () => {
         expect(diskModel('i1').healthSetPoints.lower).toBe(6);
     });
 
-    // FIXED 2026-10-04 (was `it.fails`): the page and its inputs stay on screen from the hook's `lastData` under an inline
+    // The page and its inputs stay on screen from the hook's `lastData` under an inline
     // error banner with a Retry button (a NOT_FITTED error keeps its own full-page "Re-train" message).
-    // UX BUG (LOW–MEDIUM) — any preview failure (even a one-off one) replaces the WHOLE
+    // Guards against: any preview failure (even a one-off one) replaces the WHOLE
     // Health score page with "Couldn't load the health score" (HealthScorePage.tsx:51-71:
     // `useHealthPreview` sets `data: null` on an error). The set-point inputs and Checks
     // disappear and there is no Retry: the request only re-runs when its key changes,
@@ -411,8 +411,8 @@ describe('Mark complete: races and failures', () => {
         expect(bmw().getByTestId('stale-banner')).toBeTruthy();
     });
 
-    // FIXED 2026-10-04 (was `it.fails`): the refusal is also shown as a dismissible banner on the Model fit page (`save-notice`).
-    // UX BUG (LOW) — when the save is refused because the model went out of date during
+    // The refusal is also shown as a dismissible banner on the Model fit page (`save-notice`).
+    // Guards against: when the save is refused because the model went out of date during
     // the export (the usual reason: another window changed the running condition), the
     // "files were written, but the model was not marked complete" message is stored in
     // `saveInfo` but only the Health score page renders it, and that page can no longer be
@@ -450,9 +450,9 @@ describe('Mark complete: races and failures', () => {
         expect(pill()).toBe('Complete');
     });
 
-    // FIXED 2026-10-04 (was `it.fails`): `persistModelComplete` keeps the newer on-disk set points, records the EXPORTED values in
-    // `healthExport` (so "Changed after saving" shows) and still marks the model Complete (decision, see the handover entry).
-    // BUG (MEDIUM) — set points typed + committed WHILE the export runs are silently
+    // `persistModelComplete` keeps the newer on-disk set points, records the EXPORTED values in
+    // `healthExport` (so "Changed after saving" shows) and still marks the model Complete.
+    // Guards against: set points typed + committed WHILE the export runs are silently
     // reverted. `runMarkComplete` -> `persistModelComplete(..., res.setPoints)` writes the
     // set points that were EXPORTED (captured at click time) over whatever is on disk by
     // then (BuildModelWindow.tsx:1450, healthPersist.ts `persistModelComplete`), and the
@@ -475,13 +475,13 @@ describe('Mark complete: races and failures', () => {
         expect(bmw().getByTestId('mark-complete-again')).toBeTruthy();
     });
 
-    // FIXED 2026-10-04 (was `it.fails`): the save is refused unless the on-disk model still has the fingerprint that was exported.
-    // BUG (MEDIUM) — a model whose settings change AND are re-trained while its export
+    // The save is refused unless the on-disk model still has the fingerprint that was exported.
+    // Guards against: a model whose settings change AND are re-trained while its export
     // runs ends up Complete with files from the OLD settings. `persistModelComplete`
     // only checks "trained and fresh" against the disk (healthPersist.ts), not that the
     // disk model still has the fingerprint that was exported, so a re-train during the
     // ~15 s Relationship export (the Model fit page and Re-train stay usable) passes.
-    // Phase 4 review (coordinator decision): a model whose Mark complete is writing its files cannot be
+    // A model whose Mark complete is writing its files cannot be
     // trained meanwhile ("being saved") — so the re-train half of this race is now refused up front.
     it('BUG: a Relationship model re-configured during its export does NOT end up Complete with the old files, and cannot be re-trained until the export ends', async () => {
         writeDisk(trainedWs());
@@ -515,8 +515,8 @@ describe('Mark complete: races and failures', () => {
         expect(bmwEl().textContent).toMatch(/not marked complete/);
     });
 
-    // FIXED 2026-10-04 (was `it.fails`): the WHOLE Mark-complete run is registered (`markRunsRef`) and both close paths wait for it.
-    // BUG (MEDIUM) — closing the window while "Mark complete" is exporting does not wait:
+    // The WHOLE Mark-complete run is registered (`markRunsRef`) and both close paths wait for it.
+    // Guards against: closing the window while "Mark complete" is exporting does not wait:
     // `onCloseRequested` only waits for `pendingSaveRef`, and `runMarkComplete` puts its
     // promise there only for the final persist step (BuildModelWindow.tsx:1449), not for
     // `completeModel`'s export. In the real app the webview is destroyed, so the files are
@@ -620,8 +620,8 @@ describe('multi-workspace isolation of the health state', () => {
         expect([...env.files.keys()].some(k => k.startsWith('workspaces/ws2/'))).toBe(false);
     });
 
-    // FIXED 2026-10-04 (was `it.fails`): the re-point handler commits pending drafts to the OLD workspace before it switches.
-    // BUG (LOW) — re-pointing the window at another workspace drops a set point that was
+    // The re-point handler commits pending drafts to the OLD workspace before it switches.
+    // Guards against: re-pointing the window at another workspace drops a set point that was
     // typed but not yet blurred: the `build-model-data` listener resets `spDrafts` to `{}`
     // (BuildModelWindow.tsx:708) without committing it to the OLD workspace first. (The
     // Dashboard normally closes this window when it leaves a workspace, which flushes;
@@ -638,8 +638,8 @@ describe('multi-workspace isolation of the health state', () => {
         expect(lowerOnDisk()).toBe(13);
     });
 
-    // FIXED 2026-10-04 (was `it.fails`): `executeTrain` compares `get_session_generation` with the window's generation before and after.
-    // BUG (LOW–MEDIUM) — the Build Model window's TRAIN is not bound to the dataset
+    // `executeTrain` compares `get_session_generation` with the window's generation before and after.
+    // Guards against: the Build Model window's TRAIN is not bound to the dataset
     // session: `compute_sensor_stats` / `preview_relationship_model` /
     // `compute_clustering_preview` carry no expected generation (none of them accept one),
     // so a window that outlived its dataset (another CSV loaded meanwhile) trains on the
@@ -679,10 +679,10 @@ describe('multi-workspace isolation of the health state', () => {
         expect(env.files.has(`workspaces/${WS}.json`)).toBe(false);
     });
 
-    // FIXED 2026-10-04 (was `it.fails`, decision 11): a duplicated workspace's models become Incomplete and drop `healthExport`.
-    // DESIGN GAP (LOW, needs a user decision) — `duplicateWorkspace` copies the models
+    // A duplicated workspace's models become Incomplete and drop `healthExport`.
+    // Guards against: `duplicateWorkspace` copies the models
     // with `status: true` and a `healthExport` whose `outputDir` is the ORIGINAL
-    // workspace's folder, but does not copy that folder (deliberate per the 3a entry).
+    // workspace's folder, but does not copy that folder (deliberately).
     // The copy therefore shows "Complete · files saved to <original's folder>"; once the
     // original is deleted those files are gone and the copy still claims them.
     it('DESIGN GAP: a duplicated workspace does not claim files that live in the ORIGINAL workspace\'s output folder', async () => {

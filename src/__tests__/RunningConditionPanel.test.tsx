@@ -90,7 +90,7 @@ describe('RunningConditionPanel — one column (workbench redesign §5)', () => 
         expect(panel.className).toBe('rcm-body');
         const kids = [...panel.children].map(c => c.getAttribute('data-testid'));
         expect(kids).toEqual(['rc-timeline', 'rc-periods', 'rc-scoring', 'rc-condition']);
-        // what the 2026-10-03 two-column layout had and this one must not
+        // what the two-column layout had and this one must not
         expect(screen.queryByTestId('rc-preview')).toBeNull();
         expect(panel.querySelector('aside')).toBeNull();
         expect(screen.queryByTestId('rule-sentence')).toBeNull();
@@ -129,7 +129,7 @@ describe('RunningConditionPanel — one column (workbench redesign §5)', () => 
         expect(screen.getByTestId('test-days-1').textContent).toBe('15 d · 13 d running');
     });
 
-    // Review of a4acd7a, item 6: the count of an unset condition is a count of every row.
+    // The count of an unset condition is a count of every row.
     it('not configured ("Only when running", no complete condition): the caption asks for the condition and no row claims running days', () => {
         setup({ configured: false, filters: [], counts: COUNTED });
         expect(screen.getByTestId('rc-caption').getAttribute('data-rows')).toBe('no-condition');
@@ -141,7 +141,7 @@ describe('RunningConditionPanel — one column (workbench redesign §5)', () => 
         expect(screen.queryByTestId('test-running-1')).toBeNull();
     });
 
-    // Review of a4acd7a, item 2: a half-typed date is reported per list, a complete one arrives at once.
+    // A half-typed date is reported per list, a complete one arrives at once.
     it('a date being typed: a complete one goes to the host on change; a half-typed one only names its row (per list)', () => {
         const typed = setup();
         fireEvent.change(screen.getByLabelText('P1 end'), { target: { value: '2026-01-20T00:00' } });

@@ -170,7 +170,7 @@ vi.mock('@tauri-apps/plugin-dialog', () => ({
     message: (text: string, opts: unknown) => mockMessage(text, opts),
 }));
 
-// 2026-09-01: getCurrentWindow().onCloseRequested — the close-flush effect
+// GetCurrentWindow().onCloseRequested — the close-flush effect
 // (docs/BACKLOG.md item 8). `mockCloseRequestedHandler` captures the
 // registered handler so tests can invoke it directly, simulating the user
 // requesting a close.
@@ -217,7 +217,7 @@ vi.mock('../errorReporter', () => ({
     reportError: (source: string, err: unknown) => mockReportError(source, err),
 }));
 
-// Review 2026-10-09: an ordinary autosave does no recipe / fingerprint work.
+// An ordinary autosave does no recipe / fingerprint work.
 // These wrap the real functions (behaviour unchanged) so a test can count calls.
 const ruleSpies = vi.hoisted(() => ({ applyRecipeRule: vi.fn(), recipeSignatures: vi.fn(), demote: vi.fn(), fingerprint: vi.fn() }));
 vi.mock('../utils/incompleteRule', async (importOriginal) => {
@@ -263,7 +263,7 @@ function makeInitialState(overrides: Partial<WorkspaceState> = {}): WorkspaceSta
 }
 
 /**
- * Customer batch 2026-10 (item 5): a project with no failure groups (most
+ * A project with no failure groups (most
  * fixtures here) now LANDS on the Failure Groups tab. The tests in this file
  * were written for the Sensor tab, so by default this opens it with one click,
  * the way the user would; `{ landing: true }` keeps the tab the Dashboard
@@ -508,7 +508,7 @@ describe('Dashboard', () => {
 
         // Let the debounce settle past the last change. Async because the
         // autosave now awaits a fresh loadWorkspaceData() read before
-        // writing (2026-09-18 cross-window staleness fix) -- a sync
+        // writing -- a sync
         // advanceTimersByTime wouldn't let that awaited read resolve.
         await act(async () => { await vi.advanceTimersByTimeAsync(150); });
         expect(mockSaveWorkspaceData).toHaveBeenCalledTimes(1); // exactly one write, not three
@@ -523,7 +523,7 @@ describe('Dashboard', () => {
             expect(mockCloseRequestedHandler).not.toBeNull();
 
             // Trigger an edit -- schedules a new debounced save, still pending.
-            // It has to be a REAL change: since 2026-09-03 the autosave skips a
+            // It has to be a REAL change: the autosave skips a
             // write whose payload is byte-identical to what is already on disk,
             // so re-selecting the already-selected TAG1 (as this test used to
             // do) would legitimately write nothing at all.
@@ -587,7 +587,7 @@ describe('Dashboard', () => {
             expect(lastChart.sensorColors).toEqual({ TAG1: 'c0', TAG2: 'c1' });
         });
 
-        // 2026-09-03: reported as "un-ticking a sensor in the right-hand panel
+        // Reported as "un-ticking a sensor in the right-hand panel
         // makes the chart flash a different colour before the line goes away".
         // Colours used to come from the sensor's index in `selectedSensors`, so
         // removing one re-packed every sensor after it onto a new slot, while
@@ -945,7 +945,7 @@ describe('Dashboard', () => {
             expect(lastCall.filter.timestamp_start).toBe('2026-01-01T00:00');
         });
 
-        // Customer item 3 (2026-10-09): a condition whose sensor left the chart is kept and still
+        // A condition whose sensor left the chart is kept and still
         // applies; its note offers "Show on chart", which puts the sensor back on the chart.
         it('"Show on chart" from the Filter tab adds the sensor back to the chart', () => {
             renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });
@@ -971,10 +971,9 @@ describe('Dashboard', () => {
             expect((last(filterPanelProps) as any).showSensorBlockedReason).toBeUndefined();
         });
 
-        // 2026-09-22, per explicit user question ("filter รวม... การแสดงผล
-        // ยังต้องแสดงผลทั้งหมดเหมือนเดิมนะ การทำงานตรงนี้ถูกต้องไหม"): the
+        // The
         // workspace-wide Running Condition Filter is meant ONLY for every
-        // model's PM preview/training query (compute_sensor_stats,
+        // model's preview/training query (compute_sensor_stats,
         // preview_relationship_model, compute_clustering_preview all take
         // it) — Dashboard keeps its own copy in local state purely so its
         // autosave can round-trip it without clobbering a fresher write from
@@ -1249,9 +1248,8 @@ describe('Dashboard', () => {
             });
 
             it('2026-08-31: toggling a sensor into the same group with a DIFFERENT kind creates a separate model, leaving the existing kind\'s model untouched', () => {
-                // The whole point of this redesign — a sensor can now
-                // carry more than one model KIND at once (not just more
-                // than one group), per explicit user request.
+                // A sensor can carry more than one model KIND at once (not
+                // just more than one group).
                 const initialState = makeInitialState({
                         failureGroupState: {
                             groups: [{ no: 1, name: 'Group A' }],
@@ -1334,8 +1332,8 @@ describe('Dashboard', () => {
         });
     });
 
-    // 2026-10-03: removing a model's LAST group still deletes the model at once
-    // (the 2026-09-02 no-confirm policy stands), but the Dashboard now says so —
+    // Removing a model's LAST group still deletes the model at once
+    //, but the Dashboard now says so —
     // a 7-second "<Kind> model of <sensor> deleted — Undo" toast — and Undo puts
     // the ORIGINAL model back whole through the same disk-derived write as every
     // other Failure Group edit (so it broadcasts and never reverts another
@@ -1896,7 +1894,7 @@ describe('Dashboard', () => {
             expect(lastChart.sensorAxisRange.TAG1).toBeUndefined();
         });
 
-        // Real-app bug (2026-10-11): at 230 px the row needed more width than the popover had, so
+        // Real-app bug: at 230 px the row needed more width than the popover had, so
         // "Y-axis:" wrapped onto two lines and Apply was clipped at the right edge (worse with Unpin).
         it('the axis popover is wide enough for its row on one line: 270 px, 310 px once Unpin is shown; nothing in the row wraps', () => {
             renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });
@@ -1930,7 +1928,7 @@ describe('Dashboard', () => {
         });
     });
 
-    // QA sweep, visual refresh Phase 1 (a4d3604): the colour and pin-Y-axis
+    // The colour and pin-Y-axis
     // editors moved from inline blocks under each Selected Sensor row to
     // `AnchoredPopover` (portaled into #wizard-portal-root, closes itself on
     // any scroll/resize). These pin the seam between Dashboard's own
@@ -2001,17 +1999,14 @@ describe('Dashboard', () => {
             expect(screen.queryByPlaceholderText('min')).toBeNull();
         });
 
-        // ── Regression tests for 6 bugs QA found in Phase 1 (fixed 2026-10-02) ──
+        // ── Popover regressions ──
 
         // Chromium fires a `scroll` event on an <input> whose content
-        // scrolls horizontally — verified for this sweep with a 64px
-        // number input (exactly the min/max fields' width): typing
-        // "1013250" queued a scroll event on the input. AnchoredPopover's
-        // window `capture: true` scroll listener used to treat it like a
-        // page scroll and close the popover mid-typing, dropping the draft
-        // (closeAxisEditor re-seeds from the saved range on reopen). Fixed
-        // by having the listener ignore a scroll whose target is inside the
-        // popover's own DOM subtree.
+        // scrolls horizontally (e.g. typing "1013250" into a 64px number
+        // input). AnchoredPopover's window `capture: true` scroll listener
+        // must not treat it like a page scroll and close the popover
+        // mid-typing (dropping the draft): it ignores a scroll whose target
+        // is inside the popover's own DOM subtree.
         it('typing a long number into the axis popover\'s 64px min field (the input scrolls) does not close it', () => {
             renderOne();
             fireEvent.click(screen.getByTitle(/Pin the Y-axis/));
@@ -2021,13 +2016,9 @@ describe('Dashboard', () => {
             expect(screen.queryByPlaceholderText('min')).not.toBeNull();
         });
 
-        // colorPickerFor used to never be cleared when its sensor was
-        // removed (only axisEditorFor was, in the selectedSensors prune
-        // effect), so re-adding the sensor later re-rendered the popover
-        // immediately, at a stale fixed screen position captured from a
-        // button that may no longer be there. Fixed by clearing
-        // colorPickerFor in that same prune effect, the same way
-        // axisEditorFor already was.
+        // The colour popover's open state does not survive its sensor being
+        // removed, so re-adding the sensor later does not re-render the
+        // popover at a stale fixed screen position.
         it('removing a sensor with its colour popover open, then re-adding it, does not resurrect the popover', () => {
             renderOne();
             fireEvent.click(screen.getByTitle('Line colour'));
@@ -2037,17 +2028,15 @@ describe('Dashboard', () => {
             expect(openPops()).toHaveLength(0);
         });
 
-        // Colour and axis popovers are independent state, so both could be
-        // open for the same row. Inline they stacked under the row; now both
-        // are `position: fixed` at the same `top` (adjacent buttons in one
-        // row), right-aligned 28px apart, so the 230px axis popover covered
-        // most of the 180px colour picker. Fixed by having each button's
-        // "open" branch close the other popover first.
+        // Colour and axis popovers are independent and both
+        // `position: fixed` at the same `top` (adjacent buttons in one
+        // row), so opening one closes the other — otherwise the axis popover
+        // would cover most of the colour picker.
         it('only one Selected Sensor popover is open at a time (two fixed popovers from one row overlap)', () => {
             renderOne();
             fireEvent.click(screen.getByTitle('Line colour'));
             // A real click starts with a mousedown — the shared ColourPicker closes on a
-            // mousedown outside itself (customer item 4, 2026-10-09).
+            // mousedown outside itself.
             const pin = screen.getByTitle(/Pin the Y-axis/);
             fireEvent.mouseDown(pin);
             fireEvent.click(pin);
@@ -2060,7 +2049,7 @@ describe('Dashboard', () => {
             expect(screen.queryByPlaceholderText('min')).toBeNull();
         });
 
-        // Customer items 3 + 4 (2026-10-09): the swatch IS the colour button (no pipette), the row
+        // The swatch IS the colour button (no pipette), the row
         // text is the neutral stacked SensorLabel, and the picker marks the other sensors' colours.
         it('the row is swatch + neutral SensorLabel; the picker marks colours other sensors on the chart use', () => {
             renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1', 'TAG2'], visibleSensors: ['TAG1', 'TAG2'], sensorColors: { TAG1: '#3b82f6', TAG2: '#10b981' } }) });
@@ -2079,20 +2068,12 @@ describe('Dashboard', () => {
             expect(last(chartProps.filter((p) => p.chartType === 'line')).sensorColors.TAG1).toBe('#8b5cf6');
         });
 
-        // ── Final visual-refresh QA sweep (2026-10-02, after Phase 4) ──
-        // The first QA round noted the Line -> Scatter -> Line variant of bug
-        // #6 ("กรณีเดียวกันเกิดเมื่อสลับ Line→Scatter→Line ด้วย แต่ไม่ได้เขียน
-        // เทสต์แยก"), but that fix only added colorPickerFor to the
-        // deselect-prune effect. Switching the chart type hides both popovers
-        // (their render is gated on `isLine`) WITHOUT clearing
-        // colorPickerFor/axisEditorFor or their captured anchors, so switching
-        // back to Line used to re-mount the popover — unasked — at the screen
-        // position captured before the switch (the swatch may have moved:
-        // the Scatter/Pair Plot info banner above the list changes the
-        // layout). FIXED (2026-10-02): a dedicated effect keyed on
-        // `chartType` clears both colorPickerFor and axisEditorFor as soon as
-        // chartType leaves 'line' (see Dashboard.tsx, right after chartType's
-        // own useState) — same remedy as the deselect prune.
+        // Chart-type switch: switching the chart type hides the popovers
+        // (their render is gated on `isLine`); their open state is cleared as
+        // soon as chartType leaves 'line', so switching back to Line never
+        // re-mounts a popover — unasked — at the screen position captured
+        // before the switch (the swatch may have moved: the Scatter/Pair Plot
+        // info banner above the list changes the layout).
         const lineBtn = () => screen.getAllByText('Line').find(el => el.classList.contains('chart-type-btn'))!;
         const rectAt = (top: number) => ({ top, bottom: top + 26, left: 300, right: 326, width: 26, height: 26, x: 300, y: top, toJSON() {} }) as DOMRect;
         const renderTwo = () => renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1', 'TAG2'], visibleSensors: ['TAG1', 'TAG2'] }) });
@@ -2178,7 +2159,7 @@ describe('Dashboard', () => {
 
         // ---- add-sensor-selection is a DELTA, merged into the CURRENT plot --
         //
-        // 2026-10-03: it used to replace the whole selection with the Add
+        // It used to replace the whole selection with the Add
         // Sensor window's own copy -- which plotted the sensors a new one was
         // built FROM and threw away anything changed in the Dashboard after
         // the window opened.
@@ -2485,7 +2466,7 @@ describe('Dashboard', () => {
             });
         });
 
-        // Customer batch 2026-10 (item 6), decision 2026-10-09: a recipe change that reaches
+        // A recipe change that reaches
         // disk THROUGH the autosave demotes the models trained on it in that SAME write
         // (`applyIncompleteRule` against what is on disk), the mirror adopts them and the
         // change is broadcast -- an unrelated autosave changes no model and sends nothing.
@@ -2652,7 +2633,7 @@ describe('Dashboard', () => {
             });
         });
 
-        // 2026-10-08 (review MUST-FIX 2): repairing a special sensor that could
+        // Repairing a special sensor that could
         // not be restored changes the values every model using it trained on,
         // and the train fingerprint does not cover special-sensor recipes.
         describe('"update-special-sensor" with repaired: true', () => {
@@ -2830,7 +2811,7 @@ describe('Dashboard', () => {
             expect(patched.failureGroupState.models[0].targetSensor).toBe('CALC1-renamed');
         });
 
-        // ---- 2026-10-03 (second pass): the Filter tab, the Running condition,
+        // ---- (second pass): the Filter tab, the Running condition,
         // the plotted-set answer and the rollback refresh ----------------------
         describe('special-sensor rename / delete reach the Filter tab and the workspace Running condition', () => {
             const cond = (id: string, sensor: string) => ({ id, sensor, operation: 'greater_than' as const, value1: '4', value2: '' });
@@ -3083,7 +3064,7 @@ describe('Dashboard', () => {
         });
     });
 
-    // 2026-09-21: with more than one project, every cross-window event is a
+    // With more than one project, every cross-window event is a
     // global broadcast and a window left over from the PREVIOUS project keeps
     // talking. Reported symptoms: a special sensor showing the component and
     // name of a sensor from another project; Failure Groups appearing,
@@ -3243,13 +3224,10 @@ describe('Dashboard', () => {
             expect(mockEmit).toHaveBeenCalledWith('sensors-data', expect.objectContaining({ workspaceId: 'ws-B' }));
         });
 
-        // Regression (QA sweep, 2026-10-02): the Add Special Sensor window's
-        // body grid is a fixed `320px minmax(0, 1fr)` with no floor of its
-        // own on the right (Tooling) track -- Split.js used to guarantee
-        // that pane never shrank below 150px (`minSize: [300, 150]`), but
-        // the new grid has nothing stopping the window from shrinking it to
-        // 0. A window-level minWidth (320px left track + the old 150px
-        // floor) replaces that guarantee.
+        // The Add Special Sensor window's body grid is a fixed
+        // `320px minmax(0, 1fr)` with no floor of its own on the right
+        // (Tooling) track, so a window-level minWidth (320px left track + a
+        // 150px floor) keeps that pane from shrinking to 0.
         it('"Add Special Sensor" opens with a minWidth that keeps the Tooling pane at least 150px (320px left track + 150px floor)', async () => {
             mockGetByLabel.mockResolvedValue(null);
             renderDashboard();
@@ -3274,7 +3252,7 @@ describe('Dashboard', () => {
         });
     });
 
-    // 2026-10-09 (real-app feedback): the Time range bar's single leading
+    // The Time range bar's single leading
     // Calendar icon was decorative -- clicking it did nothing -- and the end
     // date had no icon at all, so the only way to open the picker was to click
     // the date text. Now each side has its OWN calendar button right after its
@@ -3374,31 +3352,14 @@ describe('Dashboard', () => {
             expect(Math.abs(end.getTime() - Date.now())).toBeGreaterThan(24 * 60 * 60 * 1000);
         });
 
-        // Regression #1 (fixed first): the unit button (D/H/W/...) kept
-        // showing the STRONG "active" accent background forever after being
-        // clicked, even once the user hand-edited Start/End and the shown
-        // dates no longer matched that preset at all — falsely implying the
-        // preset was still in effect.
-        //
-        // Regression #2 (found by the user immediately after #1 shipped):
-        // the fix above tied ALL visual feedback to `relativeRangeApplied`,
-        // so once it went false (e.g. right after editing a date by hand),
-        // clicking Y/M/W/D/H produced ZERO visible change — every unit
-        // button looked identically plain no matter which one `relativeUnit`
-        // actually was, reading as "the buttons don't respond to clicks" (a
-        // user had to click ✓ Apply blind before a unit's selection ever
-        // became visible). Fixed by splitting the two claims apart:
-        // `isSelected` (relativeUnit === u — always live, shown as an accent
-        // OUTLINE) vs `isActive` (isSelected AND relativeRangeApplied — the
-        // stronger claim, shown as a SOLID accent fill). D is the default
+        // The unit buttons (Y/M/W/D/H) show two separate claims:
+        // `isSelected` (relativeUnit === u — always live, an accent OUTLINE)
+        // and `isActive` (isSelected AND relativeRangeApplied — a SOLID accent
+        // fill). So a click is always visible, and a preset never reads as
+        // "in effect" after the dates were edited by hand. D is the default
         // relativeUnit, so it renders as "selected" (outline) from the very
-        // first render even with nothing clicked yet.
-        // Visual refresh Phase 5 (2026-10-02): the unit buttons moved from
-        // inline `style` objects to the shared `.timebar-unit-btn` class +
-        // `is-selected`/`is-active` modifiers (`.timebar-unit-seg` is the
-        // approved prototype's `.seg.sm`-equivalent). Same 2-tier
-        // selected/applied distinction as before -- these tests now assert
-        // on className instead of inline style properties.
+        // first render even with nothing clicked yet. Asserted on the
+        // `.timebar-unit-btn` `is-selected`/`is-active` class modifiers.
         describe('unit-button selected/applied indicator (2-tier: outline = picked, solid = picked AND matches the shown dates)', () => {
             const dayBtn = () => screen.getByRole('button', { name: 'D' }) as HTMLButtonElement;
             const hourBtn = () => screen.getByRole('button', { name: 'H' }) as HTMLButtonElement;
@@ -3503,7 +3464,7 @@ describe('Dashboard', () => {
                 expect(screen.queryByText('Reset')).toBeNull();
             });
 
-            // Visual refresh Phase 5 (2026-10-02): the approved prototype's
+            // The approved prototype's
             // `.timebar` row explicitly orders Aggregation BEFORE "Reset
             // period" (unit segmented control → vsep → Aggregation select →
             // Reset period → spacer → Data range) -- the opposite of the
@@ -3646,7 +3607,7 @@ describe('Dashboard', () => {
 
 
 // ═════════════════════════════════════════════════════════════════════════
-// 2026-10-03 -- the dataset generation, "workspace-closing", robust closing of
+// The dataset generation, "workspace-closing", robust closing of
 // the child windows, and the autosave flush on leaving the Dashboard.
 // ═════════════════════════════════════════════════════════════════════════
 
@@ -3786,7 +3747,7 @@ describe('Dashboard: dataset generation and leaving the workspace (2026-10-03)',
 });
 
 // ═════════════════════════════════════════════════════════════════════════
-// Customer batch 2026-10, item 5: Failure groups come first — where the
+// Failure groups come first — where the
 // Dashboard lands, and the "Assign sensors" mode.
 // ═════════════════════════════════════════════════════════════════════════
 

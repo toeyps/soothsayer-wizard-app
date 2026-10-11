@@ -182,7 +182,6 @@ describe('RunningConditionTimeline — the one caption', () => {
         expect(screen.queryByTestId('rc-min-data')).toBeNull();
     });
 
-    // Review of a4acd7a, item 6.
     it('the running condition is not configured: "set the condition to count the rows" instead of a count of every row; no running time, no amber', () => {
         render(<RunningConditionTimeline periods={[P1, P2]} tests={[S1]} bounds={bounds} counts={st('ok', train(17_280, 60))} configured={false} />);
         expect(cap().getAttribute('data-rows')).toBe('no-condition');

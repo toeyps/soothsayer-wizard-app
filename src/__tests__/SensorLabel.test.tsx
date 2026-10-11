@@ -7,8 +7,6 @@ import {
 } from '../components/sensor/sensorInfo';
 import type { SensorMetadata } from '../types';
 
-// Customer item 3 (SPEC FINAL 2026-10-09 §1, DESIGN_SYSTEM §4 "Sensor label — ONE standard").
-
 afterEach(cleanup);
 
 const meta = (tag: string, description = '', unit = '', component = ''): SensorMetadata => ({ tag, description, unit, component });

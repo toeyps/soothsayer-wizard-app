@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 
 /*
- * Health score QA sweep (2026-10-04) — the FULL user journey per model kind,
+ * Health score — the FULL user journey per model kind,
  * with the REAL Dashboard and the REAL Build Model window (and its real Model
  * fit / Health score pages, SetPointsCard, ChecksCard) on ONE in-memory
  * workspace file, ONE event bus, and a fake Rust backend that implements the
@@ -298,7 +298,7 @@ describe('Clustering: the whole journey', () => {
         await pickInModal('criteria sensor', ['TAG4'], true);
         await settle(100);
         openSettings();
-        // A new Clustering model starts with ONE cluster (2026-10-09), so + takes it to 2.
+        // A new Clustering model starts with ONE cluster, so + takes it to 2.
         fireEvent.click(bmw().getByRole('button', { name: 'More clusters' }));
         await settle(100);
         await train();

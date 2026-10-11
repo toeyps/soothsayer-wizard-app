@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, act, cleanup, waitFor, within } from '@testing-library/react';
 
 /*
- * Build Model Workbench Phase C QA (2026-09-30) — the Dashboard's Failure
+ * The Dashboard's Failure
  * Groups tab status dot (`FailureGroupsPanel.tsx`'s `dotStatusFor`) against
  * the Build Model window's own pill / left-list dot, with BOTH real
  * components mounted on ONE workspace file.
@@ -11,18 +11,17 @@ import { render, screen, fireEvent, act, cleanup, waitFor, within } from '@testi
  * (real workspaceManager over an in-memory plugin-fs, one event bus with a
  * switch that DROPS Build Model's `failure-group-state-changed` broadcasts so
  * Dashboard's mirror goes stale) — except `FailureGroupsPanel` is the REAL
- * component here, since the dot it renders is what is under test. Phase C's
- * own FailureGroupsPanel.test.tsx only unit-tests the panel with a hand-built
- * fg / datasetHeaders; nothing exercised the Dashboard wiring
+ * component here, since the dot it renders is what is under test:
+ * FailureGroupsPanel.test.tsx only unit-tests the panel with a hand-built
+ * fg / datasetHeaders; this file exercises the Dashboard wiring
  * (`runningConditionFg={fgExtra}`, `datasetHeaders={allSensorTags}`) or the
- * cross-window round trip until this file.
+ * cross-window round trip.
  *
  * Scenarios:
  *  1. Train in Build Model -> Dashboard dot turns blue (broadcast delivered);
  *     Mark complete -> green; Mark incomplete -> blue; workspace RC edit ->
  *     dot gone (stale). With the broadcast LOST: the file is right, and the
- *     dot recovers on the next Dashboard FG write / reopen — one case
- *     (fgExtra not adopted) was a real bug, fixed 2026-09-30; one remaining
+ *     dot recovers on the next Dashboard FG write / reopen; one
  *     `it.fails` records a known, self-healing display lag (see its comment).
  *  2. Gate-blocked-but-fingerprint-fresh: every `getBuildBlockReason` reason
  *     that does NOT change the fingerprint must read as not-Trained in the
@@ -123,7 +122,7 @@ import BuildModelWindow from '../components/windows/BuildModelWindow';
 import { computeTrainFingerprint, isModelTrainedFresh } from '../utils/trainFingerprint';
 import { getBuildBlockReason } from '../utils/runningCondition';
 import type { WorkspaceState } from '../types';
-// Train/Test validation (2026-10-07): train period required to Train, test period to Mark complete.
+// Train/Test validation: train period required to Train, test period to Mark complete.
 import { ALL_TIME_TRAIN, ONE_TEST } from './helpers/trainTestFixture';
 
 const WS_FILE = 'workspaces/ws1.json';
@@ -214,15 +213,13 @@ function dashDot(groupNo: number, key = 'tag1', kind = 'individual'): string {
     expect(dash().getByTestId(`fg-sensor-row-${groupNo}:${key}`)).toBeTruthy();
     const el = screen.getByTestId('dashboard-window').querySelector(`[data-testid="fg-kind-badge-dot-${groupNo}-${key}-${kind}"]`);
     if (!el) return 'none';
-    // Final visual-refresh QA sweep (2026-10-02): a dot element that is
-    // present but no longer carries an `f4-kb-dot--<state>` class (e.g. a
-    // later reskin finishing Phase 2's hybrid migration to `.kind-badge-dot`)
-    // must fail loudly here — it used to be read back as 'none', which would
-    // make every "no dot" assertion in this file pass vacuously. Build
-    // Model's own dot (`bmwDot` below) already maps an unknown class to '?'.
+    // A dot element that is present but carries no `f4-kb-dot--<state>` class
+    // must fail loudly here — read back as 'none' it would make every "no dot"
+    // assertion in this file pass vacuously. Build Model's own dot (`bmwDot`
+    // below) maps an unknown class to '?'.
     const state = el.className.match(/f4-kb-dot--(\w+)/)?.[1];
     expect(state, `Dashboard dot present without an f4-kb-dot--<state> class: "${el.className}"`).toBeDefined();
-    // 2026-10-04: a TRAINED model whose saved set points are empty / rejected draws the yellow
+    // A TRAINED model whose saved set points are empty / rejected draws the yellow
     // `need` / red `bad` dot (the persisted verdict - `modelSetPointFlag`). This file is about the
     // CENTRAL status ("trained"), which every one of its models shares whatever its set points say;
     // the verdict variants are covered in HealthScoreIncompleteRule.integration.test.tsx.
@@ -231,7 +228,7 @@ function dashDot(groupNo: number, key = 'tag1', kind = 'individual'): string {
 
 /** Build Model left-list dot(s) for one model id — the same model can render
  *  under several FG buckets; they must all agree.
- *  Health score 3b-1 (2026-10-04): Build Model's list now has three colours
+ *  Health score 3b-1: Build Model's list now has three colours
  *  (green complete / yellow needs input or re-train / red needs fixing) straight
  *  from `modelDotState`, which stays on each dot as `data-state`. The Dashboard's
  *  Failure Groups panel still draws the older none/trained/complete vocabulary
@@ -270,7 +267,7 @@ async function dashSelectTag1Saved() {
 /** Apply in the Running condition modal, waited on until the value is on disk. */
 async function applyRcValueSaved(modal: ReturnType<typeof within>, value: string) {
     await act(async () => { fireEvent.change(modal.getByPlaceholderText('value'), { target: { value } }); });
-    await act(async () => { fireEvent.click(modal.getByTestId('rc-apply')); }); // 2026-10-03: edits land only on Apply
+    await act(async () => { fireEvent.click(modal.getByTestId('rc-apply')); }); // Edits land only on Apply
     await waitFor(() => expect(readDisk().failureGroupState.runningConditionFilters[0].value1).toBe(value), { timeout: 3000 });
 }
 
@@ -392,11 +389,11 @@ describe('Train in Build Model with the broadcast LOST (stale Dashboard mirror)'
         expect(pill()).toBe('Trained');
     });
 
-    // KNOWN GAP (LOW) — recorded per this repo's `it.fails` convention.
+    // Guards against: recorded per this repo's `it.fails` convention.
     // Dashboard's Failure Groups dot reads ONLY its in-memory mirror
     // (`fgModels` / `fgExtra`). With the broadcast lost, nothing re-reads
     // disk into that mirror: the debounced autosave re-reads
-    // `failureGroupState` from disk for the WRITE (CLAUDE.md 2026-09-18 fix)
+    // `failureGroupState` from disk for the WRITE
     // but never adopts it into `fgModels`/`fgExtra`. So after a Train in
     // Build Model the Dashboard dot stays "no dot" (while Build Model says
     // Trained) until some Dashboard FG write or a reopen — even across an
@@ -416,14 +413,12 @@ describe('Train in Build Model with the broadcast LOST (stale Dashboard mirror)'
         expect(dashDot(1)).toBe('trained'); // actual: 'none'
     });
 
-    // FIXED 2026-09-30 (found in Feature 4's Workbench QA sweep).
-    // `Dashboard.persistFailureGroupStateFrom`'s `.then` used to adopt the
-    // on-disk `groups`/`models` into the mirror but NOT the rest of the slice
-    // (`fgExtra` — the workspace running condition). With the broadcast lost,
-    // a Dashboard FG write therefore paired FRESH models with a STALE running
-    // condition, and the dot evaluated staleness against the wrong condition.
-    // Fixed by adopting the whole slice in that `.then`, same as the
-    // broadcast listener right above it already does.
+    // `Dashboard.persistFailureGroupStateFrom`'s `.then` adopts the WHOLE
+    // on-disk slice into the mirror (`fgExtra` — the workspace running
+    // condition — included), same as the broadcast listener. With the
+    // broadcast lost, a Dashboard FG write must not pair FRESH models with a
+    // STALE running condition (the dot would judge staleness against the
+    // wrong condition).
     it('after a lost RC-edit broadcast, a Dashboard FG write must not show a stale model as Trained (fgExtra now adopted from disk)', async () => {
         writeDisk(start());
         await mountBoth();
@@ -536,7 +531,7 @@ describe('gate-blocked but fingerprint-fresh: Build Model pill, Build Model dot 
     });
 });
 
-// 🆕 2026-10-03 (health score phase 3a) — "Incomplete immediately": a Complete
+// "Incomplete immediately": a Complete
 // model whose training inputs change goes back to Incomplete in the SAME write,
 // and the Dashboard's Failure Groups dot follows via the normal broadcast.
 describe('Complete -> Incomplete immediately (health score SPEC FINAL), seen from both windows', () => {

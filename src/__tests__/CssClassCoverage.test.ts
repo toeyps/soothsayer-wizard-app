@@ -1,11 +1,10 @@
 // @vitest-environment node
 /**
- * CSS class coverage guard (qa-agent, 2026-10-04 final sweep).
+ * CSS class coverage guard.
  *
  * jsdom never loads `src/App.css`, so no component test can notice that a
- * class the UI still renders has lost its CSS rule. Health score phase 4
- * (commit 4622c84) deleted ~125 rules from App.css as "unreferenced"; this
- * file is the static guard that keeps a future deletion (or a typo in a new
+ * class the UI still renders has lost its CSS rule. This
+ * file is the static guard that keeps a deletion of "unreferenced" rules (or a typo in a new
  * className) from silently un-styling something.
  *
  * What it checks, all statically over the non-test source in `src/`:
@@ -16,7 +15,7 @@
  *  2. Every dynamically composed class (`prefix-${x}`) has a CSS family
  *     (some defined class starts with that prefix), and for the finite enums
  *     the code composes from, every member is styled.
- *  3. The classes deleted in 4622c84 are referenced nowhere in source.
+ *  3. The classes on the deleted list are referenced nowhere in source.
  *  4. Every `animation` in App.css names a defined @keyframes, and every
  *     `var(--x)` without a fallback names a defined custom property.
  *
@@ -48,7 +47,7 @@ const STYLED_PREFIXES = [
     'special-sensor', 'highlights', 'timebar', 'line-chart',
     'tpe', 'vt',                       // Train/Test validation (TestPeriodsEditor, ValidationCards)
     'hsx',                             // Health set points table (SetPointsCard, workbench-redesign §4)
-    'sl', 'pk', 'cp', 'tt',            // shared SensorLabel / SensorPicker / ColourPicker / tooltip rows (customer items 3+4)
+    'sl', 'pk', 'cp', 'tt',            // shared SensorLabel / SensorPicker / ColourPicker / tooltip rows
 ];
 
 /**
@@ -79,7 +78,7 @@ const DYNAMIC_ENUMS: Record<string, readonly string[]> = {
     'gutter-': ['horizontal', 'vertical'],                                       // split.js
 };
 
-/** Deleted in 4622c84 (health score phase 4) — must not come back as references. */
+/** Deleted in 4622c84 — must not come back as references. */
 const DELETED_IN_PHASE4 = [
     'predictive-container', 'predictive-body', 'config-input', 'plot-placeholder-sub',
     'pm-commandbar', 'pm-breadcrumb', 'pm-crumb-sep', 'pm-crumb-muted', 'pm-crumb-current', 'pm-flex-spacer',
