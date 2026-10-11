@@ -287,10 +287,14 @@ export function RunningConditionCard({ state, periods, filters, combine, noneCon
                     </span>
                     {outsideLine}
                 </div>
-                <button type="button" ref={detailsBtnRef} className="rcx-btn rcx-btn--sm rcc-line-more" data-testid="rc-card-details" aria-expanded={false} onClick={() => toggleDetails(true)}>
-                    Details <ChevronDown size={12} aria-hidden="true" />
-                </button>
-                <button type="button" className="rcx-btn rcx-btn--sm" data-testid="rc-card-open" onClick={onOpen}>Edit</button>
+                {/* The SAME group, same buttons, in the same place in both views: Details / Hide
+                    details, then Edit — so the toggle stays under the pointer. */}
+                <span className="rcc-acts">
+                    <button type="button" ref={detailsBtnRef} className="rcx-btn rcx-btn--sm rcc-line-more" data-testid="rc-card-details" aria-expanded={false} onClick={() => toggleDetails(true)}>
+                        Details <ChevronDown size={12} aria-hidden="true" />
+                    </button>
+                    <button type="button" className="rcx-btn rcx-btn--sm" data-testid="rc-card-open" onClick={onOpen}>Edit</button>
+                </span>
             </section>
         );
     }
@@ -307,10 +311,6 @@ export function RunningConditionCard({ state, periods, filters, combine, noneCon
                         ? <span className="f4-pill f4-pill--bad" data-testid="rc-card-pill" title={noRowsTip}>Nothing to train on</span>
                         : <span className="f4-pill f4-pill--ok" data-testid="rc-card-pill">Set</span>}
                     <span className="rcc-applies">applies to every model</span>
-                    <span className="wb2-sp" />
-                    <button type="button" ref={detailsBtnRef} className="rcc-less" data-testid="rc-card-details" aria-expanded={true} onClick={() => toggleDetails(false)}>
-                        Hide details <ChevronUp size={12} aria-hidden="true" />
-                    </button>
                 </div>
                 <div className="rcc-grid">
                     <div className="rcc-rows" data-testid="rc-card-time"><span className="rcc-lbl">Train</span><PeriodChips periods={periods} bounds={bounds} /></div>
@@ -368,7 +368,12 @@ export function RunningConditionCard({ state, periods, filters, combine, noneCon
                     dataset bounds are unknown. */}
                 <PeriodCoverageBar periods={periods} bounds={bounds} mini tests={testPeriods} />
             </div>
-            <button type="button" className="rcx-btn rcx-btn--lg" data-testid="rc-card-open" onClick={onOpen}>Edit</button>
+            <span className="rcc-acts">
+                <button type="button" ref={detailsBtnRef} className="rcx-btn rcx-btn--sm rcc-line-more" data-testid="rc-card-details" aria-expanded={true} onClick={() => toggleDetails(false)}>
+                    Hide details <ChevronUp size={12} aria-hidden="true" />
+                </button>
+                <button type="button" className="rcx-btn rcx-btn--sm" data-testid="rc-card-open" onClick={onOpen}>Edit</button>
+            </span>
         </section>
     );
 }

@@ -6291,9 +6291,12 @@ body {
 .rcc-line-rows { font-size: 11.5px; }
 .rcc-line-rows b { font-family: var(--mono); }
 .rcc-line-more { color: var(--text-secondary); }
-.rcc-less { font: inherit; font-size: 11px; color: var(--text-secondary); background: none; border: 0; padding: 0; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; text-transform: none; letter-spacing: 0; font-weight: 500; }
-.rcc-less:hover { color: var(--text-primary); }
-.rcc-less:focus-visible { outline: 2px solid var(--accent-color); outline-offset: 2px; border-radius: 3px; }
+/* Details / Hide details + Edit: one group, the same two small buttons in both views. In the
+   full card the group sits at the top-right and is nudged by the difference between the two
+   views' margin + padding (8 px down, 4 px across), so the buttons are in the SAME place as
+   on the line and the toggle stays under the pointer. */
+.rcc-acts { display: inline-flex; align-items: center; gap: 12px; flex-shrink: 0; }
+.rcc-card:not(.rcc-line) > .rcc-acts { align-self: flex-start; margin: -8px -4px 0 0; }
 .rcc-card--req .rcc-num, .rcc-card--bad .rcc-num { font-weight: 700; }
 @media (max-width: 1100px) { .rcc-line-dt { display: none; } }
 

@@ -228,10 +228,18 @@ describe('RunningConditionCard — Set: ONE line (workbench redesign §1)', () =
         const hide = screen.getByTestId('rc-card-details');
         expect(hide.textContent).toBe('Hide details ');
         expect(hide.getAttribute('aria-expanded')).toBe('true');
+        // Same button, same group, same order as on the line: [Details / Hide details][Edit].
+        const group = (el: HTMLElement) => [...el.closest('.rcc-acts')!.children].map(b => `${b.getAttribute('data-testid')}:${b.className}`);
+        const openGroup = group(hide);
+        expect(openGroup).toEqual(['rc-card-details:rcx-btn rcx-btn--sm rcc-line-more', 'rc-card-open:rcx-btn rcx-btn--sm']);
+        expect(c.lastElementChild).toBe(hide.closest('.rcc-acts')); // the group ends the card, as it ends the line
+        expect(c.querySelector('.rcc-kicker')!.contains(hide)).toBe(false); // not a text link in the heading any more
         fireEvent.click(screen.getByTestId('rc-card-open'));
         expect(onOpen).toHaveBeenCalledTimes(1);
         fireEvent.click(hide);
         expect(screen.getByTestId('rc-card').className).toContain('rcc-line');
+        expect(group(screen.getByTestId('rc-card-details'))).toEqual(openGroup);
+        expect(screen.getByTestId('rc-card').lastElementChild).toBe(screen.getByTestId('rc-card-details').closest('.rcc-acts'));
         expect(screen.queryByTestId('rc-card-period-chip')).toBeNull();
         // the numbers on the line are the same ones the Details view showed (same props, nothing re-asked)
         expect(screen.getByTestId('rc-card-rows').textContent).toBe('11,066');
@@ -281,7 +289,7 @@ describe('RunningConditionCard — Set', () => {
         expect(c.getAttribute('data-state')).toBe('set');
         expect(c.className).toContain('rcc-card--ok');
         expect(c.querySelector('.rcc-num--ok svg')).not.toBeNull();
-        expect(c.querySelector('.rcc-kicker')!.textContent).toBe('Running condition Setapplies to every modelHide details ');
+        expect(c.querySelector('.rcc-kicker')!.textContent).toBe('Running condition Setapplies to every model');
         expect(c.textContent).not.toMatch(/Step\s*1/i);
         expect(screen.getByTestId('rc-card-pill').textContent).toBe('Set');
         expect(c.getAttribute('data-details')).toBe('open');
