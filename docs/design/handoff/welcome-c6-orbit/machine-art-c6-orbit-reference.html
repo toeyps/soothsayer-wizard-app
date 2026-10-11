@@ -1,0 +1,685 @@
+<meta charset="utf-8">
+<title>Machine Detail Study</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap">
+<style>
+/* Layout: the chosen welcome machine (C6) as one large orbitable stage, its live meters under it, the setup-rail mini beside the notes, then the orbit benchmark. Dark only, like the app. */
+:root{
+  --bg:#07080a; --card:#101012; --surface:#16161a;
+  --ink:#ededef; --ink2:#8c8c94; --faint:#5b5b63;
+  --line:rgba(255,255,255,.07); --line2:rgba(255,255,255,.12);
+  --accent:oklch(.68 .17 245); --accent-hi:oklch(.74 .17 245); --accent-m:oklch(.68 .17 245 / .18);
+  --ok:oklch(.72 .15 150); --ok-m:oklch(.72 .15 150 / .14);
+  --warn:oklch(.78 .14 75); --warn-m:oklch(.78 .14 75 / .14);
+  --danger:oklch(.68 .2 25); --danger-m:oklch(.68 .2 25 / .14);
+  --sans:Inter,system-ui,-apple-system,'Segoe UI',sans-serif;
+  --mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+  color-scheme:dark;
+}
+html,body{background:var(--bg);color:var(--ink)}
+body{font:13px/1.5 var(--sans);padding-inline:16px;padding-block:24px 48px;
+  background:radial-gradient(900px 520px at 34% 12%, oklch(.45 .13 245 / .18), transparent 70%),var(--bg)}
+.wrap{max-width:1180px;margin:0 auto;display:flex;flex-direction:column;gap:16px}
+h1{font-size:24px;font-weight:680;letter-spacing:-.022em;margin:0;text-wrap:balance}
+.sub{color:var(--ink2);margin:4px 0 0;max-width:76ch}
+.eyebrow{font:500 10.5px var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--faint)}
+.bar{display:flex;flex-wrap:wrap;gap:10px 18px;align-items:center}
+.seg{display:inline-flex;background:var(--card);border:1px solid var(--line2);border-radius:10px;padding:3px;gap:2px;flex-wrap:wrap}
+.seg button{all:unset;cursor:pointer;padding:6px 11px;border-radius:7px;color:var(--ink2);font-weight:500;font-size:12.5px;transition:background .15s,color .15s}
+.seg button:hover{color:var(--ink)}
+.seg button[aria-pressed="true"]{background:var(--accent-m);color:var(--ink);box-shadow:inset 0 0 0 1px oklch(.7 .15 235 / .5)}
+.seg button:focus-visible,.btn:focus-visible,.chk input:focus-visible{outline:2px solid var(--accent-hi);outline-offset:2px}
+.chk{display:inline-flex;gap:7px;align-items:center;color:var(--ink2);cursor:pointer;user-select:none}
+.chk input{accent-color:oklch(.68 .17 245)}
+.btn{all:unset;cursor:pointer;padding:8px 14px;border-radius:9px;font-weight:600;font-size:12.5px;color:#04101e;
+  background:linear-gradient(oklch(.76 .14 235),oklch(.64 .15 245));box-shadow:0 6px 18px oklch(.6 .15 245 / .3)}
+.btn[disabled]{opacity:.45;cursor:default}
+.btn.ghost{background:var(--card);color:var(--ink);box-shadow:inset 0 0 0 1px var(--line2);font-weight:500}
+.stage{position:relative;border-radius:16px;overflow:hidden;background:#07080a;border:1px solid rgba(255,255,255,.08);min-width:0}
+.stage canvas{display:block;width:100%;height:560px;touch-action:none;cursor:grab}
+.stage canvas.grabbing{cursor:grabbing}
+.stage .hint{position:absolute;right:14px;top:12px;font:500 11px var(--sans);color:var(--ink2);background:rgba(16,17,22,.72);border:1px solid rgba(255,255,255,.11);border-radius:7px;padding:4px 9px;pointer-events:none;transition:opacity .4s}
+.stage .foot{position:absolute;left:22px;right:22px;bottom:16px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:12px;color:var(--faint);pointer-events:none}
+.stage .foot b{font-weight:500;color:var(--ink2);margin-right:6px}
+.pill{border:1px solid oklch(.7 .15 235 / .6);border-radius:99px;padding:3px 10px;background:oklch(.6 .13 235 / .18);color:var(--ink)}
+.dots{display:inline-flex;gap:5px;padding-left:4px}
+.dots i{display:block;height:6px;width:6px;border-radius:50%;background:rgba(255,255,255,.15);transition:all .3s}
+.dots i.on{width:16px;border-radius:3px;background:var(--accent-hi)}
+.foot .ill{margin-left:auto;font:10.5px var(--mono)}
+.meters{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.mlabel{font:600 11px var(--mono);color:var(--ink2);margin-bottom:6px;display:flex;gap:8px;align-items:center}
+.mlabel .live{font:600 10px var(--mono);padding:1px 6px;border-radius:5px;color:var(--faint);background:var(--surface)}
+.mlabel .live.on{color:var(--accent-hi);background:var(--accent-m)}
+.meter{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:1px;background:var(--line);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.meter>div{background:var(--card);padding:10px 14px;min-width:0}
+.meter .k{font:500 10.5px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--faint)}
+.meter .v{font:600 20px var(--mono);letter-spacing:-.03em;font-variant-numeric:tabular-nums;white-space:nowrap}
+.meter .v small{font:500 11px var(--sans);color:var(--ink2);margin-left:4px;letter-spacing:0}
+.bufline{font:11px var(--mono);color:var(--faint)}
+.panel{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;display:flex;flex-direction:column;gap:12px;min-width:0}
+.panel h2{font-size:15px;font-weight:600;margin:0}
+.note{color:var(--ink2);font-size:12px;max-width:84ch;margin:0}
+.tbl{overflow-x:auto}
+table{border-collapse:collapse;width:100%;min-width:760px;font-variant-numeric:tabular-nums}
+th,td{text-align:right;padding:8px 10px;border-bottom:1px solid var(--line);white-space:nowrap}
+th{font:500 10.5px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--faint)}
+th:first-child,td:first-child{text-align:left}
+td{font:500 12.5px var(--mono)}
+td.name{font:500 12.5px var(--sans)}
+tr.base td{color:var(--ink2)}
+.chip{display:inline-block;font:600 10.5px var(--mono);padding:2px 7px;border-radius:6px}
+.chip.ok{color:var(--ok);background:var(--ok-m)}
+.chip.warn{color:var(--warn);background:var(--warn-m)}
+.chip.bad{color:var(--danger);background:var(--danger-m)}
+.cols{display:grid;grid-template-columns:300px 1fr;gap:14px}
+.rail{position:relative;height:330px;border-radius:14px;overflow:hidden;background:#0b0c0f;border:1px solid var(--line)}
+.rail ol{margin:0;padding:16px 16px 0 34px;color:var(--ink2);display:flex;flex-direction:column;gap:10px;font-size:12.5px;position:relative;z-index:1}
+.rail ol li::marker{font:600 11px var(--mono);color:var(--faint)}
+.rail ol li.on{color:var(--ink)}
+.rail canvas{position:absolute;left:-10px;right:-10px;bottom:30px;height:200px;width:calc(100% + 20px);display:block;pointer-events:none}
+.rail .cap{position:absolute;left:14px;right:14px;bottom:10px;font:10.5px var(--mono);color:var(--faint)}
+ul.why{margin:0;padding-left:18px;color:var(--ink2);display:flex;flex-direction:column;gap:6px}
+ul.why b{color:var(--ink);font-weight:600}
+.prog{height:3px;background:var(--line);border-radius:2px;overflow:hidden}
+.prog i{display:block;height:100%;width:0;background:var(--accent-hi);transition:width .2s}
+@media (max-width:760px){
+  .meters,.cols{grid-template-columns:1fr}
+  .meter{grid-template-columns:1fr 1fr}
+  .stage canvas{height:400px}
+  .stage .foot .ill{display:none}
+}
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">Welcome screen · machine illustration · C6 chosen</div>
+    <h1>Turn the machine like a 3D model</h1>
+    <p class="sub">The chosen look: 6,000 edge-weighted dots in one pixel buffer. Press and drag on the machine to orbit the camera, double-click to reset. While you hold it the machine stays put; let go and it glides to a stop, then the slow spin and the machine cycle carry on.</p>
+  </header>
+
+  <div class="bar" role="toolbar" aria-label="Viewer options">
+    <div class="seg" id="machSeg" aria-label="Machine"></div>
+    <button class="btn ghost" id="resetView">Reset view</button>
+  </div>
+  <div class="bar">
+    <label class="chk"><input type="checkbox" id="zoomOn"> Zoom with mouse wheel or pinch (0.8×–1.4×)</label>
+    <label class="chk"><input type="checkbox" id="slow"> Simulate office laptop (draw each frame 4×)</label>
+  </div>
+
+  <div class="stage">
+    <canvas id="hero" role="img" aria-label="Animated machine illustration. Drag to turn the view, double-click to reset."></canvas>
+    <span class="hint" id="hint">Drag to turn · double-click to reset</span>
+    <div class="foot"><b>Works with any machine that has sensors</b><span class="pill" id="pill">Gas turbine generator</span><span class="dots" id="dots"><i></i><i></i><i></i><i></i><i></i><i></i></span><span class="ill">Illustration · simulated readings</span></div>
+  </div>
+
+  <div class="meters">
+    <div><div class="mlabel">Idle (auto spin) <span class="live" id="liveIdle">now</span></div><div class="meter">
+      <div><div class="k">Dots</div><div class="v">6,000</div></div>
+      <div><div class="k">CPU avg</div><div class="v" id="iA">–<small>ms</small></div></div>
+      <div><div class="k">CPU worst 5 %</div><div class="v" id="iP">–<small>ms</small></div></div>
+      <div><div class="k">FPS</div><div class="v" id="iF">–</div></div></div></div>
+    <div><div class="mlabel">While orbiting (drag + glide) <span class="live" id="liveOrb">now</span></div><div class="meter">
+      <div><div class="k">Dots</div><div class="v">6,000</div></div>
+      <div><div class="k">CPU avg</div><div class="v" id="oA">–<small>ms</small></div></div>
+      <div><div class="k">CPU worst 5 %</div><div class="v" id="oP">–<small>ms</small></div></div>
+      <div><div class="k">FPS</div><div class="v" id="oF">–</div></div></div></div>
+  </div>
+  <div class="bufline" id="bufline">Dot buffer –</div>
+
+  <div class="cols">
+    <section class="rail" aria-label="Setup rail preview">
+      <ol><li class="on">Choose data</li><li>Name the project</li><li>Check columns</li></ol>
+      <canvas id="mini" aria-hidden="true"></canvas>
+      <span class="cap">Setup rail · mini, 2,400 dots, no drag</span>
+    </section>
+    <section class="panel">
+      <h2>How it moves</h2>
+      <ul class="why">
+        <li><b>Orbit camera.</b> Left/right turns all the way round. Up/down tilts from almost straight down (80°) to just below the floor line (−10°), so it never flips.</li>
+        <li><b>Smooth, not jumpy.</b> The view chases the pointer with a short smoothing; on release it keeps its speed and slows to a stop in about half a second.</li>
+        <li><b>The machine waits for you.</b> Grabbing pauses the spin and the machine cycle (a dissolve already under way finishes first). 1.5 s after the glide ends, the spin resumes and the tilt eases back to the default over about 2 s, so the callouts and floor return to the framing you approved. The turn angle is kept.</li>
+        <li><b>Depth stays right from every side.</b> Dot size, brightness and rim light are worked out from the camera each frame. Dots add light instead of covering each other, so no sorting is needed and no angle shows a wrong overlap.</li>
+        <li><b>Callouts follow</b> the sensor spots as the machine turns.</li>
+        <li><b>Reduced motion:</b> dragging still works; no glide, no auto spin, no cycle.</li>
+        <li><b>Setup rail mini:</b> no drag. It is small, faint and sits behind the steps; grabbing it would compete with the form.</li>
+      </ul>
+    </section>
+  </div>
+
+  <section class="panel" aria-labelledby="bh">
+    <div class="bar" style="justify-content:space-between">
+      <h2 id="bh">Orbit benchmark</h2>
+      <button class="btn" id="runBench">Run benchmark (≈ 40 s)</button>
+    </div>
+    <p class="note">Measures today’s 11,000-dot code and C6 at rest, then while orbiting: a scripted drag sweeps the full turn and the full tilt range, including straight-down views, with zoom at 1.4× for part of it. Each run: 1.5 s warm-up, 5 s measured. Keep this tab in front while it runs.</p>
+    <div class="prog" aria-hidden="true"><i id="benchProg"></i></div>
+    <div class="tbl">
+      <table>
+        <thead><tr><th>Run</th><th>CPU avg</th><th>CPU worst 5 %</th><th>Office laptop ×4, worst 5 %</th><th>FPS</th><th>Frame gap, worst 5 %</th><th>Largest dot buffer</th><th>vs today idle</th></tr></thead>
+        <tbody id="benchBody"></tbody>
+      </table>
+    </div>
+    <p class="note" id="benchEnv"></p>
+  </section>
+</div>
+
+<script>
+'use strict';
+/* =================================================================== */
+/* Shared: constants, rng, camera, clock                               */
+/* =================================================================== */
+const TAU=Math.PI*2, HOLD=4.6, TRANS=1.8;
+const NAMES=['Gas turbine generator','Gas turbine compressor','Motor','Reciprocating pump','Can pump','Turbo expander'];
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+function makeCamera(yaw,pitch,cx,cy,sc){return{cyw:Math.cos(yaw),syw:Math.sin(yaw),cp:Math.cos(pitch),sp:Math.sin(pitch),cx,cy,sc}}
+function projectPoint(cam,x,y,z,out){const x1=x*cam.cyw+z*cam.syw,z1=-x*cam.syw+z*cam.cyw,y2=y*cam.cp-z1*cam.sp,z2=y*cam.sp+z1*cam.cp,k=12/(12+z2);out[0]=cam.cx+x1*k*cam.sc;out[1]=cam.cy-y2*k*cam.sc;out[2]=z2;return out}
+function morphPhase(t){const m=t<HOLD?0:(t-HOLD)/TRANS;const e=m<.5?4*m*m*m:1-Math.pow(-2*m+2,3)/2;return{m,e,burst:Math.sin(Math.PI*m)}}
+function labelVisibility(t){if(t>=HOLD)return 0;return Math.max(0,Math.min(1,t/.5,(HOLD-t)/.4))}
+function sens(p,name,unit,v,s,trend=false){return{p,name,unit,v,s,trend}}
+
+/* fit raw (stride) points into ±2 and resample to n */
+function fitResample(raw,stride,n,rr){
+  const P=raw.pts,mn=[1e9,1e9,1e9],mx=[-1e9,-1e9,-1e9];
+  for(let i=0;i<P.length;i+=stride)for(let k=0;k<3;k++){const v=P[i+k];if(v<mn[k])mn[k]=v;if(v>mx[k])mx[k]=v}
+  const c=[(mn[0]+mx[0])/2,(mn[1]+mx[1])/2,(mn[2]+mx[2])/2];
+  const f=2/Math.max((mx[0]-mn[0])/2,(mx[1]-mn[1])/2,(mx[2]-mn[2])/2);
+  const src=P.length/stride,out=new Float32Array(n*stride);
+  for(let i=0;i<n;i++){const o=Math.floor(rr()*src)*stride;
+    out[i*stride]=(P[o]-c[0])*f;out[i*stride+1]=(P[o+1]-c[1])*f;out[i*stride+2]=(P[o+2]-c[2])*f;
+    for(let k=3;k<stride;k++)out[i*stride+k]=P[o+k];}
+  return{name:raw.name,count:n,pts:out,rawCount:src,sensors:raw.sens.map(x=>({...x,p:[(x.p[0]-c[0])*f,(x.p[1]-c[1])*f,(x.p[2]-c[2])*f]}))};
+}
+
+/* =================================================================== */
+/* A / B shapes: straight port of machineShapes.ts buildShapes()       */
+/* =================================================================== */
+function buildShapesA(n,rr){
+  const raw=[];
+  function makeSampler(){const pts=[];const add=(x,y,z,g=0)=>pts.push(x,y,z,g);return{pts,add,
+    cyl(n,ax,c,r,len,g=0){const nr=Math.max(2,Math.round(len/.22)),nl=Math.max(10,Math.round(r*18));for(let i=0;i<n;i++){let t,a;if(rr()<.62){t=(Math.floor(rr()*(nr+1))/nr-.5)*len;a=rr()*TAU}else{t=(rr()-.5)*len;a=Math.floor(rr()*nl)/nl*TAU}const u=Math.cos(a)*r,v=Math.sin(a)*r;if(ax==='x')add(c[0]+t,c[1]+u,c[2]+v,g);else if(ax==='y')add(c[0]+u,c[1]+t,c[2]+v,g);else add(c[0]+u,c[1]+v,c[2]+t,g)}},
+    disc(n,ax,c,r0,r1,g=0){const nk=Math.max(1,Math.round((r1-r0)/.16));for(let i=0;i<n;i++){const r=r0+(r1-r0)*(nk?Math.floor(rr()*(nk+1))/nk:1),a=rr()*TAU,u=Math.cos(a)*r,v=Math.sin(a)*r;if(ax==='x')add(c[0],c[1]+u,c[2]+v,g);else if(ax==='y')add(c[0]+u,c[1],c[2]+v,g);else add(c[0]+u,c[1]+v,c[2],g)}},
+    box(n,c,s,g=0){for(let i=0;i<n;i++){const p=[(rr()-.5)*s[0],(rr()-.5)*s[1],(rr()-.5)*s[2]];if(rr()<.55){const k=Math.floor(rr()*3);for(const j of[0,1,2])if(j!==k)p[j]=(rr()<.5?.5:-.5)*s[j]}else{const ax=Math.floor(rr()*3);p[ax]=(rr()<.5?.5:-.5)*s[ax];const o=[0,1,2].filter(x=>x!==ax);const j=o[Math.floor(rr()*2)];p[j]=Math.round(p[j]/s[j]*6)/6*s[j]}add(c[0]+p[0],c[1]+p[1],c[2]+p[2],g)}}}}
+  {const s=makeSampler();s.cyl(1500,'x',[0,0,0],.95,2.6);for(let i=0;i<22;i++){const a=i/22*TAU;for(let j=0;j<40;j++)s.add(-1.25+rr()*2.5,Math.cos(a)*1.05,Math.sin(a)*1.05)}
+    s.disc(350,'x',[-1.3,0,0],0,.95);s.disc(350,'x',[1.3,0,0],0,.95);s.cyl(140,'x',[1.75,0,0],.14,.9);s.box(300,[0,1.2,.2],[.7,.3,.6]);s.box(200,[-.8,-1.05,0],[.4,.2,1.6]);s.box(200,[.8,-1.05,0],[.4,.2,1.6]);
+    for(let i=0;i<120;i++){const a=rr()*TAU;s.add(-1.55,Math.cos(a)*rr()*.7,Math.sin(a)*rr()*.7)}
+    raw.push({name:'Motor',pts:s.pts,sens:[sens([0,1.05,-.5],'Winding temperature','°C',84,.4),sens([1.75,0,0],'Shaft vibration','mm/s',1.6,.04,true)]})}
+  {const s=makeSampler();const prof=x=>x<-2.4?1.25-(x+3)*.4:x<-.7?1.02-(x+2.4)*.07:x<.6?1.12:x<1.7?1.02+(x-.6)*.22:1.25;
+    for(let i=0;i<1500;i++){const x=-3+rr()*5.2,a=rr()*TAU,r=prof(x);s.add(x-.6,Math.cos(a)*r,Math.sin(a)*r,x>-.7&&x<1.7?2:0)}
+    s.cyl(700,'x',[2.4,0,0],1,1.9,1);s.disc(150,'x',[1.45,0,0],0,1,1);s.disc(150,'x',[3.35,0,0],0,1,1);s.cyl(80,'x',[1.75,0,0],.2,.6);
+    raw.push({name:'Gas turbine generator',pts:s.pts,sens:[sens([.7,1.15,0],'Exhaust gas temperature','°C',548,2,true),sens([2.4,1,0],'Active power','MW',7.9,.03)]})}
+  const vol=(s,count,c,R0,R1,t0,t1,g=0)=>{for(let i=0;i<count;i++){const th=rr()*TAU*.93,R=R0+(R1-R0)*th/TAU,tr=t0+(t1-t0)*th/TAU,a=rr()*TAU;s.add(c[0]+Math.sin(a)*tr,c[1]+Math.cos(th)*(R+Math.cos(a)*tr),c[2]+Math.sin(th)*(R+Math.cos(a)*tr),g)}};
+  {const s=makeSampler();const prof=x=>x<-2.4?1.15-(x+3)*.35:x<-.9?.95-(x+2.4)*.06:x<.2?1.05:x<1?.95+(x-.2)*.2:1.12;
+    for(let i=0;i<1300;i++){const x=-3+rr()*4.2,a=rr()*TAU,r=prof(x);s.add(x-.4,Math.cos(a)*r,Math.sin(a)*r,x>-.9&&x<1?2:0)}
+    s.cyl(80,'x',[1.1,0,0],.18,.7);s.cyl(900,'x',[2.4,0,0],.85,1.9,1);s.disc(160,'x',[1.45,0,0],0,.85,1);s.disc(160,'x',[3.35,0,0],0,.85,1);
+    s.cyl(200,'y',[1.9,1.2,0],.28,.8,1);s.disc(80,'y',[1.9,1.6,0],.28,.45,1);s.cyl(200,'y',[2.95,1.15,0],.24,.7,1);s.disc(80,'y',[2.95,1.5,0],.24,.4,1);s.box(300,[.6,-1.25,0],[6.8,.12,2]);
+    raw.push({name:'Gas turbine compressor',pts:s.pts,sens:[sens([1.9,1.6,0],'Compressor discharge pressure','bar',48.2,.15),sens([2.4,.85,0],'Axial displacement','µm',210,1.5,true)]})}
+  {const s=makeSampler();s.box(1500,[-1,.05,0],[1.4,1.3,2.1]);for(let k=0;k<6;k++)s.box(50,[-1,.72,-.85+k*.34],[1.2,.04,.04]);
+    s.cyl(140,'z',[-1.15,0,1.35],.12,.6);s.disc(420,'z',[-1.15,0,1.7],.1,.95);s.cyl(260,'z',[-1.15,0,1.7],.95,.22);for(let k=0;k<4;k++)s.cyl(40,'z',[-1.15,0,1.62+k*.05],.95,.01);
+    for(let k=-1;k<=1;k++){const z=k*.62;s.cyl(260,'x',[0,.1,z],.24,.6);s.disc(60,'x',[.3,.1,z],.12,.24);s.cyl(170,'x',[.62,.1,z],.09,.62,10+k+1)}
+    s.box(1300,[1.3,.1,0],[.75,1.05,2.1],1);for(let k=-1;k<=1;k++){s.disc(90,'y',[1.3,.66,k*.62],0,.2,1);s.cyl(60,'y',[1.3,.68,k*.62],.2,.08,1);s.disc(70,'x',[1.69,.1,k*.62],0,.2,1)}
+    s.cyl(420,'z',[1.3,-.75,0],.26,2.7,1);s.disc(80,'z',[1.3,-.75,1.35],.26,.42,1);s.disc(80,'z',[1.3,-.75,-1.35],.26,.42,1);s.cyl(280,'z',[1.3,1,0],.15,2.4,1);s.disc(60,'z',[1.3,1,1.2],.15,.28,1);
+    for(let k=-1;k<=1;k++)s.cyl(50,'y',[1.3,.85,k*.62],.1,.3,1);
+    for(let i=0;i<380;i++){const u=rr()*2-1,a=rr()*TAU,r=.38,q=Math.sqrt(1-u*u);s.add(1.3+Math.cos(a)*q*r,1.45+u*r,-.75+Math.sin(a)*q*r,1)}
+    s.box(420,[.2,-1.15,0],[3.6,.1,2.4]);
+    raw.push({name:'Reciprocating pump',pts:s.pts,sens:[sens([-1,.7,0],'Crankcase vibration','mm/s',3.4,.06,true),sens([1.3,1.83,-.75],'Discharge pressure','bar',182,1.2)]})}
+  {const s=makeSampler();s.cyl(700,'y',[0,1.75,0],.55,1.1,1);for(let k=0;k<16;k++){const a=k/16*TAU;for(let j=0;j<22;j++)s.add(Math.cos(a)*.6,1.2+rr()*1.1,Math.sin(a)*.6,1)}
+    s.disc(120,'y',[0,2.3,0],0,.55,1);s.cyl(260,'y',[0,.95,0],.45,.5);s.box(420,[0,.45,0],[1.3,.5,1.3]);s.cyl(240,'x',[.95,.45,0],.24,.7);s.disc(80,'x',[1.3,.45,0],.24,.4);s.disc(200,'y',[0,.2,0],.2,.9);s.cyl(1000,'y',[0,-1.3,0],.62,3);s.disc(140,'y',[0,-2.8,0],0,.62);
+    for(let k=0;k<4;k++)s.cyl(70,'y',[0,-1.8+k*.3,0],.45,.04);
+    raw.push({name:'Can pump',pts:s.pts,sens:[sens([0,2.3,0],'Motor NDE bearing temp','°C',68,.3,true),sens([1.3,.45,0],'Discharge flow','m³/h',420,2)]})}
+  {const s=makeSampler();s.cyl(420,'x',[0,0,0],.38,1.3);s.box(200,[0,-.55,0],[1,.3,.9]);vol(s,1000,[-1.05,0,0],.55,.95,.16,.32,2);s.disc(260,'x',[-1.05,0,0],0,.5,2);s.cyl(220,'y',[-1.05,1.1,0],.22,.9,2);s.disc(70,'y',[-1.05,1.55,0],.22,.36,2);
+    vol(s,1000,[1.05,0,0],.5,.85,.14,.28,1);s.disc(260,'x',[1.05,0,0],0,.45,1);s.cyl(220,'x',[1.75,0,0],.26,1.1,1);s.disc(70,'x',[2.3,0,0],.26,.4,1);s.cyl(160,'y',[1.05,-.95,0],.2,.6,1);
+    raw.push({name:'Turbo expander',pts:s.pts,sens:[sens([-1.05,1.55,0],'Expander inlet temperature','°C',-38.4,.2),sens([0,.38,0],'Radial vibration','µm',18,.3,true)]})}
+  raw.sort((a,b)=>NAMES.indexOf(a.name)-NAMES.indexOf(b.name));
+  return raw.map(r=>fitResample(r,4,n,rr));
+}
+
+/* =================================================================== */
+/* C / D shapes: richer geometry, edge-weighted, with surface normals  */
+/* point layout (stride 8): x y z group edge nx ny nz                  */
+/* =================================================================== */
+function buildShapesC(n,rr){
+  const DE=150, DS=46; // dots per unit length on edges / per unit area on surfaces (before resampling)
+  function S(){
+    const pts=[];
+    const add=(x,y,z,g,e,nx,ny,nz)=>pts.push(x,y,z,g,e,nx,ny,nz);
+    // local (t along axis, u, v) -> world for axis ax
+    const put=(ax,c,t,u,v,g,e,nt,nu,nv)=>{
+      if(ax==='x')add(c[0]+t,c[1]+u,c[2]+v,g,e,nt,nu,nv);
+      else if(ax==='y')add(c[0]+u,c[1]+t,c[2]+v,g,e,nu,nt,nv);
+      else add(c[0]+u,c[1]+v,c[2]+t,g,e,nu,nv,nt);
+    };
+    const s={pts,add,put,
+      ring(ax,c,r,g=0,k=1,t=0){const n=Math.max(8,Math.round(TAU*r*DE*k));for(let i=0;i<n;i++){const a=(i+rr())/n*TAU;put(ax,c,t,Math.cos(a)*r,Math.sin(a)*r,g,1,0,0,0)}},
+      seg(p,q,g=0,k=1){const L=Math.hypot(q[0]-p[0],q[1]-p[1],q[2]-p[2]);const n=Math.max(4,Math.round(L*DE*k));for(let i=0;i<n;i++){const t=(i+rr())/n;add(p[0]+(q[0]-p[0])*t,p[1]+(q[1]-p[1])*t,p[2]+(q[2]-p[2])*t,g,1,0,0,0)}},
+      shell(ax,c,r,len,g=0,k=1){const n=Math.round(TAU*r*len*DS*k);for(let i=0;i<n;i++){const a=rr()*TAU,t=(rr()-.5)*len,cu=Math.cos(a),sv=Math.sin(a);put(ax,c,t,cu*r,sv*r,g,0,0,cu,sv)}},
+      disc(ax,c,r0,r1,g=0,k=1,edge=1){const n=Math.round(Math.PI*(r1*r1-r0*r0)*DS*k);for(let i=0;i<n;i++){const r=Math.sqrt(r0*r0+rr()*(r1*r1-r0*r0)),a=rr()*TAU;put(ax,c,0,Math.cos(a)*r,Math.sin(a)*r,g,0,1,0,0)}
+        if(edge){s.ring(ax,c,r1,g,edge);if(r0>.05)s.ring(ax,c,r0,g,edge*.8)}},
+      // cylinder: sparse skin, bright rims, optional bands (rings along) and seam lines
+      cyl(ax,c,r,len,g=0,o={}){const{k=1,ek=1,bands=0,lines=0,caps=0}=o;s.shell(ax,c,r,len,g,k);
+        s.ring(ax,c,r,g,ek,-len/2);s.ring(ax,c,r,g,ek,len/2);
+        for(let b=1;b<=bands;b++)s.ring(ax,c,r*1.01,g,ek*.7,-len/2+len*b/(bands+1));
+        for(let l=0;l<lines;l++){const a=l/lines*TAU+.2;const m=Math.max(4,Math.round(len*DE*ek*.6));for(let i=0;i<m;i++){put(ax,c,((i+rr())/m-.5)*len,Math.cos(a)*r,Math.sin(a)*r,g,1,0,0,0)}}
+        if(caps){const off=ax==='x'?[len/2,0,0]:ax==='y'?[0,len/2,0]:[0,0,len/2];
+          s.disc(ax,[c[0]+off[0],c[1]+off[1],c[2]+off[2]],0,r,g,caps,0);s.disc(ax,[c[0]-off[0],c[1]-off[1],c[2]-off[2]],0,r,g,caps,0)}},
+      // box: 12 bright edges + sparse faces
+      box(c,sz,g=0,o={}){const{k=1,ek=1}=o;const h=[sz[0]/2,sz[1]/2,sz[2]/2];
+        for(let ax=0;ax<3;ax++){const a1=(ax+1)%3,a2=(ax+2)%3;for(const s1 of[-1,1])for(const s2 of[-1,1]){const p=[0,0,0],q=[0,0,0];p[ax]=c[ax]-h[ax];q[ax]=c[ax]+h[ax];p[a1]=q[a1]=c[a1]+s1*h[a1];p[a2]=q[a2]=c[a2]+s2*h[a2];s.seg(p,q,g,ek)}}
+        for(let ax=0;ax<3;ax++){const a1=(ax+1)%3,a2=(ax+2)%3;const area=sz[a1]*sz[a2];const m=Math.round(area*DS*k);for(const sg of[-1,1])for(let i=0;i<m;i++){const p=[0,0,0],nn=[0,0,0];p[ax]=c[ax]+sg*h[ax];p[a1]=c[a1]+(rr()-.5)*sz[a1];p[a2]=c[a2]+(rr()-.5)*sz[a2];nn[ax]=sg;add(p[0],p[1],p[2],g,0,nn[0],nn[1],nn[2])}}},
+      // bolt circle on a face perpendicular to ax
+      bolts(ax,c,R,cnt,br,g=0,a0=0){for(let b=0;b<cnt;b++){const a=a0+b/cnt*TAU,cu=Math.cos(a)*R,cv=Math.sin(a)*R;const m=Math.max(7,Math.round(TAU*br*DE*1.6));for(let i=0;i<m;i++){const q=(i+rr())/m*TAU;put(ax,c,0,cu+Math.cos(q)*br,cv+Math.sin(q)*br,g,1,0,0,0)}}},
+      flange(ax,c,r0,r1,cnt,g=0,k=.8){s.disc(ax,c,r0,r1,g,k);s.bolts(ax,c,(r0+r1)/2,cnt,Math.min(.05,(r1-r0)*.18),g)},
+      // body of revolution from a profile table [[x,r]...] along x
+      rev(prof,gOf,k=1,bandXs=[],ek=1,seams=0){const x0=prof[0][0],x1=prof[prof.length-1][0];const R=x=>{for(let i=1;i<prof.length;i++)if(x<=prof[i][0]){const a=prof[i-1],b=prof[i];return a[1]+(b[1]-a[1])*(x-a[0])/(b[0]-a[0])}return prof[prof.length-1][1]};
+        let area=0;for(let i=1;i<prof.length;i++)area+=TAU*(prof[i][1]+prof[i-1][1])/2*(prof[i][0]-prof[i-1][0]);
+        const n=Math.round(area*DS*k);for(let i=0;i<n;i++){const x=x0+rr()*(x1-x0),a=rr()*TAU,r=R(x);add(x,Math.cos(a)*r,Math.sin(a)*r,gOf(x),0,0,Math.cos(a),Math.sin(a))}
+        for(const p of prof)s.ring('x',[p[0],0,0],p[1],gOf(p[0]),ek);
+        for(const bx of bandXs)s.ring('x',[bx,0,0],R(bx)*1.01,gOf(bx),ek*.65);
+        for(let l=0;l<seams;l++){const a=l/seams*TAU;const m=Math.round((x1-x0)*DE*.8);for(let i=0;i<m;i++){const x=x0+(i+rr())/m*(x1-x0),r=R(x)*1.01;add(x,Math.cos(a)*r,Math.sin(a)*r,gOf(x),1,0,0,0)}}},
+      // spiral casing around x
+      vol(c,R0,R1,t0,t1,g=0,k=1){const area=TAU*(R0+R1)/2*TAU*(t0+t1)/2*.93;const n=Math.round(area*DS*k);
+        for(let i=0;i<n;i++){const th=rr()*TAU*.93,R=R0+(R1-R0)*th/TAU,tr=t0+(t1-t0)*th/TAU,a=rr()*TAU;add(c[0]+Math.sin(a)*tr,c[1]+Math.cos(th)*(R+Math.cos(a)*tr),c[2]+Math.sin(th)*(R+Math.cos(a)*tr),g,0,Math.sin(a),Math.cos(th)*Math.cos(a),Math.sin(th)*Math.cos(a))}
+        // parting lines (outer + both sides) + cross-section rings
+        for(const a of[0,Math.PI/2,-Math.PI/2]){const m=Math.round(TAU*R1*DE*.8);for(let i=0;i<m;i++){const th=(i+rr())/m*TAU*.93,R=R0+(R1-R0)*th/TAU,tr=t0+(t1-t0)*th/TAU;add(c[0]+Math.sin(a)*tr,c[1]+Math.cos(th)*(R+Math.cos(a)*tr),c[2]+Math.sin(th)*(R+Math.cos(a)*tr),g,1,0,0,0)}}
+        for(let q=1;q<=5;q++){const th=q/6*TAU*.93,R=R0+(R1-R0)*th/TAU,tr=t0+(t1-t0)*th/TAU;const m=Math.round(TAU*tr*DE*.9);for(let i=0;i<m;i++){const a=(i+rr())/m*TAU;add(c[0]+Math.sin(a)*tr,c[1]+Math.cos(th)*(R+Math.cos(a)*tr),c[2]+Math.sin(th)*(R+Math.cos(a)*tr),g,1,0,0,0)}}},
+    };
+    return s;
+  }
+  const raw=[];
+
+  // ---------------- Gas turbine generator ----------------
+  {const s=S();
+    const GT=[[-3.6,1.3],[-3.3,1.0],[-1.3,.9],[-1.05,1.05],[.15,1.05],[.35,1.16],[.5,1.16]];
+    s.rev(GT,x=>x>-1.05&&x<.4?2:0,.8,[-2.9,-2.5,-2.1,-1.7],1,2);
+    s.disc('x',[-3.6,0,0],.3,1.3,0,.25);           // bellmouth face
+    s.cyl('x',[-3.75,0,0],.3,.3,0,{k:.5});           // inlet hub
+    for(let k=0;k<8;k++){const a=k/8*TAU+.2;s.cyl('x',[-.62,Math.cos(a)*1.2,Math.sin(a)*1.2],.12,.62,2,{k:.6,ek:.8})} // combustor cans
+    s.box([.85,0,0],[.7,2.6,2.4],0,{k:.25});          // exhaust collector
+    s.cyl('y',[.85,1.9,0],.52,1.3,0,{k:.5,lines:6}); // exhaust stack
+    s.ring('y',[.85,2.55,0],.58,0,.8);
+    s.cyl('x',[1.45,0,0],.15,.5,0,{k:.6});            // shaft
+    s.cyl('x',[1.45,0,0],.36,.42,0,{k:.25,ek:.6});    // coupling guard
+    s.cyl('x',[2.6,0,0],1.0,1.9,1,{k:.45,bands:3,lines:4}); // generator
+    s.flange('x',[1.65,0,0],.25,1.02,12,1,.35); s.flange('x',[3.55,0,0],.25,1.02,12,1,.35);
+    s.box([2.6,1.3,0],[1.5,.32,1.1],1,{k:.4});        // air cooler on top
+    for(let k=0;k<6;k++)s.seg([1.95+k*.26,1.47,-.55],[1.95+k*.26,1.47,.55],1,.6);
+    s.box([3.2,.1,1.05],[.45,.5,.18],1,{k:.5});       // terminal box
+    s.cyl('x',[3.75,0,0],.12,.4,0,{k:.6});            // shaft NDE
+    s.box([1.45,-.75,0],[.35,.7,.6],0,{k:.4}); s.box([3.75,-.75,0],[.35,.7,.6],0,{k:.4}); // bearing pedestals
+    s.box([.1,-1.2,0],[7.9,.12,2.7],0,{k:.12,ek:.55});       // skid
+    raw.push({name:'Gas turbine generator',pts:s.pts,sens:[sens([.85,1.3,.6],'Exhaust gas temperature','°C',548,2,true),sens([2.6,1.46,0],'Active power','MW',7.9,.03)]})}
+
+  // ---------------- Gas turbine compressor ----------------
+  {const s=S();
+    const GT=[[-3.4,1.2],[-3.1,.95],[-1.5,.87],[-1.25,1.0],[-.2,1.0],[0,1.1],[.15,1.1]];
+    s.rev(GT,x=>x>-1.25&&x<0?2:0,.8,[-2.7,-2.3,-1.9],1,2);
+    s.disc('x',[-3.4,0,0],.28,1.2,0,.25);
+    for(let k=0;k<6;k++){const a=k/6*TAU+.3;s.cyl('x',[-.75,Math.cos(a)*1.12,Math.sin(a)*1.12],.11,.55,2,{k:.6,ek:.8})}
+    s.box([.45,0,0],[.6,2.3,2.2],0,{k:.25});          // exhaust collector
+    s.cyl('z',[.45,.35,1.45],.42,.6,0,{k:.4});         // side exhaust duct
+    s.cyl('x',[1.1,0,0],.15,.7,0,{k:.6});
+    s.cyl('x',[1.1,0,0],.32,.45,0,{k:.25,ek:.6});     // coupling guard
+    s.cyl('x',[2.4,0,0],.85,1.6,1,{k:.5,bands:2,lines:2}); // barrel
+    s.flange('x',[1.6,0,0],.25,.98,16,1,.4); s.flange('x',[3.2,0,0],.25,.98,16,1,.4);
+    s.cyl('x',[1.45,0,0],.3,.2,1,{k:.5}); s.cyl('x',[3.38,0,0],.3,.25,1,{k:.5}); // bearing housings
+    s.cyl('y',[1.95,1.15,0],.28,.7,1,{k:.5}); s.flange('y',[1.95,1.5,0],.28,.46,8,1);   // suction nozzle
+    s.cyl('y',[2.85,1.1,0],.24,.6,1,{k:.5}); s.flange('y',[2.85,1.4,0],.24,.4,8,1);     // discharge nozzle
+    s.cyl('z',[2.4,-.55,-.95],.07,.9,1,{k:.6});       // seal gas line
+    s.box([.2,-1.2,0],[7.3,.12,2.4],0,{k:.12,ek:.55});
+    raw.push({name:'Gas turbine compressor',pts:s.pts,sens:[sens([2.85,1.42,0],'Compressor discharge pressure','bar',48.2,.15),sens([3.38,.3,0],'Axial displacement','µm',210,1.5,true)]})}
+
+  // ---------------- Motor (TEFC) ----------------
+  {const s=S();
+    s.cyl('x',[0,0,0],.9,2.5,0,{k:.5,ek:.8});
+    for(let k=0;k<26;k++){const a=k/26*TAU;if(Math.sin(a)<-.55)continue;const cu=Math.cos(a),sv=Math.sin(a); // cooling fins
+      s.seg([-1.2,cu*1.06,sv*1.06],[1.15,cu*1.06,sv*1.06],0,.42); s.seg([-1.2,cu*1.06,sv*1.06],[-1.2,cu*.9,sv*.9],0,1); s.seg([1.15,cu*1.06,sv*1.06],[1.15,cu*.9,sv*.9],0,1)}
+    s.disc('x',[-1.28,0,0],.12,.95,0,.4); s.disc('x',[1.28,0,0],.12,.95,0,.4);   // end bells
+    s.cyl('x',[1.38,0,0],.3,.18,0,{k:.6}); s.bolts('x',[1.47,0,0],.22,6,.03,0);   // DE bearing cap
+    s.cyl('x',[-1.62,0,0],.98,.5,0,{k:.3,ek:.9});                                 // fan cowl
+    for(let r=.22;r<.95;r+=.15)s.ring('x',[-1.87,0,0],r,0,.55);                 // cowl grille
+    for(let k=0;k<8;k++){const a=k/8*TAU;s.seg([-1.87,Math.cos(a)*.15,Math.sin(a)*.15],[-1.87,Math.cos(a)*.96,Math.sin(a)*.96],0,.6)}
+    s.cyl('x',[1.78,0,0],.13,.62,0,{k:.7}); s.seg([1.5,.13,0],[2.05,.13,0],0,.8); // shaft + keyway
+    s.cyl('x',[2.2,0,0],.32,.3,1,{k:.6}); s.bolts('x',[2.35,0,0],.22,6,.035,1);   // coupling half
+    s.box([0,1.2,.1],[.62,.32,.55],0,{k:.5}); s.cyl('z',[0,1.15,.47],.06,.16,0,{k:.6}); // terminal box + gland
+    s.ring('z',[-.75,1.15,0],.09,0,1.2);                                          // lifting eye
+    s.box([-.8,-.98,0],[.42,.24,1.75],0,{k:.4}); s.box([.8,-.98,0],[.42,.24,1.75],0,{k:.4}); // feet
+    for(const x of[-.8,.8])for(const z of[-.66,.66])s.ring('y',[x,-.86,z],.05,0,1.4);
+    s.box([.15,-1.16,.75],[3.5,.1,.2],0,{k:.3}); s.box([.15,-1.16,-.75],[3.5,.1,.2],0,{k:.3}); // base rails
+    raw.push({name:'Motor',pts:s.pts,sens:[sens([0,1.0,-.5],'Winding temperature','°C',84,.4),sens([1.38,.3,0],'Shaft vibration','mm/s',1.6,.04,true)]})}
+
+  // ---------------- Reciprocating pump ----------------
+  {const s=S();
+    s.box([-1,.05,0],[1.4,1.3,2.1],0,{k:.45});                                   // power end
+    for(let k=0;k<6;k++)s.seg([-1.6,.72,-.85+k*.34],[-.4,.72,-.85+k*.34],0,.7);  // top ribs
+    s.box([-1.71,.05,0],[.03,.7,1.2],0,{k:.2}); s.bolts('x',[-1.73,.05,0],.48,10,.03,0); // inspection cover
+    s.cyl('z',[-1.15,0,1.35],.12,.6,0,{k:.6});
+    s.disc('z',[-1.15,0,1.7],.1,.95,0,.25);                                      // sheave
+    for(let k=0;k<5;k++)s.ring('z',[-1.15,0,1.6+k*.05],.95,0,.75);              // belt grooves
+    for(let k=0;k<5;k++){const a=k/5*TAU;s.seg([-1.15+Math.cos(a)*.12,Math.sin(a)*.12,1.7],[-1.15+Math.cos(a)*.85,Math.sin(a)*.85,1.7],0,.8)}
+    for(let k=-1;k<=1;k++){const z=k*.62;
+      s.cyl('x',[0,.1,z],.24,.6,0,{k:.5}); s.flange('x',[.3,.1,z],.1,.26,4,0);
+      s.cyl('x',[.62,.1,z],.09,.62,10+k+1,{k:1,ek:1.2})}                          // plungers (move)
+    s.box([1.3,.1,0],[.75,1.05,2.1],1,{k:.45});                                  // fluid end
+    for(let k=-1;k<=1;k++){s.flange('y',[1.3,.66,k*.62],0,.2,4,1);s.cyl('y',[1.3,.7,k*.62],.2,.08,1,{k:.6});s.flange('x',[1.69,.1,k*.62],0,.2,4,1)}
+    s.cyl('z',[1.3,-.75,0],.26,2.7,1,{k:.4}); s.flange('z',[1.3,-.75,1.35],.26,.44,8,1); s.flange('z',[1.3,-.75,-1.35],.26,.44,8,1);
+    s.cyl('z',[1.3,1,0],.15,2.4,1,{k:.45}); s.flange('z',[1.3,1,1.2],.15,.3,6,1);
+    for(let k=-1;k<=1;k++)s.cyl('y',[1.3,.85,k*.62],.1,.3,1,{k:.6});
+    {const n=Math.round(4*Math.PI*.38*.38*DS*1.2);for(let i=0;i<n;i++){const u=rr()*2-1,a=rr()*TAU,q=Math.sqrt(1-u*u);s.add(1.3+Math.cos(a)*q*.38,1.45+u*.38,-.75+Math.sin(a)*q*.38,1,0,Math.cos(a)*q,u,Math.sin(a)*q)}
+      s.ring('y',[1.3,1.45,-.75],.385,1,1); s.flange('y',[1.3,1.85,-.75],0,.12,4,1)} // dampener
+    s.box([.2,-1.15,0],[3.7,.1,2.5],0,{k:.12,ek:.55});
+    raw.push({name:'Reciprocating pump',pts:s.pts,sens:[sens([-1,.7,0],'Crankcase vibration','mm/s',3.4,.06,true),sens([1.3,1.85,-.75],'Discharge pressure','bar',182,1.2)]})}
+
+  // ---------------- Can pump ----------------
+  {const s=S();
+    s.cyl('y',[0,1.75,0],.55,1.1,1,{k:.45});
+    for(let k=0;k<18;k++){const a=k/18*TAU,cu=Math.cos(a),sv=Math.sin(a);s.seg([cu*.66,1.22,sv*.66],[cu*.66,2.25,sv*.66],1,.55)}
+    s.disc('y',[0,2.3,0],0,.58,1,.35); s.cyl('y',[0,2.42,0],.5,.24,1,{k:.3}); for(let r=.12;r<.5;r+=.12)s.ring('y',[0,2.54,0],r,1,.5); // fan cowl
+    s.box([.62,1.9,0],[.18,.36,.4],1,{k:.5});                                   // terminal box
+    s.flange('y',[0,1.18,0],.4,.66,8,1);                                         // motor flange
+    for(let k=0;k<4;k++){const a=k/4*TAU+Math.PI/4;s.seg([Math.cos(a)*.45,.72,Math.sin(a)*.45],[Math.cos(a)*.45,1.16,Math.sin(a)*.45],0,1.2)} // lantern legs
+    s.ring('y',[0,.72,0],.45,0,1); s.cyl('y',[0,.95,0],.12,.44,0,{k:.7});       // coupling
+    s.box([0,.45,0],[1.3,.5,1.3],0,{k:.4});                                      // discharge head
+    s.cyl('x',[.95,.45,0],.24,.7,0,{k:.5}); s.flange('x',[1.3,.45,0],.24,.42,8,0); // discharge nozzle
+    s.disc('y',[0,.2,0],.2,.95,0,.3); s.bolts('y',[0,.2,0],.84,8,.04,0);       // mounting plate
+    s.cyl('y',[0,-1.3,0],.62,3,0,{k:.9,bands:4,ek:.7,lines:6});                         // can
+    s.disc('y',[0,-2.8,0],0,.62,0,.6);
+    s.cyl('y',[0,-1.3,0],.3,2.4,0,{k:0,ek:.5});                                  // inner column hint (rims only)
+    raw.push({name:'Can pump',pts:s.pts,sens:[sens([0,2.3,0],'Motor NDE bearing temp','°C',68,.3,true),sens([1.3,.45,0],'Discharge flow','m³/h',420,2)]})}
+
+  // ---------------- Turbo expander ----------------
+  {const s=S();
+    s.cyl('x',[0,0,0],.38,1.3,0,{k:.6,bands:2});                                 // bearing housing
+    for(let k=0;k<4;k++){const a=k/4*TAU+Math.PI/4;s.seg([-.5,Math.cos(a)*.38,Math.sin(a)*.38],[.5,Math.cos(a)*.38,Math.sin(a)*.38],0,.7)}
+    s.box([0,-.58,0],[1.1,.3,1],0,{k:.4});
+    s.vol([-1.05,0,0],.55,.95,.16,.32,2,.9); s.disc('x',[-1.05,0,0],0,.5,2,.35);
+    s.ring('x',[-1.38,0,0],.66,2,.9); for(let k=0;k<10;k++){const a=k/10*TAU;s.seg([-1.38,Math.cos(a)*.66,Math.sin(a)*.66],[-1.25,Math.cos(a)*.52,Math.sin(a)*.52],2,1)} // IGV ring
+    s.cyl('x',[-1.6,0,0],.3,.5,2,{k:.5}); s.flange('x',[-1.85,0,0],.3,.46,8,2);  // expander outlet
+    s.cyl('y',[-1.05,1.1,0],.22,.9,2,{k:.5}); s.flange('y',[-1.05,1.55,0],.22,.38,8,2); // expander inlet
+    s.vol([1.05,0,0],.5,.85,.14,.28,1,.9); s.disc('x',[1.05,0,0],0,.45,1,.35);
+    s.cyl('x',[1.75,0,0],.26,1.1,1,{k:.5}); s.flange('x',[2.3,0,0],.26,.42,8,1); // compressor inlet
+    s.cyl('y',[1.05,-.95,0],.2,.6,1,{k:.5}); s.flange('y',[1.05,-1.25,0],.2,.34,6,1);
+    s.box([.2,-1.32,0],[4.4,.1,1.8],0,{k:.12,ek:.55});
+    raw.push({name:'Turbo expander',pts:s.pts,sens:[sens([-1.05,1.55,0],'Expander inlet temperature','°C',-38.4,.2),sens([0,.38,0],'Radial vibration','µm',18,.3,true)]})}
+
+  raw.sort((a,b)=>NAMES.indexOf(a.name)-NAMES.indexOf(b.name));
+  return raw.map(r=>fitResample(r,8,n,rr));
+}
+
+/* =================================================================== */
+/* Simulated sensors + labels (identical for every variant)            */
+/* =================================================================== */
+const HL=40;
+const initialHistory=s=>{const h=[];for(let i=0;i<HL;i++)h.push(s.v+(Math.random()-.5)*s.s*6);return h};
+const nextReading=(s,t)=>s.trend?s.v+Math.max(0,t-1.5)*Math.abs(s.v)*.06+(Math.random()-.5)*s.s*4:s.v+(Math.random()-.5)*s.s*6;
+const isWatch=(s,c)=>!!s.trend&&Math.abs(c)>Math.abs(s.v)*1.12;
+const formatReading=(v,n)=>{const a=Math.abs(n);return a>=100?v.toFixed(0):v.toFixed(a>=10?1:2)};
+const LW=188,LH=62;
+function placeLabels(anchors,W,H){const out=[],top=46,bottom=90,minX=16,margin=16,maxY=Math.max(top,H-LH-bottom);
+  anchors.forEach((a,k)=>{const side=k===0?-1:1,lx=a.x+side*70,ly=a.y+(k===0?-90:-110),maxX=Math.max(minX,W-LW-margin);const x=Math.max(minX,Math.min(maxX,side<0?lx-LW:lx));let y=Math.max(top,Math.min(maxY,ly-LH/2));const p=out[k-1];
+    if(p&&x<p.x+LW+8&&x+LW+8>p.x&&Math.abs(y-p.y)<LH+10){y=p.y+LH+12;if(y>maxY){y=maxY;p.y=Math.max(top,y-LH-12)}}out.push({x,y,w:LW,h:LH})});return out}
+const FONT_SANS="Inter, system-ui, -apple-system, 'Segoe UI', sans-serif", FONT_MONO="'JetBrains Mono', ui-monospace, monospace";
+const WARN_RGB='255,190,80', NORMAL_RGB='140,200,255';
+
+/* =================================================================== */
+/* Renderer                                                            */
+/* =================================================================== */
+const GROUP_RGB=['110,175,255','180,150,255','255,150,80'], PLUNGER_RGB='235,240,255';
+const GROUP_ARR=[[110,175,255],[180,150,255],[255,150,80],[235,240,255]];
+const VARIANTS={
+  A:{label:'Today · 11,000 dots',n:11000,kind:'A'},
+  C6:{label:'C6 · 6,000 dots',n:6000,kind:'C'},
+  M:{label:'Mini · 2,400 dots',n:2400,kind:'C'},
+};
+const shapeCache={};
+function getShapes(v){if(!shapeCache[v]){const cfg=VARIANTS[v];shapeCache[v]=cfg.kind==='A'?buildShapesA(cfg.n,mulberry32(7)):buildShapesC(cfg.n,mulberry32(7))}return shapeCache[v]}
+
+const BUF_CAP=260000;              // max pixels in the dot buffer; above this the buffer drops a resolution step
+const BUF_STEPS=[1.25,1,.8,.65];   // buffer pixels per CSS pixel
+
+class Renderer{
+  constructor(canvas,variant,opts={}){this.canvas=canvas;this.ctx=canvas.getContext('2d');this.mini=!!opts.mini;this.lastTick=-1;this.pr=[0,0,0];this.kernCache={};this.setVariant(variant);this.fit()}
+  setVariant(v){this.variant=v;this.cfg=VARIANTS[v];this.shapes=getShapes(v);const N=this.cfg.n;
+    this.jit=new Float32Array(N*3);const r=mulberry32(99);for(let i=0;i<this.jit.length;i++)this.jit[i]=r()-.5;
+    this.hist=this.shapes.map(sh=>sh.sensors.map(s=>initialHistory(s)));this.histIdx=-1;
+    if(this.cfg.kind==='A')this.buckets=Array.from({length:55},()=>[]);
+    else{this.xs=new Float32Array(N);this.ys=new Float32Array(N);this.keys=new Uint8Array(N)}}
+  fit(){const r=this.canvas.getBoundingClientRect(),d=window.devicePixelRatio||1;this.W=r.width;this.H=r.height;this.dpr=d;this.canvas.width=Math.max(1,Math.round(this.W*d));this.canvas.height=Math.max(1,Math.round(this.H*d));this.ctx.setTransform(d,0,0,d,0,0)}
+  kernels(d){ // soft round dot stamps for buffer scale d: 4 tones x 5 depths x 2x2 sub-pixel phases (built once per scale)
+    if(this.kernCache[d])return this.kernCache[d];
+    const kern=[];let kR=0;const am0=this.mini?.55:1,sm0=this.mini?.75:1;
+    const TONE=[{r:.62,a:.34},{r:.72,a:.48},{r:.86,a:.62},{r:.98,a:.6,halo:1}];
+    for(let tone=0;tone<4;tone++)for(let lv=0;lv<5;lv++)for(let px=0;px<2;px++)for(let py=0;py<2;py++){
+      const T=TONE[tone],sm=(1.22-lv*.13)*sm0,am=(1-lv*.15)*am0,rad=Math.max(.55,T.r*sm*d),a=T.a*am,ext=T.halo?rad*2:rad+1,R=Math.ceil(ext)+1,taps=[];
+      const ox=px*.5,oy=py*.5;
+      for(let dy=-R;dy<=R;dy++)for(let dx=-R;dx<=R;dx++){const dist=Math.hypot(dx-ox,dy-oy);
+        let w=dist<=rad-.5?1:dist<rad+.5?rad+.5-dist:0;w*=a;if(T.halo){const u=dist/(rad*1.3);w+=a*.22*Math.exp(-u*u)}
+        if(w>.03)taps.push(dx,dy,w)}
+      kern[((tone*5+lv)*2+px)*2+py]=new Float32Array(taps);if(R>kR)kR=R}
+    const cols=[];for(let col=0;col<4;col++)for(let tone=0;tone<4;tone++){let[R,G,B]=GROUP_ARR[col];if(tone===3){R+=(255-R)*.12;G+=(255-G)*.12;B+=(255-B)*.12}cols.push([R,G,B])}
+    return this.kernCache[d]={kern,kR,cols}}
+  background(cam,cx,cy){const ctx=this.ctx,W=this.W,H=this.H,pr=this.pr;
+    const g=ctx.createRadialGradient(cx,cy,10,cx,cy,W*.45);g.addColorStop(0,'rgba(70,120,230,0.14)');g.addColorStop(1,'rgba(0,0,0,0)');ctx.fillStyle=g;ctx.fillRect(0,0,W,H);ctx.lineWidth=1;
+    for(let i=-7;i<=7;i++){projectPoint(cam,i*.7,-1.6,-4.5,pr);const ax=pr[0],ay=pr[1];projectPoint(cam,i*.7,-1.6,4.5,pr);ctx.strokeStyle=`rgba(120,150,210,${.06*(1-Math.abs(i)/8)})`;ctx.beginPath();ctx.moveTo(ax,ay);ctx.lineTo(pr[0],pr[1]);ctx.stroke()}
+    for(let j=-6;j<=6;j++){projectPoint(cam,-5,-1.6,j*.7,pr);const ax=pr[0],ay=pr[1];projectPoint(cam,5,-1.6,j*.7,pr);ctx.strokeStyle=`rgba(120,150,210,${.05*(1-Math.abs(j)/7)})`;ctx.beginPath();ctx.moveTo(ax,ay);ctx.lineTo(pr[0],pr[1]);ctx.stroke()}}
+  particlesA(A,B,e,burst,cam,spin){const ctx=this.ctx,N=this.cfg.n,buckets=this.buckets,pr=this.pr,jit=this.jit;
+    ctx.globalCompositeOperation='lighter';for(const b of buckets)b.length=0;const pa=A.pts,pb=B.pts,phaseA=spin*.55;
+    for(let i=0;i<N;i++){const o=i*4,ga=pa[o+3],gb=pb[o+3];const xa=pa[o]+(ga>=10?.09*Math.sin(phaseA+(ga-10)*2.094):0),xb=pb[o]+(gb>=10?.09*Math.sin(phaseA+(gb-10)*2.094):0);
+      const x=xa+(xb-xa)*e+jit[i*3]*burst*1.7,y=pa[o+1]+(pb[o+1]-pa[o+1])*e+jit[i*3+1]*burst*1.7,z=pa[o+2]+(pb[o+2]-pa[o+2])*e+jit[i*3+2]*burst*1.7;
+      projectPoint(cam,x,y,z,pr);const lv=Math.max(0,Math.min(4,Math.floor((pr[2]+2.5)/5*5)));const g=e<.5?ga:gb;buckets[Math.min(g,10)*5+lv].push(pr[0],pr[1])}
+    for(let key=0;key<55;key++){const arr=buckets[key];if(!arr.length)continue;const g=Math.floor(key/5),dep=(key%5)/4;const col=g>=10?PLUNGER_RGB:GROUP_RGB[g]??GROUP_RGB[0];
+      ctx.fillStyle=`rgba(${col},${.82*(1-dep*.6)})`;const sz=1.45*(1.2-dep*.55);for(let k=0;k<arr.length;k+=2)ctx.fillRect(arr[k]-sz/2,arr[k+1]-sz/2,sz,sz)}
+    ctx.globalCompositeOperation='source-over';this.lastBuf=0}
+  particlesC(A,B,e,burst,cam,spin){const ctx=this.ctx,N=this.cfg.n,jit=this.jit;
+    const pa=A.pts,pb=B.pts,xs=this.xs,ys=this.ys,keys=this.keys;
+    const ph=spin*.55,pl0=.09*Math.sin(ph),pl1=.09*Math.sin(ph+2.094),pl2=.09*Math.sin(ph+4.188);
+    const {cyw,syw,cp,sp,cx,cy,sc}=cam;const vx=-syw*cp,vy=sp,vz=cyw*cp;const useB=e>=.5,bj=burst*1.7,dust=burst>.35;
+    let mnx=1e9,mny=1e9,mxx=-1e9,mxy=-1e9;
+    // 1) project in CSS pixels; depth level, rim light and colour from the current camera
+    for(let i=0;i<N;i++){const o=i*8,ga=pa[o+3],gb=pb[o+3];
+      const xa=pa[o]+(ga>=10?(ga===10?pl0:ga===11?pl1:pl2):0),xb=pb[o]+(gb>=10?(gb===10?pl0:gb===11?pl1:pl2):0);
+      const j=i*3,x=xa+(xb-xa)*e+jit[j]*bj,y=pa[o+1]+(pb[o+1]-pa[o+1])*e+jit[j+1]*bj,z=pa[o+2]+(pb[o+2]-pa[o+2])*e+jit[j+2]*bj;
+      const x1=x*cyw+z*syw,z1=-x*syw+z*cyw,y2=y*cp-z1*sp,z2=y*sp+z1*cp,k=12/(12+z2)*sc;
+      const X=cx+x1*k,Y=cy-y2*k;xs[i]=X;ys[i]=Y;if(X<mnx)mnx=X;if(X>mxx)mxx=X;if(Y<mny)mny=Y;if(Y>mxy)mxy=Y;
+      const q=useB?pb:pa,g=q[o+3];let tone;
+      if(dust)tone=1;else if(q[o+4]>.5)tone=3;else{const f=1-Math.abs(q[o+5]*vx+q[o+6]*vy+q[o+7]*vz);tone=f>.8?2:f>.4?1:0}
+      let lv=((z2+2.5)*1)|0;lv=lv<0?0:lv>4?4:lv;
+      keys[i]=((g>=10?3:g)*4+tone)*5+lv}
+    // 2) clip the box to the canvas, then pick the buffer scale: full (1.25x) unless the box would pass BUF_CAP pixels
+    mnx=Math.max(mnx,-4);mny=Math.max(mny,-4);mxx=Math.min(mxx,this.W+4);mxy=Math.min(mxy,this.H+4);
+    const areaCss=Math.max(1,(mxx-mnx+8)*(mxy-mny+8));const dMax=Math.min(this.dpr,1.25);let d=BUF_STEPS[BUF_STEPS.length-1];
+    for(const s of BUF_STEPS){if(s<=dMax+1e-6&&areaCss*s*s<=BUF_CAP){d=s;break}}
+    const {kern,kR:R,cols}=this.kernels(d);const pad=R+2;
+    const bx=Math.floor(mnx*d)-pad,by=Math.floor(mny*d)-pad,bw=Math.ceil(mxx*d)+pad-bx,bh=Math.ceil(mxy*d)+pad-by;
+    if(bw<=0||bh<=0)return;const npx=bw*bh;this.lastBuf=npx;this.lastD=d;
+    if(!this.acc||this.acc.length<npx*3)this.acc=new Float32Array(npx*3*1.3|0);
+    const acc=this.acc;acc.fill(0,0,npx*3);
+    // 3) add every dot's light into the buffer (order-free, so no depth sort is needed)
+    for(let i=0;i<N;i++){const X=xs[i]*d-bx-.5,Y=ys[i]*d-by-.5;let ix=Math.floor(X),iy=Math.floor(Y);const fx=X-ix,fy=Y-iy;let px=0,py=0;
+      if(fx>=.75)ix++;else if(fx>=.25)px=1;if(fy>=.75)iy++;else if(fy>=.25)py=1;
+      if(ix<R||iy<R||ix>=bw-R||iy>=bh-R)continue;
+      const key=keys[i],lv=key%5,ct=(key/5)|0,tone=ct%4;const K=kern[((tone*5+lv)*2+px)*2+py],C=cols[ct],cr=C[0],cg=C[1],cb=C[2];
+      for(let t=0;t<K.length;t+=3){const p=((iy+K[t+1])*bw+ix+K[t])*3,w=K[t+2];acc[p]+=cr*w;acc[p+1]+=cg*w;acc[p+2]+=cb*w}}
+    // 4) tone-map to RGBA and hand the browser one image
+    if(!this.img||this.img.width<bw||this.img.height<bh){const iw=Math.max(bw,this.img?this.img.width:0),ih=Math.max(bh,this.img?this.img.height:0);this.img=new ImageData(iw,ih);
+      this.off=this.off||document.createElement('canvas');this.off.width=iw;this.off.height=ih;this.offCtx=this.off.getContext('2d')}
+    const img=this.img,iw=img.width,d32=this.d32&&this.d32.buffer===img.data.buffer?this.d32:(this.d32=new Uint32Array(img.data.buffer));
+    for(let yy=0;yy<bh;yy++){let p=yy*bw*3,q=yy*iw;for(let xx=0;xx<bw;xx++,p+=3,q++){let r=acc[p],g=acc[p+1],b=acc[p+2];
+      if(r+g+b<1.5){d32[q]=0;continue}const m=r>g?(r>b?r:b):(g>b?g:b);let a=m,s=255/m;
+      if(m>255){a=255;s=255/m*(1+(m-255)/(m*2.2))} // keep hue when bright, lean slightly to white
+      r*=s;g*=s;b*=s;if(r>255)r=255;if(g>255)g=255;if(b>255)b=255;
+      d32[q]=((a|0)<<24|(b|0)<<16|(g|0)<<8|(r|0))>>>0}}
+    this.offCtx.putImageData(img,0,0,0,0,bw,bh);
+    const up=this.dpr/d;ctx.save();ctx.setTransform(up,0,0,up,0,0);ctx.globalCompositeOperation='lighter';ctx.drawImage(this.off,0,0,bw,bh,bx,by,bw,bh);ctx.restore()}
+  labels(idx,now,vis,tickNow,cam,t){const ctx=this.ctx,A=this.shapes[idx],hs=this.hist[idx],pr=this.pr;
+    if(this.histIdx!==idx){this.histIdx=idx;A.sensors.forEach((s,k)=>{hs[k]=initialHistory(s)})}
+    if(tickNow)A.sensors.forEach((s,k)=>{hs[k].push(nextReading(s,t));hs[k].shift()});
+    const anchors=A.sensors.map(s=>{projectPoint(cam,s.p[0],s.p[1],s.p[2],pr);return{x:pr[0],y:pr[1]}});const boxes=placeLabels(anchors,this.W,this.H);
+    A.sensors.forEach((s,k)=>{const h=hs[k],a=anchors[k],b=boxes[k],cur=h[h.length-1],alert=isWatch(s,cur),col=alert?WARN_RGB:NORMAL_RGB;
+      // leader line ends on the card edge nearest the sensor, so it stays attached wherever the view puts the card
+      const lx2=Math.max(b.x,Math.min(b.x+b.w,a.x)),ly=Math.max(b.y,Math.min(b.y+b.h,a.y));
+      ctx.globalAlpha=vis;const pulse=(now/1000*1.2+k*.5)%1;ctx.strokeStyle=`rgba(${col},${.7*(1-pulse)})`;ctx.lineWidth=1.2;ctx.beginPath();ctx.arc(a.x,a.y,4+pulse*14,0,7);ctx.stroke();
+      ctx.fillStyle=`rgb(${col})`;ctx.beginPath();ctx.arc(a.x,a.y,3,0,7);ctx.fill();ctx.strokeStyle=`rgba(${col},0.45)`;ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(lx2,ly);ctx.stroke();
+      ctx.fillStyle='rgba(16,16,18,0.86)';ctx.strokeStyle=alert?'rgba(255,190,80,0.6)':'rgba(255,255,255,0.12)';ctx.beginPath();ctx.roundRect?ctx.roundRect(b.x,b.y,b.w,b.h,10):ctx.rect(b.x,b.y,b.w,b.h);ctx.fill();ctx.stroke();
+      ctx.fillStyle='#ededef';ctx.font=`600 11px ${FONT_SANS}`;ctx.textAlign='left';ctx.fillText(s.name,b.x+11,b.y+19);
+      if(alert){ctx.fillStyle=`rgb(${WARN_RGB})`;ctx.font=`600 9.5px ${FONT_MONO}`;ctx.textAlign='right';ctx.fillText('● WATCH',b.x+b.w-10,b.y+19);ctx.textAlign='left'}
+      ctx.fillStyle=alert?'rgb(255,200,100)':'#ededef';ctx.font=`600 18px ${FONT_MONO}`;const vs=formatReading(cur,s.v);ctx.fillText(vs,b.x+11,b.y+47);const vw=ctx.measureText(vs).width;ctx.fillStyle='#8c8c94';ctx.font=`500 11px ${FONT_SANS}`;ctx.fillText(s.unit,b.x+15+vw,b.y+47);
+      const sx=b.x+98,sw=80,sy=b.y+28,sh=22;let mn=Infinity,mx=-Infinity;for(const v of h){if(v<mn)mn=v;if(v>mx)mx=v}
+      ctx.strokeStyle=`rgba(${col},0.9)`;ctx.lineWidth=1.3;ctx.beginPath();h.forEach((v,i)=>{const X=sx+i/(h.length-1)*sw,Y=sy+sh-(v-mn)/(mx-mn||1)*sh;i?ctx.lineTo(X,Y):ctx.moveTo(X,Y)});ctx.stroke();ctx.globalAlpha=1})}
+  draw(clock,view,spin,now,dt,still,tickAllowed){const ctx=this.ctx,W=this.W,H=this.H;ctx.clearRect(0,0,W,H);if(W<=0||H<=0)return 0;
+    const n=this.shapes.length,A=this.shapes[clock.idx],B=this.shapes[(clock.idx+1)%n],{e,burst}=morphPhase(clock.t);
+    const sc=(this.mini?W*.13:Math.min(W*.17,H*.165))*view.zoom,cx=W*.5,cy=this.mini?H*.52:H*.47,cam=makeCamera(view.yaw,view.pitch,cx,cy,sc);
+    if(!this.mini)this.background(cam,cx,cy);
+    if(this.cfg.kind==='A')this.particlesA(A,B,e,burst,cam,spin);else this.particlesC(A,B,e,burst,cam,spin);
+    if(!this.mini){const vis=still?1:labelVisibility(clock.t);
+      if(vis>0){const bk=Math.floor(now/700);const tick=tickAllowed&&!still&&bk!==this.lastTick;if(tickAllowed)this.lastTick=bk;this.labels(clock.idx,now,vis,tick&&dt>0,cam,clock.t)}}
+    return e<.5?clock.idx:(clock.idx+1)%n}
+}
+
+/* =================================================================== */
+/* Orbit camera                                                         */
+/* =================================================================== */
+const reduced=(()=>{try{return matchMedia('(prefers-reduced-motion: reduce)').matches}catch{return false}})();
+const PITCH_MIN=-10*Math.PI/180, PITCH_MAX=80*Math.PI/180, PITCH_HOME=.32, ZMIN=.8, ZMAX=1.4;
+const YAW_PER_PX=.0085, PITCH_PER_PX=.0065;   // radians per CSS pixel of drag
+const SMOOTH=22;          // 1/s, how fast the view chases the pointer
+const FRICTION=6;         // 1/s, glide decay after release (~0.5 s to stop)
+const RESUME_MS=1500;     // pause after the glide before the spin and cycle resume
+const clampP=p=>p<PITCH_MIN?PITCH_MIN:p>PITCH_MAX?PITCH_MAX:p;
+const view={yaw:-.7,pitch:PITCH_HOME,zoom:1,tYaw:-.7,tPitch:PITCH_HOME,tZoom:1,vY:0,vP:0,dragging:false,gliding:false,lastInteract:-1e9,returning:false};
+let yaw0=0,spin=0;
+const isActive=now=>view.dragging||view.gliding||now-view.lastInteract<RESUME_MS;
+
+const clock={idx:0,t:.8}, miniClock={idx:3,t:2};
+const state={slow:false,zoomOn:false,bench:null};
+const hero=new Renderer(document.getElementById('hero'),'C6');
+const mini=new Renderer(document.getElementById('mini'),'M',{mini:true});
+const miniView={yaw:-.7,pitch:PITCH_HOME,zoom:1};
+
+function stepCamera(now,dt){
+  if(view.dragging){/* targets set by pointer */}
+  else if(view.gliding&&!reduced){view.tYaw+=view.vY*dt;view.tPitch=clampP(view.tPitch+view.vP*dt);const f=Math.exp(-FRICTION*dt);view.vY*=f;view.vP*=f;
+    if(Math.abs(view.vY)<.03&&Math.abs(view.vP)<.03){view.gliding=false;view.lastInteract=now}}
+  else if(!isActive(now)&&!reduced){ // auto: the gentle sway the welcome screen already had, plus the tilt easing home
+    const prev=Math.sin(yaw0)*.45;yaw0+=dt*.22;view.tYaw+=Math.sin(yaw0)*.45-prev;
+    view.tPitch+=(PITCH_HOME-view.tPitch)*(1-Math.exp(-dt/.7))}
+  const k=reduced?1:1-Math.exp(-SMOOTH*dt);
+  view.yaw+=(view.tYaw-view.yaw)*k;view.pitch+=(view.tPitch-view.pitch)*k;view.zoom+=(view.tZoom-view.zoom)*k;
+}
+function stepClock(c,now,dt,interacting){
+  if(reduced)return;
+  if(interacting){ // hold the machine: finish a dissolve already under way, otherwise stop just before callouts fade
+    if(c.t>=HOLD)advance(c,dt);else if(c.t<HOLD-.6)c.t=Math.min(HOLD-.6,c.t+dt)}
+  else advance(c,dt)}
+function advance(c,dt){c.t+=dt;const cyc=HOLD+TRANS;while(c.t>cyc){c.t-=cyc;c.idx=(c.idx+1)%6}}
+
+/* pointer: drag to orbit, two fingers to zoom, double-click to reset */
+const cv=hero.canvas, pointers=new Map();let lastMove=0,pinchD=0;
+cv.addEventListener('pointerdown',e=>{if(state.bench)return;cv.setPointerCapture(e.pointerId);pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
+  view.dragging=true;view.gliding=false;view.vY=view.vP=0;lastMove=performance.now();cv.classList.add('grabbing');document.getElementById('hint').style.opacity='0';
+  if(pointers.size===2){const[a,b]=[...pointers.values()];pinchD=Math.hypot(a.x-b.x,a.y-b.y)}kick()});
+cv.addEventListener('pointermove',e=>{const p=pointers.get(e.pointerId);if(!p)return;const now=performance.now();
+  if(pointers.size>=2){p.x=e.clientX;p.y=e.clientY;const[a,b]=[...pointers.values()];const dd=Math.hypot(a.x-b.x,a.y-b.y);
+    if(state.zoomOn&&pinchD>0)view.tZoom=Math.min(ZMAX,Math.max(ZMIN,view.tZoom*dd/pinchD));pinchD=dd;return}
+  const dx=e.clientX-p.x,dy=e.clientY-p.y;p.x=e.clientX;p.y=e.clientY;
+  view.tYaw+=dx*YAW_PER_PX;view.tPitch=clampP(view.tPitch+dy*PITCH_PER_PX);
+  const dts=Math.max(.004,(now-lastMove)/1000);lastMove=now; // release speed, lightly filtered
+  view.vY=view.vY*.6+(dx*YAW_PER_PX/dts)*.4;view.vP=view.vP*.6+(dy*PITCH_PER_PX/dts)*.4;kick()});
+function endPointer(e){if(!pointers.has(e.pointerId))return;pointers.delete(e.pointerId);if(pointers.size)return;
+  view.dragging=false;cv.classList.remove('grabbing');const now=performance.now();
+  if(now-lastMove>80){view.vY=view.vP=0} // held still before letting go: no glide
+  view.gliding=!reduced&&(Math.abs(view.vY)>.03||Math.abs(view.vP)>.03);view.lastInteract=now;kick()}
+cv.addEventListener('pointerup',endPointer);cv.addEventListener('pointercancel',endPointer);
+cv.addEventListener('dblclick',()=>{resetView();});
+cv.addEventListener('wheel',e=>{if(!state.zoomOn||state.bench)return;e.preventDefault();view.tZoom=Math.min(ZMAX,Math.max(ZMIN,view.tZoom*Math.exp(-e.deltaY*.0012)));view.lastInteract=performance.now();kick()},{passive:false});
+function resetView(){const home=-.7+Math.sin(yaw0)*.45;view.tYaw=home+TAU*Math.round((view.yaw-home)/TAU);view.tPitch=PITCH_HOME;view.tZoom=1;view.vY=view.vP=0;view.gliding=false;view.lastInteract=performance.now()-RESUME_MS+400;kick()}
+document.getElementById('resetView').addEventListener('click',resetView);
+document.getElementById('zoomOn').addEventListener('change',e=>{state.zoomOn=e.target.checked;if(!state.zoomOn){view.tZoom=1;kick()}});
+document.getElementById('slow').addEventListener('change',e=>{state.slow=e.target.checked;stats.idle.d=[];stats.orb.d=[]});
+
+/* machine chips */
+const machSeg=document.getElementById('machSeg');
+machSeg.innerHTML=NAMES.map((n,i)=>`<button data-m="${i}" aria-pressed="${i===0}">${n}</button>`).join('');
+machSeg.addEventListener('click',e=>{const b=e.target.closest('button');if(!b||state.bench)return;clock.idx=+b.dataset.m;clock.t=.6;shown=-1;kick()});
+let shown=-1;
+function setPill(idx){if(shown===idx)return;shown=idx;document.getElementById('pill').textContent=NAMES[idx];[...document.getElementById('dots').children].forEach((c,k)=>c.classList.toggle('on',k===idx));
+  machSeg.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',String(+b.dataset.m===idx)))}
+
+/* stats */
+const pct=(arr,p)=>{if(!arr.length)return 0;const s=[...arr].sort((a,b)=>a-b);return s[Math.min(s.length-1,Math.floor(s.length*p))]};
+const avg=a=>a.length?a.reduce((x,y)=>x+y,0)/a.length:0;
+const stats={idle:{d:[],g:[]},orb:{d:[],g:[]}};let maxBuf=0,lastMeter=0;
+function pushStat(s,d,g){s.d.push(d);s.g.push(g);if(s.d.length>180){s.d.shift();s.g.shift()}}
+
+/* loop */
+let raf=0,last=performance.now();
+function kick(){if(!raf&&!document.hidden){last=performance.now();raf=requestAnimationFrame(frame)}}
+function frame(now){raf=0;const gap=now-last;const dt=Math.min(.05,gap/1000);last=now;
+  if(state.bench&&state.bench.orbit)benchDrive(now);
+  const active=isActive(now);stepCamera(now,dt);stepClock(clock,now,dt,active);
+  if(!reduced){spin+=dt*3;advance(miniClock,dt)}
+  const r=hero.canvas.getBoundingClientRect();if(r.width!==hero.W||r.height!==hero.H||(window.devicePixelRatio||1)!==hero.dpr)hero.fit();
+  const reps=state.slow?4:1,t0=performance.now();let idx=0;
+  for(let k=0;k<reps;k++)idx=hero.draw(clock,view,spin,now,dt,reduced,k===0);
+  const cost=performance.now()-t0;setPill(idx);
+  const orbiting=view.dragging||view.gliding||(state.bench&&state.bench.orbit);
+  if(gap<200)pushStat(orbiting?stats.orb:stats.idle,cost,gap);
+  if(hero.lastBuf>maxBuf)maxBuf=hero.lastBuf;
+  if(state.bench&&state.bench.rec)state.bench.rec.d.push(cost),state.bench.rec.g.push(gap),state.bench.rec.buf=Math.max(state.bench.rec.buf,hero.lastBuf||0);
+  // mini rail: own clock and camera, never dragged
+  const mr=mini.canvas.getBoundingClientRect();if(mr.width!==mini.W||mr.height!==mini.H)mini.fit();
+  if(!reduced){const prev=Math.sin(miniView._y0||0)*.45;miniView._y0=(miniView._y0||0)+dt*.22;miniView.yaw+=Math.sin(miniView._y0)*.45-prev;mini.draw(miniClock,miniView,spin,now,dt,false,false)}
+  if(now-lastMeter>400){lastMeter=now;meters(orbiting)}
+  const settling=Math.abs(view.tYaw-view.yaw)+Math.abs(view.tPitch-view.pitch)+Math.abs(view.tZoom-view.zoom)>1e-4;
+  if(document.hidden)return;
+  if(!reduced||view.dragging||settling||state.bench)raf=requestAnimationFrame(frame)}
+function meters(orbiting){
+  const put=(id,v,u)=>{document.getElementById(id).innerHTML=v+(u?`<small>${u}</small>`:'')};
+  for(const[k,s]of[['i',stats.idle],['o',stats.orb]]){if(!s.d.length)continue;put(k+'A',avg(s.d).toFixed(2),'ms');put(k+'P',pct(s.d,.95).toFixed(2),'ms');put(k+'F',(1000/avg(s.g)).toFixed(0))}
+  document.getElementById('liveIdle').classList.toggle('on',!orbiting);document.getElementById('liveOrb').classList.toggle('on',!!orbiting);
+  document.getElementById('bufline').textContent=`Dot buffer now ${(hero.lastBuf/1000).toFixed(0)}k px at ${hero.lastD||'–'}× · largest this session ${(maxBuf/1000).toFixed(0)}k px · cap ${BUF_CAP/1000}k px (above it the buffer drops one resolution step)${state.slow?' · office-laptop simulation on (each frame drawn 4×)':''}`}
+document.addEventListener('visibilitychange',()=>{if(document.hidden){if(raf)cancelAnimationFrame(raf);raf=0}else kick()});
+
+/* benchmark: scripted orbit sweeps the whole turn and tilt range, zoom 1.4x in the second half */
+function benchDrive(now){const b=state.bench,t=(now-b.t0)/1000;view.dragging=true;
+  view.tYaw=b.yaw0+t*1.7;view.tPitch=clampP(.6+.85*Math.sin(t*1.4));view.tZoom=state.zoomOn||b.zoom?(t>2.5?ZMAX:1):1}
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+document.getElementById('runBench').addEventListener('click',async()=>{
+  const btn=document.getElementById('runBench'),prog=document.getElementById('benchProg');btn.disabled=true;btn.textContent='Running…';
+  const keepSlow=state.slow;const runs=[
+    {name:'Today · 11,000 dots · idle',v:'A',orbit:false,slow:false,base:1},
+    {name:'Today · 11,000 dots · orbiting',v:'A',orbit:true,slow:false},
+    {name:'C6 · 6,000 dots · idle',v:'C6',orbit:false,slow:false},
+    {name:'C6 · 6,000 dots · orbiting',v:'C6',orbit:true,slow:false},
+    {name:'C6 · orbiting · laptop ×4 simulated',v:'C6',orbit:true,slow:true},
+    {name:'Today · orbiting · laptop ×4 simulated',v:'A',orbit:true,slow:true}];
+  const res=[];
+  for(let i=0;i<runs.length;i++){const R=runs[i];hero.setVariant(R.v);state.slow=R.slow;
+    clock.idx=0;clock.t=1;view.tYaw=view.yaw=-.7;view.tPitch=view.pitch=PITCH_HOME;view.tZoom=view.zoom=1;view.lastInteract=-1e9;view.dragging=false;view.gliding=false;
+    state.bench={orbit:R.orbit,t0:performance.now(),yaw0:-.7,zoom:true,rec:null};kick();await sleep(1500);
+    clock.idx=0;clock.t=1;state.bench.t0=performance.now();state.bench.rec={d:[],g:[],buf:0};await sleep(5000);
+    const rec=state.bench.rec;res.push({...R,avg:avg(rec.d),p95:pct(rec.d,.95),fps:1000/avg(rec.g),gap95:pct(rec.g,.95),buf:rec.buf});
+    prog.style.width=((i+1)/runs.length*100)+'%'}
+  state.bench=null;view.dragging=false;view.lastInteract=-1e9;view.tPitch=PITCH_HOME;view.tZoom=1;hero.setVariant('C6');state.slow=keepSlow;
+  renderBench(res,true);btn.disabled=false;btn.textContent='Run again';setTimeout(()=>{prog.style.width='0'},800);kick()});
+function renderBench(res,live){const base=res[0];
+  document.getElementById('benchBody').innerHTML=res.map(r=>{
+    const lap=r.slow?r.p95:r.p95*4,lapTxt=r.slow?`${lap.toFixed(1)} ms <small style="color:var(--faint)">measured</small>`:`${lap.toFixed(1)} ms`;
+    const lc=lap>16.7?'bad':lap>12?'warn':'ok';const g=r.gap95/base.gap95;
+    const vs=r.base?'<span class="chip ok">baseline</span>':g<=.9?'<span class="chip ok">smoother</span>':g<=1.1?'<span class="chip warn">same</span>':'<span class="chip bad">choppier</span>';
+    return `<tr class="${r.v==='A'?'base':''}"><td class="name">${r.name}</td><td>${r.avg.toFixed(2)} ms</td><td>${r.p95.toFixed(2)} ms</td><td><span class="chip ${lc}">${lapTxt}</span></td><td>${r.fps.toFixed(0)}</td><td>${r.gap95.toFixed(1)} ms</td><td>${r.buf?(r.buf/1000).toFixed(0)+'k px':'–'}</td><td>${vs}</td></tr>`}).join('');
+  if(live)document.getElementById('benchEnv').textContent=`Measured on this device: canvas ${Math.round(hero.W)}×${Math.round(hero.H)} CSS px at pixel ratio ${hero.dpr}, ${navigator.hardwareConcurrency||'?'} CPU threads. CPU is script time per frame; today’s code also leaves 11,000 squares for the GPU, which only FPS and the frame gap show. 60 FPS is the cap on a 60 Hz screen, 120 on 120 Hz.`;
+  window.__bench=res}
+
+/* start: table shows the dev-PC run until the viewer measures their own */
+renderBench([
+  {name:'Today · 11,000 dots · idle',v:'A',base:1,avg:1.63,p95:2.1,fps:60,gap95:16.9,buf:0},
+  {name:'Today · 11,000 dots · orbiting',v:'A',avg:1.75,p95:2.3,fps:59,gap95:16.8,buf:0},
+  {name:'C6 · 6,000 dots · idle',v:'C6',avg:1.58,p95:2.0,fps:60,gap95:16.9,buf:181168},
+  {name:'C6 · 6,000 dots · orbiting',v:'C6',avg:1.88,p95:2.5,fps:60,gap95:17.0,buf:222984},
+  {name:'C6 · orbiting · laptop ×4 simulated',v:'C6',slow:true,avg:5.55,p95:7.1,fps:60,gap95:16.8,buf:222554},
+  {name:'Today · orbiting · laptop ×4 simulated',v:'A',slow:true,avg:8.22,p95:12.2,fps:57,gap95:25.0,buf:0}],false);
+document.getElementById('benchEnv').textContent='Shown: measured on the dev PC (Chrome, 60 Hz pane, canvas 1229×560 at pixel ratio 1, 16 CPU threads). At pixel ratio 2 C6 orbiting measured 2.45 ms avg, 2.9 ms worst 5 %, 60 FPS; wide and top-down views stepped the dot buffer from 1.25× to 1×. Press Run benchmark to measure this device.';
+hero.fit();mini.fit();
+if(reduced){document.querySelector('.sub').insertAdjacentHTML('beforeend',' <b style="color:var(--warn);font-weight:500">Reduced motion is on: still frames; dragging still turns the view.</b>');
+  clock.t=1.6;mini.draw(miniClock,miniView,0,0,0,true,false)}
+kick();
+</script>

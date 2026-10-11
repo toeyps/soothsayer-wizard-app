@@ -1,0 +1,275 @@
+<meta charset="utf-8">
+<title>Wizard Welcome Copy</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap">
+<style>
+  /* Layout: the app's welcome left column (fixed width, dark, as shipped) beside a rail of copy options.
+     Dark only — the app has no light theme (DESIGN_SYSTEM §3.1). Tokens mirror src/components/upload/uploadTheme.ts. */
+  :root {
+    color-scheme: dark;
+    --bg: #0a0a0b; --surface: #101012; --surface-hi: #16161a;
+    --border: rgba(255,255,255,0.07); --border-strong: rgba(255,255,255,0.12);
+    --text: #ededef; --text-muted: #8c8c94; --text-faint: #5b5b63;
+    --accent: oklch(0.68 0.17 245); --accent-hi: oklch(0.74 0.17 245); --accent-muted: oklch(0.4 0.1 245 / 0.18);
+    --ok: oklch(0.72 0.15 150); --warn: oklch(0.78 0.14 75); --danger: oklch(0.68 0.2 25);
+    --chip: rgba(255,255,255,0.05);
+    --s1: oklch(0.72 0.16 245); --s3: oklch(0.78 0.14 70);
+    --sans: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+    --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--sans); font-size: 13px; -webkit-font-smoothing: antialiased; }
+  button { font-family: inherit; }
+  button:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--accent-hi); outline-offset: 2px; }
+
+  .page { display: grid; grid-template-columns: minmax(0, 560px) minmax(300px, 1fr); min-height: 100%; }
+  @media (max-width: 900px) { .page { grid-template-columns: 1fr; } }
+
+  /* ---------- the hero column, as shipped in HomeStep.tsx ---------- */
+  .hero { padding: 44px 36px 22px 56px; border-right: 1px solid var(--border); display: flex; flex-direction: column; min-width: 0; }
+  @media (max-width: 900px) { .hero { padding: 32px 16px 22px; border-right: 0; border-bottom: 1px solid var(--border); } }
+  .brand { display: flex; align-items: center; gap: 11px; }
+  .mark { width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; flex-shrink: 0;
+    background: radial-gradient(circle at 30% 25%, var(--accent-hi), var(--accent));
+    box-shadow: 0 0 0 1px rgba(255,255,255,0.12) inset, 0 8px 30px var(--accent-muted); }
+  .brand-name { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; line-height: 1.2; }
+  .brand-sub { font-family: var(--mono); font-size: 10.5px; font-weight: 500; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-faint); margin-top: 1px; }
+  .brand-sub.changed { color: var(--s3); }
+
+  .copy { margin-top: 48px; }
+  .kicker { display: flex; align-items: center; gap: 8px; font-family: var(--mono); font-size: 11px; font-weight: 500; letter-spacing: 0.14em; text-transform: uppercase; color: var(--accent-hi); min-height: 16px; }
+  .kicker i { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 10px var(--ok); animation: pulse 2s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: .35; } }
+  @media (prefers-reduced-motion: reduce) { .kicker i { animation: none; } }
+  h1.head { margin: 14px 0 0; font-size: 44px; line-height: 1.05; font-weight: 700; letter-spacing: -0.035em; color: var(--text); text-wrap: balance; }
+  @media (max-width: 520px) { h1.head { font-size: 34px; } }
+  h1.head .g { background: linear-gradient(90deg, var(--accent-hi), var(--s1) 45%, var(--s3)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  p.sub { margin: 16px 0 0; max-width: 44ch; font-size: 14.5px; line-height: 1.6; color: var(--text-muted); }
+  .cta { display: flex; align-items: center; gap: 10px; margin-top: 28px; }
+  .btn-new { height: 46px; padding: 0 20px 0 16px; border-radius: 12px; cursor: pointer; display: inline-flex; align-items: center; gap: 10px;
+    font-size: 14px; font-weight: 650; color: #fff; border: 1px solid transparent;
+    background: linear-gradient(180deg, var(--accent-hi), var(--accent));
+    box-shadow: 0 10px 30px var(--accent-muted), 0 0 0 1px rgba(255,255,255,0.18) inset; }
+  kbd { font-family: var(--mono); font-size: 10.5px; font-weight: 500; color: var(--text-faint); border: 1px solid var(--border-strong); border-radius: 5px; padding: 1px 6px; }
+
+  .recent { margin-top: 40px; display: flex; flex-direction: column; gap: 6px; }
+  .recent-head { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
+  .label { font-size: 12px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-faint); }
+  .count { font-family: var(--mono); font-size: 11px; color: var(--text-faint); }
+  .find { margin-left: auto; display: flex; align-items: center; gap: 7px; height: 28px; width: 170px; padding: 0 9px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--chip); color: var(--text-faint); font-size: 12px; }
+  .proj { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 11px; background: var(--surface); }
+  .proj .ic { width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center; background: var(--accent-muted); color: var(--accent-hi); flex-shrink: 0; }
+  .proj b { display: block; font-size: 13px; font-weight: 600; }
+  .proj span { font-size: 11.5px; color: var(--text-faint); font-family: var(--mono); }
+  .foot { margin-top: 16px; display: flex; gap: 14px; font-family: var(--mono); font-size: 11px; color: var(--text-faint); }
+
+  /* ---------- the options rail ---------- */
+  .rail { padding: 36px 32px 40px; display: flex; flex-direction: column; gap: 22px; min-width: 0; }
+  @media (max-width: 900px) { .rail { padding: 28px 16px 40px; } }
+  .rail h2 { margin: 0; font-size: 15px; font-weight: 600; }
+  .rail .lede { margin: 4px 0 0; color: var(--text-muted); font-size: 12.5px; line-height: 1.55; max-width: 60ch; }
+  .rail .lede s { color: var(--text-faint); }
+  .opts { display: flex; flex-direction: column; gap: 6px; }
+  .opt { text-align: left; width: 100%; display: grid; grid-template-columns: 22px 1fr auto; gap: 10px; align-items: start; padding: 10px 12px; border-radius: 11px; cursor: pointer;
+    border: 1px solid var(--border); background: var(--surface); color: var(--text); }
+  .opt:hover { background: var(--surface-hi); }
+  .opt[aria-pressed="true"] { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; background: var(--surface-hi); }
+  .opt .n { font-family: var(--mono); font-size: 11px; font-weight: 600; color: var(--accent-hi); padding-top: 2px; }
+  .opt .t { font-size: 13px; font-weight: 600; line-height: 1.35; }
+  .opt .t em { font-style: normal; color: var(--s3); }
+  .opt .why { font-size: 11.5px; color: var(--text-muted); margin-top: 2px; line-height: 1.45; }
+  .opt .k { font-family: var(--mono); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-faint); margin-top: 4px; }
+  .rec { font-family: var(--mono); font-size: 10px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ok); border: 1px solid oklch(0.72 0.15 150 / 0.4); border-radius: 5px; padding: 2px 6px; white-space: nowrap; }
+  .cur { color: var(--text-faint); border-color: var(--border-strong); }
+
+  .block { border-top: 1px solid var(--border); padding-top: 18px; display: flex; flex-direction: column; gap: 10px; }
+  .block h3 { margin: 0; font-size: 12px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-faint); }
+  .seg { display: inline-flex; border: 1px solid var(--border-strong); border-radius: 8px; overflow: hidden; width: max-content; max-width: 100%; }
+  .seg button { background: none; border: 0; color: var(--text-muted); padding: 6px 11px; font-size: 12px; cursor: pointer; font-family: var(--mono); }
+  .seg button + button { border-left: 1px solid var(--border-strong); }
+  .seg button[aria-pressed="true"] { background: var(--accent-muted); color: var(--text); }
+  .note { font-size: 12px; color: var(--text-muted); line-height: 1.5; max-width: 60ch; margin: 0; }
+
+  /* the sensor callout card from the machine art, drawn in HTML for the wording check */
+  .callout { position: relative; width: 188px; height: 62px; border-radius: 10px; background: rgba(12,12,16,0.92); border: 1px solid rgba(255,190,80,0.6); padding: 8px 11px; font-size: 11px; font-weight: 600; }
+  .callout .lab { position: absolute; right: 10px; top: 7px; font-family: var(--mono); font-size: 9.5px; color: var(--warn); }
+  .callout .val { position: absolute; left: 11px; bottom: 8px; font-family: var(--mono); font-size: 18px; color: rgb(255,200,100); }
+  .callout .val small { font-family: var(--sans); font-size: 11px; color: var(--text-muted); font-weight: 500; margin-left: 4px; }
+  .callout svg { position: absolute; left: 98px; top: 28px; }
+</style>
+
+<div class="page">
+  <!-- ================= Hero column (left column of the welcome screen) ================= -->
+  <section class="hero" aria-label="Welcome hero, left column">
+    <div class="brand">
+      <span class="mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="#0a0a0b" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 15c2-6 4-9 5-9s2 7 4 7 2-9 4-9 3 5 5 11"/><circle cx="12" cy="13" r="1.4" fill="#0a0a0b"/></svg>
+      </span>
+      <div>
+        <div class="brand-name">Wizard</div>
+        <div class="brand-sub" id="brandSub">Predictive maintenance studio</div>
+      </div>
+    </div>
+
+    <div class="copy">
+      <div class="kicker"><i aria-hidden="true"></i><span id="kicker">Sensor data → failure models</span></div>
+      <h1 class="head" id="head">See the failure <span class="g">before it happens.</span></h1>
+      <p class="sub" id="sub">Import plant sensor CSVs, explore every tag, group failure modes and build health-score models — all on this computer.</p>
+      <div class="cta">
+        <button class="btn-new" type="button"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>New project</button>
+        <kbd>Ctrl+N</kbd>
+      </div>
+    </div>
+
+    <div class="recent">
+      <div class="recent-head"><b class="label">Recent projects</b><span class="count">3</span><div class="find"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>Find project</div></div>
+      <div class="proj"><span class="ic"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7h6l2 2h10v10H3z"/></svg></span><div><b>GTG-1 exhaust study</b><span>2025-11-04 · 42 tags · 2 failure groups</span></div></div>
+      <div class="proj"><span class="ic"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7h6l2 2h10v10H3z"/></svg></span><div><b>BFW pump P-301A</b><span>2025-10-21 · 18 tags · 1 failure group</span></div></div>
+      <div class="proj"><span class="ic"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7h6l2 2h10v10H3z"/></svg></span><div><b>Turbo expander K-110</b><span>2025-09-30 · 27 tags · 3 failure groups</span></div></div>
+    </div>
+    <div class="foot"><span>v0.8.0</span><span>Data stays on this machine</span></div>
+  </section>
+
+  <!-- ================= Options rail ================= -->
+  <aside class="rail" aria-label="Copy options">
+    <div>
+      <h2>Welcome hero copy</h2>
+      <p class="lede">Wizard analyses offline sensor data and finds abnormal machine behaviour against learned normal. It does not predict. Pick an option to see it in place on the left. <s>"See the failure before it happens"</s> is shown as the current state for comparison only.</p>
+    </div>
+
+    <div class="opts" id="opts" role="group" aria-label="Headline options"></div>
+
+    <div class="block">
+      <h3>Product line under the logo</h3>
+      <div class="seg" id="brandSeg" role="group" aria-label="Brand subtitle"></div>
+      <p class="note">"Predictive maintenance" is the market category, but it carries the same promise as the headline. "Machine health studio" says what the app does without it.</p>
+    </div>
+
+    <div class="block">
+      <h3>Sensor callout in the machine art (wording only)</h3>
+      <div style="display:flex; gap:16px; align-items:center; flex-wrap:wrap">
+        <div class="callout" aria-label="Sensor callout card">
+          Shaft vibration
+          <span class="lab" id="calloutLab">● WATCH</span>
+          <span class="val">1.86<small>mm/s</small></span>
+          <svg width="80" height="22" viewBox="0 0 80 22" fill="none" stroke="rgb(255,190,80)" stroke-width="1.3" aria-hidden="true"><path d="M0 14 4 15 8 12 12 14 16 11 20 13 24 12 28 13 32 10 36 12 40 11 44 9 48 10 52 8 56 9 60 6 64 7 68 4 72 5 76 2 80 3"/></svg>
+        </div>
+        <div class="seg" id="calloutSeg" role="group" aria-label="Callout label"></div>
+      </div>
+      <p class="note" id="calloutNote"></p>
+    </div>
+  </aside>
+</div>
+
+<script>
+  const OPTIONS = [
+    {
+      id: 'current', tag: 'Current', cur: true,
+      kicker: 'Sensor data → failure models',
+      head: ['See the failure ', 'before it happens.'],
+      sub: 'Import plant sensor CSVs, explore every tag, group failure modes and build health-score models — all on this computer.',
+      why: 'Promises prediction. Wizard works on offline data, so this cannot be true.'
+    },
+    {
+      id: 'A', tag: 'Recommended', rec: true,
+      kicker: 'Sensor history → health score',
+      head: ['Find the behaviour ', 'that isn’t normal.'],
+      sub: 'Import plant sensor CSVs, explore every tag, group failure modes and train models on normal operation — then score every period by how far it strays. All on this computer.',
+      why: 'States the job in the user’s own words (abnormal machine behaviour) and the mechanism in the subtitle (learned normal → score). Two lines at 44 px, like today.'
+    },
+    {
+      id: 'B',
+      kicker: 'Learn normal → score the rest',
+      head: ['Learn normal. ', 'Score everything else.'],
+      sub: 'Historical sensor data in, a 0–100 health score out. Wizard learns what normal operation looks like and rates every period in your data against it. Nothing leaves this computer.',
+      why: 'Leads with the mechanism. Punchiest, but “Learn normal” is terse for a first read.'
+    },
+    {
+      id: 'C',
+      kicker: 'Offline sensor data → machine behaviour',
+      head: ['Abnormal behaviour, ', 'found in your history.'],
+      sub: 'Import the CSVs you already have, explore every tag, group failure modes and score each period against learned normal — all on this computer.',
+      why: 'Says “history” in the headline itself, so offline analysis is unmistakable.'
+    },
+    {
+      id: 'D',
+      kicker: 'Sensor data → health score',
+      head: ['Know normal. ', 'See where it drifts.'],
+      sub: 'Import plant sensor CSVs, explore every tag, group failure modes and train a model of normal operation. The health score shows every period that drifted away from it — all on this computer.',
+      why: 'Shortest. “Drifts” matches the health-score chart the user will meet later; it describes the past tense of the data, not a warning.'
+    },
+    {
+      id: 'E',
+      kicker: 'Every tag, every period',
+      head: ['Every tag scored ', 'against its normal.'],
+      sub: 'Import plant sensor CSVs, group failure modes and train models that learn normal operation. Wizard then gives every period a 0–100 health score — all on this computer.',
+      why: 'Puts the score front and centre. Reads more like a feature than a purpose.'
+    },
+  ];
+
+  const BRAND = [
+    { label: 'Predictive maintenance studio', note: 'current' },
+    { label: 'Machine health studio', note: 'proposed' },
+    { label: 'Sensor data analysis studio', note: 'alternative' },
+  ];
+
+  const CALLOUT = [
+    { label: '● WATCH', note: 'Current. “Watch” reads as a live alert on a running machine, which is not what the app does.' },
+    { label: '● ABNORMAL', note: 'Proposed. Names what the analysis found in the data. Same amber, same card, no change to the art or its drift animation.' },
+    { label: '● SCORE 72', note: 'Alternative. Ties the callout to the health score the user will set up later; needs the number to track the drift.' },
+  ];
+
+  const $ = (id) => document.getElementById(id);
+  const opts = $('opts');
+  OPTIONS.forEach((o, i) => {
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'opt'; b.id = 'opt-' + o.id; b.setAttribute('aria-pressed', 'false');
+    const badge = o.rec ? '<span class="rec">Recommended</span>' : o.cur ? '<span class="rec cur">Current</span>' : '';
+    b.innerHTML = `<span class="n">${o.cur ? '—' : o.id}</span><span><span class="t">${o.head[0]}<em>${o.head[1]}</em></span><div class="why">${o.why}</div><div class="k">${o.kicker}</div></span>${badge}`;
+    b.addEventListener('click', () => select(i));
+    opts.appendChild(b);
+  });
+  function select(i) {
+    const o = OPTIONS[i];
+    $('kicker').textContent = o.kicker;
+    $('head').innerHTML = o.head[0] + '<span class="g">' + o.head[1] + '</span>';
+    $('sub').textContent = o.sub;
+    [...opts.children].forEach((el, k) => el.setAttribute('aria-pressed', String(k === i)));
+    try { localStorage.setItem('wz-copy-opt', String(i)); } catch (e) {}
+  }
+
+  function seg(elId, items, onPick, key) {
+    const el = $(elId);
+    items.forEach((it, i) => {
+      const b = document.createElement('button');
+      b.type = 'button'; b.textContent = it.label; b.id = elId + '-' + i; b.setAttribute('aria-pressed', 'false');
+      b.addEventListener('click', () => pick(i));
+      el.appendChild(b);
+    });
+    function pick(i) {
+      [...el.children].forEach((c, k) => c.setAttribute('aria-pressed', String(k === i)));
+      onPick(items[i], i);
+      try { localStorage.setItem(key, String(i)); } catch (e) {}
+    }
+    return pick;
+  }
+  const pickBrand = seg('brandSeg', BRAND, (it, i) => {
+    $('brandSub').textContent = it.label;
+    $('brandSub').classList.toggle('changed', i !== 0);
+  }, 'wz-copy-brand');
+  const pickCallout = seg('calloutSeg', CALLOUT, (it) => {
+    $('calloutLab').textContent = it.label;
+    $('calloutNote').textContent = it.note;
+  }, 'wz-copy-callout');
+
+  let o = 1, b = 1, c = 1;
+  try {
+    o = +(localStorage.getItem('wz-copy-opt') ?? 1);
+    b = +(localStorage.getItem('wz-copy-brand') ?? 1);
+    c = +(localStorage.getItem('wz-copy-callout') ?? 1);
+  } catch (e) {}
+  select(Number.isInteger(o) && OPTIONS[o] ? o : 1);
+  pickBrand(Number.isInteger(b) && BRAND[b] ? b : 1);
+  pickCallout(Number.isInteger(c) && CALLOUT[c] ? c : 1);
+</script>

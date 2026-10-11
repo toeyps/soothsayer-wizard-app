@@ -1,0 +1,1754 @@
+diff --git a/src/App.css b/C:/Users/toey_/AppData/Local/Temp/claude/C--00-DATA-Soothsayer-wizard-app/f0d99bcd-4b66-44e4-9f3d-a9188e3a6417/scratchpad/cur/app/src/App.css
+index fcd05ca..98bc5a4 100644
+--- a/src/App.css
++++ b/C:/Users/toey_/AppData/Local/Temp/claude/C--00-DATA-Soothsayer-wizard-app/f0d99bcd-4b66-44e4-9f3d-a9188e3a6417/scratchpad/cur/app/src/App.css
+@@ -5771,3 +5771,124 @@ body {
+ .pm-spin {
+     animation: spin 1s linear infinite;
+ }
++
++/* ===================================================================
++ * MOCKUP — Train / Test model validation (2026-10-07)
++ * Train = accent blue, Test = magenta oklch(.74 .16 340), Known problem =
++ * test colour + 135° hatch (DESIGN_SYSTEM §4 "Train / Test periods").
++ * =================================================================== */
++:root {
++    --train: oklch(0.68 0.17 245);
++    --train-muted: oklch(0.68 0.17 245 / 0.14);
++    --test: oklch(0.74 0.16 340);
++    --test-muted: oklch(0.74 0.16 340 / 0.13);
++    --test-line: oklch(0.74 0.16 340 / 0.45);
++}
++.tpe-sw { display: inline-block; width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0; vertical-align: -1px; }
++.tpe-sw--tr { background: var(--train); }
++.tpe-sw--te { background: var(--test); }
++.tpe-sw--pb { background: repeating-linear-gradient(135deg, var(--test) 0 2px, oklch(0.74 0.16 340 / 0.3) 2px 4px); }
++.rcc-chip .tpe-sw { margin-right: 1px; }
++.rcc-chip--warn { border-color: var(--warn-line); color: var(--warn); font-family: Inter, system-ui, sans-serif; }
++
++/* Running condition modal — Train / Test sub-sections */
++.tpe-sub { display: flex; align-items: center; gap: 8px; margin: 2px 0 8px; font-size: 12px; color: var(--text-faint); }
++.tpe-sub b { font-size: 13px; font-weight: 600; color: var(--text-primary); }
++.tpe-sub--te { margin-top: 22px; padding-top: 16px; border-top: 1px dashed var(--border-strong); }
++.tpe-callout { font-size: 12px; line-height: 1.5; color: var(--text-secondary); background: var(--train-muted); border: 1px solid var(--blue-line); border-radius: 10px; padding: 9px 12px; margin-bottom: 10px; max-width: 78ch; }
++.tpe-callout b { color: var(--text-primary); font-weight: 600; }
++.tpe-callout--te { background: var(--test-muted); border-color: var(--test-line); }
++.tpe-hlwarn { display: flex; align-items: flex-start; gap: 8px; margin-top: 8px; font-size: 11.5px; color: var(--warn); background: var(--warn-muted); border: 1px solid var(--warn-line); border-radius: 8px; padding: 7px 10px; }
++.tpe-hlwarn i { width: 4px; align-self: stretch; border-radius: 2px; flex-shrink: 0; }
++.tpe-hlwarn b { color: var(--text-primary); font-weight: 600; }
++.rcm-none--warn { border-color: var(--warn-line); background: var(--warn-muted); }
++
++/* test period row: T# · start → end · Normal|Known problem · days · delete */
++.tpe-per { grid-template-columns: 28px minmax(0, 1fr) 18px minmax(0, 1fr) auto 50px 28px; box-shadow: inset 3px 0 0 var(--test); }
++.tpe-pn { color: var(--test); }
++.tpe-lab { display: inline-flex; background: var(--bg-primary); border: 1px solid var(--border-strong); border-radius: 8px; padding: 2px; gap: 2px; height: 32px; }
++.tpe-lab button { border: 0; background: none; color: var(--text-secondary); border-radius: 6px; font-size: 11.5px; font-weight: 500; padding: 0 9px; cursor: pointer; white-space: nowrap; }
++.tpe-lab button:hover:not(.on) { color: var(--text-primary); }
++.tpe-lab button.on { background: var(--test-muted); color: var(--test); font-weight: 600; }
++.tpe-lab button.on.tpe-pb { background: repeating-linear-gradient(135deg, oklch(0.74 0.16 340 / 0.22) 0 3px, oklch(0.74 0.16 340 / 0.08) 3px 6px); }
++.tpe-lab button:focus-visible { outline: 2px solid var(--accent-color); outline-offset: 1px; }
++.tpe-ev { grid-column: 2 / -1; display: grid; grid-template-columns: auto minmax(0, 220px) minmax(0, 1fr); gap: 8px; align-items: center; }
++.tpe-evl { font-size: 11.5px; color: var(--text-secondary); white-space: nowrap; }
++.tpe-ev small { font-size: 11px; color: var(--text-faint); line-height: 1.4; }
++.tpe-ev--bad .f4-dtw { border-color: var(--danger); }
++.tpe-from { grid-column: 2 / -1; font-size: 11px; color: var(--text-faint); }
++.tpe-actions { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; }
++.tpe-actions .rcx-btn { height: 36px; border-radius: 10px; }
++.tpe-menu { border: 1px solid var(--border-strong); background: var(--pop, #17171c); border-radius: 12px; padding: 6px; display: flex; flex-direction: column; gap: 2px; box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45); }
++.tpe-mi { display: flex; align-items: center; gap: 10px; padding: 8px 8px; border-radius: 8px; }
++.tpe-mi:hover { background: var(--hover-bg); }
++.tpe-mi > i { width: 4px; height: 30px; border-radius: 2px; flex-shrink: 0; }
++.tpe-mi b { display: block; font-size: 12.5px; font-weight: 600; color: var(--text-primary); }
++.tpe-mi small { display: block; font: 11px var(--mono); color: var(--text-faint); }
++.tpe-mi--dis b { color: var(--text-secondary); }
++.tpe-mi small.tpe-mi-info { color: var(--text-secondary); font-family: Inter, system-ui, sans-serif; }
++.tpe-mi-note { font-size: 11px; color: var(--text-faint); padding: 6px 8px 4px; border-top: 1px solid var(--border); margin-top: 2px; }
++
++/* modal right column */
++.tpe-pvsub { text-transform: none; letter-spacing: 0; font-weight: 400; color: var(--text-faint); margin-left: 4px; }
++.tpe-pvtest { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; font-size: 12px; color: var(--text-secondary); padding: 10px 12px; border: 1px solid var(--test-line); background: var(--test-muted); border-radius: 10px; }
++.tpe-pvtest > span:first-child { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; color: var(--test); }
++.tpe-pvtest b { font: 600 16px var(--mono); color: var(--text-primary); }
++.tpe-min { font-size: 11.5px; line-height: 1.5; color: var(--text-faint); border: 1px dashed var(--border-strong); border-radius: 10px; padding: 9px 12px; }
++.tpe-min code { font: 600 11px var(--mono); color: var(--warn); background: var(--warn-muted); border-radius: 4px; padding: 0 4px; }
++
++/* Workbench — Train vs test (Model fit) + Test results (Health score) */
++.vt-card { background: var(--bg-primary); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; min-width: 0; }
++.vt-none { border: 1px dashed var(--border-strong); border-radius: 8px; padding: 14px; font-size: 12.5px; color: var(--text-secondary); }
++.vt-none b { color: var(--text-primary); }
++.vt-table { width: 100%; border-collapse: collapse; font-size: 12px; }
++.vt-table th { font-size: 10.5px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-faint); text-align: left; padding: 6px 10px 6px 0; border-bottom: 1px solid var(--border-strong); }
++.vt-table th.n, .vt-table td.n { text-align: right; }
++.vt-table td { padding: 8px 10px 8px 0; border-bottom: 1px solid var(--border); color: var(--text-secondary); vertical-align: middle; }
++.vt-table td.n { font-family: var(--mono); color: var(--text-primary); white-space: nowrap; }
++.vt-table tr:last-child td { border-bottom: 0; }
++.vt-table td.vt-scopec { padding-left: 8px; }
++.vt-scope { display: flex; align-items: center; gap: 9px; min-width: 0; }
++.vt-scope b { display: block; font-size: 12.5px; font-weight: 600; color: var(--text-primary); }
++.vt-scope small { display: block; font: 11px var(--mono); color: var(--text-faint); }
++.vt-train td { background: var(--train-muted); }
++.vt-table td.vt-dim, .vt-dim { color: var(--text-faint); }
++.vt-table td.vt-shift { text-align: right; font-family: Inter, system-ui, sans-serif; color: var(--text-secondary); }
++.vt-shift b { font-family: var(--mono); color: var(--text-primary); }
++.vt-note { margin-top: 8px; font-size: 11px; color: var(--text-faint); line-height: 1.5; }
++.vt-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 360px)); gap: 10px; margin-top: 4px; }
++.vt-tile { border: 1px solid var(--border-strong); border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; background: var(--input-bg); }
++.vt-tile[data-tone='ok'] { border-color: oklch(0.72 0.15 150 / 0.4); box-shadow: inset 3px 0 0 var(--ok); }
++.vt-tile[data-tone='warn'] { border-color: var(--warn-line); box-shadow: inset 3px 0 0 var(--warn); }
++.vt-th { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; font-size: 11px; color: var(--text-faint); }
++.vt-th b { font-size: 12.5px; font-weight: 600; color: var(--text-primary); }
++.vt-big { font-size: 13px; color: var(--text-secondary); }
++.vt-big b { font: 600 17px var(--mono); letter-spacing: -0.01em; }
++.vt-tile[data-tone='ok'] .vt-big b { color: var(--ok); }
++.vt-tile[data-tone='warn'] .vt-big b { color: var(--warn); }
++.vt-det { font-size: 11.5px; line-height: 1.5; color: var(--text-faint); }
++.vt-changed { margin: 0; }
++
++/* Version 3 (review fixes) */
++.vt-card--cap { max-width: 720px; }
++.vt-stack { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
++.rcm-preview { position: sticky; top: 0; }
++.f4-strip i.te { background: oklch(0.74 0.16 340 / 0.35); border-left: 1px solid var(--test); border-right: 1px solid var(--test); }
++.f4-strip i.te.pb { background: repeating-linear-gradient(135deg, oklch(0.74 0.16 340 / 0.55) 0 2px, oklch(0.74 0.16 340 / 0.15) 2px 5px); }
++.f4-slabel .tpe-sw { margin-right: 4px; }
++.tpe-custom { margin-top: 4px; }
++.tpe-custom-hint { font-size: 11px; font-weight: 400; color: var(--text-faint); text-transform: none; letter-spacing: 0; }
++.vt-rcnotice { margin: 4px 16px 0; }
++.tpe-hlwarn .rcx-btn { margin-left: auto; flex-shrink: 0; align-self: center; }
++.f4-cov--mini .f4-strip-ax { white-space: nowrap; font-size: 9px; }
++
++/* Version 4 — a test period may overlap train time (information only) */
++.tpe-info, .vt-info { font-size: 11.5px; color: var(--text-secondary); display: flex; gap: 6px; align-items: baseline; line-height: 1.45; }
++.tpe-info { grid-column: 2 / -1; }
++.tpe-info::before, .vt-info::before { content: 'i'; flex-shrink: 0; width: 14px; height: 14px; border-radius: 50%; border: 1px solid var(--border-strong); color: var(--text-faint); font: 600 9px/12px var(--mono); text-align: center; }
++.vt-tile .vt-info { font-size: 11px; }
++.vt-ovrow td { padding-top: 2px; }
++/* coverage strip: train on the top lane, test on the bottom lane, so overlaps stay readable */
++.f4-strip--tt i:not(.te) { bottom: 50%; }
++.f4-strip--tt i.te { top: 50%; }
++.vt-table tr:has(+ .vt-ovrow) td { border-bottom: 0; padding-bottom: 2px; }
+diff --git a/src/components/windows/BuildModelWindow.tsx b/C:/Users/toey_/AppData/Local/Temp/claude/C--00-DATA-Soothsayer-wizard-app/f0d99bcd-4b66-44e4-9f3d-a9188e3a6417/scratchpad/cur/app/src/components/windows/BuildModelWindow.tsx
+index 6f496ef..621ef99 100644
+--- a/src/components/windows/BuildModelWindow.tsx
++++ b/C:/Users/toey_/AppData/Local/Temp/claude/C--00-DATA-Soothsayer-wizard-app/f0d99bcd-4b66-44e4-9f3d-a9188e3a6417/scratchpad/cur/app/src/components/windows/BuildModelWindow.tsx
+@@ -4,7 +4,7 @@ import { emit } from "@tauri-apps/api/event";
+ import { invoke } from "@tauri-apps/api/core";
+ import { subscribe } from "../../utils/tauriEvents";
+ import { X, Check, ChevronRight, Lock, CircleAlert, TriangleAlert, Search, Loader2 } from "lucide-react";
+-import { FailureGroup, FailureModel, ModelKind, ModelCategory, SensorMetadata, CsvMetadata, WorkspaceSensorFilter, CategoryChange, TimePeriod, FailureGroupStateSlice, FailureGroupStateChangedPayload, HealthSetPoints, HealthVerdictValue } from "../../types";
++import { FailureGroup, FailureModel, ModelKind, ModelCategory, SensorMetadata, CsvMetadata, WorkspaceSensorFilter, CategoryChange, TimePeriod, TestPeriod, TimeHighlight, FailureGroupStateSlice, FailureGroupStateChangedPayload, HealthSetPoints, HealthVerdictValue } from "../../types";
+ import type { HealthIssue } from "../../types/health";
+ import type { RelationshipPreviewResult, ClusteringPreview } from "../../types/commands";
+ import { loadWorkspaceData, updateWorkspaceData } from "../../workspaceManager";
+@@ -12,6 +12,8 @@ import { withFailureGroupState } from "../../utils/failureGroupState";
+ import { modelSensorKey, groupModelsBySensor, sensorCategory, setSensorCategory, type SensorModelGroup } from "../../utils/modelGrouping";
+ import { normalizeCategories, flagLegacyGate, migratePeriods } from "../../utils/workspaceMigrations";
+ import { findSameSensorNameConflict, suggestDistinctModelName } from "../../utils/modelNames";
++import { testBlockReason } from "../../utils/runningCondition";
++import { TestedPill } from "./workbench/ValidationCards";
+ import { CATEGORY_BLOCK_REASON, getBuildBlockReason, isRunningConditionConfigured, isWorkspaceRunningConditionConfigured, effectiveRunningCondition, type RunningConditionFg } from "../../utils/runningCondition";
+ import { computeTrainFingerprint, isModelTrainedFresh as trainedFreshFor } from "../../utils/trainFingerprint";
+ import { buildPreviewFilterPayload } from "../../utils/trainingScope";
+@@ -31,6 +33,7 @@ import { RunningConditionCard, type RcStepState } from "./RunningConditionCard";
+ import { useRowCountPreview } from "./useRowCountPreview";
+ import { SensorPickerModal } from "./SensorPickers";
+ import TimePeriodsEditor from "./TimePeriodsEditor";
++import TestPeriodsEditor, { eventTimeInvalid } from "./TestPeriodsEditor";
+ import SubModelsModal from "./SubModelsModal";
+ import { useSubModelFits } from "./useSubModelFits";
+ import ModelFitPage from "./workbench/ModelFitPage";
+@@ -142,6 +145,8 @@ interface ModelDraft {
+     customCombine: 'and' | 'or';
+     customNoneConfirmed: boolean;
+     customPeriods: TimePeriod[];
++    /** MOCKUP (validation): this model's own test periods (Custom mode). */
++    customTestPeriods: TestPeriod[];
+ }
+ 
+ const draftFromModel = (m: FailureModel): ModelDraft => ({
+@@ -157,6 +162,7 @@ const draftFromModel = (m: FailureModel): ModelDraft => ({
+     customCombine: m.customRunningConditionCombine ?? 'and',
+     customNoneConfirmed: m.customRunningConditionNoneConfirmed ?? false,
+     customPeriods: m.filterTimePeriods ?? [],
++    customTestPeriods: m.customTestPeriods ?? [],
+ });
+ 
+ // Fixed order (not alphabetical) -- I/R/C is a small, natural taxonomy, not
+@@ -259,6 +265,8 @@ interface RcDraft {
+     combine: 'and' | 'or';
+     periods: TimePeriod[];
+     noneConfirmed: boolean;
++    /** MOCKUP: test periods. */
++    testPeriods: TestPeriod[];
+ }
+ 
+ /** Draft vs. persisted comparison. JSON is enough: every draft object is built
+@@ -268,7 +276,8 @@ function rcDraftEqual(a: RcDraft, b: RcDraft): boolean {
+     return a.combine === b.combine
+         && a.noneConfirmed === b.noneConfirmed
+         && JSON.stringify(a.filters) === JSON.stringify(b.filters)
+-        && JSON.stringify(a.periods) === JSON.stringify(b.periods);
++        && JSON.stringify(a.periods) === JSON.stringify(b.periods)
++        && JSON.stringify(a.testPeriods) === JSON.stringify(b.testPeriods);
+ }
+ 
+ /** Footer's "Last trained <date>" (Complete state) — locale-formatted, not a
+@@ -334,6 +343,9 @@ export default function BuildModelWindow() {
+     // A model in Workspace mode uses THIS list; Custom mode uses its own
+     // `filterTimePeriods`.
+     const [runningConditionTimePeriods, setRunningConditionTimePeriods] = useState<TimePeriod[]>([]);
++    // MOCKUP (validation): workspace test periods + the Dashboard highlights offered as test periods.
++    const [runningConditionTestPeriods, setRunningConditionTestPeriods] = useState<TestPeriod[]>([]);
++    const [dashHighlights, setDashHighlights] = useState<TimeHighlight[]>([]);
+     const { bounds: datasetBounds } = useDatasetTimeBounds();
+     // Drives the Workbench's Running condition settings modal (opened from the
+     // Step-1 card's Edit / Set running condition / Fix period button; was an inline
+@@ -467,7 +479,7 @@ export default function BuildModelWindow() {
+      *  PredictiveModelBuild.tsx's own `seedNote`, session-only (never
+      *  persisted), shown once per model per switch-to-Custom that actually
+      *  copied something. */
+-    const [seedNoteFor, setSeedNoteFor] = useState<Record<string, { periods: number; conditions: number } | null>>({});
++    const [seedNoteFor, setSeedNoteFor] = useState<Record<string, { periods: number; conditions: number; tests?: number } | null>>({});
+     /** Clustering's criteria-sensor stats (drives the cluster-range slider's
+      *  [min, max] bounds) — scoped to whichever model is currently active,
+      *  refetched whenever its (draft-aware) criteria sensor or effective
+@@ -542,6 +554,7 @@ export default function BuildModelWindow() {
+         setRunningConditionFilters(fg?.runningConditionFilters ?? []);
+         setRunningConditionCombine(fg?.runningConditionCombine ?? 'and');
+         setRunningConditionTimePeriods(fg?.runningConditionTimePeriods ?? []);
++        setRunningConditionTestPeriods(fg?.runningConditionTestPeriods ?? []);
+         setRunningConditionNoneConfirmed(fg?.runningConditionNoneConfirmed ?? false);
+         setRcLegacyNotice(fg?.rcLegacyNotice ?? null);
+         setCategoryNotice(fg?.categoryNormalisationNotice ?? null);
+@@ -705,6 +718,7 @@ export default function BuildModelWindow() {
+                 setRunningConditionFilters([]);
+                 setRunningConditionCombine('and');
+                 setRunningConditionTimePeriods([]);
++                setRunningConditionTestPeriods([]);
+                 setRunningConditionNoneConfirmed(false);
+                 setRcLegacyNotice(null);
+                 setLegacyRemindLater(false);
+@@ -739,6 +753,7 @@ export default function BuildModelWindow() {
+             try {
+                 const ws = await loadWorkspaceData(d.workspaceId);
+                 if (seq !== loadSeq.current || workspaceIdRef.current !== d.workspaceId) return;
++                setDashHighlights((ws as { timeHighlights?: TimeHighlight[] } | null)?.timeHighlights ?? []);
+                 // One-time legacy cleanup (Feature 4-A): a sensor whose models
+                 // disagree on category is made consistent. When that changed
+                 // something, the result + notice are WRITTEN BACK here so the
+@@ -831,6 +846,9 @@ export default function BuildModelWindow() {
+         combine?: 'and' | 'or';
+         periods?: TimePeriod[];
+         noneConfirmed?: boolean;
++        testPeriods?: TestPeriod[];
++        /** MOCKUP: only the test periods changed — re-score, no re-train, but Mark complete again. */
++        testsOnly?: boolean;
+     }): Promise<void> => {
+         if (!workspaceId) return Promise.resolve();
+         return trackPending((async () => {
+@@ -840,7 +858,17 @@ export default function BuildModelWindow() {
+                     ...(patch.combine !== undefined ? { runningConditionCombine: patch.combine } : {}),
+                     ...(patch.periods !== undefined ? { runningConditionTimePeriods: patch.periods } : {}),
+                     ...(patch.noneConfirmed !== undefined ? { runningConditionNoneConfirmed: patch.noneConfirmed } : {}),
++                    ...(patch.testPeriods !== undefined ? { runningConditionTestPeriods: patch.testPeriods } : {}),
+                 });
++                // MOCKUP (validation, user decision 2026-10-07): changing ONLY the test periods keeps
++                // every model trained, but a Complete Workspace-mode model has to be marked complete
++                // again because its saved test results changed.
++                if (patch.testsOnly && applied.failureGroupState) {
++                    applied.failureGroupState = {
++                        ...applied.failureGroupState,
++                        models: applied.failureGroupState.models.map(m => (m.runningConditionMode !== 'custom' && m.status ? { ...m, status: false, testsChangedAt: new Date().toISOString() } : m)),
++                    };
++                }
+                 // Any edit made through this panel settles the legacy notice.
+                 const fg = applied.failureGroupState;
+                 const stillPending = fg?.rcLegacyNotice === 'pending' && !isWorkspaceRunningConditionConfigured(fg);
+@@ -872,6 +900,7 @@ export default function BuildModelWindow() {
+         combine: runningConditionCombine,
+         periods: runningConditionTimePeriods,
+         noneConfirmed: runningConditionNoneConfirmed,
++        testPeriods: runningConditionTestPeriods,
+     };
+     const rcPersistedRef = useRef<RcDraft>(rcPersisted);
+     rcPersistedRef.current = rcPersisted;
+@@ -914,6 +943,9 @@ export default function BuildModelWindow() {
+     const updateRunningConditionPeriods = useCallback((periods: TimePeriod[]) => {
+         patchRcDraft({ periods });
+     }, [patchRcDraft]);
++    const updateTestPeriods = useCallback((testPeriods: TestPeriod[]) => {
++        patchRcDraft({ testPeriods });
++    }, [patchRcDraft]);
+ 
+     /** Discards the draft and closes the modal — the single exit every close
+      *  path (Cancel, Discard, successful Apply) goes through. */
+@@ -952,7 +984,11 @@ export default function BuildModelWindow() {
+         setRunningConditionCombine(d.combine);
+         setRunningConditionTimePeriods(d.periods);
+         setRunningConditionNoneConfirmed(d.noneConfirmed);
+-        void persistRunningCondition({ filters: d.filters, combine: d.combine, periods: d.periods, noneConfirmed: d.noneConfirmed });
++        setRunningConditionTestPeriods(d.testPeriods);
++        const p0 = rcPersistedRef.current;
++        const testsOnly = JSON.stringify(d.testPeriods) !== JSON.stringify(p0.testPeriods)
++            && JSON.stringify({ ...d, testPeriods: [] }) === JSON.stringify({ ...p0, testPeriods: [] });
++        void persistRunningCondition({ filters: d.filters, combine: d.combine, periods: d.periods, noneConfirmed: d.noneConfirmed, testPeriods: d.testPeriods, testsOnly });
+         closeRc();
+     }, [closeRc, persistRunningCondition]);
+ 
+@@ -976,7 +1012,7 @@ export default function BuildModelWindow() {
+     //      path below asks it; Save is deliberately NOT gated by it. ----
+     const gateFg: RunningConditionFg = {
+         models: allModels, runningConditionFilters, runningConditionCombine,
+-        runningConditionTimePeriods, runningConditionNoneConfirmed,
++        runningConditionTimePeriods, runningConditionNoneConfirmed, runningConditionTestPeriods,
+     };
+     const gateHeaders = allSensors.length ? allSensors : null;
+     // 🆕 2026-09-30 QA fix (bug 3): judge the DRAFT-merged model
+@@ -1090,6 +1126,7 @@ export default function BuildModelWindow() {
+             customRunningConditionCombine: d.customCombine,
+             customRunningConditionNoneConfirmed: d.customNoneConfirmed,
+             filterTimePeriods: d.customPeriods,
++            customTestPeriods: d.customTestPeriods,
+         };
+         if (m.kind === 'individual') return base;
+         if (m.kind === 'relationship') return { ...base, predictorSensors: d.predictors, relStiffness: d.stiffness };
+@@ -1100,9 +1137,14 @@ export default function BuildModelWindow() {
+         if (modelBlockReason(m) !== null) return;
+         const d = draftOf(m);
+         const fields = draftFields(m, d);
++        // MOCKUP (validation): changing only a Custom model's test periods keeps it trained,
++        // but a Complete model must be marked complete again.
++        const testsChanged = JSON.stringify(m.customTestPeriods ?? []) !== JSON.stringify(d.customTestPeriods);
+         await persist((models, groups) => ({
+             groups,
+-            models: models.map(x => x.id === m.id ? { ...x, ...fields } : x),
++            models: models.map(x => x.id === m.id
++                ? { ...x, ...fields, ...(testsChanged && x.status ? { status: false, testsChangedAt: new Date().toISOString() } : {}) }
++                : x),
+         }));
+         setDrafts(prev => {
+             if (!(m.id in prev)) return prev;
+@@ -1143,9 +1185,14 @@ export default function BuildModelWindow() {
+             copiedPeriods = runningConditionTimePeriods.length;
+             patch.customPeriods = runningConditionTimePeriods.map(p => ({ ...p, id: newPeriodId() }));
+         }
++        let copiedTests = 0;
++        if (d.customTestPeriods.length === 0 && runningConditionTestPeriods.length > 0) {
++            copiedTests = runningConditionTestPeriods.length;
++            patch.customTestPeriods = runningConditionTestPeriods.map(p => ({ ...p, id: newPeriodId() }));
++        }
+         patchDraft(m, patch);
+-        if (copiedConditions > 0 || copiedPeriods > 0) {
+-            setSeedNoteFor(prev => ({ ...prev, [m.id]: { periods: copiedPeriods, conditions: copiedConditions } }));
++        if (copiedConditions > 0 || copiedPeriods > 0 || copiedTests > 0) {
++            setSeedNoteFor(prev => ({ ...prev, [m.id]: { periods: copiedPeriods, conditions: copiedConditions, tests: copiedTests } }));
+         }
+     };
+ 
+@@ -2362,7 +2409,7 @@ export default function BuildModelWindow() {
+                     {seedNoteFor[m.id] && (
+                         <div data-testid="pm-seed-note" className="f4-seed">
+                             <span>
+-                                Copied <b>{seedNoteFor[m.id]!.periods} period{seedNoteFor[m.id]!.periods === 1 ? '' : 's'}</b> and {seedNoteFor[m.id]!.conditions} condition{seedNoteFor[m.id]!.conditions === 1 ? '' : 's'} from Workspace. Edits here affect only this model.
++                                Copied <b>{seedNoteFor[m.id]!.periods} train period{seedNoteFor[m.id]!.periods === 1 ? '' : 's'}</b>, <b>{seedNoteFor[m.id]!.tests ?? 0} test period{seedNoteFor[m.id]!.tests === 1 ? '' : 's'}</b> and {seedNoteFor[m.id]!.conditions} condition{seedNoteFor[m.id]!.conditions === 1 ? '' : 's'} from Workspace. Edits here affect only this model.
+                             </span>
+                             <button type="button" className="f4-x" aria-label="Dismiss" onClick={() => setSeedNoteFor(prev => ({ ...prev, [m.id]: null }))}><X size={12} /></button>
+                         </div>
+@@ -2370,13 +2417,27 @@ export default function BuildModelWindow() {
+ 
+                     <div className="f4-side-blk" data-testid="custom-periods">
+                         <div className="f4-slabel">
+-                            <span>Training periods <span className="f4-count">{d.customPeriods.length}</span></span>
++                            <span><i className="tpe-sw tpe-sw--tr" /> Train periods <span className="f4-count">{d.customPeriods.length}</span></span>
+                         </div>
+                         <div className="rc-scroll">
+-                            <TimePeriodsEditor compact periods={d.customPeriods} onChange={periods => patchDraft(m, { customPeriods: periods })} bounds={datasetBounds} />
++                            <TimePeriodsEditor compact periods={d.customPeriods} onChange={periods => patchDraft(m, { customPeriods: periods })} bounds={datasetBounds} tests={d.customTestPeriods} />
+                         </div>
+                     </div>
+ 
++                    <div className="f4-side-blk tpe-custom" data-testid="custom-test-periods">
++                        <div className="f4-slabel">
++                            <span><i className="tpe-sw tpe-sw--te" /> Test periods <span className="f4-count">{d.customTestPeriods.length}</span></span>
++                            <span className="tpe-custom-hint">when the score is checked · needed before Mark complete · may include train time</span>
++                        </div>
++                        <TestPeriodsEditor
++                            tests={d.customTestPeriods}
++                            train={d.customPeriods}
++                            onChange={tests => patchDraft(m, { customTestPeriods: tests })}
++                            highlights={dashHighlights}
++                            bounds={datasetBounds}
++                        />
++                    </div>
++
+                     <div className="f4-side-blk">
+                         <div className="f4-slabel">
+                             <span>Running condition</span>
+@@ -2718,6 +2779,8 @@ export default function BuildModelWindow() {
+         if (isModelStale(m)) return 'Settings changed — re-train first.';
+         const gate = gateReasonOf(m);
+         if (gate !== null) return gate;
++        const noTest = testBlockReason(effectiveModelFor(m), gateFg);
++        if (noTest !== null) return noTest;
+         if (!trainedFreshFor(effectiveModelFor(m), gateFg)) return NOT_TRAINED_BLOCK_REASON;
+         if (trainError[m.id]) return "Couldn't refresh the result — fix the problem, then re-train.";
+         if (healthPreview.notFitted) return 'Re-train first — the fitted Relation model is no longer in memory.';
+@@ -2736,7 +2799,8 @@ export default function BuildModelWindow() {
+ 
+     /** What the Health score page says about the model's saved files. */
+     const saveInfoFor = (m: FailureModel): SaveInfo =>
+-        saveInfo[m.id] ?? (m.healthExport && isModelDone(m)
++        // MOCKUP: "Saved N files" only while the model is Complete (a tests-only change clears it).
++        (saveInfo[m.id]?.phase === 'ok' && !isModelDone(m) ? undefined : saveInfo[m.id]) ?? (m.healthExport && isModelDone(m)
+             ? { phase: 'ok', outputDir: m.healthExport.outputDir, files: null, at: m.healthExport.at }
+             : { phase: 'idle' });
+     /** Complete, but the set points on screen differ from the ones the files were written with. */
+@@ -2782,6 +2846,11 @@ export default function BuildModelWindow() {
+                 <span className={`model-status-pill model-status-pill--${pillState}`} style={{ cursor: 'default' }}>
+                     {pillLabel}
+                 </span>
++                {(() => {
++                    // MOCKUP: neutral "Tested · N" once a trained model has test periods (information only).
++                    const nTests = effectiveRunningCondition(effectiveModelFor(m), gateFg).testPeriods.length;
++                    return nTests > 0 && pillState !== 'incomplete' ? <TestedPill n={nTests} /> : null;
++                })()}
+                 {page === 'health' && saving ? (
+                     <span data-testid="footer-status" className="f4-foot-reason">
+                         <Loader2 size={11} className="pm-spin" aria-hidden="true" /> Saving results…
+@@ -3095,7 +3164,11 @@ export default function BuildModelWindow() {
+     const rcView = rcDraft ?? rcPersisted;
+     const rcDirty = rcDraft !== null && !rcDraftEqual(rcDraft, rcPersisted);
+     const rcViewInvalid = validatePeriods(rcView.periods).some(s => s.invalid);
+-    const rcApplyEnabled = !rcViewInvalid && (rcDirty || rcPeriodTyping);
++    // MOCKUP: a test period overlapping a train period (or an invalid test period) blocks Apply.
++    const rcTestsBad = validatePeriods(rcView.testPeriods ?? []).some(s => s.invalid)
++        || (rcView.testPeriods ?? []).some(eventTimeInvalid);
++    const rcNoTrain = rcView.periods.length === 0;
++    const rcApplyEnabled = !rcViewInvalid && !rcTestsBad && !rcNoTrain && (rcDirty || rcPeriodTyping);
+     const rcViewConfigured = isWorkspaceRunningConditionConfigured(
+         { runningConditionFilters: rcView.filters, runningConditionNoneConfirmed: rcView.noneConfirmed },
+         gateHeaders,
+@@ -3146,7 +3219,17 @@ export default function BuildModelWindow() {
+                     rows={persistedRows}
+                     bounds={datasetBounds}
+                     onOpen={() => setRcFilterOpen(true)}
++                    testPeriods={runningConditionTestPeriods}
+                 />
++                {(() => {
++                    // MOCKUP: after a tests-only Apply, say how many models need Mark complete again.
++                    const n = allModels.filter(x => x.testsChangedAt && !x.status).length;
++                    return n > 0 ? (
++                        <div className="wb2-stale vt-rcnotice" role="status" data-testid="tests-changed-notice">
++                            <span><b>Test periods changed</b> — {n} complete model{n === 1 ? '' : 's'} need{n === 1 ? 's' : ''} Mark complete again. {n === 1 ? 'It was' : 'They were'} not re-trained.</span>
++                        </div>
++                    ) : null;
++                })()}
+ 
+                 {rcLegacyNotice === 'pending' && !rcConfigured && !legacyRemindLater && (
+                     <div
+@@ -3329,6 +3412,9 @@ export default function BuildModelWindow() {
+                                 getComponent={getComponent}
+                                 getUnit={getUnit}
+                                 preview={draftRows}
++                                testPeriods={rcView.testPeriods ?? []}
++                                onTestPeriodsChange={updateTestPeriods}
++                                highlights={dashHighlights}
+                             />
+                         </div>
+                         <div className="bmw-modal-foot" data-testid="rc-modal-foot">
+@@ -3348,14 +3434,18 @@ export default function BuildModelWindow() {
+                                         data-testid="rc-apply"
+                                         className="filter-apply-btn"
+                                         disabled={!rcApplyEnabled}
+-                                        title={rcViewInvalid ? 'Fix the invalid training period first.' : undefined}
++                                        title={rcViewInvalid ? 'Fix the invalid training period first.' : rcNoTrain ? 'Add a train period first.' : rcTestsBad ? 'Fix the test periods first.' : undefined}
+                                         onClick={applyRcDraft}
+                                     >
+                                         <Check size={12} /> Apply
+                                     </button>
+                                     <button type="button" data-testid="rc-cancel" className="f4-btn f4-btn--plain" onClick={closeRc}>Cancel</button>
+                                     <span className="filter-panel-spacer" />
+-                                    {(rcDirty || rcPeriodTyping) && (
++                                    {rcNoTrain ? (
++                                        <span data-testid="rc-no-train-block" className="filter-dirty-hint" style={{ color: 'var(--danger)' }}>Add a train period</span>
++                                    ) : rcTestsBad ? (
++                                        <span data-testid="rc-test-block" className="filter-dirty-hint" style={{ color: 'var(--danger)' }}>Fix the test periods to apply</span>
++                                    ) : (rcDirty || rcPeriodTyping) && (
+                                         <span data-testid="rc-dirty-hint" className="filter-dirty-hint">Changes not applied yet</span>
+                                     )}
+                                 </>
+diff --git a/src/components/windows/RunningConditionCard.tsx b/C:/Users/toey_/AppData/Local/Temp/claude/C--00-DATA-Soothsayer-wizard-app/f0d99bcd-4b66-44e4-9f3d-a9188e3a6417/scratchpad/cur/app/src/components/windows/RunningConditionCard.tsx
+index b726cb6..39811c2 100644
+--- a/src/components/windows/RunningConditionCard.tsx
++++ b/C:/Users/toey_/AppData/Local/Temp/claude/C--00-DATA-Soothsayer-wizard-app/f0d99bcd-4b66-44e4-9f3d-a9188e3a6417/scratchpad/cur/app/src/components/windows/RunningConditionCard.tsx
+@@ -1,6 +1,7 @@
+ import { Fragment } from 'react';
+ import { Check } from 'lucide-react';
+-import type { TimePeriod, WorkspaceSensorFilter } from '../../types';
++import type { TestPeriod, TimePeriod, WorkspaceSensorFilter } from '../../types';
++import { testTrainOverlaps } from '../../utils/timePeriods';
+ import { isCompleteCondition } from '../../utils/runningCondition';
+ import { validatePeriods } from '../../utils/timePeriods';
+ import { conditionChipParts, formatPeriodChip, type DataBounds } from './periodDisplay';
+@@ -34,24 +35,41 @@ interface RunningConditionCardProps {
+     bounds?: DataBounds | null;
+     /** Opens the settings modal (Edit / Set running condition / Fix period). */
+     onOpen: () => void;
++    /** MOCKUP: test periods (validation). */
++    testPeriods?: TestPeriod[];
++}
++
++/** MOCKUP: test period chips — label, dates, event; red when one overlaps a train period. */
++function TestChips({ tests, train }: { tests: TestPeriod[]; train: TimePeriod[] }) {
++    if (tests.length === 0) return <span className="rcc-chip rcc-chip--warn" data-testid="rc-card-test-chip">No test period — needed before Mark complete</span>;
++    const ov = testTrainOverlaps(train, tests); // information only (may include train time)
++    return (
++        <>
++            {tests.map((t, i) => (
++                <span key={t.id} data-testid="rc-card-test-chip" className="rcc-chip" title={ov[i].length ? `Includes train time (${ov[i].map(n => `P${n}`).join(', ')})` : undefined}>
++                    <i className={`tpe-sw tpe-sw--te${t.label === 'problem' ? ' tpe-sw--pb' : ''}`} />T{i + 1} {t.label === 'problem' ? 'Known problem' : 'Normal'} · {formatPeriodChip(t)}{t.label === 'problem' && t.eventTime ? ` · event ${formatPeriodChip({ id: '', start: t.eventTime, end: t.eventTime }).split(' → ')[0]}` : ''}
++                </span>
++            ))}
++        </>
++    );
+ }
+ 
+ /** Period chips ("Which time"); a broken period is drawn red. */
+ function PeriodChips({ periods }: { periods: TimePeriod[] }) {
+     const status = validatePeriods(periods);
+-    if (periods.length === 0) return <span className="rcc-chip" data-testid="rc-card-period-chip">Whole dataset</span>;
++    if (periods.length === 0) return <span className="rcc-chip rcc-chip--bad" data-testid="rc-card-period-chip">No train period — add one</span>;
+     return (
+         <>
+             {periods.map((p, i) => (
+                 <span key={p.id} data-testid="rc-card-period-chip" className={`rcc-chip${status[i]?.invalid ? ' rcc-chip--bad' : ''}`}>
+-                    {status[i]?.invalid ? '⚠ ' : ''}{formatPeriodChip(p)}
++                    <i className="tpe-sw tpe-sw--tr" />{status[i]?.invalid ? '⚠ ' : ''}{periods.length > 1 ? `P${i + 1} · ` : ''}{formatPeriodChip(p)}
+                 </span>
+             ))}
+         </>
+     );
+ }
+ 
+-export function RunningConditionCard({ state, periods, filters, combine, noneConfirmed, headers, getDesc, getUnit, rows, bounds, onOpen }: RunningConditionCardProps) {
++export function RunningConditionCard({ state, periods, filters, combine, noneConfirmed, headers, getDesc, getUnit, rows, bounds, onOpen, testPeriods = [] }: RunningConditionCardProps) {
+     if (state === 'unset') {
+         return (
+             <section className="rcc-card rcc-card--req" data-testid="rc-card" data-state="unset">
+@@ -95,7 +113,8 @@ export function RunningConditionCard({ state, periods, filters, combine, noneCon
+                     <span className="rcc-applies">applies to every model</span>
+                 </div>
+                 <div className="rcc-grid">
+-                    <div className="rcc-rows" data-testid="rc-card-time"><span className="rcc-lbl">Which time</span><PeriodChips periods={periods} /></div>
++                    <div className="rcc-rows" data-testid="rc-card-time"><span className="rcc-lbl">Train</span><PeriodChips periods={periods} /></div>
++                    <div className="rcc-rows" data-testid="rc-card-test"><span className="rcc-lbl">Test</span><TestChips tests={testPeriods} train={periods} /></div>
+                     <div className="rcc-rows" data-testid="rc-card-cond">
+                         <span className="rcc-lbl">When running</span>
+                         {noneConfirmed || complete.length === 0
+@@ -131,7 +150,7 @@ export function RunningConditionCard({ state, periods, filters, combine, noneCon
+                 {/* Small period strip (restored 2026-10-03). PERSISTED periods only —
+                     the settings modal's draft never reaches this card. Hidden while the
+                     dataset bounds are unknown. */}
+-                <PeriodCoverageBar periods={periods} bounds={bounds} mini />
++                <PeriodCoverageBar periods={periods} bounds={bounds} mini tests={testPeriods} />
+             </div>
+             <button type="button" className="rcx-btn rcx-btn--lg" data-testid="rc-card-open" onClick={onOpen}>Edit</button>
+         </section>
+diff --git a/src/components/windows/RunningConditionPanel.tsx b/C:/Users/toey_/AppData/Local/Temp/claude/C--00-DATA-Soothsayer-wizard-app/f0d99bcd-4b66-44e4-9f3d-a9188e3a6417/scratchpad/cur/app/src/components/windows/RunningConditionPanel.tsx
+index 946e7fc..55fe32d 100644
+--- a/src/components/windows/RunningConditionPanel.tsx
++++ b/C:/Users/toey_/AppData/Local/Temp/claude/C--00-DATA-Soothsayer-wizard-app/f0d99bcd-4b66-44e4-9f3d-a9188e3a6417/scratchpad/cur/app/src/components/windows/RunningConditionPanel.tsx
+@@ -1,8 +1,9 @@
+ import { Fragment } from 'react';
+ import { Plus, X } from 'lucide-react';
+-import type { TimePeriod, WorkspaceSensorFilter } from '../../types';
++import type { TestPeriod, TimeHighlight, TimePeriod, WorkspaceSensorFilter } from '../../types';
++import TestPeriodsEditor from './TestPeriodsEditor';
+ import { isCompleteCondition } from '../../utils/runningCondition';
+-import { validatePeriods } from '../../utils/timePeriods';
++import { newPeriodId, periodsOverlap, sortPeriods, validatePeriods } from '../../utils/timePeriods';
+ import { SensorPickerModal } from './SensorPickers';
+ import { RuleSentence } from './RunningConditionParts';
+ import TimePeriodsEditor, { type PeriodBounds } from './TimePeriodsEditor';
+@@ -67,12 +68,16 @@ interface RunningConditionPanelProps {
+     getUnit: (tag: string) => string;
+     /** Row count of what Apply would commit (the draft). */
+     preview: RowCountPreview;
++    /** MOCKUP: test periods (validation). */
++    testPeriods: TestPeriod[];
++    onTestPeriodsChange: (next: TestPeriod[]) => void;
++    highlights: TimeHighlight[];
+ }
+ 
+ export default function RunningConditionPanel({
+     configured, periods, onPeriodsChange, bounds, filters, combine, noneConfirmed,
+     onNoneChange, onCombineChange, onAddFilter, onUpdateFilter, onRemoveFilter, sensors, getDesc, getComponent, getUnit,
+-    preview,
++    preview, testPeriods, onTestPeriodsChange, highlights,
+ }: RunningConditionPanelProps) {
+     const status = validatePeriods(periods);
+     const firstBad = status.findIndex(s => s.invalid);
+@@ -80,7 +85,8 @@ export default function RunningConditionPanel({
+     const headers = sensors.length ? sensors : null;
+     const label = (tag: string) => getDesc(tag) || tag;
+ 
+-    const hasCount = preview.used !== null && preview.total !== null && (preview.status === 'ok' || preview.status === 'loading');
++    const noTrain = periods.length === 0;
++    const hasCount = !noTrain && preview.used !== null && preview.total !== null && (preview.status === 'ok' || preview.status === 'loading');
+     const pct = hasCount && preview.total ? Math.min(100, ((preview.used ?? 0) / preview.total) * 100) : 0;
+ 
+     return (
+@@ -90,9 +96,23 @@ export default function RunningConditionPanel({
+                     <div className="rcm-step-h">
+                         <span className="rcm-num">1</span>
+                         <b>Which time</b>
+-                        <span className="rcm-q">Training periods · optional — a row inside any period is used · none = whole dataset</span>
++                        <span className="rcm-q">Train periods teach the model what normal looks like · test periods are when the score is checked</span>
+                     </div>
+-                    <TimePeriodsEditor periods={periods} onChange={onPeriodsChange} bounds={bounds} />
++                    <div className="tpe-sub"><i className="tpe-sw tpe-sw--tr" /><b>Train periods</b><span>required · at least one</span></div>
++                    <div className="tpe-callout"><b>Pick only times when the machine was healthy and running normally.</b> The model learns these rows as “normal” — a period with a problem in it teaches the model that the problem is normal, and the health score will miss it later.</div>
++                    <TimePeriodsEditor periods={periods} onChange={onPeriodsChange} bounds={bounds} tests={testPeriods} />
++                    {/* MOCKUP: a train period that overlaps a Dashboard highlight is a warning only. */}
++                    {periods.flatMap((p, i) => highlights.filter(h => h.enabled !== false && periodsOverlap(p, { id: h.id, start: h.start, end: h.end })).map(h => (
++                        <div key={`${p.id}-${h.id}`} className="tpe-hlwarn" data-testid="train-hl-warning">
++                            <i style={{ background: h.color }} />
++                            <span>Train P{i + 1} overlaps the highlight <b>“{h.label}”</b>. If something was wrong at that time, leave it out of the train periods.</span>
++                            <button type="button" className="rcx-btn rcx-btn--sm" data-testid="train-hl-split" onClick={() => onPeriodsChange(splitAround(periods, i, h))}>Remove the overlap</button>
++                        </div>
++                    )))}
++                    {periods.length === 0 && <div className="rcm-permsg rcm-permsg--bad" data-testid="rc-no-train">No train period — add at least one. Models learn only from the train periods.</div>}
++                    <div className="tpe-sub tpe-sub--te"><i className="tpe-sw tpe-sw--te" /><b>Test periods</b><span>when the score is checked · required before Mark complete · may include train time</span></div>
++                    <div className="tpe-callout tpe-callout--te">Label each one. <b>Normal</b>: the score should stay high (shows false alarms). <b>Known problem</b>: the score should drop (shows the problem is caught) — add the event time to get the lead time.</div>
++                    <TestPeriodsEditor tests={testPeriods} train={periods} onChange={onTestPeriodsChange} highlights={highlights} bounds={bounds} />
+                 </section>
+ 
+                 <section className="rcm-step" data-testid="rc-condition">
+@@ -239,9 +259,11 @@ export default function RunningConditionPanel({
+             </div>
+ 
+             <aside className="rcm-preview" data-testid="rc-preview" aria-label="Data used for training">
+-                <div className="rcm-pv-h">Data used for training</div>
++                <div className="rcm-pv-h">Data used for training <span className="tpe-pvsub">train periods only</span></div>
+                 <div className="rcm-big" data-testid="rc-preview-count" aria-live="polite">
+-                    {hasCount ? (
++                    {noTrain ? (
++                        <><b>0</b><span data-testid="rc-preview-no-train">rows — add a train period</span></>
++                    ) : hasCount ? (
+                         <>
+                             <b className={preview.status === 'loading' ? 'rcm-stale' : undefined}>{(preview.used ?? 0).toLocaleString()}</b>
+                             <span>of {(preview.total ?? 0).toLocaleString()} rows · {formatPercent(preview.used, preview.total)}</span>
+@@ -264,6 +286,12 @@ export default function RunningConditionPanel({
+                     getLabel={label}
+                     getUnit={getUnit}
+                 />
++                <div className="tpe-pvtest" data-testid="rc-preview-tests">
++                    <span><i className="tpe-sw tpe-sw--te" />Test</span>
++                    <b>{testPeriods.length}</b>
++                    <span>period{testPeriods.length === 1 ? '' : 's'} · {testPeriods.filter(t => t.label === 'normal').length} Normal · {testPeriods.filter(t => t.label === 'problem').length} Known problem</span>
++                </div>
++                <div className="tpe-min" data-testid="rc-min-data">Minimum training data: below <code>[MIN DAYS]</code> of running time Train is blocked; below <code>[RECOMMENDED DAYS]</code> an amber warning. Values not decided yet.</div>
+                 {firstBad >= 0 && (
+                     <div data-testid="rc-invalid-reason" className="rcm-warn rcm-warn--bad">
+                         ⚠ {status[firstBad].reason ?? `Period ${firstBad + 1} is invalid.`} Models that follow this setting can't be built until it's fixed.
+@@ -278,3 +306,20 @@ export default function RunningConditionPanel({
+         </div>
+     );
+ }
++
++// MOCKUP: "Remove the overlap" — cut the highlight's time out of train period `i`
++// (the part before and the part after are kept; an empty side is dropped).
++const STEP = 10 * 60_000;
++const pad2 = (n: number) => String(n).padStart(2, '0');
++const toMsLocal = (v: string) => { const t = (v ?? '').trim().replace(' ', 'T'); const ms = new Date(/^\d{4}-\d{2}-\d{2}$/.test(t) ? `${t}T00:00` : t).getTime(); return Number.isNaN(ms) ? null : ms; };
++const fmtLocal = (ms: number) => { const d = new Date(ms); return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`; };
++function splitAround(periods: TimePeriod[], i: number, h: TimeHighlight): TimePeriod[] {
++    const p = periods[i];
++    const ps = toMsLocal(p.start) ?? -Infinity, pe = toMsLocal(p.end) ?? Infinity;
++    const hs = toMsLocal(h.start), he = toMsLocal(h.end);
++    if (hs === null || he === null) return periods;
++    const parts: TimePeriod[] = [];
++    if (hs - STEP >= ps) parts.push({ id: p.id, start: p.start, end: fmtLocal(hs - STEP) });
++    if (he + STEP <= pe) parts.push({ id: newPeriodId(), start: fmtLocal(he + STEP), end: p.end });
++    return sortPeriods([...periods.slice(0, i), ...parts, ...periods.slice(i + 1)]);
++}
+diff --git a/src/components/windows/RunningConditionParts.tsx b/C:/Users/toey_/AppData/Local/Temp/claude/C--00-DATA-Soothsayer-wizard-app/f0d99bcd-4b66-44e4-9f3d-a9188e3a6417/scratchpad/cur/app/src/components/windows/RunningConditionParts.tsx
+index 37efe3e..84ddc87 100644
+--- a/src/components/windows/RunningConditionParts.tsx
++++ b/C:/Users/toey_/AppData/Local/Temp/claude/C--00-DATA-Soothsayer-wizard-app/f0d99bcd-4b66-44e4-9f3d-a9188e3a6417/scratchpad/cur/app/src/components/windows/RunningConditionParts.tsx
+@@ -1,8 +1,8 @@
+ import { Fragment } from 'react';
+-import type { TimePeriod } from '../../types';
++import type { TestPeriod, TimePeriod } from '../../types';
+ import { isCompleteCondition } from '../../utils/runningCondition';
+ import { validatePeriods } from '../../utils/timePeriods';
+-import { computeCoverage, conditionChipParts, formatPeriodChip, type DataBounds, type RuleInput } from './periodDisplay';
++import { boundsMs, computeCoverage, conditionChipParts, formatPeriodChip, parseLocal, DAY_MS, type DataBounds, type RuleInput } from './periodDisplay';
+ 
+ /*
+  * Small presentational pieces of the Running Condition UI (approved mockup
+@@ -14,20 +14,37 @@ import { computeCoverage, conditionChipParts, formatPeriodChip, type DataBounds,
+ /** Dataset timeline with one block per period and "N of M days used".
+  *  `className` lets a host (the settings modal) restyle the wrapper;
+  *  `mini` is the Step-1 card variant: thinner strip, shorter day caption. */
+-export function PeriodCoverageBar({ periods, bounds, className, mini = false }: {
++export function PeriodCoverageBar({ periods, bounds, className, mini = false, tests }: {
+     periods: TimePeriod[];
+     bounds: DataBounds | null | undefined;
+     className?: string;
+     mini?: boolean;
++    /** MOCKUP (validation): test periods drawn in the test colour (Known problem hatched).
++     *  When given, a train period is required: no period = an empty strip, not "all data". */
++    tests?: TestPeriod[];
+ }) {
+-    const cov = computeCoverage(periods, bounds);
+-    if (!cov) return null;
+-    const days = cov.unlimited
+-        ? `all ${cov.totalDays} days`
+-        : mini ? `${cov.usedDays} / ${cov.totalDays} d` : `${cov.usedDays} of ${cov.totalDays} days used`;
++    const validation = tests !== undefined;
++    const b = boundsMs(bounds);
++    const base = validation && periods.length === 0 && b ? computeCoverage([{ id: 'none', start: '', end: '' }], bounds) : computeCoverage(periods, bounds);
++    if (!base || !b) return null;
++    const cov = validation && periods.length === 0 ? { ...base, segments: [], usedDays: 0, unlimited: false } : base;
++    const W = b.t1 - b.t0;
++    const testSegs = (tests ?? []).map(t => {
++        const s = parseLocal(t.start) ?? b.t0;
++        const e = parseLocal(t.end) ?? b.t1;
++        const a = Math.max(b.t0, Math.min(s, e));
++        const z = Math.min(b.t1, Math.max(s, e));
++        return { id: t.id, problem: t.label === 'problem', left: ((a - b.t0) / W) * 100, width: Math.max(0.6, ((z - a) / W) * 100), days: Math.max(0, Math.round((z - a) / DAY_MS)) };
++    });
++    const testDays = testSegs.reduce((n, t) => n + t.days, 0);
++    const days = validation
++        ? `${cov.usedDays} d train · ${testDays} d test`
++        : cov.unlimited
++            ? `all ${cov.totalDays} days`
++            : mini ? `${cov.usedDays} / ${cov.totalDays} d` : `${cov.usedDays} of ${cov.totalDays} days used`;
+     return (
+         <div data-testid="period-coverage" className={[className, mini ? 'f4-cov--mini' : ''].filter(Boolean).join(' ') || undefined}>
+-            <div className="f4-strip" role="img" aria-label="Periods on the dataset timeline">
++            <div className={`f4-strip${validation ? ' f4-strip--tt' : ''}`} role="img" aria-label={validation ? 'Train periods (top lane) and test periods (bottom lane) on the dataset timeline' : 'Periods on the dataset timeline'}>
+                 {cov.segments.map((s, i) => (
+                     <i
+                         key={i}
+@@ -36,6 +53,9 @@ export function PeriodCoverageBar({ periods, bounds, className, mini = false }:
+                         style={{ left: `${s.leftPct.toFixed(2)}%`, width: `${s.widthPct.toFixed(2)}%` }}
+                     />
+                 ))}
++                {testSegs.map((t, i) => (
++                    <i key={t.id} className={`te${t.problem ? ' pb' : ''}`} title={`T${i + 1} ${t.problem ? 'Known problem' : 'Normal'}`} style={{ left: `${t.left.toFixed(2)}%`, width: `${t.width.toFixed(2)}%` }} />
++                ))}
+             </div>
+             <div className="f4-strip-ax">
+                 <span>{cov.axisLeft}</span>
+@@ -61,6 +81,13 @@ export function RuleSentence({ periods, filters, combine, none, headers, getLabe
+     const status = validatePeriods(periods);
+     const valid = periods.filter((_, i) => !status[i].invalid);
+     const conds = filters.filter(f => isCompleteCondition(f, headers));
++    if (periods.length === 0) {
++        return (
++            <div data-testid="rule-sentence" className="rcm-sentence">
++                <b className="rcm-sentence-miss" data-testid="rule-no-train">No train period</b> — add one; models learn only from the train periods.
++            </div>
++        );
++    }
+     return (
+         <div data-testid="rule-sentence" className="rcm-sentence">
+             Train on rows inside{' '}
+diff --git a/C:/Users/toey_/AppData/Local/Temp/claude/C--00-DATA-Soothsayer-wizard-app/f0d99bcd-4b66-44e4-9f3d-a9188e3a6417/scratchpad/cur/app/src/components/windows/TestPeriodsEditor.tsx b/C:/Users/toey_/AppData/Local/Temp/claude/C--00-DATA-Soothsayer-wizard-app/f0d99bcd-4b66-44e4-9f3d-a9188e3a6417/scratchpad/cur/app/src/components/windows/TestPeriodsEditor.tsx
+new file mode 100644
+index 0000000..1208069
+--- /dev/null
++++ b/C:/Users/toey_/AppData/Local/Temp/claude/C--00-DATA-Soothsayer-wizard-app/f0d99bcd-4b66-44e4-9f3d-a9188e3a6417/scratchpad/cur/app/src/components/windows/TestPeriodsEditor.tsx
+@@ -0,0 +1,146 @@
++import { useState } from 'react';
++import { Highlighter, Plus, Trash2 } from 'lucide-react';
++import type { TestPeriod, TimeHighlight, TimePeriod } from '../../types';
++import { newPeriodId, periodsOverlap, sortPeriods, trainOverlapDays, validatePeriods } from '../../utils/timePeriods';
++import { formatDate, periodDays } from './periodDisplay';
++import type { PeriodBounds } from './TimePeriodsEditor';
++
++/*
++ * MOCKUP (Train/Test validation, 2026-10-07): the "Test periods" list of the
++ * Running condition modal. A test period is data the model never trains on,
++ * labelled Normal (the score should stay high) or Known problem (the score
++ * should drop; the event time gives the lead time). A test period must not
++ * overlap a train period. "From Highlights" copies a Dashboard highlight's
++ * time range; the label is kept on the test period only.
++ */
++
++const toInput = (s: string | null | undefined) => {
++    const t = (s ?? '').trim().replace(' ', 'T');
++    if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return `${t}T00:00`;
++    return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(t) ? t.slice(0, 16) : '';
++};
++const addDays = (s: string, d: number) => {
++    const ms = new Date(toInput(s) || s).getTime();
++    if (Number.isNaN(ms)) return '';
++    const x = new Date(ms + d * 86400000);
++    const p = (n: number) => String(n).padStart(2, '0');
++    return `${x.getFullYear()}-${p(x.getMonth() + 1)}-${p(x.getDate())}T${p(x.getHours())}:${p(x.getMinutes())}`;
++};
++
++/** The event time is optional; when set it must parse and fall inside its own test period. */
++export function eventTimeInvalid(t: TestPeriod): boolean {
++    if (t.label !== 'problem' || !(t.eventTime ?? '').trim()) return false;
++    const ev = new Date(toInput(t.eventTime)).getTime();
++    const a = new Date(toInput(t.start)).getTime(), b = new Date(toInput(t.end)).getTime();
++    return Number.isNaN(ev) || (!Number.isNaN(a) && ev < a) || (!Number.isNaN(b) && ev > b);
++}
++
++interface Props {
++    tests: TestPeriod[];
++    train: TimePeriod[];
++    onChange: (next: TestPeriod[]) => void;
++    highlights: TimeHighlight[];
++    bounds?: PeriodBounds | null;
++}
++
++export default function TestPeriodsEditor({ tests, train, onChange, highlights, bounds }: Props) {
++    const [menu, setMenu] = useState(false);
++    const status = validatePeriods(tests);
++    const boundsForDays = bounds?.min && bounds?.max ? { min: toInput(bounds.min), max: toInput(bounds.max) } : null;
++    const set = (i: number, patch: Partial<TestPeriod>) => onChange(tests.map((t, j) => (j === i ? { ...t, ...patch } : t)));
++    const overlaps = (t: TimePeriod) => train.map((p, j) => (periodsOverlap(p, t) ? `P${j + 1}` : null)).filter(Boolean) as string[];
++
++    const add = () => {
++        const last = [...train, ...tests].map(p => toInput(p.end)).filter(Boolean).sort().pop();
++        const start = last ? addDays(last, 0) : toInput(bounds?.min);
++        const end = start ? addDays(start, 14) : '';
++        onChange(sortPeriods([...tests, { id: newPeriodId(), start, end, label: 'normal' } as TestPeriod]) as TestPeriod[]);
++    };
++    const fromHighlight = (h: TimeHighlight, label: TestPeriod['label']) => {
++        // Kept in time order, so T1, T2 … read left to right on the charts.
++        onChange(sortPeriods([...tests, { id: newPeriodId(), start: toInput(h.start), end: toInput(h.end), label, fromHighlight: h.label }]) as TestPeriod[]);
++        setMenu(false);
++    };
++    const usable = highlights.filter(h => h.enabled !== false);
++    const evBad = eventTimeInvalid;
++
++    return (
++        <div className="rcm-periods" data-testid="test-periods-editor">
++            {tests.length === 0 && (
++                <div className="rcm-none rcm-none--warn" data-testid="tests-empty">
++                    <span><b>No test period yet.</b> You can train, but every model needs a test period before Mark complete.</span>
++                </div>
++            )}
++            {tests.map((t, i) => {
++                const ov = overlaps(t);
++                const st = status[i];
++                const days = periodDays(t, boundsForDays);
++                const bad = st.invalid;
++                const ovDays = ov.length ? trainOverlapDays(train, t) : 0;
++                return (
++                    <div key={t.id} className={`rcm-per tpe-per${bad ? ' rcm-per--bad' : ''}`} data-testid={`test-row-${i + 1}`}>
++                        <span className="rcm-pn tpe-pn">T{i + 1}</span>
++                        <div className="f4-dtw"><input type="datetime-local" aria-label={`Test period ${i + 1} start`} value={toInput(t.start)} onChange={e => set(i, { start: e.target.value })} /></div>
++                        <span className="rcm-arrow">→</span>
++                        <div className="f4-dtw"><input type="datetime-local" aria-label={`Test period ${i + 1} end`} value={toInput(t.end)} onChange={e => set(i, { end: e.target.value })} /></div>
++                        <div className="tpe-lab" role="group" aria-label="What happened in this period">
++                            <button type="button" className={t.label === 'normal' ? 'on' : undefined} aria-pressed={t.label === 'normal'} onClick={() => set(i, { label: 'normal', eventTime: undefined })}>Normal</button>
++                            <button type="button" className={t.label === 'problem' ? 'on tpe-pb' : undefined} aria-pressed={t.label === 'problem'} onClick={() => set(i, { label: 'problem' })}>Known problem</button>
++                        </div>
++                        <span className="rcm-dur">{st.invalid || days === null ? '—' : `${days} d`}</span>
++                        <button type="button" className="rcm-ib" aria-label={`Remove test period ${i + 1}`} title="Remove test period" onClick={() => onChange(tests.filter((_, j) => j !== i))}>
++                            <Trash2 size={14} aria-hidden="true" />
++                        </button>
++                        {t.label === 'problem' && (
++                            <div className={`tpe-ev${evBad(t) ? ' tpe-ev--bad' : ''}`}>
++                                <span className="tpe-evl">Event time</span>
++                                <div className="f4-dtw"><input type="datetime-local" aria-label={`Test period ${i + 1} event time`} value={toInput(t.eventTime)} onChange={e => set(i, { eventTime: e.target.value })} /></div>
++                                <small>Optional · when the failure was found (or the machine was stopped). Wizard then reports how many days earlier the score fell below 80.</small>
++                            </div>
++                        )}
++                        {evBad(t) && <div role="alert" className="rcm-permsg rcm-permsg--bad" data-testid={`test-event-bad-${i + 1}`}>The event time must be inside T{i + 1} ({formatDate(t.start)} – {formatDate(t.end)}).</div>}
++                        {t.fromHighlight && <div className="tpe-from">From highlight “{t.fromHighlight}”</div>}
++                        {st.invalid && <div role="alert" className="rcm-permsg rcm-permsg--bad">{st.reason?.replace('Period', 'Test period')} Fix it before training.</div>}
++                        {!st.invalid && ov.length > 0 && (
++                            <div className="tpe-info" data-testid={`test-overlap-${i + 1}`}>
++                                T{i + 1} includes {ovDays} d of train time ({ov.join(', ')}) — its results include rows the model was trained on.
++                            </div>
++                        )}
++                    </div>
++                );
++            })}
++            <div className="tpe-actions">
++                <button type="button" className="rcm-add" data-testid="test-add" onClick={add}><Plus size={13} aria-hidden="true" />Add test period</button>
++                <button type="button" className="rcx-btn rcx-btn--sm" data-testid="test-from-hl" disabled={usable.length === 0} title={usable.length ? 'Use a Dashboard highlight as a test period' : 'No highlights on the Dashboard yet'} onClick={() => setMenu(m => !m)}>
++                    <Highlighter size={13} aria-hidden="true" /> From Highlights ▾
++                </button>
++            </div>
++            {menu && (
++                <div className="tpe-menu" data-testid="test-hl-menu">
++                    {usable.map(h => {
++                        const ov = overlaps({ id: h.id, start: h.start, end: h.end });
++                        const used = tests.some(t => toInput(t.start) === toInput(h.start) && toInput(t.end) === toInput(h.end));
++                        return (
++                            <div key={h.id} className="tpe-mi">
++                                <i style={{ background: h.color }} />
++                                <div>
++                                    <b>{h.label || 'Highlight'}</b>
++                                    <small>{formatDate(h.start)} → {formatDate(h.end)}{used ? ' · already a test period' : ''}</small>
++                                    {ov.length > 0 && <small className="tpe-mi-info">Includes train time ({ov.join(', ')})</small>}
++                                </div>
++                                <span className="wb2-sp" />
++                                {!used && (
++                                    <>
++                                        <button type="button" className="rcx-btn rcx-btn--sm" onClick={() => fromHighlight(h, 'normal')}>Normal</button>
++                                        <button type="button" className="rcx-btn rcx-btn--sm" onClick={() => fromHighlight(h, 'problem')}>Known problem</button>
++                                    </>
++                                )}
++                            </div>
++                        );
++                    })}
++                    <small className="tpe-mi-note">Highlights come from the Dashboard's Highlights tab. The Normal / Known problem label is kept on the test period only.</small>
++                </div>
++            )}
++        </div>
++    );
++}
+diff --git a/src/components/windows/TimePeriodsEditor.tsx b/C:/Users/toey_/AppData/Local/Temp/claude/C--00-DATA-Soothsayer-wizard-app/f0d99bcd-4b66-44e4-9f3d-a9188e3a6417/scratchpad/cur/app/src/components/windows/TimePeriodsEditor.tsx
+index c0ea616..e9dca10 100644
+--- a/src/components/windows/TimePeriodsEditor.tsx
++++ b/C:/Users/toey_/AppData/Local/Temp/claude/C--00-DATA-Soothsayer-wizard-app/f0d99bcd-4b66-44e4-9f3d-a9188e3a6417/scratchpad/cur/app/src/components/windows/TimePeriodsEditor.tsx
+@@ -1,6 +1,6 @@
+ import { useEffect, useRef, useState } from 'react';
+ import { Calendar, Plus, Trash2, X } from 'lucide-react';
+-import type { TimePeriod } from '../../types';
++import type { TestPeriod, TimePeriod } from '../../types';
+ import {
+     isRangeFullyCovered,
+     mergeOverlapping,
+@@ -141,9 +141,11 @@ interface TimePeriodsEditorProps {
+     /** True dataset extent (`useDatasetTimeBounds`); drives defaults and min/max. */
+     bounds?: PeriodBounds | null;
+     compact?: boolean;
++    /** MOCKUP (validation): test periods drawn on the coverage strip; also means a train period is required. */
++    tests?: TestPeriod[];
+ }
+ 
+-export default function TimePeriodsEditor({ periods, onChange, bounds, compact = false }: TimePeriodsEditorProps) {
++export default function TimePeriodsEditor({ periods, onChange, bounds, compact = false, tests }: TimePeriodsEditorProps) {
+     const [draft, setDraft] = useState<TimePeriod[]>(periods);
+     const [expandedId, setExpandedId] = useState<string | null>(null);
+     const [flashId, setFlashId] = useState<string | null>(null);
+@@ -281,14 +283,16 @@ export default function TimePeriodsEditor({ periods, onChange, bounds, compact =
+         };
+         return (
+             <div data-testid="time-periods-editor" className="rcm-periods">
+-                {draft.length === 0 ? (
++                {draft.length === 0 && tests !== undefined ? (
++                    <PeriodCoverageBar periods={draft} bounds={boundsForCover} className="rcm-cov" tests={tests} />
++                ) : draft.length === 0 ? (
+                     <div data-testid="periods-empty" className="rcm-none">
+                         <span><b>No period</b> — the whole dataset{totalDays !== null ? ` (${totalDays} days)` : ''} is used.</span>
+                     </div>
+                 ) : (
+                     // Coverage strip (restored 2026-10-03 — it was removed by mistake in
+                     // 011675b): draws the editor's own draft, so it follows every edit.
+-                    <PeriodCoverageBar periods={draft} bounds={boundsForCover} className="rcm-cov" />
++                    <PeriodCoverageBar periods={draft} bounds={boundsForCover} className="rcm-cov" tests={tests} />
+                 )}
+                 {draft.map((p, i) => {
+                     const st = statuses[i];
+@@ -324,7 +328,7 @@ export default function TimePeriodsEditor({ periods, onChange, bounds, compact =
+             {draft.length === 0 ? (
+                 <div data-testid="periods-empty" className="f4-empty" style={{ padding: '8px 9px' }}>
+                     <span>
+-                        <b>No limit</b> — full dataset
++                        {tests !== undefined ? <><b>No train period</b> — add one to train</> : <><b>No limit</b> — full dataset</>}
+                     </span>
+                     <button type="button" className="f4-btn f4-btn--small" data-testid="period-add" disabled={addDisabled} title={addTitle} onClick={addPeriod}>
+                         + Add period
+@@ -332,7 +336,7 @@ export default function TimePeriodsEditor({ periods, onChange, bounds, compact =
+                 </div>
+             ) : (
+                 <>
+-                    <PeriodCoverageBar periods={draft} bounds={boundsForCover} />
++                    <PeriodCoverageBar periods={draft} bounds={boundsForCover} tests={tests} />
+                     <div className="f4-plist" style={{ gap: '4px' }}>
+                         {draft.map((p, i) => {
+                             const st = statuses[i];
+diff --git a/src/components/windows/workbench/HealthScorePage.tsx b/C:/Users/toey_/AppData/Local/Temp/claude/C--00-DATA-Soothsayer-wizard-app/f0d99bcd-4b66-44e4-9f3d-a9188e3a6417/scratchpad/cur/app/src/components/windows/workbench/HealthScorePage.tsx
+index fe4d7ab..780b84f 100644
+--- a/src/components/windows/workbench/HealthScorePage.tsx
++++ b/C:/Users/toey_/AppData/Local/Temp/claude/C--00-DATA-Soothsayer-wizard-app/f0d99bcd-4b66-44e4-9f3d-a9188e3a6417/scratchpad/cur/app/src/components/windows/workbench/HealthScorePage.tsx
+@@ -21,6 +21,8 @@ import {
+     buildRelationshipSetPointOption,
+     buildScoreOption,
+ } from './healthPageCharts';
++import { setActiveTimeScopes } from './healthCharts';
++import { TestResultsCard, scopesOf, stamp } from './ValidationCards';
+ import type { HealthScorePageProps, SaveInfo } from './workbenchTypes';
+ 
+ /*
+@@ -94,6 +96,8 @@ export default function HealthScorePage(props: HealthScorePageProps) {
+ 
+     // While an error shows, the old answer's verdict / issues / score do not describe the set
+     // points on screen: nothing is judged until the next request lands.
++    // MOCKUP: the time charts on this page draw the train / test scopes.
++    setActiveTimeScopes(scopesOf(data.test_validation));
+     const issues = errorMode ? [] : attemptIssues ?? data.validation;
+     const verdict = errorMode ? null : attemptIssues ? verdictOfIssues(attemptIssues) ?? healthVerdict(data) : healthVerdict(data);
+     const scoreReady = !errorMode && data.valid && !!data.series.score && !!data.score_summary;
+@@ -102,6 +106,13 @@ export default function HealthScorePage(props: HealthScorePageProps) {
+         <div className="wb2-board wb2-hs hs-board" data-testid="health-page" data-valid={String(data.valid)}>
+             <SaveBanner save={save} />
+             {errorBanner}
++            {model.testsChangedAt && !model.status && (
++                <div className="wb2-stale hs-full vt-changed" role="status" data-testid="tests-changed-banner">
++                    {(data.test_validation?.tests.length ?? 0) === 0
++                        ? <span><b>Test periods removed</b> — add a test period, then Mark complete again.</span>
++                        : <span><b>Test periods changed.</b> Test scores are updated — the model was not re-trained. Mark complete again to save the new results.</span>}
++                </div>
++            )}
+             {preview.notFitted && (
+                 <div className="wb2-stale hs-full" role="status" data-testid="health-not-fitted-banner">
+                     <span><b>Re-train to recompute.</b> The fitted Relation model is no longer in memory; the chart below is the last result.</span>
+@@ -156,6 +167,7 @@ export default function HealthScorePage(props: HealthScorePageProps) {
+                     </div>
+                 </section>
+             )}
++            <TestResultsCard data={data} scoreReady={scoreReady} custom={model.runningConditionMode === 'custom'} />
+         </div>
+     );
+ }
+@@ -356,8 +368,8 @@ function ScoreChart({ data, score, summary, unit, hoverIdx, onHover, stale }: {
+             stale={stale}
+             sub={
+                 <span data-testid="score-summary">
+-                    {lowest ? <>Lowest <b className={lowest.score >= 80 ? 'hs-good' : 'hs-bad'} data-testid="score-lowest">{Math.round(lowest.score)}</b>{lowest.timestamp ? ` on ${lowest.timestamp}` : ''}</> : 'No scored rows'}
+-                    {pct !== null && <> · below 80 for <b data-testid="score-below80">{pct.toFixed(1)}%</b> of scored rows</>}
++                    {lowest ? <>Lowest <b className={lowest.score >= 80 ? 'hs-good' : 'hs-bad'} data-testid="score-lowest">{Math.round(lowest.score)}</b>{lowest.timestamp ? ` on ${stamp(lowest.timestamp)}` : ''}</> : 'No scored rows'}
++                    {pct !== null && <> · below 80 for <b data-testid="score-below80">{pct.toFixed(1)}%</b> of {data.test_validation ? 'train running time' : 'scored rows'}</>}
+                 </span>
+             }
+             extra={<span className="hs-rd" data-testid="hs-readout">{text}</span>}
+@@ -375,7 +387,7 @@ function ScoreChart({ data, score, summary, unit, hoverIdx, onHover, stale }: {
+                         <ResponsiveECharts option={option} style={{ height: '100%', minHeight: 0 }} {...chartProps} />
+                     </div>
+                     <div className="hs-shares" data-testid="score-shares">
+-                        <div className="hs-shares-h">Share of scored rows</div>
++                        <div className="hs-shares-h">Share of {data.test_validation ? 'train running time' : 'scored rows'}</div>
+                         {SHARES.map(s => {
+                             const v = summary[s.key];
+                             return (
+diff --git a/src/components/windows/workbench/ModelFitPage.tsx b/C:/Users/toey_/AppData/Local/Temp/claude/C--00-DATA-Soothsayer-wizard-app/f0d99bcd-4b66-44e4-9f3d-a9188e3a6417/scratchpad/cur/app/src/components/windows/workbench/ModelFitPage.tsx
+index 23b2937..b6fefd6 100644
+--- a/src/components/windows/workbench/ModelFitPage.tsx
++++ b/C:/Users/toey_/AppData/Local/Temp/claude/C--00-DATA-Soothsayer-wizard-app/f0d99bcd-4b66-44e4-9f3d-a9188e3a6417/scratchpad/cur/app/src/components/windows/workbench/ModelFitPage.tsx
+@@ -12,7 +12,10 @@ import {
+     buildValueOverTimeOption,
+     estimateRowsOutside3sd,
+     individualVLines,
++    setActiveTimeScopes,
++    withCompactScopes,
+ } from './healthCharts';
++import { TrainTestCard, scopesOf } from './ValidationCards';
+ import type { WorkbenchPageProps } from './workbenchTypes';
+ 
+ /*
+@@ -49,6 +52,8 @@ const Stat = ({ label, value, testId }: { label: string; value: string; testId?:
+ export default function ModelFitPage(props: ModelFitPageProps) {
+     const { data, model, stale, unit, sensorLabel, getDesc } = props;
+     const stats = data.stats;
++    // MOCKUP: every time chart below draws the train / test scopes of this preview.
++    setActiveTimeScopes(scopesOf(data.test_validation));
+ 
+     if (stats.kind === 'individual' && data.series.kind === 'individual') {
+         const series = data.series;
+@@ -83,6 +88,7 @@ export default function ModelFitPage(props: ModelFitPageProps) {
+                         <LegendItem color={CHART.warn} label="±3SD" />
+                     </>}
+                 />
++                <div className="vt-stack">
+                 <section className="wb2-statc" data-testid="stats-card">
+                     <div className="wb2-card-h"><b>Statistics</b><span className="wb2-card-s">from the training rows</span></div>
+                     <table>
+@@ -101,6 +107,8 @@ export default function ModelFitPage(props: ModelFitPageProps) {
+                         </tbody>
+                     </table>
+                 </section>
++                <TrainTestCard data={data} unit={unit} side custom={model.runningConditionMode === 'custom'} />
++                </div>
+             </div>
+         );
+     }
+@@ -154,7 +162,7 @@ export default function ModelFitPage(props: ModelFitPageProps) {
+                     title="Target vs predicted"
+                     sub={`${unit ? `${unit} ` : ''}over time`}
+                     stale={stale}
+-                    option={buildTargetVsPredictedOption(series, unit)}
++                    option={withCompactScopes(() => buildTargetVsPredictedOption(series, unit))}
+                     legend={<>
+                         <LegendItem color={CHART.actual} label="Actual" />
+                         <LegendItem color={CHART.predicted} label="Predicted" />
+@@ -172,6 +180,7 @@ export default function ModelFitPage(props: ModelFitPageProps) {
+                         <LegendItem color={CHART.ok} label="±2RMSE" />
+                     </>}
+                 />
++                <TrainTestCard data={data} unit={unit} custom={model.runningConditionMode === 'custom'} />
+             </div>
+         );
+     }
+@@ -195,6 +204,7 @@ export default function ModelFitPage(props: ModelFitPageProps) {
+                         <LegendItem color={CHART.warn} label="3× SD" dashed />
+                     </>}
+                 />
++                <div className="vt-stack">
+                 <section className="wb2-statc wb2-statc--top" data-testid="cluster-summary">
+                     <div className="wb2-card-h">
+                         <b>Clusters</b>
+@@ -211,6 +221,8 @@ export default function ModelFitPage(props: ModelFitPageProps) {
+                         </tbody>
+                     </table>
+                 </section>
++                <TrainTestCard data={data} unit={unit} side custom={model.runningConditionMode === 'custom'} />
++                </div>
+             </div>
+         );
+     }
+diff --git a/C:/Users/toey_/AppData/Local/Temp/claude/C--00-DATA-Soothsayer-wizard-app/f0d99bcd-4b66-44e4-9f3d-a9188e3a6417/scratchpad/cur/app/src/components/windows/workbench/ValidationCards.tsx b/C:/Users/toey_/AppData/Local/Temp/claude/C--00-DATA-Soothsayer-wizard-app/f0d99bcd-4b66-44e4-9f3d-a9188e3a6417/scratchpad/cur/app/src/components/windows/workbench/ValidationCards.tsx
+new file mode 100644
+index 0000000..5fd261b
+--- /dev/null
++++ b/C:/Users/toey_/AppData/Local/Temp/claude/C--00-DATA-Soothsayer-wizard-app/f0d99bcd-4b66-44e4-9f3d-a9188e3a6417/scratchpad/cur/app/src/components/windows/workbench/ValidationCards.tsx
+@@ -0,0 +1,230 @@
++import { Fragment, type ReactNode } from 'react';
++import type { HealthPreview, TestPeriodResult, ValidationResult } from '../../../types/health';
++import { fmtNum } from './chartTheme';
++import { formatDate, formatPeriodChip, parseLocal } from '../periodDisplay';
++import type { TimeScopes } from './healthCharts';
++
++/*
++ * MOCKUP (Train/Test validation, 2026-10-07). Two read-only cards built from
++ * `HealthPreview.test_validation`:
++ *
++ *   TrainTestCard    Model fit page — the model's numbers on the train rows vs
++ *                    each test period (per kind).
++ *   TestResultsCard  Health score page — what the health score did in each
++ *                    test period (false alarms / detection + lead time).
++ *
++ * Information only: nothing here blocks Train or Mark complete. Colours are
++ * green / amber only, never red (DESIGN_SYSTEM §4).
++ */
++
++// One date style everywhere (the Step-1 chips' formatPeriodChip / formatDate), no seconds.
++export const stamp = (s: string | null | undefined) => {
++    const ms = parseLocal(s);
++    if (ms === null) return s ?? '—';
++    const d = new Date(ms);
++    return `${formatDate(s)} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
++};
++const range = (a: string | null, b: string | null) => formatPeriodChip({ id: '', start: a ?? '', end: b ?? '' });
++
++/** A drop / the lowest score count only when the score stays there for this long
++ *  (running time). Placeholder value, decided with [MIN DAYS] / [RECOMMENDED DAYS]. */
++export const DROP_SUSTAIN_HOURS = 1;
++
++export const NORMAL_AMBER_PCT = 5;
++
++/** The scope bands every Workbench time chart draws for this preview. */
++export function scopesOf(v: ValidationResult | null | undefined): TimeScopes | null {
++    if (!v) return null;
++    const many = v.train_ranges.length > 1;
++    return {
++        ranges: [
++            ...v.train_ranges.map((r, i) => ({ kind: 'train' as const, start: r.start, end: r.end, label: many ? `TRAIN P${i + 1}` : 'TRAIN', short: many ? `P${i + 1}` : 'TRAIN' })),
++            ...v.tests.map(t => ({ kind: t.label, start: t.start, end: t.end, label: `T${t.index} ${t.label === 'problem' ? 'KNOWN PROBLEM' : 'NORMAL'}`, short: `T${t.index} ${t.label === 'problem' ? 'PROBLEM' : 'NORMAL'}` })),
++        ],
++        events: v.tests.filter(t => t.label === 'problem' && t.event_time).map(t => t.event_time as string),
++    };
++}
++
++export function TestedPill({ n }: { n: number }) {
++    return <span className="f4-pill f4-pill--grey" data-testid="tested-pill" title="Test periods scored — information only">Tested · {n}</span>;
++}
++
++function ScopeName({ kind, text, sub }: { kind: 'train' | 'normal' | 'problem'; text: string; sub: string }) {
++    return (
++        <td className="vt-scopec">
++            <div className="vt-scope">
++                <i className={`tpe-sw ${kind === 'train' ? 'tpe-sw--tr' : `tpe-sw--te${kind === 'problem' ? ' tpe-sw--pb' : ''}`}`} />
++                <span><b>{text}</b><small>{sub}</small></span>
++            </div>
++        </td>
++    );
++}
++
++const pct = (x: number | undefined | null) => (x == null ? '—' : `${x.toFixed(1)}%`);
++const signed = (x: number | undefined | null, unit = '') => (x == null ? '—' : `${x > 0 ? '+' : x < 0 ? '−' : ''}${fmtNum(Math.abs(x))}${unit}`);
++
++/** Model fit page: train vs test numbers. */
++export function TrainTestCard({ data, unit, side = false, custom = false }: { data: HealthPreview; unit: string; /** In a side column (Individual / Clustering) instead of a full, capped row. */ side?: boolean; /** Custom-mode model: its test periods live in Model settings. */ custom?: boolean }) {
++    const v = data.test_validation;
++    if (!v) return null;
++    const u = unit ? ` ${unit}` : '';
++    const trainSub = `${v.train.days.toFixed(1)} d · ${v.train.rows.toLocaleString()} rows`;
++    const testSub = (t: TestPeriodResult) => `${range(t.start, t.end)} · ${t.days.toFixed(1)} d`;
++    const testName = (t: TestPeriodResult) => `T${t.index} ${t.label === 'problem' ? 'Known problem' : 'Normal'}`;
++
++    const head = (
++        <div className="wb2-card-h">
++            <b>Train vs test</b>
++            <span className="wb2-card-s">the same model, scored over each whole test period</span>
++        </div>
++    );
++
++    if (v.tests.length === 0) {
++        return (
++            <section className={side ? 'vt-card' : 'vt-card wb2-full vt-card--cap'} data-testid="train-test-card">
++                {head}
++                <div className="vt-none" data-testid="train-test-empty">
++                    <b>No test period yet.</b> Add one in {custom ? 'Model settings → Training data (Custom)' : 'Running condition → Edit'} (a Normal period and, if you have one, a Known problem) to see how this model does on data it never trained on. Needed before Mark complete.
++                </div>
++            </section>
++        );
++    }
++
++    let cols: string[];
++    let trainCells: ReactNode;
++    let testCells: (t: TestPeriodResult) => ReactNode;
++    let note: string;
++    if (data.kind === 'relationship') {
++        cols = ['R²', 'RMSE', 'Residual mean · SD', 'RMSE test / train'];
++        const tr = v.train;
++        trainCells = <><td className="n">{fmtNum(tr.r2 ?? NaN)}</td><td className="n">{fmtNum(tr.rmse ?? NaN)}{u}</td><td className="n">{signed(tr.residual_mean)} · {fmtNum(tr.residual_sd ?? NaN)}</td><td className="n vt-dim">1.00</td></>;
++        // Known problem: only the residual shift means something (the fit is expected to break).
++        testCells = t => t.label === 'problem'
++            ? <><td className="n vt-dim">—</td><td className="n vt-dim">—</td><td className="n" title="Residual shift: mean of actual − predicted">shift {signed(t.residual_mean, u)}</td><td className="n" title="Residual shift ÷ train RMSE">{tr.rmse ? `${(Math.abs(t.residual_mean ?? 0) / tr.rmse).toFixed(1)}× train RMSE` : '—'}</td></>
++            : <><td className="n">{fmtNum(t.r2 ?? NaN)}</td><td className="n">{fmtNum(t.rmse ?? NaN)}{u}</td><td className="n">{signed(t.residual_mean)} · {fmtNum(t.residual_sd ?? NaN)}</td><td className="n">{tr.rmse && t.rmse ? (t.rmse / tr.rmse).toFixed(2) : '—'}</td></>;
++        note = 'Normal periods: a ratio near 1 means the model predicts that normal data as well as its training data. Known problem: the residual shift is how far actual moved away from the prediction, on average.';
++    } else if (data.kind === 'individual') {
++        cols = ['Rows within ±3SD', 'Mean shift'];
++        trainCells = <><td className="n">{pct(v.train.within_3sd_pct)}</td><td className="n vt-dim">0 SD</td></>;
++        testCells = t => <><td className="n">{pct(t.within_3sd_pct)}</td><td className="n">{signed(t.mean_shift_sd, ' SD')}</td></>;
++        note = 'Mean shift is in train SDs. Normal periods should stay close to the train rows; a Known problem should move away from them.';
++    } else {
++        cols = ['Rows inside the 3× SD ring'];
++        trainCells = <td className="n">{pct(v.train.inside_3sd_ring_pct)}</td>;
++        testCells = t => <td className="n">{pct(t.inside_3sd_ring_pct)}</td>;
++        note = 'Normal periods should stay inside the ring like the train rows; a Known problem should fall outside it.';
++    }
++
++    return (
++        <section className={side ? 'vt-card' : 'vt-card wb2-full vt-card--cap'} data-testid="train-test-card">
++            {head}
++            <table className="vt-table">
++                <thead><tr><th>Scope</th>{cols.map(c => <th key={c} className="n">{c}</th>)}</tr></thead>
++                <tbody>
++                    <tr className="vt-train"><ScopeName kind="train" text={v.train_ranges.length > 1 ? `Train · ${v.train_ranges.length} periods` : 'Train'} sub={trainSub} />{trainCells}</tr>
++                    {v.tests.map(t => (
++                        <Fragment key={t.index}>
++                        <tr data-testid={`train-test-row-${t.index}`}>
++                            <ScopeName kind={t.label} text={testName(t)} sub={testSub(t)} />
++                            {t.rows === 0 ? <td className="n vt-dim" colSpan={cols.length}>No running rows in this period</td> : testCells(t)}
++                        </tr>
++                        {(t.train_rows ?? 0) > 0 && (
++                            <tr className="vt-ovrow" data-testid={`train-test-overlap-${t.index}`}>
++                                <td colSpan={cols.length + 1}><span className="vt-info">T{t.index} includes {(t.train_days ?? 0).toFixed(1)} d of train running time — its numbers include rows the model was trained on.</span></td>
++                            </tr>
++                        )}
++                        </Fragment>
++                    ))}
++                </tbody>
++            </table>
++            <div className="vt-note">{note}</div>
++        </section>
++    );
++}
++
++/** Health score page: what the score did in each test period. */
++export function TestResultsCard({ data, scoreReady, custom = false }: { data: HealthPreview; scoreReady: boolean; custom?: boolean }) {
++    const v = data.test_validation;
++    if (!v) return null;
++    return (
++        <section className="hs-card hs-full vt-results" data-testid="test-results">
++            <div className="wb2-card-h">
++                <b>Test results</b>
++                <span className="wb2-card-s">information only — never blocks Mark complete</span>
++            </div>
++            {v.tests.length === 0 ? (
++                <div className="vt-none" data-testid="test-results-empty">
++                    <b>No test period.</b> Add one in {custom ? 'Model settings → Training data (Custom)' : 'Running condition → Edit'} — Mark complete needs at least one.
++                </div>
++            ) : (
++                <div className="vt-tiles">
++                    {v.tests.map(t => <ResultTile key={t.index} t={t} scoreReady={scoreReady} />)}
++                </div>
++            )}
++            {v.tests.length > 0 && <div className="vt-note">A drop counts when the score stays below 80 for at least {DROP_SUSTAIN_HOURS} hour of running time; “lowest” is the lowest score held for {DROP_SUSTAIN_HOURS} hour. Rows outside the train and test periods get no score.</div>}
++        </section>
++    );
++}
++
++function ResultTile({ t, scoreReady }: { t: TestPeriodResult; scoreReady: boolean }) {
++    const title = (
++        <div className="vt-th">
++            <i className={`tpe-sw tpe-sw--te${t.label === 'problem' ? ' tpe-sw--pb' : ''}`} />
++            <b>T{t.index} {t.label === 'problem' ? 'Known problem' : 'Normal'}</b>
++            <span>{range(t.start, t.end)} · {t.days.toFixed(1)} d running time</span>
++        </div>
++    );
++    const ovNote = (t.train_rows ?? 0) > 0
++        ? <div className="vt-info" data-testid={`test-result-overlap-${t.index}`}>Includes {(t.train_days ?? 0).toFixed(1)} d of train running time — results include rows the model was trained on.</div>
++        : null;
++    if (t.rows === 0) {
++        return <div className="vt-tile" data-testid={`test-result-${t.index}`} data-tone="none">{title}{ovNote}<div className="vt-big vt-dim">No running rows</div><div className="vt-det">The running condition removes every row of this period.</div></div>;
++    }
++    if (!scoreReady || t.pct_below_80 === null) {
++        return <div className="vt-tile" data-testid={`test-result-${t.index}`} data-tone="none">{title}{ovNote}<div className="vt-big vt-dim">Not scored yet</div><div className="vt-det">Set valid points above to score this period.</div></div>;
++    }
++    if (t.label === 'normal') {
++        const amber = t.pct_below_80 >= NORMAL_AMBER_PCT;
++        return (
++            <div className="vt-tile" data-testid={`test-result-${t.index}`} data-tone={amber ? 'warn' : 'ok'}>
++                {title}{ovNote}
++                <div className="vt-big"><b>{t.pct_below_80.toFixed(1)}%</b> of running time below 80</div>
++                <div className="vt-det">
++                    {amber
++                        ? <>Many false alarms for a normal period. Check that this time really was normal, or widen the set points.</>
++                        : <>Few false alarms — the score stays high on normal data.</>}
++                    {t.lowest !== null && <> Lowest {t.lowest} (held {DROP_SUSTAIN_HOURS} h) on {stamp(t.lowest_at)}.</>}
++                </div>
++            </div>
++        );
++    }
++    const detected = t.first_below_80 !== null;
++    const before = t.lead_days !== null && t.lead_days >= 0;
++    const tone = detected && (t.lead_days === null || before) ? 'ok' : 'warn';
++    return (
++        <div className="vt-tile" data-testid={`test-result-${t.index}`} data-tone={tone}>
++            {title}{ovNote}
++            {!detected ? (
++                <>
++                    <div className="vt-big"><b>Not detected</b></div>
++                    <div className="vt-det">The score did not stay below 80 in this period{t.lowest !== null ? ` (lowest held ${DROP_SUSTAIN_HOURS} h: ${t.lowest})` : ''}. This model does not show this problem — another model may.</div>
++                </>
++            ) : t.lead_days === null ? (
++                <>
++                    <div className="vt-big"><b>Detected</b> · fell below 80 on {stamp(t.first_below_80)}</div>
++                    <div className="vt-det">Add the event time to this test period to see the lead time.{t.lowest !== null ? ` Lowest ${t.lowest} (held ${DROP_SUSTAIN_HOURS} h) on ${stamp(t.lowest_at)}.` : ''}</div>
++                </>
++            ) : before ? (
++                <>
++                    <div className="vt-big"><b>{t.lead_days.toFixed(1)} days</b> before the event</div>
++                    <div className="vt-det">Fell below 80 on {stamp(t.first_below_80)} · event {stamp(t.event_time)}.{t.lowest !== null ? ` Lowest ${t.lowest} (held ${DROP_SUSTAIN_HOURS} h) on ${stamp(t.lowest_at)}.` : ''}</div>
++                </>
++            ) : (
++                <>
++                    <div className="vt-big">Detected only <b>{Math.abs(t.lead_days).toFixed(1)} days after</b> the event</div>
++                    <div className="vt-det">Fell below 80 only on {stamp(t.first_below_80)}, after the event ({stamp(t.event_time)}).</div>
++                </>
++            )}
++        </div>
++    );
++}
+diff --git a/src/components/windows/workbench/chartTheme.ts b/C:/Users/toey_/AppData/Local/Temp/claude/C--00-DATA-Soothsayer-wizard-app/f0d99bcd-4b66-44e4-9f3d-a9188e3a6417/scratchpad/cur/app/src/components/windows/workbench/chartTheme.ts
+index 8798cdd..97232e6 100644
+--- a/src/components/windows/workbench/chartTheme.ts
++++ b/C:/Users/toey_/AppData/Local/Temp/claude/C--00-DATA-Soothsayer-wizard-app/f0d99bcd-4b66-44e4-9f3d-a9188e3a6417/scratchpad/cur/app/src/components/windows/workbench/chartTheme.ts
+@@ -48,6 +48,8 @@ export const FONT = 'Inter, system-ui, sans-serif';
+ /** Number formatting used by every workbench readout (matches the mockup's `fmt`). */
+ export function fmtNum(v: number | null | undefined): string {
+     if (v === null || v === undefined || !Number.isFinite(v)) return '—';
++    // No "−0.000": anything that rounds to zero is plain 0.
++    if (Math.abs(v) < 0.0005) v = 0;
+     const a = Math.abs(v);
+     if (a >= 1000) return Math.round(v).toLocaleString();
+     if (a >= 100) return v.toFixed(1);
+diff --git a/src/components/windows/workbench/healthCharts.ts b/C:/Users/toey_/AppData/Local/Temp/claude/C--00-DATA-Soothsayer-wizard-app/f0d99bcd-4b66-44e4-9f3d-a9188e3a6417/scratchpad/cur/app/src/components/windows/workbench/healthCharts.ts
+index 85393e3..8ea8937 100644
+--- a/src/components/windows/workbench/healthCharts.ts
++++ b/C:/Users/toey_/AppData/Local/Temp/claude/C--00-DATA-Soothsayer-wizard-app/f0d99bcd-4b66-44e4-9f3d-a9188e3a6417/scratchpad/cur/app/src/components/windows/workbench/healthCharts.ts
+@@ -89,6 +89,132 @@ export interface HBand {
+     color: string;
+ }
+ 
++// ---------------------------------------------------------------------------
++// MOCKUP (Train/Test validation, 2026-10-07): time scopes on every time chart
++// ---------------------------------------------------------------------------
++
++export interface TimeScope {
++    kind: 'train' | 'normal' | 'problem';
++    start: string | null;
++    end: string | null;
++    /** Pill text at the top of the band: "TRAIN P1", "T1 NORMAL", "T2 KNOWN PROBLEM". */
++    label: string;
++    /** Shorter pill for narrow charts: "P1", "T1 NORMAL", "T2 PROBLEM". */
++    short: string;
++}
++export interface TimeScopes {
++    ranges: TimeScope[];
++    /** Known-problem event times (red dashed vertical line labelled EVENT). */
++    events: string[];
++    /** Use the short pill labels (charts narrower than ~520 px). */
++    compact?: boolean;
++}
++
++/** Scope colours: train = accent blue, test = magenta (DESIGN_SYSTEM §4 Train / Test periods). */
++export const SCOPE = {
++    train: 'rgba(77, 140, 240, 0.10)',
++    trainLine: '#5b95f0',
++    test: 'rgba(232, 102, 196, 0.11)',
++    testLine: '#e866c4',
++};
++
++/** The scopes the Workbench page is currently drawing. The page sets it from
++ *  `HealthPreview.test_validation` before building its options, so every chart
++ *  that goes through `buildTimeSeriesOption` gets the bands without each
++ *  builder having to pass them on (an implementation should thread it through
++ *  `TimeSeriesSpec.scopes` explicitly). */
++let activeScopes: TimeScopes | null = null;
++export function setActiveTimeScopes(s: TimeScopes | null) { activeScopes = s; }
++/** Build one option with the short pill labels (half-width charts), then restore. */
++export function withCompactScopes<T>(build: () => T): T {
++    const prev = activeScopes;
++    activeScopes = prev ? { ...prev, compact: true } : prev;
++    try { return build(); } finally { activeScopes = prev; }
++}
++/** Height kept free above the plot for the scope pills. */
++const SCOPE_STRIP = 18;
++
++let hatchCache: unknown = null;
++/** 135° magenta hatch for Known problem bands (canvas pattern; plain fill outside a browser). */
++function problemFill(): unknown {
++    if (hatchCache) return hatchCache;
++    if (typeof document === 'undefined') return SCOPE.test;
++    const c = document.createElement('canvas');
++    c.width = 8; c.height = 8;
++    const g = c.getContext('2d');
++    if (!g) return SCOPE.test;
++    g.fillStyle = 'rgba(232, 102, 196, 0.07)';
++    g.fillRect(0, 0, 8, 8);
++    g.strokeStyle = 'rgba(232, 102, 196, 0.28)';
++    g.lineWidth = 1.2;
++    g.beginPath(); g.moveTo(0, 8); g.lineTo(8, 0); g.moveTo(-2, 2); g.lineTo(2, -2); g.moveTo(6, 10); g.lineTo(10, 6); g.stroke();
++    hatchCache = { image: c, repeat: 'repeat' };
++    return hatchCache;
++}
++
++const tsMs = (s: string | null | undefined): number | null => {
++    if (!s) return null;
++    const t = new Date(s.includes('T') ? s : s.replace(' ', 'T')).getTime();
++    return Number.isFinite(t) ? t : null;
++};
++
++function scopeMarks(scopes: TimeScopes, xMin: number, xMax: number, yTop: number) {
++    const area = scopes.ranges.map(r => {
++        const a = tsMs(r.start) ?? xMin;
++        const b = tsMs(r.end) ?? xMax;
++        const fill = r.kind === 'train' ? SCOPE.train : r.kind === 'problem' ? problemFill() : SCOPE.test;
++        const col = r.kind === 'train' ? SCOPE.trainLine : SCOPE.testLine;
++        return [
++            {
++                xAxis: a,
++                // Train and test may overlap (2026-10-07): train = blue fill, test = magenta
++                // fill + dashed outline, so a test drawn over train time stays readable.
++                itemStyle: r.kind === 'train'
++                    ? { color: fill, borderWidth: 0 }
++                    : { color: fill, borderColor: col, borderWidth: 1, borderType: 'dashed' },
++                // Pills sit in their own strip ABOVE the plot, so they never meet the
++                // reference-line labels (those move to the left end when scopes show).
++                label: {
++                    // Two pill lanes: train pills above the plot, test pills on the first row inside it.
++                    show: true, position: r.kind === 'train' ? 'top' : 'insideTop', formatter: scopes.compact ? r.short : r.label, distance: 3,
++                    color: col, fontSize: 9, fontWeight: 700, fontFamily: 'JetBrains Mono, monospace',
++                    backgroundColor: 'rgba(10, 10, 11, 0.82)', padding: [2, 5], borderRadius: 4,
++                },
++            },
++            { xAxis: b },
++        ];
++    });
++    const evMs = scopes.events.map(e => tsMs(e)).filter((x): x is number => x !== null);
++    const lines = evMs.map(x => ({
++        xAxis: x,
++        lineStyle: { color: CHART.danger, width: 1.5, type: 'dashed' },
++        label: { show: false },
++    }));
++    // EVENT label: one row below the pill strip, just inside the plot.
++    const points = evMs.map(x => ({
++        coord: [x, yTop],
++        symbol: 'circle',
++        symbolSize: 0,
++        label: {
++            show: true, formatter: 'EVENT', position: 'bottom', distance: 24,
++            color: CHART.danger, fontSize: 9, fontWeight: 700, fontFamily: 'JetBrains Mono, monospace',
++            backgroundColor: 'rgba(10, 10, 11, 0.82)', padding: [2, 4], borderRadius: 3,
++        },
++    }));
++    return { area, lines, points };
++}
++
++/** Null breaks where consecutive points are more than `gapMs` apart, so the line
++ *  is not drawn across time outside every period (shutdowns, gaps between periods). */
++function withGaps(points: [number, number | null][], gapMs: number): [number, number | null][] {
++    const out: [number, number | null][] = [];
++    for (let i = 0; i < points.length; i++) {
++        if (i > 0 && points[i][0] - points[i - 1][0] > gapMs) out.push([points[i - 1][0] + 1, null]);
++        out.push(points[i]);
++    }
++    return out;
++}
++
+ export interface TimeSeriesSpec {
+     timestamps: string[];
+     lines: TimeLine[];
+@@ -98,6 +224,8 @@ export interface TimeSeriesSpec {
+     /** Fixed Y range (the Health score chart is always 0-100); overrides the
+      *  data-driven one. */
+     yRange?: [number, number];
++    /** MOCKUP: train / test scope bands + event lines (default: the page's active scopes). */
++    scopes?: TimeScopes | null;
+ }
+ 
+ /** Value(s) over time with horizontal reference lines and shaded bands. The
+@@ -118,9 +246,10 @@ export function buildTimeSeriesOption(spec: TimeSeriesSpec) {
+     const pad = (hi - lo) * 0.06 || Math.abs(hi) * 0.05 || 1;
+     const [yMin, yMax] = spec.yRange ?? niceExtent(lo - pad, hi + pad);
+ 
++    const scopes = spec.scopes !== undefined ? spec.scopes : activeScopes;
+     const series = lines.map((l, i) => {
+         const data = ms
+-            ? l.values.map((v, k) => [ms[k], v] as [number, number | null])
++            ? (scopes ? withGaps(l.values.map((v, k) => [ms[k], v] as [number, number | null]), 3 * 3600_000) : l.values.map((v, k) => [ms[k], v] as [number, number | null]))
+             : l.values;
+         const base: Record<string, unknown> = {
+             type: 'line',
+@@ -142,7 +271,7 @@ export function buildTimeSeriesOption(spec: TimeSeriesSpec) {
+                         yAxis: h.y,
+                         lineStyle: { color: h.color, width: 1.5, type: h.dashed ? 'dashed' : 'solid' },
+                         label: h.label
+-                            ? { show: true, formatter: h.label, position: 'insideEndTop', color: h.color, fontSize: 10, fontFamily: 'JetBrains Mono, monospace' }
++                            ? { show: true, formatter: h.label, position: scopes && ms ? 'insideStartTop' : 'insideEndTop', color: h.color, fontSize: 10, fontFamily: 'JetBrains Mono, monospace' }
+                             : { show: false },
+                     })),
+                 };
+@@ -157,6 +286,17 @@ export function buildTimeSeriesOption(spec: TimeSeriesSpec) {
+         }
+         return base;
+     });
++    if (scopes && ms && ms.length && series.length) {
++        const { area, lines: ev, points } = scopeMarks(scopes, ms[0], ms[ms.length - 1], yMax);
++        // Own (empty) carrier series so the scope bands sit under the data and do not
++        // mix with the Y bands / reference lines of the first series.
++        series.push({
++            type: 'line', name: '__scopes', data: [], silent: true, z: 0, symbol: 'none', tooltip: { show: false },
++            markArea: { silent: true, animation: false, data: area },
++            ...(ev.length ? { markLine: { silent: true, symbol: 'none', animation: false, data: ev } } : {}),
++            ...(points.length ? { markPoint: { silent: true, animation: false, data: points } } : {}),
++        } as Record<string, unknown>);
++    }
+ 
+     return {
+         backgroundColor: 'transparent',
+@@ -164,7 +304,7 @@ export function buildTimeSeriesOption(spec: TimeSeriesSpec) {
+         animation: false,
+         tooltip: { ...tooltipBase, trigger: 'axis', axisPointer: { type: 'line', lineStyle: { color: 'rgba(255,255,255,.35)', type: 'dashed' } } },
+         legend: { show: false },
+-        grid: { left: 58, right: 18, top: 14, bottom: 28, containLabel: false },
++        grid: { left: 58, right: 18, top: scopes && ms ? 14 + SCOPE_STRIP : 14, bottom: 28, containLabel: false },
+         dataZoom: [{ type: 'inside', xAxisIndex: 0, filterMode: 'none' }],
+         xAxis: ms
+             ? { type: 'time', ...axisCommon, splitLine: { show: false } }
+diff --git a/src/types/health.ts b/C:/Users/toey_/AppData/Local/Temp/claude/C--00-DATA-Soothsayer-wizard-app/f0d99bcd-4b66-44e4-9f3d-a9188e3a6417/scratchpad/cur/app/src/types/health.ts
+index 261a0ac..0ada28c 100644
+--- a/src/types/health.ts
++++ b/C:/Users/toey_/AppData/Local/Temp/claude/C--00-DATA-Soothsayer-wizard-app/f0d99bcd-4b66-44e4-9f3d-a9188e3a6417/scratchpad/cur/app/src/types/health.ts
+@@ -89,6 +89,25 @@ export interface HealthPreviewRequest {
+     include_out_of_scope?: boolean;
+     /** Refuse with `STALE_SESSION` when the loaded dataset's generation differs. */
+     expected_generation?: number;
++    /** MOCKUP: test periods to score and compare with the train rows. */
++    test_periods?: TestPeriodWire[];
++}
++
++export interface TestPeriodWire { start: string | null; end: string | null; label: 'normal' | 'problem'; event_time?: string | null }
++
++/** MOCKUP: train-vs-test comparison returned with the preview when test periods are sent. */
++export interface ValidationResult {
++    train: { rows: number; days: number; r2?: number; rmse?: number; residual_mean?: number; residual_sd?: number; mean?: number; sd?: number; inside_3sd_ring_pct?: number; within_3sd_pct?: number };
++    train_ranges: { start: string | null; end: string | null }[];
++    tests: TestPeriodResult[];
++}
++export interface TestPeriodResult {
++    index: number; label: 'normal' | 'problem'; start: string | null; end: string | null; event_time: string | null; days: number; rows: number;
++    r2?: number; rmse?: number; residual_mean?: number; residual_sd?: number;
++    within_3sd_pct?: number; mean_shift_sd?: number; inside_3sd_ring_pct?: number;
++    /** Rows (and running days) of this test period that are also train rows. */
++    train_rows?: number; train_days?: number;
++    scored: number; pct_below_80: number | null; first_below_80: string | null; lowest: number | null; lowest_at: string | null; lead_days: number | null;
+ }
+ 
+ export type IssueSeverity = 'error' | 'warning';
+@@ -265,6 +284,8 @@ export interface HealthPreview {
+     fit_scatter: HealthFitScatter | null;
+     /** Clustering only. */
+     cluster_scatter: HealthClusterScatter | null;
++    /** MOCKUP: present when the request carried test periods. */
++    test_validation?: ValidationResult | null;
+ }
+ 
+ // ---------------------------------------------------------------------------
+diff --git a/src/types.ts b/C:/Users/toey_/AppData/Local/Temp/claude/C--00-DATA-Soothsayer-wizard-app/f0d99bcd-4b66-44e4-9f3d-a9188e3a6417/scratchpad/cur/app/src/types.ts
+index b1935f5..e22cd0b 100644
+--- a/src/types.ts
++++ b/C:/Users/toey_/AppData/Local/Temp/claude/C--00-DATA-Soothsayer-wizard-app/f0d99bcd-4b66-44e4-9f3d-a9188e3a6417/scratchpad/cur/app/src/types.ts
+@@ -169,6 +169,10 @@ export interface PredictiveModelStateSlice {
+     customRunningConditionFilters: WorkspaceSensorFilter[];
+     /** Only read when `runningConditionMode === 'custom'`. */
+     customRunningConditionCombine: 'and' | 'or';
++    /** MOCKUP: this model's own test periods (Custom mode). */
++    customTestPeriods?: TestPeriod[];
++    /** MOCKUP: set when only the test periods changed on a Complete model (it must be marked complete again). */
++    testsChangedAt?: string;
+ }
+ 
+ /**
+@@ -367,6 +371,8 @@ export interface FailureGroupStateSlice {
+      *  A model in `runningConditionMode: 'workspace'` uses THIS list; 'custom'
+      *  uses its own `filterTimePeriods`. Empty/undefined = no time limit. */
+     runningConditionTimePeriods?: TimePeriod[];
++    /** MOCKUP: workspace test periods (validation). */
++    runningConditionTestPeriods?: TestPeriod[];
+     /** Workspace: user explicitly chose "No condition — use all rows". */
+     runningConditionNoneConfirmed?: boolean;
+     /** Category changes made by the one-time normalisation. `undefined` =
+@@ -385,6 +391,16 @@ export interface TimePeriod {
+     end: string;
+ }
+ 
++/** MOCKUP (Train/Test validation, 2026-10-07): a period the model never trains on.
++ *  `normal` = the score should stay high (false-alarm check); `problem` = the score
++ *  should drop (detection check; `eventTime` gives the lead time). */
++export interface TestPeriod extends TimePeriod {
++    label: 'normal' | 'problem';
++    eventTime?: string;
++    /** Name of the Dashboard highlight it was taken from (label is NOT stored on the highlight). */
++    fromHighlight?: string;
++}
++
+ /** One category change made by `normalizeSensorCategories`. */
+ export interface CategoryChange {
+     modelId: string;
+diff --git a/src/utils/healthPersist.ts b/C:/Users/toey_/AppData/Local/Temp/claude/C--00-DATA-Soothsayer-wizard-app/f0d99bcd-4b66-44e4-9f3d-a9188e3a6417/scratchpad/cur/app/src/utils/healthPersist.ts
+index 4cba2f2..b149710 100644
+--- a/src/utils/healthPersist.ts
++++ b/C:/Users/toey_/AppData/Local/Temp/claude/C--00-DATA-Soothsayer-wizard-app/f0d99bcd-4b66-44e4-9f3d-a9188e3a6417/scratchpad/cur/app/src/utils/healthPersist.ts
+@@ -181,6 +181,7 @@ export async function persistModelComplete(
+                 return {
+                     ...withoutVerdict(m),
+                     status: true,
++                    testsChangedAt: undefined,
+                     healthSetPoints: keepDisk ? target.healthSetPoints : setPoints,
+                     ...(keepDisk ? {} : { healthVerdict: 'valid' as const }),
+                     ...(exportRecord ? { healthExport: exportRecord } : {}),
+diff --git a/src/utils/healthRequest.ts b/C:/Users/toey_/AppData/Local/Temp/claude/C--00-DATA-Soothsayer-wizard-app/f0d99bcd-4b66-44e4-9f3d-a9188e3a6417/scratchpad/cur/app/src/utils/healthRequest.ts
+index 3b67bbb..baa6622 100644
+--- a/src/utils/healthRequest.ts
++++ b/C:/Users/toey_/AppData/Local/Temp/claude/C--00-DATA-Soothsayer-wizard-app/f0d99bcd-4b66-44e4-9f3d-a9188e3a6417/scratchpad/cur/app/src/utils/healthRequest.ts
+@@ -6,7 +6,7 @@ import type {
+     ModelFilesRequest,
+ } from '../types/health';
+ import { STIFFNESS_DEFAULT } from '../components/reports/pmReportTypes';
+-import type { RunningConditionFg } from './runningCondition';
++import { effectiveRunningCondition, type RunningConditionFg } from './runningCondition';
+ import { computeTrainFingerprint } from './trainFingerprint';
+ import { trainingScopeFilter } from './trainingScope';
+ 
+@@ -146,6 +146,9 @@ export function buildHealthPreviewRequest(opts: HealthPreviewRequestOptions): He
+     } else {
+         Object.assign(req, clusteringFields(model));
+     }
++    // MOCKUP: test periods ride along so the preview also scores and compares them.
++    const tp = effectiveRunningCondition(model, fg).testPeriods;
++    if (tp.length) req.test_periods = tp.map(t => ({ start: t.start || null, end: t.end || null, label: t.label, event_time: t.eventTime || null }));
+     if (opts.maxScatterPoints !== undefined) req.max_scatter_points = opts.maxScatterPoints;
+     if (opts.expectedGeneration !== undefined) req.expected_generation = opts.expectedGeneration;
+     return req;
+diff --git a/src/utils/runningCondition.ts b/C:/Users/toey_/AppData/Local/Temp/claude/C--00-DATA-Soothsayer-wizard-app/f0d99bcd-4b66-44e4-9f3d-a9188e3a6417/scratchpad/cur/app/src/utils/runningCondition.ts
+index b81822c..d088527 100644
+--- a/src/utils/runningCondition.ts
++++ b/C:/Users/toey_/AppData/Local/Temp/claude/C--00-DATA-Soothsayer-wizard-app/f0d99bcd-4b66-44e4-9f3d-a9188e3a6417/scratchpad/cur/app/src/utils/runningCondition.ts
+@@ -1,4 +1,4 @@
+-import type { FailureGroupStateSlice, FailureModel, TimePeriod, WorkspaceSensorFilter } from '../types';
++import type { FailureGroupStateSlice, FailureModel, TestPeriod, TimePeriod, WorkspaceSensorFilter } from '../types';
+ import { normalizeSensorTag } from '../hooks/useSensorMetaMap';
+ import { modelSensorKey, sensorCategory } from './modelGrouping';
+ import { validatePeriods } from './timePeriods';
+@@ -13,6 +13,8 @@ export interface EffectiveRunningCondition {
+     /** User explicitly chose "No condition — use all rows". */
+     noneConfirmed: boolean;
+     periods: TimePeriod[];
++    /** MOCKUP: test periods (validation). */
++    testPeriods: TestPeriod[];
+ }
+ 
+ /**
+@@ -29,6 +31,7 @@ export function effectiveRunningCondition(model: FailureModel, fg: RunningCondit
+             combine: model.customRunningConditionCombine ?? 'and',
+             noneConfirmed: model.customRunningConditionNoneConfirmed ?? false,
+             periods: model.filterTimePeriods ?? [],
++            testPeriods: model.customTestPeriods ?? [],
+         };
+     }
+     return {
+@@ -37,6 +40,7 @@ export function effectiveRunningCondition(model: FailureModel, fg: RunningCondit
+         combine: fg?.runningConditionCombine ?? 'and',
+         noneConfirmed: fg?.runningConditionNoneConfirmed ?? false,
+         periods: fg?.runningConditionTimePeriods ?? [],
++        testPeriods: fg?.runningConditionTestPeriods ?? [],
+     };
+ }
+ 
+@@ -88,5 +92,19 @@ export function getBuildBlockReason(model: FailureModel, fg: RunningConditionFg,
+     const eff = effectiveRunningCondition(model, fg);
+     const bad = validatePeriods(eff.periods).find((s) => s.invalid);
+     if (bad) return bad.reason ?? 'Fix the training period dates.';
++    // MOCKUP (validation): train only on periods the user marked as normal operation.
++    if (eff.periods.length === 0) return eff.mode === 'custom'
++        ? 'Add a train period first in Model settings → Training data (Custom).'
++        : 'Add a train period first — models learn only from the train periods (Running condition → Edit).';
++    // A test period MAY overlap a train period (user rule, 2026-10-07): never a block.
+     return null;
+ }
++
++/** MOCKUP: Mark complete also needs at least one test period. */
++export const NO_TEST_BLOCK_REASON = 'Add a test period before marking complete (Running condition → Edit).';
++export const NO_TEST_BLOCK_REASON_CUSTOM = 'Add a test period in Model settings → Training data (Custom).';
++export function testBlockReason(model: FailureModel, fg: RunningConditionFg): string | null {
++    const eff = effectiveRunningCondition(model, fg);
++    if (eff.testPeriods.length > 0) return null;
++    return eff.mode === 'custom' ? NO_TEST_BLOCK_REASON_CUSTOM : NO_TEST_BLOCK_REASON;
++}
+diff --git a/src/utils/timePeriods.ts b/C:/Users/toey_/AppData/Local/Temp/claude/C--00-DATA-Soothsayer-wizard-app/f0d99bcd-4b66-44e4-9f3d-a9188e3a6417/scratchpad/cur/app/src/utils/timePeriods.ts
+index 065d65a..fb8e5bf 100644
+--- a/src/utils/timePeriods.ts
++++ b/C:/Users/toey_/AppData/Local/Temp/claude/C--00-DATA-Soothsayer-wizard-app/f0d99bcd-4b66-44e4-9f3d-a9188e3a6417/scratchpad/cur/app/src/utils/timePeriods.ts
+@@ -170,3 +170,25 @@ export function toFilterRanges(list: TimePeriod[]): FilterRange[] {
+             end: (p.end ?? '').trim() ? p.end : null,
+         }));
+ }
++
++/** MOCKUP: do two periods share any time? Open ends count as unbounded. */
++export function periodsOverlap(a: TimePeriod, b: TimePeriod): boolean {
++    const as = toMs(a.start) ?? -Infinity, ae = toMs(a.end) ?? Infinity;
++    const bs = toMs(b.start) ?? -Infinity, be = toMs(b.end) ?? Infinity;
++    return as <= be && bs <= ae;
++}
++/** MOCKUP (2026-10-07 rule change: a test period MAY overlap train time): calendar days of
++ *  `test` that are also inside a train period (0 when none). Information only. */
++export function trainOverlapDays(train: TimePeriod[], test: TimePeriod): number {
++    const ts = toMs(test.start) ?? -Infinity, te = toMs(test.end) ?? Infinity;
++    let ms = 0;
++    for (const p of train) {
++        const a = Math.max(ts, toMs(p.start) ?? -Infinity), b = Math.min(te, toMs(p.end) ?? Infinity);
++        if (Number.isFinite(a) && Number.isFinite(b) && b > a) ms += b - a;
++    }
++    return Math.round(ms / 86_400_000);
++}
++/** MOCKUP: per test period, the 1-based numbers of the train periods it overlaps. */
++export function testTrainOverlaps(train: TimePeriod[], tests: TimePeriod[]): number[][] {
++    return tests.map(t => train.map((p, j) => (periodsOverlap(p, t) ? j + 1 : 0)).filter(Boolean));
++}
