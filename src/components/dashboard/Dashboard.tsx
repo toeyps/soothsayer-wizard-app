@@ -110,6 +110,13 @@ const RIGHT_SLOTS: DashboardSlot[] = ['right-top'];
 // how many rows the dataset holds. ~4k points ≈ 2 output points per pixel
 // on a typical panel width — visually indistinguishable from raw.
 const LINE_MAX_POINTS = 4000;
+/** Sample caps for the WebGL charts. Scatter is ONE canvas, so it can afford a large sample.
+ *  Pair Plot draws the same sample once per cell — up to 10 WebGL canvases at 4 sensors (6
+ *  scatter cells + 4 time-series cells) — so every point costs ten times: at the old 50,000 it
+ *  was half a million points, and the user found it very slow. A cell is small (a few hundred
+ *  px each way), so 10,000 points already fill its dense areas. */
+const SCATTER_MAX_POINTS = 200_000;
+const PAIR_MAX_POINTS = 10_000;
 // Same debounce window as useChartData/useScatterSample's own
 // backend-query debounce -- applied here to the autosave-to-disk write
 // instead. Without it, every tracked state change (including e.g. each
@@ -2094,7 +2101,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     const scatterActive = chartType === 'scatter' || chartType === 'pair';
     // Pair plot redraws the sample once PER cell across many WebGL contexts,
     // so it gets a tighter point budget than the single-canvas scatter.
-    const scatterMaxPoints = chartType === 'pair' ? 50_000 : 200_000;
+    const scatterMaxPoints = chartType === 'pair' ? PAIR_MAX_POINTS : SCATTER_MAX_POINTS;
 
     // Deliberately `selectedSensors`, not `visibleSensors`: the "hide from
     // chart" toggle in the Selected Sensor tab is a line-chart-only display

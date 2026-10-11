@@ -708,6 +708,16 @@ describe('Dashboard', () => {
             );
         });
 
+        // Pair Plot draws its sample once per cell (up to 10 WebGL canvases), so its cap is far
+        // below the single-canvas Scatter's — at 50,000 the user found Pair Plot very slow.
+        it('asks for a 200,000-point sample for Scatter and a 10,000-point sample for Pair Plot', () => {
+            renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1', 'TAG2'], visibleSensors: ['TAG1', 'TAG2'] }) });
+            fireEvent.click(screen.getByText('Scatter'));
+            expect(last(mockUseScatterSample.mock.calls)[1]).toBe(200_000);
+            fireEvent.click(screen.getByText('Pair Plot'));
+            expect(last(mockUseScatterSample.mock.calls)[1]).toBe(10_000);
+        });
+
         it('bounces back to "line" when the selection drops below 2 while scatter is active', () => {
             renderDashboard({
                 initialState: makeInitialState({
