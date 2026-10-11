@@ -59,7 +59,7 @@ class MockResizeObserver {
     unobserve = vi.fn();
 }
 
-import LineChart, { LINE_CHART_COLORS, defaultSensorColor } from '../components/charts/LineChart';
+import LineChart, { LINE_CHART_COLORS, defaultSensorColor, nearestMsIndex } from '../components/charts/LineChart';
 import type { ColumnarSeries } from '../components/charts/ChartTypes';
 
 function columnarOf(headers: string[], length: number): ColumnarSeries {
@@ -453,32 +453,31 @@ describe('LineChart option building', () => {
             expect(formatter([])).toBe('');
         });
 
-        it('renders a date header and rounds values to 3 decimals, appending the sensor unit (regression: for a time axis, ECharts\' `p.value` is the whole [x_ms, y] point -- matching this component\'s own series.data shape -- not just y; an earlier version of this fix printed the raw pair as e.g. "1756872000000,6425.3" in the tooltip)', () => {
-            const columnar = columnarOf(['A'], 3);
+        // The rows come from the chart's own data at the hovered time (`axisValue`), not from
+        // ECharts' `params` — see 'lists every shown sensor' below.
+        const T0 = '2026-01-01T00:00:00';
+        const one = (value: number | null): ColumnarSeries => ({ timestamps: [T0, '2026-01-01T00:01:00'], series: [[value, 99]] });
+
+        it('renders a date header and rounds values to 3 decimals, appending the sensor unit; the raw ms never leaks into the value', () => {
             render(
                 <LineChart
-                    data={[]} columnar={columnar} sensors={['A']} headers={['A']}
+                    data={[]} columnar={one(12.34567)} sensors={['A']} headers={['A']}
                     sensorMetadata={[{ tag: 'A', description: 'd', unit: 'bar', component: 'x' }]}
                 />,
             );
             const { formatter } = capturedOptions[capturedOptions.length - 1].tooltip;
-            const ms = msOf('2026-01-01T00:00:00');
-            const html = formatter([
-                { axisValue: ms, seriesName: 'A', value: [ms, 12.34567], color: '#fff' },
-            ]);
+            const ms = msOf(T0);
+            const html = formatter([{ axisValue: ms, seriesName: 'A', value: [ms, 12.34567], color: '#fff' }]);
             expect(html).toContain('12.346 bar');
-            expect(html).not.toContain(String(ms)); // the raw ms must never leak into the displayed value
+            expect(html).not.toContain(String(ms));
             expect(html).toContain('2026/01/01');
         });
 
         it('omits the unit segment when the sensor has none in metadata', () => {
-            const columnar = columnarOf(['A'], 3);
-            render(<LineChart data={[]} columnar={columnar} sensors={['A']} headers={['A']} />);
+            render(<LineChart data={[]} columnar={one(5)} sensors={['A']} headers={['A']} />);
             const { formatter } = capturedOptions[capturedOptions.length - 1].tooltip;
-            const ms = msOf('2026-01-01T00:00:00');
-            const html = formatter([
-                { axisValue: ms, seriesName: 'A', value: [ms, 5], color: '#fff' },
-            ]);
+            const ms = msOf(T0);
+            const html = formatter([{ axisValue: ms, seriesName: 'A', value: [ms, 5], color: '#fff' }]);
             // No description → the tag alone (mono), value with 3 decimals, no unit.
             expect(html).toContain('<span class="tt-desc tt-mono">A</span>');
             expect(html).toContain('>5.000</span>');
@@ -488,15 +487,15 @@ describe('LineChart option building', () => {
         // Inline label (description then tag, no brackets), value +
         // unit right in the series colour, thousands separators.
         it('each row is the Inline label + value + unit in the series colour, with thousands separators', () => {
-            const columnar = columnarOf(['A'], 3);
             render(
                 <LineChart
-                    data={[]} columnar={columnar} sensors={['A']} headers={['A']}
+                    data={[]} columnar={one(12345.6)} sensors={['A']} headers={['A']}
+                    sensorColors={{ A: '#10b981' }}
                     sensorMetadata={[{ tag: 'A', description: 'Exhaust temperature', unit: 'DEGC', component: 'GT' }]}
                 />,
             );
             const { formatter } = capturedOptions[capturedOptions.length - 1].tooltip;
-            const ms = msOf('2026-01-01T00:00:00');
+            const ms = msOf(T0);
             const html = formatter([{ axisValue: ms, seriesName: 'A', value: [ms, 12345.6], color: '#10b981' }]);
             expect(html).toContain('<div class="tt-head">2026/01/01');
             expect(html).toContain('<span class="tt-desc">Exhaust temperature</span><span class="tt-tag">A</span>');
@@ -504,16 +503,68 @@ describe('LineChart option building', () => {
             expect(html).not.toMatch(/\(A\)/);
         });
 
-        it('caps the number of rendered rows at 10', () => {
-            const columnar = columnarOf(['A'], 3);
-            render(<LineChart data={[]} columnar={columnar} sensors={['A']} headers={['A']} />);
+        // Real-app bug: with 3 sensors on the chart the tooltip showed one row. ECharts only
+        // passes the series that still have a point at exactly the hovered time, and the
+        // per-series point thinning keeps a different subset for each sensor.
+        it('lists every shown sensor at the hovered time, even when ECharts passes only one of them', () => {
+            const columnar: ColumnarSeries = {
+                timestamps: [T0, '2026-01-01T00:01:00', '2026-01-01T00:02:00'],
+                series: [[1, 2, 3], [10, 20, 30], [100, 200, 300]],
+            };
+            render(<LineChart data={[]} columnar={columnar} sensors={['A', 'B', 'C']} headers={['A', 'B', 'C']} />);
             const { formatter } = capturedOptions[capturedOptions.length - 1].tooltip;
-            const ms = msOf('2026-01-01T00:00:00');
-            const params = Array.from({ length: 15 }, (_, i) => ({
-                axisValue: ms, seriesName: `S${i}`, value: [ms, i], color: '#fff',
-            }));
-            const html = formatter(params);
+            const ms = msOf('2026-01-01T00:01:00');
+            const html = formatter([{ axisValue: ms, seriesName: 'B', value: [ms, 20], color: '#fff' }]);
+            expect((html.match(/class="tt-row"/g) ?? [])).toHaveLength(3);
+            expect(html).toContain('>2.000</span>');
+            expect(html).toContain('>20.000</span>');
+            expect(html).toContain('>200.000</span>');
+            // A time between two points reads the nearer one.
+            const near = formatter([{ axisValue: ms + 40_000, seriesName: 'B', value: [ms, 20], color: '#fff' }]);
+            expect(near).toContain('>300.000</span>');
+        });
+
+        it('a sensor with no value at that time keeps its row, shown as "—" without a unit', () => {
+            const columnar: ColumnarSeries = { timestamps: [T0], series: [[7], [null]] };
+            render(
+                <LineChart
+                    data={[]} columnar={columnar} sensors={['A', 'B']} headers={['A', 'B']}
+                    sensorMetadata={[{ tag: 'B', description: 'Flow', unit: 'TON/HR', component: 'x' }]}
+                />,
+            );
+            const { formatter } = capturedOptions[capturedOptions.length - 1].tooltip;
+            const ms = msOf(T0);
+            const html = formatter([{ axisValue: ms, seriesName: 'A', value: [ms, 7], color: '#fff' }]);
+            expect((html.match(/class="tt-row"/g) ?? [])).toHaveLength(2);
+            expect(html).toMatch(/>—<\/span>/);
+            expect(html).not.toContain('— TON/HR');
+        });
+
+        it('caps the number of rendered rows at 10', () => {
+            const names = Array.from({ length: 15 }, (_, i) => `S${i}`);
+            render(<LineChart data={[]} columnar={columnarOf(names, 3)} sensors={names} headers={names} />);
+            const { formatter } = capturedOptions[capturedOptions.length - 1].tooltip;
+            const ms = msOf(T0);
+            const html = formatter([{ axisValue: ms, seriesName: 'S0', value: [ms, 0], color: '#fff' }]);
             expect((html.match(/class="tt-row"/g) ?? [])).toHaveLength(10);
+        });
+    });
+
+    describe('nearestMsIndex (the time lookup behind the tooltip)', () => {
+        it('binary-searches ascending times to the closest entry, ties going to the earlier one', () => {
+            const xs = [0, 10, 20, 30];
+            expect(nearestMsIndex(xs, true, -5)).toBe(0);
+            expect(nearestMsIndex(xs, true, 14)).toBe(1);
+            expect(nearestMsIndex(xs, true, 16)).toBe(2);
+            expect(nearestMsIndex(xs, true, 15)).toBe(1);
+            expect(nearestMsIndex(xs, true, 999)).toBe(3);
+        });
+
+        it('scans when the times have gaps or are out of order; -1 when nothing is usable', () => {
+            expect(nearestMsIndex([null, 30, 10], false, 12)).toBe(2);
+            expect(nearestMsIndex([null, null], false, 12)).toBe(-1);
+            expect(nearestMsIndex([], true, 12)).toBe(-1);
+            expect(nearestMsIndex([1, 2], true, NaN)).toBe(-1);
         });
     });
 

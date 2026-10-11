@@ -37,6 +37,32 @@ function nearestXIndex(xData: (string | null)[], targetMs: number): number {
     return best;
 }
 
+/** Index of the entry of `xMs` closest to `targetMs`. Runs on every mousemove (the tooltip), so
+ *  it is a binary search when the times are complete and ascending — what the chart feed is —
+ *  and a plain scan over the already-parsed numbers otherwise. -1 when nothing is usable. */
+export function nearestMsIndex(xMs: (number | null)[], sorted: boolean, targetMs: number): number {
+    if (xMs.length === 0 || !isFinite(targetMs)) return -1;
+    if (sorted) {
+        let lo = 0;
+        let hi = xMs.length - 1;
+        while (lo < hi) {
+            const mid = (lo + hi) >> 1;
+            if ((xMs[mid] as number) < targetMs) lo = mid + 1;
+            else hi = mid;
+        }
+        return lo > 0 && targetMs - (xMs[lo - 1] as number) <= (xMs[lo] as number) - targetMs ? lo - 1 : lo;
+    }
+    let best = -1;
+    let bestDiff = Infinity;
+    for (let i = 0; i < xMs.length; i++) {
+        const t = xMs[i];
+        if (t == null) continue;
+        const diff = Math.abs(t - targetMs);
+        if (diff < bestDiff) { bestDiff = diff; best = i; }
+    }
+    return best;
+}
+
 // Exported so callers (e.g. the "Selected Sensor" color-swatch picker) can
 // show/default to the same palette a sensor would get without an override.
 //
@@ -704,6 +730,21 @@ function LineChart({
             };
         });
 
+        // What the tooltip reads: every shown sensor's own values, looked up at the hovered
+        // time. ECharts' `params` only lists the series that still have a point at exactly
+        // that time, and `sampling: 'lttb'` keeps a different subset of points per series —
+        // so with several sensors the tooltip used to show one or two rows and drop the rest.
+        const xMs = xData.map(toMs);
+        const xSorted = xMs.every((t, i) => t != null && (i === 0 || t >= (xMs[i - 1] as number)));
+        const tipSeries = sensors.map(sensor => {
+            const sensorIdx = headers.indexOf(sensor);
+            return {
+                sensor,
+                color: sensorColors?.[sensor] ?? defaultSensorColor(sensor),
+                values: columnar ? (columnar.series[sensorIdx] ?? []) : data.map(d => d.values[sensorIdx] ?? null),
+            };
+        });
+
         return {
             backgroundColor: 'transparent',
             textStyle: { fontFamily: 'Inter, system-ui, sans-serif' },
@@ -742,24 +783,21 @@ function LineChart({
                     const dateStr = formatDateTime(new Date(pList[0].axisValue));
                     let content = `<div class="tt-head">${dateStr}</div>`;
                     const maxItems = 10;
-                    pList.slice(0, maxItems).forEach((p: any) => {
-                        // Time axis: `p.value` is the whole data point
-                        // (`[x_ms, y]`, matching the `series.data` shape
-                        // built above), not just `y` the way a category
-                        // axis's bare-value array made it — unwrap before
-                        // display, or the raw pair prints as
-                        // "1756872000000,6425.3" instead of the value.
-                        const rawValue = Array.isArray(p.value) ? p.value[1] : p.value;
+                    const at = nearestMsIndex(xMs, xSorted, Number(pList[0].axisValue));
+                    tipSeries.slice(0, maxItems).forEach(({ sensor, color, values }) => {
+                        const rawValue = at >= 0 ? values[at] : null;
                         // Aggregated values (Avg etc.) are raw floating-point
                         // divisions with no rounding applied upstream — fix
                         // the tooltip display to 3 decimals (with thousands
                         // separators) regardless of sensor or aggregation method.
-                        const displayValue = typeof rawValue === 'number' ? fmtNum(rawValue, true) : String(rawValue ?? '—');
+                        // A sensor with no value at that time keeps its row, as "—".
+                        const hasValue = typeof rawValue === 'number' && !isNaN(rawValue);
+                        const displayValue = hasValue ? fmtNum(rawValue, true) : '—';
                         // Inline label left (description then tag), value + unit
                         // right in the series colour. Unit from master data —
                         // absent unit → omitted.
-                        const info = sensorLookup(String(p.seriesName));
-                        content += sensorInlineHtml(info, typeof p.color === 'string' ? p.color : undefined, `${displayValue}${info.unit ? ` ${info.unit}` : ''}`);
+                        const info = sensorLookup(sensor);
+                        content += sensorInlineHtml(info, color, `${displayValue}${hasValue && info.unit ? ` ${info.unit}` : ''}`);
                     });
                     return content;
                 }
