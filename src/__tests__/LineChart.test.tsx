@@ -141,6 +141,18 @@ describe('LINE_CHART_COLORS', () => {
 describe('LineChart option building', () => {
     const headers = ['A', 'B', 'C'];
 
+    // Real-app bug: with a dense, fast-swinging sensor on the chart the tooltip fell far behind
+    // the cursor, because every mousemove repainted all the series.
+    it('heavy data: the crosshair is on its own canvas layer and a hover does not re-emphasise (repaint) the series', () => {
+        render(<LineChart data={[]} columnar={columnarOf(headers, 2001)} sensors={['A', 'B', 'C']} headers={headers} />);
+        expect(capturedOptions[capturedOptions.length - 1].axisPointer).toEqual({ zlevel: 1, triggerEmphasis: false });
+    });
+
+    it('small data keeps the hover emphasis, still with the crosshair on its own layer', () => {
+        render(<LineChart data={[]} columnar={columnarOf(headers, 10)} sensors={['A', 'B', 'C']} headers={headers} />);
+        expect(capturedOptions[capturedOptions.length - 1].axisPointer).toEqual({ zlevel: 1, triggerEmphasis: true });
+    });
+
     it('builds one series and one yAxis entry per selected sensor', () => {
         const columnar = columnarOf(headers, 10);
         render(<LineChart data={[]} columnar={columnar} sensors={['A', 'B', 'C']} headers={headers} />);

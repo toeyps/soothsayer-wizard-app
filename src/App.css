@@ -2019,7 +2019,9 @@ body {
 .scatter-regl-controls {
     position: absolute;
     top: 10px;
-    left: 70px;
+    /* Starts 8 px inside the plot's left edge (ScatterChart's AXIS_PADDING.left = 88): at the
+       old 70 px the bar sat over the top Y tick label, which ends at 80 px. */
+    left: 96px;
     z-index: 10;
     display: flex;
     align-items: center;

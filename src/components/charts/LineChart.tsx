@@ -705,6 +705,13 @@ function LineChart({
         return {
             backgroundColor: 'transparent',
             textStyle: { fontFamily: 'Inter, system-ui, sans-serif' },
+            // The crosshair lives on its OWN canvas layer (zlevel 1), and for heavy data it no
+            // longer asks the series to "emphasise" the hovered point. Without both, every
+            // mousemove repainted the whole main canvas — every series re-stroked — and one
+            // dense, fast-swinging trace (a 4 000-point zig-zag) costs hundreds of ms to
+            // rasterise, so the tooltip fell far behind the cursor as soon as such a sensor
+            // was on the chart. Now a move redraws only the crosshair line.
+            axisPointer: { zlevel: 1, triggerEmphasis: !isLargeData },
             tooltip: {
                 trigger: 'axis',
                 backgroundColor: tooltipBg,
