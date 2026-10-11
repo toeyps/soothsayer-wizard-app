@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, memo, useRef, useCallback } from 'react';
+import { useState, useEffect, useMemo, memo, useRef, useCallback, type CSSProperties } from 'react';
 import createScatterplot from 'regl-scatterplot';
 import { scaleLinear } from 'd3-scale';
 import { RotateCcw, Ruler, Tag, Trash2 } from 'lucide-react';
@@ -6,8 +6,8 @@ import { ChartProps } from './ChartTypes';
 import type { TimeHighlight, ValueHighlightRange } from '../../types';
 import { firstMatchingHighlight } from '../../utils/timeHighlights';
 import { SensorPickerSingle } from '../sensor/SensorPicker';
-import { SensorInline } from '../sensor/SensorLabel';
-import { SensorMetaContext, fmtNum, useLayeredSensorLookup, type SensorInfo } from '../sensor/sensorInfo';
+import { FxBadge, SensorInline } from '../sensor/SensorLabel';
+import { SensorMetaContext, fmtNum, sensorTitle, useLayeredSensorLookup, type SensorInfo } from '../sensor/sensorInfo';
 import { hexToRgba, rgbaToHex, RANGE_PALETTE, TAG_BADGES, MAX_TAGGED_POINTS } from './pairPlotColors';
 import { reportError } from '../../errorReporter';
 import { useCoalescedDraw } from '../../hooks/useCoalescedDraw';
@@ -40,7 +40,12 @@ const VALUE_UNMATCHED_COLOR: [number, number, number, number] = [0.55, 0.6, 0.68
  * regl-scatterplot draws points only — ticks/labels/axis titles
  * are rendered by our own SVG layer on top of the canvas.
  */
-const AXIS_PADDING = { left: 60, right: 20, top: 50, bottom: 50 };
+const AXIS_PADDING = { left: 88, right: 20, top: 50, bottom: 56 };
+/** Room the two-line axis titles take: the Y title's column (30 px, 2 px from the edge) leaves
+ *  the widest tick label ("7850.82", ~44 px + the 8 px tick) clear of it inside the 88 px
+ *  gutter; the X title's 28 px sit under the tick labels inside the 56 px bottom band. */
+const Y_TITLE = { left: 2, width: 30 };
+const X_TITLE = { height: 28, bottom: 3 };
 const AXIS_TICKS = 5;
 
 function fmt(n: number): string {
@@ -52,6 +57,27 @@ function fmt(n: number): string {
 function makeTicks(min: number, max: number, count: number = AXIS_TICKS): number[] {
     if (max === min) return [min];
     return Array.from({ length: count }, (_, i) => min + (max - min) * i / (count - 1));
+}
+
+/** A Scatter axis title on two lines: line 1 the description (with the special-sensor badge),
+ *  line 2 the tag + unit. No description → the tag + unit line alone (never the tag twice).
+ *  The full name stays in `title`. */
+function AxisTitle({ axis, info, style }: { axis: 'x' | 'y'; info: SensorInfo; style: CSSProperties }) {
+    return (
+        <div className={`scatter-axis-title scatter-axis-title--${axis}`} data-testid={`scatter-axis-title-${axis}`} title={sensorTitle(info)} style={style}>
+            {info.description && (
+                <span className="sat-l1">
+                    <FxBadge special={info.special} />
+                    <span className="sat-desc">{info.description}</span>
+                </span>
+            )}
+            <span className="sat-l2">
+                {!info.description && <FxBadge special={info.special} />}
+                <span className="sat-tag">{info.tag}</span>
+                {info.unit && <span className="scatter-axis-unit">{info.unit}</span>}
+            </span>
+        </div>
+    );
 }
 
 /** One value row of the hover tooltip / a tag callout: inline label left, value + unit right
@@ -1084,18 +1110,12 @@ function ScatterChart({
 
             </svg>
 
-            {/* Axis titles — HTML overlays. Scatter has room, so its titles are the
-                Inline label (description then tag) + unit, with the full name in
-                `title`. The Y title is `writing-mode: vertical-rl` capped at the plot
-                height so it can ellipsise. */}
-            <div className="scatter-axis-title scatter-axis-title--x" data-testid="scatter-axis-title-x" style={{ left: AXIS_PADDING.left, width: innerDims.width, top: wrapperDims.height - 20, height: 18 }}>
-                <SensorInline tag={scatterX} size="sm" />
-                {sensorLookup(scatterX).unit && <span className="scatter-axis-unit">{sensorLookup(scatterX).unit}</span>}
-            </div>
-            <div className="scatter-axis-title scatter-axis-title--y" data-testid="scatter-axis-title-y" style={{ left: 2, width: 20, top: AXIS_PADDING.top, height: innerDims.height, maxHeight: innerDims.height }}>
-                <SensorInline tag={scatterY} size="sm" />
-                {sensorLookup(scatterY).unit && <span className="scatter-axis-unit">{sensorLookup(scatterY).unit}</span>}
-            </div>
+            {/* Axis titles — HTML overlays, each on TWO lines (user decision 2026-10-11): the
+                description on its own line, tag + unit on the other, so a long name is no longer
+                cut by the tag sharing its line. The Y title is `writing-mode: vertical-rl`
+                capped at the plot height; only the description line can still ellipsise there. */}
+            <AxisTitle axis="x" info={sensorLookup(scatterX)} style={{ left: AXIS_PADDING.left, width: innerDims.width, top: wrapperDims.height - X_TITLE.height - X_TITLE.bottom, height: X_TITLE.height }} />
+            <AxisTitle axis="y" info={sensorLookup(scatterY)} style={{ ...Y_TITLE, top: AXIS_PADDING.top, height: innerDims.height, maxHeight: innerDims.height }} />
         </div>
         </SensorMetaContext.Provider>
     );

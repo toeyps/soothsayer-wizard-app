@@ -119,8 +119,8 @@ describe('ScatterChart', () => {
         render(<ScatterChart data={data} sensors={['A', 'B']} headers={headers} />);
         expect(mockCreateScatterplot).toHaveBeenCalledTimes(1);
         const opts = mockCreateScatterplot.mock.calls[0][0];
-        const expectedWidth = 800 - 60 - 20; // AXIS_PADDING.left/right
-        const expectedHeight = 600 - 50 - 50; // AXIS_PADDING.top/bottom
+        const expectedWidth = 800 - 88 - 20; // AXIS_PADDING.left/right
+        const expectedHeight = 600 - 50 - 56; // AXIS_PADDING.top/bottom
         expect(opts.width).toBe(expectedWidth);
         expect(opts.height).toBe(expectedHeight);
         // Regression: regl-scatterplot defaults aspectRatio to 1 (assumes a
@@ -500,21 +500,45 @@ describe('ScatterChart', () => {
             { tag: 'B', description: '', unit: '', component: '' }, // known tag, blank description
         ];
 
-        it('X title = description then tag + unit chip; title attribute carries every part', () => {
+        // User decision 2026-10-11 ("เอาเป็น 2 บรรทัด"): the description has its own line, so a
+        // long name is no longer cut by the tag + unit sharing it.
+        it('X title is two lines: description, then tag + unit; the title attribute carries every part', () => {
             render(<ScatterChart data={data} sensors={['A', 'B']} headers={headers} sensorMetadata={sensorMetadata} />);
             const x = screen.getByTestId('scatter-axis-title-x');
-            expect(x.querySelector('.sl-desc')?.textContent).toBe('Pump Pressure');
-            expect(x.querySelector('.sl-tag')?.textContent).toBe('A');
-            expect(x.querySelector('.scatter-axis-unit')?.textContent).toBe('bar');
-            expect(x.querySelector('.sl-inline-wrap')?.getAttribute('title')).toBe('Pump Pressure · A · bar · Pump');
+            expect([...x.children].map(el => el.className)).toEqual(['sat-l1', 'sat-l2']);
+            expect(x.querySelector('.sat-l1')?.textContent).toBe('Pump Pressure');
+            expect(x.querySelector('.sat-l2 .sat-tag')?.textContent).toBe('A');
+            expect(x.querySelector('.sat-l2 .scatter-axis-unit')?.textContent).toBe('bar');
+            expect(x.getAttribute('title')).toBe('Pump Pressure · A · bar · Pump');
         });
 
-        it('Y title is the vertical form; a blank description shows the tag alone (no unit chip when none)', () => {
-            render(<ScatterChart data={data} sensors={['A', 'B']} headers={headers} sensorMetadata={sensorMetadata} />);
+        it('Y title is the vertical form of the same two lines', () => {
+            render(<ScatterChart data={data} sensors={['B', 'A']} headers={headers} sensorMetadata={sensorMetadata} />);
             const y = screen.getByTestId('scatter-axis-title-y');
             expect(y.classList.contains('scatter-axis-title--y')).toBe(true);
+            expect([...y.children].map(el => el.className)).toEqual(['sat-l1', 'sat-l2']);
+            expect(y.querySelector('.sat-desc')?.textContent).toBe('Pump Pressure');
+            expect(y.querySelector('.sat-l2')?.textContent).toBe('Abar');
+        });
+
+        it('a blank description shows the tag line alone — one line, the tag never twice, no unit when none', () => {
+            render(<ScatterChart data={data} sensors={['A', 'B']} headers={headers} sensorMetadata={sensorMetadata} />);
+            const y = screen.getByTestId('scatter-axis-title-y');
+            expect([...y.children].map(el => el.className)).toEqual(['sat-l2']);
             expect(y.textContent).toBe('B');
             expect(y.querySelector('.scatter-axis-unit')).toBeNull();
+        });
+
+        it('the Y title column and the wider gutter leave room for both lines beside the tick labels', () => {
+            render(<ScatterChart data={data} sensors={['A', 'B']} headers={headers} sensorMetadata={sensorMetadata} />);
+            const y = screen.getByTestId('scatter-axis-title-y');
+            expect(y.style.left).toBe('2px');
+            expect(y.style.width).toBe('30px');
+            // 600 px tall wrapper: the 28 px X title sits 3 px above the bottom edge, under the ticks.
+            const x = screen.getByTestId('scatter-axis-title-x');
+            expect(x.style.height).toBe('28px');
+            expect(x.style.top).toBe(`${600 - 28 - 3}px`);
+            expect(x.style.left).toBe('88px');
         });
     });
 

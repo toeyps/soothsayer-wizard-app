@@ -23,7 +23,7 @@ export function SensorMetaProvider({ metadata, special, children }: {
     return <SensorMetaContext.Provider value={lookup}>{children}</SensorMetaContext.Provider>;
 }
 
-function FxBadge({ special }: { special?: 'f' | 's' }) {
+export function FxBadge({ special }: { special?: 'f' | 's' }) {
     if (!special) return null;
     return <span className={`sl-fx sl-fx--${special}`} aria-hidden="true">{special === 'f' ? 'ƒ' : 'Σ'}</span>;
 }

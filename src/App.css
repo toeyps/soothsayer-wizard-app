@@ -5748,14 +5748,6 @@ body {
     color: var(--text-secondary);
 }
 .cp-head-label { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.cp-head-hex {
-    flex-shrink: 0;
-    font-family: var(--mono);
-    font-weight: 500;
-    letter-spacing: 0;
-    text-transform: none;
-    color: var(--text-faint);
-}
 .cp-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; }
 .cp-sw {
     position: relative;
@@ -5801,24 +5793,6 @@ body {
 .cp-car { transition: transform 0.15s; }
 .cp-custom[aria-expanded="true"] .cp-car { transform: rotate(90deg); }
 .cp-adv { display: grid; gap: 8px; }
-.cp-hexrow { display: flex; align-items: center; gap: 6px; }
-.cp-hexrow input {
-    flex: 1;
-    min-width: 0;
-    height: 26px;
-    padding: 0 8px;
-    background: var(--input-bg);
-    border: 1px solid var(--border-strong);
-    border-radius: 6px;
-    color: var(--text-primary);
-    font-family: var(--mono);
-    font-size: 11.5px;
-    outline: none;
-}
-.cp-hexrow input:focus { border-color: var(--accent-color); }
-.cp-hexrow input.bad { border-color: var(--danger); }
-.cp-prev { flex-shrink: 0; width: 26px; height: 26px; border-radius: 6px; border: 1px solid var(--border-strong); }
-.cp-err { font-size: 11px; color: var(--danger); }
 
 /* ── Tooltip / value-box rows (line chart HTML tooltip, scatter + pair plot
    hover, scatter tag callouts): inline label left, value + unit right. ── */
@@ -5957,17 +5931,47 @@ body {
     position: absolute;
     z-index: 4;
     display: flex;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 6px;
+    gap: 2px;
     overflow: hidden;
 }
-.scatter-axis-unit { flex-shrink: 0; font-family: var(--mono); font-size: 9.5px; color: var(--text-secondary); }
+/* Two lines: description, then tag + unit. Sizes are logical (inline-size), so the same rules
+   cap a line at the plot WIDTH for the X title and at the plot HEIGHT for the vertical Y title. */
+.sat-l1,
+.sat-l2 {
+    flex: none;
+    display: flex;
+    align-items: center;
+    min-inline-size: 0;
+    max-inline-size: 100%;
+    overflow: hidden;
+    white-space: nowrap;
+}
+.sat-l1 { gap: 5px; line-height: 14px; }
+.sat-l2 { gap: 6px; line-height: 12px; }
+.sat-l1 .sl-fx { flex: none; }
+.sat-desc {
+    min-inline-size: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-size: 11.5px;
+    font-weight: 500;
+    color: var(--text-primary);
+}
+.sat-tag {
+    min-inline-size: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-secondary);
+}
+.scatter-axis-unit { flex-shrink: 0; font-family: var(--mono); font-size: 9.5px; line-height: 12px; color: var(--text-secondary); }
+/* Vertical, reading bottom-to-top; the column direction puts the description on the OUTER
+   line and tag + unit next to the tick labels. */
 .scatter-axis-title--y { writing-mode: vertical-rl; transform: rotate(180deg); }
-.scatter-axis-title--y > * { min-height: 0; max-height: 100%; }
-.scatter-axis-title--y .sl-inline-wrap,
-.scatter-axis-title--y .sl-inline { min-width: auto; max-width: none; min-height: 0; max-height: 100%; }
-.scatter-axis-title--y .sl-desc { min-width: auto; min-height: 0; }
 
 /* Pair Plot axis labels: the tag in mono with a dotted underline; the hover /
    focus card is the stacked label + a component chip. */

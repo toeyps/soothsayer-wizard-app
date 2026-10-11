@@ -399,7 +399,7 @@ describe('PairPlotChart', () => {
             fireEvent.click(screen.getByText('lasso-A-B'));
             fireEvent.click(screen.getByRole('button', { name: 'Cluster colour: Cluster 1' }));
             const checked = document.querySelector('.cp-pop .cp-sw[aria-checked="true"]') as HTMLElement;
-            expect(checked.getAttribute('title')).toBe('#f59e0b');
+            expect(checked.getAttribute('data-colour')).toBe('#f59e0b');
             expect(document.querySelector('.cp-adv')).toBeNull(); // custom section stays folded
         });
 
@@ -461,7 +461,7 @@ describe('PairPlotChart', () => {
             fireEvent.click(screen.getByText('lasso-A-B'));
             fireEvent.click(screen.getByText('lasso-B-time'));
             fireEvent.click(screen.getByRole('button', { name: 'Cluster colour: Cluster 1' }));
-            const sw = (hex: string) => document.querySelector(`.cp-pop .cp-sw[title^="${hex}"]`) as HTMLElement;
+            const sw = (hex: string) => document.querySelector(`.cp-pop .cp-sw[data-colour="${hex}"]`) as HTMLElement;
             expect(sw('#10b981').getAttribute('title')).toContain('in use on this chart'); // Cluster 2's emerald
             cellCalls.length = 0;
             fireEvent.click(sw('#f43f5e'));
@@ -476,7 +476,7 @@ describe('PairPlotChart', () => {
             fireEvent.click(screen.getByText('lasso-A-B'));
             fireEvent.click(screen.getByRole('button', { name: 'Cluster colour: Cluster 1' }));
             cellCalls.length = 0;
-            fireEvent.click(document.querySelector('.cp-pop .cp-sw[title^="#f59e0b"]') as HTMLElement);
+            fireEvent.click(document.querySelector('.cp-pop .cp-sw[data-colour="#f59e0b"]') as HTMLElement);
             expect(cellCalls.length).toBe(0);
         });
 

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import { useState } from 'react';
-import ColourPicker, { COLOUR_PALETTE, HEX_ERROR, parseHexColour } from '../components/sensor/ColourPicker';
+import ColourPicker, { COLOUR_NAMES, COLOUR_PALETTE, parseHexColour } from '../components/sensor/ColourPicker';
 import { LINE_CHART_COLORS } from '../components/charts/LineChart';
 // @ts-expect-error - @types/node is not installed; vitest runs in Node so this resolves at runtime
 import { readFileSync } from 'node:fs';
@@ -30,9 +30,9 @@ function Harness(props: { initial?: string; used?: string[]; onChange?: (h: stri
 
 const swatchBtn = () => screen.getByRole('button', { name: 'Line colour: Bearing temperature' });
 const pop = () => document.querySelector('.cp-pop') as HTMLElement;
-const sw = (hex: string) => pop().querySelector(`.cp-sw[title^="${hex}"]`) as HTMLButtonElement;
+const sw = (hex: string) => pop().querySelector(`.cp-sw[data-colour="${hex}"]`) as HTMLButtonElement;
 
-describe('parseHexColour (hex field input formats)', () => {
+describe('parseHexColour (stored colour formats)', () => {
     it('accepts 6 hex digits with or without #, any case, surrounding spaces; returns lower case', () => {
         expect(parseHexColour('#3B82F6')).toBe('#3b82f6');
         expect(parseHexColour('3b82f6')).toBe('#3b82f6');
@@ -56,7 +56,7 @@ describe('ColourPicker', () => {
     it('opens a popover with the 12 palette swatches in the §4 order, the current one ringed and checked', () => {
         render(<Harness initial="#10b981" />);
         fireEvent.click(swatchBtn());
-        const swatches = [...pop().querySelectorAll('.cp-sw')].map(s => s.getAttribute('title')!.slice(0, 7));
+        const swatches = [...pop().querySelectorAll('.cp-sw')].map(s => s.getAttribute('data-colour'));
         expect(swatches).toEqual([...COLOUR_PALETTE]);
         expect(COLOUR_PALETTE.length).toBe(12);
         expect(sw('#10b981').classList.contains('sel')).toBe(true);
@@ -64,7 +64,7 @@ describe('ColourPicker', () => {
         expect(sw('#10b981').querySelector('.cp-chk')).toBeTruthy();
         expect(document.activeElement).toBe(sw('#10b981'));
         expect(screen.getByRole('dialog', { name: 'Colour for Bearing temperature' })).toBe(pop());
-        expect(pop().querySelector('.cp-head-hex')?.textContent).toBe('#10b981');
+        expect(pop().querySelector('.cp-head')?.textContent).toBe('Bearing temperature');
     });
 
     it('the palette is the same 12 colours as the line chart defaults (so the ring and dots always match)', () => {
@@ -75,7 +75,8 @@ describe('ColourPicker', () => {
         render(<Harness initial="#3b82f6" used={['#F43F5E', '#3b82f6', '#123456']} />);
         fireEvent.click(swatchBtn());
         expect(sw('#f43f5e').querySelector('.cp-used')).toBeTruthy();
-        expect(sw('#f43f5e').title).toBe('#f43f5e · in use on this chart');
+        expect(sw('#f43f5e').title).toBe('Red · in use on this chart');
+        expect(sw('#f43f5e').getAttribute('aria-label')).toBe('Red, in use on this chart');
         expect(sw('#3b82f6').querySelector('.cp-used')).toBeNull();
         expect(pop().querySelector('.cp-legend')?.textContent).toBe('In use on this chart');
     });
@@ -167,57 +168,49 @@ describe('ColourPicker', () => {
     });
 
     describe('Custom colour', () => {
-        it('the hex field is not rewritten while the user is typing in it; it is tidied on blur', () => {
-            const onChange = vi.fn();
-            render(<Harness onChange={onChange} />);
-            fireEvent.click(swatchBtn());
-            fireEvent.click(screen.getByRole('button', { name: 'Custom colour' }));
-            const input = screen.getByLabelText('Hex colour') as HTMLInputElement;
-            input.focus();
-            fireEvent.change(input, { target: { value: 'ABCDEF' } });
-            expect(onChange).toHaveBeenLastCalledWith('#abcdef');
-            expect(input.value).toBe('ABCDEF'); // not reformatted under the cursor
-            fireEvent.blur(input);
-            expect(input.value).toBe('#abcdef');
-        });
-
-        it('a palette pick still updates the hex field (it is not focused then)', () => {
-            render(<Harness />);
-            fireEvent.click(swatchBtn());
-            fireEvent.click(screen.getByRole('button', { name: 'Custom colour' }));
-            fireEvent.click(sw('#f43f5e'));
-            expect((screen.getByLabelText('Hex colour') as HTMLInputElement).value).toBe('#f43f5e');
-        });
-
-        it('opens by itself when the current colour is not a palette colour, with the HSV plate and a hex field', () => {
+        it('opens by itself when the current colour is not a palette colour, with the HSV plate; no palette swatch is ringed', () => {
             render(<Harness initial="#123456" />);
             fireEvent.click(swatchBtn());
             expect(screen.getByRole('button', { name: 'Custom colour' }).getAttribute('aria-expanded')).toBe('true');
-            expect((screen.getByLabelText('Hex colour') as HTMLInputElement).value).toBe('#123456');
+            expect(pop().querySelector('.cp-adv')).toBeTruthy();
             expect(pop().querySelector('.cp-sw.sel')).toBeNull();
         });
 
-        it('a valid hex (with or without #) applies immediately, lower-cased', () => {
-            const onChange = vi.fn();
-            render(<Harness onChange={onChange} />);
+        it('stays folded for a palette colour until "Custom colour" is pressed', () => {
+            render(<Harness />);
+            fireEvent.click(swatchBtn());
+            expect(pop().querySelector('.cp-adv')).toBeNull();
+            fireEvent.click(screen.getByRole('button', { name: 'Custom colour' }));
+            expect(pop().querySelector('.cp-adv')).toBeTruthy();
+        });
+    });
+
+    // User decision 2026-10-11: "เอาออกเลย พวก code สี" — a user never needs the colour code.
+    describe('no colour code is shown anywhere', () => {
+        it('palette colour: no hex in the heading, in any tooltip or accessible name, and no hex field', () => {
+            render(<Harness initial="#10b981" used={['#f43f5e']} />);
             fireEvent.click(swatchBtn());
             fireEvent.click(screen.getByRole('button', { name: 'Custom colour' }));
-            fireEvent.change(screen.getByLabelText('Hex colour'), { target: { value: 'ABCDEF' } });
-            expect(onChange).toHaveBeenLastCalledWith('#abcdef');
+            expect(pop().textContent).not.toMatch(/#[0-9a-f]{3,6}/i);
+            expect(pop().querySelector('input')).toBeNull();
+            for (const el of [swatchBtn(), ...pop().querySelectorAll<HTMLElement>('[title], [aria-label]')]) {
+                expect(`${el.getAttribute('title') ?? ''} ${el.getAttribute('aria-label') ?? ''}`).not.toMatch(/#[0-9a-f]{3,6}/i);
+            }
         });
 
-        it('an invalid hex shows the fix message and changes nothing', () => {
-            const onChange = vi.fn();
-            render(<Harness onChange={onChange} />);
+        it('custom colour: still no code and no field', () => {
+            render(<Harness initial="#123456" />);
             fireEvent.click(swatchBtn());
-            fireEvent.click(screen.getByRole('button', { name: 'Custom colour' }));
-            const input = screen.getByLabelText('Hex colour') as HTMLInputElement;
-            fireEvent.change(input, { target: { value: '#abc' } });
-            expect(onChange).not.toHaveBeenCalled();
-            expect(input.classList.contains('bad')).toBe(true);
-            expect(input.getAttribute('aria-invalid')).toBe('true');
-            expect(screen.getByRole('alert').textContent).toBe(HEX_ERROR);
-            expect(HEX_ERROR).toBe('Use 6 hex digits, like #3b82f6.');
+            expect(pop().textContent).not.toMatch(/#[0-9a-f]{3,6}/i);
+            expect(pop().querySelector('input')).toBeNull();
+        });
+
+        it('each swatch is named by its colour, in palette order', () => {
+            render(<Harness />);
+            fireEvent.click(swatchBtn());
+            expect(COLOUR_NAMES.length).toBe(COLOUR_PALETTE.length);
+            expect([...pop().querySelectorAll('.cp-sw')].map(x => x.getAttribute('title'))).toEqual([...COLOUR_NAMES]);
+            expect(sw('#3b82f6').getAttribute('aria-label')).toBe('Blue');
         });
     });
 

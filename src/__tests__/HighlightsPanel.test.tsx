@@ -17,7 +17,7 @@ import { findPickerRow, openPickerSurface, pickSingle, rowTag } from './helpers/
 // Colours are picked with the shared ColourPicker (the swatch is
 // the button; a palette pick applies immediately). Its own behaviour is in ColourPicker.test.tsx.
 const swatch = (name: RegExp | string) => screen.getByRole('button', { name });
-const paletteSwatch = (hex: string) => document.querySelector(`.cp-pop .cp-sw[title^="${hex}"]`) as HTMLElement;
+const paletteSwatch = (hex: string) => document.querySelector(`.cp-pop .cp-sw[data-colour="${hex}"]`) as HTMLElement;
 const colourPopoverOpen = () => document.querySelector('.cp-pop') !== null;
 
 function makeProps(overrides: Partial<React.ComponentProps<typeof HighlightsPanel>> = {}) {

@@ -2061,7 +2061,7 @@ describe('Dashboard', () => {
             expect(label).toBeTruthy();
             expect(label.getAttribute('style') ?? '').not.toContain('color');
             fireEvent.click(swatches[0]);
-            const sw = (hex: string) => document.querySelector(`.cp-pop .cp-sw[title^="${hex}"]`) as HTMLElement;
+            const sw = (hex: string) => document.querySelector(`.cp-pop .cp-sw[data-colour="${hex}"]`) as HTMLElement;
             expect(sw('#3b82f6').classList.contains('sel')).toBe(true);
             expect(sw('#10b981').querySelector('.cp-used')).toBeTruthy();
             fireEvent.click(sw('#8b5cf6'));

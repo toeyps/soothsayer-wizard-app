@@ -10,8 +10,11 @@ import ColorPlatePicker from '../dashboard/ColorPlatePicker';
  * The 16 px swatch IS the button (inside a 24 px hit area). The popover: 12 palette swatches in
  * the §4 chart order (6 × 2), a ring + check on the current colour (box-shadow, so `outline`
  * stays free for :focus-visible), a dot on colours another item on the same chart uses, then
- * "Custom colour" (HSV square + hue = `ColorPlatePicker`, and a hex field). Picks apply
- * immediately; Esc closes and returns focus; Tab past the last control closes.
+ * "Custom colour" (HSV square + hue = `ColorPlatePicker`). Picks apply immediately; Esc closes
+ * and returns focus; Tab past the last control closes.
+ *
+ * No colour code is shown anywhere (user decision 2026-10-11: a user never needs the code) — no
+ * hex in the heading, no hex field, and a swatch's tooltip is its colour NAME.
  */
 
 /** DESIGN_SYSTEM §4 multi-sensor palette order: blue, emerald, rose, violet, cyan, lime, fuchsia,
@@ -21,10 +24,14 @@ export const COLOUR_PALETTE = [
     '#d946ef', '#f97316', '#f59e0b', '#14b8a6', '#6366f1', '#ec4899',
 ] as const;
 
-export const HEX_ERROR = 'Use 6 hex digits, like #3b82f6.';
+/** What a swatch is called in its tooltip / accessible name — same order as `COLOUR_PALETTE`. */
+export const COLOUR_NAMES = [
+    'Blue', 'Green', 'Red', 'Violet', 'Cyan', 'Lime',
+    'Magenta', 'Orange', 'Amber', 'Teal', 'Indigo', 'Pink',
+] as const;
 
-/** '#rrggbb' (lower case) from user text — with or without '#', surrounding spaces ignored;
- *  null when it is not exactly 6 hex digits. */
+/** '#rrggbb' (lower case) from a stored colour — with or without '#', surrounding spaces
+ *  ignored; null when it is not exactly 6 hex digits. */
 export function parseHexColour(text: string): string | null {
     const t = text.trim().replace(/^#/, '');
     return /^[0-9a-f]{6}$/i.test(t) ? `#${t.toLowerCase()}` : null;
@@ -50,18 +57,11 @@ export interface ColourPickerProps {
 export default function ColourPicker({ color, onChange, used = [], label, title = 'Colour', disabled, onOpen }: ColourPickerProps) {
     const [rect, setRect] = useState<PopoverAnchorRect | null>(null);
     const [custom, setCustom] = useState(false);
-    const [hexText, setHexText] = useState(color);
     const btn = useRef<HTMLButtonElement>(null);
-    const hexRef = useRef<HTMLInputElement>(null);
     const gridRef = useRef<HTMLDivElement>(null);
     const current = parseHexColour(color) ?? color;
     const inPalette = COLOUR_PALETTE.some(p => p === norm(current));
 
-    // Follow the colour from outside (a palette pick, the HSV square) — but never rewrite the hex
-    // field while the user is typing in it (a valid prefix they typed would be reformatted).
-    useEffect(() => {
-        if (document.activeElement !== hexRef.current) setHexText(color);
-    }, [color]);
     // Disabled while open (e.g. the chart type changed under it) → close, don't keep a live picker.
     useEffect(() => { if (disabled) setRect(null); }, [disabled]);
 
@@ -69,7 +69,6 @@ export default function ColourPicker({ color, onChange, used = [], label, title 
         if (disabled || !btn.current) return;
         const r = btn.current.getBoundingClientRect();
         setCustom(!inPalette);
-        setHexText(color);
         setRect({ top: r.top, bottom: r.bottom, left: r.left, right: r.right });
         onOpen?.();
     };
@@ -82,8 +81,6 @@ export default function ColourPicker({ color, onChange, used = [], label, title 
 
     const usedSet = new Set(used.map(norm));
     const anyUsed = COLOUR_PALETTE.some(p => p !== norm(current) && usedSet.has(p));
-    const parsed = parseHexColour(hexText);
-    const hexBad = hexText.trim() !== '' && parsed === null;
 
     const onGridKey = (e: ReactKeyboardEvent<HTMLButtonElement>, i: number) => {
         const move = ({ ArrowRight: 1, ArrowLeft: -1, ArrowDown: 6, ArrowUp: -6 } as Record<string, number>)[e.key];
@@ -97,7 +94,7 @@ export default function ColourPicker({ color, onChange, used = [], label, title 
         if (e.key === 'Tab') {
             // Tabbing out either way closes it: past the last control, or Shift+Tab from the
             // first one (the palette — one tab stop), back to the swatch button.
-            const f = [...e.currentTarget.querySelectorAll<HTMLElement>('button:not([tabindex="-1"]), input')];
+            const f = [...e.currentTarget.querySelectorAll<HTMLElement>('button:not([tabindex="-1"])')];
             const at = document.activeElement as HTMLElement | null;
             const first = e.shiftKey && (at === f[0] || (!!at && !!gridRef.current?.contains(at)));
             if (first || (!e.shiftKey && at === f[f.length - 1])) { e.preventDefault(); close(); }
@@ -131,23 +128,24 @@ export default function ColourPicker({ color, onChange, used = [], label, title 
                     <div className="cp-pop" role="dialog" aria-label={`Colour${label ? ` for ${label}` : ''}`} onKeyDown={onPopKey}>
                         <div className="cp-head">
                             <span className="cp-head-label">{label ?? 'Colour'}</span>
-                            <span className="cp-head-hex">{current}</span>
                         </div>
                         <div className="cp-grid" role="radiogroup" aria-label="Palette" ref={gridRef}>
                             {COLOUR_PALETTE.map((p, i) => {
                                 const sel = p === norm(current);
                                 const inUse = !sel && usedSet.has(p);
+                                const name = COLOUR_NAMES[i];
                                 return (
                                     <button
                                         key={p}
                                         type="button"
                                         role="radio"
                                         aria-checked={sel}
-                                        aria-label={`${p}${inUse ? ', in use on this chart' : ''}`}
+                                        aria-label={`${name}${inUse ? ', in use on this chart' : ''}`}
                                         tabIndex={sel || (i === 0 && !inPalette) ? 0 : -1}
                                         className={`cp-sw${sel ? ' sel' : ''}`}
                                         style={{ background: p }}
-                                        title={`${p}${inUse ? ' · in use on this chart' : ''}`}
+                                        data-colour={p}
+                                        title={`${name}${inUse ? ' · in use on this chart' : ''}`}
                                         onKeyDown={e => onGridKey(e, i)}
                                         onClick={() => onChange(p)}
                                     >
@@ -163,29 +161,7 @@ export default function ColourPicker({ color, onChange, used = [], label, title 
                         </button>
                         {custom && (
                             <div className="cp-adv">
-                                <ColorPlatePicker
-                                    color={parsed ?? (parseHexColour(color) ?? '#3b82f6')}
-                                    onChange={(h) => { setHexText(h); onChange(h); }}
-                                />
-                                <div className="cp-hexrow">
-                                    <input
-                                        ref={hexRef}
-                                        type="text"
-                                        value={hexText}
-                                        aria-label="Hex colour"
-                                        aria-invalid={hexBad || undefined}
-                                        spellCheck={false}
-                                        className={hexBad ? 'bad' : ''}
-                                        onBlur={() => { if (parseHexColour(hexText)) setHexText(color); }}
-                                        onChange={e => {
-                                            setHexText(e.target.value);
-                                            const v = parseHexColour(e.target.value);
-                                            if (v) onChange(v);
-                                        }}
-                                    />
-                                    <span className="cp-prev" style={{ background: parsed ?? current }} />
-                                </div>
-                                {hexBad && <div className="cp-err" role="alert">{HEX_ERROR}</div>}
+                                <ColorPlatePicker color={parseHexColour(color) ?? '#3b82f6'} onChange={onChange} />
                             </div>
                         )}
                     </div>
