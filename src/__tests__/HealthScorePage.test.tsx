@@ -680,6 +680,22 @@ describe('hover sync (the pointer on either chart reads the same row on both)', 
         expect(inst1.group).toBe(inst2.group);
     });
 
+    // Real-app bug: with a chart enlarged, the tooltips of the two charts UNDER the backdrop
+    // showed through over the overlay, because the enlarged copy had joined the same group.
+    it('the enlarged copy of a chart (inside the overlay dialog) does not join the group', () => {
+        mount({ sp: IND_VALID });
+        const dialog = document.createElement('div');
+        dialog.className = 'pm-chart-modal-backdrop'; // ChartCard's overlay
+        const inner = dialog.appendChild(document.createElement('div'));
+        const enlarged: any = { getDom: () => inner };
+        scoreChart().onChartReady(enlarged);
+        expect(enlarged.group).toBeUndefined();
+        // a chart on the page itself still joins
+        const onPage: any = { getDom: () => document.createElement('div') };
+        scoreChart().onChartReady(onPage);
+        expect(onPage.group).toBeTruthy();
+    });
+
     it('hovering the score chart prints time, raw value and score; leaving clears it', () => {
         mount({ sp: IND_VALID });
         expect(screen.getByTestId('hs-readout').textContent).toBe('');

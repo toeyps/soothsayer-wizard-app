@@ -298,10 +298,15 @@ function SaveBanner({ save, slow, relation }: { save: SaveInfo; slow: boolean; r
 // Set-point chart (per kind)
 // ---------------------------------------------------------------------------
 
-/** Join the ECharts group so the pair of time charts share one cursor. */
-function joinSyncGroup(inst: { group?: string } | null | undefined) {
+/** Join the ECharts group so the pair of time charts share one cursor.
+ *  The ENLARGED copy of a chart (inside ChartCard's `.pm-chart-modal-backdrop`) stays out of the
+ *  group: it is alone on screen, so the charts under the backdrop must not answer its hover
+ *  with a cursor and tooltip of their own (they showed through, over the overlay), and a zoom
+ *  in it redraws one chart instead of every linked one. */
+function joinSyncGroup(inst: { group?: string; getDom?: () => Element | null } | null | undefined) {
     if (!inst) return;
     try {
+        if (inst.getDom?.()?.closest('.pm-chart-modal-backdrop')) return;
         inst.group = HEALTH_SYNC_GROUP;
         connect(HEALTH_SYNC_GROUP);
     } catch {

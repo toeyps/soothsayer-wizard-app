@@ -210,6 +210,11 @@ const tooltipBase = {
     textStyle: { color: CHART.textPrimary },
     // Never cut off at the card's edge, and a number reads like everywhere else on the page.
     confine: true,
+    // The box sits AT the pointer, like the Dashboard chart's: by default it eases toward the
+    // cursor over 0.4 s (so it always trails a moving mouse) and lingers after the mouse left.
+    transitionDuration: 0,
+    hideDelay: 0,
+    enterable: false,
     valueFormatter: (v: unknown) => (typeof v === 'number' ? fmtNum(v) : String(v ?? '')),
 };
 

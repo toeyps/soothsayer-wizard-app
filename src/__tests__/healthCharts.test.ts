@@ -186,6 +186,8 @@ describe('buildTimeSeriesOption', () => {
         expect(o.axisPointer).toEqual({ zlevel: 1, triggerEmphasis: false });
         expect(HOVER_AXIS_POINTER).toEqual({ zlevel: 1, triggerEmphasis: false });
         expect(o.tooltip.trigger).toBe('axis');
+        // the tooltip box sits at the pointer: no easing toward it, no lingering
+        expect(o.tooltip).toMatchObject({ transitionDuration: 0, hideDelay: 0, enterable: false, confine: true });
     });
 
     const spec = {
