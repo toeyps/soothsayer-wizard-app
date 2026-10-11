@@ -308,8 +308,12 @@ describe('Clustering: the whole journey', () => {
         expect(m0.clusterRanges).toHaveLength(2);
 
         await waitFor(() => expect(bmw().getByTestId('model-fit-clustering')).toBeTruthy());
-        expect(bmw().getByTestId('cluster-row-1')).toBeTruthy();
-        expect(bmw().getByTestId('cluster-row-2')).toBeTruthy();
+        // Model fit: both clusters are drawn with their rings on the ONE full-width chart
+        // (the "Clusters" summary card beside it was removed 2026-10-11).
+        expect([...bmw().getByTestId('model-fit-clustering').children].filter(c => c.tagName === 'SECTION').map(c => c.getAttribute('data-testid'))).toEqual(['chart-card-cl']);
+        expect(bmw().queryByTestId('cluster-summary')).toBeNull();
+        expect(chartsWithSeries('Cluster 1 3× SD').length).toBeGreaterThan(0);
+        expect(chartsWithSeries('Cluster 2 3× SD').length).toBeGreaterThan(0);
 
         await openHealth();
         // N = 3 -> "can't equal 3× SD"; 2.5 -> "must be more than 3× SD"

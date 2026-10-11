@@ -305,8 +305,10 @@ describe('at most 5 clusters (user decision 2026-10-10)', () => {
         expect(req.args.request.n_clusters).toBe(7);
         expect(req.args.request.cluster_ranges).toHaveLength(7);
 
-        // Model fit: a row and a point series per cluster — all 7 — in blues / violets only
-        for (let k = 1; k <= 7; k++) expect(bmw().getByTestId(`cluster-row-${k}`), `cluster row ${k}`).toBeTruthy();
+        // Model fit: a point series per cluster — all 7 — in blues / violets only, on the ONE
+        // full-width chart (the "Clusters" summary card with a row per cluster was removed 2026-10-11)
+        expect([...bmw().getByTestId('model-fit-clustering').children].filter(c => c.tagName === 'SECTION').map(c => c.getAttribute('data-testid'))).toEqual(['chart-card-cl']);
+        expect(bmw().queryByTestId('cluster-summary')).toBeNull();
         const fitChart = chartsWithSeries('Cluster 7').pop()!;
         const pointColours = (fitChart.option.series as any[]).filter(s => /^Cluster \d$/.test(s.name)).map(s => s.itemStyle.color as string);
         expect(pointColours).toHaveLength(7);

@@ -56,6 +56,8 @@ vi.mock('../components/charts/ResponsiveECharts', () => ({
             data-testid="echarts-mock"
             data-series-count={props.option?.series?.length ?? 0}
             data-x-axis-name={props.option?.xAxis?.name ?? ''}
+            // the names in the strip above a time chart (train / scoring shading), in band order
+            data-strip={((props.option?.series ?? []).find((s: any) => s.name === '__scopes')?.markArea?.data ?? []).filter((a: any) => a[0].label.show).map((a: any) => a[0].label.formatter).join('|')}
         />
     ),
 }));
@@ -1016,7 +1018,7 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             expect(screen.getByTestId('chart-card-res')).toBeTruthy();
         });
 
-        it('runs compute_clustering_preview for a Clustering model and shows Rows/Clusters', async () => {
+        it('runs compute_clustering_preview for a Clustering model and shows the Clusters chart (no cluster summary card)', async () => {
             const clu = makeModel({ id: 'c1', kind: 'clustering', targetSensor: '', xSensor: 'TAG1', ySensor: 'TAG2', numClusters: 1 }); // no criteria sensor -> one cluster (Rust needs a criteria sensor for 2+)
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: { groups: [makeGroup()], models: [clu] } });
@@ -1029,7 +1031,7 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             await waitFor(() => expect(screen.getByTestId('results-chart')).toBeTruthy());
             expect(healthCalls()[0]).toMatchObject({ kind: 'clustering', first_sensor: 'TAG1', second_sensor: 'TAG2', n_clusters: 1 });
             expect(screen.getByTestId('chart-card-cl')).toBeTruthy();
-            expect(screen.getByTestId('cluster-summary')).toBeTruthy();
+            expect(screen.queryByTestId('cluster-summary')).toBeNull();
         });
 
         it('commits an unsaved draft edit before training, so Train uses the just-edited settings', async () => {
@@ -4629,11 +4631,13 @@ describe('Workbench two pages — shell + Model fit page (health score 3b-1)', (
             expect(healthCalls()[0]).toMatchObject({ kind: 'relationship', target: 'TAG1', predictors: ['TAG2', 'TAG3'] });
         });
 
-        it('Clustering: the cluster scatter with SD rings and a cluster summary card', async () => {
+        it('Clustering: the cluster scatter with SD rings is the page\'s only, full-width card — no cluster summary, no side column', async () => {
             await mount([withTrained(makeModel({ id: 'c1', kind: 'clustering', targetSensor: '', xSensor: 'TAG1', ySensor: 'TAG2', numClusters: 1 }))]);
             await chartsReady();
-            expect(screen.getByTestId('chart-card-cl')).toBeTruthy();
-            expect(screen.getByTestId('cluster-summary')).toBeTruthy();
+            // the board's cards (an amber notice above them is not a card)
+            expect([...screen.getByTestId('model-fit-clustering').children].filter(c => c.tagName === 'SECTION').map(c => c.getAttribute('data-testid'))).toEqual(['chart-card-cl']);
+            expect(screen.getByTestId('chart-card-cl').className).toMatch(/(^| )wb2-full( |$)/);
+            expect(screen.queryByTestId('cluster-summary')).toBeNull();
             expect(healthCalls()[0]).toMatchObject({ kind: 'clustering', first_sensor: 'TAG1', second_sensor: 'TAG2' });
         });
 
@@ -6437,7 +6441,7 @@ describe('Train periods and scoring periods — review fixes (2026-10-07)', () =
     });
 
     describe('scoring results are numbered by their ORIGINAL list position (should-fix 2b)', () => {
-        it('[S1 invalid, S2 valid]: only S2 is sent, and the table row, tile and overlap note all say "S2"', async () => {
+        it('[S1 invalid, S2 valid]: only S2 is sent, and the Model fit chart band, the tile and its overlap note all say "S2"', async () => {
             const tests = [
                 { id: 'bad', start: '2024-02-10T00:00', end: '2024-02-01T00:00' },
                 { ...ONE_TEST[0], id: 'good' },
@@ -6447,7 +6451,9 @@ describe('Train periods and scoring periods — review fixes (2026-10-07)', () =
                     const req = args?.request;
                     return Promise.resolve(makeSetPointAwarePreview(req, {
                         test_validation: makeValidation({
-                            tests: (req?.test_periods ?? []).map((t: any, i: number) => makeTestResult({ index: i + 1, start: t.start, end: t.end, train_rows: 10, train_days: 2 })),
+                            // one result per period SENT, numbered by wire position. Each keeps the fixture's own
+                            // start / end (inside the fixture's 5-point series), so its band is drawn on the chart.
+                            tests: (req?.test_periods ?? []).map((_t: any, i: number) => makeTestResult({ index: i + 1, train_rows: 10, train_days: 2 })),
                         }),
                     }));
                 }
@@ -6457,11 +6463,13 @@ describe('Train periods and scoring periods — review fixes (2026-10-07)', () =
             statefulUpdateMock([model], { runningConditionTestPeriods: tests });
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: { groups: [makeGroup()], models: [model], runningConditionTestPeriods: tests } });
-            await waitFor(() => expect(screen.getByTestId('train-test-row-2')).toBeTruthy());
+            // Model fit: the scoring band on the time chart is named by the ORIGINAL position (S2, never S1).
+            // (The page has no "Train and scoring periods" table any more — removed 2026-10-11.)
+            const strip = () => within(screen.getByTestId('chart-card-ts')).getByTestId('echarts-mock').getAttribute('data-strip');
+            await waitFor(() => expect(strip()).toBe('TRAIN|S2'));
             expect(healthCalls().slice(-1)[0].test_periods).toEqual([{ start: ONE_TEST[0].start, end: ONE_TEST[0].end }]);
-            expect(screen.queryByTestId('train-test-row-1')).toBeNull();
-            expect(screen.getByTestId('train-test-row-2').querySelector('.vt-scope b')!.textContent).toBe('S2');
-            expect(screen.getByTestId('train-test-overlap-2').textContent).toContain('S2 includes 2 d of train running time');
+            expect(screen.queryByTestId('train-test-card')).toBeNull();
+            expect(screen.getByTestId('model-fit-individual').textContent).not.toMatch(/Train and scoring periods|includes 2 d of train running time/);
             await openHealthPage();
             expect(screen.getByTestId('test-result-2').querySelector('.vt-th b')!.textContent).toBe('S2');
             expect(screen.getByTestId('test-result-overlap-2').textContent).toContain('S2 includes');

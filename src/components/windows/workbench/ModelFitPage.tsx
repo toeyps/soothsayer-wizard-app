@@ -4,9 +4,9 @@ import { LayoutGrid } from 'lucide-react';
 import { SensorPickerSingle } from '../../sensor/SensorPicker';
 import { SensorInline } from '../../sensor/SensorLabel';
 import { useSensorLookup } from '../../sensor/sensorInfo';
-import type { ClusterStat, HealthPreview } from '../../../types/health';
+import type { HealthPreview } from '../../../types/health';
 import ChartCard, { LegendItem } from './ChartCard';
-import { CHART, CLUSTER_COLORS, fmtClusterBound, fmtNum } from './chartTheme';
+import { CHART, fmtNum } from './chartTheme';
 import {
     buildClusterOption,
     buildDistributionOption,
@@ -20,7 +20,7 @@ import {
     scopesOf,
     sensorAxisTitle,
 } from './healthCharts';
-import { SlowScoringNotice, TrainDaysNotice, TrainTestCard } from './ValidationCards';
+import { SlowScoringNotice, TrainDaysNotice } from './ValidationCards';
 import type { WorkbenchPageProps } from './workbenchTypes';
 
 /*
@@ -33,8 +33,13 @@ import type { WorkbenchPageProps } from './workbenchTypes';
  *   Relationship stats strip · Fit (+ X selector, Compare predictors) ·
  *                Target vs predicted · Residual over time (±2RMSE)
  *                (no residual distribution, no side histogram — by design)
- *   Clustering   scatter + 1×/3× SD ellipses · cluster summary card
- *                (no time chart — by design)
+ *   Clustering   scatter + 1×/3× SD ellipses, the board's only card (full
+ *                width; no time chart — by design)
+ *
+ * Only what the user needs to read the fit is here (user decision 2026-10-11):
+ * there is NO "Train and scoring periods" table on this page for any kind, and
+ * Clustering has NO side column (the "Clusters" summary card — rows / centre
+ * per cluster — is gone). Do not add them back.
  *
  * A chart whose lines are labelled ON the chart has no legend row under it:
  * reference lines carry their name at the right
@@ -47,10 +52,9 @@ import type { WorkbenchPageProps } from './workbenchTypes';
  *
  * Train and scoring periods: when the
  * preview carries `test_validation`, every time chart draws the train /
- * scoring scopes (`scopesOf` → `TimeSeriesSpec.scopes`) and a "Train and
- * scoring periods" card is added (side column for Individual / Clustering, a
- * capped full row for Relationship), plus an amber note below the recommended
- * train time.
+ * scoring scopes (`scopesOf` → `TimeSeriesSpec.scopes`); an amber note shows
+ * below the recommended train time. The per-period numbers ("Scoring results")
+ * and the "could not be scored — Try again" notice are on the Health score page.
  *
  * The "Model settings" section and the footer are NOT here: they sit around this
  * body in `BuildModelWindow` (they share the draft/Apply state with the rest of
@@ -94,16 +98,12 @@ function ModelFitPage(props: ModelFitPageProps) {
     // With scopes a time chart shows exactly the rows of the periods named in its strip
     // (everything else is a gap); without them, every running row of the training scope.
     const rowsShown = scopes ? 'rows in the train and scoring periods' : 'running rows';
-    const custom = model.runningConditionMode === 'custom';
     const daysNotice = (
         <>
             <SlowScoringNotice show={props.slowScoring} />
             <TrainDaysNotice days={data.test_validation?.train.days ?? props.trainDaysEstimate ?? null} />
         </>
     );
-    // "Try again" on the test_scoring_failed notice also asks Rust to retry the
-    // remembered failed prediction (a plain retry would get the same warning back).
-    const vt = { testNumbers: props.testNumbers, onRetry: props.preview.retryTestScoring ?? props.preview.retry };
 
     if (stats.kind === 'individual' && data.series.kind === 'individual') {
         const series = data.series;
@@ -132,27 +132,24 @@ function ModelFitPage(props: ModelFitPageProps) {
                         <LegendItem color={CHART.normalCurve} label="Normal curve" />
                     </>}
                 />
-                <div className="vt-stack" data-testid="fit-side">
-                    <section className="wb2-statc" data-testid="stats-card">
-                        <div className="wb2-card-h"><b>Statistics</b><span className="wb2-card-s">from the training rows</span></div>
-                        <table>
-                            <tbody>
-                                <tr><td>Rows</td><td className="n" data-testid="stat-rows">{stats.rows.toLocaleString()}</td></tr>
-                                <tr><td>Mean</td><td className="n">{fmtNum(stats.mean)}{unit ? ` ${unit}` : ''}</td></tr>
-                                <tr><td>SD</td><td className="n">{fmtNum(stats.sd)}{unit ? ` ${unit}` : ''}</td></tr>
-                                <tr><td>±1SD</td><td className="n">{fmtNum(stats.boundary_1sd[0])} – {fmtNum(stats.boundary_1sd[1])}</td></tr>
-                                <tr><td>±3SD</td><td className="n">{fmtNum(stats.boundary_3sd[0])} – {fmtNum(stats.boundary_3sd[1])}</td></tr>
-                                <tr>
-                                    <td title="Estimated from the distribution bins">Rows outside ±3SD</td>
-                                    <td className="n" data-testid="stat-outside3">
-                                        {outside === null ? '—' : `≈ ${outside.toLocaleString()} (${stats.rows ? ((outside / stats.rows) * 100).toFixed(2) : '0.00'}%)`}
-                                    </td>
-                                </tr>
-                            </tbody>
-                        </table>
-                    </section>
-                    <TrainTestCard data={data} unit={unit} side custom={custom} {...vt} />
-                </div>
+                <section className="wb2-statc" data-testid="stats-card">
+                    <div className="wb2-card-h"><b>Statistics</b><span className="wb2-card-s">from the training rows</span></div>
+                    <table>
+                        <tbody>
+                            <tr><td>Rows</td><td className="n" data-testid="stat-rows">{stats.rows.toLocaleString()}</td></tr>
+                            <tr><td>Mean</td><td className="n">{fmtNum(stats.mean)}{unit ? ` ${unit}` : ''}</td></tr>
+                            <tr><td>SD</td><td className="n">{fmtNum(stats.sd)}{unit ? ` ${unit}` : ''}</td></tr>
+                            <tr><td>±1SD</td><td className="n">{fmtNum(stats.boundary_1sd[0])} – {fmtNum(stats.boundary_1sd[1])}</td></tr>
+                            <tr><td>±3SD</td><td className="n">{fmtNum(stats.boundary_3sd[0])} – {fmtNum(stats.boundary_3sd[1])}</td></tr>
+                            <tr>
+                                <td title="Estimated from the distribution bins">Rows outside ±3SD</td>
+                                <td className="n" data-testid="stat-outside3">
+                                    {outside === null ? '—' : `≈ ${outside.toLocaleString()} (${stats.rows ? ((outside / stats.rows) * 100).toFixed(2) : '0.00'}%)`}
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </section>
             </div>
         );
     }
@@ -236,7 +233,6 @@ function ModelFitPage(props: ModelFitPageProps) {
                     stale={stale}
                     option={buildResidualOption(series, stats.two_rmse, unit, scopes)}
                 />
-                <TrainTestCard data={data} unit={unit} custom={custom} {...vt} />
             </div>
         );
     }
@@ -246,12 +242,14 @@ function ModelFitPage(props: ModelFitPageProps) {
         const xTag = model.xSensor ?? '';
         const yTag = model.ySensor ?? '';
         return (
-            <div className="wb2-board wb2-hs" data-testid="model-fit-clustering">
+            <div className="wb2-board wb2-g2" data-testid="model-fit-clustering">
                 {daysNotice}
                 <ChartCard
                     id="cl"
                     title="Clusters"
                     sub={<span className="wb2-sub-sl"><SensorInline tag={xTag} size="sm" muted /> vs <SensorInline tag={yTag} size="sm" muted /></span>}
+                    // The board's only card: it spans both columns (no side column).
+                    full
                     size="xtall"
                     stale={stale}
                     // Axis titles: description + unit — the tags are in the subtitle above.
@@ -264,51 +262,11 @@ function ModelFitPage(props: ModelFitPageProps) {
                         <LegendItem color={CHART.warn} label="3× SD" dashed />
                     </span> : undefined}
                 />
-                <div className="vt-stack" data-testid="fit-side">
-                    <section className="wb2-statc wb2-statc--top" data-testid="cluster-summary">
-                        <div className="wb2-card-h">
-                            <b>Clusters</b>
-                            {stats.criteria_sensor && <span className="wb2-card-s wb2-sub-sl">split by <SensorInline tag={stats.criteria_sensor} size="sm" muted /></span>}
-                        </div>
-                        <table>
-                            <tbody>
-                                {stats.clusters.map(c => (
-                                    <ClusterRows key={c.cluster_id} c={c} />
-                                ))}
-                                {stats.unassigned_rows > 0 && (
-                                    <tr><td>In no range</td><td className="n">{stats.unassigned_rows.toLocaleString()} rows</td></tr>
-                                )}
-                            </tbody>
-                        </table>
-                    </section>
-                    <TrainTestCard data={data} unit={unit} side custom={custom} {...vt} />
-                </div>
             </div>
         );
     }
 
     return null;
-}
-
-function ClusterRows({ c }: { c: ClusterStat }) {
-    const color = CLUSTER_COLORS[(c.cluster_id - 1 + CLUSTER_COLORS.length) % CLUSTER_COLORS.length];
-    // The range is what the user typed in Model settings: printed as typed, never padded
-    // ("33.6", not "33.60"); only an auto-divided boundary's float noise is shortened.
-    const range = c.range && (c.range.min !== null || c.range.max !== null)
-        ? ` · ${c.range.min !== null ? fmtClusterBound(c.range.min) : '…'} – ${c.range.max !== null ? fmtClusterBound(c.range.max) : '…'}`
-        : '';
-    return (
-        <>
-            <tr data-testid={`cluster-row-${c.cluster_id}`}>
-                <td><i className="wb2-dot" style={{ background: color }} />Cluster {c.cluster_id}{range}</td>
-                <td className="n">{c.n_rows.toLocaleString()} rows</td>
-            </tr>
-            <tr>
-                <td className="wb2-sub">centre</td>
-                <td className="n">x {fmtNum(c.x_center)} · y {fmtNum(c.y_center)}</td>
-            </tr>
-        </>
-    );
 }
 
 export default memo(ModelFitPage, sameModelFitProps);

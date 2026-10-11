@@ -144,6 +144,12 @@ const chips = () => {
     return bmw().getAllByTestId('rc-card-test-chip').map(c => c.textContent ?? '');
 };
 const tile = (n: number) => bmw().getByTestId(`test-result-${n}`);
+/** Names in the strip above the last time chart drawn with `series` (the train / scoring shading). */
+const stripOf = (series: string): string[] => {
+    const chart = env.charts.filter(c => ((c.option?.series ?? []) as any[]).some(s => s?.name === series)).pop();
+    const scopes = ((chart?.option?.series ?? []) as any[]).find(s => s?.name === '__scopes');
+    return ((scopes?.markArea?.data ?? []) as any[]).filter(a => a[0].label.show).map(a => a[0].label.formatter as string);
+};
 
 beforeEach(() => {
     resetEnv();
@@ -184,10 +190,11 @@ describe('a workspace saved before "just score it" (scoring periods with label /
         openDashFgTab();
         await waitFor(() => expect(dashDot(1, 'tag1', 'individual')).toBe('complete'));
         expect(dashDot(2, 'tag3', 'individual')).toBe('complete');
-        // Model fit: the same model over the train rows and each scoring period, numbered S1 / S2.
-        await waitFor(() => expect(bmw().getByTestId('train-test-row-2')).toBeTruthy());
-        expect(bmw().getByTestId('train-test-row-1').textContent).toContain('S1');
-        expect(bmw().getByTestId('train-test-card').textContent).not.toMatch(REMOVED_UI);
+        // Model fit: both old scoring periods reached the page — its time chart shades them, numbered
+        // S1 / S2 (the "Train and scoring periods" table that also listed them was removed 2026-10-11).
+        await waitFor(() => expect(stripOf('Value')).toEqual(['TRAIN', 'S1', 'S2']));
+        expect(bmw().queryByTestId('train-test-card')).toBeNull();
+        expect(bmw().getByTestId('model-fit-individual').textContent).not.toMatch(REMOVED_UI);
 
         // ── 2) Health score: neutral tiles, nothing judged ──────────────────────
         await openHealth();

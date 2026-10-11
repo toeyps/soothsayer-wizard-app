@@ -22,7 +22,6 @@ vi.mock('../components/charts/ResponsiveECharts', () => ({
 
 import ModelFitPage from '../components/windows/workbench/ModelFitPage';
 import { SensorMetaProvider } from '../components/sensor/SensorLabel';
-import { CLUSTER_COLORS } from '../components/windows/workbench/chartTheme';
 import { openPickerSurface, pickSingle, pickerRows, rowTag } from './helpers/sensorPicker';
 import { makeHealthPreview } from './helpers/healthPreviewFixture';
 import { makeTestResult, makeValidation } from './helpers/validationFixture';
@@ -62,9 +61,10 @@ describe('ModelFitPage — Individual', () => {
     it('has the full-width value chart, the Distribution chart and the statistics card, in that order', () => {
         page(model(), { target: 'T1' });
         const board = screen.getByTestId('model-fit-individual');
-        expect([...board.children].map(c => c.getAttribute('data-testid'))).toEqual(['chart-card-ts', 'chart-card-dist', 'fit-side']);
-        // the side column stacks the statistics (and, with scoring periods, the "Train and scoring periods" card)
-        expect([...screen.getByTestId('fit-side').children].map(c => c.getAttribute('data-testid'))).toEqual(['stats-card']);
+        // the statistics card sits directly in the grid cell beside Distribution (no side-column wrapper)
+        expect([...board.children].map(c => c.getAttribute('data-testid'))).toEqual(['chart-card-ts', 'chart-card-dist', 'stats-card']);
+        expect(screen.queryByTestId('fit-side')).toBeNull();
+        expect(screen.getByTestId('stats-card').className).toBe('wb2-statc');
         expect(screen.getByTestId('chart-card-ts').className).toMatch(/wb2-full/);
         expect(screen.getByTestId('chart-card-ts').className).toMatch(/wb2-card--tall/);
         expect(within(screen.getByTestId('chart-card-ts')).getByTestId('echarts-mock').getAttribute('data-series')).toBe('Value');
@@ -239,35 +239,26 @@ describe('ModelFitPage — Relationship', () => {
 describe('ModelFitPage — Clustering', () => {
     const clu = () => model({ kind: 'clustering', targetSensor: '', xSensor: 'X1', ySensor: 'Y1' });
 
-    it('the cluster scatter with its rings and a summary card with every cluster\'s rows and centre', () => {
+    // User decision 2026-10-11: the whole right-hand column is gone (the "Clusters" summary card —
+    // rows / centre per cluster, "In no range" — and the "Train and scoring periods" card under it).
+    it('the cluster scatter with its rings is the board\'s ONLY card and spans its full width — no summary card, no side column', () => {
         page(clu(), { n_clusters: 2, criteria_sensor: 'LOAD' });
         const board = screen.getByTestId('model-fit-clustering');
-        expect([...board.children].map(c => c.getAttribute('data-testid'))).toEqual(['chart-card-cl', 'fit-side']);
-        expect([...screen.getByTestId('fit-side').children].map(c => c.getAttribute('data-testid'))).toEqual(['cluster-summary']);
+        expect([...board.children].map(c => c.getAttribute('data-testid'))).toEqual(['chart-card-cl']);
+        // full width: the board's two-column grid with the card spanning every column
+        // (not the "chart + 350px side column" grid it had while the side column existed)
+        expect(board.className).toBe('wb2-board wb2-g2');
+        expect(screen.getByTestId('chart-card-cl').className).toMatch(/(^| )wb2-full( |$)/);
+        expect(screen.getByTestId('chart-card-cl').className).toMatch(/wb2-card--xtall/);
         const series = within(screen.getByTestId('chart-card-cl')).getByTestId('echarts-mock').getAttribute('data-series')!;
         expect(series).toMatch(/Cluster 1/);
         expect(series).toMatch(/Cluster 2 3× SD/);
-        const summary = screen.getByTestId('cluster-summary');
-        expect(summary.textContent).toMatch(/split by Label of LOADLOAD/);
-        // the ranges are what the user typed: printed as typed ("0 – 50"), never padded ("0.000 – 50.00")
-        expect(within(summary).getByTestId('cluster-row-1').textContent).toBe('Cluster 1 · 0 – 5041 rows');
-        expect(within(summary).getByTestId('cluster-row-2').textContent).toBe('Cluster 2 · 50 – 10042 rows');
-        // the centre is computed: the read-out formatter
-        expect(summary.textContent).toMatch(/x 10 · y 20(?!\.)/);
-    });
-
-    // ---- workbench-redesign SPEC §3 "Clustering" ----
-
-    it('a typed range keeps every decimal and is never rounded; an open end reads "…"', () => {
-        const base = makeHealthPreview({ kind: 'clustering', n_clusters: 2 });
-        const stats = base.stats as any;
-        const data = {
-            ...base,
-            stats: { ...stats, clusters: [{ ...stats.clusters[0], range: { min: null, max: 33.6 } }, { ...stats.clusters[1], range: { min: 33.6, max: 4.61234 } }] },
-        };
-        render(<ModelFitPage model={clu()} stale={false} preview={{ ...idle, data }} unit="" data={data} onXPredictorChange={() => {}} onCompare={() => {}} />);
-        expect(screen.getByTestId('cluster-row-1').textContent).toBe('Cluster 1 · … – 33.641 rows');
-        expect(screen.getByTestId('cluster-row-2').textContent).toBe('Cluster 2 · 33.6 – 4.6123442 rows');
+        expect(screen.queryByTestId('cluster-summary')).toBeNull();
+        expect(screen.queryByTestId('fit-side')).toBeNull();
+        expect(screen.queryByTestId('cluster-row-1')).toBeNull();
+        expect(board.querySelector('.wb2-statc')).toBeNull();
+        // none of the summary's words are left on the page (the fixture has 5 rows in no range)
+        expect(board.textContent).not.toMatch(/split by|centre|In no range|\d rows/);
     });
 
     // A name drawn on the chart is the ONLY key
@@ -314,23 +305,10 @@ describe('ModelFitPage — Clustering', () => {
         expect(chartOf('cl').getAttribute('data-y-axis-name')).toBe('Y1');
     });
 
-    it('the summary dots use the cluster palette (never the green / amber / red of the rings)', () => {
-        page(clu(), { n_clusters: 2 });
-        const dot = (n: number) => (screen.getByTestId(`cluster-row-${n}`).querySelector('.wb2-dot') as HTMLElement).style.background;
-        const rgb = (hex: string) => `rgb(${[1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16)).join(', ')})`;
-        expect(dot(1)).toBe(rgb(CLUSTER_COLORS[0]));
-        expect(dot(2)).toBe(rgb(CLUSTER_COLORS[1]));
-    });
-
     it('Model fit has no time chart for Clustering: one chart on the page, and it carries no scope strip', () => {
         page(clu(), { n_clusters: 2 });
         expect(screen.getAllByTestId('echarts-mock')).toHaveLength(1);
         expect(chartOf('cl').getAttribute('data-strip')).toBe('');
-    });
-
-    it('rows that fall in no cluster range are listed', () => {
-        page(clu(), { n_clusters: 2 });
-        expect(screen.getByTestId('cluster-summary').textContent).toMatch(/In no range5 rows/);
     });
 
     it('the card subtitle names both sensors by their labels', () => {
@@ -351,28 +329,55 @@ describe('ModelFitPage — train and scoring periods ("just score it", 2026-10-1
             onXPredictorChange={vi.fn()} onCompare={vi.fn()} trainDaysEstimate={extra.estimate} />);
     };
 
+    /** The removed "Train and scoring periods" table (user decision 2026-10-11) left nothing behind. */
+    const expectNoTrainTestCard = (boardId: string) => {
+        const board = screen.getByTestId(boardId);
+        expect(screen.queryByTestId('train-test-card')).toBeNull();
+        expect(screen.queryByTestId('train-test-row-train')).toBeNull();
+        expect(screen.queryByTestId('train-test-empty')).toBeNull();
+        expect(board.querySelector('table.vt-table, .vt-card')).toBeNull();
+        expect(board.textContent).not.toMatch(/Train and scoring periods|Scope|Mean shift|Rows within ±3SD|RMSE ÷ train|Rows inside the 3× SD ring/);
+        // nothing on the page labels or judges a scoring period
+        expect(board.textContent).not.toMatch(/Known problem|T\d Normal|Train vs test|test period|event time|lead time/i);
+    };
+
     it('without scoring periods: no scope bands, no "Train and scoring periods" card', () => {
         page(model(), { target: 'T1' });
         expect(within(screen.getByTestId('chart-card-ts')).getByTestId('echarts-mock').getAttribute('data-series')).toBe('Value');
-        expect(screen.queryByTestId('train-test-card')).toBeNull();
+        expectNoTrainTestCard('model-fit-individual');
     });
 
-    it('Individual: the value chart draws the scopes; the "Train and scoring periods" card sits under the statistics', () => {
+    it('Individual: the value chart draws the scopes; NO "Train and scoring periods" card — the board is the two charts and the statistics', () => {
         mount(model(), { target: 'T1' }, withTests('individual'));
         expect(within(screen.getByTestId('chart-card-ts')).getByTestId('echarts-mock').getAttribute('data-series')).toBe('Value|__scopes');
-        expect([...screen.getByTestId('fit-side').children].map(c => c.getAttribute('data-testid'))).toEqual(['stats-card', 'train-test-card']);
-        const card = screen.getByTestId('train-test-card');
-        expect(card.querySelector('.wb2-card-h b')!.textContent).toBe('Train and scoring periods');
-        expect([...card.querySelectorAll('.vt-scope b')].map(b => b.textContent)).toEqual(['Train', 'S1', 'S2']);
-        // nothing on the page labels or judges a scoring period
-        expect(screen.getByTestId('model-fit-individual').textContent).not.toMatch(/Known problem|T\d Normal|Train vs test|test period|event time|lead time/i);
+        expect([...screen.getByTestId('model-fit-individual').children].map(c => c.getAttribute('data-testid'))).toEqual(['chart-card-ts', 'chart-card-dist', 'stats-card']);
+        expectNoTrainTestCard('model-fit-individual');
     });
 
-    it('Relationship: both time charts draw the scopes; the card is a capped full-width row', () => {
+    it('Relationship: both time charts draw the scopes; NO "Train and scoring periods" card — the board ends with Residual over time', () => {
         mount(model({ kind: 'relationship', predictorSensors: ['A'] }), { target: 'T1', predictors: ['A'] }, withTests('relationship'));
         expect(within(screen.getByTestId('chart-card-tvp')).getByTestId('echarts-mock').getAttribute('data-series')).toBe('Actual|Predicted|__scopes');
         expect(within(screen.getByTestId('chart-card-res')).getByTestId('echarts-mock').getAttribute('data-series')).toBe('Residual|__scopes');
-        expect(screen.getByTestId('train-test-card').className).toContain('vt-card--cap');
+        expect([...screen.getByTestId('model-fit-relationship').children].map(c => c.getAttribute('data-testid'))).toEqual(['rel-stats', 'chart-card-fit', 'chart-card-tvp', 'chart-card-res']);
+        expectNoTrainTestCard('model-fit-relationship');
+    });
+
+    it.each(['individual', 'relationship', 'clustering'] as const)('%s: a model with NO scoring period yet shows no "No scoring period yet" card here (the Running condition line and the Health score page say it)', kind => {
+        const m = kind === 'relationship' ? model({ kind, predictorSensors: ['A'] })
+            : kind === 'clustering' ? model({ kind, targetSensor: '', xSensor: 'X1', ySensor: 'Y1' })
+            : model();
+        mount(m, { target: 'T1', predictors: ['A'], n_clusters: 2 }, { test_validation: makeValidation({ tests: [] }) });
+        expectNoTrainTestCard(`model-fit-${kind}`);
+        expect(screen.getByTestId(`model-fit-${kind}`).textContent).not.toMatch(/No scoring period/);
+    });
+
+    it('scoring that failed (test_scoring_failed) shows no notice and no "Try again" on this page — that is the Health score page\'s', () => {
+        const validation = [{ code: 'test_scoring_failed', severity: 'warning' as const, field: 'test_periods', message: 'The Relation model engine did not answer.' }];
+        mount(model({ kind: 'relationship', predictorSensors: ['A'] }), { target: 'T1', predictors: ['A'] }, { ...withTests('relationship'), validation });
+        expect(screen.queryByTestId('test-scoring-failed')).toBeNull();
+        expect(screen.queryByTestId('test-scoring-retry')).toBeNull();
+        // the charts still draw the train / scoring shading
+        expect(chartOf('res').getAttribute('data-strip')).toBe('TRAIN|S1|S2');
     });
 
     // workbench-redesign SPEC §3: the scopes are named in the strip above the plot.
@@ -395,18 +400,21 @@ describe('ModelFitPage — train and scoring periods ("just score it", 2026-10-1
         expect(screen.getByTestId('chart-card-tvp').querySelector('.wb2-card-s')!.textContent).toBe('°C · rows in the train and scoring periods');
     });
 
-    it('Clustering (no time chart): the card stacks under the cluster summary', () => {
+    it('Clustering (no time chart): with scoring periods the Clusters chart is still the board\'s only, full-width card', () => {
         mount(model({ kind: 'clustering', targetSensor: '', xSensor: 'X1', ySensor: 'Y1' }), { n_clusters: 2 }, withTests('clustering'));
-        expect([...screen.getByTestId('fit-side').children].map(c => c.getAttribute('data-testid'))).toEqual(['cluster-summary', 'train-test-card']);
+        const board = screen.getByTestId('model-fit-clustering');
+        expect([...board.children].map(c => c.getAttribute('data-testid'))).toEqual(['chart-card-cl']);
+        expect(screen.getByTestId('chart-card-cl').className).toMatch(/(^| )wb2-full( |$)/);
+        expect(screen.queryByTestId('cluster-summary')).toBeNull();
+        expectNoTrainTestCard('model-fit-clustering');
     });
 
-    it('testNumbers name the scoring-period row by the ORIGINAL list position; slowScoring shows the hint', () => {
+    it('testNumbers name the scoring period on the chart strip by its ORIGINAL list position; slowScoring shows the hint', () => {
         const data = { ...makeHealthPreview({ kind: 'individual', target: 'T1' }), test_validation: makeValidation({ tests: [makeTestResult({ index: 1 })] }) };
         render(<ModelFitPage model={model()} stale={false} preview={{ ...idle, data }} unit="°C" data={data}
             onXPredictorChange={vi.fn()} onCompare={vi.fn()} testNumbers={[2]} slowScoring />);
-        expect(screen.getByTestId('train-test-row-2').querySelector('.vt-scope b')!.textContent).toBe('S2');
-        expect(screen.queryByTestId('train-test-row-1')).toBeNull();
-        expect(within(screen.getByTestId('chart-card-ts')).getByTestId('echarts-mock')).toBeTruthy();
+        // the user's list is [S1 not sent, S2]: the band of wire entry 1 reads "S2", never "S1"
+        expect(chartOf('ts').getAttribute('data-strip')).toBe('TRAIN|S2');
         expect(screen.getByTestId('slow-test-scoring').textContent).toContain('Scoring these periods with the Relation model');
     });
 

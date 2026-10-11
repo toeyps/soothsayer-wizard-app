@@ -101,7 +101,7 @@ export function buildCheckLines(kind: HealthPreview['kind'], issues: readonly He
         : [];
     issues.forEach((i, n) => {
         // "The scoring periods could not be scored" is about the scoring results, not the
-        // set points: the Scoring results / Train and scoring periods cards show it, not Checks.
+        // set points: the Scoring results card shows it, not Checks.
         if (TEST_SCORING_ISSUE_CODES.includes(i.code)) return;
         if (relRequired.length > 1 && relRequired.includes(i)) {
             if (collapsed) return;
