@@ -644,7 +644,9 @@ function LineChart({
                 // state transitions on hover. Cut both for heavy data —
                 // markLine hover/labels (small-data screens) keep working.
                 silent: isLargeData,
-                emphasis: { disabled: isLargeData },
+                // No hover emphasis at any data size (user decision 2026-10-11): the dot on
+                // the hovered point is not worth a repaint of the series on every move.
+                emphasis: { disabled: true },
                 // Hovering a legend entry otherwise re-renders the linked
                 // series into its highlight state — pure cost, low value.
                 legendHoverLink: false,
@@ -705,13 +707,14 @@ function LineChart({
         return {
             backgroundColor: 'transparent',
             textStyle: { fontFamily: 'Inter, system-ui, sans-serif' },
-            // The crosshair lives on its OWN canvas layer (zlevel 1), and for heavy data it no
-            // longer asks the series to "emphasise" the hovered point. Without both, every
-            // mousemove repainted the whole main canvas — every series re-stroked — and one
-            // dense, fast-swinging trace (a 4 000-point zig-zag) costs hundreds of ms to
-            // rasterise, so the tooltip fell far behind the cursor as soon as such a sensor
-            // was on the chart. Now a move redraws only the crosshair line.
-            axisPointer: { zlevel: 1, triggerEmphasis: !isLargeData },
+            // The crosshair lives on its OWN canvas layer (zlevel 1), and a hover never asks the
+            // series to "emphasise" the hovered point. Without both, every mousemove repainted
+            // the whole main canvas — every series re-stroked — and one dense, fast-swinging
+            // trace (a 4 000-point zig-zag) costs hundreds of ms to rasterise, so the tooltip
+            // fell far behind the cursor as soon as such a sensor was on the chart. Now a move
+            // redraws only the crosshair line. This holds for small data too (user decision
+            // 2026-10-11): the hovered-point dot is gone at every size.
+            axisPointer: { zlevel: 1, triggerEmphasis: false },
             tooltip: {
                 trigger: 'axis',
                 backgroundColor: tooltipBg,
