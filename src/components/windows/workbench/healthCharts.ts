@@ -576,6 +576,12 @@ export interface TimeSeriesSpec {
  *  faint bands named in the strip above the plot, and time outside every period
  *  is a gap in the line. Reference-line labels sit outside the plot on its right
  *  edge (the grid keeps a gutter for them), set-point labels inside it. */
+/** The hover crosshair of every time chart: on its own canvas layer, and it never asks the
+ *  series to "emphasise". Without both, every mousemove re-strokes every line of the chart
+ *  (same fix, same reason, as the Dashboard's LineChart). An option that sets its own
+ *  top-level `axisPointer` (the Health score page's linked cursor) must spread this in. */
+export const HOVER_AXIS_POINTER = { zlevel: 1, triggerEmphasis: false } as const;
+
 export function buildTimeSeriesOption(spec: TimeSeriesSpec) {
     const { timestamps, lines, hLines = [], bands = [], yName } = spec;
     const ms = parseTimestamps(timestamps);
@@ -649,6 +655,7 @@ export function buildTimeSeriesOption(spec: TimeSeriesSpec) {
         backgroundColor: 'transparent',
         textStyle: { fontFamily: FONT },
         animation: false,
+        axisPointer: { ...HOVER_AXIS_POINTER },
         tooltip: { ...tooltipBase, trigger: 'axis', axisPointer: { type: 'line', lineStyle: { color: 'rgba(255,255,255,.35)', type: 'dashed' } } },
         legend: { show: false },
         grid: { left: 58, right, top: scopes ? 10 + SCOPE_STRIP : 14, bottom: 28, containLabel: false },

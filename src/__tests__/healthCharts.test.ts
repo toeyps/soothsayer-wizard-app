@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
+    HOVER_AXIS_POINTER,
     REF_LABEL_GUTTER,
     REF_LABEL_MIN_GAP,
     buildClusterOption,
@@ -178,6 +179,15 @@ describe('wallClockMs / parseTimestamps: a stamp sits at its OWN wall-clock time
 });
 
 describe('buildTimeSeriesOption', () => {
+    // Measured: a 4,000-point trace was re-stroked on every mousemove (about 40 ms a move);
+    // with the crosshair on its own layer and no hover emphasis a move redraws one line.
+    it('a hover redraws only the crosshair: its own canvas layer, no series emphasis', () => {
+        const o: any = buildTimeSeriesOption({ timestamps: ['2026-02-09T22:00:00', '2026-02-09T23:00:00'], lines: [{ name: 'V', values: [1, 2], color: '#fff' }] });
+        expect(o.axisPointer).toEqual({ zlevel: 1, triggerEmphasis: false });
+        expect(HOVER_AXIS_POINTER).toEqual({ zlevel: 1, triggerEmphasis: false });
+        expect(o.tooltip.trigger).toBe('axis');
+    });
+
     const spec = {
         timestamps: ['2026-01-01 00:00:00', '2026-01-01 01:00:00', '2026-01-01 02:00:00'],
         lines: [{ name: 'V', values: [1, null, 3] as (number | null)[], color: '#fff' }],

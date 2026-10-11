@@ -13,6 +13,7 @@ import type {
 import { fmtNumExact } from '../../sensor/sensorInfo';
 import { CHART, CHART_MONO, CLUSTER_COLORS, FONT, fmtScoreAxisValue } from './chartTheme';
 import {
+    HOVER_AXIS_POINTER,
     buildTimeSeriesOption,
     centreLabelSeries,
     clusterAxes,
@@ -77,7 +78,7 @@ export function signedTypedText(v: number): string {
 }
 
 /** `axisPointer.link` so two connected charts show one cursor. */
-const SYNC = { axisPointer: { link: [{ xAxisIndex: 'all' }] } };
+const SYNC = { axisPointer: { ...HOVER_AXIS_POINTER, link: [{ xAxisIndex: 'all' }] } };
 
 // ---------------------------------------------------------------------------
 // Score colour (0-100)

@@ -125,8 +125,11 @@ describe('buildIndividualSetPointOption (raw value over time, no histogram)', ()
         expect(opt.yAxis.max).toBeGreaterThanOrEqual(99);
     });
 
-    it('is connected for the shared hover cursor', () => {
+    it('is connected for the shared hover cursor, which keeps its own layer and no hover emphasis', () => {
         expect((ind(null) as any).axisPointer.link).toEqual([{ xAxisIndex: 'all' }]);
+        // The link must not replace the hover settings of the time chart it is spread over:
+        // without them every mousemove re-strokes the lines of BOTH connected charts.
+        expect((ind(null) as any).axisPointer).toEqual({ zlevel: 1, triggerEmphasis: false, link: [{ xAxisIndex: 'all' }] });
         expect(HEALTH_SYNC_GROUP).toBeTruthy();
     });
 });
@@ -436,8 +439,8 @@ describe('buildScoreOption (0-100 over time)', () => {
         expect(opt.visualMap.show).toBe(false);
     });
 
-    it('is connected to the set-point chart for the shared hover cursor', () => {
-        expect(opt.axisPointer.link).toEqual([{ xAxisIndex: 'all' }]);
+    it('is connected to the set-point chart for the shared hover cursor, on its own layer with no hover emphasis', () => {
+        expect(opt.axisPointer).toEqual({ zlevel: 1, triggerEmphasis: false, link: [{ xAxisIndex: 'all' }] });
     });
 });
 
