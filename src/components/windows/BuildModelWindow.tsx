@@ -167,16 +167,14 @@ interface ModelDraft {
     stiffness: number;
     numClusters: number;
     runningConditionMode: 'workspace' | 'custom';
-    /** Custom running-condition editor (2026-09-30 port) — unlike the PM
-     *  page's own version of these four fields (plain component state,
-     *  autosaved), these live in the draft so they follow the same
-     *  Save-changes flow as every other field here (SPEC FINAL decision #2). */
+    /** Custom running-condition editor fields — they live in the draft, so they follow
+     *  the same Save-changes flow as every other field here. */
     customFilters: WorkspaceSensorFilter[];
     customCombine: 'and' | 'or';
     customNoneConfirmed: boolean;
     customPeriods: TimePeriod[];
-    /** This model's own SCORING periods (Custom mode; "test periods" until
-     *  2026-10-10) — staged in the draft like the other Custom lists. */
+    /** This model's own SCORING periods (Custom mode) — staged in the draft like the
+     *  other Custom lists. */
     customTestPeriods: TestPeriod[];
 }
 
@@ -201,7 +199,7 @@ const draftFromModel = (m: FailureModel): ModelDraft => ({
 // same order the kind toggles/badges use everywhere else in the app.
 const KIND_ORDER: ModelKind[] = ['individual', 'relationship', 'clustering'];
 /** Left-list dot colour per status: green = complete, yellow = needs input /
- *  re-train, red = needs fixing, none = never trained (mockup `.kb[data-st]`). */
+ *  re-train, red = needs fixing, none = never trained. */
 const DOT_CLASS: Record<ModelDotState, 'complete' | 'need' | 'bad' | null> = {
     complete: 'complete', trained: 'need', stale: 'need', blocked: 'bad', none: null,
 };
@@ -209,8 +207,7 @@ const DOT_TITLE: Record<ModelDotState, string> = {
     complete: 'Complete', trained: 'Trained — set points needed', stale: 'Re-train needed', blocked: 'Needs fixing', none: 'Incomplete',
 };
 /** The words behind a kind tab's state dot (its tooltip). A tab carries NO text
- *  pill (SPEC workbench-redesign §1): a model's status is said in words once, in
- *  the footer. */
+ *  pill: a model's status is said in words once, in the footer. */
 const TAB_WORDS: Record<ModelDotState, string> = {
     complete: 'Complete', trained: 'Trained', stale: 'Re-train needed', blocked: 'Needs fixing', none: 'Not trained yet',
 };
@@ -255,10 +252,10 @@ const PREVIEW_STALE_BLOCK_REASON = TRAIN_STALE_MESSAGE;
 const IncompleteHint = () => (
     <span className="wb2-aff" data-testid="incomplete-hint">changing it sets the model to Incomplete</span>
 );
-/** The most clusters a Clustering model can be SET to (user decision 2026-10-10; it was 8).
- *  Only the stepper is capped: a model saved earlier with more keeps its count untouched —
- *  clamping it on open would change its train fingerprint and set it back to Incomplete —
- *  it just cannot be raised further ("−" still works). */
+/** The most clusters a Clustering model can be SET to. Only the stepper is capped: a
+ *  model saved with more keeps its count untouched — clamping it on open would change
+ *  its train fingerprint and set it back to Incomplete — it just cannot be raised
+ *  further ("−" still works). */
 const MAX_CLUSTERS = 5;
 const MAX_CLUSTERS_REASON = `At most ${MAX_CLUSTERS} clusters`;
 /** Stable empty list for `useSubModelFits` when the active model is not a Relationship. */
@@ -267,8 +264,7 @@ const NO_PREDICTORS: string[] = [];
 const DATASET_CHANGED_MESSAGE = 'The dataset changed since this window was opened — close it and reopen Build Model from the Dashboard.';
 const DUPLICATE_NAME_BLOCK_REASON = 'Model name is already used by another model of this sensor';
 /** Mark complete, Compare predictors and the Re-train buttons while a training
- *  run is active: one Relation-model sidecar call at a time (coordinator
- *  decision, phase 4 review). */
+ *  run is active: one Relation-model sidecar call at a time. */
 const TRAIN_RUN_ACTIVE_REASON = 'Wait for the training run to finish';
 /** A model whose Mark complete is writing its files is not trained meanwhile. */
 const BEING_SAVED_REASON = 'Its files are being saved';
@@ -280,14 +276,12 @@ const RUN_CLOSE_WAIT_NOTICE = 'Still training a model — the window stays open 
  *  lock sentences read the same one; `kindModelName` (a kind inside a sentence:
  *  "the Individual model", "the Relation model") comes from there too. */
 const KIND_TAB_LABEL: Record<ModelKind, string> = MODEL_KIND_LABEL;
-/** The ONE filled button of the detail pane (SPEC workbench-redesign §1: at most
- *  one filled button on screen) — see `primaryActionOf`. */
+/** The ONE filled button of the detail pane (at most one filled button on
+ *  screen) — see `primaryActionOf`. */
 type PrimaryAction = 'save' | 'train' | 'next' | 'mark' | null;
 
-// ─── Build Model Workbench Phase B (Train in place) ───────────────────────
-// Shape returned by Rust's `compute_sensor_stats` — mirrors the identically-
-// named (and likewise un-exported) interface in PredictiveModelBuild.tsx;
-// duplicated rather than imported since that file doesn't export it.
+// ─── Train in place ───────────────────────────────────────────────────────
+// Shape returned by Rust's `compute_sensor_stats`.
 interface SensorStats {
     mean: number;
     sd: number;
@@ -300,10 +294,9 @@ interface SensorStats {
     upper3: number;
 }
 
-/** One model's cached Phase-B preview result, keyed by kind so the results
- *  stage/expand-modal can render the right chart without re-deriving which
- *  invoke produced it. Session-only — Phase B never writes a file, so this
- *  is never persisted (only `lastTrainedAt`/`trainedFingerprint` are). */
+/** One model's cached preview result, keyed by kind so the results stage can
+ *  render the right chart without re-deriving which invoke produced it.
+ *  Session-only: never persisted (only `lastTrainedAt`/`trainedFingerprint` are). */
 type TrainResult =
     | { kind: 'individual'; stats: SensorStats }
     // `result.health_preview` is the bounded Relationship preview Rust returns
@@ -319,26 +312,13 @@ interface TrainCacheEntry {
     result: TrainResult;
 }
 
-/** 🆕 2026-09-30 [data-loss fix, repeat report]: `TimePeriodsEditor`'s date
- *  fields only commit an edit to the parent (`onPeriodsChange` ->
- *  `persistRunningCondition`, tracked in `pendingSaveRef`) on blur / Enter —
- *  never per keystroke, by design, so rows don't jump around mid-type (see
- *  that file's own top comment). The Running Condition Filter modal's own
- *  close paths (the X button, backdrop click) used to just call
- *  `setRcFilterOpen(false)` directly — a plain state update, not a real DOM
- *  focus change — so a half-typed date that never naturally blurred (e.g. a
- *  test's `fireEvent.change` with no following `fireEvent.blur`, or, per the
- *  user's real report, some real click paths) unmounted the editor without
- *  its `onCommit` ever firing, silently discarding the edit. Calling this
- *  before any close path (the modal's own, and the whole window's) forces
- *  that commit synchronously and unconditionally — a no-op when nothing
- *  relevant is focused.
- *
- *  2026-10-10: the period editors now hand a COMPLETE typed date to the parent
- *  on change, so what is left for the blur is the re-sort of the list and the
- *  commit of a date that was still pending (a year being typed); a half-typed
- *  field goes back to its committed date. The flush is still what makes a
- *  close / Apply see that settled list. */
+/** `TimePeriodsEditor`'s date fields hand a COMPLETE typed date to the parent on
+ *  change; the blur re-sorts the list and commits a date that was still pending (a
+ *  year being typed), and a half-typed field goes back to its committed date. A close
+ *  path that is a plain state update (the modal's X / backdrop, the whole window's
+ *  close) causes no DOM blur, so the editor would unmount without settling. Calling
+ *  this before any close / Apply forces that blur synchronously — a no-op when
+ *  nothing relevant is focused. */
 function flushFocusedInput(): void {
     const active = document.activeElement;
     if (active instanceof HTMLElement && typeof active.blur === 'function') active.blur();
@@ -352,9 +332,9 @@ const NO_PERIODS: TimePeriod[] = [];
  *  impact to show for it. */
 const pendingDateText = (name: string): string => `Finish the date in ${name} to see what this changes`;
 
-/** 🆕 2026-10-03: the four workspace Running condition fields the settings modal
- *  edits as ONE local draft (nothing is written until Apply — see
- *  `applyRcDraft`). Same shape `persistRunningCondition` takes. */
+/** The four workspace Running condition fields the settings modal edits as ONE
+ *  local draft (nothing is written until Apply — see `applyRcDraft`). Same shape
+ *  `persistRunningCondition` takes. */
 interface RcDraft {
     filters: WorkspaceSensorFilter[];
     combine: 'and' | 'or';
@@ -386,32 +366,19 @@ const Stamp = ({ at }: { at: string }) => <span className="wbx-dt">{formatStamp(
  * The single Build Model window — a singleton (label `build-model`) opened
  * from the Failure Groups tab's "Build Model" button.
  *
- * 🆕 2026-09-29 [Build Model Workbench, Phase A]: the Overview page was
- * rebuilt as a master/detail "Workbench" (approved mockup
- * 4jDz6AVCFMgTbxrGuFB9SN, Version 13) replacing the old "Group by Failure
- * Group / Component / Model Type" accordion — layout only, every
- * behavior/handler below is unchanged from before this pass:
+ * A master/detail "Workbench":
  *   - A left sensor list (search + filter chips + Failure-group/Component
- *     grouping — Model Type grouping is REMOVED entirely) selects a sensor;
- *     a right detail panel shows that sensor's I/R/C tabs, a collapsible
- *     "Model settings" section, a Phase-A placeholder results area, and a
- *     per-model footer (status pill, Save, Train; Mark complete lives on
- *     the Health score page).
- *   - The workspace-wide Running Condition Filter moved from an always-
- *     visible inline panel to a one-line summary bar + "Edit…" modal
- *     wrapping `RunningConditionPanel`. (2026-10-03: the bar is now the
- *     Step-1 card + a header step bar, and the modal body is the
- *     two-column redesign — see RunningConditionCard / RunningConditionPanel.)
- *   - Train/lastTrainedAt/staleness and the Failure-Groups-tab status dots
- *     are explicitly NOT part of this phase (Phase B/C) — the results area
- *     is a placeholder only.
- *   - 2026-08-31: there is no "add" flow — toggling a sensor into a group
- *     (Dashboard's Sensor tab) is the sole way a model comes into existence,
- *     always as kind 'individual'. A model's kind, its auto-filled identity
- *     sensor (Target / X), FG membership and Model Type are still not
- *     editable here — see this file's git history for the long list of
- *     explicit user requests behind each of those rules; none of them
- *     changed in this pass, only where/how they render.
+ *     grouping) selects a sensor; the right detail pane shows that sensor's
+ *     I/R/C tabs and, per model, two pages — Model fit (settings, Train,
+ *     charts) and Health score (set points, checks, Mark complete) — with one
+ *     footer (status pill, one sentence, at most one filled button).
+ *   - The workspace-wide running condition is the Step-1 card plus a settings
+ *     modal wrapping `RunningConditionPanel` (see RunningConditionCard /
+ *     RunningConditionPanel).
+ *   - There is no "add" flow: toggling a sensor into a group (Dashboard's
+ *     Sensor tab) is the sole way a model comes into existence, always as kind
+ *     'individual'. A model's kind, its auto-filled identity sensor (Target / X)
+ *     and FG membership are not editable here.
  *
  * All of this is local state — no window spawn for any of it.
  *
@@ -426,38 +393,34 @@ export default function BuildModelWindow() {
     const [sensorMetadata, setSensorMetadata] = useState<SensorMetadata[] | null>(null);
     const [allGroups, setAllGroups] = useState<FailureGroup[]>([]);
     const [allModels, setAllModels] = useState<FailureModel[]>([]);
-    // Workspace-wide "machine running" filter (2026-09-15) — set once here,
-    // every model of every kind picks it up automatically at train time (see
-    // PredictiveModelBuild.tsx's `dashboardFilterPayload`).
+    // Workspace-wide "machine running" filter — set once here, every model in
+    // Workspace mode picks it up automatically at train time.
     const [runningConditionFilters, setRunningConditionFilters] = useState<WorkspaceSensorFilter[]>([]);
-    // How the conditions above combine — 'and' (default) or 'or' (2026-09-23).
+    // How the conditions above combine — 'and' (default) or 'or'.
     const [runningConditionCombine, setRunningConditionCombine] = useState<'and' | 'or'>('and');
-    // Workspace-default TRAIN periods (Feature 4-C; "train" since the Train/Test
-    // validation change, 2026-10-07). At least one is REQUIRED to train — an
-    // empty list no longer means "whole dataset" (`getBuildBlockReason`).
+    // Workspace-default TRAIN periods. At least one is REQUIRED to train — an
+    // empty list does not mean "whole dataset" (`getBuildBlockReason`).
     // A model in Workspace mode uses THIS list; Custom mode uses its own
     // `filterTimePeriods`.
     const [runningConditionTimePeriods, setRunningConditionTimePeriods] = useState<TimePeriod[]>([]);
-    // Workspace-default SCORING periods ("test periods" until 2026-10-10): the
-    // time the trained model gives a health score for; at least one is needed
-    // before Mark complete. Custom mode uses the model's own `customTestPeriods`.
+    // Workspace-default SCORING periods: the time the trained model gives a health
+    // score for; at least one is needed before Mark complete. Custom mode uses the
+    // model's own `customTestPeriods`.
     const [runningConditionTestPeriods, setRunningConditionTestPeriods] = useState<TestPeriod[]>([]);
     // The workspace's Dashboard time highlights — only feed the amber TRAIN-period
     // overlap warning ("Remove the overlap"; never drawn on Workbench charts, and
-    // no longer a source of scoring periods). Read from the workspace file at
+    // not a source of scoring periods). Read from the workspace file at
     // hydration and again whenever the Running condition settings open.
     const [dashHighlights, setDashHighlights] = useState<TimeHighlight[]>([]);
-    // The workspace's special-sensor recipes, read from disk (customer batch 2026-10, item 6):
-    // a model trained on a special sensor whose formula changed since reads as out of date in
-    // every status (`isModelStale` & co. take them). Kept as ONE array per read, so the recipe
+    // The workspace's special-sensor recipes, read from disk: a model trained on a
+    // special sensor whose formula changed since reads as out of date in every status
+    // (`isModelStale` & co. take them). Kept as ONE array per read, so the recipe
     // signatures (memoised per array) are computed once, not per render.
     const [specialRecipes, setSpecialRecipes] = useState<SpecialSensorRecipe[] | null>(null);
     // Drives the Workbench's Running condition settings modal (opened from the
-    // Step-1 card's Edit / Set running condition / Fix period button; was an inline
-    // collapsible panel before Phase A; same underlying state, now shown in
-    // a modal overlay instead of an always-present card).
+    // Step-1 card's Edit / Set running condition / Fix period button).
     const [rcFilterOpen, setRcFilterOpen] = useState(false);
-    // 🆕 2026-10-03: the modal edits this LOCAL DRAFT, never the persisted
+    // The modal edits this LOCAL DRAFT, never the persisted
     // values above. `null` = nothing edited yet (the modal then just shows the
     // persisted values live — copy-on-write on the first edit), so there is no
     // "seed on open" step to forget on any of the several paths that open the
@@ -490,8 +453,8 @@ export default function BuildModelWindow() {
     const specialRecipesRef = useRef<SpecialSensorRecipe[] | null>(null);
     // The Running-condition dialog element (focus on open, Tab kept inside).
     const rcDialogRef = useRef<HTMLDivElement>(null);
-    // "No condition - use all rows" was explicitly confirmed for the workspace
-    // (Feature 4, soft gate A). Mirrors failureGroupState.runningConditionNoneConfirmed.
+    // "No condition - use all rows" was explicitly confirmed for the workspace.
+    // Mirrors failureGroupState.runningConditionNoneConfirmed.
     const [runningConditionNoneConfirmed, setRunningConditionNoneConfirmed] = useState(false);
     // Legacy-workspace banner: the STORED flag (failureGroupState.rcLegacyNotice,
     // written at hydration) plus a session-only "Remind me later" (never persisted).
@@ -503,7 +466,7 @@ export default function BuildModelWindow() {
     const rcAutoOpenedFor = useRef<string | null>(null);
     const [loading, setLoading] = useState(true);
 
-    // ---- Workbench left list (Phase A) ----
+    // ---- Workbench left list ----
     const [leftGroupBy, setLeftGroupBy] = useState<LeftGroupBy>('fg');
     const [sidebarFilter, setSidebarFilter] = useState<SidebarFilter>('all');
     const [searchQuery, setSearchQuery] = useState('');
@@ -517,11 +480,10 @@ export default function BuildModelWindow() {
      *  (open while incomplete, else collapsed). */
     const [settingsOpenOverride, setSettingsOpenOverride] = useState<Record<string, boolean>>({});
 
-    // ---- Train in place (Phase B) ----
+    // ---- Train in place ----
     /** Session-only cache of the last successful preview run per model id —
-     *  never persisted (Phase B writes only `lastTrainedAt`/`trainedFingerprint`
-     *  to the workspace; the actual chart data is cheap to recompute, same as
-     *  the PM page's own live queries). */
+     *  never persisted (only `lastTrainedAt`/`trainedFingerprint` go to the
+     *  workspace; the actual chart data is cheap to recompute). */
     const [trainResults, setTrainResults] = useState<Record<string, TrainCacheEntry>>({});
     /** Presence of a key = that model id currently has a preview run in
      *  flight (explicit Train/Re-train click OR the silent auto-recompute on
@@ -536,7 +498,7 @@ export default function BuildModelWindow() {
      *  the "No data for this model in the loaded file" board (`noDataOf`) and does
      *  not ask again for the same scope and data. */
     const [noRowsLoads, setNoRowsLoads] = useState<Record<string, string>>({});
-    // ---- Two pages per model (health score phase 3b-1, 2026-10-04) ----
+    // ---- Two pages per model ----
     /** Which page of the detail pane each model is on ("Model fit" is the
      *  default). Keyed by model id so switching sensors/kind tabs keeps each
      *  model's page. The Health score page can never be SHOWN for a stale or
@@ -552,8 +514,6 @@ export default function BuildModelWindow() {
     // (workspace + Rust dataset generation): it is asked again whenever that
     // changes, and it is `null` (unknown — nothing is judged against it) from the
     // very render the window is re-pointed in until the new dataset's answer lands.
-    // It used to be fetched once on mount, so a window re-pointed at another
-    // workspace judged the new periods against the OLD data's range.
     const { bounds: datasetBounds } = useDatasetTimeBounds(workspaceId === null ? null : `${workspaceId}|${generation ?? ''}`);
     /** Bumped after every Train so `useHealthPreview` refetches even when the
      *  request itself is identical (a Relationship re-train re-fills Rust's fit cache). */
@@ -564,7 +524,7 @@ export default function BuildModelWindow() {
     // navigated away from (switching sensor or kind tab).
     useEffect(() => { setCompareOpen(false); }, [selectedSensorKey, activeTab]);
 
-    // ---- Health score page (health score phase 3b-2, 2026-10-04) ----
+    // ---- Health score page ----
     /** DRAFT set points per model id: what the user is typing on the Health score
      *  page. A key is present only while there is something typed that has not
      *  been confirmed on disk yet; the page and `useHealthPreview` read
@@ -587,19 +547,19 @@ export default function BuildModelWindow() {
      *  clicks in the same tick cannot both pass). */
     const completeRunningRef = useRef<Set<string>>(new Set());
     // (The last validate verdict Rust gave per model - "Set points needed" /
-    // "Fix set point" - is no longer window state: it is PERSISTED on the model
-    // (`healthVerdict`, QA fix 2026-10-04) so the Dashboard's dot reads the same
-    // value; see `modelSetPointFlag` and the effect that writes it below.)
+    // "Fix set point" - is not window state: it is PERSISTED on the model
+    // (`healthVerdict`) so the Dashboard's dot reads the same value; see
+    // `modelSetPointFlag` and the effect that writes it below.)
     /** Every "Mark complete" run in flight (the WHOLE run: validate -> export -> save),
-     *  so a window close can wait for it (QA fix 2026-10-04: only the final save was
-     *  tracked, and `pendingSaveRef` is a single slot a later write overwrites). */
+     *  so a window close can wait for it (`pendingSaveRef` is a single slot a later
+     *  write overwrites). */
     const markRunsRef = useRef<Set<Promise<unknown>>>(new Set());
     /** The user was told the close is waiting too long for a running save; the next
      *  close attempt does not wait for it again. */
     const closeWaitGivenUpRef = useRef(false);
     const [closeNotice, setCloseNotice] = useState<string | null>(null);
 
-    // ---- Train sensor / Train all with a queue (customer batch 2026-10, items 8 + 9) ----
+    // ---- Train sensor / Train all with a queue ----
     // `useTrainQueue` runs models strictly one at a time through `trainForQueue`
     // (defined further down, it needs the window's train rules). The hook reads
     // `train` through its own ref, so this indirection only exists because the
@@ -653,22 +613,20 @@ export default function BuildModelWindow() {
      *  per render, so it survives whichever window writes the file first. */
     const [categoryNotice, setCategoryNotice] = useState<CategoryChange[] | null>(null);
     const [categoryWarn, setCategoryWarn] = useState<{ key: string; text: string } | null>(null);
-    /** 🆕 2026-09-30: "Copied N periods and M conditions from Workspace" note
-     *  for the Custom running-condition editor, keyed per model id — mirrors
-     *  PredictiveModelBuild.tsx's own `seedNote`, session-only (never
+    /** "Copied N periods and M conditions from Workspace" note for the Custom
+     *  running-condition editor, keyed per model id — session-only (never
      *  persisted), shown once per model per switch-to-Custom that actually
      *  copied something. */
     const [seedNoteFor, setSeedNoteFor] = useState<Record<string, { periods: number; conditions: number; tests: number } | null>>({});
     /** Clustering's criteria-sensor stats (drives the cluster-range slider's
      *  [min, max] bounds) — scoped to whichever model is currently active,
      *  refetched whenever its (draft-aware) criteria sensor or effective
-     *  training-scope filter changes. Mirrors PredictiveModelBuild.tsx's own
-     *  `criteriaStats` effect; `null` while unset/loading, same as there.
+     *  training-scope filter changes; `null` while unset/loading.
      *  Stored with the key it was fetched for (model + criteria sensor +
      *  filter); the `criteriaStats` read further down is only non-null when
-     *  that key matches what is selected NOW (2026-10-09). */
+     *  that key matches what is selected NOW. */
     const [criteriaStatsEntry, setCriteriaStatsEntry] = useState<{ key: string; stats: SensorStats } | null>(null);
-    /** Cluster-range boundary being typed (2026-10-09): `idx` = the boundary between cluster
+    /** Cluster-range boundary being typed: `idx` = the boundary between cluster
      *  idx+1 and idx+2. `initial` is the text the box showed on focus (an unchanged box
      *  commits nothing, so a rounded readout of a dragged value is never written back). */
     const [boundaryEdit, setBoundaryEdit] = useState<{ modelId: string; idx: number; text: string; initial: string; error: string | null } | null>(null);
@@ -716,20 +674,18 @@ export default function BuildModelWindow() {
 
     // Which workspace this window is currently showing, and a counter that
     // lets a slow, superseded `loadWorkspaceData` drop its result instead of
-    // overwriting a newer one (2026-09-21: several `build-model-data` replies
-    // could be in flight at once and whichever load finished last won).
+    // overwriting a newer one (several `build-model-data` replies can be in
+    // flight at once).
     const workspaceIdRef = useRef<string | null>(null);
     const loadSeq = useRef(0);
     const recipeSeq = useRef(0);
 
-    // 🆕 2026-09-29 [data-loss fix]: the most recent in-flight
-    // `updateWorkspaceData` write from ANY persist path in this window
-    // (running-condition edits, a model draft Save, Mark complete,
-    // the hydration-time migration write, …). Mirrors Dashboard.tsx's own
-    // `pendingSaveRef` pattern. Always overwritten to the LATEST write; a
-    // superseded one is simply abandoned, never left dangling. `handleClose`
-    // and the `onCloseRequested` handler below await whatever this currently
-    // holds before actually letting the window close.
+    // The most recent in-flight `updateWorkspaceData` write from ANY persist path
+    // in this window (running-condition edits, a model draft Save, Mark complete,
+    // the hydration-time migration write, …). Always overwritten to the LATEST
+    // write; a superseded one is simply abandoned, never left dangling.
+    // `handleClose` and the `onCloseRequested` handler below await whatever this
+    // currently holds before actually letting the window close.
     const pendingSaveRef = useRef<Promise<void> | null>(null);
     const trackPending = useCallback((p: Promise<void>): Promise<void> => {
         const tracked = p.finally(() => {
@@ -753,10 +709,10 @@ export default function BuildModelWindow() {
     }, []);
 
     /** Adopts what one of THIS window's writes put on disk: the slice and the
-     *  special-sensor recipes the write read (review 2026-10-09: a Train after a
-     *  Repair stamps `trainedFormulas` from the recipes on disk, so this window
-     *  must judge freshness against those same recipes, not an older copy). Any
-     *  recipe read still in flight is older than this write. */
+     *  special-sensor recipes the write read (a Train after a Repair stamps
+     *  `trainedFormulas` from the recipes on disk, so this window must judge
+     *  freshness against those same recipes, not an older copy). Any recipe read
+     *  still in flight is older than this write. */
     const applyWritten = useCallback((ws: WorkspaceState | null | undefined) => {
         if (!ws?.failureGroupState) return;
         applyFg(ws.failureGroupState);
@@ -868,10 +824,10 @@ export default function BuildModelWindow() {
         });
     }, [allModels]);
 
-    // A cached Phase-B preview (or an in-flight one) for a model that no
-    // longer exists (deleted on the Dashboard, or the model was re-pointed at
-    // a different workspace — see the `switched` reset below) must be thrown
-    // away, never written back anywhere.
+    // A cached preview (or an in-flight one) for a model that no longer exists
+    // (deleted on the Dashboard, or the window was re-pointed at a different
+    // workspace — see the `switched` reset below) must be thrown away, never
+    // written back anywhere.
     useEffect(() => {
         const ids = new Set(allModels.map(m => m.id));
         setTrainResults(prev => {
@@ -1005,17 +961,16 @@ export default function BuildModelWindow() {
                 setDashHighlights(ws?.timeHighlights ?? []);
                 recipeSeq.current++;
                 setSpecialRecipes(ws?.specialSensorRecipes ?? null);
-                // One-time legacy cleanup (Feature 4-A): a sensor whose models
-                // disagree on category is made consistent. When that changed
-                // something, the result + notice are WRITTEN BACK here so the
-                // notice is stored data (Dashboard's autosave can't lose it,
-                // and it never re-fires once dismissed).
-                // Same for the running-condition gate (Feature 4-B): a workspace
-                // that already has models but nothing configured is flagged
-                // `rcLegacyNotice: 'pending'` and written back, so the banner is
-                // stored data rather than something recomputed per render.
-                // Feature 4-C: old single time ranges become periods and the old
-                // keys are dropped; written back only when that changed something.
+                // One-time legacy cleanup: a sensor whose models disagree on category is
+                // made consistent. When that changed something, the result + notice are
+                // WRITTEN BACK here so the notice is stored data (Dashboard's autosave
+                // can't lose it, and it never re-fires once dismissed).
+                // Same for the running-condition gate: a workspace that already has
+                // models but nothing configured is flagged `rcLegacyNotice: 'pending'`
+                // and written back, so the banner is stored data rather than something
+                // recomputed per render.
+                // Old single time ranges become periods and the old keys are dropped;
+                // written back only when that changed something.
                 const periodsMigrated = ws ? migratePeriods(ws, { dropLegacyKeys: true }) : ws;
                 const periodsChanged = periodsMigrated !== ws;
                 const migrated = periodsMigrated ? flagLegacyGate(normalizeCategories(periodsMigrated)) : periodsMigrated;
@@ -1123,7 +1078,7 @@ export default function BuildModelWindow() {
                     ...(patch.periods !== undefined ? { runningConditionTimePeriods: patch.periods } : {}),
                     ...(patch.noneConfirmed !== undefined ? { runningConditionNoneConfirmed: patch.noneConfirmed } : {}),
                     // Scoring periods are WRITTEN as id / start / end only: a legacy label /
-                    // event time (workspace saved before 2026-10-10) never goes back to disk.
+                    // event time (an old workspace file) never goes back to disk.
                     ...(patch.testPeriods !== undefined ? { runningConditionTestPeriods: toScoringPeriods(patch.testPeriods) } : {}),
                 });
                 // Any edit made through this panel settles the legacy notice.
@@ -1148,7 +1103,7 @@ export default function BuildModelWindow() {
         })());
     }, [workspaceId, applyWritten, trackPending]);
 
-    // ---- Running Condition modal: local draft + explicit Apply (2026-10-03) ----
+    // ---- Running Condition modal: local draft + explicit Apply ----
     // Every edit in the modal lands in `rcDraft` only. Nothing is written to
     // disk or broadcast until Apply (`applyRcDraft`), which is ONE
     // `persistRunningCondition` call carrying all four fields. The Step-1 card
@@ -1281,7 +1236,7 @@ export default function BuildModelWindow() {
         closeRc();
     }, [closeRc, persistRunningCondition]);
 
-    // ---- Model editing (Feature 4-A, 2026-09-24) ----
+    // ---- Model editing ----
     // Edits are kept as one DRAFT PER MODEL ID (not one global form), so
     // switching between a sensor's Individual / Relationship / Clustering
     // tabs never loses an unsaved edit. Identity fields (target sensor / X
@@ -1294,7 +1249,7 @@ export default function BuildModelWindow() {
     const writeDraft = (m: FailureModel, patch: Partial<ModelDraft>) =>
         setDrafts(prev => ({ ...prev, [m.id]: { ...(prev[m.id] ?? draftFromModel(m)), ...patch } }));
     /** A user edit in "Model settings". It also pins the section open when it was only open
-     *  because something was missing (2026-10-09): fixing the last missing item (e.g. picking the
+     *  because something was missing: fixing the last missing item (e.g. picking the
      *  criteria sensor) must not collapse the section under the user's hands. */
     const patchDraft = (m: FailureModel, patch: Partial<ModelDraft>) => {
         writeDraft(m, patch);
@@ -1304,9 +1259,9 @@ export default function BuildModelWindow() {
     /** Category of the model's sensor across every FG (never per-model any more). */
     const categoryOf = (m: FailureModel): ModelCategory | null => sensorCategory(allModels, modelSensorKey(m));
 
-    // ---- Running-condition gate (Feature 4-B, soft gate A). ONE source of
-    //      truth: `getBuildBlockReason`. Every Train / "mark Complete"
-    //      path below asks it; Save is deliberately NOT gated by it. ----
+    // ---- Running-condition gate. ONE source of truth: `getBuildBlockReason`.
+    //      Every Train / "mark Complete" path below asks it; Save is
+    //      deliberately NOT gated by it. ----
     const gateFg: RunningConditionFg = {
         models: allModels, runningConditionFilters, runningConditionCombine,
         runningConditionTimePeriods, runningConditionNoneConfirmed, runningConditionTestPeriods,
@@ -1316,8 +1271,7 @@ export default function BuildModelWindow() {
     const gateHeaders = allSensors.length ? allSensors : null;
     const rcConfigured = isWorkspaceRunningConditionConfigured(gateFg, gateHeaders);
 
-    // ---- "No data to train on" guards (user request 2026-10-10; rule revised the
-    //      same day after the review of 1e8cc7d) ----
+    // ---- "No data to train on" guards ----
     // The intent: stop a train that has NO data, and warn at once when a period is
     // chosen beyond the data — never take away results that already exist.
     //  R1. The data's range (`datasetBounds`) is known only for the CURRENT dataset
@@ -1408,25 +1362,21 @@ export default function BuildModelWindow() {
         bounds: datasetBounds,
         noTrainRows: effectiveModelFor(m).runningConditionMode === 'custom' ? customNoRowsOf(m) : cardNoRows,
     });
-    // 🆕 2026-09-30 QA fix (bug 3): judge the DRAFT-merged model
-    // (`effectiveModelFor`, defined below — closures resolve it fine, it's
-    // only ever CALLED after the component's synchronous render body has
-    // defined it), not the persisted one. `getBuildBlockReason` reads
-    // `runningConditionMode`/`customRunningConditionFilters`/
-    // `filterTimePeriods` straight off whatever model it's given; passing
-    // the persisted model meant the gate was blind to a pending Custom-mode
-    // switch/edit — Train could commit a draft that
-    // switched to Custom with no condition set (or an invalid period) and
-    // train with `filter: null` (every row), exactly what this gate exists
-    // to prevent. Staleness (`isModelTrainedFresh`/`isModelStale`) already
-    // reads through `effectiveModelFor` for the same reason — this makes the
-    // gate check live-reactive the same way, in both directions (blocks a
+    // Judges the DRAFT-merged model (`effectiveModelFor`, defined below — only
+    // ever CALLED after the render body has defined it), not the persisted one:
+    // `getBuildBlockReason` reads `runningConditionMode` /
+    // `customRunningConditionFilters` / `filterTimePeriods` straight off the model
+    // it is given, so a pending Custom-mode switch/edit must be visible to the
+    // gate — otherwise Train could commit a draft with no condition set (or an
+    // invalid period) and train on every row. Staleness
+    // (`isModelTrainedFresh`/`isModelStale`) reads through `effectiveModelFor`
+    // for the same reason, so the gate is live in both directions (blocks a
     // draft that just broke the condition; unblocks one that just fixed it,
     // without waiting for Save).
     //
     // TWO gates (R5 above):
-    //  - `gateBlockOf` / `gateReasonOf` — the gate as it always was (category, no
-    //    condition, an invalid or missing train period). Every READ path asks this.
+    //  - `gateBlockOf` / `gateReasonOf` — category, no condition, an invalid or
+    //    missing train period. Every READ path asks this.
     //  - `trainGateBlockOf` — the same, PLUS the data guards (`no-rows`: no train
     //    period inside the data / a settled count of zero rows). Only where Train
     //    is the action.
@@ -1530,8 +1480,7 @@ export default function BuildModelWindow() {
             : trainCountKey(runningConditionTimePeriods, persistedCountFilter);
     /** What blocks Save changes in a Custom model's OWN lists, or null — exactly what
      *  blocks Apply in the workspace settings (`runningConditionApplyBlock`, whole).
-     *  (User decision 2026-10-10: ANY invalid own period blocks the save — train as
-     *  well as scoring — not only the scoring ones.)
+     *  (ANY invalid own period blocks the save — train as well as scoring.)
      *   - `data: false` — the plain rules only: an invalid train period, NO train
      *     period, an invalid scoring period. What every READ path sees.
      *   - `data: true` — plus the data guards of the DRAFT, for the Save / Train
@@ -1595,9 +1544,9 @@ export default function BuildModelWindow() {
         return own && reason === customSaveReason(m, own) ? own.footer : null;
     };
 
-    /** The READ gate: everything Save needs (plain rules), then the gate — exactly
-     *  the rule from before the data guards. What a model may SHOW is decided by this:
-     *  its charts, the Health score page, the preview, Mark complete. */
+    /** The READ gate: everything Save needs (plain rules), then the gate — without
+     *  the data guards. What a model may SHOW is decided by this: its charts, the
+     *  Health score page, the preview, Mark complete. */
     const buildBlockReason = (m: FailureModel): string | null => orderedBlockReason(modelBlockReason(m), gateBlockOf(m));
     /** The ACTION gate — why TRAIN cannot run for this model: the read gate plus the
      *  data guards (a draft period outside the data, no train period inside the data,
@@ -1638,10 +1587,9 @@ export default function BuildModelWindow() {
         if (m.kind === 'relationship') parts.push(stiffnessLabel(d.stiffness));
         else if (m.kind === 'clustering') parts.push(`${d.numClusters} clusters`);
         else parts.push('1σ + 3σ');
-        // 🆕 2026-09-30: Custom now has its own editable conditions/periods
-        // (see `switchRunningConditionMode` / the "Training data" field
-        // below), so the collapsed summary shows what's actually configured
-        // instead of a flat "Custom data" that never changed.
+        // Custom has its own editable conditions/periods (see
+        // `switchRunningConditionMode` / the "Training data" field below), so the
+        // collapsed summary shows what is actually configured.
         if (d.runningConditionMode === 'custom') {
             parts.push(customSummaryText({
                 noneConfirmed: d.customNoneConfirmed,
@@ -1658,12 +1606,10 @@ export default function BuildModelWindow() {
     // `commitModel` returns the `persist()` promise (rather than firing it and
     // forgetting) so `trainForQueue` can await the write landing on disk first.
     /** The persistable fields a model's draft would write on Save — factored
-     *  out of `commitModel` so `trainForQueue` (Phase B) can compute the exact
-     *  same merged-with-draft model to train against, without waiting for a
-     *  `persist()` round-trip + re-render to see the fresh values.
-     *  🆕 2026-09-30: the custom running-condition editor fields are common
-     *  to every kind (same as `runningConditionMode` already was), so they're
-     *  folded into `base` rather than repeated per branch. */
+     *  out of `commitModel` so `trainForQueue` can compute the exact same
+     *  merged-with-draft model to train against, without waiting for a
+     *  `persist()` round-trip + re-render to see the fresh values. The custom
+     *  running-condition fields are common to every kind, so they are in `base`. */
     const draftFields = (m: FailureModel, d: ModelDraft): Partial<FailureModel> => {
         const base: Partial<FailureModel> = {
             name: d.name.trim(),
@@ -1697,18 +1643,13 @@ export default function BuildModelWindow() {
         });
     };
 
-    /** 🆕 2026-09-30: the Custom running-condition editor's Workspace/Custom
-     *  switch — ported from PredictiveModelBuild.tsx's own
-     *  `handleRunningConditionModeChange` (see that file's own comment), but
-     *  adapted to this window's draft model: everything it touches
-     *  (`runningConditionMode`, `customFilters`/`customCombine`/
+    /** The Custom running-condition editor's Workspace/Custom switch. Everything
+     *  it touches (`runningConditionMode`, `customFilters`/`customCombine`/
      *  `customPeriods`) is a DRAFT field, so a switch here (and any seeding it
-     *  triggers) is staged, not written until Save changes — the seed check
-     *  itself ("does this model already have its own custom rows") reads the
-     *  CURRENT draft (which starts out as the model's own stored fields via
-     *  `draftFromModel`, then whatever the user has since edited) rather than
-     *  a separate, PM-page-style piece of component state — same data, this
-     *  window just keeps it in `drafts` instead of a dedicated `useState`. */
+     *  triggers) is staged, not written until Save changes. The seed check ("does
+     *  this model already have its own custom rows") reads the CURRENT draft, which
+     *  starts out as the model's own stored fields (`draftFromModel`) plus whatever
+     *  the user has since edited. */
     const switchRunningConditionMode = (m: FailureModel, mode: 'workspace' | 'custom') => {
         if (mode === 'workspace') {
             patchDraft(m, { runningConditionMode: 'workspace' });
@@ -1728,12 +1669,11 @@ export default function BuildModelWindow() {
         }
     };
 
-    /** 🆕 2026-09-30: the Relationship result chart's X-axis switcher —
-     *  writes immediately (per the approved mockup's decision #1: it's a
-     *  view choice for the chart, not a model parameter like predictors/
-     *  stiffness/training-scope, so it doesn't belong in the draft/Save-
-     *  changes flow those use). Same immediate-write shape as `changeCategory`
-     *  above — a direct `persist()` call, not a `patchDraft`. */
+    /** The Relationship result chart's X-axis switcher — writes immediately: it is
+     *  a view choice for the chart, not a model parameter like predictors /
+     *  stiffness / training scope, so it does not belong in the draft / Save-
+     *  changes flow. Same immediate-write shape as `changeCategory` above — a
+     *  direct `persist()` call, not a `patchDraft`. */
     const changeScatterX = (modelId: string, xSensor: string) => {
         void persist((models, groups) => ({
             groups,
@@ -1767,38 +1707,34 @@ export default function BuildModelWindow() {
      *  persisted model, merged with any pending (unsaved) draft edit for it —
      *  same merge `trainForQueue` commits on an actual Train. A draft change
      *  to a fingerprinted field (stiffness, predictors, Y, cluster settings,
-     *  Workspace/Custom, …) must make the results area go stale and disable
-     *  Mark complete IMMEDIATELY, not only after Save/Train (QA fix,
-     *  2026-09-29 — "an unsaved draft edit after training leaves the old
-     *  chart up and Mark complete enabled"). The persisted
+     *  Workspace/Custom, …) makes the results area go stale and disables
+     *  Mark complete IMMEDIATELY, not only after Save/Train. The persisted
      *  `trainedFingerprint` write itself only ever happens through
      *  `trainForQueue`/`executeTrain`, never from this. */
     const effectiveModelFor = (m: FailureModel): FailureModel =>
         m.id in drafts ? { ...m, ...draftFields(m, draftOf(m)) } : m;
 
     /** "Trained" (the status pill, distinct from Complete): a successful
-     *  Phase-B preview run exists AND its fingerprint still matches the
-     *  model's current inputs AND the model isn't already Complete — see
-     *  `src/utils/trainFingerprint.ts` and the SPEC FINAL entry in
-     *  `docs/PROJECT_HANDOVER.md`. */
+     *  preview run exists AND its fingerprint still matches the model's current
+     *  inputs AND the model isn't already Complete — see
+     *  `src/utils/trainFingerprint.ts`. */
     const isModelTrainedFresh = (m: FailureModel): boolean =>
         !m.status && trainedFreshFor(effectiveModelFor(m), gateFg, specialRecipes);
     /** Was trained at some point, but the model's inputs (or the effective
      *  running condition) changed since — "Settings changed — re-train". */
-    // 🆕 2026-10-03 (health score): NOT gated on `status` any more — a Complete
-    // model whose inputs changed since it was trained is out of date too (the
-    // write side already set it Incomplete; this is the read side, for old data
-    // and for a pending draft). See `utils/modelStatus.ts`.
+    // NOT gated on `status`: a Complete model whose inputs changed since it was
+    // trained is out of date too (the write side already set it Incomplete; this
+    // is the read side, for old data and for a pending draft). See
+    // `utils/modelStatus.ts`.
     const isModelStale = (m: FailureModel): boolean => isModelStaleFor(effectiveModelFor(m), gateFg, specialRecipes);
     /** Complete AND still up to date — what every "Complete" display reads
      *  (never `m.status` alone). */
     const isModelDone = (m: FailureModel): boolean => m.status && !isModelStale(m);
 
-    // 🆕 2026-10-04 (health score 3b-2): the old `toggleModelStatus` is GONE. A model
-    // can no longer be marked Complete by flipping a flag: the ONLY way is
-    // `runMarkComplete` below (validate the set points -> write the model's files ->
-    // persist `status: true`). Going back to Incomplete only writes `status: false`
-    // (the files already written stay on disk).
+    // A model is marked Complete ONLY through `runMarkComplete` below (validate the
+    // set points -> write the model's files -> persist `status: true`). Going back
+    // to Incomplete only writes `status: false` (the files already written stay on
+    // disk).
     const markModelIncomplete = (modelId: string) => {
         void persist((models, groups) => ({
             groups,
@@ -1806,13 +1742,6 @@ export default function BuildModelWindow() {
         }));
     };
 
-    /** Everything currently wrong with THIS model's own settings, plus (if
-     *  distinct from the category reason `missingItems` already covers) the
-     *  running-condition/period gate reason — feeds the results area's
-     *  "N items to fix" list. Reuses the exact same messaging `missingItems`
-     *  already surfaces in the collapsible Model settings section, per the
-     *  SPEC FINAL instruction not to invent a second wording for the same
-     *  thing. Each item carries its own "take me there" action. */
     /** A Custom-mode model whose OWN running condition is what blocks it: the fix is inside Model settings. */
     const customFixInside = (m: FailureModel): boolean =>
         draftOf(m).runningConditionMode === 'custom' && categoryOf(m) !== null && countFreeGateReasonOf(m) !== null;
@@ -1823,6 +1752,11 @@ export default function BuildModelWindow() {
      *  locked one-line header instead. */
     const isSettingsOpen = (m: FailureModel): boolean =>
         !queue.isLocked(m.id) && (settingsOpenOverride[m.id] ?? (missingItems(m).length > 0 || customFixInside(m)));
+    /** Everything currently wrong with THIS model's own settings, plus (if
+     *  distinct from the category reason `missingItems` already covers) the
+     *  running-condition/period gate reason — feeds the results area's
+     *  "N items to fix" list, in the same wording `missingItems` uses in the
+     *  Model settings section. Each item carries its own "take me there" action. */
     const incompleteItems = (m: FailureModel): { text: string; onClick: () => void }[] => {
         const items = missingItems(m).map(text => ({
             text,
@@ -1833,13 +1767,10 @@ export default function BuildModelWindow() {
         // Avoid double-reporting the category reason: `missingItems` already
         // lists "Pick a category" when it's null; `gateReasonOf` returns the
         // SAME `CATEGORY_BLOCK_REASON` text in that case, not a distinct one.
-        // 🆕 2026-09-30 QA fix (bug 4): this link used to always open the
-        // WORKSPACE Running Condition modal (`setRcFilterOpen(true)`) — for
-        // a Custom-mode model that fixes nothing, since Custom's own
-        // condition/period editor lives inline in this model's own Model
-        // settings section (the port above), not in that modal. Route a
-        // Custom-mode model's link there instead (same action `missingItems`
-        // above already uses to jump to a missing field).
+        // A Custom-mode model's own condition/period editor lives inline in
+        // its Model settings section, not in the workspace Running Condition
+        // modal, so its link goes there (same action `missingItems` above
+        // uses to jump to a missing field).
         if (gr && categoryOf(m) !== null) {
             const isCustom = draftOf(m).runningConditionMode === 'custom';
             items.push({
@@ -1852,18 +1783,6 @@ export default function BuildModelWindow() {
         return items;
     };
 
-    /** Runs the read-only preview computation for ONE model (Phase B —
-     *  "the SAME preview computations the PM page already runs for
-     *  training/preview purposes": `compute_sensor_stats` / `preview_relationship_model` /
-     *  `compute_clustering_preview`). Never writes a `*_INFO_*.json` file —
-     *  that's the next phase. `opts.persistMeta` distinguishes an explicit
-     *  Train/Re-train click (writes `lastTrainedAt`/`trainedFingerprint` via
-     *  `persist()`, never a hand-built object literal) from the silent
-     *  auto-recompute that runs when reopening an already-Trained-and-fresh
-     *  model (session-only — nothing to persist, the fingerprint hasn't
-     *  changed). `merged` carries the exact inputs used, so a Train click can
-     *  pass the just-committed draft values without waiting for this
-     *  window's state to re-render first (see `trainForQueue`). */
     /** `true` when the Rust dataset is no longer the one this window was opened on. */
     const datasetChangedSinceOpen = async (): Promise<boolean> => {
         if (generation === undefined) return false;
@@ -1874,11 +1793,6 @@ export default function BuildModelWindow() {
             return false;
         }
     };
-    /** Returns its outcome for the train queue (`useTrainQueue`) while still
-     *  setting `trainError` for the window's own UI: `{ ok: true }`, a failure
-     *  (`stale` when the dataset is no longer this window's — the run then
-     *  stops), or `abandoned` when the window was re-pointed at another
-     *  workspace meanwhile. */
     /** What a "no rows" answer of the engine is about: this training scope (the train
      *  fingerprint) on this dataset (`noRowsLoads`). */
     const noRowsLoadKey = (fingerprint: string): string => `${fingerprint}|${generation ?? ''}`;
@@ -1911,21 +1825,33 @@ export default function BuildModelWindow() {
         }
         return null;
     };
+    /** Runs the read-only preview computation for ONE model (`compute_sensor_stats` /
+     *  `preview_relationship_model` / `compute_clustering_preview`). Never writes a
+     *  `*_INFO_*.json` file — Mark complete does. `opts.persistMeta` distinguishes
+     *  an explicit Train/Re-train (writes `lastTrainedAt`/`trainedFingerprint` via
+     *  `persist()`, never a hand-built object literal) from the silent
+     *  auto-recompute that runs when reopening an already-Trained-and-fresh model
+     *  (session-only — nothing to persist, the fingerprint hasn't changed).
+     *  `merged` carries the exact inputs used, so a Train can pass the
+     *  just-committed draft values without waiting for this window's state to
+     *  re-render first (see `trainForQueue`).
+     *  Returns its outcome for the train queue (`useTrainQueue`) while still
+     *  setting `trainError` for the window's own UI: `{ ok: true }`, a failure
+     *  (`stale` when the dataset is no longer this window's — the run then
+     *  stops), or `abandoned` when the window was re-pointed at another
+     *  workspace meanwhile. */
     const executeTrain = async (merged: FailureModel, fingerprint: string, opts: { persistMeta: boolean }): Promise<TrainOutcome> => {
         const id = merged.id;
-        // 🆕 QA fix (2026-09-29): a Train can still be running when this
-        // window gets re-pointed at a different workspace (`build-model-data`
-        // for a new project). `persist()`'s write targets whatever
-        // `workspaceId` its OWN closure captured at call time, which is
-        // fine — but its `applyFg` call replaces this window's CURRENT
-        // in-memory state unconditionally, even though `workspaceIdRef`
-        // already points elsewhere by the time this resolves. Capture the
-        // workspace this run belongs to now, and refuse to write back (or
-        // touch any of this window's state) if it no longer matches once the
-        // preview actually finishes — "train ค้างแล้ว workspace เปลี่ยน →
-        // ทิ้งผล ไม่เขียนกลับ" (SPEC FINAL). A stray `trainStatus`/`trainResults`
-        // entry for the abandoned model id is harmless: the effect above
-        // already prunes any id no longer in the (now different) `allModels`.
+        // A Train can still be running when this window gets re-pointed at a
+        // different workspace (`build-model-data` for a new project).
+        // `persist()`'s write targets the `workspaceId` its own closure
+        // captured, which is fine — but its `applyFg` call would replace this
+        // window's CURRENT in-memory state even though `workspaceIdRef` already
+        // points elsewhere. So capture the workspace this run belongs to now,
+        // and refuse to write back (or touch any of this window's state) if it
+        // no longer matches once the preview finishes. A stray
+        // `trainStatus`/`trainResults` entry for the abandoned model id is
+        // harmless: the effect above prunes any id no longer in `allModels`.
         const capturedWorkspaceId = workspaceIdRef.current;
         setTrainStatus(prev => ({ ...prev, [id]: 'loading' }));
         setTrainError(prev => {
@@ -2063,18 +1989,6 @@ export default function BuildModelWindow() {
         }
     };
 
-    /** The footer's Train/Re-train button. Commits any pending draft edits
-     *  FIRST (`commitModel`) so a predictor/stiffness/etc. change made just before
-     *  clicking Train is what actually gets trained and fingerprinted —
-     *  never a stale, unsaved combination. Only actually MERGES the draft
-     *  into the trained/fingerprinted model when a draft is genuinely
-     *  pending for it (QA fix, 2026-09-29 — "Train never sticks for some
-     *  models"): `draftFields`/`draftFromModel` re-derive/re-snap fields
-     *  (e.g. `snapStiffness`, or defaulting `clusterRanges` off the DEFAULT
-     *  when the model never had any) even with nothing to commit, which
-     *  could fingerprint a value that doesn't match what's actually stored —
-     *  stale the instant Train finishes, forever. With no pending draft,
-     *  train against the persisted `m` directly, unmodified. */
     /** Forget a model's Mark complete outcome (its refusal banner was dismissed, or the
      *  user moved on with a new action). */
     const dismissSaveInfo = (modelId: string) => setSaveInfo(prev => {
@@ -2090,8 +2004,8 @@ export default function BuildModelWindow() {
      *  started: then it is SKIPPED, not failed). Commits a pending draft FIRST
      *  (`commitModel`), so what gets trained and fingerprinted is exactly what
      *  is saved; with no draft pending, the persisted model is trained
-     *  untouched (QA fix 2026-09-29: re-deriving fields from an empty draft
-     *  could fingerprint a value that is not what is stored). */
+     *  untouched (re-deriving fields from an empty draft could fingerprint a
+     *  value that is not what is stored). */
     const trainForQueue = async (id: string): Promise<TrainOutcome> => {
         // Captured BEFORE any await: a re-point while waiting abandons this model.
         const ws = workspaceIdRef.current;
@@ -2220,7 +2134,7 @@ export default function BuildModelWindow() {
         // The refusal Rust gave for the previous values no longer describes these — and
         // neither does the "not saved" outcome of that attempt (its red card and the
         // footer's "Not saved" would otherwise stay for the rest of the session and
-        // hide the real reason Mark complete is blocked; review of 452d5c2).
+        // hide the real reason Mark complete is blocked).
         setAttemptIssues(prev => (prev[m.id] ? { ...prev, [m.id]: null } : prev));
         dismissSaveInfo(m.id);
         if (commit) void commitSetPointDrafts();
@@ -2257,7 +2171,7 @@ export default function BuildModelWindow() {
         // (The gate as it always was: Mark complete is not a train, the data guards
         // do not block it.)
         const notAllowed = getBuildBlockReason(model, fg, gateHeaders)
-            // At least one valid scoring period (SPEC rule 2).
+            // At least one valid scoring period.
             ?? markCompleteBlockReason(model, fg)
             ?? (trainedFreshFor(model, fg, specialRecipes) ? null : (isModelStaleFor(model, fg, specialRecipes) ? 'Settings changed — re-train first.' : NOT_TRAINED_BLOCK_REASON));
         if (notAllowed !== null) return fail(notAllowed);
@@ -2353,15 +2267,9 @@ export default function BuildModelWindow() {
         }
     };
 
-    // 🆕 2026-09-29 [data-loss fix]: awaits every in-flight write before
-    // actually closing the window. See `flushAllPending` above and the
-    // `onCloseRequested` effect below for the native-close equivalent.
-    // 🆕 2026-09-30: `flushFocusedInput()` first, so a half-typed Running
-    // Condition period date (blur/Enter-committed only, see that function's
-    // own comment) is forced to commit — and lands in `pendingSaveRef` below
-    // — even if this button click didn't happen to blur it naturally first.
-    /** The close itself: flush every pending write (and wait for a running Mark
-     *  complete, capped), then close. */
+    /** The close itself: `flushFocusedInput()` first (a half-typed period date
+     *  settles on blur only), then flush every pending write (and wait for a
+     *  running Mark complete, capped), then close. */
     const closeNow = async () => {
         flushFocusedInput();
         // `false` = a running save did not finish in time: the window stays open (notice shown).
@@ -2407,20 +2315,14 @@ export default function BuildModelWindow() {
         }
     };
 
-    // 🆕 2026-09-29 [data-loss fix]: a native close (the window's own X
-    // button, Alt+F4, or the OS closing the app) bypasses `handleClose`
-    // entirely. Only intercepts the close when this window has an in-flight
-    // write of its own.
+    // A native close (the window's own X button, Alt+F4, or the OS closing the
+    // app) bypasses `handleClose` entirely. Only intercepts the close when this
+    // window has an in-flight write of its own.
     useEffect(() => {
         let disposed = false;
         let unlisten: (() => void) | undefined;
         const win = getCurrentWindow();
         Promise.resolve(win.onCloseRequested(async (event) => {
-            // 🆕 2026-09-30: same reasoning as `handleClose` above — a native
-            // close (titlebar X, Alt+F4, OS shutdown) must not be able to
-            // bypass a period edit that never naturally blurred. Read
-            // `pending` AFTER this, not before, so a write this
-            // call itself just kicked off is included below.
             // A training run is active: keep the window and ask (in-window alertdialog) —
             // unless the workspace is closing or an earlier "stop and close" gave up.
             if (queueRef.current.isRunningNow() && !closeBypassRef.current) {
@@ -2463,13 +2365,10 @@ export default function BuildModelWindow() {
         return () => off();
     }, [queueReset]);
 
-    // Hoisted above the `if (loading)` guard (and therefore above every hook
+    // Computed above the `if (loading)` guard (and therefore above every hook
     // below it) so `individualChartQuery`/the auto-recompute effect can read
     // `activeModel` — every hook in this component must run unconditionally
-    // on every render, so none of them can sit after an early return. These
-    // three lines are otherwise identical to the ones the render body below
-    // used to compute locally; nothing about their VALUE changed, only where
-    // they're computed.
+    // on every render, so none of them can sit after an early return.
     const sensorGroupsAll = allSensorGroups(allModels);
     const fullSensorMap = new Map(sensorGroupsAll.map(sg => [sg.key, sg]));
     const detailModels = selectedSensorKey !== null ? (fullSensorMap.get(selectedSensorKey)?.models ?? []) : [];
@@ -2479,27 +2378,26 @@ export default function BuildModelWindow() {
     const activeModelIdRef = useRef<string | null>(null);
     activeModelIdRef.current = activeModel?.id ?? null;
 
-    // ---- Auto-recompute on reopen (Phase B, per explicit user decision) ---
+    // ---- Auto-recompute on reopen ---
     // A model that is already Trained-and-fresh (per the WORKSPACE'S
     // persisted `lastTrainedAt`/`trainedFingerprint`) shows its result
     // immediately, with no click required — this silently re-runs the same
-    // read-only preview query in the background (cheap; same live query the
-    // PM page already runs on every mount) whenever the Workbench doesn't yet
-    // have a cached result for the CURRENT fingerprint (a fresh session, or
-    // this exact model wasn't open before). 🆕 2026-10-04 (health score 3b-1):
-    // this now ALSO runs for a Complete model — the Model fit page shows the
-    // charts of a Complete model too, and a Relationship model's health preview
-    // reads the fit that this run re-fills in Rust's cache after a reload. It
-    // never persists anything (`persistMeta: false` — the fingerprint didn't
-    // change, and `status` is never touched), and never fires while a run for
-    // this model is already in flight.
+    // read-only preview query in the background whenever the Workbench doesn't
+    // yet have a cached result for the CURRENT fingerprint (a fresh session, or
+    // this exact model wasn't open before). It ALSO runs for a Complete model —
+    // the Model fit page shows the charts of a Complete model too, and a
+    // Relationship model's health preview reads the fit that this run re-fills
+    // in Rust's cache after a reload. It never persists anything
+    // (`persistMeta: false` — the fingerprint didn't change, and `status` is
+    // never touched), and never fires while a run for this model is already in
+    // flight.
     // (The effect itself sits further down, right after the active Custom model's
     // row count: it must not ask the engine for a model that is known to have no
     // row in the loaded data — `noDataOf`.)
 
-    // ---- Health preview + Sub-models for the ACTIVE model (health score 3b-1) ----
+    // ---- Health preview + Sub-models for the ACTIVE model ----
     // ONE `useHealthPreview` call feeds both pages of the detail pane: the bounded
-    // series/stats Rust returns for the Model fit charts and (3b-2) the score of
+    // series/stats Rust returns for the Model fit charts and the score of
     // the Health score page. It is given the DRAFT-merged model (same as Train),
     // so an unsaved edit that changes the training inputs makes it idle ("stale")
     // while the last data stays on screen under the "Out of date" overlay.
@@ -2524,7 +2422,7 @@ export default function BuildModelWindow() {
     const activeIsCustom = !!activeModel && activeCustomDraft?.runningConditionMode === 'custom';
     // Model settings — and with them a Custom model's own panel — are drawn on the
     // Model fit page only. On the Health score page NOTHING of it is on screen, so
-    // nothing may be counted or re-read for it there (review of a4acd7a, item 1).
+    // nothing may be counted or re-read for it there.
     const activeOnFitPage = !!activeModel && pageOf(activeModel) === 'model';
     const customPanelOpen = activeIsCustom && activeOnFitPage && isSettingsOpen(activeModel);
     // With the panel closed the train running time still feeds the amber "below
@@ -2668,7 +2566,7 @@ export default function BuildModelWindow() {
     // The last validate verdict Rust gave for the active model. A stale model's old data
     // does not count. It drives the step bar live; the "Set points needed" / "Fix set point"
     // tab pills and dots (here AND on the Dashboard) read the PERSISTED copy of it
-    // (`healthVerdict` on the model, QA fix 2026-10-04), written by the effect below.
+    // (`healthVerdict` on the model), written by the effect below.
     const activeVerdict: HealthVerdict | null = activeModel && !activeStale ? healthVerdict(healthPreview.data) : null;
     const verdictToPersist: HealthVerdictValue | null = activeVerdict === 'valid' ? 'valid' : activeVerdict === 'needs' ? 'incomplete' : activeVerdict === 'bad' ? 'invalid' : null;
     const activeHasDraft = !!activeModel && activeModel.id in spDrafts;
@@ -2734,20 +2632,17 @@ export default function BuildModelWindow() {
         if ((!subModelFits.subModels || subModelFits.stale) && !subModelFits.loading) void subModelFits.run();
     };
 
-    // ---- Clustering cluster-range slider bounds (2026-09-30 port) ---------
-    // Mirrors PredictiveModelBuild.tsx's own `criteriaStats` effect: fetches
-    // `compute_sensor_stats` for the criteria sensor so the slider can span
-    // its REAL data range instead of an abstract 0-100 scale. Draft-aware (the
-    // criteria sensor and the training-scope filter both read through
-    // `draftOf`/`effectiveModelFor`, same as the live fingerprint check
-    // above) so editing the criteria picker or the Workspace/Custom switch
-    // before Save still moves the slider immediately — decision #3 (SPEC
-    // FINAL) says this uses "the model's own training-scope filter, same
-    // scope Train uses", which for an unsaved draft edit IS the draft's
-    // scope, not last-saved. `criteriaFilterKey` collapses everything that
-    // could change the resolved filter payload into one string so the effect
-    // doesn't need a long, easy-to-miss dependency list of individual draft
-    // sub-fields.
+    // ---- Clustering cluster-range slider bounds ---------------------------
+    // Fetches `compute_sensor_stats` for the criteria sensor so the slider can
+    // span its REAL data range instead of an abstract 0-100 scale. Draft-aware
+    // (the criteria sensor and the training-scope filter both read through
+    // `draftOf`/`effectiveModelFor`, same as the live fingerprint check above)
+    // so editing the criteria picker or the Workspace/Custom switch before Save
+    // still moves the slider immediately — the scope is the one Train would
+    // use, which for an unsaved draft edit IS the draft's scope.
+    // `criteriaFilterKey` collapses everything that could change the resolved
+    // filter payload into one string so the effect doesn't need a long,
+    // easy-to-miss dependency list of individual draft sub-fields.
     const criteriaSensorForActive = (activeModel && activeModel.kind === 'clustering') ? draftOf(activeModel).criteria : '';
     const criteriaFilterKey = useMemo(() => {
         if (!activeModel || activeModel.kind !== 'clustering' || !criteriaSensorForActive) return '';
@@ -2756,12 +2651,11 @@ export default function BuildModelWindow() {
         return JSON.stringify(buildPreviewFilterPayload(eff, gateHeaders));
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [activeModel?.id, criteriaSensorForActive, drafts, runningConditionFilters, runningConditionCombine, runningConditionTimePeriods, runningConditionNoneConfirmed, gateHeaders]);
-    // 🆕 2026-10-09: the stats only count for the model + criteria sensor + filter they were
-    // fetched for. The reset below runs in an effect, i.e. AFTER the render that switched the
-    // criteria sensor A -> B, so in that render the state still held A's stats — the auto-divide
-    // effect read them as B's, divided B's ranges over A's [min, max] and locked that result
-    // (a wrong training scope). Deriving per render means stats for another key read as "not
-    // arrived yet", so the divide waits for B's own stats.
+    // The stats only count for the model + criteria sensor + filter they were fetched for.
+    // The reset below runs in an effect, i.e. AFTER the render that switched the criteria
+    // sensor A -> B, so in that render the state still holds A's stats. Deriving per render
+    // means stats for another key read as "not arrived yet", so the auto-divide waits for
+    // B's own stats instead of dividing B's ranges over A's [min, max].
     // The workspace id is part of the key: a duplicated workspace has the SAME model ids (and
     // often the same criteria sensor + filter), so without it a window re-pointed at the copy
     // would keep reading the other workspace's stats as its own and never fetch again.
@@ -2772,17 +2666,11 @@ export default function BuildModelWindow() {
         ? criteriaStatsEntry.stats
         : null;
     useEffect(() => {
-        // 🆕 2026-09-30 QA fix (bug 1): `criteriaStats` is ONE piece of state
-        // shared by every model (scoped to whichever model is active, not
-        // per-model) — it used to only get cleared when there's no criteria
-        // sensor at all, so switching to a DIFFERENT clustering model (or
-        // sensor) while a fetch is in flight left the PREVIOUS model's
-        // resolved stats sitting there: the slider rendered with the wrong
-        // [min, max] (and a live handle a drag could write onto the wrong
-        // scale) until the new fetch happened to land. Reset unconditionally
-        // at the top, before the early-return AND before kicking off a new
-        // fetch, so every model/sensor change shows the loading state until
-        // its OWN stats resolve.
+        // `criteriaStats` is ONE piece of state shared by every model (scoped to
+        // whichever model is active). Reset unconditionally at the top, before
+        // the early-return AND before kicking off a new fetch, so every
+        // model/sensor change shows the loading state until its OWN stats
+        // resolve — never the previous model's [min, max].
         setCriteriaStatsEntry(null);
         if (!activeModel || activeModel.kind !== 'clustering' || !criteriaSensorForActive) {
             return;
@@ -2797,37 +2685,19 @@ export default function BuildModelWindow() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [activeModel?.id, criteriaSensorForActive, criteriaFilterKey, criteriaStatsKey]);
 
-    // ---- Clustering auto-divide (2026-09-30 QA fix, bug 2) -----------------
-    // The PM page auto-divides `clusterRanges` across the criteria sensor's
-    // REAL [min, max] whenever the criteria sensor or the cluster count
-    // changes (`PredictiveModelBuild.tsx`'s own `divisionKey` effect). The
-    // Workbench port (above) carried the slider's RENDERING but not this
-    // effect, so picking a criteria sensor on a Dashboard-created model left
-    // the abstract 0-100 default ranges in place — on a sensor whose real
-    // data is e.g. 500-900, every segment collapses to the left edge, and
-    // the handles can't fix it (each is clamped between its neighbours, and
-    // there's no handle at all for the outer min/max). The +/- cluster-count
-    // stepper had the same gap: it changed `numClusters` alone, with nothing
-    // keeping `ranges.length` in sync, so Train could send N-1 or N+1
-    // `cluster_ranges` for `n_clusters: N`.
+    // ---- Clustering auto-divide --------------------------------------------
+    // Divides `clusterRanges` equally across the criteria sensor's REAL
+    // [min, max] whenever the criteria sensor or the cluster count changes, and
+    // keeps `ranges.length` in sync with `numClusters` (so Train never sends
+    // N-1 or N+1 `cluster_ranges` for `n_clusters: N`).
     //
-    // Ported with one deliberate difference from the PM page's own version:
-    // the PM page's `prevDivisionKeyRef` starts at `''`, so the very first
-    // time ANY already-configured model's stats resolve, it unconditionally
-    // recomputes (and — on the PM page, which has no separate draft concept
-    // — immediately WRITES) an equal division, discarding whatever
-    // (possibly intentional, non-equal) ranges were already saved. Doing
-    // that literally here would create a phantom, unprompted DRAFT (and
-    // "Unsaved changes" state) on every already-configured clustering model
-    // the instant its stats finish loading, merely from opening it — and
-    // would overwrite an already-correct saved custom split with a fresh
-    // equal one. Anchoring the "previous key" on the PERSISTED model's own
-    // (criteria, numClusters) pair instead means this only fires once the
-    // draft has actually DIVERGED from what's saved — which can only happen
-    // via `patchDraft` (the criteria picker or the +/- stepper), i.e. a real
-    // user edit — or the array length itself is out of sync with
-    // `numClusters` (legacy/mismatched data), which self-heals immediately
-    // either way.
+    // The "previous key" is anchored on the PERSISTED model's own
+    // (criteria, numClusters) pair, so this only fires once the draft has
+    // actually DIVERGED from what is saved — a real user edit via `patchDraft`
+    // (the criteria picker or the +/- stepper) — or when the array length is
+    // out of sync with `numClusters` (legacy/mismatched data), which self-heals.
+    // Merely opening an already-configured model never creates a phantom draft
+    // ("Unsaved changes") and never overwrites a saved custom (non-equal) split.
     const persistedClusterKeyForActive = (activeModel && activeModel.kind === 'clustering')
         ? `${activeModel.criteriaSensor ?? ''}::${activeModel.numClusters ?? 3}`
         : '';
@@ -2847,7 +2717,7 @@ export default function BuildModelWindow() {
         // `drafts` is read fresh on each run but is not a dependency: the stats landing is the trigger.
         if (!keyChanged && !lengthMismatch && !pendingInDraft) return;
         if (!criteriaStats) {
-            // 🆕 2026-10-09: the division is PENDING until the criteria sensor's stats arrive.
+            // The division is PENDING until the criteria sensor's stats arrive.
             // For 2+ clusters the draft gets EMPTY ranges meanwhile, so the "Fill in the cluster
             // ranges" check blocks Save and Train: a placeholder range persisted now would
             // become the saved key and the real division would never happen — a 500-900
@@ -2985,9 +2855,9 @@ export default function BuildModelWindow() {
     const onReloadFit = useCallback(() => actionsRef.current?.reloadFit(), []);
     /** "Train sensor ↑": every sentence's link to the ONE place to train. */
     const focusTrainSensor = useCallback(() => { trainSensorBtnRef.current?.focus(); }, []);
-    // The focused "Save changes" disappears once its draft is saved: the focus used to
-    // fall back to <body>. Move it to the button that takes its place ("Next: Health
-    // score →"), or to the footer's status line when that one is disabled.
+    // The focused "Save changes" disappears once its draft is saved. Move the focus to
+    // the button that takes its place ("Next: Health score →"), or to the footer's
+    // status line when that one is disabled, so it does not fall back to <body>.
     useEffect(() => {
         const id = saveFocusRef.current;
         if (!id) return;
@@ -3023,7 +2893,7 @@ export default function BuildModelWindow() {
         return st === 'trained' && trainError[m.id] ? 'stale' : st;
     };
 
-    // ---- Train queue (customer batch items 8 + 9) ----
+    // ---- Train queue ----
     /** Trained and up to date, not Complete yet: set points (then Mark complete) are next. */
     const needSetPoints = (m: FailureModel): boolean => dotStateOf(m) === 'trained';
     /** Every model in run order: by sensor, I → R → C within a sensor. */
@@ -3197,7 +3067,7 @@ export default function BuildModelWindow() {
                 </div>
                 <div className="f4-kinds">
                     {ordered.map(m => {
-                        // Status dot in the badge's corner (mockup `.kb[data-st]`), straight
+                        // Status dot in the badge's corner, straight
                         // from the ONE status rule (`modelDotState`, draft-aware):
                         //   green  complete          (marked complete AND up to date)
                         //   yellow needs input       (trained, waiting for set points / re-train;
@@ -3283,22 +3153,20 @@ export default function BuildModelWindow() {
         });
     };
 
-    // ---- Detail pane (Phase A) ---- `detailModels`/`orderedDetail`/
-    // `activeModel` are computed above (before the `if (loading)` guard —
-    // every hook needs them, see the comment there); reused here as-is.
+    // ---- Detail pane ---- `detailModels`/`orderedDetail`/`activeModel` are
+    // computed above (before the `if (loading)` guard — every hook needs them,
+    // see the comment there).
 
-    /** Cluster-range slider (2026-09-30 port of PredictiveModelBuild.tsx's
-     *  own ~L2862-3013) — colored `CLUSTER_PALETTE` segments spanning the
+    /** Cluster-range slider — colored `CLUSTER_PALETTE` segments spanning the
      *  criteria sensor's REAL [min, max] (`criteriaStats`, fetched by the
-     *  effect above), N-1 draggable boundary handles, read-only value pills
-     *  below. Drag reads/writes through `patchDraft` (the draft, not
-     *  component state, per this window's own edit model) — `startSplitDrag`
-     *  re-reads `draftOf(m).ranges` on every mousemove rather than closing
-     *  over a stale `d.ranges` snapshot from the render that started the
-     *  drag, since a drag session outlives any single render. Only ever
-     *  called for the CURRENTLY ACTIVE model (via `renderModelSettingsFields`
-     *  below), so `criteriaStats` (scoped to `activeModel`) is always the
-     *  right sensor's stats for whichever `m`/`d` this renders. */
+     *  effect above), N-1 draggable boundary handles, value pills below. Drag
+     *  reads/writes through `patchDraft` — `startSplitDrag` re-reads
+     *  `draftOf(m).ranges` on every mousemove rather than closing over a stale
+     *  `d.ranges` snapshot from the render that started the drag, since a drag
+     *  session outlives any single render. Only ever called for the CURRENTLY
+     *  ACTIVE model (via `renderModelSettingsFields` below), so `criteriaStats`
+     *  (scoped to `activeModel`) is always the right sensor's stats for
+     *  whichever `m`/`d` this renders. */
     const renderClusterRangeSlider = (m: FailureModel, d: ModelDraft) => {
         const disabled = d.numClusters <= 1 || !d.criteria;
         if (disabled) {
@@ -3449,7 +3317,7 @@ export default function BuildModelWindow() {
                         );
                     })}
                 </div>
-                {/* Value pills (2026-10-09): every inner boundary is typeable — the upper bound of
+                {/* Value pills: every inner boundary is typeable — the upper bound of
                     clusters 1..N-1 is an input (the next pill's lower bound mirrors it); the
                     outer bounds are the criteria sensor's own min / max and stay read-only. */}
                 <div className="pm-cluster-slider-values">
@@ -3498,12 +3366,9 @@ export default function BuildModelWindow() {
 
     const renderModelSettingsFields = (m: FailureModel, d: ModelDraft) => (
         <>
-            {/* 🆕 2026-09-30 (issue 2/3 fix): a fixed, generous width shared by
-                all three kinds — was `minWidth: 200px` with no cap, which let
-                a long real sensor name (e.g. "GENERATOR BEARING METAL
-                TEMPERATURE") render far narrower than its text, scrolling
-                off-screen with no ellipsis/tooltip. `.f4-fld--name` (App.css)
-                grows with available space up to a real cap instead. */}
+            {/* A fixed, generous width shared by all three kinds: `.f4-fld--name`
+                (App.css) grows with available space up to a real cap, so a long
+                sensor name is not squeezed narrower than its text. */}
             <div className="f4-fld f4-fld--name">
                 <label>Model name</label>
                 <input
@@ -3534,15 +3399,12 @@ export default function BuildModelWindow() {
                 })()}
             </div>
 
-            {/* 🆕 2026-09-30 (issue 3 fix): every kind's OWN fields (as opposed
-                to Model name / Training data, which are shared and always
-                the same shape) live in one wrapping group so they read as a
-                consistent block across Individual/Relationship/Clustering
-                instead of each kind cramming a different field count into
-                the same single flex row. `.bmw-sets-kind` (App.css) is
-                itself flex-wrap, so Clustering's 4-5 fields fall onto a
-                second line rather than being squeezed narrower than their
-                content — see that class's own comment for the exact widths. */}
+            {/* Every kind's OWN fields (as opposed to Model name / Training data,
+                which are shared and always the same shape) live in one wrapping
+                group so they read as a consistent block across kinds.
+                `.bmw-sets-kind` (App.css) is itself flex-wrap, so Clustering's 4-5
+                fields fall onto a second line rather than being squeezed narrower
+                than their content. */}
             <div className="bmw-sets-kind">
             {m.kind === 'individual' && (
                 <div className="f4-fld">
@@ -3626,7 +3488,7 @@ export default function BuildModelWindow() {
                             single
                             allowNone
                             value={d.criteria}
-                            // Cleared (None or the trigger's ×, 2026-10-09): without a criteria
+                            // Cleared (None or the trigger's ×): without a criteria
                             // sensor there is only one cluster (every row) — Rust rejects 2+ — so
                             // the count drops to 1 in the same draft edit and the model stays
                             // trainable. Its ranges are dropped on Save (`draftFields`).
@@ -3653,14 +3515,9 @@ export default function BuildModelWindow() {
                             </button>
                         </span>
                     </div>
-                    {/* 🆕 2026-09-30 [cluster-range slider port]: always shown
-                        now (was `{d.criteria && (...)}` — hidden entirely with
-                        no criteria sensor), matching the PM page's own
-                        always-visible-with-empty-state behavior (SPEC/design
-                        decision #3) — `renderClusterRangeSlider` covers every
-                        empty state (no criteria sensor, N<=1, loading,
-                        constant-value sensor) itself, same wording as the PM
-                        page's own slider. */}
+                    {/* Always shown: `renderClusterRangeSlider` covers every empty
+                        state (no criteria sensor, N<=1, loading, constant-value
+                        sensor) itself. */}
                     <div className="f4-fld f4-fld--grow">
                         <span className="f4-lbl">
                             Cluster ranges
@@ -3688,7 +3545,7 @@ export default function BuildModelWindow() {
                 )}
             </div>
 
-            {/* A Custom model's OWN running condition (workbench redesign §5): the same
+            {/* A Custom model's OWN running condition: the same
                 panel as the workspace settings — timeline, rows and states — bound to
                 the model's DRAFT (saved with Save changes, never on its own). A sibling
                 of `.f4-fld--traindata`, on its own full-width row (`.rc-custom`). */}
@@ -3838,14 +3695,6 @@ export default function BuildModelWindow() {
             : trainError[m.id] ? (isModelDone(m) ? 'Load the model again first' : 'Re-train first')
             : null;
 
-    /** The Model fit page body — the old "results area" state machine, now ending
-     *  in the charts of `ModelFitPage`:
-     *  Complete without a train record -> placeholder · incomplete config/gate ->
-     *  "N items to fix" list with jump-to-field links (reuses `missingItems`'
-     *  wording) · running -> progress · never trained -> "Not trained yet" ·
-     *  stale -> "Out of date" charts (or a message when there is nothing to
-     *  draw) · Relationship fit gone from memory -> the "Fit no longer in memory"
-     *  board ("Load it again") · otherwise the charts. */
     /** "Train sensor ↑": the text link every sentence uses to point at the ONE place
      *  to train (it focuses the header's Train sensor button). */
     const trainSensorLink = (testId: string) => <TrainSensorLink testId={testId} onClick={focusTrainSensor} />;
@@ -3920,7 +3769,7 @@ export default function BuildModelWindow() {
             {' '}to see its charts.
         </>,
         `${isModelDone(m) ? 'Complete' : 'Trained'} · nothing about the model changed`);
-    /** The ONE board shape of every chart-less state (SPEC workbench-redesign §1): a
+    /** The ONE board shape of every chart-less state: a
      *  title, one sentence and an optional mono line. Its actions are text links to
      *  the one place for them ("Train sensor ↑", "Model settings", "Running
      *  condition ↑") — never a button of its own. */
@@ -3929,6 +3778,13 @@ export default function BuildModelWindow() {
             <StateBoard testId={testId} tone={tone} title={title} text={text} detail={detail} />
         </div>
     );
+    /** The Model fit page body — a state machine ending in the charts of `ModelFitPage`:
+     *  Complete without a train record -> placeholder · incomplete config/gate ->
+     *  "N items to fix" list with jump-to-field links (reuses `missingItems`'
+     *  wording) · running -> progress · never trained -> "Not trained yet" ·
+     *  stale -> "Out of date" charts (or a message when there is nothing to
+     *  draw) · Relationship fit gone from memory -> the "Fit no longer in memory"
+     *  board ("Load it again") · otherwise the charts. */
     const renderModelFitBody = (m: FailureModel) => {
         // The read gate — plus "nothing to train on" for a model that has no result at
         // all yet (never trained): its board is the place that says why Train will not
@@ -3973,7 +3829,7 @@ export default function BuildModelWindow() {
                     failed ? <span data-testid="board-train-error">{`Training failed: ${failed}`}</span> : undefined);
         }
         if (reason !== null) {
-            // No running condition yet (2026-10-03): a model that FOLLOWS the workspace
+            // No running condition yet: a model that FOLLOWS the workspace
             // condition is locked until the workspace running condition is
             // set / fixed — say that first, with a link straight into the
             // settings. A model on its own Custom condition is not affected by
@@ -4142,7 +3998,7 @@ export default function BuildModelWindow() {
         // No row of the loaded data is in its training scope: the export could only fail.
         const noData = noDataOf(m);
         if (noData) return noModelDataMarkReason(noData.mode);
-        // At least one valid scoring period (SPEC rule 2) — Train does not need one.
+        // At least one valid scoring period — Train does not need one.
         const noTest = markCompleteBlockReason(effectiveModelFor(m), gateFg);
         if (noTest !== null) return noTest;
         if (!trainedFreshFor(effectiveModelFor(m), gateFg, specialRecipes)) return NOT_TRAINED_BLOCK_REASON;
@@ -4172,7 +4028,7 @@ export default function BuildModelWindow() {
             }
             // Empty set points are counted from Rust's `required` issues (one per empty set
             // point), not from the Checks lines: a Relation model's 4 empty points collapse
-            // into ONE line there, and the footer used to say "1 set point still empty".
+            // into ONE line there.
             const empty = Math.max(1, issues.filter(i => isBlockingIssue(i) && i.code === 'required').length);
             return `${empty} set point${empty > 1 ? 's' : ''} still empty`;
         }
@@ -4194,9 +4050,8 @@ export default function BuildModelWindow() {
     /** "…\workspaces\<id>\output\<sensor>": the saved folder without the machine's own prefix (the full path is the tooltip). */
     const shortOutputDir = (dir: string): string => dir.replace(/^.*([\\/])(workspaces[\\/])/, '…$1$2');
 
-    /** THE one filled button of the detail pane right now (SPEC workbench-redesign §1,
-     *  "at most ONE filled button on screen"). Every other button is a ghost or a text
-     *  button:
+    /** THE one filled button of the detail pane right now (at most ONE filled button
+     *  on screen). Every other button is a ghost or a text button:
      *   - the running condition is not set / not valid -> none here (its own card has it)
      *   - Model fit:    Save changes while a draft exists · else Train sensor while a
      *                   model of this sensor needs training · else "Next: Health score"
@@ -4222,7 +4077,7 @@ export default function BuildModelWindow() {
         return sensorNeedsTrain ? 'train' : null;
     };
 
-    /** Footer of BOTH pages (SPEC workbench-redesign §1): ONE status pill + ONE
+    /** Footer of BOTH pages: ONE status pill + ONE
      *  sentence + at most one filled button (`primary`). This is the only place a
      *  model's status is said in words — tabs, list and set-point card carry a dot.
      *  Model fit: "Save changes" (only while a draft exists) · "Next: Health score →"
@@ -4242,11 +4097,10 @@ export default function BuildModelWindow() {
         const stale = isModelStale(m);
         const training = trainStatus[m.id] === 'loading';
         const done = isModelDone(m);
-        // 🆕 QA fix (2026-09-29): a run that failed IN THIS SESSION — whether
-        // an explicit Re-train click or the silent auto-recompute on reopen —
-        // must override the happy-path pill/footer/Mark-complete-enabled
-        // state even though the PERSISTED fields still say "fresh" (nothing
-        // was written back on failure).
+        // A run that failed IN THIS SESSION — whether an explicit Re-train or
+        // the silent auto-recompute on reopen — overrides the happy-path
+        // pill/footer/Mark-complete-enabled state even though the PERSISTED
+        // fields still say "fresh" (nothing is written back on failure).
         const hasSessionError = !!trainError[m.id];
         // The fit Rust held is gone: trained on paper (or Complete — `trainedFresh` is
         // only said of a model that is not), but the fit must be loaded or trained again.
@@ -4274,8 +4128,7 @@ export default function BuildModelWindow() {
         // The per-model Train button left this footer (customer items 8 + 9): the
         // header's Train sensor is the one place. This link focuses it.
         const goTrainSensor = trainSensorLink('footer-train-sensor');
-        // "Trained 9 Feb 2026 23:50 · scored on 2 periods" (what used to be the
-        // "Scored · N" pill and the "Last trained" caption).
+        // "Trained 9 Feb 2026 23:50 · scored on 2 periods".
         const trainedLine: ReactNode = m.lastTrainedAt
             ? <>Trained <Stamp at={m.lastTrainedAt} />{scoredCount > 0 ? ` · scored on ${scoredCount} period${scoredCount === 1 ? '' : 's'}` : ''}</>
             : null;
@@ -4825,9 +4678,6 @@ export default function BuildModelWindow() {
                 <h2 className="pointer-events-none" style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>
                     Build Model
                 </h2>
-                {/* The 5-step progress bar that sat here was removed on 2026-10-09 at the
-                    user's request: building a model goes back and forth all the time, so
-                    a linear progress did not fit. The header is title + Close only. */}
                 <button onClick={handleClose} className="scatter-regl-btn scatter-regl-btn-icon" title="Close">
                     <X size={14} />
                 </button>
@@ -4921,9 +4771,6 @@ export default function BuildModelWindow() {
                         </div>
                     </div>
                 )}
-
-                {/* The "N of M models can't be built yet" line that sat here is gone
-                    (workbench redesign 2026-10-10): the card above and each model's footer say it. */}
 
                 {categoryNotice && categoryNotice.length > 0 && (() => {
                     // One entry per sensor (the change list is per model). The
@@ -5030,13 +4877,10 @@ export default function BuildModelWindow() {
             </div>
 
             {rcFilterOpen && (
-                // 🆕 2026-10-03: edits go to a local draft; only Apply writes
-                // (see `applyRcDraft`). X / backdrop / Esc go through
-                // `requestCloseRc`, which `flushFocusedInput()`s first (a
-                // half-typed period date commits on blur only — 2026-09-30
-                // data-loss fix) and then asks before discarding a dirty draft.
-                // 2026-10-10 (workbench redesign §5): one column, 980 px — a timeline
-                // hero, one-line rows, no preview column — see RunningConditionPanel.
+                // Edits go to a local draft; only Apply writes (see `applyRcDraft`).
+                // X / backdrop / Esc go through `requestCloseRc`, which
+                // `flushFocusedInput()`s first (a half-typed period date settles on
+                // blur only) and then asks before discarding a dirty draft.
                 // Focus goes to the first field on open and Tab stays inside
                 // (`useModalFocus`); Esc is `requestCloseRc` (see the effect above).
                 <div className="bmw-modal-backdrop" role="presentation" onClick={requestCloseRc}>

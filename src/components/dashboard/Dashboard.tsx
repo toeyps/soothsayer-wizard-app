@@ -14,9 +14,8 @@ import {
     FailureGroupStateSlice, FailureGroupStateChangedPayload, WorkspaceSensorFilter, UpdateSpecialSensorPayload,
 } from '../../types';
 import type { DashboardDataFilter } from '../../types/commands';
-// `DashboardSlotMap` is no longer persisted in WorkspaceState (drag-and-drop
-// swap was removed) but we still use the type internally to describe the
-// constant slot→panel mapping below.
+// `DashboardSlotMap` is not persisted in WorkspaceState; the type only
+// describes the constant slot→panel mapping below.
 
 import { Chart, defaultSensorColor, LINE_CHART_COLORS, MAX_PAIR_PLOT_SENSORS, RANGE_PALETTE, type ChartMarkLine } from '../charts';
 import { rgbaToHex } from '../charts/pairPlotColors';
@@ -92,19 +91,16 @@ const DEFAULT_LAYOUT_SIZES: DashboardLayoutSizes = {
     leftRows: [60, 40],
 };
 
-// Fixed panel-to-slot layout. Was previously a stateful `slotMap` that the
-// user could rearrange via drag-and-drop, but the swap UI was removed so
-// this is now just a constant. Mirrors the original Dashboard layout:
-// chart at top-left, the data table just under it, sensors filling the
-// right column. Filter lives as a tab inside the data panel, not its own slot.
+// Fixed panel-to-slot layout: chart at top-left, the data panel (Selected
+// Sensor / Filter / Highlights tabs) just under it, sensors filling the
+// right column.
 const SLOT_LAYOUT: DashboardSlotMap = {
     'left-top': 'chart',
     'left-bottom': 'data',
     'right-top': 'sensors',
 };
 
-// Static list of all slots in render order — used to iterate when computing
-// drag-target visibility and for building the JSX of the two columns.
+// All slots in render order — used to build the JSX of the two columns.
 const LEFT_SLOTS: DashboardSlot[] = ['left-top', 'left-bottom'];
 const RIGHT_SLOTS: DashboardSlot[] = ['right-top'];
 
@@ -121,12 +117,10 @@ const LINE_MAX_POINTS = 4000;
 // triggered an immediate JSON.stringify + writeTextFile to $APPDATA.
 const AUTOSAVE_DEBOUNCE_MS = 250;
 
-/** Workspace fields that USED to exist and are no longer read by anything.
- *  `highlightLineDisplay` ('band' | 'line') was the Highlights tab's Band /
- *  Line colour switch — removed 2026-10-08 per customer request (time
- *  highlights always draw as a band on Line now). A workspace saved before
- *  that still carries the key; it is ignored on load and dropped by the
- *  next Dashboard autosave write instead of being carried forward forever by the
+/** Workspace fields that are no longer read by anything.
+ *  `highlightLineDisplay` ('band' | 'line') may still be carried by an old
+ *  workspace file; it is ignored on load and dropped by the next Dashboard
+ *  autosave write instead of being carried forward forever by the
  *  `...initialState` spread in `buildWorkspaceState`. */
 type LegacyWorkspaceFields = { highlightLineDisplay?: unknown };
 
@@ -168,8 +162,7 @@ const subtractRelativeAmount = (end: Date, unit: RelativeRangeUnit, n: number): 
 };
 
 // Alarm-level constants/helpers live in ../../utils/alarmLevels — shared
-// with SensorSelection.tsx, which is where the setpoint checkboxes actually
-// render (see the 2026-08-05 handover entry for why they moved there).
+// with SensorSelection.tsx, which is where the setpoint checkboxes render.
 // Stable empty array for the line chart's unused row-based `data` prop
 // (the chart consumes the bounded `columnar` feed instead).
 const EMPTY_RECORDS: CsvRecord[] = [];
@@ -223,24 +216,12 @@ export interface DashboardRef {
 const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMetadata: sensorMetadataProp, onBack, initialState }, ref) => {
     const [localName, setLocalName] = useState(initialState?.name || "");
 
-    // 2026-09-01 fix: seeded from `metadata.headers` (the raw CSV columns)
-    // ALONE used to mean a special/calculated sensor — which has no row in
-    // the CSV at all, only an `extraSensorMetadata` entry — was completely
-    // absent from this list on every workspace reopen, even though
-    // `selectedSensors`/`extraSensorMetadata` themselves restored fine.
-    // `SensorSelection`'s "all sensors" list read this state directly, so
-    // the sensor was reported as gone entirely — no name, not in the list
-    // at all — not merely "present but empty" (see `specialSensorRecipes`'s
-    // own doc comment for that separate, deeper bug this fix now lets
-    // actually surface). The live "Add Special Sensor" flow already appends
-    // a new tag into `sensorHeaders` via the `add-sensor-selection`
-    // listener below — this just does the same thing once, on mount, for
-    // whatever was already persisted.
-    //
-    // 2026-09-01 (later): `SensorSelection` itself now actually reads the
-    // derived `allSensorTags` below, not this state directly — see that
-    // memo's own comment for a second, related gap this mount-seeding fix
-    // didn't cover.
+    // Seeded from `metadata.headers` (the raw CSV columns) PLUS the persisted
+    // special sensors: a special/calculated sensor has no column in the CSV,
+    // only an `extraSensorMetadata` entry, so it is added here on mount the
+    // same way the live "Add Special Sensor" flow appends a new tag via the
+    // `add-sensor-selection` listener below. (`SensorSelection` reads the
+    // derived `allSensorTags` below, not this state directly.)
     const [sensorHeaders, setSensorHeaders] = useState<string[]>(() => {
         const csvHeaders = metadata.headers.filter(h => {
             const lower = h.trim().toLowerCase();
@@ -293,22 +274,14 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     const [visibleSensors, setVisibleSensors] = useState<string[]>(initialState?.visibleSensors || []);
     const [operationConfig, setOperationConfig] = useState<SensorOperationConfig | null>(initialState?.operationConfig || null);
 
-    // 2026-09-01 fix: `sensorHeaders` above is meant to be kept in sync with
-    // `selectedSensors`/`extraSensorMetadata` via an imperative "push if
-    // missing" step inside the `add-sensor-selection` listener below — but
-    // a special sensor built by extending an ALREADY-special sensor (one
-    // whose own tag never came from the CSV) went missing from the Sensor
-    // tab's list entirely despite being correctly selected and plotted,
-    // reported by the user, and the exact mechanism wasn't pinned down with
-    // certainty from code alone. Rather than chase that specific gap,
     // `allSensorTags` derives the full list fresh every render instead of
-    // relying on that imperative sync staying correct — a tag that's
-    // SELECTED or has metadata can now never be excluded from the list it
-    // must be pickable/searchable from, regardless of how it got there.
-    // This is what `SensorSelection` actually reads now (see the JSX
-    // below); `sensorHeaders` itself is unchanged (`request-sensors`,
-    // `add-sensor-selection`'s own bookkeeping, and persistence still all
-    // use it as before).
+    // relying on the imperative "push if missing" sync of `sensorHeaders`
+    // (in the `add-sensor-selection` listener below) staying correct: a tag
+    // that is SELECTED or has metadata can never be excluded from the list it
+    // must be pickable/searchable from, however it got there (e.g. a special
+    // sensor built on another special sensor). This is what `SensorSelection`
+    // reads; `sensorHeaders` itself is still used by `request-sensors`,
+    // `add-sensor-selection`'s own bookkeeping and persistence.
     const allSensorTags = useMemo(() => {
         const known = new Set(sensorHeaders.map(h => h.toLowerCase()));
         const extras: string[] = [];
@@ -321,11 +294,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         return extras.length > 0 ? [...sensorHeaders, ...extras] : sensorHeaders;
     }, [sensorHeaders, selectedSensors, extraSensorMetadata]);
 
-    // "Save As" (duplicate workspace under a new name) was removed entirely
-    // per user request — button, File menu items, and this window's own
-    // request-save-as-data/save-as-submit handshake are all gone. Only
-    // plain in-place rename remains (below), which never spawned a window
-    // or touched workspace IDs.
+    // In-place rename only — it never spawns a window or touches workspace IDs.
     useImperativeHandle(ref, () => ({
         renameWorkspace: (newName: string) => {
             setLocalName(newName);
@@ -362,7 +331,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         setSelectedSensors(prev => prev.filter(s => s !== sensor));
     }, []);
 
-    // "Show on chart" from a Filter condition whose sensor is no longer plotted (customer item 3).
+    // "Show on chart" from a Filter condition whose sensor is no longer plotted.
     // Respects the Pair Plot cap the same way the Sensor tab does (`maxSelectable`).
     const showSensorOnChart = useCallback((sensor: string) => {
         setSelectedSensors(prev => {
@@ -379,7 +348,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     }, []);
 
     const sensorMetaMap = useSensorMetaMap(sensorMetadata);
-    // Customer item 3: every sensor label / picker / tooltip in this window resolves through
+    // Every sensor label / picker / tooltip in this window resolves through
     // this lookup (merged metadata + the ƒ / Σ badges of the special sensors).
     const sensorLookup = useLayeredSensorLookup(sensorMetadata, specialSensorRecipes);
     const getSensorMeta = useCallback(
@@ -388,24 +357,20 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     );
 
     // ── Failure group assignment (Sensor tab quick-assign + Failure Groups
-    //    tab preview) ─────────────────────────────────────────────────────
-    // Owns WorkspaceState.failureGroupState in full. Sensor-level "which
-    // group(s) is this sensor in" (SensorSelection.tsx's per-sensor
-    // quick-assign, FolderPlus icon) creates/removes individual-kind
-    // FailureModels here; everything else — description, recommendation,
-    // per-model kind/category/sensors, PM build config — is owned and edited
-    // exclusively by the separate Build Model window (BuildModelWindow.tsx,
-    // one OS window per group). FailureGroupsPanel.tsx here is preview-only
-    // (see its own doc comment) so this file never duplicates state that
-    // window already owns. Persisted via `updateWorkspaceData`
+    //    tab) ─────────────────────────────────────────────────────────────
+    // Owns WorkspaceState.failureGroupState jointly with the Build Model
+    // window. Dashboard creates / removes models and groups (the Sensor tab's
+    // per-kind toggle, the Failure Groups tab) and edits a group's name /
+    // description / recommendation; a model's own settings, training and
+    // health score are edited only in the Build Model window
+    // (BuildModelWindow.tsx). Persisted via `updateWorkspaceData`
     // (read-modify-write) rather than Dashboard's own full-overwrite
-    // autosave so this window and any open Build Model window(s) editing
-    // *different* groups can't clobber each other.
+    // autosave so the two windows can't clobber each other.
     //
-    // A sensor can belong to multiple groups at once (2026-08-25: a real
-    // many-to-many relationship — see FailureModel.groupNos in types.ts),
-    // so membership is "does tag's individual model's groupNos include
-    // groupNo" — one individual model per tag, not one per (tag, groupNo).
+    // A sensor can belong to multiple groups at once (many-to-many — see
+    // FailureModel.groupNos in types.ts), so membership is "does the sensor's
+    // model of that kind include groupNo in its groupNos" — one model per
+    // (tag, kind), not one per (tag, groupNo).
     const [fgGroups, setFgGroups] = useState<FailureGroup[]>(
         initialState?.failureGroupState?.groups ?? [NOT_IN_GROUP]
     );
@@ -418,7 +383,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     // owns these, but Dashboard's full-overwrite autosave (`buildWorkspaceState`
     // below) rebuilds `failureGroupState` from local state on every tick, so
     // without a complete mirror the very next autosave would erase whatever it
-    // didn't list (2026-09-23: it listed 4 fields and dropped the time range).
+    // didn't list.
     // Persistence round-trip ONLY — never read into `dataFilter`/`scatterFilter`.
     const [fgExtra, setFgExtra] = useState<Omit<FailureGroupStateSlice, 'groups' | 'models'>>(() => {
         const { groups: _g, models: _m, ...rest } = initialState?.failureGroupState ?? { groups: [], models: [] };
@@ -441,9 +406,9 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     // returns the new ones. Everything else in `failureGroupState` — filters,
     // combine, the workspace time range, fields added later — is carried by
     // `withFailureGroupState`'s spread, so this writer never has to know about
-    // it (2026-09-23: it used to list four fields and erase the rest).
+    // it.
     //
-    // 2026-10-03: `compute` may also return `runningConditionFilters` -- the
+    // `compute` may also return `runningConditionFilters` -- the
     // workspace Running condition's conditions as they should be after this
     // write (a special-sensor rename has to re-key them). Left out, the field is
     // carried through untouched like every other one.
@@ -475,18 +440,11 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         })
             .then((next) => {
                 // The result may differ from what the click computed from the
-                // mirror (another window wrote first) — adopt what is durable.
-                // 🆕 2026-09-30 [bug fix, found in Feature 4's Workbench QA
-                // sweep]: this used to only adopt `groups`/`models`, leaving
-                // `fgExtra` (the workspace running condition) on its old
-                // in-memory value. If a Build Model window changed the
-                // running condition without its broadcast landing here yet,
-                // the NEXT Dashboard FG write (rename/create/delete/toggle —
-                // anything going through this function) would re-read fresh
-                // groups/models but still compute the status dot against the
-                // STALE running condition, showing a since-invalidated model
-                // as Trained. Adopt the whole slice, same as the broadcast
-                // listener right below already does.
+                // mirror (another window wrote first) — adopt what is durable:
+                // the WHOLE slice, including `fgExtra` (the workspace running
+                // condition), same as the broadcast listener right below —
+                // otherwise the next FG write would compute the status dot
+                // against a stale running condition.
                 if (next?.failureGroupState) {
                     const { groups, models, ...rest } = next.failureGroupState;
                     setFgGroups(groups);
@@ -504,11 +462,9 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                         origin: 'dashboard',
                     }).catch(e => console.warn('Failed to broadcast failure-group state:', e));
                 }
-                // 2026-09-03: this write already made the new failure-group
-                // state durable, so record what the disk now holds. Without
-                // it the debounced autosave rewrote the very same content
-                // ~250ms later, making every single toggle cost one disk read
-                // plus two full-state writes.
+                // This write already made the new failure-group state durable,
+                // so record what the disk now holds: the debounced autosave
+                // then skips rewriting the very same content ~250ms later.
                 const build = buildWorkspaceStateRef.current;
                 if (build && next?.failureGroupState) {
                     lastSavedPayloadRef.current = JSON.stringify(build({ failureGroupState: next.failureGroupState }));
@@ -517,26 +473,21 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
             .catch(e => console.error('Failed to persist failure-group assignment from Dashboard:', e));
     }, [initialState]);
 
-    // NOTE (2026-09-24): the old `persistFailureGroupState(groups, models)`
-    // wrapper (wrote the mirror's arrays over disk) is gone — EVERY FG writer
-    // (toggle, create/rename/edit/delete group, delete model, tag rename) now
-    // derives its result from disk via `persistFailureGroupStateFrom`.
+    // EVERY FG writer (toggle, create/rename/edit/delete group, delete model,
+    // tag rename) derives its result from disk via
+    // `persistFailureGroupStateFrom` — never from the mirror.
 
     // BuildModelWindow persists failureGroupState independently (its own
     // updateWorkspaceData read-modify-write calls) since it's a separate OS
-    // window. Without this listener, this
-    // window's own fgGroups/fgModels would go stale the moment either of
-    // them writes — and Dashboard's full-overwrite autosave below (which
-    // saves `{groups: fgGroups, models: fgModels}` alongside everything
-    // else it owns) would then clobber their fresher on-disk data on its
-    // next tick. Both windows broadcast this event after every persist so
-    // this copy never drifts. Also carries `runningConditionFilters` now,
-    // for the same reason.
+    // window. Without this listener, this window's own fgGroups/fgModels
+    // (and the running-condition mirror) would go stale the moment it
+    // writes. Both windows broadcast this event after every persist so this
+    // copy never drifts.
     //
-    // 2026-09-21: events are global broadcasts across every window, so with
-    // more than one project the payload can belong to a DIFFERENT workspace
-    // (a stale window from the previous project). Only apply the one that
-    // names THIS workspace — and skip this window's own echo.
+    // Events are global broadcasts across every window, so with more than
+    // one project the payload can belong to a DIFFERENT workspace (a stale
+    // window from the previous project). Only apply the one that names THIS
+    // workspace — and skip this window's own echo.
     const currentWorkspaceId = initialState?.id;
     useEffect(() => subscribe<FailureGroupStateChangedPayload>('failure-group-state-changed', (event) => {
         if (event.payload.workspaceId !== currentWorkspaceId) return;
@@ -548,25 +499,18 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         setFgExtra(rest);
     }), [currentWorkspaceId]);
 
-    // Default PM build config for a freshly created model of a given kind —
-    // mirrors spawnPredictiveModel's own seed defaults below so a model
-    // behaves identically whether it was created here or from Build Model.
-    //
-    // 2026-08-31 redesign: model creation/deletion now lives entirely on
-    // Dashboard (Sensor tab's per-kind toggle + Failure Groups tab's own
-    // delete button) — Build Model no longer creates or removes models at
-    // all, only edits/trains existing ones, per explicit user request. A
-    // sensor can now carry more than one model KIND at once (e.g. both an
-    // Individual and a Relationship model), not just more than one GROUP —
-    // so this is parameterized by kind instead of being individual-only.
-    // Clustering has no single "target sensor" (it needs X and Y); adding
-    // it from a single-sensor toggle seeds that sensor as X and leaves Y
-    // blank for later — confirmed via AskUserQuestion over not offering
-    // Clustering in this flow at all.
-    // `category` is the sensor's existing category (Feature 4-A: category is
-    // per SENSOR, set on Build Model's sensor header), so a new model inherits
-    // it instead of starting unset. Callers compute it via `sensorCategory`
-    // against the same models list they append to.
+    // Default build config for a freshly created model of a given kind.
+    // Models are created/deleted only on the Dashboard (Sensor tab's per-kind
+    // toggle + Failure Groups tab's delete button); Build Model only
+    // edits/trains existing ones. A sensor can carry more than one model KIND
+    // at once (e.g. both an Individual and a Relationship model), so this is
+    // parameterized by kind. Clustering has no single "target sensor" (it
+    // needs X and Y); adding it from a single-sensor toggle seeds that sensor
+    // as X and leaves Y blank for later.
+    // `category` is the sensor's existing category (category is per SENSOR,
+    // set on Build Model's sensor header), so a new model inherits it instead
+    // of starting unset. Callers compute it via `sensorCategory` against the
+    // same models list they append to.
     const makeDefaultModelForKind = useCallback((tag: string, groupNos: number[], kind: ModelKind, category: ModelCategory | null = null): FailureModel => ({
         id: `model-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         groupNos,
@@ -585,10 +529,9 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         relModelName: '',
         relStiffness: 100_000,
         clusterModelName: '',
-        // 2026-10-09: one cluster by default — 2+ clusters need a criteria
-        // sensor (Rust refuses n_clusters > 1 without one), so the old default of
-        // 3 with no criteria showed "1 to fix" on a model nobody had touched yet.
-        // Picking a criteria sensor still lets the stepper raise the count.
+        // One cluster by default — 2+ clusters need a criteria sensor (Rust
+        // refuses n_clusters > 1 without one). Picking a criteria sensor lets
+        // the stepper raise the count.
         numClusters: 1,
         criteriaSensor: '',
         clusterRanges: [],
@@ -596,7 +539,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         runningConditionMode: 'workspace',
         customRunningConditionFilters: [],
         customRunningConditionCombine: 'and',
-        // Health score set points (2026-10-03): Individual snapshots the
+        // Health score set points: Individual snapshots the
         // sensor's master-data alarmL/alarmH NOW (null/null for a special sensor
         // or one without them) and prefills lower/upper from it; Relationship
         // and Clustering start empty. Never written back to master data.
@@ -608,36 +551,21 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     [fgGroups]);
 
     // A sensor's per-kind, per-group toggle (SensorSelection's FolderPlus
-    // menu and its chips) — 2026-08-25 redesign: a sensor can legitimately
-    // sit in several Failure Groups at once, expressed as several entries
-    // in one model's `groupNos`, not one duplicate model per group.
-    // 2026-08-31 redesign: a sensor can ALSO carry more than one model
-    // KIND at once now (e.g. both Individual and Relationship) — this is
-    // the one control that both creates AND removes a specific (sensor,
-    // group, kind) membership, toggling instantly with no separate
-    // confirm step, consistent with the rest of the app's "no
-    // confirmations, click does the thing" policy this session settled on.
+    // menu and its chips). A sensor can sit in several Failure Groups at
+    // once (several entries in one model's `groupNos`, not one duplicate
+    // model per group) and carry more than one model KIND at once. This one
+    // control both creates AND removes a specific (sensor, group, kind)
+    // membership, toggling instantly with no confirm step.
     // Toggling ON reuses this sensor's existing model of that kind if one
     // exists (adding `groupNo`, dropping the `0` "Not in Group" sentinel
     // now that it has a real group) or creates a fresh one. Toggling OFF
     // removes just this one (group, kind) membership — deleting the model
     // outright once it has no group left to represent (whether the group
     // just removed was a real one or `0` itself).
-    //
-    // 2026-09-02: removing a sensor's LAST real group used to fall back to
-    // `groupNos: [0]` ("Not in Group") instead of deleting — the model
-    // itself (and whatever config it already had) wasn't lost, just
-    // unlinked from a failure mode. Reported by the user as unwanted: the
-    // chip's X is expected to make the membership disappear entirely, not
-    // reappear parked under "Not in Group" — so this now deletes the model
-    // the same way removing it from `0` already did (2026-08-31 fix, same
-    // reasoning: no group left to represent it), rather than special-casing
-    // groupNo 0 vs. a real group.
     // Pure: the models after toggling one (sensor, group, kind) membership.
     // Run twice — once against the mirror for the instant UI update, once
-    // against DISK inside the write (2026-09-23 race hardening: a toggle
-    // used to overwrite the whole models array with the mirror's copy, which
-    // reverted whatever another window had just written to any model).
+    // against DISK inside the write, so a stale mirror can never revert what
+    // another window just wrote to any model.
     const applyToggle = useCallback((models: FailureModel[], tag: string, groupNo: number, kind: ModelKind): FailureModel[] => {
         const existing = findKindIn(models, tag, kind);
         const isMember = !!existing && existing.groupNos.includes(groupNo);
@@ -655,13 +583,12 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         return [...models, makeDefaultModelForKind(tag, [groupNo], kind, sensorCategory(models, normalizeSensorTag(tag)))];
     }, [makeDefaultModelForKind]);
 
-    // 2026-10-03: removing a model's LAST group still deletes the model at once
-    // (the 2026-09-02 no-confirm policy stands), but now says so — a 7-second
-    // "<Kind> model of <sensor> deleted — Undo" toast. Undo puts the ORIGINAL
-    // model object back whole (same id, settings, training) through the same
-    // disk-derived write as any other FG edit, so it broadcasts
-    // `failure-group-state-changed` like they do and never reverts another
-    // window's write with a stale mirror.
+    // Removing a model's LAST group deletes the model at once (no confirm) and
+    // says so — a 7-second "<Kind> model of <sensor> deleted — Undo" toast.
+    // Undo puts the ORIGINAL model object back whole (same id, settings,
+    // training) through the same disk-derived write as any other FG edit, so it
+    // broadcasts `failure-group-state-changed` like they do and never reverts
+    // another window's write with a stale mirror.
     const [undoToasts, setUndoToasts] = useState<FgUndoEntry[]>([]);
     const undoSeq = useRef(0);
     const dismissUndo = useCallback((id: string) => {
@@ -753,11 +680,9 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         persistFailureGroupStateFrom(disk => build(disk.groups, disk.models));
     }, [fgGroups, fgModels, isDuplicateGroupName, makeDefaultModelForKind, persistFailureGroupStateFrom]);
 
-    // 2026-08-31: model deletion now lives on Dashboard (Failure Groups
-    // tab's own per-model delete button) — Build Model no longer has a
-    // "Remove model" control at all, per explicit user request. No
-    // confirmation dialog, matching this session's "click does the thing"
-    // policy for every other destructive action in the app.
+    // Model deletion lives on Dashboard (Failure Groups tab's own per-model
+    // delete button) — Build Model has no "Remove model" control. No
+    // confirmation dialog.
     const deleteModel = useCallback((modelId: string) => {
         setFgModels(fgModels.filter(m => m.id !== modelId));
         persistFailureGroupStateFrom(disk => ({ groups: disk.groups, models: disk.models.filter(m => m.id !== modelId) }));
@@ -776,12 +701,9 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     }, [fgGroups, isDuplicateGroupName, persistFailureGroupStateFrom]);
 
     // Name + Description + Recommendation together, for the Failure Groups
-    // tab's own "Edit details" panel — 2026-08-31: moved here from Build
-    // Model window entirely, per explicit user request ("ส่วนของ edit
-    // detail ต้องอยู่ที่ dashboard ด้วย"), so it's no longer duplicated
-    // between the two. FailureGroupsPanel.tsx does its own duplicate-name
-    // check locally before calling this (same pattern Build Model used),
-    // so this is a plain apply, not a validating gate.
+    // tab's own "Edit details" panel. FailureGroupsPanel.tsx does its own
+    // duplicate-name check locally before calling this, so this is a plain
+    // apply, not a validating gate.
     const updateGroupDetails = useCallback((groupNo: number, name: string, description: string, recommendation: string) => {
         const trimmed = name.trim();
         if (!trimmed) return;
@@ -792,11 +714,9 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
 
     // Deleting a group only strips THAT group from every model's
     // `groupNos` (falling back to `[0]`, "Not in Group", if it was a
-    // model's last one) — it no longer deletes models outright the way it
-    // did before `groupNos[]` existed. A model that also belongs to
-    // another group keeps living there untouched; that's the whole point
-    // of the many-to-many redesign. No confirmation step here — the UI
-    // callers (FailureGroupsPanel, BuildModelWindow) confirm first.
+    // model's last one) — it never deletes models. A model that also
+    // belongs to another group keeps living there untouched. No
+    // confirmation step here — the UI caller confirms first.
     const deleteGroup = useCallback((groupNo: number) => {
         if (groupNo === 0) return;
         const apply = (groups: FailureGroup[], models: FailureModel[]) => ({
@@ -815,15 +735,15 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
 
     // ── Failure Groups tab (group-centric preview) ───────────────────────
     // Supports FailureGroupsPanel.tsx. Reuses fgGroups/fgModels/
-    // persistFailureGroupState above; toggleSensorGroupKind/
-    // createGroupForSensor (also above) remain the entry points used by
-    // SensorSelection.tsx's per-sensor quick-assign, unchanged.
+    // persistFailureGroupStateFrom above; toggleSensorGroupKind/
+    // createGroupForSensor (also above) are the entry points used by
+    // SensorSelection.tsx's per-sensor quick-assign.
     //
-    // Customer batch 2026-10 (item 5): the Dashboard lands on the Failure
-    // Groups tab right after Import step 3 (`lastRoute: 'failure-group'`) AND
-    // whenever the project has no failure groups yet (a skipped step 3, or a
-    // project reopened from Recent with zero groups) — failure groups come
-    // first. Decided once, at mount; afterwards the user's tab clicks rule.
+    // The Dashboard lands on the Failure Groups tab right after Import step 3
+    // (`lastRoute: 'failure-group'`) AND whenever the project has no failure
+    // groups yet (a skipped step 3, or a project reopened from Recent with
+    // zero groups) — failure groups come first. Decided once, at mount;
+    // afterwards the user's tab clicks rule.
     const [activeSensorTab, setActiveSensorTab] = useState<'sensor' | 'failure-groups'>(() =>
         initialState?.lastRoute === 'failure-group'
             || realFailureGroups(initialState?.failureGroupState?.groups).length === 0
@@ -872,16 +792,6 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         persistFailureGroupStateFrom(disk => ({ groups: add(disk.groups), models: disk.models }));
     }, [fgGroups, isDuplicateGroupName, persistFailureGroupStateFrom]);
 
-    // "Quick add" a model straight from the Failure Groups tab's card,
-    // right after creating the group it belongs to, without opening Build
-    // Model first — added per explicit user request. Only the bare
-    // minimum needed to exist (name, kind, its kind-appropriate sensor(s),
-    // and which group(s) it belongs to — checkboxes in the modal, per
-    // explicit user request that one model be assignable to several
-    // groups at once); everything else (category, predictors, cluster
-    // ranges, …) is still only editable from Build Model afterward — the
-    // model shows "Incomplete" until then, same as any model created
-    // there directly.
     // Per-sensor line-color override and pinned Y-axis bounds, set from the
     // "Selected Sensor" tab.
     const [sensorColors, setSensorColors] = useState<Record<string, string>>(initialState?.sensorColors ?? {});
@@ -916,11 +826,10 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     // LineChart unmounts on every chart-type switch, so its own local state
     // would be lost the moment the user looked away and back. Deliberately
     // NOT seeded from `initialState`/included in `buildWorkspaceState` below
-    // — per explicit user request, tags should NOT survive closing and
-    // reopening the app, only an in-session chart-type switch. Scatter's own
-    // tagged points are lifted even less far — kept as local ScatterChart
-    // state, not here — see LineTaggedPoint's docstring in types.ts for why
-    // (no stable point identity across a resampled query).
+    // — tags should NOT survive closing and reopening the app, only an
+    // in-session chart-type switch. Scatter's own tagged points are kept as
+    // local ScatterChart state, not here — see LineTaggedPoint's docstring in
+    // types.ts for why (no stable point identity across a resampled query).
     const [lineTaggedPoints, setLineTaggedPoints] = useState<LineTaggedPoint[]>([]);
     const handleLineTaggedPointsChange = useCallback((points: LineTaggedPoint[]) => {
         setLineTaggedPoints(points);
@@ -959,15 +868,10 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     }, []);
 
     // "By value" highlighting ("Highlights" tab) — Scatter-only. Lives
-    // alongside timeHighlights in the same tab (per explicit user request —
-    // it used to be a "Colour by…" dropdown on Scatter's own toolbar
-    // before being replaced by time-window highlighting; the user asked
-    // for it back, deliberately relocated into the Highlights tab this
-    // time instead of restoring the old toolbar control). See
-    // ValueHighlight in types.ts for why this is one sensor + its ranges
-    // rather than a flat list like timeHighlights — Scatter only has one
-    // colour channel, so ranges from more than one sensor active at once
-    // would be ambiguous.
+    // alongside timeHighlights in the same tab. See ValueHighlight in
+    // types.ts for why this is one sensor + its ranges rather than a flat
+    // list like timeHighlights — Scatter only has one colour channel, so
+    // ranges from more than one sensor active at once would be ambiguous.
     const [valueHighlight, setValueHighlight] = useState<ValueHighlight>(
         initialState?.valueHighlight ?? { sensor: '', ranges: [] },
     );
@@ -1043,27 +947,15 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
 
     // Fills in a default for every selected sensor that doesn't have an
     // explicit override. Assignment is by palette SLOT, not by hashing the
-    // tag: hashing let unrelated sensors collide onto the same slot, or land
-    // on adjacent blue/indigo/violet entries that read as "basically the same
-    // color" on a thin line trace — the report that prompted the original
-    // change. Slots guarantee every simultaneously-selected sensor (up to the
-    // palette size) gets a visually distinct color.
+    // tag (hashing lets unrelated sensors collide onto the same or a
+    // near-identical colour), so every simultaneously-selected sensor (up to
+    // the palette size) gets a visually distinct color.
     //
-    // 2026-09-03: slots are now REMEMBERED instead of recomputed as
-    // `selectedSensors[i]`, which made a sensor's color depend on the
-    // composition of the list rather than on the sensor. Un-ticking one
-    // sensor in the right-hand panel re-packed every sensor after it onto a
-    // new slot, and `useChartData` deliberately keeps the previous view on
-    // screen while the next query is in flight ("so the chart never flashes
-    // blank") — so for ~250ms the OLD lines were redrawn in NEW colors. The
-    // sensor being removed was worse still: it dropped out of this map
-    // immediately, so LineChart fell back to `defaultSensorColor()`, a
-    // different (hash-based) color, and its line visibly changed color just
-    // before vanishing. That is the flicker the user reported.
-    //
-    // Two rules fix it: an assigned slot never moves, and a sensor keeps its
-    // entry here after being deselected, so a line still on screen from the
-    // previous fetch keeps the color it was drawn with.
+    // Two rules keep colours stable: an assigned slot never moves, and a
+    // sensor keeps its entry here after being deselected — `useChartData`
+    // keeps the previous view on screen while the next query is in flight, so
+    // a line still on screen from the previous fetch must keep the color it
+    // was drawn with.
     const resolvedSensorColors = useMemo(() => {
         const slots = colorSlotsRef.current;
         const assigned = new Map<string, number>();
@@ -1079,7 +971,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
             }
         }
         // 2) Everything new takes the lowest free slot. Once the palette is
-        //    exhausted, wrap — same as the old behaviour past that point.
+        //    exhausted, wrap.
         let overflow = 0;
         for (const sensor of selectedSensors) {
             if (assigned.has(sensor)) continue;
@@ -1122,9 +1014,8 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         });
     }, []);
 
-    // (Customer item 4, 2026-10-09: the line colour is picked with the shared ColourPicker on the
-    // Selected Sensor row — it owns its own open state and anchor, and unmounts with the row, so
-    // the old `colorPickerFor`/anchor state and its stale-anchor prunes are gone.)
+    // (The line colour is picked with the shared ColourPicker on the Selected Sensor
+    // row — it owns its own open state and anchor, and unmounts with the row.)
 
     // Inline "pin Y-axis scale" editor — one sensor's min/max fields open at
     // a time, directly under its row in the Selected Sensor tab.
@@ -1157,11 +1048,9 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         else openAxisEditor(sensor);
     }, [axisEditorFor, closeAxisEditor, openAxisEditor]);
 
-    // Validates before applying instead of silently closing on bad input —
-    // a mistyped min/max used to just no-op with no sign anything was
-    // rejected, leaving the user unsure whether their edit "took". Either
-    // field may be left blank — pinning only a min (or only a max) is valid,
-    // the blank side keeps auto-fitting to the data.
+    // Validates before applying, so a mistyped min/max is reported instead of
+    // silently ignored. Either field may be left blank — pinning only a min
+    // (or only a max) is valid, the blank side keeps auto-fitting to the data.
     const applyAxisEditor = useCallback(() => {
         if (!axisEditorFor) return;
         const minText = axisDraftMin.trim();
@@ -1265,9 +1154,8 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     // native picker of their Start/End datetime-local input, instead of
     // relying on the browser-drawn `::-webkit-calendar-picker-indicator`
     // pseudo-element (hidden in App.css — how visible it ends up is up to
-    // WebView2). 2026-10-09: back to one working calendar button PER input
-    // (the 2026-10-02 single leading icon was decorative, and the end side
-    // had none — see the `.timebar` JSX below).
+    // WebView2). One working calendar button PER input (see the `.timebar`
+    // JSX below).
     const timeRangeStartRef = useRef<HTMLInputElement>(null);
     const timeRangeEndRef = useRef<HTMLInputElement>(null);
     const slotLTRef = useRef<HTMLDivElement>(null);
@@ -1370,23 +1258,19 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     // Event handling for Add Sensor Window communication
     // Use ref to keep track of latest state without re-binding listeners
     //
-    // 2026-09-01: tracks `allSensorTags` (not `sensorHeaders` directly) so
+    // Tracks `allSensorTags` (not `sensorHeaders` directly) so
     // AddSensorWindow's own "pick a source sensor" list has the same
-    // guaranteed-complete picture Dashboard's own Sensor tab does — a
-    // special sensor missing from here would mean it can't even be picked
-    // as an input for building another one on top of it.
-    //
-    // 2026-09-07: also carries `specialSensorRecipes` and `fgModels` — the
-    // add-sensor window's "Manage" tab needs both to work out what still
-    // depends on a special sensor before offering to delete it (see
-    // `buildSpecialSensorUsage`). They travel on the same
-    // request-sensors/sensors-data handshake rather than a second one.
+    // guaranteed-complete picture Dashboard's own Sensor tab does. Also
+    // carries `specialSensorRecipes` and `fgModels` — the add-sensor window's
+    // "Manage" tab needs both to work out what still depends on a special
+    // sensor before offering to delete it (see `buildSpecialSensorUsage`).
+    // They travel on the same request-sensors/sensors-data handshake rather
+    // than a second one.
     const stateRef = useRef({ allSensorTags, selectedSensors, sensorMetadata, metadata, specialSensorRecipes, fgModels, fgGroups, fgExtra });
-    // 2026-09-21: every event from the Add Sensor window is a GLOBAL
-    // broadcast, so with a second project loaded a leftover window from the
-    // previous one could push ITS sensors/metadata/recipes into this
-    // workspace. Each payload now names its workspace and is dropped here
-    // unless it matches.
+    // Every event from the Add Sensor window is a GLOBAL broadcast, so with a
+    // second project loaded a leftover window from the previous one could push
+    // ITS sensors/metadata/recipes into this workspace. Each payload names its
+    // workspace and is dropped here unless it matches.
     const workspaceIdRef = useRef(initialState?.id);
     workspaceIdRef.current = initialState?.id;
     // Same for the DATASET: the Rust session generation this Dashboard was
@@ -1434,11 +1318,9 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
 
             // A sensor was created (or raw sensors were "added as-is") in the
             // add-sensor window. `sensors` is a DELTA: what to ADD to the plot,
-            // not a replacement for it. The window only learns the plotted list
-            // once, when it opens, so treating its copy as the truth threw away
-            // any selection change made in the Dashboard afterwards -- and,
-            // since the old copy included the sensors a new one was built FROM,
-            // plotted those too. Merge into the CURRENT selection instead.
+            // not a replacement for it — the window only learns the plotted list
+            // once, when it opens, so its copy is not the truth. Merge into the
+            // CURRENT selection.
             unlistenAdd = subscribe<AddSensorSelectionPayload>('add-sensor-selection', async (event) => {
                 if (!forThisWorkspace(event.payload)) return;
                 debugLog("Dashboard received 'add-sensor-selection'", event.payload);
@@ -1600,12 +1482,12 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                             : [...prev, metadata]
                     ));
                 }
-                // 2026-10-08: the edit FIXED a sensor that could not be
-                // restored. Its values (and those of everything built on it)
-                // are new, and no train fingerprint covers special-sensor
-                // recipes -- so every model that trains on one of them goes
-                // back to Incomplete and out of date, in ONE write computed
-                // against what is on disk (`demoteModelsTrainedOnSensors`).
+                // The edit FIXED a sensor that could not be restored. Its
+                // values (and those of everything built on it) are new, and
+                // no train fingerprint covers special-sensor recipes -- so
+                // every model that trains on one of them goes back to
+                // Incomplete and out of date, in ONE write computed against
+                // what is on disk (`demoteModelsTrainedOnSensors`).
                 // Broadcast by `persistFailureGroupStateFrom` like every
                 // other Dashboard FG write. A description-only save never
                 // carries `repaired`.
@@ -1733,18 +1615,12 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     chartTypeRef.current = chartType;
     const [samplingMethod, setSamplingMethod] = useState<'raw' | 'avg' | 'max' | 'min' | 'first' | 'last'>(initialState?.samplingMethod ?? 'raw');
 
-    // The Selected Sensor tab's colour/pin-Y-axis popovers only render while
+    // The Selected Sensor tab's pin-Y-axis popover only renders while
     // `chartType === 'line'` (Scatter/Pair Plot hide that list entirely), but
     // switching chart type does not unmount Dashboard itself, so
-    // colorPickerFor/axisEditorFor (and their captured anchor rects) used to
-    // just sit in state while hidden. Switching back to Line re-opened them
-    // at the pre-switch screen position — same stale-anchor bug class as the
-    // selectedSensors prune effect above, just reached via chart type instead
-    // of deselecting a sensor (QA sweep, 2026-10-02). Clearing both "…For"
-    // states (anchors don't need clearing separately — both popovers' render
-    // is already gated on `…For === sensor`, so a stale anchor is inert once
-    // the "for" state is null) whenever chartType leaves 'line' closes them
-    // for good instead of just hiding them.
+    // `axisEditorFor` would sit in state while hidden and re-open at a stale
+    // screen position on switching back. Clear it whenever chartType leaves
+    // 'line'.
     useEffect(() => {
         if (chartType !== 'line') {
             setAxisEditorFor(null);
@@ -1753,24 +1629,16 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
 
 
     // ── Build Model — singleton window (label `build-model`) reached from
-    //    the Failure Groups tab's "Build Model" button. Was two OS windows
-    //    (an Overview browser + one per-group window per groupNo, spawned
-    //    on demand) until the user asked to cut the total window count down
-    //    to just Dashboard + this one — the window itself now handles
-    //    overview/detail navigation internally as in-window pages, so there
-    //    is only ever this one label to spawn or focus. This also means the
-    //    duplicate-window race that used to exist between the "check if a
-    //    per-group window already exists" and "create it" steps can't
-    //    happen anymore for group-switching (it's local state now); it's
-    //    still guarded here for the singleton spawn itself.
+    //    the Failure Groups tab's "Build Model" button. The window handles
+    //    its own navigation internally, so there is only ever this one label
+    //    to spawn or focus; the spawn itself is guarded against a
+    //    duplicate-window race.
     //
-    // 2026-09-21: reads the freshest values through `stateRef` and subscribes
-    // ONCE instead of re-subscribing on every change of the four values it
-    // used to close over. Each re-subscription raced its own async
-    // unlisten, leaving stale copies alive that answered the Build Model
-    // window's request with an older workspace id / older sensor metadata
-    // (e.g. before the special sensors' component and description had been
-    // merged in) — the window applied whichever reply arrived last.
+    // Reads the freshest values through `stateRef` and subscribes ONCE instead
+    // of re-subscribing on every change of the values it reads: each
+    // re-subscription would race its own async unlisten and leave stale copies
+    // alive that answer the Build Model window's request with an older
+    // workspace id / older sensor metadata.
     const emitBuildModelData = useCallback(async () => {
         const wsId = workspaceIdRef.current;
         if (!wsId) return;
@@ -1826,31 +1694,23 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     }, [initialState, emitBuildModelData]);
 
     // Close the (singleton, workspace-scoped) Build Model window when
-    // leaving this workspace. It only ever fetches its data once, on its
-    // own mount (see BuildModelWindow.tsx's `request-build-model-data`
-    // round-trip) — it has no way to notice `main` switching to a
-    // different workspace underneath it. Without this, staying open across
-    // a switch means the next "Build Model" click here (now scoped to a
-    // different workspace) just focuses the stale window via
-    // `WebviewWindow.getByLabel('build-model')` above instead of opening
-    // one for the new workspace — the user edits what looks like the right
-    // project but is actually still writing to the old one.
+    // leaving this workspace: staying open across a switch, the next "Build
+    // Model" click here (now scoped to a different workspace) would just
+    // focus the stale window via `WebviewWindow.getByLabel('build-model')`
+    // above — the user would edit what looks like the right project but
+    // still write to the old one. The Add Special Sensor window is
+    // workspace-scoped in exactly the same way (its events are global
+    // broadcasts and it computes columns in the ONE shared Rust session), so
+    // it is closed too.
     //
-    // 2026-09-21: the Add Special Sensor window is workspace-scoped in
-    // exactly the same way and was never closed here. It keeps the previous
-    // project's sensor list, metadata (component/description) and recipes,
-    // and — because its events are global broadcasts and it computes columns
-    // in the ONE shared Rust session — kept feeding that project's special
-    // sensors into whichever project was open next.
-    //
-    // 2026-10-03: closing is fire-and-forget IPC (it can be lost or late), so it
-    // is no longer the ONLY thing standing between a leftover window and the
-    // next project. (1) Every close is awaited with its own catch, so one failing
-    // does not skip the other. (2) A workspace-scoped `workspace-closing` goes
-    // out first: a window that outlives the close drops its state at once
-    // instead of waiting for the close. (3) Special-sensor commands are pinned
-    // to this dataset's generation anyway (`expectedGeneration`), so a window
-    // that survives both still cannot touch the next project's session.
+    // Closing is fire-and-forget IPC (it can be lost or late), so it is not
+    // the ONLY thing standing between a leftover window and the next project.
+    // (1) Every close is awaited with its own catch, so one failing does not
+    // skip the other. (2) A workspace-scoped `workspace-closing` goes out
+    // first: a window that outlives the close drops its state at once instead
+    // of waiting for the close. (3) Special-sensor commands are pinned to this
+    // dataset's generation anyway (`expectedGeneration`), so a window that
+    // survives both still cannot touch the next project's session.
     useEffect(() => {
         return () => {
             const closing = { workspaceId: workspaceIdRef.current, generation: stateRef.current.metadata.generation };
@@ -1908,10 +1768,8 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     // ── Bounded data-view queries ────────────────────────────────────
     // The full pipeline (dashboard filter → operation transform → hourly
     // aggregation → min/max decimation) runs in Rust. The WebView only
-    // ever receives O(LINE_MAX_POINTS) chart arrays and one table page —
-    // selecting millions of rows no longer copies the dataset into the JS
-    // heap or blocks the main thread. (Previously `get_data` streamed
-    // every row over IPC and every transform re-ran in useMemos here.)
+    // ever receives O(LINE_MAX_POINTS) chart arrays — selecting millions of
+    // rows never copies the dataset into the JS heap or blocks the main thread.
     const handleFiltersChange = useCallback((newFilters: FilterState) => {
         // The query hooks debounce backend calls themselves, so rapid
         // datetime-input edits don't queue full-dataset passes.
@@ -1985,10 +1843,8 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     // synthesized "Result (op)" column, not a real sensor tag, so there's no
     // metadata to look an alarm value up against. Colored by SEVERITY
     // (`alarmLevelColor`: amber for L/H, red for LL/HH), not by the sensor's
-    // own line color — an earlier version matched the sensor's color instead,
-    // but that made a setpoint line blend into its own sensor's trace and
-    // become hard to spot at a glance, which defeats the point of it being
-    // a warning line at all.
+    // own line color, so a setpoint line never blends into its own sensor's
+    // trace.
     const markLines = useMemo<ChartMarkLine[]>(() => {
         if (isMultiOp) return [];
         const lines: ChartMarkLine[] = [];
@@ -2061,24 +1917,21 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     ]);
 
     // Keeps `buildWorkspaceStateRef` pointing at the current builder so the
-    // callbacks declared above it (persistFailureGroupState) can reach it.
+    // callbacks declared above it (persistFailureGroupStateFrom) can reach it.
     // Runs after every render, so it is always current by the time any click
     // handler fires.
     useEffect(() => { buildWorkspaceStateRef.current = buildWorkspaceState; });
 
-    // 2026-09-01: what the close-flush effect below awaits before actually
-    // letting the window close — see its own comment for why this exists.
-    // Always overwritten to the LATEST scheduled save on every effect rerun
-    // (a superseded save's promise is simply abandoned, never left
-    // dangling — nothing else ever holds a reference to it), so this always
-    // points at "the save that still needs to land on disk", never a stale
-    // one from an edit that's already been superseded by a newer one.
+    // What the close-flush effect below awaits before actually letting the
+    // window close. Always overwritten to the LATEST scheduled save on every
+    // effect rerun (a superseded save's promise is simply abandoned — nothing
+    // else ever holds a reference to it), so this always points at "the save
+    // that still needs to land on disk".
     const pendingSaveRef = useRef<Promise<void> | null>(null);
     // The autosave below is a debounce whose timer its cleanup CLEARS -- on a
     // dependency change that is right (the next run re-arms it), but on UNMOUNT
-    // ("Back to Import") it silently dropped whatever was changed in the last
-    // AUTOSAVE_DEBOUNCE_MS (a special sensor created just before Back was gone
-    // on the next open). `autosaveDirtyRef` is true while a timer is armed and
+    // ("Back to Import") it would drop whatever was changed in the last
+    // AUTOSAVE_DEBOUNCE_MS. `autosaveDirtyRef` is true while a timer is armed and
     // has not started its write; the unmount effect flushes it through
     // `runAutosaveRef`, which is the very same routine the timer runs.
     const autosaveDirtyRef = useRef(false);
@@ -2093,34 +1946,16 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     // actually reaches disk — same "clear + requeue" shape as the
     // useChartData/useScatterSample debounce this mirrors.
     //
-    // 🆕 2026-09-18 [CRITICAL FIX]: this write used to bake in this window's
-    // OWN `fgGroups`/`fgModels`/`runningConditionFilters` mirror (via
-    // `buildWorkspaceState()`'s default). That mirror is kept "current" only
-    // by the `failure-group-state-changed` broadcast above — best-effort
-    // cross-window IPC, not a guaranteed-ordered channel. If a Build Model /
-    // Predictive Model window (a SEPARATE OS process — see CLAUDE.md's
-    // "Windows & capabilities") wrote fresher failure-group state and its
-    // broadcast hadn't landed here yet, then ANY Dashboard-only interaction
-    // at all — panning a chart, toggling a sensor, nothing to do with
-    // failure groups — re-armed this 250ms debounce and silently overwrote
-    // that fresher data with this window's stale copy the moment it fired.
-    // No rapid clicking or "Build Model" needed — this is exactly the "I
-    // didn't touch anything, just closed and reopened the app" data-loss
-    // report: the clobber happened quietly during the PRIOR session, and
-    // reopening just revealed the already-corrupted file. Root-caused via
-    // the "close/reopen with FG already gone" repro (rules out the
-    // workspaceManager.ts same-window queue fix from earlier the same day —
-    // that only serializes writes WITHIN one window, and this loss needed no
-    // rapid same-window actions at all to reproduce).
-    //
-    // Fix: re-read `failureGroupState` fresh from disk right before writing,
-    // instead of trusting this window's local mirror — same defensive
-    // pattern `persistFailureGroupState` above already uses for
-    // `runningConditionFilters`. This narrows the race to a genuine
-    // near-simultaneous cross-window write (a few ms IPC round trip)
-    // instead of "any stale mirror, arbitrarily late," but a fully
-    // race-proof fix needs a Rust-side atomic read-modify-write across
-    // processes — out of scope here, flagged separately.
+    // The write re-reads `failureGroupState` fresh from disk right before
+    // writing instead of trusting this window's local mirror. The mirror is
+    // kept current only by the `failure-group-state-changed` broadcast above —
+    // best-effort cross-window IPC, not a guaranteed-ordered channel — so
+    // baking it in would let ANY Dashboard-only interaction (panning a chart,
+    // toggling a sensor) overwrite fresher failure-group state written by the
+    // Build Model window (a separate OS window). This narrows the race to a
+    // genuine near-simultaneous cross-window write (a few ms IPC round trip);
+    // a fully race-proof fix needs a Rust-side atomic read-modify-write across
+    // processes.
     useEffect(() => {
         if (!initialState) return;
         let timer: ReturnType<typeof setTimeout>;
@@ -2137,22 +1972,18 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                     freshFailureGroupState = onDisk.failureGroupState;
                 }
             } catch (e) {
-                // 🆕 2026-10-07 [data-loss fix — Failure Groups "gone again"]: the file
-                // is there but could not be read (`WorkspaceReadError`). This used to
-                // fall back to this window's mirror and write it over the file — and
-                // the mirror can be far behind disk (under `tauri dev` a hot-reload
-                // remount resets it to the snapshot taken when the workspace was
-                // opened, e.g. no Failure Groups at all for a project created in this
-                // session), so every group saved since was wiped. Write NOTHING now:
-                // keep the autosave pending so the next change (or leaving the
-                // Dashboard) tries again against a readable file.
+                // The file is there but could not be read (`WorkspaceReadError`).
+                // Write NOTHING: falling back to this window's mirror could wipe
+                // everything saved since (the mirror can be far behind disk, e.g.
+                // after a hot-reload remount under `tauri dev`). Keep the autosave
+                // pending so the next change (or leaving the Dashboard) tries again
+                // against a readable file.
                 console.warn('Autosave skipped: the workspace file could not be read, nothing was overwritten:', e);
                 autosaveDirtyRef.current = true;
                 return;
             }
             const built = buildWorkspaceState({ failureGroupState: freshFailureGroupState });
-            // Customer batch 2026-10 (item 6), user decision 2026-10-09: a
-            // special-sensor recipe change that reaches disk THROUGH this
+            // A special-sensor recipe change that reaches disk THROUGH this
             // autosave sends the models trained on it back to Incomplete (and
             // out of date) in the SAME write. Only the recipe rule, and only
             // when this write really changes the recipes (by content) -- the
@@ -2161,16 +1992,12 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
             const recipesChanged = !!onDisk && recipesDiffer(onDisk.specialSensorRecipes, built.specialSensorRecipes);
             const next = recipesChanged && onDisk ? applyRecipeRule(onDisk, built) : built;
             const payload = JSON.stringify(next);
-            // 2026-09-03: skip the write when the state is byte-identical
-            // to what is already on disk. Primarily this removes the
-            // second of the two writes every failure-group toggle used to
-            // cause — persistFailureGroupState writes immediately (so a
-            // Build Model window opened right after reads fresh data),
-            // then this autosave rewrote the exact same content 250ms
-            // later — but it also covers any other path that reschedules
-            // an autosave without actually changing anything.
-            // Review 2026-10-09: adopting / broadcasting happens ONLY when this
-            // run wrote. `saveWorkspaceData` never rejects (a failed write is only
+            // Skip the write when the state is byte-identical to what is
+            // already on disk: an FG write (`persistFailureGroupStateFrom`)
+            // already wrote immediately, and any other path that reschedules
+            // an autosave without actually changing anything costs nothing.
+            // Adopting / broadcasting happens ONLY when this run wrote.
+            // `saveWorkspaceData` never rejects (a failed write is only
             // logged), so a run that merely re-computes the same payload must do
             // nothing -- otherwise adopting re-arms this effect every 250 ms.
             if (payload === lastSavedPayloadRef.current) return;
@@ -2228,8 +2055,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     // changing for another one): write what the debounce had not written yet.
     // Runs on UNMOUNT only (empty deps), so a normal re-render never causes an
     // early write. Still re-reads `failureGroupState` from disk first (inside
-    // `runAutosave`) -- the 2026-09-18 rule holds -- and writes under this
-    // Dashboard's own workspace id.
+    // `runAutosave`) and writes under this Dashboard's own workspace id.
     useEffect(() => () => {
         if (!autosaveDirtyRef.current) return;
         autosaveDirtyRef.current = false;
@@ -2237,15 +2063,13 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         if (run) void run().catch(e => console.warn('Autosave flush on leaving the Dashboard failed:', e));
     }, []);
 
-    // 2026-09-01: flush a pending autosave before the window is actually
-    // allowed to close, instead of letting a change made in the last
-    // AUTOSAVE_DEBOUNCE_MS before quitting get silently lost — per
-    // `docs/BACKLOG.md` item 8. `preventDefault()` on its own only BLOCKS
-    // the close; it's still on us to call `.close()` ourselves once the
-    // flush is done, or the window would become impossible to close at all
-    // (a worse regression than the data loss this fixes). Only intercepts
-    // the close when there's actually something pending — an already-saved
-    // Dashboard closes exactly as before, no added delay.
+    // Flush a pending autosave before the window is actually allowed to
+    // close, so a change made in the last AUTOSAVE_DEBOUNCE_MS before quitting
+    // is not lost. `preventDefault()` on its own only BLOCKS the close; it's
+    // still on us to call `.close()` ourselves once the flush is done, or the
+    // window would become impossible to close at all. Only intercepts the
+    // close when there's actually something pending — an already-saved
+    // Dashboard closes with no added delay.
     useEffect(() => {
         let disposed = false;
         let unlisten: (() => void) | undefined;
@@ -2325,7 +2149,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         return rows;
     }, [scatterSample.rows, operationConfig]);
 
-    // The dashboard no longer holds the full dataset, so there is no
+    // The dashboard does not hold the full dataset, so there is no
     // full-data fallback: the scatter / pair charts render the bounded
     // sample (empty while the first fetch is in flight — the Loading badge
     // covers that window).
@@ -2412,9 +2236,6 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         // changes post-mount, so in practice only `datasetBounds` arriving
         // triggers the run that actually does anything.
     }, [datasetBounds, initialState, filters, handleFiltersChange, formatForInput]);
-
-    // Drag-and-drop swap was removed in favor of a fixed layout (see
-    // SLOT_LAYOUT at the top of this file). Resize via split.js remains.
 
     // ── Panel content renderers ──
     // Each returns the inner panel wrapper (.chart-section-large or
@@ -2517,20 +2338,13 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                     />
                 )}
             </div>
-            {/* Visual refresh Phase 5 (2026-10-02) — unified `.timebar` row,
-                structurally matching the approved prototype's own `.timebar`
-                (single flex row of pill-shaped sub-controls, no leading
-                "TIME RANGE" caps label, no second "Date: ..." line — the
-                `.timebar-datarange` text on the right already covers that).
-                Every input/handler below is identical to the pre-refresh
-                version; only the JSX shape and class names changed. See
-                docs/PROJECT_HANDOVER.md's matching entry. */}
+            {/* Unified `.timebar` row: a single flex row of pill-shaped
+                sub-controls; the `.timebar-datarange` text on the right states
+                the loaded data's own range. */}
             <div className="timebar">
-                {/* 2026-10-09 (real-app feedback): each side gets its OWN
-                    calendar button that opens THAT input's native picker --
-                    the old single leading icon was decorative (clicking it did
-                    nothing) and the end date had none. Clicking the date text
-                    itself is plain native editing again (type the digits). */}
+                {/* Each side has its OWN calendar button that opens THAT input's
+                    native picker. Clicking the date text itself is plain native
+                    editing (type the digits). */}
                 <div className="timebar-range">
                     <input
                         ref={timeRangeStartRef}
@@ -2646,9 +2460,8 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                     <option value="last">Last</option>
                 </select>
 
-                {/* Sits right after Aggregation (Phase 5 prototype order) —
-                    it never touches Aggregation itself, only clears
-                    timestampStart/End back to the full data range. */}
+                {/* Sits right after Aggregation — it never touches Aggregation
+                    itself, only clears timestampStart/End back to the full data range. */}
                 {dataRange && filters.timestampStart && (
                     <button
                         className="timebar-reset"
@@ -2677,8 +2490,8 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                 {/* Always visible once the dataset's real bounds are known
                     (not gated on a filter being applied, unlike Reset period
                     above) — tells the user up front what time period the
-                    loaded data actually covers, since the chart no longer
-                    defaults to showing all of it. */}
+                    loaded data actually covers, since the chart does not
+                    default to showing all of it. */}
                 {dataRange && (
                     <span
                         className="timebar-datarange"
@@ -2692,10 +2505,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     );
 
     // Which tab the panel shows — Filter, Highlights, or the "Selected
-    // Sensor" list (per-sensor show/hide + remove controls; replaces the old
-    // in-chart ECharts legend). The "Data Insight" tab (raw/aggregated table)
-    // was removed 2026-08-16 — unused in practice; its leftover hook/component
-    // and the `get_table_page` Rust command were deleted 2026-09-20.
+    // Sensor" list (per-sensor show/hide + remove controls).
     const [activeDataTab, setActiveDataTab] = useState<'selected' | 'filter' | 'highlights'>('selected');
 
     const renderDataContent = () => (
@@ -2723,11 +2533,6 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                     ))}
                 </div>
                 <div className="section-header-actions">
-                    {/* 2026-09-01: the "N Rows" sanity-check badge that used to sit
-                        here was removed per explicit user request — it always showed
-                        the exact same figure as the chart's own "X / Y pts
-                        (downsampled)" badge above (both read `view.total_rows`), so
-                        it was pure redundancy, not a second, independent number. */}
                     {activeDataTab === 'selected' && selectedSensors.length > 0 && (
                         <button
                             className="export-btn-header"
@@ -2837,9 +2642,8 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                                                 title={visible ? 'Hide from chart' : 'Show on chart'}
                                             />
                                         )}
-                                        {/* Customer item 4: the swatch IS the colour button. Customer item 3
-                                            (review ruling d): the row text stays neutral — the series colour
-                                            lives only on the swatch and on tooltip / tag-box values. */}
+                                        {/* The swatch IS the colour button. The row text stays neutral — the
+                                            series colour lives only on the swatch and on tooltip / tag-box values. */}
                                         {isLine && (
                                             <ColourPicker
                                                 color={currentColor}
@@ -2885,8 +2689,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                                             anchorRect={axisEditorAnchor}
                                             onRequestClose={closeAxisEditor}
                                             // Wide enough for the whole row on ONE line (label, two fields,
-                                            // Apply — plus Unpin once pinned). At the old 230 px the row needed
-                                            // more than the popover had: "Y-axis:" wrapped and Apply was clipped.
+                                            // Apply — plus Unpin once pinned).
                                             width={isPinned ? 310 : 270}
                                             style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}
                                         >
@@ -3045,12 +2848,11 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                                 title: 'Add Special Sensor',
                                 width: 1000,
                                 height: 800,
-                                // The new fixed 320px | minmax(0,1fr) body grid
-                                // (replacing Split.js's `minSize: [300, 150]`) has
-                                // no floor of its own on the right (Tooling) track
-                                // — nothing stops the window shrinking it to 0. A
-                                // window minWidth is the guard: 320px left track +
-                                // 150px floor for the right one (QA sweep, 2026-10-02).
+                                // The Add Sensor window's fixed 320px | minmax(0,1fr)
+                                // body grid has no floor of its own on the right
+                                // (Tooling) track — nothing stops the window shrinking
+                                // it to 0. A window minWidth is the guard: 320px left
+                                // track + 150px floor for the right one.
                                 minWidth: 470,
                                 minHeight: 400,
                                 center: true,
@@ -3134,13 +2936,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                 </div>
 
                 <div className="right-column" ref={rightColumnRef}>
-                    {/* Right column's one slot (RT) per SLOT_LAYOUT lives in this
-                        wrapper. The "Create Failure Group" / "Failure Groups"
-                        jump-button that used to live below this (spawning the
-                        standalone FailureGroupCreation.tsx window, later just
-                        switching tabs) was removed entirely — the Failure
-                        Groups tab above is directly clickable, so a redundant
-                        jump-button added nothing. */}
+                    {/* Right column's one slot (RT) per SLOT_LAYOUT lives in this wrapper. */}
                     <div className="right-column-splits">
                         {RIGHT_SLOTS.map(slot => renderSlot(slot))}
                     </div>
