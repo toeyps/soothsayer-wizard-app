@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, fireEvent, cleanup } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, within } from '@testing-library/react';
 import TestPeriodsEditor, { nextDefaultTestPeriod, toInputValue } from '../components/windows/TestPeriodsEditor';
 import type { TestPeriod, TimePeriod } from '../types';
 import type { PeriodCounts } from '../types/periodCounts';
@@ -94,7 +94,9 @@ describe('TestPeriodsEditor (scoring periods)', () => {
         expect(screen.getByTestId('test-days-1').textContent).toBe('14 d');
         // The removed controls: label buttons, event time, From Highlights.
         expect(row.querySelectorAll('input')).toHaveLength(2);
-        expect(row.querySelectorAll('button')).toHaveLength(1);
+        // one calendar button per date field, and Remove — nothing else
+        expect(within(row).getAllByLabelText('Open date picker')).toHaveLength(2);
+        expect(row.querySelectorAll('button')).toHaveLength(3);
         expect(row.hasAttribute('data-label')).toBe(false);
         expect(screen.queryByText('Normal')).toBeNull();
         expect(screen.queryByText('Known problem')).toBeNull();
@@ -104,11 +106,36 @@ describe('TestPeriodsEditor (scoring periods)', () => {
         expect(onChange).toHaveBeenLastCalledWith([]);
     });
 
-    it('the only button under the list is "Add scoring period" (no From Highlights button or menu)', () => {
+    // Real-app bug: the scoring date fields had no calendar button (the shared field style hides
+    // the browser's own icon), so a scoring date could only be typed — unlike a train date.
+    it('each date field has a calendar button that opens the picker of ITS field', () => {
+        setup({ tests: [t('a', '2026-02-01T00:00', '2026-02-15T00:00')] });
+        const start = screen.getByLabelText('Scoring period 1 start') as HTMLInputElement;
+        const end = screen.getByLabelText('Scoring period 1 end') as HTMLInputElement;
+        start.showPicker = vi.fn();
+        end.showPicker = vi.fn();
+        const [calStart, calEnd] = screen.getAllByLabelText('Open date picker');
+        expect(calStart.className).toContain('f4-dtw-cal');
+        fireEvent.click(calEnd);
+        expect(end.showPicker).toHaveBeenCalledTimes(1);
+        expect(start.showPicker).not.toHaveBeenCalled();
+        fireEvent.click(calStart);
+        expect(start.showPicker).toHaveBeenCalledTimes(1);
+    });
+
+    it('the calendar button falls back to focusing the field when the picker cannot open', () => {
+        setup({ tests: [t('a', '2026-02-01T00:00', '2026-02-15T00:00')] });
+        const start = screen.getByLabelText('Scoring period 1 start') as HTMLInputElement;
+        start.showPicker = vi.fn(() => { throw new Error('not allowed'); });
+        fireEvent.click(screen.getAllByLabelText('Open date picker')[0]);
+        expect(document.activeElement).toBe(start);
+    });
+
+    it('the only button under the list is "Add scoring period" (no From Highlights button or menu); a row has its two calendar buttons and Remove', () => {
         setup({ tests: [t('a', '2026-02-01T00:00', '2026-02-15T00:00')] });
         const editor = screen.getByTestId('test-periods-editor');
         const buttons = Array.from(editor.querySelectorAll('button')).map(b => b.getAttribute('aria-label') ?? b.textContent);
-        expect(buttons).toEqual(['Remove scoring period 1', 'Add scoring period']);
+        expect(buttons).toEqual(['Open date picker', 'Open date picker', 'Remove scoring period 1', 'Add scoring period']);
     });
 
     // A COMPLETE date goes to the parent on change, so

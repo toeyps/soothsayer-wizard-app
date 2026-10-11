@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Plus, Trash2 } from 'lucide-react';
+import { Calendar, Plus, Trash2 } from 'lucide-react';
 import type { TestPeriod, TimePeriod } from '../../types';
 import { PERIOD_COUNTS_IDLE, noRunningRowsNote, scoringRowModels, type PeriodCountsState } from '../../utils/periodCounts';
 import { noScoringPeriodNote } from '../../utils/runningCondition';
@@ -233,6 +233,20 @@ export default function TestPeriodsEditor({ tests, train, onChange, bounds, bloc
                 onBlur={() => commit(settled(draft))}
                 onKeyDown={e => { if (e.key === 'Enter') commit(settled(draft)); }}
             />
+            {/* `.f4-dtw` hides the browser's own calendar icon, so the field needs this button
+                — the same one the train-period fields have. Without it a scoring date could
+                only be typed. */}
+            <button
+                type="button"
+                className="f4-dtw-cal"
+                aria-label="Open date picker"
+                onClick={e => {
+                    const input = e.currentTarget.parentElement?.querySelector('input');
+                    try { input?.showPicker(); } catch { input?.focus(); }
+                }}
+            >
+                <Calendar size={14} />
+            </button>
         </div>
     );
 
