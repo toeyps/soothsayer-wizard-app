@@ -11,9 +11,27 @@ import type {
  * count — so a test that mocks the `invoke` of the Build Model window only has
  * to route the command here. Small, hand-checkable numbers; the series are
  * 5 points long.
+ *
+ * Two series, as Rust sends them (the health score is computed on 1-hour
+ * averages):
+ *  - `series`  — RAW rows for the Model fit page: CSV timestamp text (`TS`),
+ *    `score` ALWAYS `null`.
+ *  - `hourly`  — one point per clock hour for the Health score page: hour-start
+ *    timestamps (`HOURLY_TS`, Rust's `2026-01-01T00:00:00` form), values that
+ *    are the hour's MEAN, and the scores (`makeSetPointAwarePreview`).
+ * The hourly values are deliberately NOT the raw values (the 5 raw points
+ * stand for a sample of sub-hourly rows), so a test can tell which of the two
+ * a chart or a read-out actually used.
  */
 
+/** CSV timestamp text of the 5 raw rows of `series`. */
 const TS = ['2026-01-01 00:00:00', '2026-01-01 01:00:00', '2026-01-01 02:00:00', '2026-01-01 03:00:00', '2026-01-01 04:00:00'];
+
+/** Hour starts of the 5 points of `hourly`, as Rust labels an hour. */
+export const HOURLY_TS = ['2026-01-01T00:00:00', '2026-01-01T01:00:00', '2026-01-01T02:00:00', '2026-01-01T03:00:00', '2026-01-01T04:00:00'];
+
+/** `HealthPreview.scoring_interval_secs`: the score is computed per clock hour. */
+export const SCORING_INTERVAL_SECS = 3600;
 
 export function makeClusterStat(id: number, over: Partial<ClusterStat> = {}): ClusterStat {
     return {
@@ -63,6 +81,18 @@ export function makeHealthPreview(req: HealthPreviewRequest | Record<string, any
                 score: null,
                 total_points: 5,
             },
+            hourly: {
+                kind: 'relationship',
+                rows: [0, 1, 2, 3, 4],
+                timestamps: HOURLY_TS,
+                // Hour means; residual = actual - predicted of the hour.
+                actual: [10.2, 11.2, 12.2, 11.2, 10.2],
+                predicted: [10.1, 10.9, 12.2, 11, 9.8],
+                residual: [0.1, 0.3, 0, 0.2, 0.4],
+                score: null,
+                total_points: 5,
+            },
+            scoring_interval_secs: SCORING_INTERVAL_SECS,
             score_summary: null,
             histogram: null,
             fit_scatter: {
@@ -104,6 +134,20 @@ export function makeHealthPreview(req: HealthPreviewRequest | Record<string, any
                 score: null,
                 total_points: 5,
             },
+            hourly: {
+                kind: 'clustering',
+                rows: [0, 1, 2, 3, 4],
+                timestamps: HOURLY_TS,
+                // Hour means of X / Y; the cluster every row of the hour shares (null = the
+                // hour's rows do not all share one cluster, so the hour has no score).
+                x: [10.5, 11.5, 20.5, 21.5, 12.5],
+                y: [20.5, 21.5, 40.5, 41.5, 22.5],
+                cluster: [1, 1, 2, 2, null],
+                sd_distance: [null, null, null, null, null],
+                score: null,
+                total_points: 5,
+            },
+            scoring_interval_secs: SCORING_INTERVAL_SECS,
             score_summary: null,
             histogram: null,
             fit_scatter: null,
@@ -134,6 +178,17 @@ export function makeHealthPreview(req: HealthPreviewRequest | Record<string, any
             score: null,
             total_points: 5,
         },
+        hourly: {
+            kind: 'individual',
+            rows: [0, 1, 2, 3, 4],
+            timestamps: HOURLY_TS,
+            // Hour means.
+            value: [5.1, 5.4, 4.6, 6.1, 3.2],
+            in_scope: [true, true, true, true, true],
+            score: null,
+            total_points: 5,
+        },
+        scoring_interval_secs: SCORING_INTERVAL_SECS,
         score_summary: null,
         histogram: {
             bin_edges: [0, 2, 4, 6, 8, 10],
@@ -170,8 +225,10 @@ const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFi
  * empty field -> a `required` issue naming it; Individual L/H that is not beyond
  * the 3SD boundary (2 / 8 in this fixture) -> `lower_inside_3sd` / `upper_inside_3sd`;
  * Clustering N <= 3 -> `outer_sd_not_above_3`; everything else valid, with a
- * 5-point score series (100, 90, 80, 60, 30) and a summary. A test that wants
- * something else passes `over`.
+ * 5-point HOURLY score series (100, 90, 80, 60, 30) on `hourly.score` and a
+ * summary that counts hours (`share_basis: 'hour_count'`; the minimum is located
+ * by its hour start). `series.score` stays `null` — the raw rows are never
+ * scored. A test that wants something else passes `over`.
  */
 export function makeSetPointAwarePreview(req: HealthPreviewRequest | Record<string, any> | undefined, over: Partial<HealthPreview> = {}): HealthPreview {
     const r = (req ?? {}) as HealthPreviewRequest;
@@ -202,13 +259,14 @@ export function makeSetPointAwarePreview(req: HealthPreviewRequest | Record<stri
         ...base,
         validation,
         valid,
-        series: { ...base.series, score } as HealthPreview['series'],
+        hourly: { ...base.hourly, score } as HealthPreview['hourly'],
         score_summary: valid
             ? {
+                // Hours: 5 scored of the 5 training hours.
                 scored: 5, unscored: 0, total_rows: 5,
-                min_score: { score: 30, row: 4, timestamp: TS[4] },
+                min_score: { score: 30, row: 4, timestamp: HOURLY_TS[4] },
                 pct_below_80: 40, share_80_100: 60, share_40_80: 20, share_0_40: 20,
-                share_basis: 'row_count',
+                share_basis: 'hour_count',
             }
             : null,
         ...over,

@@ -23,11 +23,15 @@ import { formatDataStamp, formatPeriodChip } from '../periodDisplay';
  * like the wire keys; the words the user reads say "scoring"):
  *
  *   TestResultsCard   Health score page ("Scoring results"): two neutral facts
- *                     per scoring period — % of running time below 80 and the
- *                     lowest score held for 1 h, with its date.
+ *                     per scoring period — % of its scored hours below 80 and
+ *                     its lowest hourly score, with that hour's start.
  *   TrainDaysNotice   amber "below the recommended train running time" note.
  *   TestsChangedBanner  "Scoring periods changed / removed — Mark complete again".
- *   SlowScoringNotice / TestScoringFailedNotice  loading hint / "could not be scored".
+ *   SlowScoringNotice / TestScoringFailedNotice  loading hint / "could not be calculated".
+ *
+ * UNITS: the health score is computed on 1-hour averages of the running rows, so
+ * `scored`, `pct_below_80`, `lowest` and `lowest_at` of a result are per HOUR;
+ * `rows` and `days` ("d running time") stay raw.
  *
  * The Model fit page shows NONE of the per-period numbers (user decision
  * 2026-10-11: its "Train and scoring periods" table — `TrainTestCard` — was
@@ -42,14 +46,13 @@ import { formatDataStamp, formatPeriodChip } from '../periodDisplay';
  * running-condition chips show, invalid periods included): `testNumbers` maps
  * each result's 1-based wire `index` back to it (`testPeriodsWirePlan`).
  *
- * When Rust could not score the periods (warning `test_scoring_failed`), every
- * one is unscored: the Scoring results card says so in amber (a failure to
- * compute, not a verdict) instead of showing tiles.
+ * When Rust could not calculate the score (warning `test_scoring_failed` — the
+ * Relation model's engine did not answer), every period is unscored: the Scoring
+ * results card says so in amber (a failure to compute, not a verdict) instead of
+ * showing tiles. The same warning can come with NO scoring period (the training
+ * hours need the engine too): the Health score page then shows
+ * `TestScoringFailedNotice` in the score card's place.
  */
-
-/** "Lowest" is the lowest score HELD for this long (running time) — Rust's
- *  `DROP_SUSTAIN_HOURS`. */
-export const DROP_SUSTAIN_HOURS = 1;
 
 /** "3 Feb 2026 14:05" (no seconds) — the ONE Workbench date format, read from the
  *  row's own wall clock (`formatDataStamp`: never shifted to another time zone). */
@@ -83,7 +86,7 @@ export function TrainDaysNotice({ days }: { days: number | null | undefined }) {
     );
 }
 
-/** Amber "The scoring periods could not be scored — try again" (warning
+/** Amber "The health score could not be calculated — try again" (warning
  *  `test_scoring_failed`), or without the retry for `test_scoring_outdated` /
  *  `test_scoring_too_large` (retrying cannot help). For reading only;
  *  `onRetry` asks for the preview again. */
@@ -102,8 +105,8 @@ export function TestScoringFailedNotice({ issue, onRetry, testNumbers }: { issue
     );
 }
 
-/** "Scoring these periods with the Relation model — this can take up to ~15 s"
- *  (shown while such a preview is loading; the container decides when). */
+/** "Calculating the health score with the Relation model — this can take up to
+ *  ~15 s" (shown while such a preview is loading; the container decides when). */
 export function SlowScoringNotice({ show }: { show: boolean | undefined }) {
     if (!show) return null;
     return (
@@ -139,7 +142,7 @@ export function TestResultsCard({ data, scoreReady, unavailable = false, custom 
     custom?: boolean;
     /** S-number of each wire entry (`testPeriodsWirePlan(...).numbers`). */
     testNumbers?: readonly number[] | null;
-    /** "Try again" when the scoring periods could not be scored. */
+    /** "Try again" when the health score could not be calculated. */
     onRetry?: () => void;
 }) {
     const v = data.test_validation;
@@ -167,7 +170,7 @@ export function TestResultsCard({ data, scoreReady, unavailable = false, custom 
                         {v.tests.map((t, i) => <ResultTile key={i} t={t} n={tNum(t, i, testNumbers)} />)}
                     </div>
                     <div className="vt-note">
-                        “Below 80” counts every scored row of the period; “lowest” is the lowest score held for {DROP_SUSTAIN_HOURS} hour of running time. Rows outside the train and scoring periods get no score.
+                        Scores use 1-hour averages of the running rows. “Below 80” counts the scored hours of the period; “lowest” is its lowest hourly score. Hours outside the train and scoring periods, or with no running row, get no score.
                     </div>
                 </>
             )}
@@ -193,11 +196,11 @@ function ResultTile({ t, n }: { t: TestPeriodResult; n: number }) {
     );
 
     if (t.rows === 0) return shell('No running rows', 'The running condition removes every row of this period.', true);
-    if (t.pct_below_80 === null) return shell('No scored rows', 'No row of this period got a score.', true);
+    if (t.pct_below_80 === null) return shell('No scored hours', 'No hour of this period got a score.', true);
     return shell(
-        <><b>{t.pct_below_80.toFixed(1)}%</b> of running time below 80</>,
-        t.lowest !== null
-            ? `Lowest ${Math.round(t.lowest)} (held ${DROP_SUSTAIN_HOURS} h)${t.lowest_at ? ` on ${stamp(t.lowest_at)}` : ''}.`
-            : `No ${DROP_SUSTAIN_HOURS} h stretch of scored running time in this period, so there is no lowest score to show.`,
+        <><b>{t.pct_below_80.toFixed(1)}%</b> of running hours below 80</>,
+        // Every scored hour is a 1-hour average, so a period with a scored hour always
+        // has a lowest one (there is no "held for 1 h" window any more).
+        t.lowest !== null ? `Lowest ${Math.round(t.lowest)} (1 h average)${t.lowest_at ? ` on ${stamp(t.lowest_at)}` : ''}.` : null,
     );
 }

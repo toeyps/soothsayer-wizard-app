@@ -184,9 +184,12 @@ describe('scoring-vs-train overlap (a quiet note, never a block)', () => {
         expect(trainOverlapDays([per('', '')], tp(), { min: '2026-01-21T00:00', max: '2027-01-01T00:00' })).toBe(11);
         expect(trainOverlapDays(train, tp({ end: '' }))).toBe(0);
     });
-    it('the note text names the period S<n>', () => {
-        expect(testIncludesTrainNote(0, 12)).toBe('S1 includes 12 d of train running time — results include rows the model was trained on');
+    it('the note text names the period S<n>; the days stay raw running time, the results are per HOUR', () => {
+        // Health score on 1-hour averages: a result is an hourly point, so the note says
+        // "hours the model was trained on" (it said "rows" while every row was scored).
+        expect(testIncludesTrainNote(0, 12)).toBe('S1 includes 12 d of train running time — results include hours the model was trained on');
         expect(testIncludesTrainNote(2, 15)).toMatch(/^S3 includes 15 d of train running time/);
+        expect(testIncludesTrainNote(0, 12)).not.toMatch(/rows/);
     });
 });
 
@@ -307,12 +310,25 @@ describe('"scoring periods changed" banners (SPEC rule 8)', () => {
     });
 });
 
-describe('scoring periods could not be scored (warning test_scoring_failed, review fix 2026-10-07)', () => {
-    it('the headlines and the slow-scoring line say "scoring periods", never "test periods"', () => {
-        expect(TEST_SCORING_FAILED_TEXT).toBe('The scoring periods could not be scored — try again');
-        expect(TEST_SCORING_OUTDATED_TEXT).toBe('The scoring periods could not be scored');
-        expect(SLOW_TEST_SCORING_TEXT).toBe('Scoring these periods with the Relation model — this can take up to ~15 s.');
-        for (const t of [TEST_SCORING_FAILED_TEXT, TEST_SCORING_OUTDATED_TEXT, SLOW_TEST_SCORING_TEXT]) expect(t).not.toMatch(/test period/i);
+describe('the health score could not be calculated (warning test_scoring_failed, review fix 2026-10-07)', () => {
+    it('the headlines say the HEALTH SCORE could not be calculated - the Relation model is predicted per hour, training hours included', () => {
+        // Since the score is computed on 1-hour averages a failed engine run hides the whole
+        // score of a Relation model, not only its scoring periods (and can happen with none).
+        expect(TEST_SCORING_FAILED_TEXT).toBe('The health score could not be calculated — try again');
+        expect(TEST_SCORING_OUTDATED_TEXT).toBe('The health score could not be calculated');
+        expect(TEST_SCORING_FAILED_TEXT).toBe(`${TEST_SCORING_OUTDATED_TEXT} — try again`);
+        for (const t of [TEST_SCORING_FAILED_TEXT, TEST_SCORING_OUTDATED_TEXT]) expect(t).not.toMatch(/scoring periods|could not be scored/i);
+        // The engine run covers the training hours too, so the hint no longer says "these periods".
+        expect(SLOW_TEST_SCORING_TEXT).toBe('Calculating the health score with the Relation model — this can take up to ~15 s.');
+        expect(SLOW_TEST_SCORING_TEXT).not.toMatch(/these periods/i);
+        for (const t of [TEST_SCORING_FAILED_TEXT, TEST_SCORING_OUTDATED_TEXT, SLOW_TEST_SCORING_TEXT]) expect(t).not.toMatch(/test period|LinearGAM/i);
+    });
+
+    it('the warning is found on a preview that has NO scoring period too (no test_validation to carry it)', () => {
+        const issue = { code: TEST_SCORING_FAILED_CODE, severity: 'warning' as const, field: 'test_periods', message: 'The health score could not be calculated…' };
+        const preview = { validation: [issue], test_validation: null };
+        expect(testScoringFailure(preview)).toBe(issue);
+        expect(isTestScoringRetryable(issue)).toBe(true);
     });
 
     it('finds the warning among the preview issues, null otherwise', () => {

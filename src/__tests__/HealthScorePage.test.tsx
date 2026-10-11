@@ -15,7 +15,7 @@ import { CHART } from '../components/windows/workbench/chartTheme';
 import type { HealthScorePageProps, SaveInfo } from '../components/windows/workbench/workbenchTypes';
 import type { HealthSetPoints } from '../types';
 import type { HealthIssue, HealthPreview } from '../types/health';
-import { makeHealthPreview, makeSetPointAwarePreview } from './helpers/healthPreviewFixture';
+import { HOURLY_TS, makeHealthPreview, makeSetPointAwarePreview } from './helpers/healthPreviewFixture';
 import { makeTestResult, makeValidation } from './helpers/validationFixture';
 
 const IND_VALID = { kind: 'individual', lower: 1, upper: 9, masterLower: 1, masterUpper: 9 } as const;
@@ -457,22 +457,81 @@ describe('Health score chart', () => {
         expect(screen.queryByTestId('chart-card-score')).toBeNull();
     });
 
-    it('is locked when the preview carries no score even though it says valid', () => {
+    it('is locked when the preview carries no HOURLY score even though it says valid', () => {
         const d = previewFor('individual', IND_VALID);
-        mount({ sp: IND_VALID, data: { ...d, series: { ...d.series, score: null } as any } });
+        mount({ sp: IND_VALID, data: { ...d, hourly: { ...d.hourly, score: null } as any } });
         expect(screen.getByTestId('score-locked')).toBeTruthy();
     });
 
-    it('draws the score chart once valid: 0-100 series from series.score, with a gap (null), never 0, for a row without a score', () => {
+    it('draws the score chart once valid: 0-100 series from hourly.score, with a gap (null), never 0, for an hour without a score', () => {
         const d = previewFor('individual', IND_VALID);
-        const series = { ...d.series, score: [100, null, 80, 55, 30] } as any;
-        mount({ sp: IND_VALID, data: { ...d, series } });
+        const hourly = { ...d.hourly, score: [100, null, 80, 55, 30] } as any;
+        mount({ sp: IND_VALID, data: { ...d, hourly } });
         expect(screen.queryByTestId('score-locked')).toBeNull();
         expect(screen.getByTestId('chart-card-score')).toBeTruthy();
         const opt = scoreChart().option;
         expect(opt.series[0].data.map((p: any) => p[1])).toEqual([100, null, 80, 55, 30]);
         expect(opt.yAxis.min).toBe(0);
         expect(opt.yAxis.max).toBe(100);
+    });
+
+    // The health score is computed on 1-hour averages (2026-10-11): the raw `series` belongs to the
+    // Model fit page and is never scored. The fixture's hourly values differ from the raw ones.
+    describe('the page draws `hourly` (1-hour averages), never the raw `series`', () => {
+        const ms = (list: string[]) => list.map(t => new Date(t).getTime());
+        const xs = (c: any): number[] => c.option.series[0].data.map((p: any) => p[0]);
+        const ys = (c: any): (number | null)[] => c.option.series[0].data.map((p: any) => p[1]);
+
+        it('Individual: the set-point chart plots the hour means at the hour starts; the score chart shares that index set', () => {
+            const d = previewFor('individual', IND_VALID);
+            mount({ sp: IND_VALID, data: d });
+            expect(ys(setChart())).toEqual([5.1, 5.4, 4.6, 6.1, 3.2]);
+            expect(ys(setChart())).not.toEqual((d.series as any).value);
+            expect(xs(setChart())).toEqual(ms(HOURLY_TS));
+            expect(xs(scoreChart())).toEqual(xs(setChart()));
+            expect(ys(scoreChart())).toEqual([100, 90, 80, 60, 30]);
+        });
+
+        it('a score on the RAW series alone (an answer from before the change) unlocks nothing: only hourly.score counts', () => {
+            const d = previewFor('individual', IND_VALID);
+            mount({ sp: IND_VALID, data: { ...d, series: { ...d.series, score: [1, 2, 3, 4, 5] } as any, hourly: { ...d.hourly, score: null } as any } });
+            expect(screen.getByTestId('score-locked')).toBeTruthy();
+            expect(scoreChart()).toBeUndefined();
+        });
+
+        it('the raw series can be any length: the charts follow hourly only (12 five-minute rows = 1 hourly point)', () => {
+            const d = previewFor('individual', IND_VALID);
+            const raw = {
+                ...d.series,
+                rows: Array.from({ length: 12 }, (_, i) => i),
+                timestamps: Array.from({ length: 12 }, (_, i) => `2026-01-01 00:${String(i * 5).padStart(2, '0')}:00`),
+                value: Array.from({ length: 12 }, (_, i) => 4 + i * 0.1),
+                in_scope: Array.from({ length: 12 }, () => true),
+                total_points: 12,
+            } as any;
+            const hourly = { ...d.hourly, rows: [0], timestamps: ['2026-01-01T00:00:00'], value: [4.55], in_scope: [true], score: [100], total_points: 1 } as any;
+            mount({ sp: IND_VALID, data: { ...d, series: raw, hourly } });
+            expect(ys(setChart())).toEqual([4.55]);
+            expect(ys(scoreChart())).toEqual([100]);
+            act(() => { scoreChart().onEvents.updateAxisPointer({ axesInfo: [{ axisDim: 'x', value: new Date('2026-01-01T00:35:00').getTime() }] }); });
+            expect(screen.getByTestId('hs-readout').textContent).toBe('1 Jan 2026 00:00 · 1 h avg 4.55 bar · score 100');
+        });
+
+        it('Relationship: the residual line is the hourly residual', () => {
+            const d = previewFor('relationship', REL_VALID);
+            mount({ kind: 'relationship', sp: REL_VALID, data: d });
+            expect(ys(setChart())).toEqual([0.1, 0.3, 0, 0.2, 0.4]);
+            expect(ys(setChart())).not.toEqual((d.series as any).residual);
+            expect(xs(setChart())).toEqual(ms(HOURLY_TS));
+        });
+
+        it('Clustering: the points are the hour means (x, y), coloured by the hourly score', () => {
+            const sp = { kind: 'clustering', outerSd: 5 } as const;
+            mount({ kind: 'clustering', sp });
+            expect(setChart().option.series[0].data).toEqual([
+                [10.5, 20.5, 100, 1], [11.5, 21.5, 90, 1], [20.5, 40.5, 80, 2], [21.5, 41.5, 60, 2], [12.5, 22.5, 30, null],
+            ]);
+        });
     });
 
     it('has NO legend row and no "hover to read" sentence: the share column and the read-out say it', () => {
@@ -503,12 +562,12 @@ describe('Health score chart', () => {
 
     // The rule was on the share column only — the same card's subtitle
     // printed `toFixed(1)`: "below 80 for 0.0%" next to a "< 0.1%" share.
-    it('the subtitle follows the same rule: "below 80 for < 0.1% of scored rows", never "0.0%" for a share that is not zero', () => {
+    it('the subtitle follows the same rule: "below 80 for < 0.1% of scored hours", never "0.0%" for a share that is not zero', () => {
         const d = previewFor('individual', IND_VALID);
         const withPct = (pct: number | null) => ({ ...d, score_summary: { ...d.score_summary!, share_80_100: 99.96, share_40_80: 0.04, share_0_40: 0, pct_below_80: pct } });
         mount({ sp: IND_VALID, data: withPct(0.04) });
         expect(screen.getByTestId('score-below80').textContent).toBe('< 0.1%');
-        expect(screen.getByTestId('score-summary').textContent).toContain('below 80 for < 0.1% of scored rows');
+        expect(screen.getByTestId('score-summary').textContent).toContain('below 80 for < 0.1% of scored hours');
         expect(screen.getByTestId('score-summary').textContent).not.toContain('0.0%');
         // the subtitle and the share column of the same card agree
         expect(screen.getByTestId('share-share_40_80').textContent).toBe('40–80< 0.1%');
@@ -525,13 +584,17 @@ describe('Health score chart', () => {
         expect(shareText(100)).toBe('100.0%');
     });
 
-    it('header: the lowest score and when, % of scored rows below 80, and the three time-share numbers', () => {
+    it('header: the lowest hourly score and the start of that hour, % of scored HOURS below 80, the "1-hour averages" note, and the three share numbers', () => {
         mount({ sp: IND_VALID });
         const sum = screen.getByTestId('score-summary');
         expect(screen.getByTestId('score-lowest').textContent).toBe('30');
-        // ONE Workbench date format, in mono — never the raw CSV timestamp.
-        expect(sum.textContent).toMatch(/Lowest 30 on 1 Jan 2026 04:00 ·/);
-        expect(sum.textContent).not.toMatch(/2026-01-01/);
+        // The hour start (Rust: `2026-01-01T04:00:00`) in the ONE Workbench date format, in mono — never the raw text.
+        expect(sum.textContent).toBe('Lowest 30 on 1 Jan 2026 04:00 · below 80 for 40.0% of scored hours · 1-hour averages of the running rows');
+        expect(sum.textContent).not.toMatch(/2026-01-01|scored rows/);
+        // the note sits in the card's own subtitle line (no new card, badge or banner)
+        expect(screen.getByTestId('score-basis').textContent).toBe('· 1-hour averages of the running rows');
+        expect(screen.getByTestId('score-basis').closest('.wb2-card-s')).not.toBeNull();
+        expect(screen.getByTestId('score-shares').querySelector('.hs-shares-h')!.textContent).toBe('Share of scored hours');
         expect(screen.getByTestId('score-lowest-at').className).toContain('wbx-dt');
         expect(screen.getByTestId('score-below80').textContent).toBe('40.0%');
         expect(screen.getByTestId('share-share_80_100').textContent).toBe('80–10060.0%');
@@ -553,6 +616,12 @@ describe('Health score chart', () => {
         mount({ sp: IND_VALID, data: { ...d, score_summary: { ...d.score_summary!, share_40_80: null, pct_below_80: null } } });
         expect(screen.getByTestId('share-share_40_80').textContent).toBe('40–80—');
         expect(screen.getByTestId('score-summary').textContent).not.toMatch(/below 80 for/);
+    });
+
+    it('no hour got a score: "No scored hours" (never "rows"), the note stays', () => {
+        const d = previewFor('individual', IND_VALID);
+        mount({ sp: IND_VALID, data: { ...d, hourly: { ...d.hourly, score: [null, null, null, null, null] } as any, score_summary: { ...d.score_summary!, scored: 0, unscored: 5, min_score: null, pct_below_80: null, share_80_100: null, share_40_80: null, share_0_40: null } } });
+        expect(screen.getByTestId('score-summary').textContent).toBe('No scored hours · 1-hour averages of the running rows');
     });
 
     it('every chart card has the Expand button (set-point chart and score chart)', () => {
@@ -600,10 +669,13 @@ describe('set-point chart per kind', () => {
         expect(marks(setChart()).some(m => m?.startsWith('H'))).toBe(false);
     });
 
-    it('Individual: the subtitle is just the unit (no "type L and H on the right"), and the card has no legend row', () => {
+    it('Individual: the subtitle is the unit and "1 h average" (no "type L and H on the right"), and the card has no legend row', () => {
+        mount({ sp: IND_VALID, unit: '' });
+        expect(screen.getByTestId('chart-card-set-individual').querySelector('.wb2-card-s')!.textContent).toBe('1 h average'); // no unit: no stray "·"
+        cleanup();
         mount({ sp: IND_VALID });
         const card = screen.getByTestId('chart-card-set-individual');
-        expect(card.querySelector('.wb2-card-s')!.textContent).toBe('bar');
+        expect(card.querySelector('.wb2-card-s')!.textContent).toBe('bar · 1 h average');
         expect(card.textContent).not.toMatch(/type L and H|on the right/);
         expect(legendOf('set-individual')).toBeNull();
         // only the score-100 band is filled
@@ -629,7 +701,7 @@ describe('set-point chart per kind', () => {
         type('sp-residual_at_0_lower', '-9.61234');
         expect(marks(setChart()).slice(3)).toEqual(['80 · +5', '80 · −2.5', '0 · +12.25', '0 · −9.61234']);
         const card = screen.getByTestId('chart-card-set-relationship');
-        expect(card.querySelector('.wb2-card-s')!.textContent).toBe('actual − predicted (bar)');
+        expect(card.querySelector('.wb2-card-s')!.textContent).toBe('actual − predicted (bar) · 1 h average');
         expect(card.textContent).not.toMatch(/type the 80|on the right/);
         expect(legendOf('set-relationship')).toBeNull();
     });
@@ -642,10 +714,10 @@ describe('set-point chart per kind', () => {
 
     it('Clustering: the subtitle names both sensors and says what the point colours mean right now', () => {
         mount({ kind: 'clustering', sp: { kind: 'clustering', outerSd: 5 } });
-        expect(screen.getByTestId('chart-card-set-clustering').querySelector('.wb2-card-s')!.textContent).toBe('TAG1 vs TAG2 · points coloured by score');
+        expect(screen.getByTestId('chart-card-set-clustering').querySelector('.wb2-card-s')!.textContent).toBe('TAG1 vs TAG2 · 1 h averages · coloured by score');
         cleanup();
-        mount({ kind: 'clustering', sp: { kind: 'clustering', outerSd: null } }); // not scored yet: the points show their cluster
-        expect(screen.getByTestId('chart-card-set-clustering').querySelector('.wb2-card-s')!.textContent).toBe('TAG1 vs TAG2 · coloured by score once N is set');
+        mount({ kind: 'clustering', sp: { kind: 'clustering', outerSd: null } }); // not scored yet: the points (still hour means) show their cluster
+        expect(screen.getByTestId('chart-card-set-clustering').querySelector('.wb2-card-s')!.textContent).toBe('TAG1 vs TAG2 · 1 h averages · coloured by score once N is set');
     });
 
     it('Clustering: axis titles are description + unit (from the Tag names); the tags stay in the subtitle', () => {
@@ -657,7 +729,7 @@ describe('set-point chart per kind', () => {
         expect(setChart().option.xAxis.name).toBe('GENERATOR ACTIVE POWER · MW');
         expect(setChart().option.yAxis.name).toBe('BEARING DE TEMPERATURE · °C');
         expect(screen.getByTestId('chart-card-set-clustering').querySelector('.wb2-card-s')!.textContent)
-            .toBe('GENERATOR ACTIVE POWERTAG1 vs BEARING DE TEMPERATURETAG2 · points coloured by score');
+            .toBe('GENERATOR ACTIVE POWERTAG1 vs BEARING DE TEMPERATURETAG2 · 1 h averages · coloured by score');
         cleanup();
         // without Tag names the axis falls back to the tag
         mount({ kind: 'clustering', sp: { kind: 'clustering', outerSd: 5 } });
@@ -666,7 +738,8 @@ describe('set-point chart per kind', () => {
     });
 });
 
-describe('hover sync (the pointer on either chart reads the same row on both)', () => {
+describe('hover sync (the pointer on either chart reads the same HOUR on both)', () => {
+    // The pointer's time on the axis; the points it lands on are the hourly ones (`HOURLY_TS`).
     const TS = '2026-01-01 03:00:00';
     const axisEvent = (t: string) => ({ axesInfo: [{ axisDim: 'x', value: new Date(t).getTime() }] });
 
@@ -696,46 +769,56 @@ describe('hover sync (the pointer on either chart reads the same row on both)', 
         expect(onPage.group).toBeTruthy();
     });
 
-    it('hovering the score chart prints time, raw value and score; leaving clears it', () => {
+    it('hovering the score chart prints the hour start, the 1 h average and the score; leaving clears it', () => {
         mount({ sp: IND_VALID });
         expect(screen.getByTestId('hs-readout').textContent).toBe('');
         act(() => { scoreChart().onEvents.updateAxisPointer(axisEvent(TS)); });
-        expect(screen.getByTestId('hs-readout').textContent).toBe('1 Jan 2026 03:00 · value 6.2 bar · score 60');
+        // 6.1 = the hour mean (the raw row of the same index is 6.2): the read-out reads `hourly`.
+        expect(screen.getByTestId('hs-readout').textContent).toBe('1 Jan 2026 03:00 · 1 h avg 6.1 bar · score 60');
         act(() => { scoreChart().onEvents.globalout(); });
         expect(screen.getByTestId('hs-readout').textContent).toBe('');
+    });
+
+    it('the read-out names the START of the hour the pointer is nearest to, wherever inside the hour the pointer is', () => {
+        mount({ sp: IND_VALID });
+        act(() => { scoreChart().onEvents.updateAxisPointer(axisEvent('2026-01-01 03:20:10')); });
+        expect(screen.getByTestId('hs-readout').textContent).toBe('1 Jan 2026 03:00 · 1 h avg 6.1 bar · score 60');
+        act(() => { scoreChart().onEvents.updateAxisPointer(axisEvent('2026-01-01 03:40:00')); }); // nearer to 04:00
+        expect(screen.getByTestId('hs-readout').textContent).toBe('1 Jan 2026 04:00 · 1 h avg 3.2 bar · score 30');
     });
 
     it('hovering the SET-POINT chart drives the same read-out', () => {
         mount({ sp: IND_VALID });
         act(() => { setChart().onEvents.updateAxisPointer(axisEvent('2026-01-01 04:00:00')); });
-        expect(screen.getByTestId('hs-readout').textContent).toBe('1 Jan 2026 04:00 · value 3.1 bar · score 30');
+        expect(screen.getByTestId('hs-readout').textContent).toBe('1 Jan 2026 04:00 · 1 h avg 3.2 bar · score 30');
     });
 
-    it('Relationship reads "residual"', () => {
+    it('Relationship reads "residual" (the hourly residual), not "1 h avg"', () => {
         mount({ kind: 'relationship', sp: { ...REL_VALID } });
-        act(() => { scoreChart().onEvents.updateAxisPointer(axisEvent('2026-01-01 02:00:00')); });
-        expect(screen.getByTestId('hs-readout').textContent).toMatch(/residual -0\.2 bar · score 80/);
+        act(() => { scoreChart().onEvents.updateAxisPointer(axisEvent('2026-01-01 01:00:00')); });
+        expect(screen.getByTestId('hs-readout').textContent).toBe('1 Jan 2026 01:00 · residual 0.3 bar · score 90');
     });
 
-    it('Clustering: hovering a point of the scatter highlights that row and fills the read-out; hovering the score chart highlights it on the scatter', () => {
+    it('Clustering: hovering a point of the scatter highlights that hour and fills the read-out; hovering the score chart highlights it on the scatter', () => {
         mount({ kind: 'clustering', sp: { kind: 'clustering', outerSd: 5 } });
         expect(setChart().option.series.some((s: any) => s.name === 'Hover')).toBe(false);
         act(() => { setChart().onEvents.mouseover({ seriesName: 'Points', dataIndex: 3 }); });
         expect(screen.getByTestId('hs-readout').textContent).toBe('1 Jan 2026 03:00 · score 60');
-        expect(setChart().option.series.find((s: any) => s.name === 'Hover').data).toEqual([[21, 41]]);
-        act(() => { setChart().onEvents.mouseover({ seriesName: 'Centres', dataIndex: 0 }); }); // a ring / centre is not a row
+        // the hour's mean point (21.5, 41.5) — the raw row of that index is (21, 41)
+        expect(setChart().option.series.find((s: any) => s.name === 'Hover').data).toEqual([[21.5, 41.5]]);
+        act(() => { setChart().onEvents.mouseover({ seriesName: 'Centres', dataIndex: 0 }); }); // a ring / centre is not a point
         expect(screen.getByTestId('hs-readout').textContent).toBe('1 Jan 2026 03:00 · score 60');
         act(() => { scoreChart().onEvents.updateAxisPointer(axisEvent('2026-01-01 01:00:00')); });
-        expect(setChart().option.series.find((s: any) => s.name === 'Hover').data).toEqual([[11, 21]]);
+        expect(setChart().option.series.find((s: any) => s.name === 'Hover').data).toEqual([[11.5, 21.5]]);
         act(() => { setChart().onEvents.globalout(); });
         expect(setChart().option.series.some((s: any) => s.name === 'Hover')).toBe(false);
     });
 
-    it('a row without a score reads "not running"', () => {
+    it('an hour without a score reads "no score" (it did run — it is a point)', () => {
         const d = previewFor('individual', IND_VALID);
-        mount({ sp: IND_VALID, data: { ...d, series: { ...d.series, score: [100, null, 80, 55, 30] } as any } });
+        mount({ sp: IND_VALID, data: { ...d, hourly: { ...d.hourly, score: [100, null, 80, 55, 30] } as any } });
         act(() => { scoreChart().onEvents.updateAxisPointer(axisEvent('2026-01-01 01:00:00')); });
-        expect(screen.getByTestId('hs-readout').textContent).toBe('1 Jan 2026 01:00 · not running');
+        expect(screen.getByTestId('hs-readout').textContent).toBe('1 Jan 2026 01:00 · no score');
     });
 });
 
@@ -999,7 +1082,7 @@ describe('saved files: progress, result and "changed after saving"', () => {
 describe('the page never decides a value is wrong by itself', () => {
     it('a valid-looking pair that Rust rejects is shown as Rust says (no TS re-validation)', () => {
         const d = previewFor('individual', IND_VALID);
-        const rejected: HealthPreview = { ...d, valid: false, series: { ...d.series, score: null } as any, score_summary: null, validation: [{ code: 'ordering', field: 'lower', severity: 'error', message: 'Rust says no' }] };
+        const rejected: HealthPreview = { ...d, valid: false, hourly: { ...d.hourly, score: null } as any, score_summary: null, validation: [{ code: 'ordering', field: 'lower', severity: 'error', message: 'Rust says no' }] };
         mount({ sp: IND_VALID, data: rejected });
         expect(screen.getByTestId('check-line').textContent).toBe('Rust says no');
         expect(screen.getByTestId('score-locked')).toBeTruthy();
@@ -1180,7 +1263,8 @@ describe('warning issues are shown as non-blocking notes (coordinator 2026-10-04
 describe('Scoring periods on the Health score page ("just score it", 2026-10-10)', () => {
     const withTests = (kind: 'individual' | 'relationship', sp: HealthSetPoints): HealthPreview => ({
         ...previewFor(kind, sp),
-        test_validation: makeValidation({ tests: [makeTestResult({ pct_below_80: 7, lowest: 62, lowest_at: '2026-01-01 02:30:00' }), makeTestResult({ index: 2, start: '2026-01-01T03:00', end: '2026-01-01T04:00', pct_below_80: 41.5, lowest: 12, lowest_at: '2026-01-01 02:40:00' })] }),
+        // `lowest_at` = the START of the hour with the lowest hourly score, as Rust labels an hour.
+        test_validation: makeValidation({ tests: [makeTestResult({ pct_below_80: 7, lowest: 62, lowest_at: '2026-01-01T02:00:00' }), makeTestResult({ index: 2, start: '2026-01-01T03:00', end: '2026-01-01T04:00', pct_below_80: 41.5, lowest: 12, lowest_at: '2026-01-01T03:00:00' })] }),
     });
 
     it('the set-point chart and the score chart both draw the train / scoring scopes — bands only, no EVENT line, no hatch', () => {
@@ -1246,10 +1330,11 @@ describe('Scoring periods on the Health score page ("just score it", 2026-10-10)
         const card = screen.getByTestId('test-results');
         expect(card.querySelector('.wb2-card-h b')!.textContent).toBe('Scoring results');
         expect(card.textContent).toContain('for reading only — never blocks Mark complete');
-        expect(within(card).getByTestId('test-result-1-big').textContent).toBe('7.0% of running time below 80');
-        expect(within(card).getByTestId('test-result-1-lowest').textContent).toBe('Lowest 62 (held 1 h) on 1 Jan 2026 02:30.');
-        expect(within(card).getByTestId('test-result-2-big').textContent).toBe('41.5% of running time below 80');
-        expect(within(card).getByTestId('test-result-2-lowest').textContent).toBe('Lowest 12 (held 1 h) on 1 Jan 2026 02:40.');
+        expect(within(card).getByTestId('test-result-1-big').textContent).toBe('7.0% of running hours below 80');
+        expect(within(card).getByTestId('test-result-1-lowest').textContent).toBe('Lowest 62 (1 h average) on 1 Jan 2026 02:00.');
+        expect(within(card).getByTestId('test-result-2-big').textContent).toBe('41.5% of running hours below 80');
+        expect(within(card).getByTestId('test-result-2-lowest').textContent).toBe('Lowest 12 (1 h average) on 1 Jan 2026 03:00.');
+        expect(card.querySelector('.vt-note')!.textContent).toMatch(/^Scores use 1-hour averages of the running rows\./);
         for (const n of [1, 2]) {
             const tile = within(card).getByTestId(`test-result-${n}`);
             expect(tile.className).toBe('vt-tile');
@@ -1284,7 +1369,7 @@ describe('Scoring periods on the Health score page ("just score it", 2026-10-10)
         expect(stripOf(setChart())).toEqual(['TRAIN', 'S2']);
     });
 
-    it('test_scoring_failed -> amber notice with "Try again" (the preview Retry) instead of tiles; the score chart still draws', () => {
+    it('test_scoring_failed WITH scoring periods -> the Scoring results card carries the amber notice with "Try again" (the preview Retry) instead of tiles; the score card is not replaced', () => {
         const onRetryPreview = vi.fn();
         const data: HealthPreview = {
             ...previewFor('relationship', REL_VALID),
@@ -1292,11 +1377,101 @@ describe('Scoring periods on the Health score page ("just score it", 2026-10-10)
             test_validation: makeValidation({ tests: [makeTestResult({ scored: 0, pct_below_80: null, lowest: null })] }),
         };
         mount({ kind: 'relationship', sp: REL_VALID, data, onRetryPreview });
-        expect(screen.getByTestId('test-scoring-failed').textContent).toContain('The scoring periods could not be scored — try again');
+        expect(screen.getByTestId('test-scoring-failed').textContent).toContain('The health score could not be calculated — try again');
+        expect(screen.getAllByTestId('test-scoring-failed')).toHaveLength(1); // said once
+        expect(screen.getByTestId('test-scoring-failed').closest('[data-testid="test-results"]')).not.toBeNull();
+        expect(screen.queryByTestId('score-failed')).toBeNull();
         expect(screen.queryByTestId('test-result-1')).toBeNull();
         expect(scoreChart()).toBeTruthy();
         fireEvent.click(screen.getByTestId('test-scoring-retry'));
         expect(onRetryPreview).toHaveBeenCalledTimes(1);
+    });
+
+    // The Relation model's TRAINING hours need the engine too, so the warning can come with no
+    // scoring period at all — and then there is no Scoring results card to say it.
+    describe('"The health score could not be calculated" with NO scoring period: the notice takes the score card\'s place', () => {
+        const failedIssue = { code: 'test_scoring_failed', severity: 'warning' as const, field: 'test_periods', message: 'The Relation model engine did not answer.' };
+        /** What Rust sends then: set points valid, every hourly score null, nothing scored. */
+        const noScore = (over: Partial<HealthPreview> = {}): HealthPreview => {
+            const d = previewFor('relationship', REL_VALID);
+            return {
+                ...d,
+                hourly: { ...d.hourly, score: [null, null, null, null, null] } as any,
+                score_summary: { ...d.score_summary!, scored: 0, unscored: 5, min_score: null, pct_below_80: null, share_80_100: null, share_40_80: null, share_0_40: null },
+                validation: [failedIssue],
+                ...over,
+            };
+        };
+
+        it('no test_validation: the notice (with its Try again) is in the "Health score" card — no empty score chart, no "Set the points above", no Scoring results card', () => {
+            const onRetryPreview = vi.fn();
+            mount({ kind: 'relationship', sp: REL_VALID, data: noScore(), onRetryPreview });
+            const card = screen.getByTestId('score-failed');
+            expect(card.className).toBe('hs-card hs-full'); // the score card's own shell: not a new banner
+            expect(card.querySelector('.wb2-card-h b')!.textContent).toBe('Health score');
+            const notice = within(card).getByTestId('test-scoring-failed');
+            expect(notice.querySelector('b')!.textContent).toBe('The health score could not be calculated — try again');
+            expect(notice.textContent).toContain('The Relation model engine did not answer.');
+            expect(screen.queryByTestId('test-results')).toBeNull();
+            expect(screen.queryByTestId('score-locked')).toBeNull();
+            expect(screen.queryByTestId('chart-card-score')).toBeNull();
+            expect(scoreChart()).toBeUndefined();
+            // the set points are valid: Checks says so and never lists this warning
+            expect(screen.getByTestId('check-valid')).toBeTruthy();
+            expect(screen.queryByTestId('check-line')).toBeNull();
+            fireEvent.click(within(card).getByTestId('test-scoring-retry'));
+            expect(onRetryPreview).toHaveBeenCalledTimes(1);
+        });
+
+        it('the retry is onRetryTestScoring when the window gives one', () => {
+            const onRetryPreview = vi.fn();
+            const onRetryTestScoring = vi.fn();
+            mount({ kind: 'relationship', sp: REL_VALID, data: noScore(), onRetryPreview, onRetryTestScoring });
+            fireEvent.click(screen.getByTestId('test-scoring-retry'));
+            expect(onRetryTestScoring).toHaveBeenCalledTimes(1);
+            expect(onRetryPreview).not.toHaveBeenCalled();
+        });
+
+        it('a Scoring results card with NO period in it ("No scoring period.") cannot carry it either: the notice is still shown, once', () => {
+            mount({ kind: 'relationship', sp: REL_VALID, data: noScore({ test_validation: makeValidation({ tests: [] }) }) });
+            expect(screen.getByTestId('test-results-empty')).toBeTruthy();
+            expect(screen.getAllByTestId('test-scoring-failed')).toHaveLength(1);
+            expect(screen.getByTestId('test-scoring-failed').closest('[data-testid="score-failed"]')).not.toBeNull();
+        });
+
+        it('test_scoring_outdated with no scoring period: the same place, the headline without "try again" and no button', () => {
+            const outdated = { code: 'test_scoring_outdated', severity: 'warning' as const, field: 'test_periods', message: 'The Relation model engine in this build is out of date - reinstall or update the app.' };
+            mount({ kind: 'relationship', sp: REL_VALID, data: noScore({ validation: [outdated] }), onRetryPreview: vi.fn() });
+            const notice = within(screen.getByTestId('score-failed')).getByTestId('test-scoring-failed');
+            expect(notice.querySelector('b')!.textContent).toBe('The health score could not be calculated');
+            expect(notice.textContent).toContain('out of date');
+            expect(screen.queryByTestId('test-scoring-retry')).toBeNull();
+        });
+
+        it('it shows even while the set points are still empty (the notice does not wait for them)', () => {
+            const d = previewFor('relationship', REL_EMPTY);
+            mount({ kind: 'relationship', sp: REL_EMPTY, data: { ...d, validation: [...d.validation, failedIssue] } });
+            expect(within(screen.getByTestId('score-failed')).getByTestId('test-scoring-failed')).toBeTruthy();
+            expect(screen.queryByTestId('score-locked')).toBeNull();
+        });
+
+        it('without the warning nothing changes: the score chart, or the locked card', () => {
+            mount({ kind: 'relationship', sp: REL_VALID });
+            expect(screen.queryByTestId('score-failed')).toBeNull();
+            expect(screen.queryByTestId('test-scoring-failed')).toBeNull();
+            expect(screen.getByTestId('chart-card-score')).toBeTruthy();
+            cleanup();
+            mount({ kind: 'relationship', sp: REL_EMPTY });
+            expect(screen.queryByTestId('score-failed')).toBeNull();
+            expect(screen.getByTestId('score-locked')).toBeTruthy();
+        });
+
+        it('while the request failed and an OLD answer is on screen, that answer\'s warning is not repeated: the card says "Score not available"', () => {
+            const failed = { data: null, lastData: noScore(), loading: false, error: 'boom', errorCode: null, notFitted: false, needsRetrain: false, idle: null as null, retry: vi.fn() };
+            mount({ kind: 'relationship', sp: REL_VALID, preview: failed });
+            expect(screen.queryByTestId('score-failed')).toBeNull();
+            expect(screen.getByTestId('score-locked').textContent).toMatch(/Score not available/);
+        });
     });
 
     it('"Try again" on test_scoring_failed calls onRetryTestScoring (which tells Rust to retry the remembered failed prediction) when given, not the plain preview retry', () => {
@@ -1313,9 +1488,9 @@ describe('Scoring periods on the Health score page ("just score it", 2026-10-10)
         expect(onRetryPreview).not.toHaveBeenCalled();
     });
 
-    it('the "Scoring these periods … ~15 s" hint shows when the container says so', () => {
+    it('the "Calculating the health score … ~15 s" hint shows when the container says so', () => {
         mount({ sp: IND_VALID, slowScoring: true });
-        expect(screen.getByTestId('slow-test-scoring').textContent).toBe('Scoring these periods with the Relation model — this can take up to ~15 s.');
+        expect(screen.getByTestId('slow-test-scoring').textContent).toBe('Calculating the health score with the Relation model — this can take up to ~15 s.');
         cleanup();
         mount({ sp: IND_VALID });
         expect(screen.queryByTestId('slow-test-scoring')).toBeNull();

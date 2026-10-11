@@ -5,9 +5,9 @@
 //! preview, export) are covered by the in-crate tests next to their code.
 
 use tauri_app_lib::health_score::{
-    assign_cluster, has_errors, select_indices, summarize, validate_clustering,
+    assign_cluster, has_errors, select_indices, summarize_hours, validate_clustering,
     validate_individual, validate_relationship, ClusterGeom, ClusteringParams, IndividualBand,
-    IndividualParams, RelationshipParams, SetPointsArg,
+    IndividualParams, RelationshipParams, SetPointsArg, SHARE_BASIS_HOURS,
 };
 
 fn approx(a: f64, b: f64) {
@@ -105,14 +105,18 @@ fn issue_and_summary_json_shapes() {
     }
     assert_eq!(j["severity"], "error");
 
-    let s = summarize(&[100.0, 50.0, 10.0, f64::NAN], 10, |i| (i, Some(format!("t{i}"))));
+    let s = summarize_hours(&[100.0, 50.0, 10.0, f64::NAN], 10, |i| (i, Some(format!("t{i}"))));
     let j = serde_json::to_value(&s).unwrap();
     for k in ["scored", "unscored", "total_rows", "min_score", "pct_below_80", "share_80_100", "share_40_80", "share_0_40", "share_basis"] {
         assert!(j.get(k).is_some(), "missing {k}");
     }
     assert_eq!(j["min_score"]["row"], 2);
     assert_eq!(j["min_score"]["timestamp"], "t2");
-    assert_eq!(j["share_basis"], "row_count");
+    // The health score is computed on 1-hour averages: a summary counts hours
+    // (the keys keep their names on the wire).
+    assert_eq!(j["share_basis"], "hour_count");
+    assert_eq!(j["share_basis"], SHARE_BASIS_HOURS);
+    assert_eq!((j["scored"].clone(), j["unscored"].clone(), j["total_rows"].clone()), (3.into(), 7.into(), 10.into()));
 }
 
 #[test]

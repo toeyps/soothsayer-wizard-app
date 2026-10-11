@@ -84,7 +84,9 @@ const OLD_CUSTOM_TESTS = [
 const CUSTOM_TRAIN = [{ id: 'ct', start: '2026-01-01T00:00', end: '2026-01-02T00:00' }];
 const SP_TAG1 = { kind: 'individual', lower: 20, upper: 80, masterLower: 20, masterUpper: 80 };
 const SP_TAG3 = { kind: 'individual', lower: 0, upper: 200, masterLower: null, masterUpper: 90 };
+/** An export record as an OLD build wrote it: no `scoringIntervalSecs` — its files were scored row by row. */
 const exportRecord = (setPoints: unknown) => ({ at: '2026-10-05T08:00:00.000Z', outputDir: env.backend!.outputDir(WS), setPoints });
+const EARLIER_SCORING_HINT = 'Saved results use the earlier row-by-row scoring — Mark complete again to update the files';
 
 /** Everything of the removed feature that must never be shown or sent. */
 const REMOVED_UI = /Known problem|Bearing failure|Seal leak|From Highlights?|event time|lead time|Test periods?|detected|false alarm/i;
@@ -111,9 +113,10 @@ function oldWorkspace() {
  * `health_validation.rs` returns (facts only). The request has
  * already passed the fake's own "start / end only" check by then.
  */
+// `lowest_at` = the START of the hour with the lowest hourly score, as Rust labels an hour.
 const FACTS = [
-    { pct_below_80: 0, lowest: 91, lowest_at: '2026-01-01 15:00:00' },
-    { pct_below_80: 12.5, lowest: 64, lowest_at: '2026-01-02 15:00:00' },
+    { pct_below_80: 0, lowest: 91, lowest_at: '2026-01-01T15:00:00' },
+    { pct_below_80: 12.5, lowest: 64, lowest_at: '2026-01-02T15:00:00' },
 ];
 function scoringFor(request: any) {
     const sent: { start: string | null; end: string | null }[] = request?.test_periods ?? [];
@@ -121,7 +124,7 @@ function scoringFor(request: any) {
     return makeValidation({
         train_ranges: [],
         tests: sent.map((p, i) => makeTestResult({
-            index: i + 1, start: p.start!, end: p.end!, rows: hours(p), scored: hours(p), days: hours(p) / 24,
+            index: i + 1, start: p.start!, end: p.end!, rows: hours(p), hours: hours(p), scored: hours(p), days: hours(p) / 24,
             within_3sd_pct: 99, mean_shift_sd: 0.1, ...FACTS[i % FACTS.length],
         })),
     });
@@ -201,20 +204,27 @@ describe('a workspace saved before "just score it" (scoring periods with label /
         await waitFor(() => expect(tile(2)).toBeTruthy());
         expect(within(bmw().getByTestId('test-results')).getByText('Scoring results')).toBeTruthy();
         expect(bmw().getByTestId('test-results').textContent).toContain('for reading only — never blocks Mark complete');
-        expect(bmw().getByTestId('test-result-1-big').textContent).toBe('0.0% of running time below 80');
-        expect(bmw().getByTestId('test-result-1-lowest').textContent).toBe('Lowest 91 (held 1 h) on 1 Jan 2026 15:00.');
+        expect(bmw().getByTestId('test-result-1-big').textContent).toBe('0.0% of running hours below 80');
+        expect(bmw().getByTestId('test-result-1-lowest').textContent).toBe('Lowest 91 (1 h average) on 1 Jan 2026 15:00.');
         // S2 was "Known problem" with an event time: it reads exactly like S1 - two facts, no verdict, no lead time.
-        expect(bmw().getByTestId('test-result-2-big').textContent).toBe('12.5% of running time below 80');
-        expect(bmw().getByTestId('test-result-2-lowest').textContent).toBe('Lowest 64 (held 1 h) on 2 Jan 2026 15:00.');
+        expect(bmw().getByTestId('test-result-2-big').textContent).toBe('12.5% of running hours below 80');
+        expect(bmw().getByTestId('test-result-2-lowest').textContent).toBe('Lowest 64 (1 h average) on 2 Jan 2026 15:00.');
         for (const n of [1, 2]) {
             expect(tile(n).className).toBe('vt-tile'); // no green / amber tone class
             expect(tile(n).textContent).not.toMatch(REMOVED_UI);
         }
         expect(bmw().queryByTestId('scored-pill')).toBeNull(); // the "Scored · N" pill is gone (footer sentence instead)
-        // Still Complete with current files: nothing to do here.
+        // Still Complete. Its files were saved before the health score moved to 1-hour averages (the
+        // export record has no scoring interval): the footer says so and offers "Mark complete again" —
+        // it is NOT demoted, and nothing is written until the user presses the button (checked below:
+        // the model on disk is byte-for-byte what the file held).
         expect(bmw().queryByTestId('tests-changed-banner')).toBeNull();
-        expect(bmw().queryByTestId('mark-complete-again')).toBeNull();
+        expect(pill()).toBe('Complete');
+        expect(bmw().getByTestId('earlier-scoring').textContent).toBe(EARLIER_SCORING_HINT);
+        expect(bmw().getByTestId('mark-complete-again').className).toBe('bmw-btn-ok');
+        expect(bmw().getByTestId('wb-footer').getAttribute('data-primary')).toBe('mark');
         expect(bmw().getByTestId('mark-incomplete')).toBeTruthy();
+        expect(env.backend!.cmds('export_model_files')).toHaveLength(0);
 
         // ── 3) What reached Rust: start / end only ──────────────────────────────
         const WIRE = [
@@ -234,6 +244,8 @@ describe('a workspace saved before "just score it" (scoring periods with label /
         await waitFor(() => expect(tile(1).textContent).toContain('2 Jan 2026 06:00 → 2 Jan 2026 20:00'));
         expect(bmw().queryByTestId('test-result-2')).toBeNull();
         expect(bmw().getByTestId('test-results').textContent).not.toMatch(REMOVED_UI);
+        // the Custom model was saved by the same old build: the same hint, still Complete
+        expect(bmw().getByTestId('earlier-scoring').textContent).toBe(EARLIER_SCORING_HINT);
 
         // Not one call of the session carried a legacy key or value, and none was refused.
         expect(JSON.stringify(env.backend!.calls.map(c => c.args))).not.toMatch(REMOVED_WIRE);
@@ -310,6 +322,9 @@ describe('a workspace saved before "just score it" (scoring periods with label /
         expect(done.lastTrainedAt).toBe(before.i1.lastTrainedAt); // Mark complete is not a re-train
         expect(done.healthExport.at).not.toBe(before.i1.healthExport.at);
         expect(done.healthExport.setPoints).toEqual(SP_TAG1);
+        // The new record says how the saved results were scored: 1-hour averages.
+        expect(before.i1.healthExport.scoringIntervalSecs).toBeUndefined();
+        expect(done.healthExport.scoringIntervalSecs).toBe(3600);
         // The export described the edited periods, start / end only, and the files exist.
         const exports = env.backend!.cmds('export_model_files').slice(exportsBefore);
         expect(exports).toHaveLength(1);
@@ -322,6 +337,9 @@ describe('a workspace saved before "just score it" (scoring periods with label /
         expect(pill()).toBe('Complete');
         expect(bmw().queryByTestId('tests-changed-notice')).toBeNull();
         expect(bmw().queryByTestId('tests-changed-banner')).toBeNull();
+        // ...and the "earlier scoring" hint is gone with its button: the files are current now.
+        expect(bmw().queryByTestId('earlier-scoring')).toBeNull();
+        expect(bmw().queryByTestId('mark-complete-again')).toBeNull();
         await waitFor(() => expect(dashDot(1, 'tag1', 'individual')).toBe('complete'));
         expect(diskModel('c3')).toEqual(before.c3);
         expect(JSON.stringify(env.backend!.calls.map(c => c.args))).not.toMatch(REMOVED_WIRE);
@@ -333,9 +351,16 @@ describe('a workspace saved before "just score it" (scoring periods with label /
         selectSensor('tag1');
         await settle(400);
         expect(pill()).toBe('Complete');
+        // after a restart too: the re-saved model has no hint; the one never re-saved still has it
+        if (!bmwEl().querySelector('[data-testid="set-points-card"]')) await openHealth();
+        await waitFor(() => expect(bmw().getByTestId('save-ok')).toBeTruthy());
+        expect(bmw().queryByTestId('earlier-scoring')).toBeNull();
         selectSensor('tag3', 2);
         await settle(400);
         expect(pill()).toBe('Complete');
+        if (!bmwEl().querySelector('[data-testid="set-points-card"]')) await openHealth();
+        await waitFor(() => expect(bmw().getByTestId('earlier-scoring').textContent).toBe(EARLIER_SCORING_HINT));
+        expect(diskModel('c3').healthExport.scoringIntervalSecs).toBeUndefined();
         expect(readDisk().failureGroupState.models.map((m: any) => [m.id, m.status])).toEqual([['i1', true], ['c3', true]]);
         expect(JSON.stringify(readDisk().failureGroupState.runningConditionTestPeriods)).not.toMatch(REMOVED_WIRE);
     });

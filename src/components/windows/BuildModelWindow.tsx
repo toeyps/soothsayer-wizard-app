@@ -20,10 +20,10 @@ import { countedNoTrainRows, countedTrainRunningDays, trainCountKey } from "../.
 import { computeTrainFingerprint, isModelTrainedFresh as trainedFreshFor } from "../../utils/trainFingerprint";
 import { buildPreviewFilterPayload } from "../../utils/trainingScope";
 import { applyIncompleteRule } from "../../utils/incompleteRule";
-import { isModelStale as isModelStaleFor, modelDotState, modelSetPointFlag, NOT_TRAINED_BLOCK_REASON, type ModelDotState, type SetPointFlag } from "../../utils/modelStatus";
+import { EARLIER_SCORING_HINT_TEXT, isModelStale as isModelStaleFor, modelDotState, modelSetPointFlag, NOT_TRAINED_BLOCK_REASON, savedResultsUseEarlierScoring, type ModelDotState, type SetPointFlag } from "../../utils/modelStatus";
 import { CLUSTERS_NEED_CRITERIA, HEALTH_DEFAULT_MAX_POINTS, relationshipLambda, testPeriodsWireFor } from "../../utils/healthRequest";
 import { ensureHealthSetPoints } from "../../utils/healthSetPoints";
-import { completeModel, parseHealthError } from "../../utils/completeModel";
+import { completeModel, healthExportRecord, parseHealthError } from "../../utils/completeModel";
 import { commitHealthVerdict, commitSetPoints, MARK_COMPLETE_CLOSE_WAIT, persistModelComplete } from "../../utils/healthPersist";
 import { useSensorMetaMap, normalizeSensorTag } from "../../hooks/useSensorMetaMap";
 import { useDatasetTimeBounds } from "../../hooks/useDatasetTimeBounds";
@@ -2232,7 +2232,9 @@ export default function BuildModelWindow() {
                     if (res.code === 'STALE_SESSION') return fail('The data in this window is out of date. Close it and open Build Model again from the Dashboard.');
                     return fail(res.error ?? 'The model could not be saved.');
                 }
-                const record = { at: new Date().toISOString(), outputDir: res.outputDir, setPoints: res.setPoints };
+                // Built by the ONE builder: it carries the scoring interval the validating
+                // preview reported (`scoringIntervalSecs`, 3600 = 1-hour averages).
+                const record = healthExportRecord(res, new Date().toISOString());
                 const persisted: { reason: string | null } = { reason: null };
                 await trackPending((async () => {
                     const r = await persistModelComplete(ws, id, res.setPoints, gateHeaders, 'build-model', record, race);
@@ -2559,8 +2561,9 @@ export default function BuildModelWindow() {
         });
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [activeModel?.id, healthPreview.data, healthPreview.notFitted, healthPreview.loading]);
-    const scoringTestsNow = !!activeEffective && activeEffective.kind === 'relationship' && healthPreview.loading
-        && testPeriodsWireFor(activeEffective, gateFg) !== undefined;
+    // Any Relation-model preview: the engine now predicts the training hours too, so it can
+    // run with no scoring period (the delay keeps the hint off the fast, cached previews).
+    const scoringTestsNow = !!activeEffective && activeEffective.kind === 'relationship' && healthPreview.loading;
     const slowScoring = useDelayedFlag(scoringTestsNow, SLOW_SCORING_HINT_DELAY_MS);
 
     // The last validate verdict Rust gave for the active model. A stale model's old data
@@ -4046,6 +4049,12 @@ export default function BuildModelWindow() {
     /** Complete, but the set points on screen differ from the ones the files were written with. */
     const filesOutOfDateFor = (m: FailureModel): boolean =>
         isModelDone(m) && !!m.healthExport && !sameSetPoints(m.healthExport.setPoints, setPointsOf(m));
+    /** Complete, but its files were written before the health score moved to 1-hour
+     *  averages (the export record has no scoring interval). The model STAYS Complete:
+     *  the footer only says so and offers "Mark complete again", like `filesOutOfDateFor`.
+     *  Nothing is written until the user presses the button. */
+    const earlierScoringFor = (m: FailureModel): boolean =>
+        savedResultsUseEarlierScoring(effectiveModelFor(m), gateFg, specialRecipes);
 
     /** "…\workspaces\<id>\output\<sensor>": the saved folder without the machine's own prefix (the full path is the tooltip). */
     const shortOutputDir = (dir: string): string => dir.replace(/^.*([\\/])(workspaces[\\/])/, '…$1$2');
@@ -4057,7 +4066,8 @@ export default function BuildModelWindow() {
      *                   model of this sensor needs training · else "Next: Health score"
      *                   for a trained model · a Complete model has none
      *   - Health score: Train sensor when THIS model must train again · else Mark
-     *                   complete (again, when the files are out of date) · a Complete
+     *                   complete (again, when the files are out of date or were saved
+     *                   with the earlier row-by-row scoring) · a Complete
      *                   model has none, unless a sibling model needs training
      *  Presentation only: it never enables, disables or hides anything. */
     const primaryActionOf = (m: FailureModel, page: WorkbenchPage, cands: readonly TrainCandidate[]): PrimaryAction => {
@@ -4073,7 +4083,7 @@ export default function BuildModelWindow() {
         if (cands.find(c => c.id === m.id)?.plan.kind === 'ready') return 'train';
         // ...and Mark complete could only fail.
         if (noDataOf(m)) return sensorNeedsTrain ? 'train' : null;
-        if (!isModelDone(m) || filesOutOfDateFor(m)) return 'mark';
+        if (!isModelDone(m) || filesOutOfDateFor(m) || earlierScoringFor(m)) return 'mark';
         return sensorNeedsTrain ? 'train' : null;
     };
 
@@ -4083,7 +4093,8 @@ export default function BuildModelWindow() {
      *  Model fit: "Save changes" (only while a draft exists) · "Next: Health score →"
      *  (NO Mark complete: a model is completed only from the Health score page).
      *  Health score: "← Model fit" · Mark complete ("Mark incomplete", a text
-     *  button, once Complete; "Mark complete again" only when the files are out of date). */
+     *  button, once Complete; "Mark complete again" only when the files are out of date
+     *  or were saved with the earlier row-by-row scoring). */
     const renderFooter = (m: FailureModel, page: WorkbenchPage, primary: PrimaryAction) => {
         // Save changes is an action: the draft's data guards apply to it.
         const saveReason = modelBlockReason(m, true);
@@ -4120,6 +4131,8 @@ export default function BuildModelWindow() {
         const savePhase = saveInfo[m.id]?.phase;
         const saving = savePhase === 'running';
         const outOfDate = page === 'health' && filesOutOfDateFor(m);
+        // Saved before the score moved to 1-hour averages: still Complete, with a hint.
+        const earlierScoring = page === 'health' && earlierScoringFor(m);
         const scoredCount = toTestPeriodsWire(effectiveRunningCondition(effectiveModelFor(m), gateFg).testPeriods).length;
         // Train queue: queued or training in the run = settings locked (Save disabled).
         const qItem = queue.isRunning ? queue.itemOf(m.id) : undefined;
@@ -4185,7 +4198,7 @@ export default function BuildModelWindow() {
         // The ONE sentence (first match wins).
         let line: ReactNode;
         let tone: 'plain' | 'warn' | 'bad' = 'plain';
-        let lineId: 'footer-status' | 'mark-block-reason' | 'build-block-reason' | 'files-out-of-date' = 'footer-status';
+        let lineId: 'footer-status' | 'mark-block-reason' | 'build-block-reason' | 'files-out-of-date' | 'earlier-scoring' = 'footer-status';
         if (page === 'health') {
             // Saving is said HERE only (no card on the page unless it is slow).
             if (saving) line = <><Loader2 size={11} className="pm-spin" aria-hidden="true" /> Saving the model files…</>;
@@ -4211,6 +4224,9 @@ export default function BuildModelWindow() {
             // ...and so does one whose load failed — whether or not an earlier answer is
             // still on screen: the tab's red dot and this sentence always agree.
             else if (loadFailed) { line = loadFailedLine; tone = 'bad'; }
+            // The saved files were scored row by row (written before the 1-hour averages):
+            // the model stays Complete; "Mark complete again" writes them again.
+            else if (done && earlierScoring) { line = EARLIER_SCORING_HINT_TEXT; tone = 'warn'; lineId = 'earlier-scoring'; }
             else if (done) line = savedLine ?? trainedLine ?? identityLine;
             else line = 'Set points valid — check the score chart, then Mark complete';
         } else if (qItem && locked) {
@@ -4294,7 +4310,7 @@ export default function BuildModelWindow() {
                         <button type="button" className="f4-btn f4-btn--plain f4-btn--small" data-testid="mark-incomplete" disabled={saving} onClick={() => markModelIncomplete(m.id)}>
                             Mark incomplete
                         </button>
-                        {outOfDate && (
+                        {(outOfDate || earlierScoring) && (
                             <button
                                 type="button"
                                 className={markClass}

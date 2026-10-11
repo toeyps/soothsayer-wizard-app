@@ -220,14 +220,17 @@ describe('TestPeriodsEditor (scoring periods)', () => {
         setup({ tests: [t('a', '2026-01-21T00:00', '2026-02-10T00:00')] });
         const note = screen.getByTestId('test-overlap-1');
         expect(note.className).toBe('rcm-permsg'); // one small grey line under the row
-        expect(note.textContent).toBe('S1 includes 11 d of train running time — results include rows the model was trained on');
+        // "hours": the health score is computed on 1-hour averages, so the results are per hour.
+        expect(note.textContent).toBe('S1 includes 11 d of train running time — results include hours the model was trained on');
+        expect(note.textContent).not.toMatch(/include rows/);
         expect(screen.queryByTestId('test-invalid-1')).toBeNull();
         expect(screen.getByTestId('test-row-1').className).not.toContain('rcm-per--bad');
     });
 
     it('less than a day of train time still gets the note, with the S-number', () => {
         setup({ tests: [t('a', '2026-01-31T20:00', '2026-02-10T00:00')] });
-        expect(screen.getByTestId('test-overlap-1').textContent).toBe('S1 includes less than 1 d of train running time — results include rows the model was trained on');
+        // the same ending as the note with days (the two never disagree on rows / hours)
+        expect(screen.getByTestId('test-overlap-1').textContent).toBe('S1 includes less than 1 d of train running time — results include hours the model was trained on');
     });
 
     it('no note when the scoring period does not touch train time', () => {

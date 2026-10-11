@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { HealthSetPoints } from '../types';
+import type { HealthExportRecord, HealthSetPoints } from '../types';
 import type {
     HealthErrorCode,
     HealthIssue,
@@ -25,6 +25,9 @@ import { markCompleteBlockReason } from './runningCondition';
  *   3. `ok: true` -> the caller persists `status: true` + the validated set
  *      points (`persistModelComplete` in `healthPersist.ts` does exactly that
  *      against what is on disk). Anything else leaves the model Incomplete.
+ *      The export record it stores comes from `healthExportRecord(result)`,
+ *      which carries the scoring interval the validating preview reported
+ *      (`scoring_interval_secs`, 3600 = 1-hour averages).
  */
 
 const ERROR_CODES: readonly HealthErrorCode[] = ['NOT_FITTED', 'NO_DATA', 'BAD_REQUEST', 'STALE_SESSION', 'VALIDATION', 'SIDECAR_OUTDATED'];
@@ -61,6 +64,13 @@ export type CompleteModelResult =
         files: WrittenFile[];
         outputDir: string;
         warnings: string[];
+        /** The health score's sampling interval (seconds) of the preview that
+         *  validated these set points — `3600` = 1-hour averages of the running
+         *  rows. Store it as `healthExport.scoringIntervalSecs`
+         *  (`healthExportRecord` builds the record). Absent only when Rust did
+         *  not report a usable one (never from this build's backend): the
+         *  record is then written without it, never with a guessed number. */
+        scoringIntervalSecs?: number;
     }
     | {
         ok: false;
@@ -129,12 +139,42 @@ export async function completeModel(opts: CompleteModelOptions): Promise<Complet
         // refused; nothing was written.
         return fail('validation', { issues: result.validation });
     }
+    const interval = scoringIntervalOf(preview);
     return {
         ok: true,
         setPoints: opts.setPoints,
         files: result.files,
         outputDir: result.output_dir,
         warnings: result.warnings,
+        ...(interval !== undefined ? { scoringIntervalSecs: interval } : {}),
+    };
+}
+
+/** The preview's `scoring_interval_secs` when it is a usable number (finite,
+ *  above 0), otherwise `undefined`. */
+function scoringIntervalOf(preview: Pick<HealthPreview, 'scoring_interval_secs'>): number | undefined {
+    const v: unknown = preview.scoring_interval_secs;
+    return typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : undefined;
+}
+
+/**
+ * The `FailureModel.healthExport` record of a successful `completeModel` run —
+ * when, where, with which set points and with which scoring interval the files
+ * were written. THE one place that record is built: pass the result straight to
+ * `persistModelComplete(…, record, race)`. A hand-built `{ at, outputDir,
+ * setPoints }` would drop `scoringIntervalSecs`, and the model would then read
+ * as "saved with the earlier scoring" for ever (`savedResultsUseEarlierScoring`).
+ * `at` defaults to now (ISO).
+ */
+export function healthExportRecord(
+    res: Extract<CompleteModelResult, { ok: true }>,
+    at: string = new Date().toISOString(),
+): HealthExportRecord {
+    return {
+        at,
+        outputDir: res.outputDir,
+        setPoints: res.setPoints,
+        ...(res.scoringIntervalSecs !== undefined ? { scoringIntervalSecs: res.scoringIntervalSecs } : {}),
     };
 }
 

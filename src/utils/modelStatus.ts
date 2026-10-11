@@ -84,6 +84,36 @@ export function modelDotState(
 }
 
 /**
+ * "Saved results use the earlier scoring": a COMPLETE model whose files were
+ * written before the health score moved to 1-hour averages (2026-10-11) — its
+ * export record (`healthExport`) has no `scoringIntervalSecs`, so the results in
+ * its files were scored row by row and no longer match what the Health score
+ * page shows (1-hour averages of the running rows).
+ *
+ * Read-only, by user decision: such a model STAYS Complete. This helper never
+ * changes `status`, the train fingerprint or `healthVerdict`, and nothing calls
+ * it on load — the Health score page footer only shows
+ * `EARLIER_SCORING_HINT_TEXT` and offers "Mark complete again", the way it does
+ * for set points changed after saving. Marking complete again writes a record
+ * WITH the interval (`healthExportRecord`), which turns this false.
+ *
+ * `false` for: an Incomplete model, a Complete model that is out of date
+ * (stale — it needs a re-train, not a second Mark complete), a model with no
+ * export record at all (nothing was saved to be out of date), and a record that
+ * carries a scoring interval.
+ */
+export function savedResultsUseEarlierScoring(model: FailureModel, fg: RunningConditionFg, recipes?: StatusRecipes): boolean {
+    if (!isModelComplete(model, fg, recipes)) return false;
+    const record = model.healthExport;
+    if (!record) return false;
+    return typeof record.scoringIntervalSecs !== 'number';
+}
+
+/** The Health score page footer line shown when `savedResultsUseEarlierScoring`
+ *  is true (beside the "files out of date" line; the model stays Complete). */
+export const EARLIER_SCORING_HINT_TEXT = 'Saved results use the earlier row-by-row scoring — Mark complete again to update the files';
+
+/**
  * What the saved set points of a TRAINED model say — the
  * ONE place every surface (Dashboard Failure Groups dot, Build Model list dot,
  * the kind tab pill) reads the persisted validation verdict:

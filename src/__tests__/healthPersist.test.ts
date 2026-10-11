@@ -17,7 +17,13 @@ vi.mock('../workspaceManager', () => ({
     },
 }));
 
+// `completeModel` (used by the "Mark complete stores the scoring interval" flow below) calls Rust.
+const mockInvoke = vi.fn();
+vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a: unknown[]) => mockInvoke(...a) }));
+
 import { commitHealthVerdict, commitSetPoints, persistModelComplete, SETTINGS_CHANGED_DURING_EXPORT_REASON, TESTS_CHANGED_DURING_EXPORT_REASON } from '../utils/healthPersist';
+import { completeModel, healthExportRecord } from '../utils/completeModel';
+import { savedResultsUseEarlierScoring } from '../utils/modelStatus';
 import { NO_TEST_PERIOD_REASON } from '../utils/runningCondition';
 import { testPeriodsKey, toScoringPeriods } from '../utils/timePeriods';
 import { computeTrainFingerprint } from '../utils/trainFingerprint';
@@ -148,6 +154,77 @@ describe('persistModelComplete', () => {
             failureGroupState: { ...prev.failureGroupState!, models: prev.failureGroupState!.models.map(m => ({ ...m, targetSensor: 'T2' })) },
         }));
         expect(disk.failureGroupState!.models[0]).toMatchObject({ status: false, healthSetPoints: { lower: 0, upper: 99 } });
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Health score on 1-hour averages: the export record remembers the interval
+// ---------------------------------------------------------------------------
+
+describe('Mark complete stores the scoring interval (healthExport.scoringIntervalSecs)', () => {
+    const HEADERS = ['T'];
+    const filesOk = { ok: true, output_dir: 'C:/data/workspaces/ws1/output', validation: [], warnings: [], files: [] };
+    const rust = (preview: Record<string, unknown>) => mockInvoke.mockImplementation(async (cmd: string) => (cmd === 'compute_health_preview' ? preview : filesOk));
+    /** The real flow of the Mark complete button: validate + export, build the record, ONE write. */
+    const markComplete = async () => {
+        const fg = disk.failureGroupState!;
+        const model = fg.models.find(m => m.id === 'i1')!;
+        const res = await completeModel({ model, fg, headers: HEADERS, workspaceId: 'ws1', setPoints: sp });
+        if (!res.ok) throw new Error(`completeModel refused: ${res.reason} ${res.error ?? ''}`);
+        return persistModelComplete('ws1', 'i1', res.setPoints, HEADERS, 'build-model', healthExportRecord(res, '2026-10-11T09:00:00.000Z'));
+    };
+
+    beforeEach(() => { mockInvoke.mockReset(); });
+
+    it('the interval the validating preview reported lands on disk with the rest of the record, in the same write that sets Complete', async () => {
+        setDisk([trained(ind())]);
+        rust({ kind: 'individual', valid: true, validation: [], scoring_interval_secs: 3600 });
+        const { next, reason } = await markComplete();
+        expect(reason).toBeNull();
+        const m = disk.failureGroupState!.models[0];
+        expect(m.status).toBe(true);
+        expect(m.healthExport).toEqual({ at: '2026-10-11T09:00:00.000Z', outputDir: 'C:/data/workspaces/ws1/output', setPoints: sp, scoringIntervalSecs: 3600 });
+        expect(next!.failureGroupState!.models[0].healthExport!.scoringIntervalSecs).toBe(3600);
+        // one write, one broadcast - and the broadcast carries the record too
+        expect(mockEmit).toHaveBeenCalledTimes(1);
+        expect(mockEmit.mock.calls[0][1].models[0].healthExport.scoringIntervalSecs).toBe(3600);
+    });
+
+    it('a model completed BEFORE the change (record without the interval) stays Complete; marking it complete again writes the interval and clears the hint', async () => {
+        const old = { at: '2026-10-04T01:00:00.000Z', outputDir: 'C:/data/workspaces/ws1/output', setPoints: sp };
+        const before = trained(ind({ status: true, healthSetPoints: sp, healthVerdict: 'valid', healthExport: old }));
+        setDisk([before]);
+        // Reading the hint changes nothing on disk.
+        expect(savedResultsUseEarlierScoring(disk.failureGroupState!.models[0], disk.failureGroupState!)).toBe(true);
+        expect(disk.failureGroupState!.models[0]).toEqual(before);
+
+        rust({ kind: 'individual', valid: true, validation: [], scoring_interval_secs: 3600 });
+        expect((await markComplete()).reason).toBeNull();
+        const m = disk.failureGroupState!.models[0];
+        expect(m).toMatchObject({ status: true, healthVerdict: 'valid', healthSetPoints: sp });
+        expect(m.healthExport).toMatchObject({ at: '2026-10-11T09:00:00.000Z', scoringIntervalSecs: 3600 });
+        // the train record is untouched: marking complete again is not a re-train
+        expect([m.lastTrainedAt, m.trainedFingerprint]).toEqual([before.lastTrainedAt, before.trainedFingerprint]);
+        expect(savedResultsUseEarlierScoring(m, disk.failureGroupState!)).toBe(false);
+    });
+
+    it('a later set-point save keeps the interval on the record (every writer spreads the model)', async () => {
+        setDisk([trained(ind())]);
+        rust({ kind: 'individual', valid: true, validation: [], scoring_interval_secs: 3600 });
+        await markComplete();
+        await commitSetPoints('ws1', 'i1', { kind: 'individual', lower: 0, upper: 99 });
+        await commitHealthVerdict('ws1', 'i1', 'valid');
+        expect(disk.failureGroupState!.models[0].healthExport!.scoringIntervalSecs).toBe(3600);
+        expect(savedResultsUseEarlierScoring(disk.failureGroupState!.models[0], disk.failureGroupState!)).toBe(false);
+    });
+
+    it('a hand-built record without the interval (the old call shape) is stored as given - and keeps the hint on', async () => {
+        setDisk([trained(ind())]);
+        const record = { at: '2026-10-11T09:00:00.000Z', outputDir: 'C:/ws/output', setPoints: sp };
+        await persistModelComplete('ws1', 'i1', sp, HEADERS, 'build-model', record);
+        const m = disk.failureGroupState!.models[0];
+        expect(m.healthExport).toEqual(record);
+        expect(savedResultsUseEarlierScoring(m, disk.failureGroupState!)).toBe(true);
     });
 });
 

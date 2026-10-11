@@ -96,7 +96,8 @@ const OWN_TRAIN = [{ id: 'ct', start: '2026-01-01T00:00', end: '2026-01-02T00:00
 const OWN_TEST = [{ id: 'cs', start: '2026-01-02T06:00', end: '2026-01-02T20:00' }];
 const SP1 = { kind: 'individual', lower: 20, upper: 80, masterLower: 20, masterUpper: 80 };
 const SP_WIDE = { kind: 'individual', lower: -500, upper: 500, masterLower: null, masterUpper: null };
-const record = (setPoints: unknown) => ({ at: '2026-10-05T08:00:00.000Z', outputDir: env.backend!.outputDir(WS), setPoints });
+// (`scoringIntervalSecs`: a record as THIS build writes it — the saved results use 1-hour averages; one without it gets the footer's "earlier row-by-row scoring" hint, covered in BuildModelWindow.test.tsx)
+const record = (setPoints: unknown) => ({ at: '2026-10-05T08:00:00.000Z', outputDir: env.backend!.outputDir(WS), setPoints, scoringIntervalSecs: 3600 });
 
 /**
  * FG-A: i1 (Individual TAG1, trained) + r1 (Relation model TAG1 <- TAG3, trained),

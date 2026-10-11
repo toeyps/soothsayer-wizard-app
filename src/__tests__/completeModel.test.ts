@@ -8,7 +8,7 @@ vi.mock('@tauri-apps/api/core', () => ({
     invoke: (...args: unknown[]) => mockInvoke(...args),
 }));
 
-import { completeModel, getModelOutputDir, HEALTH_ERROR_TEXT, parseHealthError } from '../utils/completeModel';
+import { completeModel, getModelOutputDir, healthExportRecord, HEALTH_ERROR_TEXT, parseHealthError } from '../utils/completeModel';
 
 // An open-ended train period (= no time filter on the wire) and one scoring
 // period, which Mark complete requires. The period is deliberately in the shape
@@ -27,7 +27,8 @@ const HEADERS = ['T', 'P1'];
 const sp: HealthSetPoints = { kind: 'individual', lower: 1, upper: 9 };
 const model = mk({ id: 'i1', name: 'Pump', kind: 'individual', targetSensor: 'T' });
 
-const previewOk = { kind: 'individual', valid: true, validation: [] } as unknown as HealthPreview;
+// The validating preview reports the scoring interval (3600 = 1-hour averages).
+const previewOk = { kind: 'individual', valid: true, validation: [], scoring_interval_secs: 3600 } as unknown as HealthPreview;
 const issue = { code: 'lower_inside_3sd', severity: 'error' as const, message: 'L must be below -3SD', field: 'lower' };
 const previewBad = { kind: 'individual', valid: false, validation: [issue] } as unknown as HealthPreview;
 const filesOk: ModelFilesResult = {
@@ -48,6 +49,8 @@ describe('completeModel', () => {
         const res = await run();
         expect(res).toEqual({
             ok: true, setPoints: sp, files: filesOk.files, outputDir: filesOk.output_dir, warnings: ['w'],
+            // the validating preview's `scoring_interval_secs`, for the export record
+            scoringIntervalSecs: 3600,
         });
         expect(mockInvoke.mock.calls.map(c => c[0])).toEqual(['compute_health_preview', 'export_model_files']);
         // Both calls carry { request } and the same set points / scope / generation.
@@ -157,6 +160,66 @@ describe('completeModel', () => {
         expect(e.lambda).toBe(10_000);
         expect(e.cache_key).toBe(p.cache_key);
         expect(e.set_points).toEqual({ residual_at_80_lower: -1, residual_at_80_upper: 1, residual_at_0_lower: -2, residual_at_0_upper: 2 });
+    });
+
+    describe('scoring interval (health score on 1-hour averages)', () => {
+        const withInterval = (v: unknown) => ({ ...previewOk, scoring_interval_secs: v }) as unknown as HealthPreview;
+        const runWith = async (v: unknown) => {
+            mockInvoke.mockImplementation(async (cmd: string) => (cmd === 'compute_health_preview' ? withInterval(v) : filesOk));
+            return run();
+        };
+
+        it('returns the interval of the preview that VALIDATED the set points — whatever number Rust reported, not a constant', async () => {
+            expect(await runWith(3600)).toMatchObject({ ok: true, scoringIntervalSecs: 3600 });
+            expect(await runWith(900)).toMatchObject({ ok: true, scoringIntervalSecs: 900 });
+        });
+
+        it.each([undefined, null, 0, -3600, NaN, Infinity, '3600'])('an unusable interval (%s) is left out — never a guessed number — and the export still succeeds', async v => {
+            const res = await runWith(v);
+            expect(res.ok).toBe(true);
+            expect(res).not.toHaveProperty('scoringIntervalSecs');
+        });
+
+        it('a refused or failed run carries no interval', async () => {
+            mockInvoke.mockResolvedValue(previewBad);
+            expect(await run()).not.toHaveProperty('scoringIntervalSecs');
+            mockInvoke.mockImplementation(async (cmd: string) => {
+                if (cmd === 'compute_health_preview') return previewOk;
+                throw 'NO_DATA: nothing in scope';
+            });
+            expect(await run()).not.toHaveProperty('scoringIntervalSecs');
+        });
+    });
+});
+
+describe('healthExportRecord', () => {
+    const ok = { ok: true as const, setPoints: sp, files: filesOk.files, outputDir: filesOk.output_dir, warnings: [] };
+
+    it('builds the export record of a successful run: when, where, which set points and the scoring interval', () => {
+        expect(healthExportRecord({ ...ok, scoringIntervalSecs: 3600 }, '2026-10-11T08:00:00.000Z')).toEqual({
+            at: '2026-10-11T08:00:00.000Z', outputDir: 'C:/data/workspaces/ws1/output', setPoints: sp, scoringIntervalSecs: 3600,
+        });
+    });
+
+    it('`at` defaults to now (ISO)', () => {
+        const before = Date.now();
+        const rec = healthExportRecord({ ...ok, scoringIntervalSecs: 3600 });
+        expect(rec.at).toBe(new Date(rec.at).toISOString());
+        expect(new Date(rec.at).getTime()).toBeGreaterThanOrEqual(before);
+        expect(new Date(rec.at).getTime()).toBeLessThanOrEqual(Date.now());
+    });
+
+    it('a run without an interval gives a record WITHOUT the key (not `undefined`, not 0) — it must not read as an hourly export', () => {
+        const rec = healthExportRecord(ok, '2026-10-11T08:00:00.000Z');
+        expect(rec).toEqual({ at: '2026-10-11T08:00:00.000Z', outputDir: 'C:/data/workspaces/ws1/output', setPoints: sp });
+        expect('scoringIntervalSecs' in rec).toBe(false);
+    });
+
+    it('straight from completeModel: the record carries what the validating preview reported', async () => {
+        mockInvoke.mockImplementation(async (cmd: string) => (cmd === 'compute_health_preview' ? previewOk : filesOk));
+        const res = await run();
+        if (!res.ok) throw new Error('expected a successful run');
+        expect(healthExportRecord(res, 'T')).toEqual({ at: 'T', outputDir: filesOk.output_dir, setPoints: sp, scoringIntervalSecs: 3600 });
     });
 });
 

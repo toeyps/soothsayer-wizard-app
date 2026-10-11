@@ -68,7 +68,8 @@ afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 const IND_SP = { kind: 'individual', lower: 20, upper: 80, masterLower: 20, masterUpper: 80 };
 const REL_SP = { kind: 'relationship', residualAt80Lower: -5, residualAt80Upper: 5, residualAt0Lower: -10, residualAt0Upper: 10 };
 const CLU_SP = { kind: 'clustering', outerSd: 5 };
-const EXPORT = (sp: unknown) => ({ at: '2026-10-02T10:00:00.000Z', outputDir: 'C:/x/workspaces/ws1/output', setPoints: sp });
+/** An export record as THIS build writes it (`scoringIntervalSecs`: the saved results use 1-hour averages). */
+const EXPORT = (sp: unknown) => ({ at: '2026-10-02T10:00:00.000Z', outputDir: 'C:/x/workspaces/ws1/output', setPoints: sp, scoringIntervalSecs: 3600 });
 
 /** Four Complete, fresh models: three follow the WORKSPACE condition, one has its own (Custom). */
 function completeWorkspace(fgOver: Record<string, unknown> = {}, extra: Record<string, unknown>[] = [], relPredictors = ['TAG3']) {

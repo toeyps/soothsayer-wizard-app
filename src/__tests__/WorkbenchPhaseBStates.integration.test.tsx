@@ -16,7 +16,8 @@ import { act, cleanup, fireEvent, waitFor } from '@testing-library/react';
  *   - at most 5 clusters, and a 7-cluster model saved by an older build;
  *   - drafts with the new spine (the header page switch; a Model-settings draft
  *     on a tab that is not open);
- *   - CSV timestamps that carry `Z` / an offset keep their own wall clock.
+ *   - CSV timestamps that carry `Z` / an offset keep their own wall clock (the raw
+ *     rows on Model fit, and the clock HOUR the health score is averaged over).
  *
  * Covered elsewhere and NOT repeated here: a set point typed without blur is
  * saved exactly once on a sensor switch / kind-tab switch / "← Model fit" /
@@ -59,7 +60,7 @@ import {
     openDashFgTab, openHealth, openSettings, readDisk, saveChanges, selectKindTab, selectSensor, settle, typeSp, waitForCharts, writeDisk, wsFile, wsTrained,
 } from './helpers/healthWorkbench';
 import { makeTestResult, makeValidation } from './helpers/validationFixture';
-import { CHART, CLUSTER_COLORS } from '../components/windows/workbench/chartTheme';
+import { CHART, CLUSTER_COLORS, fmtNum } from '../components/windows/workbench/chartTheme';
 
 vi.setConfig({ testTimeout: 60_000 });
 
@@ -327,7 +328,11 @@ describe('at most 5 clusters (user decision 2026-10-10)', () => {
         await waitFor(() => expect(bmw().getByTestId('check-valid')).toBeTruthy());
         for (let k = 1; k <= 7; k++) expect(chartsWithSeries(`Cluster ${k} 5× SD`).length, `5× ring of cluster ${k}`).toBeGreaterThan(0);
         expect(bmw().getByTestId('mark-incomplete')).toBeTruthy();
-        expect(bmw().queryByTestId('mark-complete-again')).toBeNull();
+        // an older build's export record has no scoring interval: the footer offers "Mark complete
+        // again" for the 1-hour averages — an offer only, the model stays Complete and untouched
+        expect(bmw().getByTestId('earlier-scoring').textContent).toBe('Saved results use the earlier row-by-row scoring — Mark complete again to update the files');
+        expect(bmw().getByTestId('mark-complete-again')).toBeTruthy();
+        expect(footPill()).toBe('Complete');
         expect(fgOnDisk(), 'both pages were opened: still nothing changed').toBe(seeded.fg);
 
         // Model settings: 7 is shown as it is; it only cannot be raised
@@ -449,29 +454,32 @@ describe('drafts and the new page spine', () => {
 // ---------------------------------------------------------------------------
 
 describe('a CSV stamp with "Z" / an offset shows its OWN wall clock everywhere (never shifted by the PC\'s time zone)', () => {
-    // 60 rows, 10 s apart from 23:50:00 on 9 Feb 2026, written the way three different
-    // loggers would: UTC ("Z"), Bangkok ("+07:00") and New York ("-05:00").
+    // 60 rows, 10 s apart from 22:55:00 on 9 Feb 2026 (so they straddle 23:00: rows 0-29 are in the
+    // 22:00 hour, rows 30-59 in the 23:00 hour), written the way three different loggers would:
+    // UTC ("Z"), Bangkok ("+07:00") and New York ("-05:00").
     const ZONES = ['Z', '+07:00', '-05:00'];
     const clock = (i: number) => {
-        const s = 23 * 3600 + 50 * 60 + i * 10;
+        const s = 22 * 3600 + 55 * 60 + i * 10;
         const p = (n: number) => String(n).padStart(2, '0');
-        return { h: Math.floor(s / 3600) % 24, m: Math.floor(s / 60) % 60, s: s % 60, text: `${p(Math.floor(s / 3600) % 24)}:${p(Math.floor(s / 60) % 60)}:${p(s % 60)}` };
+        return { h: Math.floor(s / 3600), m: Math.floor(s / 60) % 60, s: s % 60, text: `${p(Math.floor(s / 3600))}:${p(Math.floor(s / 60) % 60)}:${p(s % 60)}` };
     };
     function zonedDataset() {
         const d = plantDataset(60);
         return { ...d, timestamps: d.timestamps.map((_, i) => `2026-02-09T${clock(i).text}${ZONES[i % 3]}`) };
     }
 
-    it('the lowest-score time, the scoring tile, the time axis and the hover read-out (with seconds) all read 23:5x on 9 Feb 2026; the footer\'s own stamps are the app\'s local time in the same format', async () => {
+    // The health score is computed on 1-hour averages: the Model fit page still shows every raw row
+    // at its own clock (seconds included), while the Health score page has ONE point per clock hour,
+    // placed at — and read out as — the START of the rows' own wall-clock hour.
+    it('Model fit plots every raw row at its own clock (10 s apart); the Health score page reads the rows\' own clock HOUR — lowest-score time, scoring tile and hover read-out say 22:00 / 23:00 on 9 Feb 2026; the footer\'s own stamps are the app\'s local time in the same format', async () => {
         const data = zonedDataset();
         newBackend({ plant: data });
-        // Rust also returns the scoring period's facts: the lowest score held, with the row's own text.
+        // Rust also returns the scoring period's facts: its lowest hourly score, with that hour's start.
         const validation = makeValidation({
-            train_ranges: [{ start: '2026-02-09T23:50', end: '2026-02-09T23:54' }],
-            tests: [makeTestResult({ start: '2026-02-09T23:55', end: '2026-02-09T23:58', lowest: 61, lowest_at: '2026-02-09T23:57:30+07:00' })],
+            train_ranges: [{ start: '2026-02-09T22:55', end: '2026-02-09T22:59' }],
+            tests: [makeTestResult({ start: '2026-02-09T23:00', end: '2026-02-09T23:04', lowest: 61, lowest_at: '2026-02-09T23:00:00' })],
         });
         env.backend!.override('compute_health_preview', () => true, async (_a, real) => ({ ...(await real() as object), test_validation: validation }), false);
-        // set points just outside the 3SD band, so the rows near its edge score well under 100
         const band = env.backend!.individualBand('TAG1');
         const sp = { kind: 'individual', lower: Math.floor(band.l3 * 10 - 5) / 10, upper: Math.ceil(band.u3 * 10 + 5) / 10, masterLower: 20, masterUpper: 80 };
         writeDisk(wsTrained({ runningConditionFilters: [], runningConditionNoneConfirmed: true }, [
@@ -490,7 +498,7 @@ describe('a CSV stamp with "Z" / an offset shows its OWN wall clock everywhere (
         expect(sentence()).toMatch(new RegExp(`^Trained ${STAMP} · scored on 1 period · `));
         expect(footer().textContent).not.toMatch(/\d{4}-\d{2}-\d{2}|T\d\d:|Z\b|\+07:00|\b(AM|PM)\b/);
 
-        // Model fit: every point of the time chart sits at its row's own clock
+        // Model fit (RAW rows): every point of the time chart sits at its row's own clock
         const timeChart = env.charts.filter(c => c.option?.xAxis?.type === 'time').pop()!;
         expect(timeChart, 'a time-axis chart was drawn').toBeTruthy();
         // (the chart adds a `null` point where the line leaves a train / scoring period: not a row)
@@ -499,37 +507,59 @@ describe('a CSV stamp with "Z" / an offset shows its OWN wall clock everywhere (
         points.forEach(([ms], i) => {
             const d = new Date(ms);
             expect([d.getFullYear(), d.getMonth(), d.getDate(), d.getHours(), d.getMinutes(), d.getSeconds()], `row ${i} (${data.timestamps[i]})`)
-                .toEqual([2026, 1, clock(i).h < 23 ? 10 : 9, clock(i).h, clock(i).m, clock(i).s]);
+                .toEqual([2026, 1, 9, clock(i).h, clock(i).m, clock(i).s]);
         });
         // ...so the three loggers' rows are in file order, 10 s apart (no 7 h / 5 h jumps)
         for (let i = 1; i < points.length; i++) expect(points[i][0] - points[i - 1][0], `gap before row ${i}`).toBe(10_000);
 
-        // Health score: the tiles
+        // Health score (1-hour averages)
         await openHealth();
         await waitFor(() => expect(bmw().getByTestId('score-summary')).toBeTruthy());
-        // the row with the lowest score, whatever zone its logger wrote
-        const low = env.backend!.lastOk('compute_health_preview').score_summary.min_score as { timestamp: string; row: number };
-        expect(low.timestamp).toBe(data.timestamps[low.row]);
-        const c = clock(low.row);
-        expect(bmw().getByTestId('score-lowest-at').textContent).toBe(`9 Feb 2026 ${pad(c.h)}:${pad(c.m)}`);
-        expect(bmw().getByTestId('score-lowest-at').className).toContain('wbx-dt');
-        // the scoring period's tile: "+07:00" is NOT moved to the PC's zone
-        expect(bmw().getByTestId('test-result-1-lowest').textContent).toBe('Lowest 61 (held 1 h) on 9 Feb 2026 23:57.');
-        expect(bmw().getByTestId('test-result-1').textContent).toContain('9 Feb 2026 23:55 → 9 Feb 2026 23:58');
+        const answer = env.backend!.lastOk('compute_health_preview') as {
+            hourly: { timestamps: string[]; rows: number[]; value: number[]; score: (number | null)[] };
+            series: { score: null };
+            score_summary: { min_score: { timestamp: string; row: number } };
+        };
+        // the 600 s of data are TWO hourly points, at the rows' own clock hours on 9 Feb — a "+07:00" row
+        // moved to UTC would be 15:00, a "-05:00" row 03:00 / 04:00 on the 10th
+        expect(answer.hourly.timestamps).toEqual(['2026-02-09T22:00:00', '2026-02-09T23:00:00']);
+        expect(answer.series.score).toBeNull(); // the raw rows are never scored
+        // each hour's first row was written inside that hour by its own clock, whatever zone its logger used
+        answer.hourly.rows.forEach((row, h) => expect(data.timestamps[row].slice(0, 13), `first row of hour ${h}`).toBe(answer.hourly.timestamps[h].slice(0, 13)));
 
-        // the hover read-out: sub-minute rows show their seconds, a whole minute does not
+        // the score chart has exactly those two points, at the hour starts (local wall clock)
         const score = env.charts.filter(ch => ((ch.option?.series ?? []) as any[]).some(s => s?.name === 'Health score') && ch.props?.onEvents?.updateAxisPointer).pop()!;
         expect(score, 'the score chart listens to the axis pointer').toBeTruthy();
-        // the pointer is put on row `i`'s own clock time (what ECharts reports on a time axis)
-        const hover = async (i: number) => {
-            const at = new Date(2026, 1, 9, clock(i).h, clock(i).m, clock(i).s).getTime();
+        // (as on Model fit, the chart adds a `null` point where the line leaves a train / scoring period)
+        const scorePoints = ((score.option.series as any[]).find(s => s.name === 'Health score')!.data as [number, number | null][]).filter(p => p[1] !== null);
+        expect(answer.hourly.score.every(v => v !== null), 'both hours are scored').toBe(true);
+        expect(scorePoints.map(p => p[0])).toEqual([new Date(2026, 1, 9, 22, 0, 0).getTime(), new Date(2026, 1, 9, 23, 0, 0).getTime()]);
+
+        // the hour with the lowest score: its START, in the one Workbench format
+        const low = answer.score_summary.min_score;
+        expect(answer.hourly.timestamps).toContain(low.timestamp);
+        expect(bmw().getByTestId('score-lowest-at').textContent).toBe(`9 Feb 2026 ${low.timestamp.slice(11, 16)}`);
+        expect(bmw().getByTestId('score-lowest-at').className).toContain('wbx-dt');
+        expect(bmw().getByTestId('score-summary').textContent).toMatch(/of scored hours · 1-hour averages of the running rows$/);
+        // the scoring period's tile: the hour start as it is, and the period's own bounds
+        expect(bmw().getByTestId('test-result-1-lowest').textContent).toBe('Lowest 61 (1 h average) on 9 Feb 2026 23:00.');
+        expect(bmw().getByTestId('test-result-1').textContent).toContain('9 Feb 2026 23:00 → 9 Feb 2026 23:04');
+
+        // the hover read-out: the hour START (no seconds, no raw text) and that hour's 1 h average
+        const hover = async (h: number, m: number, s: number) => {
+            const at = new Date(2026, 1, 9, h, m, s).getTime();
             await act(async () => { score.props.onEvents.updateAxisPointer({ axesInfo: [{ axisDim: 'x', value: at }] }); });
             return bmw().getByTestId('hs-readout').textContent!;
         };
-        expect(await hover(1)).toMatch(/^9 Feb 2026 23:50:10 · value [\d.]+ bar · score \d+$/);   // "+07:00"
-        expect(await hover(2)).toMatch(/^9 Feb 2026 23:50:20 · value [\d.]+ bar · score \d+$/);   // "-05:00"
-        expect(await hover(6)).toMatch(/^9 Feb 2026 23:51 · value [\d.]+ bar · score \d+$/);      // "Z", :00 seconds
-        expect(await hover(45)).toMatch(/^9 Feb 2026 23:57:30 · value [\d.]+ bar · score \d+$/);
+        const line = (h: number) => new RegExp(`^9 Feb 2026 ${answer.hourly.timestamps[h].slice(11, 16)} · 1 h avg ${fmtNum(answer.hourly.value[h]).replace('.', '\\.')} bar · score \\d+$`);
+        expect(await hover(22, 0, 0)).toMatch(line(0));
+        expect(await hover(22, 20, 10)).toMatch(line(0));   // nearer to the 22:00 point
+        expect(await hover(22, 55, 10)).toMatch(line(1));   // row 1's own time ("+07:00"): the nearest POINT is 23:00
+        expect(await hover(23, 4, 50)).toMatch(line(1));    // the last row ("-05:00")
+        for (const [h, m, s] of [[22, 0, 0], [22, 55, 10], [23, 4, 50]]) {
+            const text = await hover(h, m, s);
+            expect(text).not.toMatch(/\d\d:\d\d:\d\d|· value |T\d\d:|\+07:00|-05:00|Z\b/);
+        }
         await act(async () => { score.props.onEvents.globalout(); });
         expect(bmw().getByTestId('hs-readout').textContent).toBe('');
     });

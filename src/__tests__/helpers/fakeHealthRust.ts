@@ -29,7 +29,33 @@
  *    `validate_relationship`, `validate_clustering` (codes, fields, messages —
  *    a set point the user typed is echoed EXACTLY, `fmt_typed`; only values Rust
  *    computed keep the INFO-file rounding, `fmt_num`);
- *    score = the piecewise-linear knots; `score_summary` = `summarize`.
+ *    score = the piecewise-linear knots.
+ *  - The health score is computed on 1-HOUR AVERAGES (`health_hourly.rs`,
+ *    ported as `groupHours` / `hourLabel`): hour = clock hour of the row's
+ *    timestamp (floor), the point's timestamp = the hour's START
+ *    (`2024-01-05T13:00:00`); only rows that pass the running condition enter a
+ *    mean, an hour with no such row has NO point, a row without a timestamp is
+ *    in no hour, the file's row order does not matter, a one-row hour is that
+ *    row. Every preview therefore answers with
+ *      `series` — the RAW rows (Model fit), `score: null`, always;
+ *      `hourly` — one point per clock hour (same shape), scored once the set
+ *                 points are valid, `null` where an hour has no score (never 0);
+ *      `scoring_interval_secs: 3600`;
+ *      `score_summary` — over the TRAINING hours, counts hours,
+ *                 `share_basis: 'hour_count'`, minimum located by hour start.
+ *    Individual = the score of the hour's mean value. Clustering = the cluster
+ *    shared by EVERY row of the hour (each row's own cluster, from its own
+ *    criteria value), then the score of (mean x, mean y) against it; an hour
+ *    whose rows do not all share one cluster — two clusters, or a row with no
+ *    cluster among them — has `cluster` / `sd_distance` / `score` null (never
+ *    0), is still an hourly point and still counts in `hours` (`sharedPerHour`;
+ *    user decision 2026-10-11 — it used to be the cluster of the hour's MEAN
+ *    criteria value).
+ *    Relation model = residual of (mean target, the model's answer for the
+ *    hour's MEAN predictors) — the least-squares stand-in predicts it here, the
+ *    way the real engine is asked for the hourly rows. Statistics, band,
+ *    ellipses, 2RMSE, histogram and both scatters still come from the RAW
+ *    training rows.
  *  - `export_model_files` (`request`): Individual/Clustering re-validate against
  *    statistics computed in the call; Relationship pre-validates with the cached
  *    2RMSE (if cached) then "runs the sidecar" (gate-able) and validates again.
@@ -51,8 +77,22 @@
  *    Rust still ACCEPTS and ignores a legacy `label` / `event_time`, but the
  *    frontend must not send them, so
  *    this fake REJECTS any other key — a caller that still sends one fails its
- *    test instead of passing unnoticed. (The fake does not compute
- *    `test_validation`; tests that need one use `helpers/validationFixture.ts`.)
+ *    test instead of passing unnoticed.
+ *  - `test_validation` (`health_validation.rs`, `build_hourly`) is computed
+ *    whenever `compute_health_preview` carries `test_periods`: the scoring rows
+ *    of a period = rows inside it that have the kind's inputs and pass the
+ *    running condition's VALUE conditions (the training time periods do not
+ *    apply). `rows` / `days` / `train_rows` / `train_days` / `train.rows` /
+ *    `train.days` stay RAW (days = rows x the median sample interval); `hours`,
+ *    `train_hours`, `train.hours`, `scored`, `pct_below_80` count 1-hour points;
+ *    `lowest` = the lowest hourly score (whole number), `lowest_at` = that
+ *    hour's start; a period's kind metrics are over its hourly points, the train
+ *    block's are the raw training rows'. An invalid period adds a `test_*` issue
+ *    (never part of `valid`) and comes back with zeroes. The same block is
+ *    written as `validation` into the exported `*_INFO_*.json`, with
+ *    `scoring_interval_seconds: 3600` and `scoring_aggregation: 'mean'`.
+ *    (A UI test that only needs a canned block can still use
+ *    `helpers/validationFixture.ts`.)
  */
 
 export interface HealthDataset {
@@ -303,6 +343,146 @@ export function scoreClusterDistance(d: number, N: number): number | null {
     return clamp(s);
 }
 
+// ---------------------------------------------------------------------------
+// Hourly grouping (health_hourly.rs) — what the health score is computed on
+// ---------------------------------------------------------------------------
+
+const HOUR_MS = 3_600_000;
+
+/** `health_hourly::SCORING_INTERVAL_SECS` (`scoring_interval_secs` of a preview,
+ *  `scoring_interval_seconds` of the exported block). */
+export const SCORING_INTERVAL_SECS = 3600;
+/** `health_hourly::SCORING_AGGREGATION` (`scoring_aggregation` of the exported block). */
+export const SCORING_AGGREGATION = 'mean';
+
+/** `chart_query::hour_label`: the START of clock hour `hour` (hours since the
+ *  epoch), e.g. `2024-01-05T13:00:00`. */
+export function hourLabel(hour: number): string {
+    const d = new Date(hour * HOUR_MS);
+    return Number.isFinite(d.getTime()) ? d.toISOString().slice(0, 19) : '';
+}
+
+/** `health_hourly::HourGroups`. Positions index the `rows` given to
+ *  `groupHours`; hour indexes (`0..len`) index every per-hour array. */
+export interface HourGroups {
+    /** Number of hourly points. */
+    len: number;
+    /** Hour number (floor of the timestamp / 1 h) of each point, ascending. */
+    hours: number[];
+    /** Lowest dataset row of each hour (what `hourly.rows` carries). */
+    firstRows: number[];
+    /** Rows averaged into each hour (no minimum coverage). */
+    counts: number[];
+    /** Hour index of a universe position (`null` = no timestamp / not kept). */
+    hourOf(pos: number): number | null;
+    /** Timestamp text of hour `h`: the hour's START. */
+    label(h: number): string;
+    /** Mean of `valueAt(position)` per hour; non-finite values are skipped, an
+     *  hour with no finite value is `NaN`. */
+    mean(valueAt: (pos: number) => number): number[];
+    /** Per hour: does at least one of its rows satisfy `flagAt(position)`? */
+    any(flagAt: (pos: number) => boolean): boolean[];
+    /** The hours (ascending, unique) that hold at least one of `positions`. */
+    members(positions: Iterable<number>): number[];
+}
+
+/**
+ * `HourGroups::build`: group the universe `rows` (dataset row numbers; `tsMs`
+ * is indexed by them, `null` = the row has no timestamp) by CLOCK HOUR.
+ * `keep(position)` = does this row take part at all. The dataset is NOT assumed
+ * to be in time order; the points come out in ascending time.
+ */
+export function groupHours(tsMs: (number | null)[], rows: number[], keep: (pos: number) => boolean = () => true): HourGroups {
+    const keys: (number | null)[] = rows.map((r, i) => {
+        const t = tsMs[r];
+        return t === null || t === undefined || !Number.isFinite(t) || !keep(i) ? null : Math.floor(t / HOUR_MS);
+    });
+    const hours = [...new Set(keys.filter((k): k is number => k !== null))].sort((a, b) => a - b);
+    const index = new Map(hours.map((h, i) => [h, i]));
+    const of: (number | null)[] = keys.map(k => (k === null ? null : index.get(k)!));
+    const firstRows = hours.map(() => Infinity);
+    const counts = hours.map(() => 0);
+    of.forEach((h, i) => {
+        if (h === null) return;
+        firstRows[h] = Math.min(firstRows[h], rows[i]);
+        counts[h] += 1;
+    });
+    return {
+        len: hours.length,
+        hours,
+        firstRows,
+        counts,
+        hourOf: pos => of[pos] ?? null,
+        label: h => hourLabel(hours[h]),
+        mean: valueAt => {
+            const sum = hours.map(() => 0);
+            const n = hours.map(() => 0);
+            of.forEach((h, i) => {
+                if (h === null) return;
+                const v = valueAt(i);
+                if (Number.isFinite(v)) { sum[h] += v; n[h] += 1; }
+            });
+            return sum.map((s, h) => (n[h] > 0 ? s / n[h] : NaN));
+        },
+        any: flagAt => {
+            const out = hours.map(() => false);
+            of.forEach((h, i) => { if (h !== null && !out[h] && flagAt(i)) out[h] = true; });
+            return out;
+        },
+        members: positions => {
+            const seen = hours.map(() => false);
+            for (const p of positions) {
+                const h = of[p];
+                if (h !== null && h !== undefined) seen[h] = true;
+            }
+            return seen.flatMap((s, h) => (s ? [h] : []));
+        },
+    };
+}
+
+/**
+ * The value EVERY row of an hour shares, per hour: `valueAt[position]` is one
+ * entry per universe position (`null` = the row has none). An hour whose rows
+ * do not all carry the same non-null value answers `null` — two different
+ * values, or a `null` row mixed in with the others. A row that is in no hour
+ * (no timestamp) is not looked at.
+ *
+ * This is the Clustering rule for the cluster of an hourly point (user
+ * decision 2026-10-11): the cluster shared by every row of the hour, else none.
+ */
+export function sharedPerHour<T>(groups: HourGroups, valueAt: (T | null)[]): (T | null)[] {
+    const seen = new Array<boolean>(groups.len).fill(false);
+    const out = new Array<T | null>(groups.len).fill(null);
+    valueAt.forEach((v, pos) => {
+        const h = groups.hourOf(pos);
+        if (h === null) return;
+        if (!seen[h]) { seen[h] = true; out[h] = v; return; }
+        if (out[h] !== v) out[h] = null; // stays null: nothing equals a later non-null value
+    });
+    return out;
+}
+
+/** `health_validation::r1` / `r2dp` / `r3dp`: round half away from zero, `-0` -> `0`. */
+const r1 = (x: number) => roundTo(x, 1) + 0;
+const r2dp = (x: number) => roundTo(x, 2) + 0;
+const r3dp = (x: number) => roundTo(x, 3) + 0;
+/** `share_pct`: one decimal; no value (the key is omitted) when there is nothing to share. */
+const sharePct = (hits: number, total: number): number | undefined => (total > 0 ? r1(hits * 100 / total) : undefined);
+/** A score for the wire: `NaN` (no score) -> `null`, never 0. */
+const opt = (v: number): number | null => (Number.isNaN(v) ? null : v);
+/** `file_residual`: the residual as `REL_DATASET_*.csv` stores it. */
+export const fileResidual = (actual: number, predicted: number): number =>
+    (Number.isFinite(actual) && Number.isFinite(predicted) ? roundMetric(actual - roundMetric(predicted)) : NaN);
+
+/** `summarize_hours` over the TRAINING hours (`hourly_summary`): `scores` is one
+ *  entry per hourly point (`NaN` = no score); a point that is not a training
+ *  hour is left out. Counts HOURS; the minimum is located by its hour start and
+ *  the hour's first dataset row. */
+function hourlySummary(scores: number[], isTrain: boolean[], groups: HourGroups) {
+    const masked = scores.map((s, h) => (isTrain[h] ? s : NaN));
+    return summarize(masked, isTrain.filter(Boolean).length, h => ({ row: groups.firstRows[h], timestamp: groups.label(h) }));
+}
+
 function summarize(scores: (number | null)[], totalRows: number, locate: (i: number) => { row: number; timestamp: string | null }) {
     let scored = 0, hi = 0, mid = 0, lo = 0;
     let min: { i: number; s: number } | null = null;
@@ -323,7 +503,8 @@ function summarize(scores: (number | null)[], totalRows: number, locate: (i: num
         share_80_100: pct(hi),
         share_40_80: pct(mid),
         share_0_40: pct(lo),
-        share_basis: 'row_count' as const,
+        // `SHARE_BASIS_HOURS`: every count and share above is in 1-hour points.
+        share_basis: 'hour_count' as const,
     };
 }
 
@@ -367,6 +548,9 @@ interface RelFit {
     r2_per_step: number[];
     rmse2_per_step: number[];
     generation: number;
+    /** The stand-in model itself (intercept first): what "the engine" answers
+     *  with when it is asked to predict the hourly mean rows. */
+    beta: number[];
 }
 
 export interface FakeHealthRustOptions {
@@ -377,9 +561,18 @@ export interface FakeHealthRustOptions {
     files?: Map<string, string>;
 }
 
+/**
+ * `csv_processor::parse_timestamp` (what `ts_parsed` holds), in milliseconds.
+ * A stamp with a UTC offset (`2026-02-09T23:50:00+07:00`, seconds required)
+ * keeps ITS OWN wall clock — Rust takes `naive_local()`, the offset is dropped,
+ * never applied. A `Z` suffix is NOT a format Rust parses (`%:z` does not
+ * accept it): such a row has no timestamp, so it passes no time period and —
+ * since the health score is computed per clock hour — belongs to no hour.
+ */
 const tsMicros = (s: string | null | undefined): number | null => {
     if (!s) return null;
-    const t = s.trim().replace(' ', 'T');
+    const zoned = /^(.*[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?)[+\-−]\d{2}:\d{2}$/.exec(s.trim());
+    const t = (zoned ? zoned[1] : s.trim()).replace(' ', 'T');
     const full = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(t) ? `${t}:00` : /^\d{4}-\d{2}-\d{2}$/.test(t) ? `${t}T00:00:00` : t;
     const ms = Date.parse(`${full}Z`);
     return Number.isFinite(ms) ? ms : null;
@@ -455,6 +648,140 @@ export function createFakeHealthRust(opts: FakeHealthRustOptions) {
         const sd = n < 2 ? 0 : Math.sqrt(vals.reduce((a, b) => a + (b - mean) ** 2, 0) / (n - 1));
         return { mean, sd };
     };
+
+    // ---- scoring periods (health_validation.rs) ----
+
+    /** `ColumnarData::sample_interval_secs`: the median positive gap between
+     *  consecutive valid timestamps (`null` below 2 of them). */
+    const sampleIntervalSecs = (): number | null => {
+        const sorted = (tsParsed().filter(t => t !== null) as number[]).sort((x, y) => x - y);
+        const gaps: number[] = [];
+        for (let i = 1; i < sorted.length; i++) if (sorted[i] > sorted[i - 1]) gaps.push(sorted[i] - sorted[i - 1]);
+        gaps.sort((x, y) => x - y);
+        if (sorted.length < 2 || gaps.length === 0) return null;
+        return (gaps.length % 2 ? gaps[(gaps.length - 1) / 2] : (gaps[gaps.length / 2 - 1] + gaps[gaps.length / 2]) / 2) / 1000;
+    };
+    /** `days_of`: RAW running time of `rows` dataset rows, one decimal. */
+    const daysOf = (rows: number, intervalSecs: number | null) => (intervalSecs === null ? 0 : r1(rows * intervalSecs / 86_400));
+    const blankToNull = (v: unknown): string | null => (typeof v === 'string' && v.trim() ? v.trim() : null);
+
+    /**
+     * `TestPlan::resolve` (+ `collect_rows`): the scoring periods of a request,
+     * `null` when it carries none. A period's rows = rows inside it that pass
+     * the running condition's VALUE conditions (+ AND/OR) of the training scope
+     * `base`; the training TIME periods do not apply. An invalid period gets an
+     * issue (codes as in Rust) and no rows.
+     */
+    const testPlan = (periods: unknown, base: any) => {
+        if (!Array.isArray(periods) || periods.length === 0) return null;
+        const issues: Issue[] = [];
+        const tests = periods.map((p: any, i: number) => {
+            const n = i + 1;
+            const start = blankToNull(p?.start);
+            const end = blankToNull(p?.end);
+            const s = start === null ? null : tsMicros(start);
+            const e = end === null ? null : tsMicros(end);
+            let bad = false;
+            if (start !== null && s === null) {
+                issues.push(issue('test_start_unparseable', `test_period_${n}_start`, `Scoring period S${n}: the start time '${start}' is not a valid date and time.`));
+                bad = true;
+            }
+            if (end !== null && e === null) {
+                issues.push(issue('test_end_unparseable', `test_period_${n}_end`, `Scoring period S${n}: the end time '${end}' is not a valid date and time.`));
+                bad = true;
+            }
+            if (s !== null && e !== null && s > e) {
+                issues.push(issue('test_ends_before_start', `test_period_${n}_end`, `Scoring period S${n} ends before it starts.`));
+                bad = true;
+            }
+            const filter = bad ? null : resolveFilter({ timestamp_ranges: [{ start, end }], value_filters: base?.value_filters ?? [], combine: base?.combine });
+            return { index: n, start, end, filter };
+        });
+        const train_ranges = ((base?.timestamp_ranges ?? []) as any[]).map(r => ({ start: blankToNull(r?.start), end: blankToNull(r?.end) }));
+        /** Ascending dataset rows of each period that have the kind's inputs (`finite`). */
+        const collectRows = (finite: (r: number) => boolean): number[][] => tests.map(t => {
+            if (!t.filter) return [];
+            const out: number[] = [];
+            for (let r = 0; r < nRows(); r++) if (finite(r) && t.filter.keeps(r)) out.push(r);
+            return out;
+        });
+        return { tests, issues, train_ranges, collectRows };
+    };
+    type TestPlan = NonNullable<ReturnType<typeof testPlan>>;
+
+    interface PeriodHours { rows: number; train_rows: number; hours: number[] }
+    /** `period_hours`: the RAW counts and the hourly points of every scoring period. */
+    const periodHours = (testRows: number[][], urows: number[], isTrain: boolean[], groups: HourGroups): PeriodHours[] => {
+        const posOf = new Map(urows.map((r, i) => [r, i]));
+        return testRows.map(rs => {
+            const pos = rs.flatMap(r => (posOf.has(r) ? [posOf.get(r)!] : []));
+            return { rows: pos.length, train_rows: pos.filter(p => isTrain[p]).length, hours: groups.members(pos) };
+        });
+    };
+
+    /**
+     * `build_hourly`: the whole `test_validation` block from HOURLY points.
+     * `scores` = one per hour (`NaN` = no score), `null` while the set points
+     * are invalid. `trainRows` / `trainMetrics` = the kind's RAW train summary;
+     * `metricsFor(hours)` = the kind's metrics over a period's hourly points.
+     */
+    const buildHourly = (
+        plan: TestPlan,
+        periods: PeriodHours[],
+        h: { groups: HourGroups; isTrain: boolean[]; scores: number[] | null },
+        trainRows: number,
+        trainMetrics: Record<string, number>,
+        metricsFor: (hours: number[]) => Record<string, number>,
+    ) => {
+        const iv = sampleIntervalSecs();
+        const tests = plan.tests.map((t, j) => {
+            const p: PeriodHours = periods[j] ?? { rows: 0, train_rows: 0, hours: [] };
+            const res: Record<string, unknown> = {
+                index: t.index,
+                start: t.start,
+                end: t.end,
+                days: daysOf(p.rows, iv),          // RAW running time
+                rows: p.rows,                      // RAW rows
+                hours: p.hours.length,             // hourly points
+                ...(p.hours.length ? metricsFor(p.hours) : {}),
+                train_rows: p.train_rows,
+                train_days: daysOf(p.train_rows, iv),
+                train_hours: p.hours.filter(x => h.isTrain[x]).length,
+                scored: 0,
+                pct_below_80: null,
+                lowest: null,
+                lowest_at: null,
+            };
+            if (h.scores && p.hours.length) {
+                // `hour_facts`: no window — each point already is a 1-hour average.
+                let scored = 0, below = 0;
+                let low: { s: number; h: number } | null = null;
+                for (const x of p.hours) {
+                    const v = h.scores[x];
+                    if (Number.isNaN(v)) continue;
+                    scored++;
+                    if (v < 80) below++;
+                    if (low === null || v < low.s) low = { s: v, h: x }; // the FIRST hour at the minimum
+                }
+                res.scored = scored;
+                res.pct_below_80 = scored > 0 ? r1(below * 100 / scored) : null;
+                const m = low as { s: number; h: number } | null;
+                if (m) {
+                    res.lowest = roundTo(m.s, 0) + 0;
+                    res.lowest_at = h.groups.label(m.h);
+                }
+            }
+            return res;
+        });
+        return {
+            train: { rows: trainRows, days: daysOf(trainRows, iv), hours: h.isTrain.filter(Boolean).length, ...trainMetrics },
+            train_ranges: plan.train_ranges,
+            tests,
+        };
+    };
+    /** Drop the keys Rust omits (`None` + `skip_serializing_if`). */
+    const metrics = (m: Record<string, number | undefined>): Record<string, number> =>
+        Object.fromEntries(Object.entries(m).filter(([, v]) => v !== undefined)) as Record<string, number>;
 
     const individualBandOf = (mean: number, sd: number): IndividualBand => {
         const sdR = roundMetric(sd);
@@ -568,7 +895,8 @@ export function createFakeHealthRust(opts: FakeHealthRustOptions) {
         }
         return x;
     };
-    const ols = (X: number[][], y: number[]): number[] => {
+    /** Least-squares coefficients (intercept first). */
+    const olsBeta = (X: number[][], y: number[]): number[] => {
         const k = X[0].length + 1;
         const A = Array.from({ length: k }, () => new Array(k).fill(0));
         const b = new Array(k).fill(0);
@@ -576,8 +904,14 @@ export function createFakeHealthRust(opts: FakeHealthRustOptions) {
             const row = [1, ...X[i]];
             for (let p = 0; p < k; p++) { b[p] += row[p] * y[i]; for (let q = 0; q < k; q++) A[p][q] += row[p] * row[q]; }
         }
-        const beta = solve(A, b);
-        return X.map(r => [1, ...r].reduce((s, v, i) => s + v * beta[i], 0));
+        return solve(A, b);
+    };
+    /** The model's answer for one row of predictor values (`NaN` when one is missing). */
+    const predictWith = (beta: number[], x: number[]): number =>
+        (x.every(Number.isFinite) ? [1, ...x].reduce((s, v, i) => s + v * beta[i], 0) : NaN);
+    const ols = (X: number[][], y: number[]): number[] => {
+        const beta = olsBeta(X, y);
+        return X.map(r => predictWith(beta, r));
     };
     const r2 = (y: number[], p: number[]) => {
         const m = y.reduce((a, b) => a + b, 0) / y.length;
@@ -626,12 +960,65 @@ export function createFakeHealthRust(opts: FakeHealthRustOptions) {
         const stats = relStats(fit);
         if (fit.rows.some(r => r >= nRows())) throw 'NOT_FITTED: the cached fit does not belong to the loaded dataset';
         const residual = fit.actual.map((a, i) => a - fit.predicted[i]);
+        const tcol = col(fit.target);
+        if (!tcol) throw `BAD_REQUEST: Target not found: ${fit.target}`;
+        const pcols = fit.predictors.map(p => {
+            const c = col(p);
+            if (!c) throw `BAD_REQUEST: Predictor not found: ${p}`;
+            return c;
+        });
+
+        // ---- universe: the fitted (training) rows, plus the rows of the scoring periods ----
+        // A scoring row needs the target and every predictor (`rel_test_rows`).
+        const plan = testPlan(req.test_periods, req.filter);
+        const testRows = plan ? plan.collectRows(r => Number.isFinite(tcol[r]) && pcols.every(c => Number.isFinite(c[r]))) : [];
+        const fitRows = new Set(fit.rows);
+        const urows = [...new Set([...fit.rows, ...testRows.flat()])].sort((a, b) => a - b);
+        const isTrain = urows.map(r => fitRows.has(r));
+
         const sp = parseSetPoints(req.set_points);
         const validation = validateRelationship(stats.two_rmse, sp);
         const valid = validation.length === 0;
-        const scores = valid ? residual.map(r => scoreRelationship(stats.two_rmse, sp as any, r)) : null;
+        if (plan) validation.push(...plan.issues);
+
+        // ---- hourly points: what the health score is computed on ----
+        // Mean target and mean of each predictor over the hour's universe rows; the
+        // prediction is the model's answer for those MEAN predictors (never the mean of
+        // per-row predictions); residual as the file stores it.
+        const groups = groupHours(tsParsed(), urows);
+        const hActual = groups.mean(i => tcol[urows[i]]);
+        const hX = pcols.map(c => groups.mean(i => c[urows[i]]));
+        const hPred = hActual.map((_, h) => predictWith(fit.beta, hX.map(x => x[h])));
+        const hResid = hActual.map((a, h) => fileResidual(a, hPred[h]));
+        const hTrain = groups.any(i => isTrain[i]);
+        const hScores = valid ? hResid.map(r => scoreRelationship(stats.two_rmse, sp as any, r) ?? NaN) : null;
+
+        // RAW rows for the Model fit page: the fit's training rows only, never a score.
         const sel = selectIdx(fit.rows.length, req.max_points ?? 4000);
+        const hsel = selectIdx(groups.len, req.max_points ?? 4000);
         const scIdx = selectIdx(fit.rows.length, req.max_scatter_points ?? 8000);
+
+        // `rel_metrics`: predictions rounded like the INFO file, residual = `file_residual`.
+        const relMetrics = (pairs: [number, number][]): Record<string, number> => {
+            const ok = pairs.filter(([a, b]) => Number.isFinite(a) && Number.isFinite(b));
+            if (!ok.length) return {};
+            const y = ok.map(([a]) => a);
+            const p = ok.map(([, b]) => roundMetric(b));
+            const md = meanSd(ok.map(([a, b]) => fileResidual(a, b)));
+            return { r2: r3dp(r2(y, p)), rmse: roundMetric(rmse(y, p)), residual_mean: roundMetric(md.mean) + 0, residual_sd: roundMetric(md.sd) };
+        };
+        const test_validation = plan
+            ? buildHourly(
+                plan,
+                periodHours(testRows, urows, isTrain, groups),
+                { groups, isTrain: hTrain, scores: hScores },
+                stats.rows,
+                // The train block: the model's own numbers, from the RAW training rows.
+                relMetrics(fit.actual.map((a, i) => [a, fit.predicted[i]])),
+                // A period's metrics: over its HOURLY points.
+                hours => relMetrics(hours.map(h => [hActual[h], hPred[h]])),
+            )
+            : null;
         return {
             kind: 'relationship',
             stats,
@@ -644,10 +1031,22 @@ export function createFakeHealthRust(opts: FakeHealthRustOptions) {
                 actual: sel.map(i => fit.actual[i]),
                 predicted: sel.map(i => fit.predicted[i]),
                 residual: sel.map(i => residual[i]),
-                score: scores ? sel.map(i => scores[i]) : null,
+                score: null,
                 total_points: fit.rows.length,
             },
-            score_summary: scores ? summarize(scores, fit.rows.length, i => ({ row: fit.rows[i], timestamp: data.timestamps[fit.rows[i]] ?? null })) : null,
+            hourly: {
+                kind: 'relationship',
+                rows: hsel.map(h => groups.firstRows[h]),
+                timestamps: hsel.map(h => groups.label(h)),
+                actual: hsel.map(h => hActual[h]),
+                predicted: hsel.map(h => opt(hPred[h])),
+                residual: hsel.map(h => opt(hResid[h])),
+                score: hScores ? hsel.map(h => opt(hScores[h])) : null,
+                total_points: groups.len,
+            },
+            scoring_interval_secs: SCORING_INTERVAL_SECS,
+            score_summary: hScores ? hourlySummary(hScores, hTrain, groups) : null,
+            test_validation,
             histogram: null,
             fit_scatter: {
                 x_sensor: fit.predictors[xIdx],
@@ -663,16 +1062,60 @@ export function createFakeHealthRust(opts: FakeHealthRustOptions) {
 
     const individualPreview = (req: any) => {
         if (!req.target) throw 'BAD_REQUEST: target is required';
-        const { c, rows } = inScopeIndividual(req.target, req.filter);
-        if (!rows.length) throw `NO_DATA: No valid numeric values for sensor '${req.target}' in the training scope`;
-        const vals = rows.map(r => c[r]);
+        const c = col(req.target);
+        if (!c) throw `BAD_REQUEST: Sensor not found: ${req.target}`;
+        const f = resolveFilter(req.filter);
+        // The scoring periods: rows with a finite target that pass the value conditions.
+        const plan = testPlan(req.test_periods, req.filter);
+        const testRows = plan ? plan.collectRows(r => Number.isFinite(c[r])) : [];
+        const inTest = new Set(testRows.flat());
+        // Row universe (ascending dataset rows): the training rows and, with scoring
+        // periods, their rows too (scored with the train-only model).
+        const rows: number[] = [];
+        for (let r = 0; r < nRows(); r++) if (Number.isFinite(c[r]) && (f.noop || inTest.has(r) || f.keeps(r))) rows.push(r);
+        const isTrain = rows.map(r => f.noop || f.keeps(r));
+        const values = rows.map(r => c[r]);
+        // Every model number comes from the RAW training rows.
+        const vals = values.filter((_, i) => isTrain[i]);
+        if (!vals.length) throw `NO_DATA: No valid numeric values for sensor '${req.target}' in the training scope`;
         const { mean, sd } = meanSd(vals);
         const band = individualBandOf(mean, sd);
         const sp = parseSetPoints(req.set_points);
         const validation = validateIndividual(band, sp);
         const valid = validation.length === 0;
-        const scores = valid ? vals.map(v => scoreIndividual(band, sp.lower!, sp.upper!, v)) : null;
+        if (plan) validation.push(...plan.issues);
+
+        // ---- hourly points: what the health score is computed on ----
+        // Every universe row is in scope here (training rows + scoring-period rows): the
+        // value of a point is the MEAN of the hour's rows, its score the score of that mean.
+        const groups = groupHours(tsParsed(), rows);
+        const hValue = groups.mean(i => values[i]);
+        const hTrain = groups.any(i => isTrain[i]);
+        const hScores = valid ? hValue.map(v => scoreIndividual(band, sp.lower!, sp.upper!, v) ?? NaN) : null;
+
         const sel = selectIdx(rows.length, req.max_points ?? 4000);
+        const hsel = selectIdx(groups.len, req.max_points ?? 4000);
+        const inside3 = (v: number) => v >= band.l3 && v <= band.u3;
+        const test_validation = plan
+            ? buildHourly(
+                plan,
+                periodHours(testRows, rows, isTrain, groups),
+                { groups, isTrain: hTrain, scores: hScores },
+                vals.length,
+                // The train block: the model's own numbers, from the RAW training rows.
+                metrics({ mean: band.mean, sd: band.sd, within_3sd_pct: sharePct(vals.filter(inside3).length, vals.length) }),
+                // A period's metrics: over its HOURLY points.
+                hours => {
+                    const vs = hours.map(h => hValue[h]);
+                    const finite = vs.filter(Number.isFinite);
+                    const m = finite.length ? finite.reduce((a, b) => a + b, 0) / finite.length : NaN;
+                    return metrics({
+                        within_3sd_pct: sharePct(vs.filter(inside3).length, vs.length),
+                        mean_shift_sd: band.sd > 0 && Number.isFinite(m) ? r2dp((m - band.mean) / band.sd) : undefined,
+                    });
+                },
+            )
+            : null;
         // histogram (health_score::histogram)
         const mn = Math.min(...vals), mx = Math.max(...vals);
         let edges: number[], counts: number[], width: number;
@@ -696,16 +1139,28 @@ export function createFakeHealthRust(opts: FakeHealthRustOptions) {
             stats: { kind: 'individual', rows: vals.length, mean: band.mean, sd: band.sd, boundary_1sd: [band.l1, band.u1], boundary_3sd: [band.l3, band.u3], min: mn, max: mx },
             validation,
             valid,
+            // RAW rows for the Model fit page: never a score.
             series: {
                 kind: 'individual',
                 rows: sel.map(i => rows[i]),
                 timestamps: sel.map(i => data.timestamps[rows[i]] ?? ''),
-                value: sel.map(i => vals[i]),
+                value: sel.map(i => values[i]),
                 in_scope: sel.map(() => true),
-                score: scores ? sel.map(i => scores[i]) : null,
+                score: null,
                 total_points: rows.length,
             },
-            score_summary: scores ? summarize(scores, nRows(), i => ({ row: rows[i], timestamp: data.timestamps[rows[i]] ?? null })) : null,
+            hourly: {
+                kind: 'individual',
+                rows: hsel.map(h => groups.firstRows[h]),
+                timestamps: hsel.map(h => groups.label(h)),
+                value: hsel.map(h => hValue[h]),
+                in_scope: hsel.map(() => true),
+                score: hScores ? hsel.map(h => opt(hScores[h])) : null,
+                total_points: groups.len,
+            },
+            scoring_interval_secs: SCORING_INTERVAL_SECS,
+            score_summary: hScores ? hourlySummary(hScores, hTrain, groups) : null,
+            test_validation,
             histogram: { bin_edges: edges, counts, curve, bin_width: width, n: vals.length },
             fit_scatter: null,
             cluster_scatter: null,
@@ -736,35 +1191,92 @@ export function createFakeHealthRust(opts: FakeHealthRustOptions) {
         const f = resolveFilter(req.filter);
         const ranges: [number | null, number | null][] = n > 1 ? (req.cluster_ranges ?? []).map((r: any) => [r.min, r.max]) : [];
         const cc = n > 1 && preview.criteria_sensor ? col(preview.criteria_sensor) : null;
+        // The scoring periods: rows with finite X and Y that pass the value conditions.
+        const plan = testPlan(req.test_periods, req.filter);
+        const testRows = plan ? plan.collectRows(r => Number.isFinite(c1[r]) && Number.isFinite(c2[r])) : [];
+        const inTest = new Set(testRows.flat());
+        // Universe: training rows (and, with scoring periods, their rows) with finite X and Y.
         const rows: number[] = [];
-        for (let r = 0; r < nRows(); r++) if (Number.isFinite(c1[r]) && Number.isFinite(c2[r]) && (f.noop || f.keeps(r))) rows.push(r);
+        for (let r = 0; r < nRows(); r++) if (Number.isFinite(c1[r]) && Number.isFinite(c2[r]) && (f.noop || inTest.has(r) || f.keeps(r))) rows.push(r);
         if (!rows.length) throw 'NO_DATA: No rows remain after dropping nulls.';
-        const assign = rows.map(r => {
-            if (!cc) return 0;
-            const v = cc[r];
+        const isTrain = rows.map(r => f.noop || f.keeps(r));
+        /** `assign_cluster`: half-open ranges, first match; `null` = none. */
+        const assignCluster = (v: number): number | null => {
+            if (!cc) return 0; // single cluster: everything
             if (!Number.isFinite(v)) return null;
             const k = ranges.findIndex(([lo, hi]) => (lo === null || v >= lo) && (hi === null || v < hi));
             return k < 0 ? null : k;
-        });
+        };
+        const assign = rows.map(r => assignCluster(cc ? cc[r] : NaN));
+        const trainN = isTrain.filter(Boolean).length;
+        const assignedN = assign.filter((a, i) => isTrain[i] && a !== null).length;
         const sp = parseSetPoints(req.set_points);
         const validation = validateClustering(geoms, sp);
         const valid = validation.length === 0;
-        const scored = valid ? rows.map((r, i) => {
-            const k = assign[i];
-            if (k === null) return { s: null as number | null, d: null as number | null };
-            const d = sdDistance(geoms[k], c1[r], c2[r]);
-            return { s: scoreClusterDistance(d, sp.outer_sd!), d };
+        if (plan) validation.push(...plan.issues);
+
+        // ---- hourly points: what the health score is computed on ----
+        // Means of X and Y per hour, over EVERY row of the hour. The hour's cluster is the
+        // cluster shared by every one of those rows (each row's own cluster, from its own
+        // criteria value — `assign`). Rows that do not all agree — two different clusters,
+        // or a row with no cluster (criteria outside every range, or missing) among them —
+        // leave the hour with NO cluster: no SD distance and no score (null, never 0).
+        // The hour is still a point (mean x, mean y) and still counts in `hours`. It is
+        // never judged by the MEAN criteria value: an hour split between ranges A and C
+        // would average into B and be scored against a cluster the machine was never in.
+        const groups = groupHours(tsParsed(), rows);
+        const hX = groups.mean(i => c1[rows[i]]);
+        const hY = groups.mean(i => c2[rows[i]]);
+        const hAssign = sharedPerHour(groups, assign);
+        const hTrain = groups.any(i => isTrain[i]);
+        const hScored = valid ? hX.map((x, h) => {
+            const k = hAssign[h];
+            if (k === null) return { s: NaN, d: NaN };
+            const d = sdDistance(geoms[k], x, hY[h]);
+            return { s: scoreClusterDistance(d, sp.outer_sd!) ?? NaN, d };
         }) : null;
+        const hScores = hScored ? hScored.map(x => x.s) : null;
+        // RAW rows (Model fit): each row's own SD distance once the clusters are validated.
+        const rowDist = valid ? rows.map((r, i) => (assign[i] === null ? NaN : sdDistance(geoms[assign[i] as number], c1[r], c2[r]))) : null;
+
         const sel = selectIdx(rows.length, req.max_points ?? 4000);
-        const sc = selectIdx(rows.length, req.max_scatter_points ?? 8000);
-        const scores = scored ? scored.map(x => x.s) : null;
+        const hsel = selectIdx(groups.len, req.max_points ?? 4000);
+        // The scatter shows the training rows only.
+        const trainPos = rows.flatMap((_, i) => (isTrain[i] ? [i] : []));
+        const sc = selectIdx(trainPos.length, req.max_scatter_points ?? 8000).map(k => trainPos[k]);
+
+        // Distance to the assigned cluster's centre in SD units, from the TRAIN-fitted
+        // clusters (independent of the set points; a collapsed cluster has none).
+        const distOf = (k: number | null, x: number, y: number): number | null => {
+            if (k === null) return null;
+            const g = geoms[k];
+            if (!g || ![g.x_center, g.y_center, g.x_sd, g.y_sd, g.angle_deg].every(Number.isFinite) || g.x_sd <= 0 || g.y_sd <= 0) return null;
+            const d = sdDistance(g, x, y);
+            return Number.isFinite(d) ? d : null;
+        };
+        const ring = (ds: (number | null)[]) => {
+            const ok = ds.filter((d): d is number => d !== null);
+            return metrics({ inside_3sd_ring_pct: sharePct(ok.filter(d => d <= 3).length, ok.length) });
+        };
+        const test_validation = plan
+            ? buildHourly(
+                plan,
+                periodHours(testRows, rows, isTrain, groups),
+                { groups, isTrain: hTrain, scores: hScores },
+                trainN,
+                // The train block: the RAW training rows against their own clusters.
+                ring(rows.flatMap((r, i) => (isTrain[i] ? [distOf(assign[i], c1[r], c2[r])] : []))),
+                // A period's metric: over its HOURLY points.
+                hours => ring(hours.map(h => distOf(hAssign[h], hX[h], hY[h]))),
+            )
+            : null;
         return {
             kind: 'clustering',
             stats: {
                 kind: 'clustering',
-                rows: rows.length,
-                assigned_rows: assign.filter(a => a !== null).length,
-                unassigned_rows: assign.filter(a => a === null).length,
+                rows: trainN,
+                assigned_rows: assignedN,
+                unassigned_rows: trainN - assignedN,
                 cluster_count: n,
                 criteria_sensor: preview.criteria_sensor,
                 clusters: preview.clusters.map((c: any, i: number) => ({ ...geoms[i], cluster_id: c.cluster_id, range: c.range, n_rows: c.n_rows })),
@@ -778,14 +1290,27 @@ export function createFakeHealthRust(opts: FakeHealthRustOptions) {
                 x: sel.map(i => c1[rows[i]]),
                 y: sel.map(i => c2[rows[i]]),
                 cluster: sel.map(i => (assign[i] === null ? null : (assign[i] as number) + 1)),
-                sd_distance: sel.map(i => (scored ? scored[i].d : null)),
-                score: scores ? sel.map(i => scores[i]) : null,
+                sd_distance: sel.map(i => (rowDist ? opt(rowDist[i]) : null)),
+                score: null, // the raw rows are never scored
                 total_points: rows.length,
             },
-            score_summary: scores ? summarize(scores, nRows(), i => ({ row: rows[i], timestamp: data.timestamps[rows[i]] ?? null })) : null,
+            hourly: {
+                kind: 'clustering',
+                rows: hsel.map(h => groups.firstRows[h]),
+                timestamps: hsel.map(h => groups.label(h)),
+                x: hsel.map(h => hX[h]),
+                y: hsel.map(h => hY[h]),
+                cluster: hsel.map(h => (hAssign[h] === null ? null : (hAssign[h] as number) + 1)),
+                sd_distance: hsel.map(h => (hScored ? opt(hScored[h].d) : null)),
+                score: hScores ? hsel.map(h => opt(hScores[h])) : null,
+                total_points: groups.len,
+            },
+            scoring_interval_secs: SCORING_INTERVAL_SECS,
+            score_summary: hScores ? hourlySummary(hScores, hTrain, groups) : null,
+            test_validation,
             histogram: null,
             fit_scatter: null,
-            cluster_scatter: { x: sc.map(i => c1[rows[i]]), y: sc.map(i => c2[rows[i]]), cluster: sc.map(i => (assign[i] === null ? null : (assign[i] as number) + 1)), total: rows.length },
+            cluster_scatter: { x: sc.map(i => c1[rows[i]]), y: sc.map(i => c2[rows[i]]), cluster: sc.map(i => (assign[i] === null ? null : (assign[i] as number) + 1)), total: trainN },
         };
     };
 
@@ -814,6 +1339,28 @@ export function createFakeHealthRust(opts: FakeHealthRustOptions) {
     const okResult = (ws: string, written: any[]) => ({ ok: true, files: written, output_dir: outputDirAbs(ws), validation: [], warnings: [] });
     const refused = (ws: string, validation: Issue[]) => ({ ok: false, files: [], output_dir: outputDirAbs(ws), validation, warnings: [] });
 
+    /**
+     * `health_validation::export_block`: the `validation` object of an exported
+     * `*_INFO_*.json` — the SAME block the preview code computes as
+     * `test_validation`, plus how the scores behind it were sampled
+     * (`scoring_interval_seconds` / `scoring_aggregation`: one point per clock
+     * hour, the mean of the hour's running rows). No block at all when the
+     * request carried no scoring period.
+     */
+    const exportBlock = (testValidation: any): Record<string, unknown> => (testValidation
+        ? {
+            validation: {
+                tested: true,
+                validated_at: new Date().toISOString(),
+                scoring_interval_seconds: SCORING_INTERVAL_SECS,
+                scoring_aggregation: SCORING_AGGREGATION,
+                train: testValidation.train,
+                train_ranges: testValidation.train_ranges,
+                tests: testValidation.tests,
+            },
+        }
+        : {});
+
     /** Sync part of export (`export_sync`). */
     const exportSync = (req: any) => {
         const ws = sanitizeWs(req.workspace_id);
@@ -829,7 +1376,11 @@ export function createFakeHealthRust(opts: FakeHealthRustOptions) {
             return okResult(ws, writeFiles(ws, [{
                 kind: 'info',
                 rel: `${req.target}/INDV_INFO_${req.target}.json`,
-                content: { model_metrics: { mean: band.mean, sd: band.sd, '1sd_boundary': [band.l1, band.u1], '3sd_boundary': [band.l3, band.u3], setpoint_health_score: [sp.lower, sp.upper] }, model_name: req.model_name ?? null },
+                content: {
+                    model_metrics: { mean: band.mean, sd: band.sd, '1sd_boundary': [band.l1, band.u1], '3sd_boundary': [band.l3, band.u3], setpoint_health_score: [sp.lower, sp.upper] },
+                    model_name: req.model_name ?? null,
+                    ...exportBlock(individualPreview(req).test_validation),
+                },
             }]));
         }
         if (req.kind === 'clustering') {
@@ -849,7 +1400,11 @@ export function createFakeHealthRust(opts: FakeHealthRustOptions) {
                     } : {}),
                 };
             });
-            return okResult(ws, writeFiles(ws, [{ kind: 'info', rel: `${req.second_sensor}/CLUS_INFO_${req.first_sensor}_${req.second_sensor}.json`, content: { cluster_info: info } }]));
+            return okResult(ws, writeFiles(ws, [{
+                kind: 'info',
+                rel: `${req.second_sensor}/CLUS_INFO_${req.first_sensor}_${req.second_sensor}.json`,
+                content: { cluster_info: info, ...exportBlock(clusteringPreview(req).test_validation) },
+            }]));
         }
         throw `BAD_REQUEST: unknown kind '${req.kind}'`;
     };
@@ -876,7 +1431,8 @@ export function createFakeHealthRust(opts: FakeHealthRustOptions) {
             rm2.push(Math.round(2 * rmse(y, p) * 1e4) / 1e4);
             last = p;
         }
-        return { X, y, rows, predicted: last, r2_per_step: r2s, rmse2_per_step: rm2, lambda };
+        // The full model (every predictor): `last` is exactly its answer for the training rows.
+        return { X, y, rows, predicted: last, r2_per_step: r2s, rmse2_per_step: rm2, lambda, beta: olsBeta(X, y) };
     };
 
     /**
@@ -988,6 +1544,7 @@ export function createFakeHealthRust(opts: FakeHealthRustOptions) {
                         target: a.target, predictors: [...a.predictors], lambda: a.lambda, rows: fit.rows,
                         actual: fit.y, predicted: fit.predicted, x_cols: a.predictors.map((_: string, k: number) => fit.X.map(r => r[k])),
                         r2_per_step: fit.r2_per_step, rmse2_per_step: fit.rmse2_per_step, generation: startedIn,
+                        beta: fit.beta,
                     };
                     // `store_rel_fit`: refused when the session was replaced meanwhile.
                     const cached = generation === startedIn;
@@ -1035,6 +1592,16 @@ export function createFakeHealthRust(opts: FakeHealthRustOptions) {
                 if (pre.length) return refused(ws, pre);
                 // The ~15 s sidecar re-fit (gate-able in tests).
                 const fit = fitRelationship(req.predictors, req.target, req.lambda, req.filter);
+                // The `validation` block: the same preview code, over this fresh train-only fit
+                // (the hourly points are predicted from each hour's mean predictors). It is
+                // computed from the data the export STARTED with - like the fit itself - so a
+                // dataset swapped while the engine runs never reaches the files.
+                const exportFit: RelFit = {
+                    target: req.target, predictors: [...req.predictors], lambda: req.lambda, rows: fit.rows,
+                    actual: fit.y, predicted: fit.predicted, x_cols: req.predictors.map((_: string, k: number) => fit.X.map(r => r[k])),
+                    r2_per_step: fit.r2_per_step, rmse2_per_step: fit.rmse2_per_step, generation, beta: fit.beta,
+                };
+                const block = exportBlock(relationshipPreview(exportFit, { kind: 'relationship', filter: req.filter, set_points: req.set_points, test_periods: req.test_periods }).test_validation);
                 await sidecar(cmd, a);
                 const e = rmse(fit.y, fit.predicted.map(roundMetric));
                 const w = roundMetric(2 * e);
@@ -1042,7 +1609,7 @@ export function createFakeHealthRust(opts: FakeHealthRustOptions) {
                 if (post.length) return refused(ws, post);
                 const tok = req.predictors.join('_');
                 return okResult(ws, writeFiles(ws, [
-                    { kind: 'info', rel: `${req.target}/REL_INFO_${tok}_${req.target}.json`, content: { '2rmse': w, setpoint_health_score: { residual_at_health_80_lower: sp.residual_at_80_lower, residual_at_health_80_upper: sp.residual_at_80_upper, residual_at_health_0_lower: sp.residual_at_0_lower, residual_at_health_0_upper: sp.residual_at_0_upper } } },
+                    { kind: 'info', rel: `${req.target}/REL_INFO_${tok}_${req.target}.json`, content: { '2rmse': w, setpoint_health_score: { residual_at_health_80_lower: sp.residual_at_80_lower, residual_at_health_80_upper: sp.residual_at_80_upper, residual_at_health_0_lower: sp.residual_at_0_lower, residual_at_health_0_upper: sp.residual_at_0_upper }, ...block } },
                     { kind: 'dataset', rel: `${req.target}/REL_DATASET_${tok}_${req.target}.csv`, content: 'x,y' },
                     { kind: 'model', rel: `${req.target}/REL_MODEL_${tok}_${req.target}.pkl`, content: 'pkl' },
                 ]));

@@ -1026,11 +1026,11 @@ fn summarize_shares_partition_scored_rows() {
             .map(|_| if rng.f() < 0.1 { f64::NAN } else { (rng.range(0.0, 100.0) * 4.0).round() / 4.0 })
             .collect();
         let total = n + rng.usize(100);
-        let sum = summarize(&s, total, |i| (i * 2, Some(format!("t{i}"))));
+        let sum = summarize_hours(&s, total, |i| (i * 2, Some(format!("t{i}"))));
         let scored = s.iter().filter(|v| !v.is_nan()).count();
         assert_eq!(sum.scored, scored);
         assert_eq!(sum.unscored, total - scored);
-        assert_eq!(sum.share_basis, "row_count");
+        assert_eq!(sum.share_basis, "hour_count");
         if scored == 0 {
             assert!(sum.min_score.is_none() && sum.pct_below_80.is_none());
             continue;
@@ -1046,7 +1046,7 @@ fn summarize_shares_partition_scored_rows() {
         assert_eq!((m.score, m.row, m.timestamp), (mn, first * 2, Some(format!("t{first}"))));
     }
     // Boundaries: exactly 80 is in 80–100, exactly 40 in 40–80.
-    let sum = summarize(&[80.0, 40.0, 39.999], 3, |i| (i, None));
+    let sum = summarize_hours(&[80.0, 40.0, 39.999], 3, |i| (i, None));
     assert_eq!((sum.share_80_100.unwrap(), sum.share_40_80.unwrap()), (100.0 / 3.0, 100.0 / 3.0));
 }
 

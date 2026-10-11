@@ -6,10 +6,19 @@
 //! `src-tauri/tests/internal/` (not auto-discovered by
 //! cargo as an integration-test target).
 //!
+//! Since 2026-10-11 the health score is computed on 1-HOUR AVERAGES (one point
+//! per clock hour = the mean of the hour's in-scope rows, `health_hourly`):
+//! the checks below re-compute every hourly point independently (the fixtures
+//! are 10-minute rows, so an hour is 6 rows). The Relation model's hourly point
+//! is the hour's mean target against the model's prediction for the hour's MEAN
+//! predictors; its raw series (the fit's training rows) still equals
+//! `REL_DATASET` row for row.
+//!
 //! Covers what the in-module tests do not:
 //!   A. rounding consistency — write the model file through the export core,
-//!      read it back, re-score every row with an independent reference and
-//!      compare with the preview (Individual / Clustering / Relationship);
+//!      read it back, re-score every hourly point with an independent
+//!      reference (Relationship: the file's rows averaged per hour, through
+//!      the model) and compare with the preview;
 //!   B. training-scope consistency between `compute_health_preview` and the
 //!      export path for many filter shapes, against an independent filter;
 //!   C. Relationship cache: generation straddle, concurrency, foreign rows;
@@ -28,7 +37,8 @@
 
 use crate::csv_processor::{ColumnarData, TS_MISSING};
 use crate::health_preview::{
-    clustering_preview, individual_preview, relationship_preview, relationship_stats,
+    clustering_preview, individual_preview, rel_extra_from_model, relationship_preview_ex,
+    relationship_stats,
     HealthPreview, HealthPreviewRequest, HealthSeries, HealthStats,
 };
 use crate::health_score::{IndividualBand, RelFit, SetPointsArg};
@@ -142,6 +152,51 @@ fn clu_parts(p: &HealthPreview) -> (&crate::health_preview::ClusteringStats, &cr
     }
 }
 
+/// The HOURLY series of a preview (`hourly`: one scored point per clock hour;
+/// `*_parts` above give the RAW `series`, which carries no score).
+fn ind_hourly(p: &HealthPreview) -> &crate::health_preview::IndividualSeries {
+    match &p.hourly {
+        HealthSeries::Individual(se) => se,
+        _ => panic!("not individual"),
+    }
+}
+fn clu_hourly(p: &HealthPreview) -> &crate::health_preview::ClusteringSeries {
+    match &p.hourly {
+        HealthSeries::Clustering(se) => se,
+        _ => panic!("not clustering"),
+    }
+}
+fn rel_hourly(p: &HealthPreview) -> &crate::health_preview::RelationshipSeries {
+    match &p.hourly {
+        HealthSeries::Relationship(se) => se,
+        _ => panic!("not relationship"),
+    }
+}
+
+/// Independent hourly grouping: the clock hour of a row is read from its
+/// timestamp TEXT (`YYYY-MM-DDTHH`), never from `ts_parsed`. Returns, in time
+/// order, `(hour start text, the dataset rows of `rows` in that hour)`; a row
+/// without a timestamp is in no hour.
+fn ref_hours(d: &ColumnarData, rows: impl Iterator<Item = usize>) -> Vec<(String, Vec<usize>)> {
+    let mut by_hour: std::collections::BTreeMap<String, Vec<usize>> = std::collections::BTreeMap::new();
+    for r in rows {
+        if let Some(t) = d.timestamps[r].as_deref() {
+            by_hour.entry(format!("{}:00:00", &t[..13])).or_default().push(r);
+        }
+    }
+    by_hour.into_iter().collect()
+}
+
+/// Mean of the finite values of `col` over `rows` (`NaN` when there is none).
+fn ref_mean(col: &[f64], rows: &[usize]) -> f64 {
+    let v: Vec<f64> = rows.iter().map(|&r| col[r]).filter(|x| x.is_finite()).collect();
+    if v.is_empty() {
+        f64::NAN
+    } else {
+        v.iter().sum::<f64>() / v.len() as f64
+    }
+}
+
 fn ind_req(target: &str, sp: Option<SetPointsArg>, filter: Option<PreviewFilter>) -> HealthPreviewRequest {
     HealthPreviewRequest {
         kind: "individual".into(),
@@ -230,7 +285,7 @@ fn score_from_indv_file(info: &serde_json::Value, v: f64) -> f64 {
 }
 
 #[test]
-fn a1_individual_file_rescoring_matches_preview_for_every_row_of_several_scales() {
+fn a1_individual_file_rescoring_matches_preview_for_every_hour_of_several_scales() {
     let mut rng = Rng::new(101);
     let n = 20_000;
     let scenarios: Vec<(&str, Box<dyn Fn(&mut Rng) -> f64>)> = vec![
@@ -252,8 +307,14 @@ fn a1_individual_file_rescoring_matches_preview_for_every_row_of_several_scales(
         let sp = sp_ind(l, h);
         let p = individual_preview(&d, &ind_req("S", Some(sp.clone()), None)).unwrap();
         assert!(p.valid, "{name}: {:?}", p.validation);
-        let (st, se) = ind_parts(&p);
-        assert_eq!(se.rows.len(), n, "{name}: series must hold every row at max_points=100000");
+        let (st, raw) = ind_parts(&p);
+        assert_eq!(raw.rows.len(), n, "{name}: series must hold every row at max_points=100000");
+        assert!(raw.score.is_none(), "{name}: the raw rows are not scored");
+        // What IS scored: one point per clock hour (6 rows of 10 minutes).
+        let se = ind_hourly(&p);
+        let hours = ref_hours(&d, 0..n);
+        assert_eq!(hours.len(), n.div_ceil(6));
+        assert_eq!(se.rows.len(), hours.len(), "{name}: every hourly point at max_points=100000");
 
         let app = tempfile::tempdir().unwrap();
         let r = export_sync(&d, &ind_export("S", "ws", Some(sp), None), app.path()).unwrap();
@@ -271,14 +332,19 @@ fn a1_individual_file_rescoring_matches_preview_for_every_row_of_several_scales(
         assert_eq!(m["setpoint_health_score"][1].as_f64().unwrap(), h);
 
         let sc = se.score.as_ref().unwrap();
-        for i in 0..se.rows.len() {
+        for (i, (start, rows)) in hours.iter().enumerate() {
+            // The point is the hour's mean, labelled with the hour start...
+            assert_eq!(&se.timestamps[i], start, "{name} hour {i}");
+            assert_eq!(se.rows[i] as usize, rows[0], "{name} hour {i}: first row");
+            assert_eq!(se.value[i], ref_mean(&d.columns[1], rows), "{name} hour {i}: mean of its rows");
+            // ...and a consumer holding only the file scores that mean the same.
             let want = score_from_indv_file(&info, se.value[i]);
             let got = sc[i].unwrap();
-            assert!((got - want).abs() <= 1e-9, "{name} row {}: preview {got} vs file {want}", se.rows[i]);
+            assert!((got - want).abs() <= 1e-9, "{name} hour {start}: preview {got} vs file {want}");
             compared += 1;
         }
     }
-    assert_eq!(compared, 5 * n);
+    assert_eq!(compared, 5 * n.div_ceil(6));
 }
 
 /// Mahalanobis distance from the file's numbers via an explicitly inverted
@@ -314,6 +380,15 @@ fn file_assign(info: &serde_json::Value, c: f64, spelling: &str) -> Option<u32> 
         }
     }
     None
+}
+
+/// The cluster of an HOUR with ONLY the file and the raw rows: the cluster
+/// every row of the hour is in ([`file_assign`] per row). `None` when the rows
+/// are not all in one cluster - two clusters in the hour, or a row whose
+/// criteria value is missing / in no range.
+fn file_assign_hour(info: &serde_json::Value, crit: &[f64], rows: &[usize], spelling: &str) -> Option<u32> {
+    let first = file_assign(info, crit[*rows.first()?], spelling)?;
+    rows.iter().all(|&r| file_assign(info, crit[r], spelling) == Some(first)).then_some(first)
 }
 
 /// Three rotated, anisotropic clusters selected by a criteria sensor C, plus
@@ -390,25 +465,35 @@ fn a2b_overlapping_ranges_fit_with_shared_rows_but_score_first_match_only() {
     }
 }
 
-/// Count rows whose (cluster, score) differ between the preview and a
-/// consumer that only has the CLUS_INFO file.
-fn clustering_file_mismatches(d: &ColumnarData, req: &HealthPreviewRequest) -> (usize, usize) {
+/// Count HOURLY points whose (cluster, score) differ between the preview and a
+/// consumer that only has the CLUS_INFO file and the raw rows: it averages X
+/// and Y per clock hour itself, gives the hour the cluster EVERY one of its
+/// rows is in (none when they are not all in one cluster) and scores the mean
+/// point against it.
+/// Returns `(mismatches, hours compared, distinct assignments seen)`.
+fn clustering_file_mismatches(d: &ColumnarData, req: &HealthPreviewRequest) -> (usize, usize, usize) {
     let p = clustering_preview(d, req).unwrap();
     assert!(p.valid, "{:?}", p.validation);
-    let (_, se) = clu_parts(&p);
+    assert!(clu_parts(&p).1.score.is_none(), "the raw rows are not scored");
+    let se = clu_hourly(&p);
     let app = tempfile::tempdir().unwrap();
     let r = export_sync(d, &clu_export(req, "ws"), app.path()).unwrap();
     assert!(r.ok, "{:?}", r.validation);
     let info = read_json(Path::new(&r.files[0].path));
-    let ci_col = d.col_index("C").unwrap();
+    let (xi, yi, ci_col) = (d.col_index("X").unwrap(), d.col_index("Y").unwrap(), d.col_index("C").unwrap());
+    let hours = ref_hours(d, 0..d.n_rows());
+    assert_eq!(se.rows.len(), hours.len(), "every hourly point at max_points=100000");
     let sc = se.score.as_ref().unwrap();
     let mut mism = 0;
-    for i in 0..se.rows.len() {
-        let row = se.rows[i] as usize;
-        let c = d.columns[ci_col][row];
-        let a_new = file_assign(&info, c, "criteria");
-        let a_old = file_assign(&info, c, "critera");
+    let mut seen: HashSet<Option<u32>> = HashSet::new();
+    for (i, (start, rows)) in hours.iter().enumerate() {
+        assert_eq!(&se.timestamps[i], start);
+        assert_eq!(se.x[i], ref_mean(&d.columns[xi], rows), "hour {start}: mean X");
+        assert_eq!(se.y[i], ref_mean(&d.columns[yi], rows), "hour {start}: mean Y");
+        let a_new = file_assign_hour(&info, &d.columns[ci_col], rows, "criteria");
+        let a_old = file_assign_hour(&info, &d.columns[ci_col], rows, "critera");
         assert_eq!(a_new, a_old, "both key spellings must assign identically");
+        seen.insert(a_new);
         if a_new != se.cluster[i] {
             mism += 1;
             continue;
@@ -425,25 +510,45 @@ fn clustering_file_mismatches(d: &ColumnarData, req: &HealthPreviewRequest) -> (
             other => {
                 mism += 1;
                 if mism < 5 {
-                    eprintln!("row {row}: file {:?} vs preview {:?}", other.0, other.1);
+                    eprintln!("hour {start}: file {:?} vs preview {:?}", other.0, other.1);
                 }
             }
         }
     }
-    (mism, se.rows.len())
+    (mism, se.rows.len(), seen.len())
 }
 
 #[test]
-fn a2_clustering_file_rescoring_matches_preview_for_every_row() {
-    let d = three_cluster_data(30_000, &|r: &mut Rng, i: usize| if i % 50 == 0 { 23.0 } else { [r.range(0.0, 10.0), r.range(10.0, 20.0), r.range(25.0, 40.0)][i % 3] });
+fn a2_clustering_file_rescoring_matches_preview_for_every_hour() {
+    // The machine changes state by the HOUR (6 rows): criteria in [0, 10),
+    // [10, 20) or [25, 40). Hours WITHOUT a cluster (so without a score):
+    //   * every 50th row reads 23 (in the gap between the ranges) - one such
+    //     row leaves its whole hour without a cluster;
+    //   * every 40th hour sits in the gap for the whole hour;
+    //   * every 30th hour is half in the first range, half in the third (its
+    //     mean criteria value is in or near the SECOND - a cluster the machine
+    //     was never in during that hour);
+    //   * an hour that holds a row with no criteria value (`three_cluster_data`).
+    let d = three_cluster_data(30_000, &|r: &mut Rng, i: usize| {
+        if (i / 6) % 40 == 7 {
+            22.5
+        } else if (i / 6) % 30 == 11 {
+            [r.range(0.0, 10.0), r.range(25.0, 40.0)][(i % 6) / 3]
+        } else if i % 50 == 0 {
+            23.0
+        } else {
+            [r.range(0.0, 10.0), r.range(10.0, 20.0), r.range(25.0, 40.0)][(i / 6) % 3]
+        }
+    });
     let ranges = vec![
         ClusterRange { min: None, max: Some(10.0) },
         ClusterRange { min: Some(10.0), max: Some(20.0) },
         ClusterRange { min: Some(25.0), max: None },
     ];
-    let (mism, total) = clustering_file_mismatches(&d, &clu_req(ranges, 5.5, None));
-    assert_eq!(total, 30_000);
-    assert_eq!(mism, 0, "{mism}/{total} rows differ between preview and the CLUS_INFO file");
+    let (mism, total, seen) = clustering_file_mismatches(&d, &clu_req(ranges, 5.5, None));
+    assert_eq!(total, 5_000);
+    assert_eq!(seen, 4, "the fixture exercises every cluster and the no-cluster case");
+    assert_eq!(mism, 0, "{mism}/{total} hours differ between preview and the CLUS_INFO file");
 }
 
 /// Criteria range bounds are written to `CLUS_INFO` verbatim — they are user
@@ -453,20 +558,23 @@ fn a2_clustering_file_rescoring_matches_preview_for_every_row() {
 /// saw scored (the preview / fit assign rows with the UNROUNDED bounds).
 #[test]
 fn bug_a2_clustering_criteria_bounds_with_many_decimals_must_round_trip() {
-    // Most rows uniform; every 10th sits between a raw bound and its rounded
-    // value (10.1232 in [10.123, 10.12345), 21.9877 in [21.98765, 21.988)).
-    let d = three_cluster_data(30_000, &|r: &mut Rng, i: usize| match i % 20 {
+    // An hour is in the cluster EVERY one of its rows is in. Most hours hold one
+    // state (a value in [0, 10), [10.2, 21.9) or [22, 30)); every 10th hour sits,
+    // for the whole hour, between a raw bound and its rounded value (10.1232 in
+    // [10.123, 10.12345), 21.9877 in [21.98765, 21.988)) - every row of it does.
+    let d = three_cluster_data(30_000, &|r: &mut Rng, i: usize| match (i / 6) % 20 {
         0 => 10.1232,
         10 => 21.9877,
-        _ => r.range(0.0, 30.0),
+        h => [r.range(0.0, 10.0), r.range(10.2, 21.9), r.range(22.0, 30.0)][h % 3],
     });
     let ranges = vec![
         ClusterRange { min: None, max: Some(10.12345) },
         ClusterRange { min: Some(10.12345), max: Some(21.98765) },
         ClusterRange { min: Some(21.98765), max: None },
     ];
-    let (mism, total) = clustering_file_mismatches(&d, &clu_req(ranges, 5.5, None));
-    assert_eq!(mism, 0, "{mism}/{total} rows assigned/scored differently from the file");
+    let (mism, total, seen) = clustering_file_mismatches(&d, &clu_req(ranges, 5.5, None));
+    assert_eq!(seen, 4, "every cluster is exercised (+ the hours holding a row without a criteria value: no cluster)");
+    assert_eq!(mism, 0, "{mism}/{total} hours assigned/scored differently from the file");
 }
 
 /// Emulate `backend.py::train_relationship`'s output rounding (with the Rust
@@ -509,9 +617,25 @@ fn rel_sp_from_w(w: f64) -> SetPointsArg {
     }
 }
 
-/// Re-score a Relationship model from REL_INFO + REL_DATASET only.
-/// Returns (max |Δscore|, rows differing by > 1e-9, rows compared).
-fn relationship_file_vs_preview(scale: f64) -> (f64, usize, usize, f64, f64) {
+/// What a consumer of an exported Relation model gets when it recomputes the
+/// health score from the files: REL_DATASET's rows averaged per clock hour
+/// (target and predictor), the saved model run on the hourly mean predictor
+/// (here `model`, standing in for the `.pkl`), the residual rounded like the
+/// file's, and REL_INFO's 2RMSE + set points.
+struct RelFileCheck {
+    /// Largest |score difference| between that consumer and the preview's hourly score.
+    max_d: f64,
+    /// Hours differing by more than 1e-9.
+    diff: usize,
+    hours: usize,
+    w_preview: f64,
+    w_file: f64,
+    /// Rows whose RAW residual in the preview's `series` differs from the
+    /// file's RESIDUAL column.
+    raw_diff: usize,
+}
+
+fn relationship_file_vs_preview(scale: f64) -> RelFileCheck {
     let n = 20_000;
     let (fit, d) = rel_fixture(n, scale, 303);
     let w_preview = relationship_stats(&fit).unwrap().two_rmse;
@@ -525,10 +649,18 @@ fn relationship_file_vs_preview(scale: f64) -> (f64, usize, usize, f64, f64) {
         max_points: Some(100_000),
         ..Default::default()
     };
-    let p = relationship_preview(&d, &fit, &req).unwrap();
+    // The model, as the engine answers for an hourly point (the fixture's
+    // per-row predictions come from the same function).
+    let model = |x: &[f64]| 3.0 * x[0] + scale * 0.0123456789;
+    let extra = rel_extra_from_model(&d, &fit, &req, &model);
+    let p = relationship_preview_ex(&d, &fit, Some(&extra), &req).unwrap();
     assert!(p.valid, "{:?}", p.validation);
-    let (_, se) = rel_parts(&p);
-    assert_eq!(se.rows.len(), n);
+    let raw = rel_parts(&p).1;
+    assert!(raw.score.is_none(), "the raw series carries no score");
+    assert_eq!(raw.rows.len(), n);
+    let se = rel_hourly(&p);
+    let hours = n.div_ceil(6);
+    assert_eq!(se.rows.len(), hours, "10-minute rows: one point per 6 rows");
 
     let (pr, res, rmse2) = sidecar_like_outputs(&fit.actual, &fit.predicted);
     let dir = tempfile::tempdir().unwrap();
@@ -568,44 +700,73 @@ fn relationship_file_vs_preview(scale: f64) -> (f64, usize, usize, f64, f64) {
         g("residual_at_health_80_upper"),
         g("residual_at_health_0_upper"),
     ];
+    // REL_DATASET: timestamp, X, Y, PREDICTED, RESIDUAL - the raw training rows.
     let csv = std::fs::read_to_string(dir.path().join("output").join("Y").join("REL_DATASET_X_Y.csv")).unwrap();
-    let file_res: Vec<f64> = csv.lines().skip(1).map(|l| l.rsplit(',').next().unwrap().parse().unwrap()).collect();
-    assert_eq!(file_res.len(), n);
+    let rows: Vec<Vec<&str>> = csv.lines().skip(1).map(|l| l.split(',').collect()).collect();
+    assert_eq!(rows.len(), n);
+    // 1. The raw series IS the file, row for row.
+    let raw_diff = (0..n)
+        .filter(|&i| raw.residual[i] != Some(rows[i][4].parse::<f64>().unwrap()))
+        .count();
+    // 2. The hourly score, recomputed by a consumer from the file's rows.
     let sc = se.score.as_ref().unwrap();
-    let (mut max_d, mut diff) = (0.0f64, 0usize);
-    for i in 0..n {
-        let want = interp(file_res[i], &knots, &[0.0, 80.0, 100.0, 100.0, 80.0, 0.0]);
-        let dd = (sc[i].unwrap() - want).abs();
+    let (mut max_d, mut diff, mut h, mut i) = (0.0f64, 0usize, 0usize, 0usize);
+    while i < n {
+        // Rows of one clock hour: the same "YYYY-MM-DDTHH" prefix.
+        let hour = &rows[i][0][..13];
+        let (mut sx, mut sy, mut c) = (0.0f64, 0.0f64, 0u32);
+        while i < n && &rows[i][0][..13] == hour {
+            sx += rows[i][1].parse::<f64>().unwrap();
+            sy += rows[i][2].parse::<f64>().unwrap();
+            c += 1;
+            i += 1;
+        }
+        let (mx, my) = (sx / f64::from(c), sy / f64::from(c));
+        let residual = round_metric(my - round_metric(model(&[mx])));
+        let want = interp(residual, &knots, &[0.0, 80.0, 100.0, 100.0, 80.0, 0.0]);
+        assert!(se.timestamps[h].starts_with(hour), "hour {h}: {} vs {hour}", se.timestamps[h]);
+        let dd = (sc[h].unwrap() - want).abs();
         max_d = max_d.max(dd);
         if dd > 1e-9 {
             diff += 1;
         }
+        h += 1;
     }
-    (max_d, diff, n, w_preview, w_file)
+    assert_eq!(h, hours);
+    RelFileCheck { max_d, diff, hours, w_preview, w_file, raw_diff }
 }
 
 #[test]
-fn a3_relationship_2rmse_in_the_file_equals_the_preview_w_and_scores_agree_closely() {
+fn a3_relationship_2rmse_and_raw_residuals_in_the_file_equal_the_preview() {
     for scale in [1.0, 0.001, 1000.0] {
-        let (max_d, diff, n, w_p, w_f) = relationship_file_vs_preview(scale);
-        eprintln!("scale {scale}: W preview {w_p} file {w_f}; rows differing {diff}/{n}, max |Δscore| {max_d:.3e}");
-        assert_eq!(w_p, w_f, "W must be the same number in the preview and the file");
-        // Residual rounding (4 significant digits / 3 decimals) bounds the drift.
-        assert!(max_d < 1.0, "scale {scale}: max |Δscore| {max_d}");
+        let c = relationship_file_vs_preview(scale);
+        eprintln!(
+            "scale {scale}: W preview {} file {}; raw residual rows differing {}; hours differing {}/{}, max |Δscore| {:.3e}",
+            c.w_preview, c.w_file, c.raw_diff, c.diff, c.hours, c.max_d
+        );
+        assert_eq!(c.w_preview, c.w_file, "W must be the same number in the preview and the file");
+        // The Model fit page's residual is the residual the FILE stores
+        // (`RESIDUAL = round(actual − round(predicted))`), for every row.
+        assert_eq!(c.raw_diff, 0, "scale {scale}: raw residuals differ from REL_DATASET");
+        assert!(c.max_d < 1.0, "scale {scale}: max |Δscore| {}", c.max_d);
     }
 }
 
-/// The FILE is canonical: the preview scores `health_preview::file_residual`,
-/// the same number the sidecar writes (`RESIDUAL = round(actual −
-/// round(predicted))` in REL_DATASET_*.csv). Scoring the UNROUNDED residual
-/// instead would give a consumer re-scoring from the file slightly different
-/// scores for most rows outside the 100-band, and a row whose residual sits
-/// within ~0.0005 of a knot could change band.
+/// The health score is computed on 1-HOUR AVERAGES (since 2026-10-11): the
+/// hour's mean target against the model's prediction for the hour's mean
+/// predictors, the residual rounded like the file's
+/// (`health_preview::file_residual`). It can therefore NOT be read off
+/// REL_DATASET's per-row RESIDUAL column any more - but a consumer that
+/// averages the file's rows per clock hour, runs the saved model on the hourly
+/// means and uses REL_INFO's 2RMSE and set points gets exactly the preview's
+/// score for every hour. (Scoring an UNROUNDED residual instead would move most
+/// hours outside the 100-band slightly, and an hour within ~0.0005 of a knot
+/// could change band.)
 #[test]
-fn bug_a3_relationship_scores_must_be_reproducible_from_rel_dataset() {
+fn a3_relationship_hourly_scores_are_reproducible_from_the_exported_files_and_the_model() {
     for scale in [1.0, 0.001, 1000.0] {
-        let (max_d, diff, n, _, _) = relationship_file_vs_preview(scale);
-        assert_eq!(diff, 0, "scale {scale}: {diff}/{n} rows differ (max {max_d:.3e})");
+        let c = relationship_file_vs_preview(scale);
+        assert_eq!(c.diff, 0, "scale {scale}: {}/{} hours differ (max {:.3e})", c.diff, c.hours, c.max_d);
     }
 }
 
@@ -818,30 +979,51 @@ fn b3_include_out_of_scope_marks_rows_without_changing_stats_or_in_scope_scores(
         let st0 = ind_parts(&base).0;
         let sp = sp_ind(st0.boundary_3sd[0] - 1.0, st0.boundary_3sd[1] + 1.0);
         let a = individual_preview(&d, &ind_req("S", Some(sp.clone()), f.clone())).unwrap();
-        let mut rq = ind_req("S", Some(sp), f.clone());
+        let mut rq = ind_req("S", Some(sp.clone()), f.clone());
         rq.include_out_of_scope = Some(true);
         let b = individual_preview(&d, &rq).unwrap();
         let ((sa, ea), (sb, eb)) = (ind_parts(&a), ind_parts(&b));
         assert_eq!((sa.mean, sa.sd, sa.rows), (sb.mean, sb.sd, sb.rows), "{name}: stats must not change");
-        assert_eq!(a.score_summary.as_ref().unwrap().scored, b.score_summary.as_ref().unwrap().scored, "{name}");
-        // Universe with the flag = every finite row.
+        assert_eq!(a.score_summary, b.score_summary, "{name}: the summary must not change");
+        // RAW universe with the flag = every finite row, each with its scope
+        // flag; without it only the in-scope rows. Neither carries a score.
         let finite: Vec<u32> = (0..d.n_rows()).filter(|&r| d.columns[si][r].is_finite()).map(|r| r as u32).collect();
         assert_eq!(eb.rows, finite, "{name}");
-        let sb_scores = eb.score.as_ref().unwrap();
-        let sa_scores = ea.score.as_ref().unwrap();
-        let mut j = 0;
+        assert!(ea.score.is_none() && eb.score.is_none(), "{name}");
+        let kept: Vec<usize> = finite
+            .iter()
+            .map(|&r| r as usize)
+            .filter(|&r| f.as_ref().is_none_or(|f| ref_keeps(&d, f, r)))
+            .collect();
+        assert_eq!(ea.rows.iter().map(|&r| r as usize).collect::<Vec<_>>(), kept, "{name}");
         for i in 0..eb.rows.len() {
             let r = eb.rows[i] as usize;
-            let want_in = f.as_ref().is_none_or(|f| ref_keeps(&d, f, r));
-            assert_eq!(eb.in_scope[i], want_in, "{name}: row {r} in_scope");
-            if want_in {
-                assert_eq!(ea.rows[j] as usize, r);
-                assert_eq!(sb_scores[i], sa_scores[j], "{name}: in-scope score changed");
-                j += 1;
-            } else {
-                assert_eq!(sb_scores[i], None, "{name}: out-of-scope row {r} must be unscored, not 0");
-            }
+            assert_eq!(eb.in_scope[i], kept.binary_search(&r).is_ok(), "{name}: row {r} in_scope");
         }
+        // HOURLY points: exactly the same with and without the flag - an
+        // out-of-scope row never enters a mean and never makes a point (an hour
+        // with no in-scope row is missing, not 0).
+        let (ha, hb) = (ind_hourly(&a), ind_hourly(&b));
+        assert_eq!(serde_json::to_value(ha).unwrap(), serde_json::to_value(hb).unwrap(), "{name}: hourly changed");
+        // ...and they are the independent per-hour means of the in-scope rows.
+        let hours = ref_hours(&d, kept.iter().copied());
+        assert_eq!(hb.total_points, hours.len(), "{name}: hours with an in-scope row");
+        assert_eq!(hb.rows.len(), hours.len(), "{name}");
+        let params = crate::health_score::IndividualParams::new(
+            IndividualBand::from_rounded(sb.mean, sb.sd, sb.boundary_1sd, sb.boundary_3sd),
+            &sp,
+        )
+        .unwrap();
+        let sc = hb.score.as_ref().unwrap();
+        for (i, (start, rows)) in hours.iter().enumerate() {
+            assert_eq!(&hb.timestamps[i], start, "{name}");
+            assert_eq!(hb.rows[i] as usize, rows[0], "{name} {start}");
+            assert_eq!(hb.value[i], ref_mean(&d.columns[si], rows), "{name} {start}");
+            assert_eq!(sc[i], Some(params.score(hb.value[i]).unwrap()), "{name} {start}");
+            assert!(hb.in_scope[i]);
+        }
+        let sum = b.score_summary.as_ref().unwrap();
+        assert_eq!((sum.scored, sum.total_rows, sum.share_basis), (hours.len(), hours.len(), "hour_count"), "{name}");
     }
 }
 
@@ -1531,12 +1713,18 @@ fn e4_huge_residuals_and_huge_values_score_zero_without_nan() {
         max_points: Some(100_000),
         ..Default::default()
     };
-    let p = relationship_preview(&d, &fit, &req).unwrap();
+    // Every hourly point has a prediction (the model answers a constant).
+    let extra = rel_extra_from_model(&d, &fit, &req, &|_| 0.25);
+    let p = relationship_preview_ex(&d, &fit, Some(&extra), &req).unwrap();
     // W is now astronomically large (rmse dominated by the 1e300 rows) — the
     // preview must still be well-formed.
     let j = serde_json::to_string(&p).unwrap();
     assert!(!j.contains("NaN"));
-    if let Some(sc) = rel_parts(&p).1.score.as_ref() {
+    assert!(rel_parts(&p).1.score.is_none());
+    let h = rel_hourly(&p);
+    assert_eq!(h.total_points, n.div_ceil(6));
+    if let Some(sc) = h.score.as_ref() {
+        assert!(sc.iter().any(Option::is_some), "the hours are scored");
         assert!(sc.iter().flatten().all(|s| (0.0..=100.0).contains(s)));
     }
 }
@@ -1561,6 +1749,12 @@ fn e5_payload_json_is_bounded_for_159k_rows() {
     let ji = serde_json::to_string(&p).unwrap();
     let se = ind_parts(&p).1;
     assert!(se.rows.len() <= 4000 && se.rows.contains(&77_777), "spike kept");
+    // The hourly series is bounded by the same cap (26 544 hours here), and the
+    // payload below holds BOTH series.
+    let h = ind_hourly(&p);
+    assert_eq!(h.total_points, n / 6);
+    assert!(h.rows.len() <= 4000, "{}", h.rows.len());
+    assert!(h.rows.contains(&(77_777 / 6 * 6)), "the spike's hour is kept");
     let mut cq = clu_req(vec![ClusterRange { min: None, max: Some(5.0) }, ClusterRange { min: Some(5.0), max: None }], 5.0, None);
     cq.max_points = None;
     let jc = serde_json::to_string(&clustering_preview(&d, &cq).unwrap()).unwrap();
@@ -1577,7 +1771,13 @@ fn e5_payload_json_is_bounded_for_159k_rows() {
     };
     let w = relationship_stats(&fit).unwrap().two_rmse;
     let rq = HealthPreviewRequest { kind: "relationship".into(), set_points: Some(rel_sp_from_w(w)), ..Default::default() };
-    let jr = serde_json::to_string(&relationship_preview(&d, &fit, &rq).unwrap()).unwrap();
+    // With every hourly prediction in place (the largest payload).
+    let extra = rel_extra_from_model(&d, &fit, &rq, &|x| 3.0 * x[0]);
+    let pr = relationship_preview_ex(&d, &fit, Some(&extra), &rq).unwrap();
+    assert_eq!(rel_hourly(&pr).total_points, n / 6);
+    assert!(rel_hourly(&pr).rows.len() <= 4000 && rel_parts(&pr).1.rows.len() <= 4000);
+    assert!(rel_hourly(&pr).score.as_ref().unwrap().iter().all(Option::is_some));
+    let jr = serde_json::to_string(&pr).unwrap();
     eprintln!("payload bytes for {n} rows: individual {} / relationship {} / clustering {}", ji.len(), jr.len(), jc.len());
     for (k, l) in [("individual", ji.len()), ("relationship", jr.len()), ("clustering", jc.len())] {
         assert!(l < 2_000_000, "{k} payload {l} bytes");
@@ -1605,13 +1805,31 @@ fn e6_every_series_respects_max_points_for_every_kind_and_cap() {
         let p = individual_preview(&d, &q).unwrap();
         let se = ind_parts(&p).1;
         assert!(se.rows.len() <= want, "ind cap {cap}: {}", se.rows.len());
-        assert!([se.timestamps.len(), se.value.len(), se.in_scope.len(), se.score.as_ref().unwrap().len()].iter().all(|&l| l == se.rows.len()));
+        assert!([se.timestamps.len(), se.value.len(), se.in_scope.len()].iter().all(|&l| l == se.rows.len()));
+        assert!(se.score.is_none());
         assert!(se.timestamps.iter().all(|t| crate::csv_processor::parse_timestamp(t).is_some()));
+        // The hourly series obeys the same cap (2058 hours of 6 rows).
+        let hours = n.div_ceil(6);
+        let want_h = cap.clamp(8, 100_000).min(hours);
+        let h = ind_hourly(&p);
+        assert_eq!(h.total_points, hours);
+        assert!(h.rows.len() <= want_h, "ind hourly cap {cap}: {}", h.rows.len());
+        assert!([h.timestamps.len(), h.value.len(), h.in_scope.len(), h.score.as_ref().unwrap().len()].iter().all(|&l| l == h.rows.len()));
+        assert!(h.timestamps.iter().all(|t| t.ends_with(":00:00") && crate::csv_processor::parse_timestamp(t).is_some()));
+        assert!(h.rows.windows(2).all(|w| w[0] < w[1]), "ascending in time");
         let rq = HealthPreviewRequest { kind: "relationship".into(), set_points: Some(rel_sp_from_w(w)), max_points: Some(cap), max_scatter_points: Some(cap), ..Default::default() };
-        let p = relationship_preview(&d, &fit, &rq).unwrap();
+        let extra = rel_extra_from_model(&d, &fit, &rq, &|x| x[0]);
+        let p = relationship_preview_ex(&d, &fit, Some(&extra), &rq).unwrap();
         let se = rel_parts(&p).1;
         assert!(se.rows.len() <= want);
         assert!([se.actual.len(), se.predicted.len(), se.residual.len(), se.timestamps.len()].iter().all(|&l| l == se.rows.len()));
+        assert!(se.score.is_none());
+        let h = rel_hourly(&p);
+        assert_eq!(h.total_points, hours);
+        assert!(h.rows.len() <= want_h, "rel hourly cap {cap}: {}", h.rows.len());
+        assert!([h.actual.len(), h.predicted.len(), h.residual.len(), h.timestamps.len(), h.score.as_ref().unwrap().len()].iter().all(|&l| l == h.rows.len()));
+        assert!(h.timestamps.iter().all(|t| t.ends_with(":00:00") && crate::csv_processor::parse_timestamp(t).is_some()));
+        assert!(h.rows.windows(2).all(|w| w[0] < w[1]), "ascending in time");
         assert!(p.fit_scatter.as_ref().unwrap().x.len() <= cap.clamp(1, 100_000).min(n));
         let mut cq = clu_req(vec![], 5.0, None);
         cq.n_clusters = Some(1);
@@ -1623,6 +1841,11 @@ fn e6_every_series_respects_max_points_for_every_kind_and_cap() {
         let se = clu_parts(&p).1;
         assert!(se.rows.len() <= want);
         assert!([se.x.len(), se.y.len(), se.cluster.len(), se.sd_distance.len()].iter().all(|&l| l == se.rows.len()));
+        assert!(se.score.is_none());
+        let h = clu_hourly(&p);
+        assert_eq!(h.total_points, hours);
+        assert!(h.rows.len() <= want_h, "clu hourly cap {cap}: {}", h.rows.len());
+        assert!([h.x.len(), h.y.len(), h.cluster.len(), h.sd_distance.len(), h.timestamps.len(), h.score.as_ref().unwrap().len()].iter().all(|&l| l == h.rows.len()));
         assert!(p.cluster_scatter.as_ref().unwrap().x.len() <= cap.clamp(1, 100_000).min(n));
     }
 }
@@ -1782,10 +2005,10 @@ mod real_data {
                 let t0 = t.elapsed();
                 let st = ind_parts(&p0).0;
                 // Independent stats over the same scope.
-                let kept: Vec<f64> = (0..n)
+                let kept_rows: Vec<usize> = (0..n)
                     .filter(|&r| d.columns[ci][r].is_finite() && f.as_ref().is_none_or(|f| ref_keeps_real(&d, f, r)))
-                    .map(|r| d.columns[ci][r])
                     .collect();
+                let kept: Vec<f64> = kept_rows.iter().map(|&r| d.columns[ci][r]).collect();
                 let m = kept.iter().sum::<f64>() / kept.len() as f64;
                 let sd = (kept.iter().map(|x| (x - m).powi(2)).sum::<f64>() / (kept.len().max(2) - 1) as f64).sqrt();
                 assert_eq!(st.rows, kept.len(), "{s} {scope_name} rows");
@@ -1814,16 +2037,30 @@ mod real_data {
                 .unwrap();
                 let t1 = t.elapsed();
                 assert!(p.valid, "{s}: {:?}", p.validation);
-                let se = ind_parts(&p).1;
+                assert!(ind_parts(&p).1.rows.len() <= 4000);
+                assert!(ind_parts(&p).1.score.is_none(), "{s}: the raw rows are not scored");
+                // The scored series: one point per clock hour.
+                let se = ind_hourly(&p);
                 assert!(se.rows.len() <= 4000);
                 assert!(se.score.as_ref().unwrap().iter().flatten().all(|v| (0.0..=100.0).contains(v)));
+                // Independent hourly means of the in-scope rows (ascending rows,
+                // so the sums are taken in the same order).
+                let mut by_hour: std::collections::BTreeMap<i64, (f64, usize)> = std::collections::BTreeMap::new();
+                for &r in &kept_rows {
+                    if d.ts_parsed[r] != TS_MISSING {
+                        let e = by_hour.entry(d.ts_parsed[r].div_euclid(3_600_000_000)).or_insert((0.0, 0));
+                        e.0 += d.columns[ci][r];
+                        e.1 += 1;
+                    }
+                }
                 let sum = p.score_summary.as_ref().unwrap();
-                assert_eq!(sum.scored, kept.len());
+                assert_eq!(sum.scored, by_hour.len(), "{s}: one scored point per running hour");
+                assert_eq!(sum.share_basis, "hour_count");
                 let bytes = serde_json::to_string(&p).unwrap().len();
                 assert!(bytes < 1_500_000, "{s}: {bytes} bytes");
-                // Independent min score over ALL in-scope rows.
+                // Independent min score over ALL hourly means.
                 let ip = crate::health_score::IndividualParams::new(band, &sp_ind(l, h)).unwrap();
-                let mins = kept.iter().map(|&v| ip.score(v).unwrap()).fold(f64::INFINITY, f64::min);
+                let mins = by_hour.values().map(|&(sm, c)| ip.score(sm / c as f64).unwrap()).fold(f64::INFINITY, f64::min);
                 assert_eq!(sum.min_score.as_ref().unwrap().score, mins, "{s}: min score");
                 assert!(se.score.as_ref().unwrap().iter().flatten().any(|&v| v == mins), "{s}: min score kept in the bounded series");
                 eprintln!(
@@ -1871,7 +2108,10 @@ mod real_data {
                 }
             };
             let tc = t.elapsed();
-            let (st, se) = clu_parts(&p);
+            let st = clu_parts(&p).0;
+            assert!(clu_parts(&p).1.rows.len() <= 4000);
+            // The scored series: one point per clock hour.
+            let se = clu_hourly(&p);
             assert!(se.rows.len() <= 4000);
             if let Some(sc) = se.score.as_ref() {
                 assert!(sc.iter().flatten().all(|v| (0.0..=100.0).contains(v)));
@@ -1893,9 +2133,23 @@ mod real_data {
                 let info = read_json(Path::new(&r.files[0].path));
                 let ci = d.col_index(crit).unwrap();
                 let sc = se.score.as_ref().unwrap();
+                // Independent cluster of every hour: the cluster EVERY one of
+                // its in-scope rows with finite X and Y is in (else none).
+                let (xi, yi) = (d.col_index(xs).unwrap(), d.col_index(ys).unwrap());
+                let mut rows_by_hour: std::collections::HashMap<i64, Vec<usize>> = std::collections::HashMap::new();
+                for r in 0..n {
+                    if d.columns[xi][r].is_finite()
+                        && d.columns[yi][r].is_finite()
+                        && d.ts_parsed[r] != TS_MISSING
+                        && ref_keeps_real(&d, &gate, r)
+                    {
+                        rows_by_hour.entry(d.ts_parsed[r].div_euclid(3_600_000_000)).or_default().push(r);
+                    }
+                }
                 let mut mism = 0;
                 for i in 0..se.rows.len() {
-                    let a = file_assign(&info, d.columns[ci][se.rows[i] as usize], "criteria");
+                    let hour = d.ts_parsed[se.rows[i] as usize].div_euclid(3_600_000_000);
+                    let a = file_assign_hour(&info, &d.columns[ci], &rows_by_hour[&hour], "criteria");
                     if a != se.cluster[i] {
                         mism += 1;
                         continue;
@@ -2057,7 +2311,11 @@ mod real_data {
             .unwrap();
             let t_sp = t.elapsed();
             assert!(p.valid, "{:?}", p.validation);
-            let (st, se) = rel_parts(&p);
+            let (st, raw) = rel_parts(&p);
+            assert!(raw.rows.len() <= 4000 && raw.score.is_none());
+            // The hourly points (no engine prediction was stored in this
+            // real-data smoke run, so the scores may all be null).
+            let se = rel_hourly(&p);
             assert!(se.rows.len() <= 4000);
             assert!(se.score.as_ref().unwrap().iter().flatten().all(|v| (0.0..=100.0).contains(v)));
             let bytes = serde_json::to_string(&p).unwrap().len();

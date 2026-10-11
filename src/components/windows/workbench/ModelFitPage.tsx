@@ -54,7 +54,7 @@ import type { WorkbenchPageProps } from './workbenchTypes';
  * preview carries `test_validation`, every time chart draws the train /
  * scoring scopes (`scopesOf` → `TimeSeriesSpec.scopes`); an amber note shows
  * below the recommended train time. The per-period numbers ("Scoring results")
- * and the "could not be scored — Try again" notice are on the Health score page.
+ * and the "health score could not be calculated — try again" notice are on the Health score page.
  *
  * The "Model settings" section and the footer are NOT here: they sit around this
  * body in `BuildModelWindow` (they share the draft/Apply state with the rest of

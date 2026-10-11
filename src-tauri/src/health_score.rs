@@ -785,43 +785,53 @@ impl ClusteringParams {
 pub struct MinScorePoint {
     pub score: f64,
     /// Dataset row number (0-based, the same row numbering as `series.rows`).
+    /// For an hourly summary: the FIRST dataset row of that hour.
     pub row: usize,
-    /// The CSV timestamp text of that row, when it has one.
+    /// The timestamp text of that point, when it has one. For an hourly
+    /// summary: the START of the hour (`2024-01-05T13:00:00`).
     pub timestamp: Option<String>,
 }
 
-/// Summary of one score series. Time shares are BY ROW COUNT (each scored row
-/// weighs the same): exact for evenly-sampled data and immune to gaps in the
-/// log; `share_basis` says so, so the UI can label it.
+/// `share_basis` of every score summary: the points are 1-hour averages (the
+/// health score since 2026-10-11), so every count and share is in HOURS.
+pub const SHARE_BASIS_HOURS: &str = "hour_count";
+
+/// Summary of one score series. Shares are BY POINT COUNT (each scored point
+/// weighs the same) and the points are 1-hour averages of all three model
+/// kinds: every number below counts HOURS (the TRAINING hours) and
+/// `share_basis` says so ([`SHARE_BASIS_HOURS`]). The field names keep their
+/// `rows` wording on the wire (nothing is renamed).
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ScoreSummary {
-    /// Rows that got a score.
+    /// Hours that got a score.
     pub scored: usize,
-    /// `total_rows - scored` (out of the training scope, or an input missing).
+    /// `total_rows - scored` (an hour with an input missing / in no cluster /
+    /// without a prediction).
     pub unscored: usize,
-    /// Rows the shares/counts are measured against (dataset rows for
-    /// Individual/Clustering; the fitted rows for Relationship).
+    /// Hours the shares/counts are measured against: the training hours (hours
+    /// with at least one training row).
     pub total_rows: usize,
     pub min_score: Option<MinScorePoint>,
-    /// % of SCORED rows with a score strictly below 80. `None` when nothing
+    /// % of SCORED hours with a score strictly below 80. `None` when nothing
     /// was scored.
     pub pct_below_80: Option<f64>,
-    /// % of scored rows with `score >= 80`.
+    /// % of scored hours with `score >= 80`.
     pub share_80_100: Option<f64>,
-    /// % of scored rows with `40 <= score < 80`.
+    /// % of scored hours with `40 <= score < 80`.
     pub share_40_80: Option<f64>,
-    /// % of scored rows with `score < 40`.
+    /// % of scored hours with `score < 40`.
     pub share_0_40: Option<f64>,
-    /// `"row_count"` — see above.
+    /// Always [`SHARE_BASIS_HOURS`].
     pub share_basis: &'static str,
 }
 
-/// Summarise `scores` (`NaN` = unscored, aligned to the series universe).
-/// `locate(i)` maps a position in `scores` to `(dataset row, timestamp)` and
-/// is only called for the minimum.
-pub fn summarize(
+/// Summarise HOURLY `scores` (one entry per 1-hour point, `NaN` = unscored).
+/// `total_hours` = the hours the shares are measured against; `locate(h)` maps
+/// an hour to `(its first dataset row, the hour start's text)` and is only
+/// called for the minimum.
+pub fn summarize_hours(
     scores: &[f64],
-    total_rows: usize,
+    total_hours: usize,
     locate: impl Fn(usize) -> (usize, Option<String>),
 ) -> ScoreSummary {
     let mut scored = 0usize;
@@ -839,7 +849,7 @@ pub fn summarize(
         } else {
             lo += 1;
         }
-        // Strict `<`: the FIRST row at the minimum wins (deterministic).
+        // Strict `<`: the FIRST point at the minimum wins (deterministic).
         if min.is_none_or(|(_, m)| s < m) {
             min = Some((i, s));
         }
@@ -853,8 +863,8 @@ pub fn summarize(
     };
     ScoreSummary {
         scored,
-        unscored: total_rows.saturating_sub(scored),
-        total_rows,
+        unscored: total_hours.saturating_sub(scored),
+        total_rows: total_hours,
         min_score: min.map(|(i, s)| {
             let (row, timestamp) = locate(i);
             MinScorePoint {
@@ -867,7 +877,7 @@ pub fn summarize(
         share_80_100: pct(hi),
         share_40_80: pct(mid),
         share_0_40: pct(lo),
-        share_basis: "row_count",
+        share_basis: SHARE_BASIS_HOURS,
     }
 }
 
@@ -1055,7 +1065,11 @@ pub fn histogram(values: &[f64], mean: f64, sd: f64, max_bins: usize) -> Option<
 
 /// Full-resolution output of one Relationship fit (the sidecar's predictions
 /// plus the rows they belong to), kept Rust-side so editing set points
-/// re-scores instantly without re-running the ~12-18 s sidecar.
+/// re-scores instantly without re-running the ~12-18 s sidecar. These are the
+/// RAW training rows: the model's statistics, 2RMSE and the Model fit view
+/// come from them, and the hourly means of the training hours are computed
+/// from `actual` / `x_cols`. The health score itself is hourly - see
+/// [`RelHourPoints`] / [`RelExtra`].
 #[derive(Debug)]
 pub struct RelFit {
     pub target: String,
@@ -1083,99 +1097,296 @@ impl RelFit {
     }
 }
 
-/// Predictions of a cached fit's TRAIN-ONLY model for rows outside the training
-/// scope (the test periods of the Train/Test validation). The model is fitted
-/// once on the training rows; test rows are only ever PREDICTED, never fitted
-/// on. They are filled in lazily (the sidecar's `predict_relationship`) the
-/// first time a test period needs them and then re-used by every later
-/// set-point edit, so only a test period that brings NEW rows costs a sidecar
-/// run. Lives and dies with its fit's cache entry.
+/// Hourly inputs of a Relation model for the engine to PREDICT: one point =
+/// (clock hour, the MEAN of each predictor over that hour's rows).
+///
+/// Since 2026-10-11 the health score of a Relation model is computed on 1-hour
+/// averages (user decision: "resample the raw data to 1 hour, pass that through
+/// the model"): the residual of an hour is its mean actual minus the engine's
+/// answer for these mean predictors. There is no per-row prediction outside the
+/// training rows any more.
+///
+/// Sorted by (hour, predictor values) and unique. The predictor values are
+/// compared BIT FOR BIT: two points are "the same" only for the same hour AND
+/// exactly the same means - an hour whose rows changed (a scoring-period edge
+/// moved inside it) is another point. Stored row-major (`n_pred` values per
+/// point), which is also what the sidecar's `X_extra` carries.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct RelHourPoints {
+    n_pred: usize,
+    /// Hour number of each point (`ts_parsed.div_euclid(HOUR_US)`).
+    hours: Vec<i64>,
+    /// `n_pred` mean predictor values per point.
+    x: Vec<f64>,
+}
+
+/// Order of two predictor vectors by their bit patterns (a total order, and
+/// "equal" means bit-identical).
+fn cmp_bits(a: &[f64], b: &[f64]) -> std::cmp::Ordering {
+    a.iter().map(|v| v.to_bits()).cmp(b.iter().map(|v| v.to_bits()))
+}
+
+impl RelHourPoints {
+    /// From points in ANY order - point `i` is `hours[i]` with the `n_pred`
+    /// values `x[i * n_pred..]` - sorted, duplicates dropped. Malformed input
+    /// (`n_pred == 0`, lengths that do not match) gives the empty set.
+    pub fn from_unsorted(n_pred: usize, hours: Vec<i64>, x: Vec<f64>) -> RelHourPoints {
+        if n_pred == 0 || x.len() != hours.len() * n_pred {
+            return RelHourPoints {
+                n_pred,
+                hours: Vec::new(),
+                x: Vec::new(),
+            };
+        }
+        let order = {
+            let at = |i: usize| &x[i * n_pred..(i + 1) * n_pred];
+            let key = |a: usize, b: usize| hours[a].cmp(&hours[b]).then_with(|| cmp_bits(at(a), at(b)));
+            // Already strictly ascending (the usual case: the hours of an hourly
+            // grouping come out in time order): nothing to move.
+            if (1..hours.len()).all(|i| key(i - 1, i) == std::cmp::Ordering::Less) {
+                None
+            } else {
+                let mut order: Vec<usize> = (0..hours.len()).collect();
+                order.sort_unstable_by(|&a, &b| key(a, b));
+                order.dedup_by(|a, b| key(*a, *b) == std::cmp::Ordering::Equal);
+                Some(order)
+            }
+        };
+        let Some(order) = order else {
+            return RelHourPoints { n_pred, hours, x };
+        };
+        let mut out_h: Vec<i64> = Vec::with_capacity(order.len());
+        let mut out_x: Vec<f64> = Vec::with_capacity(order.len() * n_pred);
+        for i in order {
+            out_h.push(hours[i]);
+            out_x.extend_from_slice(&x[i * n_pred..(i + 1) * n_pred]);
+        }
+        RelHourPoints {
+            n_pred,
+            hours: out_h,
+            x: out_x,
+        }
+    }
+
+    /// Predictors per point.
+    pub fn n_pred(&self) -> usize {
+        self.n_pred
+    }
+
+    pub fn len(&self) -> usize {
+        self.hours.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.hours.is_empty()
+    }
+
+    /// Hour number of every point (ascending; an hour can appear more than
+    /// once, with different mean predictors).
+    pub fn hours(&self) -> &[i64] {
+        &self.hours
+    }
+
+    /// The mean predictor values of point `i`.
+    pub fn x(&self, i: usize) -> &[f64] {
+        &self.x[i * self.n_pred..(i + 1) * self.n_pred]
+    }
+
+    /// Row-major copy of the predictor values: the sidecar's `X_extra`
+    /// (answered by `predicted_extra`, one prediction per point, same order).
+    pub fn x_rows(&self) -> Vec<Vec<f64>> {
+        (0..self.len()).map(|i| self.x(i).to_vec()).collect()
+    }
+
+    /// Keep only the points `keep(hour, x)` accepts (order unchanged).
+    pub fn retain(&mut self, keep: impl Fn(i64, &[f64]) -> bool) {
+        let p = self.n_pred;
+        let mut w = 0usize;
+        for i in 0..self.hours.len() {
+            if keep(self.hours[i], &self.x[i * p..(i + 1) * p]) {
+                if w != i {
+                    self.hours[w] = self.hours[i];
+                    self.x.copy_within(i * p..(i + 1) * p, w * p);
+                }
+                w += 1;
+            }
+        }
+        self.hours.truncate(w);
+        self.x.truncate(w * p);
+    }
+
+    /// Position of the point (`hour`, exactly these `x`), if it is in the set.
+    fn find(&self, hour: i64, x: &[f64]) -> Option<usize> {
+        if x.len() != self.n_pred {
+            return None;
+        }
+        let (mut lo, mut hi) = (0usize, self.len());
+        while lo < hi {
+            let mid = lo + (hi - lo) / 2;
+            match self.hours[mid].cmp(&hour).then_with(|| cmp_bits(self.x(mid), x)) {
+                std::cmp::Ordering::Less => lo = mid + 1,
+                std::cmp::Ordering::Greater => hi = mid,
+                std::cmp::Ordering::Equal => return Some(mid),
+            }
+        }
+        None
+    }
+}
+
+/// The engine's predictions for hourly points ([`RelHourPoints`]) of ONE cached
+/// fit - the answers to the `X_extra` rows Rust sent it (hence the name). The
+/// model is fitted once on the raw training rows; hourly points are only ever
+/// PREDICTED, never fitted on.
+///
+/// Filled by the Train call itself (it sends every hour of its universe in the
+/// same sidecar run) and, for hours a later change brings (a scoring period
+/// added, an edge moved inside an hour), by one `predict_relationship` run.
+/// Predictions are KEPT when a point is no longer needed, so going back to an
+/// earlier set of scoring periods never runs the engine again. A prediction is
+/// only ever found under its own hour AND its own mean predictor values. Lives
+/// and dies with its fit's cache entry.
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct RelExtra {
-    /// Dataset rows, ascending and unique.
-    pub rows: Vec<u32>,
-    /// Aligned predictions (`NaN` = the sidecar returned none).
-    pub predicted: Vec<f64>,
+    points: RelHourPoints,
+    /// Aligned predictions (`NaN` = the engine returned none).
+    predicted: Vec<f64>,
 }
 
 impl RelExtra {
-    /// The prediction for `row` (finite only).
-    pub fn get(&self, row: u32) -> Option<f64> {
-        let i = self.rows.binary_search(&row).ok()?;
+    /// The predictions `predicted` of `points` (same order). `None` when the
+    /// lengths differ.
+    pub fn new(points: &RelHourPoints, predicted: &[f64]) -> Option<RelExtra> {
+        (points.len() == predicted.len()).then(|| RelExtra {
+            points: points.clone(),
+            predicted: predicted.to_vec(),
+        })
+    }
+
+    /// Stored points (finite prediction or not).
+    pub fn len(&self) -> usize {
+        self.points.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.points.is_empty()
+    }
+
+    /// The stored points (sorted, unique).
+    pub fn points(&self) -> &RelHourPoints {
+        &self.points
+    }
+
+    /// The prediction for the hour `hour` at exactly the mean predictors `x`
+    /// (finite only).
+    pub fn get(&self, hour: i64, x: &[f64]) -> Option<f64> {
+        let i = self.points.find(hour, x)?;
         Some(self.predicted[i]).filter(|v| v.is_finite())
     }
 
-    /// Does it hold an entry (finite or not) for `row`?
-    pub fn has(&self, row: u32) -> bool {
-        self.rows.binary_search(&row).is_ok()
+    /// Does it hold an entry (finite or not) for that hour and those means?
+    pub fn has(&self, hour: i64, x: &[f64]) -> bool {
+        self.points.find(hour, x).is_some()
     }
 
     fn approx_bytes(&self) -> usize {
-        self.rows.len() * (4 + 8)
+        self.len() * (8 + 8 * self.points.n_pred + 8)
     }
 
-    /// This set plus the given rows (the new value wins on a duplicate row).
-    pub fn merged(&self, rows: &[u32], predicted: &[f64]) -> RelExtra {
-        let mut pairs: Vec<(u32, f64)> = self
-            .rows
-            .iter()
-            .copied()
-            .zip(self.predicted.iter().copied())
-            .collect();
-        pairs.extend(rows.iter().copied().zip(predicted.iter().copied()));
-        // Stable sort: for equal rows the later (new) pair stays last.
-        pairs.sort_by_key(|&(r, _)| r);
-        let mut out_rows: Vec<u32> = Vec::with_capacity(pairs.len());
-        let mut out_pred: Vec<f64> = Vec::with_capacity(pairs.len());
-        for (r, p) in pairs {
-            if out_rows.last() == Some(&r) {
-                *out_pred.last_mut().expect("aligned") = p;
+    /// This set plus the given points (the new value wins on a duplicate
+    /// point). Points with another number of predictors than the stored ones
+    /// cannot belong to the same fit and are ignored.
+    pub fn merged(&self, points: &RelHourPoints, predicted: &[f64]) -> RelExtra {
+        if points.len() != predicted.len() || points.is_empty() {
+            return self.clone();
+        }
+        if self.is_empty() {
+            return RelExtra {
+                points: points.clone(),
+                predicted: predicted.to_vec(),
+            };
+        }
+        let p = self.points.n_pred;
+        if points.n_pred != p {
+            return self.clone();
+        }
+        let total = self.len() + points.len();
+        let mut hours: Vec<i64> = Vec::with_capacity(total);
+        let mut x: Vec<f64> = Vec::with_capacity(total * p);
+        let mut pred: Vec<f64> = Vec::with_capacity(total);
+        let (mut i, mut j) = (0usize, 0usize);
+        while i < self.len() || j < points.len() {
+            let order = if i >= self.len() {
+                std::cmp::Ordering::Greater
+            } else if j >= points.len() {
+                std::cmp::Ordering::Less
             } else {
-                out_rows.push(r);
-                out_pred.push(p);
+                self.points.hours[i]
+                    .cmp(&points.hours[j])
+                    .then_with(|| cmp_bits(self.points.x(i), points.x(j)))
+            };
+            match order {
+                std::cmp::Ordering::Less => {
+                    hours.push(self.points.hours[i]);
+                    x.extend_from_slice(self.points.x(i));
+                    pred.push(self.predicted[i]);
+                    i += 1;
+                }
+                // Same point: the new prediction replaces the stored one.
+                std::cmp::Ordering::Equal | std::cmp::Ordering::Greater => {
+                    if order == std::cmp::Ordering::Equal {
+                        i += 1;
+                    }
+                    hours.push(points.hours[j]);
+                    x.extend_from_slice(points.x(j));
+                    pred.push(predicted[j]);
+                    j += 1;
+                }
             }
         }
         RelExtra {
-            rows: out_rows,
-            predicted: out_pred,
+            points: RelHourPoints { n_pred: p, hours, x },
+            predicted: pred,
         }
     }
 }
 
-/// Compact identity of a set of dataset rows (ascending, unique): length,
-/// first / last row and a 64-bit hash of all of them. Used by the "last
-/// attempt failed" marker instead of the rows themselves (a test period can
-/// span millions of rows). A collision only means one remembered failure is
-/// reported for a different row set - the user can still "Try again".
+/// Compact identity of a set of hourly points: length, first / last hour and a
+/// 64-bit hash of every hour and every mean predictor value. Used by the "last
+/// attempt failed" marker instead of the points themselves. A collision only
+/// means one remembered failure is reported for a different set - the user can
+/// still "Try again".
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RowSetSig {
+pub struct PointSetSig {
     len: usize,
-    first: Option<u32>,
-    last: Option<u32>,
+    first: Option<i64>,
+    last: Option<i64>,
     hash: u64,
 }
 
-impl RowSetSig {
-    pub fn of(rows: &[u32]) -> Self {
+impl PointSetSig {
+    pub fn of(points: &RelHourPoints) -> Self {
         use std::hash::{Hash, Hasher};
         // Fixed keys: deterministic within (and across) runs.
         let mut h = std::collections::hash_map::DefaultHasher::new();
-        rows.hash(&mut h);
-        RowSetSig {
-            len: rows.len(),
-            first: rows.first().copied(),
-            last: rows.last().copied(),
+        points.hours.hash(&mut h);
+        for v in &points.x {
+            v.to_bits().hash(&mut h);
+        }
+        PointSetSig {
+            len: points.len(),
+            first: points.hours.first().copied(),
+            last: points.hours.last().copied(),
             hash: h.finish(),
         }
     }
 }
 
-/// A remembered failed test-row prediction attempt of one cached fit.
+/// A remembered failed hourly-prediction attempt of one cached fit.
 #[derive(Debug, Clone)]
 struct FailedAttempt {
     key: String,
-    /// The rows that attempt had to predict.
-    rows: RowSetSig,
+    /// The hourly points that attempt had to predict.
+    points: PointSetSig,
     kind: crate::health_validation::TestScoringFailure,
 }
 
@@ -1193,13 +1404,13 @@ fn same_fit(entry: &Arc<RelFit>, fit: &Weak<RelFit>) -> bool {
 pub struct RelCache {
     /// Most recently used LAST.
     entries: Vec<(String, Arc<RelFit>)>,
-    /// Test-row predictions of the entries above (same key), see [`RelExtra`].
+    /// Hourly predictions of the entries above (same key), see [`RelExtra`].
     extras: Vec<(String, Arc<RelExtra>)>,
-    /// Cached fits whose LAST test-row prediction attempt failed (sidecar error
-    /// / timeout, predictions over the budget), with the rows that attempt had
-    /// to predict. While the SAME rows are missing `compute_health_preview` does
-    /// not run the sidecar again; any other row set (test periods changed) runs
-    /// once. The marker dies with the fit (re-train = [`RelCache::insert`],
+    /// Cached fits whose LAST hourly-prediction attempt failed (sidecar error /
+    /// timeout, predictions over the budget), with the points that attempt had
+    /// to predict. While the SAME points are missing `compute_health_preview`
+    /// does not run the sidecar again; any other set (scoring periods changed)
+    /// runs once. The marker dies with the fit (re-train = [`RelCache::insert`],
     /// eviction, [`RelCache::clear`]), on a successful [`RelCache::merge_extra`]
     /// and on an explicit retry ([`RelCache::clear_extra_failed`]).
     failed: Vec<FailedAttempt>,
@@ -1263,7 +1474,7 @@ impl RelCache {
             + self.extras.iter().map(|(_, e)| e.approx_bytes()).sum::<usize>()
     }
 
-    /// Remove the least recently used entry TOGETHER with its test-row
+    /// Remove the least recently used entry TOGETHER with its hourly
     /// predictions and its failed marker, so the next `total_bytes()` does not
     /// count orphaned predictions (which would evict more fits than needed).
     fn evict_lru(&mut self) {
@@ -1293,7 +1504,7 @@ impl RelCache {
     /// never lands on a later fit under the same key.
     pub fn insert(&mut self, key: String, fit: RelFit) -> Arc<RelFit> {
         self.entries.retain(|(k, _)| k != &key);
-        // A new fit under the same key invalidates the old fit's test
+        // A new fit under the same key invalidates the old fit's hourly
         // predictions and its "last prediction attempt failed" marker.
         self.extras.retain(|(k, _)| k != &key);
         self.failed.retain(|f| f.key != key);
@@ -1309,15 +1520,15 @@ impl RelCache {
         self.entries.iter().any(|(k, f)| k == key && same_fit(f, fit))
     }
 
-    /// Remember that the test-row prediction attempt for the cached fit `key`
-    /// (exactly `fit`) failed for `rows` (the rows it had to predict). Replaces
+    /// Remember that the hourly-prediction attempt for the cached fit `key`
+    /// (exactly `fit`) failed for `points` (what it had to predict). Replaces
     /// an earlier marker of the key. `false` (nothing marked) when that fit is
     /// no longer cached - evicted, or replaced by a re-train meanwhile.
     pub fn mark_extra_failed(
         &mut self,
         key: &str,
         fit: &Weak<RelFit>,
-        rows: &[u32],
+        points: &RelHourPoints,
         kind: crate::health_validation::TestScoringFailure,
     ) -> bool {
         if !self.is_current(key, fit) {
@@ -1326,24 +1537,28 @@ impl RelCache {
         self.failed.retain(|f| f.key != key);
         self.failed.push(FailedAttempt {
             key: key.to_string(),
-            rows: RowSetSig::of(rows),
+            points: PointSetSig::of(points),
             kind,
         });
         true
     }
 
-    /// Did the last test-row prediction attempt for `key` fail for exactly
-    /// these missing `rows` (and nothing cleared the marker since)? The kind of
-    /// that failure, so it is reported with the same wording. A different row
-    /// set - more rows (a test period added / lengthened) or fewer (one removed /
-    /// shortened, the natural fix for "too many rows") - is NOT remembered: it
-    /// gets one fresh attempt.
-    pub fn extra_failed(&self, key: &str, rows: &[u32]) -> Option<crate::health_validation::TestScoringFailure> {
+    /// Did the last hourly-prediction attempt for `key` fail for exactly these
+    /// missing `points` (and nothing cleared the marker since)? The kind of
+    /// that failure, so it is reported with the same wording. A different set,
+    /// with more points (a scoring period added / lengthened) or fewer (one
+    /// removed / shortened, the natural fix for "too much data"), is NOT
+    /// remembered: it gets one fresh attempt.
+    pub fn extra_failed(
+        &self,
+        key: &str,
+        points: &RelHourPoints,
+    ) -> Option<crate::health_validation::TestScoringFailure> {
         let f = self.failed.iter().find(|f| f.key == key)?;
-        (f.rows == RowSetSig::of(rows)).then_some(f.kind)
+        (f.points == PointSetSig::of(points)).then_some(f.kind)
     }
 
-    /// Is there a failed marker for `key` at all (any rows)?
+    /// Is there a failed marker for `key` at all (any points)?
     #[cfg(test)]
     pub fn has_failed_marker(&self, key: &str) -> bool {
         self.failed.iter().any(|f| f.key == key)
@@ -1354,22 +1569,30 @@ impl RelCache {
         self.failed.retain(|f| f.key != key);
     }
 
-    /// The test-row predictions stored for `key` (usable under a read lock).
+    /// The hourly predictions stored for `key` (usable under a read lock).
     pub fn peek_extra(&self, key: &str) -> Option<Arc<RelExtra>> {
         self.extras.iter().find(|(k, _)| k == key).map(|(_, e)| e.clone())
     }
 
     /// Add predictions of the cached fit `key` - exactly `fit`, the fit they
-    /// were computed for - for `rows`. `false` (nothing stored, the previous
-    /// predictions of that key kept) when that fit is no longer cached (evicted
-    /// meanwhile, or replaced by a re-train under the same key: the predictions
-    /// belong to the OLD model) or when the fit plus ALL its predictions cannot
-    /// fit the byte budget even with every other entry evicted.
+    /// were computed for - for the hourly `points`. `false` (nothing stored,
+    /// the previous predictions of that key kept) when that fit is no longer
+    /// cached (evicted meanwhile, or replaced by a re-train under the same key:
+    /// the predictions belong to the OLD model), when the points do not match
+    /// the fit (another number of predictors, another number of predictions)
+    /// or when the fit plus ALL its predictions cannot fit the byte budget even
+    /// with every other entry evicted.
     ///
     /// The fit being merged is marked most recently used FIRST: the budget is
     /// then paid by the OTHER (older) fits, so a fit can never evict itself
     /// together with the predictions it was just given.
-    pub fn merge_extra(&mut self, key: &str, fit: &Weak<RelFit>, rows: &[u32], predicted: &[f64]) -> bool {
+    pub fn merge_extra(
+        &mut self,
+        key: &str,
+        fit: &Weak<RelFit>,
+        points: &RelHourPoints,
+        predicted: &[f64],
+    ) -> bool {
         let Some(pos) = self
             .entries
             .iter()
@@ -1377,7 +1600,9 @@ impl RelCache {
         else {
             return false;
         };
-        if rows.len() != predicted.len() {
+        if points.len() != predicted.len()
+            || (!points.is_empty() && points.n_pred() != self.entries[pos].1.predictors.len())
+        {
             return false;
         }
         // Touch (most recently used = last), so eviction below never picks it.
@@ -1391,8 +1616,8 @@ impl RelCache {
             .position(|(k, _)| k == key)
             .map(|i| self.extras.remove(i).1);
         let merged = match &old {
-            Some(e) => e.merged(rows, predicted),
-            None => RelExtra::default().merged(rows, predicted),
+            Some(e) => e.merged(points, predicted),
+            None => RelExtra::default().merged(points, predicted),
         };
         if fit_bytes + merged.approx_bytes() > self.max_bytes {
             // Does not fit even alone: keep what was there, say so honestly.
@@ -2023,7 +2248,7 @@ mod tests {
         let nan = f64::NAN;
         // 100, 90, 80 (>=80 -> 3), 60, 40 (mid -> 2), 39, 0 (low -> 2), 2 unscored.
         let scores = [100.0, 90.0, 80.0, 60.0, 40.0, 39.0, 0.0, nan, nan];
-        let s = summarize(&scores, 20, |i| (i * 10, Some(format!("t{i}"))));
+        let s = summarize_hours(&scores, 20, |i| (i * 10, Some(format!("t{i}"))));
         assert_eq!(s.scored, 7);
         assert_eq!(s.unscored, 13);
         assert_eq!(s.total_rows, 20);
@@ -2039,23 +2264,53 @@ mod tests {
             s.share_80_100.unwrap() + s.share_40_80.unwrap() + s.share_0_40.unwrap(),
             100.0,
         );
-        assert_eq!(s.share_basis, "row_count");
+        assert_eq!(s.share_basis, "hour_count", "there is no per-row summary any more");
+        assert_eq!(SHARE_BASIS_HOURS, "hour_count");
+    }
+
+    #[test]
+    fn an_hourly_summary_counts_hours_and_says_so() {
+        let nan = f64::NAN;
+        // 5 training hours: 100, 70, 30, one unscored, 85.
+        let scores = [100.0, 70.0, 30.0, nan, 85.0];
+        let s = summarize_hours(&scores, 5, |h| (h * 12, Some(format!("2024-01-01T{h:02}:00:00"))));
+        assert_eq!(s.share_basis, "hour_count");
+        assert_eq!((s.scored, s.unscored, s.total_rows), (4, 1, 5));
+        let m = s.min_score.clone().unwrap();
+        assert_eq!(m.score, 30.0);
+        assert_eq!(m.row, 24, "the first dataset row of the lowest hour");
+        assert_eq!(m.timestamp.as_deref(), Some("2024-01-01T02:00:00"), "the hour start");
+        approx(s.pct_below_80.unwrap(), 50.0);
+        approx(s.share_80_100.unwrap(), 50.0);
+        approx(s.share_40_80.unwrap(), 25.0);
+        approx(s.share_0_40.unwrap(), 25.0);
+        // Every key of the summary is still on the wire under its old name.
+        let j = serde_json::to_value(&s).unwrap();
+        let mut keys: Vec<&str> = j.as_object().unwrap().keys().map(String::as_str).collect();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            vec![
+                "min_score", "pct_below_80", "scored", "share_0_40", "share_40_80", "share_80_100", "share_basis",
+                "total_rows", "unscored",
+            ]
+        );
     }
 
     #[test]
     fn summary_of_nothing_scored() {
-        let s = summarize(&[f64::NAN, f64::NAN], 2, |i| (i, None));
+        let s = summarize_hours(&[f64::NAN, f64::NAN], 2, |i| (i, None));
         assert_eq!((s.scored, s.unscored), (0, 2));
         assert!(s.min_score.is_none());
         assert!(s.pct_below_80.is_none());
         assert!(s.share_80_100.is_none());
-        let e = summarize(&[], 0, |i| (i, None));
+        let e = summarize_hours(&[], 0, |i| (i, None));
         assert_eq!((e.scored, e.unscored), (0, 0));
     }
 
     #[test]
     fn summary_minimum_prefers_the_first_row_on_a_tie() {
-        let s = summarize(&[50.0, 10.0, 10.0, 90.0], 4, |i| (i, None));
+        let s = summarize_hours(&[50.0, 10.0, 10.0, 90.0], 4, |i| (i, None));
         assert_eq!(s.min_score.unwrap().row, 1);
     }
 
@@ -2222,26 +2477,97 @@ mod tests {
         c.peek(key).map(|f| Arc::downgrade(&f)).unwrap_or_default()
     }
 
-    // ---------- test-row predictions (Train/Test validation) ----------
+    // ---------- hourly points + their predictions ----------
+
+    /// Hourly points `(hour, mean predictor)` of a one-predictor model, in any
+    /// order (they come out sorted).
+    fn pts(hx: &[(i64, f64)]) -> RelHourPoints {
+        RelHourPoints::from_unsorted(1, hx.iter().map(|p| p.0).collect(), hx.iter().map(|p| p.1).collect())
+    }
+
+    /// One point per hour of `hs`, with the mean predictor `hour / 2`.
+    fn hrs(hs: impl IntoIterator<Item = i64>) -> RelHourPoints {
+        let hx: Vec<(i64, f64)> = hs.into_iter().map(|h| (h, h as f64 * 0.5)).collect();
+        pts(&hx)
+    }
+
+    #[test]
+    fn hour_points_are_sorted_unique_and_keyed_by_hour_and_exact_predictors() {
+        // Two predictors per point; hour 7 appears with two different means.
+        let p = RelHourPoints::from_unsorted(
+            2,
+            vec![9, 7, 7, 3, 7],
+            vec![1.0, 2.0, /**/ 5.0, 6.0, /**/ 4.0, 6.0, /**/ 0.5, 0.25, /**/ 5.0, 6.0],
+        );
+        assert_eq!(p.n_pred(), 2);
+        assert_eq!(p.hours(), &[3, 7, 7, 9], "ascending; the exact duplicate (7, [5, 6]) is dropped");
+        assert_eq!((p.x(0), p.x(1), p.x(2), p.x(3)), (&[0.5, 0.25][..], &[4.0, 6.0][..], &[5.0, 6.0][..], &[1.0, 2.0][..]));
+        assert_eq!(p.x_rows(), vec![vec![0.5, 0.25], vec![4.0, 6.0], vec![5.0, 6.0], vec![1.0, 2.0]]);
+        assert_eq!((p.len(), p.is_empty()), (4, false));
+        // Already sorted input is taken as it is.
+        let q = RelHourPoints::from_unsorted(1, vec![1, 2, 2], vec![0.0, 1.0, 2.0]);
+        assert_eq!(q.hours(), &[1, 2, 2]);
+        // retain keeps the order.
+        let mut r = p.clone();
+        r.retain(|hour, x| !(hour == 7 && x == [4.0, 6.0]));
+        assert_eq!(r.hours(), &[3, 7, 9]);
+        assert_eq!(r.x(1), &[5.0, 6.0]);
+        r.retain(|_, _| false);
+        assert!(r.is_empty() && r.x_rows().is_empty());
+        // Malformed input never panics: the empty set.
+        assert!(RelHourPoints::from_unsorted(2, vec![1, 2], vec![1.0, 2.0, 3.0]).is_empty());
+        assert!(RelHourPoints::from_unsorted(0, vec![1], vec![]).is_empty());
+        assert!(RelHourPoints::default().is_empty());
+    }
+
+    #[test]
+    fn a_prediction_is_found_only_under_its_hour_and_exactly_its_mean_predictors() {
+        let third = 1.0 / 3.0;
+        let e = RelExtra::new(&pts(&[(10, third), (11, 2.0)]), &[5.0, f64::NAN]).unwrap();
+        assert_eq!(e.get(10, &[third]), Some(5.0));
+        // The same hour with means that differ in the last bit is another point.
+        let nudged = f64::from_bits(third.to_bits() + 1);
+        assert!(e.get(10, &[nudged]).is_none() && !e.has(10, &[nudged]));
+        // The same means in another hour: another point.
+        assert!(e.get(9, &[third]).is_none() && !e.has(12, &[2.0]));
+        // A NaN answer is "known, but no prediction".
+        assert!(e.has(11, &[2.0]) && e.get(11, &[2.0]).is_none());
+        // A lookup with another number of predictors never matches.
+        assert!(!e.has(10, &[third, third]) && !e.has(10, &[]));
+        assert_eq!(e.len(), 2);
+        // Lengths must match.
+        assert!(RelExtra::new(&pts(&[(1, 1.0)]), &[]).is_none());
+        assert!(RelExtra::default().is_empty() && !RelExtra::default().has(1, &[1.0]));
+    }
 
     #[test]
     fn extra_predictions_merge_sorted_new_values_win_and_only_for_a_cached_fit() {
         let mut c = RelCache::default();
-        assert!(!c.merge_extra("a", &w(&c, "a"), &[5], &[1.0]), "no fit under that key");
+        assert!(!c.merge_extra("a", &w(&c, "a"), &pts(&[(5, 1.0)]), &[1.0]), "no fit under that key");
         c.insert("a".into(), fit(10, "T"));
         assert!(c.peek_extra("a").is_none());
-        assert!(c.merge_extra("a", &w(&c, "a"), &[30, 10, 20], &[3.0, 1.0, 2.0]));
-        assert!(c.merge_extra("a", &w(&c, "a"), &[20, 40], &[2.5, f64::NAN]));
+        // Points sort by hour: the predictions are given in that (sorted) order.
+        assert!(c.merge_extra("a", &w(&c, "a"), &pts(&[(30, 3.0), (10, 1.0), (20, 2.0)]), &[1.0, 2.0, 3.0]));
+        assert!(c.merge_extra("a", &w(&c, "a"), &pts(&[(20, 2.0), (40, 4.0)]), &[2.5, f64::NAN]));
         let e = c.peek_extra("a").unwrap();
-        assert_eq!(e.rows, vec![10, 20, 30, 40]);
-        assert_eq!(e.get(10), Some(1.0));
-        assert_eq!(e.get(20), Some(2.5), "the newer prediction replaces the older");
-        assert_eq!(e.get(30), Some(3.0));
-        assert_eq!(e.get(40), None, "a NaN prediction is not a prediction ...");
-        assert!(e.has(40), "... but the row is known (never asked for again)");
-        assert!(!e.has(11) && e.get(11).is_none());
-        // Length mismatch is refused.
-        assert!(!c.merge_extra("a", &w(&c, "a"), &[1, 2], &[1.0]));
+        assert_eq!(e.points().hours(), &[10, 20, 30, 40]);
+        assert_eq!(e.get(10, &[1.0]), Some(1.0));
+        assert_eq!(e.get(20, &[2.0]), Some(2.5), "the newer prediction replaces the older");
+        assert_eq!(e.get(30, &[3.0]), Some(3.0));
+        assert_eq!(e.get(40, &[4.0]), None, "a NaN prediction is not a prediction ...");
+        assert!(e.has(40, &[4.0]), "... but the point is known (never asked for again)");
+        assert!(!e.has(11, &[1.0]) && e.get(11, &[1.0]).is_none());
+        // The same hour with OTHER mean predictors (a scoring-period edge moved
+        // inside it) is stored BESIDE the first: going back needs no new run.
+        assert!(c.merge_extra("a", &w(&c, "a"), &pts(&[(20, 7.0)]), &[9.0]));
+        let e = c.peek_extra("a").unwrap();
+        assert_eq!(e.points().hours(), &[10, 20, 20, 30, 40]);
+        assert_eq!((e.get(20, &[2.0]), e.get(20, &[7.0])), (Some(2.5), Some(9.0)));
+        // Length mismatch is refused, and so are points of another model shape.
+        assert!(!c.merge_extra("a", &w(&c, "a"), &pts(&[(1, 1.0), (2, 2.0)]), &[1.0]));
+        let two_predictors = RelHourPoints::from_unsorted(2, vec![1], vec![1.0, 2.0]);
+        assert!(!c.merge_extra("a", &w(&c, "a"), &two_predictors, &[1.0]));
+        assert_eq!(c.peek_extra("a").unwrap().len(), 5, "nothing changed");
     }
 
     #[test]
@@ -2249,7 +2575,7 @@ mod tests {
         let mut c = RelCache::default();
         c.insert("a".into(), fit(10, "T"));
         c.insert("b".into(), fit(10, "T"));
-        assert!(c.merge_extra("a", &w(&c, "a"), &[1], &[1.0]) && c.merge_extra("b", &w(&c, "b"), &[2], &[2.0]));
+        assert!(c.merge_extra("a", &w(&c, "a"), &hrs([1]), &[1.0]) && c.merge_extra("b", &w(&c, "b"), &hrs([2]), &[2.0]));
         // A new fit under the same key invalidates the old predictions.
         c.insert("a".into(), fit(10, "T2"));
         assert!(c.peek_extra("a").is_none());
@@ -2266,7 +2592,7 @@ mod tests {
         let mut c = RelCache::new(2, usize::MAX);
         c.insert("a".into(), fit(10, "T"));
         c.insert("b".into(), fit(10, "T"));
-        assert!(c.merge_extra("a", &w(&c, "a"), &[1], &[1.0])); // also marks "a" most recently used
+        assert!(c.merge_extra("a", &w(&c, "a"), &hrs([1]), &[1.0])); // also marks "a" most recently used
         assert!(c.get("b").is_some()); // so touch "b": "a" is the LRU again
         c.insert("c".into(), fit(10, "T")); // evicts "a"
         assert!(c.peek("a").is_none());
@@ -2275,58 +2601,58 @@ mod tests {
 
     #[test]
     fn extra_predictions_count_towards_the_byte_budget() {
-        // Budget fits one 10-row fit (10 * 20 + 80 = 280 bytes) but not the extras too.
+        // Budget fits one 10-row fit (10 * 20 + 80 = 280 bytes) but not many
+        // hourly points too (24 bytes each with one predictor: hour + mean + prediction).
         let mut c = RelCache::new(8, 400);
         c.insert("a".into(), fit(10, "T"));
         c.insert("b".into(), fit(10, "T")); // evicts "a" (2 x 280 > 400)
         assert!(c.peek("a").is_none() && c.peek("b").is_some());
-        let rows: Vec<u32> = (0..100).collect();
+        let many = hrs(0..100);
         let preds = vec![0.0; 100];
-        // Fit + 1200 bytes of predictions cannot fit 400 bytes even alone: refused
+        // Fit + 2400 bytes of predictions cannot fit 400 bytes even alone: refused
         // honestly, the fit itself is untouched.
-        assert!(!c.merge_extra("b", &w(&c, "b"), &rows, &preds));
+        assert!(!c.merge_extra("b", &w(&c, "b"), &many, &preds));
         assert!(c.peek("b").is_some());
         assert!(c.peek_extra("b").is_none());
-        // A small one still fits (280 + 12 * 5 = 340 <= 400)...
-        assert!(c.merge_extra("b", &w(&c, "b"), &[1, 2, 3, 4, 5], &[0.0; 5]));
+        // A small one still fits (280 + 24 * 5 = 400 <= 400)...
+        assert!(c.merge_extra("b", &w(&c, "b"), &hrs(1..=5), &[0.0; 5]));
         // ...and a later oversized merge keeps what was already stored.
-        assert!(!c.merge_extra("b", &w(&c, "b"), &rows, &preds));
-        assert_eq!(c.peek_extra("b").unwrap().rows, vec![1, 2, 3, 4, 5]);
+        assert!(!c.merge_extra("b", &w(&c, "b"), &many, &preds));
+        assert_eq!(c.peek_extra("b").unwrap().points().hours(), &[1, 2, 3, 4, 5]);
     }
 
     #[test]
     fn merging_extras_into_the_oldest_fit_evicts_the_others_never_itself() {
         // Two 5-row fits (5 * 20 + 40 = 140 bytes each) fit a 300-byte budget;
-        // the extras of the OLDEST one push the total over it.
+        // the extras of the OLDEST one (3 x 24 bytes) push the total over it.
         let mut c = RelCache::new(8, 300);
         c.insert("a".into(), fit(5, "T"));
         c.insert("b".into(), fit(5, "T"));
         assert!(c.peek("a").is_some() && c.peek("b").is_some());
-        // "a" is the least recently used entry: the old code evicted IT (and the
-        // predictions it had just been given) instead of "b".
-        assert!(c.merge_extra("a", &w(&c, "a"), &[1, 2, 3], &[1.0, 2.0, 3.0]));
+        // "a" is the least recently used entry: it must not evict ITSELF (and the
+        // predictions it was just given) instead of "b".
+        assert!(c.merge_extra("a", &w(&c, "a"), &hrs(1..=3), &[1.0, 2.0, 3.0]));
         assert!(c.peek("a").is_some(), "the merged fit survives");
-        assert_eq!(c.peek_extra("a").unwrap().rows, vec![1, 2, 3]);
+        assert_eq!(c.peek_extra("a").unwrap().points().hours(), &[1, 2, 3]);
         assert!(c.peek("b").is_none(), "the other fit paid the budget");
         assert!(c.peek_extra("b").is_none());
         // Merging marked "a" most recently used: with a third fit "a" is not the next victim.
-        let mut c = RelCache::new(8, 440);
+        let mut c = RelCache::new(8, 450);
         c.insert("a".into(), fit(5, "T"));
         c.insert("b".into(), fit(5, "T"));
         c.insert("c".into(), fit(5, "T"));
-        assert!(c.merge_extra("a", &w(&c, "a"), &[1], &[1.0])); // 3 * 140 + 12 = 432 <= 440
+        assert!(c.merge_extra("a", &w(&c, "a"), &hrs([1]), &[1.0])); // 3 * 140 + 24 = 444 <= 450
         c.insert("d".into(), fit(5, "T")); // over budget: evicts the LRU = "b", not "a"
         assert!(c.peek("a").is_some() && c.peek("b").is_none());
         assert!(c.peek_extra("a").is_some());
     }
 
-    /// "a" = 5-row fit (140 bytes) + 100 predictions (1200 bytes), "b" / "c" =
-    /// 140 bytes each, "a" the least recently used. 1620 bytes in all.
+    /// "a" = 5-row fit (140 bytes) + 100 hourly predictions (2400 bytes), "b" /
+    /// "c" = 140 bytes each, "a" the least recently used. 2820 bytes in all.
     fn cache_with_heavy_lru(budget: usize) -> RelCache {
         let mut c = RelCache::new(8, budget);
         c.insert("a".into(), fit(5, "T"));
-        let rows: Vec<u32> = (0..100).collect();
-        assert!(c.merge_extra("a", &w(&c, "a"), &rows, &[0.0; 100]));
+        assert!(c.merge_extra("a", &w(&c, "a"), &hrs(0..100), &[0.0; 100]));
         c.insert("b".into(), fit(5, "T"));
         c.insert("c".into(), fit(5, "T"));
         assert!(c.peek("a").is_some() && c.peek("b").is_some() && c.peek("c").is_some());
@@ -2335,12 +2661,11 @@ mod tests {
 
     #[test]
     fn merge_evicts_the_lru_fit_with_its_predictions_and_nothing_more() {
-        // Merging 30 predictions (360 bytes) into "c" makes 1980 > 1700. Evicting
-        // "a" WITH its predictions leaves 640: only "a" goes. (Removing only a's
-        // fit would leave 1840, still over, and evict "b" too.)
-        let mut c = cache_with_heavy_lru(1700);
-        let rows: Vec<u32> = (0..30).collect();
-        assert!(c.merge_extra("c", &w(&c, "c"), &rows, &[1.0; 30]));
+        // Merging 30 predictions (720 bytes) into "c" makes 3540 > 2900. Evicting
+        // "a" WITH its predictions leaves 1000: only "a" goes. (Removing only a's
+        // fit would leave 3400, still over, and evict "b" too.)
+        let mut c = cache_with_heavy_lru(2900);
+        assert!(c.merge_extra("c", &w(&c, "c"), &hrs(0..30), &[1.0; 30]));
         assert!(c.peek("a").is_none() && c.peek_extra("a").is_none());
         assert!(c.peek("b").is_some(), "b must not pay for a's orphaned predictions");
         assert!(c.peek("c").is_some() && c.peek_extra("c").is_some());
@@ -2348,10 +2673,10 @@ mod tests {
 
     #[test]
     fn insert_evicts_the_lru_fit_with_its_predictions_and_nothing_more() {
-        // Inserting a 10-row fit (280 bytes): 1900 > 1700. Without "a" and its
-        // predictions: 700 -> only "a" goes (the old loop, still at 1760 after
-        // removing a's fit alone, also evicted "b").
-        let mut c = cache_with_heavy_lru(1700);
+        // Inserting a 10-row fit (280 bytes): 3100 > 2900. Without "a" and its
+        // predictions: 560 -> only "a" goes (a loop that removed a's fit alone
+        // would still be at 2960 and evict "b" too).
+        let mut c = cache_with_heavy_lru(2900);
         c.insert("d".into(), fit(10, "T"));
         assert!(c.peek("a").is_none() && c.peek_extra("a").is_none());
         assert!(c.peek("b").is_some() && c.peek("c").is_some() && c.peek("d").is_some());
@@ -2360,68 +2685,76 @@ mod tests {
     #[test]
     fn failed_marker_lives_with_its_fit_and_is_cleared_by_retrain_success_and_retry() {
         use crate::health_validation::TestScoringFailure::{EngineError, OverBudget};
-        let rows = [7u32, 8, 9];
+        let missing = hrs([7, 8, 9]);
         let mut c = RelCache::new(2, usize::MAX);
-        assert!(!c.mark_extra_failed("a", &w(&c, "a"), &rows, EngineError), "no fit, nothing to mark");
-        assert_eq!(c.extra_failed("a", &rows), None);
+        assert!(!c.mark_extra_failed("a", &w(&c, "a"), &missing, EngineError), "no fit, nothing to mark");
+        assert_eq!(c.extra_failed("a", &missing), None);
         c.insert("a".into(), fit(5, "T"));
-        assert!(c.mark_extra_failed("a", &w(&c, "a"), &rows, EngineError));
-        assert!(c.mark_extra_failed("a", &w(&c, "a"), &rows, OverBudget), "re-marking replaces");
-        assert_eq!(c.extra_failed("a", &rows), Some(OverBudget), "the kind is remembered");
+        assert!(c.mark_extra_failed("a", &w(&c, "a"), &missing, EngineError));
+        assert!(c.mark_extra_failed("a", &w(&c, "a"), &missing, OverBudget), "re-marking replaces");
+        assert_eq!(c.extra_failed("a", &missing), Some(OverBudget), "the kind is remembered");
         // Explicit retry.
         c.clear_extra_failed("a");
-        assert_eq!(c.extra_failed("a", &rows), None);
+        assert_eq!(c.extra_failed("a", &missing), None);
         assert!(!c.has_failed_marker("a"));
         // Re-train (same key) clears it.
-        c.mark_extra_failed("a", &w(&c, "a"), &rows, EngineError);
+        c.mark_extra_failed("a", &w(&c, "a"), &missing, EngineError);
         c.insert("a".into(), fit(5, "T2"));
         assert!(!c.has_failed_marker("a"));
         // A successful merge clears it.
-        c.mark_extra_failed("a", &w(&c, "a"), &rows, EngineError);
-        assert!(c.merge_extra("a", &w(&c, "a"), &[1], &[1.0]));
+        c.mark_extra_failed("a", &w(&c, "a"), &missing, EngineError);
+        assert!(c.merge_extra("a", &w(&c, "a"), &hrs([1]), &[1.0]));
         assert!(!c.has_failed_marker("a"));
         // Eviction and clear() drop it (a later fit under the key starts clean).
-        c.mark_extra_failed("a", &w(&c, "a"), &rows, EngineError);
+        c.mark_extra_failed("a", &w(&c, "a"), &missing, EngineError);
         c.insert("b".into(), fit(5, "T"));
         c.insert("c".into(), fit(5, "T")); // evicts "a" (max 2 entries)
         assert!(c.peek("a").is_none() && !c.has_failed_marker("a"));
-        c.mark_extra_failed("b", &w(&c, "b"), &rows, EngineError);
+        c.mark_extra_failed("b", &w(&c, "b"), &missing, EngineError);
         c.clear();
         assert!(!c.has_failed_marker("b"));
     }
 
     #[test]
-    fn failed_marker_is_remembered_only_for_the_same_missing_rows() {
+    fn failed_marker_is_remembered_only_for_the_same_missing_points() {
         use crate::health_validation::TestScoringFailure::EngineError;
         let mut c = RelCache::default();
         c.insert("a".into(), fit(5, "T"));
-        // Every second row of 100..200 (gaps leave room for a same-shape variant).
-        let failed: Vec<u32> = (100..200).step_by(2).collect();
+        // Every second hour of 100..200 (gaps leave room for a same-shape variant).
+        let hours: Vec<i64> = (100..200).step_by(2).collect();
+        let failed = hrs(hours.iter().copied());
         assert!(c.mark_extra_failed("a", &w(&c, "a"), &failed, EngineError));
-        // Same rows: remembered (set-point edits, re-renders never re-run).
+        // Same points: remembered (set-point edits, re-renders never re-run).
         assert_eq!(c.extra_failed("a", &failed), Some(EngineError));
-        // A test period added (superset): one fresh attempt.
-        let added: Vec<u32> = failed.iter().copied().chain(300..310).collect();
-        assert_eq!(c.extra_failed("a", &added), None);
-        // A period shortened / removed (subset - the fix for "too many rows"): fresh attempt.
-        assert_eq!(c.extra_failed("a", &failed[..25]), None);
-        // Same length, first and last row, one row inside different: a different set.
-        let mut other = failed.clone();
+        // A scoring period added (superset): one fresh attempt.
+        assert_eq!(c.extra_failed("a", &hrs(hours.iter().copied().chain(300..310))), None);
+        // A period shortened / removed (subset - the fix for "too much data"): fresh attempt.
+        assert_eq!(c.extra_failed("a", &hrs(hours[..25].iter().copied())), None);
+        // Same length, first and last hour, one hour inside different: a different set.
+        let mut other = hours.clone();
         other[25] += 1; // 150 -> 151, still ascending and unique
-        assert_eq!((other.len(), other[0], other[49]), (failed.len(), failed[0], failed[49]));
-        assert_eq!(c.extra_failed("a", &other), None);
-        // The marker is still there for the original rows; markers are per key.
+        assert_eq!((other.len(), other[0], other[49]), (hours.len(), hours[0], hours[49]));
+        assert_eq!(c.extra_failed("a", &hrs(other)), None);
+        // The very same hours, ONE mean predictor different (a period edge moved
+        // inside that hour): a different set too.
+        let mut moved: Vec<(i64, f64)> = hours.iter().map(|&h| (h, h as f64 * 0.5)).collect();
+        moved[25].1 += 0.25;
+        assert_eq!(c.extra_failed("a", &pts(&moved)), None);
+        // The marker is still there for the original points; markers are per key.
         assert!(c.has_failed_marker("a"));
+        assert_eq!(c.extra_failed("a", &failed), Some(EngineError));
         assert_eq!(c.extra_failed("b", &failed), None);
     }
 
     #[test]
-    fn row_set_signature_tells_sets_apart() {
-        assert_eq!(RowSetSig::of(&[1, 2, 3]), RowSetSig::of(&[1, 2, 3]));
-        assert_ne!(RowSetSig::of(&[1, 2, 3]), RowSetSig::of(&[1, 2]));
-        assert_ne!(RowSetSig::of(&[1, 2, 4]), RowSetSig::of(&[1, 3, 4]), "same len/first/last");
-        assert_ne!(RowSetSig::of(&[]), RowSetSig::of(&[0]));
-        assert_eq!(RowSetSig::of(&[]), RowSetSig::of(&[]));
+    fn point_set_signature_tells_sets_apart() {
+        let sig = |hx: &[(i64, f64)]| PointSetSig::of(&pts(hx));
+        assert_eq!(sig(&[(1, 0.5), (2, 0.5), (3, 0.5)]), sig(&[(3, 0.5), (1, 0.5), (2, 0.5)]), "a set, not a list");
+        assert_ne!(sig(&[(1, 0.5), (2, 0.5), (3, 0.5)]), sig(&[(1, 0.5), (2, 0.5)]));
+        assert_ne!(sig(&[(1, 0.5), (2, 0.5), (4, 0.5)]), sig(&[(1, 0.5), (3, 0.5), (4, 0.5)]), "same len/first/last");
+        assert_ne!(sig(&[(1, 0.5), (2, 0.5)]), sig(&[(1, 0.5), (2, 0.75)]), "same hours, other means");
+        assert_ne!(sig(&[]), sig(&[(0, 0.0)]));
+        assert_eq!(sig(&[]), sig(&[]));
     }
 
     #[test]
@@ -2434,14 +2767,14 @@ mod tests {
         let new = Arc::downgrade(&c.insert("a".into(), fit(5, "NEW")));
         assert!(!c.is_current("a", &old) && c.is_current("a", &new));
         // The old fit's predictions are refused...
-        assert!(!c.merge_extra("a", &old, &[1, 2], &[1.0, 2.0]));
+        assert!(!c.merge_extra("a", &old, &hrs([1, 2]), &[1.0, 2.0]));
         assert!(c.peek_extra("a").is_none());
         // ...and so is its failure.
-        assert!(!c.mark_extra_failed("a", &old, &[1, 2], EngineError));
+        assert!(!c.mark_extra_failed("a", &old, &hrs([1, 2]), EngineError));
         assert!(!c.has_failed_marker("a"));
         // The new fit's own work is accepted.
-        assert!(c.merge_extra("a", &new, &[1, 2], &[1.0, 2.0]));
-        assert!(c.mark_extra_failed("a", &new, &[3], EngineError));
+        assert!(c.merge_extra("a", &new, &hrs([1, 2]), &[1.0, 2.0]));
+        assert!(c.mark_extra_failed("a", &new, &hrs([3]), EngineError));
         // A dangling handle never matches a fit.
         assert!(!c.is_current("a", &Weak::new()));
     }

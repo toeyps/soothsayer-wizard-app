@@ -100,6 +100,7 @@ import { computeTrainFingerprint } from '../utils/trainFingerprint';
 import { snapshotTrainedFormulas } from '../utils/specialSensorSignature';
 import { ALL_TIME_TRAIN, LEGACY_TESTS, ONE_TEST } from './helpers/trainTestFixture';
 import { MARK_COMPLETE_CLOSE_WAIT } from '../utils/healthPersist';
+import { EARLIER_SCORING_HINT_TEXT } from '../utils/modelStatus';
 import { ADD_TRAIN_PERIOD_HINT, NO_TEST_PERIOD_REASON } from '../utils/runningCondition';
 // @ts-expect-error - @types/node is not installed; vitest runs in Node so this resolves at runtime
 import { readFileSync } from 'node:fs';
@@ -1222,7 +1223,7 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
 
         it('a Complete model shows "Mark incomplete" on the Health score page, and clicking it un-marks the model (status only; its files and set points stay)', async () => {
             mockInvoke.mockImplementation(healthInvoke);
-            const record = { at: '2026-10-04T01:00:00.000Z', outputDir: 'C:/data/workspaces/ws1/output', setPoints: VALID_IND };
+            const record = { at: '2026-10-04T01:00:00.000Z', outputDir: 'C:/data/workspaces/ws1/output', setPoints: VALID_IND, scoringIntervalSecs: 3600 };
             const models = [withTrained(makeModel({ status: true, healthSetPoints: VALID_IND, healthExport: record }))];
             statefulUpdateMock(models);
             render(<BuildModelWindow />);
@@ -5264,6 +5265,8 @@ describe('Health score page - Mark complete (the ONLY way a model becomes Comple
         expect(written.status).toBe(true);
         expect(written.healthSetPoints).toMatchObject({ lower: 1, upper: 9, masterLower: 1, masterUpper: 90 });
         expect(written.healthExport).toMatchObject({ outputDir: 'C:/data/workspaces/ws1/output', setPoints: { lower: 1, upper: 9 } });
+        // ...and the scoring interval the validating preview reported (1-hour averages)
+        expect(written.healthExport.scoringIntervalSecs).toBe(3600);
         expect(typeof written.healthExport.at).toBe('string');
         // No "Files saved to …" banner on the page: it is the footer's ONE sentence, with the
         // Workbench date format (mono) and the folder (the full path is the tooltip).
@@ -5450,7 +5453,7 @@ describe('Health score page - Mark complete (the ONLY way a model becomes Comple
 });
 
 describe('Health score page - Mark incomplete and "Changed after saving"', () => {
-    const record = { at: '2026-10-04T01:00:00.000Z', outputDir: 'C:/data/workspaces/ws1/output', setPoints: HS_SNAP };
+    const record = { at: '2026-10-04T01:00:00.000Z', outputDir: 'C:/data/workspaces/ws1/output', setPoints: HS_SNAP, scoringIntervalSecs: 3600 };
 
     it('Mark incomplete replaces the button once Complete; it writes status:false only (files, set points and export record stay)', async () => {
         await hsMount([HS_IND({ status: true, healthExport: record })]);
@@ -5523,6 +5526,133 @@ describe('Health score page - Mark incomplete and "Changed after saving"', () =>
         await hsMount([HS_IND({ status: true, healthExport: record })]);
         expect(screen.getByText('Complete', { selector: '.model-status-pill' })).toBeTruthy();
         expect(screen.queryByTestId('stale-banner')).toBeNull();
+    });
+});
+
+// The health score moved to 1-hour averages (2026-10-11). A model that was already Complete
+// STAYS Complete (user decision, Q2): its export record has no `scoringIntervalSecs`, so the
+// Health score page footer says its saved results use the earlier scoring and offers
+// "Mark complete again" — nothing is written until the user presses it.
+describe('Health score page - saved with the earlier row-by-row scoring (a Complete model from before 1-hour averages)', () => {
+    /** A record as a build BEFORE the change wrote it: no scoring interval. */
+    const earlier = { at: '2026-10-04T01:00:00.000Z', outputDir: 'C:/data/workspaces/ws1/output', setPoints: HS_SNAP };
+    const current = { ...earlier, scoringIntervalSecs: 3600 };
+    const HINT = 'Saved results use the earlier row-by-row scoring — Mark complete again to update the files';
+    const hint = () => screen.queryByTestId('earlier-scoring');
+    const again = () => screen.queryByTestId('mark-complete-again') as HTMLButtonElement | null;
+
+    it('the footer says so in its ONE sentence and "Mark complete again" is the filled button; the model stays Complete and nothing is written', async () => {
+        await hsMount([HS_IND({ status: true, healthExport: earlier })]);
+        mockUpdateWorkspaceData.mockClear();
+        await openHealthPage();
+        await waitFor(() => expect(hint()).not.toBeNull());
+        expect(hint()!.textContent).toBe(HINT);
+        expect(HINT).toBe(EARLIER_SCORING_HINT_TEXT);
+        expect(hint()!.getAttribute('data-tone')).toBe('warn');
+        expect(hint()!.closest('.f4-foot')).not.toBeNull();
+        // ONE sentence: the hint takes the place of "Files saved …" (no second line, no banner on the page)
+        expect(screen.getByTestId('wb-footer').querySelectorAll('.wbx-reason')).toHaveLength(1);
+        expect(screen.queryByTestId('save-ok')).toBeNull();
+        expect(screen.getByTestId('health-page').textContent).not.toMatch(/row-by-row/);
+        // still Complete
+        expect(screen.getByTestId('footer-pill').textContent).toBe('Complete');
+        expect(screen.getByTestId('mark-incomplete')).toBeTruthy();
+        expect(screen.queryByTestId('mark-complete')).toBeNull();
+        // the filled button, the way "files out of date" does it
+        expect(again()).not.toBeNull();
+        expect(again()!.className).toBe('bmw-btn-ok');
+        expect(again()!.textContent).toBe('✓ Mark complete again');
+        expect(screen.getByTestId('wb-footer').getAttribute('data-primary')).toBe('mark');
+        await waitFor(() => expect(again()!.disabled).toBe(false));
+        // looking wrote nothing about the model's status or its record
+        await flush();
+        expect(exportCalls()).toHaveLength(0);
+        for (const r of mockUpdateWorkspaceData.mock.results) {
+            const m = (await r.value).failureGroupState.models[0];
+            expect(m.status).toBe(true);
+            expect(m.healthExport).toEqual(earlier);
+        }
+    });
+
+    it('"Mark complete again" writes the files again, the record then carries scoringIntervalSecs: 3600, and the hint and the button are gone', async () => {
+        await hsMount([HS_IND({ status: true, healthExport: earlier })]);
+        await openHealthPage();
+        await waitFor(() => expect(again()).not.toBeNull());
+        await waitFor(() => expect(again()!.disabled).toBe(false));
+        await act(async () => { fireEvent.click(again()!); await Promise.resolve(); });
+        await waitFor(() => expect(screen.getByTestId('save-ok')).toBeTruthy());
+        expect(exportCalls()).toHaveLength(1);
+        expect(exportCalls()[0].set_points).toEqual({ lower: 1, upper: 9 }); // the same set points: only the files are renewed
+        const written = await hsLastModel();
+        expect(written.status).toBe(true);
+        expect(written.healthExport.scoringIntervalSecs).toBe(3600);
+        expect(written.healthExport.at).not.toBe(earlier.at);
+        expect(written.healthExport.setPoints).toMatchObject({ lower: 1, upper: 9 });
+        expect(hint()).toBeNull();
+        expect(again()).toBeNull();
+        expect(screen.getByTestId('footer-pill').textContent).toBe('Complete');
+    });
+
+    it('no hint for a record that carries the interval, for a Complete model with no record at all, and on the Model fit page', async () => {
+        await hsMount([HS_IND({ status: true, healthExport: current })]);
+        await openHealthPage();
+        expect(hint()).toBeNull();
+        expect(again()).toBeNull();
+        expect(screen.getByTestId('save-ok')).toBeTruthy();
+        cleanup();
+
+        await hsMount([HS_IND({ status: true })]); // completed before export records existed: nothing saved to be out of date
+        await openHealthPage();
+        expect(hint()).toBeNull();
+        expect(again()).toBeNull();
+        cleanup();
+
+        // the hint belongs to the Health score page: the Model fit footer keeps its own sentence and has no filled button
+        await hsMount([HS_IND({ status: true, healthExport: earlier })]);
+        await waitFor(() => expect(screen.getByTestId('results-chart')).toBeTruthy());
+        expect(hint()).toBeNull();
+        expect(again()).toBeNull();
+        expect(screen.getByTestId('wb-footer').getAttribute('data-primary')).toBe('none');
+        expect(screen.getByTestId('wb-footer').textContent).not.toMatch(/row-by-row/);
+    });
+
+    it('only a COMPLETE model: an Incomplete one with the same old record shows plain "Mark complete"; marking a Complete one incomplete removes the hint', async () => {
+        await hsMount([HS_IND({ status: false, healthExport: earlier })]);
+        await openHealthPage();
+        expect(hint()).toBeNull();
+        expect(again()).toBeNull();
+        expect(screen.getByTestId('mark-complete')).toBeTruthy();
+        cleanup();
+
+        await hsMount([HS_IND({ status: true, healthExport: earlier })]);
+        await openHealthPage();
+        await waitFor(() => expect(hint()).not.toBeNull());
+        await act(async () => { fireEvent.click(screen.getByTestId('mark-incomplete')); await Promise.resolve(); await Promise.resolve(); });
+        await flush();
+        expect((await hsLastModel()).status).toBe(false);
+        expect((await hsLastModel()).healthExport).toEqual(earlier); // the old record is kept as it was
+        expect(hint()).toBeNull();
+        expect(again()).toBeNull();
+        expect(screen.getByTestId('mark-complete')).toBeTruthy();
+    });
+
+    it('set points ALSO changed after saving: the "Files out of date" sentence says it (one sentence, one button) — Mark complete again fixes both', async () => {
+        await hsMount([HS_IND({ status: true, healthExport: earlier })]);
+        await openHealthPage();
+        await waitFor(() => expect(hint()).not.toBeNull());
+        hsType('sp-upper', '12');
+        expect(hint()).toBeNull();
+        expect(screen.getByTestId('files-out-of-date').textContent).toBe('Files out of date — set points changed after saving · Mark complete again to update them');
+        expect(screen.getAllByTestId('mark-complete-again')).toHaveLength(1);
+        await waitFor(() => expect(again()!.disabled).toBe(false));
+        await act(async () => { fireEvent.click(again()!); await Promise.resolve(); });
+        await waitFor(() => expect(screen.getByTestId('save-ok')).toBeTruthy());
+        const written = await hsLastModel();
+        expect(written.healthExport.setPoints).toMatchObject({ upper: 12 });
+        expect(written.healthExport.scoringIntervalSecs).toBe(3600);
+        expect(hint()).toBeNull();
+        expect(screen.queryByTestId('files-out-of-date')).toBeNull();
+        expect(again()).toBeNull();
     });
 });
 
@@ -5624,7 +5754,7 @@ describe('Health score page - edge cases', () => {
             return healthInvoke(cmd, args);
         });
         const sp = { kind: 'relationship', residualAt80Lower: -1.5, residualAt80Upper: 1.5, residualAt0Lower: -3, residualAt0Upper: 3 };
-        const rel = HS_REL({ status: true, healthSetPoints: sp, healthExport: { at: '2026-10-04T01:00:00.000Z', outputDir: 'C:/data/workspaces/ws1/output', setPoints: sp } });
+        const rel = HS_REL({ status: true, healthSetPoints: sp, healthExport: { at: '2026-10-04T01:00:00.000Z', outputDir: 'C:/data/workspaces/ws1/output', setPoints: sp, scoringIntervalSecs: 3600 } });
         statefulUpdateMock([rel]);
         render(<BuildModelWindow />);
         await deliverData({ failureGroupState: { groups: [makeGroup()], models: [rel] } });
@@ -6503,7 +6633,7 @@ describe('Train periods and scoring periods — review fixes (2026-10-07)', () =
             expect(none).not.toHaveProperty('test_periods');
         });
 
-        it('a health preview that scores scoring periods and takes a while shows the "Scoring these periods" hint; none without scoring periods', async () => {
+        it('a Relation-model health preview that takes a while shows the "Calculating the health score" hint — with or without scoring periods; never for another kind', async () => {
             mockInvoke.mockImplementation((cmd: string, args?: any) =>
                 cmd === 'compute_health_preview' ? new Promise(() => {}) : healthInvoke(cmd, args));
             const rel = HS_REL();
@@ -6514,7 +6644,7 @@ describe('Train periods and scoring periods — review fixes (2026-10-07)', () =
             // not at once (a cached re-score finishes well before) ...
             expect(screen.queryByTestId('slow-test-scoring')).toBeNull();
             // ... but once it has been loading for a moment
-            await waitFor(() => expect(screen.getByTestId('slow-test-scoring').textContent).toContain('Scoring these periods with the Relation model'), { timeout: 3000 });
+            await waitFor(() => expect(screen.getByTestId('slow-test-scoring').textContent).toBe('Calculating the health score with the Relation model — this can take up to ~15 s.'), { timeout: 3000 });
 
             cleanup();
             mockInvoke.mockClear();
@@ -6522,8 +6652,9 @@ describe('Train periods and scoring periods — review fixes (2026-10-07)', () =
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: { groups: [makeGroup()], models: [rel], runningConditionTestPeriods: [] } });
             await waitFor(() => expect(healthCalls().length).toBeGreaterThan(0));
-            await act(async () => { await new Promise(r => setTimeout(r, 1600)); });
+            // No scoring period: the engine still predicts the training hours, so the hint shows too.
             expect(screen.queryByTestId('slow-test-scoring')).toBeNull();
+            await waitFor(() => expect(screen.getByTestId('slow-test-scoring')).toBeTruthy(), { timeout: 3000 });
         });
 
         it('SIDECAR_OUTDATED on Train shows the app wording, not the raw code', async () => {
@@ -7204,7 +7335,7 @@ describe('train queue wiring — review fixes (phase 4)', () => {
 // status sentence in the footer, at most one filled button on screen, one board shape
 // for the chart-less states, one date format, scroll back to the top on a page / tab switch.
 describe('Workbench redesign §1 — the page spine', () => {
-    const record = { at: '2026-10-04T01:00:00.000Z', outputDir: 'C:/data/workspaces/ws1/output', setPoints: HS_SNAP };
+    const record = { at: '2026-10-04T01:00:00.000Z', outputDir: 'C:/data/workspaces/ws1/output', setPoints: HS_SNAP, scoringIntervalSecs: 3600 };
     /** Every FILLED button in the window (a split button's ▾ half belongs to its main half; dialogs are not the page). */
     const filled = () => Array.from(document.querySelectorAll<HTMLElement>('.rcx-btn--pri, .rcx-btn--danger, .f4-btn-save, .bmw-btn-ok'))
         .filter(b => !b.classList.contains('tq-split-caret') && !b.closest('[role="dialog"]'))
@@ -8267,7 +8398,7 @@ describe('Workbench redesign §7 — page states of every kind (phase D)', () =>
         const release = trainAnswers(k, mode);
         const model: Record<string, any> = {
             ...withTrained(k.make({ healthSetPoints: HS_SNAP })), status: true,
-            healthExport: { at: '2026-10-04T01:00:00.000Z', outputDir: 'C:/data/workspaces/ws1/output', setPoints: { ...HS_SNAP, upper: 12 } },
+            healthExport: { at: '2026-10-04T01:00:00.000Z', outputDir: 'C:/data/workspaces/ws1/output', setPoints: { ...HS_SNAP, upper: 12 }, scoringIntervalSecs: 3600 },
         };
         await mountK([model]);
         await waitFor(() => expect(screen.getByTestId('results-chart')).toBeTruthy());
@@ -9104,7 +9235,7 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
         const P_OUT2 = { ...P_OUT, id: 'p2' };
         const WARN = '⚠ P2 is outside the data (1 Jan 2025 – 31 Dec 2025) — it is not used';
         const fgShape = { runningConditionFilters: [], runningConditionCombine: 'and', runningConditionTimePeriods: [P_IN, P_OUT2], runningConditionNoneConfirmed: true };
-        const record = { at: '2026-10-04T01:00:00.000Z', outputDir: 'C:/data/workspaces/ws1/output', setPoints: HS_SNAP };
+        const record = { at: '2026-10-04T01:00:00.000Z', outputDir: 'C:/data/workspaces/ws1/output', setPoints: HS_SNAP, scoringIntervalSecs: 3600 };
         const trainedModel = (over: Record<string, any> = {}) => {
             const base = makeModel({ id: 'm1', targetSensor: 'TAG1', healthSetPoints: HS_SNAP });
             return { ...withTrained(base, { models: [base], ...fgShape }), ...over };

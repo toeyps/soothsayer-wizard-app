@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
     HOVER_AXIS_POINTER,
+    hourlyScopes,
     REF_LABEL_GUTTER,
     REF_LABEL_MIN_GAP,
     buildClusterOption,
@@ -175,6 +176,24 @@ describe('wallClockMs / parseTimestamps: a stamp sits at its OWN wall-clock time
         const o: any = buildTimeSeriesOption({ timestamps: ['2026-02-09T22:00:00+07:00', '2026-02-09T23:00:00+07:00'], lines: [{ name: 'V', values: [1, 2], color: '#fff' }] });
         expect(o.xAxis.type).toBe('time');
         expect(o.series[0].data.map((d: number[]) => d[0])).toEqual([local(2026, 2, 9, 22), local(2026, 2, 9, 23)]);
+    });
+});
+
+describe('hourlyScopes (bands of a chart of hourly points)', () => {
+    it('every range starts at the start of its clock hour; ends, names and open ends are untouched', () => {
+        const scopes = {
+            ranges: [
+                { kind: 'train' as const, start: null, end: '2024-03-01T03:59:00', label: 'TRAIN', short: 'TRAIN' },
+                { kind: 'score' as const, start: '2024-03-01T04:30:00', end: '2024-03-01T09:10:00', label: 'S1', short: 'S1' },
+                { kind: 'score' as const, start: '2024-03-02 10:05', end: null, label: 'S2', short: 'S2' },
+            ],
+        };
+        const h = hourlyScopes(scopes)!;
+        expect(h.ranges.map(r => r.start)).toEqual([null, '2024-03-01T04:00:00', '2024-03-02 10:00:00']);
+        expect(h.ranges.map(r => r.end)).toEqual(scopes.ranges.map(r => r.end));
+        expect(h.ranges.map(r => r.label)).toEqual(['TRAIN', 'S1', 'S2']);
+        expect(scopes.ranges[1].start).toBe('2024-03-01T04:30:00'); // the input is not changed
+        expect(hourlyScopes(null)).toBeNull();
     });
 });
 

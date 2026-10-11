@@ -689,9 +689,12 @@ export function trainOverlapDays(train: TimePeriod[], test: TimePeriod, bounds?:
 }
 
 /** The one quiet note on a scoring-period row / result tile that includes
- *  train time. `index` is 0-based (S1 = 0). */
+ *  train time. `index` is 0-based (S1 = 0). `days` stays RAW running time
+ *  (`TestPeriodResult.train_days`); the results themselves are per HOUR (the
+ *  health score is computed on 1-hour averages), hence "hours the model was
+ *  trained on". */
 export function testIncludesTrainNote(index: number, days: number): string {
-    return `S${index + 1} includes ${days} d of train running time — results include rows the model was trained on`;
+    return `S${index + 1} includes ${days} d of train running time — results include hours the model was trained on`;
 }
 
 /** One train period that overlaps an enabled Dashboard time highlight. */

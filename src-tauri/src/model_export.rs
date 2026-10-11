@@ -152,8 +152,12 @@ pub fn refuse_bad_test_periods(
 }
 
 /// The `validation` block of an Individual / Clustering export: the SAME
-/// preview code as `compute_health_preview` (train-only model, test rows
-/// scored), serialized with [`health_validation::export_block`].
+/// preview code as `compute_health_preview` (train-only model; the scoring
+/// periods are scored on 1-HOUR AVERAGES of their running rows, see
+/// `health_hourly`), serialized with [`health_validation::export_block`], which
+/// also declares `scoring_interval_seconds: 3600` / `scoring_aggregation:
+/// "mean"`. The train block and every key outside `validation` stay the raw
+/// training rows' numbers.
 fn individual_or_clustering_block(
     data: &ColumnarData,
     req: &ModelFilesRequest,
@@ -187,8 +191,17 @@ fn individual_or_clustering_block(
 
 /// The `validation` block of a Relationship export: the SAME preview code as
 /// `compute_health_preview`, over the fit the export just trained (`fit`, the
-/// training rows) and the train-only model's predictions for the test rows
-/// (`extra`). Nothing is refitted.
+/// raw training rows) and that model's predictions for the HOURLY points
+/// (`extra`: the engine's answers for the hourly mean predictors of the
+/// training hours and of the scoring periods, asked for in the export's one
+/// sidecar run). Nothing is refitted.
+///
+/// Like the other two kinds the block is hourly: `tests[].scored` /
+/// `pct_below_80` / `lowest` and the period metrics (`r2`, `rmse`,
+/// `residual_mean`, `residual_sd`) are over 1-hour averages - residual = mean
+/// actual minus the prediction at the hour's mean predictors - which is what
+/// `scoring_interval_seconds: 3600` / `scoring_aggregation: "mean"` declare.
+/// The `train` block stays the model's own raw-row numbers.
 pub fn relationship_block(
     data: &ColumnarData,
     fit: &crate::health_score::RelFit,

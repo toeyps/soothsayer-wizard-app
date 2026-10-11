@@ -27,6 +27,10 @@ afterEach(cleanup);
  * The Model fit page's "Train and scoring periods" table (`TrainTestCard`) was
  * removed on 2026-10-11 (user decision: information the user does not need) —
  * `ModelFitPage.test.tsx` asserts that page renders none of it.
+ *
+ * The health score is computed on 1-HOUR AVERAGES of the running rows (2026-10-11):
+ * a tile's "below 80" share and its "lowest" are per HOUR ("of running hours",
+ * "(1 h average)"), while "d running time" stays the raw running time.
  */
 
 const withV = (kind: 'individual' | 'relationship' | 'clustering', v: Partial<ReturnType<typeof makeValidation>> = {}): HealthPreview =>
@@ -45,6 +49,10 @@ describe('removed pieces', () => {
         for (const gone of ['resultTone', 'NORMAL_AMBER_PCT', 'TestedPill']) expect(exported).not.toContain(gone);
     });
 
+    it('the "held for 1 h" window is gone: every point already is a 1-hour average (no DROP_SUSTAIN_HOURS)', () => {
+        expect(Object.keys(ValidationCards)).not.toContain('DROP_SUSTAIN_HOURS');
+    });
+
     it('the Model fit page\'s "Train and scoring periods" table (TrainTestCard) is gone from the module; what the Health score page uses stays', () => {
         const exported = Object.keys(ValidationCards);
         expect(exported).not.toContain('TrainTestCard');
@@ -60,11 +68,16 @@ describe('Scoring results (Health score page) — neutral tiles only', () => {
         return screen.getByTestId('test-result-1');
     };
 
-    it('a tile shows the two facts: % of running time below 80, and the lowest score held for 1 h with its date', () => {
-        const t = tile({ pct_below_80: 4.9, lowest: 61.4, lowest_at: '2026-01-01 02:30:00' });
+    it('a tile shows the two facts: % of running HOURS below 80, and the lowest hourly score (1 h average) with the start of that hour', () => {
+        // `lowest_at` is an hour start as Rust labels it (`2026-01-01T02:00:00`).
+        const t = tile({ pct_below_80: 4.9, lowest: 61.4, lowest_at: '2026-01-01T02:00:00' });
         expect(t.querySelector('.vt-th b')!.textContent).toBe('S1');
-        expect(screen.getByTestId('test-result-1-big').textContent).toBe('4.9% of running time below 80');
-        expect(screen.getByTestId('test-result-1-lowest').textContent).toBe(`Lowest 61 (held 1 h) on ${stamp('2026-01-01 02:30:00')}.`);
+        expect(screen.getByTestId('test-result-1-big').textContent).toBe('4.9% of running hours below 80');
+        expect(screen.getByTestId('test-result-1-lowest').textContent).toBe('Lowest 61 (1 h average) on 1 Jan 2026 02:00.');
+        expect(t.textContent).not.toMatch(/held 1 h|of running time below 80/);
+        // the header keeps the RAW running time of the period (12.5 d = 3 600 five-minute rows, 300 hours)
+        expect(t.querySelector('.vt-th span')!.textContent).toContain('12.5 d running time');
+        expect(stamp('2026-01-01T02:00:00')).toBe('1 Jan 2026 02:00');
         expect(stamp('2026-01-01 02:30:00')).toBe('1 Jan 2026 02:30');
         // the row's own wall clock: an explicit offset never shifts it (any PC time zone)
         expect(stamp('2026-01-01T02:30:00+07:00')).toBe('1 Jan 2026 02:30');
@@ -77,30 +90,34 @@ describe('Scoring results (Health score page) — neutral tiles only', () => {
         expect(t.className).toBe('vt-tile');
         expect(t.hasAttribute('data-tone')).toBe(false);
         expect(screen.getByTestId('test-result-1-big').className).toBe('vt-big');
-        expect(screen.getByTestId('test-result-1-big').textContent).toBe(`${pct.toFixed(1)}% of running time below 80`);
+        expect(screen.getByTestId('test-result-1-big').textContent).toBe(`${pct.toFixed(1)}% of running hours below 80`);
         expect(t.textContent).not.toMatch(REMOVED_WORDS);
         expect(t.textContent).not.toMatch(/widen|check that|another model/i);
     });
 
-    it('no lowest level (no 1 h stretch of scored rows): says so plainly, still no verdict', () => {
+    it('the "No 1 h stretch of scored running time" sentence is gone: a period with a scored hour always has a lowest hourly score', () => {
+        // Not a payload Rust sends any more (a share without a lowest); the tile must still not
+        // bring the removed sentence back, nor print "null".
         const t = tile({ pct_below_80: 0, lowest: null, lowest_at: null });
-        expect(screen.getByTestId('test-result-1-lowest').textContent)
-            .toBe('No 1 h stretch of scored running time in this period, so there is no lowest score to show.');
+        expect(screen.getByTestId('test-result-1-lowest').textContent).toBe('');
+        expect(t.textContent).not.toMatch(/No 1 h stretch|no lowest score to show|null/);
         expect(t.className).toBe('vt-tile');
     });
 
     it('a lowest score without a date leaves the date out', () => {
         tile({ lowest: 72, lowest_at: null });
-        expect(screen.getByTestId('test-result-1-lowest').textContent).toBe('Lowest 72 (held 1 h).');
+        expect(screen.getByTestId('test-result-1-lowest').textContent).toBe('Lowest 72 (1 h average).');
     });
 
-    it('no running rows / no scored rows are dimmed facts, not verdicts', () => {
+    it('no running rows / no scored hours are dimmed facts, not verdicts', () => {
         tile({ rows: 0 });
         expect(screen.getByTestId('test-result-1-big').textContent).toBe('No running rows');
+        expect(screen.getByTestId('test-result-1-lowest').textContent).toBe('The running condition removes every row of this period.');
         expect(screen.getByTestId('test-result-1-big').className).toContain('vt-big--dim');
         cleanup();
         tile({ scored: 0, pct_below_80: null, lowest: null, lowest_at: null });
-        expect(screen.getByTestId('test-result-1-big').textContent).toBe('No scored rows');
+        expect(screen.getByTestId('test-result-1-big').textContent).toBe('No scored hours');
+        expect(screen.getByTestId('test-result-1-lowest').textContent).toBe('No hour of this period got a score.');
         expect(screen.getByTestId('test-result-1-big').className).toContain('vt-big--dim');
     });
 
@@ -123,7 +140,7 @@ describe('Scoring results (Health score page) — neutral tiles only', () => {
 
     it('a tile that includes train time carries the quiet note with Rust\'s running days; a tile that does not has none', () => {
         tile({ train_rows: 10, train_days: 1.2 });
-        expect(screen.getByTestId('test-result-overlap-1').textContent).toBe('S1 includes 1.2 d of train running time — results include rows the model was trained on.');
+        expect(screen.getByTestId('test-result-overlap-1').textContent).toBe('S1 includes 1.2 d of train running time — results include hours the model was trained on.');
         cleanup();
         render(<TestResultsCard data={withV('individual', { tests: [makeTestResult({ train_rows: 40, train_days: 3.5 }), makeTestResult({ index: 2 })] })} scoreReady />);
         expect(screen.getByTestId('test-result-overlap-1').textContent).toContain('S1 includes 3.5 d of train running time');
@@ -161,13 +178,15 @@ describe('Scoring results (Health score page) — neutral tiles only', () => {
         expect(screen.queryByTestId('test-results')).toBeNull();
     });
 
-    it('the card is titled "Scoring results", says it is for reading only, and explains the two numbers', () => {
+    it('the card is titled "Scoring results", says it is for reading only, and explains the two numbers as 1-hour averages', () => {
         tile({});
         const card = screen.getByTestId('test-results');
         expect(card.querySelector('.wb2-card-h b')!.textContent).toBe('Scoring results');
         expect(card.querySelector('.wb2-card-s')!.textContent).toBe('for reading only — never blocks Mark complete');
-        expect(card.querySelector('.vt-note')!.textContent).toContain('lowest score held for 1 hour of running time');
-        expect(card.querySelector('.vt-note')!.textContent).toContain('Rows outside the train and scoring periods get no score.');
+        expect(card.querySelector('.vt-note')!.textContent).toBe(
+            'Scores use 1-hour averages of the running rows. “Below 80” counts the scored hours of the period; “lowest” is its lowest hourly score. Hours outside the train and scoring periods, or with no running row, get no score.',
+        );
+        expect(card.querySelector('.vt-note')!.textContent).not.toMatch(/every scored row|held for 1 hour/);
         expect(card.textContent).not.toMatch(/Test results|test period/i);
     });
 });
@@ -216,9 +235,9 @@ describe('S-numbers of the ORIGINAL list, scoring failed, slow-scoring hint', ()
             testNumbers={[1, 3]}
         />);
         expect(screen.getByTestId('test-result-3').querySelector('.vt-th b')!.textContent).toBe('S3');
-        expect(screen.getByTestId('test-result-3-big').textContent).toBe('30.0% of running time below 80');
+        expect(screen.getByTestId('test-result-3-big').textContent).toBe('30.0% of running hours below 80');
         expect(screen.getByTestId('test-result-1').querySelector('.vt-th b')!.textContent).toBe('S1');
-        expect(screen.getByTestId('test-result-1-big').textContent).toBe('2.0% of running time below 80');
+        expect(screen.getByTestId('test-result-1-big').textContent).toBe('2.0% of running hours below 80');
     });
 
     const failedIssue = { code: 'test_scoring_failed', severity: 'warning' as const, field: 'test_periods', message: 'The Relation model engine did not answer.' };
@@ -227,13 +246,15 @@ describe('S-numbers of the ORIGINAL list, scoring failed, slow-scoring hint', ()
         validation: [failedIssue],
     });
 
-    it('test_scoring_failed: the tiles are replaced by one amber "could not be scored — try again" notice (with Retry)', () => {
+    it('test_scoring_failed: the tiles are replaced by one amber "The health score could not be calculated — try again" notice (with Retry)', () => {
         let retried = 0;
         render(<TestResultsCard data={unscored()} scoreReady onRetry={() => { retried += 1; }} />);
         const n = screen.getByTestId('test-scoring-failed');
         expect(n.className).toBe('vt-fail');
         expect(n.textContent).toContain(TEST_SCORING_FAILED_TEXT);
-        expect(TEST_SCORING_FAILED_TEXT).toBe('The scoring periods could not be scored — try again');
+        expect(TEST_SCORING_FAILED_TEXT).toBe('The health score could not be calculated — try again');
+        expect(n.querySelector('b')!.textContent).toBe('The health score could not be calculated — try again');
+        expect(n.textContent).not.toMatch(/could not be scored/);
         expect(n.textContent).toContain('The Relation model engine did not answer.');
         expect(screen.queryByTestId('test-result-1')).toBeNull();
         expect(screen.queryByTestId('test-results-pending')).toBeNull();
@@ -263,6 +284,7 @@ describe('S-numbers of the ORIGINAL list, scoring failed, slow-scoring hint', ()
         render(<TestResultsCard data={{ ...unscored(), validation: [outdated] }} scoreReady onRetry={() => {}} />);
         const n = screen.getByTestId('test-scoring-failed');
         expect(n.textContent).toContain(TEST_SCORING_OUTDATED_TEXT);
+        expect(n.querySelector('b')!.textContent).toBe('The health score could not be calculated');
         expect(n.textContent).not.toContain('try again');
         expect(n.textContent).toContain('out of date');
         expect(screen.queryByTestId('test-scoring-retry')).toBeNull();
@@ -282,6 +304,7 @@ describe('S-numbers of the ORIGINAL list, scoring failed, slow-scoring hint', ()
     it('SlowScoringNotice: the "up to ~15 s" hint only when asked for', () => {
         render(<SlowScoringNotice show />);
         expect(screen.getByTestId('slow-test-scoring').textContent).toBe(SLOW_TEST_SCORING_TEXT);
+        expect(screen.getByTestId('slow-test-scoring').textContent).toBe('Calculating the health score with the Relation model — this can take up to ~15 s.');
         cleanup();
         render(<SlowScoringNotice show={false} />);
         expect(screen.queryByTestId('slow-test-scoring')).toBeNull();

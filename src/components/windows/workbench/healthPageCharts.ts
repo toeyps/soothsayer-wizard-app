@@ -33,6 +33,10 @@ import {
  * `healthCharts.ts` they take only the bounded `compute_health_preview` payload
  * plus the set points being edited (the draft), and return a plain option.
  *
+ * The page hands every builder here the HOURLY series (`HealthPreview.hourly`:
+ * one point per clock hour, every value the mean of the hour's running rows) —
+ * never the raw `series`, which is the Model fit page's and carries no score.
+ *
  * Lines for a value that is not entered yet (null / NaN) are simply absent;
  * they appear and move as the user types.
  *
@@ -46,7 +50,7 @@ import {
  * Relationship, and the score chart) carries `axisPointer.link` on the X axis
  * and the page puts both charts in one ECharts group (`echarts.connect`), so the
  * same timestamp cursor and tooltip show on both. Both are drawn from the SAME
- * downsampled index set, which Rust guarantees.
+ * downsampled index set (`hourly`), which Rust guarantees.
  */
 
 /** ECharts group id the two time charts are connected under. */
@@ -96,7 +100,7 @@ export function scoreColor(score: number | null | undefined, alpha = 1): string 
 // Set-point chart - Individual
 // ---------------------------------------------------------------------------
 
-/** Raw sensor value over time with the ±1SD band (the only fill), the dashed
+/** The sensor's 1-hour average over time with the ±1SD band (the only fill), the dashed
  *  ±3SD lines and the L / H set-point lines ("H 4.6" above its line, "L 2.2"
  *  below). No histogram on this page. */
 export function buildIndividualSetPointOption(
@@ -127,7 +131,7 @@ export function buildIndividualSetPointOption(
 // Set-point chart - Relationship
 // ---------------------------------------------------------------------------
 
-/** Residual over time ONLY, with ±2RMSE, a zero line and the four 80 / 0 lines
+/** The hourly residual over time ONLY, with ±2RMSE, a zero line and the four 80 / 0 lines
  *  (lower and upper) the user has entered so far — each labelled with its score
  *  and its value as typed ("80 · +5" above an upper line, "0 · −9" below a
  *  lower one). */
@@ -165,9 +169,10 @@ export function buildRelationshipSetPointOption(
 // ---------------------------------------------------------------------------
 
 /**
- * Scatter of the (bounded) points with the 1x, 3x and N x SD ring of EVERY
- * cluster. Points come from `series` (not `cluster_scatter`) so a hovered point
- * is exactly one entry of the score series: they are coloured by score once the
+ * Scatter of the (bounded) hourly points — one (mean x, mean y) per clock hour —
+ * with the 1x, 3x and N x SD ring of EVERY cluster. Points come from `hourly`
+ * (not the raw `cluster_scatter`) so a hovered point is exactly one entry of the
+ * score series: they are coloured by score once the
  * set points are valid, by cluster before. The N x ring appears when N is a
  * number (any number; Rust judges it): it is the user's own set point, so it is
  * the strongest ring — solid red. Each ring LEVEL is named once, at the right
@@ -263,8 +268,8 @@ export function buildClusterSetPointOption(
 // ---------------------------------------------------------------------------
 
 /** Health score (0-100) over time: a dashed line at 80, the line coloured by the
- *  score band (green 80-100, amber 40-80, red below 40), gaps where a row has no
- *  score (`null`, never 0). */
+ *  score band (green 80-100, amber 40-80, red below 40), gaps where an hour has no
+ *  score (`null`, never 0). `timestamps` are the hour starts of `hourly`. */
 export function buildScoreOption(timestamps: string[], score: (number | null)[], scopes: TimeScopes | null = null) {
     const base = buildTimeSeriesOption({
         timestamps,

@@ -14,7 +14,7 @@ import {
     verdictOfIssues,
 } from '../components/windows/workbench/healthChecks';
 import type { HealthIssue } from '../types/health';
-import { makeHealthPreview, makeSetPointAwarePreview } from './helpers/healthPreviewFixture';
+import { HOURLY_TS, makeHealthPreview, makeSetPointAwarePreview } from './helpers/healthPreviewFixture';
 
 const issue = (code: string, field: string, message = `${code} ${field}`, severity: 'error' | 'warning' = 'error'): HealthIssue => ({ code, field, message, severity });
 
@@ -173,45 +173,65 @@ describe('hover: nearestIndex / hoverIndexFromAxisEvent / readout', () => {
         expect(hoverIndexFromAxisEvent({ axesInfo: [{ axisDim: 'x', value: 9 }] }, ['a', 'b', 'c'])).toBeNull();
     });
 
-    it('readoutAt: time, raw value / residual and score of one point; null outside the series', () => {
-        const ind = makeSetPointAwarePreview({ kind: 'individual', set_points: { lower: 1, upper: 9 } }).series;
-        // The time is printed in the ONE Workbench date format ("1 Jan 2026 03:00"), never the raw CSV text.
-        expect(TS[3]).toBe('2026-01-01 03:00:00');
-        expect(readoutAt(ind, 3)).toEqual({ time: '1 Jan 2026 03:00', valueLabel: 'value', value: 6.2, score: 60 });
-        const rel = makeSetPointAwarePreview({ kind: 'relationship', set_points: { residual_at_80_lower: -1, residual_at_80_upper: 1, residual_at_0_lower: -2, residual_at_0_upper: 2 } }).series;
-        expect(readoutAt(rel, 0)).toEqual({ time: '1 Jan 2026 00:00', valueLabel: 'residual', value: -0.1, score: 100 });
-        const clu = makeSetPointAwarePreview({ kind: 'clustering', n_clusters: 2, set_points: { outer_sd: 5 } }).series;
+    // The health score is computed on 1-hour averages: the read-out is given
+    // `HealthPreview.hourly` (one point per clock hour), never the raw `series`.
+    it('readoutAt: the hour start, the 1 h average / the hourly residual and the score of one HOURLY point; null outside it', () => {
+        const indP = makeSetPointAwarePreview({ kind: 'individual', set_points: { lower: 1, upper: 9 } });
+        const ind = indP.hourly;
+        // Rust labels an hour `2026-01-01T03:00:00`; it is printed in the ONE Workbench
+        // date format ("1 Jan 2026 03:00"), never as that raw text.
+        expect(HOURLY_TS[3]).toBe('2026-01-01T03:00:00');
+        // 6.1 is the HOUR MEAN of the fixture; the raw row of the same index is 6.2.
+        expect(indP.series.kind === 'individual' && indP.series.value[3]).toBe(6.2);
+        expect(readoutAt(ind, 3)).toEqual({ time: '1 Jan 2026 03:00', valueLabel: '1 h avg', value: 6.1, score: 60 });
+        const rel = makeSetPointAwarePreview({ kind: 'relationship', set_points: { residual_at_80_lower: -1, residual_at_80_upper: 1, residual_at_0_lower: -2, residual_at_0_upper: 2 } }).hourly;
+        expect(readoutAt(rel, 0)).toEqual({ time: '1 Jan 2026 00:00', valueLabel: 'residual', value: 0.1, score: 100 });
+        const clu = makeSetPointAwarePreview({ kind: 'clustering', n_clusters: 2, set_points: { outer_sd: 5 } }).hourly;
         expect(readoutAt(clu, 4)).toEqual({ time: '1 Jan 2026 04:00', valueLabel: null, value: null, score: 30 });
         expect(readoutAt(ind, null)).toBeNull();
         expect(readoutAt(ind, 99)).toBeNull();
     });
 
-    // The hover read-out lost the seconds, so the points of
-    // sub-minute data all read as the same time; and the time went through `new Date`.
-    it('readoutAt shows seconds when the stamp has them (sub-minute data), and only then', () => {
-        const base = makeSetPointAwarePreview({ kind: 'individual', set_points: { lower: 1, upper: 9 } }).series;
+    it('the raw series carries no score, so a read-out of it could only ever say "no score" — the page never passes it', () => {
+        const p = makeSetPointAwarePreview({ kind: 'individual', set_points: { lower: 1, upper: 9 } });
+        expect(p.series.score).toBeNull();
+        expect(readoutAt(p.series, 3)!.score).toBeNull();
+        expect(readoutAt(p.hourly, 3)!.score).toBe(60);
+    });
+
+    it('readoutAt prints an hour start as date + HH:00, for every hour-label Rust sends (the user\'s data is at 5 minutes; the label is never the CSV text)', () => {
+        const base = makeSetPointAwarePreview({ kind: 'individual', set_points: { lower: 1, upper: 9 } }).hourly;
+        const hours = { ...base, timestamps: ['2024-01-05T13:00:00', '2024-02-29T00:00:00', '2025-12-31T23:00:00', '2026-02-09T09:00:00', '2026-10-11T10:00:00'] } as typeof base;
+        expect([0, 1, 2, 3, 4].map(i => readoutAt(hours, i)!.time)).toEqual([
+            '5 Jan 2024 13:00', '29 Feb 2024 00:00', '31 Dec 2025 23:00', '9 Feb 2026 09:00', '11 Oct 2026 10:00',
+        ]);
+        expect(readoutText(readoutAt(hours, 0), 'bar')).toMatch(/^5 Jan 2024 13:00 · 1 h avg /);
+    });
+
+    // The formatter prints the text's OWN wall-clock parts (it never goes through `new Date`),
+    // so a stamp that is not an hour label still reads as written: its seconds are not hidden
+    // and an explicit offset / Z never shifts it. An hour label has neither.
+    it('a stamp that is not an hour label is still printed as written: seconds shown when not zero, an offset or Z never shifts the time', () => {
+        const base = makeSetPointAwarePreview({ kind: 'individual', set_points: { lower: 1, upper: 9 } }).hourly;
         const sub = { ...base, timestamps: ['2026-01-01 03:00:00', '2026-01-01 03:00:10', '2026-01-01 03:00:20', '2026-01-01 03:00:30.500', '2026-01-01 03:01:00'] } as typeof base;
         expect([0, 1, 2, 3, 4].map(i => readoutAt(sub, i)!.time)).toEqual([
             '1 Jan 2026 03:00', '1 Jan 2026 03:00:10', '1 Jan 2026 03:00:20', '1 Jan 2026 03:00:30', '1 Jan 2026 03:01',
         ]);
-        expect(new Set([0, 1, 2, 3].map(i => readoutAt(sub, i)!.time)).size).toBe(4); // neighbours are told apart
-        expect(readoutText(readoutAt(sub, 1), 'bar')).toMatch(/^1 Jan 2026 03:00:10 · value /);
-    });
-
-    it('readoutAt prints the row\'s own wall clock: an explicit offset or Z never shifts the time (any PC time zone)', () => {
-        const base = makeSetPointAwarePreview({ kind: 'individual', set_points: { lower: 1, upper: 9 } }).series;
         const tz = { ...base, timestamps: ['2026-02-09T23:50:00+07:00', '2026-02-09T23:50:05-11:00', '2026-02-09T00:10:00Z', '2026-02-09 23:59:59+0530', '2026/02/09 01:02'] } as typeof base;
         expect([0, 1, 2, 3, 4].map(i => readoutAt(tz, i)!.time)).toEqual([
             '9 Feb 2026 23:50', '9 Feb 2026 23:50:05', '9 Feb 2026 00:10', '9 Feb 2026 23:59:59', '9 Feb 2026 01:02',
         ]);
     });
 
-    it('readoutText: "time · value · score", "not running" for a row without a score, "" for nothing', () => {
-        const ind = makeSetPointAwarePreview({ kind: 'individual', set_points: { lower: 1, upper: 9 } }).series;
-        expect(readoutText(readoutAt(ind, 3), 'bar')).toBe('1 Jan 2026 03:00 · value 6.2 bar · score 60');
-        expect(readoutText(readoutAt(ind, 3), '')).toBe('1 Jan 2026 03:00 · value 6.2 · score 60');
-        const noScore = makeHealthPreview({ kind: 'individual' }).series;
-        expect(readoutText(readoutAt(noScore, 1), 'bar')).toBe('1 Jan 2026 01:00 · not running');
+    it('readoutText: "hour start · 1 h avg · score" (the residual keeps "residual"), "no score" for an hour without a score, "" for nothing', () => {
+        const ind = makeSetPointAwarePreview({ kind: 'individual', set_points: { lower: 1, upper: 9 } }).hourly;
+        expect(readoutText(readoutAt(ind, 3), 'bar')).toBe('1 Jan 2026 03:00 · 1 h avg 6.1 bar · score 60');
+        expect(readoutText(readoutAt(ind, 3), '')).toBe('1 Jan 2026 03:00 · 1 h avg 6.1 · score 60');
+        expect(readoutText(readoutAt(ind, 3), 'bar')).not.toMatch(/· value /);
+        const rel = makeSetPointAwarePreview({ kind: 'relationship', set_points: { residual_at_80_lower: -1, residual_at_80_upper: 1, residual_at_0_lower: -2, residual_at_0_upper: 2 } }).hourly;
+        expect(readoutText(readoutAt(rel, 1), 'bar')).toBe('1 Jan 2026 01:00 · residual 0.3 bar · score 90');
+        const noScore = makeHealthPreview({ kind: 'individual' }).hourly;
+        expect(readoutText(readoutAt(noScore, 1), 'bar')).toBe('1 Jan 2026 01:00 · no score');
         expect(readoutText(null, 'bar')).toBe('');
     });
 });

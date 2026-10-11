@@ -100,8 +100,9 @@ export function buildCheckLines(kind: HealthPreview['kind'], issues: readonly He
         ? issues.filter(i => i.code === 'required' && i.field in REL_POINT_LABEL)
         : [];
     issues.forEach((i, n) => {
-        // "The scoring periods could not be scored" is about the scoring results, not the
-        // set points: the Scoring results card shows it, not Checks.
+        // "The health score could not be calculated" is about the score, not the set
+        // points: the Scoring results card (or, with no scoring period, the score card's
+        // place) shows it, not Checks.
         if (TEST_SCORING_ISSUE_CODES.includes(i.code)) return;
         if (relRequired.length > 1 && relRequired.includes(i)) {
             if (collapsed) return;
@@ -178,9 +179,11 @@ export function nearestIndex(ms: readonly number[], t: number): number {
 }
 
 /**
- * The series index the pointer is on, from an ECharts `updateAxisPointer` event
- * (`axesInfo[].value` = epoch ms on a time axis, the category index otherwise).
- * `null` when the event carries no X value (pointer left the chart).
+ * The index of the point the pointer is on, from an ECharts `updateAxisPointer`
+ * event (`axesInfo[].value` = epoch ms on a time axis, the category index
+ * otherwise). On the Health score page `timestamps` are the hour starts of
+ * `HealthPreview.hourly`. `null` when the event carries no X value (pointer left
+ * the chart).
  */
 export function hoverIndexFromAxisEvent(event: unknown, timestamps: readonly string[]): number | null {
     const info = (event as { axesInfo?: { axisDim?: string; value?: unknown }[] } | null)?.axesInfo;
@@ -192,31 +195,42 @@ export function hoverIndexFromAxisEvent(event: unknown, timestamps: readonly str
 }
 
 export interface Readout {
+    /** The START of the hour, in the Workbench date format. */
     time: string;
-    /** "value" | "residual" | null (Clustering shows no raw value). */
-    valueLabel: 'value' | 'residual' | null;
+    /** "1 h avg" (Individual: the hour's mean value) | "residual" (Relation model:
+     *  the hour's residual) | null (Clustering shows no value). */
+    valueLabel: '1 h avg' | 'residual' | null;
     value: number | null;
     score: number | null;
 }
 
-/** What the read-out shows for point `idx` of a series. `null` for an index
- *  outside it. */
-export function readoutAt(series: HealthSeries, idx: number | null): Readout | null {
-    if (idx === null || idx < 0 || idx >= series.timestamps.length) return null;
-    const score = series.score ? (series.score[idx] ?? null) : null;
-    // The ONE Workbench date format ("9 Feb 2026 23:50"), from the row's own wall clock;
-    // seconds are added when they are not zero, so the points of sub-minute data do not
-    // all read as the same time.
-    const time = series.timestamps[idx] ? formatDataStamp(series.timestamps[idx], { seconds: true }) : `row ${series.rows[idx] ?? idx}`;
-    if (series.kind === 'individual') return { time, valueLabel: 'value', value: series.value[idx] ?? null, score };
-    if (series.kind === 'relationship') return { time, valueLabel: 'residual', value: series.residual[idx] ?? null, score };
+/**
+ * What the read-out shows for point `idx` of the HOURLY series
+ * (`HealthPreview.hourly`: one point per clock hour, every value the mean of the
+ * hour's running rows). `null` for an index outside it.
+ */
+export function readoutAt(hourly: HealthSeries, idx: number | null): Readout | null {
+    if (idx === null || idx < 0 || idx >= hourly.timestamps.length) return null;
+    const score = hourly.score ? (hourly.score[idx] ?? null) : null;
+    // The hour's START in the ONE Workbench date format ("9 Feb 2026 23:00"). Rust labels
+    // an hour `2026-02-09T23:00:00` whatever the CSV's own timestamp text looks like;
+    // `formatDataStamp` reads that form from the text's own wall-clock parts (never
+    // shifted to another time zone). An hour start has no seconds; a stamp that does
+    // carry some (not an hour label) still prints them instead of hiding them.
+    const time = hourly.timestamps[idx] ? formatDataStamp(hourly.timestamps[idx], { seconds: true }) : `row ${hourly.rows[idx] ?? idx}`;
+    if (hourly.kind === 'individual') return { time, valueLabel: '1 h avg', value: hourly.value[idx] ?? null, score };
+    if (hourly.kind === 'relationship') return { time, valueLabel: 'residual', value: hourly.residual[idx] ?? null, score };
     return { time, valueLabel: null, value: null, score };
 }
 
-/** The read-out as one line of text (tests and the header both use it). */
+/** The read-out as one line of text (tests and the header both use it):
+ *  "9 Feb 2026 23:00 · 1 h avg 4.2 bar · score 93". */
 export function readoutText(r: Readout | null, unit: string): string {
     if (!r) return '';
-    if (r.score === null) return `${r.time} · not running`;
+    // Every hourly point had running rows (an hour without any has no point), so a missing
+    // score means the hour could not be scored (rows in more than one cluster, no prediction,
+    // set points not valid) — never "not running".
+    if (r.score === null) return `${r.time} · no score`;
     const v = r.valueLabel && r.value !== null ? `${r.valueLabel} ${fmtNum(r.value)}${unit ? ` ${unit}` : ''} · ` : '';
     return `${r.time} · ${v}score ${Math.round(r.score)}`;
 }

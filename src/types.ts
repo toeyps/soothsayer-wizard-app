@@ -324,6 +324,19 @@ export interface HealthExportRecord {
     outputDir: string;
     /** The set points the exported files carry. */
     setPoints: HealthSetPoints;
+    /** The health score's sampling interval, in seconds, that the exported
+     *  results (the files' `validation` block) were computed with -- `3600` =
+     *  1-hour averages of the running rows. Copied at Mark complete from the
+     *  validating preview's `scoring_interval_secs` (`healthExportRecord` in
+     *  `utils/completeModel.ts`).
+     *
+     *  ABSENT on a record written before the health score moved to 1-hour
+     *  averages (2026-10-11): those files were scored ROW BY ROW. Such a model
+     *  STAYS Complete (user decision) -- `savedResultsUseEarlierScoring`
+     *  (`utils/modelStatus.ts`) is what the Health score page reads to show
+     *  "Mark complete again to update the files". Optional, spread-safe, NOT
+     *  part of `computeTrainFingerprint`. */
+    scoringIntervalSecs?: number;
 }
 
 /** Individual model: health is 0 at `lower`/`upper` (the sensor's L/H alarm

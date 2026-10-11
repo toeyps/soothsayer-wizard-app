@@ -341,6 +341,19 @@ export function scopesOf(v: ValidationResult | null | undefined, numbers?: reado
     return { ranges };
 }
 
+/**
+ * The scopes for a chart of HOURLY points (the Health score page): every range starts at the
+ * start of its clock hour. An hourly point is drawn at its hour start, so a period that begins
+ * inside an hour (04:30) has its first point at 04:00 — just before the period's own start,
+ * outside every band, where the line would be cut on both sides and the point not drawn at all.
+ * Only the drawn band moves; the period itself (and every number) is unchanged.
+ */
+export function hourlyScopes(s: TimeScopes | null | undefined): TimeScopes | null {
+    if (!s) return null;
+    const floor = (t: string | null) => (t == null ? t : t.replace(/^(\d{4}-\d{2}-\d{2}[T ]\d{2}):\d{2}(:\d{2}(\.\d+)?)?/, '$1:00:00'));
+    return { ...s, ranges: s.ranges.map(r => ({ ...r, start: floor(r.start) })) };
+}
+
 /** The same scopes with the short names (half-width charts). */
 export function compactScopes(s: TimeScopes | null | undefined): TimeScopes | null {
     return s ? { ...s, compact: true } : null;

@@ -162,6 +162,13 @@ export const SETTINGS_CHANGED_DURING_EXPORT_REASON =
  *    Health page's "Changed after saving / Mark complete again" hint
  *    tells the user the files are out of date. The saved verdict is only written
  *    ('valid') for the numbers that were actually validated.
+ *
+ * `exportRecord` is stored WHOLE as `healthExport` in the same write — build it
+ * with `healthExportRecord(result)` (`completeModel.ts`) so it carries
+ * `scoringIntervalSecs` (the interval the exported results were scored with,
+ * 3600 = 1-hour averages). That field is what clears
+ * `savedResultsUseEarlierScoring` for a model completed before the health score
+ * moved to 1-hour averages; a record without it keeps that hint on.
  */
 export async function persistModelComplete(
     workspaceId: string,

@@ -6,7 +6,7 @@ import { effectiveRunningCondition, type RunningConditionFg } from './runningCon
 /*
  * Train periods and scoring periods — the pure read-side helpers the UI shows:
  * the "scoring periods changed" banners, the minimum-training-data warning and
- * the "could not be scored" notice.
+ * the "The health score could not be calculated — try again" notice.
  *
  * Specs: docs/design/handoff/train-test-validation/README.md, as
  * revised by docs/design/handoff/workbench-redesign/README.md §2 ("just score
@@ -120,9 +120,16 @@ export function testsChangedNoticeText(n: TestsChangedNotice): string {
 }
 
 /** Stable code of the WARNING issue `compute_health_preview` adds when the
- *  scoring periods could not be scored (e.g. the Relation model engine did not
- *  answer, or is too old). The train results are still valid; every scoring
- *  period then comes back unscored. */
+ *  Relation model engine could not predict the points to score (it did not
+ *  answer, or is too old).
+ *
+ *  Since the health score is computed on 1-hour averages, the Relation model
+ *  is predicted from each hour's MEAN predictors — for the TRAINING hours too,
+ *  not only for the scoring periods. So this warning now means the WHOLE health
+ *  score of the model is missing (every hourly score is `null`, every scoring
+ *  period comes back unscored), and it can arrive with NO scoring period at
+ *  all. The model fit itself (statistics, Model fit page) is not affected. The
+ *  codes keep their `test_scoring_*` names (nothing on the wire is renamed). */
 export const TEST_SCORING_FAILED_CODE = 'test_scoring_failed';
 
 /** Same, but the Relation model engine bundled with this build is too old to
@@ -136,20 +143,23 @@ export const TEST_SCORING_OUTDATED_CODE = 'test_scoring_outdated';
  *  message says so). */
 export const TEST_SCORING_TOO_LARGE_CODE = 'test_scoring_too_large';
 
-/** Every warning code that means "the scoring periods were not scored". */
+/** Every warning code that means "the health score could not be calculated". */
 export const TEST_SCORING_ISSUE_CODES: readonly string[] = [TEST_SCORING_FAILED_CODE, TEST_SCORING_OUTDATED_CODE, TEST_SCORING_TOO_LARGE_CODE];
 
-/** Headline the scoring-results card shows for `test_scoring_failed` (amber,
- *  for reading only — never a block). Rust's own `message` is shown under it
- *  (it says why, e.g. the engine did not answer). */
-export const TEST_SCORING_FAILED_TEXT = 'The scoring periods could not be scored — try again';
+/** Headline shown for `test_scoring_failed` (amber, for reading only — never a
+ *  block): in the scoring-results card, or in the score card's place when the
+ *  model has no scoring period to carry it. Rust's own `message` is shown under
+ *  it (it says why, e.g. the engine did not answer). */
+export const TEST_SCORING_FAILED_TEXT = 'The health score could not be calculated — try again';
 
 /** Headline when no retry is offered (`test_scoring_outdated`,
  *  `test_scoring_too_large`); Rust's message underneath says what to do. */
-export const TEST_SCORING_OUTDATED_TEXT = 'The scoring periods could not be scored';
+export const TEST_SCORING_OUTDATED_TEXT = 'The health score could not be calculated';
 
-/** The "not scored" warning of a preview (`test_scoring_failed`,
- *  `test_scoring_outdated` or `test_scoring_too_large`), or null. */
+/** The "could not be calculated" warning of a preview (`test_scoring_failed`,
+ *  `test_scoring_outdated` or `test_scoring_too_large`), or null. Check it even
+ *  when the preview has no `test_validation`: the warning can come without any
+ *  scoring period (see `TEST_SCORING_FAILED_CODE`). */
 export function testScoringFailure(data: Pick<HealthPreview, 'validation'> | null | undefined): HealthIssue | null {
     return data?.validation?.find(i => TEST_SCORING_ISSUE_CODES.includes(i.code)) ?? null;
 }
@@ -160,6 +170,6 @@ export function isTestScoringRetryable(issue: Pick<HealthIssue, 'code'>): boolea
     return issue.code === TEST_SCORING_FAILED_CODE;
 }
 
-/** Shown while a Relation-model preview that scores scoring periods is still
- *  loading (the sidecar predicts their rows — slow the first time). */
-export const SLOW_TEST_SCORING_TEXT = 'Scoring these periods with the Relation model — this can take up to ~15 s.';
+/** Shown while a Relation-model preview that has to ask the engine is still
+ *  loading (it predicts the hours to score — slow the first time). */
+export const SLOW_TEST_SCORING_TEXT = 'Calculating the health score with the Relation model — this can take up to ~15 s.';

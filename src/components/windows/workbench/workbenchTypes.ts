@@ -37,8 +37,8 @@ export interface WorkbenchPageProps {
      *  (unsent) S1 does not make the valid S2 read "S1". Absent = the wire index
      *  is shown. */
     testNumbers?: readonly number[] | null;
-    /** A Relation-model preview that scores scoring periods has been loading for
-     *  a while: show "Scoring these periods … up to ~15 s". */
+    /** A Relation-model preview (the engine predicts its hourly points) has been loading for
+     *  a while: show "Calculating the health score … up to ~15 s". */
     slowScoring?: boolean;
 }
 

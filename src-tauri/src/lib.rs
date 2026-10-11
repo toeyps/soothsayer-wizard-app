@@ -3,6 +3,7 @@ pub mod clustering;
 pub mod csv_processor;
 mod formula_diagnostics;
 pub mod health_score;
+mod health_hourly;
 mod health_preview;
 mod health_validation;
 pub mod metrics;
@@ -571,7 +572,7 @@ fn store_rel_fit(state: &AppState, stamp: SessionStamp, key: String, fit: health
 
 /// [`store_rel_fit`] returning the stored fit's identity (`None` = not
 /// stored), which work started for this very fit (the Train pre-warm of its
-/// test-row predictions) must present to land on it.
+/// hourly predictions) must present to land on it.
 fn store_rel_fit_ex(
     state: &AppState,
     stamp: SessionStamp,
@@ -990,8 +991,8 @@ struct SidecarTrainResponse {
     predicted: Option<Vec<Option<f64>>>,
     /// Per-row residuals (`y - predicted`), same shape as `predicted`.
     residual: Option<Vec<Option<f64>>>,
-    /// Train/Test validation: the train-only model's (raw) predictions for
-    /// `X_extra`, same order.
+    /// Scoring periods: the model's (raw) predictions for `X_extra` - the
+    /// hourly points (mean predictors per clock hour) - in the same order.
     predicted_extra: Option<Vec<Option<f64>>>,
     /// The engine's own error / traceback: LOG ONLY, never shown.
     error: Option<String>,
@@ -1972,17 +1973,18 @@ mod resolved_filter_tests {
 /// `n_rows` is the real row count - see [`finish_relationship_response`]. The
 /// session cache still gets the FULL arrays.
 ///
-/// **Train/Test pre-warm:** `test_periods` (same wire as
-/// `compute_health_preview`: `[{start,end}]` - a legacy `label` / `event_time`
-/// is accepted and ignored; only used
-/// together with `cache_key`) makes the SAME sidecar run also predict the test
-/// rows with the train-only model it just fitted (`X_extra`, no refit on them)
-/// and seeds the fit's cached test-row predictions, so the `compute_health_preview`
-/// that follows needs no second ~15 s sidecar run. The rows are chosen by the
-/// same function as that preview's (`health_validation::extra_test_rows`).
-/// Absent / empty = no pre-warm; the response never carries the
-/// predictions. Best effort: an old sidecar that ignores `X_extra` just means the
-/// preview computes them lazily.
+/// **Hourly pre-warm (the health score is computed on 1-hour averages):** with
+/// a `cache_key` the SAME sidecar run also predicts every HOURLY point of the
+/// model's universe with the model it just fitted (`X_extra` = the mean
+/// predictors of each clock hour, no refit on them): the training hours and,
+/// with `test_periods` (same wire as `compute_health_preview`: `[{start,end}]`
+/// - a legacy `label` / `event_time` is accepted and ignored), the hours of the
+/// scoring periods. The answers are stored with the fit, so the
+/// `compute_health_preview` that follows needs no second ~15 s sidecar run. The
+/// points are chosen by the same function as that preview's
+/// (`health_validation::RelHours::points`). The response never carries the
+/// predictions. Best effort: an old sidecar that ignores `X_extra` just means
+/// the preview computes them lazily (`predict_relationship`).
 #[tauri::command(rename_all = "snake_case")]
 async fn preview_relationship_model(
     predictors: Vec<String>,
@@ -2006,7 +2008,7 @@ async fn preview_relationship_model(
     // Contract: the sidecar receives pre-cleaned arrays. Rust owns
     // column projection and NaN/non-finite filtering.  `X` is n_rows × n_predictors,
     // `y` is n_rows.  We collect into owned data and drop the lock before any await.
-    let (x_matrix, y_vector, row_idx, stamp, extra_rows, x_extra) = {
+    let (x_matrix, y_vector, row_idx, stamp, extra_points) = {
         let state_lock = state.0.read().map_err(|e| e.to_string())?;
         let session = state_lock.as_ref().ok_or("No data loaded")?;
         let data = &session.data;
@@ -2077,26 +2079,30 @@ async fn preview_relationship_model(
             return Err("No rows remain after dropping nulls.".into());
         }
 
-        // Train/Test pre-warm: the test rows to predict in this same run (only
-        // when there is a cache key to store them under).
-        let periods = test_periods.as_deref().filter(|t| !t.is_empty());
-        let (extra_rows, x_extra) = match periods {
-            Some(periods) if cache_key.as_deref().is_some_and(|k| !k.is_empty()) => {
-                let plan = health_validation::TestPlan::resolve(periods, filter.as_ref(), &data.headers);
-                let rows = health_validation::extra_test_rows(
-                    &plan,
-                    data,
-                    target_idx,
-                    &predictor_indices,
-                    &row_idx,
-                );
-                let x_extra = health_validation::x_rows(data, &predictor_indices, &rows);
-                (rows, x_extra)
-            }
-            _ => (Vec::new(), Vec::new()),
+        // Hourly pre-warm: every hourly point the health score needs (the
+        // training hours + the hours of the current scoring periods), predicted
+        // in this same run - only when there is a cache key to store them under.
+        let extra_points = if cache_key.as_deref().is_some_and(|k| !k.is_empty()) {
+            let plan = test_periods
+                .as_deref()
+                .filter(|t| !t.is_empty())
+                .map(|periods| health_validation::TestPlan::resolve(periods, filter.as_ref(), &data.headers));
+            let cols = health_validation::RelCols {
+                target: target_idx,
+                predictors: &predictor_indices,
+            };
+            let train = health_validation::RelTrain {
+                rows: &row_idx,
+                actual: &y_vector,
+                x: health_validation::RelX::Rows(&x_matrix),
+                n_pred: predictors.len(),
+            };
+            health_validation::RelHours::build(data, &train, plan.as_ref().map(|p| (p, &cols))).points()
+        } else {
+            health_score::RelHourPoints::default()
         };
 
-        (x_matrix, y_vector, row_idx, stamp, extra_rows, x_extra)
+        (x_matrix, y_vector, row_idx, stamp, extra_points)
     };
 
     let mut payload = serde_json::json!({
@@ -2109,10 +2115,9 @@ async fn preview_relationship_model(
             "linearGAM_lambda": lambda,
         }
     });
-    if !x_extra.is_empty() {
-        payload["payload"]["X_extra"] = serde_json::json!(x_extra);
+    if !extra_points.is_empty() {
+        payload["payload"]["X_extra"] = serde_json::json!(extra_points.x_rows());
     }
-    drop(x_extra);
 
     let mut payload_line = serde_json::to_string(&payload).map_err(|e| e.to_string())?;
     payload_line.push('\n');
@@ -2145,7 +2150,7 @@ async fn preview_relationship_model(
 
     finish_relationship_response_ex(
         &state, stamp, parsed, &predictors, &target, lambda, &row_idx, &y_vector, &x_matrix, cache_key,
-        max_points, &extra_rows, &|failure| log_engine_failure(&app, failure),
+        max_points, &extra_points, &|failure| log_engine_failure(&app, failure),
     )
 }
 
@@ -2166,7 +2171,8 @@ const PREVIEW_ENGINE_STEP: &str = "preview_relationship";
 /// full (and `residual` stays). `r2_per_step` /
 /// `rmse2_per_step`, `cache_key`, `cached`, `health_preview` are never
 /// touched. The cache always holds the FULL arrays (built from the unshaped
-/// response), so the health preview keeps scoring every row.
+/// response), so the model's statistics and the Model fit view keep using every
+/// training row.
 ///
 /// Engine errors: an answer with the engine's own `error` keeps
 /// the `error` key (a string - the frontend shows it as the message) but its
@@ -2189,16 +2195,17 @@ fn finish_relationship_response(
 ) -> Result<serde_json::Value, String> {
     finish_relationship_response_ex(
         state, stamp, parsed, predictors, target, lambda, row_idx, y_vector, x_matrix, cache_key,
-        max_points, &[], &|_| {},
+        max_points, &health_score::RelHourPoints::default(), &|_| {},
     )
 }
 
-/// [`finish_relationship_response`] plus the Train/Test pre-warm: `extra_rows`
-/// are the test rows this Train asked the sidecar to predict (`X_extra`); its
-/// `predicted_extra` answer is removed from the response (never shipped - it
-/// is unbounded) and, when the fit was cached, stored as that fit's test-row
-/// predictions. A missing / wrong-length answer (old sidecar) stores nothing:
-/// `compute_health_preview` then predicts lazily as before.
+/// [`finish_relationship_response`] plus the hourly pre-warm: `extra_points`
+/// are the hourly points this Train asked the sidecar to predict (`X_extra`);
+/// its `predicted_extra` answer is removed from the response (never shipped -
+/// it is unbounded) and, when the fit was cached, stored as that fit's hourly
+/// predictions (the bounded `health_preview` of the answer already uses them).
+/// A missing / wrong-length answer (old sidecar) stores nothing:
+/// `compute_health_preview` then predicts lazily.
 #[allow(clippy::too_many_arguments)]
 fn finish_relationship_response_ex(
     state: &AppState,
@@ -2212,7 +2219,7 @@ fn finish_relationship_response_ex(
     x_matrix: &[Vec<f64>],
     cache_key: Option<String>,
     max_points: Option<usize>,
-    extra_rows: &[u32],
+    extra_points: &health_score::RelHourPoints,
     log_engine: &dyn Fn(&EngineFailure),
 ) -> Result<serde_json::Value, String> {
     // First of all: the engine's own error text never leaves this function.
@@ -2224,7 +2231,7 @@ fn finish_relationship_response_ex(
         .and_then(|o| o.remove("predicted_extra"))
         .and_then(|v| {
             let a = v.as_array()?;
-            (!extra_rows.is_empty() && a.len() == extra_rows.len()).then(|| {
+            (!extra_points.is_empty() && a.len() == extra_points.len()).then(|| {
                 a.iter()
                     .map(|x| x.as_f64().filter(|x| x.is_finite()).unwrap_or(f64::NAN))
                     .collect()
@@ -2237,6 +2244,10 @@ fn finish_relationship_response_ex(
             if let Some(fit) =
                 rel_fit_from_response(&parsed, predictors, target, lambda, row_idx, y_vector, x_matrix)
             {
+                // The hourly predictions of this very fit, as it just answered.
+                let seeded = predicted_extra
+                    .as_deref()
+                    .and_then(|preds| health_score::RelExtra::new(extra_points, preds));
                 let bounded = {
                     let lock = state.0.read().map_err(|e| e.to_string())?;
                     lock.as_ref()
@@ -2249,16 +2260,17 @@ fn finish_relationship_response_ex(
                                 max_points,
                                 ..Default::default()
                             };
-                            health_preview::relationship_preview(&s.data, &fit, &req).ok()
+                            health_preview::relationship_preview_ex(&s.data, &fit, seeded.as_ref(), &req)
+                                .ok()
                         })
                 };
                 let stored = store_rel_fit_ex(state, stamp, key.clone(), fit);
                 let cached = stored.is_some();
-                // Pre-warm: the test-row predictions of this very fit (never of
-                // a later same-key fit). Over the cache budget / session or fit
+                // Pre-warm: the hourly predictions of this very fit (never of a
+                // later same-key fit). Over the cache budget / session or fit
                 // changed = not stored (lazy fallback).
                 if let (Some(handle), Some(preds)) = (stored.as_ref(), predicted_extra.as_deref()) {
-                    merge_rel_extra(state, stamp, &key, handle, extra_rows, preds);
+                    merge_rel_extra(state, stamp, &key, handle, extra_points, preds);
                 }
                 if let Some(obj) = parsed.as_object_mut() {
                     obj.insert("cache_key".into(), serde_json::Value::String(key));
@@ -3271,10 +3283,14 @@ async fn train_relationship_model(
 
 /// Core of [`train_relationship_model`] (also used by `export_model_files`).
 ///
-/// `test_periods` (Train/Test validation; empty = none): the sidecar also
-/// PREDICTS the test rows with the train-only model it just fitted (`X_extra`,
-/// no refit on them) and the same preview code as `compute_health_preview`
-/// turns that into a `validation` block added to `REL_INFO_*.json`.
+/// `test_periods` (scoring periods; empty = none, and then no `validation`
+/// block): the sidecar also PREDICTS every hourly point of the universe - the
+/// training hours and the hours of the scoring periods, each at the hour's
+/// mean predictors - with the model it just fitted (`X_extra`, no refit on
+/// them), in the same run. The same preview code as `compute_health_preview`
+/// turns that into the hourly `validation` block added to `REL_INFO_*.json`.
+/// `REL_DATASET_*.csv`, the `.pkl` and every other `REL_INFO` key are the raw
+/// training rows' numbers, unchanged.
 #[allow(clippy::too_many_arguments)]
 async fn write_relationship_files(
     predictors: &[String],
@@ -3317,7 +3333,7 @@ async fn write_relationship_files(
     // the REL_DATASET file aligns with `wizard.py::SaveThisSensor`'s
     // `training_set.to_csv(...)` (which writes the DataFrame's DatetimeIndex
     // as the unnamed first column).
-    let (x_matrix, y_vector, row_timestamps, time_bounds, row_idx, extra_rows, x_extra, stamp) = {
+    let (x_matrix, y_vector, row_timestamps, time_bounds, row_idx, extra_points, stamp) = {
         let state_lock = state.0.read().map_err(|e| e.to_string())?;
         let session = state_lock.as_ref().ok_or("No data loaded")?;
         let data = &session.data;
@@ -3396,24 +3412,27 @@ async fn write_relationship_files(
             ),
             _ => (String::new(), String::new()),
         };
-        // Train/Test validation: the test rows the model has to PREDICT (rows of
-        // a test period with all inputs that are not training rows).
-        let (extra_rows, x_extra) = if test_periods.is_empty() {
-            (Vec::new(), Vec::new())
+        // Scoring periods: the hourly points the model has to PREDICT (the
+        // training hours and the hours of the scoring periods, at their mean
+        // predictors) - the same selection as the preview's.
+        let extra_points = if test_periods.is_empty() {
+            health_score::RelHourPoints::default()
         } else {
             let plan = health_validation::TestPlan::resolve(test_periods, filter.as_ref(), &data.headers);
             if health_score::has_errors(&plan.issues) {
                 return Err(model_export::CoreError::Validation(plan.issues));
             }
-            let ex = health_validation::extra_test_rows(
-                &plan,
-                data,
-                target_idx,
-                &predictor_indices,
-                &row_idx,
-            );
-            let xe = health_validation::x_rows(data, &predictor_indices, &ex);
-            (ex, xe)
+            let cols = health_validation::RelCols {
+                target: target_idx,
+                predictors: &predictor_indices,
+            };
+            let train = health_validation::RelTrain {
+                rows: &row_idx,
+                actual: &y_vector,
+                x: health_validation::RelX::Rows(&x_matrix),
+                n_pred: predictors.len(),
+            };
+            health_validation::RelHours::build(data, &train, Some((&plan, &cols))).points()
         };
         (
             x_matrix,
@@ -3421,8 +3440,7 @@ async fn write_relationship_files(
             row_timestamps,
             bounds,
             row_idx,
-            extra_rows,
-            x_extra,
+            extra_points,
             stamp,
         )
     };
@@ -3440,8 +3458,8 @@ async fn write_relationship_files(
             "saved_path": save_path,
         }
     });
-    if !x_extra.is_empty() {
-        payload["payload"]["X_extra"] = serde_json::json!(x_extra);
+    if !extra_points.is_empty() {
+        payload["payload"]["X_extra"] = serde_json::json!(extra_points.x_rows());
     }
 
     let mut payload_line = serde_json::to_string(&payload).map_err(|e| e.to_string())?;
@@ -3492,9 +3510,9 @@ async fn write_relationship_files(
         .into());
     }
 
-    // Test-row predictions (an old sidecar ignores `X_extra`: refuse rather than
+    // Hourly predictions (an old sidecar ignores `X_extra`: refuse rather than
     // export a validation block without its numbers).
-    let extra_pred = export_extra_predictions(resp.predicted_extra.as_deref(), extra_rows.len())?;
+    let extra_pred = export_extra_predictions(resp.predicted_extra.as_deref(), extra_points.len())?;
 
     let info_path = write_relationship_outputs(
         save_path,
@@ -3515,8 +3533,8 @@ async fn write_relationship_files(
         },
     )?;
 
-    // Train/Test validation block: the SAME preview code as
-    // `compute_health_preview`, over this fresh train-only fit.
+    // The `validation` block: the SAME preview code as `compute_health_preview`,
+    // over this fresh fit and its hourly predictions.
     if !test_periods.is_empty() {
         let predicted_all: Vec<f64> = predicted.iter().map(|p| p.unwrap_or(f64::NAN)).collect();
         let fit = health_score::RelFit {
@@ -3532,10 +3550,8 @@ async fn write_relationship_files(
             r2_per_step: Vec::new(),
             rmse2_per_step: Vec::new(),
         };
-        let extra = health_score::RelExtra {
-            rows: extra_rows,
-            predicted: extra_pred,
-        };
+        let extra = health_score::RelExtra::new(&extra_points, &extra_pred)
+            .ok_or("internal: the hourly predictions do not match the request")?;
         let block_req = model_export::ModelFilesRequest {
             filter: filter.clone(),
             set_points: set_points.cloned(),
@@ -3562,7 +3578,7 @@ async fn write_relationship_files(
     })
 }
 
-/// The train-only model's predictions for the `want` test rows of an EXPORT
+/// The model's predictions for the `want` hourly points of an EXPORT
 /// (`train_relationship`'s `predicted_extra`). An export never claims a
 /// validation it could not compute: a missing array (an outdated sidecar ignores
 /// `X_extra`) or a wrong length is an error and nothing is written.
@@ -7245,10 +7261,17 @@ fn sample_dataset(
 // ---------------------------------------------------------------------------
 
 /// Bounded, per-kind data for the Build Model "Model fit" and "Health score"
-/// pages: statistics, validation of the set points, the downsampled raw/score
-/// series and (Individual / Relationship / Clustering) the histogram or
-/// scatter. See `health_preview::HealthPreviewRequest` for the request and
+/// pages: statistics, validation of the set points, the downsampled series and
+/// (Individual / Relationship / Clustering) the histogram or scatter. See
+/// `health_preview::HealthPreviewRequest` for the request and
 /// `health_preview::HealthPreview` for the response (snake_case JSON).
+///
+/// Two series come back: `series` = the RAW rows (Model fit; never scored) and
+/// `hourly` = one point per clock hour, the mean of the hour's running rows -
+/// the points the HEALTH SCORE is computed on (`health_hourly`,
+/// `scoring_interval_secs: 3600`). `score_summary` and `test_validation` count
+/// those hours. Training is not affected: every model number still comes from
+/// the raw training rows.
 ///
 /// Individual and Clustering compute straight from the dataset. Relationship
 /// reads the fit cached by `preview_relationship_model` under `cache_key` and
@@ -7259,27 +7282,36 @@ fn sample_dataset(
 ///
 /// `async` so the O(rows) pass never runs on the main thread.
 ///
-/// **Train/Test validation:** with `test_periods` the response also
-/// carries `test_validation` (see `health_validation`). Individual / Clustering
-/// need nothing more. A Relationship test row outside the training scope needs
-/// the fit's prediction for it: the cache holds only the training rows'
-/// predictions. `preview_relationship_model` (the Train call) pre-warms them
-/// when it is given the same `test_periods`; otherwise (or for periods added
-/// later) the FIRST preview that brings new test rows runs the sidecar's
-/// `predict_relationship` once (a refit on the TRAIN rows only, the test rows are
-/// only predicted - same model, same lambda) and caches the predictions under the
-/// fit's key; set-point edits and repeated calls never run it again.
+/// **Scoring periods:** with `test_periods` the response also carries
+/// `test_validation` (see `health_validation`). Individual / Clustering need
+/// nothing more.
+///
+/// **Relation model - the hourly predictions:** the score of an hour is its
+/// mean actual minus the engine's prediction for the hour's MEAN predictors, so
+/// every hourly point (training hours included - also with NO scoring period)
+/// needs an answer from the engine. `preview_relationship_model` (the Train
+/// call) asks for all of them in its own run and stores them with the fit;
+/// here, the FIRST preview that brings hourly points nobody predicted yet (a
+/// scoring period added later, a period edge moved inside an hour) runs the
+/// sidecar's `predict_relationship` once (a refit on the TRAIN rows only, the
+/// hourly points are only predicted - same model, same lambda) and stores the
+/// answers under the fit's key. Set-point edits, repeated calls and REMOVING a
+/// scoring period never run it. A stored prediction is only used for its own
+/// hour and exactly its own mean predictors.
 ///
 /// If that prediction step fails (sidecar crash, timeout, outdated sidecar, cache
-/// budget), the preview does NOT fail: it returns the normal train preview with
-/// `test_validation` present but every test unscored and one `warning` issue in
-/// `validation`: `test_scoring_outdated`, `test_scoring_too_large` or
-/// `test_scoring_failed` (see [`health_validation::test_scoring_issue`]). (Export
-/// still refuses - files never claim a validation they could not compute.) The
-/// raw reason goes to the permanent error log (truncated). A failure is
-/// remembered per set of missing test rows (see [`score_test_rows`]): later
-/// previews with the SAME rows answer with the same warning at once instead of
-/// re-running the sidecar, until a re-train, a change of the test rows, or a
+/// budget), the preview does NOT fail: it returns the normal preview - the
+/// model fit, statistics and raw `series` untouched - with every hour that has
+/// no prediction unscored (`null`), `test_validation` (when asked for) present
+/// but every period unscored, and one `warning` issue in `validation`:
+/// `test_scoring_outdated`, `test_scoring_too_large` or `test_scoring_failed`
+/// (see [`health_validation::test_scoring_issue`]). The warning can therefore
+/// appear without any scoring period. (Export still refuses - files never claim
+/// a validation they could not compute.) The raw reason goes to the permanent
+/// error log (truncated), never to the user. A failure is remembered per set of
+/// missing hourly points (see [`predict_rel_hours`]): later previews with the
+/// SAME missing points answer with the same warning at once instead of
+/// re-running the sidecar, until a re-train, a change of those points, or a
 /// request with `retry_test_scoring: true`.
 #[tauri::command]
 async fn compute_health_preview(
@@ -7287,19 +7319,19 @@ async fn compute_health_preview(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<health_preview::HealthPreview, String> {
-    // `reason` arrives already bounded (`truncate_log_detail` in score_test_rows).
+    // `reason` arrives already bounded (`truncate_log_detail` in predict_rel_hours).
     let log = |reason: &str| {
         if let Ok(path) = error_log_path(&app) {
             append_error_line(
                 &path,
                 "test-scoring",
-                "Scoring periods could not be scored (Relation model prediction step)",
+                "The health score could not be calculated (Relation model prediction step)",
                 Some(reason),
             );
         }
     };
     let runner_app = app.clone();
-    let scoring_error = score_test_rows(
+    let scoring_error = predict_rel_hours(
         &state,
         &request,
         &REL_EXTRA_LOCK,
@@ -7321,16 +7353,16 @@ async fn compute_health_preview(
 /// updated install) can fix it.
 static SIDECAR_KNOWN_OUTDATED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-/// Stand-in reason for "the last attempt for this fit and these rows failed and
-/// nobody asked to retry": never shown (the user gets the wording of the
-/// remembered failure's kind).
+/// Stand-in reason for "the last attempt for this fit and these hourly points
+/// failed and nobody asked to retry": never shown (the user gets the wording of
+/// the remembered failure's kind).
 const TEST_SCORING_PREVIOUSLY_FAILED: &str =
-    "the last prediction attempt for this fit and these test rows failed (not retried until the \
-     test rows change, a re-train or an explicit retry)";
+    "the last prediction attempt for this fit and these hourly points failed (not retried until \
+     the points change, a re-train or an explicit retry)";
 
-/// Why the test periods of a Relationship preview cannot be scored: the kind
-/// picks the user-facing warning, `reason` is the raw detail (logged, never
-/// shown).
+/// Why the health score of a Relationship preview cannot be calculated: the
+/// kind picks the user-facing warning, `reason` is the raw detail (logged,
+/// never shown).
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct TestScoringError {
     kind: health_validation::TestScoringFailure,
@@ -7343,7 +7375,7 @@ impl TestScoringError {
     }
 }
 
-/// Longest detail [`score_test_rows`] writes to the permanent error log: a
+/// Longest detail [`predict_rel_hours`] writes to the permanent error log: a
 /// sidecar parse error carries the engine's WHOLE stdout (every predicted
 /// value - megabytes) and a crash a full traceback.
 const ERROR_LOG_DETAIL_MAX: usize = 4 * 1024;
@@ -7361,26 +7393,31 @@ fn truncate_log_detail(s: &str, max: usize) -> std::borrow::Cow<'_, str> {
     std::borrow::Cow::Owned(format!("{}… ({} bytes truncated)", &s[..end], s.len() - end))
 }
 
-/// The test-row prediction step of [`compute_health_preview`], generic over the
-/// sidecar run (`run`) and the error log (`log`) so it is testable without an
-/// `AppHandle`. `Ok(None)` = nothing to do or the predictions are now cached;
-/// `Ok(Some(error))` = the test periods cannot be scored (the caller degrades
-/// the answer with the warning of `error.kind`); `Err` = the request itself is
-/// refused (`STALE_SESSION`, the data changed meanwhile = `NOT_FITTED`).
+/// The hourly-prediction step of [`compute_health_preview`] (Relation model
+/// only), generic over the sidecar run (`run`) and the error log (`log`) so it
+/// is testable without an `AppHandle`. `Ok(None)` = nothing to do or the
+/// predictions are now stored; `Ok(Some(error))` = hourly points are left
+/// without a prediction (the caller degrades the answer with the warning of
+/// `error.kind`); `Err` = the request itself is refused (`STALE_SESSION`, the
+/// data changed meanwhile = `NOT_FITTED`).
 ///
-/// * Planning runs WITHOUT `serial`: a preview whose rows are all cached (every
-///   set-point edit) or whose fit + rows are known to fail never waits for
-///   another model's ~15 s prediction. Only when rows are missing it takes
-///   `serial` and plans AGAIN under it (another caller may have filled them).
+/// It runs with AND without scoring periods: the training hours need the
+/// engine's prediction too.
+///
+/// * Planning runs WITHOUT `serial`: a preview whose points are all stored
+///   (every set-point edit, a removed scoring period) or whose fit + points are
+///   known to fail never waits for another model's ~15 s prediction. Only when
+///   points are missing it takes `serial` and plans AGAIN under it (another
+///   caller may have filled them).
 /// * A failure is logged (raw reason, at most [`ERROR_LOG_DETAIL_MAX`] bytes,
 ///   written after `serial` is released) and remembered: `SIDECAR_OUTDATED` in
 ///   `outdated` (process lifetime), anything else as the fit's failed marker
-///   for exactly the rows of that attempt (cleared by re-train, eviction, a
-///   dataset change or `retry_test_scoring`; a different set of missing rows
+///   for exactly the points of that attempt (cleared by re-train, eviction, a
+///   dataset change or `retry_test_scoring`; a different set of missing points
 ///   gets one fresh attempt).
 /// * Predictions and failures only ever land on the fit they were computed
 ///   for: a re-train under the same key meanwhile discards them.
-async fn score_test_rows<R, Fut>(
+async fn predict_rel_hours<R, Fut>(
     state: &AppState,
     request: &health_preview::HealthPreviewRequest,
     serial: &tauri::async_runtime::Mutex<()>,
@@ -7394,7 +7431,7 @@ where
 {
     use health_validation::TestScoringFailure as Kind;
     use std::sync::atomic::Ordering;
-    if request.kind != "relationship" || !request.has_test_periods() {
+    if request.kind != "relationship" {
         return Ok(None);
     }
     if request.retry_test_scoring {
@@ -7432,7 +7469,7 @@ where
                 ExtraStored::Stored => None,
                 ExtraStored::OverBudget => Some(TestScoringError::new(
                     Kind::OverBudget,
-                    format!("the predictions of {} test rows do not fit the model cache", job.rows.len()),
+                    format!("the predictions of {} hourly points do not fit the model cache", job.points.len()),
                 )),
                 ExtraStored::Superseded => {
                     // Trained again under the same key while this ran: the
@@ -7446,7 +7483,7 @@ where
                             ExtraPlan::Failed(e) => Some(e),
                             ExtraPlan::Needed(_) => Some(TestScoringError::new(
                                 Kind::EngineError,
-                                "the model was trained again while its scoring periods were being predicted",
+                                "the model was trained again while its hourly points were being predicted",
                             )),
                         },
                         None,
@@ -7478,13 +7515,13 @@ where
     Ok(outcome)
 }
 
-/// Remember a failed prediction attempt of `job` (its fit, its rows) - only on
+/// Remember a failed prediction attempt of `job` (its fit, its points) - only on
 /// the same data (`stamp`) and the very same fit, so an attempt that straddled
 /// a reload or a same-key re-train marks nothing.
 fn mark_rel_extra_failed(state: &AppState, job: &RelExtraJob, kind: health_validation::TestScoringFailure) {
     if let Ok(mut lock) = state.0.write() {
         if let Some(s) = lock.as_mut().filter(|s| s.stamp() == job.stamp) {
-            s.rel_cache.mark_extra_failed(&job.key, &job.fit, &job.rows, kind);
+            s.rel_cache.mark_extra_failed(&job.key, &job.fit, &job.points, kind);
         }
     }
 }
@@ -7501,13 +7538,15 @@ fn clear_rel_extra_failed(state: &AppState, request: &health_preview::HealthPrev
     }
 }
 
-/// [`health_preview_in`] plus the degraded answer for a failed test-row
+/// [`health_preview_in`] plus the degraded answer for a failed hourly
 /// prediction step: `scoring_error` = what kind of failure it was (the raw
 /// reason is never shown - the user gets the warning of that kind:
 /// `test_scoring_outdated` for an outdated engine, `test_scoring_too_large` when the
 /// predictions do not fit the cache's memory budget, `test_scoring_failed`
-/// otherwise, see [`health_validation::test_scoring_issue`]). The train part of
-/// the answer is untouched.
+/// otherwise, see [`health_validation::test_scoring_issue`]). The model fit,
+/// its statistics and the raw series are untouched; the hours without a
+/// prediction are unscored in `hourly` / `score_summary` (the preview itself
+/// leaves them `null`) and every scoring period is reported unscored.
 fn health_preview_with_outcome(
     state: &AppState,
     request: &health_preview::HealthPreviewRequest,
@@ -7516,18 +7555,14 @@ fn health_preview_with_outcome(
     let mut preview = health_preview_in(state, request)?;
     if let Some(kind) = scoring_error {
         if let Some(tv) = preview.test_validation.as_mut() {
-            let (counts, interval) = match rel_test_input_counts(state, request) {
-                Some((c, iv)) => (Some(c), iv),
-                None => (None, None),
-            };
-            health_validation::mark_unscored(tv, counts.as_deref(), interval);
+            health_validation::mark_unscored(tv);
         }
         preview.validation.push(health_validation::test_scoring_issue(kind));
     }
     Ok(preview)
 }
 
-/// Serialises the sidecar runs that fill the Relationship test-row predictions.
+/// Serialises the sidecar runs that fill the Relationship hourly predictions.
 static REL_EXTRA_LOCK: tauri::async_runtime::Mutex<()> = tauri::async_runtime::Mutex::const_new(());
 
 /// What one `predict_relationship` run needs (copied out of the session so no
@@ -7546,11 +7581,13 @@ struct RelExtraJob {
     predictors: Vec<String>,
     target: String,
     lambda: f64,
-    /// Test rows to predict (ascending, unique, not training rows).
-    rows: Vec<u32>,
+    /// The hourly points to predict (hour + the hour's mean predictors), in the
+    /// order of `x_extra`.
+    points: health_score::RelHourPoints,
     /// The TRAIN rows the model is fitted on (row-major) and their target.
     x: Vec<Vec<f64>>,
     y: Vec<f64>,
+    /// `points` as the sidecar's `X_extra` rows.
     x_extra: Vec<Vec<f64>>,
 }
 
@@ -7561,19 +7598,24 @@ enum ExtraPlan {
     /// itself refuses with the right code (no cache key, unknown fit, other
     /// target / predictors, bad columns).
     Nothing,
-    /// Rows are missing but must not be predicted now: the sidecar is known to
-    /// be outdated (kind `Outdated`, `SIDECAR_OUTDATED` reason) or this fit's
-    /// last attempt failed for exactly these rows (the remembered kind,
-    /// [`TEST_SCORING_PREVIOUSLY_FAILED`]).
+    /// Hourly points are missing but must not be predicted now: the sidecar is
+    /// known to be outdated (kind `Outdated`, `SIDECAR_OUTDATED` reason) or
+    /// this fit's last attempt failed for exactly these points (the remembered
+    /// kind, [`TEST_SCORING_PREVIOUSLY_FAILED`]).
     Failed(TestScoringError),
-    /// Rows are missing; the job when it was asked for (`build_job`).
+    /// Points are missing; the job when it was asked for (`build_job`).
     Needed(Option<RelExtraJob>),
 }
 
-/// The test rows of `request` that have no cached prediction yet and, with
+/// The hourly points of `request` that have no stored prediction yet and, with
 /// `build_job`, everything needed to predict them (copying the training matrix
-/// is skipped otherwise - the lock-free first look of [`score_test_rows`]).
+/// is skipped otherwise - the lock-free first look of [`predict_rel_hours`]).
 /// `sidecar_outdated` = [`SIDECAR_KNOWN_OUTDATED`].
+///
+/// Without scoring periods the points are the training hours (the dataset
+/// columns are not even looked up); with them, the hours of the whole universe
+/// plus the shared-hour versions that make REMOVING a period free (see
+/// [`health_validation::RelHours`]).
 fn plan_rel_extra_ex(
     state: &AppState,
     request: &health_preview::HealthPreviewRequest,
@@ -7597,25 +7639,45 @@ fn plan_rel_extra_ex(
         return Ok(ExtraPlan::Nothing);
     }
     let data = &session.data;
-    let Some(plan) = request.test_plan(data) else {
-        return Ok(ExtraPlan::Nothing);
+    let plan = request.test_plan(data);
+    // The dataset columns are only needed for the rows of a scoring period.
+    let pcols: Vec<usize> = match &plan {
+        Some(_) => {
+            let Some(pcols) = fit
+                .predictors
+                .iter()
+                .map(|p| data.col_index(p))
+                .collect::<Option<Vec<usize>>>()
+            else {
+                return Ok(ExtraPlan::Nothing);
+            };
+            pcols
+        }
+        None => Vec::new(),
     };
-    let Some(tcol) = data.col_index(&fit.target) else {
-        return Ok(ExtraPlan::Nothing);
+    let cols = match &plan {
+        Some(_) => {
+            let Some(tcol) = data.col_index(&fit.target) else {
+                return Ok(ExtraPlan::Nothing);
+            };
+            Some(health_validation::RelCols {
+                target: tcol,
+                predictors: &pcols,
+            })
+        }
+        None => None,
     };
-    let Some(pcols) = fit
-        .predictors
-        .iter()
-        .map(|p| data.col_index(p))
-        .collect::<Option<Vec<usize>>>()
-    else {
-        return Ok(ExtraPlan::Nothing);
-    };
-    // The same rows the Train pre-warm and the export predict (one function).
-    let known = session.rel_cache.peek_extra(key);
-    let mut rows = health_validation::extra_test_rows(&plan, data, tcol, &pcols, &fit.rows);
-    rows.retain(|r| !known.as_ref().is_some_and(|e| e.has(*r)));
-    if rows.is_empty() {
+    // The same points the Train pre-warm and the export predict (one function).
+    let mut points = health_validation::RelHours::build(
+        data,
+        &health_validation::RelTrain::of(&fit),
+        plan.as_ref().zip(cols.as_ref()),
+    )
+    .points();
+    if let Some(known) = session.rel_cache.peek_extra(key) {
+        points.retain(|hour, x| !known.has(hour, x));
+    }
+    if points.is_empty() {
         return Ok(ExtraPlan::Nothing);
     }
     if sidecar_outdated {
@@ -7624,7 +7686,7 @@ fn plan_rel_extra_ex(
             SIDECAR_OUTDATED,
         )));
     }
-    if let Some(kind) = session.rel_cache.extra_failed(key, &rows) {
+    if let Some(kind) = session.rel_cache.extra_failed(key, &points) {
         return Ok(ExtraPlan::Failed(TestScoringError::new(kind, TEST_SCORING_PREVIOUSLY_FAILED)));
     }
     if !build_job {
@@ -7633,7 +7695,7 @@ fn plan_rel_extra_ex(
     let x: Vec<Vec<f64>> = (0..fit.rows.len())
         .map(|i| fit.x_cols.iter().map(|c| c[i]).collect())
         .collect();
-    let x_extra = health_validation::x_rows(data, &pcols, &rows);
+    let x_extra = points.x_rows();
     Ok(ExtraPlan::Needed(Some(RelExtraJob {
         key: key.to_string(),
         stamp: session.stamp(),
@@ -7641,14 +7703,14 @@ fn plan_rel_extra_ex(
         predictors: fit.predictors.clone(),
         target: fit.target.clone(),
         lambda: fit.lambda,
-        rows,
+        points,
         x,
         y: fit.actual.clone(),
         x_extra,
     })))
 }
 
-/// Test helper: the job when rows must be
+/// Test helper: the job when hourly points must be
 /// predicted (ignores the outdated flag; a failed marker reads as `None`).
 #[cfg(test)]
 fn plan_rel_extra(
@@ -7659,33 +7721,6 @@ fn plan_rel_extra(
         ExtraPlan::Needed(job) => job,
         ExtraPlan::Nothing | ExtraPlan::Failed(_) => None,
     })
-}
-
-/// Rows of each test period of a Relationship `request` that have all the
-/// fit's inputs (what a successful prediction step would score), plus the
-/// dataset's sample interval - for [`health_validation::mark_unscored`].
-/// `None` when the request has no usable fit / plan.
-fn rel_test_input_counts(
-    state: &AppState,
-    request: &health_preview::HealthPreviewRequest,
-) -> Option<(Vec<usize>, Option<f64>)> {
-    let lock = state.0.read().ok()?;
-    let session = lock.as_ref()?;
-    let key = request.cache_key.as_deref().filter(|k| !k.is_empty())?;
-    let fit = session.rel_cache.peek(key)?;
-    let data = &session.data;
-    let plan = request.test_plan(data)?;
-    let tcol = data.col_index(&fit.target)?;
-    let pcols = fit
-        .predictors
-        .iter()
-        .map(|p| data.col_index(p))
-        .collect::<Option<Vec<usize>>>()?;
-    let counts = health_validation::rel_test_rows(&plan, data, tcol, &pcols)
-        .iter()
-        .map(Vec::len)
-        .collect();
-    Some((counts, health_validation::sample_interval_secs(data)))
 }
 
 /// Outcome of [`merge_rel_extra`].
@@ -7701,14 +7736,14 @@ enum ExtraStored {
     OverBudget,
 }
 
-/// Store test-row predictions under `key` - only into the very fit (`fit`) they
+/// Store hourly predictions under `key` - only into the very fit (`fit`) they
 /// were computed for, on the same data (`stamp`).
 fn merge_rel_extra(
     state: &AppState,
     stamp: SessionStamp,
     key: &str,
     fit: &std::sync::Weak<health_score::RelFit>,
-    rows: &[u32],
+    points: &health_score::RelHourPoints,
     predicted: &[f64],
 ) -> ExtraStored {
     let Ok(mut lock) = state.0.write() else {
@@ -7716,7 +7751,7 @@ fn merge_rel_extra(
     };
     match lock.as_mut() {
         Some(s) if s.stamp() == stamp => {
-            if s.rel_cache.merge_extra(key, fit, rows, predicted) {
+            if s.rel_cache.merge_extra(key, fit, points, predicted) {
                 ExtraStored::Stored
             } else if s.rel_cache.is_current(key, fit) {
                 ExtraStored::OverBudget
@@ -7732,16 +7767,16 @@ fn merge_rel_extra(
 
 /// `NOT_FITTED` detail when the data or the fit left while predicting.
 const REL_EXTRA_FIT_GONE: &str =
-    "the data or the model changed while the scoring periods were being predicted - train the model again";
+    "the data or the model changed while the health score was being calculated - train the model again";
 
 /// Store the predictions of `job` - only into the job's fit on the same data.
 /// `Ok(Stored)`; `Ok(OverBudget)` = the fit is still there but its predictions
-/// do not fit the cache budget (the caller degrades to "test periods could not
-/// be scored"); `Ok(Superseded)` = the model was trained again under the same
+/// do not fit the cache budget (the caller degrades to "the health score could
+/// not be calculated"); `Ok(Superseded)` = the model was trained again under the same
 /// key meanwhile (nothing stored); `Err(NOT_FITTED)` = the data changed or the
 /// fit left the cache. Never `Ok(FitGone)`.
 fn apply_rel_extra(state: &AppState, job: &RelExtraJob, predicted: &[f64]) -> Result<ExtraStored, String> {
-    match merge_rel_extra(state, job.stamp, &job.key, &job.fit, &job.rows, predicted) {
+    match merge_rel_extra(state, job.stamp, &job.key, &job.fit, &job.points, predicted) {
         ExtraStored::FitGone => Err(health_preview::not_fitted(REL_EXTRA_FIT_GONE)),
         other => Ok(other),
     }
@@ -7779,7 +7814,7 @@ fn arm_timeout<F: FnOnce() + Send + 'static>(
 /// and the call fails with a "did not answer" error.
 ///
 /// Its errors (and [`parse_predicted_extra`]'s) are LOG-ONLY: the one caller,
-/// [`score_test_rows`], writes them to the error log and shows the user the
+/// [`predict_rel_hours`], writes them to the error log and shows the user the
 /// fixed warning of the failure's kind instead. That is why they keep the
 /// developer word "sidecar" and the engine's own text; a caller that shows an
 /// error to the user must go through the fixed sentences of `EngineFailure`
@@ -7875,7 +7910,7 @@ async fn run_predict_relationship(
         }
     });
     let resp = run_sidecar_json(app, &payload, PREDICT_SIDECAR_TIMEOUT).await?;
-    parse_predicted_extra(&resp, job.rows.len())
+    parse_predicted_extra(&resp, job.points.len())
 }
 
 /// Session-level core of [`compute_health_preview`] (no Tauri state type).
@@ -7902,7 +7937,8 @@ fn health_preview_in(
                     "this Relation model has no fit in memory (not trained yet, or the data changed) - train it first",
                 )
             })?;
-            // Test-row predictions (Train/Test validation), when cached.
+            // The engine's hourly predictions of this fit, when stored (an hour
+            // without one is unscored).
             let extra = session.rel_cache.peek_extra(key);
             health_preview::relationship_preview_ex(&session.data, &fit, extra.as_deref(), request)
         }
@@ -9148,8 +9184,12 @@ mod health_export_tests {
         req.set_points = Some(sp_ind(l, h));
         let scored = health_preview_in(&state, &req).unwrap();
         assert!(scored.valid, "{:?}", scored.validation);
+        // The score is computed on 1-hour averages: 10 hours of data = 10 points
+        // (every hour has 50 running rows), counted in hours.
         let sum = scored.score_summary.clone().unwrap();
-        assert_eq!((sum.scored, sum.unscored), (500, 100));
+        assert_eq!((sum.scored, sum.unscored, sum.total_rows), (10, 0, 10));
+        assert_eq!(sum.share_basis, "hour_count");
+        assert_eq!(scored.scoring_interval_secs, 3600);
 
         // 5. Mark complete.
         let app = tempfile::tempdir().unwrap();
@@ -9189,23 +9229,145 @@ mod health_export_tests {
             },
         )
         .unwrap();
-        let se = match &scored.series {
+        // The raw series is every row with its scope flag - and no score.
+        let raw = match &scored.series {
+            health_preview::HealthSeries::Individual(s) => s,
+            _ => unreachable!(),
+        };
+        assert_eq!((raw.total_points, raw.in_scope.iter().filter(|&&s| s).count()), (600, 500));
+        assert!(raw.score.is_none());
+        // The hourly series: the consumer averages the RUNNING rows of each clock
+        // hour itself (from the CSV's own numbers) and scores that mean with the
+        // file - and gets the preview's score.
+        let se = match &scored.hourly {
             health_preview::HealthSeries::Individual(s) => s,
             _ => unreachable!(),
         };
         let sc = se.score.as_ref().unwrap();
+        assert_eq!((se.total_points, se.value.len()), (10, 10));
         let mut compared = 0;
-        for i in 0..se.value.len() {
-            if se.in_scope[i] {
-                assert_eq!(sc[i].unwrap(), from_file.score(se.value[i]).unwrap(), "row {}", se.rows[i]);
-                compared += 1;
-            } else {
-                assert!(sc[i].is_none());
-            }
+        for hour in 0..10u32 {
+            let running: Vec<f64> = (hour * 60..hour * 60 + 60)
+                .filter(|i| i % 6 != 5)
+                .map(|i| 50.0 + ((i * 37 % 101) as f64 - 50.0) / 10.0)
+                .collect();
+            assert_eq!(running.len(), 50);
+            let mean = running.iter().sum::<f64>() / 50.0;
+            let k = hour as usize;
+            assert_eq!(se.timestamps[k], format!("2024-05-01T{hour:02}:00:00"), "the hour start");
+            assert_eq!(se.rows[k], hour * 60, "the hour's first row");
+            assert_eq!(se.value[k], mean, "hour {hour}: the mean of its running rows");
+            assert!(se.in_scope[k]);
+            assert_eq!(sc[k].unwrap(), from_file.score(mean).unwrap(), "hour {hour}");
+            compared += 1;
         }
-        assert_eq!(compared, 500);
+        assert_eq!(compared, 10);
         // 7. The training window written to the file is the in-scope span.
         assert!(j["model_training_set_info"]["training_set_start_date"].as_str().unwrap().starts_with("2024-05-01T"));
+    }
+
+    // ---------- the exported `validation` block: hourly scoring, no key lost ----------
+
+    #[test]
+    fn exported_validation_block_declares_hourly_scoring_and_keeps_every_old_key() {
+        // 10 hours of one-minute rows (`ds`, 2024-03-01). Train = hours 0..=5,
+        // one scoring period = hours 6..=9. Hour 8 runs high for the whole hour.
+        let mut v: Vec<f64> = (0..600).map(|i| 100.0 + ((i * 37 % 101) as f64 - 50.0) / 8.0).collect();
+        for x in &mut v[480..540] {
+            *x += 40.0;
+        }
+        let d = ds(vec![("S", v)]);
+        let train = PreviewFilter {
+            timestamp_ranges: vec![TimeRangeArg {
+                start: Some("2024-03-01T00:00:00".into()),
+                end: Some("2024-03-01T05:59:00".into()),
+            }],
+            ..Default::default()
+        };
+        let preview_req = |sp: Option<SetPointsArg>| health_preview::HealthPreviewRequest {
+            kind: "individual".into(),
+            target: Some("S".into()),
+            filter: Some(train.clone()),
+            set_points: sp,
+            test_periods: Some(vec![health_validation::TestPeriodArg {
+                start: Some("2024-03-01T06:00:00".into()),
+                end: Some("2024-03-01T09:59:00".into()),
+            }]),
+            ..Default::default()
+        };
+        let b3 = match &health_preview::individual_preview(&d, &preview_req(None)).unwrap().stats {
+            health_preview::HealthStats::Individual(s) => s.boundary_3sd,
+            _ => unreachable!(),
+        };
+        let sp = sp_ind(b3[0] - 10.0, b3[1] + 10.0);
+        let app = tempfile::tempdir().unwrap();
+        let mreq = ModelFilesRequest {
+            kind: "individual".into(),
+            workspace_id: "ws".into(),
+            target: Some("S".into()),
+            filter: Some(train.clone()),
+            set_points: Some(sp.clone()),
+            test_periods: preview_req(None).test_periods,
+            ..Default::default()
+        };
+        let res = export_sync(&d, &mreq, app.path()).unwrap();
+        assert!(res.ok, "{:?}", res.validation);
+        let j = read_json(&app.path().join("workspaces/ws/output/S/INDV_INFO_S.json"));
+        let block = &j["validation"];
+
+        // Top level: the five keys an older file has + the two new ones.
+        let mut keys: Vec<&str> = block.as_object().unwrap().keys().map(String::as_str).collect();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            vec![
+                "scoring_aggregation", "scoring_interval_seconds", "tested", "tests", "train", "train_ranges",
+                "validated_at",
+            ]
+        );
+        assert_eq!(block["tested"], true);
+        assert_eq!(block["scoring_interval_seconds"], 3600);
+        assert_eq!(block["scoring_aggregation"], "mean");
+        // `train`: raw rows / running time as before, plus the hour count.
+        let mut train_keys: Vec<&str> = block["train"].as_object().unwrap().keys().map(String::as_str).collect();
+        train_keys.sort_unstable();
+        assert_eq!(train_keys, vec!["days", "hours", "mean", "rows", "sd", "within_3sd_pct"]);
+        assert_eq!((block["train"]["rows"].clone(), block["train"]["hours"].clone()), (360.into(), 6.into()));
+        // `tests[]`: every older key, plus `hours` / `train_hours`.
+        let t = &block["tests"][0];
+        let mut test_keys: Vec<&str> = t.as_object().unwrap().keys().map(String::as_str).collect();
+        test_keys.sort_unstable();
+        assert_eq!(
+            test_keys,
+            vec![
+                "days", "end", "hours", "index", "lowest", "lowest_at", "mean_shift_sd", "pct_below_80", "rows",
+                "scored", "start", "train_days", "train_hours", "train_rows", "within_3sd_pct",
+            ]
+        );
+        // Raw facts stay raw; the score facts are in hours.
+        assert_eq!((t["rows"].clone(), t["train_rows"].clone()), (240.into(), 0.into()));
+        assert_eq!((t["hours"].clone(), t["train_hours"].clone(), t["scored"].clone()), (4.into(), 0.into(), 4.into()));
+        assert_eq!(t["pct_below_80"], 25.0, "1 of the 4 hours");
+        assert_eq!(t["lowest"], 0.0, "hour 8 averages 40 above the mean, beyond H");
+        assert_eq!(t["lowest_at"], "2024-03-01T08:00:00", "the start of the lowest hour");
+
+        // The file holds exactly what the preview shows.
+        let preview = health_preview::individual_preview(&d, &preview_req(Some(sp))).unwrap();
+        let tv = preview.test_validation.as_ref().unwrap();
+        assert_eq!(block["tests"], serde_json::to_value(&tv.tests).unwrap());
+        assert_eq!(block["train"], serde_json::to_value(&tv.train).unwrap());
+        // Every key outside `validation` is what an export without periods writes.
+        let plain_dir = tempfile::tempdir().unwrap();
+        let mut plain_req = mreq.clone();
+        plain_req.test_periods = None;
+        assert!(export_sync(&d, &plain_req, plain_dir.path()).unwrap().ok);
+        let plain = read_json(&plain_dir.path().join("workspaces/ws/output/S/INDV_INFO_S.json"));
+        assert!(plain.get("validation").is_none());
+        for (k, v) in plain.as_object().unwrap() {
+            if k != "model_update_record" {
+                assert_eq!(&j[k], v, "{k}");
+            }
+        }
     }
 }
 
@@ -10165,7 +10327,7 @@ mod relationship_response_tests {
             &f.x,
             Some("k".into()),
             Some(100),
-            &[],
+            &health_score::RelHourPoints::default(),
             &|failure| logged.lock().unwrap().push(failure.clone()),
         )
         .unwrap();
@@ -10202,7 +10364,7 @@ mod relationship_response_tests {
             &f.x,
             None,
             Some(100),
-            &[],
+            &health_score::RelHourPoints::default(),
             &|_| *logged.lock().unwrap() += 1,
         )
         .unwrap();

@@ -19,7 +19,20 @@ use std::collections::BTreeMap;
 /// exists to prevent.
 const MAX_POINTS_CEILING: usize = 100_000;
 
-const HOUR_US: i64 = 3_600_000_000;
+/// One clock hour in epoch-microseconds (the unit of `ts_parsed`). Shared with
+/// the health score's hourly grouping (`health_hourly`) so both bucket a row
+/// into the SAME hour.
+pub(crate) const HOUR_US: i64 = 3_600_000_000;
+
+/// The timestamp text of an hour bucket: the START of clock hour `hour`
+/// (`ts_parsed.div_euclid(HOUR_US)`), e.g. `2024-01-05T13:00:00`. THE one label
+/// rule of an hourly point - the Dashboard's hourly aggregation and the health
+/// score's hourly points both use it.
+pub(crate) fn hour_label(hour: i64) -> String {
+    micros_to_naive(hour.saturating_mul(HOUR_US))
+        .map(|dt| dt.format("%Y-%m-%dT%H:%M:%S").to_string())
+        .unwrap_or_default()
+}
 
 // ---------------------------------------------------------------------------
 // Wire types (deserialized from the frontend `SensorOperationConfig` verbatim)
@@ -360,10 +373,7 @@ fn aggregate_hourly(ctx: &QueryCtx, method: &str) -> AggRows {
     let mut timestamps = Vec::with_capacity(buckets.len());
     let mut rows = Vec::with_capacity(buckets.len());
     for (hour, accs) in buckets {
-        let label = micros_to_naive(hour * HOUR_US)
-            .map(|dt| dt.format("%Y-%m-%dT%H:%M:%S").to_string())
-            .unwrap_or_default();
-        timestamps.push(label);
+        timestamps.push(hour_label(hour));
         rows.push(accs.iter().map(|a| a.get(method)).collect());
     }
     AggRows { timestamps, rows }

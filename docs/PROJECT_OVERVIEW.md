@@ -25,7 +25,7 @@
 6. **Build Model** (หน้าต่างแยก, เรียกว่า Workbench)
    - Step 1 **Running condition**: ช่วงเวลาที่ใช้ Train/Test + เงื่อนไข "เครื่องกำลังเดิน" (ค่า default ของ workspace หรือ Custom ต่อโมเดล)
    - ซ้าย: รายการเซนเซอร์ + ความคืบหน้า · ขวา: แท็บโมเดล **I** Individual / **R** Relation model / **C** Clustering
-   - แต่ละโมเดลมี 2 หน้า: **Model fit** (ตั้งค่า, Train, กราฟ) และ **Health score** (set points 100/80/0, Checks, กราฟคะแนน, ผล Train/Test)
+   - แต่ละโมเดลมี 2 หน้า: **Model fit** (ตั้งค่า, Train, กราฟ) และ **Health score** (set points 100/80/0, Checks, กราฟคะแนน, ผล Train/Test) — คะแนนคำนวณจาก**ค่าเฉลี่ยราย 1 ชั่วโมง**ของแถวที่เครื่องเดิน (ตั้งแต่ 2026-10-11; train และหน้า Model fit ยังใช้ข้อมูลดิบทุกแถว)
    - **Train sensor / Train all** เทรนเป็นคิวทีละโมเดล
    - **Mark complete** = ทางเดียวที่ทำให้โมเดลเป็น Complete และเขียนไฟล์โมเดล (`INDV_INFO` / `REL_INFO` + `.pkl` / `CLUS_INFO`)
 
@@ -36,7 +36,7 @@
 | เวอร์ชันล่าสุดที่ build เป็น installer | **0.9.0** (2026-10-08) — ดู [`release/CHANGELOG.md`](release/CHANGELOG.md) |
 | git tag | `v0.8.0`, `v0.9.0` มีในเครื่อง **ยังไม่ push** (0.6.0/0.7.0 ไม่เคย build จึงไม่มี tag) |
 | การ push | ล่าสุดที่ remote `personal` คือ 2026-10-04 — งานหลังจากนั้นอยู่ในเครื่องเท่านั้น ([กติกา push](#5-กติกาสำคัญที่ต้องรู้)) |
-| งานที่รอผู้ใช้ทดสอบในแอปจริง | (1) **Customer batch 2026-10** (5 phase) + รอบแก้จากการทดสอบแอปจริง 2026-10-09 (ปุ่มลบ/แก้ชื่อโปรเจกต์, ปฏิทินในแถบช่วงเวลา, ปุ่ม ↺ Pair Plot, Criteria sensor, พิมพ์ขอบเขต cluster, ไม่เกิน 5 cluster) · (2) **Workbench redesign 2026-10-10/11** (4 phase: scoring periods มีแค่เริ่ม–จบ, โครงหน้า Model fit / Health score ใหม่, กราฟ, ตาราง set point, หน้าต่าง Running condition ใหม่, ข้อความ Train, ตัวดัก "ไม่มีข้อมูลให้ train", คำว่า "Relation model" ทั้งแอป, ข้อความ "Relation model engine") → ผ่านแล้วค่อย push + ถามเปลี่ยน Notion เป็น Done — รายละเอียดและรายการทดสอบอยู่ท้าย [`handover/2026-10.md`](handover/2026-10.md) |
+| งานที่รอผู้ใช้ทดสอบในแอปจริง | (1) **Customer batch 2026-10** (5 phase) + รอบแก้จากการทดสอบแอปจริง 2026-10-09 (ปุ่มลบ/แก้ชื่อโปรเจกต์, ปฏิทินในแถบช่วงเวลา, ปุ่ม ↺ Pair Plot, Criteria sensor, พิมพ์ขอบเขต cluster, ไม่เกิน 5 cluster) · (2) **Workbench redesign 2026-10-10/11** (4 phase: scoring periods มีแค่เริ่ม–จบ, โครงหน้า Model fit / Health score ใหม่, กราฟ, ตาราง set point, หน้าต่าง Running condition ใหม่, ข้อความ Train, ตัวดัก "ไม่มีข้อมูลให้ train", คำว่า "Relation model" ทั้งแอป, ข้อความ "Relation model engine") · (3) **Health score คิดจากค่าเฉลี่ยราย 1 ชั่วโมง (2026-10-11)**: คะแนนของทั้ง 3 ชนิดโมเดล = 1 จุดต่อชั่วโมง (ค่าเฉลี่ยของแถวที่เครื่องเดิน), Relation model ส่งค่ารายชั่วโมงเข้าโมเดล (ต้องยืนยันกับ engine จริง), Clustering ชั่วโมงที่เปลี่ยน cluster ไม่มีคะแนน, โมเดล Complete เดิมคง Complete + ข้อความเตือนที่ footer, ไฟล์ INFO มี `scoring_interval_seconds` — ข้อทดสอบ BMW-210 ถึง BMW-220 · (4) **กราฟ Workbench (2026-10-11)**: tooltip ตามเมาส์ / หน้าขยายไม่มี tooltip ด้านหลัง — BMW-208, BMW-209 → ผ่านแล้วค่อย push + ถามเปลี่ยน Notion เป็น Done — รายละเอียดและรายการทดสอบอยู่ท้าย [`handover/2026-10.md`](handover/2026-10.md) |
 | เรื่องที่รอผู้ใช้ตัดสินใจ | ลบคำสั่ง Rust `write_user_file` ที่ไม่มีใครเรียกแล้ว หรือเก็บไว้ · ลดสิทธิ์ `dialog:default` เหลือ open + message · การแสดงไฟล์/โฟลเดอร์ output หลัง Mark complete (ผู้ใช้เลื่อนไว้จนกว่า UI จะใช้ได้ครบ) · แยก `BuildModelWindow.tsx` เป็นไฟล์ย่อย (เสนอไว้) |
 | งานค้างที่รู้อยู่ | [`BACKLOG.md`](BACKLOG.md) |
 

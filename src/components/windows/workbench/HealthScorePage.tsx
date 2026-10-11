@@ -24,9 +24,10 @@ import {
     buildRelationshipSetPointOption,
     buildScoreOption,
 } from './healthPageCharts';
-import { narrowScopes, scopesOf, sensorAxisTitle, type TimeScopes } from './healthCharts';
+import { hourlyScopes, narrowScopes, scopesOf, sensorAxisTitle, type TimeScopes } from './healthCharts';
 import { formatDataStamp } from '../periodDisplay';
-import { SlowScoringNotice, TestResultsCard, TestsChangedBanner } from './ValidationCards';
+import { SlowScoringNotice, TestResultsCard, TestScoringFailedNotice, TestsChangedBanner } from './ValidationCards';
+import { testScoringFailure } from '../../../utils/trainTestValidation';
 import { FitGoneBoard, LoadFailedBoard, StateBoard, TrainSensorLink } from './WorkbenchShellParts';
 import type { HealthScorePageProps, SaveInfo } from './workbenchTypes';
 
@@ -43,11 +44,17 @@ import type { HealthScorePageProps, SaveInfo } from './workbenchTypes';
  * status, Mark complete) is rendered by the container, because Mark complete
  * shares its persist flow.
  *
+ * 1-HOUR AVERAGES: the health score is computed on one point per clock hour (the
+ * mean of the hour's running rows), so EVERY chart and number of this page reads
+ * `data.hourly` — the set-point chart, the score chart, the read-out and the
+ * Clustering points share that ONE index set. `data.series` (the raw rows, never
+ * scored) belongs to the Model fit page and is not read here.
+ *
  * Hover: the two time charts (Individual / Relationship) are connected in one
  * ECharts group, so one timestamp cursor shows on both; the page ALSO keeps the
- * hovered series index to print "time - value - score" next to the score
+ * hovered `hourly` index to print "hour - 1 h average - score" next to the score
  * chart's title. Clustering has no time axis on its set-point chart, so hovering
- * a point there (or the score chart) highlights the same row on the other.
+ * a point there (or the score chart) highlights the same hour on the other.
  *
  * No legend rows: every line is labelled on its
  * chart — reference lines at the right edge, the user's set points with their
@@ -117,7 +124,8 @@ function HealthScorePage(props: HealthScorePageProps) {
     const testNumbers = props.testNumbers;
     const numbersKey = testNumbers ? testNumbers.join(',') : '';
     const scopes = useMemo(
-        () => scopesOf(validation, numbersKey ? numbersKey.split(',').map(Number) : null),
+        // This page plots hourly points, so each band starts at its hour start (`hourlyScopes`).
+        () => hourlyScopes(scopesOf(validation, numbersKey ? numbersKey.split(',').map(Number) : null)),
         [validation, numbersKey],
     );
     const slowSave = useHeldFor(save.phase === 'running', SLOW_SAVE_NOTICE_MS);
@@ -210,7 +218,14 @@ function HealthScorePage(props: HealthScorePageProps) {
     // points on screen: nothing is judged until the next request lands.
     const issues = errorMode ? [] : attemptIssues ?? data.validation;
     const verdict = errorMode ? null : attemptIssues ? verdictOfIssues(attemptIssues) ?? healthVerdict(data) : healthVerdict(data);
-    const scoreReady = !errorMode && data.valid && !!data.series.score && !!data.score_summary;
+    const scoreReady = !errorMode && data.valid && !!data.hourly.score && !!data.score_summary;
+    // "The health score could not be calculated" (the Relation model's engine did not
+    // answer for the hours to score — the training hours need it too, so this can come
+    // with NO scoring period). The Scoring results card carries it when it has tiles to
+    // replace; without that card the notice takes the score card's place.
+    const scoringFailure = errorMode ? null : testScoringFailure(data);
+    const failureCarried = (data.test_validation?.tests.length ?? 0) > 0;
+    const retryScoring = canRetry ? (props.onRetryTestScoring ?? props.onRetryPreview) : undefined;
 
     return (
         <div className="wb2-board wb2-hs hs-board" data-testid="health-page" data-valid={String(data.valid)}>
@@ -243,10 +258,15 @@ function HealthScorePage(props: HealthScorePageProps) {
             </div>
             {/* "Changed after saving" is said ONCE — the footer sentence, next to its
                 "Mark complete again" button. */}
-            {scoreReady && data.series.score && data.score_summary ? (
+            {scoringFailure && !failureCarried ? (
+                <section className="hs-card hs-full" data-testid="score-failed">
+                    <div className="wb2-card-h"><b>Health score</b></div>
+                    <TestScoringFailedNotice issue={scoringFailure} onRetry={retryScoring} testNumbers={testNumbers} />
+                </section>
+            ) : scoreReady && data.hourly.score && data.score_summary ? (
                 <ScoreChart
                     data={data}
-                    score={data.series.score}
+                    score={data.hourly.score}
                     summary={data.score_summary}
                     unit={unit}
                     hoverIdx={hoverIdx}
@@ -262,7 +282,7 @@ function HealthScorePage(props: HealthScorePageProps) {
                     </div>
                 </section>
             )}
-            <TestResultsCard data={data} scoreReady={scoreReady} unavailable={errorMode} custom={model.runningConditionMode === 'custom'} testNumbers={testNumbers} onRetry={canRetry ? (props.onRetryTestScoring ?? props.onRetryPreview) : undefined} />
+            <TestResultsCard data={data} scoreReady={scoreReady} unavailable={errorMode} custom={model.runningConditionMode === 'custom'} testNumbers={testNumbers} onRetry={retryScoring} />
         </div>
     );
 }
@@ -325,7 +345,8 @@ function SetPointChart({ data, props, hoverIdx, onHover, stale, unit, scopes }: 
 }) {
     const { model, setPoints } = props;
     const stats = data.stats;
-    const series = data.series;
+    // The hourly points (1-hour averages): the same index set as the score chart.
+    const series = data.hourly;
     // Stable until the Tag names change, so it never rebuilds a chart on its own.
     const lookup = useSensorLookup();
     const scored = !!series.score;
@@ -338,7 +359,7 @@ function SetPointChart({ data, props, hoverIdx, onHover, stale, unit, scopes }: 
             return {
                 id: 'set-individual',
                 title: 'Sensor value over time',
-                sub: unit || undefined,
+                sub: unit ? `${unit} · 1 h average` : '1 h average',
                 option: buildIndividualSetPointOption(series, stats, setPoints.kind === 'individual' ? setPoints : null, unit, sideScopes),
                 time: true,
             };
@@ -347,7 +368,7 @@ function SetPointChart({ data, props, hoverIdx, onHover, stale, unit, scopes }: 
             return {
                 id: 'set-relationship',
                 title: 'Residual over time',
-                sub: `actual − predicted${unit ? ` (${unit})` : ''}`,
+                sub: `actual − predicted${unit ? ` (${unit})` : ''} · 1 h average`,
                 option: buildRelationshipSetPointOption(series, stats.two_rmse, setPoints.kind === 'relationship' ? setPoints : null, unit, sideScopes),
                 time: true,
             };
@@ -359,7 +380,7 @@ function SetPointChart({ data, props, hoverIdx, onHover, stale, unit, scopes }: 
                 sub: (
                     <span className="wb2-sub-sl">
                         <SensorInline tag={model.xSensor ?? ''} size="sm" muted /> vs <SensorInline tag={model.ySensor ?? ''} size="sm" muted />
-                        {' '}<span className="wb2-sub-note">· {scored ? 'points coloured by score' : 'coloured by score once N is set'}</span>
+                        {' '}<span className="wb2-sub-note">· 1 h averages · {scored ? 'coloured by score' : 'coloured by score once N is set'}</span>
                     </span>
                 ),
                 // Axis titles: description + unit — the tags are in the subtitle above.
@@ -416,7 +437,7 @@ function SetPointChart({ data, props, hoverIdx, onHover, stale, unit, scopes }: 
 // Score chart
 // ---------------------------------------------------------------------------
 
-/** A share of the scored rows as text: one decimal, and a share that is not zero never
+/** A share of the scored hours as text: one decimal, and a share that is not zero never
  *  reads "0.0%" (it is "< 0.1%"). The share column and the card's subtitle use the same rule. */
 export function shareText(v: number): string {
     return v > 0 && v < 0.1 ? '< 0.1%' : `${v.toFixed(1)}%`;
@@ -438,7 +459,7 @@ function ScoreChart({ data, score, summary, unit, hoverIdx, onHover, stale, scop
     stale: boolean;
     scopes: TimeScopes | null;
 }) {
-    const series = data.series;
+    const series = data.hourly;
     const option = useMemo(() => buildScoreOption(series.timestamps, score, scopes), [series.timestamps, score, scopes]);
     const lowest = summary.min_score;
     const text = readoutText(readoutAt(series, hoverIdx), unit);
@@ -459,8 +480,9 @@ function ScoreChart({ data, score, summary, unit, hoverIdx, onHover, stale, scop
             stale={stale}
             sub={
                 <span data-testid="score-summary">
-                    {lowest ? <>Lowest <b className={lowest.score >= 80 ? 'hs-good' : 'hs-bad'} data-testid="score-lowest">{Math.round(lowest.score)}</b>{lowest.timestamp ? <> on <span className="wbx-dt" data-testid="score-lowest-at">{formatDataStamp(lowest.timestamp)}</span></> : ''}</> : 'No scored rows'}
-                    {pct !== null && <> · below 80 for <b data-testid="score-below80">{shareText(pct)}</b> of scored rows</>}
+                    {lowest ? <>Lowest <b className={lowest.score >= 80 ? 'hs-good' : 'hs-bad'} data-testid="score-lowest">{Math.round(lowest.score)}</b>{lowest.timestamp ? <> on <span className="wbx-dt" data-testid="score-lowest-at">{formatDataStamp(lowest.timestamp)}</span></> : ''}</> : 'No scored hours'}
+                    {pct !== null && <> · below 80 for <b data-testid="score-below80">{shareText(pct)}</b> of scored hours</>}
+                    {' '}<span data-testid="score-basis">· 1-hour averages of the running rows</span>
                 </span>
             }
             extra={<span className="hs-rd" data-testid="hs-readout">{text}</span>}
@@ -470,7 +492,7 @@ function ScoreChart({ data, score, summary, unit, hoverIdx, onHover, stale, scop
                         <ResponsiveECharts option={option} style={{ height: '100%', minHeight: 0 }} {...chartProps} />
                     </div>
                     <div className="hs-shares" data-testid="score-shares">
-                        <div className="hs-shares-h">Share of scored rows</div>
+                        <div className="hs-shares-h">Share of scored hours</div>
                         {SHARES.map(s => {
                             const v = summary[s.key];
                             return (

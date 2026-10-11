@@ -107,7 +107,8 @@ function overlapNote(train: TimePeriod[], t: TestPeriod, i: number, bounds: { mi
     if (!train.some(p => periodsOverlap(p, t))) return null;
     const days = trainOverlapDays(train, t, bounds);
     if (days >= 1) return testIncludesTrainNote(i, days);
-    return `S${i + 1} includes less than 1 d of train running time — results include rows the model was trained on`;
+    // Same ending as `testIncludesTrainNote`: the results are per HOUR (1-hour averages).
+    return `S${i + 1} includes less than 1 d of train running time — results include hours the model was trained on`;
 }
 
 export interface TestPeriodsEditorProps {

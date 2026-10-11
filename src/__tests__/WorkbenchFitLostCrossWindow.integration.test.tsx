@@ -75,7 +75,9 @@ afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 const REL_SP = { kind: 'relationship', residualAt80Lower: -5, residualAt80Upper: 5, residualAt0Lower: -10, residualAt0Upper: 10 };
 const IND_SP = { kind: 'individual', lower: 20, upper: 80, masterLower: 20, masterUpper: 80 };
-const record = (sp: unknown) => ({ at: '2026-10-02T10:00:00.000Z', outputDir: env.backend!.outputDir(WS), setPoints: sp });
+/** An export record as THIS build writes it (`scoringIntervalSecs`: the saved results use 1-hour averages).
+ *  A record without it gets the footer's "earlier row-by-row scoring" hint — covered in BuildModelWindow.test.tsx. */
+const record = (sp: unknown) => ({ at: '2026-10-02T10:00:00.000Z', outputDir: env.backend!.outputDir(WS), setPoints: sp, scoringIntervalSecs: 3600 });
 const FIT_GONE_ERROR = 'NOT_FITTED: this Relation model has no fit in memory (not trained yet, or the data changed) - train it first';
 
 const fits = () => env.backend!.cmds('preview_relationship_model').filter(c => c.args.cache_key).length;

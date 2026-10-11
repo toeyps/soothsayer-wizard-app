@@ -58,6 +58,18 @@ const chartOf = (id: string) => within(screen.getByTestId(`chart-card-${id}`)).g
 const legendOf = (id: string) => screen.getByTestId(`chart-card-${id}`).querySelector('.wb2-legend')?.textContent ?? null;
 
 describe('ModelFitPage — Individual', () => {
+    // The health score is computed on hourly means (`hourly`); this page is the raw / training
+    // view and must never read them.
+    it('reads the raw series only: it draws the same charts with no `hourly` in the preview at all', () => {
+        for (const kind of ['individual', 'relationship', 'clustering'] as const) {
+            const m = model(kind === 'individual' ? {} : kind === 'relationship' ? { kind, predictorSensors: ['A'] } : { kind, xSensor: 'T1', ySensor: 'A' });
+            const data = { ...makeHealthPreview({ kind, target: 'T1', predictors: ['A'], n_clusters: 1 }), hourly: undefined as never };
+            page(m, {}, { data, preview: { ...idle, data } });
+            expect(screen.getByTestId(`model-fit-${kind}`).querySelectorAll('[data-testid="echarts-mock"]').length).toBeGreaterThan(0);
+            cleanup();
+        }
+    });
+
     it('has the full-width value chart, the Distribution chart and the statistics card, in that order', () => {
         page(model(), { target: 'T1' });
         const board = screen.getByTestId('model-fit-individual');
@@ -415,7 +427,7 @@ describe('ModelFitPage — train and scoring periods ("just score it", 2026-10-1
             onXPredictorChange={vi.fn()} onCompare={vi.fn()} testNumbers={[2]} slowScoring />);
         // the user's list is [S1 not sent, S2]: the band of wire entry 1 reads "S2", never "S1"
         expect(chartOf('ts').getAttribute('data-strip')).toBe('TRAIN|S2');
-        expect(screen.getByTestId('slow-test-scoring').textContent).toContain('Scoring these periods with the Relation model');
+        expect(screen.getByTestId('slow-test-scoring').textContent).toContain('Calculating the health score with the Relation model');
     });
 
     it('amber "below the recommended train time" note from Rust\'s train days (never a block); the estimate is used only without them', () => {
