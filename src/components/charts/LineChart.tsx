@@ -848,7 +848,11 @@ function LineChart({
                 // each point proportionally to its real elapsed time.
                 // `axisLabel`'s `val` is a numeric ms timestamp.
                 type: 'time',
-                axisLabel: { formatter: (val: number) => formatDate(new Date(val)), color: txtSecondary },
+                // `hideOverlap`: a time axis places a label at every week step AND at every
+                // month start, and the two series of ticks often land a day or two apart
+                // ("2026/04/29" on top of "2026/05/01") — the colliding label is dropped
+                // instead of being printed over its neighbour.
+                axisLabel: { formatter: (val: number) => formatDate(new Date(val)), color: txtSecondary, hideOverlap: true },
                 axisLine: { lineStyle: { color: gridLine } }
             },
             yAxis: sensors.map((sensor, index) => {

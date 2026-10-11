@@ -568,6 +568,13 @@ describe('LineChart option building', () => {
         });
     });
 
+    // Real-app bug: week ticks and month-start ticks of the time axis landed a day or two apart
+    // and their dates were printed on top of each other.
+    it('xAxis labels that would collide are hidden instead of overprinted', () => {
+        render(<LineChart data={[]} columnar={columnarOf(['A'], 3)} sensors={['A']} headers={['A']} />);
+        expect(capturedOptions[capturedOptions.length - 1].xAxis.axisLabel.hideOverlap).toBe(true);
+    });
+
     it("xAxis label formatter renders the shared YYYY/MM/DD date format", () => {
         const columnar = columnarOf(['A'], 3);
         render(<LineChart data={[]} columnar={columnar} sensors={['A']} headers={['A']} />);
