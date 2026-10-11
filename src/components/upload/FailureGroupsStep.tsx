@@ -40,9 +40,9 @@ interface RemovedEntry {
 
 /**
  * Step 3 of the Import page, "Which failures should Wizard look for?"
- * (customer batch 2026-10, item 5; DESIGN_SYSTEM §4.1 "Failure groups come
- * first"). Names the failure modes only — sensors are assigned later in the
- * Dashboard, where the data can be seen.
+ * (DESIGN_SYSTEM §4.1 "Failure groups come first"). Names the failure modes
+ * only — sensors are assigned later in the Dashboard, where the data can be
+ * seen.
  *
  *  - Quick-add field: Enter adds a group and keeps focus, so several can be
  *    typed in a row; a duplicate name turns the field red and says why.

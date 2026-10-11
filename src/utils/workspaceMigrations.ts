@@ -5,11 +5,11 @@ import { normalizeSensorCategories } from './modelGrouping';
 import { isWorkspaceRunningConditionConfigured } from './runningCondition';
 
 /*
- * Feature 4 migrations (+ `migrateHealthSetPoints`, 2026-10-03, which is also
- * run by `workspaceManager.ts` on EVERY workspace read). Each step is a PURE,
- * independently idempotent function gated on its OWN marker being `undefined` (`null` and any value both mean
- * "already handled"). Nothing here is wired into `loadWorkspaceData` yet — each
- * UI phase switches its own step on. Every step spreads the existing slice
+ * Workspace migrations (`migrateHealthSetPoints` is run by
+ * `workspaceManager.ts` on EVERY workspace read). Each step is a PURE,
+ * independently idempotent function gated on its OWN marker being `undefined`
+ * (`null` and any value both mean "already handled"). Every step spreads the
+ * existing slice
  * (via `withFailureGroupState`), so no field is ever dropped. A step that has
  * nothing to do returns the SAME state object.
  */
@@ -86,7 +86,7 @@ export function flagLegacyGate(state: WorkspaceState): WorkspaceState {
     return withFailureGroupState(state, { rcLegacyNotice: pending ? 'pending' : null });
 }
 
-/** (d) Health score set points (2026-10-03): a model without `healthSetPoints`
+/** (d) Health score set points: a model without `healthSetPoints`
  *  gets the EMPTY shape for its kind. No master snapshot is taken here -- this
  *  step has no sensor metadata, so an Individual model's snapshot stays
  *  "not taken yet" (`undefined`) for `ensureHealthSetPoints` to fill the first

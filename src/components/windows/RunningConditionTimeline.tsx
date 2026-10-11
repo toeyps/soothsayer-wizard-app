@@ -80,10 +80,9 @@ const isBlank = (s: string | null | undefined) => !(s ?? '').trim();
  * Where each period sits on the dataset's time range. An open end resolves to
  * the dataset bound; a reversed period is drawn over the time between its two
  * dates (red); a period that lies wholly outside the dataset — an open-ended one
- * included, which used to be drawn as a block — is a sliver on the edge it lies
- * beyond (`outside`; red when `invalid[i]`, amber for a saved period that only
- * warns — its row says which); a period with an unreadable date has no block
- * (its row says what is wrong).
+ * included — is a sliver on the edge it lies beyond (`outside`; red when
+ * `invalid[i]`, amber for a saved period that only warns — its row says which);
+ * a period with an unreadable date has no block (its row says what is wrong).
  */
 export function timelineBlocks(
     list: readonly { start: string; end: string }[],

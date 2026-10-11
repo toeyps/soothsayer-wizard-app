@@ -8,7 +8,7 @@ import { migratePeriods } from './workspaceMigrations';
 import { demoteModelsForRecipeChange, stampTrainedFormulas } from './specialSensorSignature';
 
 /**
- * "Incomplete immediately" (health score SPEC FINAL, 2026-10-03).
+ * "Incomplete immediately".
  *
  * Changing ANY input that decides what a model is trained on —
  *   training period(s), the running condition in every part (Workspace/Custom
@@ -25,7 +25,7 @@ import { demoteModelsForRecipeChange, stampTrainedFormulas } from './specialSens
  *
  * What does NOT trigger it: set points, name, notes, category, status, group
  * membership, `scatterXSensor` — none of them is in `computeTrainFingerprint`.
- * SCORING periods ("test periods" until 2026-10-10) are not in it either; a
+ * SCORING periods are not in it either; a
  * change of ONLY them takes the second road described on `applyIncompleteRule`
  * (Complete -> Incomplete + `testsChangedAt`, but still trained).
  *
@@ -120,8 +120,8 @@ export function modelsWithChangedInputs(prev: WorkspaceState, next: WorkspaceSta
  * Ids of the models in `next` whose EFFECTIVE SCORING periods differ from
  * `prev` (workspace list for a Workspace-mode model, `customTestPeriods` for a
  * Custom one). Only each period's start / end counts (`testPeriodsKey`): ids
- * and the legacy `label` / `eventTime` / `fromHighlight` keys of a workspace
- * saved before 2026-10-10 are ignored, so a period that merely loses those
+ * and the legacy `label` / `eventTime` / `fromHighlight` keys of an old
+ * workspace file are ignored, so a period that merely loses those
  * keys in a write is not a change. Models only on one side are ignored.
  */
 export function modelsWithChangedTests(prev: WorkspaceState, next: WorkspaceState): string[] {
@@ -141,9 +141,9 @@ export interface IncompleteRuleOptions {
  * `prev` and `next` set back to `status: false`. Returns `next` itself (same
  * reference) when nothing needs demoting, so callers can cheaply tell.
  *
- * Train periods vs scoring periods (SPEC rules 8 & 9, 2026-10-07):
- *  - a TRAINING-input change (incl. train periods) behaves exactly as before:
- *    Incomplete, and the fingerprint mismatch asks for a re-train; it also
+ * Train periods vs scoring periods:
+ *  - a TRAINING-input change (incl. train periods): Incomplete, and the
+ *    fingerprint mismatch asks for a re-train; it also
  *    drops any `testsChangedAt` stamp (the train rule wins — the model needs a
  *    re-train, not just Mark complete again);
  *  - a change of ONLY the model's effective SCORING periods (a start or an
@@ -155,8 +155,8 @@ export interface IncompleteRuleOptions {
  *    Not-Complete models are left alone (nothing to mark again).
  * Idempotent: a second pass finds no Complete model to demote.
  *
- * Special-sensor recipes (customer batch 2026-10, item 6 -- user decision:
- * editing a special sensor's formula makes the models trained on it stale).
+ * Special-sensor recipes (editing a special sensor's formula makes the models
+ * trained on it stale).
  * Two steps run first, in the same write:
  *  1. `stampTrainedFormulas`: a model whose train record this write changes
  *     (a Train) gets `trainedFormulas` -- the signatures of the special
@@ -166,15 +166,15 @@ export interface IncompleteRuleOptions {
  *     `next`, or whose `trainedFormulas` no longer match `next`'s recipes, goes
  *     back to Incomplete AND out of date (`demoteModelsForRecipeChange`: like
  *     a repair -- the fingerprint cannot see a recipe, so it is dropped).
- * A model trained before step 1 existed has no snapshot and is only affected
+ * A model with no `trainedFormulas` snapshot is only affected
  * by a real recipe change in a write -- never by the upgrade itself.
  */
 export function applyIncompleteRule(prev: WorkspaceState, prevNext: WorkspaceState, opts: IncompleteRuleOptions = {}): WorkspaceState {
     const next = applyRecipeRule(prev, stampTrainedFormulas(prev, prevNext));
     const fg = next.failureGroupState;
     // A model also needs the pass when it only carries a saved set-point verdict:
-    // that verdict describes the OLD fit and is dropped with the change (QA fix,
-    // 2026-10-04) even though a not-yet-Complete model has no status to demote.
+    // that verdict describes the OLD fit and is dropped with the change
+    // even though a not-yet-Complete model has no status to demote.
     // Same for a leftover `testsChangedAt` stamp: a training-input change drops it.
     if (!fg || !Array.isArray(fg.models) || !fg.models.some(m => m.status || m.healthVerdict !== undefined || m.testsChangedAt !== undefined)) return next;
     let changed: Set<string>;

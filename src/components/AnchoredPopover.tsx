@@ -111,24 +111,15 @@ export function computePopoverPlacement(i: PopoverPlacementInput): PopoverPlacem
 
 /**
  * Floating popover rendered through `Portal` so it escapes any scrollable
- * ancestor's `overflow` clipping — this is specifically what the approved
- * visual-refresh spec requires for the color picker, pin-Y-axis, add-to-
- * failure-group, and alarm-setpoints popovers (see docs/PROJECT_HANDOVER.md's
- * 2026-09-30 SPEC FINAL entry: "popover ทุกตัว ... ต้องเรนเดอร์ผ่าน portal
- * ไม่อยู่ในรายการที่ scroll ได้" — the approved prototype's own build hit a
- * real clipping bug from rendering these inline inside a scrolling list).
- * (2026-10-03: the add-to-failure-group menu is no longer one of these — it is
- * the docked `FailureGroupAssignSheet`, which re-measures instead of closing on
- * scroll/resize. This component still serves the colour picker, pin-Y-axis and
- * alarm-setpoints popovers.)
+ * ancestor's `overflow` clipping. Serves the colour picker, pin-Y-axis and
+ * alarm-setpoints popovers.
  *
  * Position is computed ONCE from `anchorRect` (already viewport
  * coordinates, so `position: fixed` lines up directly) rather than
  * re-measured live on every scroll/resize. Instead, the popover closes
  * itself via `onRequestClose` as soon as the page scrolls or resizes —
  * without that it would stay rendered at its original screen position
- * while its anchor button scrolls away underneath it, which would look
- * like a worse bug than the clipping this component exists to fix.
+ * while its anchor button scrolls away underneath it.
  */
 export default function AnchoredPopover({ anchorRect, onRequestClose, width, reserveHeight, onPlaced, children, style }: AnchoredPopoverProps) {
     const onPlacedRef = useRef(onPlaced);
@@ -140,9 +131,9 @@ export default function AnchoredPopover({ anchorRect, onRequestClose, width, res
     closeRef.current = onRequestClose;
 
     // The popover's own rendered element — needed both to tell a scroll
-    // that originated INSIDE it apart from a scroll elsewhere (bug: a long
-    // list or a horizontally-overflowing input firing its own `scroll`
-    // event used to close the popover on itself) and, below, to measure its
+    // that originated INSIDE it (a long list or a horizontally-overflowing
+    // input firing its own `scroll` event must not close the popover on
+    // itself) apart from a scroll elsewhere and, below, to measure its
     // real on-screen size for the viewport clamp/flip pass.
     const popoverRef = useRef<HTMLDivElement>(null);
 
@@ -237,20 +228,14 @@ export default function AnchoredPopover({ anchorRect, onRequestClose, width, res
             applyClamp(node);
             onPlacedRef.current?.(node);
             // The clamp above only runs once, right when the popover is
-            // first inserted — content that grows AFTER that (e.g. the
-            // add-to-failure-group menu adding a row for a group just
-            // created from its own "Create" button, still open) can push
-            // the popover's bottom edge off screen with no way to reach it,
+            // first inserted — content that grows AFTER that can push the
+            // popover's bottom edge off screen with no way to reach it,
             // since `.sensor-popover` only scrolls internally once it hits
-            // its own max-height (QA sweep, 2026-10-02). A ResizeObserver on
-            // the popover's own element re-runs the SAME `applyClamp` logic
-            // whenever its content box actually changes size, so a popover
-            // that grows while open gets nudged back on screen exactly the
-            // way it was positioned at open time, instead of needing to be
-            // closed and reopened to recompute. Guarded for environments
+            // its own max-height. A ResizeObserver on the popover's own
+            // element re-runs the SAME `applyClamp` logic whenever its
+            // content box actually changes size. Guarded for environments
             // (jsdom in tests that don't need it) with no ResizeObserver at
-            // all — those simply keep the open-time-only clamp, same as
-            // before this fix.
+            // all — those simply keep the open-time-only clamp.
             if (typeof ResizeObserver !== 'undefined') {
                 const ro = new ResizeObserver(() => applyClamp(node));
                 ro.observe(node);

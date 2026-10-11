@@ -1,11 +1,11 @@
 import type { FailureGroup } from '../../types';
 
 /**
- * The ONE place a Failure Group record is shaped (customer batch 2026-10,
- * item 5). The Dashboard's Failure Groups tab ("+ Add failure group", "Edit
- * details") and the Import page's step 3 both build groups through these pure
- * helpers, so a group named at setup is byte-for-byte the record the Dashboard
- * would have created — same numbering, same fields, nothing forked.
+ * The ONE place a Failure Group record is shaped. The Dashboard's Failure
+ * Groups tab ("+ Add failure group", "Edit details") and the Import page's
+ * step 3 both build groups through these pure helpers, so a group named at
+ * setup is byte-for-byte the record the Dashboard would have created — same
+ * numbering, same fields, nothing forked.
  *
  * Pure (no React, no Tauri): the Dashboard runs each one against its mirror
  * for the instant UI update and again against what is on DISK inside the

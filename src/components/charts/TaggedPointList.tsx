@@ -22,10 +22,8 @@ interface TaggedPointListProps {
 /**
  * The list of pinned Tag Point markers shown under the chart's toolbox,
  * one row per tag with its own × button — so ONE tag can be removed without
- * clearing them all (customer request 2026-10-08: "ลบทีละอันไม่ได้ ต้องลบ
- * ทั้งหมด"). Before this, the only per-tag removal was re-clicking the exact
- * same spot on the chart while tag mode was on, which nobody found; "Clear
- * all" (the trash button in the toolbox) is unchanged.
+ * clearing them all; "Clear all" (the trash button in the toolbox) removes
+ * every tag.
  *
  * Shared by LineChart and ScatterChart, which each own their tag state
  * (Line's is lifted to Dashboard, Scatter's stays local) — this component is

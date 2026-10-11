@@ -6,7 +6,7 @@ import { SensorInline } from './SensorLabel';
 import { sensorHaystack, sensorTitle, useSensorLookup } from './sensorInfo';
 
 /**
- * Customer item 3 (SPEC FINAL 2026-10-09 §1, DESIGN_SYSTEM §4 "Sensor picking — ONE picker").
+ * The ONE sensor picker (DESIGN_SYSTEM §4 "Sensor picking — ONE picker").
  *  - `SensorPickerSingle`: a select-like trigger; opens an anchored popover (min(420px, 92vw),
  *    flips up near the bottom) with search + collapsible component groups; one click picks and
  *    closes; no OK button.
@@ -16,8 +16,8 @@ import { sensorHaystack, sensorTitle, useSensorLookup } from './sensorInfo';
  * which list it is through `scope` ("Sensors on the chart · 4").
  *
  * Rendering cost: groups start collapsed (only the group of the current value opens), so opening
- * the picker on a ~130-tag workspace renders a handful of headers, as the old modal did; the
- * search text per sensor is built once per open.
+ * the picker on a ~130-tag workspace renders a handful of headers; the search text per sensor
+ * is built once per open.
  */
 
 export const UNCATEGORIZED_GROUP = 'Uncategorized';
@@ -328,8 +328,7 @@ export function SensorPickerSingle({
     const isOn = useCallback((t: string) => t === value, [value]);
     const title = disabled && disabledReason ? disabledReason : value ? sensorTitle(lookup(value)) : undefined;
     // An optional picker (`allowNone`) with a value gets a visible × on the trigger, so clearing
-    // does not need opening the list and finding "None" (2026-10-09, user report on the
-    // Clustering "Criteria sensor (optional)" field). It is a SIBLING of the trigger (a button
+    // does not need opening the list and finding "None". It is a SIBLING of the trigger (a button
     // cannot hold a button), laid over the trigger's right side by `.pk-trigger-wrap`.
     const clearable = !!allowNone && !empty && !disabled;
     const cls = [

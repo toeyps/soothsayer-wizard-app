@@ -6,10 +6,7 @@ import { HEALTH_DEFAULT_MAX_POINTS } from '../../utils/healthRequest';
 
 /*
  * Sub-model fits for a Relationship model ("Compare predictors" / "Sub-models").
- *
- * Extracted from the (since deleted) PredictiveModelBuild.tsx page in health
- * score phase 3b-1, 2026-10-04; the Build Model Workbench's Model fit page is
- * now its only caller. Behaviour is the old page's own, unchanged:
+ * The Build Model Workbench's Model fit page is its only caller.
  *
  *   predictors = [p1, p2, p3] -> three SEQUENTIAL `preview_relationship_model`
  *   calls for the cumulative subsets [p1], [p1,p2], [p1,p2,p3]. Each full

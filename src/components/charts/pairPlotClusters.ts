@@ -1,9 +1,9 @@
 import { hexToRgba, rgbaToHex } from './pairPlotColors';
 
 /**
- * Pair Plot lasso clusters — naming and default-colour rules (customer batch
- * phase 2, SPEC FINAL 2026-10-09 §2). Pure helpers so the rules are testable
- * without a WebGL cell. Clusters are session-only (never persisted).
+ * Pair Plot lasso clusters — naming and default-colour rules. Pure helpers so
+ * the rules are testable without a WebGL cell. Clusters are session-only
+ * (never persisted).
  */
 
 type Rgba = [number, number, number, number];

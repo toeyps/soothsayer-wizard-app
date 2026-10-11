@@ -1,10 +1,9 @@
 /*
- * THE Workbench date-and-time format — "9 Feb 2026 23:50" (24 h, no seconds;
- * SPEC workbench-redesign §1 "One date format") — and the local-time parser
+ * THE Workbench date-and-time format — "9 Feb 2026 23:50" (24 h, no seconds)
+ * — and the local-time parser
  * every period helper reads `datetime-local` text with.
  *
- * Moved here from `src/components/windows/periodDisplay.ts` (2026-10-10,
- * workbench redesign phase C) so the pure helpers in `utils/` (period reasons
+ * Lives in `utils/` so the pure helpers there (period reasons
  * such as "P2 ends before it starts — pick an end after 11 May 2026") print
  * dates in the same one format without importing from a component folder.
  * `periodDisplay.ts` re-exports `parseLocal`, `formatStamp` and
@@ -69,7 +68,7 @@ const DATA_STAMP_RE = /^(\d{4})[-/](\d{1,2})[-/](\d{1,2})(?:[T ]+(\d{1,2}):(\d{2
  * back: the lowest-score time, the hover read-out, a scoring period's lowest).
  * Formatted from the text's OWN wall-clock parts — it is never passed through a
  * `Date`, so an explicit offset ("2026-02-09T23:50:00+07:00") reads "9 Feb 2026
- * 23:50" on a PC in any time zone (review of 452d5c2, item 6b). `formatStamp`
+ * 23:50" on a PC in any time zone. `formatStamp`
  * stays for instants the APP recorded in UTC ("Trained …", "Files saved …"), which
  * must show in local time.
  *

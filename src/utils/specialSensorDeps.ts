@@ -8,7 +8,7 @@ import { MODEL_KIND_LABEL } from './modelNames';
  * Deleting a special sensor that something else was built on top of leaves a
  * dangling reference behind: a formula that can no longer resolve `$name`, or
  * a model whose target sensor simply isn't in the data any more. Neither
- * fails loudly, so the rule (confirmed with the user) is to block the delete
+ * fails loudly, so the rule is to block the delete
  * up front rather than cascade or repair afterwards.
  *
  *   blocked  — another special sensor references it, a Failure Group model
@@ -23,13 +23,8 @@ import { MODEL_KIND_LABEL } from './modelNames';
 
 /** One place a `FailureModel` can name a sensor, and what to call it in the UI.
  *
- *  2026-09-15: the old "PM filter" field (`pmSensorFilters`, per-model) was
- *  removed here — that concept moved to a single workspace-wide
- *  `runningConditionFilters` list (see `FailureGroupStateSlice`), which
- *  isn't per-model and so doesn't fit this array's shape.
- *
- *  2026-10-03: that gap is closed. The workspace list is passed to
- *  `buildSpecialSensorUsage` separately (`runningConditionFilters`), and a
+ *  The workspace-wide running-condition list is not per-model, so it is passed
+ *  to `buildSpecialSensorUsage` separately (`runningConditionFilters`); a
  *  model's own Custom running-condition conditions are a field below. Rust
  *  silently DROPS a condition on a sensor that no longer exists, so a deleted
  *  special sensor still named there would make every model train on different
@@ -72,12 +67,11 @@ export interface EditLockSource {
 /**
  * Whether a special sensor may still be edited.
  *
- * 2026-10-03 decision (user): a special sensor used by a model is LOCKED --
+ * A special sensor used by a model is LOCKED --
  * its values and its name are frozen, because a Trained / Complete model that
  * was built from it goes stale (and the saved results / health-score input
- * become wrong) if either changes underneath it. This replaces the earlier
- * idea of putting special-sensor formulas into the train fingerprint:
- * prevention instead of detection.
+ * become wrong) if either changes underneath it. Prevention first; the
+ * detection behind it is `specialSensorSignature.ts`.
  *
  * Locked when ANY of:
  *   - a model names it (any field `MODEL_SENSOR_FIELDS` lists, incl. a model's
@@ -353,7 +347,7 @@ export function describeEditLock(lock: EditLock): string {
  * same way the reopen replay (`replaySpecialSensorRecipes`) splits them:
  *
  *   failed  -- its own recipe could not be computed (a source column is gone,
- *              or -- since 2026-10-08 -- a formula Rust now refuses, such as
+ *              or a formula Rust refuses, such as
  *              `round($A, 2)`). Only fixing THIS recipe brings it back.
  *   skipped -- built on a special sensor that has no column itself. Its own
  *              recipe may be fine; it comes back when the one it reads is
@@ -407,8 +401,8 @@ export function usageFor(
  * the direct dependents, since those have dependents of their own.
  *
  * The result is drawn from `recipes` in array order. That is only a valid
- * build order when the stored list is one -- which a workspace saved before the
- * ordering fix (2026-10-03) may not be (`[C=$B*10, B=${A}+1, A=...]`: C would be
+ * build order when the stored list is one -- which an older workspace's list
+ * may not be (`[C=$B*10, B=${A}+1, A=...]`: C would be
  * recomputed from B's OLD values). Pass `inputsOf` (what each recipe reads) and
  * the result is put in dependency order (`orderRecipesByDependency`) before it
  * is returned, whatever order the list is stored in.

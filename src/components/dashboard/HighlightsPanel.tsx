@@ -88,14 +88,14 @@ export default function HighlightsPanel({
     const [draftRangeMax, setDraftRangeMax] = useState('');
     const [rangeError, setRangeError] = useState<string | null>(null);
 
-    // Customer item 3: the "By value" range chips and inputs show the Colour-by sensor's unit.
+    // The "By value" range chips and inputs show the Colour-by sensor's unit.
     const lookup = useSensorLookup();
     const unit = valueHighlight.sensor ? lookup(valueHighlight.sensor).unit : undefined;
 
     // The inline rename draft is cleared on ANY chartType change: the panel's layout shifts
     // (the "Not shown on Pair Plot" banner) and a half-typed rename is cheap to restart. The
-    // colour pickers (customer item 4: the shared ColourPicker) own their open state; they are
-    // keyed by chart type below, so a chart switch remounts them closed the same way.
+    // colour pickers (the shared ColourPicker) own their open state; they are keyed by chart
+    // type below, so a chart switch remounts them closed the same way.
     useEffect(() => {
         setEditLabelFor(null);
     }, [chartType]);
@@ -231,8 +231,8 @@ export default function HighlightsPanel({
                 )}
 
                 <fieldset disabled={!valueHighlightApplies} className={`highlights-fieldset${valueHighlightApplies ? '' : ' highlights-fieldset--dim'}`}>
-                    {/* Customer item 3: "Colour by…" is the shared single picker, scoped to the
-                        sensors on the chart — a real disabled state on Line and Pair Plot. */}
+                    {/* "Colour by…" is the shared single picker, scoped to the sensors on
+                        the chart — a real disabled state on Line and Pair Plot. */}
                     <SensorPickerSingle
                         sensors={valueHighlightSensors}
                         value={valueHighlight.sensor}

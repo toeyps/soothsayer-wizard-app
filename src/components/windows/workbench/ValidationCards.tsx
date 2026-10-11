@@ -16,10 +16,10 @@ import { formatDataStamp, formatPeriodChip } from '../periodDisplay';
 import { fmtNumCol } from './chartTheme';
 
 /*
- * Train periods and scoring periods (SPEC FINAL 2026-10-07,
+ * Train periods and scoring periods (specs:
  * docs/design/handoff/train-test-validation/README.md, as revised by
- * docs/design/handoff/workbench-redesign/README.md §2 — "just score it", user
- * decision 2026-10-09). Read-only pieces built from
+ * docs/design/handoff/workbench-redesign/README.md §2 — "just score it").
+ * Read-only pieces built from
  * `HealthPreview.test_validation` (the component and test-id names keep "test",
  * like the wire keys; the words the user reads say "scoring"):
  *

@@ -1,6 +1,6 @@
 /*
  * Props comparison for the memoised Workbench pages (`ModelFitPage`,
- * `HealthScorePage`) — customer batch 2026-10, train queue: the Build Model
+ * `HealthScorePage`): the Build Model
  * window re-renders on every step of a training run (list badges, the run
  * strip), and every ECharts option on those pages is rebuilt per render with
  * fresh formatter functions, which makes ECharts redraw. A page re-renders

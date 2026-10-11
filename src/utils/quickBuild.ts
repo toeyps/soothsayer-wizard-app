@@ -7,9 +7,8 @@ import { numberValue } from './formulaCheck';
 import { insertPiece, type FormulaEdit } from './formulaFixes';
 
 /**
- * Quick build -- the selection-aware way to START a special-sensor formula
- * (customer batch 2026-10, item 6; the old ButtonBuilder option sets, kept on
- * user request). Pure generators: given the picked sensors and the chosen
+ * Quick build -- the selection-aware way to START a special-sensor formula.
+ * Pure generators: given the picked sensors and the chosen
  * options they return the formula TEXT (shown in the card's footer before
  * anything is committed) or, for Average / Median, the aggregate BLOCK.
  *

@@ -3,8 +3,8 @@ import { modelSensorKey } from './modelGrouping';
 import { isModelComplete } from './modelStatus';
 import type { RunningConditionFg } from './runningCondition';
 
-/** How many colour squares the recent-project chip shows (customer batch
- *  2026-10, item 5). `WorkspaceMetadata.failureGroupNos` never holds more. */
+/** How many colour squares the recent-project chip shows.
+ *  `WorkspaceMetadata.failureGroupNos` never holds more. */
 export const FG_CHIP_MAX_SWATCHES = 3;
 
 /** The user's own Failure Groups: the permanent group 0 ("Not in Group")

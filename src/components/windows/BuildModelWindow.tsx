@@ -635,12 +635,12 @@ export default function BuildModelWindow() {
     const [typedBoundaryText, setTypedBoundaryText] = useState<Record<string, { value: number; text: string }>>({});
 
     const sensorMetaMap = useSensorMetaMap(sensorMetadata);
-    // Customer item 3: every sensor label / picker in this window resolves through this lookup.
+    // Every sensor label / picker in this window resolves through this lookup.
     const sensorLookup = useLayeredSensorLookup(sensorMetadata);
     const getComponent = useCallback((tag: string) => sensorMetaMap.get(normalizeSensorTag(tag))?.component ?? '', [sensorMetaMap]);
     // Raw description only (not the "description (tag)" combo `sensorLabel`
     // below builds). Sensor labels in the UI come from `sensorLookup` (the
-    // shared SensorLabel standard, customer item 3).
+    // shared SensorLabel standard).
     const getDesc = useCallback((tag: string) => sensorMetaMap.get(normalizeSensorTag(tag))?.description ?? '', [sensorMetaMap]);
     // Unit text for the Running condition chips / value fields ("kW", "BAR"...).
     const getUnit = useCallback((tag: string) => sensorMetaMap.get(normalizeSensorTag(tag))?.unit ?? '', [sensorMetaMap]);
@@ -3062,7 +3062,7 @@ export default function BuildModelWindow() {
                 onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelectedSensorKey(sg.key); } }}
             >
                 <div style={{ minWidth: 0 }} data-testid="sensor-row-label" title={label}>
-                    {/* Customer item 3: the stacked SensorLabel (unit chip, tag on line 2). */}
+                    {/* The stacked SensorLabel (unit chip, tag on line 2). */}
                     {keyTag ? <SensorLabel tag={keyTag} /> : <div className="f4-sr-title">{title}</div>}
                 </div>
                 <div className="f4-kinds">
@@ -3419,7 +3419,7 @@ export default function BuildModelWindow() {
                     <div className="f4-fld f4-fld--grow" style={{ flex: 1, minWidth: '260px' }}>
                         <span className="f4-lbl">Predictor sensors (≥ 1)</span>
                         <IncompleteHint />
-                        {/* Customer item 3: predictors as chips (× removes one) + a dashed
+                        {/* Predictors as chips (× removes one) + a dashed
                             "Add…" that opens the multi modal; the target is excluded and the
                             scope line says so. */}
                         <SensorPickerModal
@@ -4125,8 +4125,7 @@ export default function BuildModelWindow() {
         const qItem = queue.isRunning ? queue.itemOf(m.id) : undefined;
         const locked = queue.isLocked(m.id);
         const hasDraft = m.id in drafts;
-        // The per-model Train button left this footer (customer items 8 + 9): the
-        // header's Train sensor is the one place. This link focuses it.
+        // The header's Train sensor is the one place to train. This link focuses it.
         const goTrainSensor = trainSensorLink('footer-train-sensor');
         // "Trained 9 Feb 2026 23:50 · scored on 2 periods".
         const trainedLine: ReactNode = m.lastTrainedAt
@@ -4324,7 +4323,7 @@ export default function BuildModelWindow() {
         );
     };
 
-    /** The detail header's sensor-level Train (customer items 8 + 9): one primary
+    /** The detail header's sensor-level Train: one primary
      *  "▶ Train sensor · n of m" that trains every model of the sensor that needs
      *  it (I → R → C, up-to-date ones skipped), a ▾ menu ("Train all N models" /
      *  "<Kind> only" — "Re-train …" once trained before, see `sensorTrainMenuCopy`)
@@ -4493,7 +4492,7 @@ export default function BuildModelWindow() {
                         {sidebarCollapsed ? '⇥' : '⇤'}
                     </button>
                     <div style={{ minWidth: 0 }}>
-                        {/* Customer item 3: the stacked label at header size, component chip after the tag. */}
+                        {/* The stacked label at header size, component chip after the tag. */}
                         {keyTag
                             ? <h3 className="bmw-dh-sl" aria-label={title}><SensorLabel tag={keyTag} size="lg" after={component ? <span className="comp-chip">{component}</span> : undefined} /></h3>
                             : <h3>{title}</h3>}

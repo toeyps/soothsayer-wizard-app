@@ -30,9 +30,8 @@ import { sensorRef } from '../../utils/specialSensorNaming';
 import { resolveFormulaVerdict, usePreviewFormula } from '../../hooks/usePreviewFormula';
 
 /**
- * The special-sensor Formula editor + Quick build (customer batch 2026-10, item 6;
- * SPEC `docs/design/handoff/customer-batch-2026-10/README.md` §5, DESIGN_SYSTEM §4.1).
- * Replaces SensorTooling's button builder and the Manage tab's SpecialSensorEditor.
+ * The special-sensor Formula editor + Quick build (spec:
+ * `docs/design/handoff/customer-batch-2026-10/README.md` §5, DESIGN_SYSTEM §4.1).
  *
  * ONE free-text field — the stored formula itself (`$Tag` / `${Tag with spaces}`) — with its
  * structure painted behind the text: a transparent `<textarea>` over a mirror in the same mono
@@ -42,8 +41,8 @@ import { resolveFormulaVerdict, usePreviewFormula } from '../../hooks/usePreview
  * Quick build insert) goes through `applyEdit`, a NATIVE insertion over the changed range
  * (`execCommand('insertText')`), so Ctrl+Z / Ctrl+Shift+Z undo it like typing.
  *
- * Average / Median stay an aggregate BLOCK (`kind: 'operation'`, its own `multiOp.decimals`; user
- * decision 2026-10-08). The live check is the cheap front-end pass (`checkFormula`) until Rust's
+ * Average / Median stay an aggregate BLOCK (`kind: 'operation'`, its own `multiOp.decimals`).
+ * The live check is the cheap front-end pass (`checkFormula`) until Rust's
  * `preview_formula` answers for the current text (`resolveFormulaVerdict`); the function list is
  * Rust's (never retyped here). The window decides what Add / Save do with the reported state.
  */

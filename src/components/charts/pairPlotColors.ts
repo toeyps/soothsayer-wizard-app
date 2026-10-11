@@ -17,8 +17,7 @@ export function rgbaToHex(c: [number, number, number, number]): string {
 /** Single source of truth for the matrix's default (non-cluster) colour —
  *  the app's indigo accent (matches LINE_CHART_COLORS, App.css, etc). Both
  *  the WebGL scatter cells (PairPlotCell) and the SVG diagonal histograms
- *  (PairPlotChart) derive from this one hex value so they never drift apart
- *  (previously each hardcoded its own close-but-different blue). */
+ *  (PairPlotChart) derive from this one hex value so they never drift apart. */
 export const ACCENT_HEX = '#6366f1';
 
 /** `#rrggbb` + alpha → a CSS `rgba(...)` string, for backgrounds that need

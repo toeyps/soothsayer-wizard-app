@@ -13,18 +13,14 @@ import { reportError } from '../../errorReporter';
 import { useCoalescedDraw } from '../../hooks/useCoalescedDraw';
 import TaggedPointList, { firstFreeColorIndex } from './TaggedPointList';
 
-// Re-exported so existing callers (Dashboard.tsx, charts/index.ts) that
-// import RANGE_PALETTE from this module keep working — the array itself
-// now lives in pairPlotColors.ts (dependency-free), so LineChart.tsx can
-// use it without pulling in regl-scatterplot. See that file for why.
+// Re-exported so callers (Dashboard.tsx, charts/index.ts) can import
+// RANGE_PALETTE from this module — the array itself lives in
+// pairPlotColors.ts (dependency-free), so LineChart.tsx can use it
+// without pulling in regl-scatterplot. See that file for why.
 export { RANGE_PALETTE };
 
 // WebGL can't read CSS custom properties, so the canvas clear color is a
-// plain constant here. Visual refresh (2026-10-02): this used to be
-// Tailwind's slate-900 (`#0f172a`), a navy-tinted dark that never actually
-// matched the app's own `--card-bg` (#101012, a neutral near-black) the
-// old comment claimed it did — visibly off-palette next to the rest of the
-// now-refreshed dark UI. Recomputed from `--card-bg` itself: #101012 ->
+// plain constant here, computed from `--card-bg`: #101012 ->
 // (16, 16, 18) / 255.
 const CANVAS_BG: [number, number, number, number] = [0.0627, 0.0627, 0.0706, 1.0];
 const POINT_COLOR_HOVER: [number, number, number, number] = [0.925, 0.282, 0.6, 1.0];
@@ -74,7 +70,7 @@ function ScatterChart({
     scatterAxisPins: persistedPins, onScatterAxisPinsChange,
     sensorMetadata, timeHighlights, valueHighlight,
 }: ChartProps) {
-    // Customer item 3: labels (pickers, axis titles, tooltip / tag rows) resolve through this lookup.
+    // Labels (pickers, axis titles, tooltip / tag rows) resolve through this lookup.
     const sensorLookup = useLayeredSensorLookup(sensorMetadata);
     const wrapperRef = useRef<HTMLDivElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -498,14 +494,12 @@ function ScatterChart({
             // the canvas's own pixel buffer — the browser keeps showing
             // whatever was last rendered to it, frozen, since nothing else
             // ever paints over a canvas element on its own. Without this,
-            // turning off the last enabled highlight (or removing it) left
-            // a stale halo image behind that no longer tracked pan/zoom —
-            // confirmed live: user disabled a highlight, then zoomed the
-            // main chart, and the old amber rings stayed fixed in place,
-            // visibly detached from the actual data underneath. Resetting
-            // `width` (even to its own value) is a standard trick that
-            // forces the browser to reinitialize — and thus fully clear —
-            // a canvas's backing bitmap regardless of which API drew to it.
+            // turning off the last enabled highlight (or removing it) would
+            // leave a stale halo image behind that no longer tracks
+            // pan/zoom. Resetting `width` (even to its own value) is a
+            // standard trick that forces the browser to reinitialize — and
+            // thus fully clear — a canvas's backing bitmap regardless of
+            // which API drew to it.
             // (ESLint reads the line below as a self-assign bug; it is the
             // documented canvas-clearing idiom described just above.)
             // eslint-disable-next-line no-self-assign
@@ -796,22 +790,11 @@ function ScatterChart({
     return (
         <SensorMetaContext.Provider value={sensorLookup}>
         <div ref={wrapperRef} className="scatter-regl-wrap">
-            {/* Sensor pickers — "X"/"Y" is its own small badge outside the
-                select now (2026-09-22, per explicit user request), not
-                appended inside the option text: the axis is already known
-                from position/the badge, so that space is better spent on
-                the sensor's description, which needs it far more (a bare
-                tag like "11MOV1603.PV" says nothing on its own — the option
-                text is "description (tag)", the same convention used
-                everywhere else a sensor is shown to the user). The select
-                itself is no longer width-capped, so a long description
-                isn't clipped. */}
+            {/* Sensor pickers — "X"/"Y" is its own small badge beside each picker. */}
             <div className="scatter-regl-controls">
                 <span className="scatter-regl-axis-badge">X</span>
-                {/* Customer item 3 (2026-10-09): the shared single picker in its compact
-                    24 px form — the native selects left here on 2026-09-22 are retired
-                    (DESIGN_SYSTEM §4: an anchored popover costs the same two clicks).
-                    Y opens right-aligned so it stays inside the chart. */}
+                {/* The shared single picker in its compact 24 px form. Y opens
+                    right-aligned so it stays inside the chart. */}
                 <span className="scatter-pk">
                     <SensorPickerSingle
                         compact
@@ -982,7 +965,7 @@ function ScatterChart({
                     from stealing hover from neighbouring points. */}
                 {tooltip && (
                     <div className="scatter-regl-tooltip" style={{ left: tooltip.x, top: tooltip.y }}>
-                        {/* Customer item 3: inline label + value + unit. */}
+                        {/* Inline label + value + unit. */}
                         <ValueRow info={sensorLookup(scatterX)} value={tooltip.xVal} />
                         <ValueRow info={sensorLookup(scatterY)} value={tooltip.yVal} />
                         {tooltip.timestamp && (
@@ -1101,9 +1084,9 @@ function ScatterChart({
 
             </svg>
 
-            {/* Axis titles — HTML overlays. Customer item 3 (review ruling b): Scatter has room,
-                so its titles are the Inline label (description then tag) + unit, with the full
-                name in `title`. The Y title is `writing-mode: vertical-rl` capped at the plot
+            {/* Axis titles — HTML overlays. Scatter has room, so its titles are the
+                Inline label (description then tag) + unit, with the full name in
+                `title`. The Y title is `writing-mode: vertical-rl` capped at the plot
                 height so it can ellipsise. */}
             <div className="scatter-axis-title scatter-axis-title--x" data-testid="scatter-axis-title-x" style={{ left: AXIS_PADDING.left, width: innerDims.width, top: wrapperDims.height - 20, height: 18 }}>
                 <SensorInline tag={scatterX} size="sm" />

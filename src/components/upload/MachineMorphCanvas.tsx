@@ -517,7 +517,7 @@ export default function MachineMorphCanvas({ variant = 'hero', className, style 
     ? { position: 'absolute', inset: 0, width: '100%', height: '100%', display: 'block', pointerEvents: 'none' }
     : {
         position: 'absolute', inset: 0, width: '100%', height: '100%', display: 'block',
-        // A swipe that starts on the art turns the machine instead of scrolling (accepted in the SPEC).
+        // A swipe that starts on the art turns the machine instead of scrolling.
         pointerEvents: 'auto', touchAction: 'none', cursor: 'grab', userSelect: 'none',
       };
 
@@ -576,7 +576,7 @@ export default function MachineMorphCanvas({ variant = 'hero', className, style 
               />
             ))}
           </span>
-          {/* --text-secondary so the required "simulated" label is legible (SPEC §5). */}
+          {/* --text-secondary so the required "simulated" label is legible. */}
           <span style={{ marginLeft: 'auto', font: `10.5px ${FONT_MONO}`, color: INK_MUTED }}>Illustration · simulated readings</span>
         </div>
       )}

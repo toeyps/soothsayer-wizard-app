@@ -56,23 +56,13 @@ export async function saveRecentWorkspaces(workspaces: WorkspaceMetadata[]) {
 // operation's `await` on this chain never resolves until every earlier one
 // has fully finished writing.
 //
-// Replaces an earlier "mutex + single-slot queue" design that coalesced
-// concurrent `saveWorkspaceData` calls down to just the LAST one — safe for
-// a plain overwrite (nothing lost by skipping a superseded snapshot of the
-// SAME data), but not safe once `updateWorkspaceData` started sharing it:
-// its read-modify-write reads the CURRENT file (step 1) before applying an
-// unrelated patch (step 2, e.g. "add this specific model") and writing
-// (step 3) — only step 3 went through the mutex, so a second call's step 1
-// could read the disk WHILE the first call's step 3 was still in flight,
-// compute its patch against that stale snapshot, and then win the
-// single-slot queue, overwriting the first call's already-written change
-// with a version that never saw it. Confirmed as the cause of a real
-// data-loss report (2026-09-16): rapid Failure Group / model edits in
-// Dashboard, each its own immediate `updateWorkspaceData` call, raced each
-// other exactly this way. Serializing the READ too (not just the write)
-// closes it — every call now sees the fully-committed result of every
-// earlier one, so no patch is ever computed against data that's about to
-// be replaced.
+// The READ of a read-modify-write is serialized too, not just the write:
+// `updateWorkspaceData` reads the CURRENT file before applying a patch
+// (e.g. "add this specific model") and writing. If only the write were
+// queued, a second call could read the disk while the first call's write
+// was still in flight, compute its patch against that stale snapshot and
+// overwrite the first call's change. Serialized, every call sees the
+// fully-committed result of every earlier one.
 let queue: Promise<unknown> = Promise.resolve();
 
 /** Runs `op` after every previously enqueued operation has settled
@@ -84,17 +74,11 @@ function enqueue<T>(op: () => Promise<T>): Promise<T> {
     return result;
 }
 
-// 🆕 2026-10-07 [data-loss fix — Failure Groups "gone again"]: `writeTextFile`
-// is NOT atomic (it truncates the file, then writes). Dashboard and the Build
-// Model window are separate OS windows, each with its own write queue, so one
-// could READ the workspace file in the few milliseconds the other had it
-// truncated: the read came back empty, `JSON.parse` threw, the loader returned
-// `null`, and Dashboard's autosave — which falls back to its in-memory mirror
-// when the disk read fails — then wrote that mirror over the file. The mirror
-// is only as fresh as the last broadcast this window received (and, under
-// `tauri dev`, a hot-reload remount resets it to the snapshot taken when the
-// workspace was opened), so the Failure Groups the other window had just
-// saved were replaced by an older copy. Writing to a sibling temp file and
+// `writeTextFile` is NOT atomic (it truncates the file, then writes).
+// Dashboard and the Build Model window are separate OS windows, each with its
+// own write queue, so one could READ the workspace file in the few
+// milliseconds the other has it truncated: the read would come back empty and
+// `JSON.parse` would throw. Writing to a sibling temp file and
 // renaming it over the real one means a reader only ever sees the old or the
 // new file, never a half-written one. `rename` replaces an existing file on
 // Windows/macOS/Linux alike. If the rename is refused (an older capability
@@ -142,7 +126,7 @@ async function writeWorkspaceFile(state: WorkspaceState): Promise<void> {
         };
 
         const existingIdx = recent.findIndex(w => w.id === state.id);
-        // Customer batch 2026-10 (item 5): the recent-project chip's Failure
+        // The recent-project chip's Failure
         // Group count + colours. Derived from the groups being written HERE —
         // every save and every `updateWorkspaceData` (Dashboard autosave and FG
         // edits, Build Model window writes, rename, duplicate) funnels through
@@ -211,7 +195,7 @@ export async function updateWorkspaceData(
             return null;
         }
         if (!current) return null;
-        // 2026-10-03 (health score): "Incomplete immediately" — any write that
+        // "Incomplete immediately" — any write that
         // changes what a Complete model is trained on (its own inputs, or the
         // workspace running condition it follows) sets it back to Incomplete in
         // THIS same write, whichever window or writer made it. Compared against
@@ -275,10 +259,9 @@ const DEFAULT_PM_SLICE = {
     relModelName: '',
     relStiffness: 100_000,
     clusterModelName: '',
-    // 2026-10-09: one cluster by default — 2+ clusters need a criteria
-    // sensor (Rust refuses n_clusters > 1 without one), so the old default of
-    // 3 with no criteria showed "1 to fix" on a model nobody had touched yet.
-    // Picking a criteria sensor still lets the stepper raise the count.
+    // One cluster by default — 2+ clusters need a criteria sensor (Rust
+    // refuses n_clusters > 1 without one). Picking a criteria sensor lets
+    // the stepper raise the count.
     numClusters: 1,
     criteriaSensor: '',
     clusterRanges: [],
@@ -300,12 +283,9 @@ function inferModelKind(modelType: string): ModelKind {
 }
 
 /**
- * Ensures every model has `groupNos: number[]` (2026-08-25 redesign: the
- * old singular `groupNo: number` field became a real many-to-many
- * model<->group relationship — a sensor legitimately needs an individual,
- * a relationship, AND a clustering model at once, and a single model
- * needs to appear under more than one Failure Group without being
- * duplicated into a second, independently-editable copy). A model that
+ * Ensures every model has `groupNos: number[]` (a many-to-many
+ * model<->group relationship; an old workspace carries a singular
+ * `groupNo: number`). A model that
  * already has `groupNos` is returned as-is; one still carrying only the
  * old `groupNo` becomes `groupNos: [groupNo]` (falling back to `[0]` —
  * the permanent "Not in Group" sentinel — if even that's missing).
@@ -320,17 +300,17 @@ function normalizeModelGroups(models: FailureModel[]): FailureModel[] {
 }
 
 /**
- * One-time shim for workspaces saved before the Failure Group / Predictive
- * Model redesign: old `failureGroupState.rows: FailureSensorRow[]` +
+ * One-time shim for legacy workspaces:
+ * old `failureGroupState.rows: FailureSensorRow[]` +
  * global `predictiveModelState` become `failureGroupState.models: FailureModel[]`
  * with PM config folded per-model. Also runs `normalizeModelGroups` on the
- * already-migrated path, so a workspace saved between that redesign and
- * the 2026-08-25 `groupNos[]` one still opens correctly. Both steps no-op
+ * already-migrated path, so a workspace whose models still carry the
+ * singular `groupNo` opens correctly. Both steps no-op
  * once a workspace is fully current (`failureGroupState.models` exists and
  * every model already has `groupNos`).
  */
 function migrateFailureGroupState(state: WorkspaceState): WorkspaceState {
-    // 2026-10-03: every read also gives each model the empty `healthSetPoints`
+    // Every read also gives each model the empty `healthSetPoints`
     // shape for its kind if it has none (idempotent; same object when nothing
     // to do). Runs AFTER the structural migration so legacy `rows` models count.
     return migrateHealthSetPoints(migrateFailureGroupStateStructure(state));
@@ -432,7 +412,7 @@ function migrateFailureGroupStateStructure(state: WorkspaceState): WorkspaceStat
     };
 }
 
-// 🆕 2026-10-02 [data-loss fix]: the actual read, NOT enqueued. `updateWorkspaceData`
+// The actual read, NOT enqueued. `updateWorkspaceData`
 // calls this (not the exported `loadWorkspaceData` below) so its own
 // read-inside-enqueue doesn't try to enqueue a second time onto a queue it is
 // already occupying (that would deadlock — the queued read would wait
@@ -453,10 +433,10 @@ const READ_RETRY_ATTEMPTS = 4;
 const READ_RETRY_DELAY_MS = 40;
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 
-// 🆕 2026-10-07: a read that fails on an EXISTING file is retried a few times
+// A read that fails on an EXISTING file is retried a few times
 // before giving up — the file may be mid-write by another window (see
-// `writeWorkspaceJsonAtomically`; also covers an older build still writing in
-// place). Gives up with `WorkspaceReadError`, never with `null`.
+// `writeWorkspaceJsonAtomically`). Gives up with `WorkspaceReadError`,
+// never with `null`.
 async function readWorkspaceFile(id: string): Promise<WorkspaceState | null> {
     debugLog("Loading Workspace Data for ID:", id);
     const recent = await getRecentWorkspaces();
@@ -485,40 +465,21 @@ async function readWorkspaceFile(id: string): Promise<WorkspaceState | null> {
     throw new WorkspaceReadError(id, lastError);
 }
 
-// 🆕 2026-10-02 [data-loss fix, real root cause of the repeated "Running
-// Condition Filter edit, then it's gone" reports]: this read now goes
-// through the SAME `enqueue` queue as `updateWorkspaceData`/`saveWorkspaceData`
-// (previously it was a bare, unqueued read — only the write half of
-// `updateWorkspaceData` was ever protected).
+// This read goes through the SAME `enqueue` queue as
+// `updateWorkspaceData`/`saveWorkspaceData`, so it can never start until
+// every earlier write queued by THIS window has fully landed.
 //
-// Every caller that hydrates/re-hydrates component state from this call
-// (`BuildModelWindow.tsx`'s `build-model-data` listener, `Dashboard.tsx`'s
-// autosave) can legitimately fire MORE THAN ONCE per window: React
-// StrictMode double-invokes the mount effect that requests it, and
-// Dashboard's `spawnBuildModel` re-sends `build-model-data` every time
-// "Build Model" is clicked while the window is already open (re-pointing it
-// instead of just focusing it) — not just once at first mount. If one of
-// those re-hydration reads started BEFORE this window's own in-flight
-// `persistRunningCondition`/`persist` write (via `updateWorkspaceData`) but
-// resolved AFTER it landed, it read pre-edit data and `applyFg`'d it
-// straight over the just-saved local state — reverting the ON-SCREEN value
-// back to the old one (confirmed with a real repro in
-// `BuildModelWindow.test.tsx`: "a second, concurrent build-model-data
-// hydration reading a stale snapshot ... must not revert the on-screen
-// value back to stale data"). The write itself still landed correctly on
-// disk, so this looked exactly like what was reported: the edit appears to
-// vanish regardless of how/when the user looks again, even though nothing
-// was actually lost on disk yet — until the user, seeing the reverted
-// display, made a FURTHER edit computed from that now-stale local state
-// (e.g. adding another condition appends onto the stale `filters` array),
-// which genuinely overwrote the correct disk value with a stale-based one.
-// Routing this read through the same queue means it can never start until
-// every earlier write queued by THIS window has fully landed, so a
-// re-hydration can no longer see "the past" relative to this window's own
-// edits. (This does not protect against a genuinely different OS window —
-// e.g. Dashboard vs. Build Model — writing at the same moment; each
-// window's webview has its own independent `queue`, a separate, narrower,
-// still-open gap noted on `updateWorkspaceData` above.)
+// A caller that hydrates component state from this call can fire MORE THAN
+// ONCE per window (React StrictMode double-invokes the mount effect that
+// requests it, and Dashboard re-sends `build-model-data` every time "Build
+// Model" is clicked while the window is already open). Unqueued, a
+// re-hydration read that started BEFORE this window's own in-flight write
+// but resolved AFTER it would read pre-edit data and apply it over the
+// just-saved local state — and the next edit computed from that stale state
+// would overwrite the correct value on disk. (This does not protect against
+// a genuinely different OS window — e.g. Dashboard vs. Build Model — writing
+// at the same moment; each window's webview has its own independent `queue`,
+// a narrower gap noted on `updateWorkspaceData` above.)
 export async function loadWorkspaceData(id: string): Promise<WorkspaceState | null> {
     return enqueue(() => readWorkspaceFile(id));
 }
@@ -579,7 +540,7 @@ export async function duplicateWorkspace(id: string) {
                 id: `ws_${Date.now()}`,
                 name: `${state.name} (Copy)`
             };
-            // QA fix (2026-10-04): the files a model's "Mark complete" wrote live in
+            // The files a model's "Mark complete" wrote live in
             // the ORIGINAL workspace's output folder, which is deliberately not
             // copied. A copy must not claim them (nor lose them the day the original
             // is deleted): its models become Incomplete and drop the export record,

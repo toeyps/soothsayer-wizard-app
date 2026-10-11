@@ -3,8 +3,8 @@ import { excelRoundCalls, isFormulaAtom, tokenizeFormula, type FormulaToken } fr
 import { roundPlaces } from './formulaRounding';
 
 /**
- * The cheap FRONT-END check of a special-sensor formula (customer batch
- * 2026-10, item 6): instant feedback on every keystroke, with the SAME stable
+ * The cheap FRONT-END check of a special-sensor formula: instant feedback on
+ * every keystroke, with the SAME stable
  * codes and, where it can, the same ranges as Rust's gate
  * (`formula_gate` in `src-tauri/src/lib.rs`, classified by
  * `formula_diagnostics.rs`). It runs Rust's rules in Rust's order:

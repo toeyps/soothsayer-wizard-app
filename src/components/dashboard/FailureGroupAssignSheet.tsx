@@ -45,8 +45,8 @@ const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v
 export interface FailureGroupAssignSheetProps {
     /** Tag of the sensor being edited. */
     tag: string;
-    /** The sensor's metadata for the header (SPEC 2026-10-09 item 3: the sheet header gets
-     *  meta, not strings) — rendered as the same stacked label as the row that opened it. */
+    /** The sensor's metadata for the header — rendered as the same stacked label as
+     *  the row that opened it. */
     info: SensorInfo;
     fgGroups: FailureGroup[];
     fgModels: FailureModel[];
@@ -63,8 +63,8 @@ export interface FailureGroupAssignSheetProps {
      *  button that opened it. A click outside the sheet passes false: focus
      *  belongs to whatever was clicked. */
     onClose: (opts?: { returnFocus?: boolean }) => void;
-    /** "Assign sensors →" (customer batch 2026-10, item 5): the group being
-     *  filled. Its row is pinned first, highlighted and tagged "Assigning". */
+    /** "Assign sensors →": the group being filled. Its row is pinned first,
+     *  highlighted and tagged "Assigning". */
     pinnedGroupNo?: number | null;
     /** The Sensors panel — the sheet docks to its left edge, and a click
      *  anywhere inside it never closes the sheet. */
@@ -85,20 +85,19 @@ function assignedGroupNos(groups: FailureGroup[], models: FailureModel[], tagKey
 
 /**
  * "Failure Group Assignment" — the full-height sheet docked to the left edge of
- * the Dashboard's Sensors panel that replaced the old `AnchoredPopover` menu
- * (2026-10-03). One matrix: a row per Failure Group x a column per model kind
- * (Individual / Relation model / Clustering), plus the permanent "Not in Group"
- * row pinned at the bottom.
+ * the Dashboard's Sensors panel. One matrix: a row per Failure Group x a column
+ * per model kind (Individual / Relation model / Clustering), plus the permanent
+ * "Not in Group" row pinned at the bottom.
  *
  * Presentation + local UI state only. Every change goes through the Dashboard's
- * existing handlers (`onToggleSensorGroupKind`, `onCreateGroupForSensor`,
+ * handlers (`onToggleSensorGroupKind`, `onCreateGroupForSensor`,
  * `onRenameGroup`, `onDeleteGroup`), so persistence, cross-window broadcasts and
- * the stale-mirror protection all stay where they were.
+ * the stale-mirror protection all live there.
  *
  * Rendered through `Portal` (the Sensors panel and its ancestors are all
  * `overflow: hidden`, so an in-place sheet reaching LEFT of the panel would be
  * clipped) and placed with a measured `position: fixed` rect, the same
- * technique `AnchoredPopover` already uses. Unlike that popover it is NOT
+ * technique `AnchoredPopover` uses. Unlike that popover it is NOT
  * dismissed by scroll/resize — it re-measures instead — because the user is
  * expected to scroll the sensor list while it is open.
  */

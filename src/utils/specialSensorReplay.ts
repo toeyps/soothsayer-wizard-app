@@ -23,9 +23,8 @@ import { isSessionLostError } from './staleSession';
 export interface ReplayResult {
     failed: string[];
     skipped: string[];
-    /** Why each `failed` tag failed, in the backend's own words -- e.g. a
-     *  formula Rust accepted before 2026-10-08 (silently producing an empty
-     *  sensor, like `$A * pi`) and now refuses: "Formula error: unknown name
+    /** Why each `failed` tag failed, in the backend's own words -- e.g. for a
+     *  formula Rust refuses (`$A * pi`): "Formula error: unknown name
      *  'pi'. Write pi() for π.". Only present when something failed. */
     errors?: Record<string, string>;
 }

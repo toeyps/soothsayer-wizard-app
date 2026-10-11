@@ -13,7 +13,7 @@ import { buildHealthPreviewRequest, buildModelFilesRequest, type HealthRequestOp
 import { markCompleteBlockReason } from './runningCondition';
 
 /**
- * "Mark complete" orchestration for the health-score flow (phase 3a, 2026-10-03).
+ * "Mark complete" orchestration for the health-score flow.
  * Pure async (no React, no workspace writes): check the set points, write the
  * model's files, and tell the caller what to persist.
  *

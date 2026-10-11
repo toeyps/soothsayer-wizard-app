@@ -845,13 +845,11 @@ export interface LabelBox {
 }
 
 /**
- * Callout card width. The SPEC asked for 204 (from 188); measured in Chromium
- * on 2026-10-08 that still let "● ABNORMAL" (JetBrains Mono 600 9.5px, 57.0 px)
- * collide with "Exhaust gas temperature" (Inter 600 11px, 132.8 px):
- * 132.8 + 8 + 57.0 = 197.8 > 204 − 21. 220 fit every trending name with the
- * loaded fonts and with the Segoe UI / Consolas fallback the installed app gets,
- * but with only 1.2 px to spare; 224 keeps ~5 px of headroom for text-rendering
- * differences between machines (hinting, font versions, display scaling).
+ * Callout card width. 224 keeps ~5 px of headroom so "● ABNORMAL" (JetBrains
+ * Mono 600 9.5px) never collides with the longest trending name ("Exhaust gas
+ * temperature", Inter 600 11px) — also with the Segoe UI / Consolas fallback
+ * the installed app gets, and with text-rendering differences between
+ * machines (hinting, font versions, display scaling).
  */
 export const LABEL_W = 224;
 export const LABEL_H = 62;

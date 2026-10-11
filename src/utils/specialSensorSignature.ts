@@ -4,13 +4,13 @@ import type { RunningConditionFg } from './runningCondition';
 import { demoteModelsTrainedOnSensors, trainingSensorsOf, type SensorRepairDemotion } from './specialSensorRepair';
 
 /**
- * Special-sensor formulas in the train record (customer batch 2026-10, item 6
- * -- user decision: editing a special sensor's formula makes the models
- * trained on it stale).
+ * Special-sensor formulas in the train record (editing a special sensor's
+ * formula makes the models trained on it stale).
  *
  * `computeTrainFingerprint` names a model's sensors, not how a special sensor
- * is computed, so a changed recipe left a trained / Complete model reading as
- * fresh. The edit lock (`specialSensorDeps`) prevents most such edits; this is
+ * is computed, so on its own a changed recipe would leave a trained / Complete
+ * model reading as fresh. The edit lock (`specialSensorDeps`) prevents most
+ * such edits; this is
  * the detection behind it, for the roads that do change a used recipe (Repair,
  * the legacy `round(x, n)` conversion on open, anything a lock misses):
  *
@@ -30,8 +30,8 @@ import { demoteModelsTrainedOnSensors, trainingSensorsOf, type SensorRepairDemot
  *   - `demoteModelsForRecipeChange` -- the models a recipe change sends back
  *     to Incomplete and out of date, in the same write.
  *
- * Backward compatible: a model trained before this existed has no snapshot and
- * is never judged by it, so an upgrade does not turn trained models stale.
+ * Backward compatible: a model with no snapshot is never judged by it, so an
+ * upgrade does not turn trained models stale.
  */
 
 const key = (tag: string) => tag.trim().toLowerCase();

@@ -14,11 +14,10 @@ function periodFingerprint(p: TimePeriod) {
 }
 
 /**
- * A stable string capturing every input that would change the result of the
- * Build Model Workbench Phase B "Train" preview
- * (`compute_sensor_stats` / `preview_relationship_model` /
- * `compute_clustering_preview` — see `docs/PROJECT_HANDOVER.md`'s 2026-09-29
- * SPEC FINAL entry). Compare a model's persisted `trainedFingerprint` against
+ * A stable string capturing every input that would change the result of a
+ * Train (`compute_sensor_stats` / `preview_relationship_model` /
+ * `compute_clustering_preview`). Compare a model's persisted
+ * `trainedFingerprint` against
  * a fresh call of this function to decide staleness:
  *
  *   const stale = model.trainedFingerprint !== computeTrainFingerprint(model, fg);
@@ -35,21 +34,17 @@ function periodFingerprint(p: TimePeriod) {
  * reordering the same set of predictors isn't treated as a change; filter/period
  * `id`s are stripped for the same reason (see the two helpers above).
  *
- * Two kind-specific exclusions (QA fix, 2026-09-29 — see the "Train never
- * sticks" / "opening full view makes a trained model stale" bugs in
- * `docs/PROJECT_HANDOVER.md`'s matching entry): `clusterRanges` is dropped
+ * Two kind-specific exclusions: `clusterRanges` is dropped
  * entirely whenever there is no criteria sensor (a range list is meaningless
- * without one, so its exact shape — `[]`, 3 auto-divided defaults, whatever
- * the PM page's own hydration happens to normalise it to on open — must
- * never make an unrelated model go stale), and `targetSensor` is dropped for
+ * without one, so its exact shape — `[]`, auto-divided defaults — must
+ * never make a model go stale), and `targetSensor` is dropped for
  * clustering specifically (that kind already fingerprints `ySensor`/`xSensor`
  * /`criteriaSensor`; `targetSensor` there is a derived alias, not its own
- * input, and the PM page's hydration writes `targetSensor = ySensor` on
- * every open).
+ * input).
  *
  * Running-condition rows are also filtered to COMPLETE ones only
- * (`isCompleteCondition`, the same filter `buildPreviewFilterPayload` /
- * the PM page's `dashboardFilterPayload` already apply before sending
+ * (`isCompleteCondition`, the same filter `buildPreviewFilterPayload`
+ * applies before sending
  * anything to Rust) — an incomplete row (no sensor yet, or a value not
  * filled in) isn't sent to Rust either, so it must not make every model
  * that follows the workspace condition go stale the instant someone adds a
@@ -79,27 +74,15 @@ export function computeTrainFingerprint(model: FailureModel, fg: RunningConditio
 
 /**
  * Pure "is this exact model+fg pair Trained-and-fresh" check — just the
- * fingerprint equality Phase B's Train writes (`lastTrainedAt` set AND
+ * fingerprint equality a Train writes (`lastTrainedAt` set AND
  * `trainedFingerprint` still matching a fresh `computeTrainFingerprint`
  * call), no `status`/draft awareness of its own.
  *
- * Moved here from `BuildModelWindow.tsx` (2026-09-30, Phase C of the Build
- * Model Workbench redesign — see `docs/PROJECT_HANDOVER.md`'s SPEC FINAL
- * entry) so it has exactly one definition, shared by every reader instead of
- * being redefined per file: `BuildModelWindow.tsx`'s own `isModelTrainedFresh`
- * (component-level, folds in the live draft via `effectiveModelFor` + the
- * `status` check) and `persistModelComplete` (Mark complete, checked directly
- * against the model/fg read fresh off disk inside that write) both import this
- * as `trainedFreshFor`; `FailureGroupsPanel.tsx`
- * (Dashboard's Sensor panel → Failure Groups tab) imports it directly to
- * color the status dot on each sensor row's I/R/C badge. None of these
- * callers duplicate the equality check itself any more.
- *
- * A caller that also needs to match the app's "Trained" pill/dot exactly
- * (not just fingerprint-fresh) must additionally check `!model.status` and
- * `getBuildBlockReason(model, fg, headers) === null` — this function alone
- * only answers the fingerprint-equality question, the same narrow scope it
- * had as `trainedFreshFor`.
+ * ONE definition, shared by every reader (the Build Model window,
+ * `persistModelComplete`, the Dashboard's Failure Groups status dot). A
+ * caller that needs the app's full status reads `utils/modelStatus.ts` and
+ * the gate (`getBuildBlockReason`) — this function alone only answers the
+ * fingerprint-equality question.
  */
 export function isModelTrainedFresh(
     model: FailureModel,

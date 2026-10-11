@@ -4,7 +4,7 @@ import { ZERO_ARG_FUNCTIONS } from './formulaCheck';
 import type { FormulaEdit } from './formulaFixes';
 
 /**
- * Autocomplete context of the Formula editor (customer batch 2026-10, item 6):
+ * Autocomplete context of the Formula editor:
  * is the caret inside something a suggestion list can complete, and what
  * would a pick replace?
  *

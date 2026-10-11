@@ -9,37 +9,20 @@ interface SensorExplorerProps {
     sensorMetadata: SensorMetadata[] | null;
     selectedSensors: string[];
     onToggleSensor: (sensor: string) => void;
-    /** Formula editor (customer batch 2026-10, item 6): the row's small `$` button inserts `$TAG`
-     *  at the editor's caret instead of picking the row. Omitted = no button. */
+    /** Formula editor: the row's small `$` button inserts `$TAG` at the editor's caret
+     *  instead of picking the row. Omitted = no button. */
     onInsertSensor?: (sensor: string) => void;
     searchTerm: string;
     onSearchChange: (term: string) => void;
 }
 
 /**
- * Left column of the Create tab — search + a flat-per-component list of
- * every sensor. Customer batch 2026-10 (item 6): a click PICKS the row for
- * Quick build (a "Picked" pill, the group header counts the picks); the small
- * `$` button on the row inserts `$TAG` at the formula editor's caret instead.
+ * Left column of the Create tab — search + a per-component list of every
+ * sensor. A click PICKS the row for Quick build (a "Picked" pill, the group
+ * header counts the picks); the small `$` button on the row inserts `$TAG` at
+ * the formula editor's caret instead.
  * Memoised: the window re-renders on every keystroke in the editor, and the
  * list only needs to when its own props change.
- *
- * History: each row used to toggle a source (an "Added" pill
- * when picked, a bare + icon otherwise). Visual refresh Phase 5
- * (2026-10-02): this used to render in a hardcoded VS Code-dark palette
- * (#18181b/#27272a/#3f3f46/#eab308/#007fd4) that never read any of the
- * app's own theme tokens — the single biggest reason this whole window
- * still looked like "the old app" after the token-only Phases 0-4 (those
- * phases only retuned CSS custom-property VALUES on existing markup; this
- * component's colours were never custom properties to begin with). Restyled
- * onto the shared tokens + the same `.sens`-row look (checkbox replaced by
- * an added-pill/+-icon, matching the approved prototype's own
- * `specialModal()` left column) the rest of the app's sensor pickers
- * already use. Component-grouping is kept (a deliberate superset of the
- * prototype's flat list — this app's established sensor-picker convention
- * elsewhere, e.g. SensorSelection.tsx, also groups by component) rather
- * than flattened to match the prototype literally; every prop/handler is
- * unchanged.
  */
 function SensorExplorer({
     sensors,
@@ -51,7 +34,7 @@ function SensorExplorer({
     onSearchChange
 }: SensorExplorerProps) {
     const [expandedComponents, setExpandedComponents] = useState<Set<string>>(new Set());
-    // Customer item 3: rows use the stacked SensorLabel from this list's own metadata (O(1) per
+    // Rows use the stacked SensorLabel from this list's own metadata (O(1) per
     // row, layered on the window's provider so the ƒ / Σ badges come through).
     const sensorLookup = useLayeredSensorLookup(sensorMetadata);
 

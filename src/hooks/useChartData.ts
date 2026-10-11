@@ -42,7 +42,7 @@ const DEBOUNCE_MS = 250;
  *
  * The heavy pipeline (dashboard filter → operation transform → hourly
  * aggregation → min/max decimation) runs Rust-side; this hook only ever
- * holds O(maxPoints) values, so selecting millions of rows no longer
+ * holds O(maxPoints) values, so selecting millions of rows never
  * duplicates the dataset into the JS heap or blocks the main thread.
  *
  * Debounced and race-guarded like `useScatterSample`: a stale in-flight

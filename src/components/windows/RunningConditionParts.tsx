@@ -70,8 +70,8 @@ export function PeriodCoverageBar({ periods, bounds, className, mini = false, te
 }
 
 /**
- * Train periods that overlap an (enabled) Dashboard time highlight (SPEC rule
- * 4): an amber warning per overlap with a "Remove the overlap" action that cuts
+ * Train periods that overlap an (enabled) Dashboard time highlight:
+ * an amber warning per overlap with a "Remove the overlap" action that cuts
  * the highlight's time out of the train periods. Never a block -- the user may
  * keep the overlap.
  */

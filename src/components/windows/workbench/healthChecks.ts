@@ -7,7 +7,7 @@ import { TEST_SCORING_ISSUE_CODES } from '../../../utils/trainTestValidation';
 import { scoringIssueMessage } from '../../../utils/timePeriods';
 
 /*
- * Pure helpers of the Health score page (health score phase 3b-2, 2026-10-04):
+ * Pure helpers of the Health score page:
  * what the Checks card shows, which input is "required" / "error", the
  * Valid / Not valid / Incomplete verdict, whether the saved files are out of date
  * and the hover read-out.
@@ -51,9 +51,9 @@ export function verdictOfIssues(issues: readonly HealthIssue[]): HealthVerdict |
 
 /**
  * The text an input shows for a stored set point: the value at its FULL
- * precision (QA fix, 2026-10-04 — it used to round to 6 decimals, so a stored
- * 4e-7 re-opened as "0" while the model and the exported file kept the real
- * number). `Number(formatSetPointText(x)) === x` for every finite `x`: a plain
+ * precision (rounding would re-open a stored 4e-7 as "0" while the model and
+ * the exported file keep the real number).
+ * `Number(formatSetPointText(x)) === x` for every finite `x`: a plain
  * decimal when that round-trips (0.0000004, not "4e-7", reads better in a box
  * a person types in), otherwise the shortest exact form JavaScript gives.
  */

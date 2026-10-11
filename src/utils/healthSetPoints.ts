@@ -8,7 +8,7 @@ import type {
 import { sameTag } from './specialSensorNaming';
 
 /*
- * Health score set points -- phase 1 (data model only, 2026-10-03).
+ * Health score set points.
  *
  * Everything here is PURE (no Tauri, no React) so Dashboard, BuildModelWindow,
  * the migration and tests can all share it. See `HealthSetPoints` in

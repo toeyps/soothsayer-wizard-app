@@ -6,8 +6,8 @@ const key = (tag: string) => tag.trim().toLowerCase();
 
 /**
  * Everything a special sensor's rename has to carry through, besides the
- * recipe/metadata pair itself (owned by `SpecialSensorEditor`/
- * `AddSensorWindow`'s save flow) — the flat arrays, tag-keyed records, and
+ * recipe/metadata pair itself (owned by `AddSensorWindow`'s save flow) — the
+ * flat arrays, tag-keyed records, and
  * Failure Group models scattered across `AddSensorWindow.tsx` and
  * `Dashboard.tsx` that name a sensor by its tag. Kept as small, focused pure
  * functions rather than one big "rename everywhere" helper so each call site
@@ -42,16 +42,8 @@ export function renameTagInRecord<T>(record: Record<string, T>, oldTag: string, 
  * bearing fields (see `specialSensorDeps.ts`'s `MODEL_SENSOR_FIELDS` for the
  * read-only version of this same list — kept separate here because each
  * field needs a different write-back shape: scalar, flat array, or an array
- * of objects).
- *
- * 🆕 2026-09-30 (QA fix, Build Model Workbench Custom running-condition
- * editor): also rewrites `customRunningConditionFilters` — each model's own
- * per-condition `sensor` field (2026-09-23's per-model Workspace/Custom
- * override). This gap pre-dates that feature (the field just didn't exist
- * before), but stayed invisible until Custom conditions became editable
- * in-app (this same QA pass, ported into `BuildModelWindow.tsx`'s
- * Workbench) — before that, nothing ever wrote a real sensor tag into it
- * that a rename would need to catch up with.
+ * of objects), including `customRunningConditionFilters` — each model's own
+ * per-condition `sensor` field.
  */
 export function renameTagInModels(models: FailureModel[], oldTag: string, newTag: string): FailureModel[] {
     const target = key(oldTag);
@@ -72,13 +64,12 @@ export function renameTagInModels(models: FailureModel[], oldTag: string, newTag
 
 /**
  * Rename every occurrence of `oldTag` inside the workspace-wide running-
- * condition filter (`FailureGroupStateSlice.runningConditionFilters`,
- * 2026-09-15 — replaced the old per-model `pmSensorFilters` this file used
- * to also rename above). Same shape as `renameTagInModels`'s per-field
+ * condition filter (`FailureGroupStateSlice.runningConditionFilters`). Same
+ * shape as `renameTagInModels`'s per-field
  * swap, just against one flat array instead of scattered across every
  * model's own fields.
  *
- * 2026-10-03: wired up. Dashboard's `rename-special-sensor` listener rewrites
+ * Dashboard's `rename-special-sensor` listener rewrites
  * the workspace's `runningConditionFilters` through this (persisted with
  * `withFailureGroupState` + broadcast), and the same function re-keys the
  * Dashboard's own Filter tab conditions (`filters.sensorFilters`, the same

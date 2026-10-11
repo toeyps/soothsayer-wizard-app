@@ -1,12 +1,10 @@
 /**
  * `console.log` that stays silent in production builds.
  *
- * Added 2026-09-03: a project-wide review found 17 bare `console.log` calls
- * left in shipped code paths — five of them in `workspaceManager`'s save path,
- * which runs on every 250 ms autosave, and three in `TitleBar` that just print
- * "minimize" / "maximize" / "close". None of them help a user, they leak
- * workspace ids and payload shapes into anyone's devtools, and the noise
- * buries the `console.error` calls that do matter.
+ * Bare `console.log` calls in shipped code paths (e.g. the save path that runs
+ * on every 250 ms autosave) help no user, leak workspace ids and payload
+ * shapes into anyone's devtools, and bury the `console.error` calls that do
+ * matter.
  *
  * **What this does and does not do.** The `import.meta.env.DEV` check lives
  * inside this function, so a production build still *calls* `debugLog` and

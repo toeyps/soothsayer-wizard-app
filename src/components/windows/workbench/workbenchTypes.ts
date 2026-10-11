@@ -5,16 +5,15 @@ import type { TestsChangedState } from '../../../utils/trainTestValidation';
 import type { FitGoneActions } from './WorkbenchShellParts';
 
 /*
- * Contract of the Build Model Workbench's two per-model pages (health score
- * phase 3b-1/3b-2, 2026-10-04).
+ * Contract of the Build Model Workbench's two per-model pages.
  *
  * `BuildModelWindow` is the STATE CONTAINER: it owns the selected sensor / kind
  * tab, the drafts, the train flow, ONE `useHealthPreview` call for the active
  * model, and the page switch. The pages below are presentational: they receive
  * the pieces they need as props and report user intent through callbacks.
  *
- *   page 'model'   -> `ModelFitPage`     (3b-1)
- *   page 'health'  -> `HealthScorePage`  (3b-2 replaces the 3b-1 placeholder)
+ *   page 'model'   -> `ModelFitPage`
+ *   page 'health'  -> `HealthScorePage`
  */
 
 export type WorkbenchPage = 'model' | 'health';

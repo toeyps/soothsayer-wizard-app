@@ -5,7 +5,7 @@ import { usePopoverDismiss } from './SensorPicker';
 import ColorPlatePicker from '../dashboard/ColorPlatePicker';
 
 /**
- * Customer item 4 (SPEC FINAL 2026-10-09 §1, DESIGN_SYSTEM §4 "Colour picking — ONE picker"):
+ * The ONE colour picker (DESIGN_SYSTEM §4 "Colour picking — ONE picker"):
  * sensor line colours, time highlights, value-highlight ranges and pair-plot clusters.
  * The 16 px swatch IS the button (inside a 24 px hit area). The popover: 12 palette swatches in
  * the §4 chart order (6 × 2), a ring + check on the current colour (box-shadow, so `outline`

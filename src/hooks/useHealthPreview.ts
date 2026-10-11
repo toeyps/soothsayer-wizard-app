@@ -69,7 +69,7 @@ export interface UseHealthPreviewResult {
     lastData?: HealthPreview | null;
     /** Ask again for the same request (the error banner's Retry button). */
     retry?: () => void;
-    /** Ask again AND tell Rust to retry scoring the scoring periods (2026-10-07):
+    /** Ask again AND tell Rust to retry scoring the scoring periods:
      *  after a failed Relation-model prediction Rust remembers the failure so
      *  debounced set-point edits don't re-run the slow sidecar; only the
      *  `test_scoring_failed` notice's "Try again" clears it, by sending
@@ -113,7 +113,7 @@ export function useHealthPreview(opts: UseHealthPreviewOptions): UseHealthPrevie
     // Set by `retryTestScoring`: WHICH request the user asked to retry (model id +
     // Relation-model cache key at click time). Sent once, and only with a request
     // for that same model and fit -- never carried over to another model's
-    // request after an idle spell or a model switch (code review 2026-10-07).
+    // request after an idle spell or a model switch.
     const retryScoringRef = useRef<{ modelId: string | null; cacheKey: string | null } | null>(null);
     // Live mirrors for the stable `retryTestScoring` callback (assigned below).
     const keyRef = useRef<string | null>(null);

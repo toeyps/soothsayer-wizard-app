@@ -1,5 +1,5 @@
 /**
- * Pure rules of the train queue (customer batch 2026-10, items 8 + 9). The
+ * Pure rules of the train queue. The
  * stateful part is `useTrainQueue` (`src/hooks/useTrainQueue.ts`); everything
  * here is plain functions so the preflight modal, the Train buttons, the run
  * strip and the hook all read ONE set of rules.
@@ -53,8 +53,8 @@ export const DUPLICATE_NAME_BLOCK_REASON = 'Model name is already used by anothe
 export const TRAIN_STALE_MESSAGE =
     'The data in this window is out of date. Close it and open Build Model again from the Dashboard.';
 
-/** Why both Train buttons are disabled when the workspace running condition is not set.
- *  (The step bar is gone since 2026-10-09: no text says "Step 1".) */
+/** Why both Train buttons are disabled when the workspace running condition is not set
+ *  (no text says "Step 1"). */
 export const TRAIN_NEEDS_RUNNING_CONDITION = 'Set the running condition first.';
 
 /** Why both Train buttons are disabled when no model is ready. */

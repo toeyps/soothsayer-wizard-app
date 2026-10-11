@@ -22,8 +22,8 @@ import {
 } from '../../../utils/trainQueue';
 
 /*
- * Train sensor / Train all with a queue (customer batch 2026-10, items 8 + 9;
- * DESIGN_SYSTEM §4.1 "Train sensor / Train all"). Presentational parts only:
+ * Train sensor / Train all with a queue (DESIGN_SYSTEM §4.1 "Train sensor /
+ * Train all"). Presentational parts only:
  * the queue itself is `useTrainQueue` (src/hooks), owned by BuildModelWindow,
  * which trains through the window's own per-model train, one model at a time.
  *
@@ -170,7 +170,7 @@ const MENU_KIND = TRAIN_KIND_LABEL;
 const MENU_KIND_MODEL: Record<ModelKind, string> = { individual: 'Individual model', relationship: 'Relation model', clustering: 'Clustering model' };
 
 /** The small state line under a model's menu row: where the model stands and the
- *  rough time, or why it can't train (SPEC workbench-redesign §6). "≈ 15 s" is the
+ *  rough time, or why it can't train. "≈ 15 s" is the
  *  Relation model's time; the other kinds print their own (≈ 1 s / ≈ 2 s). */
 export function trainMenuStateLine(m: SensorTrainMenuModel): string {
     const p = m.plan;
@@ -427,7 +427,7 @@ export function QueuedCard({ kind, position, waitSeconds, current }: {
     );
 }
 
-/** Health score page, after a run — ONE line (SPEC workbench-redesign §4):
+/** Health score page, after a run — ONE line:
  *  "Trained in the run 22:41 · 7 need set points · this is 3 of 7 · Next needing set points ›". */
 export function RunSetPointsBanner({ at, inRun, position, onNext, nextDisabled }: {
     at: number;

@@ -3,9 +3,8 @@ import type { SensorMetadata, SpecialSensorRecipe } from '../../types';
 import { normalizeSensorTag } from '../../hooks/useSensorMetaMap';
 
 /**
- * Customer items 3 + 4 (2026-10-09, SPEC FINAL `docs/design/handoff/customer-batch-2026-10/README.md`
- * §1, DESIGN_SYSTEM §4 "Sensor label"): the data every sensor label, picker row and tooltip
- * needs, resolved from the tag.
+ * The data every sensor label, picker row and tooltip needs, resolved from the tag
+ * (DESIGN_SYSTEM §4 "Sensor label"; spec: `docs/design/handoff/customer-batch-2026-10/README.md` §1).
  *
  * Metadata reaches the components through React context (`SensorMetaProvider`), never through a
  * module-level registry: each window wraps its tree once, and a panel that receives its own
@@ -135,8 +134,8 @@ const HUGE = 1e15;
 const trimZeros = (s: string): string => s.replace(/(\.\d*?)0+(?=$|e)/, '$1').replace(/\.(?=$|e)/, '');
 
 /**
- * The ONE display number formatter for COMPUTED values (SPEC §1 "Number formatter"; tooltips,
- * the tag-point box, stats): en-US, thousands separators, up to 3 decimals (`fixed3` = always 3,
+ * The ONE display number formatter for COMPUTED values (tooltips, the tag-point box,
+ * stats): en-US, thousands separators, up to 3 decimals (`fixed3` = always 3,
  * for value columns that must line up). Never for a value the user typed (`fmtNumText` /
  * `fmtNumExact`), `<input>` values or CSV.
  *  - 0 < |v| < 0.001 → 3 significant digits (`toPrecision(3)`), so a non-zero value never shows

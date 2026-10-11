@@ -47,9 +47,7 @@ function nearestXIndex(xData: (string | null)[], targetMs: number): number {
 // blue/violet, pink vs rose) are pushed to the tail so they only appear once
 // 9+ sensors are selected simultaneously — an already-crowded chart where
 // some hue closeness beats the alternative of wrapping back to a color
-// already in use (`% LINE_CHART_COLORS.length` in Dashboard.tsx). Was 6
-// colors; doubled to 12 after a report that a 7th selected sensor reused the
-// 1st sensor's exact color.
+// already in use (`% LINE_CHART_COLORS.length` in Dashboard.tsx).
 export const LINE_CHART_COLORS = [
     "#3b82f6", // blue
     "#10b981", // emerald
@@ -71,13 +69,12 @@ export const LINE_CHART_COLORS = [
  * the "Selected Sensor" tab's color swatch always shows the same default the
  * chart itself would use.
  *
- * This exists because `sensors[index % colors.length]` silently disagreed
- * between callers: the chart only ever sees the currently-VISIBLE subset
+ * An index (`sensors[index % colors.length]`) would disagree between
+ * callers: the chart only ever sees the currently-VISIBLE subset
  * (`displayHeaders`), while the Selected Sensor tab iterates the full
- * selection — hiding one sensor shifted every later sensor's index in the
- * chart but not in the tab, so an unrelated sensor's swatch stopped matching
- * its actual line color. Hashing the tag itself removes the shared "index"
- * both sides would otherwise need to agree on.
+ * selection — hiding one sensor would shift every later sensor's index in
+ * the chart but not in the tab. Hashing the tag itself removes the shared
+ * "index" both sides would otherwise need to agree on.
  */
 export function defaultSensorColor(sensor: string, palette: string[] = LINE_CHART_COLORS): string {
     let hash = 0;
@@ -103,7 +100,7 @@ function LineChart({
 
     // Label + unit lookup for the hover tooltip and the tag-point boxes — covers both mapping-CSV
     // sensors and runtime "special" (calculated) sensors, since Dashboard.tsx merges both into the
-    // same `sensorMetadata` array before it reaches here (customer item 3: description first).
+    // same `sensorMetadata` array before it reaches here (description first).
     const sensorLookup = useLayeredSensorLookup(sensorMetadata);
 
     // Tag Point — pin 2+ points on the chart to compare their values.
@@ -181,12 +178,10 @@ function LineChart({
     // true` (ResponsiveECharts' default) — so ordinary interactions don't
     // blow away the user's own pan/zoom. But that also means: zoom in to a
     // narrow window, then widen the Time Range filter so the backend
-    // returns a much longer span, and the SAME start/end percentages now
-    // cover only a sliver of the new, larger range — the chart silently
-    // keeps showing a fraction of the data instead of the full new window,
-    // and the slider at the bottom visibly shrinks to match (regression
-    // reported 2026-09-16, screenshot showed the plotted x-axis stopping
-    // partway through the selected Time Range).
+    // returns a much longer span, and the SAME start/end percentages would
+    // cover only a sliver of the new, larger range — without the reset the
+    // chart would silently keep showing a fraction of the data instead of
+    // the full new window.
     const rangeId = xData.length > 0 ? `${xData[0]}|${xData[xData.length - 1]}|${xData.length}` : 'empty';
     const prevRangeIdRef = useRef(rangeId);
     const rangeChanged = rangeId !== prevRangeIdRef.current;
@@ -392,15 +387,10 @@ function LineChart({
         };
     }, []);
 
-    // Visual refresh (2026-10-02): these used to be a leftover slate-blue
-    // palette (Tailwind slate-100/400/700, e.g. `#334155`) that predated
-    // the app's Linear/Vercel-style dark refresh and never matched its
-    // neutral gray tokens (`--text-primary`/`--text-secondary`/
-    // `--border-strong`/`--pop` in App.css). ECharts renders to canvas, so
-    // it can't read CSS custom properties directly — these are the same
-    // literal values those tokens resolve to, kept in sync by eye rather
-    // than at runtime. Look only: same axis labels, grid lines, tag
-    // callouts and tooltip, just recoloured to match the rest of the app.
+    // ECharts renders to canvas, so it can't read CSS custom properties
+    // directly — these are the literal values the App.css tokens
+    // (`--text-primary`/`--text-secondary`/`--border-strong`/`--pop`)
+    // resolve to, kept in sync by eye rather than at runtime.
     const txtPrimary  = '#ededef';
     const txtSecondary = '#8c8c94';
     const gridLine    = '#2a2a30';
@@ -445,10 +435,8 @@ function LineChart({
                 .filter((v): v is NonNullable<typeof v> => v !== null)
             : [];
 
-        // Always a tinted background band — the Highlights tab's old Band /
-        // Line colour switch was removed 2026-10-08 (customer: the Line
-        // colour mode was never used), so a workspace saved with
-        // `highlightLineDisplay: 'line'` now draws bands too. A distinct
+        // Always a tinted background band (a workspace saved with
+        // `highlightLineDisplay: 'line'` draws bands too). A distinct
         // ECharts mechanism from the horizontal markLine used for alarm
         // setpoints above/below. Attached to the first series only:
         // markArea renders across the shared grid regardless of which
@@ -483,11 +471,10 @@ function LineChart({
         const gridRight = AXIS_BASE_PAD + Math.max(0, rightCount - 1) * AXIS_OFFSET;
 
         // ── Dynamic vertical layout (pixel values, clamped to container) ──
-        // Ideal full-size reservations. No slider reservation anymore — the
-        // dataZoom 'slider' component (the always-visible bottom bar) was
-        // removed in favour of the toolbox's explicit Horizontal Zoom tool
-        // (see the toolbox JSX and its own dataZoom/mouse-drag handling
-        // above), per explicit user request ("เอา side scrollbar zoom ออก").
+        // Ideal full-size reservations. No slider reservation: there is no
+        // dataZoom 'slider' component — explicit zooming is the toolbox's
+        // Horizontal Zoom tool (see the toolbox JSX and its own
+        // dataZoom/mouse-drag handling above).
         const X_AXIS_LABEL_H = 24;
         const GAP_ABOVE_XAXIS = 6;
         const idealBottom = X_AXIS_LABEL_H + GAP_ABOVE_XAXIS;
@@ -554,7 +541,7 @@ function LineChart({
                     // at a fabricated y value.
                     if (anchorValue == null) return null;
                     const badge = TAG_BADGES[order % TAG_BADGES.length];
-                    // Customer item 3 (review ruling a): ECharts rich text — a description segment
+                    // ECharts rich text — a description segment
                     // (200 px, truncates), the tag as its own segment, then value + unit in a
                     // fixed right-aligned column; the box stays about 330 px wide. The hover
                     // tooltip carries the full name. `{ } |` would break the rich-text syntax.
@@ -638,9 +625,7 @@ function LineChart({
             const rawValues = columnar
                 ? (columnar.series[sensorIdx] ?? [])
                 : data.map(d => d.values[sensorIdx] ?? null);
-            // Time axis: each point carries its own x value now — a bare
-            // value array (the old category-axis shape, positioned via the
-            // shared `xAxis.data`) no longer has anywhere to place itself.
+            // Time axis: each point carries its own x value.
             const pairedData = rawValues.map((v, i) => [toMs(xData[i]), v]);
             return {
                 name: sensor,
@@ -758,12 +743,11 @@ function LineChart({
                         // Aggregated values (Avg etc.) are raw floating-point
                         // divisions with no rounding applied upstream — fix
                         // the tooltip display to 3 decimals (with thousands
-                        // separators, customer item 3) regardless of sensor or
-                        // aggregation method.
+                        // separators) regardless of sensor or aggregation method.
                         const displayValue = typeof rawValue === 'number' ? fmtNum(rawValue, true) : String(rawValue ?? '—');
-                        // Customer item 3: inline label left (description then
-                        // tag), value + unit right in the series colour. Unit
-                        // from master data — absent unit → omitted.
+                        // Inline label left (description then tag), value + unit
+                        // right in the series colour. Unit from master data —
+                        // absent unit → omitted.
                         const info = sensorLookup(String(p.seriesName));
                         content += sensorInlineHtml(info, typeof p.color === 'string' ? p.color : undefined, `${displayValue}${info.unit ? ` ${info.unit}` : ''}`);
                     });
@@ -783,47 +767,38 @@ function LineChart({
             animation: !isLargeData,
             animationDuration: 250,
             animationDurationUpdate: 150,
-            // Just the invisible 'inside' component now — no 'slider' (the
-            // always-visible bottom bar), removed per explicit user request
-            // in favour of the toolbox's Horizontal Zoom tool below. 'inside'
-            // still gives scroll-wheel zoom and drag-to-pan on the chart
-            // itself for free; only the visible bar is gone.
+            // Just the invisible 'inside' component — no 'slider' (the
+            // always-visible bottom bar); the toolbox's Horizontal Zoom tool
+            // below covers explicit zooming. 'inside' gives scroll-wheel zoom
+            // and drag-to-pan on the chart itself.
             dataZoom: [
                 {
                     type: 'inside', xAxisIndex: [0], filterMode: 'filter',
-                    // Deliberately NOT `disabled: zoomSelectMode` (tried,
-                    // reverted — regression 2026-09-16): the drag overlay
-                    // rectangle showed correctly during a drag (pure React/
-                    // DOM state, unaffected either way), but the actual zoom
-                    // never applied on release. `disabled` takes effect the
-                    // instant it's set on the chart's *currently active*
-                    // option — i.e. for the whole drag, since React doesn't
-                    // re-render mid-gesture — and a `dispatchAction({type:
-                    // 'dataZoom', ...})` fired at mouseup while its target
-                    // component is still disabled is silently a no-op. Left
-                    // enabled throughout instead; 'inside''s own native
-                    // drag-to-pan can run alongside the custom drag handler
-                    // during the gesture, but the mouseup handler's own
-                    // explicit startValue/endValue dispatch always sets the
-                    // final, definitive view afterward regardless.
+                    // Deliberately NOT `disabled: zoomSelectMode`: `disabled`
+                    // takes effect the instant it's set on the chart's
+                    // *currently active* option — i.e. for the whole drag,
+                    // since React doesn't re-render mid-gesture — and a
+                    // `dispatchAction({type: 'dataZoom', ...})` fired at
+                    // mouseup while its target component is still disabled is
+                    // silently a no-op. Left enabled throughout instead;
+                    // 'inside''s own native drag-to-pan can run alongside the
+                    // custom drag handler during the gesture, but the mouseup
+                    // handler's own explicit startValue/endValue dispatch
+                    // always sets the final, definitive view afterward.
                     // Force back to the full view exactly when `rangeId`
                     // (above) shows the underlying data actually changed —
                     // omitted on every other re-render so ECharts keeps
-                    // whatever window the user is currently panned/zoomed
-                    // to, same as before this fix.
+                    // whatever window the user is currently panned/zoomed to.
                     ...(rangeChanged ? { start: 0, end: 100 } : {}),
                 },
             ],
             xAxis: {
                 // 'time' — not 'category'. A category axis spaces every
                 // plotted point EQUALLY regardless of the real gap between
-                // their timestamps, so a 10-minute gap and a 10-hour gap
-                // (e.g. a sparse region after a filter) rendered at the
-                // exact same pixel width — the reported bug. A time axis
-                // positions each point proportionally to its real elapsed
-                // time instead. `axisLabel`'s `val` is now a numeric ms
-                // timestamp rather than the raw string that used to come
-                // from `xAxis.data` — `new Date(val)` still parses either.
+                // their timestamps (a 10-minute gap and a 10-hour gap would
+                // render at the same pixel width); a time axis positions
+                // each point proportionally to its real elapsed time.
+                // `axisLabel`'s `val` is a numeric ms timestamp.
                 type: 'time',
                 axisLabel: { formatter: (val: number) => formatDate(new Date(val)), color: txtSecondary },
                 axisLine: { lineStyle: { color: gridLine } }

@@ -1,9 +1,9 @@
 /**
- * Train queue (customer batch 2026-10, items 8 + 9 — "Train sensor" / "Train all").
+ * Train queue ("Train sensor" / "Train all").
  *
  * Shared shapes for `useTrainQueue` (`src/hooks/useTrainQueue.ts`) and its pure
  * helpers (`src/utils/trainQueue.ts`). No Tauri command is involved: the queue
- * drives the Build Model window's existing per-model train (`executeTrain`),
+ * drives the Build Model window's per-model train (`executeTrain`),
  * which is injected as a plain function, one model at a time.
  */
 

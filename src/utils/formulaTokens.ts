@@ -1,5 +1,5 @@
 /**
- * Tokenizer of the special-sensor formula text (customer batch 2026-10, item 6)
+ * Tokenizer of the special-sensor formula text
  * -- the TypeScript twin of Rust's `scan_sensor_refs` (`src-tauri/src/lib.rs`)
  * plus `formula_diagnostics::tokenize`, so a sensor name, a number or a bracket
  * never splits differently here than in the gate that decides.

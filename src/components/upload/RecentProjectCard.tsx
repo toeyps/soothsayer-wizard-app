@@ -47,7 +47,7 @@ const NO_PRESS: PressRecord = { inActions: false, touch: false, actionsShown: fa
 /**
  * "n failure groups" with a colour square per group (up to three, the
  * Dashboard's own group colours), or a neutral dashed "No failure groups" —
- * never amber, having none is not a warning (customer batch 2026-10, item 5).
+ * never amber, having none is not a warning.
  * Nothing at all for a project saved before the count was recorded; it
  * appears after that project's next save.
  */
@@ -126,8 +126,7 @@ function InteractiveProjectCard({
   // the text the user just cancelled).
   const editDoneRef = useRef(false);
   /** The time / Rename / Delete cell. Nothing that happens inside it may ever
-   *  open the project (2026-10-09 real-app bug: clicking Rename or Delete in
-   *  the Tauri/WebView2 app opened the workspace instead). */
+   *  open the project. */
   const actionsCellRef = useRef<HTMLDivElement>(null);
   /** Where the current pointer press started, recorded in the capture phase
    *  before anything re-renders: a press that began inside the actions cell
@@ -345,13 +344,11 @@ function InteractiveProjectCard({
 
       {/* Time and actions share one cell: actions take over on hover/focus,
           but stay in the DOM (and the tab order) the whole time.
-          2026-10-09 real-app bug (reproduced in Chromium): while the actions
-          were shown, the time label (opacity 0) sat ON TOP of the Rename /
-          Delete buttons -- an element with opacity < 1 forms a stacking
-          context and paints above a plain sibling at opacity 1 -- so a
-          click on the pencil or the trash hit the invisible "2 h ago" and
-          bubbled to the card: "open". Now the label never takes clicks,
-          the buttons sit on their own layer above it, the buttons are always
+          An element with opacity < 1 forms a stacking context and paints
+          above a plain sibling at opacity 1, so the hidden time label would
+          otherwise sit ON TOP of the Rename / Delete buttons and a click on
+          them would bubble to the card ("open"). So: the label never takes
+          clicks, the buttons sit on their own layer above it and are always
           hit-testable (only their visibility follows hover/focus), and the
           whole cell is a no-open zone (see handleCardClick). */}
       <div

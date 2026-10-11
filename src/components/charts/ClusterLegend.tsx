@@ -6,7 +6,7 @@ import { rgbaToHex } from './pairPlotColors';
 import { CLUSTER_NAME_MAX, cleanClusterName } from './pairPlotClusters';
 
 /**
- * Pair Plot cluster legend (customer batch phase 2, SPEC FINAL 2026-10-09 §2).
+ * Pair Plot cluster legend.
  * A chip row in the strip above the matrix (and in the enlarged view's footer):
  * per cluster the shared ColourPicker swatch + the name (renamable in place) +
  * a small × to remove that one cluster. "Clear" removes every cluster and only

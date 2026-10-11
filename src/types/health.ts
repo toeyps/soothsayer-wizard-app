@@ -1,5 +1,5 @@
 /**
- * Health score command contract (2026-10-03, phase 3a) — the TypeScript twin of
+ * Health score command contract — the TypeScript twin of
  * the Rust types in `src-tauri/src/health_preview.rs`, `health_score.rs` and
  * `model_export.rs`.
  *
@@ -100,8 +100,8 @@ export interface HealthPreviewRequest {
 }
 
 /** One scoring period on the wire: start → end only (`''` → `null`). Rust
- *  still accepts and ignores a legacy `label` / `event_time`, but they are no
- *  longer sent (2026-10-10, "just score it"). */
+ *  still accepts and ignores a legacy `label` / `event_time`, but they are
+ *  not sent. */
 export interface TestPeriodWire {
     start: string | null;
     end: string | null;
@@ -124,8 +124,7 @@ export interface ValidationTrainSummary {
 }
 
 /** Results for one scoring period, scored with the TRAIN-only model. Facts
- *  only — no label, no event time, no lead time and no verdict (removed
- *  2026-10-10, "just score it"). */
+ *  only — no label, no event time, no lead time and no verdict. */
 export interface TestPeriodResult {
     /** 1-based position in the request's `test_periods` (S1 = index 1) — Rust
      *  sends `i + 1`. The UI numbers periods by list position; don't mix the two. */

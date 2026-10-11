@@ -38,15 +38,14 @@ const STEPS: RailStep[] = [
 ];
 
 /**
- * Left rail of setup steps 1-3 (replaces the old "Find workspace / Recent"
- * sidebar): the four steps vertically, a summary of what was entered under the
- * completed ones, a faint non-interactive machine illustration, and an
- * "All projects" button back to the Get-started page.
+ * Left rail of setup steps 1-3: the four steps vertically, a summary of what
+ * was entered under the completed ones, a faint non-interactive machine
+ * illustration, and an "All projects" button back to the Get-started page.
  *
  * Step 4 is never clickable: it becomes current only for the moment the
  * Dashboard opens after step 3 (Open Dashboard / Skip), and nothing in the rail
  * is clickable then. The page renders the rail AFTER the step in DOM order, so
- * Tab reaches the step's own controls first (customer batch 2026-10, item 5).
+ * Tab reaches the step's own controls first.
  */
 export default function SetupRail({
   T, step, projectName, dataSummary, groupsSummary = null, groupsSkipped = false, onStepClick, onAllProjects,

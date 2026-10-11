@@ -1,15 +1,14 @@
 /*
- * Shared look of the Build Model Workbench charts (health score phase 3b-1).
+ * Shared look of the Build Model Workbench charts.
  *
  * ECharts renders to canvas and cannot read CSS custom properties, so these are
  * the literal values of the matching tokens in `src/App.css` (`--text-secondary`,
  * `--text-faint`, `--border`, `--ok`, `--warn`, `--danger` ...) — the same
  * convention LineChart.tsx uses. oklch() is NOT used here on purpose: ECharts'
  * own colour parser (gradients, opacity) is not guaranteed to understand it, so
- * the app's oklch tokens are approximated by the hex colours the approved
- * mockup's canvas ended up drawing.
+ * the app's oklch tokens are approximated by hex colours.
  *
- * Both the Model fit page (3b-1) and the Health score page (3b-2) draw from
+ * Both the Model fit page and the Health score page draw from
  * this file, so a band/line means the same colour on both.
  */
 import { fmtNum as fmtNumApp, fmtNumExact } from '../../sensor/sensorInfo';
@@ -19,7 +18,7 @@ export const CHART = {
     textSecondary: '#8c8c94',
     textFaint: '#5b5b63',
     gridLine: '#2a2a30',
-    /** Faint horizontal grid (matches the mockup's rgba(255,255,255,.05)). */
+    /** Faint horizontal grid. */
     splitLine: 'rgba(255, 255, 255, 0.06)',
     tooltipBg: 'rgba(23, 23, 28, 0.92)',
     tooltipBorder: 'rgba(255, 255, 255, 0.12)',
@@ -60,20 +59,20 @@ export const CHART_MONO = 'JetBrains Mono, Consolas, monospace';
  * Cluster 1, 2, … (the Clusters charts and the cluster-range slider in Model settings).
  * Blues and violets ONLY: green, amber and red mean score 100 / 80 / 0 on these charts (the
  * 1× / 3× / N× rings and the score-coloured points), so a cluster is never drawn in one of
- * them (workbench-redesign SPEC §3). Magenta is left out too — it is the scoring-period colour.
- * Slot 7 is a light indigo, not the mockup's slate: that slate is the pre-refresh axis grey the
- * app removed from every chart (VisualRefreshFinalSweep keeps it out of these files).
+ * them. Magenta is left out too — it is the scoring-period colour.
+ * Slot 7 is a light indigo, not slate: slate is the axis grey the app keeps out of every
+ * chart (VisualRefreshFinalSweep keeps it out of these files).
  */
 export const CLUSTER_COLORS = ['#3b82f6', '#a78bfa', '#38bdf8', '#818cf8', '#c084fc', '#60a5fa', '#a5b4fc', '#7dd3fc'] as const;
 
 export const FONT = 'Inter, system-ui, sans-serif';
 
 /*
- * Tick labels of VALUE axes (2026-10-09). A computed axis min/max (a histogram's max × 1.1, a
- * nice-extent step like 0.1 × 3) used to print float noise such as "1,713.8000000000002".
- * The labels must also stay DISTINCT however narrow the axis is, so they are never rounded to a
- * fixed 3 decimals (0.0012 / 0.0014 would both read "0.001"). Never use these on a time or
- * category axis.
+ * Tick labels of VALUE axes. A computed axis min/max (a histogram's max × 1.1, a
+ * nice-extent step like 0.1 × 3) would otherwise print float noise such as
+ * "1,713.8000000000002". The labels must also stay DISTINCT however narrow the axis
+ * is, so they are never rounded to a fixed 3 decimals (0.0012 / 0.0014 would both
+ * read "0.001"). Never use these on a time or category axis.
  */
 const groupedNumber = (v: number, maxDecimals: number): string =>
     new Intl.NumberFormat('en-US', { maximumFractionDigits: Math.max(0, Math.min(20, maxDecimals)) }).format(v);
@@ -150,7 +149,7 @@ export const shortDecimals = (v: number): number => {
 /** Up to this many decimals a stored cluster boundary reads as a value someone TYPED and is
  *  shown in full; more is float noise from auto-dividing or dragging (33.333333333333336). */
 export const TYPED_DECIMALS_MAX = 10;
-/** A cluster boundary for display (2026-10-09): every decimal of a typed-looking value
+/** A cluster boundary for display: every decimal of a typed-looking value
  *  (`fmtNumExact`, never rounded), the app's `fmtNum` for a computed one. */
 export function fmtClusterBound(v: number): string {
     const x = v === 0 ? 0 : v; // a negative zero reads "0", never "-0"

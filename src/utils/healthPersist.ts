@@ -10,8 +10,8 @@ import { testPeriodsKey } from './timePeriods';
 import { computeTrainFingerprint, isModelTrainedFresh } from './trainFingerprint';
 
 /**
- * The writes of the health-score flow (phase 3a, 2026-10-03; QA fixes
- * 2026-10-04). All go through `updateWorkspaceData` (read-modify-write against
+ * The writes of the health-score flow. All go through `updateWorkspaceData`
+ * (read-modify-write against
  * what is ON DISK, so a stale in-memory mirror can never revert another
  * window's change) and `withFailureGroupState` (never a hand-built slice), and
  * all broadcast `failure-group-state-changed` — carrying the WHOLE slice, with
@@ -76,7 +76,7 @@ export async function commitSetPoints(
 /**
  * Persist the validation verdict Rust gave for a model's SAVED set points so the
  * Dashboard's Failure Groups dot can show "Fix set point" / "Set points needed"
- * like the Build Model list (QA fix, 2026-10-04). Changes `healthVerdict` ONLY.
+ * like the Build Model list. Changes `healthVerdict` ONLY.
  * Writes nothing (and does not broadcast) when the model is gone, already has
  * this verdict, or is not trained-and-fresh on disk any more (a verdict of an
  * old fit must not stick to a new one). Returns the new workspace state when
@@ -148,7 +148,7 @@ export const SETTINGS_CHANGED_DURING_EXPORT_REASON =
  * window since): a model that is no longer fresh stays Incomplete and `reason`
  * says why — its files were written, but it is not reported complete.
  *
- * Two more races of the (up to ~15 s) export are closed here (QA fix, 2026-10-04):
+ * Two more races of the (up to ~15 s) export are closed here:
  *  - `race.fingerprint` (the model's `computeTrainFingerprint` at click time):
  *    the model on disk must STILL have it, both as its current fingerprint and as
  *    its `trainedFingerprint`. A model that was re-configured AND re-trained during
@@ -159,7 +159,7 @@ export const SETTINGS_CHANGED_DURING_EXPORT_REASON =
  *    hold the EXPORTED values, so `healthExport` records those; the newer values on
  *    disk are KEPT (never reverted to the exported ones) and the model is still marked
  *    Complete — the files exist and match the model that was trained — while the
- *    Health page's existing "Changed after saving / Mark complete again" hint
+ *    Health page's "Changed after saving / Mark complete again" hint
  *    tells the user the files are out of date. The saved verdict is only written
  *    ('valid') for the numbers that were actually validated.
  */
@@ -183,8 +183,8 @@ export async function persistModelComplete(
         res.reason = getBuildBlockReason(target, fg, headers);
         // At least one valid scoring period.
         if (res.reason === null) res.reason = markCompleteBlockReason(target, fg);
-        // A special sensor it was trained on changed its recipe since (customer
-        // batch 2026-10, item 6): not fresh either -- judged against DISK.
+        // A special sensor it was trained on changed its recipe since:
+        // not fresh either -- judged against DISK.
         if (res.reason === null && !isModelTrainedFresh(target, fg, prev.specialSensorRecipes)) res.reason = NOT_TRAINED_BLOCK_REASON;
         if (res.reason === null && race
             && (computeTrainFingerprint(target, fg) !== race.fingerprint || target.trainedFingerprint !== race.fingerprint)) {

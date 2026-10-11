@@ -15,22 +15,22 @@ import { isSessionLostError } from './staleSession';
  * if anything fails part-way -- put the session back the way it was.
  *
  * Why this is its own module: the recompute is a sequence of in-place column
- * overwrites (`replace: true`) with no transaction. A failure on the 3rd of 4
- * left the edited sensor's column holding the NEW formula's values while every
- * recipe still said the old one -- the chart showed numbers no recipe produces
- * until the workspace was reopened, and Cancel did not undo it. So a failure
- * after the first write is rolled back here: the recipes that were already
- * rewritten are recomputed from their ORIGINAL definitions (build order,
- * `replace: true`), and the half-built column of a rename is dropped.
+ * overwrites (`replace: true`) with no transaction. Without a rollback, a
+ * failure on the 3rd of 4 would leave the edited sensor's column holding the
+ * NEW formula's values while every recipe still says the old one -- the chart
+ * would show numbers no recipe produces until the workspace is reopened. So a
+ * failure after the first write is rolled back here: the recipes that were
+ * already rewritten are recomputed from their ORIGINAL definitions (build
+ * order, `replace: true`), and the half-built column of a rename is dropped.
  *
  * Everything is decided from `recipes` (the caller's FRESH list, read inside
  * the serial queue) and from references read from Rust right now -- never from
- * a cached lookup. A cached lookup that has not caught up with a just-saved
- * edit let `A -> $C*2` followed by `C -> $A+1` through as an A <-> C cycle.
+ * a cached lookup: one that has not caught up with a just-saved edit would let
+ * `A -> $C*2` followed by `C -> $A+1` through as an A <-> C cycle.
  */
 
 /**
- * What the edit lock (2026-10-03) is decided from -- read FRESH by the caller,
+ * What the edit lock is decided from -- read FRESH by the caller,
  * inside the serial queue, immediately before the edit runs.
  *
  * A special sensor that a model (or the workspace Running condition) uses --
@@ -59,7 +59,7 @@ export interface EditArgs {
      *  = no lock check (only callers that have no models to ask). */
     failureState?: EditFailureState;
     /**
-     * REPAIR mode (2026-10-08): the edited sensor could not be restored this
+     * REPAIR mode: the edited sensor could not be restored this
      * session (it has no column). `missingBefore` lists every special sensor
      * that had NO column right before the edit (the broken one and everything
      * skipped because of it), any case. Changes two things:
@@ -70,8 +70,8 @@ export interface EditArgs {
      *  - a rollback REMOVES the columns this edit created for sensors that had
      *    none, instead of recomputing their original recipes (those are
      *    known-bad: Rust refuses them before writing, so a "rollback" by
-     *    recompute left the rejected fix's values in place, and the sensor then
-     *    looked healthy).
+     *    recompute would leave the rejected fix's values in place, and the
+     *    sensor would then look healthy).
      * Never combined with a rename.
      */
     repair?: { missingBefore: string[] };

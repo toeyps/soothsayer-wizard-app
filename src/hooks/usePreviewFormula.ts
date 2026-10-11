@@ -10,13 +10,13 @@ import type {
 import { bindToGeneration, isStaleSessionText, StaleSessionError } from '../utils/staleSession';
 
 /**
- * The Formula editor's live check + preview (customer batch 2026-10, item 6):
+ * The Formula editor's live check + preview:
  * debounced, bounded calls of Rust's `preview_formula`, which answers with the
  * SAME gate, codes and messages Create / Save use, plus stats over every row
  * and a <= `maxPoints` min/max-preserving downsample.
  *
- * Decision (phase 5): the editor's live check moves from `validate_formula` to
- * `preview_formula`. `validate_formula` has no edit mode, so it applied the
+ * The live check is `preview_formula`, not `validate_formula`:
+ * `validate_formula` has no edit mode, so it would apply the
  * create-only refusals (`div_zero`, a one-source block) to a sensor being
  * EDITED, which Save (`replace: true`) skips -- the check and Save could
  * disagree. Sending `replace` here makes them answer alike. (`validate_formula`

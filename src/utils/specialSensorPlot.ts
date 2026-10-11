@@ -5,14 +5,11 @@ import type { SensorMetadata, SensorOperationConfig, SpecialSensorRecipe } from 
  * `add-sensor-selection`.
  *
  * `sensors` is a DELTA, not a selection: the tags the Dashboard should ADD to
- * whatever it is plotting right now. It used to be the window's own whole copy
- * of the selection, which the Dashboard swapped in wholesale -- so the SOURCE
- * sensors got plotted along with the new one, and any change the user made to
- * the plot after the window opened was thrown away (the window only learns the
- * plotted list once, when it opens).
+ * whatever it is plotting right now — never the window's own copy of the
+ * selection (the window only learns the plotted list once, when it opens, so
+ * its copy is not the truth).
  *
  *   created sensor -> just its own tag (never the sensors it was built from)
- *   "add as-is"    -> the raw sensors that were picked (nothing new to create)
  */
 export interface AddSensorSelectionPayload {
     workspaceId?: string;

@@ -2,12 +2,12 @@ import type { FailureModel } from '../types';
 import { effectiveRunningCondition, isCompleteCondition, type RunningConditionFg } from './runningCondition';
 
 /**
- * What a successful REPAIR of a special sensor does to the models (2026-10-08).
+ * What a successful REPAIR of a special sensor does to the models.
  *
- * A special sensor that could not be restored on reopen (Rust now refuses its
+ * A special sensor that could not be restored on reopen (Rust refuses its
  * recipe) can have its formula fixed even when a model uses it -- otherwise it
- * was a dead end. But the fix gives it (and everything built on it) NEW values,
- * and a model's train fingerprint (`computeTrainFingerprint`) only names the
+ * would be a dead end. But the fix gives it (and everything built on it) NEW
+ * values, and a model's train fingerprint (`computeTrainFingerprint`) only names the
  * sensors, not their recipes: a Complete model trained on the old values would
  * still read as Complete and fresh.
  *
@@ -21,8 +21,8 @@ import { effectiveRunningCondition, isCompleteCondition, type RunningConditionFg
  * this case cannot: `trainedFingerprint` is removed. With `lastTrainedAt` still
  * set, `isModelStale` (modelStatus.ts, the status truth) then reads the model
  * as "was trained, out of date" and Mark complete's trained-and-fresh check
- * requires a re-train -- the minimal change that makes the existing status
- * machinery see it; no new field. A re-train writes a fresh fingerprint.
+ * requires a re-train -- the minimal change that makes the status
+ * machinery see it; no extra field. A re-train writes a fresh fingerprint.
  *
  * "Trains on" = the fields that decide what a model is trained on (the same
  * ones `computeTrainFingerprint` uses): target, predictors, X / Y / criteria

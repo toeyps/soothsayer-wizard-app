@@ -67,7 +67,7 @@ interface DataUploadPageProps {
  * reporter. Returns the tags that have no data this session (failed +
  * skipped) so the caller can keep them off the plot.
  *
- * 2026-10-03: every replay command is pinned to `generation` -- the generation
+ * Every replay command is pinned to `generation` -- the generation
  * of the `load_csv` that produced THIS dataset -- so a second load that
  * overlapped this one (and replaced the Rust session) makes the replay fail
  * with `StaleSessionError` instead of building this workspace's sensors on
@@ -81,8 +81,8 @@ async function restoreSpecialSensors(recipes: SpecialSensorRecipe[], generation:
   if (failed.length + skipped.length > 0) {
     const parts = [
       failed.length > 0
-        // Each with the backend's reason (a removed source, or -- since
-        // 2026-10-08 -- a formula Rust now refuses, e.g. `$A * pi`).
+        // Each with the backend's reason (a removed source, or a formula
+        // Rust refuses, e.g. `$A * pi`).
         ? `${failed.length} special sensor${failed.length !== 1 ? 's' : ''} couldn't be restored: ${failed
             .map(tag => (errors?.[tag] ? `${tag} (${errors[tag]})` : tag))
             .join(', ')}.`
@@ -90,13 +90,12 @@ async function restoreSpecialSensors(recipes: SpecialSensorRecipe[], generation:
       skipped.length > 0
         ? `Skipped because they are built on a sensor that couldn't be restored: ${skipped.join(', ')}.`
         : null,
-      // What to DO (2026-10-08): the fix is editing the broken recipe, and it
+      // What to DO: the fix is editing the broken recipe, and it
       // works even when a model uses the sensor (only its name stays locked).
       failed.length > 0
         ? `To fix: on the Dashboard open Add Special Sensor > Manage and edit ${failed.length === 1 ? 'it' : 'each one'} (pencil) to correct the formula.`
-          // Only true for a skipped sensor whose OWN recipe is still accepted
-          // (2026-10-08 review): one that is refused too is then listed in
-          // Manage as needing its own fix.
+          // Only true for a skipped sensor whose OWN recipe is still accepted:
+          // one that is refused too is then listed in Manage as needing its own fix.
           + (skipped.length > 0
             ? ' Fixing it also rebuilds the skipped ones whose own formulas are still accepted; any that are not are then marked in Manage to fix the same way.'
             : '')
@@ -168,7 +167,7 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
   // focus-fallback below to decide whether to nuke a stuck loading state.
   const loadingStartedAtRef = useRef<number | null>(null);
 
-  // 2026-10-03: "latest click wins". Every open-workspace click takes the next
+  // "Latest click wins". Every open-workspace click takes the next
   // sequence number; only the newest load may replay sensors and hand over to
   // the Dashboard -- an older one that finishes late is discarded. The Rust
   // session is ONE shared object, so an older load_csv that lands after a
@@ -273,8 +272,8 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
     // The rail stays on screen with step 4 current ("Opening the Dashboard…")
     // while the new workspace is saved. Saving a fresh workspace's JSON is
     // near-instant (<50ms), so without a floor the swap flickers past and
-    // reads as abrupt; MIN_TRANSITION_MS is the same bridging pause the
-    // overlay used to give this path (not longer — nothing may get slower).
+    // reads as abrupt; MIN_TRANSITION_MS is a short bridging pause (not
+    // longer — nothing may get slower).
     const MIN_TRANSITION_MS = 500;
     setGroupsSkipped(skip);
     setStep(4);
@@ -340,9 +339,8 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
       backendPhaseRef.current += 1;
       inBackendPhase = true;
 
-      // Customer batch 2026-10 (item 6), user decision 2026-10-09: a legacy
-      // spreadsheet-style `round($A, 2)` is rewritten to the engine form
-      // `round($A * 100) / 100` BEFORE the replay (pure text, no dataset --
+      // A legacy spreadsheet-style `round($A, 2)` is rewritten to the engine
+      // form `round($A * 100) / 100` BEFORE the replay (pure text, no dataset --
       // once per open, outside the retry loop), so the sensor restores instead
       // of being refused. The rewrite (and the models it sends back to
       // Incomplete) is saved after the loop, in one write.
@@ -488,16 +486,10 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
         } catch { /* ignore */ }
       }
 
-      // Recent-workspace navigation used to branch here: `lastRoute ===
-      // 'failure-group'` spawned the standalone FailureGroupCreation.tsx
-      // window (destroying `main` first). That window is gone now —
-      // failure-group management lives inline in Dashboard's Sensor panel,
-      // so that route just renders Dashboard normally like `'dashboard'`
-      // does. Dashboard itself reads `initialState.lastRoute` to decide
-      // whether to land on the Failure Groups tab (`'failure-group'`) — see
-      // Dashboard.tsx. (The Predictive Model page no longer has its own
-      // route at all — it's reached only via Build Model's "Build Model →"
-      // button and never auto-resumes on workspace open.)
+      // `lastRoute === 'failure-group'` renders Dashboard normally, like
+      // `'dashboard'` does; Dashboard itself reads `initialState.lastRoute`
+      // to decide whether to land on the Failure Groups tab — see
+      // Dashboard.tsx.
       // Only the newest click hands over (a mapping load above may have taken
       // long enough for another workspace to be clicked).
       if (!isLatest()) return;
@@ -523,10 +515,9 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
   };
 
   // Deleting a whole workspace also removes its model output folder, which
-  // cannot be undone -- so the UI asks first. 2026-10-04: the confirmation is
-  // IN THE ROW ("Delete this project? [Delete] [Cancel]", RecentProjectCard /
-  // WorkspaceRow), replacing the earlier Tauri `ask` dialog; this handler only
-  // runs once the user has confirmed.
+  // cannot be undone -- so the UI asks first: the confirmation is IN THE ROW
+  // ("Delete this project? [Delete] [Cancel]", RecentProjectCard /
+  // WorkspaceRow); this handler only runs once the user has confirmed.
   const handleDeleteWorkspace = async (id: string) => {
     try {
       await deleteWorkspace(id);
@@ -662,8 +653,7 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
       <div style={{ display: "grid", gridTemplateColumns: "268px minmax(0, 1fr)", background: T.bg, flex: 1, minHeight: 0 }}>
         {/* The step (content + footer) comes FIRST in DOM order and the rail
             after it, placed back into the left column by the grid — so on
-            every step Tab reaches the step's own controls before the rail
-            (customer batch 2026-10, item 5). */}
+            every step Tab reaches the step's own controls before the rail. */}
         <div style={{ display: "flex", flexDirection: "column", minWidth: 0, minHeight: 0, gridColumn: 2, gridRow: 1 }}>
           <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "34px 40px 24px", display: "flex", flexDirection: "column" }}>
             {workspaceError && (

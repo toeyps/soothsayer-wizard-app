@@ -480,9 +480,6 @@ function PairPlotCell({
         }
     }, [sc, resetTick, reportZoomed]);
 
-    // (Selection sync used to live here. Highlight now happens via the
-    // cluster-driven `valueA` re-upload + palette swap above.)
-
     const yTicks = useMemo(() => makeTicks(visibleBounds.yMin, visibleBounds.yMax, 3), [visibleBounds]);
     const xTicks = useMemo(() => makeTicks(visibleBounds.xMin, visibleBounds.xMax, 3), [visibleBounds]);
 

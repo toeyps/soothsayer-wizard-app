@@ -17,21 +17,20 @@ interface SensorSelectionProps {
     onSensorChange: (sensors: string[]) => void;
     /** When set, selecting a NEW sensor once selectedSensors.length has
      *  already reached this count is a no-op — used to hard-block picking a
-     *  5th sensor while Pair Plot is active (WebGL context exhaustion), per
-     *  the user's explicit "don't let the click through" preference over
-     *  silently redirecting away from the chart afterward. Deselecting is
-     *  never blocked. */
+     *  5th sensor while Pair Plot is active (WebGL context exhaustion): the
+     *  click is blocked rather than silently redirecting away from the chart
+     *  afterward. Deselecting is never blocked. */
     maxSelectable?: number;
     sensorMetadata: SensorMetadata[] | null;
     fgGroups: FailureGroup[];
     fgModels: FailureModel[];
     getGroupColor: (groupNo: number) => string;
     /** Toggles a specific (sensor, group, kind) membership on/off — creates
-     *  or reuses a model of that kind for this sensor (2026-08-31: a sensor
-     *  can now carry more than one model kind at once, e.g. both Individual
-     *  and Relationship, not just more than one group). One control does
-     *  both add and remove, no separate confirm step — clicking an
-     *  already-member kind removes it, clicking an absent one adds it. */
+     *  or reuses a model of that kind for this sensor (a sensor can carry
+     *  more than one model kind at once, e.g. both Individual and
+     *  Relationship, and more than one group). One control does both add and
+     *  remove, no separate confirm step — clicking an already-member kind
+     *  removes it, clicking an absent one adds it. */
     onToggleSensorGroupKind: (tag: string, groupNo: number, kind: ModelKind) => void;
     onCreateGroupForSensor: (tag: string, name: string) => void;
     onRenameGroup: (groupNo: number, name: string) => void;
@@ -39,10 +38,9 @@ interface SensorSelectionProps {
     /** Which alarm setpoint lines are toggled on, per sensor tag. */
     alarmLinesEnabled: Record<string, AlarmLevel[]>;
     onToggleAlarmLine: (tag: string, level: AlarmLevel) => void;
-    /** "Assign sensors →" on a Failure Groups card (customer batch 2026-10,
-     *  item 5): the group being filled. A bar names it, component counts read
-     *  "assigned / total" for it, and the assignment sheet pins it first.
-     *  `null`/omitted = the ordinary Sensor tab. */
+    /** "Assign sensors →" on a Failure Groups card: the group being filled. A
+     *  bar names it, component counts read "assigned / total" for it, and the
+     *  assignment sheet pins it first. `null`/omitted = the ordinary Sensor tab. */
     assignGroupNo?: number | null;
     /** The bar's Done — the Dashboard goes back to the Failure Groups tab. */
     onAssignDone?: () => void;
@@ -84,12 +82,12 @@ export default function SensorSelection({
     // not scanning a flat 133-row list.
     const [expandedComponents, setExpandedComponents] = useState<Set<string>>(new Set());
     // Which sensor the Failure Group Assignment sheet (FailureGroupAssignSheet)
-    // is open for — `null` = closed. 2026-10-03: this replaced an
-    // AnchoredPopover menu with a full-height sheet docked to the left edge of
-    // the Sensors panel; it is NOT dismissed by scrolling the list or clicking
-    // inside the panel, only by the triggers listed above `closeSheet` below.
-    // A sensor can belong to more than one group (and kind), so the sheet is a
-    // matrix of toggles, not a single-select assignment.
+    // is open for — `null` = closed. A full-height sheet docked to the left
+    // edge of the Sensors panel; it is NOT dismissed by scrolling the list or
+    // clicking inside the panel, only by the triggers listed above
+    // `closeSheet` below. A sensor can belong to more than one group (and
+    // kind), so the sheet is a matrix of toggles, not a single-select
+    // assignment.
     const [fgSheetFor, setFgSheetFor] = useState<string | null>(null);
     // Which sensor's alarm-setpoint checkbox list is open. Closed by default
     // for every sensor — the icon only appears when the sensor actually HAS
@@ -199,19 +197,17 @@ export default function SensorSelection({
     // collapsed, or a search that doesn't match, both remove a sensor's row from
     // the DOM without the sensor itself ever being deselected. `fgSheetFor` /
     // `alarmPanelFor` (and the alarm popover's captured anchor rect) are state
-    // local to THIS component, not tied to the row's lifecycle, so they used to
-    // just sit there while hidden — collapsing then re-expanding the group (or
-    // filtering the row out then clearing the search) remounted the popover at
-    // the stale rect captured before the row disappeared (QA sweep,
-    // 2026-10-02; same bug class as Dashboard.tsx's selectedSensors prune
-    // effect for colorPickerFor/axisEditorFor). One shared effect, keyed on the
+    // local to THIS component, not tied to the row's lifecycle, so without
+    // this effect collapsing then re-expanding the group (or filtering the row
+    // out then clearing the search) would remount the popover at the stale rect
+    // captured before the row disappeared. One shared effect, keyed on the
     // actual visible row set, closes whichever panel's row just left it —
-    // covers both the collapse/expand and the filter-out/clear-search path, and
-    // also a sensor that disappears from `sensors` altogether (a deleted
-    // special sensor), so a further "row disappeared" trigger needs no one-off
-    // fix. The assignment sheet follows the same rule: with its row gone there
-    // is nothing for its arrow to point at, so it closes (its own ‹ › buttons
-    // expand the target's component in the SAME update, so they never trip it).
+    // covers the collapse/expand path, the filter-out/clear-search path, and a
+    // sensor that disappears from `sensors` altogether (a deleted special
+    // sensor). The assignment sheet follows the same rule: with its row gone
+    // there is nothing for its arrow to point at, so it closes (its own ‹ ›
+    // buttons expand the target's component in the SAME update, so they never
+    // trip it).
     const visibleSensorSet = useMemo(() => {
         const visible = new Set<string>();
         for (const [component, compSensors] of groupedSensors) {
@@ -244,14 +240,9 @@ export default function SensorSelection({
     }, [scrollToSensor, visibleSensorSet]);
 
     // Membership index: sensor tag (lower-cased) -> set of "<groupNo>:<kind>".
-    //
-    // 2026-09-03 perf: this used to be derived inside renderSensorRow as
-    // `fgGroups.flatMap(g => ALL_KINDS.filter(kind => fgModels.some(...)))`,
-    // i.e. a full scan of `fgModels` for every (group, kind) pair of every
-    // rendered row — O(rows x groups x kinds x models), recomputed on every
-    // render, so every keystroke in the search box paid for all of it. With
-    // 11 groups x 3 kinds that was 33 whole-array scans per row. Building
-    // the index once per `fgModels` change makes each row's lookups O(1).
+    // Built once per `fgModels` change, so each row's lookups are O(1) instead
+    // of a scan of `fgModels` for every (group, kind) pair of every rendered
+    // row on every render (every keystroke in the search box).
     const membershipIndex = useMemo(() => {
         const index = new Map<string, Set<string>>();
         for (const m of fgModels) {
@@ -271,9 +262,9 @@ export default function SensorSelection({
     // Typing in the search box re-filters the list under an open panel. The
     // alarm popover (positioned from a one-time captured rect) would float over
     // the wrong spot, so — like AnchoredPopover's own scroll/resize rule — it
-    // closes. The assignment sheet closes on a keystroke too (2026-10-03 spec:
-    // "search changes" is one of its dismissals); clearing the search through
-    // its ‹ › buttons is a programmatic change, not typing, so it keeps it open.
+    // closes. The assignment sheet closes on a keystroke too ("search changes"
+    // is one of its dismissals); clearing the search through its ‹ › buttons is
+    // a programmatic change, not typing, so it keeps it open.
     const handleSearchChange = (value: string) => {
         setSearchTerm(value);
         if (fgSheetFor) setFgSheetFor(null);
@@ -393,7 +384,7 @@ export default function SensorSelection({
                             onChange={() => handleSensorToggle(sensor)}
                             onClick={(e) => e.stopPropagation()}
                         />
-                        {/* Customer item 3: the stacked SensorLabel — description + unit chip,
+                        {/* The stacked SensorLabel — description + unit chip,
                             tag on line 2, full name in the title when it truncates. */}
                         <label htmlFor={`sensor-${sensor}`} onClick={(e) => e.stopPropagation()} className="sensor-row-label">
                             <SensorLabel tag={sensor} info={sensorLookup(sensor)} />
@@ -451,16 +442,9 @@ export default function SensorSelection({
                                     background: 'var(--fg-tint)', color: 'var(--fg-dot)',
                                 }}
                             >
-                                {/* 2026-08-31: leads the chip now (was a
-                                    small dim letter buried after the group
-                                    name) — still not prominent enough per
-                                    direct user follow-up ("sensor แทบไม่เยอะ
-                                    เท่าไหร่"), so it's bigger still and
-                                    goes first, same lead-with-the-badge
-                                    order the FG tab uses (confirmed clear
-                                    by the user there). Reuses
-                                    `.model-kind-icon--*`, the exact class
-                                    Build Model's own model rows use. */}
+                                {/* The kind badge leads the chip. Reuses
+                                    `.model-kind-icon--*`, the class Build
+                                    Model's own model rows use. */}
                                 <span
                                     className={`model-kind-icon model-kind-icon--${kind}`}
                                     style={{ width: '16px', height: '16px', borderRadius: '4px', fontSize: '0.62rem', flexShrink: 0 }}

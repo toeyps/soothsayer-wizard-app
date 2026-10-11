@@ -228,7 +228,7 @@ function ResetViewButton({ canReset, onReset }: { canReset: boolean; onReset: ()
 }
 
 function PairPlotChart({ data, sensors, headers, sensorMetadata }: ChartProps) {
-    // Customer item 3: axis hover cards and the hover tooltip resolve labels through this lookup.
+    // Axis hover cards and the hover tooltip resolve labels through this lookup.
     const sensorLookup = useLayeredSensorLookup(sensorMetadata);
     /** Ordered list of brushed clusters. Each lasso pushes a new entry; the
      *  user can recolour, rename or remove any cluster from the legend chips
@@ -249,11 +249,8 @@ function PairPlotChart({ data, sensors, headers, sensorMetadata }: ChartProps) {
     /** Ids (each cell instance's own `useId`) of the cells — matrix and
      *  enlarged view — currently zoomed or panned away from their full
      *  extent. Empty = the ↺ button has nothing to undo and says so instead
-     *  of silently doing nothing. 2026-10-09 real-app report "↺ does
-     *  nothing": verified in Chromium that ↺ DOES restore a zoomed or panned
-     *  cell; with nothing zoomed (the default — lasso mode, no wheel zoom
-     *  yet) it has no visible effect, and since customer batch phase 2 it no
-     *  longer clears clusters either, so the click looked dead. */
+     *  of silently doing nothing (↺ restores zoom / pan only; it does not
+     *  clear clusters). */
     const [zoomedCells, setZoomedCells] = useState<ReadonlySet<string>>(() => new Set());
     const handleZoomChange = useCallback((cellId: string, zoomed: boolean) => {
         setZoomedCells(prev => {
@@ -566,7 +563,7 @@ function PairPlotChart({ data, sensors, headers, sensorMetadata }: ChartProps) {
                         zIndex: 200,
                     }}
                 >
-                    {/* Customer item 3: inline label + value + unit. */}
+                    {/* Inline label + value + unit. */}
                     <div className="tt-row">
                         <span className="tt-label">
                             {hover.isTimeAxis ? <span className="tt-desc">Time</span> : <SensorInline tag={hover.sensorX} size="sm" />}

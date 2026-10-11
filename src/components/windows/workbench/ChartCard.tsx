@@ -4,11 +4,11 @@ import ResponsiveECharts from '../../charts/ResponsiveECharts';
 import { isPickerSurfaceOpen } from '../../sensor/SensorPicker';
 
 /*
- * A chart card of the Build Model Workbench (mockup `.cc`): title + subtitle,
+ * A chart card of the Build Model Workbench: title + subtitle,
  * optional controls on the right, an Expand button, the chart, an optional
  * legend row, and the "Out of date" overlay while the model is stale.
  *
- * Both pages use it: Model fit (3b-1) and Health score (3b-2). Expanding opens
+ * Both pages use it: Model fit and Health score. Expanding opens
  * a large copy of the SAME chart (same option, same data — nothing is
  * re-fetched) in the app's usual full-screen chart modal; Esc / the backdrop /
  * the X close it.
@@ -25,7 +25,7 @@ export interface ChartCardProps {
     id: string;
     title: string;
     sub?: ReactNode;
-    /** Spans every column of the board (mockup `.full`). */
+    /** Spans every column of the board. */
     full?: boolean;
     size?: ChartCardSize;
     /** Controls shown right of the title, before the Expand button. */

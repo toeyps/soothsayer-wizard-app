@@ -10,35 +10,27 @@ import { SensorInline } from '../sensor/SensorLabel';
 import { sensorTitle, useSensorLookup } from '../sensor/sensorInfo';
 
 /*
- * Build Model window: the Step-1 card that replaced the old one-line
- * `.bmw-rcbar` (approved mockup WKZxQbvJZLQiMLvMDEFoqq, 2026-10-03).
- * Presentation only — the persisted state, the build gate and the settings
- * modal all stay in BuildModelWindow. Since 2026-10-07 the "Which time" row is
- * "Train" (required) + a second row for the periods the model is scored on —
- * "Scoring" since 2026-10-10 ("just score it": S1, S2 …, start → end only, no
- * label and no event time) — and the strip draws train on the top lane,
- * scoring on the bottom lane. (The header step bar that once lived here moved
- * out on 2026-10-04 and was removed altogether on 2026-10-09 at the user's
- * request.)
+ * Build Model window: the Step-1 running-condition card. Presentation only —
+ * the persisted state, the build gate and the settings modal all stay in
+ * BuildModelWindow. The "Which time" part is "Train" (required) + a second
+ * row for the periods the model is scored on — "Scoring" (S1, S2 …, start →
+ * end only, no label and no event time) — and the strip draws train on the
+ * top lane, scoring on the bottom lane.
  *
- * Workbench redesign 2026-10-10 (SPEC workbench-redesign §1): once the running
- * condition is SET the card is ONE line of workspace context — ✓ · Train n
- * periods + span · Scoring n periods · When running: n conditions · rows · % ·
- * mini strip · Details · Edit. "Details" unfolds the full grid in place. Unset
- * and invalid stay loud cards with their own button, marked "!" (there is no
- * step number any more).
+ * Once the running condition is SET the card is ONE line of workspace
+ * context — ✓ · Train n periods + span · Scoring n periods · When running: n
+ * conditions · rows · % · mini strip · Details · Edit. "Details" unfolds the
+ * full grid in place. Unset and invalid stay loud cards with their own
+ * button, marked "!" (there is no step number).
  *
- * The row count (2026-10-10, review of a4acd7a): "N rows · x%" is Rust's
- * `count_period_rows` of the PERSISTED condition — the running rows inside the
- * train periods, of all the dataset's rows — the same two numbers the settings
- * modal's caption prints for that condition (`cardRowsFromCounts`). It used to
- * be a count of the rows where the FIRST sensor has a value, which disagreed
- * with the modal whenever that sensor had gaps.
+ * The row count: "N rows · x%" is Rust's `count_period_rows` of the PERSISTED
+ * condition — the running rows inside the train periods, of all the
+ * dataset's rows — the same two numbers the settings modal's caption prints
+ * for that condition (`cardRowsFromCounts`).
  *
- * Guards against "no data to train on" (user request 2026-10-10; rule revised
- * the same day after review). The card shows the PERSISTED state, so a period
- * outside the loaded data is never "invalid" here — the user did not just pick
- * it (an old workspace, or the data file changed):
+ * Guards against "no data to train on". The card shows the PERSISTED state,
+ * so a period outside the loaded data is never "invalid" here — the user did
+ * not just pick it (an old workspace, or the data file changed):
  *  - a saved train / scoring period entirely outside the data is an AMBER
  *    warning — "P2 is outside the data (…) — it is not used", "S1 is outside
  *    the data — nothing is scored there" — on the line and on its chip; the
@@ -192,7 +184,7 @@ export function RunningConditionCard({ state, periods, filters, combine, noneCon
     const [detailsOpen, setDetailsOpen] = useState(false);
     // "Details" / "Hide details" is ONE control to the keyboard: the two views are
     // different trees, so the button is a new element after each toggle — the focus
-    // is put back on it (it used to drop to <body> on every toggle).
+    // is put back on it (it would otherwise drop to <body> on every toggle).
     const detailsBtnRef = useRef<HTMLButtonElement>(null);
     const refocusDetails = useRef(false);
     useEffect(() => {
@@ -336,7 +328,7 @@ export function RunningConditionCard({ state, periods, filters, combine, noneCon
                                     <Fragment key={f.id}>
                                         {i > 0 && <span className="rcc-andor">{combine.toUpperCase()}</span>}
                                         <span className="rcc-chip rcc-chip--sl" data-testid="rc-card-cond-chip" title={`${sensorTitle(lookup(f.sensor))} ${c.rest}`}>
-                                            {/* Customer item 3: Inline label + the condition in mono. */}
+                                            {/* Inline label + the condition in mono. */}
                                             <SensorInline tag={f.sensor} size="sm" /> <span className="rcc-rest">{c.rest}</span>
                                         </span>
                                     </Fragment>
@@ -374,7 +366,7 @@ export function RunningConditionCard({ state, periods, filters, combine, noneCon
                         <div className="rcc-meter" role="img" aria-label="Share of rows used"><span style={{ width: `${pct}%` }} /></div>
                     </>
                 )}
-                {/* Small period strip (restored 2026-10-03). PERSISTED periods only —
+                {/* Small period strip. PERSISTED periods only —
                     the settings modal's draft never reaches this card. Hidden while the
                     dataset bounds are unknown. */}
                 <PeriodCoverageBar periods={periods} bounds={bounds} mini tests={testPeriods} />

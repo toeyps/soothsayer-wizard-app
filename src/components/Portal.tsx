@@ -8,11 +8,9 @@ const PORTAL_ROOT_ID = 'wizard-portal-root';
  * instance in this window renders into. Appended directly to
  * `document.body` -- a SIBLING of `#root`, not a descendant of it -- so
  * anything rendered through it escapes every ancestor's `overflow`,
- * `transform`/`contain` or `position` context, which is exactly the
- * problem the Dashboard visual refresh needs solved for popovers (color
- * picker, pin Y-axis, add-to-failure-group, alarm setpoints -- see the
- * 2026-09-30 SPEC FINAL entry in docs/PROJECT_HANDOVER.md: "popover ทุกตัว
- * ... ต้องเรนเดอร์ผ่าน portal ไม่อยู่ในรายการที่ scroll ได้").
+ * `transform`/`contain` or `position` context, which is what popovers
+ * opened from inside a scrollable list need (colour picker, pin Y-axis,
+ * alarm setpoints).
  *
  * This app is a Tauri v2 multi-window app, but each window (`main`,
  * `build-model`, `add-sensor`) is its own separate HTML document with its
@@ -20,11 +18,11 @@ const PORTAL_ROOT_ID = 'wizard-portal-root';
  * `ReactDOM.createRoot` per window, picked by a `?window=` URL param), so
  * "append to `document.body`" never reaches across windows -- a Portal
  * used inside the `build-model` window only ever mounts into THAT
- * window's own body, same as `#root` does today.
+ * window's own body, same as `#root` does.
  *
  * One container is reused across every `Portal` instance mounted at the
  * same time (checked by id, not created per-instance) so popovers stack
- * in the DOM in mount order under one single new top-level node, instead
+ * in the DOM in mount order under one single top-level node, instead
  * of each adding its own loose `<div>` directly on `<body>`.
  */
 function getOrCreatePortalRoot(): HTMLElement {
@@ -45,11 +43,6 @@ interface PortalProps {
  * Thin wrapper around `ReactDOM.createPortal`. Renders `children` into the
  * shared `#wizard-portal-root` container described above instead of in
  * place in the component tree.
- *
- * Deliberately NOT wired into any existing popover/modal yet -- this is
- * Phase 0 (foundation only) of the visual refresh. A later phase rewires
- * each popover component to use this once it touches that component's
- * look, per `docs/PROJECT_HANDOVER.md`'s 2026-10-02 "HANDOFF INDEX" entry.
  *
  * Usage:
  * ```tsx

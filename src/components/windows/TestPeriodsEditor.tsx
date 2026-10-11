@@ -19,16 +19,15 @@ import { isCompleteDateInput, settleDateInput } from './periodDisplay';
 import type { PeriodBounds } from './TimePeriodsEditor';
 
 /*
- * The "Scoring periods" list ("test periods" until 2026-10-10 — the file, the
- * component and the test ids keep that name, like the storage keys do). Used by
- * the Running condition modal (workspace default) and by a Custom model's own
- * panel in Model settings — the same rows in both.
+ * The "Scoring periods" list (the file, the component and the test ids say
+ * "test periods", like the storage keys do). Used by the Running condition
+ * modal (workspace default) and by a Custom model's own panel in Model
+ * settings — the same rows in both.
  *
- * "Just score it" (user decision 2026-10-09, SPEC
- * docs/design/handoff/workbench-redesign/README.md §2): a scoring period is
- * ONLY start → end. The trained model gives a health score for that time and
- * the user reads the chart — there is no Normal / Known problem label, no event
- * time, no verdict and no "From Highlights" here any more.
+ * "Just score it" (spec: docs/design/handoff/workbench-redesign/README.md §2):
+ * a scoring period is ONLY start → end. The trained model gives a health score
+ * for that time and the user reads the chart — there is no Normal / Known
+ * problem label, no event time and no verdict.
  *
  * One quiet line per period: S# · start → end · "35 d · 30 d running" · remove
  * (the running days are Rust's per-period count, `counts`; while a new count is
@@ -37,7 +36,7 @@ import type { PeriodBounds } from './TimePeriodsEditor';
  * train time it includes — never a block. An invalid period gets a thin red
  * left edge, a red date field and ONE reason line ("S1 needs an end date").
  *
- * Against the loaded data (2026-10-10, `bounds` + `savedTests`): a scoring
+ * Against the loaded data (`bounds` + `savedTests`): a scoring
  * period that is NEW or was CHANGED here and lies ENTIRELY outside the data's
  * time range is invalid ("S1 is outside the data (1 Jan 2025 – 31 Dec 2025)",
  * both fields red, blocks Apply / Save); one that is exactly as it was SAVED
@@ -47,14 +46,14 @@ import type { PeriodBounds } from './TimePeriodsEditor';
  * holds no running row gets "no running rows in S1" (amber — Mark complete's
  * own rule about scored periods is unchanged).
  *
- * Old workspaces: a period saved before 2026-10-10 may still carry `label` /
+ * Old workspaces: a saved period may still carry `label` /
  * `eventTime` / `fromHighlight`. They are never shown, and every period this
  * editor hands back is built with `toScoringPeriod` (id / start / end only), so
  * an edit can never carry them on. Merely opening the editor writes nothing
  * (the change check ignores those legacy keys).
  *
- * Typing a date works as in `TimePeriodsEditor` (2026-10-10, review of
- * a4acd7a): a COMPLETE date goes to the parent on change, in the order on
+ * Typing a date works as in `TimePeriodsEditor`: a COMPLETE date goes to the
+ * parent on change, in the order on
  * screen, so the timeline, the counts and the impact line follow the edit
  * before Apply can be pressed; a half-typed `datetime-local` reports '' — that
  * stays in the field only (`onPendingChange` names the row) and on blur / Enter

@@ -15,7 +15,7 @@ interface State {
 
 /**
  * Last line of defence: a render/effect crash anywhere below unmounts the
- * subtree, which in a production build used to leave a silent black window.
+ * subtree, which in a production build would leave a silent black window.
  * Instead we show the actual error (message + stack), persist it to the
  * error log, and offer Reload / Copy so the user can recover and report.
  */

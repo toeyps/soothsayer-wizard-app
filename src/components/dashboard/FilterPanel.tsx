@@ -56,15 +56,14 @@ const OPERATORS: { value: SensorValueFilter['operation']; label: string; title: 
 ];
 
 // ── Filter Row (memoized) ───────────────────────────────────────────────
-// One grid row per condition — `.frow` in the prototype:
+// One grid row per condition (`.frow`):
 // [sensor picker] [operator segmented] [value1] [value2 or blank] [delete].
 //
-// Customer item 3 (SPEC 2026-10-09 §1 "Filter tab"): the sensor is the shared single picker,
-// scoped to the sensors on the chart, and the value boxes carry the unit as a suffix. A condition
-// whose sensor is no longer on the chart is KEPT and still applies (Dashboard's
-// `wireValueFilters` sends every condition) — its row gets a ⚠ and a solid amber picker border,
-// and a note under it with "Show on chart" / "Remove". Never the dashed `.req` look (that means
-// "required and empty").
+// The sensor is the shared single picker, scoped to the sensors on the chart, and the value
+// boxes carry the unit as a suffix. A condition whose sensor is no longer on the chart is
+// KEPT and still applies (Dashboard's `wireValueFilters` sends every condition) — its row
+// gets a ⚠ and a solid amber picker border, and a note under it with "Show on chart" /
+// "Remove". Never the dashed `.req` look (that means "required and empty").
 
 const FilterRow = memo(function FilterRow({
     filter,

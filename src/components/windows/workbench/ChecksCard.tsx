@@ -4,8 +4,8 @@ import { buildCheckLines, type HealthVerdict } from './healthChecks';
 
 /*
  * The Checks of the Health score page. They live INSIDE the "Health set points"
- * card, under the table (SPEC workbench-redesign §4: one card, no second
- * header) — `SetPointsCard` renders this as its children. It shows what Rust's
+ * card, under the table (one card, no second header) — `SetPointsCard` renders
+ * this as its children. It shows what Rust's
  * `validation` list says (`compute_health_preview` re-validates on every call,
  * and `export_model_files` once more when Mark complete is pressed) - the page
  * never re-implements a rule. Valid: one green line. Otherwise: one line per

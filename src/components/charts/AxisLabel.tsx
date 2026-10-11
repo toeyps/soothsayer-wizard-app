@@ -5,13 +5,13 @@ import { useSensorLookup } from '../sensor/sensorInfo';
 /**
  * Sensor-name axis label for the Pair Plot matrix (cell headers and row labels, under ~120 px).
  * DESIGN_SYSTEM §4 "Chart axes only": the tag alone in mono with a dotted underline; hovering
- * (or focusing) it shows the stacked label — description, unit chip, tag — plus a component chip
- * (customer item 3, 2026-10-09). Pure CSS `:hover` / `:focus-within`, no JS position tracking.
+ * (or focusing) it shows the stacked label — description, unit chip, tag — plus a component chip.
+ * Pure CSS `:hover` / `:focus-within`, no JS position tracking.
  * Zero footprint at rest: the dotted underline is the only hint.
  *
  * `rotate` rotates the tag -90° (row headers). CSS `transform` never triggers reflow, so ellipsis
  * truncation must never be combined with `rotate` (it would clip the text to a few characters
- * BEFORE rotation — a regression this component already fixed once).
+ * BEFORE rotation).
  *
  * (Scatter's axis titles have room and use the Inline label instead — see ScatterChart.)
  */

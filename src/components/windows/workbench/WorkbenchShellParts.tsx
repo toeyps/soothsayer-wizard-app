@@ -21,7 +21,7 @@ export function TrainSensorLink({ testId, onClick }: { testId: string; onClick: 
 }
 
 /**
- * The ONE board shape of every chart-less state (SPEC workbench-redesign §1): a
+ * The ONE board shape of every chart-less state: a
  * title, one sentence and an optional mono line. Its actions are text links to
  * the one place for them ("Train sensor ↑", "Model settings", "Running
  * condition ↑") — never a button of its own.
@@ -123,7 +123,7 @@ interface PageSwitchProps {
 }
 
 /** A plain segmented control: it says WHERE you are, never how far (no numbers,
- *  no ticks — a model's status is said once, in the footer; SPEC workbench-redesign §1). */
+ *  no ticks — a model's status is said once, in the footer). */
 export function PageSwitch({ page, healthDisabled, healthDisabledTitle, onPage }: PageSwitchProps) {
     return (
         <div className="wb2-pages" role="group" aria-label="Model pages" data-testid="page-switch">
@@ -178,7 +178,7 @@ export interface StaleCantTrain {
 interface StaleBannerProps {
     /** The model is being trained again right now. */
     training?: boolean;
-    /** The model is waiting in a training run (customer items 8 + 9). */
+    /** The model is waiting in a training run. */
     queued?: boolean;
     /** Train sensor would NOT train this model right now: the banner says why (or
      *  when) instead of offering a link that would do nothing — or would start a run
@@ -191,7 +191,7 @@ interface StaleBannerProps {
 /**
  * "Settings or running condition changed — this model is Incomplete again. Train it
  * again with Train sensor ↑ to update the charts. Your set points are kept."
- * (SPEC workbench-redesign §6.) It has NO button of its own: the one place to train
+ * It has NO button of its own: the one place to train
  * is the header's Train sensor, and the sentence links there — unless Train sensor
  * would not train this model right now (`cantTrain`): then the sentence says why
  * ("It can't be trained yet: …"), or when ("…when the training run finishes").
@@ -276,11 +276,11 @@ export function LoadFailedBoard({ testId, linkTestId, className, kindName, tail,
 
 /**
  * "The model was not saved. <why>" — shown on the Model fit page when a "Mark
- * complete" was refused or failed (QA fix, 2026-10-04). The Health score page
+ * complete" was refused or failed. The Health score page
  * renders the same message in its own banner, but that page cannot be shown for
  * a model that went stale during the export (the usual reason the save is
- * refused AFTER the files were written), so without this the user never learned
- * that their Mark complete did not take effect. Dismissible.
+ * refused AFTER the files were written), so without this the user would never
+ * learn that their Mark complete did not take effect. Dismissible.
  */
 export function SaveErrorNotice({ message, onDismiss }: { message: string; onDismiss: () => void }) {
     return (

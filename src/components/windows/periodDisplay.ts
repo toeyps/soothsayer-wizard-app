@@ -13,7 +13,7 @@ import { fmtNumText } from '../sensor/sensorInfo';
 export const DAY_MS = 86_400_000;
 
 // The Workbench date format and the local-time parser live in `utils/workbenchDate.ts`
-// since 2026-10-10 (the pure period helpers in `utils/` print dates with them too);
+// (the pure period helpers in `utils/` print dates with them too);
 // re-exported here so components keep importing them from this file.
 export { parseLocal, formatStamp, formatDataStamp };
 const MONTHS = MONTHS_SHORT;
@@ -269,7 +269,7 @@ export function conditionChipParts(
     unit?: (tag: string) => string,
 ): ConditionChipParts {
     const u = (unit ? unit(f.sensor) : '').trim();
-    // Customer item 3: display numbers use the one en-US formatter (thousands separators).
+    // Display numbers use the one en-US formatter (thousands separators).
     const value = f.operation === 'between' ? `${fmtNumText(f.value1)}–${fmtNumText(f.value2)}` : fmtNumText(f.value1);
     return {
         name: (label ? label(f.sensor) : '') || f.sensor,

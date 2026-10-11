@@ -24,7 +24,7 @@ import { SlowScoringNotice, TrainDaysNotice, TrainTestCard } from './ValidationC
 import type { WorkbenchPageProps } from './workbenchTypes';
 
 /*
- * Page 1 of the Workbench — "Model fit" body (mockup `modelPage`): the charts
+ * Page 1 of the Workbench — "Model fit" body: the charts
  * and statistics of the TRAINED model, per kind. Everything comes from the
  * bounded `HealthPreview` Rust returns (`useHealthPreview`), never from row
  * arrays.
@@ -36,8 +36,8 @@ import type { WorkbenchPageProps } from './workbenchTypes';
  *   Clustering   scatter + 1×/3× SD ellipses · cluster summary card
  *                (no time chart — by design)
  *
- * A chart whose lines are labelled ON the chart has no legend row under it
- * (workbench-redesign SPEC §3): reference lines carry their name at the right
+ * A chart whose lines are labelled ON the chart has no legend row under it:
+ * reference lines carry their name at the right
  * edge, the ring levels at the ring's edge. A legend row stays where DATA is told
  * apart by colour: Distribution (Rows / Normal curve), Fit (two point colours)
  * and Target vs predicted (Actual / Predicted — a fixed key, because a name
@@ -45,7 +45,7 @@ import type { WorkbenchPageProps } from './workbenchTypes';
  * a name on the chart is the ONLY key only on a chart that cannot zoom or pan —
  * the Clusters chart zooms on both axes, so its rings have a fixed key too.
  *
- * Train and scoring periods (2026-10-07; "just score it" 2026-10-10): when the
+ * Train and scoring periods: when the
  * preview carries `test_validation`, every time chart draws the train /
  * scoring scopes (`scopesOf` → `TimeSeriesSpec.scopes`) and a "Train and
  * scoring periods" card is added (side column for Individual / Clustering, a
@@ -183,7 +183,7 @@ function ModelFitPage(props: ModelFitPageProps) {
                         {fit && fit.predictors.length > 0 && (
                             <span className="wb2-xsel" data-testid="fit-x-selector">
                                 X:
-                                {/* Customer item 3: the compact single picker, scoped to this
+                                {/* The compact single picker, scoped to this
                                     model's predictors. With one predictor it is disabled but
                                     still shows its value, and the tooltip gives the reason. */}
                                 <span className="wb2-xpk" title={fit.predictors.length === 1 ? 'Only one predictor — nothing else to plot on X' : undefined}>

@@ -89,10 +89,10 @@ const FAULT_WORDS: Record<PeriodFault, string> = {
 };
 
 // ---------------------------------------------------------------------------
-// Period vs the loaded data's time range (user request 2026-10-10: "the data is
-// 2025-01 … 2025-12 — a period chosen beyond that must be warned about at
-// once"). Pure: the bounds are the ones the window already holds for the
-// timeline, so judging costs no request. Unknown bounds = nothing is flagged.
+// Period vs the loaded data's time range: a period chosen beyond the data is
+// warned about at once. Pure: the bounds are the ones the window already holds
+// for the timeline, so judging costs no request. Unknown bounds = nothing is
+// flagged.
 // ---------------------------------------------------------------------------
 
 /** The data's time range in epoch ms, or null while it is unknown. */
@@ -408,10 +408,10 @@ export function toFilterRanges(list: TimePeriod[]): FilterRange[] {
 // ---------------------------------------------------------------------------
 // Train periods vs scoring periods. `runningConditionTimePeriods` / a model's
 // `filterTimePeriods` are the TRAIN periods; `TestPeriod`s are the SCORING
-// periods — "just score it" (user decision 2026-10-09, SPEC
+// periods — "just score it" (spec
 // docs/design/handoff/workbench-redesign/README.md §2): start → end only, the
-// trained model gives a health score for that time. They were called "test
-// periods" until 2026-10-10 and the identifiers below keep that name (as do
+// trained model gives a health score for that time. The identifiers below say
+// "test periods" (as do
 // the storage keys and the `test_periods` wire key) so nothing about the
 // workspace format changes; the user-facing words are "scoring period" and the
 // numbers are S1, S2 … by list position. Everything below is pure and works on
@@ -423,9 +423,9 @@ const DAY = 86_400_000;
 /**
  * A scoring period as it is WRITTEN: `id`, `start`, `end` and nothing else.
  *
- * A workspace saved before 2026-10-10 may carry `label` / `eventTime` /
+ * An old workspace file may carry `label` / `eventTime` /
  * `fromHighlight` on its periods. They stay readable (the type allows them) but
- * nothing may write them any more, and a spread (`{ ...t, start }`) would carry
+ * nothing may write them, and a spread (`{ ...t, start }`) would carry
  * them along silently — so every place that BUILDS or COPIES a period (the
  * editor's add / edit, `seedCustomFromWorkspace`) goes through this instead.
  * A period that is never touched keeps whatever is on disk (no migration).
@@ -460,7 +460,7 @@ export interface TestPeriodStatus {
 }
 
 /**
- * Per-scoring-period validity. DECISION (2026-10-07, kept): unlike train
+ * Per-scoring-period validity. Unlike train
  * periods, a scoring period needs BOTH a start and an end — its day count and
  * "% of running time below 80" are only meaningful on a closed range. Scoring
  * periods may overlap each other and train periods (never invalid for that).
@@ -612,8 +612,8 @@ export function scoringIssueMessage(issue: Pick<HealthIssue, 'field' | 'message'
  * change (`applyIncompleteRule`) and an edit during an export
  * (`persistModelComplete`).
  *
- * The id and the legacy `label` / `eventTime` / `fromHighlight` keys of a
- * workspace saved before 2026-10-10 are deliberately NOT part of it: Rust
+ * The id and the legacy `label` / `eventTime` / `fromHighlight` keys of an
+ * old workspace file are deliberately NOT part of it: Rust
  * ignores them, so they cannot change a result — and it means a period that
  * loses those keys when it passes through an edit (`toScoringPeriod`) is NOT
  * read as a change, so a Complete model of an old workspace is never sent back
@@ -711,7 +711,7 @@ function highlightRange(h: TimeHighlight): { start: string; end: string } | null
 }
 
 /**
- * Train periods that overlap a Dashboard highlight (SPEC rule 4 — an amber
+ * Train periods that overlap a Dashboard highlight (an amber
  * warning only, never a block). Disabled / unparseable highlights are ignored.
  */
 export function trainHighlightOverlaps(train: TimePeriod[], highlights: TimeHighlight[]): TrainHighlightOverlap[] {
@@ -729,7 +729,7 @@ export function trainHighlightOverlaps(train: TimePeriod[], highlights: TimeHigh
 const floorMinute = (ms: number) => Math.floor(ms / MINUTE) * MINUTE;
 
 /**
- * "Remove the overlap" (SPEC rule 4): every train period that overlaps
+ * "Remove the overlap": every train period that overlaps
  * `range` is split so none of it lies inside `range` — the part before ends on
  * the last whole minute before the range starts, the part after starts on the
  * first whole minute after it ends (minute resolution, like the period inputs;

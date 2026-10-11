@@ -1,12 +1,12 @@
 import { excelRoundCalls, isFormulaAtom, tokenizeFormula, type ExcelRoundCall } from './formulaTokens';
 
 /**
- * Rounding in special-sensor formulas (customer batch 2026-10, item 6).
+ * Rounding in special-sensor formulas.
  *
  * The engine's `round(x)` takes ONE value (to a whole number). N decimals are
  * written with a literal power of ten -- `round(X * 100) / 100` for 2 dp,
  * `round(X)` for 0 dp -- the form Rust's legacy converter emits
- * (`formula_diagnostics::convert_legacy_round`, shipped 2026-10-09). Quick
+ * (`formula_diagnostics::convert_legacy_round`). Quick
  * build's round transform, the "Round the result" setting and the
  * `round_excel` fix button all write this one form; never `round(0.01, X)` and
  * never the spreadsheet order `round(X, 2)` (which the engine reads as

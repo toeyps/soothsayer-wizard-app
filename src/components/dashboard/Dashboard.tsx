@@ -716,7 +716,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     // `groupNos` (falling back to `[0]`, "Not in Group", if it was a
     // model's last one) — it never deletes models. A model that also
     // belongs to another group keeps living there untouched. No
-    // confirmation step here — the UI caller confirms first.
+    // confirmation step (click delete, it is deleted).
     const deleteGroup = useCallback((groupNo: number) => {
         if (groupNo === 0) return;
         const apply = (groups: FailureGroup[], models: FailureModel[]) => ({

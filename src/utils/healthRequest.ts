@@ -14,7 +14,7 @@ import { trainingScopeFilter } from './trainingScope';
 
 /**
  * Pure builders for the health-score commands (`compute_health_preview`,
- * `export_model_files`) — phase 3a, 2026-10-03.
+ * `export_model_files`).
  *
  * They take the model the UI is currently looking at (pass the DRAFT-merged
  * model when there are unsaved edits, exactly like Train does), the workspace
@@ -99,7 +99,7 @@ export function healthInputsMissing(model: FailureModel): string | null {
     }
     if (!nonEmpty(model.xSensor)) return 'Pick the X sensor.';
     if (!nonEmpty(model.ySensor)) return 'Pick the Y sensor.';
-    // Rust: `criteria_sensor is required when n_clusters > 1` (2026-10-09).
+    // Rust: `criteria_sensor is required when n_clusters > 1`.
     return (model.numClusters ?? 3) > 1 && !nonEmpty(model.criteriaSensor) ? CLUSTERS_NEED_CRITERIA : null;
 }
 

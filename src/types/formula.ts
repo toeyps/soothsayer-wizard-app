@@ -1,6 +1,6 @@
 /**
- * Shared types of the special-sensor Formula editor + Quick build (customer
- * batch 2026-10, item 6) -- the TypeScript side of Rust's `preview_formula` /
+ * Shared types of the special-sensor Formula editor + Quick build -- the
+ * TypeScript side of Rust's `preview_formula` /
  * `convert_legacy_formula` (`src-tauri/src/lib.rs`) and of the issue codes in
  * `src-tauri/src/formula_diagnostics.rs`.
  *

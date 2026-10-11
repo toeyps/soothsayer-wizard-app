@@ -7,8 +7,8 @@ import { isBelowRecommendedTrainDays, RECOMMENDED_TRAIN_DAYS, trainDaysWarning }
 import { parseLocal } from './workbenchDate';
 
 /*
- * Per-period running-row counts for the Running-condition settings (workbench
- * redesign SPEC §5): the binding of the Rust command `count_period_rows`, the
+ * Per-period running-row counts for the Running-condition settings: the
+ * binding of the Rust command `count_period_rows`, the
  * request builders, and the pure builders of what the modal prints from the
  * answer — the one caption under the timeline
  *

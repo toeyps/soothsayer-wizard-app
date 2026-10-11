@@ -31,7 +31,7 @@ import { FitGoneBoard, LoadFailedBoard, StateBoard, TrainSensorLink } from './Wo
 import type { HealthScorePageProps, SaveInfo } from './workbenchTypes';
 
 /*
- * Page 2 of the Workbench - "Health score" body (mockup `healthPage`):
+ * Page 2 of the Workbench - "Health score" body:
  *
  *   [ set-point chart (tall)        ] [ Health set points: table  ]
  *   [                               ] [ + footnote + the Checks   ]
@@ -49,7 +49,7 @@ import type { HealthScorePageProps, SaveInfo } from './workbenchTypes';
  * chart's title. Clustering has no time axis on its set-point chart, so hovering
  * a point there (or the score chart) highlights the same row on the other.
  *
- * No legend rows (workbench-redesign SPEC §3): every line is labelled on its
+ * No legend rows: every line is labelled on its
  * chart — reference lines at the right edge, the user's set points with their
  * typed value, the ring levels at the ring's edge — and the score bands are read
  * off the share column beside the score chart.
@@ -73,7 +73,7 @@ function sameFitGone(a: HealthScorePageProps['fitGone'], b: HealthScorePageProps
 }
 
 /** A save that has been running this long gets a line on the page; until then
- *  the footer sentence ("Saving the model files…") says it alone (SPEC §4). */
+ *  the footer sentence ("Saving the model files…") says it alone. */
 export const SLOW_SAVE_NOTICE_MS = 4000;
 
 /** `flag`, but only once it has stayed true for `delayMs` (false at once). */
@@ -95,7 +95,7 @@ function HealthScorePage(props: HealthScorePageProps) {
     const [hoverIdx, setHoverIdx] = useState<number | null>(null);
     // A failed request leaves `preview.data` null, but when an earlier answer for this
     // model exists the page (inputs, charts) stays on screen from `lastData` under the
-    // red card with its Retry instead of being replaced (QA fix, 2026-10-04).
+    // red card with its Retry instead of being replaced.
     // A Relation-model fit that is gone from memory (NOT_FITTED) has its own board —
     // by the live answer, or by what the window knows (`fitGone.gone`): after a load
     // that failed and a tab switch away and back, no request is asked any more, so
@@ -123,7 +123,7 @@ function HealthScorePage(props: HealthScorePageProps) {
     const slowSave = useHeldFor(save.phase === 'running', SLOW_SAVE_NOTICE_MS);
     // A new request cannot be fixed by asking again after the dataset changed.
     const canRetry = !!props.onRetryPreview && preview.errorCode !== 'STALE_SESSION';
-    // The ONE shape of "the preview failed" (SPEC §4), with or without an earlier
+    // The ONE shape of "the preview failed", with or without an earlier
     // answer under it: a red card, the reason, Retry. Mark complete is disabled
     // meanwhile and the footer says why.
     const errorCard = failed ? (
@@ -242,7 +242,7 @@ function HealthScorePage(props: HealthScorePageProps) {
                 </SetPointsCard>
             </div>
             {/* "Changed after saving" is said ONCE — the footer sentence, next to its
-                "Mark complete again" button (SPEC workbench-redesign §1). */}
+                "Mark complete again" button. */}
             {scoreReady && data.series.score && data.score_summary ? (
                 <ScoreChart
                     data={data}
@@ -270,8 +270,7 @@ function HealthScorePage(props: HealthScorePageProps) {
 // ---------------------------------------------------------------------------
 // A FAILED save, and a save that is taking long. Saving is otherwise said by the
 // footer alone ("Saving the model files…" next to its button), and a successful
-// save is the footer sentence too ("Files saved 9 Feb 2026 23:50 · …\output\TAG";
-// SPEC workbench-redesign §1 / §4).
+// save is the footer sentence too ("Files saved 9 Feb 2026 23:50 · …\output\TAG").
 // ---------------------------------------------------------------------------
 
 function SaveBanner({ save, slow, relation }: { save: SaveInfo; slow: boolean; relation: boolean }) {

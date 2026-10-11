@@ -80,9 +80,9 @@ interface Deletion {
 
 /** Everything the Create form held when "Add sensor" was clicked. The task is
  *  queued, so it must not read the form later -- the user may have moved on.
- *  Customer batch 2026-10 (item 6): what to build is the Formula editor's state
- *  (a formula, or an Average / Median block); "add the picked sensors as-is"
- *  is gone from this window -- the Dashboard does that. */
+ *  What to build is the Formula editor's state (a formula, or an Average /
+ *  Median block); adding picked sensors to the chart as-is is the Dashboard's
+ *  job, not this window's. */
 interface CreateSnapshot {
     state: FormulaEditorState;
     description: string;
@@ -237,9 +237,9 @@ export default function AddSensorWindow() {
     // the state drives rendering, the ref is what a task reads (always the
     // value the PREVIOUS task left behind, never a stale render's copy).
     const [sensors, setSensors, sensorsRef] = useRefState<string[]>([]);
-    // Sensors PICKED in the left list for Quick build (customer batch 2026-10, item 6). They
-    // drive the editor's option sets only; nothing is built from them until the user commits
-    // Quick build's text into the formula. Cleared on Add, on Edit and with "Clear picks".
+    // Sensors PICKED in the left list for Quick build. They drive the editor's option sets
+    // only; nothing is built from them until the user commits Quick build's text into the
+    // formula. Cleared on Add, on Edit and with "Clear picks".
     const [quickSel, setQuickSel] = useState<string[]>([]);
     // What the dashboard chart is currently plotting. Distinct from
     // `quickSel` above, which is this window's own picks (deliberately
@@ -348,7 +348,7 @@ export default function AddSensorWindow() {
     // badge / unlock. It only runs once the refs cover every formula as it is.
     const formulaRefsSourceRef = useRef<Map<string, string>>(new Map());
     // Special sensors whose recipe could not be rebuilt in this session (the
-    // reopen replay failed on them: a removed source, or a formula Rust now
+    // reopen replay failed on them: a removed source, or a formula Rust
     // refuses) -- tag key -> why, or null for "no specific reason". Null while
     // unknown. Read from the session itself, not handed over by the main
     // window (see `readUnrestored`). Such a sensor's formula/sources can be
@@ -580,13 +580,9 @@ export default function AddSensorWindow() {
                 setSensors(event.payload.sensors);
                 // Deliberately NOT pre-checking `event.payload.selectedSensors`
                 // (whatever's currently plotted on the Dashboard chart) --
-                // this window always starts with a clean, empty picker.
-                // Pre-checking used to be harmless, but combined with the
-                // old builder's default "+" chain, reopening this window right
-                // after adding a sensor would pre-check the same inputs AND
-                // show an already-active calculation ready to submit --
-                // indistinguishable from the screen right before the previous
-                // "Add sensor" click, which read as "did my sensor not get added?".
+                // this window always starts with a clean, empty picker, so a
+                // reopen right after adding a sensor never looks like the
+                // screen just before the previous "Add sensor" click.
                 setSensorMetadata(event.payload.sensorMetadata);
                 setPlottedSensors(event.payload.selectedSensors ?? []);
                 setRecipes(event.payload.specialSensorRecipes ?? []);
@@ -982,7 +978,7 @@ export default function AddSensorWindow() {
      * nothing, one that makes the sensor depend on itself (directly or through
      * the chain), and a rename that collides with another sensor's tag.
      *
-     * EDIT LOCK (2026-10-03, user decision): a sensor that a model -- or the
+     * EDIT LOCK: a sensor that a model -- or the
      * workspace Running condition, or a special sensor built on it that one of
      * them uses -- depends on may not be renamed nor have its values changed
      * (only description / unit / component). The models are RE-READ FROM DISK
@@ -1031,11 +1027,11 @@ export default function AddSensorWindow() {
                 if (collides) throw new Error(`"${newTag}" is already in use by another sensor.`);
             }
 
-            // 2026-10-08: a save that changes neither the name nor what the
-            // sensor computes is a description / unit / component change --
-            // nothing to recompute. Recomputing anyway re-sent the stored recipe
-            // to Rust, so a sensor whose recipe Rust now refuses (it could not
-            // be restored on reopen) could not even have its description saved.
+            // A save that changes neither the name nor what the sensor computes
+            // is a description / unit / component change -- nothing to
+            // recompute. (Recomputing would re-send the stored recipe to Rust,
+            // so a sensor whose recipe Rust refuses could not even have its
+            // description saved.)
             const stored = recipesRef.current.find(r => sameTag(r.tag, newTag));
             const unchanged = !oldTag && !!stored && recipesEquivalent(stored, next.recipe);
 
@@ -1247,9 +1243,9 @@ export default function AddSensorWindow() {
         await getCurrentWindow().close();
     };
 
-    // Customer batch 2026-10 (item 6): Create builds what the Formula editor
-    // holds -- a formula or an Average / Median block. An empty editor builds
-    // nothing (adding raw sensors to the chart as-is is the Dashboard's job).
+    // Create builds what the Formula editor holds -- a formula or an
+    // Average / Median block. An empty editor builds nothing (adding raw
+    // sensors to the chart as-is is the Dashboard's job).
     const isCreatingSomething = !editSession && draft.state !== null;
     const currentName = name;
 
@@ -1303,25 +1299,21 @@ export default function AddSensorWindow() {
     // ---- Create (runs INSIDE the queue) ---------------------------------------
 
     /**
-     * Run whatever calculation was configured (formula, legacy config, or none
-     * -- "add as-is") and return what the Dashboard should plot, the
+     * Run the calculation the Create form held (a formula, or an Average /
+     * Median block) and return what the Dashboard should plot, the
      * master-data metadata (description/unit/component) for the newly created
      * sensor -- the same fields a mapping CSV row supplies for an imported
      * sensor -- and its recipe.
      *
      * `plotSensors` is what gets ADDED to the Dashboard's plot: the new
-     * sensor's own tag when one was created (never the sensors it was built
-     * from -- those are inputs, not something the user asked to see), or the
-     * picked raw sensors when nothing was created ("add as-is").
+     * sensor's own tag (never the sensors it was built from -- those are
+     * inputs, not something the user asked to see).
      *
-     * 2026-09-01: the recipe is new -- Rust's `calculate_new_sensor`/
-     * `evaluate_formula` compute the new column ONCE and push it straight
-     * onto the in-memory session (`AppState.data`); nothing before this
-     * persisted anything that could recreate it, so the column was
-     * silently gone after every app restart even though its name/
-     * description survived (see `newMetadata`). The recipe is exactly
-     * what's needed to invoke the same command again after a workspace
-     * reopen -- see `WorkspaceState.specialSensorRecipes`.
+     * The recipe is what makes the sensor survive a restart: Rust's
+     * `calculate_new_sensor`/`evaluate_formula` compute the new column ONCE
+     * and push it straight onto the in-memory session (`AppState.data`), so
+     * the recipe is exactly what's needed to invoke the same command again
+     * after a workspace reopen -- see `WorkspaceState.specialSensorRecipes`.
      */
     const computeRound = async (snap: CreateSnapshot, inv: Invoker): Promise<{ plotSensors: string[]; newMetadata: SensorMetadata[]; newRecipes: SpecialSensorRecipe[] }> => {
         const customName = snap.name.trim();
@@ -1598,7 +1590,7 @@ export default function AddSensorWindow() {
         : lockedAfterEdit
             ? `This sensor is now locked: ${editUsage ? describeEditLock(editUsage.editLock) : ''} Your change to its calculation can't be saved — Cancel edit to discard it.`
             // The stored calculation, untouched, never blocks a save (a description-only save of a
-            // sensor whose recipe Rust now refuses must go through -- 2026-10-08).
+            // sensor whose recipe Rust refuses must go through).
             : !editLocked && draft.edited && !draft.state ? 'The formula is empty.'
                 : !editLocked && draft.edited && draft.issue ? draft.issue.message
                     : editNameError ? 'Fix the name before saving.'
@@ -1678,7 +1670,7 @@ export default function AddSensorWindow() {
 
 
     return (
-        // Customer item 3: sensor labels in this window (explorer, Manage, pickers) resolve
+        // Sensor labels in this window (explorer, Manage, pickers) resolve
         // through the window's metadata + the special sensors' ƒ / Σ badges.
         <SensorMetaProvider metadata={sensorMetadata} special={recipes}>
         <div className="flex flex-col h-screen overflow-hidden" style={{ backgroundColor: 'var(--bg-primary)', color: 'var(--text-primary)', position: 'relative' }}>

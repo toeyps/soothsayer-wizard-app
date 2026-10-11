@@ -6,11 +6,10 @@ import { withFailureGroupState } from './failureGroupState';
 import { excelRoundCalls } from './formulaTokens';
 
 /**
- * Auto-convert legacy spreadsheet-style `round($A, 2)` on workspace open
- * (customer batch 2026-10, item 6 -- user decision 2026-10-09, taken with
- * dev). The engine's two-value round is `round(step, x)`, so `round($A, 2)`
- * rounded the CONSTANT 2 to a multiple of $A -- silently wrong values until
- * 2026-10-08, refused (`round_excel`, the sensor had no data) since. Rust's
+ * Auto-convert legacy spreadsheet-style `round($A, 2)` on workspace open.
+ * The engine's two-value round is `round(step, x)`, so `round($A, 2)`
+ * would round the CONSTANT 2 to a multiple of $A; Rust refuses it
+ * (`round_excel` — the sensor then has no data). Rust's
  * `convert_legacy_formula` rewrites every such call to the engine form
  * `round($A * 100) / 100`; this module runs it over the stored recipes, and
  * persists the result with the model demotion in ONE workspace write.
@@ -32,8 +31,7 @@ import { excelRoundCalls } from './formulaTokens';
 
 /** Pre-filter: only a formula with a spreadsheet-order `round(x, n)` call is
  *  sent to Rust. `excelRoundCalls` is the local twin of Rust's own scan, so an
- *  already-converted `round(x * 100) / 100` costs no IPC call on every open
- *  (review 2026-10-09: a bare `round(` match sent every rounded formula). */
+ *  already-converted `round(x * 100) / 100` costs no IPC call on every open. */
 const mayNeedConversion = (formula: string): boolean => excelRoundCalls(formula).length > 0;
 
 export interface LegacyConversionPass {

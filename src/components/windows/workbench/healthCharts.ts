@@ -14,18 +14,18 @@ import { parseLocal } from '../periodDisplay';
 import { CHART, CHART_MONO, CLUSTER_COLORS, FONT, axisValueFormatter, fmtAxisValue, fmtNum } from './chartTheme';
 
 /*
- * Pure ECharts option builders for the Build Model Workbench's health charts
- * (health score phase 3b-1, 2026-10-04). Every function takes ONLY the bounded
+ * Pure ECharts option builders for the Build Model Workbench's health charts.
+ * Every function takes ONLY the bounded
  * payload `compute_health_preview` returns (`HealthPreview.series` / `.stats` /
  * `.histogram` / `.fit_scatter` / `.cluster_scatter`) — never a full row array —
  * and returns a plain option object, so they are unit-testable without ECharts.
  *
  * The generic building blocks (`buildTimeSeriesOption`, `ellipseSeries`) are
- * exported so the Health score page (3b-2) can draw the same charts with the
+ * exported so the Health score page can draw the same charts with the
  * extra set-point lines / score colouring on top instead of re-implementing
  * the axes: pass more `hLines`, more `bands`, or append to `series`.
  *
- * How a Workbench chart reads (workbench-redesign SPEC §3, DESIGN_SYSTEM §4
+ * How a Workbench chart reads (DESIGN_SYSTEM §4
  * "Time scopes on charts" / "Quiet charts"):
  *   - train / scoring periods are NAMED in a thin strip above the plot (plain
  *     coloured mono text, two lanes) and are only a faint fill inside it;
@@ -271,8 +271,7 @@ export interface HBand {
 }
 
 // ---------------------------------------------------------------------------
-// Train / scoring time scopes (2026-10-07; "just score it" 2026-10-10: a
-// scoring period is only start → end — no Known-problem hatch, no EVENT line)
+// Train / scoring time scopes (a scoring period is only start → end)
 // ---------------------------------------------------------------------------
 
 /** One scope band on a time chart. `start`/`end` `null` = open (runs to the
@@ -289,8 +288,8 @@ export interface TimeScope {
     short: string;
 }
 
-/** What every Workbench time chart draws on top of its data (SPEC "Screens and
- *  UI" → time scopes). Built from `HealthPreview.test_validation` by `scopesOf`
+/** What every Workbench time chart draws on top of its data. Built from
+ *  `HealthPreview.test_validation` by `scopesOf`
  *  and passed in explicitly through `TimeSeriesSpec.scopes`. */
 export interface TimeScopes {
     ranges: TimeScope[];
@@ -422,8 +421,8 @@ export interface StripBand { kind: TimeScope['kind']; label: string; short: stri
  * out (the band itself is still drawn).
  *
  *  - The word "TRAIN" is printed ONCE: the first train band reads its full name
- *    ("TRAIN", or "TRAIN P1"), every later one only its number ("P2", "P3" — SPEC
- *    §3 `TRAIN P1 P2`). A half-width chart (`short`) prints numbers only.
+ *    ("TRAIN", or "TRAIN P1"), every later one only its number ("P2", "P3").
+ *    A half-width chart (`short`) prints numbers only.
  *  - Names never print on each other. Each sits centred over its band; going left
  *    to right on a lane, a name that would touch the one before it (on a plot
  *    `plotWidth` px wide) is left out — so 20 short periods read
@@ -730,8 +729,8 @@ export function buildDistributionOption(h: HealthHistogram, vLines: VLine[], uni
     // `min: Infinity, max: -Infinity`.
     const xRange: NiceRange | null = xs.length > 0 ? niceExtent(Math.min(...xs), Math.max(...xs)) : null;
     const xFixed = xRange && xRange[2] !== undefined ? { min: xRange[0], max: xRange[1], interval: xRange[2] } : null;
-    // 10 % headroom, rounded up to a nice tick so the top label is a round count (it was a raw
-    // max × 1.1 — "1,713.8000000000002" on screen, 2026-10-09).
+    // 10 % headroom, rounded up to a nice tick so the top label is a round count (a raw
+    // max × 1.1 would print float noise such as "1,713.8000000000002").
     const top = Math.max(1, ...h.counts.filter(Number.isFinite), ...h.curve.filter(Number.isFinite));
     const [, yMax, yStep] = niceExtent(0, top * 1.1);
     return {
@@ -876,7 +875,7 @@ export function buildFitScatterOption(fit: HealthFitScatter, yName: string) {
 /** "Target vs predicted" over time: the Actual (blue) and Predicted (red) lines.
  *  Which is which is the card's own two-item colour key (`ModelFitPage`) — the
  *  lines are NOT named on the plot: ECharts places a line's end label only while
- *  it animates the line in, so after a wheel-zoom or a drag a name stayed where
+ *  it animates the line in, so after a wheel-zoom or a drag a name would stay where
  *  its line used to end and could sit beside the OTHER line. */
 export function buildTargetVsPredictedOption(series: RelationshipSeries, unit: string, scopes: TimeScopes | null = null) {
     return buildTimeSeriesOption({

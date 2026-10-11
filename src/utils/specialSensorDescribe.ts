@@ -5,8 +5,8 @@ import { splitRoundResult } from './formulaRounding';
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 /** How a recipe reads in a list — the formula as typed, or the operation
- *  spelled out as `sum(a, b)` / `a + 10`. A rounded block (customer batch
- *  2026-10, item 6: `multiOp.decimals`) says how many decimals it keeps. */
+ *  spelled out as `sum(a, b)` / `a + 10`. A rounded block (`multiOp.decimals`)
+ *  says how many decimals it keeps. */
 export function describeRecipe(recipe: SpecialSensorRecipe): string {
     if (recipe.kind === 'formula') return recipe.formula;
     const sources = recipe.sourceSensors.join(', ');
@@ -65,7 +65,7 @@ export interface DescribeOptions {
 
 const rounded = (d: number | null) => (d === null ? '' : ` · rounded to ${plural(d, 'decimal')}`);
 
-/** A human description of a special sensor's recipe (customer batch 2026-10, item 6). */
+/** A human description of a special sensor's recipe. */
 export function describeSpecialSensor(recipe: SpecialSensorRecipe, opts: DescribeOptions = {}): SpecialSensorDescription {
     const label = opts.label ?? ((t: string) => t);
     const expression = describeRecipe(recipe);

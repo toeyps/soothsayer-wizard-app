@@ -3,19 +3,18 @@ import type { HealthPreview } from './health';
 /**
  * Response shape from the Python sidecar's `preview_relationship` action.
  *
- * Phase 5: legacy `output / r2_dict / rmse2_dict` fields removed. The
- * cumulative-feature scores live in `r2_per_step` / `rmse2_per_step`
+ * The cumulative-feature scores live in `r2_per_step` / `rmse2_per_step`
  * (last entry is the full-model score). `rmse2_per_step[i]` is `2 * RMSE`
  * — divide by 2 for plain RMSE.
  *
- * **Bounded rows (2026-10-04).** Every frontend call passes `max_points`, and
+ * **Bounded rows.** Every frontend call passes `max_points`, and
  * then `predicted` / `target_raw` / `predictor_raw` are ONE aligned, evenly
  * strided SAMPLE (at most `max_points` rows, ascending row order, the min and
  * max of the target and of the prediction always included) — NOT every row of
  * the (NaN-dropped, projected) fit. Entry `j` of all three describes the same
  * row. `n_rows` is the real number of rows the fit used: read N from it, never
  * from `.length`. The Rust cache behind `cache_key` still holds every row (the
- * health preview scores them all). `residual` is no longer sent in that case.
+ * health preview scores them all). `residual` is not sent in that case.
  */
 export interface RelationshipPreviewResult {
   request: string;
@@ -43,7 +42,7 @@ export interface RelationshipPreviewResult {
   error?: string;
   trace?: string;
   /**
-   * Health score (2026-10-03): present only when the caller passed `cache_key`.
+   * Health score: present only when the caller passed `cache_key`.
    * `cache_key` echoes it; `cached` says the full-resolution fit was kept in
    * Rust's session (false = it did not fit the byte budget or the dataset was
    * reloaded meanwhile, so `compute_health_preview` will answer `NOT_FITTED`);
@@ -112,7 +111,7 @@ export interface DashboardDataFilter {
   sensors: string[];
   timestamp_start: string | null;
   timestamp_end: string | null;
-  /** Multiple training periods (Feature 4-C): a row is kept if it falls in ANY
+  /** Multiple training periods: a row is kept if it falls in ANY
    *  range. `null` = open end. Send this OR the legacy start/end pair, never both. */
   timestamp_ranges?: { start: string | null; end: string | null }[];
   value_filters: {

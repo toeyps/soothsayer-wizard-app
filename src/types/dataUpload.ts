@@ -7,7 +7,7 @@ export interface CsvLoadReport {
   /** Generation of the session this load installed (see `CsvMetadata.generation`).
    *  Optional only for hand-built fixtures; the backend always sends it. */
   generation?: number;
-  /** Per-file facts, in the order the paths were given (2026-10-04). Every field below is
+  /** Per-file facts, in the order the paths were given. Every field below is
    *  optional: old fixtures/saved reports lack them, and `null` means "unknown" — the UI must
    *  hide the matching card instead of showing a made-up value. */
   files?: CsvFileInfo[];

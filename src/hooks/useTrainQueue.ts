@@ -11,8 +11,7 @@ import type {
 import { estimateTimeLeftMs, isStaleTrainError, planTrainRun, queuePosition, summarizeTrainRun } from '../utils/trainQueue';
 
 /**
- * The Build Model Workbench's train queue (customer batch 2026-10, items 8 + 9:
- * "Train sensor" / "Train all").
+ * The Build Model Workbench's train queue ("Train sensor" / "Train all").
  *
  * - Runs models STRICTLY one at a time, in the order given (one shared Rust
  *   session, one Python sidecar — never in parallel). Even after `reset()` a
@@ -25,7 +24,7 @@ import { estimateTimeLeftMs, isStaleTrainError, planTrainRun, queuePosition, sum
  * - Skips are decided BEFORE the run (`TrainCandidate.plan`, see
  *   `classifyTrainPlan`); `train()` may still answer `{ ok: false, skip }`
  *   when a model can no longer train at its turn.
- * - Cancel (`stopAfterCurrent`) never interrupts a train call — the existing
+ * - Cancel (`stopAfterCurrent`) never interrupts a train call — a running
  *   train cannot be cancelled; the run stops after the current model.
  * - A STALE_SESSION answer (`stale: true`, or an error text starting with
  *   `STALE_SESSION`) stops the run at once and sets `stale` until `reset()`.

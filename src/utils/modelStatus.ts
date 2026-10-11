@@ -6,7 +6,7 @@ import { trainedFormulasChanged } from './specialSensorSignature';
 /**
  * The ONE definition of a model's status, shared by the Build Model window, the
  * Dashboard's Failure Groups panel and anything else that draws a status dot,
- * a Complete count or a "re-train" hint (health score phase 3a, 2026-10-03).
+ * a Complete count or a "re-train" hint.
  *
  * `FailureModel.status` is only the PERSISTED half ("the user marked it
  * complete"). A model also has a train record (`lastTrainedAt` +
@@ -22,8 +22,8 @@ import { trainedFormulasChanged } from './specialSensorSignature';
 export const NOT_TRAINED_BLOCK_REASON = 'Train the model, then check the result before marking it complete.';
 
 /** The workspace's special-sensor recipes, for the "a special sensor this
- *  model was trained on changed its formula" half of staleness (customer batch
- *  2026-10, item 6). Omitted / null = that half is not judged here; the write
+ *  model was trained on changed its formula" half of staleness.
+ *  Omitted / null = that half is not judged here; the write
  *  side (`applyIncompleteRule` -> `demoteModelsForRecipeChange`) still demotes
  *  such a model on disk, so a caller without the recipes is never wrong for
  *  long. Pass them wherever they are at hand. */
@@ -84,7 +84,7 @@ export function modelDotState(
 }
 
 /**
- * What the saved set points of a TRAINED model say (QA fix, 2026-10-04) — the
+ * What the saved set points of a TRAINED model say — the
  * ONE place every surface (Dashboard Failure Groups dot, Build Model list dot,
  * the kind tab pill) reads the persisted validation verdict:
  *   - `fix`    — Rust rejected a saved set point ("Fix set point", red)

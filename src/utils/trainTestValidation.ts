@@ -8,9 +8,9 @@ import { effectiveRunningCondition, type RunningConditionFg } from './runningCon
  * the "scoring periods changed" banners, the minimum-training-data warning and
  * the "could not be scored" notice.
  *
- * SPEC: docs/design/handoff/train-test-validation/README.md (2026-10-07), as
- * revised by docs/design/handoff/workbench-redesign/README.md §2 (user
- * decision 2026-10-09, "just score it"): a scoring period is only start → end
+ * Specs: docs/design/handoff/train-test-validation/README.md, as
+ * revised by docs/design/handoff/workbench-redesign/README.md §2 ("just score
+ * it"): a scoring period is only start → end
  * — no Normal / Known problem label, no event time, no lead time and no
  * verdict, so there is nothing here that judges a result. The identifiers keep
  * their "test" names (`testsChangedAt` is a storage key); only the words the
@@ -18,13 +18,11 @@ import { effectiveRunningCondition, type RunningConditionFg } from './runningCon
  */
 
 /**
- * Recommended minimum of TRAIN running time, in days (SPEC rule 12).
+ * Recommended minimum of TRAIN running time, in days.
  *
- * DECISION (2026-10-07, made with the user's worry in mind that a hard minimum
- * would stop them training when they only have a little data): there is NO
- * hard block on the number of days — the SPEC's "[MIN DAYS] blocks Train"
- * level is deliberately not built. Only the technical errors Rust already
- * returns (e.g. `NO_DATA` — no row left to fit) stop a Train. Below this
+ * There is NO hard block on the number of days (a hard minimum would stop a
+ * user training when they only have a little data). Only the technical errors
+ * Rust returns (e.g. `NO_DATA` — no row left to fit) stop a Train. Below this
  * recommendation the UI shows an AMBER warning only. Change the number here;
  * nothing else hard-codes it.
  */
@@ -128,12 +126,12 @@ export function testsChangedNoticeText(n: TestsChangedNotice): string {
 export const TEST_SCORING_FAILED_CODE = 'test_scoring_failed';
 
 /** Same, but the Relation model engine bundled with this build is too old to
- *  score them (2026-10-07). Retrying cannot help — only updating the app does —
+ *  score them. Retrying cannot help — only updating the app does —
  *  so this one gets no "Try again". */
 export const TEST_SCORING_OUTDATED_CODE = 'test_scoring_outdated';
 
-/** Same, but the scoring periods have too many rows to score in memory
- *  (2026-10-07, code review): retrying the same periods fails the same way, so
+/** Same, but the scoring periods have too many rows to score in memory:
+ *  retrying the same periods fails the same way, so
  *  no "Try again" either — the user has to shorten or remove one (Rust's
  *  message says so). */
 export const TEST_SCORING_TOO_LARGE_CODE = 'test_scoring_too_large';

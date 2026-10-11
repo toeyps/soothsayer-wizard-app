@@ -12,9 +12,8 @@ import { fmtNumCol } from './chartTheme';
 import { fieldState, formatSetPointText, RING_QUICK, stepRing, type FieldState, type HealthVerdict } from './healthChecks';
 
 /*
- * The "Health set points" card of the Health score page (SPEC workbench-redesign
- * §4): ONE small table instead of a ladder of boxed rungs, with the Checks in
- * the same card.
+ * The "Health set points" card of the Health score page: ONE small table, with
+ * the Checks in the same card.
  *
  *   SCORE  BAND                        LOWER     UPPER
  *   100    within ±1SD · automatic     65.58     72.46      plain text
@@ -162,7 +161,7 @@ const VERDICT_DOT: Record<HealthVerdict, { cls: 'complete' | 'need' | 'bad'; wor
 
 export default function SetPointsCard(props: SetPointsCardProps) {
     const { data, setPoints, verdict, children } = props;
-    // No status pill on this card (SPEC workbench-redesign §1): one dot in the list's
+    // No status pill on this card: one dot in the list's
     // colours, the words in its tooltip. The words themselves are the Checks lines
     // below and the footer sentence.
     const dot = verdict ? VERDICT_DOT[verdict] : null;

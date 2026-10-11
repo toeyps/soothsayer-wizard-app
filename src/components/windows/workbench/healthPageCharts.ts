@@ -27,8 +27,8 @@ import {
 } from './healthCharts';
 
 /*
- * Pure ECharts option builders of the Health score page (health score phase
- * 3b-2, 2026-10-04): the SET-POINT chart (per kind) and the SCORE chart. Like
+ * Pure ECharts option builders of the Health score page: the SET-POINT chart
+ * (per kind) and the SCORE chart. Like
  * `healthCharts.ts` they take only the bounded `compute_health_preview` payload
  * plus the set points being edited (the draft), and return a plain option.
  *
@@ -39,7 +39,7 @@ import {
  * carry their value inside the plot at the right end — in the form the user
  * typed (`typedText`: "H 4.6", "L 2.2", "80 · +5"), never padded or rounded.
  * The computed reference lines (±1SD, ±3SD, ±2RMSE) are thin and labelled
- * outside the plot (workbench-redesign SPEC §3).
+ * outside the plot.
  *
  * Hover sync: every time-based option (set-point chart of Individual /
  * Relationship, and the score chart) carries `axisPointer.link` on the X axis

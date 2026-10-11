@@ -9,10 +9,10 @@ export function normalizeSensorTag(tag: string): string {
 
 /**
  * O(1)-lookup sensor-metadata map, built once per `sensorMetadata` array
- * instead of the `Array.find()` scan every panel (Sensor list, Filter
- * dropdown, Selected Sensor tab) used to repeat on every render/keystroke.
- * Also the single place the tag-normalization rule lives, so the three
- * panels can no longer drift apart on how a tag is matched.
+ * instead of an `Array.find()` scan in every panel (Sensor list, Filter
+ * dropdown, Selected Sensor tab) on every render/keystroke.
+ * Also the single place the tag-normalization rule lives, so the
+ * panels cannot drift apart on how a tag is matched.
  */
 export function useSensorMetaMap(sensorMetadata: SensorMetadata[] | null | undefined): Map<string, SensorMetadata> {
     return useMemo(() => {

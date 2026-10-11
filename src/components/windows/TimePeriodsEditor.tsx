@@ -17,11 +17,11 @@ import { isCompleteDateInput, overlapDays, settleDateInput } from './periodDispl
 
 /*
  * The TRAIN periods list of the Running-condition settings — the workspace
- * modal and a Custom model's own panel use the same rows (workbench redesign
- * SPEC §5, docs/design/handoff/workbench-redesign/README.md).
+ * modal and a Custom model's own panel use the same rows (spec:
+ * docs/design/handoff/workbench-redesign/README.md §5).
  *
- * Semantics: at least one train period is required to train (an empty list no
- * longer means "no time limit" — `getBuildBlock`); a row is kept if it falls in
+ * Semantics: at least one train period is required to train (an empty list
+ * does not mean "no time limit" — `getBuildBlock`); a row is kept if it falls in
  * ANY period. A blank start is only allowed on the first period ("Start of
  * data"), a blank end only on the last ("End of data"). Overlap between two
  * train periods is a quiet note with a "Merge into one" fix, NOT a block; a
@@ -37,7 +37,7 @@ import { isCompleteDateInput, overlapDays, settleDateInput } from './periodDispl
  * a thin red left edge, a red date field on the side that is wrong and ONE
  * reason line ("P2 ends before it starts — pick an end after 11 May 2026").
  *
- * Against the loaded data (2026-10-10, `bounds` + `savedPeriods`): a period that
+ * Against the loaded data (`bounds` + `savedPeriods`): a period that
  * is NEW or was CHANGED here and lies ENTIRELY outside the data's time range is
  * invalid like a reversed one — both date fields red and "P1 is outside the
  * data (1 Jan 2025 – 31 Dec 2025)". One that is exactly as it was SAVED
@@ -48,7 +48,7 @@ import { isCompleteDateInput, overlapDays, settleDateInput } from './periodDispl
  * count holds no running row while the others do gets "no running rows in P2"
  * (amber).
  *
- * Typing a date (2026-10-10, review of a4acd7a): a date goes to the parent ON
+ * Typing a date: a date goes to the parent ON
  * CHANGE as soon as the field reports a complete one (`isCompleteDateInput`),
  * so the timeline, the counts and the modal's impact line follow the edit
  * BEFORE Apply can be pressed. What a change never does:

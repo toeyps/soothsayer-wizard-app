@@ -10,10 +10,8 @@ import type { SubModelFit, SubModelFitsState } from './useSubModelFits';
  * scatter that shares the first predictor as X so the cards compare
  * apples-to-apples.
  *
- * Extracted from the (since deleted) PredictiveModelBuild.tsx page in health
- * score phase 3b-1, 2026-10-04; the Build Model Workbench's Model fit page
- * ("Compare predictors") is its only caller. Class names are the old page's
- * (`pm-preview-modal-*` / `pm-submodel*`). Preview only — nothing is saved.
+ * The Build Model Workbench's Model fit page ("Compare predictors") is its
+ * only caller. Preview only — nothing is saved.
  */
 
 /** ECharts scatter option for ONE sub-model fit — Raw (blue) vs Model (red)

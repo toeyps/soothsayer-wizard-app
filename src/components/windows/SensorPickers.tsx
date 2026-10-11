@@ -1,13 +1,10 @@
 import { useMemo, type ReactNode } from "react";
 import { SensorPickerMulti, SensorPickerSingle } from "../sensor/SensorPicker";
 
-// 2026-10-04 (Health score phase 4): moved out of PredictiveModelBuild.tsx when that page was
-// deleted — shared by the Build Model Workbench (BuildModelWindow, RunningConditionPanel).
+// Shared by the Build Model Workbench (BuildModelWindow, RunningConditionPanel).
 //
-// 2026-10-09 (customer item 3, SPEC FINAL `docs/design/handoff/customer-batch-2026-10/README.md`
-// §1): there is ONE sensor picker now — `src/components/sensor/SensorPicker.tsx`.
-// `SensorAutocomplete` is retired (its last caller, the Fit chart's X selector, uses the compact
-// single picker), and `SensorPickerModal` is a thin adapter kept so the Workbench call sites and
+// There is ONE sensor picker — `src/components/sensor/SensorPicker.tsx`.
+// `SensorPickerModal` is a thin adapter kept so the Workbench call sites and
 // their tests keep one seam:
 //   - single → `SensorPickerSingle`: a select-like trigger and an anchored popover; one click
 //     picks and closes; no OK.

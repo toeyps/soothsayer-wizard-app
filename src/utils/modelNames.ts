@@ -4,8 +4,8 @@ import { modelSensorKey } from './modelGrouping';
 /**
  * THE kind names a user reads, in every window (Dashboard sheet, Failure Groups
  * tab, Build Model tabs / Train menu / run strip, special-sensor lock sentences,
- * suggested model names): Individual / Relation model / Clustering. User decision
- * 2026-10-10: the whole app says "Relation model", never "Relationship" — and
+ * suggested model names): Individual / Relation model / Clustering. The whole
+ * app says "Relation model", never "Relationship" — and
  * never the algorithm name. `UserFacingWording.test.ts` guards it.
  * DISPLAY ONLY: the kind VALUE stays `'relationship'` (types, saved workspaces,
  * wire values, fingerprints).
@@ -22,8 +22,8 @@ export const kindModelName = (kind: ModelKind): string =>
     (kind === 'relationship' ? MODEL_KIND_LABEL[kind] : `${MODEL_KIND_LABEL[kind]} model`);
 
 /**
- * The kind word a suggested name carried BEFORE 2026-10-10, per kind — only where
- * it differs from today's. A workspace saved back then still holds names like
+ * The kind word a suggested name carried in older workspaces, per kind — only
+ * where it differs from today's. Such a workspace still holds names like
  * "Pump (Relationship)": they are the user's data (and their export file names),
  * so they are never rewritten — but a new suggestion must not land next to one as
  * its twin "Pump (Relation model)".
@@ -39,9 +39,9 @@ const norm = (s: string): string => s.trim().toLowerCase();
  * trimmed, case-insensitive name equals `name`, or null. Empty names and
  * models with no key sensor yet never conflict. The model itself is skipped.
  *
- * Exact text only, on purpose: "X (Relationship)" (a name saved before the
- * 2026-10-10 wording change) and "X (Relation model)" are two different names
- * here, so no saved workspace starts being blocked by this change.
+ * Exact text only, on purpose: "X (Relationship)" (a name in an older
+ * workspace) and "X (Relation model)" are two different names
+ * here, so no saved workspace is blocked by it.
  */
 export function findSameSensorNameConflict(
     models: FailureModel[],

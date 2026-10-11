@@ -1,5 +1,5 @@
 /**
- * `count_period_rows` command contract (workbench redesign 2026-10, phase C) —
+ * `count_period_rows` command contract —
  * the TypeScript twin of `src-tauri/src/period_counts.rs`. Field names are
  * exactly what Rust sends / expects (snake_case): do not camelCase them.
  *

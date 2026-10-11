@@ -1,14 +1,14 @@
 import type { Invoker } from './specialSensorRecompute';
 
 /**
- * Binding a caller to the dataset it was handed (2026-10-03).
+ * Binding a caller to the dataset it was handed.
  *
  * There is ONE Rust session, shared by every window. `load_csv` replaces it and
  * stamps it with a strictly increasing `generation`. A window that was opened
  * for workspace A and outlived it (its close was lost or late, or two loads
- * overlapped) used to run `evaluate_formula` / `calculate_new_sensor` /
- * `remove_sensor_columns` against whatever session was current -- workspace
- * B's. Those three commands now take an optional `expectedGeneration`
+ * overlapped) would otherwise run `evaluate_formula` / `calculate_new_sensor` /
+ * `remove_sensor_columns` against whatever session is current -- workspace
+ * B's. So those commands take an optional `expectedGeneration`
  * (camelCase JS key -- they keep Tauri's default casing); when it is not the
  * session's generation they mutate NOTHING and fail with a message starting
  * `STALE_SESSION`.
@@ -54,11 +54,10 @@ export function isSessionLostError(err: unknown): boolean {
     return err instanceof StaleSessionError || err instanceof TaskAbortedError;
 }
 
-/** The commands that take `expectedGeneration`. `validate_formula` joined them
- *  on 2026-10-08: read-only, but a window bound to an older dataset would
- *  otherwise check a formula against ANOTHER project's columns.
- *  `preview_formula` (the Formula editor's live check + preview, customer
- *  batch 2026-10 item 6) joined for the same reason: it must never answer
+/** The commands that take `expectedGeneration`. `validate_formula` and
+ *  `preview_formula` (the Formula editor's live check + preview) are
+ *  read-only, but a window bound to an older dataset would
+ *  otherwise check a formula against ANOTHER project's columns, or answer
  *  with another project's values. */
 const GENERATION_GUARDED = new Set([
     'evaluate_formula', 'calculate_new_sensor', 'remove_sensor_columns', 'validate_formula', 'preview_formula',

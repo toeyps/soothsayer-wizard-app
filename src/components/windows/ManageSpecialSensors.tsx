@@ -34,8 +34,7 @@ interface Props {
     onUndo: () => void;
     /** The sensor open in the Formula editor (Create tab, titled "Edit sensor"), if any. */
     editingTag: string | null;
-    /** The pencil opens the sensor in the Formula editor (customer batch 2026-10, item 6 — the
-     *  inline editor this list used to expand is gone). */
+    /** The pencil opens the sensor in the Formula editor. */
     onEdit: (tag: string) => void;
     /** A save is being applied: the pencil buttons wait. */
     savingEdit: boolean;
@@ -87,8 +86,8 @@ export default function ManageSpecialSensors({
 
     const metaFor = (tag: string) => sensorMetadata?.find(m => m.tag.toLowerCase() === tag.toLowerCase());
 
-    // One human line per recipe (customer batch 2026-10, item 6): sources read by their
-    // description in a block / operation; a formula keeps its own `$TAG` text.
+    // One human line per recipe: sources read by their description in a block /
+    // operation; a formula keeps its own `$TAG` text.
     const descriptions = useMemo(() => {
         const label = (tag: string) => sensorMetadata?.find(m => m.tag.toLowerCase() === tag.toLowerCase())?.description?.trim() || tag;
         return new Map(recipes.map(r => [r.tag, describeSpecialSensor(r, { label })]));
@@ -160,8 +159,8 @@ export default function ManageSpecialSensors({
                     // Deletion stays off until the reference lookup has
                     // actually answered — see `formulaRefs` above — and until
                     // the models / running condition are known fresh.
-                    // The sensor open in the editor cannot be deleted under it (review
-                    // 2026-10-09): close the edit first.
+                    // The sensor open in the editor cannot be deleted under it:
+                    // close the edit first.
                     const isEditing = editingTag !== null && editingTag.toLowerCase() === recipe.tag.toLowerCase();
                     const canDelete = info.deletable && formulaRefs !== null && usageKnown && !isEditing;
                     // Why Delete is off, in one line (its tooltip): "Used by X — remove it there first".
@@ -187,7 +186,7 @@ export default function ManageSpecialSensors({
                                     {recipe.kind === 'formula' ? 'ƒ' : 'Σ'}
                                 </span>
 
-                                {/* Customer item 3: description first, unit chip, tag on line 2 — the
+                                {/* Description first, unit chip, tag on line 2 — the
                                     ƒ / Σ badge is already the square on the left, so it is not repeated.
                                     No "no description" placeholder (the tag stands alone). */}
                                 <div className="min-w-0 flex-1 manage-ss-label">
@@ -232,7 +231,7 @@ export default function ManageSpecialSensors({
                                             className="flex items-center gap-1 px-1.5 py-0.5 rounded"
                                             style={{ fontSize: '10px', color: 'var(--text-secondary)', border: '1px solid var(--border-strong)' }}
                                         >
-                                            {/* Customer item 3: a neutral grey lock pill (a lock is not a warning). */}
+                                            {/* A neutral grey lock pill (a lock is not a warning). */}
                                             <Lock size={9} />
                                             {summary}
                                         </button>

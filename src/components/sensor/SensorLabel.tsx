@@ -3,7 +3,7 @@ import type { SensorMetadata, SpecialSensorRecipe } from '../../types';
 import { SensorMetaContext, sensorTitle, useLayeredSensorLookup, useSensorLookup, type SensorInfo } from './sensorInfo';
 
 /**
- * Customer item 3 (SPEC FINAL 2026-10-09 §1, DESIGN_SYSTEM §4 "Sensor label — ONE standard"):
+ * The ONE sensor label (DESIGN_SYSTEM §4 "Sensor label — ONE standard"):
  * description first, tag second, in two variants of one component.
  *  - `SensorLabel` (Stacked): lists, cards, headers — line 1 description + unit chip, line 2 tag.
  *  - `SensorInline` (Inline): picker triggers/rows, chips, condition rows, chart subtitles,

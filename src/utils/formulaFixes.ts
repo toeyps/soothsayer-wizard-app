@@ -5,8 +5,8 @@ import { convertExcelRoundCall, roundPlaces } from './formulaRounding';
 import { ZERO_ARG_FUNCTIONS } from './formulaCheck';
 
 /**
- * Editing helpers of the special-sensor Formula editor (customer batch
- * 2026-10, item 6): the fix buttons on the check line, Wrap / Unwrap,
+ * Editing helpers of the special-sensor Formula editor: the fix buttons on
+ * the check line, Wrap / Unwrap,
  * palette insertion and "Replace…" of a sensor. All pure: each returns the
  * EDIT TO APPLY -- the whole new text plus the selection to put back -- and
  * the component applies it as a native text insertion (so Ctrl+Z undoes it

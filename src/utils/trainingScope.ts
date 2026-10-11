@@ -9,11 +9,10 @@ import { toFilterRanges } from './timePeriods';
  * `compute_health_preview`, `export_model_files`) expect for `filter` —
  * `{timestamp_ranges, value_filters, combine}`, or `null` for "no filter at all".
  *
- * Extracted verbatim from `BuildModelWindow.tsx` (2026-10-03, health score
- * phase 3a) so the Workbench's Train and the health-score requests build the
- * training scope through ONE function — a request that used a different scope
- * than the Train it belongs to would score the wrong rows. Behaviour is
- * unchanged: rows the query would ignore (no sensor, missing value, sensor not
+ * The Workbench's Train and the health-score requests build the
+ * training scope through this ONE function — a request that used a different
+ * scope than the Train it belongs to would score the wrong rows. Rows the
+ * query would ignore (no sensor, missing value, sensor not
  * in `headers`) are dropped, "No condition" sends no value filters, an
  * open-both-ends period means "no time limit", and invalid periods are dropped.
  */

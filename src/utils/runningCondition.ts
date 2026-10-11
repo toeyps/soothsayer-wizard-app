@@ -16,9 +16,9 @@ export interface EffectiveRunningCondition {
     combine: 'and' | 'or';
     /** User explicitly chose "No condition — use all rows". */
     noneConfirmed: boolean;
-    /** TRAIN periods (required to train since 2026-10-07). */
+    /** TRAIN periods (required to train). */
     periods: TimePeriod[];
-    /** SCORING periods ("test periods" until 2026-10-10) — the time the trained
+    /** SCORING periods — the time the trained
      *  model gives a health score for; never trained on, never part of the
      *  train fingerprint. */
     testPeriods: TestPeriod[];
@@ -87,28 +87,28 @@ export function isRunningConditionConfigured(model: FailureModel, fg: RunningCon
 export const CATEGORY_BLOCK_REASON = 'Pick a category on the sensor header.';
 
 /** The effective running condition is not configured (no condition and no
- *  explicit "Use all rows"). Gate copy of the workbench redesign (2026-10-10):
- *  it names the two ways out and never says "Step 1". */
+ *  explicit "Use all rows"). The copy names the two ways out and never says
+ *  "Step 1". */
 export const NO_RUNNING_CONDITION_REASON = 'Set the running condition first — a condition, or Use all rows';
 
-/** No train period, Workspace-mode model (SPEC rule 1). */
+/** No train period, Workspace-mode model. */
 export const NO_TRAIN_PERIOD_REASON =
     'Add a train period — models learn only from the train periods, so pick times the machine was healthy (Running condition → Edit).';
-/** No train period, Custom-mode model: points to its own Model settings (SPEC rule 7). */
+/** No train period, Custom-mode model: points to its own Model settings. */
 export const NO_TRAIN_PERIOD_REASON_CUSTOM =
     'Add a train period in Model settings → Training data (Custom) — pick times the machine was healthy.';
 
 /**
- * The "no data to train on" guards (user request 2026-10-10: stop a train that
- * has no data at the UI instead of letting the engine fail, and warn at once
- * when a period is chosen beyond the data — NOT take away results that exist).
+ * The "no data to train on" guards: stop a train that has no data at the UI
+ * instead of letting the engine fail, and warn at once
+ * when a period is chosen beyond the data — NOT take away results that exist.
  *
  * What a caller may know about the LOADED DATA, beyond the saved condition
  * itself. Everything is optional and only ever ADDS a block, and only an ACTION
  * may pass it (Train; Apply / Save changes for a draft). The READ paths — a
  * trained model's charts, its Health score page, Mark complete, the dots, the
- * Dashboard — call the gate WITHOUT it and get exactly the rules they had
- * before. Nothing here is persisted: it never changes a model's `status`,
+ * Dashboard — call the gate WITHOUT it and get only the plain rules.
+ * Nothing here is persisted: it never changes a model's `status`,
  * fingerprint or `healthVerdict`.
  */
 export interface GateOptions {
@@ -168,7 +168,7 @@ export function noTrainDataKindOf(reason: string): { cause: 'outside-data' | 'ze
 
 /**
  * A model that HAS results (trained and up to date, or Complete) whose training
- * scope holds no row of the LOADED data (2026-10-11): its charts are computed
+ * scope holds no row of the LOADED data: its charts are computed
  * from the loaded data, so they cannot be drawn — but nothing about the model
  * changed. The window says exactly that (one board, the model's own status
  * words), never "Couldn't load" / "Training failed".
@@ -223,14 +223,14 @@ export type BuildBlock =
  * `runningConditionMode` — in 'custom' the fix is inside its Model settings
  * (`customBlockText`), in 'workspace' it is the Running-condition settings.
  *
- * Train/Test validation (SPEC rule 1, 2026-10-07): at least one TRAIN period is
- * required — the old "no period = whole dataset" default is gone. Any period
+ * At least one TRAIN period is required — no period does not mean "whole
+ * dataset". Any period
  * counts, including one left open at both ends (that is the user's explicit
  * choice of the whole time range; the Add-period button's first default).
  * Scoring periods are NOT needed to train (`markCompleteBlockReason` asks for
  * them).
  *
- * `opts` (2026-10-10, see `GateOptions` — pass it ONLY where Train is the
+ * `opts` (see `GateOptions` — pass it ONLY where Train is the
  * action; never for a read path): after everything above, `no-rows` when there
  * is truly nothing to train on — NO train period is inside the loaded data
  * (`bounds`), or the settled count of the training scope is zero
@@ -383,17 +383,17 @@ export const ADD_TRAIN_PERIOD_HINT = 'Add a train period';
 
 /**
  * Apply gate of the Running-condition settings (workspace draft, or a Custom
- * model's own lists): an invalid train period, NO train period (SPEC rule 1 —
- * hint "Add a train period"), or an invalid scoring period (a missing /
+ * model's own lists): an invalid train period, NO train period (hint "Add a
+ * train period"), or an invalid scoring period (a missing /
  * unparseable date, or an end before its start) blocks it. A scoring period
  * that overlaps a train period does NOT, neither does having NO scoring period
  * (only Mark complete needs one), and neither does a train period overlapping
- * a highlight (rule 4).
+ * a highlight.
  *
  * `action` only changes the footer wording: "applying" for the settings modal,
  * "saving" for a model's own Custom lists (saved with Save changes).
  *
- * `opts` (2026-10-10, see `GateOptions`): with the dataset bounds a train or
+ * `opts` (see `GateOptions`): with the dataset bounds a train or
  * scoring period that is NEW or was CHANGED in this draft (against
  * `savedPeriods` / `savedTestPeriods`) and lies ENTIRELY outside the loaded
  * data is invalid like any other ("Fix P1 before applying"); a period that is
@@ -466,13 +466,13 @@ export interface CustomSeedResult {
 const newFilterId = () => `rcf-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
 /**
- * The switch-to-Custom seed (SPEC rule 7), extended with scoring periods: each
+ * The switch-to-Custom seed: each
  * of the model's own lists (conditions, train periods, scoring periods) is
  * copied from the workspace ONCE — only when it is still empty, so switching
  * Workspace → Custom → Workspace → Custom never overwrites the model's own
  * edits. Copies get fresh ids. A copied scoring period is start / end only
- * (`toScoringPeriod`): the legacy label / event time of a workspace saved
- * before 2026-10-10 is never written into a model's own list. Pure: the caller
+ * (`toScoringPeriod`): the legacy label / event time of an old workspace file
+ * is never written into a model's own list. Pure: the caller
  * stages `patch` into its draft.
  */
 export function seedCustomFromWorkspace(

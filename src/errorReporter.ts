@@ -105,9 +105,9 @@ const lastFileOnly = new Map<string, number>();
 /**
  * Append a line to `frontend-errors.log` WITHOUT showing a toast — for
  * conditions the app already handled safely but that must leave a trace for
- * debugging (2026-10-07: a workspace file that could not be read, so a save
- * was skipped instead of overwriting it — the only evidence if Failure Groups
- * ever vanish again). Same line coalesced within the dedupe window; never throws.
+ * debugging (e.g. a workspace file that could not be read, so a save was
+ * skipped instead of overwriting it). Same line coalesced within the dedupe
+ * window; never throws.
  */
 export function logToFile(source: string, message: string, detail?: string): void {
     const key = `${source}|${message}`;

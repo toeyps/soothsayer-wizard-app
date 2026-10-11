@@ -6,8 +6,8 @@ import { testPeriodsKey } from './timePeriods';
 import { isModelTrainedFresh } from './trainFingerprint';
 
 /*
- * "Change warnings" of the Running-condition settings (workbench redesign
- * SPEC §5, docs/design/handoff/workbench-redesign/README.md):
+ * "Change warnings" of the Running-condition settings (spec:
+ * docs/design/handoff/workbench-redesign/README.md §5):
  *
  *   BEFORE Apply — an impact line next to the Apply button says what applying
  *   the draft does to the models that follow the workspace running condition.
@@ -101,7 +101,7 @@ export function remarkImpactText(n: number): string {
 
 /**
  * What applying `draft` over the persisted failure-group state `fg` does to
- * the models (SPEC §5 "Before Apply"):
+ * the models:
  *
  *   - the train periods or the condition changed  → amber "Applying sets N
  *     models back to Incomplete — they need training again"; N = Workspace-mode
