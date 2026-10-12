@@ -91,6 +91,18 @@ describe('KpiStrip — the row of tiles', () => {
         render(<KpiStrip fit testId="strip"><Kpi label="A" value="1" /></KpiStrip>);
         expect(screen.getByTestId('strip').className).toBe('wb3-kpis wb3-kpis--fit');
     });
+
+    it('`scroll` = the Health score strip (one row that scrolls sideways — CSS); `state` is printed as data-state', () => {
+        render(<KpiStrip scroll state="locked" testId="strip"><Kpi label="A" value="1" /></KpiStrip>);
+        const strip = screen.getByTestId('strip');
+        expect(strip.className).toBe('wb3-kpis wb3-kpis--scroll');
+        expect(strip.dataset.state).toBe('locked');
+        cleanup();
+        // without them: neither the class nor the attribute
+        render(<KpiStrip testId="strip"><Kpi label="A" value="1" /></KpiStrip>);
+        expect(screen.getByTestId('strip').className).toBe('wb3-kpis');
+        expect(screen.getByTestId('strip').hasAttribute('data-state')).toBe(false);
+    });
 });
 
 // jsdom never loads App.css: the layout rules the SPEC asks for are pinned on the stylesheet text.

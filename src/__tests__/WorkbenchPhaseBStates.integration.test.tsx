@@ -512,7 +512,7 @@ describe('a CSV stamp with "Z" / an offset shows its OWN wall clock everywhere (
 
         // Health score (1-hour averages)
         await openHealth();
-        await waitFor(() => expect(bmw().getByTestId('score-summary')).toBeTruthy());
+        await waitFor(() => expect(bmw().getByTestId('score-summary').dataset.state).toBe('ready'));
         const answer = env.backend!.lastOk('compute_health_preview') as {
             hourly: { timestamps: string[]; rows: number[]; value: number[]; score: (number | null)[] };
             series: { score: null };
@@ -539,7 +539,9 @@ describe('a CSV stamp with "Z" / an offset shows its OWN wall clock everywhere (
         expect(low.timestamp.slice(11, 19)).toMatch(/^2[23]:00:00$/);
         expect(bmw().getByTestId('score-lowest-at').textContent).toBe(`2026/02/09 ${low.timestamp.slice(11, 19)}`);
         expect(bmw().getByTestId('score-lowest-at').className).toContain('wbx-dt');
-        expect(bmw().getByTestId('score-summary').textContent).toMatch(/of scored hours · 1-hour averages of the running rows$/);
+        expect(bmw().getByTestId('kpi-lowest').textContent).toMatch(/ · 1 h average$/);
+        expect(bmw().getByTestId('kpi-below80').textContent).toMatch(/of \d+ scored hours$/);
+        expect(bmw().getByTestId('score-basis').textContent).toBe('1-hour averages of the running rows');
         // (no per-period tile any more — the "Scoring results" card was removed 2026-10-12)
         expect(bmw().queryByTestId('test-results')).toBeNull();
 

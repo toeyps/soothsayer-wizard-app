@@ -56,7 +56,6 @@ const STYLED_PREFIXES = [
  */
 const ALLOW_UNSTYLED = new Set<string>([
     'fg-panel-widget',                 // FailureGroupsPanel root; layout is inline style, never had a rule
-    'hs-share-l',                      // label cell of `.hs-share` (3-col grid styles it positionally)
     'scatter-regl-axes',               // inline-styled SVG overlay (ScatterChart)
     'scatter-regl-canvas-wrap',        // inline-styled wrapper (ScatterChart)
     'wb2-card--normal',                // default ChartCard size = the base `.wb2-card` look
@@ -246,6 +245,17 @@ describe('CSS class coverage (static — jsdom cannot see App.css)', () => {
         expect(CSS).not.toMatch(/\.hs-spp|\.hs-setwrap|\.wb2-hs\b|\.hsx-/);
         const all = FILES.map(f => f.code).join('\n');
         expect(all).not.toMatch(/\bhsx-|\bhs-spp\b|\bhs-setwrap\b|\bwb2-hs\b/);
+    });
+
+    it('Health score KPI strip: one row that scrolls sideways; the share bar and its key are styled; the old shares card rules are gone', () => {
+        for (const c of ['wb3-kpis--scroll', 'wb3-sharebar', 'wb3-sharekey']) expect(DEFINED.has(c), c).toBe(true);
+        expect(CSS).toMatch(/\.wb3-kpis--scroll \{ display: flex; overflow-x: auto;/);
+        expect(CSS).toMatch(/\.wb3-kpis--scroll \.wb3-kpi \{ flex: 1 0 176px; \}/);
+        // each band grows by its share (inline flex-grow); a band that has hours never vanishes
+        expect(CSS).toMatch(/\.wb3-sharebar i \{[^}]*flex: 0 0 0;[^}]*min-width: 2px;/);
+        expect(CSS).not.toMatch(/\.hs-shares|\.hs-share\b|\.hs-share-bar|\.hs-share-v|\.hs-sharecard|\.hs-good|\.hs-bad\b/);
+        const all = FILES.map(f => f.code).join('\n');
+        expect(all).not.toMatch(/\bhs-shares?\b|\bhs-share-(l|bar|v)\b|\bhs-sharecard\b|\bhs-good\b|\bhs-bad\b/);
     });
 
     it('score ruler: every tick / name state the ruler can render is styled, the band is capped, and a ruler input keeps a focus outline in every state', () => {

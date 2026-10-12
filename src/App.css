@@ -5367,6 +5367,18 @@ body {
 .wb3-kpi--ok .wb3-kpi-v { color: var(--ok); }
 .wb3-kpi--warn .wb3-kpi-v { color: var(--warn); }
 .wb3-kpi--bad .wb3-kpi-v { color: var(--danger); }
+/* Health score: ONE row of equal tiles that never wraps; a pane too narrow for it scrolls
+   the row sideways. A long label wraps inside its tile instead of being cut. */
+.wb3-kpis--scroll { display: flex; overflow-x: auto; padding-bottom: 2px; scrollbar-width: thin; }
+.wb3-kpis--scroll .wb3-kpi { flex: 1 0 176px; }
+.wb3-kpis--scroll .wb3-kpi-l { white-space: normal; overflow: visible; }
+/* "Share of scored hours": one stacked bar (each band grows by its share) and its key. */
+.wb3-sharebar { display: flex; width: 100%; height: 10px; margin: 6px 0 2px; border-radius: 5px; overflow: hidden; background: rgba(255, 255, 255, 0.06); }
+.wb3-sharebar i { display: block; flex: 0 0 0; min-width: 2px; height: 100%; }
+.wb3-sharekey { display: flex; flex-wrap: wrap; gap: 3px 12px; font-size: 10.5px; color: var(--text-secondary); }
+.wb3-sharekey > span { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.wb3-sharekey i { width: 8px; height: 8px; border-radius: 2px; }
+.wb3-sharekey b { font-family: var(--mono); font-weight: 600; color: var(--text-primary); }
 @container (max-width: 760px) {
     .wb3-kpi-v { font-size: 20px; }
     .wb3-kpi-v--sm { font-size: 13.5px; }
@@ -5391,8 +5403,6 @@ body {
 .hs-stateboard { min-height: 280px; }
 .hs-card { background: var(--bg-primary); border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px 12px; min-width: 0; display: flex; flex-direction: column; }
 .hs-note { font-size: 11px; color: var(--text-faint); line-height: 1.45; }
-.hs-good { color: var(--ok); }
-.hs-bad { color: var(--danger); }
 
 /* The score ruler (ScoreRuler.tsx, "Workbench detail pages v2"): ONE horizontal band
    maps value -> score. A tick = a value and the score the model gives there; the ticks
@@ -5512,17 +5522,6 @@ body {
 .hs-fix { display: block; color: var(--text-faint); margin-top: 2px; }
 
 /* score chart card: header read-out */
-/* "Share of scored hours": its own card under the score chart, the three bands side by
-   side (the chart card stays exactly as wide as the chart above it, so the two time axes
-   line up). */
-.hs-shares { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px 28px; padding: 2px 2px 4px; font: 500 10.5px var(--mono); color: var(--text-faint); }
-.hs-share { display: grid; grid-template-columns: 44px 1fr 44px; align-items: center; gap: 6px; }
-@container (max-width: 760px) {
-    .hs-shares { grid-template-columns: minmax(0, 1fr); }
-}
-.hs-share-bar { height: 7px; border-radius: 4px; background: rgba(255, 255, 255, 0.06); overflow: hidden; }
-.hs-share-bar i { display: block; height: 100%; }
-.hs-share-v { text-align: right; color: var(--text-secondary); }
 .hs-rd { font: 500 11px var(--mono); color: var(--text-secondary); min-height: 16px; margin-left: auto; }
 .wb2-card-h .wb2-ib { margin-left: auto; }
 .hs-lockbig { height: 120px; padding: 0 12px; border: 1px dashed var(--border-strong); border-radius: 8px; display: grid; place-items: center; text-align: center; font-size: 12px; color: var(--text-faint); }

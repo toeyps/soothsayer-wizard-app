@@ -185,7 +185,7 @@ describe('Individual on 5-minute data', () => {
         // ── Health score: 1-hour averages ──
         const from = env.charts.length;
         await openHealth();
-        await waitFor(() => expect(bmw().getByTestId('score-summary')).toBeTruthy());
+        await waitFor(() => expect(bmw().getByTestId('score-summary').dataset.state).toBe('ready'));
         // the request the UI built IS the fixture's request (the one Rust is pinned to)
         const sent = lastPreview('individual');
         expect(sent.args.request).toMatchObject(request);
@@ -201,7 +201,7 @@ describe('Individual on 5-minute data', () => {
         expect(scores.map(p => p[0])).toEqual(HOURS.map(h => at(h)));  // the SAME index set as the chart above
         expect(scores.map(p => p[1])).toEqual(want.hourly.score);
         expect(text('chart-card-set-individual')).toContain('bar · 1 h average');
-        expect(text('score-summary')).toBe('Lowest 100 on 2024/03/01 00:00:00 · below 80 for 0.0% of scored hours · 1-hour averages of the running rows');
+        expect([text('score-lowest'), text('score-lowest-at'), text('score-below80'), text('score-basis')]).toEqual(['100', '2024/03/01 00:00:00', '0.0%', '1-hour averages of the running rows']);
         expect(bmw().getByTestId('score-shares').textContent).toContain('Share of scored hours');
 
         // the read-out: the hour START and that hour's average — never a row's own minute
@@ -258,7 +258,7 @@ describe('Clustering (2 clusters) on 5-minute data', () => {
 
         const from = env.charts.length;
         await openHealth();
-        await waitFor(() => expect(bmw().getByTestId('score-summary')).toBeTruthy());
+        await waitFor(() => expect(bmw().getByTestId('score-summary').dataset.state).toBe('ready'));
         const sent = lastPreview('clustering');
         expect(sent.args.request).toMatchObject(request);
         const answer = sent.result as any;
@@ -294,7 +294,7 @@ describe('Clustering (2 clusters) on 5-minute data', () => {
         expect(await hoverPoint(8)).toBe('2024/03/01 09:00:00 · score 0');
         expect(bmwEl().textContent).not.toMatch(/not running/i);
 
-        expect(text('score-summary')).toBe('Lowest 100 on 2024/03/01 00:00:00 · below 80 for 0.0% of scored hours · 1-hour averages of the running rows');
+        expect([text('score-lowest'), text('score-lowest-at'), text('score-below80'), text('score-basis')]).toEqual(['100', '2024/03/01 00:00:00', '0.0%', '1-hour averages of the running rows']);
 
         // Mark complete is not blocked by unscored hours
         await markComplete();
@@ -344,7 +344,7 @@ describe('Relation model on 5-minute data', () => {
         // ── Health score: hourly ──
         const from = env.charts.length;
         await openHealth();
-        await waitFor(() => expect(bmw().getByTestId('score-summary')).toBeTruthy());
+        await waitFor(() => expect(bmw().getByTestId('score-summary').dataset.state).toBe('ready'));
         // here too only the TRAIN period is shaded and named; the scoring periods' hours are on the line (below)
         expect(stripOf(lastChart('Health score', from, true))).toEqual(['TRAIN']);
         // an hourly point's tooltip is headed by its hour START, date and time
@@ -383,7 +383,7 @@ describe('Relation model on 5-minute data', () => {
         expect(trainsOfRelation()).toHaveLength(1);
         expect(diskModel('r1').trainedFingerprint).toBe(fingerprint);
         expect(pill()).toBe('Trained');
-        await waitFor(() => expect(bmw().getByTestId('score-summary')).toBeTruthy());
+        await waitFor(() => expect(bmw().getByTestId('score-summary').dataset.state).toBe('ready'));
 
         // ── add a period (08:00 → 09:59): again no training ──
         fireEvent.click(bmw().getByTestId('rc-card-open'));
@@ -404,7 +404,7 @@ describe('Relation model on 5-minute data', () => {
         expect(trainsOfRelation()).toHaveLength(1);
         expect(diskModel('r1').trainedFingerprint).toBe(fingerprint);
         expect(pill()).toBe('Trained');
-        await waitFor(() => expect(bmw().getByTestId('score-summary')).toBeTruthy());
+        await waitFor(() => expect(bmw().getByTestId('score-summary').dataset.state).toBe('ready'));
         // no request of the session asked Rust to RETRY a failed prediction: nothing had failed
         expect(env.backend!.cmds('compute_health_preview').some(c => c.args.request.retry_test_scoring)).toBe(false);
         expect(env.backend!.calls.filter(c => c.error).map(c => `${c.cmd}: ${c.error}`)).toEqual([]);
@@ -466,7 +466,7 @@ describe('Relation model on 5-minute data', () => {
         // Try again
         await act(async () => { fireEvent.click(within(failed).getByTestId('test-scoring-retry')); });
         await waitFor(() => expect(bmw().queryByTestId('score-failed')).toBeNull());
-        await waitFor(() => expect(bmw().getByTestId('score-summary')).toBeTruthy());
+        await waitFor(() => expect(bmw().getByTestId('score-summary').dataset.state).toBe('ready'));
         const retried = env.backend!.cmds('compute_health_preview').filter(c => c.args.request.retry_test_scoring === true);
         expect(retried).toHaveLength(1);
         expect(retried[0].args.request).toMatchObject({ kind: 'relationship', cache_key: trainsOfRelation()[0].args.cache_key });
@@ -474,7 +474,7 @@ describe('Relation model on 5-minute data', () => {
         const scores = pointsOf(lastChart('Health score', from, true), 'Health score');
         expect(scores.map(p => p[0])).toEqual([0, 1, 2, 3].map(h => at(h)));
         expect(scores.map(p => p[1])).toEqual([100, 100, 100, 100]);
-        expect(text('score-summary')).toBe('Lowest 100 on 2024/03/01 00:00:00 · below 80 for 0.0% of scored hours · 1-hour averages of the running rows');
+        expect([text('score-lowest'), text('score-lowest-at'), text('score-below80'), text('score-basis')]).toEqual(['100', '2024/03/01 00:00:00', '0.0%', '1-hour averages of the running rows']);
         // a later request (a set point edit) does not keep asking for a retry
         const lower = bmw().getByTestId('sp-residual_at_0_lower');
         await act(async () => { fireEvent.change(lower, { target: { value: '-7' } }); fireEvent.blur(lower); });

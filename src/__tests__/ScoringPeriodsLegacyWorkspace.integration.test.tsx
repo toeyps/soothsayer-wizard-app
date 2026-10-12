@@ -202,7 +202,7 @@ describe('a workspace saved before "just score it" (scoring periods with label /
 
         // ── 2) Health score: nothing judged — and no per-period tiles (the "Scoring results" card was removed) ──
         await openHealth();
-        await waitFor(() => expect(bmw().getByTestId('score-summary')).toBeTruthy());
+        await waitFor(() => expect(bmw().getByTestId('score-summary').dataset.state).toBe('ready'));
         expect(bmw().queryByTestId('test-results')).toBeNull();
         expect(bmw().getByTestId('health-page').textContent).not.toMatch(REMOVED_UI);
         expect(bmw().getByTestId('health-page').textContent).not.toMatch(/Scoring results/);
@@ -234,7 +234,7 @@ describe('a workspace saved before "just score it" (scoring periods with label /
         await waitFor(() => expect(previewsFor('TAG3').length).toBeGreaterThan(0));
         expect(lastPreviewFor('TAG3').test_periods).toEqual([{ start: '2026-01-02T06:00', end: '2026-01-02T20:00' }]);
         if (!bmwEl().querySelector('[data-testid="set-points-card"]')) await openHealth();
-        await waitFor(() => expect(bmw().getByTestId('score-summary')).toBeTruthy());
+        await waitFor(() => expect(bmw().getByTestId('score-summary').dataset.state).toBe('ready'));
         expect(bmw().getByTestId('health-page').textContent).not.toMatch(REMOVED_UI);
         // the Custom model was saved by the same old build: the same hint, still Complete
         expect(bmw().getByTestId('earlier-scoring').textContent).toBe(EARLIER_SCORING_HINT);

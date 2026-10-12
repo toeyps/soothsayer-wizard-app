@@ -47,10 +47,13 @@ export function Kpi({ label, value, unit, sub, tone, small, title, testId, child
 
 /** The row of tiles; it spans every column of the board it sits in.
  *  `fit` = the Model fit strip: three equal tiles, each capped at about 420 px
- *  and kept to the left, so they do not stretch across a wide window. */
-export function KpiStrip({ fit, testId, children }: { fit?: boolean; testId?: string; children: ReactNode }) {
+ *  and kept to the left, so they do not stretch across a wide window.
+ *  `scroll` = the Health score strip: ONE row of equal tiles that never wraps — on a
+ *  pane too narrow for them the row scrolls sideways.
+ *  `state` is printed as `data-state` (what the tiles currently show). */
+export function KpiStrip({ fit, scroll, state, testId, children }: { fit?: boolean; scroll?: boolean; state?: string; testId?: string; children: ReactNode }) {
     return (
-        <div className={`wb3-kpis${fit ? ' wb3-kpis--fit' : ''}`} data-testid={testId}>
+        <div className={`wb3-kpis${fit ? ' wb3-kpis--fit' : ''}${scroll ? ' wb3-kpis--scroll' : ''}`} data-testid={testId} data-state={state}>
             {children}
         </div>
     );

@@ -301,7 +301,7 @@ describe('Relationship specifics', () => {
         const req = env.backend!.cmds('compute_health_preview').pop()!.args.request;
         expect(req.set_points.residual_at_80_lower).toBeLessThan(0);
         expect(req.set_points.residual_at_80_upper).toBe(5);
-        expect(bmw().getByTestId('score-summary')).toBeTruthy();
+        expect(bmw().getByTestId('score-summary').dataset.state).toBe('ready');
     });
 });
 
@@ -454,7 +454,7 @@ describe('misc edges', () => {
         await waitForCharts();
         await openHealth();
         await waitFor(() => expect(bmw().getByTestId('check-valid')).toBeTruthy());
-        expect(bmw().getByTestId('score-summary')).toBeTruthy();
+        expect(bmw().getByTestId('score-summary').dataset.state).toBe('ready');
     });
 
     it('malformed / degenerate previews (NaN stats, empty series, 1-point series, all-null score, 1e300) never crash the page', async () => {

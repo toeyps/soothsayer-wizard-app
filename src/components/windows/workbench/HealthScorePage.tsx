@@ -9,7 +9,7 @@ import { useSensorLookup } from '../../sensor/sensorInfo';
 import ChartCard from './ChartCard';
 import ChecksCard from './ChecksCard';
 import ScoreRuler from './ScoreRuler';
-import { CHART } from './chartTheme';
+import { Kpi, KpiStrip } from './Kpi';
 import {
     healthVerdict,
     hoverIndexFromAxisEvent,
@@ -35,10 +35,10 @@ import type { HealthScorePageProps, SaveInfo } from './workbenchTypes';
 /*
  * Page 2 of the Workbench - "Health score" body:
  *
+ *   [ Lowest score ] [ Below 80 ] [ Share of scored hours ]   the KPI tiles
  *   [ Health set points: the score ruler + footnote + the Checks     ]
  *   [ set-point chart                                                ]
  *   [ Health score over time (locked until the set points are valid) ]
- *   [ Share of scored hours                                          ]
  *
  * One column: every card is as wide as the board, so the two time charts are the
  * same width (their time axes line up) and the ruler has room for its band.
@@ -64,7 +64,7 @@ import type { HealthScorePageProps, SaveInfo } from './workbenchTypes';
  * No legend rows: every line is labelled on its
  * chart — reference lines at the right edge, the user's set points with their
  * typed value, the ring levels at the ring's edge — and the score bands are read
- * off the "Share of scored hours" card under the score chart.
+ * off the "Share of scored hours" tile at the top of the page.
  */
 
 /** Memo comparison (see `samePageProps`): the small data the window rebuilds per
@@ -233,13 +233,17 @@ function HealthScorePage(props: HealthScorePageProps) {
     // all it stands in the score card's place; when some hours WERE scored (the training
     // hours), the score chart still follows it. (The "Scoring results" card that used to
     // carry it — one tile per scoring period — was removed 2026-10-12, user decision: not
-    // used. The score chart's own subtitle keeps the two facts for all scored hours.)
+    // used. The KPI tiles at the top keep the facts for ALL scored hours; there is never a
+    // tile per scoring period.)
     const scoringFailure = errorMode ? null : testScoringFailure(data);
     const anyScored = !!data.hourly.score?.some(v => v !== null);
     const retryScoring = canRetry ? (props.onRetryTestScoring ?? props.onRetryPreview) : undefined;
 
     return (
         <div className="wb2-board hs-board" data-testid="health-page" data-valid={String(data.valid)}>
+            {/* The page's numbers first, as tiles — they replace the score chart's old
+                subtitle and the "Share of scored hours" card. */}
+            <ScoreKpis summary={scoreReady ? data.score_summary : null} state={errorMode ? 'error' : scoreReady ? 'ready' : 'locked'} />
             <SaveBanner save={save} slow={slowSave} relation={model.kind === 'relationship'} />
             <SlowScoringNotice show={props.slowScoring} />
             {errorCard}
@@ -280,7 +284,6 @@ function HealthScorePage(props: HealthScorePageProps) {
                 <ScoreChart
                     data={data}
                     score={data.hourly.score}
-                    summary={data.score_summary}
                     unit={unit}
                     hoverIdx={hoverIdx}
                     onHover={setHoverIdx}
@@ -558,25 +561,99 @@ function SetPointChart({ data, props, hoverIdx, onHover, stale, unit, scopes, zo
 }
 
 // ---------------------------------------------------------------------------
-// Score chart
+// KPI tiles
 // ---------------------------------------------------------------------------
 
 /** A share of the scored hours as text: one decimal, and a share that is not zero never
- *  reads "0.0%" (it is "< 0.1%"). The shares card and the score card's subtitle use the same rule. */
+ *  reads "0.0%" (it is "< 0.1%"). Every share on the page uses this rule. */
 export function shareText(v: number): string {
     return v > 0 && v < 0.1 ? '< 0.1%' : `${v.toFixed(1)}%`;
 }
 
+/** The three score bands, in the order of the bar (best first), in the app's score colours. */
 const SHARES: { key: 'share_80_100' | 'share_40_80' | 'share_0_40'; label: string; color: string }[] = [
-    { key: 'share_80_100', label: '80–100', color: CHART.ok },
-    { key: 'share_40_80', label: '40–80', color: CHART.warn },
-    { key: 'share_0_40', label: '0–40', color: CHART.danger },
+    { key: 'share_80_100', label: '80–100', color: 'var(--ok)' },
+    { key: 'share_40_80', label: '40–80', color: 'var(--warn)' },
+    { key: 'share_0_40', label: '0–40', color: 'var(--danger)' },
 ];
 
-function ScoreChart({ data, score, summary, unit, hoverIdx, onHover, stale, scopes, zoom }: {
+/** What the tiles show: the score (`ready`), nothing yet because the set points are not
+ *  valid (`locked`), or nothing because the health score did not load (`error`). */
+export type ScoreKpiState = 'ready' | 'locked' | 'error';
+
+/** The caption of a tile that has no number to show. */
+const NOT_LOADED = 'not available until the score loads';
+
+/**
+ * The KPI strip of the Health score page: `Lowest score · Below 80 · Share of scored
+ * hours`, for ALL scored hours (there is never a tile per scoring period — user decision
+ * 2026-10-12). Tiles do not judge: the only colour is on a number that IS a score — the
+ * lowest score (green from 80, red below) — and the bar's three score bands.
+ * `summary` is null whenever there is no score to show (`state` says why).
+ */
+export function ScoreKpis({ summary, state }: { summary: ScoreSummary | null | undefined; state: ScoreKpiState }) {
+    const ready = state === 'ready' && !!summary;
+    const lowest = ready ? summary.min_score : null;
+    const pct = ready ? summary.pct_below_80 : null;
+    const scored = ready ? summary.scored : 0;
+    const waiting = state === 'error' ? NOT_LOADED : 'once the set points are valid';
+    return (
+        <KpiStrip scroll testId="score-summary" state={state}>
+            <Kpi
+                label="Lowest score"
+                testId="kpi-lowest"
+                // Coloured by the band its score is in — the same three bands as the score
+                // chart's line and the share bar: 80–100, 40–80, below 40 (SPEC §6).
+                tone={lowest ? (lowest.score >= 80 ? 'ok' : lowest.score >= 40 ? 'warn' : 'bad') : undefined}
+                value={lowest ? <span data-testid="score-lowest">{Math.round(lowest.score)}</span> : '—'}
+                sub={lowest
+                    // The hour start in the app's one date format; every score is a 1-hour average.
+                    ? <>{lowest.timestamp && <>on <span className="wbx-dt" data-testid="score-lowest-at">{formatDataStamp(lowest.timestamp)}</span> · </>}1 h average</>
+                    : ready ? 'no scored hours' : waiting}
+            />
+            <Kpi
+                label="Below 80"
+                testId="kpi-below80"
+                value={pct !== null ? <span data-testid="score-below80">{shareText(pct)}</span> : '—'}
+                sub={ready ? `of ${scored.toLocaleString('en-US')} scored hour${scored === 1 ? '' : 's'}` : state === 'error' ? NOT_LOADED : 'of the scored hours'}
+            />
+            <Kpi
+                label="Share of scored hours"
+                testId="score-shares"
+                small
+                value={
+                    <span className="wb3-sharebar" role="img" aria-label="Share of scored hours by score band" data-testid="share-bar">
+                        {SHARES.map(s => {
+                            const v = ready ? summary[s.key] : null;
+                            // A band that has hours is always visible, however small its share.
+                            return v ? <i key={s.key} data-band={s.key} style={{ flexGrow: v, background: s.color }} /> : null;
+                        })}
+                    </span>
+                }
+                sub={state === 'error' ? NOT_LOADED : undefined}
+            >
+                <div className="wb3-sharekey">
+                    {SHARES.map(s => {
+                        const v = ready ? summary[s.key] : null;
+                        return (
+                            <span key={s.key} data-testid={`share-${s.key}`}>
+                                <i style={{ background: s.color }} /><span>{s.label}</span><b>{v === null ? '—' : shareText(v)}</b>
+                            </span>
+                        );
+                    })}
+                </div>
+            </Kpi>
+        </KpiStrip>
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Score chart
+// ---------------------------------------------------------------------------
+
+function ScoreChart({ data, score, unit, hoverIdx, onHover, stale, scopes, zoom }: {
     data: HealthPreview;
     score: (number | null)[];
-    summary: ScoreSummary;
     unit: string;
     hoverIdx: number | null;
     onHover: (i: number | null) => void;
@@ -590,7 +667,6 @@ function ScoreChart({ data, score, summary, unit, hoverIdx, onHover, stale, scop
     const option = useMemo(() => buildScoreOption(series.timestamps, score, scopes), [series.timestamps, score, scopes]);
     // A new option redraws the chart unzoomed: put the shared window back.
     useEffect(() => { zoom.restore(); }, [option, zoom]);
-    const lowest = summary.min_score;
     const text = readoutText(readoutAt(series, hoverIdx), unit);
     const chartProps = {
         onChartReady: zoom.join,
@@ -600,43 +676,20 @@ function ScoreChart({ data, score, summary, unit, hoverIdx, onHover, stale, scop
             datazoom: zoom.onZoom,
         },
     };
-    const pct = summary.pct_below_80;
+    // Exactly as wide as the chart above it, and the two charts have the same plot margins,
+    // so their time axes line up. The numbers (lowest score, % below 80, the shares) are the
+    // KPI tiles at the top of the page; the card only says what a point of this chart is.
     return (
-        <>
-        {/* Exactly as wide as the chart above it, and the two charts have the same plot
-            margins, so their time axes line up. The shares are a card of their own under it. */}
         <ChartCard
             id="score"
             title="Health score"
             size="hs"
             stale={stale}
-            sub={
-                <span data-testid="score-summary">
-                    {lowest ? <>Lowest <b className={lowest.score >= 80 ? 'hs-good' : 'hs-bad'} data-testid="score-lowest">{Math.round(lowest.score)}</b>{lowest.timestamp ? <> on <span className="wbx-dt" data-testid="score-lowest-at">{formatDataStamp(lowest.timestamp)}</span></> : ''}</> : 'No scored hours'}
-                    {pct !== null && <> · below 80 for <b data-testid="score-below80">{shareText(pct)}</b> of scored hours</>}
-                    {' '}<span data-testid="score-basis">· 1-hour averages of the running rows</span>
-                </span>
-            }
+            sub={<span data-testid="score-basis">1-hour averages of the running rows</span>}
             extra={<span className="hs-rd" data-testid="hs-readout">{text}</span>}
             option={option}
             chartProps={chartProps}
         />
-        <section className="hs-card hs-sharecard" data-testid="score-shares">
-            <div className="wb2-card-h"><b>Share of scored hours</b></div>
-            <div className="hs-shares">
-                {SHARES.map(s => {
-                    const v = summary[s.key];
-                    return (
-                        <div key={s.key} className="hs-share" data-testid={`share-${s.key}`}>
-                            <span className="hs-share-l">{s.label}</span>
-                            <span className="hs-share-bar"><i style={{ width: `${Math.max(v === null ? 0 : v, v ? 1 : 0)}%`, background: s.color }} /></span>
-                            <span className="hs-share-v">{v === null ? '—' : shareText(v)}</span>
-                        </div>
-                    );
-                })}
-            </div>
-        </section>
-        </>
     );
 }
 

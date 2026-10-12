@@ -9,12 +9,12 @@ vi.mock('../components/charts/ResponsiveECharts', () => ({
     default: (props: any) => { charts.push(props); return <div data-testid="echarts-mock" data-y-name={props.option?.yAxis?.name ?? ''} />; },
 }));
 
-import HealthScorePage, { SLOW_SAVE_NOTICE_MS, lockReason, sameHealthScoreProps, scoreLockText, shareText } from '../components/windows/workbench/HealthScorePage';
+import HealthScorePage, { SLOW_SAVE_NOTICE_MS, ScoreKpis, lockReason, sameHealthScoreProps, scoreLockText, shareText } from '../components/windows/workbench/HealthScorePage';
 import { SensorMetaProvider } from '../components/sensor/SensorLabel';
 import { CHART } from '../components/windows/workbench/chartTheme';
 import type { HealthScorePageProps, SaveInfo } from '../components/windows/workbench/workbenchTypes';
 import type { HealthSetPoints } from '../types';
-import type { HealthIssue, HealthPreview } from '../types/health';
+import type { HealthIssue, HealthPreview, ScoreSummary } from '../types/health';
 import { HOURLY_TS, makeHealthPreview, makeSetPointAwarePreview } from './helpers/healthPreviewFixture';
 import { makeTestResult, makeValidation } from './helpers/validationFixture';
 
@@ -75,6 +75,12 @@ const rulerScores = () => [...ruler().querySelectorAll('.wb3-ruler-scores > span
 /** A tick's name (its own text: the Relation ruler also carries a narrow-layout copy of the value in a <small>). */
 const rulerNames = () => [...ruler().querySelectorAll('[data-testid="ruler-name"]')].map(el => el.childNodes[0].textContent);
 const markers = () => screen.queryAllByTestId('ruler-marker');
+/** The KPI strip at the top of the page (`data-state`: ready / locked / error) and its three tiles. */
+const kpis = () => screen.getByTestId('score-summary');
+const tile = (id: 'kpi-lowest' | 'kpi-below80' | 'score-shares') => screen.getByTestId(id);
+const tileSub = (id: 'kpi-lowest' | 'kpi-below80' | 'score-shares') => tile(id).querySelector('.wb3-kpi-s')?.textContent ?? null;
+/** The bands drawn in the stacked share bar, with how much each grows. */
+const barBands = () => [...screen.getByTestId('share-bar').querySelectorAll('i')].map(i => [(i as HTMLElement).dataset.band, (i as HTMLElement).style.flexGrow]);
 const scoreChart = () => charts.filter(c => c.option?.yAxis?.name === 'Score').pop();
 const setChart = () => charts.filter(c => c.option?.yAxis?.name !== 'Score' || c.option?.series?.[0]?.name === 'Points').pop();
 /** Text of the legend row under a card's chart, or null when the card has none. */
@@ -698,13 +704,26 @@ describe('Health score chart', () => {
         });
     });
 
-    it('has NO legend row and no "hover to read" sentence: the share column and the read-out say it', () => {
+    it('has NO legend row and no "hover to read" sentence: the shares tile and the read-out say it', () => {
         mount({ sp: IND_VALID });
         expect(legendOf('score')).toBeNull();
         const card = screen.getByTestId('chart-card-score');
         expect(card.textContent).not.toMatch(/Hover to read|near 0|both charts move together/i);
-        expect(screen.getByTestId('score-shares')).toBeTruthy(); // the share column stays
+        expect(screen.getByTestId('score-shares')).toBeTruthy(); // the shares stay — as a tile at the top
+        expect(card.contains(screen.getByTestId('score-shares'))).toBe(false);
         expect(screen.getByTestId('hs-readout')).toBeTruthy(); // so does the hover read-out
+    });
+
+    // Workbench detail pages v2: the numbers left the card's subtitle for the KPI tiles; the card
+    // only says what a point of the chart is.
+    it('the score card\'s subtitle is ONE short caption — "1-hour averages of the running rows" — with no numbers in it', () => {
+        mount({ sp: IND_VALID });
+        const card = screen.getByTestId('chart-card-score');
+        expect(card.querySelector('.wb2-card-s')!.textContent).toBe('1-hour averages of the running rows');
+        expect(screen.getByTestId('score-basis').textContent).toBe('1-hour averages of the running rows');
+        expect(screen.getByTestId('score-basis').closest('.wb2-card-s')).not.toBeNull();
+        expect(card.textContent).not.toMatch(/Lowest|below 80|scored hours/);
+        expect(card.querySelector('[data-testid="score-lowest"], [data-testid="score-below80"]')).toBeNull();
     });
 
     it('the line at 80 is named at the right edge outside the plot; the tooltip prints whole scores', () => {
@@ -738,16 +757,16 @@ describe('Health score chart', () => {
         expect(screen.getByTestId('share-share_80_100').textContent).toBe('80–100100.0%');
     });
 
-    // The rule was on the share column only — the same card's subtitle
-    // printed `toFixed(1)`: "below 80 for 0.0%" next to a "< 0.1%" share.
-    it('the subtitle follows the same rule: "below 80 for < 0.1% of scored hours", never "0.0%" for a share that is not zero', () => {
+    // The rule was once on the share column only, while "below 80" printed `toFixed(1)`:
+    // "below 80 for 0.0%" next to a "< 0.1%" share.
+    it('the "Below 80" tile follows the same rule: "< 0.1%", never "0.0%" for a share that is not zero', () => {
         const d = previewFor('individual', IND_VALID);
         const withPct = (pct: number | null) => ({ ...d, score_summary: { ...d.score_summary!, share_80_100: 99.96, share_40_80: 0.04, share_0_40: 0, pct_below_80: pct } });
         mount({ sp: IND_VALID, data: withPct(0.04) });
         expect(screen.getByTestId('score-below80').textContent).toBe('< 0.1%');
-        expect(screen.getByTestId('score-summary').textContent).toContain('below 80 for < 0.1% of scored hours');
-        expect(screen.getByTestId('score-summary').textContent).not.toContain('0.0%');
-        // the subtitle and the share column of the same card agree
+        expect(tile('kpi-below80').textContent).toBe('Below 80< 0.1%of 5 scored hours');
+        expect(tile('kpi-below80').textContent).not.toContain('0.0%');
+        // the tile and the shares tile beside it agree
         expect(screen.getByTestId('share-share_40_80').textContent).toBe('40–80< 0.1%');
         cleanup();
         mount({ sp: IND_VALID, data: withPct(0) });
@@ -762,44 +781,25 @@ describe('Health score chart', () => {
         expect(shareText(100)).toBe('100.0%');
     });
 
-    it('header: the lowest hourly score and the start of that hour, % of scored HOURS below 80, the "1-hour averages" note, and the three share numbers', () => {
-        mount({ sp: IND_VALID });
-        const sum = screen.getByTestId('score-summary');
-        expect(screen.getByTestId('score-lowest').textContent).toBe('30');
-        // The hour start (Rust: `2026-01-01T04:00:00`) in the app's one date format (a data row's time, with seconds), in mono — never the raw text.
-        expect(sum.textContent).toBe('Lowest 30 on 2026/01/01 04:00:00 · below 80 for 40.0% of scored hours · 1-hour averages of the running rows');
-        expect(sum.textContent).not.toMatch(/2026-01-01|scored rows/);
-        // the note sits in the card's own subtitle line (no new card, badge or banner)
-        expect(screen.getByTestId('score-basis').textContent).toBe('· 1-hour averages of the running rows');
-        expect(screen.getByTestId('score-basis').closest('.wb2-card-s')).not.toBeNull();
-        expect(screen.getByTestId('score-shares').querySelector('.wb2-card-h b')!.textContent).toBe('Share of scored hours');
-        expect(screen.getByTestId('score-lowest-at').className).toContain('wbx-dt');
-        expect(screen.getByTestId('score-below80').textContent).toBe('40.0%');
-        expect(screen.getByTestId('share-share_80_100').textContent).toBe('80–10060.0%');
-        expect(screen.getByTestId('share-share_40_80').textContent).toBe('40–8020.0%');
-        expect(screen.getByTestId('share-share_0_40').textContent).toBe('0–4020.0%');
-    });
-
-    it('a lowest score of 80 or more reads green, below 80 red', () => {
-        const d = previewFor('individual', IND_VALID);
-        mount({ sp: IND_VALID, data: { ...d, score_summary: { ...d.score_summary!, min_score: { score: 92, row: 1, timestamp: 't' } } } });
-        expect(screen.getByTestId('score-lowest').className).toMatch(/hs-good/);
-        cleanup();
-        mount({ sp: IND_VALID });
-        expect(screen.getByTestId('score-lowest').className).toMatch(/hs-bad/);
-    });
-
-    it('shows an em dash for a share Rust did not provide', () => {
+    it('shows an em dash for a share Rust did not provide — and no "Below 80" number', () => {
         const d = previewFor('individual', IND_VALID);
         mount({ sp: IND_VALID, data: { ...d, score_summary: { ...d.score_summary!, share_40_80: null, pct_below_80: null } } });
         expect(screen.getByTestId('share-share_40_80').textContent).toBe('40–80—');
-        expect(screen.getByTestId('score-summary').textContent).not.toMatch(/below 80 for/);
+        expect(barBands().map(b => b[0])).toEqual(['share_80_100', 'share_0_40']); // no segment for a share that is not known
+        expect(screen.queryByTestId('score-below80')).toBeNull();
+        expect(tile('kpi-below80').textContent).toBe('Below 80—of 5 scored hours');
     });
 
-    it('no hour got a score: "No scored hours" (never "rows"), the note stays', () => {
+    it('no hour got a score: the Lowest tile reads "no scored hours" (never "rows"), every number is a dash, the chart caption stays', () => {
         const d = previewFor('individual', IND_VALID);
         mount({ sp: IND_VALID, data: { ...d, hourly: { ...d.hourly, score: [null, null, null, null, null] } as any, score_summary: { ...d.score_summary!, scored: 0, unscored: 5, min_score: null, pct_below_80: null, share_80_100: null, share_40_80: null, share_0_40: null } } });
-        expect(screen.getByTestId('score-summary').textContent).toBe('No scored hours · 1-hour averages of the running rows');
+        expect(kpis().dataset.state).toBe('ready'); // the set points ARE valid: this is an answer, not a lock
+        expect(tile('kpi-lowest').textContent).toBe('Lowest score—no scored hours');
+        expect(tile('kpi-lowest').className).toBe('wb3-kpi'); // no score, no colour
+        expect(tile('kpi-below80').textContent).toBe('Below 80—of 0 scored hours');
+        expect(barBands()).toEqual([]);
+        expect(kpis().textContent).not.toMatch(/rows/);
+        expect(screen.getByTestId('score-basis').textContent).toBe('1-hour averages of the running rows');
     });
 
     it('every chart card has the Expand button (set-point chart and score chart)', () => {
@@ -807,7 +807,7 @@ describe('Health score chart', () => {
         expect(screen.getByTestId('chart-expand-set-individual')).toBeTruthy();
         fireEvent.click(screen.getByTestId('chart-expand-score'));
         expect(screen.getByTestId('chart-overlay-score')).toBeTruthy();
-        // the enlarged copy is the chart alone: the shares are a card of their own under it
+        // the enlarged copy is the chart alone: the shares are a tile at the top of the page
         expect(screen.getByTestId('chart-overlay-score').querySelector('[data-testid="score-shares"]')).toBeNull();
         fireEvent.keyDown(window, { key: 'Escape' });
         expect(screen.queryByTestId('chart-overlay-score')).toBeNull();
@@ -816,21 +816,19 @@ describe('Health score chart', () => {
     // Real-app request 2026-10-12: "if the two charts were the same size it would be much easier
     // to read — no need to line the point up by eye". Workbench detail pages v2: the ruler card is
     // full width ABOVE the charts and there is no right-column card any more.
-    it('one column: the ruler card, the set-point chart, the score chart, the shares — the two time charts are the same width and share their plot margins and one zoom', () => {
+    it('one column: the KPI tiles, the ruler card, the set-point chart, the score chart — the two time charts are the same width and share their plot margins and one zoom', () => {
         mount({ sp: IND_VALID });
         const page = screen.getByTestId('health-page');
         const rulerCard = screen.getByTestId('set-points-card');
         const setCard = screen.getByTestId('chart-card-set-individual');
         const scoreCard = screen.getByTestId('chart-card-score');
-        const shares = screen.getByTestId('score-shares');
-        // every card is a direct child of the ONE-column board, in this order
+        // every block is a direct child of the ONE-column board, in this order — the tiles first
         expect(page.className).toBe('wb2-board hs-board');
-        expect([...page.children]).toEqual([rulerCard, setCard, scoreCard, shares]);
-        // no side column, no wrappers of the old two-column layout
-        expect(page.querySelector('.hs-spp, .hs-setwrap')).toBeNull();
+        expect([...page.children]).toEqual([kpis(), rulerCard, setCard, scoreCard]);
+        // no side column, no wrappers of the old two-column layout, no "Share of scored hours" card
+        expect(page.querySelector('.hs-spp, .hs-setwrap, .hs-sharecard, .hs-shares')).toBeNull();
         expect(rulerCard.className).toBe('hs-card wb3-rulercard');
-        expect(shares.className).toBe('hs-card hs-sharecard');
-        expect(scoreCard.contains(shares)).toBe(false);
+        expect(kpis().contains(screen.getByTestId('score-shares'))).toBe(true);
         // the same plot box: left and right margins are equal
         const g = (c: any) => [c.option.grid.left, c.option.grid.right];
         expect(g(scoreChart())).toEqual(g(setChart()));
@@ -851,6 +849,172 @@ describe('Health score chart', () => {
     it('the Out of date film covers both charts while the model is stale', () => {
         mount({ sp: IND_VALID, stale: true });
         expect(screen.getAllByTestId('chart-outdated').length).toBe(2);
+    });
+});
+
+// Workbench detail pages v2 §6 "KPI strip" (as cut down 2026-10-12): Lowest score · Below 80 ·
+// Share of scored hours. It replaces the score chart's long subtitle and the "Share of scored
+// hours" card. Never a tile per scoring period.
+describe('KPI tiles at the top of the page', () => {
+    it('three tiles, in one row above the ruler: Lowest score (with the hour), Below 80 (of the scored hours), Share of scored hours (a stacked bar + its key)', () => {
+        mount({ sp: IND_VALID });
+        const strip = kpis();
+        expect(strip.className).toBe('wb3-kpis wb3-kpis--scroll'); // one row; it scrolls sideways when the pane is too narrow
+        expect(strip.dataset.state).toBe('ready');
+        expect(screen.getByTestId('health-page').firstElementChild).toBe(strip);
+        expect(strip.compareDocumentPosition(screen.getByTestId('set-points-card')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+        expect([...strip.children]).toEqual([tile('kpi-lowest'), tile('kpi-below80'), tile('score-shares')]);
+        expect([...strip.querySelectorAll('.wb3-kpi-l')].map(l => l.textContent)).toEqual(['Lowest score', 'Below 80', 'Share of scored hours']);
+        // Lowest score: the whole number, then the START of that hour in the app's one date format (mono)
+        expect(screen.getByTestId('score-lowest').textContent).toBe('30');
+        expect(screen.getByTestId('score-lowest').closest('.wb3-kpi-v')).not.toBeNull();
+        expect(tileSub('kpi-lowest')).toBe('on 2026/01/01 04:00:00 · 1 h average');
+        expect(screen.getByTestId('score-lowest-at').textContent).toBe('2026/01/01 04:00:00');
+        expect(screen.getByTestId('score-lowest-at').className).toContain('wbx-dt');
+        expect(tile('kpi-lowest').textContent).not.toMatch(/2026-01-01|T04/); // never the raw text
+        // Below 80: % of the scored HOURS (never "rows"), and how many hours that is of
+        expect(screen.getByTestId('score-below80').textContent).toBe('40.0%');
+        expect(tileSub('kpi-below80')).toBe('of 5 scored hours');
+        // Share of scored hours: one stacked bar, each band growing by its share, and the key with the numbers
+        expect(screen.getByRole('img', { name: 'Share of scored hours by score band' })).toBe(screen.getByTestId('share-bar'));
+        expect(barBands()).toEqual([['share_80_100', '60'], ['share_40_80', '20'], ['share_0_40', '20']]);
+        expect(screen.getByTestId('share-share_80_100').textContent).toBe('80–10060.0%');
+        expect(screen.getByTestId('share-share_40_80').textContent).toBe('40–8020.0%');
+        expect(screen.getByTestId('share-share_0_40').textContent).toBe('0–4020.0%');
+        expect(tileSub('score-shares')).toBeNull();
+        expect(strip.textContent).not.toMatch(/scored rows|training hours/);
+    });
+
+    it('colour is ONLY on the score number itself: the lowest score takes the colour of its band (80–100 green, 40–80 amber, below 40 red) — the other tiles never judge', () => {
+        const d = previewFor('individual', IND_VALID);
+        mount({ sp: IND_VALID }); // lowest 30
+        expect(tile('kpi-lowest').className).toBe('wb3-kpi wb3-kpi--bad');
+        expect(tile('kpi-below80').className).toBe('wb3-kpi');
+        expect(tile('score-shares').className).toBe('wb3-kpi');
+        cleanup();
+        mount({ sp: IND_VALID, data: { ...d, score_summary: { ...d.score_summary!, min_score: { score: 92, row: 1, timestamp: 't' } } } });
+        expect(tile('kpi-lowest').className).toBe('wb3-kpi wb3-kpi--ok');
+        cleanup();
+        mount({ sp: IND_VALID, data: { ...d, score_summary: { ...d.score_summary!, min_score: { score: 80, row: 1, timestamp: 't' } } } });
+        expect(tile('kpi-lowest').className).toBe('wb3-kpi wb3-kpi--ok'); // 80 itself is good
+        cleanup();
+        for (const [score, tone] of [[79.9, 'warn'], [40, 'warn'], [39.9, 'bad'], [0, 'bad']] as const) {
+            mount({ sp: IND_VALID, data: { ...d, score_summary: { ...d.score_summary!, min_score: { score, row: 1, timestamp: 't' } } } });
+            expect(tile('kpi-lowest').className, String(score)).toBe(`wb3-kpi wb3-kpi--${tone}`);
+            cleanup();
+        }
+        // a terrible "Below 80" is still plain: tiles do not judge
+        mount({ sp: IND_VALID, data: { ...d, score_summary: { ...d.score_summary!, pct_below_80: 97.3 } } });
+        expect(tile('kpi-below80').className).toBe('wb3-kpi');
+        expect(kpis().querySelector('.hs-good, .hs-bad')).toBeNull();
+        expect(kpis().querySelectorAll('.wb3-kpi--ok, .wb3-kpi--warn, .wb3-kpi--bad')).toHaveLength(1); // the Lowest tile alone
+    });
+
+    it('a lowest score is shown as a whole number; one without a timestamp still says it is a 1 h average', () => {
+        const d = previewFor('individual', IND_VALID);
+        mount({ sp: IND_VALID, data: { ...d, score_summary: { ...d.score_summary!, min_score: { score: 79.6, row: 1, timestamp: null as any } } } });
+        expect(screen.getByTestId('score-lowest').textContent).toBe('80');
+        expect(tile('kpi-lowest').className).toBe('wb3-kpi wb3-kpi--warn'); // the colour follows the real score (79.6), not the rounded text
+        expect(tileSub('kpi-lowest')).toBe('1 h average');
+        expect(screen.queryByTestId('score-lowest-at')).toBeNull();
+    });
+
+    it('a band with no hours has no segment in the bar; a tiny one still has one (and reads "< 0.1%")', () => {
+        const d = previewFor('individual', IND_VALID);
+        mount({ sp: IND_VALID, data: { ...d, score_summary: { ...d.score_summary!, share_80_100: 99.96, share_40_80: 0.04, share_0_40: 0 } } });
+        expect(barBands()).toEqual([['share_80_100', '99.96'], ['share_40_80', '0.04']]);
+        expect(screen.getByTestId('share-share_0_40').textContent).toBe('0–400.0%');
+    });
+
+    it('LOCKED (the set points are empty or rejected): the same three tiles, every number a dash, no colour, and a caption that says what is missing', () => {
+        mount({ sp: { kind: 'individual', lower: null, upper: null, masterLower: null, masterUpper: null } });
+        expect(kpis().dataset.state).toBe('locked');
+        expect(kpis().children).toHaveLength(3);
+        expect(tile('kpi-lowest').textContent).toBe('Lowest score—once the set points are valid');
+        expect(tile('kpi-below80').textContent).toBe('Below 80—of the scored hours');
+        expect(tile('score-shares').textContent).toBe('Share of scored hours80–100—40–80—0–40—');
+        expect(barBands()).toEqual([]);
+        for (const id of ['kpi-lowest', 'kpi-below80', 'score-shares'] as const) expect(tile(id).className).toBe('wb3-kpi');
+        expect(screen.queryByTestId('score-lowest')).toBeNull();
+        expect(screen.queryByTestId('score-lowest-at')).toBeNull();
+        expect(screen.queryByTestId('score-below80')).toBeNull();
+        // a rejected point: the same
+        cleanup();
+        mount({ sp: IND_VALID });
+        type('sp-lower', '3');
+        expect(kpis().dataset.state).toBe('locked');
+        expect(tileSub('kpi-lowest')).toBe('once the set points are valid');
+        // fixed: the numbers are back
+        type('sp-lower', '1');
+        expect(kpis().dataset.state).toBe('ready');
+        expect(screen.getByTestId('score-lowest').textContent).toBe('30');
+    });
+
+    it('valid by Rust but no hourly score in the answer: locked as well (the tiles never show numbers the chart cannot)', () => {
+        const d = previewFor('individual', IND_VALID);
+        mount({ sp: IND_VALID, data: { ...d, hourly: { ...d.hourly, score: null } as any } });
+        expect(kpis().dataset.state).toBe('locked');
+        expect(screen.queryByTestId('score-lowest')).toBeNull();
+    });
+
+    // SPEC "Preview failed": every tile says "not available until the score loads".
+    it('PREVIEW FAILED: every tile says "not available until the score loads" — the old answer\'s numbers are not shown', () => {
+        const last = previewFor('individual', IND_VALID); // an answer that HAD a lowest score of 30
+        mount({ sp: IND_VALID, preview: { data: null, lastData: last, loading: false, error: 'boom', errorCode: null, notFitted: false, needsRetrain: false, idle: null } as any });
+        expect(kpis().dataset.state).toBe('error');
+        expect(kpis().children).toHaveLength(3);
+        for (const id of ['kpi-lowest', 'kpi-below80', 'score-shares'] as const) {
+            expect(tileSub(id)).toBe('not available until the score loads');
+            expect(tile(id).className).toBe('wb3-kpi');
+        }
+        expect(tile('kpi-lowest').textContent).toBe('Lowest score—not available until the score loads');
+        expect(tile('kpi-below80').textContent).toBe('Below 80—not available until the score loads');
+        expect(tile('score-shares').textContent).toBe('Share of scored hours80–100—40–80—0–40—not available until the score loads');
+        expect(barBands()).toEqual([]);
+        expect(kpis().textContent).not.toMatch(/30|40\.0%|60\.0%/);
+        // the next request (error cleared, data still null): still "not available", never the old numbers
+        cleanup();
+        mount({ sp: IND_VALID, preview: { data: null, lastData: last, loading: true, error: null, errorCode: null, notFitted: false, needsRetrain: false, idle: null } as any });
+        expect(kpis().dataset.state).toBe('error');
+        expect(tileSub('kpi-lowest')).toBe('not available until the score loads');
+    });
+
+    it('the chart-less states (loading, fit gone, load failed) have NO tiles: there is no preview to summarise', () => {
+        mount({ data: null });
+        expect(screen.getByTestId('health-loading')).toBeTruthy();
+        expect(screen.queryByTestId('score-summary')).toBeNull();
+        cleanup();
+        mount({ data: null, preview: { data: null, loading: false, error: 'No rows in the training scope.', errorCode: 'NO_DATA', notFitted: false, needsRetrain: false, idle: null } });
+        expect(screen.queryByTestId('score-summary')).toBeNull();
+    });
+
+    it('never a tile per scoring period: with scoring periods the strip is still exactly three tiles, for all scored hours', () => {
+        const withPeriods: HealthPreview = {
+            ...previewFor('individual', IND_VALID),
+            test_validation: makeValidation({ tests: [makeTestResult({ pct_below_80: 7, lowest: 62, lowest_at: '2026-01-01T02:00:00' }), makeTestResult({ index: 2, start: '2026-01-01T03:00', end: '2026-01-01T04:00', pct_below_80: 41.5, lowest: 12, lowest_at: '2026-01-01T03:00:00' })] }),
+        };
+        mount({ sp: IND_VALID, data: withPeriods, testNumbers: [1, 2] });
+        expect([...kpis().children].map(t => t.getAttribute('data-testid'))).toEqual(['kpi-lowest', 'kpi-below80', 'score-shares']);
+        expect(kpis().textContent).not.toMatch(/S1|S2|62|41\.5|12\b|scoring period/i); // no period's own numbers
+        // and with an EMPTY list of scoring periods there is no "no scoring period" tile either
+        cleanup();
+        mount({ sp: IND_VALID, data: { ...previewFor('individual', IND_VALID), test_validation: makeValidation({ tests: [] }) } });
+        expect(kpis().children).toHaveLength(3);
+        expect(screen.getByTestId('health-page').textContent).not.toMatch(/no scoring period/i);
+    });
+
+    it('ScoreKpis alone: one scored hour is "of 1 scored hour"; large counts are grouped; "ready" without a summary is treated as nothing to show', () => {
+        const summary = (over: Partial<ScoreSummary>): ScoreSummary => ({ ...previewFor('individual', IND_VALID).score_summary!, ...over });
+        const { rerender } = render(<ScoreKpis state="ready" summary={summary({ scored: 1 })} />);
+        expect(tileSub('kpi-below80')).toBe('of 1 scored hour');
+        rerender(<ScoreKpis state="ready" summary={summary({ scored: 12345 })} />);
+        expect(tileSub('kpi-below80')).toBe('of 12,345 scored hours');
+        rerender(<ScoreKpis state="ready" summary={null} />);
+        expect(screen.queryByTestId('score-lowest')).toBeNull();
+        expect(tile('kpi-lowest').textContent).toBe('Lowest score—once the set points are valid');
+        rerender(<ScoreKpis state="error" summary={summary({})} />); // an error never shows a summary, even if one is passed
+        expect(screen.queryByTestId('score-lowest')).toBeNull();
+        expect(tileSub('score-shares')).toBe('not available until the score loads');
     });
 });
 
@@ -1606,13 +1770,17 @@ describe('Scoring periods on the Health score page ("just score it", 2026-10-10)
         expect(screen.queryByTestId('test-results')).toBeNull();
         expect(page.querySelector('.vt-tile, .vt-note, .vt-quiet, .vt-none')).toBeNull();
         expect(page.textContent).not.toMatch(/Scoring results|for reading only|of running hours below 80/);
-        // what the page still says about the score: the chart's own subtitle (all scored hours)
-        expect(screen.getByTestId('score-summary').textContent).toMatch(/^Lowest \d+ on .* · below 80 for .*% of scored hours/);
+        // what the page still says about the score: the three KPI tiles, for ALL scored hours — and
+        // never a tile per scoring period (S1, S2 …), nor a "no scoring period" one
+        expect([...kpis().children].map(t => t.querySelector('.wb3-kpi-l')!.textContent)).toEqual(['Lowest score', 'Below 80', 'Share of scored hours']);
+        expect(kpis().textContent).toMatch(/^Lowest score\d+on .* · 1 h averageBelow 80.*%of \d+ scored hours/);
+        expect(page.textContent).not.toMatch(/\bS1\b|\bS2\b|includes \d+ d of train time|no scoring period/i);
         cleanup();
         mount({ kind: 'relationship', sp: REL_EMPTY, data: { ...withTests('relationship', REL_EMPTY) } });
         expect(screen.queryByTestId('test-results')).toBeNull();
         expect(screen.queryByTestId('test-results-pending')).toBeNull();
         expect(screen.getByTestId('score-locked')).toBeTruthy(); // "Set every point on the ruler above" says it
+        expect(kpis().children).toHaveLength(3); // locked too: the same three tiles, nothing per period
     });
 
     it('the chart strip names the train period only, whatever the scoring periods\' numbers', () => {

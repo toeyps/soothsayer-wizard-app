@@ -120,7 +120,8 @@ describe('Individual: the whole journey', () => {
         expect(bmw().getByTestId('set-points-card').contains(bmw().getByTestId('checks-card'))).toBe(true);
         await waitFor(() => expect(bmw().getByTestId('check-valid')).toBeTruthy());
         expect(bmwEl().querySelector('[data-testid="score-locked"]')).toBeNull();
-        expect(bmw().getByTestId('score-summary').textContent).toMatch(/Lowest/);
+        expect(bmw().getByTestId('score-summary').dataset.state).toBe('ready');
+        expect(bmw().getByTestId('score-lowest').textContent).toMatch(/^\d+$/);
 
         // invalid: L inside the 3SD band -> Rust's message in Checks, score locked.
         const band = env.backend!.individualBand('TAG1', { timestamp_ranges: [], value_filters: [{ sensor: 'TAG2', operation: 'greater_than', value1: 10, value2: null }], combine: 'and' });
