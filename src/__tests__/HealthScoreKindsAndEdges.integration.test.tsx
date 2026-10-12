@@ -499,11 +499,12 @@ describe('misc edges', () => {
         expect(bmw().getByRole('button', { name: 'Larger' })).toBeTruthy();
     });
 
-    // Each visible label keeps its text and carries a screen-reader-only suffix
-    // ("Lower residual at score 80" ...), so the four accessible names are distinct.
-    // Guards against: the four Relationship inputs are labelled "Lower", "Upper",
-    // "Lower", "Upper" (SetPointsCard.tsx:229-236): the 80-point and the 0-point of the
-    // same side share one accessible name, so a screen reader (or a label search) cannot
+    // Each input's accessible name starts with the ONE name of its point on the score ruler
+    // ("0 low — the residual where the score reaches 0 on the low side" ...), so the four
+    // accessible names are distinct.
+    // Guards against: the four Relationship inputs once were labelled "Lower", "Upper",
+    // "Lower", "Upper" (the former set-point table): the 80-point and the 0-point of the
+    // same side shared one accessible name, so a screen reader (or a label search) could not
     // tell them apart.
     it('A11Y BUG: each Relationship set-point input has a distinct accessible name', async () => {
         writeDisk(wsTrained({}, [model({ id: 'r1', kind: 'relationship', predictorSensors: ['TAG3'], healthSetPoints: REL_SP })]));

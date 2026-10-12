@@ -5319,10 +5319,9 @@ body {
 /* board of chart cards */
 .wb2-board { padding: 12px 18px 14px; display: grid; gap: 12px; align-content: start; }
 .wb2-g2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.wb2-hs { grid-template-columns: minmax(0, 1fr) 350px; }
 .wb2-full { grid-column: 1 / -1; }
 @container (max-width: 760px) {
-    .wb2-g2, .wb2-hs { grid-template-columns: minmax(0, 1fr); }
+    .wb2-g2 { grid-template-columns: minmax(0, 1fr); }
 }
 .wb2-card { background: var(--bg-primary); border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px 8px; min-width: 0; display: flex; flex-direction: column; }
 .wb2-card-h { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; min-height: 26px; flex-wrap: wrap; }
@@ -5380,68 +5379,122 @@ body {
 .bmw-leg i { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 4px; }
 
 /* =====================================================================
-   Build Model Workbench, "Health score" page: set-point chart, the Health
-   set points table, the Checks and the full-width score chart. Prefix
-   hs-. Reuses the wb2- cards, pills and tokens; no new colours.
+   Build Model Workbench, "Health score" page: the score ruler (the set
+   points and the Checks), the set-point chart, the score chart and the
+   shares. Prefix hs- (the ruler itself: wb3-ruler). Reuses the wb2- cards,
+   pills and tokens; no new colours.
    ===================================================================== */
-.hs-board { grid-template-columns: minmax(0, 1fr) 350px; }
+/* One column: every card is as wide as the board, so the two time charts are the same
+   width (their time axes line up) and the ruler has room for its band. */
+.hs-board { grid-template-columns: minmax(0, 1fr); }
 .hs-full { grid-column: 1 / -1; }
 .hs-stateboard { min-height: 280px; }
-.hs-setwrap { display: flex; min-width: 0; }
-.hs-setwrap > .wb2-card { flex: 1; }
-.hs-setwrap .wb2-cv { flex: 1; min-height: 330px; height: auto; }
-.hs-spp { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
-/* The set-points card fills its row, down to the bottom edge of the chart beside it — the same
-   shape as the row below (score chart + "Share of scored hours"). */
-.hs-spp > .hs-card { flex: 1 1 auto; }
 .hs-card { background: var(--bg-primary); border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px 12px; min-width: 0; display: flex; flex-direction: column; }
 .hs-note { font-size: 11px; color: var(--text-faint); line-height: 1.45; }
 .hs-good { color: var(--ok); }
 .hs-bad { color: var(--danger); }
-@media (max-width: 760px) {
-    .hs-board { grid-template-columns: minmax(0, 1fr); }
-}
 
-/* Health set points: ONE small table (Score · Band · Lower · Upper). Computed values
-   are plain text; the user's set points are the only boxes. The Checks sit in the
-   same card, under a hairline. Prefix hsx-. */
-.hsx-card { gap: 0; }
-.hsx-table { display: flex; flex-direction: column; }
-.hsx-row { display: grid; grid-template-columns: 34px minmax(0, 1fr) 84px 84px; gap: 8px; align-items: center; padding: 7px 0; border-top: 1px solid var(--border); }
-.hsx-head { border-top: 0; padding: 2px 0 4px; font: 600 9.5px Inter, "Segoe UI", system-ui, sans-serif; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-faint); }
-.hsx-table--cl .hsx-row { grid-template-columns: 34px minmax(0, 1fr) 76px; }
-.hsx-table--cl .hsx-row:first-child { border-top: 0; }
-.hsx-score { font: 700 14px var(--mono); }
-.hsx-row--ok .hsx-score { color: var(--ok); }
-.hsx-row--warn .hsx-score { color: var(--warn); }
-.hsx-row--danger .hsx-score { color: var(--danger); }
-.hsx-what { font-size: 11.5px; color: var(--text-primary); min-width: 0; line-height: 1.35; }
-.hsx-what > span, .hsx-what small { white-space: nowrap; }
-.hsx-what small { font-size: 10.5px; color: var(--text-faint); }
-.hsx-v { min-width: 0; }
-.hsx-ro { font: 500 12px var(--mono); color: var(--text-secondary); }
-.hsx-row .hs-num { height: 28px; padding: 0 7px; }
-/* a long unit never squeezes the number out of its box */
-.hsx-row .hs-num > span { flex-shrink: 0; max-width: 38px; overflow: hidden; text-overflow: ellipsis; }
-.hsx-note { font-size: 10.5px; color: var(--text-faint); line-height: 1.45; padding: 0 0 8px 42px; }
-.hsx-ctl { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 0 0 8px 42px; }
-.hsx-ctl .hs-quick { margin-top: 0; }
-.hsx-ctl .hs-num--ring { width: 96px; }
-.hsx-checks { border-top: 1px solid var(--border); padding-top: 9px; margin-top: 2px; }
-.hsx-checks-in .hs-checks { gap: 5px; }
-.hsx-checks-in .hs-chk { font-size: 11px; }
+/* The score ruler (ScoreRuler.tsx, "Workbench detail pages v2"): ONE horizontal band
+   maps value -> score. A tick = a value and the score the model gives there; the ticks
+   are spaced evenly (a schematic, not a scale). The program's ticks are plain text, the
+   user's points are the only inputs (large). The Checks sit in the same card, under a
+   hairline. The band's colours are set inline from the --ok / --warn / --danger tokens. */
+.wb3-rulercard { gap: 0; }
+.wb3-rulercard .wb2-card-s { color: var(--text-secondary); }
+/* The side margins hold half of an end input, which is centred on its tick. */
+.wb3-ruler { position: relative; margin: 14px auto 8px; width: min(100% - 156px, 1100px); }
+.wb3-ruler--clustering { width: min(100% - 200px, 1100px); }
+.wb3-ruler-scores, .wb3-ruler-names, .wb3-ruler-values { position: relative; height: 18px; }
+.wb3-ruler-scores > span, .wb3-ruler-names > span, .wb3-ruler-values > span { position: absolute; transform: translateX(-50%); white-space: nowrap; }
+.wb3-ruler-sc { font: 700 13px var(--mono); letter-spacing: -0.02em; }
+.wb3-ruler-sc--ok { color: var(--ok); }
+.wb3-ruler-sc--warn { color: var(--warn); }
+.wb3-ruler-sc--bad { color: var(--danger); }
+/* a user point that is empty, rejected or not checked: its score is not given yet */
+.wb3-ruler-sc--off { color: var(--text-faint); }
+.wb3-ruler-band { position: relative; height: 12px; border-radius: 6px; margin: 4px 0 6px; box-shadow: inset 0 0 0 1px var(--border); }
+.wb3-ruler-tick { position: absolute; top: -4px; bottom: -4px; width: 2px; margin-left: -1px; border-radius: 1px; background: color-mix(in srgb, var(--text-primary) 55%, transparent); }
+.wb3-ruler-tick--user { top: -6px; bottom: -6px; width: 3px; margin-left: -1.5px; background: var(--text-primary); box-shadow: 0 0 0 2px var(--bg-primary); }
+/* rejected = red · empty = dashed amber · not checked (the score did not load) = dashed grey */
+.wb3-ruler-tick--bad { background: var(--danger); }
+.wb3-ruler-tick--req { width: 0; background: none; border-left: 3px dashed var(--warn); box-shadow: none; }
+.wb3-ruler-tick--unk { width: 0; background: none; border-left: 3px dashed var(--text-secondary); box-shadow: none; }
+.wb3-ruler-names { height: 16px; }
+.wb3-ruler-nm { font-size: 10.5px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-secondary); }
+.wb3-ruler-nm--user { color: var(--text-primary); }
+.wb3-ruler-nm--bad { color: var(--danger); }
+.wb3-ruler-nm--req { color: var(--warn); }
+/* only on the narrow Relation-model layout below: a program tick's value under its name,
+   and an input's own label */
+.wb3-ruler-nm-pv, .wb3-ruler-vl { display: none; }
+.wb3-ruler-vl { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 600 10px Inter, "Segoe UI", system-ui, sans-serif; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-secondary); }
+.wb3-ruler-values { height: 40px; margin-top: 2px; }
+.wb3-ruler-v { top: 8px; font: 500 13px var(--mono); color: var(--text-secondary); }
+.wb3-ruler-v--user { top: 0; }
+.wb3-ruler-v--bad .wb3-ruler-vl { color: var(--danger); }
+.wb3-ruler-v--req .wb3-ruler-vl { color: var(--warn); }
+/* A rejected typed value, marked in red where it really sits: the label (stacked on rows
+   when two would overlap), a dashed stem down to the band, a diamond on the band. */
+.wb3-ruler-marks { position: relative; height: 22px; }
+.wb3-ruler-mark { position: absolute; top: 0; z-index: 1; transform: translateX(-50%); white-space: nowrap; padding: 1px 6px; border: 1px solid var(--danger-line); border-radius: 6px; background: color-mix(in srgb, var(--danger) 14%, var(--bg-primary)); color: var(--danger); font: 600 10.5px var(--mono); line-height: 14px; }
+/* beyond the user's point at that end: the label hugs the end, its arrow points outwards */
+.wb3-ruler-mark--right { transform: translateX(-100%); margin-left: 8px; }
+.wb3-ruler-mark--left { transform: none; margin-left: -8px; }
+.wb3-ruler-stem { position: absolute; bottom: -4px; width: 0; margin-left: -1px; border-left: 2px dashed var(--danger); }
+.wb3-ruler-stem::after { content: ''; position: absolute; left: -6px; bottom: -3px; width: 10px; height: 10px; border-radius: 2px; background: var(--danger); transform: rotate(45deg); box-shadow: 0 0 0 2px var(--bg-primary); }
+.wb3-ruler-note { padding: 4px 0 10px; font-size: 11.5px; line-height: 1.5; color: var(--text-secondary); }
+.wb3-ruler-note .hs-quick { display: inline-flex; margin: 0 10px 0 0; vertical-align: middle; }
+.wb3-ruler-note .hs-restore { font-size: inherit; }
+.wb3-ruler-checks { border-top: 1px solid var(--border); padding-top: 10px; margin-top: 2px; }
+.wb3-ruler-checks .hs-chk { font-size: 12px; }
+.wb3-ruler-checks .hs-chk--bad { font-weight: 500; }
+
+/* The set-point input (NumField): dashed amber = empty, red = rejected (Rust's issues). */
 .hs-num { display: flex; align-items: center; background: var(--input-bg); border: 1px solid var(--border-strong); border-radius: 7px; height: 30px; padding: 0 8px; gap: 4px; min-width: 0; }
 .hs-num:focus-within { border-color: var(--accent-color); }
 .hs-num input { background: none; border: 0; outline: none; font: 500 12px var(--mono); color: var(--text-primary); width: 100%; min-width: 0; }
 .hs-num > span { font-size: 10.5px; color: var(--text-faint); white-space: nowrap; }
 .hs-num--req { border-color: var(--warn-line); border-style: dashed; background: var(--warn-muted); }
 .hs-num--err { border-color: var(--danger); background: var(--danger-muted); }
-.hs-num--ring { width: 110px; }
+/* The ruler's large input. A long unit never squeezes the number out of its box. */
+.hs-num--big { width: 132px; height: 38px; padding: 0 10px; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35); }
+.hs-num--big input { flex: 1 1 0; width: auto; min-width: 0; font: 600 16px var(--mono); letter-spacing: -0.02em; }
+.hs-num--big > span { flex: 0 0 auto; max-width: 46px; overflow: hidden; text-overflow: ellipsis; font-size: 11px; }
+/* the outer-ring box, between its − / + buttons */
+.hs-num--big.hs-num--ring { width: 104px; }
+/* Focus stays visible on a ruler input whatever its state (amber, red or plain). */
+.hs-num--big:focus-within { outline: 2px solid var(--accent-color); outline-offset: 1px; }
+.wb3-ruler--relationship .hs-num--big { width: 104px; }
+.wb3-ruler--relationship .hs-num--big input { font-size: 14.5px; }
+@container (max-width: 760px) {
+    .wb3-ruler { width: min(100% - 124px, 1100px); }
+    .wb3-ruler--clustering { width: calc(100% - 200px); }
+    .wb3-ruler--individual .hs-num--big { width: 112px; }
+    .wb3-ruler--individual .hs-num--big input { font-size: 14.5px; }
+}
+/* Relation model on a narrow pane: seven ticks leave no room for four inputs, so the
+   inputs move to their own labelled row under the band (in ruler order); the band keeps
+   the scores, the program ticks' names and their values. */
+@container (max-width: 900px) {
+    .wb3-ruler--relationship { width: calc(100% - 52px); }
+    .wb3-ruler--relationship .wb3-ruler-nm--user { display: none; }
+    .wb3-ruler--relationship .wb3-ruler-names { height: 30px; }
+    .wb3-ruler--relationship .wb3-ruler-nm-pv { display: block; font: 500 10.5px var(--mono); letter-spacing: 0; text-transform: none; text-align: center; color: var(--text-secondary); }
+    .wb3-ruler--relationship .wb3-ruler-values { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; height: auto; margin: 8px -14px 0; }
+    .wb3-ruler--relationship .wb3-ruler-values > span { position: static; transform: none; white-space: normal; }
+    .wb3-ruler--relationship .wb3-ruler-v:not(.wb3-ruler-v--user) { display: none; }
+    .wb3-ruler--relationship .wb3-ruler-v--user { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+    .wb3-ruler--relationship .wb3-ruler-vl { display: block; }
+    .wb3-ruler--relationship .hs-num--big { width: 100%; }
+    .wb3-ruler--relationship .hs-num--big input { font-size: 14px; }
+}
 .hs-restore { border: 0; background: none; color: var(--accent-hi); font-size: 10.5px; cursor: pointer; padding: 0; }
 .hs-restore:hover { text-decoration: underline; }
 .hs-kstep { display: flex; align-items: center; gap: 6px; }
 .hs-kstep button { width: 30px; height: 30px; border-radius: 7px; border: 1px solid var(--border-strong); background: var(--surface-hi); color: var(--text-primary); cursor: pointer; font: 600 14px var(--mono); }
 .hs-kstep button:hover { background: var(--hover-bg); }
+/* on the ruler the stepper's buttons are as tall as its large input */
+.wb3-ruler .hs-kstep button { height: 38px; border-radius: 8px; }
 .hs-quick { display: flex; gap: 4px; margin-top: 6px; }
 .hs-quick button { border: 1px solid var(--border-strong); background: none; border-radius: 6px; font: 500 11px var(--mono); padding: 2px 8px; cursor: pointer; color: var(--text-secondary); }
 .hs-quick button.on { border-color: var(--accent-color); color: var(--accent-hi); background: var(--accent-muted); }
@@ -5458,17 +5511,21 @@ body {
 .hs-chk--bad .hs-ic { background: var(--danger-muted); color: var(--danger); }
 .hs-fix { display: block; color: var(--text-faint); margin-top: 2px; }
 
-/* score chart card: chart + share-of-rows column, header read-out */
-/* "Share of scored hours": its own card beside the score chart (the chart card is exactly
-   as wide as the chart above it, so the two time axes line up). */
-.hs-shares { flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 18px; padding: 4px 2px 8px; font: 500 10.5px var(--mono); color: var(--text-faint); }
-.hs-share { display: grid; grid-template-columns: 38px 1fr 38px; align-items: center; gap: 4px; }
+/* score chart card: header read-out */
+/* "Share of scored hours": its own card under the score chart, the three bands side by
+   side (the chart card stays exactly as wide as the chart above it, so the two time axes
+   line up). */
+.hs-shares { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px 28px; padding: 2px 2px 4px; font: 500 10.5px var(--mono); color: var(--text-faint); }
+.hs-share { display: grid; grid-template-columns: 44px 1fr 44px; align-items: center; gap: 6px; }
+@container (max-width: 760px) {
+    .hs-shares { grid-template-columns: minmax(0, 1fr); }
+}
 .hs-share-bar { height: 7px; border-radius: 4px; background: rgba(255, 255, 255, 0.06); overflow: hidden; }
 .hs-share-bar i { display: block; height: 100%; }
 .hs-share-v { text-align: right; color: var(--text-secondary); }
 .hs-rd { font: 500 11px var(--mono); color: var(--text-secondary); min-height: 16px; margin-left: auto; }
 .wb2-card-h .wb2-ib { margin-left: auto; }
-.hs-lockbig { height: 120px; border: 1px dashed var(--border-strong); border-radius: 8px; display: grid; place-items: center; text-align: center; font-size: 12px; color: var(--text-faint); }
+.hs-lockbig { height: 120px; padding: 0 12px; border: 1px dashed var(--border-strong); border-radius: 8px; display: grid; place-items: center; text-align: center; font-size: 12px; color: var(--text-faint); }
 .hs-lockbig b { display: block; color: var(--text-primary); font-size: 13.5px; margin-bottom: 3px; }
 
 /* "Saving results..." / "Saved N files to ..." / failure */

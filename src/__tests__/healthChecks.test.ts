@@ -8,6 +8,7 @@ import {
     nearestIndex,
     readoutAt,
     readoutText,
+    REL_POINT_LABEL,
     RING_QUICK,
     sameSetPoints,
     stepRing,
@@ -69,7 +70,7 @@ describe('buildCheckLines', () => {
         }
     });
 
-    it('Relationship: two or more empty points collapse into ONE line listing them in ladder order', () => {
+    it('Relationship: two or more empty points collapse into ONE line listing them in RULER order, by the ruler\'s names', () => {
         const lines = buildCheckLines('relationship', [
             issue('required', 'residual_at_0_upper'),
             issue('required', 'residual_at_80_lower'),
@@ -78,7 +79,12 @@ describe('buildCheckLines', () => {
         ]);
         expect(lines).toHaveLength(1);
         expect(lines[0].tone).toBe('need');
-        expect(lines[0].text).toBe('Enter 4 empty points: lower 80, upper 80, lower 0, upper 0');
+        expect(lines[0].text).toBe('Enter 4 empty points: 0 low, 80 low, 80 high, 0 high');
+        // the residual chart is BELOW the ruler now (it used to be on the left of the table)
+        expect(lines[0].fix).toBe('Read them off the residual chart below, or type the values.');
+        // the ONE name of each point, shared with the ruler's ticks and markers
+        expect(REL_POINT_LABEL).toEqual({ residual_at_0_lower: '0 low', residual_at_80_lower: '80 low', residual_at_80_upper: '80 high', residual_at_0_upper: '0 high' });
+        expect(Object.keys(REL_POINT_LABEL)).toEqual(['residual_at_0_lower', 'residual_at_80_lower', 'residual_at_80_upper', 'residual_at_0_upper']);
     });
 
     it('Relationship: a single empty point keeps Rust\'s message; other issues stay next to the collapsed line', () => {
@@ -88,7 +94,8 @@ describe('buildCheckLines', () => {
             issue('point80_inside_band', 'residual_at_80_upper', 'upper 80 is inside ±2RMSE'),
             issue('required', 'residual_at_0_upper'),
         ]);
-        expect(lines.map(l => l.text)).toEqual(['Enter 2 empty points: lower 0, upper 0', 'upper 80 is inside ±2RMSE']);
+        // Rust's own sentence is shown as Rust wrote it — only the page's own (collapsed) line uses the ruler's names
+        expect(lines.map(l => l.text)).toEqual(['Enter 2 empty points: 0 low, 0 high', 'upper 80 is inside ±2RMSE']);
     });
 
     it('the collapse is Relationship-only', () => {

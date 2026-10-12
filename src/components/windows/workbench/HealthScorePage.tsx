@@ -8,7 +8,7 @@ import { SensorInline } from '../../sensor/SensorLabel';
 import { useSensorLookup } from '../../sensor/sensorInfo';
 import ChartCard from './ChartCard';
 import ChecksCard from './ChecksCard';
-import SetPointsCard from './SetPointsCard';
+import ScoreRuler from './ScoreRuler';
 import { CHART } from './chartTheme';
 import {
     healthVerdict,
@@ -16,6 +16,7 @@ import {
     readoutAt,
     readoutText,
     verdictOfIssues,
+    type HealthVerdict,
 } from './healthChecks';
 import {
     HEALTH_SYNC_GROUP,
@@ -24,7 +25,7 @@ import {
     buildRelationshipSetPointOption,
     buildScoreOption,
 } from './healthPageCharts';
-import { hourlyScopes, narrowScopes, scopesOf, sensorAxisTitle, type TimeScopes } from './healthCharts';
+import { hourlyScopes, scopesOf, sensorAxisTitle, type TimeScopes } from './healthCharts';
 import { formatDataStamp } from '../periodDisplay';
 import { SlowScoringNotice, TestScoringFailedNotice, TestsChangedBanner } from './ValidationCards';
 import { testScoringFailure } from '../../../utils/trainTestValidation';
@@ -34,9 +35,13 @@ import type { HealthScorePageProps, SaveInfo } from './workbenchTypes';
 /*
  * Page 2 of the Workbench - "Health score" body:
  *
- *   [ set-point chart (tall)        ] [ Health set points: table  ]
- *   [                               ] [ + footnote + the Checks   ]
- *   [ Health score over time (full width, locked until valid)     ]
+ *   [ Health set points: the score ruler + footnote + the Checks     ]
+ *   [ set-point chart                                                ]
+ *   [ Health score over time (locked until the set points are valid) ]
+ *   [ Share of scored hours                                          ]
+ *
+ * One column: every card is as wide as the board, so the two time charts are the
+ * same width (their time axes line up) and the ruler has room for its band.
  *
  * Everything is drawn from the ONE bounded `HealthPreview` the container's
  * `useHealthPreview` returns for the DRAFT set points (so typing moves the
@@ -59,7 +64,7 @@ import type { HealthScorePageProps, SaveInfo } from './workbenchTypes';
  * No legend rows: every line is labelled on its
  * chart — reference lines at the right edge, the user's set points with their
  * typed value, the ring levels at the ring's edge — and the score bands are read
- * off the share column beside the score chart.
+ * off the "Share of scored hours" card under the score chart.
  */
 
 /** Memo comparison (see `samePageProps`): the small data the window rebuilds per
@@ -234,11 +239,25 @@ function HealthScorePage(props: HealthScorePageProps) {
     const retryScoring = canRetry ? (props.onRetryTestScoring ?? props.onRetryPreview) : undefined;
 
     return (
-        <div className="wb2-board wb2-hs hs-board" data-testid="health-page" data-valid={String(data.valid)}>
+        <div className="wb2-board hs-board" data-testid="health-page" data-valid={String(data.valid)}>
             <SaveBanner save={save} slow={slowSave} relation={model.kind === 'relationship'} />
             <SlowScoringNotice show={props.slowScoring} />
             {errorCard}
             <TestsChangedBanner state={props.testsChanged} />
+            {/* The ruler: value → score in one band, the user's points its only inputs, its
+                footnote, then the Checks — ONE card, as wide as the board. */}
+            <ScoreRuler
+                data={data}
+                setPoints={setPoints}
+                unit={unit}
+                issues={issues}
+                verdict={verdict}
+                unchecked={errorMode}
+                onChange={props.onSetPointsChange}
+                onCommit={props.onSetPointsCommit}
+            >
+                <ChecksCard kind={data.kind} issues={issues} verdict={verdict} unavailable={errorMode} testNumbers={testNumbers} />
+            </ScoreRuler>
             <SetPointChart
                 data={data}
                 props={props}
@@ -249,20 +268,6 @@ function HealthScorePage(props: HealthScorePageProps) {
                 scopes={scopes}
                 zoom={zoom}
             />
-            <div className="hs-spp">
-                {/* ONE card: the table of set points, its footnote, then the Checks. */}
-                <SetPointsCard
-                    data={data}
-                    setPoints={setPoints}
-                    unit={unit}
-                    issues={issues}
-                    verdict={verdict}
-                    onChange={props.onSetPointsChange}
-                    onCommit={props.onSetPointsCommit}
-                >
-                    <ChecksCard kind={data.kind} issues={issues} verdict={verdict} unavailable={errorMode} testNumbers={testNumbers} />
-                </SetPointsCard>
-            </div>
             {/* "Changed after saving" is said ONCE — the footer sentence, next to its
                 "Mark complete again" button. */}
             {scoringFailure && (
@@ -284,15 +289,29 @@ function HealthScorePage(props: HealthScorePageProps) {
                     zoom={zoom}
                 />
             ) : (
-                <section className="hs-card hs-full" data-testid="score-locked">
+                <section className="hs-card hs-full" data-testid="score-locked" data-lock={lockReason(errorMode, verdict)}>
                     <div className="wb2-card-h"><b>Health score</b></div>
                     <div className="hs-lockbig">
-                        <div>{errorMode ? <><b>Score not available</b>Not available until the health score loads.</> : <><b>Set the points above</b>The score over time appears here once every set point is valid.</>}</div>
+                        <div>{errorMode ? <><b>Score not available</b>Not available until the health score loads.</> : scoreLockText(verdict)}</div>
                     </div>
                 </section>
             )}
         </div>
     );
+}
+
+/** Why the score area is locked: the request failed (`error`), a set point is rejected
+ *  (`bad`), or nothing is rejected but the score cannot be drawn yet (`empty`). */
+export function lockReason(errorMode: boolean, verdict: HealthVerdict | null): 'error' | 'bad' | 'empty' {
+    return errorMode ? 'error' : verdict === 'bad' ? 'bad' : 'empty';
+}
+
+/** The sentence in the locked score area: it sends the user to the ruler above — to FIX a
+ *  rejected point, or to SET the points that are still empty. */
+export function scoreLockText(verdict: HealthVerdict | null): string {
+    return verdict === 'bad'
+        ? 'Fix the set point on the ruler above — the score appears here'
+        : 'Set every point on the ruler above — the score appears here';
 }
 
 // ---------------------------------------------------------------------------
@@ -452,9 +471,6 @@ function SetPointChart({ data, props, hoverIdx, onHover, stale, unit, scopes, zo
     // Stable until the Tag names change, so it never rebuilds a chart on its own.
     const lookup = useSensorLookup();
     const scored = !!series.score;
-    // This chart shares its row with the set-points card: its strip names are spaced for
-    // the narrower plot (the score chart below is the same width and does the same).
-    const sideScopes = useMemo(() => narrowScopes(scopes), [scopes]);
 
     const built = useMemo(() => {
         if (stats.kind === 'individual' && series.kind === 'individual') {
@@ -462,7 +478,7 @@ function SetPointChart({ data, props, hoverIdx, onHover, stale, unit, scopes, zo
                 id: 'set-individual',
                 title: 'Sensor value over time',
                 sub: unit ? `${unit} · 1 h average` : '1 h average',
-                option: buildIndividualSetPointOption(series, stats, setPoints.kind === 'individual' ? setPoints : null, unit, sideScopes),
+                option: buildIndividualSetPointOption(series, stats, setPoints.kind === 'individual' ? setPoints : null, unit, scopes),
                 time: true,
             };
         }
@@ -471,7 +487,7 @@ function SetPointChart({ data, props, hoverIdx, onHover, stale, unit, scopes, zo
                 id: 'set-relationship',
                 title: 'Residual over time',
                 sub: `actual − predicted${unit ? ` (${unit})` : ''} · 1 h average`,
-                option: buildRelationshipSetPointOption(series, stats.two_rmse, setPoints.kind === 'relationship' ? setPoints : null, unit, sideScopes),
+                option: buildRelationshipSetPointOption(series, stats.two_rmse, setPoints.kind === 'relationship' ? setPoints : null, unit, scopes),
                 time: true,
             };
         }
@@ -497,7 +513,7 @@ function SetPointChart({ data, props, hoverIdx, onHover, stale, unit, scopes, zo
         // `hoverIdx` only changes the Clustering highlight; the time charts follow
         // the connected cursor and must not be rebuilt on every mouse move.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [stats, series, setPoints, unit, model.xSensor, model.ySensor, sideScopes, lookup, scored, stats.kind === 'clustering' ? hoverIdx : null]);
+    }, [stats, series, setPoints, unit, model.xSensor, model.ySensor, scopes, lookup, scored, stats.kind === 'clustering' ? hoverIdx : null]);
 
     // A new option redraws the chart unzoomed: put the shared window back.
     const builtOption = built?.option;
@@ -508,8 +524,8 @@ function SetPointChart({ data, props, hoverIdx, onHover, stale, unit, scopes, zo
 
     // No key row under these charts: the time charts only zoom in time, so the names of
     // their level lines stay at the right edge; the Clusters chart zooms on both axes,
-    // but its rings are keyed by the set-points table beside it (the 100 / 80 / 0 rows
-    // in the rings' colours), which never leaves the view.
+    // but its rings are keyed by the score ruler above it (1× / 3× / N× SD in the rings'
+    // colours).
     const chartProps: Partial<ComponentProps<typeof ResponsiveECharts>> = built.time
         ? {
             onChartReady: zoom.join,
@@ -526,18 +542,18 @@ function SetPointChart({ data, props, hoverIdx, onHover, stale, unit, scopes, zo
             },
         };
 
+    // As wide as the board, like the score chart under it. The Clusters scatter has two
+    // value axes and gets the taller card.
     return (
-        <div className="hs-setwrap">
-            <ChartCard
-                id={built.id}
-                title={built.title}
-                sub={built.sub}
-                size="tall"
-                stale={stale}
-                option={built.option}
-                chartProps={chartProps}
-            />
-        </div>
+        <ChartCard
+            id={built.id}
+            title={built.title}
+            sub={built.sub}
+            size={built.time ? 'tall' : 'xtall'}
+            stale={stale}
+            option={built.option}
+            chartProps={chartProps}
+        />
     );
 }
 
@@ -546,7 +562,7 @@ function SetPointChart({ data, props, hoverIdx, onHover, stale, unit, scopes, zo
 // ---------------------------------------------------------------------------
 
 /** A share of the scored hours as text: one decimal, and a share that is not zero never
- *  reads "0.0%" (it is "< 0.1%"). The share column and the card's subtitle use the same rule. */
+ *  reads "0.0%" (it is "< 0.1%"). The shares card and the score card's subtitle use the same rule. */
 export function shareText(v: number): string {
     return v > 0 && v < 0.1 ? '< 0.1%' : `${v.toFixed(1)}%`;
 }
@@ -569,10 +585,9 @@ function ScoreChart({ data, score, summary, unit, hoverIdx, onHover, stale, scop
     zoom: SharedZoom;
 }) {
     const series = data.hourly;
-    // The same width as the chart above it (both sit in the board's first column, beside a
-    // side card), so the strip names are spaced the same way.
-    const sideScopes = useMemo(() => narrowScopes(scopes), [scopes]);
-    const option = useMemo(() => buildScoreOption(series.timestamps, score, sideScopes), [series.timestamps, score, sideScopes]);
+    // The same width as the chart above it (every card spans the board), so the strip names
+    // are spaced the same way.
+    const option = useMemo(() => buildScoreOption(series.timestamps, score, scopes), [series.timestamps, score, scopes]);
     // A new option redraws the chart unzoomed: put the shared window back.
     useEffect(() => { zoom.restore(); }, [option, zoom]);
     const lowest = summary.min_score;
@@ -588,9 +603,8 @@ function ScoreChart({ data, score, summary, unit, hoverIdx, onHover, stale, scop
     const pct = summary.pct_below_80;
     return (
         <>
-        {/* NOT full width: the card is exactly as wide as the chart above it, and the two
-            charts have the same plot margins, so their time axes line up. The shares sit
-            beside it, in the column of the set-points card. */}
+        {/* Exactly as wide as the chart above it, and the two charts have the same plot
+            margins, so their time axes line up. The shares are a card of their own under it. */}
         <ChartCard
             id="score"
             title="Health score"

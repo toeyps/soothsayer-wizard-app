@@ -4,7 +4,7 @@ import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-libra
 /*
  * Health score — the FULL user journey per model kind,
  * with the REAL Dashboard and the REAL Build Model window (and its real Model
- * fit / Health score pages, SetPointsCard, ChecksCard) on ONE in-memory
+ * fit / Health score pages, ScoreRuler, ChecksCard) on ONE in-memory
  * workspace file, ONE event bus, and a fake Rust backend that implements the
  * real health contract (`helpers/fakeHealthRust.ts`): validation codes and
  * messages, scores, generation guard, the Relationship fit cache, the export.
@@ -228,7 +228,7 @@ describe('Relationship: the whole journey', () => {
 
         // Health score: 4 empty points collapse into ONE Checks line.
         await openHealth();
-        await waitFor(() => expect(bmw().getAllByTestId('check-line').map(l => l.textContent).join('|')).toMatch(/Enter 4 empty points: lower 80, upper 80, lower 0, upper 0/));
+        await waitFor(() => expect(bmw().getAllByTestId('check-line').map(l => l.textContent).join('|')).toMatch(/Enter 4 empty points: 0 low, 80 low, 80 high, 0 high/));
         expect(bmw().getAllByTestId('check-line')).toHaveLength(1);
         expect(bmw().getByTestId('score-locked')).toBeTruthy();
 

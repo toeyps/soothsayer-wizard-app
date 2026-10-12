@@ -46,7 +46,6 @@ const STYLED_PREFIXES = [
     'kind-badge', 'model-kind-icon', 'model-status-pill', 'pair-regl', 'scatter-regl',
     'special-sensor', 'highlights', 'timebar', 'line-chart',
     'tpe', 'vt',                       // Train/Test validation (TestPeriodsEditor, ValidationCards)
-    'hsx',                             // Health set points table (SetPointsCard, workbench-redesign §4)
     'sl', 'pk', 'cp', 'tt',            // shared SensorLabel / SensorPicker / ColourPicker / tooltip rows
 ];
 
@@ -75,7 +74,8 @@ const DYNAMIC_ENUMS: Record<string, readonly string[]> = {
     'wb2-card--': ['tall', 'xtall', 'hs'],                                       // ChartCardSize minus 'normal'
     'wb3-kpi--': ['ok', 'warn', 'bad'],                                          // Kpi tone (a score value's band colour)
     'hs-chk--': ['ok', 'need', 'bad'],
-    'hsx-row--': ['ok', 'warn', 'danger'],                                       // SetPointsCard Row tone
+    'wb3-ruler--': ['individual', 'relationship', 'clustering'],                 // ScoreRuler: the model kind
+    'wb3-ruler-sc--': ['ok', 'warn', 'bad', 'off'],                              // ScoreRuler: a tick's score colour (off = no score yet)
     'gutter-': ['horizontal', 'vertical'],                                       // split.js
 };
 
@@ -240,7 +240,31 @@ describe('CSS class coverage (static — jsdom cannot see App.css)', () => {
     });
 
     // Layout rules no component test can see (jsdom lays nothing out).
-    it('Health score page: the set-points card fills its row, down to the bottom of the chart beside it', () => {
-        expect(CSS).toMatch(/\.hs-spp > \.hs-card \{ flex: 1 1 auto; \}/);
+    it('Health score page: ONE column — every card (the ruler, both time charts) is as wide as the board', () => {
+        expect(CSS).toMatch(/\.hs-board \{ grid-template-columns: minmax\(0, 1fr\); \}/);
+        // the two-column layout and the set-point table are gone, rules and all
+        expect(CSS).not.toMatch(/\.hs-spp|\.hs-setwrap|\.wb2-hs\b|\.hsx-/);
+        const all = FILES.map(f => f.code).join('\n');
+        expect(all).not.toMatch(/\bhsx-|\bhs-spp\b|\bhs-setwrap\b|\bwb2-hs\b/);
+    });
+
+    it('score ruler: every tick / name state the ruler can render is styled, the band is capped, and a ruler input keeps a focus outline in every state', () => {
+        for (const c of [
+            'wb3-ruler-tick--user', 'wb3-ruler-tick--bad', 'wb3-ruler-tick--req', 'wb3-ruler-tick--unk',
+            'wb3-ruler-nm--user', 'wb3-ruler-nm--bad', 'wb3-ruler-nm--req', 'wb3-ruler-v--user', 'wb3-ruler-v--bad', 'wb3-ruler-v--req',
+            'wb3-ruler-mark', 'wb3-ruler-mark--left', 'wb3-ruler-mark--right', 'wb3-ruler-stem', 'wb3-ruler-marks',
+            'wb3-ruler-checks', 'wb3-ruler-note', 'wb3-rulercard', 'hs-num--big',
+        ]) expect(DEFINED.has(c), c).toBe(true);
+        // the band is capped at about 1,100 px
+        expect(CSS).toMatch(/\.wb3-ruler \{[^}]*width: min\(100% - 156px, 1100px\)/);
+        // rejected = red, empty = dashed amber, not checked = dashed grey (never a score colour)
+        expect(CSS).toMatch(/\.wb3-ruler-tick--bad \{ background: var\(--danger\); \}/);
+        expect(CSS).toMatch(/\.wb3-ruler-tick--req \{[^}]*border-left: 3px dashed var\(--warn\)/);
+        expect(CSS).toMatch(/\.wb3-ruler-tick--unk \{[^}]*border-left: 3px dashed var\(--text-secondary\)/);
+        // focus: an outline on the box itself, on top of whatever border its state gives it
+        expect(CSS).toMatch(/\.hs-num--big:focus-within \{ outline: 2px solid var\(--accent-color\); outline-offset: 1px; \}/);
+        // Relation model, narrow pane: the four inputs get their own labelled row under the band
+        expect(CSS).toMatch(/@container \(max-width: 900px\) \{[\s\S]*?\.wb3-ruler--relationship \.wb3-ruler-values \{ display: grid; grid-template-columns: repeat\(4, minmax\(0, 1fr\)\);/);
+        expect(CSS).toMatch(/\.wb3-ruler--relationship \.wb3-ruler-vl \{ display: block; \}/);
     });
 });

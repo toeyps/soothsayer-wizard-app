@@ -79,17 +79,19 @@ export interface CheckLine {
     warning?: boolean;
 }
 
-/** The four Relationship points, in the order they are listed. */
-const REL_POINT_LABEL: Record<string, string> = {
-    residual_at_80_lower: 'lower 80',
-    residual_at_80_upper: 'upper 80',
-    residual_at_0_lower: 'lower 0',
-    residual_at_0_upper: 'upper 0',
+/** The four Relation-model points: ONE name per point everywhere the page names it itself
+ *  (the score ruler's ticks, its red markers, the collapsed Checks line), listed in RULER
+ *  order — low side first, left to right. (Rust's own sentences keep Rust's wording.) */
+export const REL_POINT_LABEL: Record<string, string> = {
+    residual_at_0_lower: '0 low',
+    residual_at_80_lower: '80 low',
+    residual_at_80_upper: '80 high',
+    residual_at_0_upper: '0 high',
 };
 const REL_POINT_ORDER = Object.keys(REL_POINT_LABEL);
 
 /** Rust's issues as Checks lines. Relationship: two or more `required` issues for
- *  its four points collapse into ONE line ("Enter 4 empty points: lower 80, ...").
+ *  its four points collapse into ONE line ("Enter 4 empty points: 0 low, 80 low, ...").
  *  `testNumbers` is `testPeriodsWirePlan(...).numbers` of the scoring periods that
  *  were sent (see `scoringIssueMessage`). */
 export function buildCheckLines(kind: HealthPreview['kind'], issues: readonly HealthIssue[], testNumbers?: readonly number[] | null): CheckLine[] {
@@ -114,7 +116,7 @@ export function buildCheckLines(kind: HealthPreview['kind'], issues: readonly He
                 key: 'required-points',
                 tone: 'need',
                 text: `Enter ${relRequired.length} empty points: ${names.join(', ')}`,
-                fix: 'Read them off the residual chart on the left, or type the values.',
+                fix: 'Read them off the residual chart below, or type the values.',
             });
             return;
         }

@@ -4,8 +4,9 @@ import { buildCheckLines, type HealthVerdict } from './healthChecks';
 
 /*
  * The Checks of the Health score page. They live INSIDE the "Health set points"
- * card, under the table (one card, no second header) — `SetPointsCard` renders
- * this as its children. It shows what Rust's
+ * card, under the score ruler (one card, no second header) — `ScoreRuler` renders
+ * this as its children, and every ruler input points at it (`aria-describedby`).
+ * It shows what Rust's
  * `validation` list says (`compute_health_preview` re-validates on every call,
  * and `export_model_files` once more when Mark complete is pressed) - the page
  * never re-implements a rule. Valid: one green line. Otherwise: one line per
@@ -29,7 +30,7 @@ const ICON = { need: Minus, bad: X } as const;
 export default function ChecksCard({ kind, issues, verdict, unavailable, testNumbers }: ChecksCardProps) {
     const lines = buildCheckLines(kind, issues, testNumbers);
     return (
-        <div className="hsx-checks-in" role="group" aria-label="Checks" data-testid="checks-card">
+        <div role="group" aria-label="Checks" data-testid="checks-card">
             {unavailable ? (
                 <div className="hs-note" data-testid="checks-unavailable">Not available until the health score loads.</div>
             ) : lines.length > 0 || verdict === 'valid' ? (

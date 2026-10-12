@@ -124,11 +124,13 @@ export function fmtNum(v: number | null | undefined): string {
 }
 
 /**
- * `fmtNum` for a COMPUTED value in a table COLUMN that must line up on the decimal point (the
- * train / scoring metrics table, the automatic rows of the set-points table): always 3 decimals
+ * `fmtNum` for a COMPUTED value in a table COLUMN that must line up on the decimal point:
+ * always 3 decimals
  * ("5.000", "0.910") — the app formatter's own `fixed3` form (DESIGN_SYSTEM §4 "Numbers"), so a
  * non-zero value still never reads as 0 ("0.000120"). Never for a value the user typed (that one
  * stays exactly as typed, `fmtNumExact`), and not for a number standing alone in a sentence.
+ * (No table uses it right now: the set-points table that did was replaced by the score ruler,
+ * whose program values stand alone under their ticks and read through `fmtNum`.)
  */
 export function fmtNumCol(v: number | null | undefined): string {
     if (v === null || v === undefined || !Number.isFinite(v)) return '—';

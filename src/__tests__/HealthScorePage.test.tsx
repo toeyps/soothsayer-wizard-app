@@ -9,7 +9,7 @@ vi.mock('../components/charts/ResponsiveECharts', () => ({
     default: (props: any) => { charts.push(props); return <div data-testid="echarts-mock" data-y-name={props.option?.yAxis?.name ?? ''} />; },
 }));
 
-import HealthScorePage, { SLOW_SAVE_NOTICE_MS, sameHealthScoreProps, shareText } from '../components/windows/workbench/HealthScorePage';
+import HealthScorePage, { SLOW_SAVE_NOTICE_MS, lockReason, sameHealthScoreProps, scoreLockText, shareText } from '../components/windows/workbench/HealthScorePage';
 import { SensorMetaProvider } from '../components/sensor/SensorLabel';
 import { CHART } from '../components/windows/workbench/chartTheme';
 import type { HealthScorePageProps, SaveInfo } from '../components/windows/workbench/workbenchTypes';
@@ -67,6 +67,14 @@ const mount = (o: Opts = {}) => render(<Harness {...o} />);
 const type = (id: string, value: string) => fireEvent.change(screen.getByTestId(id), { target: { value } });
 const input = (id: string) => screen.getByTestId(id) as HTMLInputElement;
 const field = (id: string) => input(id).closest('.hs-num') as HTMLElement;
+/** The score ruler (the band that replaced the set-point table) and its parts, by tick key. */
+const ruler = () => screen.getByTestId('score-ruler');
+const rulerPart = (part: 'tick' | 'name' | 'value', key: string) => ruler().querySelector(`[data-testid="ruler-${part}"][data-tick="${key}"]`) as HTMLElement;
+const tickKeys = () => [...ruler().querySelectorAll('[data-testid="ruler-tick"]')].map(el => (el as HTMLElement).dataset.tick);
+const rulerScores = () => [...ruler().querySelectorAll('.wb3-ruler-scores > span')].map(el => el.textContent);
+/** A tick's name (its own text: the Relation ruler also carries a narrow-layout copy of the value in a <small>). */
+const rulerNames = () => [...ruler().querySelectorAll('[data-testid="ruler-name"]')].map(el => el.childNodes[0].textContent);
+const markers = () => screen.queryAllByTestId('ruler-marker');
 const scoreChart = () => charts.filter(c => c.option?.yAxis?.name === 'Score').pop();
 const setChart = () => charts.filter(c => c.option?.yAxis?.name !== 'Score' || c.option?.series?.[0]?.name === 'Points').pop();
 /** Text of the legend row under a card's chart, or null when the card has none. */
@@ -92,46 +100,70 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
-describe('Individual: the set-point table (100 / 80 / 0)', () => {
-    // workbench-redesign SPEC §4: Score · Band · Lower · Upper. Automatic values are TEXT.
-    it('is ONE table — Score · Band · Lower · Upper; what the program computes is plain text, only L and H are inputs', () => {
+describe('Individual: the score ruler (0 · 80 · 100 · 100 · 80 · 0)', () => {
+    // Workbench detail pages v2 §6: ONE band maps value → score. The program's ticks are TEXT.
+    it('is ONE ruler — 0 · 80 · 100 · 100 · 80 · 0 on L · −3SD · −1SD · +1SD · +3SD · H; what the program computes is plain text, only L and H are inputs', () => {
         mount({ sp: IND_VALID });
         const card = screen.getByTestId('set-points-card');
-        const table = within(card).getByRole('table', { name: 'Health set points' });
-        expect(within(table).getAllByRole('columnheader').map(h => h.textContent)).toEqual(['Score', 'Band', 'Lower', 'Upper']);
-        expect(within(table).getAllByRole('row')).toHaveLength(4); // head + 100 / 80 / 0
-        expect(within(card).getByTestId('rung-100').textContent).toBe('100within ±1SD · automatic4.0006.000');
-        expect(within(card).getByTestId('rung-80').textContent).toBe('80at ±3SD · automatic2.0008.000');
-        expect(within(card).getByTestId('rung-0').textContent).toMatch(/^0at L \/ H · you set them/);
-        // automatic values: text, never something that looks like an input
-        for (const id of ['ro-l1', 'ro-u1', 'ro-l3', 'ro-u3']) {
-            const el = screen.getByTestId(id);
+        expect(within(card).getByTestId('score-ruler')).toBe(ruler());
+        expect(ruler().dataset.kind).toBe('individual');
+        expect(tickKeys()).toEqual(['lower', 'm3sd', 'm1sd', 'p1sd', 'p3sd', 'upper']);
+        expect(rulerScores()).toEqual(['0', '80', '100', '100', '80', '0']);
+        expect(rulerNames()).toEqual(['L', '−3SD', '−1SD', '+1SD', '+3SD', 'H']);
+        // the program's values: text, never something that looks like an input
+        for (const key of ['m3sd', 'm1sd', 'p1sd', 'p3sd']) {
+            const el = rulerPart('value', key);
             expect(el.tagName).toBe('SPAN');
-            expect(el.className).toBe('hsx-ro');
-            expect(el.closest('.hs-num')).toBeNull();
+            expect(el.querySelector('input, .hs-num')).toBeNull();
         }
-        expect([screen.getByTestId('ro-l1'), screen.getByTestId('ro-u1'), screen.getByTestId('ro-l3'), screen.getByTestId('ro-u3')].map(e => e.textContent)).toEqual(['4.000', '6.000', '2.000', '8.000']);
+        expect(['m3sd', 'm1sd', 'p1sd', 'p3sd'].map(k => rulerPart('value', k).textContent)).toEqual(['2', '4', '6', '8']);
+        // the user's points are the ONLY inputs, each under its own tick, in the large variant
         expect(card.querySelectorAll('input')).toHaveLength(2);
-        // no locks, no boxed rungs, no source chips any more
-        expect(card.querySelectorAll('svg.lucide-lock')).toHaveLength(0);
-        expect(card.querySelector('.hs-rung, .hs-ro, .hs-src, .hs-lock')).toBeNull();
+        expect(rulerPart('value', 'lower').contains(input('sp-lower'))).toBe(true);
+        expect(rulerPart('value', 'upper').contains(input('sp-upper'))).toBe(true);
+        expect(field('sp-lower').className).toMatch(/\bhs-num--big\b/);
+        expect(field('sp-upper').className).toMatch(/\bhs-num--big\b/);
         expect(input('sp-lower').value).toBe('1');
         expect(input('sp-upper').value).toBe('9');
         expect(screen.getByLabelText(/^L — /)).toBe(input('sp-lower'));
         expect(screen.getByLabelText(/^H — /)).toBe(input('sp-upper'));
+        // what the band means is said once, in the card's subtitle
+        expect(screen.getByTestId('ruler-kind-note').textContent).toBe('Score 100 within ±1SD of the learned normal · 80 at ±3SD · 0 at L and H — you set L and H');
+        // valid: nothing is marked
+        expect(markers()).toHaveLength(0);
+        expect(screen.queryByTestId('ruler-markers')).toBeNull();
+        expect(ruler().querySelector('[data-state]')).toBeNull();
+        // the set-point TABLE is gone: no table, no 100 / 80 / 0 rows, no read-only cells, no locks or chips
+        expect(within(card).queryByRole('table')).toBeNull();
+        expect(within(card).queryAllByRole('columnheader')).toHaveLength(0);
+        for (const id of ['rung-100', 'rung-80', 'rung-0', 'ro-l1', 'ro-u1', 'ro-l3', 'ro-u3', 'hs-ladder']) expect(screen.queryByTestId(id)).toBeNull();
+        expect(card.querySelector('.hsx-table, .hsx-row, .hsx-ro, .hs-rung, .hs-ro, .hs-src, .hs-lock')).toBeNull();
+        expect(card.querySelectorAll('svg.lucide-lock')).toHaveLength(0);
     });
 
-    it('the Checks live in the SAME card, under the table (no second card, no second header)', () => {
+    it('the Checks live in the SAME card, under the ruler (no second card, no second header)', () => {
         mount({ sp: IND_VALID });
         const card = screen.getByTestId('set-points-card');
         const checks = within(card).getByTestId('checks-card');
         expect(checks.tagName).toBe('DIV');
-        expect(checks.closest('.hsx-checks')).not.toBeNull();
+        expect(checks.closest('.wb3-ruler-checks')).not.toBeNull();
+        expect(ruler().compareDocumentPosition(checks) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy(); // under the ruler
         expect(within(card).getByTestId('check-valid').textContent).toBe('Every set point passes the checks — the score is below.');
         expect(screen.getAllByTestId('checks-card')).toHaveLength(1);
-        expect(document.querySelectorAll('.hs-spp > section')).toHaveLength(1);
+        expect(screen.getAllByTestId('set-points-card')).toHaveLength(1);
         expect(card.querySelectorAll('.wb2-card-h')).toHaveLength(1);
         expect(card.textContent).not.toMatch(/Checks/);
+    });
+
+    it('every ruler input points at the Checks (aria-describedby) — they say in words what its colour means', () => {
+        mount({ sp: { kind: 'individual', lower: 3, upper: null, masterLower: null, masterUpper: null } });
+        for (const id of ['sp-lower', 'sp-upper']) {
+            const target = document.getElementById(input(id).getAttribute('aria-describedby')!)!;
+            expect(target.contains(screen.getByTestId('checks-card'))).toBe(true);
+        }
+        cleanup();
+        mount({ sp: IND_VALID }); // a valid point too
+        expect(document.getElementById(input('sp-lower').getAttribute('aria-describedby')!)!.contains(screen.getByTestId('check-valid'))).toBe(true);
     });
 
     it('the inputs show the unit', () => {
@@ -264,6 +296,71 @@ describe('Individual: the set-point table (100 / 80 / 0)', () => {
         });
     });
 
+    // The user's concept rule: a wrong value must WARN — on the band itself, not only in a sentence.
+    describe('wrong values warn on the ruler', () => {
+        it('a rejected value: red tick, red name, red input AND a red marker where the typed value really sits, labelled as typed', () => {
+            mount({ sp: IND_VALID });
+            type('sp-lower', '3'); // between −3SD (2) and −1SD (4): the fixture's Rust rejects it
+            expect(rulerPart('tick', 'lower').dataset.state).toBe('error');
+            expect(rulerPart('tick', 'lower').className).toMatch(/wb3-ruler-tick--bad/);
+            expect(rulerPart('name', 'lower').className).toMatch(/wb3-ruler-nm--bad/);
+            expect(field('sp-lower').className).toMatch(/hs-num--err/);
+            const [m] = markers();
+            expect(markers()).toHaveLength(1);
+            expect(m.textContent).toBe('L = 3');
+            expect(m.dataset.point).toBe('lower');
+            expect(m.style.left).toBe('30%'); // half-way between tick 1 and tick 2 of 5
+            expect(m.dataset.beyond).toBeUndefined();
+            // the Checks sentence carries the value as typed, in the same card
+            expect(within(screen.getByTestId('set-points-card')).getByTestId('check-line').textContent).toBe('The lower set point (L = 3) must be below the lower 3σ boundary (2).');
+            // the other, valid point is untouched
+            expect(rulerPart('tick', 'upper').dataset.state).toBeUndefined();
+            // fixing it removes every mark
+            type('sp-lower', '1');
+            expect(markers()).toHaveLength(0);
+            expect(rulerPart('tick', 'lower').dataset.state).toBeUndefined();
+        });
+
+        it('the marker keeps what was typed: every decimal, a real minus sign', () => {
+            mount({ sp: IND_VALID });
+            type('sp-lower', '2.61234');
+            expect(markers()[0].textContent).toBe('L = 2.61234');
+            type('sp-upper', '-0.5');
+            expect(markers().map(m => m.textContent)).toEqual(['L = 2.61234', 'H = −0.5']);
+        });
+
+        it('an EMPTY point is dashed amber (tick, name, input) and has no marker; a rejected one is red', () => {
+            mount({ sp: { kind: 'individual', lower: 3, upper: null, masterLower: null, masterUpper: null } });
+            expect(rulerPart('tick', 'upper').dataset.state).toBe('required');
+            expect(rulerPart('tick', 'upper').className).toMatch(/wb3-ruler-tick--req/);
+            expect(rulerPart('tick', 'upper').className).not.toMatch(/wb3-ruler-tick--bad/);
+            expect(rulerPart('name', 'upper').className).toMatch(/wb3-ruler-nm--req/);
+            expect(field('sp-upper').className).toMatch(/hs-num--req/);
+            expect(rulerPart('tick', 'lower').className).toMatch(/wb3-ruler-tick--bad/);
+            expect(markers().map(m => m.dataset.point)).toEqual(['lower']); // nothing to mark for an empty box
+        });
+
+        it('a value beyond the user\'s other point sits AT that end with an arrow ("L = 90 →")', () => {
+            mount({ sp: IND_VALID }); // H = 9 is valid
+            type('sp-lower', '90');
+            const [m] = markers();
+            expect(m.textContent).toBe('L = 90 →');
+            expect(m.dataset.beyond).toBe('right');
+            expect(m.style.left).toBe('100%');
+            expect(m.className).toMatch(/wb3-ruler-mark--right/);
+        });
+
+        it('two rejected values whose labels would collide are stacked on rows', () => {
+            mount({ sp: { kind: 'individual', lower: 4.5, upper: 5.5, masterLower: null, masterUpper: null } });
+            const ms = markers();
+            expect(ms.map(m => m.textContent)).toEqual(['L = 4.5', 'H = 5.5']);
+            expect(ms.map(m => m.dataset.row)).toEqual(['0', '1']);
+            expect(ms.map(m => m.style.top)).toEqual(['0px', '22px']);
+            expect(screen.getByTestId('ruler-markers').dataset.rows).toBe('2');
+            expect(screen.getByTestId('ruler-markers').style.height).toBe('44px');
+        });
+    });
+
     it('an input keeps the text the user typed ("2.50" is not rewritten to "2.5"; "-2" never becomes "-2.000")', () => {
         mount({ sp: { kind: 'individual', lower: null, upper: 9, masterLower: null, masterUpper: null } });
         type('sp-lower', '-2');
@@ -277,27 +374,44 @@ describe('Individual: the set-point table (100 / 80 / 0)', () => {
 });
 
 describe('Relationship: four points, all start empty', () => {
-    it('table: the 100 row is text ("within ±2RMSE · automatic"); the four residual points are the only inputs, empty, with − / + placeholders and the unit', () => {
+    it('ruler: 0 low · 80 low · −2RMSE · no residual · +2RMSE · 80 high · 0 high; the band edges are text; the four residual points are the only inputs, empty, with − / + placeholders and the unit', () => {
         mount({ kind: 'relationship', sp: { ...REL_EMPTY } });
         const card = screen.getByTestId('set-points-card');
-        expect(within(card).getAllByRole('columnheader').map(h => h.textContent)).toEqual(['Score', 'Band', 'Lower', 'Upper']);
-        expect(screen.getByTestId('rung-100').textContent).toBe('100within ±2RMSE · automatic−0.913+0.913');
-        expect(screen.getByTestId('rung-100').querySelector('input')).toBeNull();
-        expect(screen.getByTestId('ro-l2').textContent).toBe('−0.913');
-        expect(screen.getByTestId('ro-u2').textContent).toBe('+0.913');
-        expect(screen.getByTestId('ro-l2').closest('.hs-num')).toBeNull();
-        expect(screen.getByTestId('rung-80').textContent).toMatch(/^80residual at 80 · you set them/);
-        expect(screen.getByTestId('rung-0').textContent).toMatch(/^0residual at 0 · you set them/);
-        const ids = ['sp-residual_at_80_lower', 'sp-residual_at_80_upper', 'sp-residual_at_0_lower', 'sp-residual_at_0_upper'];
-        expect(card.querySelectorAll('input')).toHaveLength(4);
+        expect(ruler().dataset.kind).toBe('relationship');
+        expect(tickKeys()).toEqual(['residual_at_0_lower', 'residual_at_80_lower', 'm2rmse', 'zero', 'p2rmse', 'residual_at_80_upper', 'residual_at_0_upper']);
+        expect(rulerScores()).toEqual(['0', '80', '100', '100', '100', '80', '0']);
+        expect(rulerNames()).toEqual(['0 low', '80 low', '−2RMSE', 'no residual', '+2RMSE', '80 high', '0 high']);
+        expect(['m2rmse', 'zero', 'p2rmse'].map(k => rulerPart('value', k).textContent)).toEqual(['−0.913', '0', '+0.913']);
+        for (const k of ['m2rmse', 'zero', 'p2rmse']) expect(rulerPart('value', k).querySelector('input, .hs-num')).toBeNull();
+        // the inputs, in RULER order (low side first)
+        const ids = ['sp-residual_at_0_lower', 'sp-residual_at_80_lower', 'sp-residual_at_80_upper', 'sp-residual_at_0_upper'];
+        expect([...card.querySelectorAll('input')].map(i => i.id)).toEqual(ids);
         for (const id of ids) {
             expect(input(id).value).toBe(''); // they start EMPTY — no defaults
             expect(input(id).placeholder).toBe(id.endsWith('_lower') ? '−' : '+');
             expect(field(id).className).toMatch(/hs-num--req/);
+            expect(field(id).className).toMatch(/hs-num--big/);
             expect(field(id).textContent).toContain('bar');
+            expect(rulerPart('tick', id.slice(3)).dataset.state).toBe('required');
         }
-        expect(screen.getByTestId('sign-note').textContent).toBe('Residual = actual − predicted: lower points are negative, upper points positive. 0 sits further from zero than 80.');
+        expect(screen.getByTestId('ruler-kind-note').textContent).toBe('Residual = actual − predicted · 100 within ±2RMSE · you set where 80 and 0 sit on each side');
+        expect(screen.getByTestId('sign-note').textContent).toBe('The low points are negative, the high points positive. Each 0 point sits further from zero than its 80 point.');
         expect(screen.queryByTestId('master-note')).toBeNull();
+        expect(within(card).queryByRole('table')).toBeNull();
+    });
+
+    // On a narrow pane the four inputs sit on their own labelled row under the band (CSS, by
+    // container width): each input carries its point's name, each program tick its value.
+    it('each input carries its point\'s name and each program tick its value, for the narrow layout\'s own row', () => {
+        mount({ kind: 'relationship', sp: { ...REL_VALID } });
+        const label = (key: string) => rulerPart('value', key).querySelector('.wb3-ruler-vl')!;
+        expect(['residual_at_0_lower', 'residual_at_80_lower', 'residual_at_80_upper', 'residual_at_0_upper'].map(k => label(k).textContent)).toEqual(['0 low', '80 low', '80 high', '0 high']);
+        expect(label('residual_at_0_lower').getAttribute('aria-hidden')).toBe('true'); // the input has its own accessible name
+        expect(['m2rmse', 'zero', 'p2rmse'].map(k => rulerPart('name', k).querySelector('.wb3-ruler-nm-pv')!.textContent)).toEqual(['−0.913', '0', '+0.913']);
+        // ...and only the Relation ruler does (Individual / Clustering inputs stay under their ticks at every width)
+        cleanup();
+        mount({ sp: IND_VALID });
+        expect(ruler().querySelector('.wb3-ruler-vl, .wb3-ruler-nm-pv')).toBeNull();
     });
 
     it('typing writes the matching field of the draft', () => {
@@ -312,12 +426,13 @@ describe('Relationship: four points, all start empty', () => {
         mount({ kind: 'relationship', sp: { ...REL_EMPTY } });
         let lines = screen.getAllByTestId('check-line');
         expect(lines).toHaveLength(1);
-        expect(lines[0].textContent).toMatch(/Enter 4 empty points: lower 80, upper 80, lower 0, upper 0/);
+        expect(lines[0].textContent).toMatch(/Enter 4 empty points: 0 low, 80 low, 80 high, 0 high/);
+        expect(lines[0].textContent).toMatch(/Read them off the residual chart below, or type the values\./);
         type('sp-residual_at_80_lower', '-1.5');
         type('sp-residual_at_80_upper', '1.5');
         lines = screen.getAllByTestId('check-line');
         expect(lines).toHaveLength(1);
-        expect(lines[0].textContent).toMatch(/Enter 2 empty points: lower 0, upper 0/);
+        expect(lines[0].textContent).toMatch(/Enter 2 empty points: 0 low, 0 high/);
         expect(screen.getByTestId('hs-verdict').getAttribute('title')).toBe('Set points still empty');
     });
 
@@ -332,31 +447,50 @@ describe('Relationship: four points, all start empty', () => {
 describe('Clustering: one outer ring N for every cluster', () => {
     const CL = (n: number | null) => ({ kind: 'clustering', outerSd: n }) as const;
 
-    it('table: the 1× and 3× rows are text; N is the one control (number box, − / +, 4× 5× 6× 7×) on its own line', () => {
+    it('ruler: one-sided — centre · 1× · 3× · N×; the 1× and 3× ticks are text; N is the one control (number box, − / +) under its tick, with the 4× 5× 6× 7× presets', () => {
         mount({ kind: 'clustering', sp: CL(null) });
         const card = screen.getByTestId('set-points-card');
-        expect(screen.getByTestId('rung-100').textContent).toBe('100inside the 1× SD ring · automatic1× SD');
-        expect(screen.getByTestId('rung-80').textContent).toBe('80on the 3× SD ring · automatic3× SD');
-        expect(screen.getByTestId('rung-0').textContent).toBe('0on the N× SD ring · you set N · more than 3N× SD');
-        expect(within(card).queryAllByRole('columnheader')).toHaveLength(0); // one value column: no head row
-        for (const id of ['rung-100', 'rung-80', 'rung-0']) expect(screen.getByTestId(id).querySelector('input, button')).toBeNull();
+        expect(ruler().dataset.kind).toBe('clustering');
+        expect(tickKeys()).toEqual(['centre', 'ring1', 'ring3', 'outer_sd']);
+        expect(rulerScores()).toEqual(['100', '100', '80', '0']);
+        expect(rulerNames()).toEqual(['centre', '1× SD', '3× SD', 'N× SD']);
+        expect(['centre', 'ring1', 'ring3'].map(k => rulerPart('value', k).textContent)).toEqual(['0× SD', '1×', '3×']);
+        for (const k of ['centre', 'ring1', 'ring3']) expect(rulerPart('value', k).querySelector('input, button')).toBeNull();
         expect(card.querySelectorAll('input')).toHaveLength(1);
         const ctl = screen.getByTestId('ring-control');
+        expect(rulerPart('value', 'outer_sd').contains(ctl)).toBe(true);
         expect(within(ctl).getByTestId('sp-outer_sd')).toBe(input('sp-outer_sd'));
+        expect(within(ctl).getByTestId('ring-dec')).toBeTruthy();
+        expect(within(ctl).getByTestId('ring-inc')).toBeTruthy();
         expect(input('sp-outer_sd').value).toBe('');
         expect(input('sp-outer_sd').placeholder).toBe('N');
         expect(field('sp-outer_sd').className).toMatch(/hs-num--req/);
+        expect(field('sp-outer_sd').className).toMatch(/hs-num--big/);
         expect(field('sp-outer_sd').textContent).toContain('× SD');
-        expect(['ring-quick-4', 'ring-quick-5', 'ring-quick-6', 'ring-quick-7'].map(id => within(ctl).getByTestId(id).textContent)).toEqual(['4×', '5×', '6×', '7×']);
+        expect(rulerPart('tick', 'outer_sd').dataset.state).toBe('required');
+        expect(['ring-quick-4', 'ring-quick-5', 'ring-quick-6', 'ring-quick-7'].map(id => within(card).getByTestId(id).textContent)).toEqual(['4×', '5×', '6×', '7×']);
+        expect(screen.getByTestId('ruler-kind-note').textContent).toBe('Distance from each cluster\'s centre in SD units · 100 inside 1× SD · 80 at 3× SD · 0 at N× SD — you set N');
         expect(card.textContent).toMatch(/One N for every cluster: each cluster gets its own 1×, 3× and N× rings/);
+        expect(within(card).queryByRole('table')).toBeNull();
+        expect(screen.queryByTestId('ro-nx')).toBeNull();
     });
 
-    it('the 0 row names the N that is set, exactly as typed', () => {
+    it('the box shows the N that is set, exactly as typed; a rejected N is marked on the band where it sits, as typed', () => {
         mount({ kind: 'clustering', sp: CL(null) });
         fireEvent.click(screen.getByTestId('ring-quick-5'));
-        expect(screen.getByTestId('ro-nx').textContent).toBe('5× SD');
+        expect(input('sp-outer_sd').value).toBe('5');
+        expect(markers()).toHaveLength(0);
         type('sp-outer_sd', '4.25');
-        expect(screen.getByTestId('ro-nx').textContent).toBe('4.25× SD');
+        expect(input('sp-outer_sd').value).toBe('4.25');
+        expect(markers()).toHaveLength(0);
+        type('sp-outer_sd', '2.5'); // not above 3: rejected
+        expect(rulerPart('tick', 'outer_sd').className).toMatch(/wb3-ruler-tick--bad/);
+        const [m] = markers();
+        expect(m.textContent).toBe('N = 2.5×');
+        expect(parseFloat(m.style.left)).toBeCloseTo((1.75 / 3) * 100, 3); // three quarters of the way from the 1× tick to the 3× tick
+        type('sp-outer_sd', '3'); // exactly ON the 3× tick
+        expect(markers()[0].textContent).toBe('N = 3×');
+        expect(parseFloat(markers()[0].style.left)).toBeCloseTo((2 / 3) * 100, 3);
     });
 
     it('a quick button sets N and commits at once; the current one is pressed', () => {
@@ -456,11 +590,35 @@ describe('Checks card', () => {
 });
 
 describe('Health score chart', () => {
-    it('is locked ("Set the points above") while the set points are not valid - no score chart is drawn', () => {
+    it('is locked while the set points are not valid - no score chart is drawn; the text sends the user to the ruler', () => {
         mount({ sp: { kind: 'individual', lower: null, upper: null, masterLower: null, masterUpper: null } });
-        expect(screen.getByTestId('score-locked').textContent).toMatch(/Set the points above/);
+        const lock = screen.getByTestId('score-locked');
+        expect(lock.textContent).toBe('Health scoreSet every point on the ruler above — the score appears here');
+        expect(lock.dataset.lock).toBe('empty');
         expect(scoreChart()).toBeUndefined();
         expect(screen.queryByTestId('chart-card-score')).toBeNull();
+    });
+
+    // Workbench detail pages v2 §6 "Lock text": a rejected point reads differently from an empty one.
+    it('lock text: a rejected set point -> "Fix the set point on the ruler above…"; only empty ones -> "Set every point on the ruler above…"', () => {
+        mount({ sp: IND_VALID });
+        type('sp-lower', '3'); // rejected
+        expect(screen.getByTestId('score-locked').textContent).toBe('Health scoreFix the set point on the ruler above — the score appears here');
+        expect(screen.getByTestId('score-locked').dataset.lock).toBe('bad');
+        type('sp-lower', ''); // empty again: nothing is rejected
+        expect(screen.getByTestId('score-locked').textContent).toBe('Health scoreSet every point on the ruler above — the score appears here');
+        expect(screen.getByTestId('score-locked').dataset.lock).toBe('empty');
+        // a rejected point AND an empty one: the rejected one decides
+        cleanup();
+        mount({ sp: { kind: 'individual', lower: 3, upper: null, masterLower: null, masterUpper: null } });
+        expect(screen.getByTestId('score-locked').dataset.lock).toBe('bad');
+        // the old words are gone
+        expect(screen.getByTestId('health-page').textContent).not.toMatch(/Set the points above|once every set point is valid/);
+        // the pure rule behind it
+        expect(scoreLockText('bad')).toBe('Fix the set point on the ruler above — the score appears here');
+        expect(scoreLockText('needs')).toBe('Set every point on the ruler above — the score appears here');
+        expect(scoreLockText(null)).toBe('Set every point on the ruler above — the score appears here');
+        expect([lockReason(true, 'bad'), lockReason(false, 'bad'), lockReason(false, 'needs'), lockReason(false, null)]).toEqual(['error', 'bad', 'empty', 'empty']);
     });
 
     it('is locked when the preview carries no HOURLY score even though it says valid', () => {
@@ -649,38 +807,45 @@ describe('Health score chart', () => {
         expect(screen.getByTestId('chart-expand-set-individual')).toBeTruthy();
         fireEvent.click(screen.getByTestId('chart-expand-score'));
         expect(screen.getByTestId('chart-overlay-score')).toBeTruthy();
-        // the enlarged copy is the chart alone: the shares are a card of their own beside it
+        // the enlarged copy is the chart alone: the shares are a card of their own under it
         expect(screen.getByTestId('chart-overlay-score').querySelector('[data-testid="score-shares"]')).toBeNull();
         fireEvent.keyDown(window, { key: 'Escape' });
         expect(screen.queryByTestId('chart-overlay-score')).toBeNull();
     });
 
     // Real-app request 2026-10-12: "if the two charts were the same size it would be much easier
-    // to read — no need to line the point up by eye".
-    it('the two time charts are the same width and share their plot margins, so their time axes line up; the shares are a side card', () => {
+    // to read — no need to line the point up by eye". Workbench detail pages v2: the ruler card is
+    // full width ABOVE the charts and there is no right-column card any more.
+    it('one column: the ruler card, the set-point chart, the score chart, the shares — the two time charts are the same width and share their plot margins and one zoom', () => {
         mount({ sp: IND_VALID });
+        const page = screen.getByTestId('health-page');
+        const rulerCard = screen.getByTestId('set-points-card');
         const setCard = screen.getByTestId('chart-card-set-individual');
         const scoreCard = screen.getByTestId('chart-card-score');
-        // neither spans the board: both sit in its first column (the side cards take the second)
-        for (const card of [setCard, scoreCard]) expect(card.className).not.toMatch(/wb2-full|hs-full/);
-        expect(setCard.closest('.hs-setwrap')!.parentElement).toBe(scoreCard.parentElement);
         const shares = screen.getByTestId('score-shares');
+        // every card is a direct child of the ONE-column board, in this order
+        expect(page.className).toBe('wb2-board hs-board');
+        expect([...page.children]).toEqual([rulerCard, setCard, scoreCard, shares]);
+        // no side column, no wrappers of the old two-column layout
+        expect(page.querySelector('.hs-spp, .hs-setwrap')).toBeNull();
+        expect(rulerCard.className).toBe('hs-card wb3-rulercard');
         expect(shares.className).toBe('hs-card hs-sharecard');
         expect(scoreCard.contains(shares)).toBe(false);
-        expect(shares.parentElement).toBe(scoreCard.parentElement);
-        expect(scoreCard.nextElementSibling).toBe(shares);
         // the same plot box: left and right margins are equal
         const g = (c: any) => [c.option.grid.left, c.option.grid.right];
         expect(g(scoreChart())).toEqual(g(setChart()));
-        // the set-points card is stretched to the bottom of its row, like the shares card below it (real-app
-        // request 2026-10-12: "pull it down so it is the same layout") — the CSS rule itself is checked in
-        // CssClassCoverage.test.ts; here: it is the card the rule names
-        expect(screen.getByTestId('set-points-card').parentElement!.className).toBe('hs-spp');
-        expect(screen.getByTestId('set-points-card').className).toContain('hs-card');
         // one zoom window: both listen for a zoom and join through the same ready handler
         expect(typeof scoreChart().onEvents.datazoom).toBe('function');
         expect(scoreChart().onEvents.datazoom).toBe(setChart().onEvents.datazoom);
         expect(scoreChart().onChartReady).toBe(setChart().onChartReady);
+    });
+
+    it('Clustering: the scatter is the taller card (two value axes); a time chart keeps the "tall" one', () => {
+        mount({ kind: 'clustering', sp: { kind: 'clustering', outerSd: 5 } });
+        expect(screen.getByTestId('chart-card-set-clustering').className).toMatch(/wb2-card--xtall/);
+        cleanup();
+        mount({ sp: IND_VALID });
+        expect(screen.getByTestId('chart-card-set-individual').className).toMatch(/wb2-card--tall/);
     });
 
     it('the Out of date film covers both charts while the model is stale', () => {
@@ -1170,7 +1335,37 @@ describe('a failed request keeps the page (QA 2026-10-04)', () => {
         expect(screen.queryByTestId('check-valid')).toBeNull();
         expect(screen.getByTestId('checks-unavailable').textContent).toBe('Not available until the health score loads.');
         expect(screen.getByTestId('score-locked').textContent).toBe('Health scoreScore not availableNot available until the health score loads.');
+        expect(screen.getByTestId('score-locked').dataset.lock).toBe('error');
         expect(field('sp-lower').className).not.toMatch(/hs-num--err|hs-num--req/);
+    });
+
+    // Workbench detail pages v2 §6 "Preview failed": the ruler never draws an unchecked point as valid.
+    it('the ruler draws the user\'s ticks as "not checked": grey and dashed, no score colour, no marker — even for a value the old answer accepted', () => {
+        mount({ sp: IND_VALID, preview: failed(null, previewFor('individual', IND_VALID)), onRetryPreview: onRetry });
+        for (const key of ['lower', 'upper']) {
+            expect(rulerPart('tick', key).dataset.state).toBe('unchecked');
+            expect(rulerPart('tick', key).className).toMatch(/wb3-ruler-tick--unk/);
+            expect(rulerPart('tick', key).className).not.toMatch(/wb3-ruler-tick--(bad|req)/);
+            expect(rulerPart('name', key).className).not.toMatch(/wb3-ruler-nm--(bad|req)/);
+        }
+        // the program's own ticks are still what the last answer said
+        expect(rulerPart('tick', 'm3sd').dataset.state).toBeUndefined();
+        expect(rulerScores()).toEqual(['0', '80', '100', '100', '80', '0']);
+        const scores = [...ruler().querySelectorAll('.wb3-ruler-scores > span')];
+        expect(scores[0].className).toMatch(/wb3-ruler-sc--off/);
+        expect(scores[5].className).toMatch(/wb3-ruler-sc--off/);
+        expect(scores[1].className).not.toMatch(/wb3-ruler-sc--off/);
+        // the band's two ends carry no score colour
+        const band = screen.getByTestId('ruler-band').style.background;
+        expect(band.startsWith('linear-gradient(90deg, color-mix(in srgb, var(--text-secondary) 35%, transparent) 0%')).toBe(true);
+        expect(band).not.toMatch(/var\(--danger\)/);
+        expect(markers()).toHaveLength(0);
+        // the inputs still point at the Checks, which say why
+        expect(document.getElementById(input('sp-lower').getAttribute('aria-describedby')!)!.contains(screen.getByTestId('checks-unavailable'))).toBe(true);
+        // a value typed under the red card is not judged either
+        type('sp-lower', '3');
+        expect(markers()).toHaveLength(0);
+        expect(rulerPart('tick', 'lower').dataset.state).toBe('unchecked');
     });
 
     it('typing still works under the banner', () => {
@@ -1254,14 +1449,22 @@ describe('a failed request keeps the page (QA 2026-10-04)', () => {
 });
 
 describe('accessible names and full-precision values (QA 2026-10-04)', () => {
-    it('the four Relationship inputs have four DISTINCT accessible names; the visible column heads stay Lower / Upper', () => {
+    it('the four Relationship inputs have four DISTINCT accessible names, each starting with the ONE name of its point ("0 low" … "0 high")', () => {
         mount({ kind: 'relationship', sp: REL_VALID });
-        const ids = ['sp-residual_at_80_lower', 'sp-residual_at_80_upper', 'sp-residual_at_0_lower', 'sp-residual_at_0_upper'];
+        const ids = ['sp-residual_at_0_lower', 'sp-residual_at_80_lower', 'sp-residual_at_80_upper', 'sp-residual_at_0_upper'];
         const names = ids.map(id => input(id).getAttribute('aria-label'));
         expect(new Set(names).size).toBe(4);
-        expect(names).toEqual(['Lower residual at score 80', 'Upper residual at score 80', 'Lower residual at score 0', 'Upper residual at score 0']);
+        expect(names).toEqual([
+            '0 low — the residual where the score reaches 0 on the low side',
+            '80 low — the residual where the score is 80 on the low side',
+            '80 high — the residual where the score is 80 on the high side',
+            '0 high — the residual where the score reaches 0 on the high side',
+        ]);
         for (const [i, id] of ids.entries()) expect(screen.getByLabelText(names[i]!)).toBe(input(id));
-        expect(screen.getAllByRole('columnheader').slice(2).map(h => h.textContent)).toEqual(['Lower', 'Upper']);
+        // the same names under the band — and the old "Lower / Upper" column heads are gone
+        expect(rulerNames().filter((_, i) => [0, 1, 5, 6].includes(i))).toEqual(['0 low', '80 low', '80 high', '0 high']);
+        expect(screen.queryAllByRole('columnheader')).toHaveLength(0);
+        expect(screen.getByRole('group', { name: 'Health set points on the score ruler' })).toBe(ruler());
     });
 
     it('the state of the card is a dot with words for a screen reader, and a required / rejected input says so', () => {
@@ -1372,7 +1575,7 @@ describe('Scoring periods on the Health score page ("just score it", 2026-10-10)
     });
 
     // Many periods printed "TRAIN P1" … "TRAIN P20" on each other.
-    it('several train periods: "TRAIN" once then numbers; no scoring name among them; both charts sit beside a side card and space their names for that width', () => {
+    it('several train periods: "TRAIN" once then numbers; no scoring name among them; both charts are the same width and space their names the same way', () => {
         const hhmm = (m: number) => `2026-01-01T${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
         // 16 short train periods over the 4 hours of data
         const train_ranges = Array.from({ length: 16 }, (_, i) => ({ start: hhmm(i * 15), end: hhmm(i * 15 + 12) }));
@@ -1409,7 +1612,7 @@ describe('Scoring periods on the Health score page ("just score it", 2026-10-10)
         mount({ kind: 'relationship', sp: REL_EMPTY, data: { ...withTests('relationship', REL_EMPTY) } });
         expect(screen.queryByTestId('test-results')).toBeNull();
         expect(screen.queryByTestId('test-results-pending')).toBeNull();
-        expect(screen.getByTestId('score-locked')).toBeTruthy(); // "Set the points above" says it
+        expect(screen.getByTestId('score-locked')).toBeTruthy(); // "Set every point on the ruler above" says it
     });
 
     it('the chart strip names the train period only, whatever the scoring periods\' numbers', () => {
@@ -1454,7 +1657,7 @@ describe('Scoring periods on the Health score page ("just score it", 2026-10-10)
             };
         };
 
-        it('no test_validation: the notice (with its Try again) is in the "Health score" card — no empty score chart, no "Set the points above", no Scoring results card', () => {
+        it('no test_validation: the notice (with its Try again) is in the "Health score" card — no empty score chart, no locked card, no Scoring results card', () => {
             const onRetryPreview = vi.fn();
             mount({ kind: 'relationship', sp: REL_VALID, data: noScore(), onRetryPreview });
             const card = screen.getByTestId('score-failed');
