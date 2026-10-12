@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, within, fireEvent } from '@testing-library/react';
-import TagCompareTable, { tagCell, type TagCompareRow } from '../components/charts/TagCompareTable';
+import TagCompareTable, { TagTableSlot, tagCell, type TagCompareRow } from '../components/charts/TagCompareTable';
 
 const info = (tag: string, description = '', unit = '') => ({ tag, description, unit, component: '' });
 const items = [
@@ -18,15 +18,16 @@ describe('TagCompareTable (the values of the tagged points, under the chart)', (
         expect(container.firstChild).toBeNull();
     });
 
-    it('one column per tag (badge + time + its ×), one row per sensor, the values in tag order', () => {
+    it('one column per tag (colour dot + time + its ×, no number), one row per sensor, the values in tag order', () => {
         render(<TagCompareTable items={items} rows={rows} onRemove={vi.fn()} />);
         const table = screen.getByTestId('tag-table');
         const heads = within(within(table).getByRole('list', { name: 'Tagged points' })).getAllByRole('listitem');
-        expect(heads.map(h => h.textContent)).toEqual(['①2026/04/23 15:05:00', '②2026/05/19 03:40:00']);
+        expect(heads.map(h => h.textContent)).toEqual(['2026/04/23 15:05:00', '2026/05/19 03:40:00']);
+        expect(heads.map(h => (h.querySelector('.chart-tag-dot') as HTMLElement).style.background)).toEqual(['rgb(245, 158, 11)', 'rgb(16, 185, 129)']);
         expect(within(table).getAllByTestId('tag-table-name').map(n => n.textContent)).toEqual(['Bearing tempT1', 'F1']);
         expect(within(table).getAllByTestId('tag-table-val').map(v => v.textContent)).toEqual(['83.300 DEGC', '79.100 DEGC', '1.927', '—']);
         // A value cell says which sensor and which tag it belongs to (hover / assistive tech).
-        expect(within(table).getAllByTestId('tag-table-val')[1].getAttribute('title')).toBe('Bearing temp · ② 2026/05/19 03:40:00');
+        expect(within(table).getAllByTestId('tag-table-val')[1].getAttribute('title')).toBe('Bearing temp · 2026/05/19 03:40:00');
         // The count next to the title.
         expect(within(table).getByRole('button', { name: /Tagged points/ }).textContent).toContain('2');
     });
@@ -58,6 +59,31 @@ describe('TagCompareTable (the values of the tagged points, under the chart)', (
         expect(screen.getAllByRole('listitem')).toHaveLength(2); // the tags stay
         fireEvent.click(toggle);
         expect(screen.getAllByTestId('tag-table-name')).toHaveLength(2);
+    });
+
+    it('TagTableSlot: under the chart when no place is offered, nothing while the tab is closed, INTO the tab when it is open', () => {
+        const props = { items, rows, onRemove: vi.fn() };
+        const a = render(<TagTableSlot {...props} />);
+        expect(a.container.querySelector('[data-testid="tag-table"]')!.className).toBe('tag-table');
+        a.unmount();
+
+        const b = render(<TagTableSlot {...props} host={null} />);
+        expect(b.container.firstChild).toBeNull();
+        b.unmount();
+
+        const host = document.createElement('div');
+        document.body.appendChild(host);
+        const cRender = render(<TagTableSlot {...props} host={host} />);
+        expect(cRender.container.firstChild).toBeNull();
+        const table = host.querySelector('[data-testid="tag-table"]') as HTMLElement;
+        expect(table.className).toBe('tag-table tag-table--panel');
+        // In the tab there is no fold button: the corner is a plain column title and the rows always show.
+        expect(within(table).queryByRole('button', { name: /Tagged points/ })).toBeNull();
+        expect(within(table).getByText('Sensor')).toBeTruthy();
+        expect(within(table).getAllByTestId('tag-table-name')).toHaveLength(2);
+        cRender.unmount();
+        expect(host.childNodes).toHaveLength(0);
+        host.remove();
     });
 
     it('tagCell: number text + unit, or "—" when there is no value', () => {

@@ -768,6 +768,43 @@ describe('Dashboard', () => {
         });
     });
 
+    describe('Tagged points tab (the values of the points tagged on the Line / Scatter chart)', () => {
+        const lastChart = () => chartProps[chartProps.length - 1];
+
+        it('is a tab next to Highlights; closed, the chart is told there is no place for its table (null, not undefined)', () => {
+            renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });
+            expect(screen.getByText('Tagged points')).toBeTruthy();
+            expect(lastChart().tagTableHost).toBeNull();
+            expect(typeof lastChart().onTagCountChange).toBe('function');
+            expect(screen.queryByTestId('tag-panel-host')).toBeNull();
+        });
+
+        it('open with nothing tagged: says how to tag a point, and hands the chart the element to render into', () => {
+            renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });
+            fireEvent.click(screen.getByText('Tagged points'));
+            expect(screen.getByTestId('tag-panel-empty').textContent).toMatch(/turn on the Tag tool/);
+            expect(lastChart().tagTableHost).toBe(screen.getByTestId('tag-panel-host'));
+            // Leaving the tab takes the place away again.
+            fireEvent.click(screen.getByText('Highlights'));
+            expect(lastChart().tagTableHost).toBeNull();
+        });
+
+        it('tagging a point opens the tab and shows the count; a count reported without "added" (mount, removal) does not switch tabs', () => {
+            renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });
+            fireEvent.click(screen.getByText('Filter'));
+            act(() => { lastChart().onTagCountChange(3, false); }); // e.g. the Line chart mounted with its tags
+            expect(screen.getByText('Tagged points (3)')).toBeTruthy();
+            expect(screen.queryByTestId('tag-panel-host')).toBeNull(); // still on Filter
+            act(() => { lastChart().onTagCountChange(4, true); }); // the user tagged one more
+            expect(screen.getByText('Tagged points (4)')).toBeTruthy();
+            expect(screen.getByTestId('tag-panel-host')).toBeTruthy();
+            expect(screen.queryByTestId('tag-panel-empty')).toBeNull();
+            act(() => { lastChart().onTagCountChange(0, false); }); // cleared
+            expect(screen.getByText('Tagged points')).toBeTruthy();
+            expect(screen.getByTestId('tag-panel-empty')).toBeTruthy();
+        });
+    });
+
     describe('Highlights tab (time-window "By time" highlights)', () => {
         it('renders HighlightsPanel when the Highlights tab is selected, alongside Selected Sensor / Filter', () => {
             renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });

@@ -841,6 +841,17 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     const handleLineTaggedPointsChange = useCallback((points: LineTaggedPoint[]) => {
         setLineTaggedPoints(points);
     }, []);
+    // The values of the tagged points (Line and Scatter) are shown in the "Tagged points" tab
+    // of the panel under the chart: the chart renders its table INTO that tab's element
+    // (`tagTableHost`, null while the tab is closed) and reports how many tags it has.
+    const [tagTableHost, setTagTableHost] = useState<HTMLElement | null>(null);
+    const [tagCount, setTagCount] = useState(0);
+    const [activeDataTab, setActiveDataTab] = useState<'selected' | 'filter' | 'highlights' | 'tags'>('selected');
+    const handleTagCountChange = useCallback((count: number, added: boolean) => {
+        setTagCount(count);
+        // Tagging a point is asking for its values: open the tab they are in.
+        if (added) setActiveDataTab('tags');
+    }, []);
 
     // Time-window highlights ("Highlights" tab) — global across every chart
     // type except Pair Plot. See TimeHighlight in types.ts for why.
@@ -2325,6 +2336,8 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                         timeHighlights={timeHighlights}
                         lineTaggedPoints={lineTaggedPoints}
                         onLineTaggedPointsChange={handleLineTaggedPointsChange}
+                        tagTableHost={tagTableHost}
+                        onTagCountChange={handleTagCountChange}
                     />
                 ) : (
                     // Scatter / pair plot render the bounded Rust sample so
@@ -2342,6 +2355,8 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                         sensorMetadata={sensorMetadata}
                         timeHighlights={timeHighlights}
                         valueHighlight={valueHighlight}
+                        tagTableHost={tagTableHost}
+                        onTagCountChange={handleTagCountChange}
                     />
                 )}
             </div>
@@ -2511,15 +2526,15 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         </div>
     );
 
-    // Which tab the panel shows — Filter, Highlights, or the "Selected
-    // Sensor" list (per-sensor show/hide + remove controls).
-    const [activeDataTab, setActiveDataTab] = useState<'selected' | 'filter' | 'highlights'>('selected');
+    // Which tab the panel shows — Filter, Highlights, Tagged points, or the "Selected
+    // Sensor" list (per-sensor show/hide + remove controls). (`activeDataTab` is declared
+    // next to the tag state above, which opens the Tagged points tab.)
 
     const renderDataContent = () => (
         <div className="widget-section data-widget">
             <div className="section-header collapsible-header">
                 <div className="section-header-left" style={{ gap: '4px' }}>
-                    {(['selected', 'filter', 'highlights'] as const).map(tab => (
+                    {(['selected', 'filter', 'highlights', 'tags'] as const).map(tab => (
                         <button
                             key={tab}
                             onClick={() => setActiveDataTab(tab)}
@@ -2535,6 +2550,8 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                                 ? 'Filter'
                                 : tab === 'highlights'
                                     ? 'Highlights'
+                                    : tab === 'tags'
+                                        ? `Tagged points${tagCount > 0 ? ` (${tagCount})` : ''}`
                                     : `Selected Sensor${selectedSensors.length > 0 ? ` (${selectedSensors.length})` : ''}`}
                         </button>
                     ))}
@@ -2573,6 +2590,18 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                                 ? `Pair Plot shows at most ${MAX_PAIR_PLOT_SENSORS} sensors`
                                 : undefined}
                         />
+                    </div>
+                ) : activeDataTab === 'tags' ? (
+                    <div className="tag-panel">
+                        {tagCount === 0 && (
+                            <div className="tag-panel-empty" data-testid="tag-panel-empty">
+                                {chartType === 'pair'
+                                    ? 'Pair Plot has no tagged points — switch to Line or Scatter to tag a point.'
+                                    : 'No tagged points yet — turn on the Tag tool at the top right of the chart, then click the chart. The values of every tagged point are compared here.'}
+                            </div>
+                        )}
+                        {/* The chart renders its table of values into this element. */}
+                        <div ref={setTagTableHost} className="tag-panel-host" data-testid="tag-panel-host" />
                     </div>
                 ) : activeDataTab === 'highlights' ? (
                     <HighlightsPanel

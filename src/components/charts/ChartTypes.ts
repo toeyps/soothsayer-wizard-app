@@ -94,6 +94,13 @@ export interface ChartProps {
     /** Fired whenever the Line chart's tagged points change (add/remove/
      *  clear), so the parent can persist them. */
     onLineTaggedPointsChange?: (points: LineTaggedPoint[]) => void;
+    /** Where the Line / Scatter chart renders the table of its tagged points' values: the
+     *  element of the Dashboard's "Tagged points" tab, or `null` while that tab is not open
+     *  (nothing is drawn). Leave it out (`undefined`) and the table docks under the chart. */
+    tagTableHost?: HTMLElement | null;
+    /** How many points are tagged on the chart right now; `added` is true when the user has
+     *  just tagged one more (not on mount, and not when one is removed). */
+    onTagCountChange?: (count: number, added: boolean) => void;
     /** "By value" highlighting (Dashboard-owned, edited from the Highlights
      *  tab's "By value" group) — colours Scatter points by where a 3rd
      *  sensor's value falls among user-defined ranges. Scatter-only;

@@ -2313,24 +2313,10 @@ body {
     pointer-events: none;
 }
 
-.scatter-tag-badge {
-    position: absolute;
-    width: 16px;
-    height: 16px;
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 9px;
-    font-weight: 700;
-    color: #08110c;
-    transform: translate(-50%, -50%);
-    border: 2px solid #0f172a;
-    pointer-events: none;
-}
-
-/* Tag Point — the values of the tagged points, in a table docked UNDER the chart (Line and
-   Scatter; `TagCompareTable.tsx`). The chart keeps only a numbered marker per tag. */
+/* Tag Point — the values of the tagged points, in a table (`TagCompareTable.tsx`, Line and
+   Scatter). In the Dashboard it fills the "Tagged points" tab of the panel under the chart
+   (`.tag-panel`); with no such tab it docks under the chart. The chart keeps only a dot in
+   the tag's colour. */
 .chart-with-tags {
     display: flex;
     flex-direction: column;
@@ -2352,6 +2338,45 @@ body {
     overflow: auto;
     border-top: 1px solid var(--border-strong);
     background: var(--card-bg);
+}
+
+/* In the Dashboard's tab: the whole tab is the table. */
+.tag-table--panel {
+    max-height: none;
+    height: 100%;
+    border-top: 0;
+}
+
+.tag-panel {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+}
+
+.tag-panel-host {
+    flex: 1 1 0;
+    min-height: 0;
+}
+
+.tag-panel-host:empty {
+    display: none;
+}
+
+.tag-panel-empty {
+    padding: 1rem;
+    font-size: 0.8rem;
+    line-height: 1.5;
+    color: var(--text-secondary);
+    opacity: 0.75;
+}
+
+.tag-table-title {
+    padding: 0 4px;
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    color: var(--text-secondary);
 }
 
 .tag-table-grid {
@@ -2514,15 +2539,9 @@ body {
 
 .chart-tag-dot {
     flex-shrink: 0;
-    width: 15px;
-    height: 15px;
+    width: 10px;
+    height: 10px;
     border-radius: 50%;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 9px;
-    font-weight: 700;
-    color: #08110c;
 }
 
 .chart-tag-label {

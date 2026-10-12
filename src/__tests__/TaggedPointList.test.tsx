@@ -14,11 +14,12 @@ describe('TaggedPointList (per-tag remove, shared by Line and Scatter)', () => {
         expect(container.firstChild).toBeNull();
     });
 
-    it('renders one row per tag with its badge in the tag colour and its label', () => {
+    it('renders one row per tag: a dot in the tag colour (no number in it) and its label', () => {
         render(<TaggedPointList items={items} onRemove={vi.fn()} />);
         const rows = within(screen.getByRole('list', { name: 'Tagged points' })).getAllByRole('listitem');
         expect(rows).toHaveLength(2);
-        expect(rows[0].textContent).toBe('①2026/01/01 00:01');
+        expect(rows[0].textContent).toBe('2026/01/01 00:01');
+        expect(rows[0].querySelector('.chart-tag-dot')!.textContent).toBe('');
         expect((rows[1].querySelector('.chart-tag-dot') as HTMLElement).style.background).toBe('rgb(0, 255, 0)');
     });
 

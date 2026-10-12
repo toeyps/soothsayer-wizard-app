@@ -680,22 +680,22 @@ describe('Tag Point (click a point on the chart to compare it with others)', () 
         const markPoint = capturedOptions[capturedOptions.length - 1].series[0].markPoint;
         expect(markPoint.data).toHaveLength(1);
         expect(markPoint.data[0].coord[0]).toBe(msOf(columnar.timestamps[2]));
-        expect(markPoint.data[0].label.formatter).toContain('①');
     });
 
     // The values of a tag are NOT drawn on the chart any more (a box per tag covered the next
     // tag's box as soon as two tags were close — real-app report 2026-10-12): the chart keeps a
-    // numbered dot + a dashed line, the values are in the table under the chart.
-    it('on the chart a tag is only its numbered dot (no value box) plus a dashed line at its time', () => {
+    // dot in the tag's colour + a dashed line; the values are in the tag table. The dot carries
+    // NO number (user, real app 2026-10-12: the digit could not be read — keep only the colour).
+    it('on the chart a tag is only a dot in its colour (no number, no value box) plus a dashed line at its time', () => {
         const columnar = columnarOf(headers, 5);
         const { container } = render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} />);
         fireEvent.click(tagToggle(container));
         mockConvertFromPixel.mockReturnValue([msOf(columnar.timestamps[2]), 0]);
         act(() => { zrClickHandler!({ offsetX: 50, offsetY: 50 }); });
         const first = capturedOptions[capturedOptions.length - 1].series[0];
-        expect(first.markPoint.data[0].label.formatter).toBe('①'); // the badge alone: no time, no values
-        expect(first.markPoint.label.position).toBe('inside');
-        expect(first.markPoint.label.rich).toBeUndefined();
+        expect(first.markPoint.label).toEqual({ show: false }); // no text on the chart at all
+        expect(first.markPoint.data[0].label).toBeUndefined();
+        expect(first.markPoint.symbol).toBe('circle');
         expect(first.markLine.silent).toBe(true);
         expect(first.markLine.data).toEqual([
             { xAxis: msOf(columnar.timestamps[2]), lineStyle: expect.objectContaining({ type: 'dashed', color: first.markPoint.data[0].itemStyle.color }), label: { show: false } },
@@ -728,7 +728,11 @@ describe('Tag Point (click a point on the chart to compare it with others)', () 
         expect(vals[2]).toBe(v(1, 2).toFixed(3)); // no unit
         // Column heads: the tags, in badge order, each with its own ×.
         const heads = within(within(table).getByRole('list', { name: 'Tagged points' })).getAllByRole('listitem');
-        expect(heads.map(h => h.textContent![0])).toEqual(['①', '②']);
+        expect(heads.map(h => h.textContent)).toEqual([formatDateTime(new Date(columnar.timestamps[2])), formatDateTime(new Date(columnar.timestamps[4]))]);
+        // ... told apart by colour only: the dot of a column head is the colour of its marker on the chart.
+        const markerColours = capturedOptions[capturedOptions.length - 1].series[0].markPoint.data.map((d: any) => d.itemStyle.color);
+        expect(heads.map(h => (h.querySelector('.chart-tag-dot') as HTMLElement).textContent)).toEqual(['', '']);
+        expect(new Set(markerColours).size).toBe(2);
         // The swatch is the sensor's line colour.
         expect((names[0].querySelector('.tag-table-swatch') as HTMLElement).style.background).not.toBe('');
     });
@@ -749,6 +753,54 @@ describe('Tag Point (click a point on the chart to compare it with others)', () 
         expect(within(table).queryAllByTestId('tag-table-val')).toHaveLength(0);
         // The tags (and their ×) stay reachable while folded.
         expect(within(table).getAllByRole('button', { name: /^Remove tag/ })).toHaveLength(1);
+    });
+
+    describe('with a place offered by the Dashboard (the "Tagged points" tab)', () => {
+        it('renders the table INTO that element (nothing under the chart) and says so in the hint', () => {
+            const columnar = columnarOf(headers, 5);
+            const seededTag = [{ id: 't1', timestamp: columnar.timestamps[1], color: '#f59e0b' }];
+            const host = document.createElement('div');
+            document.body.appendChild(host);
+            const { container, unmount } = render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} lineTaggedPoints={seededTag} tagTableHost={host} />);
+            expect(container.querySelector('[data-testid="tag-table"]')).toBeNull();
+            const table = host.querySelector('[data-testid="tag-table"]') as HTMLElement;
+            expect(table).toBeTruthy();
+            expect(table.className).toContain('tag-table--panel');
+            expect(within(table).queryByRole('button', { name: /Tagged points/ })).toBeNull(); // no fold button in the tab
+            expect(within(table).getAllByTestId('tag-table-val')).toHaveLength(headers.length);
+            fireEvent.click(tagToggle(container));
+            expect(container.textContent).toContain('its values are listed in the Tagged points tab');
+            // The × in the tab removes the tag on the chart.
+            fireEvent.click(within(table).getByRole('button', { name: /^Remove tag/ }));
+            expect(capturedOptions[capturedOptions.length - 1].series[0].markPoint).toBeUndefined();
+            expect(host.querySelector('[data-testid="tag-table"]')).toBeNull();
+            unmount();
+            host.remove();
+        });
+
+        it('draws no table while the tab is closed (host null) — the tags stay on the chart', () => {
+            const columnar = columnarOf(headers, 5);
+            const seededTag = [{ id: 't1', timestamp: columnar.timestamps[1], color: '#f59e0b' }];
+            render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} lineTaggedPoints={seededTag} tagTableHost={null} />);
+            expect(screen.queryByTestId('tag-table')).toBeNull();
+            expect(capturedOptions[capturedOptions.length - 1].series[0].markPoint.data).toHaveLength(1);
+        });
+
+        it('reports the tag count: not "added" on mount or on a removal, "added" when the user tags a point, 0 on unmount', () => {
+            const columnar = columnarOf(headers, 5);
+            const seededTag = [{ id: 't1', timestamp: columnar.timestamps[1], color: '#f59e0b' }];
+            const onCount = vi.fn();
+            const { container, unmount } = render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} lineTaggedPoints={seededTag} tagTableHost={null} onTagCountChange={onCount} />);
+            expect(onCount).toHaveBeenLastCalledWith(1, false); // seeded tags (e.g. back from Scatter) do not count as "added"
+            fireEvent.click(tagToggle(container));
+            mockConvertFromPixel.mockReturnValue([msOf(columnar.timestamps[3]), 0]);
+            act(() => { zrClickHandler!({ offsetX: 50, offsetY: 50 }); });
+            expect(onCount).toHaveBeenLastCalledWith(2, true);
+            act(() => { zrClickHandler!({ offsetX: 50, offsetY: 50 }); }); // same point again = untag
+            expect(onCount).toHaveBeenLastCalledWith(1, false);
+            unmount();
+            expect(onCount).toHaveBeenLastCalledWith(0, false);
+        });
     });
 
     it('the plot and the table are stacked: the plot box is what the chart measures, the table is not laid over it', () => {
@@ -797,8 +849,10 @@ describe('Tag Point (click a point on the chart to compare it with others)', () 
         act(() => { zrClickHandler!({ offsetX: 2, offsetY: 2 }); });
         const data = capturedOptions[capturedOptions.length - 1].series[0].markPoint.data;
         expect(data).toHaveLength(2);
-        expect(data[0].label.formatter).not.toContain('Δ');
-        expect(data[1].label.formatter).not.toContain('Δ');
+        // Two tags = two value columns per sensor row in the table, and no Δ column or text anywhere.
+        const table = screen.getByTestId('tag-table');
+        expect(within(table).getAllByTestId('tag-table-val')).toHaveLength(headers.length * 2);
+        expect(table.textContent).not.toContain('Δ');
     });
 
     it('the marker needs no edge handling: a tag at either end of the data is the same plain dot', () => {
@@ -810,7 +864,7 @@ describe('Tag Point (click a point on the chart to compare it with others)', () 
             act(() => { zrClickHandler!({ offsetX: i, offsetY: 1 }); });
         }
         const entries = capturedOptions[capturedOptions.length - 1].series[0].markPoint.data;
-        expect(entries.map((e: any) => e.label)).toEqual([{ formatter: '①' }, { formatter: '②' }]);
+        expect(entries.map((e: any) => Object.keys(e).sort())).toEqual([['coord', 'itemStyle'], ['coord', 'itemStyle']]);
     });
 
     it('caps at 8 tagged points (one per RANGE_PALETTE colour)', () => {
@@ -863,11 +917,12 @@ describe('Tag Point -- removing ONE tag from the tag list (customer request 2026
         expect(screen.queryByRole('list', { name: 'Tagged points' })).toBeNull();
     });
 
-    it('lists every tag with its badge, time and its own keyboard-reachable remove button', () => {
+    it('lists every tag with its colour dot, time and its own keyboard-reachable remove button', () => {
         render(<LineChart data={[]} columnar={columnarOf(headers, 5)} sensors={headers} headers={headers} lineTaggedPoints={seeded} />);
         const list = screen.getByRole('list', { name: 'Tagged points' });
         const rows = within(list).getAllByRole('listitem');
-        expect(rows.map(r => r.textContent)).toEqual(seeded.map((t, i) => `${['①', '②', '③'][i]}${label(t.timestamp)}`));
+        expect(rows.map(r => r.textContent)).toEqual(seeded.map(t => label(t.timestamp)));
+        expect(rows.map(r => (r.querySelector('.chart-tag-dot') as HTMLElement).style.background)).toHaveLength(3);
         const removeButtons = within(list).getAllByRole('button', { name: /^Remove tag/ });
         expect(removeButtons).toHaveLength(3);
         removeButtons.forEach(b => expect(b.tagName).toBe('BUTTON')); // native button: Tab + Enter/Space for free
@@ -881,7 +936,6 @@ describe('Tag Point -- removing ONE tag from the tag list (customer request 2026
         expect(onChange).toHaveBeenLastCalledWith([seeded[0], seeded[2]]);
         const markPoint = capturedOptions[capturedOptions.length - 1].series[0].markPoint;
         expect(markPoint.data.map((d: any) => d.itemStyle.color)).toEqual(['#aa0000', '#0000aa']);
-        expect(markPoint.data[1].label.formatter).toContain('②'); // badges renumber by position
         const rows = within(screen.getByRole('list', { name: 'Tagged points' })).getAllByRole('listitem');
         expect(rows).toHaveLength(2);
         // "Clear all" is still offered for the rest.
@@ -953,7 +1007,7 @@ describe('Tag Point -- removing ONE tag from the tag list (customer request 2026
         const rowText = () => within(screen.getByRole('list', { name: 'Tagged points' })).getAllByRole('listitem')[0].textContent;
         const markerMs = () => capturedOptions[capturedOptions.length - 1].series[0].markPoint.data[0].coord[0];
         const firstValue = () => screen.getAllByTestId('tag-table-val')[0].textContent;
-        expect(rowText()).toBe(`①${label('2026-01-01T00:01:00')}`);
+        expect(rowText()).toBe(label('2026-01-01T00:01:00'));
         expect(markerMs()).toBe(msOf('2026-01-01T00:01:00'));
         expect(firstValue()).toBe((columnarOf(headers, 5).series[0][1] as number).toFixed(3));
 
@@ -964,7 +1018,7 @@ describe('Tag Point -- removing ONE tag from the tag list (customer request 2026
             series: headers.map(() => [1, 2, 3]),
         };
         rerender(<LineChart data={[]} columnar={coarse} sensors={headers} headers={headers} lineTaggedPoints={tag} />);
-        expect(rowText()).toBe(`①${label('2026-01-01T00:00:00')}`);
+        expect(rowText()).toBe(label('2026-01-01T00:00:00'));
         expect(markerMs()).toBe(msOf('2026-01-01T00:00:00'));
         expect(firstValue()).toBe('1.000');
         expect(screen.getByRole('button', { name: `Remove tag ① ${label('2026-01-01T00:00:00')}` })).toBeTruthy();

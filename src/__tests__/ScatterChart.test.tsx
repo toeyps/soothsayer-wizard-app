@@ -625,17 +625,39 @@ describe('ScatterChart', () => {
             fireEvent.click(getCanvas(container));
 
             expect(container.querySelector('.scatter-tag-ring')).toBeTruthy();
-            expect(container.querySelector('.scatter-tag-badge')!.textContent).toBe('①');
+            expect(container.querySelector('.scatter-tag-badge')).toBeNull(); // no number: the ring's colour is the tag
             // No value box on the plot: the values are in the table under the chart —
             // one row per axis (X then Y), one column per tag.
             expect(container.querySelector('.scatter-tag-callout')).toBeNull();
             const table = screen.getByTestId('tag-table');
-            expect(within(table).getAllByRole('listitem').map(h => h.textContent)).toEqual(['①t0']);
+            expect(within(table).getAllByRole('listitem').map(h => h.textContent)).toEqual(['t0']);
+            // The column head's dot is the colour of the ring on the plot.
+            const ring = container.querySelector('.scatter-tag-ring') as HTMLElement;
+            expect((table.querySelector('.chart-tag-dot') as HTMLElement).style.background).toBe(ring.style.borderColor);
             const names = within(table).getAllByTestId('tag-table-name').map(n => n.textContent);
             expect(names).toEqual(['XA', 'YB']);
             expect(within(table).getAllByTestId('tag-table-val').map(v => v.textContent)).toEqual(['1', '10']);
             // Stacked under the plot, not laid over it.
             expect(container.querySelector('.scatter-regl-wrap')!.contains(table)).toBe(false);
+        });
+
+        it('with a place offered by the Dashboard the table goes INTO it, and the tag count is reported', () => {
+            const host = document.createElement('div');
+            document.body.appendChild(host);
+            const onCount = vi.fn();
+            const { container, unmount } = render(<ScatterChart data={data} sensors={['A', 'B']} headers={headers} tagTableHost={host} onTagCountChange={onCount} />);
+            expect(onCount).toHaveBeenLastCalledWith(0, false);
+            fireEvent.click(screen.getByTitle(/compare 2\+ points/i));
+            expect(container.textContent).toContain('its values are listed in the Tagged points tab');
+            act(() => { lastInstance!.__subs['pointover'](0); });
+            fireEvent.click(getCanvas(container));
+            expect(onCount).toHaveBeenLastCalledWith(1, true);
+            expect(container.querySelector('[data-testid="tag-table"]')).toBeNull();
+            const table = host.querySelector('[data-testid="tag-table"]') as HTMLElement;
+            expect(within(table).getAllByTestId('tag-table-val').map(v => v.textContent)).toEqual(['1', '10']);
+            unmount();
+            expect(onCount).toHaveBeenLastCalledWith(0, false);
+            host.remove();
         });
 
         it('clicking an already-tagged point again removes it (toggle)', () => {
@@ -690,7 +712,7 @@ describe('ScatterChart', () => {
                 tagThree(container);
                 const list = screen.getByRole('list', { name: 'Tagged points' });
                 const rows = within(list).getAllByRole('listitem');
-                expect(rows.map(r => r.textContent)).toEqual(['①t0', '②t1', '③t2']);
+                expect(rows.map(r => r.textContent)).toEqual(['t0', 't1', 't2']);
                 expect(within(list).getAllByRole('button', { name: /^Remove tag/ })).toHaveLength(3);
             });
 
@@ -708,7 +730,7 @@ describe('ScatterChart', () => {
                 expect(screen.getAllByTestId('tag-table-val').slice(0, 2).map(v => v.textContent)).toEqual(['1', '3']);
                 // Badges renumber by position, the list matches the markers.
                 const rows = within(screen.getByRole('list', { name: 'Tagged points' })).getAllByRole('listitem');
-                expect(rows.map(r => r.textContent)).toEqual(['①t0', '②t2']);
+                expect(rows.map(r => r.textContent)).toEqual(['t0', 't2']);
                 // Clear all is still there for the rest.
                 expect(screen.getByTitle('Clear all tags')).toBeTruthy();
             });

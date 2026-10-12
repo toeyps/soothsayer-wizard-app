@@ -7,7 +7,7 @@ import { fmtNum, sensorInlineHtml, useLayeredSensorLookup } from '../sensor/sens
 import { hexToRgbaCss, rgbaToHex, RANGE_PALETTE, TAG_BADGES, MAX_TAGGED_POINTS } from './pairPlotColors';
 import type { LineTaggedPoint } from '../../types';
 import { firstFreeColorIndex } from './TaggedPointList';
-import TagCompareTable, { tagCell, type TagCompareRow } from './TagCompareTable';
+import { TagTableSlot, tagCell, type TagCompareRow } from './TagCompareTable';
 
 /** Parses one `xData` entry to epoch ms, or `null` for a missing/unparseable
  *  timestamp — a time-axis series point needs an explicit x value per point
@@ -113,12 +113,12 @@ export function defaultSensorColor(sensor: string, palette: string[] = LINE_CHAR
 
 /** Tag-point box fonts: the stacks the installed app really renders with (DESIGN_SYSTEM §3.2 —
  *  the CSP blocks the web fonts, so Windows draws Segoe UI / Consolas). */
-const TAG_MONO = '"JetBrains Mono", Consolas, ui-monospace, monospace';
 
 function LineChart({
     data, columnar, sensors, headers, markLines, hideYSplitLine, sensorColors, sensorAxisRange,
     sensorMetadata, timeHighlights,
     lineTaggedPoints: persistedTaggedPoints, onLineTaggedPointsChange,
+    tagTableHost, onTagCountChange,
 }: ChartProps) {
     // Track container height so the grid/slider/legend scale with it.
     const wrapperRef = useRef<HTMLDivElement>(null);
@@ -185,6 +185,18 @@ function LineChart({
     useEffect(() => {
         onLineTaggedPointsChange?.(taggedPoints);
     }, [taggedPoints, onLineTaggedPointsChange]);
+
+    // Tell the parent how many points are tagged (the "Tagged points" tab shows the count and
+    // opens when one is added); 0 again when this chart goes away.
+    const tagCountRef = useRef(taggedPoints.length);
+    const onTagCountChangeRef = useRef(onTagCountChange);
+    onTagCountChangeRef.current = onTagCountChange;
+    useEffect(() => {
+        const n = taggedPoints.length;
+        onTagCountChangeRef.current?.(n, n > tagCountRef.current);
+        tagCountRef.current = n;
+    }, [taggedPoints.length]);
+    useEffect(() => () => { onTagCountChangeRef.current?.(0, false); }, []);
 
     // xData is needed both by the option builder below and by the click
     // handler (to resolve a clicked pixel back to a timestamp) — computed
@@ -571,8 +583,11 @@ function LineChart({
         // as markArea above, for the same reason: this draws across the
         // shared grid regardless of which series owns it, so attaching it
         // to every series would just draw it N times over). Each entry's
-        // `coord` anchors a numbered dot to series[0]'s own value at that
-        // index, and a dashed line marks the instant across every sensor.
+        // `coord` anchors a dot in the tag's colour to series[0]'s own value
+        // at that index, and a dashed line of the same colour marks the
+        // instant across every sensor. No number in the dot (it could not be
+        // read at that size — user decision 2026-10-12): the colour is what
+        // ties a dot to its column of the table.
         // The VALUES are not drawn here: they are listed in the table under
         // the chart (`TagCompareTable`) — a box per tag on the chart covered
         // the next tag's box as soon as two tags were close.
@@ -582,7 +597,7 @@ function LineChart({
         };
         const taggedMarkPointData = dataCount > 0
             ? taggedPoints
-                .map((tag, order) => {
+                .map(tag => {
                     const tagMs = new Date(tag.timestamp).getTime();
                     if (isNaN(tagMs)) return null;
                     const idx = nearestXIndex(xData, tagMs);
@@ -594,7 +609,6 @@ function LineChart({
                     return {
                         coord: [toMs(xData[idx]), anchorValue],
                         itemStyle: { color: tag.color, borderColor: markLabelBg, borderWidth: 2 },
-                        label: { formatter: TAG_BADGES[order % TAG_BADGES.length] },
                     };
                 })
                 .filter((v): v is NonNullable<typeof v> => v !== null)
@@ -709,17 +723,9 @@ function LineChart({
                             silent: true,
                             animation: false,
                             symbol: 'circle',
-                            symbolSize: 17,
+                            symbolSize: 13,
                             data: taggedMarkPointData,
-                            // The badge (①②…) sits inside the dot, like the column head of the table.
-                            label: {
-                                show: true,
-                                position: 'inside',
-                                color: '#08110c',
-                                fontSize: 10,
-                                fontWeight: 700,
-                                fontFamily: TAG_MONO,
-                            },
+                            label: { show: false },
                         },
                     }
                     : {}),
@@ -977,7 +983,9 @@ function LineChart({
                     position: 'absolute', top: 12, left: 44, pointerEvents: 'none',
                     fontSize: 10, fontStyle: 'italic', color: txtSecondary,
                 }}>
-                    Click the chart to tag a point — its values are listed under the chart
+                    {tagTableHost === undefined
+                        ? 'Click the chart to tag a point — its values are listed under the chart'
+                        : 'Click the chart to tag a point — its values are listed in the Tagged points tab'}
                 </div>
             )}
             {/* Live feedback for an in-progress Horizontal Zoom drag — a
@@ -996,7 +1004,7 @@ function LineChart({
                 }} />
             )}
         </div>
-        <TagCompareTable items={tagListItems} rows={tagTableRows} onRemove={removeTag} emptyFocusRef={tagButtonRef} />
+        <TagTableSlot host={tagTableHost} items={tagListItems} rows={tagTableRows} onRemove={removeTag} emptyFocusRef={tagButtonRef} />
         </div>
     );
 }

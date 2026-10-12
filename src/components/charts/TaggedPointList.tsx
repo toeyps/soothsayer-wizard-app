@@ -3,7 +3,9 @@ import { X } from 'lucide-react';
 
 export interface TaggedPointListItem {
     id: string;
-    /** Numbered badge (①②…) — the same one drawn on the chart marker. */
+    /** Position number (①②…). Not drawn (a tag is told apart by its COLOUR, on the chart and
+     *  here — user decision 2026-10-12: the digit inside a small dot could not be read); it only
+     *  names the tag for assistive tech, in the × button's label. */
     badge: string;
     color: string;
     /** Short human label, normally the point's timestamp. */
@@ -52,9 +54,7 @@ export default function TaggedPointList({ items, onRemove, emptyFocusRef }: Tagg
         <ul className="chart-tag-list" aria-label="Tagged points">
             {items.map((item, index) => (
                 <li key={item.id} className="chart-tag-item">
-                    <span className="chart-tag-dot" style={{ background: item.color }} aria-hidden="true">
-                        {item.badge}
-                    </span>
+                    <span className="chart-tag-dot" style={{ background: item.color }} aria-hidden="true" />
                     <span className="chart-tag-label" title={item.label}>{item.label}</span>
                     <button
                         type="button"

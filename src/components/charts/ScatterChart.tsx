@@ -13,7 +13,7 @@ import { hexToRgba, rgbaToHex, RANGE_PALETTE, TAG_BADGES, MAX_TAGGED_POINTS } fr
 import { reportError } from '../../errorReporter';
 import { useCoalescedDraw } from '../../hooks/useCoalescedDraw';
 import { firstFreeColorIndex } from './TaggedPointList';
-import TagCompareTable, { tagCell, type TagCompareRow } from './TagCompareTable';
+import { TagTableSlot, tagCell, type TagCompareRow } from './TagCompareTable';
 
 // Re-exported so callers (Dashboard.tsx, charts/index.ts) can import
 // RANGE_PALETTE from this module — the array itself lives in
@@ -97,6 +97,7 @@ function ScatterChart({
     data, sensors, headers, scatterX: persistedX, scatterY: persistedY, onScatterAxesChange,
     scatterAxisPins: persistedPins, onScatterAxisPinsChange,
     sensorMetadata, timeHighlights, valueHighlight,
+    tagTableHost, onTagCountChange,
 }: ChartProps) {
     // Labels (pickers, axis titles, tooltip / tag rows) resolve through this lookup.
     const sensorLookup = useLayeredSensorLookup(sensorMetadata);
@@ -168,6 +169,18 @@ function ScatterChart({
     useEffect(() => {
         setScatterTags([]);
     }, [data, scatterX, scatterY]);
+
+    // Tell the parent how many points are tagged (the "Tagged points" tab shows the count and
+    // opens when one is added); 0 again when this chart goes away.
+    const tagCountRef = useRef(scatterTags.length);
+    const onTagCountChangeRef = useRef(onTagCountChange);
+    onTagCountChangeRef.current = onTagCountChange;
+    useEffect(() => {
+        const n = scatterTags.length;
+        onTagCountChangeRef.current?.(n, n > tagCountRef.current);
+        tagCountRef.current = n;
+    }, [scatterTags.length]);
+    useEffect(() => () => { onTagCountChangeRef.current?.(0, false); }, []);
     /** The regl-scatterplot instance kept in component state so the draw
      *  effect can react to its lifecycle (recreate on resize → redraw). */
     const [sc, setSc] = useState<any>(null);
@@ -751,7 +764,7 @@ function ScatterChart({
         };
     }, [hoveredIdx, sc, data, scatterX, scatterY, headers, innerDims.width, innerDims.height]);
 
-    // Screen positions of every tagged point's ring + badge. Recomputes
+    // Screen positions of every tagged point's ring. Recomputes
     // on every pan/zoom (visibleBounds changes on each `view` event) so they
     // track the camera exactly the way the tooltip does
     // above — `getScreenPosition` always reflects the CURRENT camera, not
@@ -759,7 +772,7 @@ function ScatterChart({
     const tagOverlays = useMemo(() => {
         if (!sc || scatterTags.length === 0) return [];
         return scatterTags
-            .map((tag, order) => {
+            .map(tag => {
                 const origIdx = origIndicesRef.current[tag.pointIdx];
                 const row = origIdx != null ? data[origIdx] : null;
                 if (!row) return null;
@@ -775,7 +788,6 @@ function ScatterChart({
                     id: tag.id,
                     x: pos[0],
                     y: pos[1],
-                    badge: TAG_BADGES[order % TAG_BADGES.length],
                     color,
                 };
             })
@@ -903,7 +915,9 @@ function ScatterChart({
             {scatterTagMode && (
                 <div className="chart-tag-anchor">
                     <div className="scatter-regl-hint chart-tag-hint">
-                        Click a point to tag it — its values are listed under the chart
+                        {tagTableHost === undefined
+                            ? 'Click a point to tag it — its values are listed under the chart'
+                            : 'Click a point to tag it — its values are listed in the Tagged points tab'}
                     </div>
                 </div>
             )}
@@ -1009,17 +1023,12 @@ function ScatterChart({
                         )}
                     </div>
                 )}
-                {/* Tagged points — a ring (doesn't touch the dot's own fill
-                    colour, so it layers over criteria-range coloring
-                    without a conflict) + a small numbered badge. The values
-                    are in the table under the chart, not in a box here. */}
+                {/* Tagged points — a ring in the tag's colour (it doesn't touch
+                    the dot's own fill colour, so it layers over criteria-range
+                    coloring without a conflict). No number and no value box:
+                    the colour ties the ring to its column of the tag table. */}
                 {tagOverlays.map(t => (
-                    <div key={t.id}>
-                        <div className="scatter-tag-ring" style={{ left: t.x, top: t.y, borderColor: t.color }} />
-                        <div className="scatter-tag-badge" style={{ left: t.x + 9, top: t.y - 9, background: t.color }}>
-                            {t.badge}
-                        </div>
-                    </div>
+                    <div key={t.id} className="scatter-tag-ring" style={{ left: t.x, top: t.y, borderColor: t.color }} />
                 ))}
                 {initError && (
                     <div style={{
@@ -1121,7 +1130,7 @@ function ScatterChart({
             <AxisTitle axis="x" info={sensorLookup(scatterX)} style={{ left: AXIS_PADDING.left, width: innerDims.width, top: wrapperDims.height - X_TITLE.height - X_TITLE.bottom, height: X_TITLE.height }} />
             <AxisTitle axis="y" info={sensorLookup(scatterY)} style={{ ...Y_TITLE, top: AXIS_PADDING.top, height: innerDims.height, maxHeight: innerDims.height }} />
         </div>
-        <TagCompareTable items={tagListItems} rows={tagTableRows} onRemove={removeScatterTag} emptyFocusRef={tagButtonRef} />
+        <TagTableSlot host={tagTableHost} items={tagListItems} rows={tagTableRows} onRemove={removeScatterTag} emptyFocusRef={tagButtonRef} />
         </div>
         </SensorMetaContext.Provider>
     );

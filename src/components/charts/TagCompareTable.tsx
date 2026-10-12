@@ -1,4 +1,5 @@
 import { Fragment, useState, type RefObject } from 'react';
+import { createPortal } from 'react-dom';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import TaggedPointList, { type TaggedPointListItem } from './TaggedPointList';
 import { SensorInline } from '../sensor/SensorLabel';
@@ -23,46 +24,58 @@ interface TagCompareTableProps {
     onRemove: (id: string) => void;
     /** Where keyboard focus goes when the last tag is removed (the table unmounts). */
     emptyFocusRef?: RefObject<HTMLElement | null>;
+    /** `panel` = fills the Dashboard's "Tagged points" tab (no height cap, no fold button);
+     *  `docked` (default) = a strip under the chart. */
+    variant?: 'docked' | 'panel';
 }
 
 /**
- * The values of every tagged point, side by side, docked UNDER the chart
- * (Line and Scatter): one column per tag (badge + time + its own ×), one row
- * per sensor.
+ * The values of every tagged point, side by side: one column per tag (colour
+ * dot + time + its own ×), one row per sensor. Line and Scatter.
  *
  * The values used to be drawn ON the chart, one box per tag at the tagged
  * point. With five sensors a box is about 330 px wide, so two tags closer than
  * that covered each other (and the lines) and neither could be read. On the
- * chart a tag is now only its numbered marker; the numbers live here, where
+ * chart a tag is now only a dot in its colour; the numbers live here, where
  * any count of tags and sensors fits — the columns scroll sideways, the rows
  * scroll down — and two tags can be compared along one row.
+ *
+ * Where it shows: in the Dashboard it is rendered into the "Tagged points" tab
+ * of the panel under the chart (`TagTableSlot` with a host element), so the
+ * chart keeps its full height; with no host it docks under the chart itself.
  *
  * The column heads ARE `TaggedPointList` (a list of tags with one × each, and
  * its focus rule when a tag is removed), laid out as cells of the same grid.
  */
-export default function TagCompareTable({ items, rows, onRemove, emptyFocusRef }: TagCompareTableProps) {
-    const [open, setOpen] = useState(true);
+export default function TagCompareTable({ items, rows, onRemove, emptyFocusRef, variant = 'docked' }: TagCompareTableProps) {
+    const [folded, setFolded] = useState(false);
     if (items.length === 0) return null;
+    const panel = variant === 'panel';
+    const open = panel || !folded;
 
     return (
-        <section className="tag-table" data-testid="tag-table" aria-label="Values at the tagged points">
+        <section className={`tag-table${panel ? ' tag-table--panel' : ''}`} data-testid="tag-table" aria-label="Values at the tagged points">
             <div
                 className="tag-table-grid"
                 // Kept together on the left: the names next to their values, not stretched across a wide window.
                 style={{ gridTemplateColumns: `minmax(220px, 380px) repeat(${items.length}, minmax(168px, 210px))` }}
             >
                 <div className="tag-table-corner">
-                    <button
-                        type="button"
-                        className="tag-table-toggle"
-                        aria-expanded={open}
-                        onClick={() => setOpen(o => !o)}
-                        title={open ? 'Hide the values' : 'Show the values'}
-                    >
-                        {open ? <ChevronDown size={12} aria-hidden="true" /> : <ChevronRight size={12} aria-hidden="true" />}
-                        Tagged points
-                        <span className="tag-table-count">{items.length}</span>
-                    </button>
+                    {panel ? (
+                        <span className="tag-table-title">Sensor</span>
+                    ) : (
+                        <button
+                            type="button"
+                            className="tag-table-toggle"
+                            aria-expanded={open}
+                            onClick={() => setFolded(f => !f)}
+                            title={open ? 'Hide the values' : 'Show the values'}
+                        >
+                            {open ? <ChevronDown size={12} aria-hidden="true" /> : <ChevronRight size={12} aria-hidden="true" />}
+                            Tagged points
+                            <span className="tag-table-count">{items.length}</span>
+                        </button>
+                    )}
                 </div>
                 <TaggedPointList items={items} onRemove={onRemove} emptyFocusRef={emptyFocusRef} />
                 {open && rows.map(row => (
@@ -77,7 +90,7 @@ export default function TagCompareTable({ items, rows, onRemove, emptyFocusRef }
                                 key={item.id}
                                 className="tag-table-val"
                                 data-testid="tag-table-val"
-                                title={`${row.info.description || row.info.tag} · ${item.badge} ${item.label}`}
+                                title={`${row.info.description || row.info.tag} · ${item.label}`}
                             >
                                 {row.cells[c] ?? '—'}
                             </div>
@@ -87,6 +100,17 @@ export default function TagCompareTable({ items, rows, onRemove, emptyFocusRef }
             </div>
         </section>
     );
+}
+
+/**
+ * Where a chart puts its tag table. `host` undefined = nobody offers a place: dock it under the
+ * chart. `host` null = the Dashboard's "Tagged points" tab is not open right now: draw nothing.
+ * Otherwise it is rendered INTO that tab.
+ */
+export function TagTableSlot({ host, ...props }: TagCompareTableProps & { host?: HTMLElement | null }) {
+    if (host === undefined) return <TagCompareTable {...props} />;
+    if (!host) return null;
+    return createPortal(<TagCompareTable {...props} variant="panel" />, host);
 }
 
 /** A value cell: the number as the tooltips print it, then the unit; "—" when there is none. */
