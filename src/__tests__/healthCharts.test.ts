@@ -325,15 +325,22 @@ describe('buildTimeSeriesOption', () => {
             expect(stackedEdgeLabels(sd(6, 4, 8, 2), 0).size).toBe(0);
         });
 
-        it('stackedEdgeLabels: a close same-side pair is carried by the OUTER line, listed top to bottom; the inner line carries nothing', () => {
+        // Real-app report 2026-10-12: the stack used to hang on the OUTER line, so it sat wholly
+        // beyond it — "+1SD" read as the name of the +3SD line and "+3SD" floated over nothing.
+        it('stackedEdgeLabels: a close same-side pair is carried by the INNER line, listed top to bottom (each name lands by its own line); the outer line carries nothing', () => {
             const lines = sd(6, 4, 8, 2);
             const m = stackedEdgeLabels(lines, 2.5);
-            // above the lines: the +3SD line (the higher one) carries "+3SD" over "+1SD"
-            expect(m.get(2)!.map(h => h.label)).toEqual(['+3SD', '+1SD']);
-            expect(m.get(0)).toBeNull();
-            // below the lines: the −3SD line (the lower one) carries "−1SD" over "−3SD"
-            expect(m.get(3)!.map(h => h.label)).toEqual(['−1SD', '−3SD']);
-            expect(m.get(1)).toBeNull();
+            // above the lines: the +1SD line (the lower one) carries "+3SD" over "+1SD" — the stack
+            // grows upwards from it, so "+1SD" sits on its own line and "+3SD" one text line higher
+            expect(m.get(0)!.map(h => h.label)).toEqual(['+3SD', '+1SD']);
+            expect(m.get(2)).toBeNull();
+            // below the lines: the −1SD line (the higher one) carries "−1SD" over "−3SD", growing downwards
+            expect(m.get(1)!.map(h => h.label)).toEqual(['−1SD', '−3SD']);
+            expect(m.get(3)).toBeNull();
+            // three in a row: still the innermost
+            const three = stackedEdgeLabels([...lines, { y: 9, color: '#f00', label: '+5SD', edge: 'above' }], 2.5);
+            expect(three.get(0)!.map(h => h.label)).toEqual(['+5SD', '+3SD', '+1SD']);
+            expect([three.get(2), three.get(4)]).toEqual([null, null]);
             // +1SD and −1SD are on OPPOSITE sides of their lines: they are never merged with each other
             expect(stackedEdgeLabels([lines[0], lines[1]], 100).size).toBe(0);
         });
@@ -363,12 +370,14 @@ describe('buildTimeSeriesOption', () => {
             });
             const [u1, l1, u3, l3, h, l] = o.series[0].markLine.data;
             expect((8 - 6) / (o.yAxis.max - o.yAxis.min)).toBeLessThan(REF_LABEL_MIN_GAP); // the case this is for
-            expect(u1.label).toEqual({ show: false });
-            expect(l1.label).toEqual({ show: false });
-            expect(u3.label).toMatchObject({ show: true, position: 'end', verticalAlign: 'bottom', formatter: '{l0|+3SD}\n{l1|+1SD}' });
-            expect(u3.label.rich).toMatchObject({ l0: { color: '#fa0' }, l1: { color: '#0f0' } });
-            expect(l3.label).toMatchObject({ show: true, position: 'end', verticalAlign: 'top', formatter: '{l0|−1SD}\n{l1|−3SD}' });
-            expect(l3.label.rich).toMatchObject({ l0: { color: '#0f0' }, l1: { color: '#fa0' } });
+            // The stack hangs on the ±1SD lines and grows away from the band, so the carrier's own
+            // name ("+1SD" bottom-aligned on its line, "−1SD" top-aligned on its line) is right on it.
+            expect(u3.label).toEqual({ show: false });
+            expect(l3.label).toEqual({ show: false });
+            expect(u1.label).toMatchObject({ show: true, position: 'end', verticalAlign: 'bottom', formatter: '{l0|+3SD}\n{l1|+1SD}' });
+            expect(u1.label.rich).toMatchObject({ l0: { color: '#fa0' }, l1: { color: '#0f0' } });
+            expect(l1.label).toMatchObject({ show: true, position: 'end', verticalAlign: 'top', formatter: '{l0|−1SD}\n{l1|−3SD}' });
+            expect(l1.label.rich).toMatchObject({ l0: { color: '#0f0' }, l1: { color: '#fa0' } });
             // the lines themselves are all still drawn, and the set points keep their own labels
             expect(o.series[0].markLine.data.map((d: any) => d.yAxis)).toEqual([6, 4, 8, 2, 300, -200]);
             expect([h.label.formatter, l.label.formatter]).toEqual(['H 300', 'L −200']);

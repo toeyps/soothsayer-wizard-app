@@ -278,7 +278,8 @@ export interface HLine {
      *  (`'above'`, the + side) or below (`'below'`, the − side) the line's end
      *  instead of centred on it, so "+2RMSE" and "−2RMSE" never print on top of
      *  each other when the two lines are only a few pixels apart (a wide Y range).
-     *  Two lines of the SAME side that close together share one stacked label
+     *  Two lines of the SAME side that close together share one stacked label,
+     *  anchored on the inner line so each name stays by its own line
      *  (`stackedEdgeLabels`). */
     edge?: 'above' | 'below';
 }
@@ -547,8 +548,14 @@ function scopeSeries(scopes: TimeScopes, xMin: number, xMax: number): Record<str
  * ±1SD and ±3SD far apart; with set points far from the data (a master alarm
  * limit) the whole ±3SD band is a few pixels tall and "+1SD" lands on "+3SD".
  * Such a run shares ONE label, stacked in the order the lines have on screen and
- * each name in its own line's colour, carried by the OUTERMOST line (the top one
- * above the lines, the bottom one below them).
+ * each name in its own line's colour, carried by the INNERMOST line (the lowest
+ * of a run above the lines, the highest of a run below them). The stack grows
+ * AWAY from the band from there, so every name ends up beside its own line: the
+ * inner name sits right on its line exactly as an unstacked label would, and the
+ * outer name one text line further out, where the outer line is. (It used to
+ * hang on the OUTERMOST line: the whole stack then sat beyond that line, "+1SD"
+ * read as the name of the +3SD line and "+3SD" floated over nothing — real-app
+ * report 2026-10-12.)
  *
  * Returns, per index of `hLines`: the lines a carrier prints (top to bottom), or
  * `null` for a line whose name its neighbour carries. Lines not in the map keep
@@ -566,7 +573,7 @@ export function stackedEdgeLabels(hLines: readonly HLine[], minGap: number): Map
             while (to + 1 < side.length && hLines[side[to + 1]].y - hLines[side[to]].y < minGap) to++;
             if (to > from) {
                 const run = side.slice(from, to + 1); // ascending y = bottom to top on screen
-                const carrier = edge === 'above' ? run[run.length - 1] : run[0];
+                const carrier = edge === 'above' ? run[0] : run[run.length - 1];
                 for (const i of run) out.set(i, i === carrier ? run.map(k => hLines[k]).reverse() : null);
             }
             from = to + 1;
