@@ -71,6 +71,7 @@ import { env, resetEnv, type ChartRecord } from './helpers/healthEnv';
 import { createFakeHealthRust, type HealthDataset } from './helpers/fakeHealthRust';
 import { hourlyScopes, scopesOf } from '../components/windows/workbench/healthCharts';
 import { buildScoreOption } from '../components/windows/workbench/healthPageCharts';
+import { fmtNum } from '../components/windows/workbench/chartTheme';
 import {
     WS, bmw, bmwEl, diskModel, markComplete, model, mountWindows, newBackend, openHealth, pill, readDisk, restartApp,
     selectSensor, settle, train, waitForCharts, writeDisk, wsState,
@@ -161,7 +162,12 @@ describe('Individual on 5-minute data', () => {
         await waitForCharts();
 
         // ── Model fit: RAW rows, 5 minutes apart — nothing here is averaged ──
-        expect(text('stat-rows')).toBe('48'); // the 4 training hours x 12 rows
+        // (the page prints no row count any more — its tiles are Mean · SD · Outside ±3SD — so the raw statistics
+        // are read from the answer the page was drawn from, and the Mean tile is that answer's mean)
+        const fitStats = (lastPreview('individual').result as any).stats;
+        expect(fitStats.rows).toBe(48); // the 4 training hours x 12 rows
+        expect(bmw().getByTestId('stat-mean').querySelector('.wb3-kpi-v')!.firstChild!.textContent).toBe(fmtNum(fitStats.mean));
+        expect(bmw().queryByTestId('stat-rows')).toBeNull();
         const raw = pointsOf(lastChart('Value', 0, false), 'Value');
         expect(raw).toHaveLength(want.series_total_points); // 48 train rows + the 45 running rows of the scoring period
         expect(raw[1][0] - raw[0][0]).toBe(5 * 60_000);

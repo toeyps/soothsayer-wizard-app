@@ -912,6 +912,7 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
 
             expect(screen.queryByTestId('results-rc-locked')).toBeNull();
             expect(screen.getByTestId('results-placeholder').querySelector('.wbx-msg-t')!.textContent).toBe('Not trained yet');
+            expect(document.querySelector('.wb3-kpis'), 'no KPI strip without a preview').toBeNull();
         });
 
         it('shows a "marked complete" message once the model is Complete (chart never shows for a Complete model)', async () => {
@@ -963,6 +964,7 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: { groups: [makeGroup()], models: [rel] } });
             expect(screen.getByTestId('results-incomplete').textContent).toMatch(/1 item to fix before training/);
+            expect(document.querySelector('.wb3-kpis'), 'no KPI strip without a preview').toBeNull();
             expect(screen.queryByTestId('add-model-form')).toBeTruthy(); // already open (incomplete auto-expands)
             fireEvent.click(screen.getByText('Model settings', { selector: 'b' })); // collapse it
             expect(screen.queryByTestId('add-model-form')).toBeNull();
@@ -1004,6 +1006,7 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: { groups: [makeGroup()], models: [makeModel()], runningConditionNoneConfirmed: true, runningConditionTimePeriods: periods } });
             expect(screen.getByTestId('results-rc-locked').textContent).toMatch(/Fix the running condition first/);
+            expect(document.querySelector('.wb3-kpis'), 'no KPI strip without a preview').toBeNull();
             expect(screen.getByTestId('results-rc-locked').textContent).toMatch(/can train until it is fixed — open Running condition ↑$/);
             expect(screen.getByTestId('results-rc-locked-open').textContent).toBe('Running condition ↑');
         });
@@ -1031,7 +1034,10 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             expect(healthCalls()[0]).toMatchObject({ kind: 'individual', target: 'TAG1' });
             expect(screen.getByTestId('chart-card-ts')).toBeTruthy();
             expect(screen.getByTestId('chart-card-dist')).toBeTruthy();
-            expect(within(screen.getByTestId('stats-card')).getByTestId('stat-rows').textContent).toBe('1,000');
+            // the numbers first: the KPI strip above the charts (no statistics card, no "Training rows" item)
+            expect(within(screen.getByTestId('fit-kpis')).getByTestId('stat-mean').textContent).toMatch(/^Mean5/);
+            expect(screen.queryByTestId('stats-card')).toBeNull();
+            expect(screen.queryByTestId('stat-rows')).toBeNull();
             // Nothing further to train here (Train sensor has nothing ready); the next step is the Health score page.
             await waitFor(() => expect(trainSensorWhy()).toBe('1 model up to date — nothing to train'));
             expect(trainSensorBtn().disabled).toBe(true);
@@ -1053,8 +1059,10 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             expect(mockInvoke).toHaveBeenCalledWith('preview_relationship_model', expect.objectContaining({ predictors: ['TAG2'], target: 'TAG1', lambda: 10_000 }));
             await waitFor(() => expect(screen.getByTestId('results-chart')).toBeTruthy());
             expect(healthCalls()[0]).toMatchObject({ kind: 'relationship', target: 'TAG1', predictors: ['TAG2'] });
-            expect(screen.getByTestId('stat-r2').textContent).toBe('R²0.912');
-            expect(screen.getByTestId('stat-2rmse').textContent).toBe('2RMSE0.913');
+            expect(screen.getByTestId('stat-r2').querySelector('.wb3-kpi-v')!.textContent).toBe('0.912');
+            // 2RMSE is the caption of the RMSE tile, not an item of its own
+            expect(screen.getByTestId('stat-rmse').querySelector('.wb3-kpi-s')!.textContent).toBe('±2RMSE 0.913 = the score-100 band');
+            expect(screen.queryByTestId('stat-2rmse')).toBeNull();
             expect(screen.getByTestId('chart-card-fit')).toBeTruthy();
             expect(screen.getByTestId('chart-card-tvp')).toBeTruthy();
             expect(screen.getByTestId('chart-card-res')).toBeTruthy();
@@ -1099,6 +1107,7 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             await deliverData({ failureGroupState: { groups: [makeGroup()], models: [{ ...trained, trainedFingerprint: 'stale-fingerprint-does-not-match' }] } });
             await flush();
             expect(screen.getByTestId('results-stale').textContent).toBe('Out of dateSettings or running condition changed — train it again with Train sensor ↑ to see the charts.');
+            expect(document.querySelector('.wb3-kpis'), 'no KPI strip without a preview').toBeNull();
             expect(screen.getByText('Incomplete', { selector: '.model-status-pill' })).toBeTruthy(); // pill reverts, "Trained" is only for fresh
             expect(trainSensorBtn().disabled).toBe(false);
             expect(trainSensorBtn().textContent).toBe('▶ Train sensor · 1 of 1');
@@ -1123,6 +1132,7 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
                 await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
             });
             expect(screen.getByTestId('results-error').textContent).toMatch(/stats exploded/);
+            expect(document.querySelector('.wb3-kpis'), 'no KPI strip without a preview').toBeNull();
             // A failed run makes the model ready again: Train sensor offers it, the footer says so.
             await waitFor(() => expect(trainSensorBtn().disabled).toBe(false));
             expect(screen.getByTestId('footer-status').textContent).toBe('Training failed · fix the problem, then Train sensor ↑');
@@ -4660,21 +4670,22 @@ describe('Workbench two pages — shell + Model fit page (health score 3b-1)', (
     });
 
     describe('Model fit page, per kind (bounded series from compute_health_preview)', () => {
-        it('Individual: value over time, Distribution and a statistics card; asks for the training scope of the model', async () => {
+        it('Individual: the KPI strip, value over time and Distribution; asks for the training scope of the model', async () => {
             await mount([withTrained(makeModel())]);
             await chartsReady();
             expect(screen.getByTestId('model-fit-individual')).toBeTruthy();
             expect(screen.getByTestId('chart-card-ts')).toBeTruthy();
             expect(screen.getByTestId('chart-card-dist')).toBeTruthy();
-            expect(screen.getByTestId('stats-card')).toBeTruthy();
+            expect([...screen.getByTestId('fit-kpis').children].map(c => c.getAttribute('data-testid'))).toEqual(['stat-mean', 'stat-sd', 'stat-outside3']);
+            expect(screen.queryByTestId('stats-card')).toBeNull();
             expect(healthCalls()[0]).toMatchObject({ kind: 'individual', target: 'TAG1', max_points: 4000 });
         });
 
-        it('Relationship: stats strip + Fit + Target vs predicted + Residual over time, and NO residual distribution / histogram', async () => {
+        it('Relationship: KPI strip + Fit + Target vs predicted + Residual over time, and NO residual distribution / histogram', async () => {
             await mount([trainedRel()]);
             await chartsReady();
             for (const id of ['fit', 'tvp', 'res']) expect(screen.getByTestId(`chart-card-${id}`)).toBeTruthy();
-            expect(screen.getByTestId('rel-stats')).toBeTruthy();
+            expect([...screen.getByTestId('rel-stats').children].map(c => c.getAttribute('data-testid'))).toEqual(['stat-r2', 'stat-rmse', 'stat-res-sd']);
             expect(screen.queryByTestId('chart-card-dist')).toBeNull();
             expect(screen.queryByText(/Distribution/)).toBeNull();
             expect(healthCalls()[0]).toMatchObject({ kind: 'relationship', target: 'TAG1', predictors: ['TAG2', 'TAG3'] });
@@ -4687,13 +4698,15 @@ describe('Workbench two pages — shell + Model fit page (health score 3b-1)', (
             expect([...screen.getByTestId('model-fit-clustering').children].filter(c => c.tagName === 'SECTION').map(c => c.getAttribute('data-testid'))).toEqual(['chart-card-cl']);
             expect(screen.getByTestId('chart-card-cl').className).toMatch(/(^| )wb2-full( |$)/);
             expect(screen.queryByTestId('cluster-summary')).toBeNull();
+            expect([...screen.getByTestId('cl-stats').children].map(c => c.getAttribute('data-testid'))).toEqual(['stat-clusters', 'stat-assigned', 'stat-inside3']);
             expect(healthCalls()[0]).toMatchObject({ kind: 'clustering', first_sensor: 'TAG1', second_sensor: 'TAG2' });
         });
 
-        it('the unit of the target sensor reaches the page (statistics in "bar")', async () => {
+        it('the unit of the target sensor reaches the page (the tiles are in "bar")', async () => {
             await mount([withTrained(makeModel())]);
             await chartsReady();
-            expect(screen.getByTestId('stats-card').textContent).toMatch(/Mean5 bar/);
+            expect(screen.getByTestId('stat-mean').querySelector('.wb3-kpi-v')!.textContent).toBe('5bar');
+            expect(screen.getByTestId('stat-mean').querySelector('.wb3-kpi-u')!.textContent).toBe('bar');
         });
 
         it('every chart card has an Expand button that opens a large copy of the same chart, closed by Esc / backdrop / X', async () => {
@@ -4723,6 +4736,7 @@ describe('Workbench two pages — shell + Model fit page (health score 3b-1)', (
             await mount([rel]);
             await fitGoneSettled();
             const b = screen.getByTestId('results-not-fitted');
+            expect(document.querySelector('.wb3-kpis'), 'no KPI strip without a preview').toBeNull();
             expect(b.className).toContain('wbx-msg');
             expect(b.querySelector('.wbx-msg-t')!.textContent).toBe('Fit no longer in memory');
             expect(b.querySelector('.wbx-msg-s')!.textContent).toBe('The fitted Relation model is no longer in memory (the data was reloaded, a special sensor changed, or many Relation models were opened). Nothing about the model changed — Load it again, or re-train it with Train sensor ↑. The charts come back when it is loaded.');
@@ -4834,6 +4848,7 @@ describe('Workbench two pages — shell + Model fit page (health score 3b-1)', (
             await clickLoad();
             await waitFor(() => expect(screen.getByTestId('results-loading')).toBeTruthy());
             expect(screen.getByTestId('results-loading').querySelector('.wbx-msg-t')!.textContent).toBe('Loading the Relation model…');
+            expect(document.querySelector('.wb3-kpis'), 'no KPI strip without a preview').toBeNull();
             expect(screen.queryByTestId('results-not-fitted')).toBeNull();
             expect(fits()).toHaveLength(before + 2);
             expect((fits().pop()![1] as any).cache_key).toBe(`r1::${rel.trainedFingerprint}`); // the SAME fit, not a new train
@@ -4894,6 +4909,7 @@ describe('Workbench two pages — shell + Model fit page (health score 3b-1)', (
             await mount([withTrained(makeModel())]);
             await waitFor(() => expect(screen.getByTestId('results-health-error')).toBeTruthy());
             expect(screen.getByTestId('results-health-error').textContent).toMatch(/no rows in the training scope/);
+            expect(document.querySelector('.wb3-kpis'), 'no KPI strip without a preview').toBeNull();
         });
 
         it('the dataset generation of the window is sent as expected_generation', async () => {
@@ -6930,6 +6946,7 @@ describe('train queue wiring (customer items 8 + 9)', () => {
         fireEvent.click(screen.getAllByRole('tab').find(t => t.textContent?.includes('Relation model'))!);
         expect(screen.getByTestId('settings-locked').textContent).toContain('Locked while this model is in the run');
         expect(screen.getByTestId('queued-card').textContent).toContain('Queued · next');
+        expect(document.querySelector('.wb3-kpis'), 'no KPI strip without a preview').toBeNull();
         expect(screen.getByTestId('footer-status').textContent).toBe('Queued in the run · next');
         const save = screen.getByText('Save changes') as HTMLButtonElement;
         expect(save.disabled).toBe(true);
@@ -8119,6 +8136,7 @@ describe('Workbench redesign §7 — page states of every kind (phase D)', () =>
         const model: Record<string, any> = { ...withTrained(k.make()), status: true };
         await mountK([model]);
         await waitFor(() => expect(screen.getByTestId('results-load-failed')).toBeTruthy());
+        expect(document.querySelector('.wb3-kpis'), 'no KPI strip without a preview').toBeNull();
         expect(screen.queryByTestId('results-error')).toBeNull(); // not the "Training failed" board
         const b = boardOf('results-load-failed');
         expect(b.title).toBe(`Couldn't load the ${k.name}`);

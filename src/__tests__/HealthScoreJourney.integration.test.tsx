@@ -44,6 +44,7 @@ vi.mock('../hooks/useScatterSample', () => ({
 vi.mock('../components/charts/LineChart', () => ({ default: () => <div /> }));
 
 import { env, resetEnv } from './helpers/healthEnv';
+import { fmtNum } from '../components/windows/workbench/chartTheme';
 import {
     WS, bmw, bmwDot, bmwEl, chartsWithSeries, dash, dashDot, diskModel, enterSp,
     markBtn, markComplete, mountWindows, newBackend, openDashFgTab, openDashSensorTab, openHealth, openSettings,
@@ -98,10 +99,16 @@ describe('Individual: the whole journey', () => {
         expect(pill()).toBe('Trained');
         expect(env.backend!.cmds('compute_sensor_stats').some(c => c.args.sensor === 'TAG1' && c.args.filter?.value_filters?.[0]?.sensor === 'TAG2')).toBe(true);
 
-        // 3) Model fit page (Individual): value-over-time + distribution + stats card; no residual chart.
+        // 3) Model fit page (Individual): the KPI tiles + value-over-time + distribution; no residual chart.
         await waitFor(() => expect(bmw().getByTestId('model-fit-individual')).toBeTruthy());
-        expect(bmw().getByTestId('stats-card')).toBeTruthy();
-        expect(bmw().getByTestId('stat-rows').textContent).toBe('49');
+        // The tiles print the statistics of the 49 training rows (the page shows no row count any more:
+        // Mean · SD · Outside ±3SD — "Workbench detail pages v2", SPEC §5).
+        const fitStats = (env.backend!.cmds('compute_health_preview').filter(c => c.args.request.kind === 'individual' && c.result !== undefined).pop()!.result as any).stats;
+        expect(fitStats.rows).toBe(49);
+        expect([...bmw().getByTestId('fit-kpis').children].map(c => c.getAttribute('data-testid'))).toEqual(['stat-mean', 'stat-sd', 'stat-outside3']);
+        expect(bmw().getByTestId('stat-mean').querySelector('.wb3-kpi-v')!.firstChild!.textContent).toBe(fmtNum(fitStats.mean));
+        expect(bmw().getByTestId('stat-sd').querySelector('.wb3-kpi-v')!.firstChild!.textContent).toBe(fmtNum(fitStats.sd));
+        expect(bmwEl().querySelector('[data-testid="stats-card"], [data-testid="stat-rows"]')).toBeNull();
         expect(bmwEl().querySelector('[data-testid="model-fit-relationship"]')).toBeNull();
 
         // 4) Health score page: master prefill is valid -> score unlocked, Checks green.
@@ -210,7 +217,7 @@ describe('Relationship: the whole journey', () => {
         expect(hp.args.request.cache_key).toBe(pr.args.cache_key);
         expect(hp.error).toBeUndefined();
 
-        // Model fit: stats strip, Fit scatter (+ X selector + Compare predictors), residual over time; NO residual distribution.
+        // Model fit: KPI strip, Fit scatter (+ X selector + Compare predictors), residual over time; NO residual distribution.
         await waitFor(() => expect(bmw().getByTestId('model-fit-relationship')).toBeTruthy());
         expect(bmw().getByTestId('rel-stats')).toBeTruthy();
         expect(bmw().getByTestId('fit-x-selector')).toBeTruthy();

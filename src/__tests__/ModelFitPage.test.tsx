@@ -25,7 +25,7 @@ vi.mock('../components/charts/ResponsiveECharts', () => ({
 // The Fit chart's X selector is the REAL shared compact single picker;
 // its own behaviour is tested in SensorPicker.test.tsx.
 
-import ModelFitPage from '../components/windows/workbench/ModelFitPage';
+import ModelFitPage, { outsideText } from '../components/windows/workbench/ModelFitPage';
 import { SensorMetaProvider } from '../components/sensor/SensorLabel';
 import { openPickerSurface, pickSingle, pickerRows, rowTag } from './helpers/sensorPicker';
 import { makeHealthPreview } from './helpers/healthPreviewFixture';
@@ -61,6 +61,21 @@ function page(m: FailureModel, req: Record<string, any>, over: Record<string, an
 const chartOf = (id: string) => within(screen.getByTestId(`chart-card-${id}`)).getByTestId('echarts-mock');
 /** Text of the legend row under a card's chart, or null when the card has none. */
 const legendOf = (id: string) => screen.getByTestId(`chart-card-${id}`).querySelector('.wb2-legend')?.textContent ?? null;
+/** One KPI tile, part by part (`unit` is null when the tile prints none). */
+const tile = (id: string) => {
+    const el = screen.getByTestId(id);
+    const value = el.querySelector('.wb3-kpi-v')!;
+    const unit = value.querySelector('.wb3-kpi-u')?.textContent ?? null;
+    return {
+        label: el.querySelector('.wb3-kpi-l')!.textContent,
+        value: unit === null ? value.textContent : value.textContent!.slice(0, -unit.length),
+        unit,
+        sub: el.querySelector('.wb3-kpi-s')?.textContent ?? null,
+    };
+};
+/** The tiles of a strip, left to right: their test ids / their labels. */
+const tileIds = (strip: HTMLElement) => [...strip.children].map(c => c.getAttribute('data-testid'));
+const tileLabels = (strip: HTMLElement) => [...strip.querySelectorAll('.wb3-kpi-l')].map(l => l.textContent);
 
 describe('ModelFitPage — Individual', () => {
     // The health score is computed on hourly means (`hourly`); this page is the raw / training
@@ -75,42 +90,81 @@ describe('ModelFitPage — Individual', () => {
         }
     });
 
-    it('has the full-width value chart, the Distribution chart and the statistics card, in that order', () => {
+    // Workbench detail pages v2, SPEC §5: the tiles first, then both charts at full width.
+    it('has the KPI strip, then the full-width (taller) value chart and the full-width Distribution chart — no statistics card', () => {
         page(model(), { target: 'T1' });
         const board = screen.getByTestId('model-fit-individual');
-        // the statistics card sits directly in the grid cell beside Distribution (no side-column wrapper)
-        expect([...board.children].map(c => c.getAttribute('data-testid'))).toEqual(['chart-card-ts', 'chart-card-dist', 'stats-card']);
+        expect([...board.children].map(c => c.getAttribute('data-testid'))).toEqual(['fit-kpis', 'chart-card-ts', 'chart-card-dist']);
+        // one column; `wb2-board--ind` is also what makes the value chart taller (App.css)
+        expect(board.className).toBe('wb2-board wb2-board--ind');
         expect(screen.queryByTestId('fit-side')).toBeNull();
-        expect(screen.getByTestId('stats-card').className).toBe('wb2-statc');
-        expect(screen.getByTestId('chart-card-ts').className).toMatch(/wb2-full/);
+        expect(screen.queryByTestId('stats-card')).toBeNull();
+        expect(board.querySelector('table')).toBeNull();
+        expect(board.textContent).not.toMatch(/Statistics/);
+        expect(screen.getByTestId('chart-card-ts').className).toMatch(/(^| )wb2-full( |$)/);
         expect(screen.getByTestId('chart-card-ts').className).toMatch(/wb2-card--tall/);
+        expect(screen.getByTestId('chart-card-dist').className).toMatch(/(^| )wb2-full( |$)/);
         expect(within(screen.getByTestId('chart-card-ts')).getByTestId('echarts-mock').getAttribute('data-series')).toBe('Value');
         expect(within(screen.getByTestId('chart-card-dist')).getByTestId('echarts-mock').getAttribute('data-series')).toBe('Rows|Normal curve');
     });
 
-    it('the statistics card lists rows, mean, SD, ±1SD, ±3SD and the estimated rows outside ±3SD', () => {
+    it('the strip has exactly three tiles — Mean, SD (with the ±1SD range) and Outside ±3SD (share, estimated rows, the ±3SD range)', () => {
         page(model(), { target: 'T1' });
-        const t = screen.getByTestId('stats-card').textContent!;
-        expect(t).toMatch(/Rows1,000/);
+        const strip = screen.getByTestId('fit-kpis');
+        expect(strip.className).toBe('wb3-kpis wb3-kpis--fit');
+        expect(tileIds(strip)).toEqual(['stat-mean', 'stat-sd', 'stat-outside3']);
         // the app's ONE formatter for computed values: up to 3 decimals, never padded
-        expect(t).toMatch(/Mean5 °C/);
-        expect(t).toMatch(/SD1 °C/);
-        expect(t).toMatch(/±1SD4 – 6±3SD/);
-        expect(t).toMatch(/±3SD2 – 8Rows outside/);
-        expect(screen.getByTestId('stat-outside3').textContent).toMatch(/^≈ \d+ \(\d+\.\d{2}%\)$/);
+        expect(tile('stat-mean')).toEqual({ label: 'Mean', value: '5', unit: '°C', sub: 'learned normal' });
+        expect(tile('stat-sd')).toEqual({ label: 'SD', value: '1', unit: '°C', sub: '±1SD 4 – 6' });
+        // the fixture's bins: 10 rows in 0–2 and 10 rows in 8–10 lie outside 2 … 8 → 20 of 1,000
+        expect(tile('stat-outside3')).toEqual({ label: 'Outside ±3SD', value: '2.00%', unit: null, sub: '≈ 20 rows · ±3SD 2 – 8' });
+        // the row count is an estimate from the bins: the tile says so on hover (the old table row's tooltip)
+        expect(screen.getByTestId('stat-outside3').getAttribute('title')).toBe('Estimated from the distribution bins');
     });
 
-    it('without a histogram the Distribution card says so instead of drawing', () => {
+    it('no "Training rows" tile and no "Trained" tile; the row count is not an item of its own', () => {
+        page(model(), { target: 'T1' });
+        const strip = screen.getByTestId('fit-kpis');
+        expect(screen.queryByTestId('stat-rows')).toBeNull();
+        expect(tileLabels(strip)).toEqual(['Mean', 'SD', 'Outside ±3SD']);
+        expect(strip.textContent).not.toMatch(/Training rows|Trained|1,000/);
+    });
+
+    it('a share outside ±3SD that is not zero never reads "0.00%"; no row outside reads "0.00%"', () => {
+        // 1 row outside of 1,000,000: 0.0001%
+        const tiny = { ...makeHealthPreview({ kind: 'individual' }) };
+        tiny.stats = { ...(tiny.stats as any), rows: 1_000_000 };
+        tiny.histogram = { bin_edges: [0, 2, 4, 6, 8, 10], counts: [1, 0, 999_999, 0, 0], curve: [0, 0, 0, 0, 0], bin_width: 2, n: 1_000_000 };
+        render(<ModelFitPage model={model()} stale={false} preview={{ ...idle, data: tiny }} unit="" data={tiny} onXPredictorChange={() => {}} onCompare={() => {}} />);
+        expect(tile('stat-outside3')).toMatchObject({ value: '< 0.01%', sub: '≈ 1 row · ±3SD 2 – 8' });
+        cleanup();
+        const none = { ...makeHealthPreview({ kind: 'individual' }) };
+        none.histogram = { bin_edges: [0, 2, 4, 6, 8, 10], counts: [0, 0, 1000, 0, 0], curve: [0, 0, 0, 0, 0], bin_width: 2, n: 1000 };
+        render(<ModelFitPage model={model()} stale={false} preview={{ ...idle, data: none }} unit="" data={none} onXPredictorChange={() => {}} onCompare={() => {}} />);
+        expect(tile('stat-outside3')).toMatchObject({ value: '0.00%', sub: '≈ 0 rows · ±3SD 2 – 8' });
+        expect(outsideText(0.004)).toBe('< 0.01%');
+        expect(outsideText(0.27)).toBe('0.27%');
+        expect(outsideText(0)).toBe('0.00%');
+    });
+
+    it('without a unit a tile prints no unit', () => {
+        page(model(), { target: 'T1' }, { unit: '' });
+        expect(tile('stat-mean')).toMatchObject({ value: '5', unit: null });
+        expect(screen.getByTestId('fit-kpis').querySelector('.wb3-kpi-u')).toBeNull();
+    });
+
+    it('without a histogram the Distribution card says so instead of drawing, and the Outside ±3SD tile is a dash', () => {
         const data = { ...makeHealthPreview({ kind: 'individual' }), histogram: null };
         render(<ModelFitPage model={model()} stale={false} preview={{ ...idle, data }} unit="" data={data} onXPredictorChange={() => {}} onCompare={() => {}} />);
         expect(within(screen.getByTestId('chart-card-dist')).queryByTestId('echarts-mock')).toBeNull();
         expect(screen.getByText('No distribution for this scope')).toBeTruthy();
-        expect(screen.getByTestId('stat-outside3').textContent).toBe('—');
+        expect(tile('stat-outside3')).toEqual({ label: 'Outside ±3SD', value: '—', unit: null, sub: 'no distribution' });
     });
 
-    it('stale: every chart is "Out of date"', () => {
+    it('stale: every chart is "Out of date" (the tiles stay, as the statistics did)', () => {
         page(model(), { target: 'T1' }, { stale: true });
         expect(screen.getAllByTestId('chart-outdated')).toHaveLength(2);
+        expect(tileIds(screen.getByTestId('fit-kpis'))).toHaveLength(3);
     });
 
     // workbench-redesign SPEC §3: no legend row where the lines are labelled on the chart.
@@ -119,20 +173,40 @@ describe('ModelFitPage — Individual', () => {
         expect(legendOf('ts')).toBeNull();
         expect(legendOf('dist')).toBe('RowsNormal curve');
         expect(screen.getByTestId('chart-card-dist').textContent).not.toMatch(/±1SD|±3SD/);
-        expect(screen.getByTestId('chart-card-ts').textContent).not.toMatch(/±1SD|±3SD|Value/);
+        // the card names its lines once, in the subtitle sentence — nowhere else (no "Value" key either)
+        const card = screen.getByTestId('chart-card-ts');
+        const sub = card.querySelector('.wb2-card-s')!.textContent!;
+        expect(card.textContent!.replace(sub, '')).not.toMatch(/±1SD|±3SD|Value/);
     });
 
-    it('the subtitles say what the chart shows: every running row without scoring periods, "rows per value" for Distribution', () => {
+    it('the subtitles say what the chart shows: every running row without scoring periods and what the two colours mean; "rows per value" for Distribution', () => {
         page(model(), { target: 'T1' });
-        expect(screen.getByTestId('chart-card-ts').querySelector('.wb2-card-s')!.textContent).toBe('°C · running rows');
+        expect(screen.getByTestId('chart-card-ts').querySelector('.wb2-card-s')!.textContent)
+            .toBe('°C · running rows · green = within ±1SD (score 100) · amber dashes = ±3SD (score 80)');
         expect(screen.getByTestId('chart-card-dist').querySelector('.wb2-card-s')!.textContent).toBe('°C · rows per value');
+    });
+
+    it('tiles never judge: no tile of any kind carries a tone, and the page prints no verdict on the fit', () => {
+        for (const kind of ['individual', 'relationship', 'clustering'] as const) {
+            const m = model(kind === 'individual' ? {} : kind === 'relationship' ? { kind, predictorSensors: ['A'] } : { kind, xSensor: 'X1', ySensor: 'Y1' });
+            // a poor fit on purpose: nothing may turn amber or call it weak
+            const base = makeHealthPreview({ kind, target: 'T1', predictors: ['A'], n_clusters: 2, criteria_sensor: 'LOAD' });
+            const data = kind === 'relationship' ? { ...base, stats: { ...(base.stats as any), r2: 0.12 } } : base;
+            page(m, {}, { data, preview: { ...idle, data } });
+            const board = screen.getByTestId(`model-fit-${kind}`);
+            const tiles = [...board.querySelectorAll('.wb3-kpi')];
+            expect(tiles).toHaveLength(3);
+            expect(tiles.map(t => t.className)).toEqual(['wb3-kpi', 'wb3-kpi', 'wb3-kpi']);
+            expect(board.querySelector('.wb3-kpis')!.textContent).not.toMatch(/good|fair|weak|poor|strong|excellent|low fit|high fit/i);
+            cleanup();
+        }
     });
 });
 
 describe('ModelFitPage — Relationship', () => {
     const rel = () => model({ kind: 'relationship', targetSensor: 'T1', predictorSensors: ['A', 'B'] });
 
-    it('stats strip first, then Fit, Target vs predicted and a full-width Residual over time — no residual distribution, no histogram', () => {
+    it('KPI strip first, then Fit, Target vs predicted and a full-width Residual over time — no residual distribution, no histogram', () => {
         page(rel(), { target: 'T1', predictors: ['A', 'B'] });
         const board = screen.getByTestId('model-fit-relationship');
         expect([...board.children].map(c => c.getAttribute('data-testid'))).toEqual(['rel-stats', 'chart-card-fit', 'chart-card-tvp', 'chart-card-res']);
@@ -142,16 +216,24 @@ describe('ModelFitPage — Relationship', () => {
         expect(screen.queryByText(/histogram/i)).toBeNull();
     });
 
-    it('the strip has R², RMSE, 2RMSE, residual mean/SD, rows and the predictor count', () => {
+    // Workbench detail pages v2, SPEC §5: three tiles; 2RMSE and the residual mean are captions.
+    it('the strip has exactly three tiles — R², RMSE (with ±2RMSE) and Residual SD (with the residual mean)', () => {
         page(rel(), { target: 'T1', predictors: ['A', 'B'] });
-        const txt = (id: string) => screen.getByTestId(id).textContent;
-        expect(txt('stat-r2')).toBe('R²0.912');
-        expect(txt('stat-rmse')).toBe('RMSE0.457 °C');
-        expect(txt('stat-2rmse')).toBe('2RMSE0.913');
-        expect(txt('stat-res-mean')).toBe('Residual mean0.012');
-        expect(txt('stat-res-sd')).toBe('Residual SD0.4');
-        expect(txt('stat-rows')).toBe('Rows321');
-        expect(txt('stat-predictors')).toBe('Predictors2');
+        const strip = screen.getByTestId('rel-stats');
+        expect(strip.className).toBe('wb3-kpis wb3-kpis--fit');
+        expect(tileIds(strip)).toEqual(['stat-r2', 'stat-rmse', 'stat-res-sd']);
+        expect(tile('stat-r2')).toEqual({ label: 'R²', value: '0.912', unit: null, sub: 'of the training rows' });
+        expect(tile('stat-rmse')).toEqual({ label: 'RMSE', value: '0.457', unit: '°C', sub: '±2RMSE 0.913 = the score-100 band' });
+        expect(tile('stat-res-sd')).toEqual({ label: 'Residual SD', value: '0.4', unit: '°C', sub: 'mean 0.012' });
+    });
+
+    it('no "Training rows" / "Trained" tile; Rows, Predictors, 2RMSE and Residual mean are not items of their own', () => {
+        page(rel(), { target: 'T1', predictors: ['A', 'B'] });
+        const strip = screen.getByTestId('rel-stats');
+        for (const id of ['stat-rows', 'stat-predictors', 'stat-2rmse', 'stat-res-mean']) expect(screen.queryByTestId(id)).toBeNull();
+        expect(tileLabels(strip)).toEqual(['R²', 'RMSE', 'Residual SD']);
+        // the fixture trained on 321 rows with 2 predictors: neither number is on the strip
+        expect(strip.textContent).not.toMatch(/Training rows|Trained|Rows|Predictors|321/);
     });
 
     it('Fit draws Actual and Relation model; Target vs predicted draws Actual and Predicted; Residual draws one series', () => {
@@ -203,11 +285,10 @@ describe('ModelFitPage — Relationship', () => {
         const base = makeHealthPreview({ kind: 'relationship', target: 'T1', predictors: ['A'] });
         const data = { ...base, stats: { ...(base.stats as any), residual_mean: 0.0002, residual_sd: 0.00004567, rmse: 1234.5678, two_rmse: -0 } };
         render(<ModelFitPage model={rel()} stale={false} preview={{ ...idle, data }} unit="" data={data} onXPredictorChange={() => {}} onCompare={() => {}} />);
-        const txt = (id: string) => screen.getByTestId(id).textContent;
-        expect(txt('stat-res-mean')).toBe('Residual mean0.0002');
-        expect(txt('stat-res-sd')).toBe('Residual SD0.0000457'); // 3 significant digits
-        expect(txt('stat-rmse')).toBe('RMSE1,234.568'); // not rounded to "1,235"
-        expect(txt('stat-2rmse')).toBe('2RMSE0'); // a negative zero reads "0"
+        expect(tile('stat-res-sd').sub).toBe('mean 0.0002');
+        expect(tile('stat-res-sd').value).toBe('0.0000457'); // 3 significant digits
+        expect(tile('stat-rmse').value).toBe('1,234.568'); // not rounded to "1,235"
+        expect(tile('stat-rmse').sub).toBe('±2RMSE 0 = the score-100 band'); // a negative zero reads "0"
     });
 
     it('stale: all three charts are "Out of date"', () => {
@@ -258,10 +339,11 @@ describe('ModelFitPage — Clustering', () => {
 
     // User decision 2026-10-11: the whole right-hand column is gone (the "Clusters" summary card —
     // rows / centre per cluster, "In no range" — and the "Train and scoring periods" card under it).
-    it('the cluster scatter with its rings is the board\'s ONLY card and spans its full width — no summary card, no side column', () => {
+    it('the cluster scatter with its rings is the board\'s ONLY card and spans its full width, under the KPI strip — no summary card, no side column', () => {
         page(clu(), { n_clusters: 2, criteria_sensor: 'LOAD' });
         const board = screen.getByTestId('model-fit-clustering');
-        expect([...board.children].map(c => c.getAttribute('data-testid'))).toEqual(['chart-card-cl']);
+        expect([...board.children].map(c => c.getAttribute('data-testid'))).toEqual(['cl-stats', 'chart-card-cl']);
+        expect([...board.querySelectorAll('section')].map(c => c.getAttribute('data-testid'))).toEqual(['chart-card-cl']);
         // full width: the board's two-column grid with the card spanning every column
         // (not the "chart + 350px side column" grid it had while the side column existed)
         expect(board.className).toBe('wb2-board wb2-g2');
@@ -273,9 +355,55 @@ describe('ModelFitPage — Clustering', () => {
         expect(screen.queryByTestId('cluster-summary')).toBeNull();
         expect(screen.queryByTestId('fit-side')).toBeNull();
         expect(screen.queryByTestId('cluster-row-1')).toBeNull();
-        expect(board.querySelector('.wb2-statc')).toBeNull();
-        // none of the summary's words are left on the page (the fixture has 5 rows in no range)
-        expect(board.textContent).not.toMatch(/split by|centre|In no range|\d rows/);
+        expect(board.querySelector('table')).toBeNull();
+        // none of the summary card's own words are left on the page: no per-cluster centre, no "In no range" row
+        expect(board.textContent).not.toMatch(/centre|In no range/);
+    });
+
+    // Workbench detail pages v2, SPEC §5.
+    it('the strip has exactly three tiles — Clusters (split by the criteria sensor), In a cluster % and Inside 3× SD %', () => {
+        const data = { ...makeHealthPreview({ kind: 'clustering', n_clusters: 2, criteria_sensor: 'LOAD' }), test_validation: makeValidation() };
+        page(clu(), {}, { data, preview: { ...idle, data } });
+        const strip = screen.getByTestId('cl-stats');
+        expect(strip.className).toBe('wb3-kpis wb3-kpis--fit');
+        expect(tileIds(strip)).toEqual(['stat-clusters', 'stat-assigned', 'stat-inside3']);
+        // "split by" names the criteria sensor with the shared muted Inline label (description, then tag)
+        expect(tile('stat-clusters')).toEqual({ label: 'Clusters', value: '2', unit: null, sub: 'split by Label of LOADLOAD' });
+        expect(screen.getByTestId('stat-clusters').querySelector('.wb3-kpi-s .sl--muted')).toBeTruthy();
+        // the fixture: 95 of 100 rows fall in a criteria range, 5 in none
+        expect(tile('stat-assigned')).toEqual({ label: 'In a cluster', value: '95.0%', unit: null, sub: '5 rows outside every criteria range' });
+        // the train block of the preview (makeValidation): 98.9% of the training rows inside the 3× SD ring
+        expect(tile('stat-inside3')).toEqual({ label: 'Inside 3× SD', value: '98.9%', unit: null, sub: 'of the training rows · score ≥ 80' });
+        expect(tileLabels(strip)).not.toContain('Training rows');
+        expect(strip.textContent).not.toMatch(/Training rows|Trained/);
+    });
+
+    it('one cluster has no criteria sensor: the Clusters tile says so; without the train block "Inside 3× SD" is a dash', () => {
+        page(clu(), { n_clusters: 1 });
+        expect(tile('stat-clusters')).toEqual({ label: 'Clusters', value: '1', unit: null, sub: 'one cluster · no criteria sensor' });
+        // Rust sends `test_validation` only with scoring periods
+        expect(tile('stat-inside3')).toMatchObject({ value: '—', sub: 'of the training rows · score ≥ 80' });
+    });
+
+    it('a share that is not zero never reads "0.0%" (the shared `shareText`): "< 0.1%"; a single row outside is "1 row"', () => {
+        const base = makeHealthPreview({ kind: 'clustering', n_clusters: 2, criteria_sensor: 'LOAD' });
+        const data = {
+            ...base,
+            stats: { ...(base.stats as any), rows: 100_000, assigned_rows: 50, unassigned_rows: 99_950 },
+            test_validation: makeValidation({ train: { ...makeValidation().train, inside_3sd_ring_pct: 0.04 } }),
+        };
+        page(clu(), {}, { data, preview: { ...idle, data } });
+        expect(tile('stat-assigned')).toMatchObject({ value: '< 0.1%', sub: '99,950 rows outside every criteria range' });
+        expect(tile('stat-inside3').value).toBe('< 0.1%');
+        cleanup();
+        // nothing at all in a cluster is a real zero; no training row = no share to print
+        const zero = { ...base, stats: { ...(base.stats as any), rows: 10, assigned_rows: 0, unassigned_rows: 10 } };
+        page(clu(), {}, { data: zero, preview: { ...idle, data: zero } });
+        expect(tile('stat-assigned').value).toBe('0.0%');
+        cleanup();
+        const one = { ...base, stats: { ...(base.stats as any), rows: 0, assigned_rows: 0, unassigned_rows: 1 } };
+        page(clu(), {}, { data: one, preview: { ...idle, data: one } });
+        expect(tile('stat-assigned')).toMatchObject({ value: '—', sub: '1 row outside every criteria range' });
     });
 
     // A name drawn on the chart is the ONLY key
@@ -364,10 +492,10 @@ describe('ModelFitPage — train and scoring periods ("just score it", 2026-10-1
         expectNoTrainTestCard('model-fit-individual');
     });
 
-    it('Individual: the value chart draws the scopes; NO "Train and scoring periods" card — the board is the two charts and the statistics', () => {
+    it('Individual: the value chart draws the scopes; NO "Train and scoring periods" card — the board is the KPI strip and the two charts', () => {
         mount(model(), { target: 'T1' }, withTests('individual'));
         expect(within(screen.getByTestId('chart-card-ts')).getByTestId('echarts-mock').getAttribute('data-series')).toBe('Value|__scopes');
-        expect([...screen.getByTestId('model-fit-individual').children].map(c => c.getAttribute('data-testid'))).toEqual(['chart-card-ts', 'chart-card-dist', 'stats-card']);
+        expect([...screen.getByTestId('model-fit-individual').children].map(c => c.getAttribute('data-testid'))).toEqual(['fit-kpis', 'chart-card-ts', 'chart-card-dist']);
         expectNoTrainTestCard('model-fit-individual');
     });
 
@@ -404,7 +532,8 @@ describe('ModelFitPage — train and scoring periods ("just score it", 2026-10-1
         expect(chartOf('ts').getAttribute('data-strip')).toBe('TRAIN');
         expect(chartOf('ts').getAttribute('data-bands')).toBe('TRAIN'); // one band under the data: none for S1, none for S2
         // the data did not change, so neither did the subtitle that describes it
-        expect(screen.getByTestId('chart-card-ts').querySelector('.wb2-card-s')!.textContent).toBe('°C · rows in the train and scoring periods');
+        expect(screen.getByTestId('chart-card-ts').querySelector('.wb2-card-s')!.textContent)
+            .toBe('°C · rows in the train and scoring periods · green = within ±1SD (score 100) · amber dashes = ±3SD (score 80)');
         expect(chartOf('dist').getAttribute('data-strip')).toBe(''); // not a time chart
         expect(chartOf('dist').getAttribute('data-bands')).toBe('');
     });
@@ -441,7 +570,7 @@ describe('ModelFitPage — train and scoring periods ("just score it", 2026-10-1
     it('Clustering (no time chart): with scoring periods the Clusters chart is still the board\'s only, full-width card', () => {
         mount(model({ kind: 'clustering', targetSensor: '', xSensor: 'X1', ySensor: 'Y1' }), { n_clusters: 2 }, withTests('clustering'));
         const board = screen.getByTestId('model-fit-clustering');
-        expect([...board.children].map(c => c.getAttribute('data-testid'))).toEqual(['chart-card-cl']);
+        expect([...board.children].map(c => c.getAttribute('data-testid'))).toEqual(['cl-stats', 'chart-card-cl']);
         expect(screen.getByTestId('chart-card-cl').className).toMatch(/(^| )wb2-full( |$)/);
         expect(screen.queryByTestId('cluster-summary')).toBeNull();
         expectNoTrainTestCard('model-fit-clustering');

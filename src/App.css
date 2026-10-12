@@ -5345,13 +5345,33 @@ body {
 .wb2-lg i.wb2-lg-sq { width: 9px; height: 9px; border: 0; border-radius: 2px; }
 .wb2-xsel { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-faint); }
 
-/* statistics strip and table card */
-.wb2-stats { display: flex; gap: 16px; flex-wrap: wrap; font-size: 11.5px; color: var(--text-faint); }
-.wb2-stats b { font: 600 12px var(--mono); color: var(--text-primary); margin-left: 4px; }
-.wb2-statc { background: var(--bg-primary); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; min-width: 0; }
-.wb2-statc table { width: 100%; border-collapse: collapse; font-size: 12px; }
-.wb2-statc td { padding: 6px 0; border-bottom: 1px solid var(--border); color: var(--text-secondary); }
-.wb2-statc td.n { font-family: var(--mono); color: var(--text-primary); text-align: right; }
+/* Model fit, Individual: one column — the tiles, then both charts at full width;
+   the value chart is taller than a "tall" card elsewhere. */
+.wb2-board--ind { grid-template-columns: minmax(0, 1fr); }
+.wb2-board--ind .wb2-card--tall .wb2-cv { height: 400px; }
+
+/* KPI tiles (Kpi.tsx, "Workbench detail pages v2"): the numbers first, in a strip
+   above the charts. Prefix wb3-. One big mono number per tile, its unit, a caption.
+   A tile never judges: the value is plain text. Only a value that IS a health score
+   takes its band colour (the --ok / --warn / --bad modifiers). */
+.wb3-kpis { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+/* Model fit: three equal tiles, kept to the left and capped so they do not stretch
+   across a wide window. */
+.wb3-kpis--fit { grid-template-columns: repeat(3, minmax(0, 420px)); justify-content: start; }
+.wb3-kpi { background: var(--card-bg); border: 1px solid var(--border-strong); border-radius: 12px; padding: 10px 14px 9px; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.wb3-kpi-l { font-size: 10.5px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-secondary); display: flex; align-items: center; gap: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wb3-kpi-v { font: 600 24px var(--mono); letter-spacing: -0.03em; color: var(--text-primary); line-height: 1.15; display: flex; align-items: baseline; gap: 6px; white-space: nowrap; overflow: hidden; }
+.wb3-kpi-v--sm { font-size: 13.5px; letter-spacing: -0.01em; padding-top: 5px; white-space: normal; line-height: 1.3; }
+.wb3-kpi-u { font-size: 11px; font-weight: 500; color: var(--text-secondary); letter-spacing: 0; }
+.wb3-kpi-s { font-size: 11px; color: var(--text-secondary); line-height: 1.4; }
+.wb3-kpi-s b { color: var(--text-primary); font-weight: 600; font-family: var(--mono); }
+.wb3-kpi--ok .wb3-kpi-v { color: var(--ok); }
+.wb3-kpi--warn .wb3-kpi-v { color: var(--warn); }
+.wb3-kpi--bad .wb3-kpi-v { color: var(--danger); }
+@container (max-width: 760px) {
+    .wb3-kpi-v { font-size: 20px; }
+    .wb3-kpi-v--sm { font-size: 13.5px; }
+}
 
 /* left list: status dots (yellow needs input or re-train, red needs fixing, green complete) and legend */
 .f4-kb-dot--need { background: var(--warn); }

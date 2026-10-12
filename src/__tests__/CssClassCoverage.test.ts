@@ -41,7 +41,7 @@ const CSS = RAW_CSS.replace(/\/\*[\s\S]*?\*\//g, '');
 
 /** Prefixes whose classes are hand-written in App.css (not tailwind utilities). */
 const STYLED_PREFIXES = [
-    'bmw', 'wb2', 'hs', 'rcc', 'rcm', 'rcs', 'rcx', 'fg', 'pm', 'f4',
+    'bmw', 'wb2', 'wb3', 'hs', 'rcc', 'rcm', 'rcs', 'rcx', 'fg', 'pm', 'f4',
     'sensor-picker', 'predictor-picker', 'sensor-autocomplete',
     'kind-badge', 'model-kind-icon', 'model-status-pill', 'pair-regl', 'scatter-regl',
     'special-sensor', 'highlights', 'timebar', 'line-chart',
@@ -73,6 +73,7 @@ const DYNAMIC_ENUMS: Record<string, readonly string[]> = {
     'f4-kb-dot--': ['trained', 'complete', 'need', 'bad'],                       // dotStatusFor + DOT_CLASS
     'rc-impact--': ['amber', 'grey'],                                             // BuildModelWindow: the impact line next to Apply (tone)
     'wb2-card--': ['tall', 'xtall', 'hs'],                                       // ChartCardSize minus 'normal'
+    'wb3-kpi--': ['ok', 'warn', 'bad'],                                          // Kpi tone (a score value's band colour)
     'hs-chk--': ['ok', 'need', 'bad'],
     'hsx-row--': ['ok', 'warn', 'danger'],                                       // SetPointsCard Row tone
     'gutter-': ['horizontal', 'vertical'],                                       // split.js
