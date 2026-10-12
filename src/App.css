@@ -2329,35 +2329,155 @@ body {
     pointer-events: none;
 }
 
-.scatter-tag-callout {
-    position: absolute;
-    transform: translate(-50%, calc(-100% - 12px));
+/* Tag Point — the values of the tagged points, in a table docked UNDER the chart (Line and
+   Scatter; `TagCompareTable.tsx`). The chart keeps only a numbered marker per tag. */
+.chart-with-tags {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+}
+
+.chart-with-tags > .chart-with-tags-plot {
+    flex: 1 1 0;
+    height: auto;
+    min-height: 0;
+}
+
+.tag-table {
+    flex: none;
+    /* Head + five sensor rows; more rows scroll, more tags scroll sideways. */
+    max-height: 142px;
+    overflow: auto;
+    border-top: 1px solid var(--border-strong);
     background: var(--card-bg);
-    border: 1px solid var(--border-strong);
-    border-radius: 4px;
-    padding: 5px 8px;
-    font-size: 10px;
-    line-height: 1.5;
-    white-space: nowrap;
-    color: var(--text-primary);
-    font-family: Inter, system-ui, sans-serif;
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
-    pointer-events: none;
-    z-index: 21;
 }
 
-.scatter-tag-callout .scatter-tag-callout-ts {
+.tag-table-grid {
+    display: grid;
+    align-items: stretch;
+    justify-content: start;
+    min-width: min-content;
+}
+
+.tag-table-corner,
+.tag-table .chart-tag-item {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    height: 28px;
+    box-sizing: border-box;
+    background: var(--surface-hi);
+    border-bottom: 1px solid var(--border-strong);
+}
+
+.tag-table-corner,
+.tag-table-name {
+    position: sticky;
+    left: 0;
+    border-right: 1px solid var(--border-strong);
+}
+
+.tag-table-corner {
+    z-index: 3;
+    display: flex;
+    align-items: center;
+    padding: 0 8px;
+}
+
+.tag-table-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 2px 4px;
+    border: 0;
+    border-radius: 5px;
+    background: none;
     color: var(--text-secondary);
-    font-family: 'JetBrains Mono', monospace;
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    cursor: pointer;
 }
 
-/* Tag Point list — one row per pinned tag under the chart toolbox (Line and
-   Scatter), each with its own × so a single tag can be removed.
-   Same floating "glass" chrome as the toolbox above it.
-   z-index 10 — deliberately BELOW the toolboxes (11): `.line-chart-toolbox`
-   is its own stacking context, so its Zoom dropdown's z 12 only counts inside
-   it; at an equal 11 this later sibling would paint over "Horizontal zoom" /
-   "Zoom out". Scatter's axis editor (z 12, same parent) also stays on top. */
+.tag-table-toggle:hover,
+.tag-table-toggle:focus-visible {
+    color: var(--text-primary);
+    background: var(--accent-muted);
+    outline: none;
+}
+
+.tag-table-count {
+    padding: 0 5px;
+    border-radius: 99px;
+    background: rgba(255, 255, 255, 0.08);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 9.5px;
+    font-weight: 500;
+}
+
+/* The column heads are the tag list itself, each tag one cell of the grid. */
+.tag-table .chart-tag-list {
+    display: contents;
+}
+
+.tag-table .chart-tag-item {
+    justify-content: flex-end;
+    padding: 0 6px 0 10px;
+    border-radius: 0;
+}
+
+.tag-table .chart-tag-label {
+    flex: 0 1 auto;
+    font-size: 10.5px;
+}
+
+.tag-table-name,
+.tag-table-val {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    height: 22px;
+    box-sizing: border-box;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.tag-table-name {
+    z-index: 1;
+    gap: 7px;
+    padding: 0 10px;
+    background: var(--card-bg);
+}
+
+.tag-table-swatch {
+    flex: none;
+    width: 8px;
+    height: 8px;
+    border-radius: 2px;
+}
+
+.tag-table-lead {
+    flex: none;
+    width: 14px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+
+.tag-table-val {
+    justify-content: flex-end;
+    padding: 0 28px 0 10px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-primary);
+    white-space: nowrap;
+}
+
+/* The tag-mode hint of the Scatter chart, in the right-hand column under its toolbox
+   (z-index 10, below the toolboxes' 11 and Scatter's axis editor at 12). */
 .chart-tag-anchor {
     position: absolute;
     top: 44px;
@@ -2382,29 +2502,14 @@ body {
 .chart-tag-list {
     list-style: none;
     margin: 0;
-    padding: 3px;
-    display: flex;
-    flex-direction: column;
-    gap: 1px;
-    max-height: 220px;
-    overflow-y: auto;
-    background: rgba(20, 20, 24, 0.9);
-    backdrop-filter: blur(6px);
-    border: 1px solid var(--border-strong);
-    border-radius: 10px;
+    padding: 0;
 }
 
 .chart-tag-item {
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 2px 2px 2px 4px;
-    border-radius: 6px;
     min-width: 0;
-}
-
-.chart-tag-item:hover {
-    background: var(--accent-muted);
 }
 
 .chart-tag-dot {
@@ -5809,7 +5914,6 @@ body {
     white-space: nowrap;
 }
 .scatter-regl-tooltip .tt-row { min-width: 200px; }
-.scatter-tag-callout .tt-row { font-size: 10.5px; }
 
 /* ── Per-screen rollout ── */
 /* Dashboard › Sensor tab rows: the label takes the room so ellipsis works. */

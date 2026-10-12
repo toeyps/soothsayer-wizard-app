@@ -6,7 +6,8 @@ import { formatAxisTick, formatDateTime } from '../../utils/dateFormat';
 import { fmtNum, sensorInlineHtml, useLayeredSensorLookup } from '../sensor/sensorInfo';
 import { hexToRgbaCss, rgbaToHex, RANGE_PALETTE, TAG_BADGES, MAX_TAGGED_POINTS } from './pairPlotColors';
 import type { LineTaggedPoint } from '../../types';
-import TaggedPointList, { firstFreeColorIndex } from './TaggedPointList';
+import { firstFreeColorIndex } from './TaggedPointList';
+import TagCompareTable, { tagCell, type TagCompareRow } from './TagCompareTable';
 
 /** Parses one `xData` entry to epoch ms, or `null` for a missing/unparseable
  *  timestamp — a time-axis series point needs an explicit x value per point
@@ -113,7 +114,6 @@ export function defaultSensorColor(sensor: string, palette: string[] = LINE_CHAR
 /** Tag-point box fonts: the stacks the installed app really renders with (DESIGN_SYSTEM §3.2 —
  *  the CSP blocks the web fonts, so Windows draws Segoe UI / Consolas). */
 const TAG_MONO = '"JetBrains Mono", Consolas, ui-monospace, monospace';
-const TAG_SANS = 'Inter, "Segoe UI", system-ui, sans-serif';
 
 function LineChart({
     data, columnar, sensors, headers, markLines, hideYSplitLine, sensorColors, sensorAxisRange,
@@ -354,7 +354,7 @@ function LineChart({
         };
     }, [chartInstance]);
 
-    // Removes ONE tag (the × on its row in the tag list) — the rest keep
+    // Removes ONE tag (the × on its column head in the table under the chart) — the rest keep
     // their colours; badges renumber by position, same as the markers.
     // Focus target when the last tag's × is pressed (the list unmounts).
     const tagButtonRef = useRef<HTMLButtonElement>(null);
@@ -382,6 +382,31 @@ function LineChart({
             label: isNaN(d.getTime()) ? tag.timestamp : formatDateTime(d),
         };
     }), [taggedPoints, xData]);
+
+    // The table under the chart: one row per shown sensor, one value per tag — read at the SAME
+    // nearest plotted point as the marker and the column head above.
+    const tagTableRows = useMemo<TagCompareRow[]>(() => {
+        if (taggedPoints.length === 0) return [];
+        const idxOf = taggedPoints.map(tag => {
+            const ms = new Date(tag.timestamp).getTime();
+            return isNaN(ms) || xData.length === 0 ? -1 : nearestXIndex(xData, ms);
+        });
+        return sensors.map(sensor => {
+            const sensorIdx = headers.indexOf(sensor);
+            const info = sensorLookup(sensor);
+            const at = (i: number): number | null => {
+                if (i < 0 || sensorIdx < 0) return null;
+                const v = columnar ? columnar.series[sensorIdx]?.[i] : data[i]?.values[sensorIdx];
+                return typeof v === 'number' && Number.isFinite(v) ? v : null;
+            };
+            return {
+                key: sensor,
+                info,
+                color: sensorColors?.[sensor] ?? defaultSensorColor(sensor),
+                cells: idxOf.map(i => { const v = at(i); return tagCell(v == null ? null : fmtNum(v, true), info.unit); }),
+            };
+        });
+    }, [taggedPoints, xData, sensors, headers, columnar, data, sensorLookup, sensorColors]);
 
     const zoomOut = useCallback(() => {
         chartInstance?.dispatchAction({ type: 'dataZoom', start: 0, end: 100 });
@@ -546,10 +571,11 @@ function LineChart({
         // as markArea above, for the same reason: this draws across the
         // shared grid regardless of which series owns it, so attaching it
         // to every series would just draw it N times over). Each entry's
-        // `coord` anchors the marker to series[0]'s own value at that
-        // index; the label lists every visible sensor's value (not just
-        // series[0]'s) plus a Δ line vs the first tag, for every tag after
-        // the first.
+        // `coord` anchors a numbered dot to series[0]'s own value at that
+        // index, and a dashed line marks the instant across every sensor.
+        // The VALUES are not drawn here: they are listed in the table under
+        // the chart (`TagCompareTable`) — a box per tag on the chart covered
+        // the next tag's box as soon as two tags were close.
         const valuesFor = (sensor: string): (number | null)[] => {
             const sensorIdx = headers.indexOf(sensor);
             return columnar ? (columnar.series[sensorIdx] ?? []) : data.map(d => d.values[sensorIdx] ?? null);
@@ -560,53 +586,28 @@ function LineChart({
                     const tagMs = new Date(tag.timestamp).getTime();
                     if (isNaN(tagMs)) return null;
                     const idx = nearestXIndex(xData, tagMs);
-                    const perSensor = sensors.map(sensor => ({ sensor, value: valuesFor(sensor)[idx] ?? null }));
-                    const anchorValue = perSensor[0]?.value;
+                    const anchorValue = sensors.length > 0 ? valuesFor(sensors[0])[idx] ?? null : null;
                     // series[0] missing at this exact index (e.g. a NaN row) —
                     // nothing to anchor the marker to; skip rather than plot
                     // at a fabricated y value.
                     if (anchorValue == null) return null;
-                    const badge = TAG_BADGES[order % TAG_BADGES.length];
-                    // ECharts rich text — a description segment
-                    // (200 px, truncates), the tag as its own segment, then value + unit in a
-                    // fixed right-aligned column; the box stays about 330 px wide. The hover
-                    // tooltip carries the full name. `{ } |` would break the rich-text syntax.
-                    const rt = (t: string) => t.replace(/[{}|]/g, ' ');
-                    const lines = [`{h|${badge}  ${formatDateTime(new Date(xData[idx] ?? ''))}}`];
-                    perSensor.forEach(({ sensor, value }) => {
-                        const info = sensorLookup(sensor);
-                        const label = info.description ? `{d|${rt(info.description)}}{t|${rt(sensor)}}` : `{dm|${rt(sensor)}}`;
-                        lines.push(`${label}{v|${value == null ? '—' : fmtNum(value, true)}${info.unit ? ` ${rt(info.unit)}` : ''}}`);
-                    });
-
-                    // Flip the callout away from whichever edge it's closest
-                    // to, so it doesn't render partly off-canvas (ECharts
-                    // hard-clips labels at the canvas boundary, it doesn't
-                    // reflow them the way a DOM tooltip would). Horizontal:
-                    // based on the tag's position along the x-axis — a
-                    // TIME fraction, not an index fraction: with a time
-                    // axis the gaps between points aren't equal, so a point
-                    // halfway through the array is no longer necessarily
-                    // halfway across the drawn axis. Vertical: based on
-                    // where its value falls within the anchor sensor's own
-                    // data range — an approximation (the actual y-axis
-                    // includes a small auto-fit pad) but close enough to
-                    // matter only right at the edges.
-                    const firstMs = toMs(xData[0]);
-                    const lastMs = toMs(xData[xData.length - 1]);
-                    const rightFrac = firstMs != null && lastMs != null && lastMs > firstMs
-                        ? (tagMs - firstMs) / (lastMs - firstMs)
-                        : 0.5;
-                    const align: 'left' | 'right' | 'center' = rightFrac > 0.65 ? 'right' : rightFrac < 0.1 ? 'left' : 'center';
-                    const range = seriesMinMax(sensors[0]);
-                    const nearTop = range ? (anchorValue - range.min) / ((range.max - range.min) || 1) > 0.75 : false;
-                    const position: 'top' | 'bottom' = nearTop ? 'bottom' : 'top';
-
                     return {
                         coord: [toMs(xData[idx]), anchorValue],
                         itemStyle: { color: tag.color, borderColor: markLabelBg, borderWidth: 2 },
-                        label: { formatter: lines.join('\n'), position, align },
+                        label: { formatter: TAG_BADGES[order % TAG_BADGES.length] },
                     };
+                })
+                .filter((v): v is NonNullable<typeof v> => v !== null)
+            : [];
+
+        const tagLineData = dataCount > 0
+            ? taggedPoints
+                .map(tag => {
+                    const tagMs = new Date(tag.timestamp).getTime();
+                    if (isNaN(tagMs)) return null;
+                    const ms = toMs(xData[nearestXIndex(xData, tagMs)]);
+                    if (ms == null) return null;
+                    return { xAxis: ms, lineStyle: { color: tag.color, type: 'dashed' as const, width: 1, opacity: 0.75 }, label: { show: false } };
                 })
                 .filter((v): v is NonNullable<typeof v> => v !== null)
             : [];
@@ -615,7 +616,7 @@ function LineChart({
             const sensorIdx = headers.indexOf(sensor);
             const color = sensorColors?.[sensor] ?? defaultSensorColor(sensor);
             const sensorMarks = (markLines ?? []).filter(m => m.sensor === sensor);
-            const markLine = sensorMarks.length > 0
+            const thresholdLine = sensorMarks.length > 0
                 ? {
                     symbol: 'none',
                     silent: false,
@@ -648,6 +649,14 @@ function LineChart({
                     })),
                 }
                 : undefined;
+            // The tag lines ride on the first series (same convention as markArea / markPoint).
+            const tagLines = index === 0 ? tagLineData : [];
+            const markLine = thresholdLine && tagLines.length > 0
+                ? { ...thresholdLine, data: [...thresholdLine.data, ...tagLines] }
+                : thresholdLine
+                    ?? (tagLines.length > 0
+                        ? { symbol: 'none', silent: true, animation: false, label: { show: false }, data: tagLines }
+                        : undefined);
             const rawValues = columnar
                 ? (columnar.series[sensorIdx] ?? [])
                 : data.map(d => d.values[sensorIdx] ?? null);
@@ -700,29 +709,16 @@ function LineChart({
                             silent: true,
                             animation: false,
                             symbol: 'circle',
-                            symbolSize: 12,
+                            symbolSize: 17,
                             data: taggedMarkPointData,
-                            // position/align are set per-item above (flipped
-                            // away from whichever canvas edge each tag is
-                            // closest to) — shared chrome only here.
+                            // The badge (①②…) sits inside the dot, like the column head of the table.
                             label: {
                                 show: true,
-                                color: txtPrimary,
-                                backgroundColor: markLabelBg,
-                                borderColor: tooltipBorder,
-                                borderWidth: 1,
-                                borderRadius: 6,
-                                padding: [6, 8],
+                                position: 'inside',
+                                color: '#08110c',
                                 fontSize: 10,
+                                fontWeight: 700,
                                 fontFamily: TAG_MONO,
-                                lineHeight: 15,
-                                rich: {
-                                    h: { fontFamily: TAG_MONO, fontSize: 10, color: txtSecondary, lineHeight: 17 },
-                                    d: { fontFamily: TAG_SANS, fontSize: 10.5, fontWeight: 500, color: txtPrimary, width: 200, overflow: 'truncate', ellipsis: '…' },
-                                    dm: { fontFamily: TAG_MONO, fontSize: 10.5, color: txtPrimary, width: 256, overflow: 'truncate', ellipsis: '…' },
-                                    t: { fontFamily: TAG_MONO, fontSize: 9.5, color: txtSecondary, width: 56, overflow: 'truncate', ellipsis: '…', padding: [0, 0, 0, 4] },
-                                    v: { fontFamily: TAG_MONO, fontSize: 10, fontWeight: 600, color: txtPrimary, width: 76, align: 'right', overflow: 'truncate', ellipsis: '…' },
-                                },
                             },
                         },
                     }
@@ -918,7 +914,8 @@ function LineChart({
     }, [data, columnar, sensors, headers, containerH, markLines, hideYSplitLine, sensorColors, sensorAxisRange, sensorLookup, timeHighlights, xData, taggedPoints, rangeChanged]);
 
     return (
-        <div ref={wrapperRef} style={{ width: '100%', height: '100%', minHeight: 0, position: 'relative' }}>
+        <div className="chart-with-tags">
+        <div ref={wrapperRef} className="chart-with-tags-plot" style={{ width: '100%', minHeight: 0, position: 'relative' }}>
             {/* lazyUpdate batches consecutive setOption calls into one frame
                 (resize + data changes coalesce instead of each triggering
                 its own full notMerge re-init). */}
@@ -967,11 +964,6 @@ function LineChart({
                     </button>
                 )}
             </div>
-            {tagListItems.length > 0 && (
-                <div className="chart-tag-anchor">
-                    <TaggedPointList items={tagListItems} onRemove={removeTag} emptyFocusRef={tagButtonRef} />
-                </div>
-            )}
             {zoomSelectMode && (
                 <div style={{
                     position: 'absolute', top: 12, left: 44, pointerEvents: 'none',
@@ -985,7 +977,7 @@ function LineChart({
                     position: 'absolute', top: 12, left: 44, pointerEvents: 'none',
                     fontSize: 10, fontStyle: 'italic', color: txtSecondary,
                 }}>
-                    Click the chart to tag a point — remove one with its × in the tag list
+                    Click the chart to tag a point — its values are listed under the chart
                 </div>
             )}
             {/* Live feedback for an in-progress Horizontal Zoom drag — a
@@ -1003,6 +995,8 @@ function LineChart({
                     pointerEvents: 'none',
                 }} />
             )}
+        </div>
+        <TagCompareTable items={tagListItems} rows={tagTableRows} onRemove={removeTag} emptyFocusRef={tagButtonRef} />
         </div>
     );
 }

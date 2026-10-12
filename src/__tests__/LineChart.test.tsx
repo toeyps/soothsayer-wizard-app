@@ -683,29 +683,85 @@ describe('Tag Point (click a point on the chart to compare it with others)', () 
         expect(markPoint.data[0].label.formatter).toContain('①');
     });
 
-    // The tag-point box is ECharts rich text — a description
-    // segment (200 px, truncates), the tag segment, then a fixed right-aligned value column.
-    it('the tag-point box lists each sensor as description + tag + right-aligned value (rich text)', () => {
+    // The values of a tag are NOT drawn on the chart any more (a box per tag covered the next
+    // tag's box as soon as two tags were close — real-app report 2026-10-12): the chart keeps a
+    // numbered dot + a dashed line, the values are in the table under the chart.
+    it('on the chart a tag is only its numbered dot (no value box) plus a dashed line at its time', () => {
         const columnar = columnarOf(headers, 5);
-        const meta = headers.map((h, i) => ({ tag: h, description: i === 0 ? 'Bearing {temp} | DE' : '', unit: i === 0 ? 'DEGC' : '', component: '' }));
-        const { container } = render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} sensorMetadata={meta} />);
+        const { container } = render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} />);
         fireEvent.click(tagToggle(container));
         mockConvertFromPixel.mockReturnValue([msOf(columnar.timestamps[2]), 0]);
         act(() => { zrClickHandler!({ offsetX: 50, offsetY: 50 }); });
-        const markPoint = capturedOptions[capturedOptions.length - 1].series[0].markPoint;
-        const text: string = markPoint.data[0].label.formatter;
-        const lines = text.split('\n');
-        expect(lines[0]).toMatch(/^\{h\|① {2}/);
-        // `{ } |` inside a name would break the rich-text syntax → replaced by spaces.
-        expect(lines[1]).toMatch(new RegExp(`^\\{d\\|Bearing  temp    DE\\}\\{t\\|${headers[0]}\\}\\{v\\|[^}]+ DEGC\\}$`));
-        // No description → the tag alone in the wider mono segment.
-        expect(lines[2]).toMatch(new RegExp(`^\\{dm\\|${headers[1]}\\}\\{v\\|`));
-        const rich = markPoint.label.rich;
-        expect(rich.d.width).toBeGreaterThanOrEqual(200);
-        expect(rich.v.align).toBe('right');
-        expect(rich.d.width + rich.t.width + rich.v.width).toBeLessThanOrEqual(340);
-        expect(rich.d.fontFamily).toContain('Segoe UI');
-        expect(rich.v.fontFamily).toContain('Consolas');
+        const first = capturedOptions[capturedOptions.length - 1].series[0];
+        expect(first.markPoint.data[0].label.formatter).toBe('①'); // the badge alone: no time, no values
+        expect(first.markPoint.label.position).toBe('inside');
+        expect(first.markPoint.label.rich).toBeUndefined();
+        expect(first.markLine.silent).toBe(true);
+        expect(first.markLine.data).toEqual([
+            { xAxis: msOf(columnar.timestamps[2]), lineStyle: expect.objectContaining({ type: 'dashed', color: first.markPoint.data[0].itemStyle.color }), label: { show: false } },
+        ]);
+        // Only the first series carries them.
+        expect(capturedOptions[capturedOptions.length - 1].series[1].markLine).toBeUndefined();
+    });
+
+    it('the table under the chart lists every shown sensor against every tag: description + tag left, value + unit per tag', () => {
+        const columnar = columnarOf(headers, 5);
+        const meta = headers.map((h, i) => ({ tag: h, description: i === 0 ? 'Bearing temp DE' : '', unit: i === 0 ? 'DEGC' : '', component: '' }));
+        const { container } = render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} sensorMetadata={meta} />);
+        expect(screen.queryByTestId('tag-table')).toBeNull(); // nothing tagged: no table, the chart has the full height
+        fireEvent.click(tagToggle(container));
+        mockConvertFromPixel.mockReturnValue([msOf(columnar.timestamps[2]), 0]);
+        act(() => { zrClickHandler!({ offsetX: 50, offsetY: 50 }); });
+        mockConvertFromPixel.mockReturnValue([msOf(columnar.timestamps[4]), 0]);
+        act(() => { zrClickHandler!({ offsetX: 60, offsetY: 50 }); });
+
+        const table = screen.getByTestId('tag-table');
+        const names = within(table).getAllByTestId('tag-table-name');
+        expect(names).toHaveLength(headers.length);
+        expect(names[0].textContent).toBe(`Bearing temp DE${headers[0]}`);
+        expect(names[1].textContent).toBe(headers[1]); // no description: the tag alone
+        const vals = within(table).getAllByTestId('tag-table-val').map(v => v.textContent);
+        expect(vals).toHaveLength(headers.length * 2); // sensors x tags, row by row
+        const v = (sensor: number, row: number) => columnar.series[sensor][row] as number;
+        expect(vals[0]).toBe(`${v(0, 2).toFixed(3)} DEGC`);
+        expect(vals[1]).toBe(`${v(0, 4).toFixed(3)} DEGC`);
+        expect(vals[2]).toBe(v(1, 2).toFixed(3)); // no unit
+        // Column heads: the tags, in badge order, each with its own ×.
+        const heads = within(within(table).getByRole('list', { name: 'Tagged points' })).getAllByRole('listitem');
+        expect(heads.map(h => h.textContent![0])).toEqual(['①', '②']);
+        // The swatch is the sensor's line colour.
+        expect((names[0].querySelector('.tag-table-swatch') as HTMLElement).style.background).not.toBe('');
+    });
+
+    it('a sensor with no value at the tagged time shows "—"; the table can be folded down to its head row', () => {
+        const columnar = columnarOf(headers, 5);
+        (columnar.series[1] as (number | null)[])[2] = null;
+        const { container } = render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} />);
+        fireEvent.click(tagToggle(container));
+        mockConvertFromPixel.mockReturnValue([msOf(columnar.timestamps[2]), 0]);
+        act(() => { zrClickHandler!({ offsetX: 50, offsetY: 50 }); });
+        const table = screen.getByTestId('tag-table');
+        expect(within(table).getAllByTestId('tag-table-val')[1].textContent).toBe('—');
+        const toggle = within(table).getByRole('button', { name: /Tagged points/ });
+        expect(toggle.getAttribute('aria-expanded')).toBe('true');
+        fireEvent.click(toggle);
+        expect(toggle.getAttribute('aria-expanded')).toBe('false');
+        expect(within(table).queryAllByTestId('tag-table-val')).toHaveLength(0);
+        // The tags (and their ×) stay reachable while folded.
+        expect(within(table).getAllByRole('button', { name: /^Remove tag/ })).toHaveLength(1);
+    });
+
+    it('the plot and the table are stacked: the plot box is what the chart measures, the table is not laid over it', () => {
+        const columnar = columnarOf(headers, 5);
+        const seededTag = [{ id: 't1', timestamp: columnar.timestamps[1], color: '#f59e0b' }];
+        const { container } = render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} lineTaggedPoints={seededTag} />);
+        const outer = container.querySelector('.chart-with-tags') as HTMLElement;
+        const plot = outer.querySelector(':scope > .chart-with-tags-plot') as HTMLElement;
+        const table = outer.querySelector(':scope > [data-testid="tag-table"]') as HTMLElement;
+        expect(plot).toBeTruthy();
+        expect(table).toBeTruthy();
+        expect(plot.contains(table)).toBe(false);
+        expect(plot.contains(tagToggle(container))).toBe(true);
     });
 
     it('ignores a click outside the plot grid (containPixel false)', () => {
@@ -745,40 +801,16 @@ describe('Tag Point (click a point on the chart to compare it with others)', () 
         expect(data[1].label.formatter).not.toContain('Δ');
     });
 
-    it('aligns the callout left for a tag at the left edge (its value there is also this series\' minimum, so no vertical flip is needed)', () => {
-        // columnarOf(headers, 10) -> series[0] (sensor 'A') is [0,1,...,9],
-        // monotonically increasing, so index 0 is simultaneously the
-        // leftmost x-position AND the series minimum.
+    it('the marker needs no edge handling: a tag at either end of the data is the same plain dot', () => {
         const columnar = columnarOf(headers, 10);
         const { container } = render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} />);
         fireEvent.click(tagToggle(container));
-        mockConvertFromPixel.mockReturnValue([msOf(columnar.timestamps[0]), 0]);
-        act(() => { zrClickHandler!({ offsetX: 1, offsetY: 1 }); });
-        const [entry] = capturedOptions[capturedOptions.length - 1].series[0].markPoint.data;
-        expect(entry.label.align).toBe('left');
-        expect(entry.label.position).toBe('top'); // low value -- no clipping risk above it
-    });
-
-    it('flips the callout right-aligned and below the point for a tag at the right edge whose value is also this series\' maximum', () => {
-        const columnar = columnarOf(headers, 10);
-        const { container } = render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} />);
-        fireEvent.click(tagToggle(container));
-        mockConvertFromPixel.mockReturnValue([msOf(columnar.timestamps[9]), 0]); // rightmost index, series[0]'s max value (9)
-        act(() => { zrClickHandler!({ offsetX: 1, offsetY: 1 }); });
-        const [entry] = capturedOptions[capturedOptions.length - 1].series[0].markPoint.data;
-        expect(entry.label.align).toBe('right');
-        expect(entry.label.position).toBe('bottom'); // high value -- 'top' would clip above the chart
-    });
-
-    it('centres the callout (default top/center) for a tag away from every edge', () => {
-        const columnar = columnarOf(headers, 10);
-        const { container } = render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} />);
-        fireEvent.click(tagToggle(container));
-        mockConvertFromPixel.mockReturnValue([msOf(columnar.timestamps[5]), 0]); // middle index
-        act(() => { zrClickHandler!({ offsetX: 1, offsetY: 1 }); });
-        const [entry] = capturedOptions[capturedOptions.length - 1].series[0].markPoint.data;
-        expect(entry.label.align).toBe('center');
-        expect(entry.label.position).toBe('top');
+        for (const i of [0, 9]) {
+            mockConvertFromPixel.mockReturnValue([msOf(columnar.timestamps[i]), 0]);
+            act(() => { zrClickHandler!({ offsetX: i, offsetY: 1 }); });
+        }
+        const entries = capturedOptions[capturedOptions.length - 1].series[0].markPoint.data;
+        expect(entries.map((e: any) => e.label)).toEqual([{ formatter: '①' }, { formatter: '②' }]);
     });
 
     it('caps at 8 tagged points (one per RANGE_PALETTE colour)', () => {
@@ -913,15 +945,17 @@ describe('Tag Point -- removing ONE tag from the tag list (customer request 2026
         expect(document.activeElement).toBe(tagToggle(container));
     });
 
-    it('each row names the SAME instant as its marker callout: the stored timestamp snapped to the nearest plotted point, re-resolved after a refetch', () => {
+    it('each column head names the SAME instant as its marker and its values: the stored timestamp snapped to the nearest plotted point, re-resolved after a refetch', () => {
         // A tag stored at 00:01:20 (e.g. pinned on a finer aggregation) on a
         // chart whose points are 00:00, 00:01, ... -> both resolve to 00:01.
         const tag = [{ id: 'tx', timestamp: '2026-01-01T00:01:20', color: '#aa0000' }];
         const { rerender } = render(<LineChart data={[]} columnar={columnarOf(headers, 5)} sensors={headers} headers={headers} lineTaggedPoints={tag} />);
         const rowText = () => within(screen.getByRole('list', { name: 'Tagged points' })).getAllByRole('listitem')[0].textContent;
-        const calloutHead = () => String(capturedOptions[capturedOptions.length - 1].series[0].markPoint.data[0].label.formatter).split('\n')[0];
+        const markerMs = () => capturedOptions[capturedOptions.length - 1].series[0].markPoint.data[0].coord[0];
+        const firstValue = () => screen.getAllByTestId('tag-table-val')[0].textContent;
         expect(rowText()).toBe(`①${label('2026-01-01T00:01:00')}`);
-        expect(calloutHead()).toContain(label('2026-01-01T00:01:00'));
+        expect(markerMs()).toBe(msOf('2026-01-01T00:01:00'));
+        expect(firstValue()).toBe((columnarOf(headers, 5).series[0][1] as number).toFixed(3));
 
         // Refetch onto a coarser 5-minute grid: the marker snaps to 00:00,
         // and the list must follow it rather than keep the stored 00:01:20.
@@ -931,7 +965,8 @@ describe('Tag Point -- removing ONE tag from the tag list (customer request 2026
         };
         rerender(<LineChart data={[]} columnar={coarse} sensors={headers} headers={headers} lineTaggedPoints={tag} />);
         expect(rowText()).toBe(`①${label('2026-01-01T00:00:00')}`);
-        expect(calloutHead()).toContain(label('2026-01-01T00:00:00'));
+        expect(markerMs()).toBe(msOf('2026-01-01T00:00:00'));
+        expect(firstValue()).toBe('1.000');
         expect(screen.getByRole('button', { name: `Remove tag ① ${label('2026-01-01T00:00:00')}` })).toBeTruthy();
     });
 });

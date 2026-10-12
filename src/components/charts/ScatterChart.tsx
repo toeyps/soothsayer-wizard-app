@@ -12,7 +12,8 @@ import { SensorMetaContext, fmtNum, sensorTitle, useLayeredSensorLookup, type Se
 import { hexToRgba, rgbaToHex, RANGE_PALETTE, TAG_BADGES, MAX_TAGGED_POINTS } from './pairPlotColors';
 import { reportError } from '../../errorReporter';
 import { useCoalescedDraw } from '../../hooks/useCoalescedDraw';
-import TaggedPointList, { firstFreeColorIndex } from './TaggedPointList';
+import { firstFreeColorIndex } from './TaggedPointList';
+import TagCompareTable, { tagCell, type TagCompareRow } from './TagCompareTable';
 
 // Re-exported so callers (Dashboard.tsx, charts/index.ts) can import
 // RANGE_PALETTE from this module — the array itself lives in
@@ -81,7 +82,7 @@ function AxisTitle({ axis, info, style }: { axis: 'x' | 'y'; info: SensorInfo; s
     );
 }
 
-/** One value row of the hover tooltip / a tag callout: inline label left, value + unit right
+/** One value row of the hover tooltip: inline label left, value + unit right
  *  (DESIGN_SYSTEM §4 "Tooltips and value boxes"). */
 function ValueRow({ info, value }: { info: SensorInfo; value: unknown }) {
     return (
@@ -750,16 +751,13 @@ function ScatterChart({
         };
     }, [hoveredIdx, sc, data, scatterX, scatterY, headers, innerDims.width, innerDims.height]);
 
-    // Screen positions + callout content for every tagged point. Recomputes
-    // on every pan/zoom (visibleBounds changes on each `view` event) so the
-    // ring/badge/callout track the camera exactly the way the tooltip does
+    // Screen positions of every tagged point's ring + badge. Recomputes
+    // on every pan/zoom (visibleBounds changes on each `view` event) so they
+    // track the camera exactly the way the tooltip does
     // above — `getScreenPosition` always reflects the CURRENT camera, not
     // whatever it was when the point was tagged.
     const tagOverlays = useMemo(() => {
         if (!sc || scatterTags.length === 0) return [];
-        const xIdx = headers.indexOf(scatterX);
-        const yIdx = headers.indexOf(scatterY);
-
         return scatterTags
             .map((tag, order) => {
                 const origIdx = origIndicesRef.current[tag.pointIdx];
@@ -772,8 +770,6 @@ function ScatterChart({
                     return null;
                 }
                 if (!pos) return null;
-                const xVal = xIdx >= 0 ? row.values[xIdx] : null;
-                const yVal = yIdx >= 0 ? row.values[yIdx] : null;
                 const color = rgbaToHex(RANGE_PALETTE[tag.colorIdx % RANGE_PALETTE.length]);
                 return {
                     id: tag.id,
@@ -781,14 +777,12 @@ function ScatterChart({
                     y: pos[1],
                     badge: TAG_BADGES[order % TAG_BADGES.length],
                     color,
-                    xVal, yVal,
-                    timestamp: row.timestamp,
                 };
             })
             .filter((v): v is NonNullable<typeof v> => v !== null);
-    }, [sc, scatterTags, data, scatterX, scatterY, headers, visibleBounds]);
+    }, [sc, scatterTags, data, visibleBounds]);
 
-    // Rows of the tag list under the toolbox (one × per tag). Built from
+    // Columns of the table under the chart (one × per tag). Built from
     // `scatterTags` itself, not `tagOverlays`, so a tag whose point can't be
     // placed on screen right now can still be removed on its own.
     // Focus target when the last tag's × is pressed (the list empties).
@@ -806,6 +800,24 @@ function ScatterChart({
             label: row?.timestamp ? formatDataStamp(row.timestamp) : `Point ${order + 1}`,
         };
     }), [scatterTags, data]);
+    // ... and its two rows: the X and the Y sensor's value at each tagged point.
+    const tagTableRows = useMemo<TagCompareRow[]>(() => {
+        if (scatterTags.length === 0) return [];
+        return ([['X', scatterX], ['Y', scatterY]] as const).map(([lead, sensor]) => {
+            const col = headers.indexOf(sensor);
+            const info = sensorLookup(sensor);
+            return {
+                key: lead,
+                lead,
+                info,
+                cells: scatterTags.map(tag => {
+                    const origIdx = origIndicesRef.current[tag.pointIdx];
+                    const v = origIdx != null && col >= 0 ? data[origIdx]?.values[col] : null;
+                    return tagCell(typeof v === 'number' ? fmtNum(v) : null, info.unit);
+                }),
+            };
+        });
+    }, [scatterTags, data, scatterX, scatterY, headers, sensorLookup]);
 
     if (sensors.length < 2) {
         return <div style={{ color: 'var(--text-secondary)', textAlign: 'center', marginTop: '20%' }}>Select at least 2 sensors</div>;
@@ -816,7 +828,8 @@ function ScatterChart({
 
     return (
         <SensorMetaContext.Provider value={sensorLookup}>
-        <div ref={wrapperRef} className="scatter-regl-wrap">
+        <div className="chart-with-tags">
+        <div ref={wrapperRef} className="scatter-regl-wrap chart-with-tags-plot">
             {/* Sensor pickers — "X"/"Y" is its own small badge beside each picker. */}
             <div className="scatter-regl-controls">
                 <span className="scatter-regl-axis-badge">X</span>
@@ -886,17 +899,12 @@ function ScatterChart({
                     </button>
                 )}
             </div>
-            {/* Tag-mode hint + the tag list (one × per tag) share one
-                right-hand column under the toolbox so they stack instead of
-                overlapping. */}
-            {(scatterTagMode || tagListItems.length > 0) && (
+            {/* Tag-mode hint, in the right-hand column under the toolbox. */}
+            {scatterTagMode && (
                 <div className="chart-tag-anchor">
-                    {scatterTagMode && (
-                        <div className="scatter-regl-hint chart-tag-hint">
-                            Click a point to tag it — remove one with its × below
-                        </div>
-                    )}
-                    <TaggedPointList items={tagListItems} onRemove={removeScatterTag} emptyFocusRef={tagButtonRef} />
+                    <div className="scatter-regl-hint chart-tag-hint">
+                        Click a point to tag it — its values are listed under the chart
+                    </div>
                 </div>
             )}
 
@@ -1003,19 +1011,13 @@ function ScatterChart({
                 )}
                 {/* Tagged points — a ring (doesn't touch the dot's own fill
                     colour, so it layers over criteria-range coloring
-                    without a conflict) + a small numbered badge + a callout
-                    with the tag's values and, from the second tag on, its
-                    delta vs the first. */}
+                    without a conflict) + a small numbered badge. The values
+                    are in the table under the chart, not in a box here. */}
                 {tagOverlays.map(t => (
                     <div key={t.id}>
                         <div className="scatter-tag-ring" style={{ left: t.x, top: t.y, borderColor: t.color }} />
                         <div className="scatter-tag-badge" style={{ left: t.x + 9, top: t.y - 9, background: t.color }}>
                             {t.badge}
-                        </div>
-                        <div className="scatter-tag-callout" style={{ left: t.x, top: t.y - 14 }}>
-                            {t.timestamp && <div className="scatter-tag-callout-ts">{formatDataStamp(t.timestamp)}</div>}
-                            <ValueRow info={sensorLookup(scatterX)} value={t.xVal} />
-                            <ValueRow info={sensorLookup(scatterY)} value={t.yVal} />
                         </div>
                     </div>
                 ))}
@@ -1118,6 +1120,8 @@ function ScatterChart({
                 capped at the plot height; only the description line can still ellipsise there. */}
             <AxisTitle axis="x" info={sensorLookup(scatterX)} style={{ left: AXIS_PADDING.left, width: innerDims.width, top: wrapperDims.height - X_TITLE.height - X_TITLE.bottom, height: X_TITLE.height }} />
             <AxisTitle axis="y" info={sensorLookup(scatterY)} style={{ ...Y_TITLE, top: AXIS_PADDING.top, height: innerDims.height, maxHeight: innerDims.height }} />
+        </div>
+        <TagCompareTable items={tagListItems} rows={tagTableRows} onRemove={removeScatterTag} emptyFocusRef={tagButtonRef} />
         </div>
         </SensorMetaContext.Provider>
     );

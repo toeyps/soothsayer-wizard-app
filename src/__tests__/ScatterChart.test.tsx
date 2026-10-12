@@ -476,7 +476,7 @@ describe('ScatterChart', () => {
 
     // One date format in the whole app (2026-10-12): the Scatter printed the CSV text as it was
     // ("2025-03-14 21:25:00") while the Line chart's tooltip read "2025/03/14 21:25:00".
-    it('the row time is in the one date format wherever it is printed (tooltip, tag callout, tag list) — from the row\'s own clock', () => {
+    it('the row time is in the one date format wherever it is printed (tooltip, the tag table\'s column head) — from the row\'s own clock', () => {
         const rows = [
             { timestamp: '2025-03-14 21:25:00', values: [1, 10] },
             { timestamp: '2025-03-14T21:30:00+07:00', values: [2, 20] }, // an offset never moves it
@@ -486,10 +486,10 @@ describe('ScatterChart', () => {
         expect(container.querySelector('.scatter-regl-tooltip-ts')!.textContent).toBe('2025/03/14 21:25:00');
         act(() => { lastInstance!.__subs['pointover'](1); });
         expect(container.querySelector('.scatter-regl-tooltip-ts')!.textContent).toBe('2025/03/14 21:30:00');
-        // tag that point: its callout and its row in the tag list read the same
+        // tag that point: its column head in the table under the chart reads the same
         fireEvent.click(screen.getByTitle(/compare 2\+ points/i));
         fireEvent.click(container.querySelector('[data-testid="scatter-main-canvas"]')!);
-        expect(container.querySelector('.scatter-tag-callout-ts')!.textContent).toBe('2025/03/14 21:30:00');
+        expect(container.querySelector('.scatter-tag-callout')).toBeNull(); // no value box on the plot
         expect(container.querySelector('.chart-tag-label')!.textContent).toBe('2025/03/14 21:30:00');
         expect(container.textContent).not.toContain('2025-03-14');
     });
@@ -626,11 +626,16 @@ describe('ScatterChart', () => {
 
             expect(container.querySelector('.scatter-tag-ring')).toBeTruthy();
             expect(container.querySelector('.scatter-tag-badge')!.textContent).toBe('①');
-            const callout = container.querySelector('.scatter-tag-callout')!;
-            expect(callout.textContent).toContain('t0');
-            // Value rows: inline label left, value right (DESIGN_SYSTEM §4 tooltips and value boxes).
-            const vals = [...callout.querySelectorAll('.tt-row')].map(r => [rowTag(r), r.querySelector('.tt-val')?.textContent]);
-            expect(vals).toEqual([['A', '1'], ['B', '10']]);
+            // No value box on the plot: the values are in the table under the chart —
+            // one row per axis (X then Y), one column per tag.
+            expect(container.querySelector('.scatter-tag-callout')).toBeNull();
+            const table = screen.getByTestId('tag-table');
+            expect(within(table).getAllByRole('listitem').map(h => h.textContent)).toEqual(['①t0']);
+            const names = within(table).getAllByTestId('tag-table-name').map(n => n.textContent);
+            expect(names).toEqual(['XA', 'YB']);
+            expect(within(table).getAllByTestId('tag-table-val').map(v => v.textContent)).toEqual(['1', '10']);
+            // Stacked under the plot, not laid over it.
+            expect(container.querySelector('.scatter-regl-wrap')!.contains(table)).toBe(false);
         });
 
         it('clicking an already-tagged point again removes it (toggle)', () => {
@@ -650,9 +655,10 @@ describe('ScatterChart', () => {
             act(() => { lastInstance!.__subs['pointover'](1); });
             fireEvent.click(getCanvas(container));
 
-            const callouts = container.querySelectorAll('.scatter-tag-callout');
-            expect(callouts).toHaveLength(2);
-            expect(callouts[1].textContent).not.toContain('Δ');
+            const table = screen.getByTestId('tag-table');
+            // Two tags = two value columns per row, and nothing else (no Δ column or text).
+            expect(within(table).getAllByTestId('tag-table-val').map(v => v.textContent)).toEqual(['1', '2', '10', '20']);
+            expect(table.textContent).not.toContain('Δ');
         });
 
         it('"Clear all" only appears once a tag exists, and clears every tag', () => {
@@ -698,10 +704,8 @@ describe('ScatterChart', () => {
 
                 expect(container.querySelectorAll('.scatter-tag-ring')).toHaveLength(2);
                 expect(ringColours()).toEqual([c0, c2]);
-                const callouts = Array.from(container.querySelectorAll('.scatter-tag-callout')).map(c => c.textContent);
-                expect(callouts[0]).toContain('t0');
-                expect(callouts[1]).toContain('t2');
-                expect(callouts.join(' ')).not.toContain('t1');
+                // The removed tag's column goes with it: the X row keeps the values of t0 and t2.
+                expect(screen.getAllByTestId('tag-table-val').slice(0, 2).map(v => v.textContent)).toEqual(['1', '3']);
                 // Badges renumber by position, the list matches the markers.
                 const rows = within(screen.getByRole('list', { name: 'Tagged points' })).getAllByRole('listitem');
                 expect(rows.map(r => r.textContent)).toEqual(['①t0', '②t2']);
