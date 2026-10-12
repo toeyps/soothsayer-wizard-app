@@ -13,7 +13,16 @@
  * accumulation buffer and ImageData only ever grow, and the dot stamps are
  * cached per buffer scale.
  */
-import { POINT_STRIDE, type Camera, type MachineShape } from './machineShapes';
+import {
+  MAX_PARTS,
+  PART_STEP,
+  PART_STRIDE,
+  POINT_STRIDE,
+  SPIN_PER_SECOND,
+  poseParts,
+  type Camera,
+  type MachineShape,
+} from './machineShapes';
 import { pickBufferScale } from './machineOrbit';
 
 /** Dot tones: 0..2 = surface facing → grazing (rim light), 3 = edge dot (with halo). */
@@ -25,7 +34,7 @@ export const TONE: ReadonlyArray<{ r: number; a: number; halo?: boolean }> = [
 ];
 /** Depth levels (near → far). */
 export const DEPTH_LEVELS = 5;
-/** Group colours: base metal, second body, hot section / volute (orange, accepted exception), plunger. */
+/** Colours (`group & 3`): base metal, second body, hot section / volute (orange, accepted exception), plunger. */
 export const GROUP_ARR: ReadonlyArray<readonly [number, number, number]> = [
   [110, 175, 255],
   [180, 150, 255],
@@ -37,9 +46,8 @@ export const EDGE_LIFT = 0.12;
 /** Mini variant: tone alphas × 0.6 (on top of the wrapper's opacity 0.45), dots × 0.75. */
 export const MINI_ALPHA = 0.6;
 export const MINI_SIZE = 0.75;
-/** Plunger stroke (normalised units) and the three plungers' phase offsets. */
-export const PLUNGER_AMP = 0.09;
-export const PLUNGER_PHASES = [0, 2.094, 4.188] as const;
+/** Plunger stroke and phases now live with the other moving parts in `machineShapes.ts`. */
+export { PLUNGER_AMP, PLUNGER_PHASES } from './machineShapes';
 
 export interface DotKernels {
   /** One stamp per (tone, depth, sub-pixel x, sub-pixel y): flat (dx, dy, weight) triples. */
@@ -153,6 +161,9 @@ export class DotRenderer {
   private off: HTMLCanvasElement | null = null;
   private offCtx: CanvasRenderingContext2D | null = null;
   private readonly kernCache = new Map<number, DotKernels>();
+  /** This frame's part poses for machine A and machine B (3×4 per part, slot 0 unused). */
+  private readonly poseA = new Float32Array((MAX_PARTS + 1) * PART_STRIDE);
+  private readonly poseB = new Float32Array((MAX_PARTS + 1) * PART_STRIDE);
 
   constructor(n: number, mini: boolean) {
     this.n = n;
@@ -215,16 +226,21 @@ export class DotRenderer {
     const xs = this.xs;
     const ys = this.ys;
     const keys = this.keys;
-    const ph = spin * 0.55;
-    const pl0 = PLUNGER_AMP * Math.sin(ph + PLUNGER_PHASES[0]);
-    const pl1 = PLUNGER_AMP * Math.sin(ph + PLUNGER_PHASES[1]);
-    const pl2 = PLUNGER_AMP * Math.sin(ph + PLUNGER_PHASES[2]);
+    // Moving parts: one small matrix per part per frame (a few sin/cos), then
+    // applied inside the loop below to that part's points only. `spin` does not
+    // advance under reduced motion, so every part then stays in its rest pose.
+    const MA = this.poseA;
+    const MB = this.poseB;
+    const sec = spin / SPIN_PER_SECOND;
+    poseParts(A.parts, sec, MA);
+    poseParts(B.parts, sec, MB);
     const { cyw, syw, cp, sp, cx, cy, sc } = cam;
     // View direction in model space, for the rim light.
     const vx = -syw * cp;
     const vy = sp;
     const vz = cyw * cp;
     const useB = e >= 0.5;
+    const MQ = useB ? MB : MA;
     const bj = burst * 1.7;
     const dust = burst > 0.35;
     let mnx = 1e9;
@@ -237,12 +253,32 @@ export class DotRenderer {
       const o = i * S;
       const ga = pa[o + 3];
       const gb = pb[o + 3];
-      const xa = pa[o] + (ga >= 10 ? (ga === 10 ? pl0 : ga === 11 ? pl1 : pl2) : 0);
-      const xb = pb[o] + (gb >= 10 ? (gb === 10 ? pl0 : gb === 11 ? pl1 : pl2) : 0);
+      let xa = pa[o];
+      let ya = pa[o + 1];
+      let za = pa[o + 2];
+      if (ga >= PART_STEP) {
+        const m = (ga >> 2) * PART_STRIDE;
+        const px = xa;
+        const py = ya;
+        xa = MA[m] * px + MA[m + 1] * py + MA[m + 2] * za + MA[m + 3];
+        ya = MA[m + 4] * px + MA[m + 5] * py + MA[m + 6] * za + MA[m + 7];
+        za = MA[m + 8] * px + MA[m + 9] * py + MA[m + 10] * za + MA[m + 11];
+      }
+      let xb = pb[o];
+      let yb = pb[o + 1];
+      let zb = pb[o + 2];
+      if (gb >= PART_STEP) {
+        const m = (gb >> 2) * PART_STRIDE;
+        const px = xb;
+        const py = yb;
+        xb = MB[m] * px + MB[m + 1] * py + MB[m + 2] * zb + MB[m + 3];
+        yb = MB[m + 4] * px + MB[m + 5] * py + MB[m + 6] * zb + MB[m + 7];
+        zb = MB[m + 8] * px + MB[m + 9] * py + MB[m + 10] * zb + MB[m + 11];
+      }
       const j = i * 3;
       const x = xa + (xb - xa) * e + jit[j] * bj;
-      const y = pa[o + 1] + (pb[o + 1] - pa[o + 1]) * e + jit[j + 1] * bj;
-      const z = pa[o + 2] + (pb[o + 2] - pa[o + 2]) * e + jit[j + 2] * bj;
+      const y = ya + (yb - ya) * e + jit[j + 1] * bj;
+      const z = za + (zb - za) * e + jit[j + 2] * bj;
       const x1 = x * cyw + z * syw;
       const z1 = -x * syw + z * cyw;
       const y2 = y * cp - z1 * sp;
@@ -262,12 +298,24 @@ export class DotRenderer {
       if (dust) tone = 1;
       else if (q[o + 4] > 0.5) tone = 3;
       else {
-        const f = 1 - Math.abs(q[o + 5] * vx + q[o + 6] * vy + q[o + 7] * vz);
+        let nx = q[o + 5];
+        let ny = q[o + 6];
+        let nz = q[o + 7];
+        if (g >= PART_STEP) {
+          // The normal turns with its part, so the rim light stays where the camera sees it.
+          const m = (g >> 2) * PART_STRIDE;
+          const ax = nx;
+          const ay = ny;
+          nx = MQ[m] * ax + MQ[m + 1] * ay + MQ[m + 2] * nz;
+          ny = MQ[m + 4] * ax + MQ[m + 5] * ay + MQ[m + 6] * nz;
+          nz = MQ[m + 8] * ax + MQ[m + 9] * ay + MQ[m + 10] * nz;
+        }
+        const f = 1 - Math.abs(nx * vx + ny * vy + nz * vz);
         tone = f > 0.8 ? 2 : f > 0.4 ? 1 : 0;
       }
       let lv = (z2 + 2.5) | 0;
       lv = lv < 0 ? 0 : lv > 4 ? 4 : lv;
-      keys[i] = ((g >= 10 ? 3 : g) * 4 + tone) * DEPTH_LEVELS + lv;
+      keys[i] = ((g & 3) * 4 + tone) * DEPTH_LEVELS + lv;
     }
 
     // 2) clip the box to the canvas, then pick the buffer scale

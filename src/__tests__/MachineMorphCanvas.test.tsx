@@ -196,12 +196,23 @@ describe('buildShapes (C6)', () => {
     }
   });
 
-  it('only the reciprocating pump has moving plunger particles (groups 10-12)', () => {
+  // group = colour (group & 3) + 4 × part (group >> 2); part 0 is fixed, part k moves with parts[k − 1]
+  // (every machine's rotor train turns since 2026-10-12 — the details are in machineParts.test.ts).
+  it('every machine has moving parts; only the reciprocating pump has sliding ones (its three plungers, colour 3)', () => {
     for (const sh of shapes) {
+      expect(sh.parts.length).toBeGreaterThanOrEqual(1);
       const groups = new Set<number>();
-      for (let i = 3; i < sh.pts.length; i += 8) if (sh.pts[i] >= 10) groups.add(sh.pts[i]);
-      if (sh.name === 'Reciprocating pump') expect([...groups].sort()).toEqual([10, 11, 12]);
-      else expect(groups.size).toBe(0);
+      for (let i = 3; i < sh.pts.length; i += 8) {
+        expect(sh.pts[i] >> 2).toBeLessThanOrEqual(sh.parts.length);
+        if (sh.pts[i] >= 4) groups.add(sh.pts[i]);
+      }
+      expect(groups.size).toBeGreaterThan(0);
+      const slides = sh.parts.filter(p => p.kind === 'slide');
+      if (sh.name === 'Reciprocating pump') {
+        expect(slides.map(p => p.phase)).toEqual([0, 2.094, 4.188]);
+        // parts 2-4 are the plungers: bright metal (colour 3) -> groups 11, 15, 19
+        expect([...groups].filter(g => g >> 2 >= 2).sort((a, b) => a - b)).toEqual([11, 15, 19]);
+      } else expect(slides).toHaveLength(0);
     }
   });
 
