@@ -5174,7 +5174,6 @@ body {
 .wb2-scroll { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; }
 .wb2-stale { display: flex; align-items: center; gap: 12px; margin: 10px 18px 0; padding: 10px 12px; border-radius: 10px; background: var(--warn-muted); border: 1px solid var(--warn-line); font-size: 12.5px; color: var(--warn); }
 .wb2-stale b { color: var(--text-primary); }
-.wb2-aff { font-size: 10px; font-weight: 500; color: var(--warn); margin-left: 6px; }
 
 /* board of chart cards */
 .wb2-board { padding: 12px 18px 14px; display: grid; gap: 12px; align-content: start; }

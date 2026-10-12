@@ -4916,23 +4916,27 @@ describe('Workbench two pages — shell + Model fit page (health score 3b-1)', (
         });
     });
 
-    describe('Model settings: "changing it sets the model to Incomplete" hints', () => {
-        it('next to the training data, predictors and stiffness (Relationship)', async () => {
+    // The amber note used to stand next to every training input of every model — it read as a
+    // warning that something was filled in wrong (real-app report 2026-10-12) and was removed.
+    describe('Model settings: no "changing it sets the model to Incomplete" note beside the fields', () => {
+        it('Relationship: none next to the training data, predictors or stiffness — the labels stand alone', async () => {
             await mount([REL()]);
             openSettings();
             const form = screen.getByTestId('add-model-form');
-            expect(within(form).getAllByTestId('incomplete-hint')).toHaveLength(3);
+            expect(within(form).queryAllByTestId('incomplete-hint')).toHaveLength(0);
+            expect(form.textContent).not.toMatch(/sets the model to Incomplete/);
             for (const label of ['Predictor sensors (≥ 1)', 'Stiffness', 'Training data']) {
-                expect(screen.getByText(label).parentElement!.querySelector('[data-testid="incomplete-hint"]')?.textContent).toBe('changing it sets the model to Incomplete');
+                expect(screen.getByText(label).parentElement!.querySelector('.wb2-aff')).toBeNull();
             }
         });
 
-        it('next to the sensors and clusters (Clustering) and the training data; none for the name', async () => {
-            await mount([makeModel({ id: 'c1', kind: 'clustering', targetSensor: '', xSensor: 'TAG1', ySensor: 'TAG2' })]);
+        it('Clustering: none next to the sensors, clusters or training data either — also on a Complete model', async () => {
+            await mount([withTrained(makeModel({ id: 'c1', kind: 'clustering', targetSensor: '', xSensor: 'TAG1', ySensor: 'TAG2', status: true }))]);
             openSettings();
-            const hinted = ['Y sensor (target)', 'Criteria sensor (optional)', 'Clusters', 'Training data'];
-            for (const label of hinted) expect(screen.getByText(label).parentElement!.querySelector('[data-testid="incomplete-hint"]'), label).toBeTruthy();
-            expect(screen.getByText('Model name').parentElement!.querySelector('[data-testid="incomplete-hint"]')).toBeNull();
+            const form = screen.getByTestId('add-model-form');
+            for (const label of ['Y sensor (target)', 'Criteria sensor (optional)', 'Clusters', 'Training data']) expect(screen.getByText(label), label).toBeTruthy();
+            expect(within(form).queryAllByTestId('incomplete-hint')).toHaveLength(0);
+            expect(form.textContent).not.toMatch(/sets the model to Incomplete/);
         });
     });
 });
