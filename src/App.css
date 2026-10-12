@@ -5231,6 +5231,9 @@ body {
 .hs-setwrap > .wb2-card { flex: 1; }
 .hs-setwrap .wb2-cv { flex: 1; min-height: 330px; height: auto; }
 .hs-spp { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+/* The set-points card fills its row, down to the bottom edge of the chart beside it — the same
+   shape as the row below (score chart + "Share of scored hours"). */
+.hs-spp > .hs-card { flex: 1 1 auto; }
 .hs-card { background: var(--bg-primary); border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px 12px; min-width: 0; display: flex; flex-direction: column; }
 .hs-note { font-size: 11px; color: var(--text-faint); line-height: 1.45; }
 .hs-good { color: var(--ok); }

@@ -237,4 +237,9 @@ describe('CSS class coverage (static — jsdom cannot see App.css)', () => {
         const missing = [...CSS.matchAll(/var\(\s*(--[\w-]+)\s*\)/g)].map(m => m[1]).filter(v => !defs.has(v));
         expect([...new Set(missing)]).toEqual([]);
     });
+
+    // Layout rules no component test can see (jsdom lays nothing out).
+    it('Health score page: the set-points card fills its row, down to the bottom of the chart beside it', () => {
+        expect(CSS).toMatch(/\.hs-spp > \.hs-card \{ flex: 1 1 auto; \}/);
+    });
 });

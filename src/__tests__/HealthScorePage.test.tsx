@@ -672,6 +672,11 @@ describe('Health score chart', () => {
         // the same plot box: left and right margins are equal
         const g = (c: any) => [c.option.grid.left, c.option.grid.right];
         expect(g(scoreChart())).toEqual(g(setChart()));
+        // the set-points card is stretched to the bottom of its row, like the shares card below it (real-app
+        // request 2026-10-12: "pull it down so it is the same layout") — the CSS rule itself is checked in
+        // CssClassCoverage.test.ts; here: it is the card the rule names
+        expect(screen.getByTestId('set-points-card').parentElement!.className).toBe('hs-spp');
+        expect(screen.getByTestId('set-points-card').className).toContain('hs-card');
         // one zoom window: both listen for a zoom and join through the same ready handler
         expect(typeof scoreChart().onEvents.datazoom).toBe('function');
         expect(scoreChart().onEvents.datazoom).toBe(setChart().onEvents.datazoom);
