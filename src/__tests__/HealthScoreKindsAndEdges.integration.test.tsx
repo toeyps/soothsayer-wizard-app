@@ -427,10 +427,11 @@ describe('Mark complete (Health score page) is the only way a model becomes Comp
         await settle(400);
         await waitFor(() => expect(markBtn().disabled).toBe(false));
         // The fit came back BY ITSELF, so the refusal stays on the page (it is what tells the
-        // user to click again) — but the footer no longer says "fix it": nothing is left to
-        // fix, only the second click is missing.
+        // user to click again) — but the notice line no longer says "fix it": nothing is left
+        // to fix, only the second click is missing.
         expect(bmw().getByTestId('save-error').textContent).toMatch(/Mark complete again once it is loaded\.$/);
-        const footSentence = bmw().getByTestId('wb-footer').querySelector('.wbx-reason')!.textContent;
+        expect(bmw().getByTestId('wb-notice').getAttribute('data-tone')).toBe('bad');
+        const footSentence = bmw().getByTestId('wb-notice').querySelector('.wbx-reason')!.textContent;
         expect(footSentence).toBe('Not saved · the Relation model is loaded again — Mark complete again');
         expect(footSentence).not.toMatch(/fix it/);
         await act(async () => { fireEvent.click(markBtn()); });

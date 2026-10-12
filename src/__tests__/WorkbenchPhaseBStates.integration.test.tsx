@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { openTabStatus } from './helpers/workbenchStatus';
 import { act, cleanup, fireEvent, waitFor } from '@testing-library/react';
 
 /*
@@ -80,9 +81,12 @@ const STAMP = String.raw`\d{4}/\d{2}/\d{2} \d{2}:\d{2}`;
 const wsWrites = () => env.writes.filter(w => w.path === wsFile()).length;
 /** The models' slice of the workspace file, as text. */
 const fgOnDisk = () => JSON.stringify(readDisk().failureGroupState);
-const footer = () => bmw().getByTestId('wb-footer');
-const sentence = () => (footer().querySelector('.wbx-reason') as HTMLElement).textContent;
-const footPill = () => bmw().getByTestId('footer-pill').textContent;
+/** The notice line (null when there is nothing to fix or wait for: no line at all). */
+const footer = () => bmw().queryByTestId('wb-notice');
+const sentence = () => footer()?.querySelector('.wbx-reason')?.textContent ?? null;
+/** "Complete" / "Trained" / "Incomplete" of the model whose kind tab is open — read from the status words on
+ *  that tab (the footer pill is gone: Workbench detail v2 §4). */
+const footPill = () => openTabStatus(bmwEl());
 /** A kind tab's status words: the dot's tooltip — and the SAME string shown on the tab beside the dot (v2 §2). */
 const tabWords = (id: string) => {
     const title = bmw().getByTestId(`tab-status-${id}`).getAttribute('title');
@@ -109,7 +113,7 @@ async function readyIndividual(over: Record<string, unknown> = {}) {
 // ---------------------------------------------------------------------------
 
 describe('the health score failed to load (SPEC §4 "Preview failed")', () => {
-    it('Mark complete is disabled with the footer reason; a set point typed under the red card keeps its input mounted and is saved on blur; Retry recovers and Mark complete then writes what was typed', async () => {
+    it('Mark complete is disabled with the reason in the notice line and under the button; a set point typed under the red card keeps its input mounted and is saved on blur; Retry recovers and Mark complete then writes what was typed', async () => {
         await readyIndividual();
         expect(dashDot(1, 'tag1', 'individual')).toBe('trained');
 
@@ -120,11 +124,13 @@ describe('the health score failed to load (SPEC §4 "Preview failed")', () => {
         expect(bmw().getByTestId('health-error').textContent).toBe("Couldn't load the health score. Failed to read column: transient I/O error · the score and Checks are not available until it loadsRetry");
         expect(bmw().getByTestId('checks-unavailable').textContent).toBe('Not available until the health score loads.');
         expect(bmw().getByTestId('score-locked').textContent).toMatch(/Score not available/);
-        // Mark complete: disabled, and the footer (the one status sentence) says why
+        // Mark complete: disabled — the notice line (the one sentence) and the line under the button say why
         expect(markBtn().disabled).toBe(true);
         expect(markBtn().title).toBe('The health score did not load · Retry above, then Mark complete');
         expect(bmw().getByTestId('mark-block-reason').textContent).toBe('The health score did not load · Retry above, then Mark complete');
-        expect(footer().querySelectorAll('.wbx-reason')).toHaveLength(1);
+        expect(bmw().getByTestId('state-why').textContent).toBe('The health score did not load · Retry above, then Mark complete');
+        expect(footer()!.querySelectorAll('.wbx-reason')).toHaveLength(1);
+        expect(footer()!.getAttribute('data-tone')).toBe('warn');
         expect(footPill()).toBe('Trained');
         // the value typed before the failure was saved all the same
         expect(diskModel('i1').healthSetPoints.upper).toBe(85);
@@ -158,7 +164,9 @@ describe('the health score failed to load (SPEC §4 "Preview failed")', () => {
         await waitFor(() => expect(bmw().queryByTestId('health-error')).toBeNull());
         await waitFor(() => expect(bmw().getByTestId('check-valid')).toBeTruthy());
         expect(input('sp-lower')).toBe(el);
-        await waitFor(() => expect(sentence()).toBe('Set points valid — check the score chart, then Mark complete'));
+        // valid again: nothing to fix or wait for, so no notice line and no reason under the button
+        await waitFor(() => expect(bmw().queryByTestId('state-why')).toBeNull()); // (no "Checking…" left either)
+        expect(footer()).toBeNull();
         await markComplete();
         await waitFor(() => expect(diskModel('i1').status).toBe(true));
         expect(diskModel('i1').healthExport.setPoints).toMatchObject({ lower: 15, upper: 85 });
@@ -166,7 +174,7 @@ describe('the health score failed to load (SPEC §4 "Preview failed")', () => {
         await waitFor(() => expect(dashDot(1, 'tag1', 'individual')).toBe('complete'));
     });
 
-    it('STALE_SESSION (the dataset was replaced under the window): its own reason in the footer, NO Retry on the card, the typed value stays and is saved', async () => {
+    it('STALE_SESSION (the dataset was replaced under the window): its own reason in the notice line, NO Retry on the card, the typed value stays and is saved', async () => {
         await readyIndividual();
         env.backend!.loadDataset('plant'); // a new Rust session: this window's generation is old
         const el = input('sp-upper');
@@ -197,17 +205,19 @@ describe('the health score failed to load (SPEC §4 "Preview failed")', () => {
 // ---------------------------------------------------------------------------
 
 describe('a save error and the recovery (SPEC §4 "Save error")', () => {
-    it('Mark complete fails writing → red card with the file + "Not saved…" → a set point is edited → both go and the footer shows the real state → Mark complete succeeds → "Files saved <date>" in the one date format', async () => {
+    it('Mark complete fails writing → red card with the file + "Not saved…" → a set point is edited → both go and the notice line goes with them (nothing left to fix) → Mark complete succeeds → "Files saved <date>" in the one date format', async () => {
         await readyIndividual();
         const why = `Couldn't write ${env.backend!.outputDir(WS)}/TAG1/INDV_INFO_TAG1.json — the file is open in another program.`;
         env.backend!.failOn('export_model_files', () => true, why);
         await act(async () => { fireEvent.click(markBtn()); });
         await waitFor(() => expect(bmw().getByTestId('save-error')).toBeTruthy());
-        // the red card carries the file; the footer says what to do
+        // the red card carries the file; the notice line (red) says what to do
         expect(bmw().getByTestId('save-error').className).toContain('hs-save--bad');
         expect(bmw().getByTestId('save-error-reason').textContent).toBe(why);
         expect(sentence()).toBe('Not saved · fix it, then Mark complete again');
-        expect((footer().querySelector('.wbx-reason') as HTMLElement).getAttribute('data-tone')).toBe('bad');
+        expect((footer()!.querySelector('.wbx-reason') as HTMLElement).getAttribute('data-tone')).toBe('bad');
+        expect(footer()!.getAttribute('data-tone')).toBe('bad');
+        expect(footer()!.getAttribute('role')).toBe('status');
         expect(footPill()).toBe('Trained');
         expect(diskModel('i1').status).toBe(false);
         expect(diskModel('i1').healthExport).toBeUndefined();
@@ -224,8 +234,10 @@ describe('a save error and the recovery (SPEC §4 "Save error")', () => {
         typeSp('sp-upper', '85');
         blurSp('sp-upper');
         await settle(350);
-        await waitFor(() => expect(sentence()).toBe('Set points valid — check the score chart, then Mark complete'));
-        expect(footer().textContent).not.toMatch(/Not saved/);
+        // valid set points, nothing to fix or wait for: the notice line is gone altogether
+        await waitFor(() => expect(markBtn().disabled).toBe(false));
+        expect(footer()).toBeNull();
+        expect(sentence()).toBeNull();
         expect(bmw().queryByTestId('save-error')).toBeNull();
 
         // Mark complete succeeds (the fault was a one-off)
@@ -238,7 +250,9 @@ describe('a save error and the recovery (SPEC §4 "Save error")', () => {
         expect(bmw().getByTestId('save-ok').querySelector('.wbx-dt')!.textContent)
             .toBe(`${at.getFullYear()}/${pad(at.getMonth() + 1)}/${pad(at.getDate())} ${pad(at.getHours())}:${pad(at.getMinutes())}`);
         expect(bmw().getByTestId('footer-saved-path').getAttribute('title')).toBe(env.backend!.outputDir(WS));
-        expect(bmw().getByTestId('save-ok').closest('[data-testid="wb-footer"]')).not.toBeNull();
+        // the confirmation is the notice line (tone "ok") — there is no banner and no footer bar
+        expect(bmw().getByTestId('save-ok').closest('[data-testid="wb-notice"]')).not.toBeNull();
+        expect(footer()!.getAttribute('data-tone')).toBe('ok');
         expect(bmwEl().textContent).not.toMatch(/Files saved to/);
         expect(footPill()).toBe('Complete');
         expect(diskModel('i1')).toMatchObject({ status: true, healthSetPoints: { lower: 20, upper: 85 } });
@@ -302,7 +316,7 @@ describe('at most 5 clusters (user decision 2026-10-10)', () => {
         expect(bmwDot('c1')).toEqual({ state: 'complete', colour: 'complete' });
         expect(dashDot(1, 'tag3', 'clustering')).toBe('complete');
         expect(bmw().queryByTestId('save-changes')).toBeNull();
-        expect(footer().textContent).not.toMatch(/Unsaved/);
+        expect(sentence() ?? '').not.toMatch(/Unsaved/);
         expect(bmw().queryByTestId('stale-banner')).toBeNull();
         // Rust was asked for 7 clusters with the 7 saved ranges
         const req = env.backend!.cmds('compute_health_preview').filter(c => c.args.request.kind === 'clustering').pop()!;
@@ -420,7 +434,7 @@ describe('drafts and the new page spine', () => {
         // the Relation model's tab is opened: this tab has no draft — the other tab's tooltip carries it
         selectKindTab('Relation model');
         await waitForCharts();
-        expect(footer().textContent).not.toMatch(/Unsaved/);
+        expect(footer(), 'a trained model with no draft has no notice line').toBeNull();
         expect(bmw().queryByTestId('save-changes')).toBeNull();
         expect(tabLabel(/^Individual/)).toBe('Individual, Trained · unsaved changes');
         expect(bmw().getByRole('tab', { name: /^Individual/ }).getAttribute('title')).toBe('Individual · Trained · unsaved changes');
@@ -445,7 +459,8 @@ describe('drafts and the new page spine', () => {
         openSettings();
         expect(nameBox().value).toBe('Pressure I (edited)');
         expect(sentence()).toBe('Unsaved changes to the Individual model');
-        expect(footer().getAttribute('data-primary')).toBe('save');
+        expect(footer()!.getAttribute('data-tone')).toBe('plain');
+        expect(bmw().getByTestId('wb-actions').getAttribute('data-primary')).toBe('save');
         await saveChanges();
         await waitFor(() => expect(diskModel('i1').name).toBe('Pressure I (edited)'));
         await waitFor(() => expect(tabLabel(/^Individual/)).toBe('Individual, Trained'));
@@ -493,13 +508,12 @@ describe('a CSV stamp with "Z" / an offset shows its OWN wall clock everywhere (
         selectSensor('tag1');
         await waitForCharts();
 
-        // footer: an instant the APP recorded (UTC on disk) shown in local time, the one format
-        const trained = new Date(diskModel('i1').lastTrainedAt);
-        const pad = (n: number) => String(n).padStart(2, '0');
-        const local = (d: Date) => `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-        expect(footer().querySelector('.wbx-dt')!.textContent).toBe(local(trained));
-        expect(sentence()).toMatch(new RegExp(`^Trained ${STAMP} · scored on 1 period · `));
-        expect(footer().textContent).not.toMatch(/\d{4}-\d{2}-\d{2}|T\d\d:|Z\b|\+07:00|\b(AM|PM)\b/);
+        // No train date and no "scored on N periods" anywhere on the page (user decision
+        // 2026-10-12): a trained, up-to-date model has no notice line at all.
+        expect(diskModel('i1').lastTrainedAt).toBeTruthy();
+        expect(footer()).toBeNull();
+        expect(bmwEl().textContent).not.toMatch(/scored on \d+ period|Trained \d{4}\/\d{2}\/\d{2}/);
+        expect(bmwEl().textContent).not.toMatch(/\d{4}-\d{2}-\d{2}T|\+07:00|\b(AM|PM)\b/);
 
         // Model fit (RAW rows): every point of the time chart sits at its row's own clock
         const timeChart = env.charts.filter(c => c.option?.xAxis?.type === 'time').pop()!;

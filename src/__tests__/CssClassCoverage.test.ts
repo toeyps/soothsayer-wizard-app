@@ -43,7 +43,7 @@ const CSS = RAW_CSS.replace(/\/\*[\s\S]*?\*\//g, '');
 const STYLED_PREFIXES = [
     'bmw', 'wb2', 'wb3', 'hs', 'rcc', 'rcm', 'rcs', 'rcx', 'fg', 'pm', 'f4',
     'sensor-picker', 'predictor-picker', 'sensor-autocomplete',
-    'kind-badge', 'model-kind-icon', 'model-status-pill', 'pair-regl', 'scatter-regl',
+    'kind-badge', 'model-kind-icon', 'pair-regl', 'scatter-regl',
     'special-sensor', 'highlights', 'timebar', 'line-chart',
     'tpe', 'vt',                       // Train/Test validation (TestPeriodsEditor, ValidationCards)
     'sl', 'pk', 'cp', 'tt',            // shared SensorLabel / SensorPicker / ColourPicker / tooltip rows
@@ -67,12 +67,12 @@ const DYNAMIC_ENUMS: Record<string, readonly string[]> = {
     'fg-sheet-cell--': ['individual', 'relationship', 'clustering'],
     'kind-badge--': ['individual', 'relationship', 'clustering'],
     'model-kind-icon--': ['individual', 'relationship', 'clustering'],
-    'model-status-pill--': ['complete', 'trained', 'incomplete'],               // BuildModelWindow pillState
     'f4-kb-dot--': ['trained', 'complete', 'need', 'bad'],                       // dotStatusFor + DOT_CLASS
     'rc-impact--': ['amber', 'grey'],                                             // BuildModelWindow: the impact line next to Apply (tone)
     'wb2-card--': ['tall', 'xtall', 'stack', 'stackxy'],                         // ChartCardSize minus 'normal'
     'wb3-kpi--': ['ok', 'warn', 'bad'],                                          // Kpi tone (a score value's band colour)
     'hs-chk--': ['ok', 'need', 'bad'],
+    'wb3-notice--': ['plain', 'warn', 'bad', 'ok'],                              // BuildModelWindow renderStateParts: the tone of the notice line
     'wb3-tab-words--': ['complete', 'need', 'bad'],                              // BuildModelWindow tabDotOf: the tone of a kind tab's status words
     'wb3-ruler--': ['individual', 'relationship', 'clustering'],                 // ScoreRuler: the model kind
     'wb3-ruler-sc--': ['ok', 'warn', 'bad', 'off'],                              // ScoreRuler: a tick's score colour (off = no score yet)
@@ -100,6 +100,13 @@ const DELETED_IN_PHASE4 = [
     'pm-chart-empty', 'pm-config-block', 'pm-config-dim', 'pm-fields',
     'f4-seg--two', 'f4-wsw', 'f4-wsw-t', 'f4-wsw-s', 'f4-reason--bad', 'f4-formula', 'f4-formula--compact',
     'f4-rolist', 'f4-roline', 'f4-roline--sans', 'f4-roline-d', 'f4-dot--faint', 'bmw-result-stats',
+] as const;
+
+/** Deleted with the Workbench footer bar (detail pages v2, phase 4b): the status pill and
+ *  the sticky footer — the header holds the buttons, a notice line the sentence. */
+const DELETED_WITH_THE_FOOTER_BAR = [
+    'model-status-pill', 'model-status-pill--complete', 'model-status-pill--trained', 'model-status-pill--incomplete',
+    'f4-foot', 'wbx-foot',
 ] as const;
 
 // ── helpers ──────────────────────────────────────────────────────────────
@@ -217,6 +224,16 @@ describe('CSS class coverage (static — jsdom cannot see App.css)', () => {
             const re = new RegExp(`(?<![\\w-])${c.replace(/-/g, '\\-')}(?![\\w-])`);
             for (const { rel, code } of FILES) if (re.test(code)) hits.push(`${c} (${rel})`);
             if (DEFINED.has(c)) hits.push(`${c} (re-added to App.css — fine only if a component uses it again)`);
+        }
+        expect(hits).toEqual([]);
+    });
+
+    it('the footer bar\'s classes (status pill, sticky footer) are referenced nowhere in source and have no rule left', () => {
+        const hits: string[] = [];
+        for (const c of DELETED_WITH_THE_FOOTER_BAR) {
+            const re = new RegExp(`(?<![\\w-])${c.replace(/-/g, '\\-')}(?![\\w-])`);
+            for (const { rel, code } of FILES) if (re.test(code)) hits.push(`${c} (${rel})`);
+            if (DEFINED.has(c)) hits.push(`${c} (still has a rule in App.css)`);
         }
         expect(hits).toEqual([]);
     });

@@ -365,7 +365,7 @@ describe('(1) opening a v1 (pre-Feature-4) workspace', () => {
 // (2) one gate: the footer reason === Train's reason === the shared helper's
 // ─────────────────────────────────────────────────────────────────────────
 
-describe('(2) the Workbench footer reason and the Train button agree with the shared gate helper', () => {
+describe('(2) the Workbench notice-line reason and the Train button agree with the shared gate helper', () => {
     const configured = () => wsState(currentFg([model({ id: 'i1' })], { runningConditionNoneConfirmed: true }));
 
     const cases: [string, Record<string, unknown>][] = [
@@ -376,7 +376,7 @@ describe('(2) the Workbench footer reason and the Train button agree with the sh
     ];
 
     for (const [label, patch] of cases) {
-        it(`${label}: a broadcast re-blocks Train, and the footer shows the SAME reason`, async () => {
+        it(`${label}: a broadcast re-blocks Train, and the notice line shows the SAME reason`, async () => {
             writeDisk(configured());
             await mountBuildModel();
             closeRcModal();
@@ -394,7 +394,7 @@ describe('(2) the Workbench footer reason and the Train button agree with the sh
             expect(reason).toBe(getBuildBlockReason(disk.models[0], disk, HEADERS));
             // Mark complete is not on this page at all (it lives on the Health score page, locked here).
             expect(screen.queryByText('✓ Mark complete')).toBeNull();
-            expect((screen.getByTestId('next-health-score') as HTMLButtonElement).disabled).toBe(true);
+            expect(screen.getByTestId('page-tab-health').getAttribute('aria-disabled')).toBe('true');
             fireEvent.click(trainBtn());
             await settle(30);
             expect(readDisk().failureGroupState.models[0].status).toBe(false);
@@ -631,7 +631,7 @@ describe('reason text consistency', () => {
         // Mark complete is not on this page (health score 3b-2) and the Health score page stays
         // locked; the Train sensor carries the same gate reason as the footer (preflight wording).
         expect(screen.queryByText('✓ Mark complete')).toBeNull();
-        expect((screen.getByTestId('next-health-score') as HTMLButtonElement).disabled).toBe(true);
+        expect(screen.getByTestId('page-tab-health').getAttribute('aria-disabled')).toBe('true');
         const train = trainBtn();
         expect(train.disabled).toBe(true);
         // Same reason, in the preflight wording ("above" reads wrong there).

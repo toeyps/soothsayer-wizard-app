@@ -801,7 +801,7 @@ describe('leaving the workspace while a Relationship Mark complete is still savi
         const gate = be.health.gate('sidecar:export_model_files');
         await act(async () => { fireEvent.click(bmw().getByTestId('mark-complete')); });
         await settle(30);
-        // saving is said in the footer only (no card on the page unless the save is slow)
+        // saving is said in the notice line only (no card on the page unless the save is slow)
         expect(bmw().queryByTestId('save-running')).toBeNull();
         expect(bmw().getByTestId('footer-status').textContent).toMatch(/Saving the model files…/);
 

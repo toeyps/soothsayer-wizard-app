@@ -104,9 +104,11 @@ async function expectDemoted(id: string, before: any, o: { group?: number; key?:
 /** Build Model shows the active (demoted) model as stale everywhere. */
 function expectStaleUi() {
     expect(pill()).toBe('Incomplete');
-    const h = bmw().getByTestId('next-health-score') as HTMLButtonElement;
-    expect(h.disabled).toBe(true);
-    expect(h.title).toBe('Re-train first');
+    // the Health score page is closed: page tab ② says why, and there is no disabled "Next" copy
+    const h = bmw().getByTestId('page-tab-health');
+    expect(h.getAttribute('aria-disabled')).toBe('true');
+    expect(bmw().getByTestId('page-tab-health-why').textContent).toBe('Re-train first');
+    expect(bmw().queryByTestId('next-health-score')).toBeNull();
     expect(bmw().getByTestId('stale-banner')).toBeTruthy();
 }
 
@@ -165,7 +167,7 @@ describe('model-setting triggers (Save changes)', () => {
         openSettings();
         fireEvent.click(bmw().getByRole('button', { name: 'Custom' }));
         // An unsaved draft already reads as out of date (draft-aware): Health page closed.
-        expect((bmw().getByTestId('next-health-score') as HTMLButtonElement).disabled).toBe(true);
+        expect(bmw().getByTestId('page-tab-health').getAttribute('aria-disabled')).toBe('true');
         expect(diskModel('i1').status).toBe(true); // nothing written yet
         await saveChanges();
         await expectDemoted('i1', before, { key: 'tag1', kind: 'individual' });
@@ -335,7 +337,7 @@ describe('NOT triggers: the model stays Complete', () => {
     });
 });
 
-describe('ONE truth: Dashboard dot, Build Model dot, tab pill, page switch', () => {
+describe('ONE truth: Dashboard dot, Build Model dot, kind-tab words, page tabs', () => {
     it('never trained -> trained (needs set points) -> invalid set point -> valid -> complete -> complete-but-changed -> stale', async () => {
         writeDisk(wsTrained({}, [model({ id: 'i1', kind: 'individual', healthSetPoints: { kind: 'individual', lower: null, upper: null, masterLower: null, masterUpper: null } })]));
         // strip the train record: "never trained"
@@ -350,7 +352,8 @@ describe('ONE truth: Dashboard dot, Build Model dot, tab pill, page switch', () 
         // never trained
         expect(dashDot(1, 'tag1', 'individual')).toBe('none');
         expect(bmwDot('i1').state).toBe('none');
-        expect((bmw().getByTestId('next-health-score') as HTMLButtonElement).title).toBe('Train the model first');
+        expect(bmw().getByTestId('page-tab-health-why').textContent).toBe('Train the model first');
+        expect(bmw().queryByTestId('next-health-score')).toBeNull(); // no disabled copy of it
         expect(bmwEl().querySelector('[data-testid="page-model-done"]')).toBeNull();
 
         // trained, set points empty
@@ -387,7 +390,9 @@ describe('ONE truth: Dashboard dot, Build Model dot, tab pill, page switch', () 
         expect(bmwDot('i1').state).toBe('complete');
         await waitFor(() => expect(dashDot(1, 'tag1', 'individual')).toBe('complete'));
         expect(bmwEl().querySelector('[data-testid="page-health-done"]')).toBeNull();
-        expect(bmw().getByTestId('footer-pill').textContent).toBe('Complete');
+        expect(pill()).toBe('Complete');
+        expect(bmwEl().querySelector('[data-testid="footer-pill"]')).toBeNull(); // no status pill: the kind tab says it
+        expect(bmwEl().querySelector('[data-testid="tab-words-i1"]')!.textContent).toBe('Complete');
 
         // complete but changed after saving: still Complete everywhere + the hint
         await enterSp({ 'sp-lower': '11' });

@@ -249,7 +249,7 @@ describe('Relationship: the whole journey', () => {
         const gate = env.backend!.gate('sidecar:export_model_files');
         await act(async () => { fireEvent.click(markBtn()); });
         await settle(30);
-        // saving is the footer sentence (a line on the page only once the save IS slow)
+        // saving is the notice line's sentence (a line on the page only once the save IS slow)
         expect(bmw().queryByTestId('save-running')).toBeNull();
         expect(bmw().getByTestId('footer-status').textContent).toMatch(/Saving the model files…/);
         expect(markBtn().disabled).toBe(true);
@@ -257,9 +257,10 @@ describe('Relationship: the whole journey', () => {
         gate.release();
         await settle(50);
         await waitFor(() => expect(bmw().getByTestId('save-ok')).toBeTruthy());
-        // the saved message is the footer sentence (no banner, no file list on the page)
+        // the saved message is the notice line (no banner, no file list on the page)
         expect(bmw().getByTestId('save-ok').textContent).toMatch(/^Files saved \d{4}\/\d{2}\/\d{2} \d{2}:\d{2} · /);
-        expect(bmw().getByTestId('save-ok').closest('.f4-foot')).not.toBeNull();
+        expect(bmw().getByTestId('save-ok').closest('[data-testid="wb-notice"]')).not.toBeNull();
+        expect(bmw().getByTestId('wb-notice').getAttribute('data-tone')).toBe('ok');
         const exp = env.backend!.cmds('export_model_files').pop()!;
         expect(exp.args.request.cache_key).toBe(pr.args.cache_key);
         expect(exp.args.request.lambda).toBe(100_000);

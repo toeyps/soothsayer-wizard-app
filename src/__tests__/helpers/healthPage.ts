@@ -5,7 +5,7 @@ import { act, fireEvent, screen, waitFor, type BoundFunctions, type queries } fr
  * Drives the Build Model Workbench's Health score page from an integration
  * test: since 3b-2 a model is completed ONLY there
  * ("Mark complete" no longer exists on the Model fit page), so every test that
- * used to click the footer button goes through these.
+ * used to click the old footer button goes through these.
  *
  * `q` is the query scope (the default `screen`, or a `within(container)` when two
  * windows are mounted side by side).
@@ -36,15 +36,27 @@ const VALID_INPUTS: Record<string, Record<string, string>> = {
     clustering: { 'sp-outer_sd': '5' },
 };
 
-/** The "2 Health score" page switch - disabled until the model is trained and fresh
+/** Page tab ② "Health score" — the door to the page. It is CLOSED (aria-disabled, still
+ *  focusable, its reason in place of the caption) until the model is trained and fresh
  *  (and the gate passes), exactly when the old footer "Mark complete" could be enabled. */
-export const healthPageButton = (q: Q = screen) => q.getByTestId('next-health-score') as HTMLButtonElement;
+export const healthPageTab = (q: Q = screen) => q.getByTestId('page-tab-health') as HTMLButtonElement;
+
+/** True while the Health score page cannot be opened. "Next: Health score →" is then
+ *  never a pressable button either (it is rendered only when it is the next step or can
+ *  be pressed — Workbench detail v2 §1). */
+export const healthPageClosed = (q: Q = screen): boolean => {
+    const closed = healthPageTab(q).getAttribute('aria-disabled') === 'true';
+    const next = q.queryByTestId('next-health-score') as HTMLButtonElement | null;
+    if (closed) expect(next === null || next.disabled, 'no pressable "Next: Health score" while page tab ② is closed').toBe(true);
+    return closed;
+};
 
 const settle = (ms = 30) => act(async () => { await new Promise(r => setTimeout(r, ms)); });
 
 /** Opens the Health score page and waits for its first answer. */
 export async function openHealthPage(q: Q = screen) {
-    fireEvent.click(healthPageButton(q));
+    expect(healthPageClosed(q), `the Health score page is closed: ${healthPageTab(q).title}`).toBe(false);
+    fireEvent.click(healthPageTab(q));
     await waitFor(() => expect(q.getByTestId('set-points-card')).toBeTruthy());
 }
 

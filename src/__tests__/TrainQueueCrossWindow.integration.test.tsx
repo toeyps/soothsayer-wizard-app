@@ -463,14 +463,14 @@ describe('(b) Train all over two failure groups with one failure and one skip', 
         expect(bmwEl().querySelector('[role="tab"][aria-selected="true"]')?.textContent).toMatch(/Individual/);
         expect(bmw().getByRole('heading', { level: 3 }).textContent).toContain('Temp');
 
-        // The failed model: its failure shows in the footer and the Health score stays locked.
+        // The failed model: its failure shows in the notice line (red) and the Health score stays locked.
         fireEvent.click(bmw().getByRole('button', { name: /^All \d+$/ }));
         fireEvent.click(bmw().getByTestId('sensor-list-row-fg:1-tag1'));
         await settle(50);
         expect(bmw().getByTestId('footer-status').textContent).toContain('Training failed');
-        const next = bmw().getByTestId('next-health-score') as HTMLButtonElement;
-        expect(next.disabled).toBe(true);
-        expect(next.title).toBe('Train the model first');
-        expect((bmw().getByTestId('next-health-score') as HTMLButtonElement).disabled).toBe(true);
+        expect(bmw().getByTestId('wb-notice').getAttribute('data-tone')).toBe('bad');
+        expect(bmw().queryByTestId('next-health-score')).toBeNull(); // no disabled copy: page tab ② says why
+        expect(bmw().getByTestId('page-tab-health-why').textContent).toBe('Train the model first');
+        expect(bmw().getByTestId('page-tab-health').getAttribute('aria-disabled')).toBe('true');
     });
 });

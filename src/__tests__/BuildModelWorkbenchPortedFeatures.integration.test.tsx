@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { openTabStatus } from './helpers/workbenchStatus';
 import { render, screen, fireEvent, act, cleanup, waitFor, within } from '@testing-library/react';
 
 /*
@@ -261,7 +262,9 @@ async function mountBoth() {
 
 const bmw = () => within(screen.getByTestId('build-model-window'));
 const bmwEl = () => screen.getByTestId('build-model-window');
-const pill = () => bmwEl().querySelector('.f4-foot .model-status-pill')!.textContent;
+/** "Complete" / "Trained" / "Incomplete" of the model whose kind tab is open — read from the status words on
+ *  that tab (the footer pill is gone: Workbench detail v2 §4). */
+const pill = () => openTabStatus(bmwEl());
 // The Fit chart card's X-axis name. The charts come from the (debounced) health preview, so read it with waitFor.
 const echartsX = () => within(bmw().getByTestId('chart-card-fit')).getByTestId('echarts-mock').getAttribute('data-x-axis-name');
 const dropBuildModelBroadcasts = () => {

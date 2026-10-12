@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { openTabStatus } from './helpers/workbenchStatus';
 import { render, screen, fireEvent, act, cleanup, waitFor, within } from '@testing-library/react';
 
 /*
@@ -107,7 +108,7 @@ vi.mock('../components/charts/ResponsiveECharts', () => ({ default: () => <div d
 
 import BuildModelWindow from '../components/windows/BuildModelWindow';
 import { makeSetPointAwarePreview } from './helpers/healthPreviewFixture';
-import { EXPORT_RESULT_OK, healthPageButton, markCompleteFromHealthPage, markIncompleteFromHealthPage } from './helpers/healthPage';
+import { EXPORT_RESULT_OK, healthPageClosed, markCompleteFromHealthPage, markIncompleteFromHealthPage } from './helpers/healthPage';
 import { emit } from '@tauri-apps/api/event';
 import { updateWorkspaceData, saveWorkspaceData, loadWorkspaceData, duplicateWorkspace } from '../workspaceManager';
 import { withFailureGroupState } from '../utils/failureGroupState';
@@ -195,12 +196,15 @@ function closeRcModal() {
 }
 void closeRcModal;
 
-const pill = () => document.querySelector('.f4-foot .model-status-pill')!.textContent;
-const footerStatus = () => screen.getByTestId('footer-status').textContent;
+/** "Complete" / "Trained" / "Incomplete" of the model whose kind tab is open — read from the status words on
+ *  that tab (the footer pill is gone: Workbench detail v2 §4). */
+const pill = () => openTabStatus(document);
+/** The notice line's sentence, or null when there is no notice line (nothing to fix or wait for). */
+const footerStatus = () => screen.queryByTestId('wb-notice')?.querySelector('.wbx-reason')?.textContent ?? null;
 /** Since health score 3b-2 "Mark complete" lives on the Health score page, which can only be opened for a model
  *  that is trained, fresh and passes the gate - exactly when the old footer button could be enabled. This is
- *  that page's entry button: `.disabled` keeps its old meaning ("Mark complete is not available"). */
-const markCompleteBtn = () => healthPageButton();
+ *  that page's door (page tab ②): `.disabled` keeps its old meaning ("Mark complete is not available"). */
+const markCompleteBtn = () => ({ disabled: healthPageClosed() });
 
 async function clickTrain() {
     await act(async () => { fireEvent.click(screen.getByTestId('train-sensor')); });
@@ -378,7 +382,7 @@ describe('(3) lastTrainedAt / trainedFingerprint survive a save + reload', () =>
         expect(h.invokes.find(c => c.cmd === 'count_period_rows')!.args.filter.value_filters).toHaveLength(1);
     });
 
-    it('a Complete model keeps its training metadata through reload and its footer says "Trained <date>" (the one date format)', async () => {
+    it('a Complete model keeps its training metadata through reload — and the page prints no train date (no notice line on Model fit)', async () => {
         writeDisk(wsState(currentFg([dashModel({ id: 'i1' })])));
         await mountBuildModel();
         await clickTrain();
@@ -389,7 +393,10 @@ describe('(3) lastTrainedAt / trainedFingerprint survive a save + reload', () =>
         await mountBuildModel();
         expect(diskModel('i1').lastTrainedAt).toBeTruthy();
         expect(pill()).toBe('Complete');
-        expect(footerStatus()).toMatch(/^Trained \d{4}\/\d{2}\/\d{2} \d{2}:\d{2}( · scored on \d+ periods?)?$/);
+        // No train date and no "scored on N periods" on the page (user decision 2026-10-12): a
+        // Complete, up-to-date model has no notice line on Model fit.
+        expect(footerStatus()).toBeNull();
+        expect(document.body.textContent).not.toMatch(/scored on \d+ period|Trained \d{4}\/\d{2}\/\d{2}/);
         // Un-marking brings it straight back to Trained (the metadata was never lost).
         await markIncompleteFromHealthPage();
         expect(pill()).toBe('Trained');
@@ -497,7 +504,7 @@ describe('(4) a slow Train that lands after its model or workspace is gone', () 
 // (5) state machine vs. gate vs. what the results area shows
 // ─────────────────────────────────────────────────────────────────────────
 
-describe('(5) pill / footer / Mark complete agree with the results area', () => {
+describe('(5) status words / notice line / Mark complete agree with the results area', () => {
     // "Trained" is judged against `effectiveModelFor` (the persisted model
     // merged with any pending draft): an unsaved draft edit to a fingerprinted
     // field (stiffness, predictors, Y, clusters, Workspace/Custom…) after
@@ -546,7 +553,7 @@ describe('(5) pill / footer / Mark complete agree with the results area', () => 
     // also consult the gate (`buildBlockReason`/`getBuildBlockReason`)
     // directly, instead of relying only on the fingerprint, so they no
     // longer still say Trained while the results area disagrees.
-    it('when the gate blocks a previously trained model, the pill does not still say "Trained"', async () => {
+    it('when the gate blocks a previously trained model, its status does not still say "Trained"', async () => {
         writeDisk(wsState(currentFg([dashModel({ id: 'i1' })], { runningConditionNoneConfirmed: false, runningConditionFilters: [COND] })));
         await mountBuildModel();
         await clickTrain();

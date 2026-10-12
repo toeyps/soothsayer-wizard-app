@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { openTabStatus } from './helpers/workbenchStatus';
 import { act, cleanup, fireEvent, waitFor } from '@testing-library/react';
 
 /*
@@ -83,9 +84,12 @@ const FIT_GONE_ERROR = 'NOT_FITTED: this Relation model has no fit in memory (no
 const fits = () => env.backend!.cmds('preview_relationship_model').filter(c => c.args.cache_key).length;
 /** Every write of the workspace file so far. */
 const wsWrites = () => env.writes.filter(w => w.path === wsFile()).length;
-const footer = () => bmw().getByTestId('wb-footer');
-const sentence = () => (footer().querySelector('.wbx-reason') as HTMLElement).textContent;
-const footPill = () => bmw().getByTestId('footer-pill').textContent;
+/** The notice line (null when there is nothing to fix or wait for: no line at all). */
+const footer = () => bmw().queryByTestId('wb-notice');
+const sentence = () => footer()?.querySelector('.wbx-reason')?.textContent ?? null;
+/** "Complete" / "Trained" / "Incomplete" of the model whose kind tab is open — read from the status words on
+ *  that tab (the footer pill is gone: Workbench detail v2 §4). */
+const footPill = () => openTabStatus(bmwEl());
 /** A kind tab's status words: the dot's tooltip — and the SAME string shown on the tab beside the dot (v2 §2). */
 const tabWords = (id: string) => {
     const title = bmw().getByTestId(`tab-status-${id}`).getAttribute('title');
@@ -124,7 +128,9 @@ describe('(a) a COMPLETE Relation model whose fit Rust no longer holds', () => {
         // status said once, and it still says Complete
         expect(footPill()).toBe('Complete');
         expect(sentence()).toBe('Fit no longer in memory · load it again');
-        expect(buttonsOf(footer().querySelector('.wbx-reason') as HTMLElement)).toEqual(['footer-load-fit']);
+        expect(buttonsOf(footer()!.querySelector('.wbx-reason') as HTMLElement)).toEqual(['footer-load-fit']);
+        expect(footer()!.getAttribute('data-tone')).toBe('warn');
+        expect(footer()!.getAttribute('role')).toBe('status');
         expect(tabWords('r1')).toBe('Complete · Fit no longer in memory');
         // ...and every dot is still the Complete one, in both windows
         expect(tabDot('r1')).toBe('complete');
@@ -226,7 +232,9 @@ describe('(b) Mark complete answered NOT_FITTED by export_model_files', () => {
         expect(bmwDot('r1').colour).toBe('need');
         // it counts as "needs training": Train sensor is the one filled button
         expect(filled()).toEqual(['train-sensor']);
-        expect(footer().getAttribute('data-primary')).toBe('train');
+        expect(bmw().getByTestId('wb-actions').getAttribute('data-primary')).toBe('train');
+        // the reason under the disabled Mark complete names the same thing (plain text: the links are in the notice line)
+        expect(bmw().getByTestId('state-why').textContent).toBe('Fit no longer in memory · load it again, or re-train with Train sensor ↑');
         // the Dashboard only knows what is on disk: still trained, never Complete
         expect(dashDot(1, 'tag1', 'relationship')).toBe('trained');
 
@@ -239,12 +247,13 @@ describe('(b) Mark complete answered NOT_FITTED by export_model_files', () => {
         expect(fits()).toBe(fitsBefore + 1);
         expect(diskModel('r1').lastTrainedAt, 'loaded, not re-trained').toBe(trainedAt);
         // Loaded by the user's own "Load it again": nothing is left to fix, so the refusal's
-        // red card and the footer's "Not saved · fix it" are gone — the footer is back on the
-        // ordinary sentence of a model whose set points are valid.
+        // red card and the notice line's "Not saved · fix it" are gone — a model whose set
+        // points are valid has nothing to fix or wait for, so there is no notice line at all.
         expect(bmw().queryByTestId('save-error')).toBeNull();
         expect(bmw().queryByTestId('save-error-reason')).toBeNull();
-        expect(sentence()).toBe('Set points valid — check the score chart, then Mark complete');
-        expect(footer().textContent).not.toMatch(/Not saved|fix it/);
+        await waitFor(() => expect(bmw().queryByTestId('state-why')).toBeNull());
+        expect(footer()).toBeNull();
+        expect(sentence()).toBeNull();
         expect(footPill()).toBe('Trained');
         expect(tabWords('r1')).toBe('Trained');
         expect(filled()).toEqual(['mark-complete']);

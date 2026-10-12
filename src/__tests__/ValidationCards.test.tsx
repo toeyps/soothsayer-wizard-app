@@ -22,7 +22,7 @@ afterEach(cleanup);
  */
 
 describe('removed pieces', () => {
-    it('the "Scored · N" pill is gone from the module (the footer sentence says "scored on N periods")', () => {
+    it('the "Scored · N" pill is gone from the module (and the page no longer says "scored on N periods" anywhere)', () => {
         expect(Object.keys(ValidationCards)).not.toContain('ScoredPill');
     });
 

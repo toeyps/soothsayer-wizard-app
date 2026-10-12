@@ -99,8 +99,9 @@ const tabWords = (id: string) => {
     expect(bmw().getByTestId(`tab-words-${id}`).textContent).toBe(title);
     return title;
 };
-const footer = () => bmw().getByTestId('wb-footer');
-const sentence = () => (footer().querySelector('.wbx-reason') as HTMLElement | null)?.textContent ?? null;
+/** The notice line (null when there is nothing to fix or wait for: no line at all). */
+const footer = () => bmw().queryByTestId('wb-notice');
+const sentence = () => footer()?.querySelector('.wbx-reason')?.textContent ?? null;
 const stripPhase = () => bmw().queryByTestId('train-run-strip')?.getAttribute('data-phase') ?? null;
 const freshOnDisk = (mid: string) => {
     const fg = readDisk().failureGroupState;
@@ -349,8 +350,9 @@ describe('A. Train sensor ▾ and the page states, on the real workspace file', 
         expect(pill()).toBe('Complete');
         expect(sentence()).toBe("Couldn't load the model · load it again");
         expect(tabWords('i3')).toBe("Complete · Couldn't load the model");
-        expect((bmw().getByTestId('next-health-score') as HTMLButtonElement).disabled).toBe(true);
-        expect(bmw().getByTestId('next-health-score').getAttribute('title')).toBe('Load the model again first');
+        expect(bmw().getByTestId('page-tab-health').getAttribute('aria-disabled')).toBe('true');
+        expect(bmw().getByTestId('page-tab-health-why').textContent).toBe('Load the model again first');
+        expect(bmw().queryByTestId('next-health-score')).toBeNull(); // no disabled copy of it
         // the other window knows nothing of it: still green
         expect(dashDot(1, 'tag3', 'individual')).toBe('complete');
         expect(bmwDot('i3').state).toBe('complete');
@@ -647,7 +649,7 @@ describe('B. "Relation model" everywhere — and a workspace that still holds th
 describe('C. the Relation model engine fails: only Rust\'s fixed sentence is shown, wherever it surfaces', () => {
     const rel = (o: Record<string, unknown> = {}) => model({ id: 'r1', name: 'Pressure from flow', kind: 'relationship', targetSensor: 'TAG1', predictorSensors: ['TAG3', 'TAG5'], ...o });
 
-    it('Train all: the queue row, the run strip\'s details, the model\'s board and footer, the tab words, the list — and nothing on disk or on the Dashboard changes', async () => {
+    it('Train all: the queue row, the run strip\'s details, the model\'s board and notice line, the tab words, the list — and nothing on disk or on the Dashboard changes', async () => {
         writeDisk(never(wsTrained(FG, [rel(), model({ id: 'i4', name: 'Mode band', targetSensor: 'TAG4', groupNos: [2], healthSetPoints: EMPTY_SP })]), ['r1', 'i4']));
         await mountWindows();
         openDashFgTab();

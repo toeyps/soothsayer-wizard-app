@@ -215,7 +215,7 @@ describe('a workspace saved before "just score it" (scoring periods with label /
         expect(pill()).toBe('Complete');
         expect(bmw().getByTestId('earlier-scoring').textContent).toBe(EARLIER_SCORING_HINT);
         expect(bmw().getByTestId('mark-complete-again').className).toBe('bmw-btn-ok');
-        expect(bmw().getByTestId('wb-footer').getAttribute('data-primary')).toBe('mark');
+        expect(bmw().getByTestId('wb-actions').getAttribute('data-primary')).toBe('mark');
         expect(bmw().getByTestId('mark-incomplete')).toBeTruthy();
         expect(env.backend!.cmds('export_model_files')).toHaveLength(0);
 
@@ -297,6 +297,7 @@ describe('a workspace saved before "just score it" (scoring periods with label /
         expect(dashDot(2, 'tag3', 'individual')).toBe('complete');
         // Train is not asked for: the Health score page stays open to the model.
         expect(bmwEl().querySelector('[data-testid="next-health-score"]:disabled')).toBeNull();
+        expect(bmw().getByTestId('page-tab-health').getAttribute('aria-disabled')).toBeNull();
 
         // ── 5) Mark complete again ──────────────────────────────────────────────
         if (!bmwEl().querySelector('[data-testid="set-points-card"]')) await openHealth();

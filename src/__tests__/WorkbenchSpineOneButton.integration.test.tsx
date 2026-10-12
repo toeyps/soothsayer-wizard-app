@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { openTabStatus } from './helpers/workbenchStatus';
 import { act, cleanup, fireEvent, waitFor, within } from '@testing-library/react';
 
 /*
@@ -10,10 +11,11 @@ import { act, cleanup, fireEvent, waitFor, within } from '@testing-library/react
  * `workspaceManager` and the fake Rust health backend:
  *
  *   1. at most ONE filled button on screen, and it follows the state;
- *   2. a model's status has ONE pill and ONE sentence (the footer); the kind tab
- *      shows a dot + the short status words beside it (Workbench detail v2 §2 — the
- *      same string as its tooltip), everywhere else it is a dot, and the kind-tab dot,
- *      the sensor-list dot and the Dashboard's Failure Groups dot agree at every step.
+ *   2. a model's status is said in words on its kind tab (a dot + the short status
+ *      words — Workbench detail v2 §2), there is NO status pill and NO footer bar, and
+ *      at most ONE notice line — only while there is something to fix or wait for
+ *      (v2 §4); everywhere else the status is a dot, and the kind-tab dot, the
+ *      sensor-list dot and the Dashboard's Failure Groups dot agree at every step.
  *
  * `BuildModelWindow.test.tsx` ("Workbench redesign §1 — the page spine") pins each
  * state on its own with `workspaceManager` mocked; this file walks from one state
@@ -75,10 +77,14 @@ afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 const filled = () => Array.from(bmwEl().querySelectorAll<HTMLElement>('.rcx-btn--pri, .rcx-btn--danger, .f4-btn-save, .bmw-btn-ok'))
     .filter(b => !b.classList.contains('tq-split-caret') && !b.closest('[role="dialog"]'))
     .map(b => b.getAttribute('data-testid'));
-const footer = () => bmw().getByTestId('wb-footer');
-const primary = () => footer().getAttribute('data-primary');
-const sentence = () => (footer().querySelector('.wbx-reason') as HTMLElement).textContent ?? '';
-const footPill = () => bmw().getByTestId('footer-pill').textContent;
+/** The notice line (null when there is nothing to fix or wait for: no line at all). */
+const footer = () => bmw().queryByTestId('wb-notice');
+/** `data-primary` of the header's state buttons: which button is the filled one. */
+const primary = () => bmw().getByTestId('wb-actions').getAttribute('data-primary');
+const sentence = () => footer()?.querySelector('.wbx-reason')?.textContent ?? null;
+/** "Complete" / "Trained" / "Incomplete" of the model whose kind tab is open — read from the status words on
+ *  that tab (the footer pill is gone: Workbench detail v2 §4). */
+const footPill = () => openTabStatus(bmwEl());
 const tabDot = (id: string) => bmw().getByTestId(`tab-status-${id}`);
 const tabOf = (id: string) => tabDot(id).closest('[role="tab"]') as HTMLElement;
 
@@ -88,12 +94,14 @@ const tabOf = (id: string) => tabDot(id).closest('[role="tab"]') as HTMLElement;
 type Dash = 'none' | 'trained' | 'need' | 'bad' | 'complete';
 
 interface Spine {
-    /** `data-primary` of the footer. */
+    /** `data-primary` of the header's state buttons. */
     primary: 'none' | 'save' | 'train' | 'next' | 'mark';
     /** Test ids of every filled button in the window. */
     filled: string[];
+    /** The model's status, as its kind tab's words say it (see `openTabStatus`). */
     pill: 'Incomplete' | 'Trained' | 'Complete';
-    sentence: RegExp | string;
+    /** The notice line's sentence — or null: nothing to fix or wait for, so NO notice line. */
+    sentence: RegExp | string | null;
     /** Tooltip words of the kind tab's dot. */
     words: string;
     /** Colour of the tab dot AND of the sensor-list dot. */
@@ -108,14 +116,20 @@ async function expectSpine(step: string, id: string, key: string, kind: string, 
     await waitFor(() => expect(filled(), at('filled buttons')).toEqual(want.filled));
     expect(filled().length, at('at most one filled button')).toBeLessThanOrEqual(1);
     expect(primary(), at('data-primary')).toBe(want.primary);
-    // (2) status in words exactly once: ONE pill and ONE sentence, both in the footer
-    const pills = bmwEl().querySelectorAll('.model-status-pill');
-    expect(pills.length, at('status pills in the whole window')).toBe(1);
-    expect(pills[0].closest('[data-testid="wb-footer"]'), at('the pill is the footer\'s')).not.toBeNull();
-    expect(footer().querySelectorAll('.wbx-reason').length, at('sentences in the footer')).toBe(1);
-    expect(footPill(), at('footer pill')).toBe(want.pill);
-    if (typeof want.sentence === 'string') expect(sentence(), at('footer sentence')).toBe(want.sentence);
-    else expect(sentence(), at('footer sentence')).toMatch(want.sentence);
+    // (2) no status pill and no footer bar anywhere; at most ONE notice line with ONE sentence
+    expect(bmwEl().querySelectorAll('.model-status-pill, [data-testid="footer-pill"]').length, at('status pills in the whole window')).toBe(0);
+    expect(bmwEl().querySelector('[data-testid="wb-footer"], .f4-foot'), at('no footer bar')).toBeNull();
+    expect(bmwEl().querySelectorAll('[data-testid="wb-notice"]').length, at('notice lines')).toBeLessThanOrEqual(1);
+    expect(footPill(), at('status (kind-tab words)')).toBe(want.pill);
+    if (want.sentence === null) expect(footer(), at('no notice line')).toBeNull();
+    else {
+        expect(footer()!.getAttribute('role'), at('the notice line is a status')).toBe('status');
+        expect(footer()!.querySelectorAll('.wbx-reason').length, at('sentences in the notice line')).toBe(1);
+        if (typeof want.sentence === 'string') expect(sentence(), at('notice sentence')).toBe(want.sentence);
+        else expect(sentence(), at('notice sentence')).toMatch(want.sentence);
+    }
+    // ...and never a train date or "scored on N periods" (user decision 2026-10-12)
+    expect(bmwEl().querySelector('.bmw-detail')!.textContent, at('no train date on the page')).not.toMatch(/scored on \d+ period|Trained \d{4}\//);
     // ...no status PILL on a tab (a dot + plain words) or on the set-point card (a dot with a tooltip)
     for (const tab of bmw().getAllByRole('tab')) expect(tab.querySelector('.f4-pill, .model-status-pill'), at('no pill on a kind tab')).toBeNull();
     expect(bmwEl().querySelector('[data-testid="set-points-card"] .f4-pill, [data-testid="set-points-card"] .model-status-pill'), at('no pill on the set-point card')).toBeNull();
@@ -184,12 +198,15 @@ describe('ONE filled button + status said once, through a whole Individual journ
         expect(bmw().getByTestId('rc-card-open').textContent).toBe('Edit');
         await expectSpine('needs training', 'i1', 'tag1', 'individual', {
             primary: 'train', filled: ['train-sensor'], pill: 'Incomplete',
-            sentence: 'Not trained yet · Train sensor ↑', words: 'Not trained yet', dot: 'none', dash: 'none',
+            sentence: null, words: 'Not trained yet', dot: 'none', dash: 'none',
         });
         expect(bmw().getByTestId('train-sensor').textContent).toBe('▶ Train sensor · 1 of 1');
-        expect(bmw().getByTestId('next-health-score').className).toBe('rcx-btn'); // a ghost: training comes first
+        // "Next: Health score" cannot be pressed and is not the next step: it is not rendered at
+        // all (no disabled copy) — page tab 2 says why the page is closed
+        expect(bmw().queryByTestId('next-health-score')).toBeNull();
+        expect(bmw().getByTestId('page-tab-health-why').textContent).toBe('Train the model first');
 
-        // 3) a training run in progress: still at most one filled button, and the footer says it
+        // 3) a training run in progress: still at most one filled button, and the notice line says it
         const g = env.backend!.gate('compute_sensor_stats', a => a.sensor === 'TAG1');
         await act(async () => { fireEvent.click(bmw().getByTestId('train-sensor')); });
         await settle(50);
@@ -200,11 +217,12 @@ describe('ONE filled button + status said once, through a whole Individual journ
         expect(bmw().getByTestId('train-sensor').textContent).toBe(' Training…');
         expect((bmw().getByTestId('train-sensor') as HTMLButtonElement).disabled).toBe(true);
         expect(bmw().getByTestId('train-sensor-why').textContent).toBe('Training this sensor…');
-        expect(bmwEl().querySelectorAll('.model-status-pill')).toHaveLength(1);
+        expect(bmwEl().querySelectorAll('.model-status-pill')).toHaveLength(0);
         expect(footPill()).toBe('Incomplete');
+        expect(footer()!.getAttribute('data-tone')).toBe('plain');
         expect(sentence()).toMatch(/^ ?Training now · about \d+ s$/);
         expect(bmw().getByTestId('results-loading').querySelector('.wbx-msg-t')!.textContent).toMatch(/^Training the Individual model · about \d+ s$/);
-        expect((bmw().getByTestId('next-health-score') as HTMLButtonElement).disabled).toBe(true);
+        expect(bmw().getByTestId('page-tab-health').getAttribute('aria-disabled')).toBe('true');
         expect(bmw().queryByTestId('save-changes')).toBeNull();
         expect(dashDot(1, 'tag1', 'individual')).toBe('none');
         await act(async () => { g.release(); });
@@ -215,7 +233,7 @@ describe('ONE filled button + status said once, through a whole Individual journ
         // 4) trained, set points still empty: "Next: Health score →" is the button
         await expectSpine('trained', 'i1', 'tag1', 'individual', {
             primary: 'next', filled: ['next-health-score'], pill: 'Trained',
-            sentence: new RegExp(`^Trained ${STAMP} · scored on 1 period · check the charts, then set the health set points$`),
+            sentence: null,
             words: 'Set points needed', dot: 'need', dash: 'need',
         });
         expect(bmw().getByTestId('train-sensor').className).not.toContain('rcx-btn--pri');
@@ -241,7 +259,7 @@ describe('ONE filled button + status said once, through a whole Individual journ
         await waitFor(() => expect(diskModel('i1').healthVerdict).toBe('valid'));
         await expectSpine('valid set points', 'i1', 'tag1', 'individual', {
             primary: 'mark', filled: ['mark-complete'], pill: 'Trained',
-            sentence: 'Set points valid — check the score chart, then Mark complete',
+            sentence: null,
             words: 'Trained', dot: 'need', dash: 'trained',
         });
         expect(markBtn().className).toBe('bmw-btn-ok');
@@ -283,7 +301,7 @@ describe('ONE filled button + status said once, through a whole Individual journ
         await settle(100);
         await expectSpine('complete, Model fit', 'i1', 'tag1', 'individual', {
             primary: 'none', filled: [], pill: 'Complete',
-            sentence: new RegExp(`^Trained ${STAMP} · scored on 1 period$`), words: 'Complete', dot: 'complete', dash: 'complete',
+            sentence: null, words: 'Complete', dot: 'complete', dash: 'complete',
         });
         expect(bmw().queryByTestId('save-changes')).toBeNull();
         openSettings();
@@ -298,7 +316,7 @@ describe('ONE filled button + status said once, through a whole Individual journ
         expect(diskModel('i1')).toMatchObject({ name: 'Renamed in QA', status: true }); // a name never makes it Incomplete
         await expectSpine('saved', 'i1', 'tag1', 'individual', {
             primary: 'none', filled: [], pill: 'Complete',
-            sentence: new RegExp(`^Trained ${STAMP} · scored on 1 period$`), words: 'Complete', dot: 'complete', dash: 'complete',
+            sentence: null, words: 'Complete', dot: 'complete', dash: 'complete',
         });
     });
 });
@@ -334,7 +352,7 @@ describe('a Custom-mode model while the WORKSPACE running condition is not set',
         await settle(50);
         await expectSpine('custom model, not trained', 'u1', 'tag5', 'individual', {
             primary: 'none', filled: ['rc-card-open'], pill: 'Incomplete',
-            sentence: 'Not trained yet · Train sensor ↑', words: 'Not trained yet', dot: 'none', dash: 'none',
+            sentence: null, words: 'Not trained yet', dot: 'none', dash: 'none',
         });
         const ts = () => bmw().getByTestId('train-sensor') as HTMLButtonElement;
         expect(ts().textContent).toBe('▶ Train sensor · 1 of 1');
@@ -349,7 +367,7 @@ describe('a Custom-mode model while the WORKSPACE running condition is not set',
         expect(env.backend!.cmds('compute_sensor_stats').filter(c => c.args.sensor === 'TAG5').pop()!.args.filter ?? null).toBeNull();
         await expectSpine('custom model, trained', 'u1', 'tag5', 'individual', {
             primary: 'none', filled: ['rc-card-open'], pill: 'Trained',
-            sentence: new RegExp(`^Trained ${STAMP} · scored on 1 period · check the charts, then set the health set points$`),
+            sentence: null,
             words: 'Set points needed', dot: 'need', dash: 'need',
         });
         const next = bmw().getByTestId('next-health-score') as HTMLButtonElement;
@@ -362,7 +380,7 @@ describe('a Custom-mode model while the WORKSPACE running condition is not set',
         await waitFor(() => expect(diskModel('u1').healthVerdict).toBe('valid'));
         await expectSpine('custom model, valid set points', 'u1', 'tag5', 'individual', {
             primary: 'none', filled: ['rc-card-open'], pill: 'Trained',
-            sentence: 'Set points valid — check the score chart, then Mark complete', words: 'Trained', dot: 'need', dash: 'trained',
+            sentence: null, words: 'Trained', dot: 'need', dash: 'trained',
         });
         expect(markBtn().className).toBe('rcx-btn'); // a ghost — and it works
         await markComplete();

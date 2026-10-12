@@ -277,7 +277,7 @@ describe('errors from Rust', () => {
         expect(bmw().queryByTestId('health-not-fitted-retrain')).toBeNull();
         const trainSensor = () => bmw().getByTestId('train-sensor') as HTMLButtonElement;
         // it counts as "needs training": Train sensor is the one filled button, and the link leads to it
-        expect(bmw().getByTestId('wb-footer').getAttribute('data-primary')).toBe('train');
+        expect(bmw().getByTestId('wb-actions').getAttribute('data-primary')).toBe('train');
         expect(trainSensor().className).toContain('rcx-btn--pri');
         fireEvent.click(bmw().getByTestId('health-go-train-sensor'));
         expect(document.activeElement).toBe(trainSensor());

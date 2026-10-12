@@ -1,4 +1,5 @@
 import { expect, vi } from 'vitest';
+import { openTabStatus } from './workbenchStatus';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import Dashboard from '../../components/dashboard/Dashboard';
 import BuildModelWindow from '../../components/windows/BuildModelWindow';
@@ -146,7 +147,9 @@ export const selectSensor = (key: string, g = 1) => fireEvent.click(bmw().getByT
 export const selectKindTab = (label: 'Individual' | 'Relation model' | 'Clustering') =>
     fireEvent.click(bmw().getAllByRole('tab').find(t => t.textContent?.includes(label))!);
 
-export const pill = () => bmwEl().querySelector('.f4-foot .model-status-pill')!.textContent;
+/** "Complete" / "Trained" / "Incomplete" of the model whose kind tab is open — read from the status words on
+ *  that tab (the footer pill is gone: Workbench detail v2 §4). */
+export const pill = () => openTabStatus(bmwEl());
 
 /** Wait until the active model's Model fit charts are on screen (a preview landed). */
 export async function waitForCharts() {
@@ -171,8 +174,10 @@ export async function train() {
 }
 
 export async function openHealth() {
-    const b = bmw().getByTestId('next-health-score') as HTMLButtonElement;
-    expect(b.disabled, `Health page disabled: ${b.title}`).toBe(false);
+    // Page tab ② is the door that is always on screen ("Next: Health score →" exists only
+    // while it is the next step or can be pressed).
+    const b = bmw().getByTestId('page-tab-health') as HTMLButtonElement;
+    expect(b.getAttribute('aria-disabled'), `Health score page closed: ${b.title}`).toBeNull();
     fireEvent.click(b);
     await settle(300);
     await waitFor(() => expect(bmw().getByTestId('set-points-card')).toBeTruthy());

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { openTabStatus } from './helpers/workbenchStatus';
 import { render, screen, fireEvent, act, cleanup, waitFor, within } from '@testing-library/react';
 
 /*
@@ -183,7 +184,9 @@ async function mountBoth() {
 }
 
 const bmw = () => within(screen.getByTestId('build-model-window'));
-const pill = () => screen.getByTestId('build-model-window').querySelector('.f4-foot .model-status-pill')!.textContent;
+/** "Complete" / "Trained" / "Incomplete" of the model whose kind tab is open — read from the status words on
+ *  that tab (the footer pill is gone: Workbench detail v2 §4). */
+const pill = () => openTabStatus(screen.getByTestId('build-model-window'));
 const selectTag1 = () => fireEvent.click(bmw().getByTestId('sensor-list-row-fg:1-tag1'));
 const dropBuildModelBroadcasts = () => {
     h.drop = (event, payload) => event === 'failure-group-state-changed' && payload?.origin === 'build-model';
@@ -301,6 +304,6 @@ describe('Workbench training metadata vs. a stale Dashboard mirror', () => {
         });
         await settle(20);
         expect(bmw().getByTestId('results-stale')).toBeTruthy();
-        expect((bmw().getByTestId('next-health-score') as HTMLButtonElement).disabled).toBe(true); // Mark complete is only reachable from the Health score page
+        expect(bmw().getByTestId('page-tab-health').getAttribute('aria-disabled')).toBe('true'); // Mark complete is only reachable from the Health score page
     });
 });

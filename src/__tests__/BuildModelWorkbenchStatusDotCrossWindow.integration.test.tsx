@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { openTabStatus } from './helpers/workbenchStatus';
 import { render, screen, fireEvent, act, cleanup, waitFor, within } from '@testing-library/react';
 
 /*
@@ -116,7 +117,7 @@ vi.mock('../components/charts/LineChart', () => ({ default: () => <div /> }));
 vi.mock('../components/charts/ResponsiveECharts', () => ({ default: () => <div /> }));
 
 import { makeSetPointAwarePreview } from './helpers/healthPreviewFixture';
-import { EXPORT_RESULT_OK, healthPageButton, markCompleteFromHealthPage, markIncompleteFromHealthPage } from './helpers/healthPage';
+import { EXPORT_RESULT_OK, healthPageClosed, markCompleteFromHealthPage, markIncompleteFromHealthPage } from './helpers/healthPage';
 import Dashboard from '../components/dashboard/Dashboard';
 import BuildModelWindow from '../components/windows/BuildModelWindow';
 import { computeTrainFingerprint, isModelTrainedFresh } from '../utils/trainFingerprint';
@@ -245,7 +246,9 @@ function bmwDot(modelId: string): string {
     return st === 'stale' || st === 'blocked' ? 'none' : st;
 }
 
-const pill = () => screen.getByTestId('build-model-window').querySelector('.f4-foot .model-status-pill')!.textContent;
+/** "Complete" / "Trained" / "Incomplete" of the model whose kind tab is open — read from the status words on
+ *  that tab (the footer pill is gone: Workbench detail v2 §4). */
+const pill = () => openTabStatus(screen.getByTestId('build-model-window'));
 const selectTag1 = (g = 1) => fireEvent.click(bmw().getByTestId(`sensor-list-row-fg:${g}-tag1`));
 const dropBuildModelBroadcasts = () => {
     h.drop = (event, payload) => event === 'failure-group-state-changed' && payload?.origin === 'build-model';
@@ -439,7 +442,7 @@ describe('Train in Build Model with the broadcast LOST (stale Dashboard mirror)'
     });
 });
 
-describe('gate-blocked but fingerprint-fresh: Build Model pill, Build Model dot and Dashboard dot never disagree', () => {
+describe('gate-blocked but fingerprint-fresh: Build Model status words, Build Model dot and Dashboard dot never disagree', () => {
     type Case = {
         name: string;
         fg: Record<string, unknown>;
@@ -503,7 +506,7 @@ describe('gate-blocked but fingerprint-fresh: Build Model pill, Build Model dot 
             expect(bmwDot('i1')).toBe(expected);
             expect(dashDot(1)).toBe(expected);
             // Mark complete (reached through the Health score page) follows the same verdict.
-            expect(healthPageButton(bmw()).disabled).toBe(c.blocked);
+            expect(healthPageClosed(bmw())).toBe(c.blocked);
             // Opening the model must not rewrite the stamp either way.
             expect(readDisk().failureGroupState.models[0].trainedFingerprint).toBe(m.trainedFingerprint);
         });

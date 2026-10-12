@@ -3127,33 +3127,6 @@ body {
     color: var(--cond);
 }
 
-.model-status-pill {
-    font-size: 0.7rem;
-    font-weight: 600;
-    padding: 3px 10px;
-    border-radius: 999px;
-    border: none;
-    cursor: pointer;
-    flex-shrink: 0;
-}
-
-.model-status-pill--complete {
-    background: var(--perf-muted);
-    color: var(--perf);
-}
-
-.model-status-pill--incomplete {
-    background: var(--surface-hi);
-    color: var(--text-faint);
-}
-
-/* Third pill state, between Incomplete and Complete -- the model is trained
-   and still current (not stale), but hasn't been marked Complete yet. */
-.model-status-pill--trained {
-    background: var(--accent-muted);
-    color: var(--accent-hi);
-}
-
 .model-open-pm {
     font-size: 0.76rem;
     color: var(--accent-hi);
@@ -3331,11 +3304,7 @@ body {
 }
 .f4-move-note { font-size: 0.66rem; color: var(--accent-hi); background: var(--accent-muted); border-radius: 6px; padding: 6px 8px; }
 
-/* Sticky per-model footer, reused unchanged by the Workbench's detail pane
-   (see .bmw-detail below) -- still sticky/bottom-radiused for the same
-   reason it always was: a tall panel above it must not push the footer's
-   own buttons out of the visible area. */
-.f4-foot { position: sticky; bottom: 0; z-index: 1; display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; padding: 10px 14px; border-top: 1px solid var(--border); background: var(--card-bg); border-bottom-left-radius: 9px; border-bottom-right-radius: 9px; }
+/* The sentence of the Workbench notice line (`.wb3-notice`, further down). */
 .f4-foot-reason { margin-right: auto; font-size: 0.7rem; color: var(--text-faint); display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
 .f4-foot-reason--block { color: var(--warn); }
 .f4-btn-save { font-size: 0.76rem; font-weight: 600; padding: 8px 22px; border-radius: 7px; border: 0; background: var(--accent-color); color: #06111f; cursor: pointer; }
@@ -5318,16 +5287,21 @@ body {
 .wb2-stale b { color: var(--text-primary); }
 
 /* board of chart cards */
-.wb2-board { padding: 12px 18px 14px; display: grid; gap: 12px; align-content: start; }
+/* Cards are lifted off the window (Workbench detail v2 §7): the card background, a
+   stronger edge and a soft shadow, radius 14 — for the chart cards and the set-point
+   (ruler) card alike. Chart heights are unchanged. */
+.wb2-board { padding: 14px 20px 18px; display: grid; gap: 14px; align-content: start; }
+/* A banner that sits INSIDE a board is a row of the board (no page margins of its own). */
+.wb2-board > .wb2-stale, .wb2-board > .rcm-warn, .wb2-board > .hs-save { margin: 0; grid-column: 1 / -1; }
 .wb2-g2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .wb2-full { grid-column: 1 / -1; }
 @container (max-width: 760px) {
     .wb2-g2 { grid-template-columns: minmax(0, 1fr); }
 }
-.wb2-card { background: var(--bg-primary); border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px 8px; min-width: 0; display: flex; flex-direction: column; }
+.wb2-card { background: var(--card-bg); border: 1px solid var(--border-strong); border-radius: 14px; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02), 0 8px 24px rgba(0, 0, 0, 0.25); padding: 12px 14px 10px; min-width: 0; display: flex; flex-direction: column; }
 .wb2-card-h { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; min-height: 26px; flex-wrap: wrap; }
-.wb2-card-h b { font-size: 12.5px; font-weight: 600; color: var(--text-primary); }
-.wb2-card-s { font-size: 11px; color: var(--text-faint); }
+.wb2-card-h b { font-size: 13.5px; font-weight: 600; color: var(--text-primary); }
+.wb2-card-s { font-size: 11.5px; color: var(--text-secondary); }
 .wb2-ib { width: 26px; height: 26px; border: 0; background: none; border-radius: 6px; color: var(--text-faint); cursor: pointer; display: grid; place-items: center; }
 .wb2-ib:hover { background: var(--hover-bg); color: var(--text-primary); }
 .wb2-ib:focus-visible { outline: 2px solid var(--accent-color); outline-offset: 1px; }
@@ -5417,7 +5391,7 @@ body {
 .hs-board { grid-template-columns: minmax(0, 1fr); }
 .hs-full { grid-column: 1 / -1; }
 .hs-stateboard { min-height: 280px; }
-.hs-card { background: var(--bg-primary); border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px 12px; min-width: 0; display: flex; flex-direction: column; }
+.hs-card { background: var(--card-bg); border: 1px solid var(--border-strong); border-radius: 14px; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02), 0 8px 24px rgba(0, 0, 0, 0.25); padding: 12px 14px 12px; min-width: 0; display: flex; flex-direction: column; }
 .hs-note { font-size: 11px; color: var(--text-faint); line-height: 1.45; }
 
 /* The score ruler (ScoreRuler.tsx, "Workbench detail pages v2"): ONE horizontal band
@@ -5440,7 +5414,7 @@ body {
 .wb3-ruler-sc--off { color: var(--text-faint); }
 .wb3-ruler-band { position: relative; height: 12px; border-radius: 6px; margin: 4px 0 6px; box-shadow: inset 0 0 0 1px var(--border); }
 .wb3-ruler-tick { position: absolute; top: -4px; bottom: -4px; width: 2px; margin-left: -1px; border-radius: 1px; background: color-mix(in srgb, var(--text-primary) 55%, transparent); }
-.wb3-ruler-tick--user { top: -6px; bottom: -6px; width: 3px; margin-left: -1.5px; background: var(--text-primary); box-shadow: 0 0 0 2px var(--bg-primary); }
+.wb3-ruler-tick--user { top: -6px; bottom: -6px; width: 3px; margin-left: -1.5px; background: var(--text-primary); box-shadow: 0 0 0 2px var(--card-bg); }
 /* rejected = red · empty = dashed amber · not checked (the score did not load) = dashed grey */
 .wb3-ruler-tick--bad { background: var(--danger); }
 .wb3-ruler-tick--req { width: 0; background: none; border-left: 3px dashed var(--warn); box-shadow: none; }
@@ -5462,12 +5436,12 @@ body {
 /* A rejected typed value, marked in red where it really sits: the label (stacked on rows
    when two would overlap), a dashed stem down to the band, a diamond on the band. */
 .wb3-ruler-marks { position: relative; height: 22px; }
-.wb3-ruler-mark { position: absolute; top: 0; z-index: 1; transform: translateX(-50%); white-space: nowrap; padding: 1px 6px; border: 1px solid var(--danger-line); border-radius: 6px; background: color-mix(in srgb, var(--danger) 14%, var(--bg-primary)); color: var(--danger); font: 600 10.5px var(--mono); line-height: 14px; }
+.wb3-ruler-mark { position: absolute; top: 0; z-index: 1; transform: translateX(-50%); white-space: nowrap; padding: 1px 6px; border: 1px solid var(--danger-line); border-radius: 6px; background: color-mix(in srgb, var(--danger) 14%, var(--card-bg)); color: var(--danger); font: 600 10.5px var(--mono); line-height: 14px; }
 /* beyond the user's point at that end: the label hugs the end, its arrow points outwards */
 .wb3-ruler-mark--right { transform: translateX(-100%); margin-left: 8px; }
 .wb3-ruler-mark--left { transform: none; margin-left: -8px; }
 .wb3-ruler-stem { position: absolute; bottom: -4px; width: 0; margin-left: -1px; border-left: 2px dashed var(--danger); }
-.wb3-ruler-stem::after { content: ''; position: absolute; left: -6px; bottom: -3px; width: 10px; height: 10px; border-radius: 2px; background: var(--danger); transform: rotate(45deg); box-shadow: 0 0 0 2px var(--bg-primary); }
+.wb3-ruler-stem::after { content: ''; position: absolute; left: -6px; bottom: -3px; width: 10px; height: 10px; border-radius: 2px; background: var(--danger); transform: rotate(45deg); box-shadow: 0 0 0 2px var(--card-bg); }
 .wb3-ruler-note { padding: 4px 0 10px; font-size: 11.5px; line-height: 1.5; color: var(--text-secondary); }
 .wb3-ruler-note .hs-quick { display: inline-flex; margin: 0 10px 0 0; vertical-align: middle; }
 .wb3-ruler-note .hs-restore { font-size: inherit; }
@@ -6638,14 +6612,33 @@ body {
 /* A date in the app's one date format ("2026/02/09 23:50") is always mono */
 .wbx-dt { font-family: var(--mono); font-size: 0.95em; }
 
-/* Detail header: identity on the left, ONE control group on the right. On a pane
-   narrower than ~1000 px the whole group moves under the name, as one row. */
-.bmw-dhead { padding: 12px 20px 10px; grid-template-columns: auto minmax(0, 1fr) auto; }
-.wbx-dh-ctl { display: flex; align-items: flex-start; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
-@container (max-width: 1000px) {
-    .wbx-dh-ctl { grid-column: 1 / -1; justify-content: flex-start; }
-    .wbx-dh-ctl .tq-sensortrain { margin-left: auto; }
+/* Detail header, arranged by function (Workbench detail v2 §1): identity on the left —
+   label, unit, tag, component, FG chips, then the category switch (small) in the same
+   meta row — and ACTIONS only on the right: Train sensor + the state buttons, each with
+   its one short reason line under it. The actions never take more than ~46% of the pane
+   (the name keeps its room; the buttons wrap onto a second row instead); on a narrow pane
+   they move under the name as one right-aligned row. */
+.bmw-dhead { padding: 16px 20px 12px; grid-template-columns: auto minmax(0, 1fr) auto; align-items: start; }
+.wbx-dh-ctl { display: flex; align-items: flex-start; gap: 8px; flex-wrap: wrap; justify-content: flex-end; max-width: 46cqi; }
+@container (max-width: 760px) {
+    .wbx-dh-ctl { grid-column: 1 / -1; max-width: none; }
 }
+.wbx-dh-ctl .tq-sensortrain .tq-why { max-width: 260px; white-space: normal; }
+.wbx-dh-ctl .tq-split .rcx-btn { height: 32px; }
+.wb3-meta-sep { width: 1px; height: 16px; margin: 0 4px; background: var(--border-strong); }
+.wb3-catseg { padding: 1px; }
+.wb3-catseg button { font-size: 0.66rem; padding: 3px 9px; }
+/* The state buttons: Save changes · Next: Health score → · Mark complete / Mark incomplete.
+   At most ONE of them (or Train sensor) is filled. The reason of a disabled one sits
+   under THAT button, in the same slot and style as Train sensor's line. */
+.wb3-actions { display: flex; align-items: flex-start; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
+.wb3-actions:empty { display: none; }
+/* A button (or the Mark pair) with its reason line under it. */
+.wb3-act { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.wb3-act-row { display: flex; align-items: center; gap: 8px; }
+.wb3-actions .rcx-btn, .wb3-actions .bmw-btn-ok, .wb3-actions .f4-btn-save { height: 32px; padding: 0 16px; border-radius: 8px; font-size: 12.5px; white-space: nowrap; }
+.wb3-actions .f4-btn--small { height: 32px; padding: 0 12px; font-size: 11.5px; }
+.wb3-actions .tq-why { max-width: 260px; margin-top: -1px; text-align: right; }
 .f4-catseg button { font-size: 0.68rem; padding: 3px 9px; }
 
 /* Train sensor: filled only while it is the pane's next action; the caption is one short line */
@@ -6712,12 +6705,23 @@ body {
 .wbx-msg--bad .wbx-msg-t { color: var(--danger); }
 .wbx-msg--run .wbx-msg-t { color: var(--accent-hi); }
 
-/* Footer: one pill + ONE sentence, at most one filled button */
-.wbx-foot { padding: 9px 14px; }
+/* Notice line (Workbench detail v2 §4): what is left of the footer bar. It exists ONLY
+   while there is something to fix or wait for — a warning (amber), an error (red; a
+   rejected set point is one), saving, an unsaved draft, queued / training — or the
+   "Files saved <date> · <folder>" confirmation (ok). No pill, no buttons. */
+.wb3-notice { position: sticky; bottom: 0; z-index: 1; display: flex; align-items: center; gap: 10px; padding: 9px 20px; border-top: 1px solid var(--border); background: var(--card-bg); }
+.wb3-notice:focus-visible { outline: 2px solid var(--accent-color); outline-offset: -2px; }
 .wbx-reason { font-size: 0.72rem; color: var(--text-secondary); }
+.wb3-notice .wbx-reason { font-size: 12px; gap: 7px; }
 .f4-foot-reason--bad { color: var(--danger); }
+.wb3-notice--plain .wbx-reason, .wb3-notice--ok .wbx-reason { color: var(--text-secondary); }
+.wb3-notice--ok { background: color-mix(in oklab, var(--ok) 8%, var(--card-bg)); }
+.wb3-notice--warn { border-top-color: var(--warn-line); background: color-mix(in oklab, var(--warn) 9%, var(--card-bg)); }
+.wb3-notice--bad { border-top-color: var(--danger-line); background: color-mix(in oklab, var(--danger) 10%, var(--card-bg)); }
+/* The notice has the strength of what it reports. */
+.wb3-notice--warn .wbx-reason, .wb3-notice--warn .wbx-reason > svg { color: var(--warn); }
+.wb3-notice--bad .wbx-reason, .wb3-notice--bad .wbx-reason > svg { color: var(--danger); font-weight: 500; }
 .wbx-reason .hs-path { font-size: 10.5px; color: var(--text-secondary); max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; word-break: normal; display: inline-block; vertical-align: bottom; }
-.wbx-foot .rcx-btn { height: 30px; font-size: 0.74rem; }
 
 /* Spinners honour reduced motion */
 @media (prefers-reduced-motion: reduce) {
