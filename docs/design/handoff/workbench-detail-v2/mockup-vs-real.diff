@@ -1,0 +1,2929 @@
+diff --git a/real_now/src/App.css b/mock_now/src/App.css
+index 4d13621..8748d1a 100644
+--- a/real_now/src/App.css
++++ b/mock_now/src/App.css
+@@ -2579,6 +2579,227 @@ body {
+     outline: none;
+ }
+ 
++/* ---------------------------------------------------------------------------
++   TAGGED POINTS v2 (design 2026-10-12, mockup) — the "Tagged points" tab reads as a
++   table that belongs to the whole panel: the head band and the row lines cross the
++   full width, rows are 30 px, a point's head is two short lines (date, time) under
++   a rule in the tag's colour, the unit is printed once per row, and a hovered row
++   lights up. Overrides the first version's rules above; an implementation folds
++   the two blocks into one.
++   --------------------------------------------------------------------------- */
++.tag-table {
++    /* Docked fallback: head + five rows. */
++    max-height: 196px;
++}
++
++.tag-table--panel {
++    max-height: none;
++    display: flex;
++    flex-direction: column;
++}
++
++.tag-table-grid {
++    width: 100%;
++    justify-content: stretch;
++}
++
++.tag-table-row {
++    display: contents;
++}
++
++/* Head band */
++.tag-table-corner,
++.tag-table .chart-tag-item,
++.tag-table-fill--head {
++    position: sticky;
++    top: 0;
++    z-index: 2;
++    height: 44px;
++    box-sizing: border-box;
++    background: var(--surface-hi);
++    border-bottom: 1px solid var(--border-strong);
++}
++
++.tag-table-corner {
++    z-index: 3;
++    padding: 0 12px;
++}
++
++.tag-table-title {
++    padding: 0;
++    font-size: 10.5px;
++    font-weight: 600;
++    letter-spacing: 0.06em;
++    text-transform: uppercase;
++    color: var(--text-secondary);
++}
++
++/* A point's head: [dot] date / time [×]. The rule on top is the tag's colour — the
++   same colour as its dot and dashed line on the chart. */
++.tag-table .chart-tag-item {
++    justify-content: flex-end;
++    gap: 8px;
++    padding: 0 6px 0 12px;
++    box-shadow: inset 0 2px 0 var(--tag-c, transparent);
++    border-left: 1px solid rgba(255, 255, 255, 0.05);
++}
++
++.tag-table .chart-tag-dot {
++    width: 9px;
++    height: 9px;
++    box-shadow: 0 0 0 2px var(--surface-hi), 0 0 0 3px color-mix(in srgb, var(--tag-c, transparent) 45%, transparent);
++}
++
++.tag-table .chart-tag-label {
++    flex: 0 1 auto;
++    display: flex;
++    flex-direction: column;
++    align-items: flex-end;
++    gap: 1px;
++    line-height: 1.2;
++    font-size: 11px;
++}
++
++.chart-tag-date {
++    font-size: 10px;
++    color: var(--text-secondary);
++}
++
++.chart-tag-time {
++    font-size: 12px;
++    font-weight: 600;
++    color: var(--text-primary);
++}
++
++.chart-tag-date,
++.chart-tag-time {
++    max-width: 100%;
++    overflow: hidden;
++    text-overflow: ellipsis;
++    white-space: nowrap;
++}
++
++/* The × is quiet until its column head is pointed at or holds focus — never hidden, so it
++   can always be found and tabbed to. */
++.tag-table .chart-tag-remove {
++    opacity: 0.45;
++}
++
++.tag-table .chart-tag-item:hover .chart-tag-remove,
++.tag-table .chart-tag-remove:focus-visible {
++    opacity: 1;
++}
++
++/* Rows */
++.tag-table-name,
++.tag-table-val,
++.tag-table-fill {
++    height: 30px;
++    box-sizing: border-box;
++    border-bottom: 1px solid rgba(255, 255, 255, 0.055);
++}
++
++.tag-table-name {
++    gap: 8px;
++    padding: 0 12px;
++    background: var(--card-bg);
++}
++
++.tag-table-swatch {
++    width: 9px;
++    height: 9px;
++    border-radius: 2px;
++}
++
++.tag-table-lead {
++    display: inline-flex;
++    align-items: center;
++    justify-content: center;
++    width: 16px;
++    height: 16px;
++    border-radius: 4px;
++    background: rgba(255, 255, 255, 0.07);
++    color: var(--text-primary);
++}
++
++.tag-table-name .sensor-label,
++.tag-table-name .sensor-inline {
++    min-width: 0;
++}
++
++/* A narrow name cell gives its room to the description: the tag (still in the tooltip) hides
++   sooner here than the shared label's 150 px. */
++@container (max-width: 250px) {
++    .tag-table-name .sl-fit .sl-tag { display: none; }
++}
++
++/* The unit, once per row: at the right edge of the name cell, right before the numbers. */
++.tag-table-unit {
++    flex: none;
++    margin-left: auto;
++    padding-left: 10px;
++    font-family: 'JetBrains Mono', monospace;
++    font-size: 10px;
++    color: var(--text-secondary);
++    opacity: 0.8;
++    white-space: nowrap;
++}
++
++.tag-table-val {
++    /* 34 px on the right = the ×'s width + gap in the head, so a number ends exactly
++       under the end of its point's time. */
++    padding: 0 34px 0 12px;
++    border-left: 1px solid rgba(255, 255, 255, 0.05);
++    font-size: 12px;
++    font-weight: 500;
++    font-variant-numeric: tabular-nums;
++}
++
++.tag-table-val--none {
++    color: var(--text-secondary);
++    opacity: 0.55;
++    font-weight: 400;
++}
++
++.tag-table-row:hover > .tag-table-val,
++.tag-table-row:hover > .tag-table-fill {
++    background: rgba(255, 255, 255, 0.035);
++}
++
++.tag-table-row:hover > .tag-table-name {
++    /* Opaque (the cell is sticky and slides over the values): the card colour, lightened. */
++    background: color-mix(in srgb, var(--card-bg) 96.5%, #fff);
++}
++
++/* The count under the table; stays at the left edge when the table scrolls sideways. */
++.tag-table-foot {
++    position: sticky;
++    left: 0;
++    width: max-content;
++    max-width: 100%;
++    margin: 0;
++    padding: 8px 12px 10px;
++    font-size: 11px;
++    color: var(--text-secondary);
++}
++
++.tag-table-foot b {
++    font-family: 'JetBrains Mono', monospace;
++    font-weight: 600;
++    color: var(--text-primary);
++}
++
++/* No tagged point yet: the same sentence, centred in the tab instead of in its corner. */
++.tag-panel-empty {
++    margin: auto;
++    max-width: 440px;
++    padding: 1.25rem 1rem;
++    text-align: center;
++    font-size: 0.8rem;
++    line-height: 1.55;
++    opacity: 0.8;
++}
++
+ /* =============================================
+    Pair plot (regl-scatterplot grid)
+    ============================================= */
+@@ -6412,7 +6633,7 @@ body {
+ .bmw-dhead { padding: 12px 20px 10px; grid-template-columns: auto minmax(0, 1fr) auto; }
+ .wbx-dh-ctl { display: flex; align-items: flex-start; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
+ @container (max-width: 1000px) {
+-    .wbx-dh-ctl { grid-column: 1 / -1; justify-content: flex-start; }
++    .wbx-dh-ctl:not(.wb3-dh-ctl) { grid-column: 1 / -1; justify-content: flex-start; }
+     .wbx-dh-ctl .tq-sensortrain { margin-left: auto; }
+ }
+ .f4-catseg button { font-size: 0.68rem; padding: 3px 9px; }
+@@ -6456,6 +6677,200 @@ body {
+     .pm-spin { animation: none; }
+ }
+ 
++/* ===================================================================== */
++/* cur5 — Workbench detail pages, bolder direction (ui-design-lead 2026-10-12) */
++/* ===================================================================== */
++
++/* Header: identity on the left (label, unit, tag, component, FG chips, category), actions on the right. */
++.wb3-dhead { padding: 16px 20px 12px; align-items: start; }
++.wb3-dhead .bmw-dh-sl .sensor-label-desc, .wb3-dhead h3 { font-size: 1.1rem; letter-spacing: -0.015em; }
++.wb3-meta-sep { width: 1px; height: 16px; background: var(--border-strong); margin: 0 4px; }
++.wb3-catseg { padding: 1px; }
++.wb3-catseg button { font-size: 0.66rem; padding: 3px 9px; }
++.wb3-dh-ctl { align-items: flex-start; gap: 8px; }
++.wb3-actions { display: flex; align-items: center; gap: 8px; }
++.wb3-actions .rcx-btn, .wb3-actions .bmw-btn-ok, .wb3-actions .f4-btn-save { height: 32px; font-size: 12.5px; padding: 0 16px; border-radius: 8px; }
++.wb3-actions .f4-btn--small { height: 32px; padding: 0 12px; font-size: 11.5px; }
++.wb3-dh-ctl .tq-sensortrain .tq-why { max-width: 260px; white-space: normal; }
++.wb3-dh-ctl .tq-split .rcx-btn { height: 32px; }
++
++/* Kind tabs carry a few words of state, not only a dot. */
++.wb3-kindtabs .f4-tab { padding: 10px 12px 9px; font-size: 0.78rem; }
++.wb3-tab-state { display: inline-flex; align-items: center; gap: 5px; margin-left: 2px; }
++.wb3-tab-words { font-size: 0.66rem; font-weight: 500; color: var(--text-secondary); white-space: nowrap; max-width: 300px; overflow: hidden; text-overflow: ellipsis; }
++.wb3-tab-words--need { color: var(--warn); }
++.wb3-tab-words--bad { color: var(--danger); }
++.wb3-tab-words--complete { color: var(--ok); }
++.f4-tab--on .wb3-tab-words { font-weight: 600; }
++
++/* Page tabs under the kind tabs: the two steps of a model. */
++.wb3-pages { display: flex; gap: 4px; padding: 8px 14px 0; border-bottom: 1px solid var(--border); background: var(--bg-primary); }
++.wb3-page { display: inline-flex; align-items: center; gap: 8px; height: 38px; padding: 0 14px; border: 0; border-bottom: 2px solid transparent; margin-bottom: -1px; background: none; color: var(--text-secondary); font: inherit; font-size: 12.5px; font-weight: 500; cursor: pointer; white-space: nowrap; border-radius: 6px 6px 0 0; }
++.wb3-page:hover:not(.wb3-page--off) { color: var(--text-primary); background: var(--hover-bg); }
++.wb3-page--on { color: var(--text-primary); font-weight: 600; border-bottom-color: var(--accent-color); }
++.wb3-page--off { cursor: not-allowed; }
++.wb3-page--off .wb3-page-n, .wb3-page--off .wb3-page-t { opacity: 0.45; }
++.wb3-page:focus-visible { outline: 2px solid var(--accent-color); outline-offset: -2px; }
++.wb3-page-n { width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; font: 700 10px var(--mono); background: var(--surface-hi); color: var(--text-secondary); border: 1px solid var(--border-strong); }
++.wb3-page--on .wb3-page-n { background: var(--accent-color); color: #06111f; border-color: transparent; }
++.wb3-page-s { font-size: 10.5px; font-weight: 400; color: var(--text-faint); }
++.wb3-page--off .wb3-page-s { color: var(--warn); font-weight: 500; }
++
++/* Boards: more room between cards, cards lifted off the window. */
++.wb3-board { gap: 14px; padding: 14px 20px 18px; }
++.wb3-board .wb2-card, .wb3-board .hs-card { background: var(--card-bg); border-color: var(--border-strong); box-shadow: 0 1px 0 rgba(255, 255, 255, 0.02) inset, 0 8px 24px rgba(0, 0, 0, 0.25); border-radius: 14px; padding: 12px 14px 10px; }
++.wb3-board .wb2-card-h b { font-size: 13.5px; }
++.wb3-board .wb2-card-s { font-size: 11.5px; color: var(--text-secondary); }
++.wb3-board .wb2-card--xtall .wb2-cv { height: 400px; }
++.wb3-board .wb2-card--normal .wb2-cv { height: 220px; }
++.wb3-board .wb2-stale, .wb3-board .rcm-warn, .wb3-board .hs-save { margin: 0; grid-column: 1 / -1; }
++
++/* KPI strip: the numbers first. */
++.wb3-kpis { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
++/* Model fit: 3 tiles, left-aligned and capped so they do not stretch on a wide window */
++.wb3-kpis--fit { grid-template-columns: repeat(3, minmax(0, 420px)); justify-content: start; }
++.wb3-kpi { background: var(--card-bg); border: 1px solid var(--border-strong); border-radius: 12px; padding: 10px 14px 9px; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
++.wb3-kpi-l { font-size: 10.5px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-secondary); display: flex; align-items: center; gap: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
++.wb3-kpi-l .tpe-sw { flex-shrink: 0; }
++.wb3-kpi-v { font: 600 24px var(--mono); letter-spacing: -0.03em; color: var(--text-primary); line-height: 1.15; display: flex; align-items: baseline; gap: 6px; white-space: nowrap; overflow: hidden; }
++.wb3-kpi-v--sm { font-size: 13.5px; letter-spacing: -0.01em; padding-top: 5px; white-space: normal; line-height: 1.3; }
++.wb3-kpi-u { font-size: 11px; font-weight: 500; color: var(--text-secondary); letter-spacing: 0; }
++.wb3-kpi-s { font-size: 11px; color: var(--text-secondary); line-height: 1.4; }
++.wb3-kpi-s b { color: var(--text-primary); font-weight: 600; font-family: var(--mono); }
++.wb3-kpi--ok .wb3-kpi-v { color: var(--ok); }
++.wb3-kpi--warn .wb3-kpi-v { color: var(--warn); }
++.wb3-kpi--bad .wb3-kpi-v { color: var(--danger); }
++.wb3-sharebar { display: flex; width: 100%; height: 10px; border-radius: 5px; overflow: hidden; background: rgba(255, 255, 255, 0.06); margin: 6px 0 2px; }
++.wb3-sharebar i { display: block; height: 100%; }
++.wb3-sharekey { display: flex; gap: 10px; font-size: 10.5px; color: var(--text-faint); flex-wrap: wrap; }
++.wb3-sharekey span { display: inline-flex; align-items: center; gap: 4px; }
++.wb3-sharekey i { width: 8px; height: 8px; border-radius: 2px; }
++.wb3-sharekey b { font-family: var(--mono); color: var(--text-secondary); font-weight: 600; }
++
++/* Health score page: one column — ruler, then the stacked charts. */
++.wb3-board.hs-board { grid-template-columns: minmax(0, 1fr); }
++.wb3-board.hs-board > * { grid-column: 1 / -1; }
++
++/* The score ruler. */
++.wb3-rulercard { gap: 0; padding-bottom: 12px; }
++.wb3-ruler { --n: 5; position: relative; margin: 14px auto 8px; width: min(100% - 156px, 1100px); }
++.wb3-ruler-scores, .wb3-ruler-names, .wb3-ruler-values { position: relative; height: 18px; }
++.wb3-ruler-scores > span, .wb3-ruler-names > span, .wb3-ruler-values > span { position: absolute; transform: translateX(-50%); white-space: nowrap; }
++.wb3-ruler-sc { font: 700 13px var(--mono); letter-spacing: -0.02em; }
++.wb3-ruler-sc--ok { color: var(--ok); }
++.wb3-ruler-sc--warn { color: var(--warn); }
++.wb3-ruler-sc--bad { color: var(--danger); }
++.wb3-ruler-sc--off { color: var(--text-faint); }
++.wb3-ruler-band { position: relative; height: 12px; border-radius: 6px; margin: 4px 0 6px; box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08) inset; }
++.wb3-ruler-tick { position: absolute; top: -4px; bottom: -4px; width: 2px; margin-left: -1px; background: rgba(255, 255, 255, 0.55); border-radius: 1px; }
++.wb3-ruler-tick--user { background: #fff; width: 3px; margin-left: -1.5px; top: -6px; bottom: -6px; box-shadow: 0 0 0 2px var(--card-bg); }
++.wb3-ruler-tick--bad { background: var(--danger); }
++.wb3-ruler-names { height: 16px; }
++.wb3-ruler-nm { font-size: 10.5px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-secondary); }
++.wb3-ruler-nm--user { color: var(--text-primary); }
++.wb3-ruler-values { height: 40px; margin-top: 2px; }
++.wb3-ruler-v { font: 500 13px var(--mono); color: var(--text-secondary); top: 8px; }
++.wb3-ruler-v--user { top: 0; }
++.hs-num--big { height: 38px; padding: 0 10px; border-radius: 9px; background: var(--input-bg); border-color: var(--border-strong); width: 132px; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35); }
++.hs-num--big { overflow: hidden; }
++.hs-num--big input { font: 600 16px var(--mono); letter-spacing: -0.02em; width: auto; flex: 1 1 0; min-width: 0; }
++.hs-num--big > span { flex: 0 0 auto; }
++.wb3-ruler--7 .hs-num--big { width: 104px; }
++.wb3-ruler--7 .hs-num--big input { font-size: 14.5px; }
++.hs-num--big > span { font-size: 11px; max-width: 46px; }
++.hs-num--big.hs-num--req { border-color: var(--warn-line); border-style: dashed; background: var(--warn-muted); }
++.hs-num--big.hs-num--err { border-color: var(--danger); background: var(--danger-muted); }
++.hs-num--big.hs-num--ring { width: 92px; }
++.wb3-kstep { display: inline-flex; align-items: center; gap: 4px; }
++/* The scoring-period tile label: two lines, never cut. */
++.wb3-kpi-l:has(.wb3-kpi-l2) { white-space: normal; overflow: visible; }
++.wb3-kpi-l2 { display: flex; flex-direction: column; gap: 1px; min-width: 0; font-family: var(--mono); letter-spacing: 0; text-transform: none; font-size: 10.5px; }
++.wb3-kpi-l2 > span { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
++.wb3-kpi-l2 > span + span { padding-left: 16px; }
++/* Health score strip: a tile is never narrower than its two-line period label; a label wraps, never cuts. */
++.wb3-kpis:not(.wb3-kpis--fit) { display: flex; overflow-x: auto; padding-bottom: 2px; scrollbar-width: thin; }
++.wb3-kpis:not(.wb3-kpis--fit) .wb3-kpi { flex: 1 0 176px; }
++.wb3-kpis-per--top { display: contents; }
++.wb3-kpis-per--under { display: none !important; }
++.wb3-kpis:not(.wb3-kpis--fit) .wb3-kpi { padding-left: 12px; padding-right: 12px; }
++.wb3-kpis:not(.wb3-kpis--fit) .wb3-kpi-l { white-space: normal; overflow: visible; }
++.wb3-notice--ok { background: color-mix(in oklab, var(--ok) 8%, var(--card-bg)); }
++.wb3-notice--ok .wbx-reason { color: var(--text-secondary); }
++/* A rejected typed value, marked in red where it really sits; an empty one in dashed amber. */
++.wb3-ruler-ghosts { position: relative; height: 22px; }
++.wb3-ruler-ghost { position: absolute; transform: translateX(-50%); white-space: nowrap; font: 600 10.5px var(--mono); color: var(--danger); background: var(--danger-muted); border: 1px solid var(--danger-line); border-radius: 5px; padding: 1px 6px; line-height: 14px; z-index: 1; }
++.wb3-ruler-gmark { position: absolute; top: -26px; bottom: -4px; width: 0; margin-left: -1px; border-left: 2px dashed var(--danger); }
++.wb3-ruler-gmark::after { content: ''; position: absolute; left: -6px; bottom: -3px; width: 10px; height: 10px; background: var(--danger); transform: rotate(45deg); border-radius: 2px; box-shadow: 0 0 0 2px var(--card-bg); }
++.wb3-ruler-tick--req { background: none; border-left: 3px dashed var(--warn); width: 0; box-shadow: none; }
++.wb3-ruler-nm--bad { color: var(--danger); }
++.wb3-ruler-nm--req { color: var(--warn); }
++.wb3-ruler-nm-pv, .wb3-ruler-vl { display: none; }
++.wb3-rulercard .hs-chk--bad { color: var(--danger); font-weight: 500; }
++.wb3-rulercard .hs-chk--need { color: var(--warn); }
++.wb3-ruler-ghost { top: 0; }
++.wb3-ruler-ghost--right { transform: translateX(-100%); margin-left: 8px; }
++.wb3-ruler-ghost--left { transform: none; margin-left: -8px; }
++/* Not checked (the health score did not load): grey, dashed, no score colour. */
++.wb3-ruler-tick--unk { background: none; border-left: 3px dashed var(--text-faint); width: 0; box-shadow: none; }
++/* Focus is visible on every ruler input, whatever its state. */
++.hs-num--big:focus-within { outline: 2px solid var(--accent-color); outline-offset: 1px; }
++/* A score number keeps its colour; a tile's value never does (tiles do not judge). */
++.wb3-kpi-s b.wb3-sc--ok { color: var(--ok); }
++.wb3-kpi-s b.wb3-sc--warn { color: var(--warn); }
++.wb3-kpi-s b.wb3-sc--bad { color: var(--danger); }
++/* The notice has the strength of what it reports. */
++.wb3-notice--warn .wbx-reason, .wb3-notice--warn .wbx-reason svg { color: var(--warn); }
++.wb3-notice--bad .wbx-reason, .wb3-notice--bad .wbx-reason svg { color: var(--danger); font-weight: 500; }
++/* Mark complete with its reason under it — the same slot and style as Train sensor's line. */
++.wb3-actions { align-items: flex-start; }
++.wb3-markcol { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
++.wb3-markrow { display: flex; align-items: center; gap: 8px; }
++.wb3-markcol .tq-why { max-width: 260px; text-align: right; }
++.wb3-ruler-note { font-size: 11.5px; color: var(--text-secondary); line-height: 1.5; padding: 4px 0 10px; display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: center; }
++.wb3-rulercard .hsx-checks { border-top: 1px solid var(--border); padding-top: 10px; margin-top: 2px; }
++.wb3-rulercard .hs-chk { font-size: 12px; }
++
++/* Stacked charts: one time axis, the score under the value. */
++.wb3-board .wb3-stack .wb2-cv { height: 560px; }
++.wb3-board .wb3-stack--xy .wb2-cv { height: 700px; }
++.wb3-stack-in { display: flex; flex-direction: column; height: 100%; }
++.wb3-stack-top { flex: 1 1 58%; min-height: 0; }
++.wb3-stack--xy .wb3-stack-top { flex-basis: 64%; }
++.wb3-stack-bot { flex: 1 1 42%; min-height: 0; position: relative; border-top: 1px dashed var(--border-strong); margin-top: 2px; padding-top: 4px; }
++.wb3-stack--xy .wb3-stack-bot { flex-basis: 36%; }
++.wb3-stack-lock { height: 100%; display: grid; place-items: center; padding: 10px 0 0; }
++.wb3-stack-lock > span { border: 1px dashed var(--border-strong); border-radius: 10px; padding: 18px 24px; color: var(--text-faint); font-size: 12.5px; width: 100%; text-align: center; }
++.wb3-stack .hs-rd { font: 500 11.5px var(--mono); color: var(--text-secondary); }
++
++/* The notice line (the only job the footer keeps). */
++.wb3-notice { position: sticky; bottom: 0; z-index: 1; display: flex; align-items: center; gap: 10px; padding: 9px 20px; border-top: 1px solid var(--border); background: var(--card-bg); }
++.wb3-notice .wbx-reason { font-size: 12px; display: inline-flex; align-items: center; gap: 7px; }
++.wb3-notice--warn { background: color-mix(in oklab, var(--warn) 9%, var(--card-bg)); border-top-color: var(--warn-line); }
++.wb3-notice--bad { background: color-mix(in oklab, var(--danger) 10%, var(--card-bg)); border-top-color: var(--danger-line); }
++
++@container (max-width: 760px) {
++    .wb3-dh-ctl { grid-column: 1 / -1; justify-content: flex-end; }
++    .wb3-ruler { width: min(100% - 140px, 1100px); }
++    /* Relation model: 7 ticks do not leave room for 4 inputs - the inputs move to their
++       own labelled row under the band; the band keeps the scores, names and program values. */
++    .wb3-ruler--7 { width: calc(100% - 52px); }
++    .wb3-ruler--7 .wb3-ruler-nm--user { display: none; }
++    .wb3-ruler--7 .wb3-ruler-names { height: 30px; }
++    .wb3-ruler--7 .wb3-ruler-nm-pv { display: block; font: 500 10.5px var(--mono); letter-spacing: 0; text-transform: none; color: var(--text-secondary); text-align: center; }
++    .wb3-ruler--7 .wb3-ruler-values { height: auto; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin: 8px -14px 0; }
++    .wb3-ruler--7 .wb3-ruler-values > span { position: static; transform: none; white-space: normal; }
++    .wb3-ruler--7 .wb3-ruler-v:not(.wb3-ruler-v--user) { display: none; }
++    .wb3-ruler--7 .wb3-ruler-v--user { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
++    .wb3-ruler--7 .wb3-ruler-vl { display: block; font-size: 10px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
++    .wb3-ruler--7 .hs-num--big { width: 100%; }
++    .wb3-ruler--7 .hs-num--big input { font-size: 14px; }
++    .wb3-kpi-v { font-size: 20px; }
++    /* Narrow: the scoring-period tiles move under the ruler, so the ruler stays above the fold. */
++    .wb3-kpis-per--top { display: none; }
++    .wb3-kpis-per--under { display: flex !important; }
++    .wb3-page:not(.wb3-page--off) .wb3-page-s { display: none; }
++}
++
+ /* Welcome page — machine illustration: the ‹ › buttons and the dots that pick a machine
+    (MachineMorphCanvas.tsx; the panel is always dark, so these do not follow the theme). */
+ .machine-nav-btn {
+@@ -6512,3 +6927,143 @@ body {
+     outline: 2px solid oklch(0.74 0.17 245);
+     outline-offset: 2px;
+ }
++
++/* MODEL SETTINGS v2 (design 2026-10-12, mockup) — ONE form for the three kinds.
++   - One grid of three equal columns (two on a narrow detail pane, one on a very narrow one).
++     Row 1 is always: Model name · the kind's own "how" setting (Boundary / Stiffness /
++     Clusters) · Training data. The sensors follow on row 2, wide fields take a full row.
++   - Every field is label (one 16 px line) → control (30 px, the picker's height) → help.
++   - No "sets the model to Incomplete" hint of any kind (removed in the real app, d917dae).
++   Overrides the flex / 4-track rules above; an implementation folds them together. */
++.bmw-sets-body,
++.bmw-sets-body--clustering {
++    display: grid;
++    grid-template-columns: repeat(3, minmax(0, 1fr));
++    gap: 14px 20px;
++    align-items: start;
++    padding: 4px 20px 14px 38px;
++}
++
++.bmw-sets-body .f4-fld,
++.bmw-sets-body .bmw-sets-kind .f4-fld,
++.bmw-sets-body > .f4-fld:not(.f4-fld--name):not(.f4-fld--traindata) {
++    gap: 5px;
++    min-width: 0;
++    max-width: none;
++}
++
++.bmw-sets-body .f4-fld--name { grid-area: 1 / 1; }
++.bmw-sets-body .ms-how { grid-area: 1 / 2; }
++.bmw-sets-body .f4-fld--traindata { grid-area: 1 / 3; }
++.bmw-sets-body .bmw-sets-kind .f4-fld--grow,
++.bmw-sets-body--clustering .f4-fld--grow,
++.bmw-sets-body .rc-custom,
++.bmw-sets-body--clustering .rc-custom { grid-column: 1 / -1; }
++
++/* Labels: one line, one height. */
++.bmw-sets-body .f4-fld > label,
++.bmw-sets-body .f4-fld > .f4-lbl {
++    display: flex;
++    align-items: center;
++    gap: 6px;
++    height: 16px;
++    font-size: 11px;
++    line-height: 16px;
++    white-space: nowrap;
++}
++
++.bmw-sets-body .f4-lbl .pm-field-hint-inline {
++    font-weight: 400;
++    color: var(--text-faint);
++    overflow: hidden;
++    text-overflow: ellipsis;
++}
++
++/* Controls: all 30 px, the same radius, the same field colours. */
++.bmw-sets-body .f4-fld > .fg-inspector-input {
++    height: 30px;
++    padding: 0 10px;
++    border-radius: 8px;
++    border-color: var(--border-strong);
++    background: var(--input-bg);
++    font-size: 12.5px;
++    line-height: 28px;
++}
++
++.bmw-sets-body .f4-fld > .f4-seg {
++    align-self: flex-start;
++    max-width: 100%;
++    height: 30px;
++    box-sizing: border-box;
++    border-radius: 8px;
++    flex-wrap: nowrap;
++}
++
++.bmw-sets-body .f4-fld > .f4-seg button {
++    height: 24px;
++    padding: 0 10px;
++    white-space: nowrap;
++}
++
++.bmw-sets-body .f4-fld > .bmw-step {
++    align-self: flex-start;
++    height: 30px;
++    box-sizing: border-box;
++    border-radius: 8px;
++}
++
++.bmw-sets-body .f4-fld > .bmw-step button { width: 30px; }
++.bmw-sets-body .f4-fld > .bmw-step span { min-width: 34px; font-size: 12.5px; }
++
++.bmw-sets-body .f4-fld > .f4-readout {
++    height: 30px;
++    box-sizing: border-box;
++    padding: 0 9px;
++    border-radius: 8px;
++    font-size: 12.5px;
++}
++
++/* A read-out that is a short fact, not a sensor: as wide as its text. */
++.bmw-sets-body .f4-fld > .ms-ro {
++    align-self: flex-start;
++    max-width: 100%;
++    color: var(--text-secondary);
++}
++
++.bmw-sets-body .pk-multi { min-height: 30px; }
++
++.bmw-sets-body .pm-cluster-slider--empty {
++    min-height: 30px;
++    box-sizing: border-box;
++    padding-top: 0;
++    padding-bottom: 0;
++    display: flex;
++    align-items: center;
++    border-radius: 8px;
++    font-size: 11.5px;
++}
++
++/* Help and notes: one size, right under the control. */
++.bmw-sets-body .f4-hint,
++.bmw-sets-body .f4-req-note {
++    font-size: 10.5px;
++    line-height: 14px;
++}
++
++/* A narrow detail pane: two columns — the name on its own row. */
++@container (max-width: 780px) {
++    .bmw-sets-body,
++    .bmw-sets-body--clustering { grid-template-columns: repeat(2, minmax(0, 1fr)); }
++    .bmw-sets-body .f4-fld--name { grid-area: 1 / 1 / 2 / -1; }
++    .bmw-sets-body .ms-how { grid-area: 2 / 1; }
++    .bmw-sets-body .f4-fld--traindata { grid-area: 2 / 2; }
++}
++
++@container (max-width: 480px) {
++    .bmw-sets-body,
++    .bmw-sets-body--clustering { grid-template-columns: minmax(0, 1fr); }
++    .bmw-sets-body .f4-fld--name,
++    .bmw-sets-body .ms-how,
++    .bmw-sets-body .f4-fld--traindata { grid-area: auto; }
++    .bmw-sets-body .f4-fld > .f4-seg { flex-wrap: wrap; height: auto; }
++}
+diff --git a/real_now/src/components/charts/TagCompareTable.tsx b/mock_now/src/components/charts/TagCompareTable.tsx
+index ae8ca23..34ae227 100644
+--- a/real_now/src/components/charts/TagCompareTable.tsx
++++ b/mock_now/src/components/charts/TagCompareTable.tsx
+@@ -1,8 +1,9 @@
+-import { Fragment, useState, type RefObject } from 'react';
++import { useState, type RefObject } from 'react';
+ import { createPortal } from 'react-dom';
+ import { ChevronDown, ChevronRight } from 'lucide-react';
+ import TaggedPointList, { type TaggedPointListItem } from './TaggedPointList';
+ import { SensorInline } from '../sensor/SensorLabel';
++import { MAX_TAGGED_POINTS } from './pairPlotColors';
+ import type { SensorInfo } from '../sensor/sensorInfo';
+ 
+ export interface TagCompareRow {
+@@ -12,7 +13,8 @@ export interface TagCompareRow {
+     color?: string;
+     /** A short lead before the name — the axis ("X" / "Y") on the Scatter chart. */
+     lead?: string;
+-    /** One ready-to-print value (with its unit) per tag, in the order of `items`. */
++    /** One ready-to-print NUMBER per tag, in the order of `items` ("—" when there is none).
++     *  The unit is not in it: it is printed once per row, beside the sensor's name. */
+     cells: string[];
+ }
+ 
+@@ -57,8 +59,11 @@ export default function TagCompareTable({ items, rows, onRemove, emptyFocusRef,
+         <section className={`tag-table${panel ? ' tag-table--panel' : ''}`} data-testid="tag-table" aria-label="Values at the tagged points">
+             <div
+                 className="tag-table-grid"
+-                // Kept together on the left: the names next to their values, not stretched across a wide window.
+-                style={{ gridTemplateColumns: `minmax(220px, 380px) repeat(${items.length}, minmax(168px, 210px))` }}
++                // The names stay next to their values (capped columns), and a last, empty column
++                // takes the rest of the width, so the head band and the row lines cross the whole
++                // tab instead of the table floating in a corner. Many tags: the columns shrink to
++                // 124 px, then the table scrolls sideways under the fixed name column.
++                style={{ gridTemplateColumns: `minmax(220px, 400px) repeat(${items.length}, minmax(124px, 152px)) minmax(0, 1fr)` }}
+             >
+                 <div className="tag-table-corner">
+                     {panel ? (
+@@ -78,26 +83,41 @@ export default function TagCompareTable({ items, rows, onRemove, emptyFocusRef,
+                     )}
+                 </div>
+                 <TaggedPointList items={items} onRemove={onRemove} emptyFocusRef={emptyFocusRef} />
++                <div className="tag-table-fill tag-table-fill--head" aria-hidden="true" />
+                 {open && rows.map(row => (
+-                    <Fragment key={row.key}>
++                    // One element per row (`display: contents`), so hovering any cell lights the whole row.
++                    <div key={row.key} className="tag-table-row">
+                         <div className="tag-table-name" data-testid="tag-table-name">
+                             {row.color && <i className="tag-table-swatch" style={{ background: row.color }} aria-hidden="true" />}
+                             {row.lead && <span className="tag-table-lead">{row.lead}</span>}
+                             <SensorInline tag={row.info.tag} info={row.info} size="sm" fit />
++                            {/* The unit, ONCE per row (it used to be repeated in every cell). */}
++                            {row.info.unit && <span className="tag-table-unit" data-testid="tag-table-unit">{row.info.unit}</span>}
+                         </div>
+-                        {items.map((item, c) => (
+-                            <div
+-                                key={item.id}
+-                                className="tag-table-val"
+-                                data-testid="tag-table-val"
+-                                title={`${row.info.description || row.info.tag} · ${item.label}`}
+-                            >
+-                                {row.cells[c] ?? '—'}
+-                            </div>
+-                        ))}
+-                    </Fragment>
++                        {items.map((item, c) => {
++                            const text = row.cells[c] ?? '—';
++                            return (
++                                <div
++                                    key={item.id}
++                                    className={`tag-table-val${text === '—' ? ' tag-table-val--none' : ''}`}
++                                    data-testid="tag-table-val"
++                                    title={`${row.info.description || row.info.tag} · ${item.label}${text === '—' ? ' · no value at this point' : row.info.unit ? ` · ${text} ${row.info.unit}` : ''}`}
++                                >
++                                    {text}
++                                </div>
++                            );
++                        })}
++                        <div className="tag-table-fill" aria-hidden="true" />
++                    </div>
+                 ))}
+             </div>
++            {/* How many of the chart's tags are used — and, at the limit, why a click adds nothing. */}
++            {panel && (
++                <p className="tag-table-foot" data-testid="tag-table-foot">
++                    <b>{items.length}</b> of {MAX_TAGGED_POINTS} points
++                    {items.length >= MAX_TAGGED_POINTS && <span className="tag-table-foot-full"> · the chart holds {MAX_TAGGED_POINTS} at most — remove one to tag another</span>}
++                </p>
++            )}
+         </section>
+     );
+ }
+@@ -113,8 +133,9 @@ export function TagTableSlot({ host, ...props }: TagCompareTableProps & { host?:
+     return createPortal(<TagCompareTable {...props} variant="panel" />, host);
+ }
+ 
+-/** A value cell: the number as the tooltips print it, then the unit; "—" when there is none. */
+-export function tagCell(text: string | null, unit?: string): string {
+-    if (text == null) return '—';
+-    return unit ? `${text} ${unit}` : text;
++/** A value cell: the number as the tooltips print it; "—" when there is none. The unit is NOT
++ *  part of the cell any more — the table prints it once per row. (`_unit` is still accepted so the
++ *  two charts did not have to change in the mockup; an implementation drops the argument.) */
++export function tagCell(text: string | null, _unit?: string): string {
++    return text == null ? '—' : text;
+ }
+diff --git a/real_now/src/components/charts/TaggedPointList.tsx b/mock_now/src/components/charts/TaggedPointList.tsx
+index 7e1ee75..05d7ecc 100644
+--- a/real_now/src/components/charts/TaggedPointList.tsx
++++ b/mock_now/src/components/charts/TaggedPointList.tsx
+@@ -1,4 +1,4 @@
+-import { useRef, type RefObject } from 'react';
++import { useRef, type CSSProperties, type RefObject } from 'react';
+ import { X } from 'lucide-react';
+ 
+ export interface TaggedPointListItem {
+@@ -53,9 +53,16 @@ export default function TaggedPointList({ items, onRemove, emptyFocusRef }: Tagg
+     return (
+         <ul className="chart-tag-list" aria-label="Tagged points">
+             {items.map((item, index) => (
+-                <li key={item.id} className="chart-tag-item">
++                <li key={item.id} className="chart-tag-item" style={{ '--tag-c': item.color } as CSSProperties}>
+                     <span className="chart-tag-dot" style={{ background: item.color }} aria-hidden="true" />
+-                    <span className="chart-tag-label" title={item.label}>{item.label}</span>
++                    {/* "2026/06/21 03:10:00" reads as two short lines — the date, then the time —
++                        so a column can be narrow and the time is not squeezed against the ×.
++                        A label that is not a date and time ("Point 3") stays one line. */}
++                    <span className="chart-tag-label" title={item.label}>
++                        {splitStamp(item.label).map((part, i, all) => (
++                            <span key={i} className={all.length === 2 && i === 0 ? 'chart-tag-date' : 'chart-tag-time'}>{part}</span>
++                        ))}
++                    </span>
+                     <button
+                         type="button"
+                         className="chart-tag-remove"
+@@ -75,6 +82,12 @@ export default function TaggedPointList({ items, onRemove, emptyFocusRef }: Tagg
+     );
+ }
+ 
++/** "YYYY/MM/DD HH:mm:ss" → [date, time]; anything else stays whole. Display only. */
++function splitStamp(label: string): string[] {
++    const m = /^(\d{4}\/\d{2}\/\d{2}) (\d{2}:\d{2}(?::\d{2})?)$/.exec(label);
++    return m ? [m[1], m[2]] : [label];
++}
++
+ /** Colour slot for a NEW tag: the first palette index no remaining tag is
+  *  using. Picking `tags.length` instead (the old rule) re-used a colour that
+  *  was still on the chart as soon as any tag other than the last had been
+diff --git a/real_now/src/components/upload/machineDots.ts b/mock_now/src/components/upload/machineDots.ts
+index dca0c59..a5cbe75 100644
+--- a/real_now/src/components/upload/machineDots.ts
++++ b/mock_now/src/components/upload/machineDots.ts
+@@ -13,7 +13,16 @@
+  * accumulation buffer and ImageData only ever grow, and the dot stamps are
+  * cached per buffer scale.
+  */
+-import { POINT_STRIDE, type Camera, type MachineShape } from './machineShapes';
++import {
++  MAX_PARTS,
++  PART_STEP,
++  PART_STRIDE,
++  POINT_STRIDE,
++  SPIN_PER_SECOND,
++  poseParts,
++  type Camera,
++  type MachineShape,
++} from './machineShapes';
+ import { pickBufferScale } from './machineOrbit';
+ 
+ /** Dot tones: 0..2 = surface facing → grazing (rim light), 3 = edge dot (with halo). */
+@@ -25,7 +34,7 @@ export const TONE: ReadonlyArray<{ r: number; a: number; halo?: boolean }> = [
+ ];
+ /** Depth levels (near → far). */
+ export const DEPTH_LEVELS = 5;
+-/** Group colours: base metal, second body, hot section / volute (orange, accepted exception), plunger. */
++/** Colours (`group & 3`): base metal, second body, hot section / volute (orange, accepted exception), plunger. */
+ export const GROUP_ARR: ReadonlyArray<readonly [number, number, number]> = [
+   [110, 175, 255],
+   [180, 150, 255],
+@@ -37,9 +46,8 @@ export const EDGE_LIFT = 0.12;
+ /** Mini variant: tone alphas × 0.6 (on top of the wrapper's opacity 0.45), dots × 0.75. */
+ export const MINI_ALPHA = 0.6;
+ export const MINI_SIZE = 0.75;
+-/** Plunger stroke (normalised units) and the three plungers' phase offsets. */
+-export const PLUNGER_AMP = 0.09;
+-export const PLUNGER_PHASES = [0, 2.094, 4.188] as const;
++/** Plunger stroke and phases now live with the other moving parts in `machineShapes.ts`. */
++export { PLUNGER_AMP, PLUNGER_PHASES } from './machineShapes';
+ 
+ export interface DotKernels {
+   /** One stamp per (tone, depth, sub-pixel x, sub-pixel y): flat (dx, dy, weight) triples. */
+@@ -153,6 +161,9 @@ export class DotRenderer {
+   private off: HTMLCanvasElement | null = null;
+   private offCtx: CanvasRenderingContext2D | null = null;
+   private readonly kernCache = new Map<number, DotKernels>();
++  /** This frame's part poses for machine A and machine B (3×4 per part, slot 0 unused). */
++  private readonly poseA = new Float32Array((MAX_PARTS + 1) * PART_STRIDE);
++  private readonly poseB = new Float32Array((MAX_PARTS + 1) * PART_STRIDE);
+ 
+   constructor(n: number, mini: boolean) {
+     this.n = n;
+@@ -215,16 +226,21 @@ export class DotRenderer {
+     const xs = this.xs;
+     const ys = this.ys;
+     const keys = this.keys;
+-    const ph = spin * 0.55;
+-    const pl0 = PLUNGER_AMP * Math.sin(ph + PLUNGER_PHASES[0]);
+-    const pl1 = PLUNGER_AMP * Math.sin(ph + PLUNGER_PHASES[1]);
+-    const pl2 = PLUNGER_AMP * Math.sin(ph + PLUNGER_PHASES[2]);
++    // Moving parts: one small matrix per part per frame (a few sin/cos), then
++    // applied inside the loop below to that part's points only. `spin` does not
++    // advance under reduced motion, so every part then stays in its rest pose.
++    const MA = this.poseA;
++    const MB = this.poseB;
++    const sec = spin / SPIN_PER_SECOND;
++    poseParts(A.parts, sec, MA);
++    poseParts(B.parts, sec, MB);
+     const { cyw, syw, cp, sp, cx, cy, sc } = cam;
+     // View direction in model space, for the rim light.
+     const vx = -syw * cp;
+     const vy = sp;
+     const vz = cyw * cp;
+     const useB = e >= 0.5;
++    const MQ = useB ? MB : MA;
+     const bj = burst * 1.7;
+     const dust = burst > 0.35;
+     let mnx = 1e9;
+@@ -237,12 +253,32 @@ export class DotRenderer {
+       const o = i * S;
+       const ga = pa[o + 3];
+       const gb = pb[o + 3];
+-      const xa = pa[o] + (ga >= 10 ? (ga === 10 ? pl0 : ga === 11 ? pl1 : pl2) : 0);
+-      const xb = pb[o] + (gb >= 10 ? (gb === 10 ? pl0 : gb === 11 ? pl1 : pl2) : 0);
++      let xa = pa[o];
++      let ya = pa[o + 1];
++      let za = pa[o + 2];
++      if (ga >= PART_STEP) {
++        const m = (ga >> 2) * PART_STRIDE;
++        const px = xa;
++        const py = ya;
++        xa = MA[m] * px + MA[m + 1] * py + MA[m + 2] * za + MA[m + 3];
++        ya = MA[m + 4] * px + MA[m + 5] * py + MA[m + 6] * za + MA[m + 7];
++        za = MA[m + 8] * px + MA[m + 9] * py + MA[m + 10] * za + MA[m + 11];
++      }
++      let xb = pb[o];
++      let yb = pb[o + 1];
++      let zb = pb[o + 2];
++      if (gb >= PART_STEP) {
++        const m = (gb >> 2) * PART_STRIDE;
++        const px = xb;
++        const py = yb;
++        xb = MB[m] * px + MB[m + 1] * py + MB[m + 2] * zb + MB[m + 3];
++        yb = MB[m + 4] * px + MB[m + 5] * py + MB[m + 6] * zb + MB[m + 7];
++        zb = MB[m + 8] * px + MB[m + 9] * py + MB[m + 10] * zb + MB[m + 11];
++      }
+       const j = i * 3;
+       const x = xa + (xb - xa) * e + jit[j] * bj;
+-      const y = pa[o + 1] + (pb[o + 1] - pa[o + 1]) * e + jit[j + 1] * bj;
+-      const z = pa[o + 2] + (pb[o + 2] - pa[o + 2]) * e + jit[j + 2] * bj;
++      const y = ya + (yb - ya) * e + jit[j + 1] * bj;
++      const z = za + (zb - za) * e + jit[j + 2] * bj;
+       const x1 = x * cyw + z * syw;
+       const z1 = -x * syw + z * cyw;
+       const y2 = y * cp - z1 * sp;
+@@ -262,12 +298,24 @@ export class DotRenderer {
+       if (dust) tone = 1;
+       else if (q[o + 4] > 0.5) tone = 3;
+       else {
+-        const f = 1 - Math.abs(q[o + 5] * vx + q[o + 6] * vy + q[o + 7] * vz);
++        let nx = q[o + 5];
++        let ny = q[o + 6];
++        let nz = q[o + 7];
++        if (g >= PART_STEP) {
++          // The normal turns with its part, so the rim light stays where the camera sees it.
++          const m = (g >> 2) * PART_STRIDE;
++          const ax = nx;
++          const ay = ny;
++          nx = MQ[m] * ax + MQ[m + 1] * ay + MQ[m + 2] * nz;
++          ny = MQ[m + 4] * ax + MQ[m + 5] * ay + MQ[m + 6] * nz;
++          nz = MQ[m + 8] * ax + MQ[m + 9] * ay + MQ[m + 10] * nz;
++        }
++        const f = 1 - Math.abs(nx * vx + ny * vy + nz * vz);
+         tone = f > 0.8 ? 2 : f > 0.4 ? 1 : 0;
+       }
+       let lv = (z2 + 2.5) | 0;
+       lv = lv < 0 ? 0 : lv > 4 ? 4 : lv;
+-      keys[i] = ((g >= 10 ? 3 : g) * 4 + tone) * DEPTH_LEVELS + lv;
++      keys[i] = ((g & 3) * 4 + tone) * DEPTH_LEVELS + lv;
+     }
+ 
+     // 2) clip the box to the canvas, then pick the buffer scale
+diff --git a/real_now/src/components/upload/machineShapes.ts b/mock_now/src/components/upload/machineShapes.ts
+index 7a08096..d7c75f7 100644
+--- a/real_now/src/components/upload/machineShapes.ts
++++ b/mock_now/src/components/upload/machineShapes.ts
+@@ -12,13 +12,23 @@
+  *
+  * Point layout is a flat Float32Array, stride 8 (`POINT_STRIDE`):
+  *   x, y, z, group, edge, nx, ny, nz
+- *   group 0   = base metal (blue)
+- *   group 1   = second body colour (violet)
+- *   group 2   = hot section / volute (orange — an accepted, user-approved
+- *               exception to "warn hue only for state")
+- *   group 10+ = reciprocating-pump plunger k = group - 10 (moves back and forth)
++ *   group     = colour + PART_STEP × part  (so `group & 3` is the colour and
++ *               `group >> 2` the part; group < PART_STEP = fixed geometry)
++ *     colour 0 = base metal (blue)
++ *     colour 1 = second body colour (violet)
++ *     colour 2 = hot section / volute (orange — an accepted, user-approved
++ *                exception to "warn hue only for state")
++ *     colour 3 = bright metal (the reciprocating pump's plungers)
++ *     part   0 = does not move; part k ≥ 1 = `MachineShape.parts[k - 1]`, a
++ *                rigid moving part (a rotor turning about its shaft, or a
++ *                plunger sliding) — see `PartDef` / `poseParts`
+  *   edge      = 1 for rim / seam / edge / bolt dots (drawn brighter), else 0
+  *   n         = surface normal (0,0,0 for edge dots); gives the rim light
++ *
++ * Every machine has at least one moving part ("the machine is running").
++ * Motion is a pose, not new data: the stored points are the rest pose (which
++ * is exactly what reduced motion shows) and the renderer applies one small
++ * matrix per part inside its existing per-point loop.
+  */
+ 
+ export type Rng = () => number;
+@@ -52,6 +62,75 @@ export const DS = 46;
+ 
+ export const TAU = Math.PI * 2;
+ 
++/* ------------------------------------------------------------------ */
++/* Moving parts                                                        */
++/* ------------------------------------------------------------------ */
++
++export type Axis = 'x' | 'y' | 'z';
++
++/** `group = colour + PART_STEP × part`. */
++export const PART_STEP = 4;
++/** Floats per part pose: a 3×4 matrix, rows x′ y′ z′, columns x y z 1. */
++export const PART_STRIDE = 12;
++/** Most parts one machine may have (the renderer sizes its pose table from it). */
++export const MAX_PARTS = 6;
++/** The canvas advances its part clock (`spin`) by this much per second. */
++export const SPIN_PER_SECOND = 3;
++/** Crank speed of the reciprocating pump, rev/s (= the shipped plunger phase `spin × 0.55`). */
++export const CRANK_RPS = (0.55 * SPIN_PER_SECOND) / TAU;
++/** Plunger stroke (normalised units) and the three plungers' phase offsets (ported from the mockup). */
++export const PLUNGER_AMP = 0.09;
++export const PLUNGER_PHASES = [0, 2.094, 4.188] as const;
++
++/** One rigid moving part of a machine. */
++export interface PartDef {
++  /** What it is, for tests and the spec (never shown in the UI). */
++  name: string;
++  /** `turn` = rotates about `axis` through `c`; `slide` = moves back and forth along `axis`. */
++  kind: 'turn' | 'slide';
++  axis: Axis;
++  /** A point on the shaft axis, in the normalised machine space (after fitting). */
++  c: Vec3;
++  /** Revolutions (turn) or strokes (slide) per second; the sign is the direction. */
++  rps: number;
++  /** Phase offset, radians. */
++  phase: number;
++  /** Stroke amplitude of a slide, in normalised units (0 for a turn). */
++  amp: number;
++}
++
++/**
++ * Write the pose of every part at `seconds` into `out` (slot k = part k, slot 0
++ * unused): a 3×4 matrix per part. Allocates nothing — the renderer calls it
++ * once per frame per machine.
++ */
++export function poseParts(parts: ReadonlyArray<PartDef>, seconds: number, out: Float32Array): void {
++  for (let p = 0; p < parts.length; p++) {
++    const d = parts[p];
++    const o = (p + 1) * PART_STRIDE;
++    const a = seconds * d.rps * TAU + d.phase;
++    out.fill(0, o, o + PART_STRIDE);
++    out[o] = out[o + 5] = out[o + 10] = 1;
++    if (d.kind === 'slide') {
++      out[o + (d.axis === 'x' ? 3 : d.axis === 'y' ? 7 : 11)] = d.amp * Math.sin(a);
++      continue;
++    }
++    const c = Math.cos(a);
++    const s = Math.sin(a);
++    // u, v = the two axes the turn mixes (x: y,z · y: z,x · z: x,y)
++    const u = d.axis === 'x' ? 1 : d.axis === 'y' ? 2 : 0;
++    const v = (u + 1) % 3;
++    const cu = d.c[u];
++    const cv = d.c[v];
++    out[o + u * 4 + u] = c;
++    out[o + u * 4 + v] = -s;
++    out[o + u * 4 + 3] = cu - cu * c + cv * s;
++    out[o + v * 4 + u] = s;
++    out[o + v * 4 + v] = c;
++    out[o + v * 4 + 3] = cv - cu * s - cv * c;
++  }
++}
++
+ /** mulberry32 plus a read-out of its internal state (`mulberry32(state())` continues the same sequence). */
+ function mulberry32WithState(seed: number): { next: Rng; state: () => number } {
+   let a = seed | 0;
+@@ -94,14 +173,14 @@ export interface MachineShape {
+   /** Share of the raw points that are edge dots (0..1). */
+   edgeRatio: number;
+   sensors: SensorDef[];
++  /** The machine's moving parts; point group `colour + PART_STEP × (index + 1)` belongs to `parts[index]`. */
++  parts: PartDef[];
+ }
+ 
+ /* ------------------------------------------------------------------ */
+ /* Point sampler (C6)                                                  */
+ /* ------------------------------------------------------------------ */
+ 
+-export type Axis = 'x' | 'y' | 'z';
+-
+ export interface CylOpts {
+   /** Surface (skin) density factor. */
+   k?: number;
+@@ -348,6 +427,35 @@ interface RawShape {
+   name: MachineName;
+   pts: number[];
+   sens: SensorDef[];
++  /** Moving parts, centres still in raw (un-fitted) space. */
++  parts: PartDef[];
++}
++
++/** A point at angle `a`, radius `r` on the circle around `c` perpendicular to `ax`. */
++function onCircle(ax: Axis, c: Vec3, r: number, a: number): Vec3 {
++  const u = Math.cos(a) * r;
++  const v = Math.sin(a) * r;
++  return ax === 'x' ? [c[0], c[1] + u, c[2] + v] : ax === 'y' ? [c[0] + v, c[1], c[2] + u] : [c[0] + u, c[1] + v, c[2]];
++}
++
++/** `n` blades / vanes / spokes from radius `r0` to `r1`; `sweep` (rad) leans the tips so they read as blades. */
++function blades(s: Sampler, ax: Axis, c: Vec3, r0: number, r1: number, n: number, g: number, k: number, sweep = 0): void {
++  for (let b = 0; b < n; b++) {
++    const a = (b / n) * TAU;
++    s.seg(onCircle(ax, c, r0, a), onCircle(ax, c, r1, a + sweep), g, k);
++  }
++}
++
++/** Collects one machine's moving parts: everything `build` samples belongs to the new part. */
++function partRecorder(s: Sampler) {
++  const parts: PartDef[] = [];
++  const add = (name: string, kind: PartDef['kind'], axis: Axis, c: Vec3, rps: number, build: () => void, phase = 0, amp = 0) => {
++    parts.push({ name, kind, axis, c, rps, phase, amp });
++    const from = s.pts.length;
++    build();
++    for (let i = from + 3; i < s.pts.length; i += POINT_STRIDE) s.pts[i] += parts.length * PART_STEP;
++  };
++  return { parts, add };
+ }
+ 
+ function sens(p: Vec3, name: string, unit: string, v: number, s: number, trend = false): SensorDef {
+@@ -364,7 +472,16 @@ export function buildRawShapes(rr: Rng): RawShape[] {
+     const GT: Array<[number, number]> = [[-3.6, 1.3], [-3.3, 1.0], [-1.3, 0.9], [-1.05, 1.05], [0.15, 1.05], [0.35, 1.16], [0.5, 1.16]];
+     s.rev(GT, (x) => (x > -1.05 && x < 0.4 ? 2 : 0), 0.8, [-2.9, -2.5, -2.1, -1.7], 1, 2);
+     s.disc('x', [-3.6, 0, 0], 0.3, 1.3, 0, 0.25); // bellmouth face
+-    s.cyl('x', [-3.75, 0, 0], 0.3, 0.3, 0, { k: 0.5 }); // inlet hub
++    const mv = partRecorder(s);
++    // One shaft line: compressor rotor, load coupling and generator shaft turn together.
++    mv.add('rotor', 'turn', 'x', [0, 0, 0], 0.3, () => {
++      s.cyl('x', [-3.75, 0, 0], 0.3, 0.3, 0, { k: 0.5, lines: 3 }); // inlet hub
++      blades(s, 'x', [-3.6, 0, 0], 0.32, 1.2, 14, 0, 0.5, 0.3); // first-stage blades in the bellmouth
++      s.cyl('x', [1.45, 0, 0], 0.15, 0.5, 0, { k: 0.6, lines: 3 }); // shaft
++      s.ring('x', [1.45, 0, 0], 0.3, 0, 0.8); // load coupling
++      s.bolts('x', [1.45, 0, 0], 0.23, 6, 0.04, 0);
++      s.cyl('x', [3.75, 0, 0], 0.12, 0.4, 0, { k: 0.6, lines: 3 }); // shaft NDE
++    });
+     for (let k = 0; k < 8; k++) {
+       const a = (k / 8) * TAU + 0.2;
+       s.cyl('x', [-0.62, Math.cos(a) * 1.2, Math.sin(a) * 1.2], 0.12, 0.62, 2, { k: 0.6, ek: 0.8 }); // combustor cans
+@@ -372,7 +489,6 @@ export function buildRawShapes(rr: Rng): RawShape[] {
+     s.box([0.85, 0, 0], [0.7, 2.6, 2.4], 0, { k: 0.25 }); // exhaust collector
+     s.cyl('y', [0.85, 1.9, 0], 0.52, 1.3, 0, { k: 0.5, lines: 6 }); // exhaust stack
+     s.ring('y', [0.85, 2.55, 0], 0.58, 0, 0.8);
+-    s.cyl('x', [1.45, 0, 0], 0.15, 0.5, 0, { k: 0.6 }); // shaft
+     s.cyl('x', [1.45, 0, 0], 0.36, 0.42, 0, { k: 0.25, ek: 0.6 }); // coupling guard
+     s.cyl('x', [2.6, 0, 0], 1.0, 1.9, 1, { k: 0.45, bands: 3, lines: 4 }); // generator
+     s.flange('x', [1.65, 0, 0], 0.25, 1.02, 12, 1, 0.35);
+@@ -380,7 +496,6 @@ export function buildRawShapes(rr: Rng): RawShape[] {
+     s.box([2.6, 1.3, 0], [1.5, 0.32, 1.1], 1, { k: 0.4 }); // air cooler on top
+     for (let k = 0; k < 6; k++) s.seg([1.95 + k * 0.26, 1.47, -0.55], [1.95 + k * 0.26, 1.47, 0.55], 1, 0.6);
+     s.box([3.2, 0.1, 1.05], [0.45, 0.5, 0.18], 1, { k: 0.5 }); // terminal box
+-    s.cyl('x', [3.75, 0, 0], 0.12, 0.4, 0, { k: 0.6 }); // shaft NDE
+     s.box([1.45, -0.75, 0], [0.35, 0.7, 0.6], 0, { k: 0.4 }); // bearing pedestals
+     s.box([3.75, -0.75, 0], [0.35, 0.7, 0.6], 0, { k: 0.4 });
+     s.box([0.1, -1.2, 0], [7.9, 0.12, 2.7], 0, { k: 0.12, ek: 0.55 }); // skid
+@@ -391,6 +506,7 @@ export function buildRawShapes(rr: Rng): RawShape[] {
+         sens([0.85, 1.3, 0.6], 'Exhaust gas temperature', '°C', 548, 2, true),
+         sens([2.6, 1.46, 0], 'Active power', 'MW', 7.9, 0.03),
+       ],
++      parts: mv.parts,
+     });
+   }
+ 
+@@ -400,13 +516,23 @@ export function buildRawShapes(rr: Rng): RawShape[] {
+     const GT: Array<[number, number]> = [[-3.4, 1.2], [-3.1, 0.95], [-1.5, 0.87], [-1.25, 1.0], [-0.2, 1.0], [0, 1.1], [0.15, 1.1]];
+     s.rev(GT, (x) => (x > -1.25 && x < 0 ? 2 : 0), 0.8, [-2.7, -2.3, -1.9], 1, 2);
+     s.disc('x', [-3.4, 0, 0], 0.28, 1.2, 0, 0.25);
++    const mv = partRecorder(s);
++    // Two shafts, two speeds: the gas generator runs faster than the power turbine that drives the compressor.
++    mv.add('gas generator rotor', 'turn', 'x', [0, 0, 0], 0.42, () => {
++      blades(s, 'x', [-3.4, 0, 0], 0.3, 1.1, 14, 0, 0.5, 0.3); // first-stage blades in the bellmouth
++      s.ring('x', [-3.4, 0, 0], 0.3, 0, 0.8);
++    });
++    mv.add('power turbine shaft', 'turn', 'x', [0, 0, 0], 0.26, () => {
++      s.cyl('x', [1.1, 0, 0], 0.15, 0.7, 0, { k: 0.6, lines: 3 }); // shaft
++      s.ring('x', [1.1, 0, 0], 0.28, 0, 0.8); // coupling
++      s.bolts('x', [1.1, 0, 0], 0.21, 6, 0.04, 0);
++    });
+     for (let k = 0; k < 6; k++) {
+       const a = (k / 6) * TAU + 0.3;
+       s.cyl('x', [-0.75, Math.cos(a) * 1.12, Math.sin(a) * 1.12], 0.11, 0.55, 2, { k: 0.6, ek: 0.8 }); // combustor cans
+     }
+     s.box([0.45, 0, 0], [0.6, 2.3, 2.2], 0, { k: 0.25 }); // exhaust collector
+     s.cyl('z', [0.45, 0.35, 1.45], 0.42, 0.6, 0, { k: 0.4 }); // side exhaust duct
+-    s.cyl('x', [1.1, 0, 0], 0.15, 0.7, 0, { k: 0.6 });
+     s.cyl('x', [1.1, 0, 0], 0.32, 0.45, 0, { k: 0.25, ek: 0.6 }); // coupling guard
+     s.cyl('x', [2.4, 0, 0], 0.85, 1.6, 1, { k: 0.5, bands: 2, lines: 2 }); // barrel
+     s.flange('x', [1.6, 0, 0], 0.25, 0.98, 16, 1, 0.4);
+@@ -426,6 +552,7 @@ export function buildRawShapes(rr: Rng): RawShape[] {
+         sens([2.85, 1.42, 0], 'Compressor discharge pressure', 'bar', 48.2, 0.15),
+         sens([3.38, 0.3, 0], 'Axial displacement', 'µm', 210, 1.5, true),
+       ],
++      parts: mv.parts,
+     });
+   }
+ 
+@@ -453,10 +580,15 @@ export function buildRawShapes(rr: Rng): RawShape[] {
+       const a = (k / 8) * TAU;
+       s.seg([-1.87, Math.cos(a) * 0.15, Math.sin(a) * 0.15], [-1.87, Math.cos(a) * 0.96, Math.sin(a) * 0.96], 0, 0.6);
+     }
+-    s.cyl('x', [1.78, 0, 0], 0.13, 0.62, 0, { k: 0.7 }); // shaft + keyway
+-    s.seg([1.5, 0.13, 0], [2.05, 0.13, 0], 0, 0.8);
+-    s.cyl('x', [2.2, 0, 0], 0.32, 0.3, 1, { k: 0.6 }); // coupling half
+-    s.bolts('x', [2.35, 0, 0], 0.22, 6, 0.035, 1);
++    const mv = partRecorder(s);
++    // Rotor: the shaft, its coupling half and the cooling fan behind the cowl grille.
++    mv.add('rotor', 'turn', 'x', [0, 0, 0], 0.36, () => {
++      s.cyl('x', [1.78, 0, 0], 0.13, 0.62, 0, { k: 0.7 }); // shaft + keyway
++      s.seg([1.5, 0.13, 0], [2.05, 0.13, 0], 0, 0.8);
++      s.cyl('x', [2.2, 0, 0], 0.32, 0.3, 1, { k: 0.6 }); // coupling half
++      s.bolts('x', [2.35, 0, 0], 0.22, 6, 0.035, 1);
++      blades(s, 'x', [-1.74, 0, 0], 0.14, 0.86, 7, 0, 0.6, 0.45); // cooling fan
++    });
+     s.box([0, 1.2, 0.1], [0.62, 0.32, 0.55], 0, { k: 0.5 }); // terminal box + gland
+     s.cyl('z', [0, 1.15, 0.47], 0.06, 0.16, 0, { k: 0.6 });
+     s.ring('z', [-0.75, 1.15, 0], 0.09, 0, 1.2); // lifting eye
+@@ -472,6 +604,7 @@ export function buildRawShapes(rr: Rng): RawShape[] {
+         sens([0, 1.0, -0.5], 'Winding temperature', '°C', 84, 0.4),
+         sens([1.38, 0.3, 0], 'Shaft vibration', 'mm/s', 1.6, 0.04, true),
+       ],
++      parts: mv.parts,
+     });
+   }
+ 
+@@ -482,18 +615,24 @@ export function buildRawShapes(rr: Rng): RawShape[] {
+     for (let k = 0; k < 6; k++) s.seg([-1.6, 0.72, -0.85 + k * 0.34], [-0.4, 0.72, -0.85 + k * 0.34], 0, 0.7); // top ribs
+     s.box([-1.71, 0.05, 0], [0.03, 0.7, 1.2], 0, { k: 0.2 }); // inspection cover
+     s.bolts('x', [-1.73, 0.05, 0], 0.48, 10, 0.03, 0);
+-    s.cyl('z', [-1.15, 0, 1.35], 0.12, 0.6, 0, { k: 0.6 });
+-    s.disc('z', [-1.15, 0, 1.7], 0.1, 0.95, 0, 0.25); // sheave
+-    for (let k = 0; k < 5; k++) s.ring('z', [-1.15, 0, 1.6 + k * 0.05], 0.95, 0, 0.75); // belt grooves
+-    for (let k = 0; k < 5; k++) {
+-      const a = (k / 5) * TAU;
+-      s.seg([-1.15 + Math.cos(a) * 0.12, Math.sin(a) * 0.12, 1.7], [-1.15 + Math.cos(a) * 0.85, Math.sin(a) * 0.85, 1.7], 0, 0.8); // spokes
+-    }
++    const mv = partRecorder(s);
++    // The sheave sits on the crankshaft, so it turns once per plunger stroke.
++    mv.add('crankshaft sheave', 'turn', 'z', [-1.15, 0, 0], CRANK_RPS, () => {
++      s.cyl('z', [-1.15, 0, 1.35], 0.12, 0.6, 0, { k: 0.6 });
++      s.disc('z', [-1.15, 0, 1.7], 0.1, 0.95, 0, 0.25); // sheave
++      for (let k = 0; k < 5; k++) s.ring('z', [-1.15, 0, 1.6 + k * 0.05], 0.95, 0, 0.75); // belt grooves
++      for (let k = 0; k < 5; k++) {
++        const a = (k / 5) * TAU;
++        s.seg([-1.15 + Math.cos(a) * 0.12, Math.sin(a) * 0.12, 1.7], [-1.15 + Math.cos(a) * 0.85, Math.sin(a) * 0.85, 1.7], 0, 0.8); // spokes
++      }
++    });
+     for (let k = -1; k <= 1; k++) {
+       const z = k * 0.62;
+       s.cyl('x', [0, 0.1, z], 0.24, 0.6, 0, { k: 0.5 });
+       s.flange('x', [0.3, 0.1, z], 0.1, 0.26, 4, 0);
+-      s.cyl('x', [0.62, 0.1, z], 0.09, 0.62, 10 + k + 1, { k: 1, ek: 1.2 }); // plungers (move)
++      mv.add(`plunger ${k + 2}`, 'slide', 'x', [0.62, 0.1, z], CRANK_RPS, () => {
++        s.cyl('x', [0.62, 0.1, z], 0.09, 0.62, 3, { k: 1, ek: 1.2 }); // plungers
++      }, PLUNGER_PHASES[k + 1], PLUNGER_AMP);
+     }
+     s.box([1.3, 0.1, 0], [0.75, 1.05, 2.1], 1, { k: 0.45 }); // fluid end
+     for (let k = -1; k <= 1; k++) {
+@@ -528,6 +667,7 @@ export function buildRawShapes(rr: Rng): RawShape[] {
+         sens([-1, 0.7, 0], 'Crankcase vibration', 'mm/s', 3.4, 0.06, true),
+         sens([1.3, 1.85, -0.75], 'Discharge pressure', 'bar', 182, 1.2),
+       ],
++      parts: mv.parts,
+     });
+   }
+ 
+@@ -550,8 +690,17 @@ export function buildRawShapes(rr: Rng): RawShape[] {
+       const a = (k / 4) * TAU + Math.PI / 4;
+       s.seg([Math.cos(a) * 0.45, 0.72, Math.sin(a) * 0.45], [Math.cos(a) * 0.45, 1.16, Math.sin(a) * 0.45], 0, 1.2); // lantern legs
+     }
+-    s.ring('y', [0, 0.72, 0], 0.45, 0, 1); // coupling
+-    s.cyl('y', [0, 0.95, 0], 0.12, 0.44, 0, { k: 0.7 });
++    s.ring('y', [0, 0.72, 0], 0.45, 0, 1); // lantern base
++    const mv = partRecorder(s);
++    // One vertical shaft: motor fan on top, coupling in the lantern, impeller stages down in the can.
++    mv.add('rotor', 'turn', 'y', [0, 0, 0], 0.3, () => {
++      blades(s, 'y', [0, 2.42, 0], 0.1, 0.45, 6, 1, 0.8, 0.5); // motor fan under the cowl
++      s.cyl('y', [0, 0.95, 0], 0.12, 0.44, 0, { k: 0.7, lines: 3 }); // shaft
++      s.ring('y', [0, 0.95, 0], 0.26, 0, 0.8); // coupling
++      s.bolts('y', [0, 0.95, 0], 0.19, 6, 0.035, 0);
++      s.cyl('y', [0, -1.3, 0], 0.07, 2.4, 0, { k: 0.4, ek: 0.5, lines: 2 }); // line shaft down the column
++      for (const y of [-0.5, -1.3, -2.1]) blades(s, 'y', [0, y, 0], 0.07, 0.3, 6, 0, 1.2, 0.7); // impeller stages
++    });
+     s.box([0, 0.45, 0], [1.3, 0.5, 1.3], 0, { k: 0.4 }); // discharge head
+     s.cyl('x', [0.95, 0.45, 0], 0.24, 0.7, 0, { k: 0.5 }); // discharge nozzle
+     s.flange('x', [1.3, 0.45, 0], 0.24, 0.42, 8, 0);
+@@ -567,6 +716,7 @@ export function buildRawShapes(rr: Rng): RawShape[] {
+         sens([0, 2.3, 0], 'Motor NDE bearing temp', '°C', 68, 0.3, true),
+         sens([1.3, 0.45, 0], 'Discharge flow', 'm³/h', 420, 2),
+       ],
++      parts: mv.parts,
+     });
+   }
+ 
+@@ -580,7 +730,14 @@ export function buildRawShapes(rr: Rng): RawShape[] {
+     }
+     s.box([0, -0.58, 0], [1.1, 0.3, 1], 0, { k: 0.4 });
+     s.vol([-1.05, 0, 0], 0.55, 0.95, 0.16, 0.32, 2, 0.9);
+-    s.disc('x', [-1.05, 0, 0], 0, 0.5, 2, 0.35);
++    const mv = partRecorder(s);
++    // Expander wheel and compressor wheel share one shaft.
++    mv.add('rotor', 'turn', 'x', [0, 0, 0], 0.5, () => {
++      s.disc('x', [-1.05, 0, 0], 0, 0.5, 2, 0.35); // expander wheel
++      blades(s, 'x', [-1.05, 0, 0], 0.1, 0.48, 9, 2, 0.8, 0.6);
++      s.disc('x', [1.05, 0, 0], 0, 0.45, 1, 0.35); // compressor wheel
++      blades(s, 'x', [1.05, 0, 0], 0.09, 0.43, 9, 1, 0.8, -0.6);
++    });
+     s.ring('x', [-1.38, 0, 0], 0.66, 2, 0.9); // IGV ring
+     for (let k = 0; k < 10; k++) {
+       const a = (k / 10) * TAU;
+@@ -591,7 +748,6 @@ export function buildRawShapes(rr: Rng): RawShape[] {
+     s.cyl('y', [-1.05, 1.1, 0], 0.22, 0.9, 2, { k: 0.5 }); // expander inlet
+     s.flange('y', [-1.05, 1.55, 0], 0.22, 0.38, 8, 2);
+     s.vol([1.05, 0, 0], 0.5, 0.85, 0.14, 0.28, 1, 0.9);
+-    s.disc('x', [1.05, 0, 0], 0, 0.45, 1, 0.35);
+     s.cyl('x', [1.75, 0, 0], 0.26, 1.1, 1, { k: 0.5 }); // compressor inlet
+     s.flange('x', [2.3, 0, 0], 0.26, 0.42, 8, 1);
+     s.cyl('y', [1.05, -0.95, 0], 0.2, 0.6, 1, { k: 0.5 });
+@@ -604,6 +760,7 @@ export function buildRawShapes(rr: Rng): RawShape[] {
+         sens([-1.05, 1.55, 0], 'Expander inlet temperature', '°C', -38.4, 0.2),
+         sens([0, 0.38, 0], 'Radial vibration', 'µm', 18, 0.3, true),
+       ],
++      parts: mv.parts,
+     });
+   }
+ 
+@@ -648,6 +805,11 @@ function fitResample(sh: RawShape, n: number, rr: Rng): MachineShape {
+       ...x,
+       p: [(x.p[0] - c[0]) * f, (x.p[1] - c[1]) * f, (x.p[2] - c[2]) * f] as Vec3,
+     })),
++    // Shaft axes move with the fit; a slide's stroke is already in normalised units.
++    parts: sh.parts.map((d) => ({
++      ...d,
++      c: [(d.c[0] - c[0]) * f, (d.c[1] - c[1]) * f, (d.c[2] - c[2]) * f] as Vec3,
++    })),
+   };
+ }
+ 
+diff --git a/real_now/src/components/windows/BuildModelWindow.tsx b/mock_now/src/components/windows/BuildModelWindow.tsx
+index 3e61fc2..c4b714d 100644
+--- a/real_now/src/components/windows/BuildModelWindow.tsx
++++ b/mock_now/src/components/windows/BuildModelWindow.tsx
+@@ -583,6 +583,7 @@ export default function BuildModelWindow() {
+     /** Footer pieces the focus moves to when the focused "Save changes" unmounts. */
+     const nextHealthBtnRef = useRef<HTMLButtonElement>(null);
+     const footerRef = useRef<HTMLDivElement>(null);
++    const activePageTabRef = useRef<HTMLButtonElement>(null);
+     /** Id of the model whose "Save changes" was pressed (see the effect on `drafts`). */
+     const saveFocusRef = useRef<string | null>(null);
+     /** Close WITHOUT the run dialog: the Dashboard said this workspace is closing
+@@ -2867,7 +2868,9 @@ export default function BuildModelWindow() {
+         const active = document.activeElement;
+         if (active && active !== document.body) return; // the focus is somewhere real
+         const next = nextHealthBtnRef.current;
+-        (next && !next.disabled ? next : footerRef.current)?.focus();
++        // No notice on screen (the fallback <div> is not a real target): the active page tab.
++        const notice = footerRef.current?.classList.contains('wb3-notice') ? footerRef.current : null;
++        (next && !next.disabled ? next : notice ?? activePageTabRef.current)?.focus();
+     }, [drafts]);
+ 
+     if (loading) {
+@@ -3408,16 +3411,16 @@ export default function BuildModelWindow() {
+                 than their content. */}
+             <div className="bmw-sets-kind">
+             {m.kind === 'individual' && (
+-                <div className="f4-fld">
++                <div className="f4-fld ms-how">
+                     <span className="f4-lbl">Boundary</span>
+-                    <span className="f4-pill f4-pill--grey" style={{ height: '28px', display: 'inline-flex' }}>1σ + 3σ · automatic</span>
++                    <span className="f4-readout ms-ro" data-testid="boundary-readout"><Lock size={12} aria-hidden="true" /><span>1σ + 3σ · automatic</span></span>
+                     <div className="f4-hint">Everything else is automatic for an Individual model.</div>
+                 </div>
+             )}
+ 
+             {m.kind === 'relationship' && (
+                 <>
+-                    <div className="f4-fld f4-fld--grow" style={{ flex: 1, minWidth: '260px' }}>
++                    <div className="f4-fld f4-fld--grow">
+                         <span className="f4-lbl">Predictor sensors (≥ 1)</span>
+                         {/* Predictors as chips (× removes one) + a dashed
+                             "Add…" that opens the multi modal; the target is excluded and the
+@@ -3436,7 +3439,7 @@ export default function BuildModelWindow() {
+                             <div className="f4-req-note">No predictors yet. A Relation model needs at least one.</div>
+                         )}
+                     </div>
+-                    <div className="f4-fld">
++                    <div className="f4-fld ms-how">
+                         <span className="f4-lbl">Stiffness</span>
+                         <div className="f4-seg">
+                             {STIFFNESS_OPTIONS.map(opt => (
+@@ -3494,7 +3497,7 @@ export default function BuildModelWindow() {
+                             placeholder="None"
+                         />
+                     </div>
+-                    <div className="f4-fld">
++                    <div className="f4-fld ms-how">
+                         <span className="f4-lbl">Clusters</span>
+                         <span className="bmw-step">
+                             <button type="button" aria-label="Fewer clusters" onClick={() => patchDraft(m, { numClusters: Math.max(1, d.numClusters - 1) })}>−</button>
+@@ -4087,7 +4090,7 @@ export default function BuildModelWindow() {
+      *  Health score: "← Model fit" · Mark complete ("Mark incomplete", a text
+      *  button, once Complete; "Mark complete again" only when the files are out of date
+      *  or were saved with the earlier row-by-row scoring). */
+-    const renderFooter = (m: FailureModel, page: WorkbenchPage, primary: PrimaryAction) => {
++    const renderFooter = (m: FailureModel, page: WorkbenchPage, primary: PrimaryAction): { notice: ReactNode; actions: ReactNode } => {
+         // Save changes is an action: the draft's data guards apply to it.
+         const saveReason = modelBlockReason(m, true);
+         // The pill and what the page may show: the read gate.
+@@ -4117,7 +4120,6 @@ export default function BuildModelWindow() {
+             : null;
+         const pillState: 'complete' | 'trained' | 'incomplete' =
+             done ? 'complete' : (trainedFresh && !hasSessionError && reason === null && (!fitGone || noData !== null)) ? 'trained' : 'incomplete';
+-        const pillLabel = pillState === 'complete' ? 'Complete' : pillState === 'trained' ? 'Trained' : 'Incomplete';
+         const healthBlock = healthPageBlock(m);
+         const markBlock = page === 'health' ? markCompleteBlock(m) : null;
+         const savePhase = saveInfo[m.id]?.phase;
+@@ -4132,10 +4134,9 @@ export default function BuildModelWindow() {
+         const hasDraft = m.id in drafts;
+         // The header's Train sensor is the one place to train. This link focuses it.
+         const goTrainSensor = trainSensorLink('footer-train-sensor');
+-        // "Trained 2026/02/09 23:50 · scored on 2 periods".
+-        const trainedLine: ReactNode = m.lastTrainedAt
+-            ? <>Trained <Stamp at={m.lastTrainedAt} />{scoredCount > 0 ? ` · scored on ${scoredCount} period${scoredCount === 1 ? '' : 's'}` : ''}</>
+-            : null;
++        // No train date in the footer (user decision 2026-10-12): the periods are in the
++        // running-condition line, the date stays only in the tab status tooltip.
++        const trainedLine: ReactNode = m.lastTrainedAt ? 'Trained' : null;
+         const identityLine = `${kindModelName(m.kind)}${cat ? ` · ${CATEGORY_LABELS[cat]}` : ''}`;
+         // A successful save is THIS sentence (there is no "Files saved to …" banner).
+         const saved = saveInfoFor(m);
+@@ -4219,7 +4220,9 @@ export default function BuildModelWindow() {
+             // The saved files were scored row by row (written before the 1-hour averages):
+             // the model stays Complete; "Mark complete again" writes them again.
+             else if (done && earlierScoring) { line = EARLIER_SCORING_HINT_TEXT; tone = 'warn'; lineId = 'earlier-scoring'; }
+-            else if (done) line = savedLine ?? trainedLine ?? identityLine;
++            // A Model-settings draft is waiting on the other page.
++            else if (hasDraft) line = 'Unsaved changes in Model settings';
++            else if (done) line = savedLine ?? identityLine;
+             else line = 'Set points valid — check the score chart, then Mark complete';
+         } else if (qItem && locked) {
+             line = qItem.state === 'running'
+@@ -4237,7 +4240,7 @@ export default function BuildModelWindow() {
+         // A Complete model with no train record whose ▾ train failed: nothing to load
+         // again — the menu row that trains it is the way out (the board has the reason).
+         else if (legacyTrainFailedOf(m)) { line = <>{TRAIN_FAILED_WORDS} · train it again from {trainMenuPhrase('footer-train-menu', m)}</>; tone = 'bad'; }
+-        else if (done) line = trainedLine ?? identityLine;
++        else if (done) line = identityLine;
+         else if (hasSessionError) { line = <>Training failed · fix the problem, then {trainSensorPhrase('footer-train-sensor', m)}</>; tone = 'bad'; }
+         // Trained, but its charts could not be loaded (the board above says so): there
+         // is nothing to "check" yet.
+@@ -4254,24 +4257,36 @@ export default function BuildModelWindow() {
+         else line = identityLine;
+ 
+         const markClass = primary === 'mark' ? 'bmw-btn-ok' : 'rcx-btn';
+-        return (
+-            <div className="f4-foot wbx-foot" ref={footerRef} tabIndex={-1} data-testid="wb-footer" data-primary={primary ?? 'none'}>
+-                {page === 'health' && (
+-                    <button type="button" className="f4-btn f4-btn--plain f4-btn--small" data-testid="footer-back-to-fit" onClick={() => setPage(m, 'model')}>
+-                        ← Model fit
+-                    </button>
+-                )}
+-                <span className={`model-status-pill model-status-pill--${pillState}`} data-testid="footer-pill" style={{ cursor: 'default' }}>
+-                    {pillLabel}
+-                </span>
++        // cur5 direction: the status words live on the kind tab and the KPI strip; the
++        // footer is a NOTICE LINE that exists only while there is something to fix or
++        // wait for (warn / bad / saving / unsaved). The buttons moved to the header.
++        // A successful save is said by the notice too (the real app's footer sentence
++        // "Files saved <date> · <folder>" — there is no other place that confirms it).
++        const savedNow = savedLine !== null && line === savedLine;
++        // A REJECTED set point is an error (red), an empty one a warning (amber) — the
++        // notice has the same strength as the ruler above it.
++        const spBad = page === 'health' && lineId === 'mark-block-reason' && activeVerdict === 'bad';
++        if (spBad) tone = 'bad';
++        // The reason, repeated in ONE short line under the button it disables (the same
++        // slot and style as Train sensor's line).
++        const markWhy = page === 'health' && !saving && markBlock !== null
++            ? <div className={`tq-why tq-why--${spBad || tone === 'bad' ? 'danger' : 'warn'}`} data-testid="mark-why">{markBlock}</div>
++            : null;
++        const showNotice = tone !== 'plain' || saving || hasDraft || (qItem && locked) || savedNow;
++        const notice = showNotice ? (
++            <div className={`wb3-notice wb3-notice--${savedNow ? 'ok' : tone}`} role="status" ref={footerRef} tabIndex={-1} data-testid="wb-footer" data-primary={primary ?? 'none'} data-pill={pillState}>
+                 <span
+                     data-testid={lineId}
+                     data-tone={tone}
+                     className={`f4-foot-reason wbx-reason${tone === 'warn' ? ' f4-foot-reason--block' : tone === 'bad' ? ' f4-foot-reason--bad' : ''}`}
+                 >
+-                    {tone !== 'plain' && <CircleAlert size={11} aria-hidden="true" />}
++                    {tone !== 'plain' && <CircleAlert size={12} aria-hidden="true" />}
+                     {line}
+                 </span>
++            </div>
++        ) : <div ref={footerRef} tabIndex={-1} data-testid="wb-footer" data-primary={primary ?? 'none'} data-pill={pillState} style={{ display: 'contents' }} />;
++        const actions = (
++            <div className="wb3-actions" data-testid="wb-actions">
+                 {page === 'model' && hasDraft && (
+                     <button
+                         type="button"
+@@ -4284,7 +4299,9 @@ export default function BuildModelWindow() {
+                         Save changes
+                     </button>
+                 )}
+-                {page === 'model' && (
++                {/* Only when it is the next step or can be pressed: a disabled copy would
++                    duplicate tab ②, which already says why it is closed. */}
++                {page === 'model' && (primary === 'next' || (healthBlock === null && !training)) && (
+                     <button
+                         type="button"
+                         ref={nextHealthBtnRef}
+@@ -4300,7 +4317,7 @@ export default function BuildModelWindow() {
+                         Next: Health score →
+                     </button>
+                 )}
+-                {page === 'health' && (done ? (
++                {page === 'health' && (<div className="wb3-markcol"><div className="wb3-markrow">{done ? (
+                     <>
+                         <button type="button" className="f4-btn f4-btn--plain f4-btn--small" data-testid="mark-incomplete" disabled={saving} onClick={() => markModelIncomplete(m.id)}>
+                             Mark incomplete
+@@ -4329,9 +4346,10 @@ export default function BuildModelWindow() {
+                     >
+                         {saving ? 'Saving…' : '✓ Mark complete'}
+                     </button>
+-                ))}
++                )}</div>{markWhy}</div>)}
+             </div>
+         );
++        return { notice, actions };
+     };
+ 
+     /** The detail header's sensor-level Train: one primary
+@@ -4484,14 +4502,42 @@ export default function BuildModelWindow() {
+         const category = selectedSensorKey !== null ? sensorCategory(allModels, selectedSensorKey) : null;
+         const page = pageOf(activeModel);
+         const stale = isModelStale(activeModel);
++        const healthBlock = healthPageBlock(activeModel);
+         const training = trainStatus[activeModel.id] === 'loading';
+         // One plan per model of the sensor, computed once: the Train sensor button and
+         // the one-filled-button rule both read it.
+         const cands = orderedDetail.map(candidateOf);
+         const primary = primaryActionOf(activeModel, page, cands);
++        const foot = renderFooter(activeModel, page, primary);
++        const catSwitch = (
++                    <div
++                        role="group"
++                        aria-label="Category"
++                        className={`f4-catseg wb3-catseg${category ? '' : ' f4-catseg--unset'}`}
++                        title={category ? undefined : 'Pick a category — it is set once for this sensor and applies to all of its models.'}
++                    >
++                        {category === null && (
++                            <span className="f4-cat-flag"><CircleAlert size={11} aria-hidden="true" /> Set category</span>
++                        )}
++                        {(['performance', 'condition'] as ModelCategory[]).map(c => {
++                            const active = category === c;
++                            return (
++                                <button
++                                    key={c}
++                                    type="button"
++                                    aria-pressed={active}
++                                    className={active ? (c === 'condition' ? 'on-cond' : 'on-perf') : undefined}
++                                    onClick={() => changeCategory(selectedSensorKey!, c)}
++                                >
++                                    {CATEGORY_LABELS[c]}
++                                </button>
++                            );
++                        })}
++                    </div>
++        );
+         return (
+             <>
+-                <div className="bmw-dhead">
++                <div className="bmw-dhead wb3-dhead">
+                     <button
+                         type="button"
+                         className="bmw-iconbtn"
+@@ -4516,38 +4562,16 @@ export default function BuildModelWindow() {
+                                     </span>
+                                 );
+                             })}
++                            <span className="wb3-meta-sep" aria-hidden="true" />
++                            {catSwitch}
+                         </div>
+                     </div>
+-                    {/* ONE control group — category switch · page switch · Train sensor — that
+-                        moves as a row under the name on a narrow pane (never one control per row). */}
+-                    <div className="wbx-dh-ctl" data-testid="detail-controls">
+-                    <div
+-                        role="group"
+-                        aria-label="Category"
+-                        className={`f4-catseg${category ? '' : ' f4-catseg--unset'}`}
+-                        title={category ? undefined : 'Pick a category — it is set once for this sensor and applies to all of its models.'}
+-                    >
+-                        {category === null && (
+-                            <span className="f4-cat-flag"><CircleAlert size={11} aria-hidden="true" /> Set category</span>
+-                        )}
+-                        {(['performance', 'condition'] as ModelCategory[]).map(c => {
+-                            const active = category === c;
+-                            return (
+-                                <button
+-                                    key={c}
+-                                    type="button"
+-                                    aria-pressed={active}
+-                                    className={active ? (c === 'condition' ? 'on-cond' : 'on-perf') : undefined}
+-                                    onClick={() => changeCategory(selectedSensorKey!, c)}
+-                                >
+-                                    {CATEGORY_LABELS[c]}
+-                                </button>
+-                            );
+-                        })}
+-                    </div>
+-                    {/* No page switch here (removed 2026-10-12, user decision): the two pages are
+-                        reached from the footer — "Next: Health score →" and "← Model fit". */}
+-                    {renderSensorTrain(cands, primary === 'train')}
++                    {/* cur5: the header's right side holds ACTIONS only — Train sensor (ghost
++                        unless it is the next step) and the one filled button that follows the
++                        state (Save changes → Train → Next: Health score → Mark complete). */}
++                    <div className="wbx-dh-ctl wb3-dh-ctl" data-testid="detail-controls">
++                        {renderSensorTrain(cands, primary === 'train')}
++                        {foot.actions}
+                     </div>
+                 </div>
+ 
+@@ -4557,7 +4581,7 @@ export default function BuildModelWindow() {
+                     </div>
+                 )}
+ 
+-                <div role="tablist" className="f4-tabs">
++                <div role="tablist" className="f4-tabs wb3-kindtabs">
+                     {orderedDetail.map(m => {
+                         const selected = m.id === activeModel.id;
+                         // No text pill on a tab — ONE dot in the list's colours, the words in the tooltip.
+@@ -4577,18 +4601,32 @@ export default function BuildModelWindow() {
+                             >
+                                 <span className={`f4-kmini model-kind-icon--${m.kind}`} aria-hidden="true">{KIND_ABBREV[m.kind]}</span>
+                                 <span className="f4-tab-l">{KIND_TAB_LABEL[m.kind]}</span>
+-                                <span
+-                                    className={`f4-sdot${dot ? ` f4-sdot--${dot}` : ''}`}
+-                                    data-testid={`tab-status-${m.id}`}
+-                                    data-dot={dot ?? 'none'}
+-                                    title={words}
+-                                    aria-hidden="true"
+-                                />
++                                <span className="wb3-tab-state" aria-hidden="true">
++                                    <span
++                                        className={`f4-sdot${dot ? ` f4-sdot--${dot}` : ''}`}
++                                        data-testid={`tab-status-${m.id}`}
++                                        data-dot={dot ?? 'none'}
++                                        title={words}
++                                    />
++                                    <span className={`wb3-tab-words${dot && !/^Trained( ·|$)/.test(words) ? ` wb3-tab-words--${dot}` : ''}`} data-testid={`tab-words-${m.id}`}>{words}{isModelDone(m) && filesOutOfDateFor(m) ? ' · files out of date' : ''}</span>
++                                </span>
+                             </button>
+                         );
+                     })}
+                     <span className="f4-tabs-spacer" />
+                 </div>
++                {/* cur5: the two pages of a model are TABS under the kind tabs, not a header switch. */}
++                <nav className="wb3-pages" aria-label="Model pages" data-testid="page-switch">
++                    <button type="button" ref={page === 'model' ? activePageTabRef : undefined} className={`wb3-page${page === 'model' ? ' wb3-page--on' : ''}`} data-testid="page-model" aria-current={page === 'model' ? 'page' : undefined} onClick={() => setPage(activeModel, 'model')}>
++                        <span className="wb3-page-n">1</span>Model fit
++                        <span className="wb3-page-s">settings · train · check the fit</span>
++                    </button>
++                    {/* Closed = aria-disabled (still focusable, its reason always readable), never `disabled`. */}
++                    <button type="button" ref={page === 'health' ? activePageTabRef : undefined} className={`wb3-page${page === 'health' ? ' wb3-page--on' : ''}${healthBlock !== null ? ' wb3-page--off' : ''}`} data-testid="page-health" aria-current={page === 'health' ? 'page' : undefined} aria-disabled={healthBlock !== null ? true : undefined} title={healthBlock ?? undefined} onClick={() => { if (healthBlock === null) setPage(activeModel, 'health'); }}>
++                        <span className="wb3-page-n">2</span><span className="wb3-page-t">Health score</span>
++                        <span className="wb3-page-s">{healthBlock ?? 'set points · score · mark complete'}</span>
++                    </button>
++                </nav>
+ 
+                 <div role="tabpanel" data-testid={`model-tab-panel-${activeModel.id}`} style={{ display: 'contents' }}>
+                     {/* One scroll area for settings + banner + the page body, so the
+@@ -4629,7 +4667,7 @@ export default function BuildModelWindow() {
+                             />
+                         )}
+                     </WorkbenchScroll>
+-                    {renderFooter(activeModel, page, primary)}
++                    {foot.notice}
+                 </div>
+             </>
+         );
+diff --git a/real_now/src/components/windows/workbench/HealthScorePage.tsx b/mock_now/src/components/windows/workbench/HealthScorePage.tsx
+index e19203b..6ef161b 100644
+--- a/real_now/src/components/windows/workbench/HealthScorePage.tsx
++++ b/mock_now/src/components/windows/workbench/HealthScorePage.tsx
+@@ -3,12 +3,13 @@ import { samePageProps } from './pageMemo';
+ import { connect } from 'echarts';
+ import { Loader2 } from 'lucide-react';
+ import ResponsiveECharts from '../../charts/ResponsiveECharts';
+-import type { HealthPreview, ScoreSummary } from '../../../types/health';
++import type { HealthIssue, HealthPreview, ScoreSummary } from '../../../types/health';
+ import { SensorInline } from '../../sensor/SensorLabel';
+ import { useSensorLookup } from '../../sensor/sensorInfo';
+ import ChartCard from './ChartCard';
+ import ChecksCard from './ChecksCard';
+-import SetPointsCard from './SetPointsCard';
++import ScoreRuler from './ScoreRuler';
++import { Kpi } from './Kpi';
+ import { CHART } from './chartTheme';
+ import {
+     healthVerdict,
+@@ -24,7 +25,7 @@ import {
+     buildRelationshipSetPointOption,
+     buildScoreOption,
+ } from './healthPageCharts';
+-import { hourlyScopes, narrowScopes, scopesOf, sensorAxisTitle, type TimeScopes } from './healthCharts';
++import { hourlyScopes, scopesOf, sensorAxisTitle, type TimeScopes } from './healthCharts';
+ import { formatDataStamp } from '../periodDisplay';
+ import { SlowScoringNotice, TestScoringFailedNotice, TestsChangedBanner } from './ValidationCards';
+ import { testScoringFailure } from '../../../utils/trainTestValidation';
+@@ -100,8 +101,7 @@ function useHeldFor(flag: boolean, delayMs: number): boolean {
+ function HealthScorePage(props: HealthScorePageProps) {
+     const { model, stale, preview, unit, setPoints, attemptIssues, save } = props;
+     const [hoverIdx, setHoverIdx] = useState<number | null>(null);
+-    // One zoom window for the two time charts, kept when either is redrawn. (A hook: it must
+-    // stay above the early returns of the state boards below.)
++    // One zoom window for the two time charts, kept when either is redrawn (real code, 2026-10-12).
+     const zoom = useSharedZoom(props.model.id);
+     // A failed request leaves `preview.data` null, but when an earlier answer for this
+     // model exists the page (inputs, charts) stays on screen from `lastData` under the
+@@ -224,22 +224,58 @@ function HealthScorePage(props: HealthScorePageProps) {
+     const verdict = errorMode ? null : attemptIssues ? verdictOfIssues(attemptIssues) ?? healthVerdict(data) : healthVerdict(data);
+     const scoreReady = !errorMode && data.valid && !!data.hourly.score && !!data.score_summary;
+     // "The health score could not be calculated" (the Relation model's engine did not
+-    // answer for the hours to score): said in a card of its own. With no scored hour at
+-    // all it stands in the score card's place; when some hours WERE scored (the training
+-    // hours), the score chart still follows it. (The "Scoring results" card that used to
+-    // carry it — one tile per scoring period — was removed 2026-10-12, user decision: not
+-    // used. The score chart's own subtitle keeps the two facts for all scored hours.)
++    // answer for the hours to score — the training hours need it too, so this can come
++    // with NO scoring period). The Scoring results card carries it when it has tiles to
++    // replace; without that card the notice takes the score card's place.
+     const scoringFailure = errorMode ? null : testScoringFailure(data);
+     const anyScored = !!data.hourly.score?.some(v => v !== null);
+     const retryScoring = canRetry ? (props.onRetryTestScoring ?? props.onRetryPreview) : undefined;
+ 
++    const summary = data.score_summary;
++    const lowest = scoreReady && summary ? summary.min_score : null;
++    const scoreTone = (s: number | null | undefined): 'ok' | 'warn' | 'bad' | undefined => (s == null ? undefined : s >= 80 ? 'ok' : s >= 40 ? 'warn' : 'bad');
++    const pct = scoreReady && summary ? summary.pct_below_80 : null;
++
+     return (
+-        <div className="wb2-board wb2-hs hs-board" data-testid="health-page" data-valid={String(data.valid)}>
++        <div className="wb2-board wb3-board hs-board" data-testid="health-page" data-valid={String(data.valid)}>
++            {/* cur5 direction: the page's numbers first, as tiles — the training hours'
++                summary, the share bar, then ONE tile per scoring period (the former
++                "Scoring results" card: still neutral numbers, never a verdict). */}
++            <div className="wb3-kpis" data-testid="hs-kpis">
++                <Kpi label="Lowest score" tone={scoreTone(lowest?.score)} testId="score-lowest"
++                    value={lowest ? Math.round(lowest.score) : '—'}
++                    sub={lowest?.timestamp ? <>on <span className="wbx-dt" data-testid="score-lowest-at">{formatDataStamp(lowest.timestamp)}</span> · 1 h average</> : scoreReady ? 'no scored hour' : errorMode ? 'not available until the score loads' : 'once the set points are valid'} />
++                <Kpi label="Below 80" testId="score-below80"
++                    value={pct === null ? '—' : shareText(pct)}
++                    sub={summary && scoreReady ? `of ${summary.scored.toLocaleString('en-US')} scored training hours` : errorMode ? 'not available until the score loads' : 'of the scored training hours'} />
++                <Kpi label="Share of scored hours" testId="score-shares" value={<ShareBar summary={scoreReady ? summary : null} />} small>
++                    <div className="wb3-sharekey">
++                        {SHARES.map(s => <span key={s.key}><i style={{ background: s.color }} />{s.label} <b data-testid={`share-${s.key}`}>{scoreReady && summary && summary[s.key] !== null ? shareText(summary[s.key] as number) : '—'}</b></span>)}
++                    </div>
++                </Kpi>
++            </div>
+             <SaveBanner save={save} slow={slowSave} relation={model.kind === 'relationship'} />
+             <SlowScoringNotice show={props.slowScoring} />
+             {errorCard}
+             <TestsChangedBanner state={props.testsChanged} />
+-            <SetPointChart
++            {/* The ruler: value → score in one band, the user's points its only inputs, the Checks under it. */}
++            <ScoreRuler
++                data={data}
++                setPoints={setPoints}
++                unit={unit}
++                issues={issues}
++                verdict={verdict}
++                unchecked={errorMode}
++                onChange={props.onSetPointsChange}
++                onCommit={props.onSetPointsCommit}
++            >
++                <ChecksCard kind={data.kind} issues={issues} verdict={verdict} unavailable={errorMode} testNumbers={testNumbers} />
++            </ScoreRuler>
++            {/* The two charts share ONE time axis: the set-point chart above, the score
++                under it, one linked crosshair. (Clustering has no time axis on its
++                set-point chart — the scatter sits above the score chart; hovering an hour
++                on either highlights it on the other.) */}
++            <StackCharts
+                 data={data}
+                 props={props}
+                 hoverIdx={hoverIdx}
+@@ -247,50 +283,20 @@ function HealthScorePage(props: HealthScorePageProps) {
+                 stale={stale}
+                 unit={unit}
+                 scopes={scopes}
++                scoreReady={scoreReady}
++                errorMode={errorMode}
++                scoringFailure={scoringFailure}
++                retryScoring={retryScoring}
++                testNumbers={testNumbers}
++                verdictBad={verdict === 'bad'}
+                 zoom={zoom}
+             />
+-            <div className="hs-spp">
+-                {/* ONE card: the table of set points, its footnote, then the Checks. */}
+-                <SetPointsCard
+-                    data={data}
+-                    setPoints={setPoints}
+-                    unit={unit}
+-                    issues={issues}
+-                    verdict={verdict}
+-                    onChange={props.onSetPointsChange}
+-                    onCommit={props.onSetPointsCommit}
+-                >
+-                    <ChecksCard kind={data.kind} issues={issues} verdict={verdict} unavailable={errorMode} testNumbers={testNumbers} />
+-                </SetPointsCard>
+-            </div>
+-            {/* "Changed after saving" is said ONCE — the footer sentence, next to its
+-                "Mark complete again" button. */}
+-            {scoringFailure && (
++            {scoringFailure && scoreReady && anyScored && (
+                 <section className="hs-card hs-full" data-testid="score-failed">
+                     <div className="wb2-card-h"><b>Health score</b></div>
+                     <TestScoringFailedNotice issue={scoringFailure} onRetry={retryScoring} testNumbers={testNumbers} />
+                 </section>
+             )}
+-            {scoringFailure && !(scoreReady && anyScored) ? null : scoreReady && data.hourly.score && data.score_summary ? (
+-                <ScoreChart
+-                    data={data}
+-                    score={data.hourly.score}
+-                    summary={data.score_summary}
+-                    unit={unit}
+-                    hoverIdx={hoverIdx}
+-                    onHover={setHoverIdx}
+-                    stale={stale}
+-                    scopes={scopes}
+-                    zoom={zoom}
+-                />
+-            ) : (
+-                <section className="hs-card hs-full" data-testid="score-locked">
+-                    <div className="wb2-card-h"><b>Health score</b></div>
+-                    <div className="hs-lockbig">
+-                        <div>{errorMode ? <><b>Score not available</b>Not available until the health score loads.</> : <><b>Set the points above</b>The score over time appears here once every set point is valid.</>}</div>
+-                    </div>
+-                </section>
+-            )}
+         </div>
+     );
+ }
+@@ -314,7 +320,6 @@ function SaveBanner({ save, slow, relation }: { save: SaveInfo; slow: boolean; r
+         );
+     }
+     if (save.phase !== 'error') return null;
+-    // The reason carries the file (Rust names the file or folder it could not write).
+     return (
+         <div className="hs-save hs-save--bad hs-full" role="alert" data-testid="save-error">
+             <span><b>The model was not saved.</b> <span data-testid="save-error-reason">{save.message}</span></span>
+@@ -323,9 +328,32 @@ function SaveBanner({ save, slow, relation }: { save: SaveInfo; slow: boolean; r
+ }
+ 
+ // ---------------------------------------------------------------------------
+-// Set-point chart (per kind)
++// Share bar + stacked charts
+ // ---------------------------------------------------------------------------
+ 
++/** A share of the scored hours as text: one decimal, and a share that is not zero never
++ *  reads "0.0%" (it is "< 0.1%"). */
++export function shareText(v: number): string {
++    return v > 0 && v < 0.1 ? '< 0.1%' : `${v.toFixed(1)}%`;
++}
++
++const SHARES: { key: 'share_80_100' | 'share_40_80' | 'share_0_40'; label: string; color: string }[] = [
++    { key: 'share_80_100', label: '80–100', color: CHART.ok },
++    { key: 'share_40_80', label: '40–80', color: CHART.warn },
++    { key: 'share_0_40', label: '0–40', color: CHART.danger },
++];
++
++function ShareBar({ summary }: { summary: ScoreSummary | null }) {
++    return (
++        <span className="wb3-sharebar" role="img" aria-label="Share of scored hours by score band">
++            {SHARES.map(s => {
++                const v = summary ? summary[s.key] : null;
++                return <i key={s.key} style={{ width: `${v === null ? (s.key === 'share_80_100' ? 100 : 0) : Math.max(v, v > 0 ? 1 : 0)}%`, background: summary ? s.color : 'rgba(255,255,255,.1)' }} />;
++            })}
++        </span>
++    );
++}
++
+ /** Join the ECharts group so the pair of time charts share one cursor.
+  *  The ENLARGED copy of a chart (inside ChartCard's `.pm-chart-modal-backdrop`) stays out of the
+  *  group: it is alone on screen, so the charts under the backdrop must not answer its hover
+@@ -435,7 +463,26 @@ export function useSharedZoom(resetKey: string): SharedZoom {
+     }, []);
+ }
+ 
+-function SetPointChart({ data, props, hoverIdx, onHover, stale, unit, scopes, zoom }: {
++type AnyOpt = Record<string, unknown>;
++
++/** The upper chart of the stack: no X labels (the score chart under it prints them). */
++function asUpper(opt: AnyOpt): AnyOpt {
++    const grid = (opt.grid ?? {}) as AnyOpt;
++    const xAxis = (opt.xAxis ?? {}) as AnyOpt;
++    return { ...opt, grid: { ...grid, bottom: 6 }, xAxis: { ...xAxis, axisLabel: { ...(xAxis.axisLabel as AnyOpt ?? {}), show: false }, axisTick: { show: false } } };
++}
++
++/** The lower chart of the stack: no scope strip of its own (the upper chart names the
++ *  periods), the bands stay. */
++function asLower(opt: AnyOpt): AnyOpt {
++    const grid = (opt.grid ?? {}) as AnyOpt;
++    const series = ((opt.series ?? []) as AnyOpt[]).map(s => (s.name === '__scopes'
++        ? { ...s, markArea: { ...(s.markArea as AnyOpt), data: ((s.markArea as AnyOpt).data as AnyOpt[][]).map(d => [{ ...d[0], label: { ...(d[0].label as AnyOpt), show: false } }, d[1]]) } }
++        : s));
++    return { ...opt, grid: { ...grid, top: 8 }, series };
++}
++
++function StackCharts({ data, props, hoverIdx, onHover, stale, unit, scopes, scoreReady, errorMode, scoringFailure, retryScoring, testNumbers, verdictBad, zoom }: {
+     data: HealthPreview;
+     props: HealthScorePageProps;
+     hoverIdx: number | null;
+@@ -443,141 +490,50 @@ function SetPointChart({ data, props, hoverIdx, onHover, stale, unit, scopes, zo
+     stale: boolean;
+     unit: string;
+     scopes: TimeScopes | null;
++    scoreReady: boolean;
++    errorMode: boolean;
++    scoringFailure: HealthIssue | null;
++    retryScoring?: () => void;
++    testNumbers?: readonly number[] | null;
++    verdictBad?: boolean;
+     zoom: SharedZoom;
+ }) {
+     const { model, setPoints } = props;
+     const stats = data.stats;
+-    // The hourly points (1-hour averages): the same index set as the score chart.
+     const series = data.hourly;
+-    // Stable until the Tag names change, so it never rebuilds a chart on its own.
+     const lookup = useSensorLookup();
+     const scored = !!series.score;
+-    // This chart shares its row with the set-points card: its strip names are spaced for
+-    // the narrower plot (the score chart below is the same width and does the same).
+-    const sideScopes = useMemo(() => narrowScopes(scopes), [scopes]);
+ 
+-    const built = useMemo(() => {
++    const upper = useMemo(() => {
+         if (stats.kind === 'individual' && series.kind === 'individual') {
+-            return {
+-                id: 'set-individual',
+-                title: 'Sensor value over time',
+-                sub: unit ? `${unit} · 1 h average` : '1 h average',
+-                option: buildIndividualSetPointOption(series, stats, setPoints.kind === 'individual' ? setPoints : null, unit, sideScopes),
+-                time: true,
+-            };
++            return { title: 'Sensor value', sub: unit ? `${unit} · 1 h average` : '1 h average', option: asUpper(buildIndividualSetPointOption(series, stats, setPoints.kind === 'individual' ? setPoints : null, unit, scopes)), time: true };
+         }
+         if (stats.kind === 'relationship' && series.kind === 'relationship') {
+-            return {
+-                id: 'set-relationship',
+-                title: 'Residual over time',
+-                sub: `actual − predicted${unit ? ` (${unit})` : ''} · 1 h average`,
+-                option: buildRelationshipSetPointOption(series, stats.two_rmse, setPoints.kind === 'relationship' ? setPoints : null, unit, sideScopes),
+-                time: true,
+-            };
++            return { title: 'Residual', sub: `actual − predicted${unit ? ` (${unit})` : ''} · 1 h average`, option: asUpper(buildRelationshipSetPointOption(series, stats.two_rmse, setPoints.kind === 'relationship' ? setPoints : null, unit, scopes)), time: true };
+         }
+         if (stats.kind === 'clustering' && series.kind === 'clustering') {
+             return {
+-                id: 'set-clustering',
+                 title: 'Clusters',
+-                sub: (
+-                    <span className="wb2-sub-sl">
+-                        <SensorInline tag={model.xSensor ?? ''} size="sm" muted /> vs <SensorInline tag={model.ySensor ?? ''} size="sm" muted />
+-                        {' '}<span className="wb2-sub-note">· 1 h averages · {scored ? 'coloured by score' : 'coloured by score once N is set'}</span>
+-                    </span>
+-                ),
+-                // Axis titles: description + unit — the tags are in the subtitle above.
+-                option: buildClusterSetPointOption(
+-                    series, stats.clusters, setPoints.kind === 'clustering' ? setPoints : null,
+-                    { x: sensorAxisTitle(lookup(model.xSensor ?? '')), y: sensorAxisTitle(lookup(model.ySensor ?? '')) }, hoverIdx,
+-                ),
++                sub: <span className="wb2-sub-sl"><SensorInline tag={model.xSensor ?? ''} size="sm" muted /> vs <SensorInline tag={model.ySensor ?? ''} size="sm" muted /><span className="wb2-sub-note"> · 1 h averages · {scored ? 'coloured by score' : 'coloured by score once N is set'}</span></span>,
++                option: buildClusterSetPointOption(series, stats.clusters, setPoints.kind === 'clustering' ? setPoints : null, { x: sensorAxisTitle(lookup(model.xSensor ?? '')), y: sensorAxisTitle(lookup(model.ySensor ?? '')) }, hoverIdx) as AnyOpt,
+                 time: false,
+             };
+         }
+         return null;
+-        // `hoverIdx` only changes the Clustering highlight; the time charts follow
+-        // the connected cursor and must not be rebuilt on every mouse move.
+         // eslint-disable-next-line react-hooks/exhaustive-deps
+-    }, [stats, series, setPoints, unit, model.xSensor, model.ySensor, sideScopes, lookup, scored, stats.kind === 'clustering' ? hoverIdx : null]);
+-
+-    // A new option redraws the chart unzoomed: put the shared window back.
+-    const builtOption = built?.option;
+-    const isTime = !!built?.time;
+-    useEffect(() => { if (isTime) zoom.restore(); }, [builtOption, isTime, zoom]);
++    }, [stats, series, setPoints, unit, model.xSensor, model.ySensor, scopes, lookup, scored, stats.kind === 'clustering' ? hoverIdx : null]);
+ 
+-    if (!built) return null;
++    const score = scoreReady && series.score ? series.score : null;
++    const lower = useMemo(() => (score ? asLower(buildScoreOption(series.timestamps, score, scopes) as AnyOpt) : null), [series.timestamps, score, scopes]);
+ 
+-    // No key row under these charts: the time charts only zoom in time, so the names of
+-    // their level lines stay at the right edge; the Clusters chart zooms on both axes,
+-    // but its rings are keyed by the set-points table beside it (the 100 / 80 / 0 rows
+-    // in the rings' colours), which never leaves the view.
+-    const chartProps: Partial<ComponentProps<typeof ResponsiveECharts>> = built.time
+-        ? {
+-            onChartReady: zoom.join,
+-            onEvents: {
+-                updateAxisPointer: (e: unknown) => onHover(hoverIndexFromAxisEvent(e, series.timestamps)),
+-                globalout: () => onHover(null),
+-                datazoom: zoom.onZoom,
+-            },
+-        }
+-        : {
+-            onEvents: {
+-                mouseover: (p: { seriesName?: string; dataIndex?: number }) => { if (p.seriesName === 'Points' && typeof p.dataIndex === 'number') onHover(p.dataIndex); },
+-                globalout: () => onHover(null),
+-            },
+-        };
++    // A new option redraws a chart unzoomed: put the shared window back.
++    const upperOption = upper?.option;
++    const upperTime = !!upper?.time;
++    useEffect(() => { if (upperTime || lower) zoom.restore(); }, [upperOption, upperTime, lower, zoom]);
+ 
+-    return (
+-        <div className="hs-setwrap">
+-            <ChartCard
+-                id={built.id}
+-                title={built.title}
+-                sub={built.sub}
+-                size="tall"
+-                stale={stale}
+-                option={built.option}
+-                chartProps={chartProps}
+-            />
+-        </div>
+-    );
+-}
+-
+-// ---------------------------------------------------------------------------
+-// Score chart
+-// ---------------------------------------------------------------------------
+-
+-/** A share of the scored hours as text: one decimal, and a share that is not zero never
+- *  reads "0.0%" (it is "< 0.1%"). The share column and the card's subtitle use the same rule. */
+-export function shareText(v: number): string {
+-    return v > 0 && v < 0.1 ? '< 0.1%' : `${v.toFixed(1)}%`;
+-}
+-
+-const SHARES: { key: 'share_80_100' | 'share_40_80' | 'share_0_40'; label: string; color: string }[] = [
+-    { key: 'share_80_100', label: '80–100', color: CHART.ok },
+-    { key: 'share_40_80', label: '40–80', color: CHART.warn },
+-    { key: 'share_0_40', label: '0–40', color: CHART.danger },
+-];
+-
+-function ScoreChart({ data, score, summary, unit, hoverIdx, onHover, stale, scopes, zoom }: {
+-    data: HealthPreview;
+-    score: (number | null)[];
+-    summary: ScoreSummary;
+-    unit: string;
+-    hoverIdx: number | null;
+-    onHover: (i: number | null) => void;
+-    stale: boolean;
+-    scopes: TimeScopes | null;
+-    zoom: SharedZoom;
+-}) {
+-    const series = data.hourly;
+-    // The same width as the chart above it (both sit in the board's first column, beside a
+-    // side card), so the strip names are spaced the same way.
+-    const sideScopes = useMemo(() => narrowScopes(scopes), [scopes]);
+-    const option = useMemo(() => buildScoreOption(series.timestamps, score, sideScopes), [series.timestamps, score, sideScopes]);
+-    // A new option redraws the chart unzoomed: put the shared window back.
+-    useEffect(() => { zoom.restore(); }, [option, zoom]);
+-    const lowest = summary.min_score;
++    if (!upper) return null;
+     const text = readoutText(readoutAt(series, hoverIdx), unit);
+-    const chartProps = {
++    const timeProps: Partial<ComponentProps<typeof ResponsiveECharts>> = {
+         onChartReady: zoom.join,
+         onEvents: {
+             updateAxisPointer: (e: unknown) => onHover(hoverIndexFromAxisEvent(e, series.timestamps)),
+@@ -585,44 +541,44 @@ function ScoreChart({ data, score, summary, unit, hoverIdx, onHover, stale, scop
+             datazoom: zoom.onZoom,
+         },
+     };
+-    const pct = summary.pct_below_80;
++    const upperProps: Partial<ComponentProps<typeof ResponsiveECharts>> = upper.time ? timeProps : {
++        onEvents: {
++            mouseover: (p: { seriesName?: string; dataIndex?: number }) => { if (p.seriesName === 'Points' && typeof p.dataIndex === 'number') onHover(p.dataIndex); },
++            globalout: () => onHover(null),
++        },
++    };
++    const lockText = errorMode ? 'Score not available until the health score loads'
++        : verdictBad ? 'Fix the set point on the ruler above — the score appears here'
++        : 'Set every point on the ruler above — the score appears here';
++
+     return (
+-        <>
+-        {/* NOT full width: the card is exactly as wide as the chart above it, and the two
+-            charts have the same plot margins, so their time axes line up. The shares sit
+-            beside it, in the column of the set-points card. */}
+-        <ChartCard
+-            id="score"
+-            title="Health score"
+-            size="hs"
+-            stale={stale}
+-            sub={
+-                <span data-testid="score-summary">
+-                    {lowest ? <>Lowest <b className={lowest.score >= 80 ? 'hs-good' : 'hs-bad'} data-testid="score-lowest">{Math.round(lowest.score)}</b>{lowest.timestamp ? <> on <span className="wbx-dt" data-testid="score-lowest-at">{formatDataStamp(lowest.timestamp)}</span></> : ''}</> : 'No scored hours'}
+-                    {pct !== null && <> · below 80 for <b data-testid="score-below80">{shareText(pct)}</b> of scored hours</>}
+-                    {' '}<span data-testid="score-basis">· 1-hour averages of the running rows</span>
+-                </span>
+-            }
+-            extra={<span className="hs-rd" data-testid="hs-readout">{text}</span>}
+-            option={option}
+-            chartProps={chartProps}
+-        />
+-        <section className="hs-card hs-sharecard" data-testid="score-shares">
+-            <div className="wb2-card-h"><b>Share of scored hours</b></div>
+-            <div className="hs-shares">
+-                {SHARES.map(s => {
+-                    const v = summary[s.key];
+-                    return (
+-                        <div key={s.key} className="hs-share" data-testid={`share-${s.key}`}>
+-                            <span className="hs-share-l">{s.label}</span>
+-                            <span className="hs-share-bar"><i style={{ width: `${Math.max(v === null ? 0 : v, v ? 1 : 0)}%`, background: s.color }} /></span>
+-                            <span className="hs-share-v">{v === null ? '—' : shareText(v)}</span>
++        <div className={`wb3-stack${upper.time ? '' : ' wb3-stack--xy'}`}>
++            <ChartCard
++                id="stack"
++                title={`${upper.title} and health score`}
++                sub={<>{upper.sub}{upper.time ? ' · one time axis, one cursor for both' : ''}</>}
++                full
++                size="xtall"
++                stale={stale}
++                extra={<span className="hs-rd" data-testid="hs-readout">{text}</span>}
++                render={() => (
++                    <div className="wb3-stack-in">
++                        <div className="wb3-stack-top" data-testid={`chart-card-set-${stats.kind}`}>
++                            <ResponsiveECharts option={upper.option} style={{ height: '100%', minHeight: 0 }} {...upperProps} />
+                         </div>
+-                    );
+-                })}
+-            </div>
+-        </section>
+-        </>
++                        <div className="wb3-stack-bot" data-testid={lower ? 'chart-card-score' : scoringFailure ? 'score-failed' : 'score-locked'}>
++                            {scoringFailure && !lower ? (
++                                <div className="wb3-stack-lock"><TestScoringFailedNotice issue={scoringFailure} onRetry={retryScoring} testNumbers={testNumbers} /></div>
++                            ) : lower ? (
++                                <ResponsiveECharts option={lower} style={{ height: '100%', minHeight: 0 }} {...timeProps} />
++                            ) : (
++                                <div className="wb3-stack-lock"><span>{lockText}</span></div>
++                            )}
++                        </div>
++                    </div>
++                )}
++            />
++        </div>
+     );
+ }
+ 
+diff --git a/mock_now/src/components/windows/workbench/Kpi.tsx b/mock_now/src/components/windows/workbench/Kpi.tsx
+new file mode 100644
+index 0000000..6a2ce93
+--- /dev/null
++++ b/mock_now/src/components/windows/workbench/Kpi.tsx
+@@ -0,0 +1,34 @@
++import type { ReactNode } from 'react';
++
++/*
++ * cur5 direction — a KPI tile: ONE big number the user reads first, its unit,
++ * a small caption under it. A row of these (`.wb3-kpis`) replaces the
++ * "Statistics" table on the Model fit page and the score summary sentence on
++ * the Health score page. Tiles never judge (no verdict colours) except `tone`,
++ * which only flags a number worth a second look (amber) or a score colour.
++ */
++export function Kpi({ label, value, unit, sub, tone, small, testId, children }: {
++    label: ReactNode;
++    value: ReactNode;
++    unit?: string;
++    sub?: ReactNode;
++    /** `ok` / `warn` / `bad` colour the value (score colours); absent = plain. */
++    tone?: 'ok' | 'warn' | 'bad';
++    /** A date or a word instead of a number: smaller type. */
++    small?: boolean;
++    testId?: string;
++    /** Extra content under the value (a bar, a list). */
++    children?: ReactNode;
++}) {
++    return (
++        <div className={`wb3-kpi${tone ? ` wb3-kpi--${tone}` : ''}`} data-testid={testId}>
++            <div className="wb3-kpi-l">{label}</div>
++            <div className={`wb3-kpi-v${small ? ' wb3-kpi-v--sm' : ''}`}>
++                {value}
++                {unit && <span className="wb3-kpi-u">{unit}</span>}
++            </div>
++            {children}
++            {sub && <div className="wb3-kpi-s">{sub}</div>}
++        </div>
++    );
++}
+diff --git a/real_now/src/components/windows/workbench/ModelFitPage.tsx b/mock_now/src/components/windows/workbench/ModelFitPage.tsx
+index c8f6160..84bf2c7 100644
+--- a/real_now/src/components/windows/workbench/ModelFitPage.tsx
++++ b/mock_now/src/components/windows/workbench/ModelFitPage.tsx
+@@ -22,6 +22,10 @@ import {
+ } from './healthCharts';
+ import { SlowScoringNotice, TrainDaysNotice } from './ValidationCards';
+ import type { WorkbenchPageProps } from './workbenchTypes';
++import { Kpi } from './Kpi';
++
++/** A share as text: one decimal; a share that is not zero never reads "0.0%". */
++const pctText = (v: number): string => (v > 0 && v < 0.1 ? '< 0.1%' : `${v.toFixed(1)}%`);
+ 
+ /*
+  * Page 1 of the Workbench — "Model fit" body: the charts
+@@ -80,9 +84,6 @@ export interface ModelFitPageProps extends WorkbenchPageProps {
+     trainDaysEstimate?: number | null;
+ }
+ 
+-const Stat = ({ label, value, testId }: { label: string; value: string; testId?: string }) => (
+-    <span data-testid={testId}>{label}<b>{value}</b></span>
+-);
+ 
+ /** Memo comparison (see `samePageProps`): small data the window rebuilds per
+  *  render is compared by value — the model (re-read from disk after every
+@@ -110,22 +111,36 @@ function ModelFitPage(props: ModelFitPageProps) {
+     if (stats.kind === 'individual' && data.series.kind === 'individual') {
+         const series = data.series;
+         const outside = estimateRowsOutside3sd(data.histogram, stats);
++        const outsidePct = outside === null || !stats.rows ? null : (outside / stats.rows) * 100;
++        // cur5 direction: the numbers the user reads first are large tiles above the
++        // charts (the old "Statistics" table is gone); the charts take the full width.
+         return (
+-            <div className="wb2-board wb2-g2" data-testid="model-fit-individual">
++            <div className="wb2-board wb3-board" data-testid="model-fit-individual">
++                <div className="wb3-kpis wb3-kpis--fit" data-testid="fit-kpis">
++                    <Kpi label="Mean" value={fmtNum(stats.mean)} unit={unit} sub="learned normal" />
++                    <Kpi label="SD" value={fmtNum(stats.sd)} unit={unit} sub={`±1SD ${fmtNum(stats.boundary_1sd[0])} – ${fmtNum(stats.boundary_1sd[1])}`} />
++                    <Kpi
++                        label="Outside ±3SD"
++                        value={outsidePct === null ? '—' : outsidePct > 0 && outsidePct < 0.01 ? '< 0.01%' : `${outsidePct.toFixed(2)}%`}
++                        sub={outside === null ? 'no distribution' : `≈ ${outside.toLocaleString('en-US')} rows · ±3SD ${fmtNum(stats.boundary_3sd[0])} – ${fmtNum(stats.boundary_3sd[1])}`}
++                        testId="stat-outside3"
++                    />
++                </div>
+                 {daysNotice}
+                 <ChartCard
+                     id="ts"
+                     title="Sensor value over time"
+-                    sub={`${unit ? `${unit} · ` : ''}${rowsShown}`}
++                    sub={`${unit ? `${unit} · ` : ''}${rowsShown} · green = within ±1SD (score 100) · amber dashes = ±3SD (score 80)`}
+                     full
+-                    size="tall"
++                    size="xtall"
+                     stale={stale}
+                     option={buildValueOverTimeOption(series, stats, unit, scopes)}
+                 />
+                 <ChartCard
+                     id="dist"
+                     title="Distribution"
+-                    sub={`${unit ? `${unit} · ` : ''}rows per value`}
++                    sub={`${unit ? `${unit} · ` : ''}rows per value of the training rows`}
++                    full
+                     stale={stale}
+                     option={data.histogram ? buildDistributionOption(data.histogram, individualVLines(stats), unit) : null}
+                     empty="No distribution for this scope"
+@@ -134,24 +149,6 @@ function ModelFitPage(props: ModelFitPageProps) {
+                         <LegendItem color={CHART.normalCurve} label="Normal curve" />
+                     </>}
+                 />
+-                <section className="wb2-statc" data-testid="stats-card">
+-                    <div className="wb2-card-h"><b>Statistics</b><span className="wb2-card-s">from the training rows</span></div>
+-                    <table>
+-                        <tbody>
+-                            <tr><td>Rows</td><td className="n" data-testid="stat-rows">{stats.rows.toLocaleString()}</td></tr>
+-                            <tr><td>Mean</td><td className="n">{fmtNum(stats.mean)}{unit ? ` ${unit}` : ''}</td></tr>
+-                            <tr><td>SD</td><td className="n">{fmtNum(stats.sd)}{unit ? ` ${unit}` : ''}</td></tr>
+-                            <tr><td>±1SD</td><td className="n">{fmtNum(stats.boundary_1sd[0])} – {fmtNum(stats.boundary_1sd[1])}</td></tr>
+-                            <tr><td>±3SD</td><td className="n">{fmtNum(stats.boundary_3sd[0])} – {fmtNum(stats.boundary_3sd[1])}</td></tr>
+-                            <tr>
+-                                <td title="Estimated from the distribution bins">Rows outside ±3SD</td>
+-                                <td className="n" data-testid="stat-outside3">
+-                                    {outside === null ? '—' : `≈ ${outside.toLocaleString()} (${stats.rows ? ((outside / stats.rows) * 100).toFixed(2) : '0.00'}%)`}
+-                                </td>
+-                            </tr>
+-                        </tbody>
+-                    </table>
+-                </section>
+             </div>
+         );
+     }
+@@ -160,17 +157,13 @@ function ModelFitPage(props: ModelFitPageProps) {
+         const series = data.series;
+         const fit = data.fit_scatter;
+         return (
+-            <div className="wb2-board wb2-g2" data-testid="model-fit-relationship">
+-                {daysNotice}
+-                <div className="wb2-stats wb2-full" data-testid="rel-stats">
+-                    <Stat label="R²" value={fmtNum(stats.r2)} testId="stat-r2" />
+-                    <Stat label="RMSE" value={`${fmtNum(stats.rmse)}${unit ? ` ${unit}` : ''}`} testId="stat-rmse" />
+-                    <Stat label="2RMSE" value={fmtNum(stats.two_rmse)} testId="stat-2rmse" />
+-                    <Stat label="Residual mean" value={fmtNum(stats.residual_mean)} testId="stat-res-mean" />
+-                    <Stat label="Residual SD" value={fmtNum(stats.residual_sd)} testId="stat-res-sd" />
+-                    <Stat label="Rows" value={stats.rows.toLocaleString('en-US')} testId="stat-rows" />
+-                    <Stat label="Predictors" value={String(stats.predictors.length)} testId="stat-predictors" />
++            <div className="wb2-board wb3-board wb2-g2" data-testid="model-fit-relationship">
++                <div className="wb3-kpis wb3-kpis--fit wb2-full" data-testid="rel-stats">
++                    <Kpi label="R²" value={fmtNum(stats.r2)} sub="of the training rows" testId="stat-r2" />
++                    <Kpi label="RMSE" value={fmtNum(stats.rmse)} unit={unit} sub={`±2RMSE ${fmtNum(stats.two_rmse)} = the score-100 band`} testId="stat-rmse" />
++                    <Kpi label="Residual SD" value={fmtNum(stats.residual_sd)} unit={unit} sub={`mean ${fmtNum(stats.residual_mean)}`} testId="stat-res-sd" />
+                 </div>
++                {daysNotice}
+                 <ChartCard
+                     id="fit"
+                     title="Fit"
+@@ -244,7 +237,12 @@ function ModelFitPage(props: ModelFitPageProps) {
+         const xTag = model.xSensor ?? '';
+         const yTag = model.ySensor ?? '';
+         return (
+-            <div className="wb2-board wb2-g2" data-testid="model-fit-clustering">
++            <div className="wb2-board wb3-board" data-testid="model-fit-clustering">
++                <div className="wb3-kpis wb3-kpis--fit" data-testid="cl-stats">
++                    <Kpi label="Clusters" value={stats.cluster_count} sub={stats.criteria_sensor ? <span className="wb2-sub-sl">split by <SensorInline tag={stats.criteria_sensor} size="sm" muted /></span> : 'one cluster · no criteria sensor'} testId="stat-clusters" />
++                    <Kpi label="In a cluster" value={stats.rows ? pctText((stats.assigned_rows / stats.rows) * 100) : '—'} sub={`${stats.unassigned_rows.toLocaleString('en-US')} rows outside every criteria range`} testId="stat-assigned" />
++                    <Kpi label="Inside 3× SD" value={data.test_validation?.train.inside_3sd_ring_pct != null ? pctText(data.test_validation.train.inside_3sd_ring_pct) : '—'} sub="of the training rows · score ≥ 80" testId="stat-inside3" />
++                </div>
+                 {daysNotice}
+                 <ChartCard
+                     id="cl"
+diff --git a/mock_now/src/components/windows/workbench/ScoreRuler.tsx b/mock_now/src/components/windows/workbench/ScoreRuler.tsx
+new file mode 100644
+index 0000000..5416d9f
+--- /dev/null
++++ b/mock_now/src/components/windows/workbench/ScoreRuler.tsx
+@@ -0,0 +1,335 @@
++import type { ReactNode } from 'react';
++import type {
++    ClusteringHealthSetPoints,
++    HealthSetPoints,
++    IndividualHealthSetPoints,
++    RelationshipHealthSetPoints,
++} from '../../../types';
++import type { HealthIssue, HealthPreview } from '../../../types/health';
++import { canResetToMaster, resetToMaster, setPointSource, type SetPointSide } from '../../../utils/healthSetPoints';
++import { fmtNumExact } from '../../sensor/sensorInfo';
++import { fmtNum } from './chartTheme';
++import { fieldState, RING_QUICK, stepRing, type HealthVerdict } from './healthChecks';
++import { NumField } from './SetPointsCard';
++
++/*
++ * cur5 direction — the SCORE RULER replaces the "Health set points" table.
++ *
++ * One horizontal band reads value → score left to right. Each tick is a value
++ * on the sensor's scale and the score the model gives there; the band between
++ * two ticks is coloured by those scores (green 100, amber 80, red 0). The
++ * program's own ticks (±1SD, ±3SD, ±2RMSE, 1× / 3× SD) are plain mono text; the
++ * user's points are the ONLY inputs, big, in the same row, so "what do I type
++ * and where does it sit" is one picture:
++ *
++ *   Individual    0 ─── 80 ─── 100 ══ 100 ─── 80 ─── 0
++ *                 [L]   −3SD   −1SD     +1SD   +3SD   [H]
++ *   Relation      0 ─ 80 ─ 100 ═ 0 ═ 100 ─ 80 ─ 0     (residual = actual − predicted)
++ *                 [0⁻] [80⁻] −2RMSE  0  +2RMSE [80⁺] [0⁺]
++ *   Clustering    100 ═══ 80 ─── 0                     (one-sided: distance from the centre)
++ *                 1× SD   3× SD  [N× SD]
++ *
++ * Ticks are spaced EVENLY (a schematic, not a scale): the values under them say
++ * where each one really is. A missing user point greys its end; an invalid one
++ * turns its end red. The Checks (children) sit under the ruler in the same card.
++ */
++
++export interface ScoreRulerProps {
++    data: HealthPreview;
++    setPoints: HealthSetPoints;
++    unit: string;
++    issues: readonly HealthIssue[];
++    verdict: HealthVerdict | null;
++    onChange: (next: HealthSetPoints, commit?: boolean) => void;
++    onCommit: () => void;
++    /** The health score could not be loaded: nothing was checked. The user's ticks are
++     *  drawn as "not checked" (grey end, dashed tick, no score colour) — never as valid. */
++    unchecked?: boolean;
++    children?: ReactNode;
++}
++
++interface Tick {
++    score: number;
++    /** What the tick is ("−3SD", "L"). */
++    name: string;
++    /** Its value as text, or an input. */
++    value: ReactNode;
++    /** The user's own point. */
++    user?: boolean;
++    /** The user's point is missing / wrong. */
++    state?: 'required' | 'error' | 'unchecked' | null;
++    /** Narrow layout: a program tick's value, printed with its name. */
++    plain?: string;
++}
++
++/** Where a REJECTED typed value really sits on the ruler ("L = 62" between −3SD and
++ *  −1SD): the ruler keeps the model's order and marks the typed value in red at its
++ *  true place, so an impossible order is never drawn silently. `pos` is in tick units. */
++interface Ghost { pos: number; label: string; beyond?: 'left' | 'right' }
++
++/** A rejected value among the program's ticks AND the user's other valid points
++ *  (`anchors`: [value, tick index]): it never lands on the wrong side of one of them.
++ *  Past the last user tick it sits AT that end, with an arrow ("beyond"). */
++function ghostOf(v: number, label: string, anchors: [number, number][], n: number): Ghost {
++    const a = [...anchors].sort((x, y) => x[0] - y[0]);
++    const p = posAmong(v, a);
++    return p > n ? { pos: n, label: `${label} →`, beyond: 'right' } : p < 0 ? { pos: 0, label: `← ${label}`, beyond: 'left' } : { pos: p, label };
++}
++
++/** Labels that would overlap go on separate rows (row 0 = the top one). */
++function ghostRows(ghosts: Ghost[], n: number): { rows: number; rowOf: number[] } {
++    const order = ghosts.map((g, i) => i).sort((x, y) => ghosts[x].pos - ghosts[y].pos);
++    const last: number[] = [];
++    const rowOf: number[] = new Array(ghosts.length).fill(0);
++    for (const i of order) {
++        let r = last.findIndex(p => (ghosts[i].pos - p) / n >= 0.26);
++        if (r < 0) { r = last.length; last.push(ghosts[i].pos); } else last[r] = ghosts[i].pos;
++        rowOf[i] = r;
++    }
++    return { rows: Math.max(1, last.length), rowOf };
++}
++
++/** Position of `v` among anchors `[value, tick index]` (ascending by value): linear
++ *  between two anchors, half a tick outside the first / last one. */
++function posAmong(v: number, anchors: [number, number][]): number {
++    if (v < anchors[0][0]) return anchors[0][1] - 0.5;
++    for (let i = 1; i < anchors.length; i++) {
++        const [v0, p0] = anchors[i - 1];
++        const [v1, p1] = anchors[i];
++        if (v <= v1) return v1 === v0 ? p1 : p0 + ((v - v0) / (v1 - v0)) * (p1 - p0);
++    }
++    return anchors[anchors.length - 1][1] + 0.5;
++}
++
++const SCORE_RGB: Record<100 | 80 | 0, string> = { 100: '16, 185, 129', 80: '229, 169, 61', 0: '238, 90, 69' };
++const scoreRgb = (s: number) => SCORE_RGB[(s >= 100 ? 100 : s >= 80 ? 80 : 0) as 100 | 80 | 0];
++
++/** The band's background: one colour stop per tick, so each segment fades between its ends. */
++function gradient(ticks: Tick[]): string {
++    const n = ticks.length - 1;
++    const stops = ticks.map((t, i) => {
++        const missing = t.user && t.state;
++        const c = missing ? '120, 124, 140' : scoreRgb(t.score);
++        return `rgba(${c}, ${missing ? 0.35 : 0.85}) ${(i / n) * 100}%`;
++    });
++    return `linear-gradient(90deg, ${stops.join(', ')})`;
++}
++
++function Ruler({ ticks, testId, ghosts = [] }: { ticks: Tick[]; testId: string; ghosts?: Ghost[] }) {
++    const n = ticks.length - 1;
++    const { rows, rowOf } = ghostRows(ghosts, n);
++    return (
++        <div className={`wb3-ruler wb3-ruler--${ticks.length}${ghosts.length ? ' wb3-ruler--ghost' : ''}`} data-testid={testId} style={{ '--n': n } as React.CSSProperties}>
++            {ghosts.length > 0 && (
++                <div className="wb3-ruler-ghosts" data-testid="ruler-ghosts" style={{ height: rows * 22 }}>
++                    {ghosts.map((g, i) => (
++                        <span key={i} className={`wb3-ruler-ghost${g.beyond ? ` wb3-ruler-ghost--${g.beyond}` : ''}`} data-testid="ruler-ghost" data-row={rowOf[i]} style={{ left: `${(g.pos / n) * 100}%`, top: rowOf[i] * 22 }} title="Where the value you typed sits — it is not accepted there">{g.label}</span>
++                    ))}
++                </div>
++            )}
++            <div className="wb3-ruler-scores" aria-hidden="true">
++                {ticks.map((t, i) => (
++                    <span key={i} className={`wb3-ruler-sc wb3-ruler-sc--${t.score >= 100 ? 'ok' : t.score >= 80 ? 'warn' : 'bad'}${t.user && t.state ? ' wb3-ruler-sc--off' : ''}`} style={{ left: `${(i / n) * 100}%` }}>
++                        {t.score}
++                    </span>
++                ))}
++            </div>
++            <div className="wb3-ruler-band" style={{ background: gradient(ticks) }}>
++                {ticks.map((t, i) => (
++                    <i key={i} className={`wb3-ruler-tick${t.user ? ' wb3-ruler-tick--user' : ''}${t.state === 'error' ? ' wb3-ruler-tick--bad' : t.state === 'required' ? ' wb3-ruler-tick--req' : t.state === 'unchecked' ? ' wb3-ruler-tick--unk' : ''}`} style={{ left: `${(i / n) * 100}%` }} />
++                ))}
++                {ghosts.map((g, i) => (
++                    <i key={`g${i}`} className="wb3-ruler-gmark" aria-hidden="true" style={{ left: `${(g.pos / n) * 100}%`, top: -(26 + (rows - 1 - rowOf[i]) * 22) }} />
++                ))}
++            </div>
++            <div className="wb3-ruler-names">
++                {ticks.map((t, i) => (
++                    <span key={i} className={`wb3-ruler-nm${t.user ? ' wb3-ruler-nm--user' : ''}${t.state === 'error' ? ' wb3-ruler-nm--bad' : t.state === 'required' ? ' wb3-ruler-nm--req' : ''}`} style={{ left: `${(i / n) * 100}%` }}>{t.name}{t.plain && <small className="wb3-ruler-nm-pv">{t.plain}</small>}</span>
++                ))}
++            </div>
++            <div className="wb3-ruler-values">
++                {ticks.map((t, i) => (
++                    <span key={i} className={`wb3-ruler-v${t.user ? ' wb3-ruler-v--user' : ''}`} style={{ left: `${(i / n) * 100}%` }}>{t.user && <small className="wb3-ruler-vl" aria-hidden="true">{t.name}</small>}{t.value}</span>
++                ))}
++            </div>
++        </div>
++    );
++}
++
++const VERDICT_DOT: Record<HealthVerdict, { cls: 'complete' | 'need' | 'bad'; words: string }> = {
++    valid: { cls: 'complete', words: 'Set points valid' },
++    needs: { cls: 'need', words: 'Set points still empty' },
++    bad: { cls: 'bad', words: 'A set point is not valid' },
++};
++
++export default function ScoreRuler(props: ScoreRulerProps) {
++    const { data, setPoints, verdict, children } = props;
++    const dot = verdict ? VERDICT_DOT[verdict] : null;
++    const kindNote = data.stats.kind === 'individual'
++        ? 'Score 100 within ±1SD of the learned normal · 80 at ±3SD · 0 at L and H — you set L and H'
++        : data.stats.kind === 'relationship'
++            ? 'Residual = actual − predicted · 100 within ±2RMSE · you set where 80 and 0 sit on each side'
++            : 'Distance from each cluster\'s centre in SD units · 100 inside 1× SD · 80 at 3× SD · 0 at N× SD — you set N';
++    return (
++        <section className="hs-card wb3-rulercard" data-testid="set-points-card">
++            <div className="wb2-card-h">
++                <b>Health set points</b>
++                <span className="wb2-card-s">{kindNote}</span>
++                <span className="wb2-sp" />
++                {dot && <span className={`f4-sdot f4-sdot--${dot.cls}`} data-testid="hs-verdict" data-verdict={verdict ?? undefined} role="img" title={dot.words} aria-label={dot.words} />}
++            </div>
++            {data.stats.kind === 'individual' && setPoints.kind === 'individual' && <IndividualRuler {...props} sp={setPoints} />}
++            {data.stats.kind === 'relationship' && setPoints.kind === 'relationship' && <RelationshipRuler {...props} sp={setPoints} />}
++            {data.stats.kind === 'clustering' && setPoints.kind === 'clustering' && <ClusteringRuler {...props} sp={setPoints} />}
++            {children && <div className="hsx-checks" id="hs-checks">{children}</div>}
++        </section>
++    );
++}
++
++type P<S extends HealthSetPoints> = ScoreRulerProps & { sp: S };
++
++function IndividualRuler({ data, sp, unit, issues, onChange, onCommit, unchecked }: P<IndividualHealthSetPoints>) {
++    if (data.stats.kind !== 'individual') return null;
++    const st = data.stats;
++    const field = (s: SetPointSide) => (
++        <NumField
++            key={s}
++            testId={`sp-${s}`}
++            big
++            ariaLabel={s === 'lower' ? 'L — the value where the score reaches 0 on the low side' : 'H — the value where the score reaches 0 on the high side'}
++            hint={s === 'lower' ? 'L' : 'H'}
++            unit={unit}
++            value={s === 'lower' ? sp.lower : sp.upper}
++            state={fieldState(issues, s)}
++            describedBy={fieldState(issues, s) ? 'hs-checks' : undefined}
++            onChange={v => onChange({ ...sp, [s]: v })}
++            onCommit={onCommit}
++        />
++    );
++    const ticks: Tick[] = [
++        { score: 0, name: 'L', value: field('lower'), user: true, state: unchecked ? 'unchecked' : fieldState(issues, 'lower') },
++        { score: 80, name: '−3SD', value: fmtNum(st.boundary_3sd[0]) },
++        { score: 100, name: '−1SD', value: fmtNum(st.boundary_1sd[0]) },
++        { score: 100, name: '+1SD', value: fmtNum(st.boundary_1sd[1]) },
++        { score: 80, name: '+3SD', value: fmtNum(st.boundary_3sd[1]) },
++        { score: 0, name: 'H', value: field('upper'), user: true, state: unchecked ? 'unchecked' : fieldState(issues, 'upper') },
++    ];
++    const A: [number, number][] = [[st.boundary_3sd[0], 1], [st.boundary_1sd[0], 2], [st.boundary_1sd[1], 3], [st.boundary_3sd[1], 4]];
++    const ghosts: Ghost[] = [];
++    const fin = (v: number | null): v is number => typeof v === 'number' && Number.isFinite(v);
++    // The user's other point, when it is valid, is an anchor too (L = 90 with H = 85 sits BEYOND H).
++    if (ticks[0].state === null && fin(sp.lower)) A.push([sp.lower, 0]);
++    if (ticks[5].state === null && fin(sp.upper)) A.push([sp.upper, 5]);
++    if (ticks[0].state === 'error' && fin(sp.lower)) ghosts.push(ghostOf(sp.lower, `L = ${fmtNumExact(sp.lower).replace('-', '−')}`, A, 5));
++    if (ticks[5].state === 'error' && fin(sp.upper)) ghosts.push(ghostOf(sp.upper, `H = ${fmtNumExact(sp.upper).replace('-', '−')}`, A, 5));
++    const srcL = setPointSource(sp, 'lower');
++    const srcU = setPointSource(sp, 'upper');
++    const words = (letter: 'L' | 'H', src: ReturnType<typeof setPointSource>) =>
++        src === 'model' ? `${letter} is set on this model` : src === 'master' ? `${letter} comes from the master data` : `${letter} is not in the master data`;
++    const origin = srcL === 'master' && srcU === 'master' ? 'L and H come from the master data alarm limits.'
++        : srcL === 'not-in-master' && srcU === 'not-in-master' ? 'The master data has no alarm limits for this sensor — type L and H.'
++        : `${words('L', srcL)} · ${words('H', srcU)}.`;
++    const reset = (s: SetPointSide) => {
++        const master = s === 'lower' ? sp.masterLower : sp.masterUpper;
++        if (typeof master !== 'number' || !canResetToMaster(sp, s)) return null;
++        return (
++            <button key={s} type="button" className="hs-restore" data-testid={`sp-${s}-reset`} onClick={() => onChange(resetToMaster(sp, s), true)}>
++                Use master {s === 'lower' ? 'L' : 'H'} {fmtNumExact(master)}
++            </button>
++        );
++    };
++    const resets = [reset('lower'), reset('upper')].filter(Boolean);
++    return (
++        <>
++            <Ruler ticks={ticks} testId="hs-ladder" ghosts={ghosts} />
++            <div className="wb3-ruler-note" data-testid="master-note">
++                <span data-testid="master-origin" data-lower={srcL} data-upper={srcU}>{origin}</span>
++                {' '}Saved on this model only; the master data is not changed.
++                {resets.length > 0 && <>{' '}{resets[0]}{resets.length > 1 && <>{' · '}{resets[1]}</>}</>}
++            </div>
++        </>
++    );
++}
++
++function RelationshipRuler({ data, sp, unit, issues, onChange, onCommit, unchecked }: P<RelationshipHealthSetPoints>) {
++    if (data.stats.kind !== 'relationship') return null;
++    const w = data.stats.two_rmse;
++    const field = (key: keyof Omit<RelationshipHealthSetPoints, 'kind'>, wire: string, label: string) => (
++        <NumField
++            testId={`sp-${wire}`}
++            big
++            ariaLabel={label}
++            hint={wire.endsWith('_lower') ? '−' : '+'}
++            unit={unit}
++            value={sp[key]}
++            state={fieldState(issues, wire)}
++            describedBy={fieldState(issues, wire) ? 'hs-checks' : undefined}
++            onChange={v => onChange({ ...sp, [key]: v })}
++            onCommit={onCommit}
++        />
++    );
++    const st = (wire: string): Tick['state'] => (unchecked ? 'unchecked' : fieldState(issues, wire));
++    const ticks: Tick[] = [
++        { score: 0, name: '0 low', value: field('residualAt0Lower', 'residual_at_0_lower', '0 low — the residual where the score reaches 0 on the low side'), user: true, state: st('residual_at_0_lower') },
++        { score: 80, name: '80 low', value: field('residualAt80Lower', 'residual_at_80_lower', '80 low — the residual where the score is 80 on the low side'), user: true, state: st('residual_at_80_lower') },
++        { score: 100, name: '−2RMSE', value: `−${fmtNum(w)}`, plain: `−${fmtNum(w)}` },
++        { score: 100, name: 'no residual', value: '0' },
++        { score: 100, name: '+2RMSE', value: `+${fmtNum(w)}`, plain: `+${fmtNum(w)}` },
++        { score: 80, name: '80 high', value: field('residualAt80Upper', 'residual_at_80_upper', '80 high — the residual where the score is 80 on the high side'), user: true, state: st('residual_at_80_upper') },
++        { score: 0, name: '0 high', value: field('residualAt0Upper', 'residual_at_0_upper', '0 high — the residual where the score reaches 0 on the high side'), user: true, state: st('residual_at_0_upper') },
++    ];
++    // A rejected point is marked where it really sits among the band edges AND the
++    // user's other valid points (never on the wrong side of one of them).
++    const pts: [number, number | null, string][] = [[0, sp.residualAt0Lower, '0 low'], [1, sp.residualAt80Lower, '80 low'], [5, sp.residualAt80Upper, '80 high'], [6, sp.residualAt0Upper, '0 high']];
++    const fin = (v: number | null): v is number => typeof v === 'number' && Number.isFinite(v);
++    const RA: [number, number][] = [[-w, 2], [0, 3], [w, 4]];
++    pts.forEach(([i, v]) => { if (ticks[i].state === null && fin(v)) RA.push([v, i]); });
++    const ghosts: Ghost[] = [];
++    pts.forEach(([i, v, nm]) => {
++        if (ticks[i].state === 'error' && fin(v)) ghosts.push(ghostOf(v, `${nm} = ${fmtNumExact(v).replace('-', '−')}`, RA, 6));
++    });
++    return (
++        <>
++            <Ruler ticks={ticks} testId="hs-ladder" ghosts={ghosts} />
++            <div className="wb3-ruler-note" data-testid="sign-note">
++                The low points are negative, the high points positive. Each 0 point sits further from zero than its 80 point.
++            </div>
++        </>
++    );
++}
++
++function ClusteringRuler({ sp, issues, onChange, onCommit, unchecked }: P<ClusteringHealthSetPoints>) {
++    const state = fieldState(issues, 'outer_sd');
++    const set = (n: number | null, commit?: boolean) => onChange({ ...sp, outerSd: n }, commit);
++    const ticks: Tick[] = [
++        { score: 100, name: 'centre', value: '0× SD' },
++        { score: 100, name: '1× SD', value: '1×' },
++        { score: 80, name: '3× SD', value: '3×' },
++        {
++            score: 0, name: 'N× SD', user: true, state: unchecked ? 'unchecked' : state,
++            value: (
++                <span className="hs-kstep wb3-kstep" data-testid="ring-control">
++                    <button type="button" data-testid="ring-dec" aria-label="Smaller" onClick={() => set(stepRing(sp.outerSd, -1), true)}>−</button>
++                    <NumField wide big testId="sp-outer_sd" ariaLabel="Outer ring in × SD" unit="" suffix="× SD" hint="N" value={sp.outerSd} state={state} describedBy={state ? 'hs-checks' : undefined} onChange={v => set(v)} onCommit={onCommit} />
++                    <button type="button" data-testid="ring-inc" aria-label="Larger" onClick={() => set(stepRing(sp.outerSd, 1), true)}>+</button>
++                </span>
++            ),
++        },
++    ];
++    const ghosts: Ghost[] = state === 'error' && typeof sp.outerSd === 'number' && Number.isFinite(sp.outerSd)
++        ? [ghostOf(Math.max(0, sp.outerSd), `N = ${fmtNumExact(sp.outerSd).replace('-', '−')}×`, [[0, 0], [1, 1], [3, 2]], 3)]
++        : [];
++    return (
++        <>
++            <Ruler ticks={ticks} testId="hs-ladder" ghosts={ghosts} />
++            <div className="wb3-ruler-note">
++                <span className="hs-quick">
++                    {RING_QUICK.map(q => (
++                        <button key={q} type="button" data-testid={`ring-quick-${q}`} className={sp.outerSd === q ? 'on' : ''} aria-pressed={sp.outerSd === q} onClick={() => set(q, true)}>{q}×</button>
++                    ))}
++                </span>
++                {' '}One N for every cluster: each cluster gets its own 1×, 3× and N× rings, sized by its own SD.
++            </div>
++        </>
++    );
++}
+diff --git a/real_now/src/components/windows/workbench/SetPointsCard.tsx b/mock_now/src/components/windows/workbench/SetPointsCard.tsx
+index 908e158..9f658c8 100644
+--- a/real_now/src/components/windows/workbench/SetPointsCard.tsx
++++ b/mock_now/src/components/windows/workbench/SetPointsCard.tsx
+@@ -1,59 +1,15 @@
+-import { useEffect, useState, type ReactNode } from 'react';
+-import type {
+-    ClusteringHealthSetPoints,
+-    HealthSetPoints,
+-    IndividualHealthSetPoints,
+-    RelationshipHealthSetPoints,
+-} from '../../../types';
+-import type { HealthIssue, HealthPreview } from '../../../types/health';
+-import { canResetToMaster, resetToMaster, setPointSource, type SetPointSide } from '../../../utils/healthSetPoints';
+-import { fmtNumExact } from '../../sensor/sensorInfo';
+-import { fmtNumCol } from './chartTheme';
+-import { fieldState, formatSetPointText, RING_QUICK, stepRing, type FieldState, type HealthVerdict } from './healthChecks';
++import { useEffect, useState } from 'react';
++import { formatSetPointText, type FieldState } from './healthChecks';
+ 
+ /*
+- * The "Health set points" card of the Health score page: ONE small table, with
+- * the Checks in the same card.
+- *
+- *   SCORE  BAND                        LOWER     UPPER
+- *   100    within ±1SD · automatic     65.58     72.46      plain text
+- *    80    at ±3SD · automatic         58.69     79.35      plain text
+- *     0    at L / H                    [ 40 ]    [ 85 ]     the only inputs
+- *          one footnote: where L / H come from, "saved on this model only"
+- *   ─────
+- *   the Checks (`children`) — the same card, no second header
+- *
+- * Values the program computes are plain TEXT (`fmtNumCol` — the computed-value format
+- * with a fixed 3 decimals, so the Lower / Upper columns line up): nothing that looks like
+- * an input is one. The user's points are the only boxes; they keep the user's
+- * own text while typing, and a typed value shown as text (the "Use master H 4.5"
+- * link) is printed in its exact shortest form (`fmtNumExact` — never padded to
+- * "4.50", never rounded).
+- *
+- * Presentational: the page keeps the DRAFT set points and this card reports
+- * every change (`onChange`) and every "done typing" (`onCommit`, on blur / Enter).
+- * A discrete action (use master, a stepper click, a quick button) asks for an
+- * immediate commit (`onChange(next, true)`).
++ * The number input of the Health score page's set points (the score ruler,
++ * `ScoreRuler.tsx`, is its only user — the former "Health set points" table is gone).
+  *
++ * The user's points are the only boxes; they keep the user's own text while typing.
+  * Which inputs are "required" (dashed amber) / "error" (red) comes ONLY from
+- * Rust's `validation[].field`; this card never decides a value is wrong.
++ * Rust's `validation[].field`; this input never decides a value is wrong.
+  */
+ 
+-export interface SetPointsCardProps {
+-    data: HealthPreview;
+-    /** The draft set points being edited (always the model's own kind). */
+-    setPoints: HealthSetPoints;
+-    unit: string;
+-    /** Rust's issues - the source of every input's required / error state. */
+-    issues: readonly HealthIssue[];
+-    /** `null` while nothing has been judged yet. */
+-    verdict: HealthVerdict | null;
+-    onChange: (next: HealthSetPoints, commit?: boolean) => void;
+-    onCommit: () => void;
+-    /** The Checks, rendered inside this card under the table. */
+-    children?: ReactNode;
+-}
+-
+ // ---------------------------------------------------------------------------
+ // Number input
+ // ---------------------------------------------------------------------------
+@@ -84,11 +40,15 @@ interface NumFieldProps {
+      *  the side's sign for a Relation-model point, "N") — a word would not fit the column.
+      *  "Required" is said by the dashed amber box and `aria-required`. */
+     hint: string;
++    /** cur5: the large ruler input. */
++    big?: boolean;
++    /** Id of the element that explains this input's problem (the Checks). */
++    describedBy?: string;
+ }
+ 
+ /** A number input with its own text state, so "-", "1." and "" can be typed
+  *  without the field fighting the parsed number. */
+-function NumField({ testId, ariaLabel, unit, value, state, onChange, onCommit, suffix, wide, hint }: NumFieldProps) {
++export function NumField({ testId, ariaLabel, unit, value, state, onChange, onCommit, suffix, wide, hint, big, describedBy }: NumFieldProps) {
+     const [text, setText] = useState(toText(value));
+     // The draft changed from outside (use master, a stepper, a broadcast): follow
+     // it - but never rewrite what the user is typing when it parses to the value
+@@ -99,7 +59,7 @@ function NumField({ testId, ariaLabel, unit, value, state, onChange, onCommit, s
+     }, [value]);
+     const cls = state === 'error' ? ' hs-num--err' : state === 'required' ? ' hs-num--req' : '';
+     return (
+-        <span className={`hs-num${wide ? ' hs-num--ring' : ''}${cls}`}>
++        <span className={`hs-num${wide ? ' hs-num--ring' : ''}${big ? ' hs-num--big' : ''}${cls}`}>
+             <input
+                 id={testId}
+                 data-testid={testId}
+@@ -109,6 +69,7 @@ function NumField({ testId, ariaLabel, unit, value, state, onChange, onCommit, s
+                 placeholder={hint}
+                 aria-required={state === 'required' ? true : undefined}
+                 aria-invalid={state === 'error' ? true : undefined}
++                aria-describedby={describedBy}
+                 onChange={e => { setText(e.target.value); onChange(parseNum(e.target.value)); }}
+                 onBlur={onCommit}
+                 onKeyDown={e => { if (e.key === 'Enter') onCommit(); }}
+@@ -117,213 +78,3 @@ function NumField({ testId, ariaLabel, unit, value, state, onChange, onCommit, s
+         </span>
+     );
+ }
+-
+-/** A value the program computed: plain text, never a box. */
+-const Ro = ({ children, testId }: { children: ReactNode; testId?: string }) => (
+-    <span className="hsx-ro" data-testid={testId}>{children}</span>
+-);
+-
+-/** "within ±1SD · automatic": what the band is, and who sets it. */
+-const Band = ({ what, who }: { what: string; who: string }) => (
+-    // The space sits BETWEEN the two no-wrap parts, so a narrow column breaks there and nowhere else.
+-    <><span>{what}</span>{' '}<small>· {who}</small></>
+-);
+-
+-/** One row of the table: the score, its band, and the two side values. */
+-function Row({ score, tone, band, lower, upper, testId }: {
+-    score: number;
+-    tone: 'ok' | 'warn' | 'danger';
+-    band: ReactNode;
+-    lower?: ReactNode;
+-    upper?: ReactNode;
+-    testId: string;
+-}) {
+-    return (
+-        <div className={`hsx-row hsx-row--${tone}`} role="row" data-testid={testId}>
+-            <span className="hsx-score" role="rowheader">{score}</span>
+-            <span className="hsx-what" role="cell">{band}</span>
+-            <span className="hsx-v" role="cell">{lower}</span>
+-            {upper !== undefined && <span className="hsx-v" role="cell">{upper}</span>}
+-        </div>
+-    );
+-}
+-
+-/** The card's state dot: colour class (the sensor list's) + the tooltip words. */
+-const VERDICT_DOT: Record<HealthVerdict, { cls: 'complete' | 'need' | 'bad'; words: string }> = {
+-    valid: { cls: 'complete', words: 'Set points valid' },
+-    needs: { cls: 'need', words: 'Set points still empty' },
+-    bad: { cls: 'bad', words: 'A set point is not valid' },
+-};
+-
+-// ---------------------------------------------------------------------------
+-// The card
+-// ---------------------------------------------------------------------------
+-
+-export default function SetPointsCard(props: SetPointsCardProps) {
+-    const { data, setPoints, verdict, children } = props;
+-    // No status pill on this card: one dot in the list's
+-    // colours, the words in its tooltip. The words themselves are the Checks lines
+-    // below and the footer sentence.
+-    const dot = verdict ? VERDICT_DOT[verdict] : null;
+-    const head = verdict && dot
+-        ? <span className={`f4-sdot f4-sdot--${dot.cls}`} data-testid="hs-verdict" data-verdict={verdict} role="img" title={dot.words} aria-label={dot.words} />
+-        : null;
+-    return (
+-        <section className="hs-card hsx-card" data-testid="set-points-card">
+-            <div className="wb2-card-h"><b>Health set points</b><span className="wb2-sp" />{head}</div>
+-            {data.stats.kind === 'individual' && setPoints.kind === 'individual' && <IndividualRows {...props} data={data} sp={setPoints} />}
+-            {data.stats.kind === 'relationship' && setPoints.kind === 'relationship' && <RelationshipRows {...props} data={data} sp={setPoints} />}
+-            {data.stats.kind === 'clustering' && setPoints.kind === 'clustering' && <ClusteringRows {...props} sp={setPoints} />}
+-            {children && <div className="hsx-checks">{children}</div>}
+-        </section>
+-    );
+-}
+-
+-/** The table itself: `Score · Band · Lower · Upper` (Clustering has one value
+- *  column, so its head row is left out). Footnotes and the ring control sit
+- *  under it, outside the table. */
+-function Table({ sides, children }: { sides: boolean; children: ReactNode }) {
+-    return (
+-        <div className={`hsx-table${sides ? '' : ' hsx-table--cl'}`} role="table" aria-label="Health set points" data-testid="hs-ladder">
+-            {sides && (
+-                <div className="hsx-row hsx-head" role="row">
+-                    <span role="columnheader">Score</span>
+-                    <span role="columnheader">Band</span>
+-                    <span role="columnheader">Lower</span>
+-                    <span role="columnheader">Upper</span>
+-                </div>
+-            )}
+-            {children}
+-        </div>
+-    );
+-}
+-
+-type RowsProps<S extends HealthSetPoints> = SetPointsCardProps & { sp: S };
+-
+-function IndividualRows({ data, sp, unit, issues, onChange, onCommit }: RowsProps<IndividualHealthSetPoints>) {
+-    if (data.stats.kind !== 'individual') return null;
+-    const st = data.stats;
+-    const field = (s: SetPointSide) => (
+-        <NumField
+-            key={s}
+-            testId={`sp-${s}`}
+-            ariaLabel={s === 'lower' ? 'L — the value where the score reaches 0 on the low side' : 'H — the value where the score reaches 0 on the high side'}
+-            hint={s === 'lower' ? 'L' : 'H'}
+-            unit={unit}
+-            value={s === 'lower' ? sp.lower : sp.upper}
+-            state={fieldState(issues, s)}
+-            onChange={v => onChange({ ...sp, [s]: v })}
+-            onCommit={onCommit}
+-        />
+-    );
+-    // ONE footnote for both sides: where L / H come from, and the master-data rule.
+-    // A "Use master …" link shows only for a side that differs from the master data.
+-    const srcL = setPointSource(sp, 'lower');
+-    const srcU = setPointSource(sp, 'upper');
+-    const words = (letter: 'L' | 'H', src: ReturnType<typeof setPointSource>) =>
+-        src === 'model' ? `${letter} is set on this model` : src === 'master' ? `${letter} comes from the master data` : `${letter} is not in the master data`;
+-    const origin = srcL === 'master' && srcU === 'master' ? 'L and H come from the master data alarm limits.'
+-        : srcL === 'not-in-master' && srcU === 'not-in-master' ? 'The master data has no alarm limits for this sensor — type L and H.'
+-        : `${words('L', srcL)} · ${words('H', srcU)}.`;
+-    const reset = (s: SetPointSide) => {
+-        const master = s === 'lower' ? sp.masterLower : sp.masterUpper;
+-        if (typeof master !== 'number' || !canResetToMaster(sp, s)) return null;
+-        return (
+-            <button key={s} type="button" className="hs-restore" data-testid={`sp-${s}-reset`} onClick={() => onChange(resetToMaster(sp, s), true)}>
+-                Use master {s === 'lower' ? 'L' : 'H'} {fmtNumExact(master)}
+-            </button>
+-        );
+-    };
+-    const resets = [reset('lower'), reset('upper')].filter(Boolean);
+-    return (
+-        <>
+-            <Table sides>
+-                <Row score={100} tone="ok" testId="rung-100" band={<Band what="within ±1SD" who="automatic" />}
+-                    lower={<Ro testId="ro-l1">{fmtNumCol(st.boundary_1sd[0])}</Ro>} upper={<Ro testId="ro-u1">{fmtNumCol(st.boundary_1sd[1])}</Ro>} />
+-                <Row score={80} tone="warn" testId="rung-80" band={<Band what="at ±3SD" who="automatic" />}
+-                    lower={<Ro testId="ro-l3">{fmtNumCol(st.boundary_3sd[0])}</Ro>} upper={<Ro testId="ro-u3">{fmtNumCol(st.boundary_3sd[1])}</Ro>} />
+-                <Row score={0} tone="danger" testId="rung-0" band={<Band what="at L / H" who="you set them" />}
+-                    lower={field('lower')} upper={field('upper')} />
+-            </Table>
+-            <div className="hsx-note" data-testid="master-note">
+-                <span data-testid="master-origin" data-lower={srcL} data-upper={srcU}>{origin}</span>
+-                {' '}Saved on this model only; the master data is not changed.
+-                {resets.length > 0 && <>{' '}{resets[0]}{resets.length > 1 && <>{' · '}{resets[1]}</>}</>}
+-            </div>
+-        </>
+-    );
+-}
+-
+-function RelationshipRows({ data, sp, unit, issues, onChange, onCommit }: RowsProps<RelationshipHealthSetPoints>) {
+-    if (data.stats.kind !== 'relationship') return null;
+-    const w = data.stats.two_rmse;
+-    // The four points start EMPTY (no defaults); the placeholder only shows the side's sign.
+-    const field = (key: keyof Omit<RelationshipHealthSetPoints, 'kind'>, wire: string, label: string) => (
+-        <NumField
+-            testId={`sp-${wire}`}
+-            ariaLabel={label}
+-            hint={wire.endsWith('_lower') ? '−' : '+'}
+-            unit={unit}
+-            value={sp[key]}
+-            state={fieldState(issues, wire)}
+-            onChange={v => onChange({ ...sp, [key]: v })}
+-            onCommit={onCommit}
+-        />
+-    );
+-    return (
+-        <>
+-            <Table sides>
+-                <Row score={100} tone="ok" testId="rung-100" band={<Band what="within ±2RMSE" who="automatic" />}
+-                    lower={<Ro testId="ro-l2">−{fmtNumCol(w)}</Ro>} upper={<Ro testId="ro-u2">+{fmtNumCol(w)}</Ro>} />
+-                <Row score={80} tone="warn" testId="rung-80" band={<Band what="residual at 80" who="you set them" />}
+-                    lower={field('residualAt80Lower', 'residual_at_80_lower', 'Lower residual at score 80')}
+-                    upper={field('residualAt80Upper', 'residual_at_80_upper', 'Upper residual at score 80')} />
+-                <Row score={0} tone="danger" testId="rung-0" band={<Band what="residual at 0" who="you set them" />}
+-                    lower={field('residualAt0Lower', 'residual_at_0_lower', 'Lower residual at score 0')}
+-                    upper={field('residualAt0Upper', 'residual_at_0_upper', 'Upper residual at score 0')} />
+-            </Table>
+-            <div className="hsx-note" data-testid="sign-note">
+-                Residual = actual − predicted: lower points are negative, upper points positive. 0 sits further from zero than 80.
+-            </div>
+-        </>
+-    );
+-}
+-
+-function ClusteringRows({ sp, issues, onChange, onCommit }: RowsProps<ClusteringHealthSetPoints>) {
+-    const state = fieldState(issues, 'outer_sd');
+-    const set = (n: number | null, commit?: boolean) => onChange({ ...sp, outerSd: n }, commit);
+-    return (
+-        <>
+-            {/* The 1× and 3× rows are text; N is the one control, on its own line under the table. */}
+-            <Table sides={false}>
+-                <Row score={100} tone="ok" testId="rung-100" band={<Band what="inside the 1× SD ring" who="automatic" />} lower={<Ro testId="ro-1x">1× SD</Ro>} />
+-                <Row score={80} tone="warn" testId="rung-80" band={<Band what="on the 3× SD ring" who="automatic" />} lower={<Ro testId="ro-3x">3× SD</Ro>} />
+-                <Row score={0} tone="danger" testId="rung-0" band={<Band what="on the N× SD ring" who="you set N · more than 3" />} lower={<Ro testId="ro-nx">{sp.outerSd !== null && Number.isFinite(sp.outerSd) ? fmtNumExact(sp.outerSd) : 'N'}× SD</Ro>} />
+-            </Table>
+-            <div className="hsx-ctl" data-testid="ring-control">
+-                <span className="hs-kstep">
+-                    <button type="button" data-testid="ring-dec" aria-label="Smaller" onClick={() => set(stepRing(sp.outerSd, -1), true)}>−</button>
+-                    <NumField
+-                        wide
+-                        testId="sp-outer_sd"
+-                        ariaLabel="Outer ring in × SD"
+-                        unit=""
+-                        suffix="× SD"
+-                        hint="N"
+-                        value={sp.outerSd}
+-                        state={state}
+-                        onChange={v => set(v)}
+-                        onCommit={onCommit}
+-                    />
+-                    <button type="button" data-testid="ring-inc" aria-label="Larger" onClick={() => set(stepRing(sp.outerSd, 1), true)}>+</button>
+-                </span>
+-                <span className="hs-quick">
+-                    {RING_QUICK.map(q => (
+-                        <button key={q} type="button" data-testid={`ring-quick-${q}`} className={sp.outerSd === q ? 'on' : ''} aria-pressed={sp.outerSd === q} onClick={() => set(q, true)}>{q}×</button>
+-                    ))}
+-                </span>
+-            </div>
+-            <div className="hsx-note">One N for every cluster: each cluster gets its own 1×, 3× and N× rings, sized by its own SD.</div>
+-        </>
+-    );
+-}
+diff --git a/real_now/src/components/windows/workbench/healthChecks.ts b/mock_now/src/components/windows/workbench/healthChecks.ts
+index ecc35a6..b6b9427 100644
+--- a/real_now/src/components/windows/workbench/healthChecks.ts
++++ b/mock_now/src/components/windows/workbench/healthChecks.ts
+@@ -81,10 +81,10 @@ export interface CheckLine {
+ 
+ /** The four Relationship points, in the order they are listed. */
+ const REL_POINT_LABEL: Record<string, string> = {
+-    residual_at_80_lower: 'lower 80',
+-    residual_at_80_upper: 'upper 80',
+-    residual_at_0_lower: 'lower 0',
+-    residual_at_0_upper: 'upper 0',
++    residual_at_0_lower: '0 low',
++    residual_at_80_lower: '80 low',
++    residual_at_80_upper: '80 high',
++    residual_at_0_upper: '0 high',
+ };
+ const REL_POINT_ORDER = Object.keys(REL_POINT_LABEL);
+ 
+@@ -114,7 +114,7 @@ export function buildCheckLines(kind: HealthPreview['kind'], issues: readonly He
+                 key: 'required-points',
+                 tone: 'need',
+                 text: `Enter ${relRequired.length} empty points: ${names.join(', ')}`,
+-                fix: 'Read them off the residual chart on the left, or type the values.',
++                fix: 'Read them off the residual chart below, or type the values.',
+             });
+             return;
+         }
