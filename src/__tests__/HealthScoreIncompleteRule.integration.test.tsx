@@ -268,7 +268,7 @@ describe('NOT triggers: the model stays Complete', () => {
         expect(diskModel('i1').healthSetPoints.upper).toBe(81);
         expect(diskModel('i1').status).toBe(true);
         expect(bmw().getByTestId('files-out-of-date')).toBeTruthy();
-        fireEvent.click(bmw().getByTestId('footer-back-to-fit'));
+        fireEvent.click(bmw().getByTestId('page-tab-model'));
 
         // model name
         openSettings();
@@ -363,9 +363,12 @@ describe('ONE truth: Dashboard dot, Build Model dot, tab pill, page switch', () 
         // the yellow "need" dot there, same colour as the Build Model list (it used to be the
         // plain "trained" dot because the verdict only lived in the Build Model window).
         await waitFor(() => expect(dashDot(1, 'tag1', 'individual')).toBe('need'));
-        // the page switch never carries a tick or a number; the status words are the footer's
+        // the page tabs never carry a tick (their numbers are an order, not progress); the status
+        // words are on the kind tab and in the footer
         expect(bmwEl().querySelector('[data-testid="page-model-done"]')).toBeNull();
         expect(bmwEl().querySelector('[data-testid="page-switch"]')).toBeNull(); // the header has no page switch any more
+        expect(bmwEl().querySelector('[data-testid="page-tabs"]')!.textContent).not.toMatch(/✓/);
+        expect(bmwEl().querySelector('[data-testid="tab-words-i1"]')!.textContent).toBe('Set points needed');
 
         // an invalid set point -> "Fix set point" (red) in Build Model
         await enterSp({ 'sp-lower': '49', 'sp-upper': '90' });

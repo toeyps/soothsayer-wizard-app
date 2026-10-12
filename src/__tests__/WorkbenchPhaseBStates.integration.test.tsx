@@ -20,7 +20,7 @@ import { act, cleanup, fireEvent, waitFor } from '@testing-library/react';
  *     rows on Model fit, and the clock HOUR the health score is averaged over).
  *
  * Covered elsewhere and NOT repeated here: a set point typed without blur is
- * saved exactly once on a sensor switch / kind-tab switch / "← Model fit" /
+ * saved exactly once on a sensor switch / kind-tab switch / page tab ① "Model fit" /
  * the Close button / a native close, and on Enter (`HealthScoreDraftsAndRaces`,
  * "a set point typed WITHOUT blur is persisted (exactly once) when the user leaves").
  */
@@ -83,7 +83,12 @@ const fgOnDisk = () => JSON.stringify(readDisk().failureGroupState);
 const footer = () => bmw().getByTestId('wb-footer');
 const sentence = () => (footer().querySelector('.wbx-reason') as HTMLElement).textContent;
 const footPill = () => bmw().getByTestId('footer-pill').textContent;
-const tabWords = (id: string) => bmw().getByTestId(`tab-status-${id}`).getAttribute('title');
+/** A kind tab's status words: the dot's tooltip — and the SAME string shown on the tab beside the dot (v2 §2). */
+const tabWords = (id: string) => {
+    const title = bmw().getByTestId(`tab-status-${id}`).getAttribute('title');
+    expect(bmw().getByTestId(`tab-words-${id}`).textContent).toBe(title);
+    return title;
+};
 const tabLabel = (name: RegExp) => bmw().getByRole('tab', { name }).getAttribute('aria-label');
 const input = (id: string) => bmw().getByTestId(id) as HTMLInputElement;
 
@@ -335,7 +340,7 @@ describe('at most 5 clusters (user decision 2026-10-10)', () => {
         expect(fgOnDisk(), 'both pages were opened: still nothing changed').toBe(seeded.fg);
 
         // Model settings: 7 is shown as it is; it only cannot be raised
-        fireEvent.click(bmw().getByTestId('footer-back-to-fit'));
+        fireEvent.click(bmw().getByTestId('page-tab-model'));
         await settle(100);
         openSettings();
         expect(count()).toBe('7');
@@ -379,7 +384,7 @@ describe('drafts and the new page spine', () => {
         typeSp('sp-lower', '1');
         typeSp('sp-lower', '12'); // still typing
         expect(diskModel('i1').healthSetPoints.lower).toBe(20);
-        fireEvent.click(bmw().getByTestId('footer-back-to-fit'));
+        fireEvent.click(bmw().getByTestId('page-tab-model'));
         await settle(100);
         expect(diskModel('i1').healthSetPoints.lower).toBe(12);
         const lowers = env.writes.filter(w => w.path === wsFile()).slice(before)

@@ -86,7 +86,12 @@ const wsWrites = () => env.writes.filter(w => w.path === wsFile()).length;
 const footer = () => bmw().getByTestId('wb-footer');
 const sentence = () => (footer().querySelector('.wbx-reason') as HTMLElement).textContent;
 const footPill = () => bmw().getByTestId('footer-pill').textContent;
-const tabWords = (id: string) => bmw().getByTestId(`tab-status-${id}`).getAttribute('title');
+/** A kind tab's status words: the dot's tooltip — and the SAME string shown on the tab beside the dot (v2 §2). */
+const tabWords = (id: string) => {
+    const title = bmw().getByTestId(`tab-status-${id}`).getAttribute('title');
+    expect(bmw().getByTestId(`tab-words-${id}`).textContent).toBe(title);
+    return title;
+};
 const tabDot = (id: string) => bmw().getByTestId(`tab-status-${id}`).getAttribute('data-dot');
 const filled = () => Array.from(bmwEl().querySelectorAll<HTMLElement>('.rcx-btn--pri, .rcx-btn--danger, .f4-btn-save, .bmw-btn-ok'))
     .filter(b => !b.classList.contains('tq-split-caret') && !b.closest('[role="dialog"]'))
@@ -166,7 +171,7 @@ describe('(a) a COMPLETE Relation model whose fit Rust no longer holds', () => {
         expect(dashDot(1, 'tag1', 'relationship')).toBe('complete');
         expect(filled()).toEqual([]);
         // the Model fit page has its charts back too
-        fireEvent.click(bmw().getByTestId('footer-back-to-fit'));
+        fireEvent.click(bmw().getByTestId('page-tab-model'));
         await waitForCharts();
         expect(bmw().queryByTestId('results-not-fitted')).toBeNull();
         expect(bmw().getByTestId('model-fit-relationship')).toBeTruthy();

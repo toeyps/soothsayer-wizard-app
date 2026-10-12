@@ -10,9 +10,10 @@ import { act, cleanup, fireEvent, waitFor, within } from '@testing-library/react
  * `workspaceManager` and the fake Rust health backend:
  *
  *   1. at most ONE filled button on screen, and it follows the state;
- *   2. a model's status is said in words exactly once (the footer: one pill + one
- *      sentence) — everywhere else it is a dot, and the kind-tab dot, the sensor-list
- *      dot and the Dashboard's Failure Groups dot agree at every step.
+ *   2. a model's status has ONE pill and ONE sentence (the footer); the kind tab
+ *      shows a dot + the short status words beside it (Workbench detail v2 §2 — the
+ *      same string as its tooltip), everywhere else it is a dot, and the kind-tab dot,
+ *      the sensor-list dot and the Dashboard's Failure Groups dot agree at every step.
  *
  * `BuildModelWindow.test.tsx` ("Workbench redesign §1 — the page spine") pins each
  * state on its own with `workspaceManager` mocked; this file walks from one state
@@ -115,7 +116,7 @@ async function expectSpine(step: string, id: string, key: string, kind: string, 
     expect(footPill(), at('footer pill')).toBe(want.pill);
     if (typeof want.sentence === 'string') expect(sentence(), at('footer sentence')).toBe(want.sentence);
     else expect(sentence(), at('footer sentence')).toMatch(want.sentence);
-    // ...no status pill on a tab or on the set-point card (a dot with a tooltip)
+    // ...no status PILL on a tab (a dot + plain words) or on the set-point card (a dot with a tooltip)
     for (const tab of bmw().getAllByRole('tab')) expect(tab.querySelector('.f4-pill, .model-status-pill'), at('no pill on a kind tab')).toBeNull();
     expect(bmwEl().querySelector('[data-testid="set-points-card"] .f4-pill, [data-testid="set-points-card"] .model-status-pill'), at('no pill on the set-point card')).toBeNull();
     expect(bmwEl().textContent, at('no "Files saved to" banner / "Step 1"')).not.toMatch(/Files saved to|Step 1\b/);
@@ -123,6 +124,8 @@ async function expectSpine(step: string, id: string, key: string, kind: string, 
     await waitFor(() => expect(tabDot(id).getAttribute('title'), at('tab words')).toBe(want.words));
     expect(tabDot(id).getAttribute('data-dot'), at('tab dot')).toBe(want.dot);
     expect(tabDot(id).textContent, at('the tab dot carries no text')).toBe('');
+    // ...the words are shown beside it (v2 §2): the same string as the tooltip, uncut
+    expect(bmw().getByTestId(`tab-words-${id}`).textContent, at('the words on the tab')).toBe(want.words);
     expect(tabOf(id).getAttribute('aria-label'), at('the state is part of the tab name')).toMatch(new RegExp(`, ${want.words.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`));
     expect(bmwDot(id).colour, at('sensor-list dot')).toBe(want.dot);
     await waitFor(() => expect(dashDot(1, key, kind), at('Dashboard Failure Groups dot')).toBe(want.dash));
@@ -227,7 +230,10 @@ describe('ONE filled button + status said once, through a whole Individual journ
             sentence: '2 set points still empty', words: 'Set points needed', dot: 'need', dash: 'need',
         });
         expect(markBtn().disabled).toBe(true);
-        expect(bmw().getByTestId('footer-back-to-fit').className).toContain('f4-btn--plain');
+        // going back is page tab ① — not a button of the footer, and never filled
+        expect(bmw().queryByTestId('footer-back-to-fit')).toBeNull();
+        expect(bmw().getByTestId('page-tab-model').className).toBe('wb3-page');
+        expect(bmw().getByTestId('page-tab-health').getAttribute('aria-current')).toBe('page');
 
         // 6) valid set points
         await enterSp({ 'sp-lower': '10', 'sp-upper': '90' });
@@ -259,7 +265,8 @@ describe('ONE filled button + status said once, through a whole Individual journ
         await expectSpine('files out of date', 'i1', 'tag1', 'individual', {
             primary: 'mark', filled: ['mark-complete-again'], pill: 'Complete',
             sentence: 'Files out of date — set points changed after saving · Mark complete again to update them',
-            words: 'Complete', dot: 'complete', dash: 'complete',
+            // the tab says it too (v2 §2) — the model is still Complete, so the dot stays green
+            words: 'Complete · files out of date', dot: 'complete', dash: 'complete',
         });
         expect(diskModel('i1').status).toBe(true); // a set point never makes it Incomplete
         await waitFor(() => expect((bmw().getByTestId('mark-complete-again') as HTMLButtonElement).disabled).toBe(false));
@@ -272,7 +279,7 @@ describe('ONE filled button + status said once, through a whole Individual journ
         });
 
         // 9) back on Model fit a Model-settings draft appears: "Save changes" exists only while it does
-        fireEvent.click(bmw().getByTestId('footer-back-to-fit'));
+        fireEvent.click(bmw().getByTestId('page-tab-model'));
         await settle(100);
         await expectSpine('complete, Model fit', 'i1', 'tag1', 'individual', {
             primary: 'none', filled: [], pill: 'Complete',

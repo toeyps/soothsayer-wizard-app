@@ -2112,7 +2112,7 @@ describe('Custom running-condition editor (2026-09-30 port)', () => {
 
         await waitFor(() => expect((screen.getByTestId('next-health-score') as HTMLButtonElement).disabled).toBe(false));
         fireEvent.click(screen.getByTestId('next-health-score'));
-        await waitFor(() => expect(screen.getByTestId('footer-back-to-fit')).toBeTruthy());
+        await waitFor(() => expect(screen.getByTestId('page-tab-health').getAttribute('aria-current')).toBe('page'));
         expect(screen.queryByTestId('custom-rc-editor')).toBeNull(); // the panel is not on this page
         const counts = periodCountCalls().length;
         const loads = mockLoadWorkspaceData.mock.calls.length;
@@ -2124,7 +2124,7 @@ describe('Custom running-condition editor (2026-09-30 port)', () => {
 
         // back on Model fit (settings still open): the panel is on screen again, so it counts
         // again (the answers of a closed panel are dropped) and re-reads the highlights once
-        fireEvent.click(screen.getByTestId('footer-back-to-fit'));
+        fireEvent.click(screen.getByTestId('page-tab-model'));
         await waitFor(() => expect(screen.getByTestId('custom-rc-editor')).toBeTruthy());
         await waitFor(() => expect(periodCountCalls()).toHaveLength(counts + 2));
         expect(mockLoadWorkspaceData.mock.calls.length).toBe(loads + 1);
@@ -4438,14 +4438,148 @@ describe('Workbench two pages — shell + Model fit page (health score 3b-1)', (
         await deliverData({ failureGroupState: { groups: [makeGroup()], models, ...extraFg } }, payload);
     };
 
-    // The header's "Model fit | Health score" switch was removed (user decision 2026-10-12: the
-    // footer already has the buttons). The two pages are reached from the footer only.
-    describe('the two pages are reached from the footer (no page switch in the header)', () => {
-        it('there is no page switch; "Next: Health score" is disabled for a model that was never trained', async () => {
+    // Workbench detail v2 §3: the two pages of a model are a tab row under the kind tabs —
+    // "① Model fit" / "② Health score". (The header's segmented "Model fit | Health score"
+    // switch stays removed; the footer's "Next: Health score →" is the same door as tab ②.)
+    describe('the two pages are a tab row under the kind tabs (no page switch in the header)', () => {
+        const pageTabs = () => screen.getByTestId('page-tabs');
+        const tabModel = () => screen.getByTestId('page-tab-model');
+        const tabHealth = () => screen.getByTestId('page-tab-health');
+
+        it('a <nav> of two plain buttons, numbered 1 and 2, each with its caption; aria-current marks the open page', async () => {
+            await mount([withTrained(makeModel())]);
+            expect(pageTabs().tagName).toBe('NAV');
+            expect(pageTabs().getAttribute('aria-label')).toBe('Model pages');
+            expect(screen.getByRole('navigation', { name: 'Model pages' })).toBe(pageTabs());
+            // under the kind tabs, above the page body — not in the header
+            const kindTabs = screen.getByRole('tablist');
+            expect(kindTabs.nextElementSibling).toBe(pageTabs());
+            expect(screen.getByTestId('detail-controls').contains(pageTabs())).toBe(false);
+            expect(within(pageTabs()).getAllByRole('button')).toEqual([tabModel(), tabHealth()]);
+            for (const b of [tabModel(), tabHealth()]) {
+                expect(b.tagName).toBe('BUTTON');
+                expect(b.getAttribute('type')).toBe('button');
+                expect(b.getAttribute('role')).toBeNull(); // plain buttons, not role="tab": the kind tabs are the tablist
+            }
+            expect(tabModel().textContent).toBe('1Model fitsettings · train · check the fit');
+            expect(tabHealth().textContent).toBe('2Health scoreset points · score · mark complete');
+            // the numbers are an order, not progress: no tick on either
+            expect(pageTabs().textContent).not.toMatch(/✓/);
+            expect(screen.queryByTestId('page-model-done')).toBeNull();
+            expect(screen.queryByTestId('page-health-done')).toBeNull();
+            // Model fit is open
+            expect(tabModel().getAttribute('aria-current')).toBe('page');
+            expect(tabModel().className).toBe('wb3-page wb3-page--on');
+            expect(tabHealth().getAttribute('aria-current')).toBeNull();
+            expect(tabHealth().getAttribute('aria-disabled')).toBeNull();
+            expect(tabHealth().className).toBe('wb3-page');
+            // the old header switch is not back
+            expect(screen.queryByTestId('page-switch')).toBeNull();
+            expect(screen.queryByRole('group', { name: 'Model pages' })).toBeNull();
+        });
+
+        it('tab ② opens the Health score page and tab ① goes back — the footer has no "← Model fit" button', async () => {
+            await mount([withTrained(makeModel())]);
+            fireEvent.click(tabHealth());
+            await waitFor(() => expect(screen.getByTestId('set-points-card')).toBeTruthy());
+            expect(screen.getByTestId('checks-card')).toBeTruthy();
+            expect(screen.queryByTestId('results-chart')).toBeNull();
+            expect(screen.queryByTestId('add-model-form')).toBeNull(); // Model settings live on the Model fit page
+            expect(tabHealth().getAttribute('aria-current')).toBe('page');
+            expect(tabHealth().className).toBe('wb3-page wb3-page--on');
+            expect(tabModel().getAttribute('aria-current')).toBeNull();
+            expect(screen.queryByTestId('next-health-score')).toBeNull(); // "Next" is a Model fit button
+            expect(screen.queryByTestId('footer-back-to-fit')).toBeNull();
+            expect(within(screen.getByTestId('wb-footer')).queryByText(/Model fit/)).toBeNull();
+            // clicking the open tab again changes nothing
+            fireEvent.click(tabHealth());
+            expect(screen.getByTestId('health-page')).toBeTruthy();
+            // ① is always open: the user can always go back
+            expect(tabModel().getAttribute('aria-disabled')).toBeNull();
+            fireEvent.click(tabModel());
+            expect(screen.queryByTestId('health-page')).toBeNull();
+            expect(tabModel().getAttribute('aria-current')).toBe('page');
+            expect(screen.getByTestId('next-health-score')).toBeTruthy();
+        });
+
+        it('"Next: Health score →" still opens the page, and tab ② follows it', async () => {
+            await mount([withTrained(makeModel())]);
+            fireEvent.click(screen.getByTestId('next-health-score'));
+            await waitFor(() => expect(screen.getByTestId('set-points-card')).toBeTruthy());
+            expect(tabHealth().getAttribute('aria-current')).toBe('page');
+            expect(tabModel().getAttribute('aria-current')).toBeNull();
+        });
+
+        // A closed ②: aria-disabled (never `disabled` — it stays focusable), its REASON in place of
+        // the caption, and a click that does nothing. The reasons are `healthPageBlock`'s own strings
+        // — the ones "Next: Health score →" carries as its tooltip.
+        it.each([
+            ['Train the model first', () => [makeModel()]],
+            ['Re-train first', () => [{ ...withTrained(makeModel()), trainedFingerprint: 'old' }]],
+            ['Fix the settings first', () => [withTrained(makeModel({ category: null }))]],
+        ] as [string, () => any[]][])('a closed tab ② says why in place of its caption: "%s"', async (reason, models) => {
+            await mount(models());
+            const health = tabHealth() as HTMLButtonElement;
+            expect(health.getAttribute('aria-disabled')).toBe('true');
+            expect(health.disabled).toBe(false); // focusable: aria-disabled, not disabled
+            health.focus();
+            expect(document.activeElement).toBe(health);
+            expect(health.className).toBe('wb3-page wb3-page--off');
+            // the reason takes the caption's place — in its own class, which no width hides
+            const why = screen.getByTestId('page-tab-health-why');
+            expect(why.textContent).toBe(reason);
+            expect(why.className).toBe('wb3-page-why');
+            expect(health.querySelector('.wb3-page-s')).toBeNull();
+            expect(health.textContent).toBe(`2Health score${reason}`);
+            expect(health.title).toBe(reason);
+            // the same rule, the same words as the footer's "Next"
+            const next = screen.getByTestId('next-health-score') as HTMLButtonElement;
+            expect(next.disabled).toBe(true);
+            expect(next.title).toBe(reason);
+            // a click does nothing
+            fireEvent.click(health);
+            expect(screen.queryByTestId('health-page')).toBeNull();
+            expect(tabModel().getAttribute('aria-current')).toBe('page');
+            expect(health.getAttribute('aria-current')).toBeNull();
+        });
+
+        it('the last run of this session failed: tab ② is closed with "Re-train first"', async () => {
+            mockInvoke.mockImplementation((cmd: string, args?: any) =>
+                cmd === 'compute_sensor_stats' ? Promise.reject(new Error('stats exploded')) : healthInvoke(cmd, args));
+            statefulUpdateMock([withTrained(makeModel())]);
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: { groups: [makeGroup()], models: [withTrained(makeModel())] } });
+            await waitFor(() => expect(screen.getByTestId('tab-words-m1').textContent).toBe('Training failed'));
+            expect(tabHealth().getAttribute('aria-disabled')).toBe('true');
+            expect(screen.getByTestId('page-tab-health-why').textContent).toBe('Re-train first');
+        });
+
+        it('while the model\'s fit is still being worked out, tab ② is closed like "Next" (no reason text) and opens when the fit is there', async () => {
+            let release: () => void = () => {};
+            mockInvoke.mockImplementation((cmd: string, args?: any) =>
+                cmd === 'compute_sensor_stats' ? new Promise(res => { release = () => res(healthInvoke(cmd, args)); }) : healthInvoke(cmd, args));
+            statefulUpdateMock([withTrained(makeModel())]);
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: { groups: [makeGroup()], models: [withTrained(makeModel())] } });
+            await waitFor(() => expect(screen.getByTestId('results-loading')).toBeTruthy());
+            expect((screen.getByTestId('next-health-score') as HTMLButtonElement).disabled).toBe(true);
+            expect(tabHealth().getAttribute('aria-disabled')).toBe('true');
+            expect(screen.queryByTestId('page-tab-health-why')).toBeNull(); // "Next" has no reason for this moment either
+            expect(tabHealth().title).toBe('');
+            fireEvent.click(tabHealth());
+            expect(screen.queryByTestId('health-page')).toBeNull();
+            await act(async () => { release(); await Promise.resolve(); await Promise.resolve(); });
+            await waitFor(() => expect(tabHealth().getAttribute('aria-disabled')).toBeNull());
+            expect((screen.getByTestId('next-health-score') as HTMLButtonElement).disabled).toBe(false);
+            fireEvent.click(tabHealth());
+            expect(screen.getByTestId('health-page')).toBeTruthy();
+        });
+
+        it('"Next: Health score" is disabled for a model that was never trained', async () => {
             await mount([makeModel()]);
             expect(screen.queryByTestId('page-switch')).toBeNull();
             expect(screen.queryByRole('group', { name: 'Model pages' })).toBeNull();
-            expect(screen.queryByTestId('footer-back-to-fit')).toBeNull(); // already on Model fit
+            expect(screen.queryByTestId('footer-back-to-fit')).toBeNull();
             const health = screen.getByTestId('next-health-score') as HTMLButtonElement;
             expect(health.disabled).toBe(true);
             expect(health.title).toBe('Train the model first');
@@ -4460,7 +4594,7 @@ describe('Workbench two pages — shell + Model fit page (health score 3b-1)', (
             expect(screen.queryByTestId('page-model-done')).toBeNull();
         });
 
-        it('trained and fresh: "Next: Health score" opens the real page (set points + checks), "← Model fit" goes back', async () => {
+        it('trained and fresh: "Next: Health score" opens the real page (set points + checks), tab ① goes back', async () => {
             await mount([withTrained(makeModel())]);
             expect(screen.queryByTestId('page-model-done')).toBeNull();
             expect(screen.queryByTestId('page-health-done')).toBeNull();
@@ -4469,9 +4603,8 @@ describe('Workbench two pages — shell + Model fit page (health score 3b-1)', (
             expect(screen.getByTestId('checks-card')).toBeTruthy();
             expect(screen.queryByTestId('results-chart')).toBeNull();
             expect(screen.queryByTestId('add-model-form')).toBeNull(); // Model settings live on the Model fit page
-            expect(screen.queryByTestId('next-health-score')).toBeNull(); // on the Health score page the footer offers the way back instead
-            expect(screen.getByTestId('footer-back-to-fit').textContent).toContain('Model fit');
-            fireEvent.click(screen.getByTestId('footer-back-to-fit'));
+            expect(screen.queryByTestId('next-health-score')).toBeNull(); // on the Health score page the way back is tab ①
+            fireEvent.click(screen.getByTestId('page-tab-model'));
             expect(screen.queryByTestId('health-page')).toBeNull();
         });
 
@@ -4513,6 +4646,35 @@ describe('Workbench two pages — shell + Model fit page (health score 3b-1)', (
             });
             expect(screen.queryByTestId('health-page')).toBeNull();
             expect((screen.getByTestId('next-health-score') as HTMLButtonElement).disabled).toBe(true);
+            // ...and its tab ② is closed, with the reason
+            expect(tabModel().getAttribute('aria-current')).toBe('page');
+            expect(tabHealth().getAttribute('aria-disabled')).toBe('true');
+            expect(screen.getByTestId('page-tab-health-why').textContent).toBe('Re-train first');
+            // the Individual model kept its own page all along
+            fireEvent.click(screen.getByRole('tab', { name: /Individual/ }));
+            expect(screen.getByTestId('health-page')).toBeTruthy();
+            expect(tabHealth().getAttribute('aria-current')).toBe('page');
+        });
+
+        it('each model keeps its own page when the pages are switched with the tabs', async () => {
+            await mount([withTrained(makeModel({ id: 'i1' })), trainedRel()]);
+            fireEvent.click(tabHealth()); // Individual -> Health score
+            expect(screen.getByTestId('health-page')).toBeTruthy();
+            fireEvent.click(screen.getByRole('tab', { name: /Relation model/ }));
+            expect(screen.queryByTestId('health-page')).toBeNull(); // the Relation model is still on Model fit
+            expect(tabModel().getAttribute('aria-current')).toBe('page');
+            expect(tabHealth().getAttribute('aria-current')).toBeNull();
+            fireEvent.click(screen.getByRole('tab', { name: /Individual/ }));
+            expect(screen.getByTestId('health-page')).toBeTruthy(); // ...and Individual kept its page
+            expect(tabHealth().getAttribute('aria-current')).toBe('page');
+            fireEvent.click(tabModel()); // Individual -> back to Model fit
+            fireEvent.click(screen.getByRole('tab', { name: /Relation model/ }));
+            await waitFor(() => expect(tabHealth().getAttribute('aria-disabled')).toBeNull());
+            fireEvent.click(tabHealth()); // Relation model -> Health score
+            expect(screen.getByTestId('health-page')).toBeTruthy();
+            fireEvent.click(screen.getByRole('tab', { name: /Individual/ }));
+            expect(screen.queryByTestId('health-page')).toBeNull();
+            expect(tabModel().getAttribute('aria-current')).toBe('page');
         });
     });
 
@@ -4532,9 +4694,9 @@ describe('Workbench two pages — shell + Model fit page (health score 3b-1)', (
             fireEvent.click(next());
             expect(screen.getByTestId('health-page')).toBeTruthy();
             expect(screen.queryByTestId('next-health-score')).toBeNull();
-            // "← Model fit" goes back; Mark complete now lives on this page (3b-2).
+            // Page tab ① goes back (the footer has no "← Model fit"); Mark complete lives on this page (3b-2).
             expect(screen.getByText('✓ Mark complete')).toBeTruthy();
-            fireEvent.click(screen.getByTestId('footer-back-to-fit'));
+            fireEvent.click(screen.getByTestId('page-tab-model'));
             expect(screen.queryByTestId('health-page')).toBeNull();
         });
 
@@ -4755,6 +4917,9 @@ describe('Workbench two pages — shell + Model fit page (health score 3b-1)', (
             expect(screen.getByTestId('footer-pill').textContent).toBe('Incomplete'); // not "Trained"
             expect(screen.getByRole('tab', { name: /Relation model/ }).getAttribute('aria-label')).toBe('Relation model, Fit no longer in memory');
             expect(screen.getByTestId('tab-status-r1').className).toContain('f4-sdot--need');
+            // the words on the tab (v2 §2): uncut, amber — it needs loading / training again
+            expect(screen.getByTestId('tab-words-r1').textContent).toBe('Fit no longer in memory');
+            expect(screen.getByTestId('tab-words-r1').className).toBe('wb3-tab-words wb3-tab-words--need');
             expect(screen.getByTestId('next-health-score').className).toBe('rcx-btn'); // a ghost: training comes first
             // the link goes to the ONE place to train, and that place trains it
             fireEvent.click(within(b).getByTestId('board-train-sensor'));
@@ -4830,6 +4995,9 @@ describe('Workbench two pages — shell + Model fit page (health score 3b-1)', (
             expect(line.getAttribute('data-tone')).toBe('warn');
             expect(within(line).queryByTestId('footer-train-sensor')).toBeNull();
             expect(tabLabel()).toBe('Relation model, Complete · Fit no longer in memory');
+            // the words on the tab (v2 §2): the model is still Complete — green, like its dot
+            expect(screen.getByTestId('tab-words-r1').textContent).toBe('Complete · Fit no longer in memory');
+            expect(screen.getByTestId('tab-words-r1').className).toBe('wb3-tab-words wb3-tab-words--complete');
 
             // 1) a load that FAILS: back on the same board, red, with the reason — never "Training failed"
             mockUpdateWorkspaceData.mockClear();
@@ -5125,12 +5293,12 @@ describe('Health score page - draft set points and when they are persisted (heal
             expect((await hsLastModel()).healthSetPoints).toEqual({ kind: 'clustering', outerSd: 5 });
         });
 
-        it('leaving the page ("← Model fit") commits a draft that never blurred', async () => {
+        it('leaving the page (page tab ① "Model fit") commits a draft that never blurred', async () => {
             await hsMount([HS_IND()]);
             await openHealthPage();
             mockUpdateWorkspaceData.mockClear();
             hsType('sp-upper', '11');
-            await act(async () => { fireEvent.click(screen.getByTestId('footer-back-to-fit')); await Promise.resolve(); await Promise.resolve(); });
+            await act(async () => { fireEvent.click(screen.getByTestId('page-tab-model')); await Promise.resolve(); await Promise.resolve(); });
             await flush();
             expect((await hsLastModel()).healthSetPoints.upper).toBe(11);
         });
@@ -5231,7 +5399,7 @@ describe('Health score page - draft set points and when they are persisted (heal
             await openHealthPage();
             await flush();
             mockUpdateWorkspaceData.mockClear();
-            fireEvent.click(screen.getByTestId('footer-back-to-fit'));
+            fireEvent.click(screen.getByTestId('page-tab-model'));
             await flush();
             fireEvent.click(screen.getByTestId('next-health-score'));
             await flush();
@@ -5488,7 +5656,7 @@ describe('Health score page - Mark complete (the ONLY way a model becomes Comple
         expect(screen.getByTestId('footer-status').textContent).toMatch(/Saving the model files…/); // typing does not end the save
         expect(hsMarkBtn().disabled).toBe(true);
         expect(hsInput('sp-residual_at_0_upper').value).toBe('3.5');
-        expect((screen.getByTestId('footer-back-to-fit') as HTMLButtonElement).disabled).toBe(false);
+        expect(screen.getByTestId('page-tab-model').getAttribute('aria-disabled')).toBeNull(); // the way back stays open while saving
         await act(async () => { release(); await Promise.resolve(); await Promise.resolve(); });
         await waitFor(() => expect(screen.getByTestId('mark-incomplete')).toBeTruthy());
         // 3.5 was typed while the files were being written with 3: the footer says they are out of date
@@ -6108,7 +6276,7 @@ describe('Health score - QA fixes 2026-10-04', () => {
             await hsClickMark();
             await waitFor(() => expect(screen.getByTestId('save-error').textContent).toMatch(/access denied/));
             expect(screen.queryByTestId('save-notice')).toBeNull(); // the Health page shows its own banner, not both
-            fireEvent.click(screen.getByTestId('footer-back-to-fit'));
+            fireEvent.click(screen.getByTestId('page-tab-model'));
             const notice = screen.getByTestId('save-notice');
             expect(notice.textContent).toMatch(/not marked complete/);
             expect(notice.textContent).toMatch(/access denied/);
@@ -6122,7 +6290,7 @@ describe('Health score - QA fixes 2026-10-04', () => {
             await waitFor(() => expect(hsMarkBtn().disabled).toBe(false));
             await hsClickMark();
             await waitFor(() => expect(screen.getByTestId('save-ok')).toBeTruthy());
-            fireEvent.click(screen.getByTestId('footer-back-to-fit'));
+            fireEvent.click(screen.getByTestId('page-tab-model'));
             expect(screen.queryByTestId('save-notice')).toBeNull();
         });
     });
@@ -6420,7 +6588,7 @@ describe('Train periods and scoring periods in the Build Model window', () => {
             expect(exportCalls()[0].test_periods).toEqual([{ start: ONE_TEST[0].start, end: ONE_TEST[0].end }]);
             // once Complete, the Model fit footer keeps saying it — still one sentence, one pill
             await waitFor(() => expect(screen.getByTestId('mark-incomplete')).toBeTruthy());
-            fireEvent.click(screen.getByTestId('footer-back-to-fit'));
+            fireEvent.click(screen.getByTestId('page-tab-model'));
             expect(screen.getByTestId('footer-status').textContent).toMatch(/^Trained \d{4}\/\d{2}\/\d{2} \d{2}:\d{2} · scored on 1 period$/);
             expect(screen.getByTestId('wb-footer').querySelectorAll('.f4-pill')).toHaveLength(0);
             expect(screen.queryByTestId('scored-pill')).toBeNull();
@@ -7465,7 +7633,8 @@ describe('Workbench redesign §1 — the page spine', () => {
             expect(filled()).toEqual(['mark-complete']);
             expect(primary()).toBe('mark');
             expect(screen.getByTestId('mark-complete').className).toBe('bmw-btn-ok');
-            expect(screen.getByTestId('footer-back-to-fit').className).toContain('f4-btn--plain');
+            expect(screen.queryByTestId('footer-back-to-fit')).toBeNull(); // going back is page tab ①, never a second button here
+            expect(screen.getByTestId('page-tab-model').className).toBe('wb3-page');
         });
 
         it('a Complete model has NO filled button on either page; "Mark incomplete" is a text button', async () => {
@@ -7521,14 +7690,22 @@ describe('Workbench redesign §1 — the page spine', () => {
         });
     });
 
-    describe('kind tab: ONE state dot in the list\'s colours, the words in its tooltip', () => {
+    // Workbench detail v2 §2: the dot stays, and the status WORDS are shown beside it — the same
+    // string as the tooltip and the tab's name (one rule: `tabDotOf`).
+    describe('kind tab: ONE state dot in the list\'s colours + the status in words beside it (the same words in its tooltip)', () => {
+        const tabWords = (id: string) => screen.getByTestId(`tab-words-${id}`);
+        const tone = (id: string) => tabWords(id).getAttribute('data-tone');
+
         it('a model whose run failed gets the RED dot — on its tab AND in the sensor list — with "Training failed"; the board and the footer say it once each', async () => {
             mockInvoke.mockImplementation((cmd: string) =>
                 cmd === 'compute_sensor_stats' ? Promise.reject(new Error('stats exploded')) : Promise.resolve({}));
             render(<BuildModelWindow />);
             await deliverData();
-            // before: never trained = an empty ring, no colour
+            // before: never trained = an empty ring, no colour — and the words in neutral grey
             expect(screen.getByTestId('tab-status-m1').className).toBe('f4-sdot');
+            expect(tabWords('m1').textContent).toBe('Not trained yet');
+            expect(tabWords('m1').className).toBe('wb3-tab-words');
+            expect(tone('m1')).toBe('plain');
             await act(async () => {
                 fireEvent.click(trainSensorBtn());
                 await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
@@ -7544,7 +7721,14 @@ describe('Workbench redesign §1 — the page spine', () => {
             expect(tab.getAttribute('aria-label')).toBe('Individual, Training failed');
             expect(screen.getByRole('tab', { name: 'Individual, Training failed' })).toBe(tab);
             expect(tab.querySelector('.f4-pill')).toBeNull();
-            expect(tab.textContent).toBe('IIndividual'); // kind badge + name — no status word on the tab
+            // kind badge + name + the status words, in red (they ask for action) — no pill
+            expect(tab.textContent).toBe('IIndividualTraining failed');
+            expect(tabWords('m1').textContent).toBe('Training failed');
+            expect(tabWords('m1').className).toBe('wb3-tab-words wb3-tab-words--bad');
+            expect(tone('m1')).toBe('bad');
+            // the visible words are decoration for assistive tech: the tab's name already says them
+            expect(tabWords('m1').parentElement!.getAttribute('aria-hidden')).toBe('true');
+            expect(tabWords('m1').parentElement!.contains(dot)).toBe(true);
             // the same red dot in the sensor list
             expect(screen.getByTestId('sensor-kind-badge-dot-m1').className).toContain('f4-kb-dot--bad');
             expect(screen.getByTestId('sensor-kind-badge-m1').getAttribute('title')).toBe('Individual · Training failed');
@@ -7562,12 +7746,21 @@ describe('Workbench redesign §1 — the page spine', () => {
             expect(screen.getByTestId('footer-pill').textContent).toBe('Incomplete');
         });
 
-        it('complete = green, trained = amber — the same colour classes as the list', async () => {
+        it('complete = green, trained = amber — the same colour classes as the list; "Complete" is green words, a plain "Trained" neutral grey', async () => {
             await hsMount([HS_IND({ id: 'i1', status: true, healthExport: record }), HS_REL()]);
             expect(screen.getByTestId('tab-status-i1').className).toContain('f4-sdot--complete');
             expect(screen.getByTestId('tab-status-i1').getAttribute('title')).toBe('Complete');
             expect(screen.getByTestId('tab-status-r1').className).toContain('f4-sdot--need');
             for (const tab of screen.getAllByRole('tab')) expect(tab.querySelector('.f4-pill')).toBeNull();
+            expect(tabWords('i1').textContent).toBe('Complete');
+            expect(tabWords('i1').className).toBe('wb3-tab-words wb3-tab-words--complete');
+            // "Trained" asks for nothing: its DOT is amber (as in the list), its words are not
+            expect(tabWords('r1').textContent).toBe('Trained');
+            expect(tabWords('r1').className).toBe('wb3-tab-words');
+            expect(tone('r1')).toBe('plain');
+            expect(screen.getAllByRole('tab').map(tab => tab.textContent)).toEqual(['IIndividualComplete', 'RRelation modelTrained']);
+            // the Workbench tabs carry their own class (the larger padding is scoped to it)
+            expect(screen.getByRole('tablist').className).toBe('f4-tabs wb3-kindtabs');
             expect(screen.getAllByRole('tab').map(tab => tab.getAttribute('aria-label'))).toEqual(['Individual, Complete', 'Relation model, Trained']);
             // the kind name still finds its tab
             expect(screen.getByRole('tab', { name: /Relation model/ }).getAttribute('aria-selected')).toBe('false');
@@ -7588,10 +7781,80 @@ describe('Workbench redesign §1 — the page spine', () => {
             expect(tab.getAttribute('title')).toBe(`Individual · ${words}`);
             expect(screen.getByTestId('tab-status-m1').getAttribute('title')).toBe(words);
             expect(screen.getByTestId('tab-status-m1').className).toContain('f4-sdot--bad');
+            // ...in words on the tab too, in red
+            expect(tabWords('m1').textContent).toBe(words);
+            expect(tone('m1')).toBe('bad');
         });
 
-        // An unsaved draft is said in the footer of the OPEN tab only: on another tab the tooltip must carry it.
-        it('unsaved Model settings on a tab that is not open: its tooltip words end with "· unsaved changes"', async () => {
+        it('"Needs condition": the gate badge of a model with no running condition, in red words', async () => {
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: { groups: [makeGroup()], models: [makeModel()], runningConditionNoneConfirmed: false, rcLegacyNotice: null } });
+            fireEvent.click(screen.getByLabelText('Close')); // the auto-opened settings modal
+            expect(tabWords('m1').textContent).toBe('Needs condition');
+            expect(tone('m1')).toBe('bad');
+            expect(screen.getByRole('tab').getAttribute('title')).toBe('Individual · Needs condition');
+        });
+
+        it('"Re-train needed" (amber) for a model whose settings changed after training', async () => {
+            await hsMount([{ ...HS_IND(), trainedFingerprint: 'old' }]);
+            expect(tabWords('m1').textContent).toBe('Re-train needed');
+            expect(tabWords('m1').className).toBe('wb3-tab-words wb3-tab-words--need');
+            expect(screen.getByTestId('tab-status-m1').className).toContain('f4-sdot--need');
+            expect(screen.getByRole('tab').getAttribute('title')).toBe('Individual · Re-train needed');
+        });
+
+        it('a trained model with set points missing or rejected: "Set points needed" (amber) / "Fix set point" (red)', async () => {
+            await hsMount([HS_IND({ healthSetPoints: HS_EMPTY_IND })]);
+            await openHealthPage();
+            await waitFor(() => expect(tabWords('m1').textContent).toBe('Set points needed'));
+            expect(tabWords('m1').className).toBe('wb3-tab-words wb3-tab-words--need');
+            expect(screen.getByRole('tab').getAttribute('aria-label')).toBe('Individual, Set points needed');
+            // a value inside the 3SD band (2..8) is rejected
+            hsType('sp-lower', '1');
+            hsType('sp-upper', '5');
+            await waitFor(() => expect(tabWords('m1').textContent).toBe('Fix set point'));
+            expect(tabWords('m1').className).toBe('wb3-tab-words wb3-tab-words--bad');
+            expect(screen.getByTestId('tab-status-m1').className).toContain('f4-sdot--bad');
+            expect(screen.getByRole('tab').getAttribute('title')).toBe('Individual · Fix set point');
+        });
+
+        // The three suffixes are part of the VISIBLE words, uncut (v2 §2).
+        it('suffix "· files out of date": a Complete model whose set points changed after its files were saved — on the tab, in the tooltip and in the tab\'s name', async () => {
+            await hsMount([HS_IND({ status: true, healthExport: record })]);
+            expect(tabWords('m1').textContent).toBe('Complete');
+            await openHealthPage();
+            hsType('sp-upper', '12');
+            await waitFor(() => expect(tabWords('m1').textContent).toBe('Complete · files out of date'));
+            // the model IS still Complete: the dot and the words stay green
+            expect(tabWords('m1').className).toBe('wb3-tab-words wb3-tab-words--complete');
+            expect(screen.getByTestId('tab-status-m1').className).toContain('f4-sdot--complete');
+            const tab = screen.getByRole('tab');
+            expect(tab.getAttribute('title')).toBe('Individual · Complete · files out of date');
+            expect(tab.getAttribute('aria-label')).toBe('Individual, Complete · files out of date');
+            expect(screen.getByTestId('tab-status-m1').getAttribute('title')).toBe('Complete · files out of date');
+            // typed back: the words go back
+            hsType('sp-upper', '9');
+            await waitFor(() => expect(tabWords('m1').textContent).toBe('Complete'));
+        });
+
+        it('the words are never cut and the tooltip keeps the full sentence: every suffix is in both', async () => {
+            await hsMount([HS_IND({ status: true, healthExport: record }), HS_REL()]);
+            fireEvent.click(screen.getByTestId('next-health-score'));
+            await waitFor(() => expect(screen.getByTestId('set-points-card')).toBeTruthy());
+            hsType('sp-upper', '12'); // files out of date
+            fireEvent.click(screen.getByTestId('page-tab-model'));
+            rename();                 // + an unsaved Model-settings draft
+            const full = 'Complete · files out of date · unsaved changes';
+            await waitFor(() => expect(tabWords('m1').textContent).toBe(full));
+            expect(screen.getByRole('tab', { name: /Individual/ }).getAttribute('title')).toBe(`Individual · ${full}`);
+            expect(screen.getByRole('tab', { name: /Individual/ }).getAttribute('aria-label')).toBe(`Individual, ${full}`);
+            expect(screen.getByTestId('tab-status-m1').getAttribute('title')).toBe(full);
+            // no truncating wrapper: the words are one text node inside the tab
+            expect(tabWords('m1').childNodes).toHaveLength(1);
+        });
+
+        // An unsaved draft is said in the footer of the OPEN tab; every tab says it in its words.
+        it('unsaved Model settings: the tab\'s words (and tooltip) end with "· unsaved changes"', async () => {
             await hsMount([HS_IND(), HS_REL()]);
             const label = (name: RegExp) => screen.getByRole('tab', { name }).getAttribute('aria-label');
             expect(label(/Individual/)).toBe('Individual, Trained');
@@ -7603,6 +7866,10 @@ describe('Workbench redesign §1 — the page spine', () => {
             expect(label(/Relation model/)).not.toMatch(/unsaved/);
             expect(screen.getByRole('tab', { name: /Individual/ }).getAttribute('title')).toBe('Individual · Trained · unsaved changes');
             expect(screen.getByTestId('tab-status-m1').getAttribute('title')).toBe('Trained · unsaved changes');
+            // visible on the tab too — still neutral: "Trained" with a draft asks for nothing on this tab
+            expect(tabWords('m1').textContent).toBe('Trained · unsaved changes');
+            expect(tone('m1')).toBe('plain');
+            expect(tabWords('r1').textContent).toBe('Trained');
             // saved: the words go back
             fireEvent.click(screen.getByRole('tab', { name: /Individual/ }));
             await act(async () => { fireEvent.click(screen.getByTestId('save-changes')); await Promise.resolve(); await Promise.resolve(); });
@@ -7864,7 +8131,7 @@ describe('Workbench redesign §1 — the page spine', () => {
         await openHealthPage();
         expect(sc().scrollTop).toBe(0);
         sc().scrollTop = 40;
-        fireEvent.click(screen.getByTestId('footer-back-to-fit'));
+        fireEvent.click(screen.getByTestId('page-tab-model'));
         expect(sc().scrollTop).toBe(0);
     });
 
@@ -8807,6 +9074,9 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
             expect(screen.queryByTestId('build-block-reason')).toBeNull();
             expect(screen.getByTestId('tab-status-m1').getAttribute('data-dot')).toBe('complete');
             expect(screen.getByTestId('tab-status-m1').getAttribute('title')).toBe('Complete · no data in the loaded file');
+            // ...and the same words on the tab, uncut (v2 §2)
+            expect(screen.getByTestId('tab-words-m1').textContent).toBe('Complete · no data in the loaded file');
+            expect(screen.getByTestId('tab-words-m1').className).toBe('wb3-tab-words wb3-tab-words--complete');
             expect(screen.getByTestId('sensor-kind-badge-dot-m1').getAttribute('data-state')).toBe('complete');
             expect(screen.getByTestId('sensor-kind-badge-dot-m1').className).toContain('f4-kb-dot--complete');
             expect(screen.getByTestId('sensor-kind-badge-m1').getAttribute('title')).toBe('Individual · Complete · no data in the loaded file');
@@ -9075,6 +9345,12 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
             expect(screen.queryByTestId('build-block-reason')).toBeNull();
             expect(screen.getByTestId('tab-status-m1').getAttribute('data-dot')).toBe('need');
             expect(screen.getByTestId('tab-status-m1').getAttribute('title')).toMatch(/^(Trained|Set points needed) · no data in the loaded file$/);
+            // ...and the same words on the tab (v2 §2): "Trained · …" neutral grey, "Set points needed · …" amber
+            {
+                const words = screen.getByTestId('tab-words-m1');
+                expect(words.textContent).toBe(screen.getByTestId('tab-status-m1').getAttribute('title'));
+                expect(words.getAttribute('data-tone')).toBe(words.textContent!.startsWith('Trained') ? 'plain' : 'need');
+            }
             expect(screen.getByTestId('sensor-kind-badge-dot-m1').getAttribute('data-state')).toBe('trained');
             expect(screen.getByTestId('sensor-kind-badge-dot-m1').className).toContain('f4-kb-dot--need');
             expect(screen.getByRole('button', { name: /^Needs setup/ }).textContent).toBe('Needs setup 0');
@@ -9088,7 +9364,7 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
 
             // ── the Health score page: the same board; Mark complete could only fail ──
             fireEvent.click(screen.getByTestId('next-health-score'));
-            await waitFor(() => expect(screen.getByTestId('footer-back-to-fit')).toBeTruthy());
+            await waitFor(() => expect(screen.getByTestId('page-tab-health').getAttribute('aria-current')).toBe('page'));
             expect(screen.getByTestId('results-no-data')).toBeTruthy();
             expect(screen.queryByTestId('set-points-card')).toBeNull();
             expect(hsMarkBtn().disabled).toBe(true);

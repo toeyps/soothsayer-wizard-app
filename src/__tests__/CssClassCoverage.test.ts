@@ -73,6 +73,7 @@ const DYNAMIC_ENUMS: Record<string, readonly string[]> = {
     'wb2-card--': ['tall', 'xtall', 'stack', 'stackxy'],                         // ChartCardSize minus 'normal'
     'wb3-kpi--': ['ok', 'warn', 'bad'],                                          // Kpi tone (a score value's band colour)
     'hs-chk--': ['ok', 'need', 'bad'],
+    'wb3-tab-words--': ['complete', 'need', 'bad'],                              // BuildModelWindow tabDotOf: the tone of a kind tab's status words
     'wb3-ruler--': ['individual', 'relationship', 'clustering'],                 // ScoreRuler: the model kind
     'wb3-ruler-sc--': ['ok', 'warn', 'bad', 'off'],                              // ScoreRuler: a tick's score colour (off = no score yet)
     'gutter-': ['horizontal', 'vertical'],                                       // split.js

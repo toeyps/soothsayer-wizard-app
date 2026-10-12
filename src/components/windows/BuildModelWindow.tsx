@@ -200,14 +200,15 @@ const draftFromModel = (m: FailureModel): ModelDraft => ({
 const KIND_ORDER: ModelKind[] = ['individual', 'relationship', 'clustering'];
 /** Left-list dot colour per status: green = complete, yellow = needs input /
  *  re-train, red = needs fixing, none = never trained. */
-const DOT_CLASS: Record<ModelDotState, 'complete' | 'need' | 'bad' | null> = {
+type TabDot = 'complete' | 'need' | 'bad' | null;
+const DOT_CLASS: Record<ModelDotState, TabDot> = {
     complete: 'complete', trained: 'need', stale: 'need', blocked: 'bad', none: null,
 };
 const DOT_TITLE: Record<ModelDotState, string> = {
     complete: 'Complete', trained: 'Trained — set points needed', stale: 'Re-train needed', blocked: 'Needs fixing', none: 'Incomplete',
 };
-/** The words behind a kind tab's state dot (its tooltip). A tab carries NO text
- *  pill: a model's status is said in words once, in the footer. */
+/** The status words of a kind tab: shown beside its state dot and in its tooltip
+ *  (Workbench detail v2 §2 — see `tabDotOf`). */
 const TAB_WORDS: Record<ModelDotState, string> = {
     complete: 'Complete', trained: 'Trained', stale: 'Re-train needed', blocked: 'Needs fixing', none: 'Not trained yet',
 };
@@ -3639,15 +3640,21 @@ export default function BuildModelWindow() {
         return modelSetPointFlag(effectiveModelFor(m), gateFg, gateHeaders, st, specialRecipes);
     };
 
-    /** The state dot of a kind tab: colour (the sensor list's colours) + the words of
-     *  its tooltip — the central status (`modelDotState`), refined for a trained model
-     *  by the verdict on its set points, by the gate badge, and red for a model whose
-     *  run failed in this session. */
-    const tabDotOf = (m: FailureModel, st: ModelDotState): { dot: 'complete' | 'need' | 'bad' | null; words: string } => {
-        // Unsaved Model-settings edits are said in the footer of the tab that is open;
-        // on any other tab the tooltip is the only place that can say it.
-        const unsaved = m.id in drafts ? ' · unsaved changes' : '';
-        if (trainError[m.id]) return { dot: 'bad', words: `${failedWordsOf(m)}${unsaved}` };
+    /** The state of a kind tab — ONE rule for its dot, the words shown beside it and
+     *  its tooltip / accessible name: the central status (`modelDotState`), refined for
+     *  a trained model by the verdict on its set points, by the gate badge, and red for
+     *  a model whose run failed in this session.
+     *   - `dot`:   the dot's colour (the sensor list's colours);
+     *   - `words`: the status in words, with every suffix ("· no data in the loaded
+     *              file", "· files out of date", "· unsaved changes") — shown on the tab
+     *              uncut, and the same string in the tooltip and the tab's name;
+     *   - `tone`:  the colour of those words — the dot's colour, except that a plain
+     *              "Trained" asks for nothing and stays neutral grey. */
+    const tabDotOf = (m: FailureModel, st: ModelDotState): { dot: TabDot; tone: TabDot; words: string } => {
+        // Unsaved Model-settings edits and saved files that no longer match the set
+        // points are said for EVERY tab of the sensor, not only the one that is open.
+        const tail = `${filesOutOfDateFor(m) ? ' · files out of date' : ''}${m.id in drafts ? ' · unsaved changes' : ''}`;
+        if (trainError[m.id]) return { dot: 'bad', tone: 'bad', words: `${failedWordsOf(m)}${tail}` };
         const badge = gateBadge(m);
         // Results, but no row of the loaded data: nothing about the model changed — its
         // own dot and words ("Complete", "Trained", its set-point flag), plus why there
@@ -3655,15 +3662,17 @@ export default function BuildModelWindow() {
         if (noDataOf(m)) {
             const flag = setPointFlagOf(m, st);
             const own = flag === 'fix' ? 'Fix set point' : flag === 'needed' ? 'Set points needed' : TAB_WORDS[st];
-            return { dot: flag === 'fix' ? 'bad' : DOT_CLASS[st], words: `${own} · ${NO_MODEL_DATA_WORDS}${unsaved}` };
+            const dot = flag === 'fix' ? 'bad' : DOT_CLASS[st];
+            return { dot, tone: own === TAB_WORDS.trained ? null : dot, words: `${own} · ${NO_MODEL_DATA_WORDS}${tail}` };
         }
         // A trained model whose fit is gone needs training again (amber, like "Re-train needed").
         if (badge === null && fitGoneOf(m) && (st === 'trained' || st === 'complete')) {
-            return { dot: DOT_CLASS[st], words: `${st === 'complete' ? 'Complete · ' : ''}${FIT_GONE_WORDS}${unsaved}` };
+            return { dot: DOT_CLASS[st], tone: DOT_CLASS[st], words: `${st === 'complete' ? 'Complete · ' : ''}${FIT_GONE_WORDS}${tail}` };
         }
         const flag = setPointFlagOf(m, st);
         const words = badge ?? (flag === 'fix' ? 'Fix set point' : flag === 'needed' ? 'Set points needed' : TAB_WORDS[st]);
-        return { dot: flag === 'fix' ? 'bad' : DOT_CLASS[st], words: `${words}${unsaved}` };
+        const dot = flag === 'fix' ? 'bad' : DOT_CLASS[st];
+        return { dot, tone: words === TAB_WORDS.trained ? null : dot, words: `${words}${tail}` };
     };
 
     /** Props the two pages share (`WorkbenchPageProps`) for the ACTIVE model. */
@@ -4083,13 +4092,14 @@ export default function BuildModelWindow() {
     };
 
     /** Footer of BOTH pages: ONE status pill + ONE
-     *  sentence + at most one filled button (`primary`). This is the only place a
-     *  model's status is said in words — tabs, list and set-point card carry a dot.
+     *  sentence + at most one filled button (`primary`). (The kind tab says the status
+     *  in words too — `tabDotOf`; the list and the set-point card carry a dot.)
      *  Model fit: "Save changes" (only while a draft exists) · "Next: Health score →"
      *  (NO Mark complete: a model is completed only from the Health score page).
-     *  Health score: "← Model fit" · Mark complete ("Mark incomplete", a text
-     *  button, once Complete; "Mark complete again" only when the files are out of date
-     *  or were saved with the earlier row-by-row scoring). */
+     *  Health score: Mark complete ("Mark incomplete", a text button, once Complete;
+     *  "Mark complete again" only when the files are out of date or were saved with the
+     *  earlier row-by-row scoring). Going back to Model fit is page tab ① — there is no
+     *  "← Model fit" button here. */
     const renderFooter = (m: FailureModel, page: WorkbenchPage, primary: PrimaryAction) => {
         // Save changes is an action: the draft's data guards apply to it.
         const saveReason = modelBlockReason(m, true);
@@ -4259,11 +4269,6 @@ export default function BuildModelWindow() {
         const markClass = primary === 'mark' ? 'bmw-btn-ok' : 'rcx-btn';
         return (
             <div className="f4-foot wbx-foot" ref={footerRef} tabIndex={-1} data-testid="wb-footer" data-primary={primary ?? 'none'}>
-                {page === 'health' && (
-                    <button type="button" className="f4-btn f4-btn--plain f4-btn--small" data-testid="footer-back-to-fit" onClick={() => setPage(m, 'model')}>
-                        ← Model fit
-                    </button>
-                )}
                 <span className={`model-status-pill model-status-pill--${pillState}`} data-testid="footer-pill" style={{ cursor: 'default' }}>
                     {pillLabel}
                 </span>
@@ -4293,9 +4298,9 @@ export default function BuildModelWindow() {
                         ref={nextHealthBtnRef}
                         className={`rcx-btn${primary === 'next' ? ' rcx-btn--pri' : ''}`}
                         data-testid="next-health-score"
-                        // The only way to the Health score page since the header's page switch went
-                        // (2026-10-12). Closed while this model's fit is still being worked out
-                        // (redesign §7): the Health score page reads that fit.
+                        // The same door as page tab ② (and closed by the same rules). Closed while
+                        // this model's fit is still being worked out (redesign §7): the Health score
+                        // page reads that fit.
                         disabled={healthBlock !== null || training}
                         title={healthBlock ?? undefined}
                         onClick={() => setPage(m, 'health')}
@@ -4492,6 +4497,14 @@ export default function BuildModelWindow() {
         // the one-filled-button rule both read it.
         const cands = orderedDetail.map(candidateOf);
         const primary = primaryActionOf(activeModel, page, cands);
+        // Page tab ② is closed exactly when "Next: Health score →" is disabled (the same
+        // two rules: `healthPageBlock`, and this model's fit still being worked out) —
+        // and only while it is not the page that is open: the open page's tab is never
+        // shown as closed. Its reason takes the caption's place; the "still loading /
+        // training" moment has no reason text (the page body says it).
+        const healthBlock = healthPageBlock(activeModel);
+        const healthTabClosed = page !== 'health' && (healthBlock !== null || training);
+        const healthTabWhy = healthTabClosed ? healthBlock : null;
         return (
             <>
                 <div className="bmw-dhead">
@@ -4548,8 +4561,8 @@ export default function BuildModelWindow() {
                             );
                         })}
                     </div>
-                    {/* No page switch here (removed 2026-10-12, user decision): the two pages are
-                        reached from the footer — "Next: Health score →" and "← Model fit". */}
+                    {/* No page switch in the header: the two pages are the tab row under the kind
+                        tabs (v2 §3), plus the footer's "Next: Health score →". */}
                     {renderSensorTrain(cands, primary === 'train')}
                     </div>
                 </div>
@@ -4560,11 +4573,12 @@ export default function BuildModelWindow() {
                     </div>
                 )}
 
-                <div role="tablist" className="f4-tabs">
+                <div role="tablist" className="f4-tabs wb3-kindtabs">
                     {orderedDetail.map(m => {
                         const selected = m.id === activeModel.id;
-                        // No text pill on a tab — ONE dot in the list's colours, the words in the tooltip.
-                        const { dot, words } = tabDotOf(m, dotStateOf(m));
+                        // ONE dot in the list's colours + the status in words beside it (v2 §2).
+                        // The same words are the tooltip and part of the tab's name.
+                        const { dot, tone, words } = tabDotOf(m, dotStateOf(m));
                         return (
                             <button
                                 key={m.id}
@@ -4580,18 +4594,59 @@ export default function BuildModelWindow() {
                             >
                                 <span className={`f4-kmini model-kind-icon--${m.kind}`} aria-hidden="true">{KIND_ABBREV[m.kind]}</span>
                                 <span className="f4-tab-l">{KIND_TAB_LABEL[m.kind]}</span>
-                                <span
-                                    className={`f4-sdot${dot ? ` f4-sdot--${dot}` : ''}`}
-                                    data-testid={`tab-status-${m.id}`}
-                                    data-dot={dot ?? 'none'}
-                                    title={words}
-                                    aria-hidden="true"
-                                />
+                                {/* aria-hidden: the tab's own name (aria-label) already says these words. */}
+                                <span className="wb3-tab-state" aria-hidden="true">
+                                    <span
+                                        className={`f4-sdot${dot ? ` f4-sdot--${dot}` : ''}`}
+                                        data-testid={`tab-status-${m.id}`}
+                                        data-dot={dot ?? 'none'}
+                                        title={words}
+                                    />
+                                    <span
+                                        className={`wb3-tab-words${tone ? ` wb3-tab-words--${tone}` : ''}`}
+                                        data-testid={`tab-words-${m.id}`}
+                                        data-tone={tone ?? 'plain'}
+                                    >
+                                        {words}
+                                    </span>
+                                </span>
                             </button>
                         );
                     })}
                     <span className="f4-tabs-spacer" />
                 </div>
+                {/* The two pages of a model: a second tab row under the kind tabs (v2 §3). The
+                    numbers are an order, not progress — no ticks, and ① is always open. */}
+                <nav className="wb3-pages" aria-label="Model pages" data-testid="page-tabs">
+                    <button
+                        type="button"
+                        className={`wb3-page${page === 'model' ? ' wb3-page--on' : ''}`}
+                        data-testid="page-tab-model"
+                        aria-current={page === 'model' ? 'page' : undefined}
+                        onClick={() => setPage(activeModel, 'model')}
+                    >
+                        <span className="wb3-page-n">1</span>
+                        <span className="wb3-page-t">Model fit</span>
+                        <span className="wb3-page-s">settings · train · check the fit</span>
+                    </button>
+                    {/* Closed = aria-disabled, never `disabled`: it stays focusable and its
+                        reason is always readable, in place of the caption. */}
+                    <button
+                        type="button"
+                        className={`wb3-page${page === 'health' ? ' wb3-page--on' : ''}${healthTabClosed ? ' wb3-page--off' : ''}`}
+                        data-testid="page-tab-health"
+                        aria-current={page === 'health' ? 'page' : undefined}
+                        aria-disabled={healthTabClosed ? true : undefined}
+                        title={healthTabWhy ?? undefined}
+                        onClick={() => { if (!healthTabClosed) setPage(activeModel, 'health'); }}
+                    >
+                        <span className="wb3-page-n">2</span>
+                        <span className="wb3-page-t">Health score</span>
+                        {healthTabWhy !== null
+                            ? <span className="wb3-page-why" data-testid="page-tab-health-why">{healthTabWhy}</span>
+                            : <span className="wb3-page-s">set points · score · mark complete</span>}
+                    </button>
+                </nav>
 
                 <div role="tabpanel" data-testid={`model-tab-panel-${activeModel.id}`} style={{ display: 'contents' }}>
                     {/* One scroll area for settings + banner + the page body, so the

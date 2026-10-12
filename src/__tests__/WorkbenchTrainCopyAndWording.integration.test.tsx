@@ -93,7 +93,12 @@ const modelsBytes = () => JSON.stringify(readDisk().failureGroupState.models);
 const bmwBroadcasts = () => env.emitted.filter(e => e.event === 'failure-group-state-changed' && e.payload?.origin === 'build-model');
 const trainBtn = () => bmw().getByTestId('train-sensor') as HTMLButtonElement;
 const trainWhy = () => bmw().getByTestId('train-sensor-why').textContent;
-const tabWords = (id: string) => bmw().getByTestId(`tab-status-${id}`).getAttribute('title');
+/** A kind tab's status words: the dot's tooltip — and the SAME string shown on the tab beside the dot (v2 §2). */
+const tabWords = (id: string) => {
+    const title = bmw().getByTestId(`tab-status-${id}`).getAttribute('title');
+    expect(bmw().getByTestId(`tab-words-${id}`).textContent).toBe(title);
+    return title;
+};
 const footer = () => bmw().getByTestId('wb-footer');
 const sentence = () => (footer().querySelector('.wbx-reason') as HTMLElement | null)?.textContent ?? null;
 const stripPhase = () => bmw().queryByTestId('train-run-strip')?.getAttribute('data-phase') ?? null;
@@ -616,7 +621,7 @@ describe('B. "Relation model" everywhere — and a workspace that still holds th
         await waitFor(() => expect(bmw().getByTestId('save-error')).toBeTruthy(), { timeout: 8000 });
         expect(bmw().getByTestId('save-error-reason').textContent).toBe(ENGINE_NO_START);
         expectCleanWords('Mark complete failed');
-        fireEvent.click(bmw().getByTestId('footer-back-to-fit'));
+        fireEvent.click(bmw().getByTestId('page-tab-model'));
         await settle(200);
         expectCleanWords('Model fit page after the failed Mark complete');
         await openHealth();

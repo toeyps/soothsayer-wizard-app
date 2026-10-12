@@ -105,7 +105,12 @@ const type = (el: HTMLElement, value: string) => fireEvent.change(el, { target: 
 const trainBtn = () => bmw().getByTestId('train-sensor') as HTMLButtonElement;
 const trainWhy = () => bmw().getByTestId('train-sensor-why').textContent;
 const footReason = () => bmw().queryByTestId('build-block-reason')?.textContent ?? null;
-const tabWords = (id: string) => bmw().getByTestId(`tab-status-${id}`).getAttribute('title');
+/** A kind tab's status words: the dot's tooltip — and the SAME string shown on the tab beside the dot (v2 §2). */
+const tabWords = (id: string) => {
+    const title = bmw().getByTestId(`tab-status-${id}`).getAttribute('title');
+    expect(bmw().getByTestId(`tab-words-${id}`).textContent).toBe(title);
+    return title;
+};
 const trains = () => env.backend!.calls.filter(c =>
     c.cmd === 'preview_relationship_model' || c.cmd === 'compute_clustering_preview' || c.cmd === 'compute_sensor_stats');
 const freshOnDisk = (mid: string, id = WS) => {
@@ -563,7 +568,7 @@ describe('R5 — the guards never touch what READS a model', () => {
         // ── the Complete model ───────────────────────────────────────────────
         selectSensor('tag3');
         await settle(400);
-        { const back = bmw().queryByTestId('footer-back-to-fit'); if (back) fireEvent.click(back); } // make sure its Model fit page is the one open
+        fireEvent.click(bmw().getByTestId('page-tab-model')); // make sure its Model fit page is the one open (tab ① is always there)
         await waitForCharts();
         expect(pill()).toBe('Complete');
         expect(tabWords('i3')).toBe('Complete');
@@ -673,7 +678,7 @@ describe('R5 — the guards never touch what READS a model', () => {
         expect(bmw().queryByTestId('set-points-card')).toBeNull();
         expect(pill()).toBe('Complete');
         expect((bmw().getByTestId('mark-incomplete') as HTMLButtonElement).disabled).toBe(false);
-        fireEvent.click(bmw().getByTestId('footer-back-to-fit'));
+        fireEvent.click(bmw().getByTestId('page-tab-model'));
 
         // ── the trained model: still trained on disk, on the Dashboard AND here — never "Training failed" ──
         expect(dashDot(1, 'tag1', 'individual')).toBe('trained');
@@ -697,7 +702,7 @@ describe('R5 — the guards never touch what READS a model', () => {
         expect(noDataBoard().title).toBe(NO_DATA_TITLE);
         expect(markBtn().disabled).toBe(true);
         expect(markBtn().title).toBe('No data for this model in the loaded file — fix the running condition (Running condition → Edit) first');
-        fireEvent.click(bmw().getByTestId('footer-back-to-fit'));
+        fireEvent.click(bmw().getByTestId('page-tab-model'));
         expect(dashDot(1, 'tag1', 'individual')).toBe('trained');
 
         // ── opening changed nothing on disk, nothing was broadcast, and the engine was never asked

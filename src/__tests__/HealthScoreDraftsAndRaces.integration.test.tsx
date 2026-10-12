@@ -106,7 +106,7 @@ describe('a set point typed WITHOUT blur is persisted (exactly once) when the us
     const leaves: { name: string; leave: () => Promise<void> }[] = [
         { name: 'switches to another sensor', leave: async () => { selectSensor('tag3'); await settle(100); } },
         { name: 'switches the kind tab', leave: async () => { selectKindTab('Relation model'); await settle(100); } },
-        { name: 'goes back to Model fit', leave: async () => { fireEvent.click(bmw().getByTestId('footer-back-to-fit')); await settle(100); } },
+        { name: 'goes back to Model fit', leave: async () => { fireEvent.click(bmw().getByTestId('page-tab-model')); await settle(100); } },
         { name: 'clicks the window Close button', leave: async () => { await act(async () => { fireEvent.click(bmw().getByTitle('Close')); }); await settle(100); } },
         {
             name: 'closes the window natively (onCloseRequested)',
@@ -282,7 +282,7 @@ describe('errors from Rust', () => {
         fireEvent.click(bmw().getByTestId('health-go-train-sensor'));
         expect(document.activeElement).toBe(trainSensor());
         // the Model fit page says the same
-        fireEvent.click(bmw().getByTestId('footer-back-to-fit'));
+        fireEvent.click(bmw().getByTestId('page-tab-model'));
         await settle(50);
         expect(bmw().getByTestId('results-not-fitted').textContent).toMatch(/^Fit no longer in memory/);
         expect(bmw().queryByTestId('results-not-fitted-retrain')).toBeNull();
@@ -496,7 +496,7 @@ describe('Mark complete: races and failures', () => {
         await settle(30);
         const exportedKey = env.backend!.cmds('export_model_files')[0].args.request.cache_key;
         // back to Model fit: change stiffness, Save, Re-train — all while the export runs
-        fireEvent.click(bmw().getByTestId('footer-back-to-fit'));
+        fireEvent.click(bmw().getByTestId('page-tab-model'));
         openSettings();
         fireEvent.click(bmw().getByRole('button', { name: 'Strict' }));
         await saveChanges();

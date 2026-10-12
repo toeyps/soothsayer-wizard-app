@@ -3318,7 +3318,8 @@ body {
 .f4-kmini { width: 18px; height: 18px; border-radius: 5px; display: grid; place-items: center; font-size: 0.56rem; font-weight: 700; }
 .f4-sdot { width: 7px; height: 7px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px var(--text-faint); }
 /* One state dot per kind tab (and on the set-point card), in the sensor list's
-   colours; the words are its tooltip. No text pills on a tab. */
+   colours; the words are its tooltip — and, on a Workbench kind tab, shown beside
+   it (`.wb3-tab-words`, further down). */
 .f4-sdot { flex-shrink: 0; }
 .f4-sdot--need { background: var(--warn); box-shadow: none; }
 .f4-sdot--bad { background: var(--danger); box-shadow: none; }
@@ -6647,14 +6648,51 @@ body {
 }
 .f4-catseg button { font-size: 0.68rem; padding: 3px 9px; }
 
-/* Page switch: a plain segmented control — it says WHERE, not how far */
-
 /* Train sensor: filled only while it is the pane's next action; the caption is one short line */
 .tq-sensortrain .tq-why { margin-top: -1px; }
 .tq-split-caret:not(.rcx-btn--pri) { border-left-color: transparent; margin-left: -1px; }
 
 /* Kind tabs: kind badge + name + ONE dot */
 .f4-tab { padding: 8px 10px 7px; }
+
+/* Workbench detail v2 §2 — a Workbench kind tab says its status in WORDS beside the dot
+   (BuildModelWindow `tabDotOf`). Amber / red only for words that ask for action, green
+   for Complete, neutral grey for a plain "Trained". The words are never cut: a row that
+   does not fit wraps onto a second line of tabs. Slightly larger padding (§7). */
+.wb3-kindtabs { flex-wrap: wrap; }
+.wb3-kindtabs .f4-tab { padding: 10px 12px 9px; font-size: 0.78rem; max-width: 100%; }
+.wb3-tab-state { display: inline-flex; align-items: center; gap: 5px; margin-left: 2px; min-width: 0; }
+.wb3-tab-words { font-size: 0.66rem; font-weight: 500; color: var(--text-secondary); white-space: nowrap; }
+.wb3-tab-words--need { color: var(--warn); }
+.wb3-tab-words--bad { color: var(--danger); }
+.wb3-tab-words--complete { color: var(--ok); }
+.f4-tab--on .wb3-tab-words { font-weight: 600; }
+
+/* Workbench detail v2 §3 — the two pages of a model: a second tab row under the kind
+   tabs. ① Model fit / ② Health score; the numbers are an order, not progress. A closed ②
+   (aria-disabled, still focusable) dims its number and name only — its reason stays at
+   full strength, and stays on screen at every width. */
+.wb3-pages { display: flex; flex-wrap: wrap; gap: 4px; padding: 8px 14px 0; border-bottom: 1px solid var(--border); background: var(--bg-primary); }
+.wb3-page { display: inline-flex; align-items: center; gap: 8px; min-width: 0; height: 38px; padding: 0 14px; border: 0; border-bottom: 2px solid transparent; border-radius: 6px 6px 0 0; margin-bottom: -1px; background: none; color: var(--text-secondary); font: inherit; font-size: 12.5px; font-weight: 500; white-space: nowrap; cursor: pointer; }
+.wb3-page:hover:not(.wb3-page--off) { color: var(--text-primary); background: var(--hover-bg); }
+.wb3-page:focus-visible { outline: 2px solid var(--accent-color); outline-offset: -2px; }
+.wb3-page--on { color: var(--text-primary); font-weight: 600; border-bottom-color: var(--accent-color); }
+.wb3-page--off { cursor: not-allowed; }
+.wb3-page--off .wb3-page-n, .wb3-page--off .wb3-page-t { opacity: 0.45; }
+.wb3-page-n { width: 18px; height: 18px; flex-shrink: 0; border: 1px solid var(--border-strong); border-radius: 50%; display: grid; place-items: center; background: var(--surface-hi); color: var(--text-secondary); font: 700 10px var(--mono); }
+.wb3-page--on .wb3-page-n { border-color: transparent; background: var(--accent-color); color: #06111f; }
+.wb3-page-s { font-size: 10.5px; font-weight: 400; color: var(--text-faint); }
+.wb3-page-why { font-size: 10.5px; font-weight: 500; color: var(--warn); }
+@container (max-width: 760px) {
+    /* The captions go; a closed tab's reason (`.wb3-page-why`) stays. */
+    .wb3-page-s { display: none; }
+}
+@container (max-width: 480px) {
+    .wb3-kindtabs .f4-tab { white-space: normal; text-align: left; }
+    .wb3-tab-words { white-space: normal; }
+    .wb3-pages { padding: 6px 6px 0; }
+    .wb3-page { padding: 0 10px; }
+}
 
 /* Model settings: a quiet disclosure line */
 .bmw-sets { background: transparent; }

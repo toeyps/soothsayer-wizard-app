@@ -132,7 +132,7 @@ describe('Individual: master-data prefill (snapshot, chips, reset, never written
         expect(diskModel('i1').healthSetPoints).toEqual({ kind: 'individual', lower: 20, upper: 80, masterLower: 20, masterUpper: 80 });
         const n = spHistory('i1').length;
         // leave and come back, switch pages: no further write
-        fireEvent.click(bmw().getByTestId('footer-back-to-fit'));
+        fireEvent.click(bmw().getByTestId('page-tab-model'));
         await settle(100);
         await openHealth();
         await settle(300);
@@ -490,7 +490,9 @@ describe('misc edges', () => {
         expect(bmw().getByLabelText(/^L(\s|$)/, { selector: 'input' })).toBe(bmw().getByTestId('sp-lower'));
         expect(bmw().getByLabelText(/^H(\s|$)/, { selector: 'input' })).toBe(bmw().getByTestId('sp-upper'));
         expect(bmw().getByRole('button', { name: /Mark complete/ })).toBeTruthy();
-        expect(bmw().getAllByRole('button', { name: /Model fit/ })).toHaveLength(1); // the footer's "← Model fit" (the header has no page switch)
+        // ONE way back to Model fit: page tab ① (no "← Model fit" button in the footer, no switch in the header)
+        expect(bmw().getAllByRole('button', { name: /Model fit/ })).toEqual([bmw().getByTestId('page-tab-model')]);
+        expect(bmw().getByTestId('page-tab-health').getAttribute('aria-current')).toBe('page');
         selectSensor('tag3');
         await waitForCharts();
         await openHealth();
