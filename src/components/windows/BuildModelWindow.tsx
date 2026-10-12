@@ -3367,9 +3367,9 @@ export default function BuildModelWindow() {
 
     const renderModelSettingsFields = (m: FailureModel, d: ModelDraft) => (
         <>
-            {/* A fixed, generous width shared by all three kinds: `.f4-fld--name`
-                (App.css) grows with available space up to a real cap, so a long
-                sensor name is not squeezed narrower than its text. */}
+            {/* Model settings is ONE grid of three equal columns for all three kinds (SPEC
+                docs/design/handoff/model-settings-layout): row 1 is always Model name · the
+                kind's own setting · Training data; every control is 30 px high. */}
             <div className="f4-fld f4-fld--name">
                 <label>Model name</label>
                 <input
@@ -3400,60 +3400,93 @@ export default function BuildModelWindow() {
                 })()}
             </div>
 
-            {/* Every kind's OWN fields (as opposed to Model name / Training data,
-                which are shared and always the same shape) live in one wrapping
-                group so they read as a consistent block across kinds.
-                `.bmw-sets-kind` (App.css) is itself flex-wrap, so Clustering's 4-5
-                fields fall onto a second line rather than being squeezed narrower
-                than their content. */}
+            {/* Row 1, middle column: the kind's own "how" setting — Boundary (Individual),
+                Stiffness (Relation model) or Clusters (Clustering). `.bmw-sets-kind` is
+                `display: contents`: a grouping with no box, so its field is a cell of the
+                form's grid. The DOM order is the order on screen (name · how · training
+                data, then the sensors), so Tab walks the form as it reads. */}
             <div className="bmw-sets-kind">
             {m.kind === 'individual' && (
                 <div className="f4-fld">
                     <span className="f4-lbl">Boundary</span>
-                    <span className="f4-pill f4-pill--grey" style={{ height: '28px', display: 'inline-flex' }}>1σ + 3σ · automatic</span>
+                    <span className="f4-readout ms-ro" data-testid="boundary-readout"><Lock size={12} aria-hidden="true" /><span>1σ + 3σ · automatic</span></span>
                     <div className="f4-hint">Everything else is automatic for an Individual model.</div>
                 </div>
             )}
-
             {m.kind === 'relationship' && (
-                <>
-                    <div className="f4-fld f4-fld--grow" style={{ flex: 1, minWidth: '260px' }}>
-                        <span className="f4-lbl">Predictor sensors (≥ 1)</span>
-                        {/* Predictors as chips (× removes one) + a dashed
-                            "Add…" that opens the multi modal; the target is excluded and the
-                            scope line says so. */}
-                        <SensorPickerModal
-                            sensors={allSensors}
-                            getComponent={getComponent}
-                            selected={d.predictors}
-                            excluded={[m.targetSensor ?? '']}
-                            onConfirm={predictors => patchDraft(m, { predictors })}
-                            noun="predictors"
-                            invalid={d.predictors.length === 0}
-                            scope={<>All sensors except the target · {allSensors.filter(s => s !== m.targetSensor).length}</>}
-                        />
-                        {d.predictors.length === 0 && (
-                            <div className="f4-req-note">No predictors yet. A Relation model needs at least one.</div>
-                        )}
+                <div className="f4-fld">
+                    <span className="f4-lbl">Stiffness</span>
+                    <div className="f4-seg">
+                        {STIFFNESS_OPTIONS.map(opt => (
+                            <button
+                                key={opt.value}
+                                type="button"
+                                className={d.stiffness === opt.value ? 'on' : undefined}
+                                onClick={() => patchDraft(m, { stiffness: opt.value })}
+                            >
+                                {opt.label}
+                            </button>
+                        ))}
                     </div>
-                    <div className="f4-fld">
-                        <span className="f4-lbl">Stiffness</span>
-                        <div className="f4-seg">
-                            {STIFFNESS_OPTIONS.map(opt => (
-                                <button
-                                    key={opt.value}
-                                    type="button"
-                                    className={d.stiffness === opt.value ? 'on' : undefined}
-                                    onClick={() => patchDraft(m, { stiffness: opt.value })}
-                                >
-                                    {opt.label}
-                                </button>
-                            ))}
-                        </div>
-                    </div>
-                </>
+                </div>
             )}
+            {m.kind === 'clustering' && (
+                <div className="f4-fld">
+                    <span className="f4-lbl">Clusters</span>
+                    <span className="bmw-step">
+                        <button type="button" aria-label="Fewer clusters" onClick={() => patchDraft(m, { numClusters: Math.max(1, d.numClusters - 1) })}>−</button>
+                        <span>{d.numClusters}</span>
+                        {/* Never `Math.min(MAX_CLUSTERS, …)`: that would LOWER a legacy model that has more. */}
+                        <button
+                            type="button"
+                            aria-label="More clusters"
+                            disabled={d.numClusters >= MAX_CLUSTERS}
+                            title={d.numClusters >= MAX_CLUSTERS ? MAX_CLUSTERS_REASON : undefined}
+                            onClick={() => { if (d.numClusters < MAX_CLUSTERS) patchDraft(m, { numClusters: d.numClusters + 1 }); }}
+                        >
+                            +
+                        </button>
+                    </span>
+                </div>
+            )}
+            </div>
 
+            {/* Row 1, last column, in all three kinds. */}
+            <div className="f4-fld f4-fld--traindata">
+                <span className="f4-lbl">Training data</span>
+                <div className="f4-seg">
+                    <button type="button" className={d.runningConditionMode === 'workspace' ? 'on' : undefined} onClick={() => switchRunningConditionMode(m, 'workspace')}>Workspace</button>
+                    <button type="button" className={d.runningConditionMode === 'custom' ? 'on' : undefined} onClick={() => switchRunningConditionMode(m, 'custom')}>Custom</button>
+                </div>
+                {d.runningConditionMode === 'workspace' && (
+                    <div className="f4-hint">Follows the workspace Running condition above.</div>
+                )}
+            </div>
+
+            {/* Row 2 on: the kind's sensors. Wide fields (predictors, cluster ranges) take a
+                full row (`.f4-fld--grow`). An Individual model has none. */}
+            <div className="bmw-sets-kind">
+            {m.kind === 'relationship' && (
+                <div className="f4-fld f4-fld--grow">
+                    <span className="f4-lbl">Predictor sensors (≥ 1)</span>
+                    {/* Predictors as chips (× removes one) + a dashed
+                        "Add…" that opens the multi modal; the target is excluded and the
+                        scope line says so. */}
+                    <SensorPickerModal
+                        sensors={allSensors}
+                        getComponent={getComponent}
+                        selected={d.predictors}
+                        excluded={[m.targetSensor ?? '']}
+                        onConfirm={predictors => patchDraft(m, { predictors })}
+                        noun="predictors"
+                        invalid={d.predictors.length === 0}
+                        scope={<>All sensors except the target · {allSensors.filter(s => s !== m.targetSensor).length}</>}
+                    />
+                    {d.predictors.length === 0 && (
+                        <div className="f4-req-note">No predictors yet. A Relation model needs at least one.</div>
+                    )}
+                </div>
+            )}
             {m.kind === 'clustering' && (
                 <>
                     <div className="f4-fld">
@@ -3494,23 +3527,6 @@ export default function BuildModelWindow() {
                             placeholder="None"
                         />
                     </div>
-                    <div className="f4-fld">
-                        <span className="f4-lbl">Clusters</span>
-                        <span className="bmw-step">
-                            <button type="button" aria-label="Fewer clusters" onClick={() => patchDraft(m, { numClusters: Math.max(1, d.numClusters - 1) })}>−</button>
-                            <span>{d.numClusters}</span>
-                            {/* Never `Math.min(MAX_CLUSTERS, …)`: that would LOWER a legacy model that has more. */}
-                            <button
-                                type="button"
-                                aria-label="More clusters"
-                                disabled={d.numClusters >= MAX_CLUSTERS}
-                                title={d.numClusters >= MAX_CLUSTERS ? MAX_CLUSTERS_REASON : undefined}
-                                onClick={() => { if (d.numClusters < MAX_CLUSTERS) patchDraft(m, { numClusters: d.numClusters + 1 }); }}
-                            >
-                                +
-                            </button>
-                        </span>
-                    </div>
                     {/* Always shown: `renderClusterRangeSlider` covers every empty
                         state (no criteria sensor, N<=1, loading, constant-value
                         sensor) itself. */}
@@ -3525,19 +3541,6 @@ export default function BuildModelWindow() {
                     </div>
                 </>
             )}
-            </div>
-
-            {/* Always last, same fixed width in all three kinds (issue 3 fix) —
-                `.f4-fld--traindata` (App.css). */}
-            <div className="f4-fld f4-fld--traindata">
-                <span className="f4-lbl">Training data</span>
-                <div className="f4-seg">
-                    <button type="button" className={d.runningConditionMode === 'workspace' ? 'on' : undefined} onClick={() => switchRunningConditionMode(m, 'workspace')}>Workspace</button>
-                    <button type="button" className={d.runningConditionMode === 'custom' ? 'on' : undefined} onClick={() => switchRunningConditionMode(m, 'custom')}>Custom</button>
-                </div>
-                {d.runningConditionMode === 'workspace' && (
-                    <div className="f4-hint">Follows the workspace Running condition above.</div>
-                )}
             </div>
 
             {/* A Custom model's OWN running condition: the same
@@ -3615,7 +3618,7 @@ export default function BuildModelWindow() {
                 {isOpen && (
                     <div
                         data-testid="add-model-form"
-                        className={`bmw-sets-body${m.kind === 'clustering' ? ' bmw-sets-body--clustering' : ''}`}
+                        className="bmw-sets-body"
                     >
                         {renderModelSettingsFields(m, d)}
                     </div>

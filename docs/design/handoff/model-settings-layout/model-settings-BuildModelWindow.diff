@@ -1,0 +1,89 @@
+diff --git a/tp_bmw_before_ms.tsx b/cur5/app/src/components/windows/BuildModelWindow.tsx
+index 0a39226..c4b714d 100644
+--- a/tp_bmw_before_ms.tsx
++++ b/cur5/app/src/components/windows/BuildModelWindow.tsx
+@@ -246,12 +246,10 @@ const PREVIEW_FAILED_BLOCK_REASON = 'The health score did not load · Retry abov
+ /** ...and when it could not be loaded because the dataset was replaced (STALE_SESSION):
+  *  asking again cannot help, so that card has NO Retry — the footer must not point at one. */
+ const PREVIEW_STALE_BLOCK_REASON = TRAIN_STALE_MESSAGE;
+-/** Next to every Model-settings field that is part of the training inputs
+- *  (training data, predictors, sensors, clusters, stiffness): changing it sets a
+- *  Complete model back to Incomplete (`applyIncompleteRule`) — say so up front. */
+-const IncompleteHint = () => (
+-    <span className="wb2-aff" data-testid="incomplete-hint">changing it sets the model to Incomplete</span>
+-);
++// (No note beside the Model-settings fields: the amber "changing it sets the model to
++// Incomplete" line that stood next to every training input, on every model whatever its
++// state, read as "something here is wrong" — removed 2026-10-12, user decision. A change
++// that needs a re-train is said when it happens: the stale banner and the Incomplete pill.)
+ /** The most clusters a Clustering model can be SET to. Only the stepper is capped: a
+  *  model saved with more keeps its count untouched — clamping it on open would change
+  *  its train fingerprint and set it back to Incomplete — it just cannot be raised
+@@ -3413,18 +3411,17 @@ export default function BuildModelWindow() {
+                 than their content. */}
+             <div className="bmw-sets-kind">
+             {m.kind === 'individual' && (
+-                <div className="f4-fld">
++                <div className="f4-fld ms-how">
+                     <span className="f4-lbl">Boundary</span>
+-                    <span className="f4-pill f4-pill--grey" style={{ height: '28px', display: 'inline-flex' }}>1σ + 3σ · automatic</span>
++                    <span className="f4-readout ms-ro" data-testid="boundary-readout"><Lock size={12} aria-hidden="true" /><span>1σ + 3σ · automatic</span></span>
+                     <div className="f4-hint">Everything else is automatic for an Individual model.</div>
+                 </div>
+             )}
+ 
+             {m.kind === 'relationship' && (
+                 <>
+-                    <div className="f4-fld f4-fld--grow" style={{ flex: 1, minWidth: '260px' }}>
++                    <div className="f4-fld f4-fld--grow">
+                         <span className="f4-lbl">Predictor sensors (≥ 1)</span>
+-                        <IncompleteHint />
+                         {/* Predictors as chips (× removes one) + a dashed
+                             "Add…" that opens the multi modal; the target is excluded and the
+                             scope line says so. */}
+@@ -3442,9 +3439,8 @@ export default function BuildModelWindow() {
+                             <div className="f4-req-note">No predictors yet. A Relation model needs at least one.</div>
+                         )}
+                     </div>
+-                    <div className="f4-fld">
++                    <div className="f4-fld ms-how">
+                         <span className="f4-lbl">Stiffness</span>
+-                        <IncompleteHint />
+                         <div className="f4-seg">
+                             {STIFFNESS_OPTIONS.map(opt => (
+                                 <button
+@@ -3472,7 +3468,6 @@ export default function BuildModelWindow() {
+                     </div>
+                     <div className="f4-fld">
+                         <span className="f4-lbl">Y sensor (target)</span>
+-                        <IncompleteHint />
+                         <SensorPickerModal
+                             sensors={allSensors}
+                             getComponent={getComponent}
+@@ -3487,7 +3482,6 @@ export default function BuildModelWindow() {
+                     </div>
+                     <div className="f4-fld">
+                         <span className="f4-lbl">Criteria sensor (optional)</span>
+-                        <IncompleteHint />
+                         <SensorPickerModal
+                             sensors={allSensors}
+                             getComponent={getComponent}
+@@ -3503,9 +3497,8 @@ export default function BuildModelWindow() {
+                             placeholder="None"
+                         />
+                     </div>
+-                    <div className="f4-fld">
++                    <div className="f4-fld ms-how">
+                         <span className="f4-lbl">Clusters</span>
+-                        <IncompleteHint />
+                         <span className="bmw-step">
+                             <button type="button" aria-label="Fewer clusters" onClick={() => patchDraft(m, { numClusters: Math.max(1, d.numClusters - 1) })}>−</button>
+                             <span>{d.numClusters}</span>
+@@ -3541,7 +3534,6 @@ export default function BuildModelWindow() {
+                 `.f4-fld--traindata` (App.css). */}
+             <div className="f4-fld f4-fld--traindata">
+                 <span className="f4-lbl">Training data</span>
+-                <IncompleteHint />
+                 <div className="f4-seg">
+                     <button type="button" className={d.runningConditionMode === 'workspace' ? 'on' : undefined} onClick={() => switchRunningConditionMode(m, 'workspace')}>Workspace</button>
+                     <button type="button" className={d.runningConditionMode === 'custom' ? 'on' : undefined} onClick={() => switchRunningConditionMode(m, 'custom')}>Custom</button>

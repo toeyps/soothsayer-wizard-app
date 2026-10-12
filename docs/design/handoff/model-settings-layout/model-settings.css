@@ -1,0 +1,139 @@
+/* MODEL SETTINGS v2 (design 2026-10-12, mockup) — ONE form for the three kinds.
+   - One grid of three equal columns (two on a narrow detail pane, one on a very narrow one).
+     Row 1 is always: Model name · the kind's own "how" setting (Boundary / Stiffness /
+     Clusters) · Training data. The sensors follow on row 2, wide fields take a full row.
+   - Every field is label (one 16 px line) → control (30 px, the picker's height) → help.
+   - No "sets the model to Incomplete" hint of any kind (removed in the real app, d917dae).
+   Overrides the flex / 4-track rules above; an implementation folds them together. */
+.bmw-sets-body,
+.bmw-sets-body--clustering {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 14px 20px;
+    align-items: start;
+    padding: 4px 20px 14px 38px;
+}
+
+.bmw-sets-body .f4-fld,
+.bmw-sets-body .bmw-sets-kind .f4-fld,
+.bmw-sets-body > .f4-fld:not(.f4-fld--name):not(.f4-fld--traindata) {
+    gap: 5px;
+    min-width: 0;
+    max-width: none;
+}
+
+.bmw-sets-body .f4-fld--name { grid-area: 1 / 1; }
+.bmw-sets-body .ms-how { grid-area: 1 / 2; }
+.bmw-sets-body .f4-fld--traindata { grid-area: 1 / 3; }
+.bmw-sets-body .bmw-sets-kind .f4-fld--grow,
+.bmw-sets-body--clustering .f4-fld--grow,
+.bmw-sets-body .rc-custom,
+.bmw-sets-body--clustering .rc-custom { grid-column: 1 / -1; }
+
+/* Labels: one line, one height. */
+.bmw-sets-body .f4-fld > label,
+.bmw-sets-body .f4-fld > .f4-lbl {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    height: 16px;
+    font-size: 11px;
+    line-height: 16px;
+    white-space: nowrap;
+}
+
+.bmw-sets-body .f4-lbl .pm-field-hint-inline {
+    font-weight: 400;
+    color: var(--text-faint);
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* Controls: all 30 px, the same radius, the same field colours. */
+.bmw-sets-body .f4-fld > .fg-inspector-input {
+    height: 30px;
+    padding: 0 10px;
+    border-radius: 8px;
+    border-color: var(--border-strong);
+    background: var(--input-bg);
+    font-size: 12.5px;
+    line-height: 28px;
+}
+
+.bmw-sets-body .f4-fld > .f4-seg {
+    align-self: flex-start;
+    max-width: 100%;
+    height: 30px;
+    box-sizing: border-box;
+    border-radius: 8px;
+    flex-wrap: nowrap;
+}
+
+.bmw-sets-body .f4-fld > .f4-seg button {
+    height: 24px;
+    padding: 0 10px;
+    white-space: nowrap;
+}
+
+.bmw-sets-body .f4-fld > .bmw-step {
+    align-self: flex-start;
+    height: 30px;
+    box-sizing: border-box;
+    border-radius: 8px;
+}
+
+.bmw-sets-body .f4-fld > .bmw-step button { width: 30px; }
+.bmw-sets-body .f4-fld > .bmw-step span { min-width: 34px; font-size: 12.5px; }
+
+.bmw-sets-body .f4-fld > .f4-readout {
+    height: 30px;
+    box-sizing: border-box;
+    padding: 0 9px;
+    border-radius: 8px;
+    font-size: 12.5px;
+}
+
+/* A read-out that is a short fact, not a sensor: as wide as its text. */
+.bmw-sets-body .f4-fld > .ms-ro {
+    align-self: flex-start;
+    max-width: 100%;
+    color: var(--text-secondary);
+}
+
+.bmw-sets-body .pk-multi { min-height: 30px; }
+
+.bmw-sets-body .pm-cluster-slider--empty {
+    min-height: 30px;
+    box-sizing: border-box;
+    padding-top: 0;
+    padding-bottom: 0;
+    display: flex;
+    align-items: center;
+    border-radius: 8px;
+    font-size: 11.5px;
+}
+
+/* Help and notes: one size, right under the control. */
+.bmw-sets-body .f4-hint,
+.bmw-sets-body .f4-req-note {
+    font-size: 10.5px;
+    line-height: 14px;
+}
+
+/* A narrow detail pane: two columns — the name on its own row. */
+@container (max-width: 780px) {
+    .bmw-sets-body,
+    .bmw-sets-body--clustering { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .bmw-sets-body .f4-fld--name { grid-area: 1 / 1 / 2 / -1; }
+    .bmw-sets-body .ms-how { grid-area: 2 / 1; }
+    .bmw-sets-body .f4-fld--traindata { grid-area: 2 / 2; }
+}
+
+@container (max-width: 480px) {
+    .bmw-sets-body,
+    .bmw-sets-body--clustering { grid-template-columns: minmax(0, 1fr); }
+    .bmw-sets-body .f4-fld--name,
+    .bmw-sets-body .ms-how,
+    .bmw-sets-body .f4-fld--traindata { grid-area: auto; }
+    .bmw-sets-body .f4-fld > .f4-seg { flex-wrap: wrap; height: auto; }
+}

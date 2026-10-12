@@ -3397,17 +3397,51 @@ body {
 .bmw-sets--open .bmw-sets-chev { transform: rotate(90deg); }
 .bmw-sets-sum { color: var(--text-secondary); font-family: var(--mono); font-size: 0.7rem; flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .bmw-sets-sp { flex: 1; }
-.bmw-sets-body { display: flex; flex-wrap: wrap; gap: 14px 18px; align-items: flex-end; padding: 2px 20px 14px 38px; }
-/* `.bmw-sets-kind` is `display: contents` — a pure JSX/semantic grouping
-   with NO layout effect of its own, so its children are ordinary flex items
-   of `.bmw-sets-body` directly, in ONE flow: Model name, then the
-   kind-specific fields, then Training data, wrapping to a second line only
-   when the window is genuinely too narrow to fit them — never a forced break. */
-.f4-fld--name { flex: 1 1 260px; min-width: 220px; max-width: 380px; }
-.f4-fld--traindata { flex: 0 0 170px; min-width: 170px; }
+/* MODEL SETTINGS — ONE form for the three kinds (SPEC docs/design/handoff/model-settings-layout,
+   2026-10-12). One grid of three equal columns (two on a narrow detail pane, one on a very
+   narrow one). Row 1 is always: Model name · the kind's own setting (Boundary / Stiffness /
+   Clusters) · Training data; the sensors follow on row 2 and wide fields take a full row —
+   the DOM is in that order, the grid only flows it. Every field is label (one 16 px line) →
+   control (30 px, the picker's height) → help. */
+.bmw-sets-body { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px 20px; align-items: start; padding: 4px 20px 14px 38px; }
+/* `.bmw-sets-kind` groups a kind's own fields in the JSX only: no box, its fields are grid cells. */
 .bmw-sets-kind { display: contents; }
-.bmw-sets-kind .f4-fld, .bmw-sets-body > .f4-fld:not(.f4-fld--name):not(.f4-fld--traindata) { flex: 0 1 150px; min-width: 140px; }
-.bmw-sets-kind .f4-fld--grow { flex: 1 1 260px; min-width: 220px; }
+.bmw-sets-body .f4-fld { gap: 5px; min-width: 0; max-width: none; }
+.f4-fld--name, .f4-fld--traindata { min-width: 0; }
+.bmw-sets-body .f4-fld--grow, .bmw-sets-body .rc-custom { grid-column: 1 / -1; }
+/* Labels: one line, one height. */
+.bmw-sets-body .f4-fld > label,
+.bmw-sets-body .f4-fld > .f4-lbl { display: flex; align-items: center; gap: 6px; height: 16px; font-size: 11px; line-height: 16px; white-space: nowrap; }
+.bmw-sets-body .f4-lbl .pm-field-hint-inline { font-weight: 400; color: var(--text-faint); overflow: hidden; text-overflow: ellipsis; }
+/* Controls: all 30 px, the same radius, the same field colours. */
+.bmw-sets-body .f4-fld > .fg-inspector-input { height: 30px; padding: 0 10px; border-radius: 8px; border-color: var(--border-strong); background: var(--input-bg); font-size: 12.5px; line-height: 28px; }
+.bmw-sets-body .f4-fld > .f4-seg { align-self: flex-start; max-width: 100%; height: 30px; box-sizing: border-box; border-radius: 8px; flex-wrap: nowrap; }
+.bmw-sets-body .f4-fld > .f4-seg button { height: 24px; padding: 0 10px; white-space: nowrap; }
+.bmw-sets-body .f4-fld > .bmw-step { align-self: flex-start; height: 30px; box-sizing: border-box; border-radius: 8px; }
+.bmw-sets-body .f4-fld > .bmw-step button { width: 30px; }
+.bmw-sets-body .f4-fld > .bmw-step span { min-width: 34px; font-size: 12.5px; }
+.bmw-sets-body .f4-fld > .f4-readout { height: 30px; box-sizing: border-box; padding: 0 9px; border-radius: 8px; font-size: 12.5px; }
+/* A read-out that is a short fact, not a sensor ("1σ + 3σ · automatic"): as wide as its text. */
+.bmw-sets-body .f4-fld > .ms-ro { align-self: flex-start; max-width: 100%; color: var(--text-secondary); }
+.bmw-sets-body .pk-multi { min-height: 30px; }
+.bmw-sets-body .pm-cluster-slider--empty { min-height: 30px; box-sizing: border-box; padding-top: 0; padding-bottom: 0; display: flex; align-items: center; border-radius: 8px; font-size: 11.5px; }
+/* Help and notes: one size, right under the control. */
+.bmw-sets-body .f4-hint,
+.bmw-sets-body .f4-req-note { font-size: 10.5px; line-height: 14px; }
+/* Three columns but not much room (a detail pane of about 780–940 px): the four Stiffness
+   options are wider than their cell — they wrap onto a second line rather than being cut off. */
+@container (max-width: 940px) {
+    .bmw-sets-body .f4-fld > .f4-seg { flex-wrap: wrap; height: auto; min-height: 30px; }
+}
+/* A narrow detail pane (`.bmw-detail` is the container): two columns — the name on its own row. */
+@container (max-width: 780px) {
+    .bmw-sets-body { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .bmw-sets-body .f4-fld--name { grid-column: 1 / -1; }
+}
+@container (max-width: 480px) {
+    .bmw-sets-body { grid-template-columns: minmax(0, 1fr); }
+    .bmw-sets-body .f4-fld > .f4-seg { flex-wrap: wrap; height: auto; }
+}
 .bmw-step { display: inline-flex; align-items: center; border: 1px solid var(--border-strong); border-radius: 7px; overflow: hidden; height: 28px; }
 .bmw-step button { font: inherit; background: var(--input-bg); border: 0; color: var(--text-primary); width: 26px; height: 100%; cursor: pointer; }
 .bmw-step button:hover { background: var(--hover-bg); }
@@ -3415,41 +3449,10 @@ body {
 .bmw-step button:disabled, .bmw-step button:disabled:hover { color: var(--text-faint); background: var(--input-bg); cursor: default; }
 .bmw-step span { min-width: 28px; text-align: center; font-family: var(--mono); font-size: 0.76rem; }
 
-/* Clustering is the one kind whose 7 fields (name, X, Y, criteria, clusters,
-   cluster ranges, training data) regularly wrap onto a 2nd row even at a
-   comfortable window width — under plain flex-wrap each row's items have
-   DIFFERENT flex-basis values, so row 2's items would not line up under row
-   1's. A grid fixes that: field DOM order is name, X, Y, criteria, clusters,
-   ranges, training, and grid auto-placement fills left-to-right,
-   top-to-bottom into the 4 tracks below in that same order. Applied via one
-   conditional class on `.bmw-sets-body` (`bmw-sets-body--clustering`). */
-.bmw-sets-body--clustering {
-    display: grid;
-    grid-template-columns: minmax(200px, 1.3fr) minmax(140px, 1fr) minmax(140px, 1fr) minmax(140px, 1fr);
-    align-items: start;
-}
-/* Cluster ranges is the one field wider than one track — spans columns 2-3,
-   pushing Training data to column 4 on the same row-2 grid line Criteria
-   sensor sits on in row 1. */
-.bmw-sets-body--clustering .f4-fld--grow { grid-column: span 2; }
-/* The Custom running-condition editor spans every column, whichever layout
-   mode `.bmw-sets-body` is in. */
-.bmw-sets-body--clustering .rc-custom { grid-column: 1 / -1; }
-/* Narrow window (a resized Build Model window, or the sidebar-width PM
-   page): collapse to one column — trivially "aligned" since a 1-column stack
-   has nothing to misalign against. `.bmw-detail`'s own `container-type:
-   inline-size` makes this a container query against the detail pane's own
-   width, not the OS window's. */
-@container (max-width: 620px) {
-    .bmw-sets-body--clustering { grid-template-columns: 1fr; }
-    .bmw-sets-body--clustering .f4-fld--grow { grid-column: 1; }
-}
-
 /* A Custom model's OWN running condition (workbench redesign §5): the same panel
-   as the workspace settings, on its own full-width row of Model settings (flex
-   mode) or across every grid column (clustering mode, see
-   `.bmw-sets-body--clustering .rc-custom` above). */
-.rc-custom { flex: 1 1 100%; min-width: 0; border-top: 1px dashed var(--border-strong); padding-top: 6px; margin-top: 2px; }
+   as the workspace settings, on its own full-width row of the Model settings grid
+   (`.bmw-sets-body .rc-custom` above). */
+.rc-custom { min-width: 0; border-top: 1px dashed var(--border-strong); padding-top: 6px; margin-top: 2px; }
 .rc-seed { display: flex; align-items: baseline; gap: 8px; }
 .rc-seed > span { flex: 1; min-width: 0; }
 

@@ -770,11 +770,11 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
         });
     });
 
-    // Model name and Training data get the same width treatment in every kind
-    // (`.f4-fld--name` / `.f4-fld--traindata` in App.css), and `.bmw-sets-kind`
-    // wraps everything kind-specific into its own group so Clustering's extra
-    // fields fall onto their own line instead of being crushed into one row.
-    describe('Model settings row layout (issues 2/3, 2026-09-30)', () => {
+    // Model settings is ONE three-column grid for all three kinds (SPEC
+    // docs/design/handoff/model-settings-layout, 2026-10-12): row 1 is always
+    // Model name · the kind's own setting · Training data; the sensors follow. The DOM is in
+    // that order (so Tab walks the form as it reads); `.bmw-sets-kind` only groups.
+    describe('Model settings layout: one grid, the same first row in every kind', () => {
         it('Model name has a title attribute (full text on hover) and the shared width class, in every kind', async () => {
             const longName = 'GENERATOR BEARING METAL TEMPERATURE DRIVE END';
             for (const kind of ['individual', 'relationship', 'clustering'] as const) {
@@ -793,40 +793,81 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             }
         });
 
-        it('Training data is the shared, fixed-width field and always renders after every kind-specific field', async () => {
-            const clu = makeModel({ id: 'c1', kind: 'clustering', targetSensor: '', xSensor: 'TAG1', ySensor: 'TAG2', criteriaSensor: 'TAG2', clusterRanges: [{ min: 0, max: 100 }] });
-            render(<BuildModelWindow />);
-            await deliverData({ failureGroupState: { groups: [makeGroup()], models: [clu] } });
-            openSettings();
-            const form = screen.getByTestId('add-model-form');
-            const fields = within(form).getAllByText(/^(Model name|X sensor|Y sensor \(target\)|Criteria sensor \(optional\)|Clusters|Cluster ranges|Training data)$/);
-            expect(fields[fields.length - 1].textContent).toBe('Training data');
-            const trainingDataFld = screen.getByText('Training data').closest('.f4-fld');
-            expect(trainingDataFld?.className).toContain('f4-fld--traindata');
+        it('field order in every kind: Model name · the kind\'s own setting · Training data, then the sensors', async () => {
+            const LABELS = /^(Model name|Boundary|Stiffness|Clusters|Training data|Predictor sensors \(≥ 1\)|X sensor|Y sensor \(target\)|Criteria sensor \(optional\)|Cluster ranges)$/;
+            const cases = [
+                { model: makeModel({ id: 'i1', kind: 'individual' }), order: ['Model name', 'Boundary', 'Training data'] },
+                { model: makeModel({ id: 'r1', kind: 'relationship', targetSensor: 'TAG1', predictorSensors: ['TAG2'] }), order: ['Model name', 'Stiffness', 'Training data', 'Predictor sensors (≥ 1)'] },
+                {
+                    model: makeModel({ id: 'c1', kind: 'clustering', targetSensor: '', xSensor: 'TAG1', ySensor: 'TAG2', criteriaSensor: 'TAG2', clusterRanges: [{ min: 0, max: 100 }] }),
+                    order: ['Model name', 'Clusters', 'Training data', 'X sensor', 'Y sensor (target)', 'Criteria sensor (optional)', 'Cluster ranges'],
+                },
+            ];
+            for (const { model, order } of cases) {
+                render(<BuildModelWindow />);
+                await deliverData({ failureGroupState: { groups: [makeGroup()], models: [model] } });
+                openSettings();
+                const form = screen.getByTestId('add-model-form');
+                const labels = within(form).getAllByText(LABELS).filter(el => el.matches('label, .f4-lbl')).map(el => el.textContent!.replace(/ · requires.*$/, ''));
+                expect(labels, model.kind).toEqual(order);
+                expect(screen.getByText('Training data').closest('.f4-fld')?.className).toContain('f4-fld--traindata');
+                // the form body is the one grid, whatever the kind (no kind-specific layout class)
+                expect(form.className).toBe('bmw-sets-body');
+                cleanup();
+            }
         });
 
-        it('every kind-specific field lives inside the shared .bmw-sets-kind wrapper, distinct from Model name / Training data', async () => {
+        it('Individual: Boundary is a locked read-out box ("1σ + 3σ · automatic"), not a pill', async () => {
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: { groups: [makeGroup()], models: [makeModel({ id: 'i1', kind: 'individual' })] } });
+            openSettings();
+            const ro = screen.getByTestId('boundary-readout');
+            expect(ro.className).toBe('f4-readout ms-ro');
+            expect(ro.textContent).toBe('1σ + 3σ · automatic');
+            expect(ro.querySelector('svg')).toBeTruthy(); // the lock
+            expect(ro.closest('.f4-fld')!.querySelector('.f4-lbl')!.textContent).toBe('Boundary');
+            expect(screen.getByTestId('add-model-form').querySelector('.f4-pill')).toBeNull();
+        });
+
+        it('the kind\'s own fields sit in the .bmw-sets-kind groups (the setting of row 1, then the sensors); Model name and Training data are outside them', async () => {
             const rel = makeModel({ kind: 'relationship', targetSensor: 'TAG1', predictorSensors: ['TAG2'] });
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: { groups: [makeGroup()], models: [rel] } });
             openSettings();
-            const kindGroup = screen.getByText('Predictor sensors (≥ 1)').closest('.bmw-sets-kind');
-            expect(kindGroup).toBeTruthy();
-            expect(within(kindGroup as HTMLElement).getByText('Stiffness')).toBeTruthy();
-            // Model name and Training data are siblings of the group, not inside it.
-            expect(kindGroup!.contains(screen.getByText('Training data'))).toBe(false);
+            const form = screen.getByTestId('add-model-form');
+            const groups = Array.from(form.querySelectorAll('.bmw-sets-kind'));
+            expect(groups).toHaveLength(2);
+            expect(within(groups[0] as HTMLElement).getByText('Stiffness')).toBeTruthy();
+            expect(within(groups[1] as HTMLElement).getByText('Predictor sensors (≥ 1)')).toBeTruthy();
+            for (const g of groups) {
+                expect(g.contains(screen.getByText('Training data'))).toBe(false);
+                expect(g.contains(screen.getByText('Model name'))).toBe(false);
+            }
+            // Training data sits between the two groups: the third cell of row 1.
+            const train = screen.getByText('Training data').closest('.f4-fld')!;
+            expect(groups[0].compareDocumentPosition(train) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+            expect(train.compareDocumentPosition(groups[1]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+            // the predictors take a full row; the old inline flex sizing is gone
+            const pred = screen.getByText('Predictor sensors (≥ 1)').closest('.f4-fld') as HTMLElement;
+            expect(pred.className).toBe('f4-fld f4-fld--grow');
+            expect(pred.getAttribute('style')).toBeNull();
         });
 
-        it('App.css gives Model name room to grow and Training data a fixed shared width', () => {
-            expect(cssBlock('.f4-fld--name')).toMatch(/max-width:\s*380px/);
-            expect(cssBlock('.f4-fld--traindata')).toMatch(/flex:\s*0 0 170px/);
-            // `.bmw-sets-kind` is now `display: contents`
-            // — a pure grouping wrapper with no layout box of its own — so Model
-            // name, the kind-specific fields and Training data all wrap together
-            // as ONE row in `.bmw-sets-body`, instead of the group forcing
-            // itself (and Training data after it) onto separate lines.
+        it('App.css: one three-column grid, 30 px controls, two columns on a narrow pane', () => {
+            expect(cssBlock('.bmw-sets-body')).toMatch(/display:\s*grid/);
+            expect(cssBlock('.bmw-sets-body')).toMatch(/grid-template-columns:\s*repeat\(3, minmax\(0, 1fr\)\)/);
+            // `.bmw-sets-kind` has no box of its own: its fields are cells of that grid.
             expect(cssBlock('.bmw-sets-kind')).toMatch(/display:\s*contents/);
-            expect(cssBlock('.bmw-sets-body')).toMatch(/flex-wrap:\s*wrap/);
+            // wide fields and the Custom panel take a full row
+            expect(APP_CSS).toMatch(/\.bmw-sets-body \.f4-fld--grow, \.bmw-sets-body \.rc-custom \{ grid-column: 1 \/ -1; \}/);
+            // every control is 30 px high
+            for (const control of ['.fg-inspector-input', '.f4-seg', '.bmw-step', '.f4-readout']) {
+                expect(cssBlock(`.bmw-sets-body .f4-fld > ${control}`), control).toMatch(/height:\s*30px/);
+            }
+            expect(APP_CSS).toMatch(/@container \(max-width: 780px\) \{\s*\.bmw-sets-body \{ grid-template-columns: repeat\(2, minmax\(0, 1fr\)\); \}\s*\.bmw-sets-body \.f4-fld--name \{ grid-column: 1 \/ -1; \}/);
+            // the old flex-wrap flow and Clustering's own 4-track grid are gone
+            expect(cssBlock('.bmw-sets-body')).not.toMatch(/flex-wrap/);
+            expect(APP_CSS).not.toMatch(/bmw-sets-body--clustering/);
         });
     });
 
@@ -2774,10 +2815,10 @@ describe('Cluster-range slider (2026-09-30 port)', () => {
         });
     });
 
-    it('App.css gives Clustering its own row-aligned grid and the Custom running-condition panel its own full-width row', () => {
-        expect(cssBlock('.bmw-sets-body--clustering')).toMatch(/display:\s*grid/);
+    it('App.css gives the Custom running-condition panel its own full-width row of the Model settings grid', () => {
         expect(() => cssBlock('.rc-scroll')).toThrow(); // the scroll box of the old compact editor is gone
-        expect(cssBlock('.rc-custom')).toMatch(/flex:\s*1 1 100%/);
+        expect(APP_CSS).toMatch(/\.bmw-sets-body \.rc-custom \{ grid-column: 1 \/ -1; \}/);
+        expect(cssBlock('.rc-custom')).not.toMatch(/flex:/);
     });
 });
 
