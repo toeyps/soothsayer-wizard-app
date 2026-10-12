@@ -291,7 +291,7 @@ function HealthScorePage(props: HealthScorePageProps) {
 // ---------------------------------------------------------------------------
 // A FAILED save, and a save that is taking long. Saving is otherwise said by the
 // footer alone ("Saving the model files…" next to its button), and a successful
-// save is the footer sentence too ("Files saved 9 Feb 2026 23:50 · …\output\TAG").
+// save is the footer sentence too ("Files saved 2026/02/09 23:50 · …\output\TAG").
 // ---------------------------------------------------------------------------
 
 function SaveBanner({ save, slow, relation }: { save: SaveInfo; slow: boolean; relation: boolean }) {

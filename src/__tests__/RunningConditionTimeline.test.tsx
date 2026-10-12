@@ -13,7 +13,7 @@ afterEach(cleanup);
  * red, and the ONE caption under it.
  */
 
-// 1 Jan 2026 00:00 → 1 May 2026 00:00 = 120 days, so percentages are easy to read.
+// 2026/01/01 00:00 → 2026/05/01 00:00 = 120 days, so percentages are easy to read.
 const bounds = { min: '2026-01-01 00:00:00', max: '2026-05-01 00:00:00' };
 const p = (id: string, start: string, end: string): TimePeriod => ({ id, start, end });
 const P1 = p('a', '2026-01-01T00:00', '2026-01-31T00:00'); // 30 d
@@ -33,10 +33,10 @@ const left = (id: string) => parseFloat(screen.getByTestId(id).style.left);
 const width = (id: string) => parseFloat(screen.getByTestId(id).style.width);
 
 describe('monthTicks', () => {
-    it('one tick per month start inside the range; January carries the year', () => {
+    it('one tick per month start inside the range; every tick is year/month ("2026/01") — no month name', () => {
         const t0 = new Date(2025, 10, 15).getTime();
         const t1 = new Date(2026, 2, 15).getTime();
-        expect(monthTicks(t0, t1).map(t => t.label)).toEqual(['Dec', 'Jan 2026', 'Feb', 'Mar']);
+        expect(monthTicks(t0, t1).map(t => t.label)).toEqual(['2025/12', '2026/01', '2026/02', '2026/03']);
         const ticks = monthTicks(t0, t1);
         expect(ticks[0].pct).toBeGreaterThan(0);
         expect(ticks[ticks.length - 1].pct).toBeLessThanOrEqual(100);
@@ -44,9 +44,22 @@ describe('monthTicks', () => {
 
     it('a range that starts on a month start gets a tick at 0 %', () => {
         const ticks = monthTicks(new Date(2026, 0, 1).getTime(), new Date(2026, 4, 1).getTime());
-        expect(ticks.map(t => t.label)).toEqual(['Jan 2026', 'Feb', 'Mar', 'Apr', 'May']);
+        expect(ticks.map(t => t.label)).toEqual(['2026/01', '2026/02', '2026/03', '2026/04', '2026/05']);
         expect(ticks[0].pct).toBe(0);
         expect(ticks[4].pct).toBe(100);
+    });
+
+    it('a long range is thinned evenly to at most 10 printed ticks (a "2026/01" label is wider than "Jan")', () => {
+        // 13 month starts (2025/01 … 2026/01): every second one is printed
+        const year = monthTicks(new Date(2025, 0, 1).getTime(), new Date(2026, 0, 1).getTime());
+        expect(year.map(t => t.label)).toEqual(['2025/01', '2025/03', '2025/05', '2025/07', '2025/09', '2025/11', '2026/01']);
+        // 10 month starts: all of them
+        expect(monthTicks(new Date(2025, 0, 1).getTime(), new Date(2025, 9, 1).getTime())).toHaveLength(10);
+        // five years: still no more than 10, in order, none repeated
+        const five = monthTicks(new Date(2021, 0, 1).getTime(), new Date(2026, 0, 1).getTime());
+        expect(five.length).toBeLessThanOrEqual(10);
+        expect(new Set(five.map(t => t.label)).size).toBe(five.length);
+        for (const t of five) expect(t.label).toMatch(/^\d{4}\/\d{2}$/);
     });
 
     it('a long dataset is thinned to at most ~14 labels; an empty range gives none', () => {
@@ -112,7 +125,7 @@ describe('RunningConditionTimeline — lanes', () => {
         show([P1, P2], [S1]);
         const tl = screen.getByTestId('rc-timeline');
         expect(tl.querySelector('canvas, svg')).toBeNull();
-        expect([...tl.querySelectorAll('.rct-axis span')].map(s => s.textContent)).toEqual(['Jan 2026', 'Feb', 'Mar', 'Apr', 'May']);
+        expect([...tl.querySelectorAll('.rct-axis span')].map(s => s.textContent)).toEqual(['2026/01', '2026/02', '2026/03', '2026/04', '2026/05']);
         const trainLane = screen.getByTestId('rc-timeline-train');
         expect(trainLane.className).toContain('rct-lane--tr');
         expect(trainLane.querySelector('.rct-ln')!.textContent).toBe('Train');

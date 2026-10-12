@@ -78,7 +78,7 @@ import {
 
 vi.setConfig({ testTimeout: 60_000 });
 
-// ── the plant: 120 rows, 5 minutes apart, from 1 Mar 2024 00:00 (see the fixture's `_about`) ──
+// ── the plant: 120 rows, 5 minutes apart, from 2024/03/01 00:00 (see the fixture's `_about`) ──
 const DATA = fixture.dataset as unknown as HealthDataset;
 const HEADERS = DATA.headers;
 const META = [
@@ -113,7 +113,7 @@ const CLU = () => model({
 });
 
 // ── reading what was drawn ──
-/** Local wall-clock ms of `h:m` on 1 Mar 2024 (the charts place a row at its own clock). */
+/** Local wall-clock ms of `h:m` on 2024/03/01 (the charts place a row at its own clock). */
 const at = (h: number, m = 0) => new Date(2024, 2, 1, h, m, 0).getTime();
 /** The hours that have a running row: hour 6 is stopped from start to end. */
 const HOURS = [0, 1, 2, 3, 4, 5, 7, 8, 9];
@@ -173,8 +173,8 @@ describe('Individual on 5-minute data', () => {
         // no "S1" — its 45 rows are on the line all the same (counted above)
         expect(stripOf(lastChart('Value', 0, false))).toEqual(['TRAIN']);
         // the tooltip of a raw 5-minute row is headed by that row's date AND time (it read "2024-03-01" alone)
-        expect(tipHeading(lastChart('Value', 0, false), at(4, 35))).toBe('1 Mar 2024 04:35');
-        expect(tipHeading(lastChart('Value', 0, false), at(0, 5))).toBe('1 Mar 2024 00:05');
+        expect(tipHeading(lastChart('Value', 0, false), at(4, 35))).toBe('2024/03/01 04:35:00');
+        expect(tipHeading(lastChart('Value', 0, false), at(0, 5))).toBe('2024/03/01 00:05:00');
 
         // ── Health score: 1-hour averages ──
         const from = env.charts.length;
@@ -195,18 +195,18 @@ describe('Individual on 5-minute data', () => {
         expect(scores.map(p => p[0])).toEqual(HOURS.map(h => at(h)));  // the SAME index set as the chart above
         expect(scores.map(p => p[1])).toEqual(want.hourly.score);
         expect(text('chart-card-set-individual')).toContain('bar · 1 h average');
-        expect(text('score-summary')).toBe('Lowest 100 on 1 Mar 2024 00:00 · below 80 for 0.0% of scored hours · 1-hour averages of the running rows');
+        expect(text('score-summary')).toBe('Lowest 100 on 2024/03/01 00:00:00 · below 80 for 0.0% of scored hours · 1-hour averages of the running rows');
         expect(bmw().getByTestId('score-shares').textContent).toContain('Share of scored hours');
 
         // the read-out: the hour START and that hour's average — never a row's own minute
-        expect(await hoverTime(scoreChart, at(5, 10))).toBe('1 Mar 2024 05:00 · 1 h avg 70 bar · score 0');
-        expect(await hoverTime(scoreChart, at(4, 20))).toBe('1 Mar 2024 04:00 · 1 h avg 55.5 bar · score 100'); // every row of that hour is far out; its mean is not
-        expect(await hoverTime(setChart, at(7, 25))).toBe('1 Mar 2024 07:00 · 1 h avg 52.5 bar · score 100');
+        expect(await hoverTime(scoreChart, at(5, 10))).toBe('2024/03/01 05:00:00 · 1 h avg 70 bar · score 0');
+        expect(await hoverTime(scoreChart, at(4, 20))).toBe('2024/03/01 04:00:00 · 1 h avg 55.5 bar · score 100'); // every row of that hour is far out; its mean is not
+        expect(await hoverTime(setChart, at(7, 25))).toBe('2024/03/01 07:00:00 · 1 h avg 52.5 bar · score 100');
         for (const ms of [at(5, 50), at(6, 10), at(6, 55)]) expect(await hoverTime(scoreChart, ms)).not.toContain('06:00'); // the stopped hour is not a point
 
         // Scoring results: hours, not rows (row by row hour 04:00 alone would be 12 rows below 80)
         expect(text('test-result-1-big')).toBe('20.0% of running hours below 80');
-        expect(text('test-result-1-lowest')).toBe('Lowest 0 (1 h average) on 1 Mar 2024 05:00.');
+        expect(text('test-result-1-lowest')).toBe('Lowest 0 (1 h average) on 2024/03/01 05:00:00.');
         expect(text('test-result-1')).toContain('0.2 d running time'); // running time stays a raw fact (45 rows x 5 min)
         expect(text('test-results')).toContain('Scores use 1-hour averages of the running rows.');
 
@@ -283,19 +283,19 @@ describe('Clustering (2 clusters) on 5-minute data', () => {
             await act(async () => { clusters.props.onEvents.mouseover({ seriesName: 'Points', dataIndex: i }); });
             return text('hs-readout');
         };
-        expect(await hoverPoint(4)).toBe('1 Mar 2024 04:00 · no score'); // changed cluster inside the hour
-        expect(await hoverPoint(5)).toBe('1 Mar 2024 05:00 · no score'); // a row with no criteria value
-        expect(await hoverPoint(6)).toBe('1 Mar 2024 07:00 · no score'); // in no criteria range
-        expect(await hoverPoint(7)).toBe('1 Mar 2024 08:00 · score 100');
-        expect(await hoverPoint(8)).toBe('1 Mar 2024 09:00 · score 0');
+        expect(await hoverPoint(4)).toBe('2024/03/01 04:00:00 · no score'); // changed cluster inside the hour
+        expect(await hoverPoint(5)).toBe('2024/03/01 05:00:00 · no score'); // a row with no criteria value
+        expect(await hoverPoint(6)).toBe('2024/03/01 07:00:00 · no score'); // in no criteria range
+        expect(await hoverPoint(7)).toBe('2024/03/01 08:00:00 · score 100');
+        expect(await hoverPoint(8)).toBe('2024/03/01 09:00:00 · score 0');
         expect(bmwEl().textContent).not.toMatch(/not running/i);
 
         // Scoring results: S1 has no hour with a cluster; in S2 the lowest is the real 0 at 09:00, not 07:00
         expect(text('test-result-1-big')).toBe('No scored hours');
         expect(text('test-result-1-lowest')).toBe('No hour of this period got a score.');
         expect(text('test-result-2-big')).toBe('50.0% of running hours below 80');
-        expect(text('test-result-2-lowest')).toBe('Lowest 0 (1 h average) on 1 Mar 2024 09:00.');
-        expect(text('score-summary')).toBe('Lowest 100 on 1 Mar 2024 00:00 · below 80 for 0.0% of scored hours · 1-hour averages of the running rows');
+        expect(text('test-result-2-lowest')).toBe('Lowest 0 (1 h average) on 2024/03/01 09:00:00.');
+        expect(text('score-summary')).toBe('Lowest 100 on 2024/03/01 00:00:00 · below 80 for 0.0% of scored hours · 1-hour averages of the running rows');
 
         // Mark complete is not blocked by unscored hours
         await markComplete();
@@ -352,8 +352,8 @@ describe('Relation model on 5-minute data', () => {
         expect(bmw().getByTestId('test-result-1').querySelector('.vt-th b')!.textContent).toBe('S1');
         expect(bmw().getByTestId('test-result-2').querySelector('.vt-th b')!.textContent).toBe('S2');
         // an hourly point's tooltip is headed by its hour START, date and time
-        expect(tipHeading(lastChart('Health score', from, true), at(4))).toBe('1 Mar 2024 04:00');
-        expect(tipHeading(lastChart('Residual', from, true), at(7))).toBe('1 Mar 2024 07:00');
+        expect(tipHeading(lastChart('Health score', from, true), at(4))).toBe('2024/03/01 04:00:00');
+        expect(tipHeading(lastChart('Residual', from, true), at(7))).toBe('2024/03/01 07:00:00');
         let sent = lastPreview('relationship');
         expect(sent.args.request).toMatchObject({ kind: 'relationship', target: 'T', predictors: ['P'], cache_key: key, test_periods: wire(S_TWO) });
         expect((sent.result as any).series.total_points).toBe(48);
@@ -370,11 +370,11 @@ describe('Relation model on 5-minute data', () => {
         expect(scores.map(p => p[0])).toEqual(HOURS.map(h => at(h)));
         expect(scores.map(p => Math.round(p[1] as number))).toEqual([100, 100, 100, 100, 27, 100, 0, 100, 100]);
         expect(text('chart-card-set-relationship')).toContain('actual − predicted (kW) · 1 h average');
-        expect(await hoverTime(scoreChart, at(4, 5))).toMatch(/^1 Mar 2024 04:00 · residual 5(\.\d+)? kW · score 27$/);
+        expect(await hoverTime(scoreChart, at(4, 5))).toMatch(/^2024\/03\/01 04:00:00 · residual 5(\.\d+)? kW · score 27$/);
         expect(text('test-result-1-big')).toBe('50.0% of running hours below 80');
-        expect(text('test-result-1-lowest')).toBe('Lowest 27 (1 h average) on 1 Mar 2024 04:00.');
+        expect(text('test-result-1-lowest')).toBe('Lowest 27 (1 h average) on 2024/03/01 04:00:00.');
         expect(text('test-result-2-big')).toBe('33.3% of running hours below 80');
-        expect(text('test-result-2-lowest')).toBe('Lowest 0 (1 h average) on 1 Mar 2024 07:00.');
+        expect(text('test-result-2-lowest')).toBe('Lowest 0 (1 h average) on 2024/03/01 07:00:00.');
 
         // ── remove S2: nothing is trained, the same fit is scored again ──
         const fingerprint = diskModel('r1').trainedFingerprint;
@@ -483,7 +483,7 @@ describe('Relation model on 5-minute data', () => {
         const scores = pointsOf(lastChart('Health score', from, true), 'Health score');
         expect(scores.map(p => p[0])).toEqual([0, 1, 2, 3].map(h => at(h)));
         expect(scores.map(p => p[1])).toEqual([100, 100, 100, 100]);
-        expect(text('score-summary')).toBe('Lowest 100 on 1 Mar 2024 00:00 · below 80 for 0.0% of scored hours · 1-hour averages of the running rows');
+        expect(text('score-summary')).toBe('Lowest 100 on 2024/03/01 00:00:00 · below 80 for 0.0% of scored hours · 1-hour averages of the running rows');
         // a later request (a set point edit) does not keep asking for a retry
         const lower = bmw().getByTestId('sp-residual_at_0_lower');
         await act(async () => { fireEvent.change(lower, { target: { value: '-7' } }); fireEvent.blur(lower); });

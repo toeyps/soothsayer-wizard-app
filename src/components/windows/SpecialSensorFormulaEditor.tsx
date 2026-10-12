@@ -20,6 +20,7 @@ import {
     type FormulaEdit,
 } from '../../utils/formulaFixes';
 import { rangeToBody, withRoundResult } from '../../utils/formulaRounding';
+import { formatDataStamp } from '../../utils/workbenchDate';
 import {
     blockPreviewAggregate, editorStateFormula, insertQuickPiece, quickMulti, quickSingle, recipeToEditorState,
     QUICK_NUMBER_OPS, QUICK_TRANSFORMS,
@@ -712,7 +713,8 @@ const SpecialSensorFormulaEditor = forwardRef<FormulaEditorHandle, Props>(functi
                     Preview
                     <span className="fx-r">
                         {preview.isCurrent && preview.ok && preview.period
-                            ? `Downsampled · ${preview.period[0].slice(0, 10)} → ${preview.period[1].slice(0, 10)}`
+                            // The first / last row's DATE, in the app's one date format ("2025/01/01").
+                            ? `Downsampled · ${formatDataStamp(preview.period[0], { dateOnly: true })} → ${formatDataStamp(preview.period[1], { dateOnly: true })}`
                             : 'Updates when the formula is valid'}
                     </span>
                 </div>

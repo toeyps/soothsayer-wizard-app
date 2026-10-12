@@ -4,12 +4,13 @@ import type { PeriodCountsState } from '../../utils/periodCounts';
 import { runningConditionCaption } from '../../utils/periodCounts';
 import { noTrainRowsText } from '../../utils/runningCondition';
 import { periodDataFit, validatePeriods, validateTestPeriods, type PeriodBaseline } from '../../utils/timePeriods';
-import { MONTHS_SHORT, parseLocal } from '../../utils/workbenchDate';
+import { formatYearMonth } from '../../utils/dateFormat';
+import { parseLocal } from '../../utils/workbenchDate';
 import { boundsMs, formatPeriod, type DataBounds } from './periodDisplay';
 
 /*
  * The timeline hero of the Running-condition settings (workbench redesign SPEC
- * §5): a month axis, a TRAIN lane (P1, P2 … in train blue) and a SCORE lane
+ * §5): a month axis ("2026/01", "2026/03" …), a TRAIN lane (P1, P2 … in train blue) and a SCORE lane
  * (S1, S2 … dashed, in the scoring colour), an invalid period in red, and the
  * ONE caption under it (`runningConditionCaption`). A period that lies entirely
  * outside the loaded data is a sliver on the edge it lies beyond — red when it
@@ -30,8 +31,13 @@ export interface TimelineTick {
     label: string;
 }
 
-/** One tick per month start inside [t0, t1] ("Jan 2026" on a January, else
- *  "Feb"); thinned so at most ~14 are printed. */
+/** At most this many month ticks are printed: a label is "2026/01" (7 mono
+ *  characters, ~42 px), so 10 of them still stand apart on a narrow window. */
+const MAX_MONTH_TICKS = 10;
+
+/** One tick per month start inside [t0, t1], labelled year/month in the app's
+ *  date format ("2026/01", "2026/02" …); thinned evenly so at most
+ *  `MAX_MONTH_TICKS` are printed. */
 export function monthTicks(t0: number, t1: number): TimelineTick[] {
     const span = t1 - t0;
     if (!(span > 0)) return [];
@@ -45,12 +51,12 @@ export function monthTicks(t0: number, t1: number): TimelineTick[] {
         const ms = d.getTime();
         out.push({
             pct: ((ms - t0) / span) * 100,
-            label: d.getMonth() === 0 ? `${MONTHS_SHORT[0]} ${d.getFullYear()}` : MONTHS_SHORT[d.getMonth()],
+            label: formatYearMonth(d),
         });
         d.setMonth(d.getMonth() + 1);
     }
-    if (out.length <= 14) return out;
-    const step = Math.ceil(out.length / 14);
+    if (out.length <= MAX_MONTH_TICKS) return out;
+    const step = Math.ceil(out.length / MAX_MONTH_TICKS);
     return out.filter((_, i) => i % step === 0);
 }
 
@@ -63,7 +69,7 @@ export interface TimelineBlock {
     /** An open side runs to the edge of the dataset. */
     openStart: boolean;
     openEnd: boolean;
-    /** Tooltip / accessible text: "P1 · 1 Jan – 28 Feb 2026". */
+    /** Tooltip / accessible text: "P1 · 2026/01/01 00:00 – 2026/02/28 23:59". */
     label: string;
     /** The period lies entirely outside the dataset: a sliver on that edge
      *  (`invalid` = red, a period new / changed in the draft; else amber — a

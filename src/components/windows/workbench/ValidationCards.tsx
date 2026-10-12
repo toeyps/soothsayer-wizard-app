@@ -54,8 +54,9 @@ import { formatDataStamp, formatPeriodChip } from '../periodDisplay';
  * `TestScoringFailedNotice` in the score card's place.
  */
 
-/** "3 Feb 2026 14:05" (no seconds) — the ONE Workbench date format, read from the
- *  row's own wall clock (`formatDataStamp`: never shifted to another time zone). */
+/** "2026/02/03 14:05:00" — a data row's time in the app's one date format, read
+ *  from the row's own wall clock (`formatDataStamp`: never shifted to another
+ *  time zone). */
 export function stamp(s: string | null | undefined): string {
     return s == null ? '—' : formatDataStamp(s);
 }

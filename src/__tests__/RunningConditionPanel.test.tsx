@@ -182,7 +182,7 @@ describe('RunningConditionPanel — one column (workbench redesign §5)', () => 
 
     it('an invalid train period: the row is red with its reason, the timeline block is red — nothing else repeats it', () => {
         setup({ periods: [P1, p('b', '2026-05-11T00:00', '2026-05-01T00:00')] });
-        expect(screen.getByTestId('period-invalid-2').textContent).toBe('P2 ends before it starts — pick an end after 11 May 2026');
+        expect(screen.getByTestId('period-invalid-2').textContent).toBe('P2 ends before it starts — pick an end after 2026/05/11 00:00');
         expect(screen.getAllByRole('alert')).toHaveLength(1);
         expect(screen.getByTestId('rc-panel').textContent).not.toMatch(/Period 2|can't be built/);
     });

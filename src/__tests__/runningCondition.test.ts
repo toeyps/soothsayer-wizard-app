@@ -175,7 +175,7 @@ describe('getBuildBlock - the gate as data (which blocker, which period)', () =>
     it('an invalid train period says WHICH one (its P-number), what is wrong and the row line', () => {
         expect(getBuildBlock(ws, fg({ runningConditionNoneConfirmed: true, runningConditionTimePeriods: [TR, BAD] }))).toEqual({
             kind: 'invalid-train', mode: 'workspace', reason: 'P2 ends before it starts.', periodNumber: 2, fault: 'ends-before-start',
-            rowReason: 'P2 ends before it starts — pick an end after 11 May 2025',
+            rowReason: 'P2 ends before it starts — pick an end after 2025/05/11 00:00',
         });
         expect(getBuildBlock({ ...custom, filterTimePeriods: [BAD] }, fg())).toMatchObject({ kind: 'invalid-train', mode: 'custom', periodNumber: 1 });
     });

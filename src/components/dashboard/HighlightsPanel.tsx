@@ -4,6 +4,7 @@ import type { TimeHighlight, ValueHighlight } from '../../types';
 import ColourPicker from '../sensor/ColourPicker';
 import { SensorPickerSingle } from '../sensor/SensorPicker';
 import { fmtNumExact, useSensorLookup } from '../sensor/sensorInfo';
+import { formatDateTimeMinutes } from '../../utils/dateFormat';
 
 interface HighlightsPanelProps {
     // "By time" -- timestamp windows, read by Line + Scatter (not Pair Plot).
@@ -43,11 +44,12 @@ interface HighlightsPanelProps {
     chartType: 'line' | 'scatter' | 'pair';
 }
 
+/** "2025/03/14 21:25 → 2025/03/15 08:00": a highlight's two bounds in the app's
+ *  one date format (a bound the user typed: date + time, no seconds). */
 function fmtRange(start: string, end: string): string {
     const f = (s: string) => {
         const d = new Date(s);
-        if (isNaN(d.getTime())) return '?';
-        return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+        return isNaN(d.getTime()) ? '?' : formatDateTimeMinutes(d);
     };
     return `${f(start)} → ${f(end)}`;
 }

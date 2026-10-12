@@ -841,6 +841,9 @@ describe('PairPlotChart', () => {
         // Inline label + value (the one en-US formatter, up to 3 decimals).
         expect(screen.getByText('1.235')).toBeTruthy();
         expect(screen.getByText('9.877')).toBeTruthy();
+        // the row's time under the two values: the one date format, from the row's OWN clock
+        // (the mocked row is "2026-01-01T00:00:00Z" — the "Z" never moves it to this PC's zone)
+        expect(container.querySelector('.scatter-regl-tooltip-ts')!.textContent).toBe('2026/01/01 00:00:00');
     });
 
     it('shows a hover tooltip with a formatted date/time for a time-axis cell', () => {

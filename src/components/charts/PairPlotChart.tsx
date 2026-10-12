@@ -8,6 +8,7 @@ import { SensorInline } from '../sensor/SensorLabel';
 import { SensorMetaContext, fmtNum, useLayeredSensorLookup } from '../sensor/sensorInfo';
 import { ChartProps, MAX_PAIR_PLOT_SENSORS } from './ChartTypes';
 import { formatDateTime } from '../../utils/dateFormat';
+import { formatDataStamp } from '../../utils/workbenchDate';
 import { ACCENT_HEX, CANVAS_BG_HEX, correlationGradientHex, hexToRgba, hexToRgbaCss, rgbaToHex } from './pairPlotColors';
 import { pearsonCorrelation } from './pairPlotStats';
 
@@ -579,7 +580,7 @@ function PairPlotChart({ data, sensors, headers, sensorMetadata }: ChartProps) {
                         <span className="tt-val">{fmtNum(hover.yVal)}{sensorLookup(hover.sensorY).unit ? ` ${sensorLookup(hover.sensorY).unit}` : ''}</span>
                     </div>
                     {hover.timestamp && !hover.isTimeAxis && (
-                        <div className="scatter-regl-tooltip-ts">{hover.timestamp}</div>
+                        <div className="scatter-regl-tooltip-ts">{formatDataStamp(hover.timestamp)}</div>
                     )}
                 </div>
             )}

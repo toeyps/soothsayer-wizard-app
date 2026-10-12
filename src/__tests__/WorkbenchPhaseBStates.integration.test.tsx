@@ -75,7 +75,7 @@ afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 const IND_SP = { kind: 'individual', lower: 20, upper: 80, masterLower: 20, masterUpper: 80 };
 const REL_SP = { kind: 'relationship', residualAt80Lower: -5, residualAt80Upper: 5, residualAt0Lower: -10, residualAt0Upper: 10 };
-const STAMP = String.raw`\d{1,2} [A-Z][a-z]{2} \d{4} \d{2}:\d{2}`;
+const STAMP = String.raw`\d{4}/\d{2}/\d{2} \d{2}:\d{2}`;
 
 const wsWrites = () => env.writes.filter(w => w.path === wsFile()).length;
 /** The models' slice of the workspace file, as text. */
@@ -227,12 +227,11 @@ describe('a save error and the recovery (SPEC §4 "Save error")', () => {
         await markComplete();
         await waitFor(() => expect(bmw().getByTestId('save-ok')).toBeTruthy());
         expect(bmw().getByTestId('save-ok').textContent).toMatch(new RegExp(`^Files saved ${STAMP} · .*workspaces/${WS}/output$`));
-        // ONE date format: the stamp is the mono "9 Feb 2026 23:50" of the moment it was saved (local time)
+        // ONE date format: the stamp is the mono "2026/02/09 23:50" of the moment it was saved (local time, no seconds)
         const at = new Date(diskModel('i1').healthExport.at);
-        const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
         const pad = (n: number) => String(n).padStart(2, '0');
         expect(bmw().getByTestId('save-ok').querySelector('.wbx-dt')!.textContent)
-            .toBe(`${at.getDate()} ${MONTHS[at.getMonth()]} ${at.getFullYear()} ${pad(at.getHours())}:${pad(at.getMinutes())}`);
+            .toBe(`${at.getFullYear()}/${pad(at.getMonth() + 1)}/${pad(at.getDate())} ${pad(at.getHours())}:${pad(at.getMinutes())}`);
         expect(bmw().getByTestId('footer-saved-path').getAttribute('title')).toBe(env.backend!.outputDir(WS));
         expect(bmw().getByTestId('save-ok').closest('[data-testid="wb-footer"]')).not.toBeNull();
         expect(bmwEl().textContent).not.toMatch(/Files saved to/);
@@ -454,7 +453,7 @@ describe('drafts and the new page spine', () => {
 // ---------------------------------------------------------------------------
 
 describe('a CSV stamp with "Z" / an offset shows its OWN wall clock everywhere (never shifted by the PC\'s time zone)', () => {
-    // 60 rows, 10 s apart from 22:55:00 on 9 Feb 2026 (so they straddle 23:00: rows 0-29 are in the
+    // 60 rows, 10 s apart from 22:55:00 on 2026/02/09 (so they straddle 23:00: rows 0-29 are in the
     // 22:00 hour, rows 30-59 in the 23:00 hour), written the way three different loggers would:
     // UTC ("Z"), Bangkok ("+07:00") and New York ("-05:00").
     const ZONES = ['Z', '+07:00', '-05:00'];
@@ -471,7 +470,7 @@ describe('a CSV stamp with "Z" / an offset shows its OWN wall clock everywhere (
     // The health score is computed on 1-hour averages: the Model fit page still shows every raw row
     // at its own clock (seconds included), while the Health score page has ONE point per clock hour,
     // placed at — and read out as — the START of the rows' own wall-clock hour.
-    it('Model fit plots every raw row at its own clock (10 s apart); the Health score page reads the rows\' own clock HOUR — lowest-score time, scoring tile and hover read-out say 22:00 / 23:00 on 9 Feb 2026; the footer\'s own stamps are the app\'s local time in the same format', async () => {
+    it('Model fit plots every raw row at its own clock (10 s apart); the Health score page reads the rows\' own clock HOUR — lowest-score time, scoring tile and hover read-out say 22:00 / 23:00 on 2026/02/09; the footer\'s own stamps are the app\'s local time in the same format', async () => {
         const data = zonedDataset();
         newBackend({ plant: data });
         // Rust also returns the scoring period's facts: its lowest hourly score, with that hour's start.
@@ -491,9 +490,8 @@ describe('a CSV stamp with "Z" / an offset shows its OWN wall clock everywhere (
 
         // footer: an instant the APP recorded (UTC on disk) shown in local time, the one format
         const trained = new Date(diskModel('i1').lastTrainedAt);
-        const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
         const pad = (n: number) => String(n).padStart(2, '0');
-        const local = (d: Date) => `${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+        const local = (d: Date) => `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
         expect(footer().querySelector('.wbx-dt')!.textContent).toBe(local(trained));
         expect(sentence()).toMatch(new RegExp(`^Trained ${STAMP} · scored on 1 period · `));
         expect(footer().textContent).not.toMatch(/\d{4}-\d{2}-\d{2}|T\d\d:|Z\b|\+07:00|\b(AM|PM)\b/);
@@ -520,7 +518,7 @@ describe('a CSV stamp with "Z" / an offset shows its OWN wall clock everywhere (
             series: { score: null };
             score_summary: { min_score: { timestamp: string; row: number } };
         };
-        // the 600 s of data are TWO hourly points, at the rows' own clock hours on 9 Feb — a "+07:00" row
+        // the 600 s of data are TWO hourly points, at the rows' own clock hours on 2026/02/09 — a "+07:00" row
         // moved to UTC would be 15:00, a "-05:00" row 03:00 / 04:00 on the 10th
         expect(answer.hourly.timestamps).toEqual(['2026-02-09T22:00:00', '2026-02-09T23:00:00']);
         expect(answer.series.score).toBeNull(); // the raw rows are never scored
@@ -535,30 +533,33 @@ describe('a CSV stamp with "Z" / an offset shows its OWN wall clock everywhere (
         expect(answer.hourly.score.every(v => v !== null), 'both hours are scored').toBe(true);
         expect(scorePoints.map(p => p[0])).toEqual([new Date(2026, 1, 9, 22, 0, 0).getTime(), new Date(2026, 1, 9, 23, 0, 0).getTime()]);
 
-        // the hour with the lowest score: its START, in the one Workbench format
+        // the hour with the lowest score: its START — a data row's time, with seconds, read from the row's own clock
         const low = answer.score_summary.min_score;
         expect(answer.hourly.timestamps).toContain(low.timestamp);
-        expect(bmw().getByTestId('score-lowest-at').textContent).toBe(`9 Feb 2026 ${low.timestamp.slice(11, 16)}`);
+        expect(low.timestamp.slice(11, 19)).toMatch(/^2[23]:00:00$/);
+        expect(bmw().getByTestId('score-lowest-at').textContent).toBe(`2026/02/09 ${low.timestamp.slice(11, 19)}`);
         expect(bmw().getByTestId('score-lowest-at').className).toContain('wbx-dt');
         expect(bmw().getByTestId('score-summary').textContent).toMatch(/of scored hours · 1-hour averages of the running rows$/);
         // the scoring period's tile: the hour start as it is, and the period's own bounds
-        expect(bmw().getByTestId('test-result-1-lowest').textContent).toBe('Lowest 61 (1 h average) on 9 Feb 2026 23:00.');
-        expect(bmw().getByTestId('test-result-1').textContent).toContain('9 Feb 2026 23:00 → 9 Feb 2026 23:04');
+        expect(bmw().getByTestId('test-result-1-lowest').textContent).toBe('Lowest 61 (1 h average) on 2026/02/09 23:00:00.');
+        expect(bmw().getByTestId('test-result-1').textContent).toContain('2026/02/09 23:00 → 2026/02/09 23:04');
 
-        // the hover read-out: the hour START (no seconds, no raw text) and that hour's 1 h average
+        // the hover read-out: the hour START (a data row's time: "…22:00:00", never the raw text) and that hour's 1 h average
         const hover = async (h: number, m: number, s: number) => {
             const at = new Date(2026, 1, 9, h, m, s).getTime();
             await act(async () => { score.props.onEvents.updateAxisPointer({ axesInfo: [{ axisDim: 'x', value: at }] }); });
             return bmw().getByTestId('hs-readout').textContent!;
         };
-        const line = (h: number) => new RegExp(`^9 Feb 2026 ${answer.hourly.timestamps[h].slice(11, 16)} · 1 h avg ${fmtNum(answer.hourly.value[h]).replace('.', '\\.')} bar · score \\d+$`);
+        const line = (h: number) => new RegExp(`^2026/02/09 ${answer.hourly.timestamps[h].slice(11, 19)} · 1 h avg ${fmtNum(answer.hourly.value[h]).replace('.', '\\.')} bar · score \\d+$`);
         expect(await hover(22, 0, 0)).toMatch(line(0));
         expect(await hover(22, 20, 10)).toMatch(line(0));   // nearer to the 22:00 point
         expect(await hover(22, 55, 10)).toMatch(line(1));   // row 1's own time ("+07:00"): the nearest POINT is 23:00
         expect(await hover(23, 4, 50)).toMatch(line(1));    // the last row ("-05:00")
         for (const [h, m, s] of [[22, 0, 0], [22, 55, 10], [23, 4, 50]]) {
             const text = await hover(h, m, s);
-            expect(text).not.toMatch(/\d\d:\d\d:\d\d|· value |T\d\d:|\+07:00|-05:00|Z\b/);
+            // the hour start with its ":00:00" — never a row's own 22:55:10, the raw text or a zone
+            expect(text).toMatch(/^2026\/02\/09 2[23]:00:00 · /);
+            expect(text).not.toMatch(/\d\d:\d\d:[1-5]\d|· value |T\d\d:|\+07:00|-05:00|Z\b/);
         }
         await act(async () => { score.props.onEvents.globalout(); });
         expect(bmw().getByTestId('hs-readout').textContent).toBe('');

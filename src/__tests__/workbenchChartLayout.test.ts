@@ -334,29 +334,117 @@ describe('value axes tick on the step their range was rounded to', () => {
 // Item 11 — the time axis shows the stamp's OWN clock, whatever zone it names
 // ---------------------------------------------------------------------------
 
+/** A time-axis tick in the app's one date format: date, then the time when the tick is not a midnight. */
+const TICK_RE = /^(\d{4})\/(\d{2})\/(\d{2})(?: (\d{2}):(\d{2})(?::\d{2}(?:\.\d{3})?)?)?$/;
+const MONTH_NAME = /Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec/;
+
 describe('the time axis of an offset-stamped CSV shows the clock the file wrote', () => {
     const pad = (n: number) => String(n).padStart(2, '0');
     /** 25 hourly rows of one day, 00:00 … 24:00, every stamp ending in `zone`. */
     const day = (zone: string) => Array.from({ length: 25 }, (_, h) => (h < 24 ? `2026-02-09T${pad(h)}:00:00${zone}` : `2026-02-10T00:00:00${zone}`));
+    /** The time-axis tick labels, in the app's one date format: "2026/02/09" on a
+     *  midnight, "2026/02/09 06:00" on any other tick. */
     const hourLabels = (zone: string) => {
         const timestamps = day(zone);
         const ts = textsFor(buildTimeSeriesOption({ timestamps, lines: [{ name: 'V', values: timestamps.map((_, i) => i), color: '#fff' }] }), 620, 250);
-        return ts.filter(t => /^\d{2}:\d{2}$/.test(t.text)).sort((a, b) => a.x - b.x);
+        return ts.filter(t => TICK_RE.test(t.text)).sort((a, b) => a.x - b.x);
+    };
+    /** Hours since 2026/02/09 00:00 that a tick label names. */
+    const hourOf = (label: string) => {
+        const m = TICK_RE.exec(label)!;
+        return (Number(m[3]) - 9) * 24 + Number(m[4] ?? 0) + Number(m[5] ?? 0) / 60;
     };
 
     it('"…+07:00", "…-05:00", "…Z" and no zone at all draw the SAME axis: 06:00 a quarter of the way along, 12:00 in the middle', () => {
         const plotLeft = 58;
-        const plotWidth = 620 - 58 - 18;
+        const fullWidth = 620 - 58 - 18;
         const plain = hourLabels('');
         expect(plain.length).toBeGreaterThanOrEqual(3);
+        // the ticks of one day carry their time — more than the two midnights are labelled
+        expect(plain.filter(l => / \d{2}:\d{2}$/.test(l.text)).length).toBeGreaterThanOrEqual(2);
+        // The plot starts at its fixed left edge. Its width is the grid's, minus the few
+        // pixels ECharts takes off the right so that a date label on the last tick is not
+        // cut at the card's edge (a date is wider than the "06:00" ECharts printed before).
+        const last = plain[plain.length - 1];
+        const plotWidth = ((last.x - plotLeft) / hourOf(last.text)) * 24;
+        expect(plotWidth).toBeLessThanOrEqual(fullWidth + 0.5);
+        expect(plotWidth).toBeGreaterThan(fullWidth - 30);
         for (const l of plain) {
-            const hour = Number(l.text.slice(0, 2)) + Number(l.text.slice(3)) / 60;
+            expect(l.text.slice(0, 8), l.text).toBe('2026/02/');
             // the label sits where that hour of the FILE's clock is: hour / 24 of the plot
-            expect(l.x, `${l.text}`).toBeCloseTo(plotLeft + (hour / 24) * plotWidth, 0);
+            expect(l.x, `${l.text}`).toBeCloseTo(plotLeft + (hourOf(l.text) / 24) * plotWidth, 0);
         }
+        // 06:00 a quarter of the way along, 12:00 in the middle (whichever of them is labelled)
+        const noon = plain.find(l => l.text === '2026/02/09 12:00');
+        if (noon) expect(noon.x).toBeCloseTo(plotLeft + plotWidth / 2, 0);
         // every zone gives the very same labels at the very same places — on a PC in any time zone
         const at = (ls: Txt[]) => ls.map(l => [l.text, Math.round(l.x)]);
         for (const zone of ['+07:00', '-05:00', 'Z', '+0530']) expect(at(hourLabels(zone)), zone).toEqual(at(plain));
+    });
+});
+
+// ---------------------------------------------------------------------------
+// One date format in the whole app (2026-10-12) — the time-axis ticks are dates
+// like the Dashboard's ("2025/03/14"), never ECharts' own month names; zoomed in
+// to less than a day, the ticks of one day must not all read the same date.
+// ---------------------------------------------------------------------------
+
+describe('the time axis ticks are in the one date format at every zoom', () => {
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const HOUR = 3_600_000;
+    const T0 = new Date(2025, 0, 1, 0, 0, 0).getTime();
+    /** 120 days of hourly rows from 2025/01/01 00:00, as Rust writes a stamp. */
+    const timestamps = Array.from({ length: 120 * 24 }, (_, i) => {
+        const d = new Date(T0 + i * HOUR);
+        return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:00:00`;
+    });
+    const option = buildTimeSeriesOption({ timestamps, lines: [{ name: 'V', values: timestamps.map((_, i) => i % 7), color: '#fff' }] });
+    const SPAN = T0 + (timestamps.length - 1) * HOUR - T0;
+    /** The tick labels with the axis zoomed to `[fromDays, fromDays + spanHours]`. */
+    const ticksAt = (fromDays: number, spanHours: number, width = 620): string[] => {
+        const startValue = T0 + fromDays * 24 * HOUR;
+        const zoomed = { ...option, dataZoom: [{ ...(option.dataZoom[0] as object), startValue, endValue: startValue + spanHours * HOUR }] };
+        // the axis labels are the row of centred secondary-colour texts under the plot
+        return textsFor(zoomed, width, 250).filter(t => t.fill === CHART.textSecondary && t.anchor === 'middle' && !t.rotated).map(t => t.text);
+    };
+
+    it('the axis is given the app formatter and drops a label that would overlap its neighbour', () => {
+        const x = option.xAxis as { type: string; axisLabel: { formatter: (v: number) => string; hideOverlap: boolean; fontSize: number; color: string } };
+        expect(x.type).toBe('time');
+        expect(x.axisLabel.hideOverlap).toBe(true);
+        expect(x.axisLabel.formatter(new Date(2025, 2, 14).getTime())).toBe('2025/03/14');
+        expect(x.axisLabel.formatter(new Date(2025, 2, 14, 6, 0).getTime())).toBe('2025/03/14 06:00');
+        // the look of the labels is unchanged
+        expect(x.axisLabel.fontSize).toBe(10);
+        expect(x.axisLabel.color).toBe(CHART.textSecondary);
+    });
+
+    it('whole range, weeks, days: every tick is a plain date "YYYY/MM/DD" — no month name, no bare day number', () => {
+        for (const [fromDays, spanHours] of [[0, SPAN / HOUR], [10, 60 * 24], [30, 20 * 24], [40, 5 * 24]] as const) {
+            for (const width of [420, 620, 1100]) {
+                const ticks = ticksAt(fromDays, spanHours, width);
+                expect(ticks.length, `${spanHours} h @ ${width}px`).toBeGreaterThanOrEqual(2);
+                for (const t of ticks) expect(t, `${spanHours} h @ ${width}px`).toMatch(/^2025\/\d{2}\/\d{2}$/);
+                expect(new Set(ticks).size, `${ticks.join(' | ')}`).toBe(ticks.length);
+            }
+        }
+    });
+
+    it('zoomed in to a day or less: the ticks of one day show their time, so no two ticks read the same', () => {
+        for (const spanHours of [36, 24, 12, 6, 2]) {
+            for (const width of [420, 620, 1100]) {
+                const ticks = ticksAt(40, spanHours, width);
+                expect(ticks.length, `${spanHours} h @ ${width}px`).toBeGreaterThanOrEqual(2);
+                for (const t of ticks) {
+                    expect(t, `${spanHours} h @ ${width}px`).toMatch(TICK_RE);
+                    expect(t).not.toMatch(MONTH_NAME);
+                }
+                // the whole point: never "2025/02/10, 2025/02/10, 2025/02/10"
+                expect(new Set(ticks).size, `${ticks.join(' | ')}`).toBe(ticks.length);
+                // and at least one of them carries a time
+                expect(ticks.some(t => / \d{2}:\d{2}/.test(t)), `${ticks.join(' | ')}`).toBe(true);
+            }
+        }
     });
 });
 

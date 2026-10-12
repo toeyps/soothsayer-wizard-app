@@ -193,7 +193,7 @@ describe('TestPeriodsEditor (scoring periods)', () => {
         setup({ tests: [t('a', '2026-02-01T00:00', '2026-02-15T00:00'), t('b', '2026-02-15T00:00', '2026-02-01T00:00')] });
         const msg = screen.getByTestId('test-invalid-2');
         expect(msg.getAttribute('role')).toBe('alert');
-        expect(msg.textContent).toBe('S2 ends before it starts — pick an end after 15 Feb 2026');
+        expect(msg.textContent).toBe('S2 ends before it starts — pick an end after 2026/02/15 00:00');
         const row = screen.getByTestId('test-row-2');
         expect(row.className).toContain('rcm-per--bad');
         expect(row.getAttribute('data-invalid')).toBe('true');

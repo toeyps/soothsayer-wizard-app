@@ -73,15 +73,16 @@ describe('Scoring results (Health score page) — neutral tiles only', () => {
         const t = tile({ pct_below_80: 4.9, lowest: 61.4, lowest_at: '2026-01-01T02:00:00' });
         expect(t.querySelector('.vt-th b')!.textContent).toBe('S1');
         expect(screen.getByTestId('test-result-1-big').textContent).toBe('4.9% of running hours below 80');
-        expect(screen.getByTestId('test-result-1-lowest').textContent).toBe('Lowest 61 (1 h average) on 1 Jan 2026 02:00.');
+        expect(screen.getByTestId('test-result-1-lowest').textContent).toBe('Lowest 61 (1 h average) on 2026/01/01 02:00:00.');
         expect(t.textContent).not.toMatch(/held 1 h|of running time below 80/);
         // the header keeps the RAW running time of the period (12.5 d = 3 600 five-minute rows, 300 hours)
         expect(t.querySelector('.vt-th span')!.textContent).toContain('12.5 d running time');
-        expect(stamp('2026-01-01T02:00:00')).toBe('1 Jan 2026 02:00');
-        expect(stamp('2026-01-01 02:30:00')).toBe('1 Jan 2026 02:30');
+        // a data row's time: always with seconds
+        expect(stamp('2026-01-01T02:00:00')).toBe('2026/01/01 02:00:00');
+        expect(stamp('2026-01-01 02:30:00')).toBe('2026/01/01 02:30:00');
         // the row's own wall clock: an explicit offset never shifts it (any PC time zone)
-        expect(stamp('2026-01-01T02:30:00+07:00')).toBe('1 Jan 2026 02:30');
-        expect(stamp('2026-01-01T02:30:00Z')).toBe('1 Jan 2026 02:30');
+        expect(stamp('2026-01-01T02:30:00+07:00')).toBe('2026/01/01 02:30:00');
+        expect(stamp('2026-01-01T02:30:00Z')).toBe('2026/01/01 02:30:00');
         expect(stamp(null)).toBe('—');
     });
 

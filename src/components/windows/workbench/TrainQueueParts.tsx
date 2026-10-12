@@ -5,6 +5,7 @@ import { sensorPlainLabel, useSensorLookup } from '../../sensor/sensorInfo';
 import { useModalFocus } from '../useModalFocus';
 import type { ModelKind } from '../../../types';
 import { parseHealthError } from '../../../utils/completeModel';
+import { formatClock } from '../../../utils/dateFormat';
 import { MODEL_KIND_LABEL } from '../../../utils/modelNames';
 import type {
     TrainFixTarget,
@@ -438,8 +439,8 @@ export function RunSetPointsBanner({ at, inRun, position, onNext, nextDisabled }
     onNext: () => void;
     nextDisabled: boolean;
 }) {
-    const t = new Date(at);
-    const hhmm = `${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}`;
+    // The time of the run that just finished in this window: a clock time, no date.
+    const hhmm = formatClock(new Date(at));
     return (
         <div className="tq-hbanner" role="status" data-testid="run-setpoints-banner">
             <span className="tq-ok" aria-hidden="true">✓</span>

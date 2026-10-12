@@ -38,7 +38,7 @@ import type { PeriodBounds } from './TimePeriodsEditor';
  *
  * Against the loaded data (`bounds` + `savedTests`): a scoring
  * period that is NEW or was CHANGED here and lies ENTIRELY outside the data's
- * time range is invalid ("S1 is outside the data (1 Jan 2025 – 31 Dec 2025)",
+ * time range is invalid ("S1 is outside the data (2025/01/01 00:00 – 2025/12/31 23:50)",
  * both fields red, blocks Apply / Save); one that is exactly as it was SAVED
  * only gets an amber warning ("S1 is outside the data — nothing is scored
  * there") and blocks nothing; one only partly

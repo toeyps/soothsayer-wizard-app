@@ -4,7 +4,7 @@ import {
 } from '../components/windows/periodDisplay';
 import type { TestPeriod, WorkspaceSensorFilter } from '../types';
 
-// Dataset of the approved mockup: 1 Jan 2025 00:00 - 31 Mar 2026 23:50 = 455 days.
+// Dataset of the approved mockup: 2025/01/01 00:00 - 2026/03/31 23:50 = 455 days.
 const B = { min: '2025-01-01 00:00:00', max: '2026-03-31 23:50:00' };
 const p = (id: string, start: string, end: string) => ({ id, start, end });
 const f = (sensor: string, operation: WorkspaceSensorFilter['operation'], value1: string, value2 = ''): WorkspaceSensorFilter =>
@@ -51,59 +51,69 @@ describe('isCompleteDateInput / settleDateInput (typing a date in a period row)'
 });
 
 describe('formatPeriod (chip / row label)', () => {
-    it('whole days in one year: year once, at the end', () => {
-        expect(formatPeriod(p('a', '2025-01-01T00:00', '2025-02-28T23:59'))).toBe('1 Jan – 28 Feb 2025');
+    // One date format in the whole app (2026-10-12): a period bound always shows its
+    // full date AND its time on both sides — the two shortening rules are gone.
+    it('whole days in one year: the year on BOTH sides and the time on both (no "year once", no date-alone edge)', () => {
+        expect(formatPeriod(p('a', '2025-01-01T00:00', '2025-02-28T23:59'))).toBe('2025/01/01 00:00 – 2025/02/28 23:59');
     });
-    it('whole days across years: year on both sides', () => {
-        expect(formatPeriod(p('a', '2025-11-01T00:00', '2026-01-15T23:59'))).toBe('1 Nov 2025 – 15 Jan 2026');
+    it('whole days across years: the same shape', () => {
+        expect(formatPeriod(p('a', '2025-11-01T00:00', '2026-01-15T23:59'))).toBe('2025/11/01 00:00 – 2026/01/15 23:59');
     });
-    it('a side that is not a whole day shows date + time on both sides', () => {
-        expect(formatPeriod(p('a', '2025-11-03T06:00', '2025-12-19T18:00'))).toBe('3 Nov 2025 06:00 – 19 Dec 2025 18:00');
+    it('a side that is not a whole day: date + time on both sides', () => {
+        expect(formatPeriod(p('a', '2025-11-03T06:00', '2025-12-19T18:00'))).toBe('2025/11/03 06:00 – 2025/12/19 18:00');
     });
     it('open ends read "Start of data" / "end of data"; both open reads "All data"', () => {
-        expect(formatPeriod(p('a', '', '2025-02-28T23:59'))).toBe('Start of data – 28 Feb 2025');
-        expect(formatPeriod(p('a', '2025-11-01T00:00', ''))).toBe('1 Nov 2025 – end of data');
+        expect(formatPeriod(p('a', '', '2025-02-28T23:59'))).toBe('Start of data – 2025/02/28 23:59');
+        expect(formatPeriod(p('a', '2025-11-01T00:00', ''))).toBe('2025/11/01 00:00 – end of data');
         expect(formatPeriod(p('a', '', ''))).toBe('All data');
     });
-    // Workbench redesign §1: ONE date-and-time format in the Workbench.
-    it('formatStamp is "9 Feb 2026 23:50": day, short month, year, 24-hour time, no seconds — for CSV text, datetime-local, ISO and epoch ms', () => {
-        expect(formatStamp('2026-02-09 23:50:00')).toBe('9 Feb 2026 23:50');
-        expect(formatStamp('2026-02-09T23:50')).toBe('9 Feb 2026 23:50');
-        expect(formatStamp('2026-10-08T14:22:31')).toBe('8 Oct 2026 14:22');
-        expect(formatStamp('2026-01-01')).toBe('1 Jan 2026 00:00');
-        expect(formatStamp(new Date(2026, 1, 9, 5, 7).getTime())).toBe('9 Feb 2026 05:07');
-        // a UTC instant is shown in local time, in the same shape
-        expect(formatStamp('2026-10-04T01:00:00.000Z')).toMatch(/^[34] Oct 2026 \d{2}:\d{2}$/);
+    it('unparseable text is shown as typed', () => {
+        expect(formatPeriod(p('a', 'garbage', '2025-02-28T23:59'))).toBe('garbage – 2025/02/28 23:59');
+    });
+    // An instant the app recorded: date + time, no seconds.
+    it('formatStamp is "2026/02/09 23:50": year/month/day, 24-hour time, no seconds — for CSV text, datetime-local, ISO and epoch ms', () => {
+        expect(formatStamp('2026-02-09 23:50:00')).toBe('2026/02/09 23:50');
+        expect(formatStamp('2026-02-09T23:50')).toBe('2026/02/09 23:50');
+        expect(formatStamp('2026-10-08T14:22:31')).toBe('2026/10/08 14:22');
+        expect(formatStamp('2026-01-01')).toBe('2026/01/01 00:00');
+        expect(formatStamp(new Date(2026, 1, 9, 5, 7).getTime())).toBe('2026/02/09 05:07');
+        // a UTC instant is shown in LOCAL time (the PC's own clock at that instant), in the same shape
+        expect(formatStamp('2026-10-04T01:00:00.000Z')).toMatch(/^2026\/10\/0[34] \d{2}:\d{2}$/);
+        const utc = new Date('2026-10-04T01:00:00.000Z');
+        const two = (n: number) => String(n).padStart(2, '0');
+        expect(formatStamp('2026-10-04T01:00:00.000Z')).toBe(`2026/10/${two(utc.getDate())} ${two(utc.getHours())}:${two(utc.getMinutes())}`);
         // never a locale form
         expect(formatStamp('2026-10-08T14:22:31')).not.toMatch(/PM|AM|,/);
     });
 
     // A CSV row's time is DATA: printed from its own wall-clock parts, never through a Date.
-    it('formatDataStamp: the same "9 Feb 2026 23:50" shape, from the text itself — an offset or Z never shifts it', () => {
-        expect(formatDataStamp('2026-02-09 23:50:00')).toBe('9 Feb 2026 23:50');
-        expect(formatDataStamp('2026-02-09T23:50')).toBe('9 Feb 2026 23:50');
-        expect(formatDataStamp('2026-02-09')).toBe('9 Feb 2026 00:00');
-        expect(formatDataStamp('2026/2/9 5:07')).toBe('9 Feb 2026 05:07');
-        expect(formatDataStamp(' 2026-02-09 23:50:00 ')).toBe('9 Feb 2026 23:50');
+    it('formatDataStamp: "2026/02/09 23:50:00", from the text itself — an offset or Z never shifts it', () => {
+        expect(formatDataStamp('2026-02-09 23:50:00')).toBe('2026/02/09 23:50:00');
+        expect(formatDataStamp('2026-02-09T23:50')).toBe('2026/02/09 23:50:00');
+        expect(formatDataStamp('2026-02-09')).toBe('2026/02/09 00:00:00');
+        expect(formatDataStamp('2026/2/9 5:07')).toBe('2026/02/09 05:07:00');
+        expect(formatDataStamp(' 2026-02-09 23:50:00 ')).toBe('2026/02/09 23:50:00');
         // would read 16:50 / the next day on a PC in another zone if it went through `new Date`
-        expect(formatDataStamp('2026-02-09T23:50:00+07:00')).toBe('9 Feb 2026 23:50');
-        expect(formatDataStamp('2026-02-09T23:50:00-0800')).toBe('9 Feb 2026 23:50');
-        expect(formatDataStamp('2026-02-09T23:50:00.000Z')).toBe('9 Feb 2026 23:50');
-        expect(formatDataStamp('2026-12-31T23:59:59+14:00')).toBe('31 Dec 2026 23:59');
+        expect(formatDataStamp('2026-02-09T23:50:00+07:00')).toBe('2026/02/09 23:50:00');
+        expect(formatDataStamp('2026-02-09T23:50:00-0800')).toBe('2026/02/09 23:50:00');
+        expect(formatDataStamp('2026-02-09T23:50:00.000Z')).toBe('2026/02/09 23:50:00');
+        expect(formatDataStamp('2026-12-31T23:59:59+14:00')).toBe('2026/12/31 23:59:59');
     });
 
-    it('formatDataStamp shows seconds only when asked AND they are not zero', () => {
-        expect(formatDataStamp('2026-02-09 23:50:07')).toBe('9 Feb 2026 23:50');
-        expect(formatDataStamp('2026-02-09 23:50:07', { seconds: true })).toBe('9 Feb 2026 23:50:07');
-        expect(formatDataStamp('2026-02-09 23:50:07.250', { seconds: true })).toBe('9 Feb 2026 23:50:07');
-        expect(formatDataStamp('2026-02-09 23:50:00', { seconds: true })).toBe('9 Feb 2026 23:50');
-        expect(formatDataStamp('2026-02-09T23:50:07+07:00', { seconds: true })).toBe('9 Feb 2026 23:50:07');
-        expect(formatDataStamp('2026-02-09T23:50', { seconds: true })).toBe('9 Feb 2026 23:50');
+    it('formatDataStamp ALWAYS shows the seconds (it is a data row) — zero or not, asked for or not', () => {
+        expect(formatDataStamp('2026-02-09 23:50:07')).toBe('2026/02/09 23:50:07');
+        expect(formatDataStamp('2026-02-09 23:50:07', { seconds: true })).toBe('2026/02/09 23:50:07');
+        expect(formatDataStamp('2026-02-09 23:50:07.250', { seconds: true })).toBe('2026/02/09 23:50:07');
+        expect(formatDataStamp('2026-02-09 23:50:00', { seconds: true })).toBe('2026/02/09 23:50:00');
+        expect(formatDataStamp('2026-02-09T23:50:07+07:00', { seconds: true })).toBe('2026/02/09 23:50:07');
+        expect(formatDataStamp('2026-02-09T23:50', { seconds: true })).toBe('2026/02/09 23:50:00');
+        // only an explicit `seconds: false` drops them
+        expect(formatDataStamp('2026-02-09 23:50:07', { seconds: false })).toBe('2026/02/09 23:50');
     });
 
     it('formatDataStamp: text in another shape is read as local time; text that is not a date stays; "—" for nothing', () => {
-        expect(formatDataStamp('Feb 9, 2026 23:50:07')).toBe('9 Feb 2026 23:50');
-        expect(formatDataStamp('Feb 9, 2026 23:50:07', { seconds: true })).toBe('9 Feb 2026 23:50:07');
+        expect(formatDataStamp('Feb 9, 2026 23:50:07')).toBe('2026/02/09 23:50:07');
+        expect(formatDataStamp('Feb 9, 2026 23:50:07', { seconds: true })).toBe('2026/02/09 23:50:07');
         expect(formatDataStamp('2026-13-40 00:00')).toBe('2026-13-40 00:00'); // not a real month: as it is
         expect(formatDataStamp('row 12')).toBe('row 12');
         expect(formatDataStamp('')).toBe('');
@@ -119,8 +129,38 @@ describe('formatPeriod (chip / row label)', () => {
         expect(formatStamp(Number.NaN)).toBe('—');
     });
 
-    it('formatDate is a single bound with year', () => {
-        expect(formatDate('2025-06-01T00:00')).toBe('1 Jun 2025');
+    it('formatDate is a single bound as a date alone, "2025/06/01" (raw text when it is not a date)', () => {
+        expect(formatDate('2025-06-01T00:00')).toBe('2025/06/01');
+        expect(formatDate('2025-06-01T18:30')).toBe('2025/06/01');
+        expect(formatDate('soon')).toBe('soon');
+        expect(formatDate(null)).toBe('');
+    });
+
+    it('no period formatter can return a month name — every month, whole-day edges and open sides included', () => {
+        const MONTH_NAME = /Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec/i;
+        for (let m = 1; m <= 12; m++) {
+            const mm = String(m).padStart(2, '0');
+            const whole = p('a', `2025-${mm}-01T00:00`, `2025-${mm}-28T23:59`);
+            const odd = p('a', `2025-${mm}-03T06:00`, `2026-${mm}-19T18:00`);
+            const texts = [
+                formatPeriod(whole), formatPeriodChip(whole), formatPeriod(odd), formatPeriodChip(odd),
+                // an open side keeps its words; the other side is still a numeral date
+                formatPeriod(p('a', '', `2025-${mm}-28T23:59`)).replace('Start of data', ''),
+                formatPeriod(p('a', `2025-${mm}-01T00:00`, '')).replace('end of data', ''),
+                formatPeriodChip(p('a', '', `2025-${mm}-28T23:59`)).replace('Start', ''),
+                formatPeriodChip(p('a', `2025-${mm}-01T00:00`, '')).replace('End', ''),
+                formatDate(`2025-${mm}-09T12:00`), formatStamp(`2025-${mm}-09T12:00`), formatDataStamp(`2025-${mm}-09 12:00:00`),
+            ];
+            for (const t of texts) {
+                expect(t).not.toMatch(MONTH_NAME);
+                expect(t).toMatch(/^[\d/: –→]+$/);
+            }
+            const bounds = { min: `2025-${mm}-01 00:00:00`, max: `2026-${mm}-28 23:50:00` };
+            const cov = computeCoverage([whole], bounds)!;
+            expect(`${cov.axisLeft} ${cov.axisRight}`).toBe(`2025/${mm} 2026/${mm}`);
+            expect(cov.segments[0].label).toBe(`2025/${mm}/01 00:00 – 2025/${mm}/28 23:59`);
+            expect(computeTestCoverage([whole], bounds)!.segments[0].label).toBe(`S1 · 2025/${mm}/01 00:00 – 2025/${mm}/28 23:59`);
+        }
     });
 });
 
@@ -145,7 +185,7 @@ describe('computeCoverage', () => {
         expect(computeCoverage([], { min: null, max: null })).toBeNull();
     });
 
-    it('the approved mockup example: 3 periods are "166 of 455 days used", axis Jan 2025 - Mar 2026', () => {
+    it('the approved mockup example: 3 periods are "166 of 455 days used", axis 2025/01 - 2026/03', () => {
         const c = computeCoverage([
             p('a', '2025-01-01T00:00', '2025-02-28T23:59'),
             p('b', '2025-06-01T00:00', '2025-07-31T23:59'),
@@ -154,8 +194,14 @@ describe('computeCoverage', () => {
         expect(c.totalDays).toBe(455);
         expect(c.usedDays).toBe(166);
         expect(c.unlimited).toBe(false);
-        expect(c.axisLeft).toBe('Jan 2025');
-        expect(c.axisRight).toBe('Mar 2026');
+        expect(c.axisLeft).toBe('2025/01');
+        expect(c.axisRight).toBe('2026/03');
+        // a block's tooltip is the period in the same one format
+        expect(c.segments.map(s => s.label)).toEqual([
+            '2025/01/01 00:00 – 2025/02/28 23:59',
+            '2025/06/01 00:00 – 2025/07/31 23:59',
+            '2025/11/03 06:00 – 2025/12/19 18:00',
+        ]);
         expect(c.segments).toHaveLength(3);
         expect(c.segments.every(s => s.kind === 'ok')).toBe(true);
         // First block starts at the very left and is 59/455 wide.
@@ -165,7 +211,7 @@ describe('computeCoverage', () => {
 
     it('overlapping periods count their union once and the later block is flagged "ovl"', () => {
         const c = computeCoverage([p('a', '2025-01-01T00:00', '2025-02-28T23:59'), p('b', '2025-02-15T00:00', '2025-03-31T23:59')], B)!;
-        expect(c.usedDays).toBe(90); // 1 Jan -> 31 Mar, NOT 59 + 45
+        expect(c.usedDays).toBe(90); // 2025/01/01 -> 2025/03/31, NOT 59 + 45
         expect(c.segments.map(s => s.kind)).toEqual(['ok', 'ovl']);
     });
 
@@ -182,7 +228,7 @@ describe('computeCoverage', () => {
 
     it('open ends run to the dataset edge; periods beyond the dataset are clamped', () => {
         const open = computeCoverage([p('a', '', '2025-01-11T00:00'), p('b', '2026-03-21T00:00', '')], B)!;
-        expect(open.usedDays).toBe(21); // 10 d at the start + 10.99 d at the end (21 Mar -> 31 Mar 23:50), rounded once
+        expect(open.usedDays).toBe(21); // 10 d at the start + 10.99 d at the end (03/21 -> 03/31 23:50), rounded once
         const wide = computeCoverage([p('a', '2024-01-01T00:00', '2030-01-01T00:00')], B)!;
         expect(wide.usedDays).toBe(455);
         expect(wide.segments[0].leftPct).toBe(0);
@@ -201,10 +247,10 @@ describe('computeTestCoverage (scoring periods on the timeline — "just score i
     it('one segment per scoring period, named S1, S2 … by list position; overlapping days are counted once', () => {
         const c = computeTestCoverage([p('a', '2025-01-01T00:00', '2025-01-31T00:00'), p('b', '2025-01-21T00:00', '2025-02-10T00:00')], B)!;
         expect(c.segments.map(s => s.label)).toEqual([
-            'S1 · 1 Jan 2025 00:00 – 31 Jan 2025 00:00',
-            'S2 · 21 Jan 2025 00:00 – 10 Feb 2025 00:00',
+            'S1 · 2025/01/01 00:00 – 2025/01/31 00:00',
+            'S2 · 2025/01/21 00:00 – 2025/02/10 00:00',
         ]);
-        expect(c.usedDays).toBe(40); // 1 Jan -> 10 Feb, the 10 shared days once
+        expect(c.usedDays).toBe(40); // 2025/01/01 -> 2025/02/10, the 10 shared days once
         expect(c.segments[0].leftPct).toBe(0);
     });
 
@@ -219,7 +265,7 @@ describe('computeTestCoverage (scoring periods on the timeline — "just score i
 
     it('an unparseable or reversed period draws nothing but keeps its number for the others; unknown bounds = null', () => {
         const c = computeTestCoverage([p('bad', '2025-02-10T00:00', '2025-02-01T00:00'), p('ok', '2025-03-01T00:00', '2025-03-11T00:00')], B)!;
-        expect(c.segments.map(s => s.label)).toEqual(['S2 · 1 Mar 2025 00:00 – 11 Mar 2025 00:00']);
+        expect(c.segments.map(s => s.label)).toEqual(['S2 · 2025/03/01 00:00 – 2025/03/11 00:00']);
         expect(c.usedDays).toBe(10);
         expect(computeTestCoverage([p('a', '2025-03-01T00:00', '2025-03-11T00:00')], null)).toBeNull();
     });
@@ -233,21 +279,23 @@ describe('condition symbols', () => {
 });
 
 describe('formatPeriodChip (Step-1 card / summary sentence)', () => {
-    it('whole days: "1 Jan 2026 → 31 Mar 2026" - the year on BOTH sides, even inside one year', () => {
-        expect(formatPeriodChip(p('a', '2026-01-01T00:00', '2026-03-31T23:59'))).toBe('1 Jan 2026 → 31 Mar 2026');
+    it('whole days: "2026/01/01 00:00 → 2026/03/31 23:59" - the full date AND the time on both sides, on a whole-day edge too', () => {
+        expect(formatPeriodChip(p('a', '2026-01-01T00:00', '2026-03-31T23:59'))).toBe('2026/01/01 00:00 → 2026/03/31 23:59');
+        // the preview the user chose the format from
+        expect(formatPeriodChip(p('a', '2025-01-01T00:05', '2025-03-31T23:59'))).toBe('2025/01/01 00:05 → 2025/03/31 23:59');
     });
     it('open ends read Start / End; both open reads "Whole dataset"', () => {
-        expect(formatPeriodChip(p('a', '', '2026-03-31T23:59'))).toBe('Start → 31 Mar 2026');
-        expect(formatPeriodChip(p('a', '2026-04-15T00:00', ''))).toBe('15 Apr 2026 → End');
+        expect(formatPeriodChip(p('a', '', '2026-03-31T23:59'))).toBe('Start → 2026/03/31 23:59');
+        expect(formatPeriodChip(p('a', '2026-04-15T00:00', ''))).toBe('2026/04/15 00:00 → End');
         expect(formatPeriodChip(p('a', '', ''))).toBe('Whole dataset');
     });
-    it('a side that is not a day boundary (start 00:00 / end 23:59) also shows its time', () => {
-        expect(formatPeriodChip(p('a', '2025-11-03T06:00', '2025-12-19T18:00'))).toBe('3 Nov 2025 06:00 → 19 Dec 2025 18:00');
-        expect(formatPeriodChip(p('a', '2025-11-03T00:00', '2025-12-19T18:00'))).toBe('3 Nov 2025 → 19 Dec 2025 18:00');
+    it('a side that is not a day boundary shows its time like any other', () => {
+        expect(formatPeriodChip(p('a', '2025-11-03T06:00', '2025-12-19T18:00'))).toBe('2025/11/03 06:00 → 2025/12/19 18:00');
+        expect(formatPeriodChip(p('a', '2025-11-03T00:00', '2025-12-19T18:00'))).toBe('2025/11/03 00:00 → 2025/12/19 18:00');
     });
     it('date-only text counts as local midnight; unparseable text is shown as typed', () => {
-        expect(formatPeriodChip(p('a', '2026-01-01', '2026-02-01T23:59'))).toBe('1 Jan 2026 → 1 Feb 2026');
-        expect(formatPeriodChip(p('a', 'garbage', '2026-02-01T23:59'))).toBe('garbage → 1 Feb 2026');
+        expect(formatPeriodChip(p('a', '2026-01-01', '2026-02-01T23:59'))).toBe('2026/01/01 00:00 → 2026/02/01 23:59');
+        expect(formatPeriodChip(p('a', 'garbage', '2026-02-01T23:59'))).toBe('garbage → 2026/02/01 23:59');
     });
 });
 

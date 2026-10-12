@@ -321,7 +321,7 @@ describe('TimePeriodsEditor — invalid and overlapping periods', () => {
         expect(screen.getByLabelText('P2 start').closest('.f4-dtw')!.className).not.toContain('f4-dtw--bad');
         const reason = screen.getByTestId('period-invalid-2');
         expect(reason.getAttribute('role')).toBe('alert');
-        expect(reason.textContent).toBe('P2 ends before it starts — pick an end after 11 May 2026');
+        expect(reason.textContent).toBe('P2 ends before it starts — pick an end after 2026/05/11 00:00');
         // the valid row is untouched
         expect(screen.getByTestId('period-row-1').className).toBe('rcm-per');
         expect(screen.queryByTestId('period-invalid-1')).toBeNull();

@@ -2,7 +2,7 @@ import { useMemo, memo, useRef, useState, useEffect, useCallback } from 'react';
 import { Tag, Trash2, Search, ZoomIn, ZoomOut } from 'lucide-react';
 import ResponsiveECharts from './ResponsiveECharts';
 import { ChartProps } from './ChartTypes';
-import { formatDate, formatDateTime } from '../../utils/dateFormat';
+import { formatAxisTick, formatDateTime } from '../../utils/dateFormat';
 import { fmtNum, sensorInlineHtml, useLayeredSensorLookup } from '../sensor/sensorInfo';
 import { hexToRgbaCss, rgbaToHex, RANGE_PALETTE, TAG_BADGES, MAX_TAGGED_POINTS } from './pairPlotColors';
 import type { LineTaggedPoint } from '../../types';
@@ -852,7 +852,10 @@ function LineChart({
                 // month start, and the two series of ticks often land a day or two apart
                 // ("2026/04/29" on top of "2026/05/01") — the colliding label is dropped
                 // instead of being printed over its neighbour.
-                axisLabel: { formatter: (val: number) => formatDate(new Date(val)), color: txtSecondary, hideOverlap: true },
+                // `formatAxisTick` — the one tick label of every time axis in the app: the date
+                // alone on a midnight tick, date + time on a finer one, so ticks inside one day
+                // (zoomed in) no longer all read the same date.
+                axisLabel: { formatter: formatAxisTick, color: txtSecondary, hideOverlap: true },
                 axisLine: { lineStyle: { color: gridLine } }
             },
             yAxis: sensors.map((sensor, index) => {

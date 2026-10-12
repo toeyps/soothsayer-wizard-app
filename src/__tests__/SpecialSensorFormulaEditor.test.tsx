@@ -204,6 +204,23 @@ describe('the check line and the report', () => {
         expect(screen.getByRole('img', { name: 'Preview of the result' })).toBeTruthy();
     });
 
+    // One date format in the whole app (2026-10-12): it read "2024-01-01 → 2024-03-01".
+    it('the preview header names the first → last row DATE in the one date format', async () => {
+        setup();
+        type('$A + $B');
+        await flush();
+        expect([...document.querySelectorAll('.fx-ct .fx-r')].map(n => n.textContent)).toContain('Downsampled · 2024/01/01 → 2024/03/01');
+        expect(document.body.textContent).not.toContain('2024-01-01 →');
+    });
+
+    it('the preview dates are the rows\' own dates — an offset in the text never moves them to another day', async () => {
+        reply = () => ok({ period: ['2024-01-01T00:30:00+07:00', '2024-03-01T23:30:00Z'] });
+        setup();
+        type('$A + $B');
+        await flush();
+        expect([...document.querySelectorAll('.fx-ct .fx-r')].map(n => n.textContent)).toContain('Downsampled · 2024/01/01 → 2024/03/01');
+    });
+
     it('an unknown function gets the closest engine function as its fix (once Rust sent the list)', async () => {
         setup();
         type('$A + 1');

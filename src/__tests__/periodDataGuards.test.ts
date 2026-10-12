@@ -43,12 +43,12 @@ const AFTER = p('2026-02-01T00:00', '2026-03-01T00:00');
 const BEFORE = p('2024-02-01T00:00', '2024-03-01T00:00');
 
 describe('periodDataFit / validatePeriods against the loaded data', () => {
-    it('a period entirely AFTER the data is invalid: fault, reason with the data range in the Workbench date format, both fields wrong', () => {
+    it('a period entirely AFTER the data is invalid: fault, reason with the data range in the one date format (date + time on both sides), both fields wrong', () => {
         const [st] = validatePeriods([AFTER], DATA);
         expect(st.invalid).toBe(true);
         expect(st.fault).toBe('outside-data');
-        expect(st.rowReason).toBe('P1 is outside the data (1 Jan 2025 – 31 Dec 2025)');
-        expect(st.reason).toBe('P1 is outside the data (1 Jan 2025 – 31 Dec 2025).');
+        expect(st.rowReason).toBe('P1 is outside the data (2025/01/01 00:00 – 2025/12/31 23:59)');
+        expect(st.reason).toBe('P1 is outside the data (2025/01/01 00:00 – 2025/12/31 23:59).');
         expect(st.dataNote).toBeUndefined();
         expect(faultOnSide('outside-data', 'start')).toBe(true);
         expect(faultOnSide('outside-data', 'end')).toBe(true);
@@ -58,7 +58,7 @@ describe('periodDataFit / validatePeriods against the loaded data', () => {
     it('a period entirely BEFORE the data is invalid too, named by its list number', () => {
         const status = validatePeriods([BEFORE, INSIDE], DATA);
         expect(status.map(s => s.fault)).toEqual(['outside-data', undefined]);
-        expect(status[0].rowReason).toBe('P1 is outside the data (1 Jan 2025 – 31 Dec 2025)');
+        expect(status[0].rowReason).toBe('P1 is outside the data (2025/01/01 00:00 – 2025/12/31 23:59)');
         expect(status[1].overlapsPrev).toBe(false); // never "overlaps" a period that is already flagged
     });
 
@@ -72,21 +72,21 @@ describe('periodDataFit / validatePeriods against the loaded data', () => {
     it('PARTLY outside is valid, with one quiet note that names the side', () => {
         const ends = validatePeriods([p('2025-11-01T00:00', '2026-02-28T23:59')], DATA)[0];
         expect(ends.invalid).toBe(false);
-        expect(ends.dataNote).toBe('Only the part inside the data is used (data ends 31 Dec 2025)');
+        expect(ends.dataNote).toBe('Only the part inside the data is used (data ends 2025/12/31)');
         const starts = validatePeriods([p('2024-11-01T00:00', '2025-02-28T23:59')], DATA)[0];
-        expect(starts).toMatchObject({ invalid: false, dataNote: 'Only the part inside the data is used (data starts 1 Jan 2025)' });
+        expect(starts).toMatchObject({ invalid: false, dataNote: 'Only the part inside the data is used (data starts 2025/01/01)' });
         const both = validatePeriods([p('2024-11-01T00:00', '2026-02-28T23:59')], DATA)[0];
-        expect(both).toMatchObject({ invalid: false, dataNote: 'Only the part inside the data is used (data runs 1 Jan 2025 – 31 Dec 2025)' });
+        expect(both).toMatchObject({ invalid: false, dataNote: 'Only the part inside the data is used (data runs 2025/01/01 – 2025/12/31)' });
     });
 
     it('a bound on the data\'s own first / last calendar day is not "past" it (data that ends at 23:50, a period typed to 23:59)', () => {
         const bounds = { min: '2025-01-01 00:10:00', max: '2025-12-31 23:50:00' };
         expect(validatePeriods([p('2025-01-01T00:00', '2025-12-31T23:59')], bounds)[0]).toMatchObject({ invalid: false, dataNote: undefined });
         // one day further is a note
-        expect(validatePeriods([p('2025-01-01T00:00', '2026-01-01T23:59')], bounds)[0].dataNote).toBe('Only the part inside the data is used (data ends 31 Dec 2025)');
-        // ...and the invalid reason keeps the time of an edge that is not a whole-day edge
+        expect(validatePeriods([p('2025-01-01T00:00', '2026-01-01T23:59')], bounds)[0].dataNote).toBe('Only the part inside the data is used (data ends 2025/12/31)');
+        // ...the invalid reason gives the data's range with its time on both sides (the note above: the date alone)
         expect(validatePeriods([p('2026-01-05T00:00', '2026-01-06T00:00')], bounds)[0].rowReason)
-            .toBe('P1 is outside the data (1 Jan 2025 00:10 – 31 Dec 2025 23:50)');
+            .toBe('P1 is outside the data (2025/01/01 00:10 – 2025/12/31 23:50)');
     });
 
     it('with the bounds unknown nothing is flagged — and the plain call (no bounds) is exactly the old rule', () => {
@@ -110,17 +110,20 @@ describe('periodDataFit / validatePeriods against the loaded data', () => {
         const tests: TestPeriod[] = [INSIDE, AFTER, p('2025-12-20T00:00', '2026-01-10T00:00')];
         const status = validateTestPeriods(tests, DATA);
         expect(status.map(s => s.invalid)).toEqual([false, true, false]);
-        expect(status[1]).toMatchObject({ fault: 'outside-data', rowReason: 'S2 is outside the data (1 Jan 2025 – 31 Dec 2025)' });
-        expect(status[2].dataNote).toBe('Only the part inside the data is used (data ends 31 Dec 2025)');
+        expect(status[1]).toMatchObject({ fault: 'outside-data', rowReason: 'S2 is outside the data (2025/01/01 00:00 – 2025/12/31 23:59)' });
+        expect(status[2].dataNote).toBe('Only the part inside the data is used (data ends 2025/12/31)');
         expect(firstInvalidTestPeriodNumber(tests, DATA)).toBe(2);
-        expect(testPeriodsError(tests, DATA)).toBe('S2 is outside the data (1 Jan 2025 – 31 Dec 2025).');
+        expect(testPeriodsError(tests, DATA)).toBe('S2 is outside the data (2025/01/01 00:00 – 2025/12/31 23:59).');
         // without bounds: the old rule
         expect(testPeriodsError(tests)).toBeNull();
     });
 
-    it('dataRangeText: the date alone on a whole-day edge, date + time otherwise', () => {
-        expect(dataRangeText(DATA)).toBe('1 Jan 2025 – 31 Dec 2025');
-        expect(dataRangeText({ min: '2025-01-01 06:00:00', max: '2025-12-31 23:59:00' })).toBe('1 Jan 2025 06:00 – 31 Dec 2025');
+    it('dataRangeText: always date + time on both sides — a whole-day edge is not shortened to the date alone', () => {
+        expect(dataRangeText(DATA)).toBe('2025/01/01 00:00 – 2025/12/31 23:59');
+        expect(dataRangeText({ min: '2025-01-01 06:00:00', max: '2025-12-31 23:59:00' })).toBe('2025/01/01 06:00 – 2025/12/31 23:59');
+        expect(dataRangeText({ min: '2025-01-01 00:10:00', max: '2025-12-31 23:50:00' })).toBe('2025/01/01 00:10 – 2025/12/31 23:50');
+        // no month name, whatever the months
+        expect(dataRangeText({ min: '2025-05-01 00:00:00', max: '2025-09-30 23:59:00' })).not.toMatch(/[A-Za-z]/);
     });
 
     it('the request builders are NOT changed by the guard (no bounds there): same wire, same count plan, so nothing is asked differently', () => {
@@ -136,7 +139,7 @@ describe('a period outside the data: NEW / CHANGED in the draft = invalid, exact
         const [inside, out] = validatePeriods([INSIDE, AFTER], DATA, [INSIDE, AFTER]);
         expect(inside).toMatchObject({ invalid: false, dataNote: undefined });
         expect(inside.outsideData).toBeUndefined();
-        expect(out).toMatchObject({ invalid: false, fault: undefined, outsideData: true, dataNote: 'P2 is outside the data (1 Jan 2025 – 31 Dec 2025) — it is not used' });
+        expect(out).toMatchObject({ invalid: false, fault: undefined, outsideData: true, dataNote: 'P2 is outside the data (2025/01/01 00:00 – 2025/12/31 23:59) — it is not used' });
         expect(firstInvalidPeriodNumber([INSIDE, AFTER], DATA, [INSIDE, AFTER])).toBeNull();
     });
 
@@ -170,7 +173,7 @@ describe('a period outside the data: NEW / CHANGED in the draft = invalid, exact
 
     it('savedOutsideDataNotes: the card\'s sentences for the saved lists — nothing while the range is unknown', () => {
         expect(savedOutsideDataNotes([INSIDE, AFTER], [BEFORE], DATA)).toEqual([
-            'P2 is outside the data (1 Jan 2025 – 31 Dec 2025) — it is not used',
+            'P2 is outside the data (2025/01/01 00:00 – 2025/12/31 23:59) — it is not used',
             'S1 is outside the data — nothing is scored there',
         ]);
         expect(savedOutsideDataNotes([INSIDE], [INSIDE], DATA)).toEqual([]);
@@ -192,7 +195,7 @@ describe('a period outside the data: NEW / CHANGED in the draft = invalid, exact
 describe('runningConditionApplyBlock with the data guards', () => {
     it('a train period entirely outside the data blocks Apply / Save like any invalid period — "Fix P1 before applying" / "…before saving"', () => {
         const block = runningConditionApplyBlock([AFTER], [], 'applying', { bounds: DATA });
-        expect(block).toMatchObject({ kind: 'invalid-train', periodNumber: 1, footer: 'Fix P1 before applying', reason: 'P1 is outside the data (1 Jan 2025 – 31 Dec 2025).' });
+        expect(block).toMatchObject({ kind: 'invalid-train', periodNumber: 1, footer: 'Fix P1 before applying', reason: 'P1 is outside the data (2025/01/01 00:00 – 2025/12/31 23:59).' });
         expect(runningConditionApplyBlock([INSIDE, AFTER], [], 'saving', { bounds: DATA })).toMatchObject({ kind: 'invalid-train', periodNumber: 2, footer: 'Fix P2 before saving' });
     });
 
@@ -241,7 +244,7 @@ describe('getBuildBlock with the data guards (the PERSISTED state)', () => {
     const fg = (periods: TimePeriod[]) => ({ models: [], runningConditionFilters: [], runningConditionCombine: 'and' as const, runningConditionNoneConfirmed: true, runningConditionTimePeriods: periods });
     const model = (over: Partial<FailureModel> = {}) => mk({ id: 'm1', category: 'performance', ...over });
 
-    const WS_NO_DATA = 'No train period is inside the data (1 Jan 2025 – 31 Dec 2025) — nothing to train on. Move a train period inside the data (Running condition → Edit).';
+    const WS_NO_DATA = 'No train period is inside the data (2025/01/01 00:00 – 2025/12/31 23:59) — nothing to train on. Move a train period inside the data (Running condition → Edit).';
 
     it('R4: NO train period inside the loaded data blocks Train (`no-rows` / outside-data) with the named reason', () => {
         const block = getBuildBlock(model(), fg([AFTER]), null, { bounds: DATA });
@@ -304,8 +307,8 @@ describe('getBuildBlock with the data guards (the PERSISTED state)', () => {
     });
 
     it('the train queue names both reasons: preflight "Skipped" text + where Fix → goes', () => {
-        expect(preflightReason('P1 is outside the data (1 Jan 2025 – 31 Dec 2025).')).toEqual({ text: 'Train period P1 is outside the data (1 Jan 2025 – 31 Dec 2025)', fix: 'runningCondition' });
-        expect(preflightReason('P1 is outside the data (1 Jan 2025 – 31 Dec 2025).', { customMode: true }).fix).toBe('settings');
+        expect(preflightReason('P1 is outside the data (2025/01/01 00:00 – 2025/12/31 23:59).')).toEqual({ text: 'Train period P1 is outside the data (2025/01/01 00:00 – 2025/12/31 23:59)', fix: 'runningCondition' });
+        expect(preflightReason('P1 is outside the data (2025/01/01 00:00 – 2025/12/31 23:59).', { customMode: true }).fix).toBe('settings');
         expect(preflightReason(NO_TRAIN_ROWS_REASON)).toEqual({ text: 'No rows to train on', fix: 'runningCondition' });
         expect(preflightReason(NO_TRAIN_ROWS_REASON_CUSTOM, { customMode: true })).toEqual({ text: 'No rows to train on in its own training data', fix: 'settings' });
         // ...whether or not there is a condition to relax
@@ -349,7 +352,7 @@ describe('"No data for this model in the loaded file" — the texts of a trained
     });
 
     it('the cause is the one the guard found: the data range for "outside the data", the condition for a zero count ("Use all rows" names no condition), the engine\'s finding otherwise', () => {
-        expect(noModelDataCauseText('outside-data', DATA)).toBe('None of its train periods is inside the data (1 Jan 2025 – 31 Dec 2025).');
+        expect(noModelDataCauseText('outside-data', DATA)).toBe('None of its train periods is inside the data (2025/01/01 00:00 – 2025/12/31 23:59).');
         expect(noModelDataCauseText('zero-rows', DATA)).toBe('No row passes the running condition in its train periods.');
         expect(noModelDataCauseText('zero-rows', DATA, false)).toBe('Its train periods hold no row of the data.');
         expect(noModelDataCauseText('engine', null)).toBe('No row inside its train periods passes the running condition with values for this model.');

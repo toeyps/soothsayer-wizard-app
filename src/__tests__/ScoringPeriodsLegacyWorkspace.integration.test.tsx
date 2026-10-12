@@ -180,8 +180,8 @@ describe('a workspace saved before "just score it" (scoring periods with label /
 
         // Step-1 card: plain S1 / S2, none of the removed words anywhere in the window.
         expect(chips()).toHaveLength(2);
-        expect(chips()[0]).toMatch(/^S1 · 1 Jan 2026 12:00 → 1 Jan 2026 23:00$/);
-        expect(chips()[1]).toMatch(/^S2 · 2 Jan 2026 → 3 Jan 2026 00:00$/);
+        expect(chips()[0]).toMatch(/^S1 · 2026\/01\/01 12:00 → 2026\/01\/01 23:00$/);
+        expect(chips()[1]).toMatch(/^S2 · 2026\/01\/02 00:00 → 2026\/01\/03 00:00$/);
         expect(bmwEl().textContent).not.toMatch(REMOVED_UI);
 
         // Both models are still Complete - in this window and on the Dashboard.
@@ -207,10 +207,10 @@ describe('a workspace saved before "just score it" (scoring periods with label /
         expect(within(bmw().getByTestId('test-results')).getByText('Scoring results')).toBeTruthy();
         expect(bmw().getByTestId('test-results').textContent).toContain('for reading only — never blocks Mark complete');
         expect(bmw().getByTestId('test-result-1-big').textContent).toBe('0.0% of running hours below 80');
-        expect(bmw().getByTestId('test-result-1-lowest').textContent).toBe('Lowest 91 (1 h average) on 1 Jan 2026 15:00.');
+        expect(bmw().getByTestId('test-result-1-lowest').textContent).toBe('Lowest 91 (1 h average) on 2026/01/01 15:00:00.');
         // S2 was "Known problem" with an event time: it reads exactly like S1 - two facts, no verdict, no lead time.
         expect(bmw().getByTestId('test-result-2-big').textContent).toBe('12.5% of running hours below 80');
-        expect(bmw().getByTestId('test-result-2-lowest').textContent).toBe('Lowest 64 (1 h average) on 2 Jan 2026 15:00.');
+        expect(bmw().getByTestId('test-result-2-lowest').textContent).toBe('Lowest 64 (1 h average) on 2026/01/02 15:00:00.');
         for (const n of [1, 2]) {
             expect(tile(n).className).toBe('vt-tile'); // no green / amber tone class
             expect(tile(n).textContent).not.toMatch(REMOVED_UI);
@@ -243,7 +243,7 @@ describe('a workspace saved before "just score it" (scoring periods with label /
         await waitFor(() => expect(previewsFor('TAG3').length).toBeGreaterThan(0));
         expect(lastPreviewFor('TAG3').test_periods).toEqual([{ start: '2026-01-02T06:00', end: '2026-01-02T20:00' }]);
         if (!bmwEl().querySelector('[data-testid="set-points-card"]')) await openHealth();
-        await waitFor(() => expect(tile(1).textContent).toContain('2 Jan 2026 06:00 → 2 Jan 2026 20:00'));
+        await waitFor(() => expect(tile(1).textContent).toContain('2026/01/02 06:00 → 2026/01/02 20:00'));
         expect(bmw().queryByTestId('test-result-2')).toBeNull();
         expect(bmw().getByTestId('test-results').textContent).not.toMatch(REMOVED_UI);
         // the Custom model was saved by the same old build: the same hint, still Complete
@@ -298,7 +298,7 @@ describe('a workspace saved before "just score it" (scoring periods with label /
         // Both windows say so.
         expect(bmw().getByTestId('tests-changed-notice').textContent)
             .toBe('Scoring periods changed — 1 complete model needs Mark complete again. It was re-scored with the same trained model, not re-trained.');
-        expect(chips()[1]).toBe('S2 · 2 Jan 2026 → 2 Jan 2026 20:00');
+        expect(chips()[1]).toBe('S2 · 2026/01/02 00:00 → 2026/01/02 20:00');
         expect(pill()).not.toBe('Complete');
         expect(bmwDot('i1').state).not.toBe('complete');
         expect(bmwDot('i1').state).not.toBe('stale'); // still trained: no Re-train asked
@@ -313,7 +313,7 @@ describe('a workspace saved before "just score it" (scoring periods with label /
         await waitFor(() => expect(bmw().getByTestId('tests-changed-banner').getAttribute('data-state')).toBe('changed'));
         const NEW_WIRE = [WIRE[0], { start: '2026-01-02T00:00', end: '2026-01-02T20:00' }];
         await waitFor(() => expect(lastPreviewFor('TAG1').test_periods).toEqual(NEW_WIRE));
-        await waitFor(() => expect(tile(2).textContent).toContain('2 Jan 2026 → 2 Jan 2026 20:00'));
+        await waitFor(() => expect(tile(2).textContent).toContain('2026/01/02 00:00 → 2026/01/02 20:00'));
         // The scoring results never block it.
         const exportsBefore = env.backend!.cmds('export_model_files').length;
         expect(markBtn().textContent).toContain('Mark complete');
@@ -348,7 +348,7 @@ describe('a workspace saved before "just score it" (scoring periods with label /
 
         // ── 6) Close and reopen the app: what was saved is what comes back ──────
         await restartApp();
-        expect(chips()).toEqual(['S1 · 1 Jan 2026 12:00 → 1 Jan 2026 23:00', 'S2 · 2 Jan 2026 → 2 Jan 2026 20:00']);
+        expect(chips()).toEqual(['S1 · 2026/01/01 12:00 → 2026/01/01 23:00', 'S2 · 2026/01/02 00:00 → 2026/01/02 20:00']);
         expect(bmw().queryByTestId('tests-changed-notice')).toBeNull();
         selectSensor('tag1');
         await settle(400);

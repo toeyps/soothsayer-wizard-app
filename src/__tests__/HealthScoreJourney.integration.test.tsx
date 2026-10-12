@@ -250,7 +250,7 @@ describe('Relationship: the whole journey', () => {
         await settle(50);
         await waitFor(() => expect(bmw().getByTestId('save-ok')).toBeTruthy());
         // the saved message is the footer sentence (no banner, no file list on the page)
-        expect(bmw().getByTestId('save-ok').textContent).toMatch(/^Files saved \d{1,2} [A-Z][a-z]{2} \d{4} \d{2}:\d{2} · /);
+        expect(bmw().getByTestId('save-ok').textContent).toMatch(/^Files saved \d{4}\/\d{2}\/\d{2} \d{2}:\d{2} · /);
         expect(bmw().getByTestId('save-ok').closest('.f4-foot')).not.toBeNull();
         const exp = env.backend!.cmds('export_model_files').pop()!;
         expect(exp.args.request.cache_key).toBe(pr.args.cache_key);

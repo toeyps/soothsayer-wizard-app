@@ -66,6 +66,23 @@ describe('HighlightsPanel', () => {
             expect((screen.getByPlaceholderText('Label (optional)') as HTMLInputElement).value).toBe('');
         });
 
+        // One date format in the whole app (2026-10-12): the chip used to read "3/14 21:25 → 3/15 08:00".
+        it('a highlight chip shows its range in the one date format: full date + time on both sides, 24 h, no seconds', () => {
+            const hl = (id: string, start: string, end: string): TimeHighlight => ({ id, start, end, label: id, color: '#ff0000', enabled: true });
+            render(<HighlightsPanel {...makeProps({ timeHighlights: [
+                hl('a', '2025-03-14T21:25', '2025-03-15T08:00'),
+                hl('b', '2025-01-01T00:00', '2025-12-31T23:59'),
+                hl('c', 'not a date', '2025-12-31T23:59'),
+            ] })} />);
+            const ranges = [...document.querySelectorAll('.highlights-chip-body small')].map(s => s.textContent);
+            expect(ranges).toEqual([
+                '2025/03/14 21:25 → 2025/03/15 08:00',
+                '2025/01/01 00:00 → 2025/12/31 23:59',
+                '? → 2025/12/31 23:59', // a bound that cannot be read stays "?"
+            ]);
+            for (const r of ranges) expect(r).not.toMatch(/[A-Za-z]|^\d{1,2}\/\d{1,2} /);
+        });
+
         it('rejects a missing start or end with an inline error', () => {
             const onAddTimeHighlight = vi.fn();
             render(<HighlightsPanel {...makeProps({ onAddTimeHighlight })} />);

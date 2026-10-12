@@ -159,7 +159,7 @@ describe('(a) a COMPLETE Relation model whose fit Rust no longer holds', () => {
         expect(diskModel('r1')).toMatchObject({ status: true, lastTrainedAt: before.trainedAt, healthSetPoints: REL_SP });
         // back to a plain Complete model everywhere
         expect(footPill()).toBe('Complete');
-        expect(sentence()).toMatch(/^Files saved \d{1,2} [A-Z][a-z]{2} \d{4} \d{2}:\d{2} · /);
+        expect(sentence()).toMatch(/^Files saved \d{4}\/\d{2}\/\d{2} \d{2}:\d{2} · /);
         expect(tabWords('r1')).toBe('Complete');
         expect(tabDot('r1')).toBe('complete');
         expect(bmwDot('r1').colour).toBe('complete');

@@ -358,8 +358,8 @@ function rcDraftEqual(a: RcDraft, b: RcDraft): boolean {
         && JSON.stringify(toScoringPeriods(a.testPeriods)) === JSON.stringify(toScoringPeriods(b.testPeriods));
 }
 
-/** A date in the footer ("Trained …", "Files saved …"): the ONE Workbench date
- *  format, "9 Feb 2026 23:50", in mono. */
+/** A date in the footer ("Trained …", "Files saved …"): an instant the app
+ *  recorded, in the app's one date format — "2026/02/09 23:50", in mono. */
 const Stamp = ({ at }: { at: string }) => <span className="wbx-dt">{formatStamp(at)}</span>;
 
 /**
@@ -4140,7 +4140,7 @@ export default function BuildModelWindow() {
         const hasDraft = m.id in drafts;
         // The header's Train sensor is the one place to train. This link focuses it.
         const goTrainSensor = trainSensorLink('footer-train-sensor');
-        // "Trained 9 Feb 2026 23:50 · scored on 2 periods".
+        // "Trained 2026/02/09 23:50 · scored on 2 periods".
         const trainedLine: ReactNode = m.lastTrainedAt
             ? <>Trained <Stamp at={m.lastTrainedAt} />{scoredCount > 0 ? ` · scored on ${scoredCount} period${scoredCount === 1 ? '' : 's'}` : ''}</>
             : null;

@@ -378,7 +378,7 @@ describe('(3) lastTrainedAt / trainedFingerprint survive a save + reload', () =>
         expect(h.invokes.find(c => c.cmd === 'count_period_rows')!.args.filter.value_filters).toHaveLength(1);
     });
 
-    it('a Complete model keeps its training metadata through reload and its footer says "Trained <date>" (one Workbench date format)', async () => {
+    it('a Complete model keeps its training metadata through reload and its footer says "Trained <date>" (the one date format)', async () => {
         writeDisk(wsState(currentFg([dashModel({ id: 'i1' })])));
         await mountBuildModel();
         await clickTrain();
@@ -389,7 +389,7 @@ describe('(3) lastTrainedAt / trainedFingerprint survive a save + reload', () =>
         await mountBuildModel();
         expect(diskModel('i1').lastTrainedAt).toBeTruthy();
         expect(pill()).toBe('Complete');
-        expect(footerStatus()).toMatch(/^Trained \d{1,2} [A-Z][a-z]{2} \d{4} \d{2}:\d{2}( · scored on \d+ periods?)?$/);
+        expect(footerStatus()).toMatch(/^Trained \d{4}\/\d{2}\/\d{2} \d{2}:\d{2}( · scored on \d+ periods?)?$/);
         // Un-marking brings it straight back to Trained (the metadata was never lost).
         await markIncompleteFromHealthPage();
         expect(pill()).toBe('Trained');

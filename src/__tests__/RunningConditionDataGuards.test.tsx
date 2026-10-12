@@ -56,7 +56,7 @@ describe('Train period rows against the loaded data', () => {
         const row = screen.getByTestId('period-row-2');
         expect(row.getAttribute('data-invalid')).toBe('true');
         expect(row.className).toContain('rcm-per--bad');
-        expect(screen.getByTestId('period-invalid-2').textContent).toBe('P2 is outside the data (1 Jan 2025 – 31 Dec 2025)');
+        expect(screen.getByTestId('period-invalid-2').textContent).toBe('P2 is outside the data (2025/01/01 00:00 – 2025/12/31 23:59)');
         expect(screen.getByTestId('period-invalid-2').getAttribute('role')).toBe('alert');
         expect(screen.getByLabelText('P2 start').getAttribute('aria-invalid')).toBe('true');
         expect(screen.getByLabelText('P2 end').getAttribute('aria-invalid')).toBe('true');
@@ -79,13 +79,13 @@ describe('Train period rows against the loaded data', () => {
         expect(screen.getByTestId('period-invalid-1').textContent).toMatch(/^P1 ends before it starts/);
         // ... and once the end is typed too, it is a period outside the data
         fireEvent.change(screen.getByLabelText('P1 end'), { target: { value: '2026-06-01T00:00' } });
-        expect(screen.getByTestId('period-invalid-1').textContent).toBe('P1 is outside the data (1 Jan 2025 – 31 Dec 2025)');
+        expect(screen.getByTestId('period-invalid-1').textContent).toBe('P1 is outside the data (2025/01/01 00:00 – 2025/12/31 23:59)');
     });
 
     it('a period PARTLY outside: one quiet amber note, nothing red, the days stay', () => {
         render(<TimePeriodsEditor periods={[PARTLY]} onChange={() => {}} bounds={DATA} />);
         const note = screen.getByTestId('period-data-note-1');
-        expect(note.textContent).toBe('Only the part inside the data is used (data ends 31 Dec 2025)');
+        expect(note.textContent).toBe('Only the part inside the data is used (data ends 2025/12/31)');
         expect(note.className).toBe('rcm-permsg rcm-permsg--warn');
         expect(note.getAttribute('role')).toBeNull(); // quiet: not an alert
         expect(screen.getByTestId('period-row-1').getAttribute('data-invalid')).toBeNull();
@@ -109,7 +109,7 @@ describe('Train period rows against the loaded data', () => {
         expect(row.className).toContain('rcm-per--warn');
         expect(row.className).not.toContain('rcm-per--bad');
         const note = screen.getByTestId('period-data-note-2');
-        expect(note.textContent).toBe('P2 is outside the data (1 Jan 2025 – 31 Dec 2025) — it is not used');
+        expect(note.textContent).toBe('P2 is outside the data (2025/01/01 00:00 – 2025/12/31 23:59) — it is not used');
         expect(note.className).toBe('rcm-permsg rcm-permsg--warn');
         expect(note.getAttribute('role')).toBeNull();
         expect(screen.queryByTestId('period-invalid-2')).toBeNull();
@@ -117,7 +117,7 @@ describe('Train period rows against the loaded data', () => {
         expect(screen.getByLabelText('P2 end').getAttribute('aria-invalid')).toBeNull();
         // moved to another place outside the data: now it is what the user picks — invalid
         fireEvent.change(screen.getByLabelText('P2 end'), { target: { value: '2026-04-01T00:00' } });
-        expect(screen.getByTestId('period-invalid-2').textContent).toBe('P2 is outside the data (1 Jan 2025 – 31 Dec 2025)');
+        expect(screen.getByTestId('period-invalid-2').textContent).toBe('P2 is outside the data (2025/01/01 00:00 – 2025/12/31 23:59)');
         expect(screen.getByTestId('period-row-2').getAttribute('data-invalid')).toBe('true');
         // typed back to what was saved: the warning again
         fireEvent.change(screen.getByLabelText('P2 end'), { target: { value: AFTER.end } });
@@ -151,7 +151,7 @@ describe('Scoring period rows against the loaded data', () => {
     it('entirely outside: red row, both fields red, "S1 is outside the data (…)"', () => {
         tests([AFTER]);
         expect(screen.getByTestId('test-row-1').getAttribute('data-invalid')).toBe('true');
-        expect(screen.getByTestId('test-invalid-1').textContent).toBe('S1 is outside the data (1 Jan 2025 – 31 Dec 2025)');
+        expect(screen.getByTestId('test-invalid-1').textContent).toBe('S1 is outside the data (2025/01/01 00:00 – 2025/12/31 23:59)');
         expect(screen.getByLabelText('Scoring period 1 start').getAttribute('aria-invalid')).toBe('true');
         expect(screen.getByLabelText('Scoring period 1 end').getAttribute('aria-invalid')).toBe('true');
         expect(screen.queryByTestId('test-data-note-1')).toBeNull();
@@ -170,13 +170,13 @@ describe('Scoring period rows against the loaded data', () => {
         expect(screen.queryByTestId('test-no-rows-1')).toBeNull();
         // changed: invalid
         fireEvent.change(screen.getByLabelText('Scoring period 1 start'), { target: { value: '2026-02-02T00:00' } });
-        expect(screen.getByTestId('test-invalid-1').textContent).toBe('S1 is outside the data (1 Jan 2025 – 31 Dec 2025)');
+        expect(screen.getByTestId('test-invalid-1').textContent).toBe('S1 is outside the data (2025/01/01 00:00 – 2025/12/31 23:59)');
     });
 
     it('partly outside: the quiet amber note; a scoring period with no running rows: an amber note too — neither is a fault', () => {
         const before = p('s', '2024-12-01T00:00', '2025-01-15T00:00');
         tests([before], st('ok', null, counts([pc(before, 300, 0)])));
-        expect(screen.getByTestId('test-data-note-1').textContent).toBe('Only the part inside the data is used (data starts 1 Jan 2025)');
+        expect(screen.getByTestId('test-data-note-1').textContent).toBe('Only the part inside the data is used (data starts 2025/01/01)');
         expect(screen.getByTestId('test-no-rows-1').textContent).toBe('no running rows in S1');
         expect(screen.getByTestId('test-no-rows-1').className).toBe('rcm-permsg rcm-permsg--warn');
         expect(screen.getByTestId('test-row-1').getAttribute('data-invalid')).toBeNull();
@@ -272,7 +272,7 @@ describe('The one-line running-condition card (the PERSISTED condition)', () => 
         expect(el.getAttribute('data-norows')).toBeNull();
         expect(el.className).toContain('rcc-card--ok');
         const warn = screen.getByTestId('rc-card-outside');
-        expect(warn.textContent).toBe('⚠ P2 is outside the data (1 Jan 2025 – 31 Dec 2025) — it is not used');
+        expect(warn.textContent).toBe('⚠ P2 is outside the data (2025/01/01 00:00 – 2025/12/31 23:59) — it is not used');
         expect(warn.className).toContain('rcc-line-warn');
         expect(warn.getAttribute('role')).toBe('status');
         expect(screen.getByTestId('rc-card-rows').textContent).toBe('11,066'); // the count is still shown
@@ -296,8 +296,8 @@ describe('The one-line running-condition card (the PERSISTED condition)', () => 
         expect(el.className).toContain('rcc-card--bad');
         expect(screen.queryByTestId('rc-card-title')).toBeNull();
         expect(screen.getByTestId('rc-card-use').textContent).toBe('0 rows — nothing to train on');
-        expect(screen.getByTestId('rc-card-no-rows').title).toBe('No train period is inside the data (1 Jan 2025 – 31 Dec 2025) — move a train period inside the data');
-        expect(screen.getByTestId('rc-card-outside').textContent).toBe('⚠ P1 is outside the data (1 Jan 2025 – 31 Dec 2025) — it is not used');
+        expect(screen.getByTestId('rc-card-no-rows').title).toBe('No train period is inside the data (2025/01/01 00:00 – 2025/12/31 23:59) — move a train period inside the data');
+        expect(screen.getByTestId('rc-card-outside').textContent).toBe('⚠ P1 is outside the data (2025/01/01 00:00 – 2025/12/31 23:59) — it is not used');
         expect(screen.getByTestId('rc-card-open').textContent).toBe('Edit');
     });
 

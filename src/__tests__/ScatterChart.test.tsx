@@ -474,6 +474,26 @@ describe('ScatterChart', () => {
         expect(tooltip.textContent).toContain('t0');
     });
 
+    // One date format in the whole app (2026-10-12): the Scatter printed the CSV text as it was
+    // ("2025-03-14 21:25:00") while the Line chart's tooltip read "2025/03/14 21:25:00".
+    it('the row time is in the one date format wherever it is printed (tooltip, tag callout, tag list) — from the row\'s own clock', () => {
+        const rows = [
+            { timestamp: '2025-03-14 21:25:00', values: [1, 10] },
+            { timestamp: '2025-03-14T21:30:00+07:00', values: [2, 20] }, // an offset never moves it
+        ] as any;
+        const { container } = render(<ScatterChart data={rows} sensors={['A', 'B']} headers={headers} />);
+        act(() => { lastInstance!.__subs['pointover'](0); });
+        expect(container.querySelector('.scatter-regl-tooltip-ts')!.textContent).toBe('2025/03/14 21:25:00');
+        act(() => { lastInstance!.__subs['pointover'](1); });
+        expect(container.querySelector('.scatter-regl-tooltip-ts')!.textContent).toBe('2025/03/14 21:30:00');
+        // tag that point: its callout and its row in the tag list read the same
+        fireEvent.click(screen.getByTitle(/compare 2\+ points/i));
+        fireEvent.click(container.querySelector('[data-testid="scatter-main-canvas"]')!);
+        expect(container.querySelector('.scatter-tag-callout-ts')!.textContent).toBe('2025/03/14 21:30:00');
+        expect(container.querySelector('.chart-tag-label')!.textContent).toBe('2025/03/14 21:30:00');
+        expect(container.textContent).not.toContain('2025-03-14');
+    });
+
     it('a tiny non-zero value in the tooltip keeps 3 significant digits instead of reading as 0', () => {
         const tiny = [{ timestamp: 't0', values: [0.00012, 12345678901.5] }] as any;
         const { container } = render(<ScatterChart data={tiny} sensors={['A', 'B']} headers={headers} />);

@@ -149,7 +149,7 @@ export const NO_TRAIN_ROWS_REASON_CUSTOM = noTrainRowsReason('custom', true);
 
 /** Start of the reason of a model none of whose train periods is inside the data. */
 export const NO_TRAIN_DATA_WORDS = 'No train period is inside the data';
-/** "No train period is inside the data (1 Jan 2025 – 31 Dec 2025) — nothing to
+/** "No train period is inside the data (2025/01/01 00:00 – 2025/12/31 23:50) — nothing to
  *  train on. Move a train period inside the data (Running condition → Edit)." */
 export function noTrainDataReason(mode: 'workspace' | 'custom', bounds: PeriodDataBounds | null | undefined): string {
     const what = `${NO_TRAIN_DATA_WORDS} (${dataRangeText(bounds)}) — nothing to train on. Move a train period inside the data`;

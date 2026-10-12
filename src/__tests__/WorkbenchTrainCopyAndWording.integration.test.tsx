@@ -250,7 +250,7 @@ describe('A. Train sensor ▾ and the page states, on the real workspace file', 
         await waitFor(() => expect(banner().getAttribute('data-state')).toBe('blocked'));
         expect(bmw().queryByTestId('stale-go-train')).toBeNull();
         expect(bmw().getByTestId('stale-cant-train').textContent)
-            .toBe("It can't be trained yet: No train period is inside the data (1 Jan 2026 – 3 Jan 2026 11:00) — nothing to train on. Move a train period inside the data (Running condition → Edit). ");
+            .toBe("It can't be trained yet: No train period is inside the data (2026/01/01 00:00 – 2026/01/03 11:00) — nothing to train on. Move a train period inside the data (Running condition → Edit). ");
         expect(banner().textContent).toMatch(/Your set points are kept\.$/);
         expect(trainBtn().disabled).toBe(true);
         // the set points really are kept, and the train record was not touched by the block

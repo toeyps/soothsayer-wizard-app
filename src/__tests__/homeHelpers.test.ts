@@ -33,12 +33,23 @@ describe('formatRelativeTime', () => {
     expect(formatRelativeTime(NOW - 30 * DAY, NOW)).toBe('30 d ago');
   });
 
-  it('older than 30 days falls back to a calendar date', () => {
+  it('older than 30 days falls back to the calendar date and time, in the app\'s one date format (local time, no seconds)', () => {
     const ts = NOW - 31 * DAY;
+    const d = new Date(ts);
+    const two = (n: number) => String(n).padStart(2, '0');
+    // the same instant, on this PC's own clock: "2026/09/03 19:00" in Bangkok
     expect(formatRelativeTime(ts, NOW)).toBe(
-      new Date(ts).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }),
+      `${d.getFullYear()}/${two(d.getMonth() + 1)}/${two(d.getDate())} ${two(d.getHours())}:${two(d.getMinutes())}`,
     );
-    expect(formatRelativeTime(ts, NOW)).toMatch(/\d{4}$/);
+    expect(formatRelativeTime(ts, NOW)).toMatch(/^2026\/09\/0[34] \d{2}:\d{2}$/);
+    // never a month name, a locale form or seconds
+    expect(formatRelativeTime(ts, NOW)).not.toMatch(/[A-Za-z,]/);
+    expect(formatRelativeTime(new Date(2026, 2, 5, 14, 20, 59).getTime(), new Date(2026, 9, 4).getTime())).toBe('2026/03/05 14:20');
+  });
+
+  it('the relative words are not dates and stay as they are at the 30-day edge', () => {
+    expect(formatRelativeTime(NOW - 30 * DAY, NOW)).toBe('30 d ago');
+    expect(formatRelativeTime(NOW - 30 * DAY - 1, NOW)).toMatch(/^\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}$/);
   });
 
   it('a missing or invalid timestamp yields an empty label (nothing invented)', () => {

@@ -195,7 +195,7 @@ export function hoverIndexFromAxisEvent(event: unknown, timestamps: readonly str
 }
 
 export interface Readout {
-    /** The START of the hour, in the Workbench date format. */
+    /** The START of the hour, in the app's date format ("2026/02/09 23:00:00"). */
     time: string;
     /** "1 h avg" (Individual: the hour's mean value) | "residual" (Relation model:
      *  the hour's residual) | null (Clustering shows no value). */
@@ -212,19 +212,18 @@ export interface Readout {
 export function readoutAt(hourly: HealthSeries, idx: number | null): Readout | null {
     if (idx === null || idx < 0 || idx >= hourly.timestamps.length) return null;
     const score = hourly.score ? (hourly.score[idx] ?? null) : null;
-    // The hour's START in the ONE Workbench date format ("9 Feb 2026 23:00"). Rust labels
-    // an hour `2026-02-09T23:00:00` whatever the CSV's own timestamp text looks like;
-    // `formatDataStamp` reads that form from the text's own wall-clock parts (never
-    // shifted to another time zone). An hour start has no seconds; a stamp that does
-    // carry some (not an hour label) still prints them instead of hiding them.
-    const time = hourly.timestamps[idx] ? formatDataStamp(hourly.timestamps[idx], { seconds: true }) : `row ${hourly.rows[idx] ?? idx}`;
+    // The hour's START in the app's one date format ("2026/02/09 23:00:00" — a data
+    // row's time, always with seconds). Rust labels an hour `2026-02-09T23:00:00`
+    // whatever the CSV's own timestamp text looks like; `formatDataStamp` reads that
+    // form from the text's own wall-clock parts (never shifted to another time zone).
+    const time = hourly.timestamps[idx] ? formatDataStamp(hourly.timestamps[idx]) : `row ${hourly.rows[idx] ?? idx}`;
     if (hourly.kind === 'individual') return { time, valueLabel: '1 h avg', value: hourly.value[idx] ?? null, score };
     if (hourly.kind === 'relationship') return { time, valueLabel: 'residual', value: hourly.residual[idx] ?? null, score };
     return { time, valueLabel: null, value: null, score };
 }
 
 /** The read-out as one line of text (tests and the header both use it):
- *  "9 Feb 2026 23:00 · 1 h avg 4.2 bar · score 93". */
+ *  "2026/02/09 23:00:00 · 1 h avg 4.2 bar · score 93". */
 export function readoutText(r: Readout | null, unit: string): string {
     if (!r) return '';
     // Every hourly point had running rows (an hour without any has no point), so a missing

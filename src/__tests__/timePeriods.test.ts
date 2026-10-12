@@ -60,12 +60,12 @@ describe('period reasons say P<n> / S<n> (workbench redesign §5)', () => {
         expect(all.map(s => s.fault)).toEqual(['start-invalid', 'end-invalid', 'start-missing', 'end-missing', 'ends-before-start', undefined]);
         for (const s of all) expect(`${s.reason ?? ''} ${s.rowReason ?? ''}`).not.toMatch(/Period \d/);
     });
-    it('the row line of "ends before it starts" names the date to get past, in the Workbench date format', () => {
+    it('the row line of "ends before it starts" names the date AND time to get past, in the app\'s one date format', () => {
         const [, bad] = validatePeriods([p('a', '2026-01-01T00:00', '2026-03-31T23:59'), p('b', '2026-05-11T00:00', '2026-05-01T23:59')]);
         expect(bad.reason).toBe('P2 ends before it starts.');
-        expect(bad.rowReason).toBe('P2 ends before it starts — pick an end after 11 May 2026');
-        // a start that is not at midnight keeps its time
-        expect(validatePeriods([p('a', '2026-05-11T06:30', '2026-05-01T00:00')])[0].rowReason).toBe('P1 ends before it starts — pick an end after 11 May 2026 06:30');
+        // a period bound always shows its time — a start at midnight too
+        expect(bad.rowReason).toBe('P2 ends before it starts — pick an end after 2026/05/11 00:00');
+        expect(validatePeriods([p('a', '2026-05-11T06:30', '2026-05-01T00:00')])[0].rowReason).toBe('P1 ends before it starts — pick an end after 2026/05/11 06:30');
     });
     it('the other row lines are the reason without its full stop; a valid period has none', () => {
         const s = validatePeriods([p('a', '2025-01-01T00:00', ''), p('b', '', '2025-02-01T00:00')]);
@@ -75,7 +75,7 @@ describe('period reasons say P<n> / S<n> (workbench redesign §5)', () => {
     it('scoring periods get the same two texts, named S<n>', () => {
         const st = validateTestPeriods([{ id: 't1', start: '2026-01-01T00:00', end: '2026-01-31T23:59' }, { id: 't2', start: '2026-05-11T00:00', end: '2026-05-01T00:00' }, { id: 't3', start: '', end: '2026-05-01T00:00' }]);
         expect(st[0]).toEqual({ invalid: false, reason: undefined });
-        expect(st[1]).toEqual({ invalid: true, reason: 'S2 ends before it starts.', rowReason: 'S2 ends before it starts — pick an end after 11 May 2026', fault: 'ends-before-start' });
+        expect(st[1]).toEqual({ invalid: true, reason: 'S2 ends before it starts.', rowReason: 'S2 ends before it starts — pick an end after 2026/05/11 00:00', fault: 'ends-before-start' });
         expect(st[2]).toEqual({ invalid: true, reason: 'S3 needs a start date.', rowReason: 'S3 needs a start date', fault: 'start-missing' });
     });
     it('periodReasonTexts / faultSide / fixPeriodFirstText', () => {

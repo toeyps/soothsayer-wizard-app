@@ -2675,7 +2675,7 @@ describe('O. Step 2 "Sensor data" panel', () => {
     expect(grid.getByText('2')).toBeTruthy();
     expect(grid.getByText('Period')).toBeTruthy();
     expect(grid.getByText('18.2 mo')).toBeTruthy();
-    expect(grid.getByText('2025-01-01 00:00:00 → 2026-07-08 00:00:00')).toBeTruthy();
+    expect(grid.getByText('2025/01/01 00:00:00 → 2026/07/08 00:00:00')).toBeTruthy();
     expect(grid.getByText('Interval')).toBeTruthy();
     expect(grid.getByText('5 min')).toBeTruthy();
     expect(grid.getByText('% empty')).toBeTruthy();
@@ -2734,7 +2734,7 @@ describe('O. Step 2 "Sensor data" panel', () => {
     useDataUploadMock.mockReturnValue(readyTwoFiles({ ...FULL_REPORT, period_start_micros: null, period_end_micros: null }));
     renderAtStep2();
     const grid = within(screen.getByTestId('summary-grid'));
-    expect(grid.getByText('2025-01-01 00:00:00 → 2026-07-08 00:00:00')).toBeTruthy();
+    expect(grid.getByText('2025/01/01 00:00:00 → 2026/07/08 00:00:00')).toBeTruthy();
     expect(grid.queryByText(/ mo$/)).toBeNull();
   });
 
@@ -2839,7 +2839,9 @@ describe('P. Time coverage', () => {
     renderAtStep2();
     const cov = within(screen.getByTestId('time-coverage'));
     expect(cov.getAllByTestId('coverage-bar')).toHaveLength(1);
-    expect(cov.getByText('2025-01-01')).toBeTruthy();
+    expect(cov.getByText('2025/01/01')).toBeTruthy();
+    // the bar's tooltip: the file's first → last row, in the same one date format
+    expect(cov.getByTestId('coverage-bar').getAttribute('title')).toBe('2025/01/01 00:00:00 → 2025/12/31 00:00:00');
     expect(cov.getByText(/1 file without a readable time range is not shown/)).toBeTruthy();
   });
 

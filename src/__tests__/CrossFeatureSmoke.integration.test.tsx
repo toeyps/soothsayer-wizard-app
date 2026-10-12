@@ -543,7 +543,7 @@ describe.each(['individual', 'relationship', 'clustering'] as Kind[])('cross-fea
         ]);
         // no "Scored · N" pill: the saved message is the footer's one sentence
         expect(bmw().queryByTestId('scored-pill')).toBeNull();
-        expect(bmw().getByTestId('save-ok').textContent).toMatch(/^Files saved \d{1,2} [A-Z][a-z]{2} \d{4} \d{2}:\d{2} · /);
+        expect(bmw().getByTestId('save-ok').textContent).toMatch(/^Files saved \d{4}\/\d{2}\/\d{2} \d{2}:\d{2} · /);
 
         // 6) The special sensor is now locked in Manage (a model uses it).
         if (!roots.has('add-sensor')) await openAddSensorWindow();

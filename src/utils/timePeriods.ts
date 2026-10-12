@@ -33,15 +33,15 @@ export interface PeriodStatus {
     reason?: string;
     /** The ONE reason line under the period's own row when `invalid` (no full
      *  stop, and a hint what to do where there is one): "P2 ends before it
-     *  starts — pick an end after 11 May 2026", "P2 needs a start date". */
+     *  starts — pick an end after 2026/05/11 00:00", "P2 needs a start date". */
     rowReason?: string;
     /** What is wrong, when `invalid`. */
     fault?: PeriodFault;
     /** A VALID period that reaches past the loaded data on one or both sides
      *  (never a block): the quiet amber note under its row — "Only the part
-     *  inside the data is used (data ends 31 Dec 2025)". For a saved period that
+     *  inside the data is used (data ends 2025/12/31)". For a saved period that
      *  lies ENTIRELY outside the data (`outsideData`): "P2 is outside the data
-     *  (1 Jan 2025 – 31 Dec 2025) — it is not used". */
+     *  (2025/01/01 00:00 – 2025/12/31 23:50) — it is not used". */
     dataNote?: string;
     /** Not invalid, but entirely outside the loaded data: a period that is
      *  UNCHANGED from the saved list (an old workspace, or the data file changed
@@ -135,21 +135,21 @@ export function periodDataFit(p: { start: string; end: string }, bounds: PeriodD
     };
 }
 
-/** "1 Jan 2025 – 31 Dec 2025": the data's range in the Workbench date format
- *  (the time is added only when a side is not on its whole-day edge). */
+/** "2025/01/01 00:00 – 2025/12/31 23:50": the data's range in the app's date
+ *  format, date and time on both sides. */
 export function dataRangeText(bounds: PeriodDataBounds | null | undefined): string {
-    return `${formatBound(bounds?.min, 'start')} – ${formatBound(bounds?.max, 'end')}`;
+    return `${formatBound(bounds?.min)} – ${formatBound(bounds?.max)}`;
 }
 
 /** The two texts of a period that is entirely outside the data:
- *  "P1 is outside the data (1 Jan 2025 – 31 Dec 2025)" (+ a full stop for `reason`). */
+ *  "P1 is outside the data (2025/01/01 00:00 – 2025/12/31 23:50)" (+ a full stop for `reason`). */
 export function outsideDataTexts(name: string, bounds: PeriodDataBounds | null | undefined): { reason: string; rowReason: string } {
     const core = `${name} ${FAULT_WORDS['outside-data']} (${dataRangeText(bounds)})`;
     return { reason: `${core}.`, rowReason: core };
 }
 
 /** The amber warning of a SAVED, untouched period that lies entirely outside the
- *  data: "P2 is outside the data (1 Jan 2025 – 31 Dec 2025) — it is not used"
+ *  data: "P2 is outside the data (2025/01/01 00:00 – 2025/12/31 23:50) — it is not used"
  *  (train) / "S1 is outside the data — nothing is scored there" (scoring). */
 export function savedOutsideDataNote(name: string, kind: 'train' | 'scoring', bounds: PeriodDataBounds | null | undefined): string {
     return kind === 'train'
@@ -181,13 +181,16 @@ export function savedOutsideDataNotes(train: TimePeriod[], tests: TestPeriod[], 
     return out;
 }
 
-/** The quiet amber note of a period that is only PARTLY inside the data, or null. */
+/** The quiet amber note of a period that is only PARTLY inside the data, or null:
+ *  "Only the part inside the data is used (data ends 2025/12/31)". The data's
+ *  edge is given as a date alone — "past the data" is judged by calendar day
+ *  (`periodDataFit`), so a time would claim a precision the rule does not have. */
 export function partlyOutsideNote(fit: PeriodDataFit, bounds: PeriodDataBounds | null | undefined): string | null {
     const r = dataRangeMs(bounds);
     if (!r || fit.outside || (!fit.before && !fit.after)) return null;
-    const what = fit.before && fit.after ? `data runs ${dateText(r.min, true)} – ${dateText(r.max, true)}`
-        : fit.after ? `data ends ${dateText(r.max, true)}`
-        : `data starts ${dateText(r.min, true)}`;
+    const what = fit.before && fit.after ? `data runs ${dateText(r.min)} – ${dateText(r.max)}`
+        : fit.after ? `data ends ${dateText(r.max)}`
+        : `data starts ${dateText(r.min)}`;
     return `Only the part inside the data is used (${what})`;
 }
 
@@ -196,12 +199,12 @@ export function partlyOutsideNote(fit: PeriodDataFit, bounds: PeriodDataBounds |
  * it — "P2" (train period, by list position) or "S1" (scoring period) — never
  * "Period 2". `reason` is the short sentence ("P2 ends before it starts.");
  * `rowReason` the one line under the row, with what to do when that is known
- * ("P2 ends before it starts — pick an end after 11 May 2026"; the date is the
- * period's own start in the Workbench date format).
+ * ("P2 ends before it starts — pick an end after 2026/05/11 00:00"; the date is
+ * the period's own start, date and time, in the app's date format).
  */
 export function periodReasonTexts(name: string, fault: PeriodFault, start?: string | null): { reason: string; rowReason: string } {
     const core = `${name} ${FAULT_WORDS[fault]}`;
-    const after = fault === 'ends-before-start' ? formatBound(start, 'start') : '';
+    const after = fault === 'ends-before-start' ? formatBound(start) : '';
     return { reason: `${core}.`, rowReason: after ? `${core} — pick an end after ${after}` : core };
 }
 
@@ -247,7 +250,7 @@ export function newPeriodId(): string {
  * SAVED list, see `PeriodBaseline`): a period that is otherwise valid but lies
  * ENTIRELY outside the data is
  *   - invalid when it is NEW or was CHANGED against `baseline` (`fault:
- *     'outside-data'`, "P1 is outside the data (1 Jan 2025 – 31 Dec 2025)") —
+ *     'outside-data'`, "P1 is outside the data (2025/01/01 00:00 – 2025/12/31 23:50)") —
  *     the user is told at once and Apply / Save changes are blocked;
  *   - only a WARNING when it is unchanged from `baseline` (`outsideData` +
  *     `dataNote`: "P2 is outside the data (…) — it is not used") — an old
@@ -447,7 +450,7 @@ export interface TestPeriodStatus {
     reason?: string;
     /** The one reason line under the row when `invalid` (see
      *  `PeriodStatus.rowReason`): "S2 ends before it starts — pick an end
-     *  after 11 May 2026". */
+     *  after 2026/05/11 00:00". */
     rowReason?: string;
     /** What is wrong, when `invalid`. */
     fault?: PeriodFault;

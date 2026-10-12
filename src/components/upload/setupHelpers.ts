@@ -10,6 +10,7 @@
 
 import type { CsvFileInfo, CsvLoadProgress, CsvLoadReport } from '../../types/dataUpload';
 import type { SensorMetadata, WorkspaceMetadata } from '../../types';
+import { formatRowTime, formatWallClock } from '../../utils/dateFormat';
 
 /** Longest project name the Name step accepts (also the counter's denominator). */
 export const PROJECT_NAME_MAX = 80;
@@ -102,11 +103,22 @@ export function isDuplicateProjectName(name: string, existing: Pick<WorkspaceMet
 
 /* ------------------------------ load report ------------------------------ */
 
+/**
+ * A row time from the load report ("2024-01-01 00:00:00", as Rust writes it) in
+ * the app's one date format: "2024/01/01 00:00:00" — read from the text's own
+ * wall clock, never moved to another time zone. Text in another shape is shown
+ * as it is.
+ */
+export function rowTimeText(text: string): string {
+  return formatRowTime(text) ?? text;
+}
+
 export interface ReportSummary {
   /** Merged row count, formatted ("159,264"). */
   rows: string | null;
   /** Numeric sensor columns (everything except the timestamp). */
   sensors: string | null;
+  /** First / last row time in the app's date format ("2024/01/01 00:00:00"). */
   periodStart: string | null;
   periodEnd: string | null;
   /** Duration label ("18 mo"); null when the instants in microseconds are unknown. */
@@ -136,8 +148,8 @@ export function summarizeReport(report: CsvLoadReport | null | undefined): Repor
   return {
     rows: formatCount(report.total_rows),
     sensors: formatCount(sensors),
-    periodStart: hasPeriod ? start : null,
-    periodEnd: hasPeriod ? end : null,
+    periodStart: hasPeriod ? rowTimeText(start) : null,
+    periodEnd: hasPeriod ? rowTimeText(end) : null,
     periodSpan: hasPeriod ? formatSpan(report.period_start_micros, report.period_end_micros) : null,
     interval: formatInterval(report.interval_seconds),
     missing: formatMissingPercent(report.missing_percent),
@@ -171,6 +183,7 @@ export interface CoverageLane {
   /** Left edge and width as percentages (0-100) of the shared time axis. */
   leftPct: number;
   widthPct: number;
+  /** The file's first / last row time in the app's date format; '' when unknown. */
   start: string;
   end: string;
 }
@@ -188,13 +201,15 @@ export interface Coverage {
 
 const MIN_BAR_PCT = 1.2;
 
+/** An axis tick of the coverage chart: "2025/01/01" / "2025/01/01 00:05". The
+ *  naive timestamps are stored as if UTC, so the wall clock is the UTC fields. */
 function microsToText(micros: number, withTime: boolean): string {
-  try {
-    const iso = new Date(Math.round(micros / 1000)).toISOString(); // naive timestamps are stored as if UTC
-    return withTime ? `${iso.slice(0, 10)} ${iso.slice(11, 16)}` : iso.slice(0, 10);
-  } catch {
-    return '';
-  }
+  const d = new Date(Math.round(micros / 1000));
+  if (Number.isNaN(d.getTime())) return '';
+  return formatWallClock({
+    year: d.getUTCFullYear(), month: d.getUTCMonth() + 1, day: d.getUTCDate(),
+    hour: d.getUTCHours(), minute: d.getUTCMinutes(), second: d.getUTCSeconds(),
+  }, withTime ? 'minutes' : 'date');
 }
 
 /**
@@ -218,11 +233,11 @@ export function computeCoverage(files: CsvFileInfo[] | null | undefined): Covera
     const s = f.start_micros as number;
     const e = f.end_micros as number;
     if (span <= 0) {
-      return { index, name: f.name, leftPct: 0, widthPct: 100, start: f.start ?? '', end: f.end ?? '' };
+      return { index, name: f.name, leftPct: 0, widthPct: 100, start: rowTimeText(f.start ?? ''), end: rowTimeText(f.end ?? '') };
     }
     const widthPct = Math.min(100, Math.max(MIN_BAR_PCT, ((e - s) / span) * 100));
     const leftPct = Math.min(100 - widthPct, Math.max(0, ((s - minMicros) / span) * 100));
-    return { index, name: f.name, leftPct, widthPct, start: f.start ?? '', end: f.end ?? '' };
+    return { index, name: f.name, leftPct, widthPct, start: rowTimeText(f.start ?? ''), end: rowTimeText(f.end ?? '') };
   });
 
   let overlaps = false;

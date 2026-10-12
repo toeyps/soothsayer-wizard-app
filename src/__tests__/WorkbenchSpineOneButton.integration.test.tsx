@@ -129,7 +129,7 @@ async function expectSpine(step: string, id: string, key: string, kind: string, 
 }
 
 const EMPTY_IND = { kind: 'individual', lower: null, upper: null, masterLower: null, masterUpper: null };
-const STAMP = String.raw`\d{1,2} [A-Z][a-z]{2} \d{4} \d{2}:\d{2}`;
+const STAMP = String.raw`\d{4}/\d{2}/\d{2} \d{2}:\d{2}`;
 
 /** Closes the Running condition modal that opens by itself when nothing is set. */
 function closeRcModal() {

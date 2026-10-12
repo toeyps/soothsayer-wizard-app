@@ -5,6 +5,7 @@ import { RotateCcw, Ruler, Tag, Trash2 } from 'lucide-react';
 import { ChartProps } from './ChartTypes';
 import type { TimeHighlight, ValueHighlightRange } from '../../types';
 import { firstMatchingHighlight } from '../../utils/timeHighlights';
+import { formatDataStamp } from '../../utils/workbenchDate';
 import { SensorPickerSingle } from '../sensor/SensorPicker';
 import { FxBadge, SensorInline } from '../sensor/SensorLabel';
 import { SensorMetaContext, fmtNum, sensorTitle, useLayeredSensorLookup, type SensorInfo } from '../sensor/sensorInfo';
@@ -802,7 +803,7 @@ function ScatterChart({
             id: tag.id,
             badge: TAG_BADGES[order % TAG_BADGES.length],
             color: rgbaToHex(RANGE_PALETTE[tag.colorIdx % RANGE_PALETTE.length]),
-            label: row?.timestamp || `Point ${order + 1}`,
+            label: row?.timestamp ? formatDataStamp(row.timestamp) : `Point ${order + 1}`,
         };
     }), [scatterTags, data]);
 
@@ -995,7 +996,8 @@ function ScatterChart({
                         <ValueRow info={sensorLookup(scatterX)} value={tooltip.xVal} />
                         <ValueRow info={sensorLookup(scatterY)} value={tooltip.yVal} />
                         {tooltip.timestamp && (
-                            <div className="scatter-regl-tooltip-ts">{tooltip.timestamp}</div>
+                            // The row's own time in the app's one date format ("2025/03/14 21:25:00").
+                            <div className="scatter-regl-tooltip-ts">{formatDataStamp(tooltip.timestamp)}</div>
                         )}
                     </div>
                 )}
@@ -1011,7 +1013,7 @@ function ScatterChart({
                             {t.badge}
                         </div>
                         <div className="scatter-tag-callout" style={{ left: t.x, top: t.y - 14 }}>
-                            {t.timestamp && <div className="scatter-tag-callout-ts">{t.timestamp}</div>}
+                            {t.timestamp && <div className="scatter-tag-callout-ts">{formatDataStamp(t.timestamp)}</div>}
                             <ValueRow info={sensorLookup(scatterX)} value={t.xVal} />
                             <ValueRow info={sensorLookup(scatterY)} value={t.yVal} />
                         </div>

@@ -4,13 +4,15 @@
  */
 
 import type { WorkspaceMetadata } from '../../types';
+import { formatDateTimeMinutes } from '../../utils/dateFormat';
 
 const MIN = 60_000;
 const HOUR = 60 * MIN;
 const DAY = 24 * HOUR;
 
 /** Relative "last modified" label: "just now", "5 min ago", "2 h ago", "3 d ago";
- *  older than 30 days falls back to a calendar date ("5 Mar 2026"). A missing /
+ *  older than 30 days falls back to the calendar date and time in the app's one
+ *  date format ("2026/03/05 14:20", local time). A missing /
  *  non-finite timestamp yields "" (nothing is invented); a timestamp slightly in
  *  the future (clock skew) reads "just now". */
 export function formatRelativeTime(timestamp: number | undefined | null, now: number = Date.now()): string {
@@ -20,7 +22,7 @@ export function formatRelativeTime(timestamp: number | undefined | null, now: nu
   if (diff < HOUR) return `${Math.floor(diff / MIN)} min ago`;
   if (diff < DAY) return `${Math.floor(diff / HOUR)} h ago`;
   if (diff <= 30 * DAY) return `${Math.floor(diff / DAY)} d ago`;
-  return new Date(timestamp).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+  return formatDateTimeMinutes(new Date(timestamp));
 }
 
 /** Up to two initials from the project name ("GEG-4 Bearing study" -> "GB"); "P" when the name has no letters/digits. */

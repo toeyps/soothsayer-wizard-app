@@ -164,7 +164,7 @@ function ScoringChips({ tests, train, bounds }: { tests: TestPeriod[]; train: Ti
     );
 }
 
-/** "1 Jan 2026 → 30 Jun 2026": first train start to last train end (an open side reads Start / End). */
+/** "2026/01/01 00:00 → 2026/06/30 23:59": first train start to last train end (an open side reads Start / End). */
 function trainSpan(periods: TimePeriod[]): string {
     if (periods.length === 0) return '';
     const byTime = (a: string, b: string) => (parseLocal(a) ?? 0) - (parseLocal(b) ?? 0);

@@ -14,12 +14,14 @@ const P3 = [
 ];
 
 describe('PeriodCoverageBar', () => {
-    it('shows the mockup caption "166 of 455 days used" between Jan 2025 and Mar 2026, one block per period', () => {
+    it('shows the mockup caption "166 of 455 days used" between 2025/01 and 2026/03, one block per period', () => {
         const { container } = render(<PeriodCoverageBar periods={P3} bounds={B} />);
         expect(screen.getByTestId('period-coverage-days').textContent).toBe('166 of 455 days used');
         const axis = container.querySelector('.f4-strip-ax')!;
-        expect(axis.firstElementChild!.textContent).toBe('Jan 2025');
-        expect(axis.lastElementChild!.textContent).toBe('Mar 2026');
+        // the two ends of the strip: year/month, the short form of the app's one date format
+        expect(axis.firstElementChild!.textContent).toBe('2025/01');
+        expect(axis.lastElementChild!.textContent).toBe('2026/03');
+        expect(axis.textContent).not.toMatch(/Jan|Mar/);
         expect(container.querySelectorAll('.f4-strip i')).toHaveLength(3);
         expect(container.querySelector('.f4-strip')!.getAttribute('role')).toBe('img');
     });
@@ -29,7 +31,7 @@ describe('PeriodCoverageBar', () => {
         const block = container.querySelector('.f4-strip i') as HTMLElement;
         expect(block.style.left).toBe('0%'); // jsdom normalises 0.00% -> 0%
         expect(parseFloat(block.style.width)).toBeCloseTo(12.97, 1); // 59 / 455
-        expect(block.title).toBe('1 Jan – 28 Feb 2025');
+        expect(block.title).toBe('2025/01/01 00:00 – 2025/02/28 23:59');
     });
 
     it('empty list: a full-width block and "all N days"', () => {
@@ -68,7 +70,7 @@ describe('PeriodCoverageBar with scoring periods (two lanes)', () => {
         expect(strip.querySelectorAll('i:not(.te)')).toHaveLength(1);
         const te = screen.getAllByTestId('period-coverage-test');
         expect(te.map(x => x.className)).toEqual(['te', 'te']);
-        expect(te.map(x => x.getAttribute('title'))).toEqual(['S1 · 1 Jan 2026 00:00 – 31 Dec 2026 23:50', 'S2 · 1 Jun 2026 00:00 – 10 Jun 2026 00:00']);
+        expect(te.map(x => x.getAttribute('title'))).toEqual(['S1 · 2026/01/01 00:00 – 2026/12/31 23:50', 'S2 · 2026/06/01 00:00 – 2026/06/10 00:00']);
         // the scoring periods overlap each other: their days are counted once
         expect(screen.getByTestId('period-coverage-days').textContent).toBe('90 d train · 365 d scoring');
     });

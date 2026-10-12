@@ -16,7 +16,7 @@ export const ALL_TIME_TRAIN: TimePeriod[] = [{ id: 'all-time', start: '', end: '
  * One closed scoring period (start → end only) — enough for Mark complete.
  *
  * January 2024 — which is OUTSIDE the data of most integration datasets (the
- * fake plant's 60 hourly rows from 1 Jan 2026, the `2026-01-01 … 2026-12-31`
+ * fake plant's 60 hourly rows from 2026/01/01, the `2026-01-01 … 2026-12-31`
  * bounds the mocked windows answer). That is deliberate: it is the "saved
  * scoring period outside the loaded data" state of an old workspace, and it
  * must never get in the way — a SAVED period outside the data only warns (it

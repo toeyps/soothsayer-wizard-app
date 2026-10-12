@@ -8,9 +8,10 @@ import type {
     RelationshipSeries,
     ValidationResult,
 } from '../../../types/health';
+import { formatAxisTick, formatDateTime } from '../../../utils/dateFormat';
 import { testNumberFor } from '../../../utils/timePeriods';
 import type { SensorInfo } from '../../sensor/sensorInfo';
-import { formatDataStamp, formatStamp, parseLocal } from '../periodDisplay';
+import { formatDataStamp, parseLocal } from '../periodDisplay';
 import { CHART, CHART_MONO, CLUSTER_COLORS, FONT, axisValueFormatter, fmtAxisValue, fmtNum } from './chartTheme';
 
 /*
@@ -31,8 +32,9 @@ import { CHART, CHART_MONO, CLUSTER_COLORS, FONT, axisValueFormatter, fmtAxisVal
  *     mono text) and are only a faint fill inside it. A scoring period is NOT
  *     drawn — no band, no frame, no name (user decision, 2026-10-12) — but its
  *     rows are: the line runs through it exactly as through a train period;
- *   - the hover tooltip is headed by the point's own date AND time in the one
- *     Workbench format ("9 Feb 2026 23:50" — `timeHeadingFormatter`);
+ *   - the hover tooltip is headed by the point's own date AND time in the app's
+ *     one date format ("2026/02/09 23:50:00" — `timeHeadingFormatter`), and the
+ *     time axis' ticks are dates in the same format (`TIME_AXIS_LABEL`);
  *   - reference lines (±1SD, ±3SD, ±2RMSE, 80) are labelled OUTSIDE the plot on
  *     its right edge, so they need no legend row under the chart. A DATA line is
  *     never named on the plot — ECharts does not move an end label with its line
@@ -227,6 +229,15 @@ const axisCommon = {
     axisLine: { lineStyle: { color: CHART.gridLine } },
     axisTick: { show: false },
 };
+/**
+ * Tick labels of a TIME axis, in the app's one date format (`formatAxisTick`):
+ * "2025/03/14" like the Dashboard line chart's axis — never ECharts' own labels,
+ * which print month names and bare day numbers ("Mar", "14"). Zoomed in so far
+ * that several ticks fall on one day, a tick that is not a midnight also shows
+ * its time ("2025/03/14 06:00"), so no two ticks read the same; `hideOverlap`
+ * drops a label that would be printed over its neighbour.
+ */
+export const TIME_AXIS_LABEL = { ...axisCommon.axisLabel, formatter: formatAxisTick, hideOverlap: true };
 /** `axisCommon` for a VALUE axis: tick labels through the app's number formatter, so a
  *  computed min/max never shows float noise ("1,713.8000000000002" on the Distribution chart). */
 /** Axis line of a scatter's value axis: on the plot's EDGE. ECharts' default draws it
@@ -615,9 +626,9 @@ export const HOVER_AXIS_POINTER = { zlevel: 1, triggerEmphasis: false } as const
 
 /**
  * The heading of the hover tooltip on a TIME axis: the hovered point's own date and
- * time in the one Workbench format — "9 Feb 2026 23:50", ":SS" added only when the
- * row's seconds are not zero (`formatDataStamp`, the same text as the read-outs
- * beside the charts). Goes on the X axis as `axisPointer.label.formatter`.
+ * time in the app's one date format — "2026/02/09 23:50:00", always with seconds
+ * (`formatDataStamp`, the same text as the read-outs beside the charts). Goes on
+ * the X axis as `axisPointer.label.formatter`.
  *
  * Why it is needed: left alone, ECharts heads an axis tooltip with the time axis'
  * DEFAULT pointer label, whose precision follows the axis' tick unit — a chart
@@ -641,9 +652,8 @@ export function timeHeadingFormatter(timestamps: readonly string[], ms: readonly
             for (let i = ms.length - 1; i >= 0; i--) rowAt.set(ms[i], i);
         }
         const row = rowAt.get(x);
-        if (row !== undefined) return formatDataStamp(timestamps[row], { seconds: true });
-        const sec = new Date(x).getSeconds();
-        return `${formatStamp(x)}${sec !== 0 ? `:${String(sec).padStart(2, '0')}` : ''}`;
+        if (row !== undefined) return formatDataStamp(timestamps[row]);
+        return formatDateTime(new Date(x));
     };
 }
 
@@ -728,7 +738,7 @@ export function buildTimeSeriesOption(spec: TimeSeriesSpec) {
         xAxis: ms
             // The pointer label itself stays hidden (a tooltip's axis shows none); its
             // formatter is what heads the tooltip — the value rows under it are ECharts' own.
-            ? { type: 'time', ...axisCommon, splitLine: { show: false }, axisPointer: { label: { formatter: timeHeadingFormatter(timestamps, ms) } } }
+            ? { type: 'time', ...axisCommon, axisLabel: TIME_AXIS_LABEL, splitLine: { show: false }, axisPointer: { label: { formatter: timeHeadingFormatter(timestamps, ms) } } }
             : { type: 'category', data: timestamps, boundaryGap: false, ...axisCommon, axisLabel: { ...axisCommon.axisLabel, hideOverlap: true }, splitLine: { show: false } },
         yAxis: {
             type: 'value',

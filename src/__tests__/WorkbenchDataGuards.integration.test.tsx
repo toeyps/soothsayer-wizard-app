@@ -85,7 +85,7 @@ const P_IN = { id: 'p1', start: '2026-01-01T00:00', end: '2026-01-02T23:00' };  
 const P_OUT = { id: 'p2', start: '2027-03-01T00:00', end: '2027-03-10T00:00' }; // entirely after it
 const S_IN = { id: 's1', start: '2026-01-03T00:00', end: '2026-01-03T11:00' };
 const S_OUT = { id: 's2', start: '2024-01-01T00:00', end: '2024-01-31T23:59' };
-const RANGE_26 = '1 Jan 2026 – 3 Jan 2026 11:00';
+const RANGE_26 = '2026/01/01 00:00 – 2026/01/03 11:00';
 const SP1 = { kind: 'individual', lower: 20, upper: 80, masterLower: 20, masterUpper: 80 };
 const SP_WIDE = { kind: 'individual', lower: -500, upper: 500, masterLower: null, masterUpper: null };
 const EMPTY_SP = { kind: 'individual', lower: null, upper: null };
@@ -169,7 +169,7 @@ describe('R1 — a Build Model window re-pointed from a 2025 project to a 2027 o
         // ── the 2027 range lands ────────────────────────────────────────────
         await act(async () => { hold.release(); });
         await waitFor(() => expect(bmw().getByTestId('rc-card-outside').textContent)
-            .toBe('⚠ P1 is outside the data (1 Jan 2027 – 3 Jan 2027 11:00) — it is not used'));
+            .toBe('⚠ P1 is outside the data (2027/01/01 00:00 – 2027/01/03 11:00) — it is not used'));
         // asked again exactly once for the new dataset
         expect(env.backend!.cmds('get_dataset_time_bounds')).toHaveLength(2);
         // one period is inside the data: nothing is blocked, the card is not red
@@ -629,7 +629,7 @@ describe('R5 — the guards never touch what READS a model', () => {
         openDashFgTab();
         selectSensor('tag4');
         await settle(600);
-        const RANGE_27 = '1 Jan 2027 – 3 Jan 2027 11:00';
+        const RANGE_27 = '2027/01/01 00:00 – 2027/01/03 11:00';
         const REASON = `No train period is inside the data (${RANGE_27}) — nothing to train on. Move a train period inside the data (Running condition → Edit).`;
 
         // ── the card says it; the never-trained model cannot train ───────────

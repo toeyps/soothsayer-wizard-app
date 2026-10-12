@@ -582,6 +582,10 @@ describe('LineChart option building', () => {
         // A time axis hands its formatter a numeric ms value, not the raw
         // date string a category axis' shared `xAxis.data` used to carry.
         expect(formatter(msOf('2026-03-09T00:00:00'))).toBe('2026/03/09');
+        // Zoomed inside a day the ticks are not midnights: each shows its time, so they do not
+        // all read the same date (the same rule as the Workbench charts' axis).
+        expect(formatter(msOf('2026-03-09T06:00:00'))).toBe('2026/03/09 06:00');
+        expect(formatter(msOf('2026-03-09T06:00:30'))).toBe('2026/03/09 06:00:30');
     });
 
     it("xAxis is a time axis, not a category axis (regression: a category axis spaces every point equally by index regardless of real elapsed time, so a 10-minute gap and a 10-hour gap between points rendered at the same pixel width)", () => {

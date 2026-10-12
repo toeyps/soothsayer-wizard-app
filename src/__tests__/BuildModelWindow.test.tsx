@@ -1945,7 +1945,7 @@ describe('Custom running-condition editor (2026-09-30 port)', () => {
         expect(screen.getByTestId('custom-rc-editor')).toBeTruthy();
         const reason = () => screen.getByTestId('build-block-reason').textContent;
         expect(reason()).toBe("Fix P1's end above");
-        expect(within(screen.getByTestId('custom-periods')).getByTestId('period-invalid-1').textContent).toBe('P1 ends before it starts — pick an end after 1 Mar 2026');
+        expect(within(screen.getByTestId('custom-periods')).getByTestId('period-invalid-1').textContent).toBe('P1 ends before it starts — pick an end after 2026/03/01 00:00');
         // the same words on the board's list of things to fix
         expect(within(screen.getByTestId('results-incomplete')).getByText("Fix P1's end above")).toBeTruthy();
 
@@ -3392,7 +3392,7 @@ describe('Running Condition Filter modal — draft + explicit Apply (2026-10-03)
         const end = screen.getByLabelText('P1 end') as HTMLInputElement;
         fireEvent.change(end, { target: { value: '2023-01-01T00:00' } });
         fireEvent.blur(end);
-        expect(screen.getByTestId('period-invalid-1').textContent).toBe('P1 ends before it starts — pick an end after 1 Jan 2024');
+        expect(screen.getByTestId('period-invalid-1').textContent).toBe('P1 ends before it starts — pick an end after 2024/01/01 00:00');
         expect(screen.getByTestId('period-row-1').getAttribute('data-invalid')).toBe('true');
         const block = screen.getByTestId('rc-apply-block');
         expect(block.textContent).toBe('Fix P1 before applying');
@@ -3547,15 +3547,15 @@ describe('Running condition Step 1 — header, card, settings modal preview (202
             expect(screen.getByTestId('rc-card').className).toContain('rcc-card--ok');
             // Set = ONE line (counts + span); the chips are under "Details".
             expect(screen.getByTestId('rc-card').className).toContain('rcc-line');
-            expect(screen.getByTestId('rc-card-time').textContent).toBe('Train 2 periods 1 Jan 2026 → End');
+            expect(screen.getByTestId('rc-card-time').textContent).toBe('Train 2 periods 2026/01/01 00:00 → End');
             expect(screen.getByTestId('rc-card-test').textContent).toBe('Scoring 1 period');
             expect(screen.getByTestId('rc-card-cond').textContent).toBe('When running: 1 condition');
             expect(screen.getByTestId('rc-card').textContent).not.toMatch(/Step\s*1/i);
             fireEvent.click(screen.getByTestId('rc-card-details'));
-            expect(screen.getAllByTestId('rc-card-period-chip').map(c => c.textContent)).toEqual(['P1 · 1 Jan 2026 → 31 Mar 2026', 'P2 · 15 Apr 2026 → End']);
+            expect(screen.getAllByTestId('rc-card-period-chip').map(c => c.textContent)).toEqual(['P1 · 2026/01/01 00:00 → 2026/03/31 23:59', 'P2 · 2026/04/15 00:00 → End']);
             // the persisted scoring periods sit on their own "Scoring" row: S# · start → end
             expect(within(screen.getByTestId('rc-card-test')).getByText('Scoring')).toBeTruthy();
-            expect(screen.getAllByTestId('rc-card-test-chip').map(c => c.textContent)).toEqual(['S1 · 1 Jan 2024 → 31 Jan 2024']);
+            expect(screen.getAllByTestId('rc-card-test-chip').map(c => c.textContent)).toEqual(['S1 · 2024/01/01 00:00 → 2024/01/31 23:59']);
             expect(screen.getByTestId('rc-card-cond-chip').textContent).toBe('Pump PressureTAG1 > 5 bar'); // Inline label (description then tag) + condition; description + unit come from the sensor metadata
             // Rust's `count_period_rows` of the persisted condition: 2 periods x 800 running rows of 5,000
             await waitFor(() => expect(screen.getByTestId('rc-card-rows').textContent).toBe('1,600'));
@@ -3593,8 +3593,10 @@ describe('Running condition Step 1 — header, card, settings modal preview (202
             expect(within(screen.getByTestId('rc-card')).queryByTestId('period-coverage')).toBeNull();
             fireEvent.click(screen.getByTestId('rc-card-details'));
             expect(cardCov().querySelectorAll('.f4-strip i')).toHaveLength(2);
-            expect(cardCov().textContent).toContain('Jan 2025');
-            expect(cardCov().textContent).toContain('Jul 2026');
+            // the two ends of the strip: year/month, the short form of the one date format
+            expect(cardCov().textContent).toContain('2025/01');
+            expect(cardCov().textContent).toContain('2026/07');
+            expect(cardCov().textContent).not.toMatch(/Jan|Jul/);
             const cardDays = () => within(cardCov()).getByTestId('period-coverage-days').textContent;
             const persisted = cardDays();
             expect(persisted).toMatch(/^\d+ d train · \d+ d scoring$/);
@@ -5269,11 +5271,11 @@ describe('Health score page - Mark complete (the ONLY way a model becomes Comple
         expect(written.healthExport.scoringIntervalSecs).toBe(3600);
         expect(typeof written.healthExport.at).toBe('string');
         // No "Files saved to …" banner on the page: it is the footer's ONE sentence, with the
-        // Workbench date format (mono) and the folder (the full path is the tooltip).
+        // app's one date format (mono, no seconds) and the folder (the full path is the tooltip).
         const saved = screen.getByTestId('save-ok');
         expect(saved.closest('.f4-foot')).not.toBeNull();
-        expect(saved.textContent).toMatch(/^Files saved \d{1,2} [A-Z][a-z]{2} \d{4} \d{2}:\d{2} · …\/workspaces\/ws1\/output$/);
-        expect(saved.querySelector('.wbx-dt')!.textContent).toMatch(/^\d{1,2} [A-Z][a-z]{2} \d{4} \d{2}:\d{2}$/);
+        expect(saved.textContent).toMatch(/^Files saved \d{4}\/\d{2}\/\d{2} \d{2}:\d{2} · …\/workspaces\/ws1\/output$/);
+        expect(saved.querySelector('.wbx-dt')!.textContent).toMatch(/^\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}$/);
         expect(screen.getByTestId('footer-saved-path').getAttribute('title')).toBe('C:/data/workspaces/ws1/output');
         expect(screen.getByTestId('health-page').querySelector('.hs-save')).toBeNull();
         expect(screen.queryByTestId('save-files')).toBeNull();
@@ -5474,7 +5476,7 @@ describe('Health score page - Mark incomplete and "Changed after saving"', () =>
         await openHealthPage();
         expect(screen.queryByTestId('files-out-of-date')).toBeNull();
         expect(screen.queryByTestId('mark-complete-again')).toBeNull();
-        expect(screen.getByTestId('save-ok').textContent).toMatch(/^Files saved 4 Oct 2026 \d{2}:\d{2} · …\/workspaces\/ws1\/output$/); // from the stored record, in the footer
+        expect(screen.getByTestId('save-ok').textContent).toMatch(/^Files saved 2026\/10\/04 \d{2}:\d{2} · …\/workspaces\/ws1\/output$/); // from the stored record, in the footer
         expect(screen.getByTestId('save-ok').closest('.f4-foot')).not.toBeNull();
         hsType('sp-upper', '12');
         // said ONCE, in the footer (no banner on the page), next to its button
@@ -6156,7 +6158,7 @@ describe('Train periods and scoring periods in the Build Model window', () => {
             expect(screen.queryByRole('dialog', { name: 'Running condition' })).toBeNull();
             // the card (Details) shows the persisted period as a plain S1 chip
             fireEvent.click(screen.getByTestId('rc-card-details'));
-            expect(screen.getByTestId('rc-card-test-chip').textContent).toBe('S1 · 1 Jan 2024 → 20 Jan 2024 06:00');
+            expect(screen.getByTestId('rc-card-test-chip').textContent).toBe('S1 · 2024/01/01 00:00 → 2024/01/20 06:00');
             expect(screen.queryByTestId('rc-card-test-event')).toBeNull();
         });
 
@@ -6199,8 +6201,8 @@ describe('Train periods and scoring periods in the Build Model window', () => {
                 expect(screen.getByTestId('rc-card-test').textContent).toBe('Scoring 2 periods'); // the one line
                 fireEvent.click(screen.getByTestId('rc-card-details'));
                 expect(screen.getAllByTestId('rc-card-test-chip').map(c => c.textContent)).toEqual([
-                    'S1 · 1 Jan 2024 → 31 Jan 2024',
-                    'S2 · 1 Mar 2024 → 31 Mar 2024',
+                    'S1 · 2024/01/01 00:00 → 2024/01/31 23:59',
+                    'S2 · 2024/03/01 00:00 → 2024/03/31 23:59',
                 ]);
                 const dlg = within(screen.getByRole('dialog', { name: 'Running condition' }));
                 expect(dlg.getAllByTestId(/^test-row-\d+$/).map(r => r.querySelector('.tpe-pn')!.textContent)).toEqual(['S1', 'S2']);
@@ -6339,7 +6341,7 @@ describe('Train periods and scoring periods in the Build Model window', () => {
         it('with a scoring period: Mark complete is enabled, the requests carry test_periods as start / end only, and the footer SENTENCE says "scored on 1 period" (no pill)', async () => {
             await hsMount([HS_IND()]);
             // Model fit footer of a trained model: ONE sentence — trained when, scored on how many periods, what is next.
-            expect(screen.getByTestId('footer-status').textContent).toMatch(/^Trained \d{1,2} [A-Z][a-z]{2} \d{4} \d{2}:\d{2} · scored on 1 period · check the charts, then set the health set points$/);
+            expect(screen.getByTestId('footer-status').textContent).toMatch(/^Trained \d{4}\/\d{2}\/\d{2} \d{2}:\d{2} · scored on 1 period · check the charts, then set the health set points$/);
             expect(screen.getByTestId('footer-status').querySelector('.wbx-dt')).not.toBeNull();
             await openHealthPage();
             await waitFor(() => expect(hsMarkBtn().disabled).toBe(false));
@@ -6353,7 +6355,7 @@ describe('Train periods and scoring periods in the Build Model window', () => {
             // once Complete, the Model fit footer keeps saying it — still one sentence, one pill
             await waitFor(() => expect(screen.getByTestId('mark-incomplete')).toBeTruthy());
             fireEvent.click(screen.getByTestId('footer-back-to-fit'));
-            expect(screen.getByTestId('footer-status').textContent).toMatch(/^Trained \d{1,2} [A-Z][a-z]{2} \d{4} \d{2}:\d{2} · scored on 1 period$/);
+            expect(screen.getByTestId('footer-status').textContent).toMatch(/^Trained \d{4}\/\d{2}\/\d{2} \d{2}:\d{2} · scored on 1 period$/);
             expect(screen.getByTestId('wb-footer').querySelectorAll('.f4-pill')).toHaveLength(0);
             expect(screen.queryByTestId('scored-pill')).toBeNull();
         });
@@ -6517,7 +6519,7 @@ describe('Train periods and scoring periods — review fixes (2026-10-07)', () =
     // train-vs-highlight warning, fed by the model's own train periods and writing into the
     // model's DRAFT (Save changes commits it) - it was only tested for the workspace modal.
     describe('a Custom model\'s own train periods against the Dashboard highlights (test gap)', () => {
-        // CUSTOM_TRAIN is 1 Jan -> 11 Jan 2024; the highlight sits inside it.
+        // CUSTOM_TRAIN is 2024/01/01 -> 2024/01/11; the highlight sits inside it.
         const HL = { id: 'h1', start: '2024-01-05 00:00:00', end: '2024-01-07 00:00:00', label: 'Trip', color: '#f43f5e', enabled: true };
         const customPeriods = () => within(screen.getByTestId('custom-periods'));
         const mountCustom = async (model: any, timeHighlights: unknown[]) => {
@@ -7644,7 +7646,7 @@ describe('Workbench redesign §1 — the page spine', () => {
             const path = screen.getByTestId('footer-saved-path');
             expect(path.textContent).toBe('…\\workspaces\\ws1\\output\\TAG1');
             expect(path.getAttribute('title')).toBe(dir);
-            expect(screen.getByTestId('save-ok').textContent).toMatch(/^Files saved 4 Oct 2026 \d{2}:\d{2} · …\\workspaces\\ws1\\output\\TAG1$/);
+            expect(screen.getByTestId('save-ok').textContent).toMatch(/^Files saved 2026\/10\/04 \d{2}:\d{2} · …\\workspaces\\ws1\\output\\TAG1$/);
         });
 
         it('the health score failed to load: the red card + Retry on the page; Mark complete is disabled and the footer says what to do', async () => {
@@ -7800,12 +7802,12 @@ describe('Workbench redesign §1 — the page spine', () => {
         expect(sc().scrollTop).toBe(0);
     });
 
-    it('ONE date format: the footer prints "9 Feb 2026 23:50" in mono — never a locale date', async () => {
+    it('ONE date format: the footer prints "2026/02/09 23:50" in mono — never a locale date', async () => {
         await hsMount([{ ...HS_IND(), lastTrainedAt: '2026-02-09T23:50:00' }]);
         const line = screen.getByTestId('footer-status');
-        expect(line.textContent).toMatch(/^Trained 9 Feb 2026 23:50( · scored on \d+ periods?)? · check the charts, then set the health set points$/);
-        expect(line.querySelector('.wbx-dt')!.textContent).toBe('9 Feb 2026 23:50');
-        expect(line.textContent).not.toMatch(/\b(AM|PM)\b|\d{4}-\d{2}-\d{2}|T\d\d:|Feb 9/);
+        expect(line.textContent).toMatch(/^Trained 2026\/02\/09 23:50( · scored on \d+ periods?)? · check the charts, then set the health set points$/);
+        expect(line.querySelector('.wbx-dt')!.textContent).toBe('2026/02/09 23:50');
+        expect(line.textContent).not.toMatch(/\b(AM|PM)\b|\d{4}-\d{2}-\d{2}|T\d\d:|Feb|:\d\d:\d\d/); // no locale form, no month name, no seconds
         expect(screen.getByTestId('wb-footer').querySelectorAll('.model-status-pill')).toHaveLength(1);
         expect(screen.getByTestId('footer-pill').textContent).toBe('Trained');
     });
@@ -8533,7 +8535,7 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
     const P_OUT = { id: 'p1', start: '2026-02-01T00:00', end: '2026-03-01T00:00' };
     const S_IN = [{ id: 's1', start: '2025-05-01T00:00', end: '2025-05-31T23:59' }];
     const COND = { id: 'f1', sensor: 'TAG1', operation: 'greater_than', value1: '5', value2: '' };
-    const OUTSIDE_REASON = 'P1 is outside the data (1 Jan 2025 – 31 Dec 2025)';
+    const OUTSIDE_REASON = 'P1 is outside the data (2025/01/01 00:00 – 2025/12/31 23:59)';
     type CountArgs = { periods: { start: string | null; end: string | null }[]; filter: { value_filters: { value1: number | null }[] } | null };
     /** `count_period_rows`: 1,000 rows per period of 5,000, `running(period, index, args)` of them running. */
     const countAnswer = (args: CountArgs, running: (p: { start: string | null; end: string | null }, i: number, args: CountArgs) => number) => {
@@ -8619,7 +8621,7 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
             // PARTLY outside: a quiet amber note, and Apply is allowed again
             type(dlg.getByLabelText('P1 start'), '2025-11-01T00:00');
             expect(dlg.queryByTestId('period-invalid-1')).toBeNull();
-            expect(dlg.getByTestId('period-data-note-1').textContent).toBe('Only the part inside the data is used (data ends 31 Dec 2025)');
+            expect(dlg.getByTestId('period-data-note-1').textContent).toBe('Only the part inside the data is used (data ends 2025/12/31)');
             expect(dlg.getByTestId('rc-tl-P1').getAttribute('data-invalid')).toBeNull();
             expect(screen.queryByTestId('rc-apply-block')).toBeNull();
             expect(apply().disabled).toBe(false);
@@ -8631,7 +8633,7 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
             const dlg = openRc();
             type(dlg.getByLabelText('Scoring period 1 end'), '2026-03-01T00:00');
             type(dlg.getByLabelText('Scoring period 1 start'), '2026-02-01T00:00');
-            expect(dlg.getByTestId('test-invalid-1').textContent).toBe('S1 is outside the data (1 Jan 2025 – 31 Dec 2025)');
+            expect(dlg.getByTestId('test-invalid-1').textContent).toBe('S1 is outside the data (2025/01/01 00:00 – 2025/12/31 23:59)');
             expect(dlg.getByTestId('rc-tl-S1').getAttribute('data-outside')).toBe('true');
             expect(apply().disabled).toBe(true);
             expect(screen.getByTestId('rc-apply-block').textContent).toBe('Fix S1 before applying');
@@ -8660,7 +8662,7 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
     });
 
     describe('B1 — the PERSISTED state: NO saved train period is inside the loaded data (R4)', () => {
-        const NO_DATA_REASON = 'No train period is inside the data (1 Jan 2025 – 31 Dec 2025) — nothing to train on. Move a train period inside the data (Running condition → Edit).';
+        const NO_DATA_REASON = 'No train period is inside the data (2025/01/01 00:00 – 2025/12/31 23:59) — nothing to train on. Move a train period inside the data (Running condition → Edit).';
 
         it('the card turns red ("0 rows — nothing to train on" — never "P1 needs fixing"), Train is blocked with the named reason (Train sensor, the board, the footer, Train all "Skipped" + Fix →) — and nothing is written or trained', async () => {
             rust({ running: () => 800 });
@@ -8720,9 +8722,9 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
             // ── the ONE board: the title, the cause from the guard, one link ──
             const board = await waitFor(() => screen.getByTestId('results-no-data'));
             expect(board.querySelector('.wbx-msg-t')!.textContent).toBe('No data for this model in the loaded file');
-            expect(within(board).getByTestId('no-data-cause').textContent).toBe('None of its train periods is inside the data (1 Jan 2025 – 31 Dec 2025).');
+            expect(within(board).getByTestId('no-data-cause').textContent).toBe('None of its train periods is inside the data (2025/01/01 00:00 – 2025/12/31 23:59).');
             expect(board.querySelector('.wbx-msg-s')!.textContent)
-                .toBe('None of its train periods is inside the data (1 Jan 2025 – 31 Dec 2025). Fix it in Running condition ↑ to see its charts.');
+                .toBe('None of its train periods is inside the data (2025/01/01 00:00 – 2025/12/31 23:59). Fix it in Running condition ↑ to see its charts.');
             expect(board.querySelector('.wbx-msg-d')!.textContent).toBe('Complete · nothing about the model changed');
             expect(board.className).not.toContain('wbx-msg--bad');
             expect(within(board).getAllByRole('button')).toHaveLength(1);
@@ -8830,7 +8832,7 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
                     expect(board.querySelector('.wbx-msg-s')!.textContent)
                         .toBe("Fix the problem, then train again with Train sensor ↑ (it can't train yet). The model keeps its last state.");
                     expect(within(board).getByTestId('board-train-sensor-blocked').getAttribute('title'))
-                        .toBe('No train period is inside the data (1 Jan 2025 – 31 Dec 2025) — nothing to train on. Move a train period inside the data (Running condition → Edit).');
+                        .toBe('No train period is inside the data (2025/01/01 00:00 – 2025/12/31 23:59) — nothing to train on. Move a train period inside the data (Running condition → Edit).');
                     expect(screen.queryByTestId('footer-train-sensor')).toBeNull();
                     expect(screen.getByTestId('footer-train-sensor-blocked').textContent).toBe("(it can't train yet)");
                 }
@@ -9162,7 +9164,7 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
             expect(save().disabled).toBe(false);
             type(own().getByLabelText('Scoring period 1 end'), '2026-03-01T00:00');
             type(own().getByLabelText('Scoring period 1 start'), '2026-02-01T00:00');
-            expect(own().getByTestId('test-invalid-1').textContent).toBe('S1 is outside the data (1 Jan 2025 – 31 Dec 2025)');
+            expect(own().getByTestId('test-invalid-1').textContent).toBe('S1 is outside the data (2025/01/01 00:00 – 2025/12/31 23:59)');
             expect(save().disabled).toBe(true);
             expect(footReason()).toBe('Fix S1 before saving');
             type(own().getByLabelText('Scoring period 1 start'), S_IN[0].start);
@@ -9234,7 +9236,7 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
     // Next / Health score / Mark incomplete / Mark complete again unreachable.
     describe('R3 / R5 — a SAVED train period outside the data next to one inside it: an amber warning, nothing else changes', () => {
         const P_OUT2 = { ...P_OUT, id: 'p2' };
-        const WARN = '⚠ P2 is outside the data (1 Jan 2025 – 31 Dec 2025) — it is not used';
+        const WARN = '⚠ P2 is outside the data (2025/01/01 00:00 – 2025/12/31 23:59) — it is not used';
         const fgShape = { runningConditionFilters: [], runningConditionCombine: 'and', runningConditionTimePeriods: [P_IN, P_OUT2], runningConditionNoneConfirmed: true };
         const record = { at: '2026-10-04T01:00:00.000Z', outputDir: 'C:/data/workspaces/ws1/output', setPoints: HS_SNAP, scoringIntervalSecs: 3600 };
         const trainedModel = (over: Record<string, any> = {}) => {
@@ -9305,7 +9307,7 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
             rust({ running: outsideIsEmpty });
             await mountB([makeModel()], { runningConditionTimePeriods: [P_IN, P_OUT2] });
             const dlg = openRc();
-            expect(dlg.getByTestId('period-data-note-2').textContent).toBe('P2 is outside the data (1 Jan 2025 – 31 Dec 2025) — it is not used');
+            expect(dlg.getByTestId('period-data-note-2').textContent).toBe('P2 is outside the data (2025/01/01 00:00 – 2025/12/31 23:59) — it is not used');
             expect(dlg.getByTestId('period-row-2').getAttribute('data-invalid')).toBeNull();
             expect(dlg.getByTestId('rc-tl-P2').className).toContain('warn');
             expect(screen.queryByTestId('rc-fix-period-pill')).toBeNull();
@@ -9338,7 +9340,7 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
             expect(dlg.getByTestId('test-row-1').getAttribute('data-outside')).toBe('true');
             // R2: changed in this draft and still outside the data — blocked at once
             type(dlg.getByLabelText('Scoring period 1 start'), '2024-02-02T00:00');
-            expect(dlg.getByTestId('test-invalid-1').textContent).toBe('S1 is outside the data (1 Jan 2025 – 31 Dec 2025)');
+            expect(dlg.getByTestId('test-invalid-1').textContent).toBe('S1 is outside the data (2025/01/01 00:00 – 2025/12/31 23:59)');
             expect(screen.getByTestId('rc-apply-block').textContent).toBe('Fix S1 before applying');
             // typed back to what was saved: the warning again, nothing blocked
             type(dlg.getByLabelText('Scoring period 1 start'), S_OUT[0].start);
@@ -9387,7 +9389,7 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
             openSettings();
             fireEvent.click(screen.getByRole('button', { name: 'Custom' }));
             const own = within(screen.getByTestId('custom-rc-panel'));
-            expect(own.getByTestId('period-data-note-2').textContent).toBe('P2 is outside the data (1 Jan 2025 – 31 Dec 2025) — it is not used');
+            expect(own.getByTestId('period-data-note-2').textContent).toBe('P2 is outside the data (2025/01/01 00:00 – 2025/12/31 23:59) — it is not used');
             expect(own.queryByTestId('period-invalid-2')).toBeNull();
             expect(own.getByTestId('test-data-note-1').textContent).toBe(S_WARN);
             expect(own.queryByTestId('test-invalid-1')).toBeNull();
@@ -9395,7 +9397,7 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
             expect(save.disabled).toBe(false);
             // R2 still holds for what the user picks here: the copied period MOVED to another place outside the data
             type(own.getByLabelText('P2 end'), '2026-04-01T00:00');
-            expect(own.getByTestId('period-invalid-2').textContent).toBe('P2 is outside the data (1 Jan 2025 – 31 Dec 2025)');
+            expect(own.getByTestId('period-invalid-2').textContent).toBe('P2 is outside the data (2025/01/01 00:00 – 2025/12/31 23:59)');
             expect(save.disabled).toBe(true);
             expect(footReason()).toBe('Fix P2 before saving');
             type(own.getByLabelText('P2 end'), P_OUT.end);
@@ -9540,8 +9542,8 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
     });
 
     // M1: the bounds were fetched once on mount, so a window re-pointed at another
-    // workspace judged the new periods against the OLD data — "P1 is outside the data (1 Jan 2025 – 31 Dec
-    // 2025)" for a valid 2027 period of 2027 data, Train disabled, not repairable.
+    // workspace judged the new periods against the OLD data — "P1 is outside the data (2025/01/01 00:00 –
+    // 2025/12/31 23:59)" for a valid 2027 period of 2027 data, Train disabled, not repairable.
     describe('M1 — the dataset bounds belong to the dataset on screen (R1)', () => {
         const DATA_2027 = { min: '2027-01-01 00:00:00', max: '2027-12-31 23:59:00' };
         const P_2027 = { id: 'p1', start: '2027-03-01T00:00', end: '2027-04-30T23:59' };
@@ -9590,7 +9592,7 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
             const dlg = openRc();
             type(dlg.getByLabelText('P1 end'), '2025-04-30T23:59');
             type(dlg.getByLabelText('P1 start'), '2025-03-01T00:00');
-            expect(dlg.getByTestId('period-invalid-1').textContent).toBe('P1 is outside the data (1 Jan 2027 – 31 Dec 2027)');
+            expect(dlg.getByTestId('period-invalid-1').textContent).toBe('P1 is outside the data (2027/01/01 00:00 – 2027/12/31 23:59)');
         });
 
         it('the same workspace sent again (same dataset) asks nothing again', async () => {

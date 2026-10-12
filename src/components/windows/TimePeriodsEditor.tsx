@@ -35,16 +35,16 @@ import { isCompleteDateInput, overlapDays, settleDateInput } from './periodDispl
  * per-period count (`usePeriodCounts`, handed in as `counts`) — while a new
  * count is on its way the previous number stays, dimmed. An invalid period gets
  * a thin red left edge, a red date field on the side that is wrong and ONE
- * reason line ("P2 ends before it starts — pick an end after 11 May 2026").
+ * reason line ("P2 ends before it starts — pick an end after 2026/05/11 00:00").
  *
  * Against the loaded data (`bounds` + `savedPeriods`): a period that
  * is NEW or was CHANGED here and lies ENTIRELY outside the data's time range is
  * invalid like a reversed one — both date fields red and "P1 is outside the
- * data (1 Jan 2025 – 31 Dec 2025)". One that is exactly as it was SAVED
+ * data (2025/01/01 00:00 – 2025/12/31 23:50)". One that is exactly as it was SAVED
  * (`savedPeriods`: an old workspace, or the data file changed since) only gets
  * an amber warning — "P2 is outside the data (…) — it is not used" — and blocks
  * nothing. One that is only partly inside gets a quiet amber note ("Only the
- * part inside the data is used (data ends 31 Dec 2025)"). A period whose settled
+ * part inside the data is used (data ends 2025/12/31)"). A period whose settled
  * count holds no running row while the others do gets "no running rows in P2"
  * (amber).
  *

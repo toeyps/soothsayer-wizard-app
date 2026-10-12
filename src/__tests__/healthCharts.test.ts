@@ -23,10 +23,12 @@ import {
     ringRightPoint,
     sensorAxisTitle,
     stackedEdgeLabels,
+    TIME_AXIS_LABEL,
     wallClockMs,
     type HLine,
 } from '../components/windows/workbench/healthCharts';
 import { CHART, CLUSTER_COLORS, fmtClusterBound, fmtNum, fmtNumCol } from '../components/windows/workbench/chartTheme';
+import { formatAxisTick } from '../utils/dateFormat';
 import { fmtNum as fmtNumApp } from '../components/sensor/sensorInfo';
 import { formatDataStamp } from '../components/windows/periodDisplay';
 import { makeClusterStat, makeHealthPreview } from './helpers/healthPreviewFixture';
@@ -110,11 +112,11 @@ describe('wallClockMs / parseTimestamps: a stamp sits at its OWN wall-clock time
             '2026/1/5 6:07', '2026-02-09', '2026-02-09T23:50:00.5-08:00',
         ];
         const pad = (n: number) => String(n).padStart(2, '0');
-        const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
         for (const s of stamps) {
             const d = new Date(wallClockMs(s));
             // the axis draws the LOCAL fields of the ms value: they must be the stamp's own clock
-            expect(`${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`, s).toBe(formatDataStamp(s));
+            // (formatDataStamp prints that clock as "2026/02/09 23:50:00", from the text itself)
+            expect(`${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`, s).toBe(formatDataStamp(s));
         }
     });
 
@@ -515,11 +517,16 @@ describe('Individual charts', () => {
         expect(wide.yAxis.axisLabel.formatter(-1e-17)).toBe('0');
     });
 
-    it('every VALUE axis of the workbench charts formats its labels; time / category axes never get a number formatter', () => {
+    it('every VALUE axis of the workbench charts formats its labels; a time axis gets the DATE formatter, a category axis none', () => {
         const noisy = 0.1 * 3; // 0.30000000000000004
         const ts: any = buildTimeSeriesOption({ timestamps: ['2026-01-01 00:00:00', '2026-01-01 01:00:00'], lines: [{ name: 'V', values: [1, 2], color: '#fff' }] });
         expect(ts.yAxis.axisLabel.formatter(noisy)).toBe('0.3');
-        expect(ts.xAxis.axisLabel?.formatter).toBeUndefined();
+        // the time axis: the app's one date format (never a number formatter, never ECharts' month names)
+        expect(ts.xAxis.axisLabel).toBe(TIME_AXIS_LABEL);
+        expect(ts.xAxis.axisLabel.formatter).toBe(formatAxisTick);
+        expect(ts.xAxis.axisLabel.hideOverlap).toBe(true);
+        expect(ts.xAxis.axisLabel.formatter(new Date(2026, 0, 1).getTime())).toBe('2026/01/01');
+        expect(ts.xAxis.axisLabel.formatter(new Date(2026, 0, 1, 1, 0).getTime())).toBe('2026/01/01 01:00');
         const cat: any = buildTimeSeriesOption({ timestamps: ['a', 'b'], lines: [{ name: 'V', values: [1, 2], color: '#fff' }] });
         expect(cat.xAxis.axisLabel.formatter).toBeUndefined();
         const fit: any = buildFitScatterOption(rel().fit_scatter!, '°C');

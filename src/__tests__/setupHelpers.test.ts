@@ -18,6 +18,7 @@ import {
   matchedFraction,
   progressRank,
   progressStageLabel,
+  rowTimeText,
   summarizeReport,
 } from '../components/upload/setupHelpers';
 
@@ -188,7 +189,8 @@ describe('summarizeReport (null-safe)', () => {
       interval_seconds: 300, missing_percent: 0.84,
     });
     expect(s).toMatchObject({
-      periodStart: '2025-01-01 05:00:00', periodEnd: '2026-07-08 00:00:00', periodSpan: '18 mo',
+      // the first / last row's time, in the app's one date format (the row's own clock, with seconds)
+      periodStart: '2025/01/01 05:00:00', periodEnd: '2026/07/08 00:00:00', periodSpan: '18 mo',
       interval: '5 min', missing: '0.8%',
     });
   });
@@ -327,14 +329,24 @@ describe('computeCoverage (shared time axis geometry)', () => {
     expect(c.lanes[0].index).toBe(0);
   });
 
-  it('axis labels are dates (and include the time for a range under three days)', () => {
+  it('axis labels are dates in the app\'s one date format (and include the time for a range under three days)', () => {
     const wide = computeCoverage([file()])!;
     expect(wide.ticks).toHaveLength(4);
-    expect(wide.ticks[0].label).toBe('2025-01-01');
-    expect(wide.ticks[3].label).toBe('2025-01-11');
+    expect(wide.ticks[0].label).toBe('2025/01/01');
+    expect(wide.ticks[3].label).toBe('2025/01/11');
     const narrow = computeCoverage([file({ end_micros: T0 + 2 * 3_600_000_000 })])!;
-    expect(narrow.ticks[0].label).toBe('2025-01-01 00:00');
-    expect(narrow.ticks[3].label).toBe('2025-01-01 02:00');
+    expect(narrow.ticks[0].label).toBe('2025/01/01 00:00');
+    expect(narrow.ticks[3].label).toBe('2025/01/01 02:00');
+    // the naive timestamps are stored as if UTC: the label is that clock on a PC in any time zone
+    expect(computeCoverage([file({ start_micros: T0 + 23 * 3_600_000_000, end_micros: T0 + 25 * 3_600_000_000 })])!.ticks[0].label).toBe('2025/01/01 23:00');
+  });
+
+  it('a file\'s own start / end (the bar\'s tooltip) are row times in the same format; unreadable text stays as it is', () => {
+    const c = computeCoverage([file()])!;
+    expect(c.lanes[0]).toMatchObject({ start: '2025/01/01 00:00:00', end: '2025/01/11 00:00:00' });
+    expect(rowTimeText('2025-03-14T21:25:00+07:00')).toBe('2025/03/14 21:25:00'); // never moved to another zone
+    expect(rowTimeText('14/03/2025 21:25')).toBe('14/03/2025 21:25');
+    expect(computeCoverage([file({ start: null, end: null })])!.lanes[0]).toMatchObject({ start: '', end: '' });
   });
 });
 

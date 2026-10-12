@@ -76,7 +76,7 @@ const stripOf = (c: any): string[] => (c.option.series.find((x: any) => x.name =
     .filter((a: any) => a[0].label.show).map((a: any) => a[0].label.formatter);
 /** Every band drawn under a time chart's data, by name. */
 const bandsOf = (c: any): string[] => (c.option.series.find((x: any) => x.name === '__scopes')?.markArea?.data ?? []).map((a: any) => a[0].name);
-/** Local wall-clock ms of hour `h` on 1 Jan 2026 — where the fixture's hourly point of that hour sits on the axis. */
+/** Local wall-clock ms of hour `h` on 2026/01/01 — where the fixture's hourly point of that hour sits on the axis. */
 const hourAt = (h: number) => new Date(2026, 0, 1, h).getTime();
 /** The heading of a time chart's hover tooltip for the X value `ms` (the X axis' pointer-label formatter). */
 const tipHeading = (c: any, ms: number): string => c.option.xAxis.axisPointer.label.formatter({ value: ms });
@@ -520,7 +520,7 @@ describe('Health score chart', () => {
             expect(ys(setChart())).toEqual([4.55]);
             expect(ys(scoreChart())).toEqual([100]);
             act(() => { scoreChart().onEvents.updateAxisPointer({ axesInfo: [{ axisDim: 'x', value: new Date('2026-01-01T00:35:00').getTime() }] }); });
-            expect(screen.getByTestId('hs-readout').textContent).toBe('1 Jan 2026 00:00 · 1 h avg 4.55 bar · score 100');
+            expect(screen.getByTestId('hs-readout').textContent).toBe('2026/01/01 00:00:00 · 1 h avg 4.55 bar · score 100');
         });
 
         it('Relationship: the residual line is the hourly residual', () => {
@@ -559,12 +559,12 @@ describe('Health score chart', () => {
     });
 
     // User report 2026-10-12: the tooltip was headed by the date alone ("2026-01-01").
-    it('the hover tooltip of both time charts is headed by the hovered HOUR — date and time, the hour start, in the Workbench format', () => {
+    it('the hover tooltip of both time charts is headed by the hovered HOUR — date and time, the hour start, in the one date format', () => {
         mount({ sp: IND_VALID });
         for (const chart of [scoreChart(), setChart()]) {
             expect(chart.option.xAxis.type).toBe('time');
-            expect(tipHeading(chart, hourAt(2))).toBe('1 Jan 2026 02:00');
-            expect(tipHeading(chart, hourAt(0))).toBe('1 Jan 2026 00:00'); // midnight still shows its time
+            expect(tipHeading(chart, hourAt(2))).toBe('2026/01/01 02:00:00');
+            expect(tipHeading(chart, hourAt(0))).toBe('2026/01/01 00:00:00'); // midnight still shows its time
             // the same text as the read-out under the score chart, and nothing else about the tooltip changed
             expect(chart.option.tooltip).toMatchObject({ trigger: 'axis', confine: true, transitionDuration: 0, hideDelay: 0, enterable: false });
             expect(chart.option.tooltip.formatter).toBeUndefined(); // the value rows are ECharts' own
@@ -608,8 +608,8 @@ describe('Health score chart', () => {
         mount({ sp: IND_VALID });
         const sum = screen.getByTestId('score-summary');
         expect(screen.getByTestId('score-lowest').textContent).toBe('30');
-        // The hour start (Rust: `2026-01-01T04:00:00`) in the ONE Workbench date format, in mono — never the raw text.
-        expect(sum.textContent).toBe('Lowest 30 on 1 Jan 2026 04:00 · below 80 for 40.0% of scored hours · 1-hour averages of the running rows');
+        // The hour start (Rust: `2026-01-01T04:00:00`) in the app's one date format (a data row's time, with seconds), in mono — never the raw text.
+        expect(sum.textContent).toBe('Lowest 30 on 2026/01/01 04:00:00 · below 80 for 40.0% of scored hours · 1-hour averages of the running rows');
         expect(sum.textContent).not.toMatch(/2026-01-01|scored rows/);
         // the note sits in the card's own subtitle line (no new card, badge or banner)
         expect(screen.getByTestId('score-basis').textContent).toBe('· 1-hour averages of the running rows');
@@ -794,7 +794,7 @@ describe('hover sync (the pointer on either chart reads the same HOUR on both)',
         expect(screen.getByTestId('hs-readout').textContent).toBe('');
         act(() => { scoreChart().onEvents.updateAxisPointer(axisEvent(TS)); });
         // 6.1 = the hour mean (the raw row of the same index is 6.2): the read-out reads `hourly`.
-        expect(screen.getByTestId('hs-readout').textContent).toBe('1 Jan 2026 03:00 · 1 h avg 6.1 bar · score 60');
+        expect(screen.getByTestId('hs-readout').textContent).toBe('2026/01/01 03:00:00 · 1 h avg 6.1 bar · score 60');
         act(() => { scoreChart().onEvents.globalout(); });
         expect(screen.getByTestId('hs-readout').textContent).toBe('');
     });
@@ -802,32 +802,32 @@ describe('hover sync (the pointer on either chart reads the same HOUR on both)',
     it('the read-out names the START of the hour the pointer is nearest to, wherever inside the hour the pointer is', () => {
         mount({ sp: IND_VALID });
         act(() => { scoreChart().onEvents.updateAxisPointer(axisEvent('2026-01-01 03:20:10')); });
-        expect(screen.getByTestId('hs-readout').textContent).toBe('1 Jan 2026 03:00 · 1 h avg 6.1 bar · score 60');
+        expect(screen.getByTestId('hs-readout').textContent).toBe('2026/01/01 03:00:00 · 1 h avg 6.1 bar · score 60');
         act(() => { scoreChart().onEvents.updateAxisPointer(axisEvent('2026-01-01 03:40:00')); }); // nearer to 04:00
-        expect(screen.getByTestId('hs-readout').textContent).toBe('1 Jan 2026 04:00 · 1 h avg 3.2 bar · score 30');
+        expect(screen.getByTestId('hs-readout').textContent).toBe('2026/01/01 04:00:00 · 1 h avg 3.2 bar · score 30');
     });
 
     it('hovering the SET-POINT chart drives the same read-out', () => {
         mount({ sp: IND_VALID });
         act(() => { setChart().onEvents.updateAxisPointer(axisEvent('2026-01-01 04:00:00')); });
-        expect(screen.getByTestId('hs-readout').textContent).toBe('1 Jan 2026 04:00 · 1 h avg 3.2 bar · score 30');
+        expect(screen.getByTestId('hs-readout').textContent).toBe('2026/01/01 04:00:00 · 1 h avg 3.2 bar · score 30');
     });
 
     it('Relationship reads "residual" (the hourly residual), not "1 h avg"', () => {
         mount({ kind: 'relationship', sp: { ...REL_VALID } });
         act(() => { scoreChart().onEvents.updateAxisPointer(axisEvent('2026-01-01 01:00:00')); });
-        expect(screen.getByTestId('hs-readout').textContent).toBe('1 Jan 2026 01:00 · residual 0.3 bar · score 90');
+        expect(screen.getByTestId('hs-readout').textContent).toBe('2026/01/01 01:00:00 · residual 0.3 bar · score 90');
     });
 
     it('Clustering: hovering a point of the scatter highlights that hour and fills the read-out; hovering the score chart highlights it on the scatter', () => {
         mount({ kind: 'clustering', sp: { kind: 'clustering', outerSd: 5 } });
         expect(setChart().option.series.some((s: any) => s.name === 'Hover')).toBe(false);
         act(() => { setChart().onEvents.mouseover({ seriesName: 'Points', dataIndex: 3 }); });
-        expect(screen.getByTestId('hs-readout').textContent).toBe('1 Jan 2026 03:00 · score 60');
+        expect(screen.getByTestId('hs-readout').textContent).toBe('2026/01/01 03:00:00 · score 60');
         // the hour's mean point (21.5, 41.5) — the raw row of that index is (21, 41)
         expect(setChart().option.series.find((s: any) => s.name === 'Hover').data).toEqual([[21.5, 41.5]]);
         act(() => { setChart().onEvents.mouseover({ seriesName: 'Centres', dataIndex: 0 }); }); // a ring / centre is not a point
-        expect(screen.getByTestId('hs-readout').textContent).toBe('1 Jan 2026 03:00 · score 60');
+        expect(screen.getByTestId('hs-readout').textContent).toBe('2026/01/01 03:00:00 · score 60');
         act(() => { scoreChart().onEvents.updateAxisPointer(axisEvent('2026-01-01 01:00:00')); });
         expect(setChart().option.series.find((s: any) => s.name === 'Hover').data).toEqual([[11.5, 21.5]]);
         act(() => { setChart().onEvents.globalout(); });
@@ -838,7 +838,7 @@ describe('hover sync (the pointer on either chart reads the same HOUR on both)',
         const d = previewFor('individual', IND_VALID);
         mount({ sp: IND_VALID, data: { ...d, hourly: { ...d.hourly, score: [100, null, 80, 55, 30] } as any } });
         act(() => { scoreChart().onEvents.updateAxisPointer(axisEvent('2026-01-01 01:00:00')); });
-        expect(screen.getByTestId('hs-readout').textContent).toBe('1 Jan 2026 01:00 · no score');
+        expect(screen.getByTestId('hs-readout').textContent).toBe('2026/01/01 01:00:00 · no score');
     });
 });
 
@@ -1374,9 +1374,9 @@ describe('Scoring periods on the Health score page ("just score it", 2026-10-10)
         expect(card.querySelector('.wb2-card-h b')!.textContent).toBe('Scoring results');
         expect(card.textContent).toContain('for reading only — never blocks Mark complete');
         expect(within(card).getByTestId('test-result-1-big').textContent).toBe('7.0% of running hours below 80');
-        expect(within(card).getByTestId('test-result-1-lowest').textContent).toBe('Lowest 62 (1 h average) on 1 Jan 2026 02:00.');
+        expect(within(card).getByTestId('test-result-1-lowest').textContent).toBe('Lowest 62 (1 h average) on 2026/01/01 02:00:00.');
         expect(within(card).getByTestId('test-result-2-big').textContent).toBe('41.5% of running hours below 80');
-        expect(within(card).getByTestId('test-result-2-lowest').textContent).toBe('Lowest 12 (1 h average) on 1 Jan 2026 03:00.');
+        expect(within(card).getByTestId('test-result-2-lowest').textContent).toBe('Lowest 12 (1 h average) on 2026/01/01 03:00:00.');
         expect(card.querySelector('.vt-note')!.textContent).toMatch(/^Scores use 1-hour averages of the running rows\./);
         for (const n of [1, 2]) {
             const tile = within(card).getByTestId(`test-result-${n}`);

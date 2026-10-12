@@ -1,6 +1,7 @@
 import type { TimePeriod, WorkspaceSensorFilter } from '../../types';
 import { validatePeriods } from '../../utils/timePeriods';
-import { MONTHS_SHORT, clockText, dateText, formatDataStamp, formatStamp, parseLocal } from '../../utils/workbenchDate';
+import { formatYearMonth } from '../../utils/dateFormat';
+import { dateText, formatDataStamp, formatStamp, parseLocal } from '../../utils/workbenchDate';
 import { fmtNumText } from '../sensor/sensorInfo';
 
 /*
@@ -12,11 +13,11 @@ import { fmtNumText } from '../sensor/sensorInfo';
 
 export const DAY_MS = 86_400_000;
 
-// The Workbench date format and the local-time parser live in `utils/workbenchDate.ts`
-// (the pure period helpers in `utils/` print dates with them too);
-// re-exported here so components keep importing them from this file.
+// The date helpers and the local-time parser live in `utils/workbenchDate.ts`
+// (the pure period helpers in `utils/` print dates with them too) and print in
+// the app's one date format (`utils/dateFormat.ts`); re-exported here so
+// components keep importing them from this file.
 export { parseLocal, formatStamp, formatDataStamp };
-const MONTHS = MONTHS_SHORT;
 
 export interface DataBounds {
     min: string | null | undefined;
@@ -53,8 +54,13 @@ export function settleDateInput(typed: string, committed: string | null | undefi
     if (typed === saved || parseLocal(typed) !== null) return typed;
     return saved.trim() ? saved : typed;
 }
-const hhmm = clockText;
-const dateTxt = dateText;
+
+/** One typed bound of a period: "2025/11/03 06:00" — always date + time, on a
+ *  whole-day edge too. Text that is not a date is shown as typed. */
+function boundText(raw: string): string {
+    const ms = parseLocal(raw);
+    return ms === null ? raw : formatStamp(ms);
+}
 
 /** Dataset extent as epoch ms, or null when either side is unknown. */
 export function boundsMs(b: DataBounds | null | undefined): { t0: number; t1: number } | null {
@@ -64,52 +70,35 @@ export function boundsMs(b: DataBounds | null | undefined): { t0: number; t1: nu
 }
 
 /**
- * Chip / row label: "1 Jan – 28 Feb 2025" (year once when both ends share it),
- * "1 Nov 2025 – 15 Jan 2026", "3 Nov 2025 06:00 – 19 Dec 2025 18:00" when a
- * side isn't a whole day, "Start of data – 28 Feb 2025", "1 Nov 2025 – end of
- * data", and "All data" when both sides are open.
+ * Chip / row label: "2025/01/01 00:00 – 2025/02/28 23:59" — always the full
+ * date and the time on both sides (a whole-day edge too, and the year on both
+ * sides even when they share it). An open side keeps its words: "Start of data –
+ * 2025/02/28 23:59", "2025/11/01 00:00 – end of data"; "All data" when both
+ * sides are open. Unparseable text is shown as typed.
  */
 export function formatPeriod(p: TimePeriod): string {
     const sBlank = isBlank(p.start);
     const eBlank = isBlank(p.end);
     if (sBlank && eBlank) return 'All data';
-    const s = parseLocal(p.start);
-    const e = parseLocal(p.end);
-    const whole = (sBlank || (s !== null && hhmm(s) === '00:00')) && (eBlank || (e !== null && hhmm(e) === '23:59'));
-    const sy = s === null ? null : new Date(s).getFullYear();
-    const ey = e === null ? null : new Date(e).getFullYear();
-    const left = sBlank ? 'Start of data'
-        : s === null ? p.start
-        : whole ? dateTxt(s, sy !== ey) : `${dateTxt(s, true)} ${hhmm(s)}`;
-    const right = eBlank ? 'end of data'
-        : e === null ? p.end
-        : whole ? dateTxt(e, true) : `${dateTxt(e, true)} ${hhmm(e)}`;
-    return `${left} – ${right}`;
+    return `${sBlank ? 'Start of data' : boundText(p.start)} – ${eBlank ? 'end of data' : boundText(p.end)}`;
 }
 
 /**
- * Step-1 card / rule-sentence chip: "1 Jan 2026 → 31 Mar 2026". Always the year
- * on both sides; a side that is not a whole-day boundary (start 00:00 / end
- * 23:59) also gets its time. An open side reads "Start" / "End"; both open
- * reads "Whole dataset". Unparseable text is shown as typed.
+ * Step-1 card / rule-sentence chip: "2026/01/01 00:00 → 2026/03/31 23:59" —
+ * always the full date and the time on both sides. An open side reads "Start" /
+ * "End"; both open reads "Whole dataset". Unparseable text is shown as typed.
  */
 export function formatPeriodChip(p: TimePeriod): string {
     const sBlank = isBlank(p.start);
     const eBlank = isBlank(p.end);
     if (sBlank && eBlank) return 'Whole dataset';
-    const side = (raw: string, blank: boolean, openLabel: string, wholeTime: string): string => {
-        if (blank) return openLabel;
-        const ms = parseLocal(raw);
-        if (ms === null) return raw;
-        return hhmm(ms) === wholeTime ? dateTxt(ms, true) : `${dateTxt(ms, true)} ${hhmm(ms)}`;
-    };
-    return `${side(p.start, sBlank, 'Start', '00:00')} → ${side(p.end, eBlank, 'End', '23:59')}`;
+    return `${sBlank ? 'Start' : boundText(p.start)} → ${eBlank ? 'End' : boundText(p.end)}`;
 }
 
-/** "1 Jun 2025" for a single bound (falls back to the raw text). */
+/** "2025/06/01" for a single bound — the date alone (falls back to the raw text). */
 export function formatDate(s: string | null | undefined): string {
     const ms = parseLocal(s);
-    return ms === null ? (s ?? '') : dateTxt(ms, true);
+    return ms === null ? (s ?? '') : dateText(ms);
 }
 
 /** Whole days a period spans (open ends resolve to the dataset bounds); null if unknowable or reversed. */
@@ -145,6 +134,7 @@ export interface Coverage {
     /** True when no period is set (everything is used). */
     unlimited: boolean;
     segments: CoverageSegment[];
+    /** The dataset's first / last month, "2025/01" — the ends of the strip. */
     axisLeft: string;
     axisRight: string;
 }
@@ -160,8 +150,8 @@ export function computeCoverage(periods: TimePeriod[], bounds: DataBounds | null
     const { t0, t1 } = b;
     const W = t1 - t0;
     const totalDays = Math.round(W / DAY_MS);
-    const axisLeft = `${MONTHS[new Date(t0).getMonth()]} ${new Date(t0).getFullYear()}`;
-    const axisRight = `${MONTHS[new Date(t1).getMonth()]} ${new Date(t1).getFullYear()}`;
+    const axisLeft = formatYearMonth(new Date(t0));
+    const axisRight = formatYearMonth(new Date(t1));
     if (periods.length === 0) {
         return { totalDays, usedDays: totalDays, unlimited: true, axisLeft, axisRight,
             segments: [{ leftPct: 0, widthPct: 100, kind: 'ok', label: 'All data' }] };
@@ -201,7 +191,7 @@ export function computeCoverage(periods: TimePeriod[], bounds: DataBounds | null
 export interface TestCoverageSegment {
     leftPct: number;
     widthPct: number;
-    /** "S2 · 1 Mar 2026 → 14 Mar 2026" (the segment's tooltip). */
+    /** "S2 · 2026/03/01 00:00 – 2026/03/14 23:59" (the segment's tooltip). */
     label: string;
 }
 
