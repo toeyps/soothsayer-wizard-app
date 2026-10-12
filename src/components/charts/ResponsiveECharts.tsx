@@ -1,5 +1,6 @@
-import { useRef, useEffect, CSSProperties } from 'react';
+import { useRef, useEffect, useState, useCallback, CSSProperties } from 'react';
 import ReactECharts from 'echarts-for-react';
+import { attachEvenTimeTicks, hasTimeXAxis } from './evenTimeAxis';
 
 interface ResponsiveEChartsProps {
     option: any;
@@ -46,6 +47,23 @@ export default function ResponsiveECharts({
     const containerRef = useRef<HTMLDivElement>(null);
     const rafRef = useRef<number | null>(null);
 
+    // The long-lived instance (see `onChartReady` above for why it is taken from there).
+    const [instance, setInstance] = useState<any>(null);
+    const onReadyRef = useRef(onChartReady);
+    onReadyRef.current = onChartReady;
+    const handleReady = useCallback((inst: any) => {
+        setInstance(inst);
+        onReadyRef.current?.(inst);
+    }, []);
+
+    // Every chart with a time X axis gets evenly spaced ticks (see `evenTimeAxis.ts`). A new
+    // `option` replaces the whole chart option (notMerge), so the ticks are attached again.
+    const timeAxis = hasTimeXAxis(option);
+    useEffect(() => {
+        if (!instance || !timeAxis) return;
+        return attachEvenTimeTicks(instance);
+    }, [instance, timeAxis, option]);
+
     useEffect(() => {
         if (!containerRef.current) return;
         const el = containerRef.current;
@@ -86,7 +104,7 @@ export default function ResponsiveECharts({
                 theme={theme}
                 opts={opts}
                 onEvents={onEvents}
-                onChartReady={onChartReady}
+                onChartReady={handleReady}
                 style={{ height: '100%', width: '100%' }}
             />
         </div>
