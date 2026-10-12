@@ -48,7 +48,7 @@ import {
  *
  * When Rust could not calculate the score (warning `test_scoring_failed` — the
  * Relation model's engine did not answer), the Health score page shows
- * `TestScoringFailedNotice` in the score card's place.
+ * `TestScoringFailedNotice` in the score chart's place (the lower half of the chart card).
  */
 
 /** Amber note when the train running time is below the recommendation (rule 12). Never a block. */

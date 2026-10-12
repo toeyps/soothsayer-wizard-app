@@ -9,7 +9,6 @@ import {
     buildTimeSeriesOption,
     buildValueOverTimeOption,
     compactScopes,
-    narrowScopes,
     scopeIslands,
     scopeStripNames,
     scopesOf,
@@ -356,26 +355,27 @@ describe('buildTimeSeriesOption with scopes', () => {
         });
     });
 
-    it('which plot width the names are spaced for: a full-width card, or the narrow one for a half-width chart and a chart beside a side card', () => {
+    it('which plot width the names are spaced for: a full-width card, or the narrow one for a half-width chart', () => {
         const ts = Array.from({ length: 101 }, (_, i) => `2026-01-01 ${String(Math.floor(i / 60)).padStart(2, '0')}:${String(i % 60).padStart(2, '0')}:00`);
         const at = (i: number) => `2026-01-01T${String(Math.floor(i / 60)).padStart(2, '0')}:${String(i % 60).padStart(2, '0')}`;
         const ranges = Array.from({ length: 20 }, (_, i) => ({ kind: 'train' as const, start: at(i * 5), end: at(i * 5 + 4), label: `TRAIN P${i + 1}`, short: `P${i + 1}` }));
         const build = (scopes: TimeScopes | null) => buildTimeSeriesOption({ timestamps: ts, lines: [{ name: 'V', values: ts.map((_, i) => i), color: '#fff' }], scopes });
         const full = stripNames(build({ ranges }));
-        const narrow = stripNames(build(narrowScopes({ ranges })));
         const compact = stripNames(build(compactScopes({ ranges })));
-        expect(narrowScopes({ ranges })).toEqual({ ranges, narrow: true });
-        expect(narrowScopes(null)).toBeNull();
-        // beside a side card: fewer names than across the board, but still the word TRAIN
-        expect(narrow.length).toBeLessThan(full.length);
-        expect(narrow[0]).toBe('TRAIN P1');
-        // half-width: numbers only, spaced for the same narrow plot
+        expect(compactScopes({ ranges })).toEqual({ ranges, compact: true });
+        expect(compactScopes(null)).toBeNull();
+        // across the board: the word TRAIN once, then numbers
+        expect(full[0]).toBe('TRAIN P1');
+        // half-width: numbers only, spaced for the narrow plot — fewer names than across the board
         expect(compact[0]).toBe('P1');
         expect(compact.some(n => /TRAIN/.test(n))).toBe(false);
-        // few periods: the hint changes nothing
+        expect(compact.length).toBeLessThan(full.length);
+        // few periods on a full-width card: every one is named
         const few = { ranges: ranges.slice(0, 3).map((r, i) => ({ ...r, start: at(i * 30), end: at(i * 30 + 25) })) };
-        expect(stripNames(build(narrowScopes(few)))).toEqual(stripNames(build(few)));
         expect(stripNames(build(few))).toEqual(['TRAIN P1', 'P2', 'P3']);
+        // (there is no "chart beside a side card" spacing any more: the Health score page's charts
+        // are one full-width card since "Workbench detail pages v2")
+        expect(Object.keys(few)).toEqual(['ranges']);
     });
 
     it('open ends run to the edges of the data; compact charts use the short names', () => {

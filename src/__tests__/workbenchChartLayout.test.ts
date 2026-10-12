@@ -13,7 +13,6 @@ import {
     buildValueOverTimeOption,
     compactScopes,
     individualVLines,
-    narrowScopes,
     type TimeScope,
 } from '../components/windows/workbench/healthCharts';
 import { buildClusterSetPointOption, buildIndividualSetPointOption, buildRelationshipSetPointOption } from '../components/windows/workbench/healthPageCharts';
@@ -542,10 +541,10 @@ describe('the scope strip with many periods', () => {
     for (let d = 1; d <= 20; d++) for (const h of [0, 6, 12, 18]) timestamps.push(`2026-01-${pad(d)} ${pad(h)}:00:00`);
     const train: TimeScope[] = Array.from({ length: 20 }, (_, i) => ({ kind: 'train', start: `2026-01-${pad(i + 1)}T00:00`, end: `2026-01-${pad(i + 1)}T18:00`, label: `TRAIN P${i + 1}`, short: `P${i + 1}` }));
     const score: TimeScope[] = Array.from({ length: 12 }, (_, i) => ({ kind: 'score', start: `2026-01-${pad(i + 1)}T06:00`, end: `2026-01-${pad(i + 1)}T12:00`, label: `S${i + 1}`, short: `S${i + 1}` }));
-    const option = (ranges: TimeScope[], hint?: 'compact' | 'narrow') => buildTimeSeriesOption({
+    const option = (ranges: TimeScope[], hint?: 'compact') => buildTimeSeriesOption({
         timestamps,
         lines: [{ name: 'V', values: timestamps.map((_, i) => i % 7), color: '#fff' }],
-        scopes: hint === 'compact' ? compactScopes({ ranges }) : hint === 'narrow' ? narrowScopes({ ranges }) : { ranges },
+        scopes: hint === 'compact' ? compactScopes({ ranges }) : { ranges },
     });
     /** Width of a 9 px mono name. */
     const nameWidth = (text: string) => text.length * 5.4;
@@ -586,12 +585,14 @@ describe('the scope strip with many periods', () => {
         expectNoOverlap(names);
     });
 
-    it('a chart beside a side card (the Health score set-point chart): "TRAIN" once, thinned for the same narrow plot', () => {
+    // Since "Workbench detail pages v2" this chart is the upper half of a full-width card (it
+    // used to sit beside a side card and was spaced for a narrow plot).
+    it('the Health score set-point chart (a full-width card): "TRAIN" once, spaced for the narrowest full-width plot', () => {
         // with the reference-label gutter: 58 px left, 52 px right
-        const width = STRIP_PLOT_WIDTH.narrow + 58 + 52;
+        const width = STRIP_PLOT_WIDTH.full + 58 + 52;
         const p = makeHealthPreview({ kind: 'individual' });
         const series = { ...(p.series as IndividualSeries), timestamps, rows: timestamps.map((_, i) => i), value: timestamps.map((_, i) => 4 + (i % 3)), score: null };
-        const names = lane(textsFor(buildIndividualSetPointOption(series, p.stats as IndividualStats, { kind: 'individual', lower: 1, upper: 9 }, 'bar', narrowScopes({ ranges: train })), width, 330), CHART.train);
+        const names = lane(textsFor(buildIndividualSetPointOption(series, p.stats as IndividualStats, { kind: 'individual', lower: 1, upper: 9 }, 'bar', { ranges: train }), width, 330), CHART.train);
         expect(names[0].text).toBe('TRAIN P1');
         expect(names.filter(t => /TRAIN/.test(t.text))).toHaveLength(1);
         expect(names.length).toBeGreaterThanOrEqual(4);

@@ -103,8 +103,8 @@ export function buildCheckLines(kind: HealthPreview['kind'], issues: readonly He
         : [];
     issues.forEach((i, n) => {
         // "The health score could not be calculated" is about the score, not the set
-        // points: the Scoring results card (or, with no scoring period, the score card's
-        // place) shows it, not Checks.
+        // points: the chart card shows it (in the score chart's place, or as a notice
+        // above the charts), not Checks.
         if (TEST_SCORING_ISSUE_CODES.includes(i.code)) return;
         if (relRequired.length > 1 && relRequired.includes(i)) {
             if (collapsed) return;

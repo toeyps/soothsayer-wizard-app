@@ -455,3 +455,81 @@ describe('scoreColor', () => {
         expect(scoreColor(NaN)).toContain('180, 190, 210');
     });
 });
+
+// The ONE chart card of the Health score page ("Workbench detail pages v2"): a time chart
+// with the score chart right under it, on one time axis.
+describe('asStackUpper / asStackLower — the two halves of the stacked card', () => {
+    const { asStackUpper, asStackLower, buildIndividualSetPointOption, buildRelationshipSetPointOption, buildScoreOption, STACK_INNER_GAP } = healthPageCharts;
+    const p = makeHealthPreview({ kind: 'individual' });
+    const hourly = p.hourly as IndividualSeries;
+    const scopes = { ranges: [
+        { kind: 'train' as const, start: '2026-01-01T00:00', end: '2026-01-01T01:30', label: 'TRAIN P1', short: 'P1' },
+        { kind: 'train' as const, start: '2026-01-01T03:00', end: '2026-01-01T04:00', label: 'TRAIN P2', short: 'P2' },
+    ] };
+    const upperOf = (s: typeof scopes | null = scopes) => buildIndividualSetPointOption(hourly, p.stats as IndividualStats, { kind: 'individual', lower: 1, upper: 9 }, 'bar', s);
+    const lowerOf = (s: typeof scopes | null = scopes) => buildScoreOption(hourly.timestamps, [100, 90, 80, 60, 30], s);
+    const strip = (o: { series: Record<string, unknown>[] }) => (o.series.find(x => x.name === '__scopes') as any)?.markArea.data as any[][] | undefined;
+
+    it('upper: the X labels and ticks are left out and the plot runs down to the divider — the axis itself is untouched', () => {
+        const base = upperOf();
+        const up = asStackUpper(base);
+        expect(up.xAxis.axisLabel).toMatchObject({ show: false });
+        expect((up.xAxis as any).axisTick).toEqual({ show: false });
+        expect(up.grid).toEqual({ ...base.grid, bottom: STACK_INNER_GAP });
+        expect(STACK_INNER_GAP).toBe(8);
+        // the same axis: type, the tooltip heading, every other label setting
+        expect(up.xAxis.type).toBe('time');
+        expect((up.xAxis as any).axisPointer).toBe((base.xAxis as any).axisPointer);
+        const { show: _s, ...restLabel } = up.xAxis.axisLabel as Record<string, unknown>;
+        const { show: _b, ...baseLabel } = (base.xAxis as any).axisLabel as Record<string, unknown>;
+        expect(restLabel).toEqual(baseLabel);
+        // nothing else changes: series (the strip with its NAMES), Y axis, zoom, tooltip, the cursor link
+        expect(up.series).toBe(base.series);
+        expect(strip(up)!.map(a => a[0].label.show)).toEqual([true, true]);
+        expect(up.yAxis).toBe(base.yAxis);
+        expect(up.dataZoom).toBe(base.dataZoom);
+        expect(up.tooltip).toBe(base.tooltip);
+        expect(up.axisPointer).toBe(base.axisPointer);
+        // the input is not mutated
+        expect((base.xAxis as any).axisLabel.show).not.toBe(false);
+        expect(base.grid.bottom).toBe(28);
+    });
+
+    it('lower: the period names are hidden (the upper chart prints them once), the bands stay, the plot starts under the divider', () => {
+        const base = lowerOf();
+        const low = asStackLower(base);
+        expect(low.grid).toEqual({ ...base.grid, top: STACK_INNER_GAP });
+        expect(base.grid.top).toBeGreaterThan(STACK_INNER_GAP); // it had room for the strip
+        expect(strip(low)!.map(a => a[0].label.show)).toEqual([false, false]);
+        // the bands themselves: same places, same fill, same names (for the tests and the tooltip)
+        expect(strip(low)!.map(a => [a[0].name, a[0].xAxis, a[1].xAxis, a[0].itemStyle])).toEqual(strip(base)!.map(a => [a[0].name, a[0].xAxis, a[1].xAxis, a[0].itemStyle]));
+        // the score series is untouched; so are the axes (it keeps its own X labels), zoom and the score colours
+        expect(low.series[0]).toBe(base.series[0]);
+        expect(low.xAxis).toBe(base.xAxis);
+        expect(low.yAxis).toBe(base.yAxis);
+        expect(low.visualMap).toBe(base.visualMap);
+        expect(low.dataZoom).toBe(base.dataZoom);
+        // the input is not mutated
+        expect(strip(base)!.map(a => a[0].label.show)).toEqual([true, true]);
+    });
+
+    it('without scopes there is no strip to hide: only the margin changes', () => {
+        const base = lowerOf(null);
+        const low = asStackLower(base);
+        expect(strip(low)).toBeUndefined();
+        expect(low.series).toEqual(base.series);
+        expect(low.grid.top).toBe(STACK_INNER_GAP);
+    });
+
+    it('the pair lines up: the same left / right plot margins and the same time values, for Individual and the Relation model', () => {
+        const rel = makeHealthPreview({ kind: 'relationship' });
+        const relUpper = buildRelationshipSetPointOption(rel.hourly as RelationshipSeries, 0.9134, { kind: 'relationship', residualAt80Lower: -1.5, residualAt80Upper: 1.5, residualAt0Lower: -3, residualAt0Upper: 3 }, 'bar', scopes);
+        const low = asStackLower(lowerOf());
+        for (const up of [asStackUpper(upperOf()), asStackUpper(relUpper)]) {
+            expect([up.grid.left, up.grid.right]).toEqual([low.grid.left, low.grid.right]);
+            expect(up.grid.right).toBe(REF_LABEL_GUTTER);
+            const xs = (o: { series: Record<string, unknown>[] }) => (o.series[0].data as [number, number | null][]).map(d => d[0]);
+            expect(xs(up)).toEqual(xs(low));
+        }
+    });
+});

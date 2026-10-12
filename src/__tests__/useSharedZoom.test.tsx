@@ -6,7 +6,7 @@ vi.mock('echarts', () => ({ connect: vi.fn() }));
 vi.mock('../components/charts/ResponsiveECharts', () => ({ default: () => null }));
 
 import { useSharedZoom } from '../components/windows/workbench/HealthScorePage';
-import { HEALTH_SYNC_GROUP } from '../components/windows/workbench/healthPageCharts';
+import { HEALTH_SYNC_GROUP, HEALTH_SYNC_GROUP_EXPANDED } from '../components/windows/workbench/healthPageCharts';
 
 /*
  * The Health score page's two time charts show ONE zoom window (real-app request
@@ -148,5 +148,78 @@ describe('useSharedZoom', () => {
         const broken = { ...fakeChart(), getOption: () => { throw new Error('gone'); } };
         result.current.join(broken);
         expect(() => result.current.onZoom({}, broken)).not.toThrow();
+    });
+});
+
+// The stacked card's Expand overlay holds BOTH charts: that enlarged pair is linked to itself —
+// its own cursor group, its own zoom window — and never to the pair under the backdrop.
+describe('useSharedZoom — the enlarged pair (scope "expanded")', () => {
+    const setupExpanded = (key = 'm1') => renderHook(({ k }) => useSharedZoom(k, 'expanded'), { initialProps: { k: key } });
+
+    it('the two enlarged charts join their own group; a zoom on one is pushed to the other', () => {
+        const { result } = setupExpanded();
+        const a = fakeChart({ inModal: true });
+        const b = fakeChart({ inModal: true });
+        result.current.join(a);
+        result.current.join(b);
+        expect(a.group).toBe(HEALTH_SYNC_GROUP_EXPANDED);
+        expect(b.group).toBe(HEALTH_SYNC_GROUP_EXPANDED);
+        expect(HEALTH_SYNC_GROUP_EXPANDED).not.toBe(HEALTH_SYNC_GROUP);
+        a.wheel(30, 70, result.current);
+        expect(b.actions).toEqual([{ type: 'dataZoom', dataZoomIndex: 0, start: 30, end: 70, escapeConnect: true }]);
+        expect(a.actions).toEqual([]);
+        // a redraw of one (a set point edited while the overlay is open) gets the window back
+        b.redraw();
+        result.current.restore();
+        expect([b.start, b.end]).toEqual([30, 70]);
+    });
+
+    it('a chart ON THE PAGE stays out of it: not grouped, not moved, its zoom moves nothing', () => {
+        const { result } = setupExpanded();
+        const big = fakeChart({ inModal: true });
+        const onPage = fakeChart();
+        result.current.join(big);
+        result.current.join(onPage);
+        expect(onPage.group).toBeUndefined();
+        big.wheel(10, 40, result.current);
+        expect(onPage.actions).toEqual([]);
+        onPage.wheel(50, 60, result.current);
+        expect(big.actions).toEqual([]);
+        expect([big.start, big.end]).toEqual([10, 40]);
+    });
+
+    it('the page pair and the enlarged pair keep separate windows (two hooks, as the page uses them)', () => {
+        const page = setup();
+        const expanded = setupExpanded();
+        const p1 = fakeChart();
+        const p2 = fakeChart();
+        const x1 = fakeChart({ inModal: true });
+        const x2 = fakeChart({ inModal: true });
+        for (const c of [p1, p2, x1, x2]) { page.result.current.join(c); expanded.result.current.join(c); }
+        expect([p1.group, p2.group, x1.group, x2.group]).toEqual([HEALTH_SYNC_GROUP, HEALTH_SYNC_GROUP, HEALTH_SYNC_GROUP_EXPANDED, HEALTH_SYNC_GROUP_EXPANDED]);
+        // every chart reports its zoom to BOTH hooks' handlers only through the one it was given; here: each to its own
+        p1.wheel(20, 60, page.result.current);
+        expect([p2.start, p2.end]).toEqual([20, 60]);
+        expect([[x1.start, x1.end], [x2.start, x2.end]]).toEqual([[0, 100], [0, 100]]);
+        x2.wheel(40, 90, expanded.result.current);
+        expect([x1.start, x1.end]).toEqual([40, 90]);
+        expect([[p1.start, p1.end], [p2.start, p2.end]]).toEqual([[20, 60], [20, 60]]);
+        // a zoom event that reaches the WRONG hook is ignored (the chart never joined it)
+        p1.wheel(5, 6, expanded.result.current);
+        expect([x1.start, x1.end]).toEqual([40, 90]);
+    });
+
+    it('another model starts the enlarged pair unzoomed too', () => {
+        const { result, rerender } = setupExpanded('m1');
+        const a = fakeChart({ inModal: true });
+        const b = fakeChart({ inModal: true });
+        result.current.join(a);
+        result.current.join(b);
+        a.wheel(30, 70, result.current);
+        rerender({ k: 'm2' });
+        b.redraw();
+        b.actions.length = 0;
+        result.current.restore();
+        expect(b.actions).toEqual([]);
     });
 });

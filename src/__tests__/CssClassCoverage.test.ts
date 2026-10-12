@@ -70,7 +70,7 @@ const DYNAMIC_ENUMS: Record<string, readonly string[]> = {
     'model-status-pill--': ['complete', 'trained', 'incomplete'],               // BuildModelWindow pillState
     'f4-kb-dot--': ['trained', 'complete', 'need', 'bad'],                       // dotStatusFor + DOT_CLASS
     'rc-impact--': ['amber', 'grey'],                                             // BuildModelWindow: the impact line next to Apply (tone)
-    'wb2-card--': ['tall', 'xtall', 'hs'],                                       // ChartCardSize minus 'normal'
+    'wb2-card--': ['tall', 'xtall', 'stack', 'stackxy'],                         // ChartCardSize minus 'normal'
     'wb3-kpi--': ['ok', 'warn', 'bad'],                                          // Kpi tone (a score value's band colour)
     'hs-chk--': ['ok', 'need', 'bad'],
     'wb3-ruler--': ['individual', 'relationship', 'clustering'],                 // ScoreRuler: the model kind
@@ -245,6 +245,20 @@ describe('CSS class coverage (static — jsdom cannot see App.css)', () => {
         expect(CSS).not.toMatch(/\.hs-spp|\.hs-setwrap|\.wb2-hs\b|\.hsx-/);
         const all = FILES.map(f => f.code).join('\n');
         expect(all).not.toMatch(/\bhsx-|\bhs-spp\b|\bhs-setwrap\b|\bwb2-hs\b/);
+    });
+
+    it('Health score chart card: ONE card of two stacked charts — 560 px, 700 px with the Clusters scatter on top; the old one-chart sizes and the lock box are gone', () => {
+        expect(CSS).toMatch(/\.wb2-card--stack \.wb2-cv \{ height: 560px; \}/);
+        expect(CSS).toMatch(/\.wb2-card--stackxy \.wb2-cv \{ height: 700px; \}/);
+        for (const c of ['wb3-stack-in', 'wb3-stack-in--xy', 'wb3-stack-top', 'wb3-stack-bot', 'wb3-stack-bot--lock', 'wb3-stack-locktext']) expect(DEFINED.has(c), c).toBe(true);
+        // the two halves share the card's height (the upper one gets more; more still for the scatter)
+        expect(CSS).toMatch(/\.wb3-stack-top \{ flex: 1 1 58%; min-height: 0; \}/);
+        expect(CSS).toMatch(/\.wb3-stack-bot \{[^}]*flex: 1 1 42%;[^}]*border-top: 1px dashed var\(--border-strong\);/);
+        expect(CSS).toMatch(/\.wb3-stack-in--xy \.wb3-stack-top \{ flex-basis: 64%; \}/);
+        expect(CSS).toMatch(/\.wb3-stack-in--xy \.wb3-stack-bot \{ flex-basis: 36%; \}/);
+        expect(CSS).not.toMatch(/\.wb2-card--hs|\.hs-lockbig/);
+        const all = FILES.map(f => f.code).join('\n');
+        expect(all).not.toMatch(/\bhs-lockbig\b|size="hs"|narrowScopes|fmtNumCol/);
     });
 
     it('Health score KPI strip: one row that scrolls sideways; the share bar and its key are styled; the old shares card rules are gone', () => {

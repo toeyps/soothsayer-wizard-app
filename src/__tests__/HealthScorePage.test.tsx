@@ -80,11 +80,12 @@ const kpis = () => screen.getByTestId('score-summary');
 const tile = (id: 'kpi-lowest' | 'kpi-below80' | 'score-shares') => screen.getByTestId(id);
 const tileSub = (id: 'kpi-lowest' | 'kpi-below80' | 'score-shares') => tile(id).querySelector('.wb3-kpi-s')?.textContent ?? null;
 /** The bands drawn in the stacked share bar, with how much each grows. */
+/** The ONE chart card of the page (both charts), its header subtitle and its two halves. */
+const stackCard = () => screen.getByTestId('chart-card-stack');
+const stackSub = () => stackCard().querySelector('.wb2-card-s')!.textContent;
 const barBands = () => [...screen.getByTestId('share-bar').querySelectorAll('i')].map(i => [(i as HTMLElement).dataset.band, (i as HTMLElement).style.flexGrow]);
 const scoreChart = () => charts.filter(c => c.option?.yAxis?.name === 'Score').pop();
 const setChart = () => charts.filter(c => c.option?.yAxis?.name !== 'Score' || c.option?.series?.[0]?.name === 'Points').pop();
-/** Text of the legend row under a card's chart, or null when the card has none. */
-const legendOf = (id: string) => screen.getByTestId(`chart-card-${id}`).querySelector('.wb2-legend')?.textContent ?? null;
 /** The names PRINTED in the strip above a time chart's plot (the TRAIN periods — a scoring period is not drawn), in band order. */
 const stripOf = (c: any): string[] => (c.option.series.find((x: any) => x.name === '__scopes')?.markArea?.data ?? [])
     .filter((a: any) => a[0].label.show).map((a: any) => a[0].label.formatter);
@@ -557,7 +558,7 @@ describe('Clustering: one outer ring N for every cluster', () => {
         expect(ringLabelsOf(setChart())).toEqual(['1× · 100', '3× · 80', '4.5× · 0']);
         type('sp-outer_sd', '4.25');
         expect(ringLabelsOf(setChart()).slice(-1)).toEqual(['4.25× · 0']);
-        expect(legendOf('set-clustering')).toBeNull();
+        expect(stackCard().querySelector('.wb2-legend')).toBeNull();
     });
 
     it('no master-data note (that is Individual\'s)', () => {
@@ -599,7 +600,8 @@ describe('Health score chart', () => {
     it('is locked while the set points are not valid - no score chart is drawn; the text sends the user to the ruler', () => {
         mount({ sp: { kind: 'individual', lower: null, upper: null, masterLower: null, masterUpper: null } });
         const lock = screen.getByTestId('score-locked');
-        expect(lock.textContent).toBe('Health scoreSet every point on the ruler above — the score appears here');
+        expect(lock.textContent).toBe('Set every point on the ruler above — the score appears here');
+        expect(stackCard().contains(lock)).toBe(true); // in the lower half of the one chart card
         expect(lock.dataset.lock).toBe('empty');
         expect(scoreChart()).toBeUndefined();
         expect(screen.queryByTestId('chart-card-score')).toBeNull();
@@ -609,10 +611,10 @@ describe('Health score chart', () => {
     it('lock text: a rejected set point -> "Fix the set point on the ruler above…"; only empty ones -> "Set every point on the ruler above…"', () => {
         mount({ sp: IND_VALID });
         type('sp-lower', '3'); // rejected
-        expect(screen.getByTestId('score-locked').textContent).toBe('Health scoreFix the set point on the ruler above — the score appears here');
+        expect(screen.getByTestId('score-locked').textContent).toBe('Fix the set point on the ruler above — the score appears here');
         expect(screen.getByTestId('score-locked').dataset.lock).toBe('bad');
         type('sp-lower', ''); // empty again: nothing is rejected
-        expect(screen.getByTestId('score-locked').textContent).toBe('Health scoreSet every point on the ruler above — the score appears here');
+        expect(screen.getByTestId('score-locked').textContent).toBe('Set every point on the ruler above — the score appears here');
         expect(screen.getByTestId('score-locked').dataset.lock).toBe('empty');
         // a rejected point AND an empty one: the rejected one decides
         cleanup();
@@ -706,8 +708,8 @@ describe('Health score chart', () => {
 
     it('has NO legend row and no "hover to read" sentence: the shares tile and the read-out say it', () => {
         mount({ sp: IND_VALID });
-        expect(legendOf('score')).toBeNull();
-        const card = screen.getByTestId('chart-card-score');
+        expect(stackCard().querySelector('.wb2-legend')).toBeNull();
+        const card = stackCard();
         expect(card.textContent).not.toMatch(/Hover to read|near 0|both charts move together/i);
         expect(screen.getByTestId('score-shares')).toBeTruthy(); // the shares stay — as a tile at the top
         expect(card.contains(screen.getByTestId('score-shares'))).toBe(false);
@@ -715,15 +717,15 @@ describe('Health score chart', () => {
     });
 
     // Workbench detail pages v2: the numbers left the card's subtitle for the KPI tiles; the card
-    // only says what a point of the chart is.
-    it('the score card\'s subtitle is ONE short caption — "1-hour averages of the running rows" — with no numbers in it', () => {
+    // only says what a point of its charts is.
+    it('the chart card\'s subtitle says ONCE that every point is a "1-hour average of the running rows" — with no numbers in it', () => {
         mount({ sp: IND_VALID });
-        const card = screen.getByTestId('chart-card-score');
-        expect(card.querySelector('.wb2-card-s')!.textContent).toBe('1-hour averages of the running rows');
+        expect(stackSub()).toBe('bar · 1-hour averages of the running rows · one time axis, one cursor for both');
+        expect(screen.getAllByTestId('score-basis')).toHaveLength(1);
         expect(screen.getByTestId('score-basis').textContent).toBe('1-hour averages of the running rows');
         expect(screen.getByTestId('score-basis').closest('.wb2-card-s')).not.toBeNull();
-        expect(card.textContent).not.toMatch(/Lowest|below 80|scored hours/);
-        expect(card.querySelector('[data-testid="score-lowest"], [data-testid="score-below80"]')).toBeNull();
+        expect(stackCard().querySelector('.wb2-card-h')!.textContent).not.toMatch(/Lowest|below 80|scored hours/);
+        expect(stackCard().querySelector('[data-testid="score-lowest"], [data-testid="score-below80"]')).toBeNull();
     });
 
     it('the line at 80 is named at the right edge outside the plot; the tooltip prints whole scores', () => {
@@ -802,53 +804,210 @@ describe('Health score chart', () => {
         expect(screen.getByTestId('score-basis').textContent).toBe('1-hour averages of the running rows');
     });
 
-    it('every chart card has the Expand button (set-point chart and score chart)', () => {
+    it('the card has ONE Expand button: the enlarged copy holds BOTH charts (and nothing else of the page)', () => {
         mount({ sp: IND_VALID });
-        expect(screen.getByTestId('chart-expand-set-individual')).toBeTruthy();
-        fireEvent.click(screen.getByTestId('chart-expand-score'));
-        expect(screen.getByTestId('chart-overlay-score')).toBeTruthy();
-        // the enlarged copy is the chart alone: the shares are a tile at the top of the page
-        expect(screen.getByTestId('chart-overlay-score').querySelector('[data-testid="score-shares"]')).toBeNull();
+        expect(screen.queryByTestId('chart-expand-set-individual')).toBeNull();
+        expect(screen.queryByTestId('chart-expand-score')).toBeNull();
+        expect(stackCard().querySelectorAll('button[title="Expand"]')).toHaveLength(1);
+        fireEvent.click(screen.getByTestId('chart-expand-stack'));
+        const overlay = screen.getByTestId('chart-overlay-stack');
+        expect(overlay.querySelectorAll('[data-testid="echarts-mock"]')).toHaveLength(2);
+        expect(overlay.querySelectorAll('.wb3-stack-in > *')).toHaveLength(2);
+        expect([...overlay.querySelectorAll('[data-testid="echarts-mock"]')].map(c => c.getAttribute('data-y-name'))).toEqual(['bar', 'Score']); // value above, score below
+        // the enlarged copy is the charts alone: the tiles stay on the page
+        expect(overlay.querySelector('[data-testid="score-shares"]')).toBeNull();
+        // ...and it repeats none of the page's test ids
+        for (const id of ['chart-stack', 'chart-card-set-individual', 'chart-card-score']) expect(screen.getAllByTestId(id)).toHaveLength(1);
         fireEvent.keyDown(window, { key: 'Escape' });
-        expect(screen.queryByTestId('chart-overlay-score')).toBeNull();
+        expect(screen.queryByTestId('chart-overlay-stack')).toBeNull();
+    });
+
+    // The enlarged copy is a pair of its own: it used to be ONE chart kept out of everything; now
+    // that it is both charts, they must be linked to each other — and still not to the page's.
+    it('the enlarged copy: its two charts share THEIR OWN cursor group and zoom window — never the page\'s', () => {
+        mount({ sp: IND_VALID });
+        const pageJoin = scoreChart().onChartReady;
+        const pageZoom = scoreChart().onEvents.datazoom;
+        fireEvent.click(screen.getByTestId('chart-expand-stack'));
+        const [upper, lower] = charts.slice(-2); // the two charts drawn for the overlay
+        expect(upper.onChartReady).toBe(lower.onChartReady);
+        expect(upper.onEvents.datazoom).toBe(lower.onEvents.datazoom);
+        expect(upper.onChartReady).not.toBe(pageJoin);
+        expect(upper.onEvents.datazoom).not.toBe(pageZoom);
+        // a chart inside the overlay joins the EXPANDED group through the overlay's handler...
+        const dialog = document.createElement('div');
+        dialog.className = 'pm-chart-modal-backdrop';
+        const inOverlay: any = { getDom: () => dialog.appendChild(document.createElement('div')) };
+        upper.onChartReady(inOverlay);
+        expect(inOverlay.group).toBe('health-score-sync-expanded');
+        // ...but not through the page's (the charts under the backdrop must stay still)
+        const stray: any = { getDom: () => dialog.appendChild(document.createElement('div')) };
+        pageJoin(stray);
+        expect(stray.group).toBeUndefined();
+        // and a chart on the page never joins the overlay's pair
+        const onPage: any = { getDom: () => document.createElement('div') };
+        upper.onChartReady(onPage);
+        expect(onPage.group).toBeUndefined();
+        pageJoin(onPage);
+        expect(onPage.group).toBe('health-score-sync');
+        // hovering in the overlay still drives the page's read-out state (one hovered hour for the page)
+        act(() => { lower.onEvents.updateAxisPointer({ axesInfo: [{ axisDim: 'x', value: new Date('2026-01-01 03:00:00').getTime() }] }); });
+        expect(screen.getByTestId('hs-readout').textContent).toBe('2026/01/01 03:00:00 · 1 h avg 6.1 bar · score 60');
     });
 
     // Real-app request 2026-10-12: "if the two charts were the same size it would be much easier
-    // to read — no need to line the point up by eye". Workbench detail pages v2: the ruler card is
-    // full width ABOVE the charts and there is no right-column card any more.
-    it('one column: the KPI tiles, the ruler card, the set-point chart, the score chart — the two time charts are the same width and share their plot margins and one zoom', () => {
+    // to read — no need to line the point up by eye". Workbench detail pages v2: ONE full-width card
+    // holds both charts, on one time axis.
+    it('one column: the KPI tiles, the ruler card, then ONE chart card with the set-point chart above the score chart', () => {
         mount({ sp: IND_VALID });
         const page = screen.getByTestId('health-page');
         const rulerCard = screen.getByTestId('set-points-card');
-        const setCard = screen.getByTestId('chart-card-set-individual');
-        const scoreCard = screen.getByTestId('chart-card-score');
         // every block is a direct child of the ONE-column board, in this order — the tiles first
         expect(page.className).toBe('wb2-board hs-board');
-        expect([...page.children]).toEqual([kpis(), rulerCard, setCard, scoreCard]);
+        expect([...page.children]).toEqual([kpis(), rulerCard, stackCard()]);
         // no side column, no wrappers of the old two-column layout, no "Share of scored hours" card
         expect(page.querySelector('.hs-spp, .hs-setwrap, .hs-sharecard, .hs-shares')).toBeNull();
         expect(rulerCard.className).toBe('hs-card wb3-rulercard');
         expect(kpis().contains(screen.getByTestId('score-shares'))).toBe(true);
-        // the same plot box: left and right margins are equal
+        // ONE card (not two), full width, 560 px tall (the "stack" size)
+        expect(page.querySelectorAll('.wb2-card')).toHaveLength(1);
+        expect(stackCard().className).toBe('wb2-card wb2-card--stack wb2-full');
+        expect(stackCard().querySelector('.wb2-card-h b')!.textContent).toBe('Sensor value and health score');
+        // both charts inside it, in order: the set-point chart, then the score chart
+        const stack = screen.getByTestId('chart-stack');
+        expect(stack.className).toBe('wb3-stack-in');
+        expect([...stack.children]).toEqual([screen.getByTestId('chart-card-set-individual'), screen.getByTestId('chart-card-score')]);
+        expect(screen.getByTestId('chart-card-set-individual').className).toBe('wb3-stack-top');
+        expect(screen.getByTestId('chart-card-score').className).toBe('wb3-stack-bot');
+        expect(stack.querySelectorAll('[data-testid="echarts-mock"]')).toHaveLength(2);
+        expect(screen.getByTestId('chart-card-set-individual').querySelector('[data-testid="echarts-mock"]')!.getAttribute('data-y-name')).toBe('bar');
+        expect(screen.getByTestId('chart-card-score').querySelector('[data-testid="echarts-mock"]')!.getAttribute('data-y-name')).toBe('Score');
+    });
+
+    it('ONE time axis: the same plot margins left and right, the X labels printed once (under the lower chart), the periods named once (above the upper one)', () => {
+        mount({ sp: IND_VALID, data: { ...previewFor('individual', IND_VALID), test_validation: makeValidation({ tests: [makeTestResult()] }) } });
         const g = (c: any) => [c.option.grid.left, c.option.grid.right];
         expect(g(scoreChart())).toEqual(g(setChart()));
-        // one zoom window: both listen for a zoom and join through the same ready handler
+        // the same X values in both (the hour starts), so a moment in time is at the same X
+        const xs = (c: any): number[] => c.option.series[0].data.map((p: any) => p[0]);
+        expect(xs(scoreChart())).toEqual(xs(setChart()));
+        expect(setChart().option.xAxis.type).toBe('time');
+        expect(scoreChart().option.xAxis.type).toBe('time');
+        // upper: no X labels / ticks of its own, its plot runs down to the divider
+        expect(setChart().option.xAxis.axisLabel.show).toBe(false);
+        expect(setChart().option.xAxis.axisTick).toEqual({ show: false });
+        expect(setChart().option.grid.bottom).toBe(8);
+        // lower: it prints the time labels; its plot starts right under the divider
+        expect(scoreChart().option.xAxis.axisLabel.show).not.toBe(false);
+        expect(scoreChart().option.grid.top).toBe(8);
+        expect(scoreChart().option.grid.bottom).toBe(28);
+        // the TRAIN band is on both, its NAME only above the upper plot
+        expect(bandsOf(setChart())).toEqual(['TRAIN']);
+        expect(bandsOf(scoreChart())).toEqual(['TRAIN']);
+        expect(stripOf(setChart())).toEqual(['TRAIN']);
+        expect(stripOf(scoreChart())).toEqual([]);
+    });
+
+    it('one zoom window and one cursor for both: the two charts join through the same handler and report their zoom to the same one', () => {
+        mount({ sp: IND_VALID });
         expect(typeof scoreChart().onEvents.datazoom).toBe('function');
         expect(scoreChart().onEvents.datazoom).toBe(setChart().onEvents.datazoom);
         expect(scoreChart().onChartReady).toBe(setChart().onChartReady);
+        // both link their X cursor (the group carries it across)
+        for (const c of [scoreChart(), setChart()]) expect(c.option.axisPointer.link).toEqual([{ xAxisIndex: 'all' }]);
+        // a zoom on one is pushed to the other; a set-point edit (a redrawn chart) puts the window back
+        const inst = (start: number, end: number) => {
+            const z = { start, end };
+            const chart: any = {
+                getDom: () => document.createElement('div'),
+                isDisposed: () => false,
+                getOption: () => ({ dataZoom: [z] }),
+                dispatchAction: vi.fn((a: any) => { z.start = a.start; z.end = a.end; }),
+            };
+            return chart;
+        };
+        const upper = inst(0, 100);
+        const lower = inst(0, 100);
+        setChart().onChartReady(upper);
+        scoreChart().onChartReady(lower);
+        upper.getOption().dataZoom[0].start = 20;
+        upper.getOption().dataZoom[0].end = 60;
+        act(() => { setChart().onEvents.datazoom({}, upper); });
+        expect(lower.dispatchAction).toHaveBeenLastCalledWith({ type: 'dataZoom', dataZoomIndex: 0, start: 20, end: 60, escapeConnect: true });
+        expect(upper.dispatchAction).not.toHaveBeenCalled();
+        // the user edits a set point while zoomed: the upper chart is redrawn from a new option (unzoomed)...
+        upper.getOption().dataZoom[0].start = 0;
+        upper.getOption().dataZoom[0].end = 100;
+        type('sp-upper', '9.5');
+        // ...and gets the window back; the lower one, which kept it, is left alone
+        expect(upper.dispatchAction).toHaveBeenLastCalledWith({ type: 'dataZoom', dataZoomIndex: 0, start: 20, end: 60, escapeConnect: true });
+        expect(lower.dispatchAction).toHaveBeenCalledTimes(1);
     });
 
-    it('Clustering: the scatter is the taller card (two value axes); a time chart keeps the "tall" one', () => {
+    it('LOCKED: the upper chart is alone in the card and keeps its own time labels; the lock sentence takes the score chart\'s place', () => {
+        mount({ sp: { kind: 'individual', lower: null, upper: null, masterLower: null, masterUpper: null } });
+        const stack = screen.getByTestId('chart-stack');
+        expect([...stack.children]).toEqual([screen.getByTestId('chart-card-set-individual'), screen.getByTestId('score-locked')]);
+        expect(screen.getByTestId('score-locked').className).toBe('wb3-stack-bot wb3-stack-bot--lock');
+        expect(screen.queryByTestId('chart-card-score')).toBeNull();
+        expect(stack.querySelectorAll('[data-testid="echarts-mock"]')).toHaveLength(1);
+        // not the upper half of a pair: its X labels and its own bottom margin are back
+        expect(setChart().option.xAxis.axisLabel.show).not.toBe(false);
+        expect(setChart().option.grid.bottom).toBe(28);
+        // the card is the same card (title, size, read-out) — only its lower half differs
+        expect(stackCard().className).toBe('wb2-card wb2-card--stack wb2-full');
+        expect(stackCard().querySelector('.wb2-card-h b')!.textContent).toBe('Sensor value and health score');
+        expect(screen.getByTestId('hs-readout').textContent).toBe('');
+    });
+
+    it('Clustering: the 700 px variant — the scatter above (taller share of the card), the score chart below; they share no axis', () => {
         mount({ kind: 'clustering', sp: { kind: 'clustering', outerSd: 5 } });
-        expect(screen.getByTestId('chart-card-set-clustering').className).toMatch(/wb2-card--xtall/);
+        expect(stackCard().className).toBe('wb2-card wb2-card--stackxy wb2-full');
+        expect(stackCard().querySelector('.wb2-card-h b')!.textContent).toBe('Clusters and health score');
+        const stack = screen.getByTestId('chart-stack');
+        expect(stack.className).toBe('wb3-stack-in wb3-stack-in--xy');
+        expect([...stack.children]).toEqual([screen.getByTestId('chart-card-set-clustering'), screen.getByTestId('chart-card-score')]);
+        // the scatter is not a time chart: it joins no cursor group and no zoom window, and keeps its own axes
+        expect(setChart().onChartReady).toBeUndefined();
+        expect(setChart().onEvents.datazoom).toBeUndefined();
+        expect(setChart().option.xAxis.type).toBe('value');
+        expect(setChart().option.xAxis.axisLabel?.show).not.toBe(false);
+        // the score chart under it is a whole chart of its own: its time labels, its own top margin
+        expect(typeof scoreChart().onEvents.datazoom).toBe('function');
+        expect(scoreChart().option.grid.top).toBe(14);
+        // a time kind is the 560 px one
+        cleanup();
+        mount({ kind: 'relationship', sp: REL_VALID });
+        expect(stackCard().className).toBe('wb2-card wb2-card--stack wb2-full');
+        expect(stackCard().querySelector('.wb2-card-h b')!.textContent).toBe('Residual and health score');
+        expect(screen.getByTestId('chart-stack').className).toBe('wb3-stack-in');
+    });
+
+    it('the hover read-out is in the card header — there whether or not the score is drawn', () => {
+        mount({ sp: IND_VALID });
+        const head = stackCard().querySelector('.wb2-card-h')!;
+        expect(head.contains(screen.getByTestId('hs-readout'))).toBe(true);
+        expect(screen.getAllByTestId('hs-readout')).toHaveLength(1);
+        act(() => { setChart().onEvents.updateAxisPointer({ axesInfo: [{ axisDim: 'x', value: new Date('2026-01-01 04:00:00').getTime() }] }); });
+        expect(screen.getByTestId('hs-readout').textContent).toBe('2026/01/01 04:00:00 · 1 h avg 3.2 bar · score 30');
+        cleanup();
+        mount({ sp: { kind: 'individual', lower: null, upper: null, masterLower: null, masterUpper: null } });
+        expect(stackCard().querySelector('.wb2-card-h')!.contains(screen.getByTestId('hs-readout'))).toBe(true);
+        act(() => { setChart().onEvents.updateAxisPointer({ axesInfo: [{ axisDim: 'x', value: new Date('2026-01-01 04:00:00').getTime() }] }); });
+        expect(screen.getByTestId('hs-readout').textContent).toBe('2026/01/01 04:00:00 · no score');
+    });
+
+    it('the Out of date film: ONE, over the whole card (both charts), while the model is stale', () => {
+        mount({ sp: IND_VALID, stale: true });
+        const films = screen.getAllByTestId('chart-outdated');
+        expect(films).toHaveLength(1);
+        const body = stackCard().querySelector('.wb2-cv')!;
+        expect(films[0].parentElement).toBe(body);
+        expect(body.contains(screen.getByTestId('chart-card-set-individual'))).toBe(true);
+        expect(body.contains(screen.getByTestId('chart-card-score'))).toBe(true);
         cleanup();
         mount({ sp: IND_VALID });
-        expect(screen.getByTestId('chart-card-set-individual').className).toMatch(/wb2-card--tall/);
-    });
-
-    it('the Out of date film covers both charts while the model is stale', () => {
-        mount({ sp: IND_VALID, stale: true });
-        expect(screen.getAllByTestId('chart-outdated').length).toBe(2);
+        expect(screen.queryByTestId('chart-outdated')).toBeNull();
     });
 });
 
@@ -1047,15 +1206,15 @@ describe('set-point chart per kind', () => {
         expect(marks(setChart()).some(m => m?.startsWith('H'))).toBe(false);
     });
 
-    it('Individual: the subtitle is the unit and "1 h average" (no "type L and H on the right"), and the card has no legend row', () => {
+    it('Individual: the subtitle is the unit and "1-hour averages of the running rows" (no "type L and H on the right"), and the card has no legend row', () => {
         mount({ sp: IND_VALID, unit: '' });
-        expect(screen.getByTestId('chart-card-set-individual').querySelector('.wb2-card-s')!.textContent).toBe('1 h average'); // no unit: no stray "·"
+        expect(stackSub()).toBe('1-hour averages of the running rows · one time axis, one cursor for both'); // no unit: no stray "·"
         cleanup();
         mount({ sp: IND_VALID });
-        const card = screen.getByTestId('chart-card-set-individual');
-        expect(card.querySelector('.wb2-card-s')!.textContent).toBe('bar · 1 h average');
+        const card = stackCard();
+        expect(stackSub()).toBe('bar · 1-hour averages of the running rows · one time axis, one cursor for both');
         expect(card.textContent).not.toMatch(/type L and H|on the right/);
-        expect(legendOf('set-individual')).toBeNull();
+        expect(card.querySelector('.wb2-legend')).toBeNull();
         // only the score-100 band is filled
         const bands = setChart().option.series[0].markArea.data;
         expect(bands).toHaveLength(1);
@@ -1078,10 +1237,10 @@ describe('set-point chart per kind', () => {
         type('sp-residual_at_0_upper', '12.250'); // typed with a trailing zero
         type('sp-residual_at_0_lower', '-9.61234');
         expect(marks(setChart()).slice(3)).toEqual(['80 · +5', '80 · −2.5', '0 · +12.25', '0 · −9.61234']);
-        const card = screen.getByTestId('chart-card-set-relationship');
-        expect(card.querySelector('.wb2-card-s')!.textContent).toBe('actual − predicted (bar) · 1 h average');
+        const card = stackCard();
+        expect(stackSub()).toBe('actual − predicted (bar) · 1-hour averages of the running rows · one time axis, one cursor for both');
         expect(card.textContent).not.toMatch(/type the 80|on the right/);
-        expect(legendOf('set-relationship')).toBeNull();
+        expect(card.querySelector('.wb2-legend')).toBeNull();
     });
 
     it('Clustering: the scatter card', () => {
@@ -1092,10 +1251,11 @@ describe('set-point chart per kind', () => {
 
     it('Clustering: the subtitle names both sensors and says what the point colours mean right now', () => {
         mount({ kind: 'clustering', sp: { kind: 'clustering', outerSd: 5 } });
-        expect(screen.getByTestId('chart-card-set-clustering').querySelector('.wb2-card-s')!.textContent).toBe('TAG1 vs TAG2 · 1 h averages · coloured by score');
+        expect(stackSub()).toBe('TAG1 vs TAG2 · 1-hour averages of the running rows · coloured by score');
+        expect(stackSub()).not.toMatch(/one time axis/); // the scatter shares no axis with the score chart
         cleanup();
         mount({ kind: 'clustering', sp: { kind: 'clustering', outerSd: null } }); // not scored yet: the points (still hour means) show their cluster
-        expect(screen.getByTestId('chart-card-set-clustering').querySelector('.wb2-card-s')!.textContent).toBe('TAG1 vs TAG2 · 1 h averages · coloured by score once N is set');
+        expect(stackSub()).toBe('TAG1 vs TAG2 · 1-hour averages of the running rows · coloured by score once N is set');
     });
 
     it('Clustering: axis titles are description + unit (from the Tag names); the tags stay in the subtitle', () => {
@@ -1106,8 +1266,7 @@ describe('set-point chart per kind', () => {
         render(<SensorMetaProvider metadata={meta}><Harness kind="clustering" sp={{ kind: 'clustering', outerSd: 5 }} /></SensorMetaProvider>);
         expect(setChart().option.xAxis.name).toBe('GENERATOR ACTIVE POWER · MW');
         expect(setChart().option.yAxis.name).toBe('BEARING DE TEMPERATURE · °C');
-        expect(screen.getByTestId('chart-card-set-clustering').querySelector('.wb2-card-s')!.textContent)
-            .toBe('GENERATOR ACTIVE POWERTAG1 vs BEARING DE TEMPERATURETAG2 · 1 h averages · coloured by score');
+        expect(stackSub()).toBe('GENERATOR ACTIVE POWERTAG1 vs BEARING DE TEMPERATURETAG2 · 1-hour averages of the running rows · coloured by score');
         cleanup();
         // without Tag names the axis falls back to the tag
         mount({ kind: 'clustering', sp: { kind: 'clustering', outerSd: 5 } });
@@ -1498,7 +1657,7 @@ describe('a failed request keeps the page (QA 2026-10-04)', () => {
         expect(screen.queryByTestId('hs-verdict')).toBeNull();
         expect(screen.queryByTestId('check-valid')).toBeNull();
         expect(screen.getByTestId('checks-unavailable').textContent).toBe('Not available until the health score loads.');
-        expect(screen.getByTestId('score-locked').textContent).toBe('Health scoreScore not availableNot available until the health score loads.');
+        expect(screen.getByTestId('score-locked').textContent).toBe('Score not availableNot available until the health score loads.');
         expect(screen.getByTestId('score-locked').dataset.lock).toBe('error');
         expect(field('sp-lower').className).not.toMatch(/hs-num--err|hs-num--req/);
     });
@@ -1684,7 +1843,7 @@ describe('Scoring periods on the Health score page ("just score it", 2026-10-10)
     });
 
     // User decision 2026-10-12: only the TRAIN period is highlighted — a scoring period has no band, no frame, no name.
-    it('the set-point chart and the score chart both highlight the TRAIN period only — one band, no "S1" / "S2", no EVENT line, no hatch', () => {
+    it('the set-point chart and the score chart both highlight the TRAIN period only — one band, no "S1" / "S2", no EVENT line, no hatch; it is NAMED once, above the upper chart', () => {
         mount({ sp: IND_VALID, data: withTests('individual', IND_VALID) });
         const names = (c: any) => c.option.series.map((x: any) => x.name);
         expect(names(scoreChart())).toContain('__scopes');
@@ -1693,7 +1852,8 @@ describe('Scoring periods on the Health score page ("just score it", 2026-10-10)
             const carrier = chart.option.series.find((x: any) => x.name === '__scopes');
             expect(carrier.markLine).toBeUndefined();
             expect(carrier.markPoint).toBeUndefined();
-            expect(stripOf(chart)).toEqual(['TRAIN']);
+            // the name is printed above the UPPER chart only: the lower one is the same time axis
+            expect(stripOf(chart)).toEqual(chart === setChart() ? ['TRAIN'] : []);
             expect(bandsOf(chart)).toEqual(['TRAIN']);
             expect(carrier.markArea.data[0][0].itemStyle.borderType).toBeUndefined(); // no dashed frame
             expect(JSON.stringify(carrier)).not.toMatch(/EVENT|KNOWN|NORMAL|PROBLEM|data:image|S1|S2/);
@@ -1739,27 +1899,25 @@ describe('Scoring periods on the Health score page ("just score it", 2026-10-10)
     });
 
     // Many periods printed "TRAIN P1" … "TRAIN P20" on each other.
-    it('several train periods: "TRAIN" once then numbers; no scoring name among them; both charts are the same width and space their names the same way', () => {
+    it('several train periods: "TRAIN" once then numbers, above the upper chart; no scoring name among them; every band is on both charts', () => {
         const hhmm = (m: number) => `2026-01-01T${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
         // 16 short train periods over the 4 hours of data
         const train_ranges = Array.from({ length: 16 }, (_, i) => ({ start: hhmm(i * 15), end: hhmm(i * 15 + 12) }));
         const data: HealthPreview = { ...previewFor('individual', IND_VALID), test_validation: makeValidation({ train_ranges, tests: [makeTestResult(), makeTestResult({ index: 2 })] }) };
         mount({ sp: IND_VALID, data });
-        const score = stripOf(scoreChart());
         const set = stripOf(setChart());
-        for (const names of [score, set]) {
-            expect(names[0]).toBe('TRAIN P1');
-            expect(names.filter(n => /TRAIN/.test(n))).toHaveLength(1);
-            // the two scoring periods are not named
-            expect(names.some(n => /^S\d/.test(n))).toBe(false);
-        }
+        expect(set[0]).toBe('TRAIN P1');
+        expect(set.filter(n => /TRAIN/.test(n))).toHaveLength(1);
+        // the two scoring periods are not named
+        expect(set.some(n => /^S\d/.test(n))).toBe(false);
+        // the lower chart names nothing: the strip above the upper plot serves both
+        expect(stripOf(scoreChart())).toEqual([]);
         // every TRAIN band is drawn on both charts (only names are left out) — and no band for S1 / S2
         for (const chart of [scoreChart(), setChart()]) {
             expect(bandsOf(chart)).toEqual(Array.from({ length: 16 }, (_, i) => `TRAIN P${i + 1}`));
         }
         const trainNames = (names: string[]) => names.filter(n => /P\d/.test(n)).length;
-        expect(trainNames(score)).toBeLessThan(16); // 16 names do not fit
-        expect(trainNames(set)).toBe(trainNames(score)); // the same width: the same names
+        expect(trainNames(set)).toBeLessThan(16); // 16 names do not fit
         expect(trainNames(set)).toBeGreaterThanOrEqual(3);
     });
 
@@ -1787,8 +1945,9 @@ describe('Scoring periods on the Health score page ("just score it", 2026-10-10)
         const data: HealthPreview = { ...previewFor('individual', IND_VALID), test_validation: makeValidation({ tests: [makeTestResult({ index: 1 })] }) };
         mount({ sp: IND_VALID, data, testNumbers: [2] });
         expect(screen.queryByTestId('test-result-2')).toBeNull();
-        expect(stripOf(scoreChart())).toEqual(['TRAIN']);
         expect(stripOf(setChart())).toEqual(['TRAIN']);
+        expect(bandsOf(scoreChart())).toEqual(['TRAIN']);
+        expect(stripOf(scoreChart())).toEqual([]);
     });
 
     it('test_scoring_failed while some hours WERE scored -> the amber notice (with "Try again" = the preview Retry) in its own card, said once, and the score chart still follows it', () => {
@@ -1825,12 +1984,15 @@ describe('Scoring periods on the Health score page ("just score it", 2026-10-10)
             };
         };
 
-        it('no test_validation: the notice (with its Try again) is in the "Health score" card — no empty score chart, no locked card, no Scoring results card', () => {
+        it('no test_validation: the notice (with its Try again) is in the LOWER HALF of the chart card, where the score chart would be — no empty score chart, no lock sentence, no Scoring results card', () => {
             const onRetryPreview = vi.fn();
             mount({ kind: 'relationship', sp: REL_VALID, data: noScore(), onRetryPreview });
             const card = screen.getByTestId('score-failed');
-            expect(card.className).toBe('hs-card hs-full'); // the score card's own shell: not a new banner
-            expect(card.querySelector('.wb2-card-h b')!.textContent).toBe('Health score');
+            expect(card.className).toBe('wb3-stack-bot wb3-stack-bot--lock'); // the score chart's own place: not a new banner
+            expect([...screen.getByTestId('chart-stack').children]).toEqual([screen.getByTestId('chart-card-set-relationship'), card]);
+            expect(screen.getAllByTestId('score-failed')).toHaveLength(1);
+            // the residual chart above it is alone, so it keeps its own time labels
+            expect(setChart().option.xAxis.axisLabel.show).not.toBe(false);
             const notice = within(card).getByTestId('test-scoring-failed');
             expect(notice.querySelector('b')!.textContent).toBe('The health score could not be calculated — try again');
             expect(notice.textContent).toContain('The Relation model engine did not answer.');

@@ -55,6 +55,53 @@ import {
 
 /** ECharts group id the two time charts are connected under. */
 export const HEALTH_SYNC_GROUP = 'health-score-sync';
+/** The group of the ENLARGED copy of the pair (the Expand overlay): its own, so the two
+ *  charts in the overlay share a cursor while the pair under the backdrop stays still. */
+export const HEALTH_SYNC_GROUP_EXPANDED = 'health-score-sync-expanded';
+
+// ---------------------------------------------------------------------------
+// The stacked card: a time chart with the score chart right under it
+// ---------------------------------------------------------------------------
+
+/** What the two helpers below need of a time-chart option (`buildTimeSeriesOption`). */
+interface StackableOption {
+    grid: Record<string, unknown>;
+    xAxis: Record<string, unknown>;
+    series: Record<string, unknown>[];
+}
+
+/** Space under the upper plot / above the lower plot of the stack, px: room for the
+ *  outermost Y tick label and nothing else, so the two plots read as one. */
+export const STACK_INNER_GAP = 8;
+
+/**
+ * The UPPER chart of the stacked card when the score chart sits right under it on the
+ * SAME time axis: its X labels and ticks are left out (the lower chart prints them, once)
+ * and the plot runs down to the divider. Only the look changes — the axis itself (type,
+ * range, the tooltip heading) is untouched, so the two plots stay aligned.
+ */
+export function asStackUpper<T extends StackableOption>(opt: T): T {
+    const axisLabel = (opt.xAxis.axisLabel ?? {}) as Record<string, unknown>;
+    return {
+        ...opt,
+        grid: { ...opt.grid, bottom: STACK_INNER_GAP },
+        xAxis: { ...opt.xAxis, axisLabel: { ...axisLabel, show: false }, axisTick: { show: false } },
+    };
+}
+
+/**
+ * The LOWER chart of the stacked card under a time chart: the train periods are NAMED
+ * once, in the strip above the upper chart, so here the names are hidden (the bands
+ * themselves stay) and the plot starts right under the divider.
+ */
+export function asStackLower<T extends StackableOption>(opt: T): T {
+    const series = opt.series.map(s => {
+        if (s.name !== '__scopes') return s;
+        const area = s.markArea as { data: [Record<string, unknown>, Record<string, unknown>][] } & Record<string, unknown>;
+        return { ...s, markArea: { ...area, data: area.data.map(([from, to]) => [{ ...from, label: { ...(from.label as Record<string, unknown>), show: false } }, to]) } };
+    });
+    return { ...opt, grid: { ...opt.grid, top: STACK_INNER_GAP }, series };
+}
 
 const finite = (v: number | null | undefined): v is number => typeof v === 'number' && Number.isFinite(v);
 

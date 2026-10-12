@@ -318,10 +318,6 @@ export interface TimeScopes {
     ranges: TimeScope[];
     /** A half-width chart: print the short names (numbers only, no "TRAIN"). */
     compact?: boolean;
-    /** The chart shares its row with a side card (the Health score set-point
-     *  chart), so its plot can be as narrow as a half-width one: the names keep
-     *  the word "TRAIN" but are spaced for the narrow plot (`STRIP_PLOT_WIDTH`). */
-    narrow?: boolean;
 }
 
 /**
@@ -382,11 +378,6 @@ export function compactScopes(s: TimeScopes | null | undefined): TimeScopes | nu
     return s ? { ...s, compact: true } : null;
 }
 
-/** The same scopes, their names spaced for a chart beside a side card. */
-export function narrowScopes(s: TimeScopes | null | undefined): TimeScopes | null {
-    return s ? { ...s, narrow: true } : null;
-}
-
 /** Height of the strip above the plot that names the train periods. It is two text
  *  lanes tall: the names sit on the upper one; the lower one (where the scoring
  *  names were until 2026-10-12) is kept empty so the plot does not move. */
@@ -407,9 +398,9 @@ const REF_LABEL_LINE = 11;
 /** The plot width (px) the strip names must stay apart on. The builder is pure and
  *  never knows the real width, so it spaces the names for the narrowest plot the
  *  Workbench layout gives that kind of chart: a card across the whole board
- *  (`full`), or a half-width card / a chart beside a side card (`narrow` — both
- *  are ~230 px at the narrowest two-column layout). On a wider chart a name that
- *  would have fitted may stay hidden; names do not print on each other. */
+ *  (`full`), or a half-width card (`narrow` — ~230 px at the narrowest two-column
+ *  layout). On a wider chart a name that would have fitted may stay hidden; names
+ *  do not print on each other. */
 export const STRIP_PLOT_WIDTH = { full: 420, narrow: 200 } as const;
 /** Advance of one character of the 9 px mono strip text, and the air between two names. */
 const STRIP_CHAR = 5.6;
@@ -516,7 +507,7 @@ function scopeSeries(scopes: TimeScopes, xMin: number, xMax: number): Record<str
     });
     const names = scopeStripNames(bands, xMin, xMax, {
         short: !!scopes.compact,
-        plotWidth: scopes.compact || scopes.narrow ? STRIP_PLOT_WIDTH.narrow : STRIP_PLOT_WIDTH.full,
+        plotWidth: scopes.compact ? STRIP_PLOT_WIDTH.narrow : STRIP_PLOT_WIDTH.full,
     });
     const area = bands.map((band, i) => [
         {

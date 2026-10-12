@@ -200,7 +200,7 @@ describe('Individual on 5-minute data', () => {
         const scores = pointsOf(scoreChart, 'Health score');
         expect(scores.map(p => p[0])).toEqual(HOURS.map(h => at(h)));  // the SAME index set as the chart above
         expect(scores.map(p => p[1])).toEqual(want.hourly.score);
-        expect(text('chart-card-set-individual')).toContain('bar · 1 h average');
+        expect(text('chart-card-stack')).toContain('bar · 1-hour averages of the running rows');
         expect([text('score-lowest'), text('score-lowest-at'), text('score-below80'), text('score-basis')]).toEqual(['100', '2024/03/01 00:00:00', '0.0%', '1-hour averages of the running rows']);
         expect(bmw().getByTestId('score-shares').textContent).toContain('Share of scored hours');
 
@@ -274,7 +274,7 @@ describe('Clustering (2 clusters) on 5-minute data', () => {
         expect(points.map(p => p[2])).toEqual(want.hourly.score);   // null for 04:00, 05:00, 07:00 — never 0
         expect(points.map(p => p[3])).toEqual(want.hourly.cluster);
         expect(points[5].slice(0, 2)).toEqual([34, 64]);             // the row with no criteria value still moved the hour's mean
-        expect(text('chart-card-set-clustering')).toContain('1 h averages · coloured by score');
+        expect(text('chart-card-stack')).toContain('1-hour averages of the running rows · coloured by score');
 
         // the score chart: a gap at the three unscored hours (they are not drawn as 0)
         const scoreChart = lastChart('Health score', from, true);
@@ -345,8 +345,11 @@ describe('Relation model on 5-minute data', () => {
         const from = env.charts.length;
         await openHealth();
         await waitFor(() => expect(bmw().getByTestId('score-summary').dataset.state).toBe('ready'));
-        // here too only the TRAIN period is shaded and named; the scoring periods' hours are on the line (below)
-        expect(stripOf(lastChart('Health score', from, true))).toEqual(['TRAIN']);
+        // here too only the TRAIN period is shaded and named — once, above the UPPER chart of the stacked card (the
+        // score chart under it is the same time axis); the scoring periods' hours are on the line (below)
+        expect(stripOf(lastChart('Residual', from, true))).toEqual(['TRAIN']);
+        expect(stripOf(lastChart('Health score', from, true))).toEqual([]);
+        expect(((seriesOf(lastChart('Health score', from, true), '__scopes')?.markArea?.data ?? []) as any[]).map(x => x[0].name)).toEqual(['TRAIN']); // the band itself is still drawn
         // an hourly point's tooltip is headed by its hour START, date and time
         expect(tipHeading(lastChart('Health score', from, true), at(4))).toBe('2024/03/01 04:00:00');
         expect(tipHeading(lastChart('Residual', from, true), at(7))).toBe('2024/03/01 07:00:00');
@@ -365,7 +368,7 @@ describe('Relation model on 5-minute data', () => {
         const scores = pointsOf(scoreChart, 'Health score');
         expect(scores.map(p => p[0])).toEqual(HOURS.map(h => at(h)));
         expect(scores.map(p => Math.round(p[1] as number))).toEqual([100, 100, 100, 100, 27, 100, 0, 100, 100]);
-        expect(text('chart-card-set-relationship')).toContain('actual − predicted (kW) · 1 h average');
+        expect(text('chart-card-stack')).toContain('actual − predicted (kW) · 1-hour averages of the running rows');
         expect(await hoverTime(scoreChart, at(4, 5))).toMatch(/^2024\/03\/01 04:00:00 · residual 5(\.\d+)? kW · score 27$/);
 
         // ── remove S2: nothing is trained, the same fit is scored again ──

@@ -5333,7 +5333,22 @@ body {
 .wb2-cv { position: relative; height: 250px; min-width: 0; }
 .wb2-card--tall .wb2-cv { height: 330px; }
 .wb2-card--xtall .wb2-cv { height: 520px; }
-.wb2-card--hs .wb2-cv { height: 230px; }
+/* Health score: ONE card, the set-point chart above the score chart on one time axis
+   (the Clusters scatter above it is taller: it has two value axes). */
+.wb2-card--stack .wb2-cv { height: 560px; }
+.wb2-card--stackxy .wb2-cv { height: 700px; }
+/* The two halves (also the body of the enlarged copy, which fills its dialog). */
+.wb3-stack-in { display: flex; flex-direction: column; flex: 1 1 auto; height: 100%; min-height: 0; }
+.wb3-stack-top { flex: 1 1 58%; min-height: 0; }
+.wb3-stack-bot { position: relative; flex: 1 1 42%; min-height: 0; margin-top: 2px; padding-top: 4px; border-top: 1px dashed var(--border-strong); }
+.wb3-stack-in--xy .wb3-stack-top { flex-basis: 64%; }
+.wb3-stack-in--xy .wb3-stack-bot { flex-basis: 36%; }
+/* The lower half while there is no score to draw: the lock sentence, or the "could not be
+   calculated" notice, in the score chart's own place. */
+.wb3-stack-bot--lock { display: grid; place-items: center; padding-top: 10px; }
+.wb3-stack-locktext { width: 100%; padding: 18px 24px; border: 1px dashed var(--border-strong); border-radius: 10px; text-align: center; font-size: 12.5px; color: var(--text-secondary); }
+.wb3-stack-locktext b { display: block; margin-bottom: 3px; font-size: 13.5px; color: var(--text-primary); }
+.wb3-stack-bot--lock > .vt-fail { width: 100%; }
 .wb2-outdated { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(8, 8, 10, 0.6); color: var(--text-secondary); font-size: 12.5px; text-align: center; border-radius: 8px; z-index: 2; }
 .wb2-outdated b { display: block; color: var(--text-primary); font-size: 13.5px; }
 .wb2-ovl-body { position: relative; }
@@ -5524,8 +5539,6 @@ body {
 /* score chart card: header read-out */
 .hs-rd { font: 500 11px var(--mono); color: var(--text-secondary); min-height: 16px; margin-left: auto; }
 .wb2-card-h .wb2-ib { margin-left: auto; }
-.hs-lockbig { height: 120px; padding: 0 12px; border: 1px dashed var(--border-strong); border-radius: 8px; display: grid; place-items: center; text-align: center; font-size: 12px; color: var(--text-faint); }
-.hs-lockbig b { display: block; color: var(--text-primary); font-size: 13.5px; margin-bottom: 3px; }
 
 /* "Saving results..." / "Saved N files to ..." / failure */
 .hs-save { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 9px 12px; border-radius: 10px; border: 1px solid var(--border-strong); background: var(--bg-secondary); font-size: 12px; color: var(--text-secondary); }

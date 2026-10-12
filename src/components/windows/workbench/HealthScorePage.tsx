@@ -3,7 +3,7 @@ import { samePageProps } from './pageMemo';
 import { connect } from 'echarts';
 import { Loader2 } from 'lucide-react';
 import ResponsiveECharts from '../../charts/ResponsiveECharts';
-import type { HealthPreview, ScoreSummary } from '../../../types/health';
+import type { HealthIssue, HealthPreview, ScoreSummary } from '../../../types/health';
 import { SensorInline } from '../../sensor/SensorLabel';
 import { useSensorLookup } from '../../sensor/sensorInfo';
 import ChartCard from './ChartCard';
@@ -20,6 +20,9 @@ import {
 } from './healthChecks';
 import {
     HEALTH_SYNC_GROUP,
+    HEALTH_SYNC_GROUP_EXPANDED,
+    asStackLower,
+    asStackUpper,
     buildClusterSetPointOption,
     buildIndividualSetPointOption,
     buildRelationshipSetPointOption,
@@ -37,11 +40,13 @@ import type { HealthScorePageProps, SaveInfo } from './workbenchTypes';
  *
  *   [ Lowest score ] [ Below 80 ] [ Share of scored hours ]   the KPI tiles
  *   [ Health set points: the score ruler + footnote + the Checks     ]
- *   [ set-point chart                                                ]
- *   [ Health score over time (locked until the set points are valid) ]
+ *   [ ONE chart card:  the set-point chart                           ]
+ *   [                  ------------------------------------------    ]
+ *   [                  the health score (locked until valid)         ]
  *
- * One column: every card is as wide as the board, so the two time charts are the
- * same width (their time axes line up) and the ruler has room for its band.
+ * One column: every card is as wide as the board. The two charts of the stacked card
+ * share ONE time axis (same plot margins, one cursor, one zoom window), so a spike is
+ * read straight down to its score.
  *
  * Everything is drawn from the ONE bounded `HealthPreview` the container's
  * `useHealthPreview` returns for the DRAFT set points (so typing moves the
@@ -57,8 +62,8 @@ import type { HealthScorePageProps, SaveInfo } from './workbenchTypes';
  *
  * Hover: the two time charts (Individual / Relationship) are connected in one
  * ECharts group, so one timestamp cursor shows on both; the page ALSO keeps the
- * hovered `hourly` index to print "hour - 1 h average - score" next to the score
- * chart's title. Clustering has no time axis on its set-point chart, so hovering
+ * hovered `hourly` index to print "hour - 1 h average - score" in the stacked card's
+ * header. Clustering has no time axis on its set-point chart, so hovering
  * a point there (or the score chart) highlights the same hour on the other.
  *
  * No legend rows: every line is labelled on its
@@ -105,9 +110,11 @@ function useHeldFor(flag: boolean, delayMs: number): boolean {
 function HealthScorePage(props: HealthScorePageProps) {
     const { model, stale, preview, unit, setPoints, attemptIssues, save } = props;
     const [hoverIdx, setHoverIdx] = useState<number | null>(null);
-    // One zoom window for the two time charts, kept when either is redrawn. (A hook: it must
-    // stay above the early returns of the state boards below.)
+    // One zoom window for the two time charts, kept when either is redrawn — and a second
+    // one for their enlarged copy in the Expand overlay. (Hooks: they must stay above the
+    // early returns of the state boards below.)
     const zoom = useSharedZoom(props.model.id);
+    const zoomExpanded = useSharedZoom(props.model.id, 'expanded');
     // A failed request leaves `preview.data` null, but when an earlier answer for this
     // model exists the page (inputs, charts) stays on screen from `lastData` under the
     // red card with its Retry instead of being replaced.
@@ -229,15 +236,19 @@ function HealthScorePage(props: HealthScorePageProps) {
     const verdict = errorMode ? null : attemptIssues ? verdictOfIssues(attemptIssues) ?? healthVerdict(data) : healthVerdict(data);
     const scoreReady = !errorMode && data.valid && !!data.hourly.score && !!data.score_summary;
     // "The health score could not be calculated" (the Relation model's engine did not
-    // answer for the hours to score): said in a card of its own. With no scored hour at
-    // all it stands in the score card's place; when some hours WERE scored (the training
-    // hours), the score chart still follows it. (The "Scoring results" card that used to
+    // answer for the hours to score). With no scored hour at all the notice stands in the
+    // score chart's place — the lower half of the stacked card; when some hours WERE
+    // scored (the training hours), it is a card of its own above the charts and the score
+    // chart is still drawn. (The "Scoring results" card that used to
     // carry it — one tile per scoring period — was removed 2026-10-12, user decision: not
     // used. The KPI tiles at the top keep the facts for ALL scored hours; there is never a
     // tile per scoring period.)
     const scoringFailure = errorMode ? null : testScoringFailure(data);
     const anyScored = !!data.hourly.score?.some(v => v !== null);
     const retryScoring = canRetry ? (props.onRetryTestScoring ?? props.onRetryPreview) : undefined;
+    // The score chart is drawn when there is a score to draw — and not under a failure
+    // that left no hour scored (an empty chart would say nothing).
+    const score = scoreReady && data.hourly.score && !(scoringFailure && !anyScored) ? data.hourly.score : null;
 
     return (
         <div className="wb2-board hs-board" data-testid="health-page" data-valid={String(data.valid)}>
@@ -262,7 +273,19 @@ function HealthScorePage(props: HealthScorePageProps) {
             >
                 <ChecksCard kind={data.kind} issues={issues} verdict={verdict} unavailable={errorMode} testNumbers={testNumbers} />
             </ScoreRuler>
-            <SetPointChart
+            {/* "Changed after saving" is said ONCE — the footer sentence, next to its
+                "Mark complete again" button. */}
+            {scoringFailure && score && (
+                <section className="hs-card hs-full" data-testid="score-failed">
+                    <div className="wb2-card-h"><b>Health score</b></div>
+                    <TestScoringFailedNotice issue={scoringFailure} onRetry={retryScoring} testNumbers={testNumbers} />
+                </section>
+            )}
+            {/* ONE card, two charts on one time axis: the set-point chart above, the score
+                under it, one linked cursor and one zoom window. (Clustering has no time axis
+                on its set-point chart — the scatter sits above the score chart; hovering an
+                hour on either highlights it on the other.) */}
+            <StackCharts
                 data={data}
                 props={props}
                 hoverIdx={hoverIdx}
@@ -271,35 +294,19 @@ function HealthScorePage(props: HealthScorePageProps) {
                 unit={unit}
                 scopes={scopes}
                 zoom={zoom}
+                zoomExpanded={zoomExpanded}
+                score={score}
+                lock={lockReason(errorMode, verdict)}
+                lockText={scoreLockText(verdict)}
+                failure={score ? null : scoringFailure}
+                onRetryFailure={retryScoring}
+                testNumbers={testNumbers}
             />
-            {/* "Changed after saving" is said ONCE — the footer sentence, next to its
-                "Mark complete again" button. */}
-            {scoringFailure && (
-                <section className="hs-card hs-full" data-testid="score-failed">
-                    <div className="wb2-card-h"><b>Health score</b></div>
-                    <TestScoringFailedNotice issue={scoringFailure} onRetry={retryScoring} testNumbers={testNumbers} />
-                </section>
-            )}
-            {scoringFailure && !(scoreReady && anyScored) ? null : scoreReady && data.hourly.score && data.score_summary ? (
-                <ScoreChart
-                    data={data}
-                    score={data.hourly.score}
-                    unit={unit}
-                    hoverIdx={hoverIdx}
-                    onHover={setHoverIdx}
-                    stale={stale}
-                    scopes={scopes}
-                    zoom={zoom}
-                />
-            ) : (
-                <section className="hs-card hs-full" data-testid="score-locked" data-lock={lockReason(errorMode, verdict)}>
-                    <div className="wb2-card-h"><b>Health score</b></div>
-                    <div className="hs-lockbig">
-                        <div>{errorMode ? <><b>Score not available</b>Not available until the health score loads.</> : scoreLockText(verdict)}</div>
-                    </div>
-                </section>
-            )}
         </div>
+    );
+}
+
+/** Why the score area is locked        </div>
     );
 }
 
@@ -345,20 +352,26 @@ function SaveBanner({ save, slow, relation }: { save: SaveInfo; slow: boolean; r
 }
 
 // ---------------------------------------------------------------------------
-// Set-point chart (per kind)
+// The linked pair of time charts: one cursor group, one zoom window
 // ---------------------------------------------------------------------------
 
+/** Which pair a `useSharedZoom` serves: the two charts on the page, or their enlarged
+ *  copy inside the Expand overlay (ChartCard's `.pm-chart-modal-backdrop`). */
+export type ZoomScope = 'page' | 'expanded';
+
 /** Join the ECharts group so the pair of time charts share one cursor.
- *  The ENLARGED copy of a chart (inside ChartCard's `.pm-chart-modal-backdrop`) stays out of the
- *  group: it is alone on screen, so the charts under the backdrop must not answer its hover
- *  with a cursor and tooltip of their own (they showed through, over the overlay), and a zoom
- *  in it redraws one chart instead of every linked one. */
-function joinSyncGroup(inst: { group?: string; getDom?: () => Element | null } | null | undefined): boolean {
+ *  The pair on the page and its ENLARGED copy are two separate groups, and a chart only
+ *  ever joins the one it is drawn in: the charts under the backdrop must not answer the
+ *  overlay's hover with a cursor and tooltip of their own (they showed through, over the
+ *  overlay), and a zoom in the overlay redraws only the charts in it. */
+function joinSyncGroup(inst: { group?: string; getDom?: () => Element | null } | null | undefined, scope: ZoomScope): boolean {
     if (!inst) return false;
     try {
-        if (inst.getDom?.()?.closest('.pm-chart-modal-backdrop')) return false;
-        inst.group = HEALTH_SYNC_GROUP;
-        connect(HEALTH_SYNC_GROUP);
+        const enlarged = !!inst.getDom?.()?.closest('.pm-chart-modal-backdrop');
+        if (enlarged !== (scope === 'expanded')) return false;
+        const group = scope === 'expanded' ? HEALTH_SYNC_GROUP_EXPANDED : HEALTH_SYNC_GROUP;
+        inst.group = group;
+        connect(group);
         return true;
     } catch {
         // No sync is not worth breaking the page for.
@@ -395,8 +408,8 @@ function zoomWindowOf(inst: ZoomChart): [number, number] | null {
 }
 
 /**
- * ONE zoom window for the page's two time charts ("Sensor value over time" /
- * "Residual over time" and "Health score"). They are the same width and share
+ * ONE zoom window for the page's two time charts (the sensor value / the residual,
+ * and the health score — stacked in one card). They are the same width and share
  * the plot margins, so with the same window a moment in time is at the same X in
  * both — the user reads a spike straight down to its score (real-app request
  * 2026-10-12: "no need to line the point up by eye").
@@ -406,8 +419,12 @@ function zoomWindowOf(inst: ZoomChart): [number, number] | null {
  * its window — the two then showed different spans. So the window is kept here:
  * each zoom records it and pushes it to the other chart, and a redraw puts it back.
  * A different model starts unzoomed.
+ *
+ * `scope` picks the pair it serves: the charts on the page (the default) or their
+ * enlarged copy in the Expand overlay — each pair has its own cursor group and its own
+ * window, and a chart drawn in the other place is never joined.
  */
-export function useSharedZoom(resetKey: string): SharedZoom {
+export function useSharedZoom(resetKey: string, scope: ZoomScope = 'page'): SharedZoom {
     const state = useRef<{ key: string; win: [number, number] | null; charts: Set<ZoomChart>; busy: boolean }>({ key: resetKey, win: null, charts: new Set(), busy: false });
     if (state.current.key !== resetKey) state.current = { key: resetKey, win: null, charts: state.current.charts, busy: false };
     return useMemo<SharedZoom>(() => {
@@ -428,7 +445,7 @@ export function useSharedZoom(resetKey: string): SharedZoom {
         };
         return {
             join: inst => {
-                if (!inst || !joinSyncGroup(inst)) return;
+                if (!inst || !joinSyncGroup(inst, scope)) return;
                 st().charts.add(inst);
                 apply(inst);
             },
@@ -454,10 +471,21 @@ export function useSharedZoom(resetKey: string): SharedZoom {
                 try { each(apply); } finally { st().busy = false; }
             },
         };
-    }, []);
+    }, [scope]);
 }
 
-function SetPointChart({ data, props, hoverIdx, onHover, stale, unit, scopes, zoom }: {
+/**
+ * The ONE chart card of the page: the set-point chart (per kind) above, the health score
+ * below. Individual / Relation model: both are time charts on ONE time axis — the upper
+ * one leaves its X labels to the lower one, the train periods are named once (above the
+ * upper plot), one cursor and one zoom window serve both. Clustering: the scatter above
+ * has no time axis; hovering a point (or an hour of the score chart) highlights the same
+ * hour on the other.
+ *
+ * `score` = the hourly scores to draw, or null when there is none to draw: the lower half
+ * then holds the "could not be calculated" notice (`failure`) or the lock sentence.
+ */
+function StackCharts({ data, props, hoverIdx, onHover, stale, unit, scopes, zoom, zoomExpanded, score, lock, lockText, failure, onRetryFailure, testNumbers }: {
     data: HealthPreview;
     props: HealthScorePageProps;
     hoverIdx: number | null;
@@ -466,10 +494,17 @@ function SetPointChart({ data, props, hoverIdx, onHover, stale, unit, scopes, zo
     unit: string;
     scopes: TimeScopes | null;
     zoom: SharedZoom;
+    zoomExpanded: SharedZoom;
+    score: (number | null)[] | null;
+    lock: 'error' | 'bad' | 'empty';
+    lockText: string;
+    failure: HealthIssue | null;
+    onRetryFailure?: () => void;
+    testNumbers?: readonly number[] | null;
 }) {
     const { model, setPoints } = props;
     const stats = data.stats;
-    // The hourly points (1-hour averages): the same index set as the score chart.
+    // The hourly points (1-hour averages): ONE index set for both charts.
     const series = data.hourly;
     // Stable until the Tag names change, so it never rebuilds a chart on its own.
     const lookup = useSensorLookup();
@@ -478,89 +513,143 @@ function SetPointChart({ data, props, hoverIdx, onHover, stale, unit, scopes, zo
     const built = useMemo(() => {
         if (stats.kind === 'individual' && series.kind === 'individual') {
             return {
-                id: 'set-individual',
-                title: 'Sensor value over time',
-                sub: unit ? `${unit} · 1 h average` : '1 h average',
+                title: 'Sensor value',
+                what: unit || null,
                 option: buildIndividualSetPointOption(series, stats, setPoints.kind === 'individual' ? setPoints : null, unit, scopes),
-                time: true,
+                time: true as const,
             };
         }
         if (stats.kind === 'relationship' && series.kind === 'relationship') {
             return {
-                id: 'set-relationship',
-                title: 'Residual over time',
-                sub: `actual − predicted${unit ? ` (${unit})` : ''} · 1 h average`,
+                title: 'Residual',
+                what: `actual − predicted${unit ? ` (${unit})` : ''}`,
                 option: buildRelationshipSetPointOption(series, stats.two_rmse, setPoints.kind === 'relationship' ? setPoints : null, unit, scopes),
-                time: true,
+                time: true as const,
             };
         }
         if (stats.kind === 'clustering' && series.kind === 'clustering') {
             return {
-                id: 'set-clustering',
                 title: 'Clusters',
-                sub: (
-                    <span className="wb2-sub-sl">
-                        <SensorInline tag={model.xSensor ?? ''} size="sm" muted /> vs <SensorInline tag={model.ySensor ?? ''} size="sm" muted />
-                        {' '}<span className="wb2-sub-note">· 1 h averages · {scored ? 'coloured by score' : 'coloured by score once N is set'}</span>
-                    </span>
-                ),
-                // Axis titles: description + unit — the tags are in the subtitle above.
+                what: null,
+                // Axis titles: description + unit — the tags are in the subtitle.
                 option: buildClusterSetPointOption(
                     series, stats.clusters, setPoints.kind === 'clustering' ? setPoints : null,
                     { x: sensorAxisTitle(lookup(model.xSensor ?? '')), y: sensorAxisTitle(lookup(model.ySensor ?? '')) }, hoverIdx,
                 ),
-                time: false,
+                time: false as const,
             };
         }
         return null;
         // `hoverIdx` only changes the Clustering highlight; the time charts follow
         // the connected cursor and must not be rebuilt on every mouse move.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [stats, series, setPoints, unit, model.xSensor, model.ySensor, scopes, lookup, scored, stats.kind === 'clustering' ? hoverIdx : null]);
+    }, [stats, series, setPoints, unit, model.xSensor, model.ySensor, scopes, lookup, stats.kind === 'clustering' ? hoverIdx : null]);
 
-    // A new option redraws the chart unzoomed: put the shared window back.
-    const builtOption = built?.option;
     const isTime = !!built?.time;
-    useEffect(() => { if (isTime) zoom.restore(); }, [builtOption, isTime, zoom]);
+    // With the score chart under it a time chart is the UPPER half of one plot (no X labels
+    // of its own); alone — the score is locked — it keeps them.
+    const upperOption = useMemo(
+        () => (built ? (built.time && score ? asStackUpper(built.option) : built.option) : null),
+        [built, score],
+    );
+    // Under a time chart the periods are already named; under the scatter the strip is its own.
+    const lowerOption = useMemo(() => {
+        if (!score) return null;
+        const option = buildScoreOption(series.timestamps, score, scopes);
+        return isTime ? asStackLower(option) : option;
+    }, [series.timestamps, score, scopes, isTime]);
 
-    if (!built) return null;
+    // A new option redraws a chart unzoomed: put the shared window back (on the page, and
+    // in the enlarged copy when it is open).
+    useEffect(() => {
+        if (!isTime && !lowerOption) return;
+        zoom.restore();
+        zoomExpanded.restore();
+    }, [upperOption, lowerOption, isTime, zoom, zoomExpanded]);
+
+    if (!built || !upperOption) return null;
+
+    const text = readoutText(readoutAt(series, hoverIdx), unit);
+    // The subtitle says what the upper chart plots, that every point of BOTH charts is a
+    // 1-hour average of the running rows, and (time charts) that they share the axis.
+    const sub = built.time ? (
+        <>
+            {built.what && <>{built.what} · </>}
+            <span data-testid="score-basis">1-hour averages of the running rows</span>
+            {' '}· one time axis, one cursor for both
+        </>
+    ) : (
+        <span className="wb2-sub-sl">
+            <SensorInline tag={model.xSensor ?? ''} size="sm" muted /> vs <SensorInline tag={model.ySensor ?? ''} size="sm" muted />
+            {' '}<span className="wb2-sub-note">· <span data-testid="score-basis">1-hour averages of the running rows</span> · {scored ? 'coloured by score' : 'coloured by score once N is set'}</span>
+        </span>
+    );
 
     // No key row under these charts: the time charts only zoom in time, so the names of
     // their level lines stay at the right edge; the Clusters chart zooms on both axes,
     // but its rings are keyed by the score ruler above it (1× / 3× / N× SD in the rings'
     // colours).
-    const chartProps: Partial<ComponentProps<typeof ResponsiveECharts>> = built.time
-        ? {
-            onChartReady: zoom.join,
+    const body = (expanded: boolean) => {
+        // The enlarged copy is a pair of its own: its own cursor group and zoom window.
+        const z = expanded ? zoomExpanded : zoom;
+        const timeProps: Partial<ComponentProps<typeof ResponsiveECharts>> = {
+            onChartReady: z.join,
             onEvents: {
                 updateAxisPointer: (e: unknown) => onHover(hoverIndexFromAxisEvent(e, series.timestamps)),
                 globalout: () => onHover(null),
-                datazoom: zoom.onZoom,
+                datazoom: z.onZoom,
             },
-        }
-        : {
+        };
+        const upperProps: Partial<ComponentProps<typeof ResponsiveECharts>> = built.time ? timeProps : {
             onEvents: {
                 mouseover: (p: { seriesName?: string; dataIndex?: number }) => { if (p.seriesName === 'Points' && typeof p.dataIndex === 'number') onHover(p.dataIndex); },
                 globalout: () => onHover(null),
             },
         };
+        // The test ids name the halves of the card ON THE PAGE; the enlarged copy has none
+        // (it would repeat them).
+        const id = (name: string) => (expanded ? undefined : name);
+        return (
+            <div className={`wb3-stack-in${built.time ? '' : ' wb3-stack-in--xy'}`} data-testid={id('chart-stack')} data-upper={stats.kind}>
+                <div className="wb3-stack-top" data-testid={id(`chart-card-set-${stats.kind}`)}>
+                    <ResponsiveECharts option={upperOption} style={{ height: '100%', minHeight: 0 }} {...upperProps} />
+                </div>
+                {lowerOption ? (
+                    <div className="wb3-stack-bot" data-testid={id('chart-card-score')}>
+                        <ResponsiveECharts option={lowerOption} style={{ height: '100%', minHeight: 0 }} {...timeProps} />
+                    </div>
+                ) : failure ? (
+                    <div className="wb3-stack-bot wb3-stack-bot--lock" data-testid={id('score-failed')}>
+                        <TestScoringFailedNotice issue={failure} onRetry={onRetryFailure} testNumbers={testNumbers} />
+                    </div>
+                ) : (
+                    <div className="wb3-stack-bot wb3-stack-bot--lock" data-testid={id('score-locked')} data-lock={lock}>
+                        <div className="wb3-stack-locktext">
+                            {lock === 'error' ? <><b>Score not available</b>Not available until the health score loads.</> : lockText}
+                        </div>
+                    </div>
+                )}
+            </div>
+        );
+    };
 
-    // As wide as the board, like the score chart under it. The Clusters scatter has two
-    // value axes and gets the taller card.
     return (
         <ChartCard
-            id={built.id}
-            title={built.title}
-            sub={built.sub}
-            size={built.time ? 'tall' : 'xtall'}
+            id="stack"
+            title={`${built.title} and health score`}
+            sub={sub}
+            full
+            size={built.time ? 'stack' : 'stackxy'}
             stale={stale}
-            option={built.option}
-            chartProps={chartProps}
+            extra={<span className="hs-rd" data-testid="hs-readout">{text}</span>}
+            render={body}
         />
     );
 }
 
 // ---------------------------------------------------------------------------
+// KPI tiles
+// ---------------------------------------------------------------------------// ---------------------------------------------------------------------------
 // KPI tiles
 // ---------------------------------------------------------------------------
 
@@ -644,52 +733,6 @@ export function ScoreKpis({ summary, state }: { summary: ScoreSummary | null | u
                 </div>
             </Kpi>
         </KpiStrip>
-    );
-}
-
-// ---------------------------------------------------------------------------
-// Score chart
-// ---------------------------------------------------------------------------
-
-function ScoreChart({ data, score, unit, hoverIdx, onHover, stale, scopes, zoom }: {
-    data: HealthPreview;
-    score: (number | null)[];
-    unit: string;
-    hoverIdx: number | null;
-    onHover: (i: number | null) => void;
-    stale: boolean;
-    scopes: TimeScopes | null;
-    zoom: SharedZoom;
-}) {
-    const series = data.hourly;
-    // The same width as the chart above it (every card spans the board), so the strip names
-    // are spaced the same way.
-    const option = useMemo(() => buildScoreOption(series.timestamps, score, scopes), [series.timestamps, score, scopes]);
-    // A new option redraws the chart unzoomed: put the shared window back.
-    useEffect(() => { zoom.restore(); }, [option, zoom]);
-    const text = readoutText(readoutAt(series, hoverIdx), unit);
-    const chartProps = {
-        onChartReady: zoom.join,
-        onEvents: {
-            updateAxisPointer: (e: unknown) => onHover(hoverIndexFromAxisEvent(e, series.timestamps)),
-            globalout: () => onHover(null),
-            datazoom: zoom.onZoom,
-        },
-    };
-    // Exactly as wide as the chart above it, and the two charts have the same plot margins,
-    // so their time axes line up. The numbers (lowest score, % below 80, the shares) are the
-    // KPI tiles at the top of the page; the card only says what a point of this chart is.
-    return (
-        <ChartCard
-            id="score"
-            title="Health score"
-            size="hs"
-            stale={stale}
-            sub={<span data-testid="score-basis">1-hour averages of the running rows</span>}
-            extra={<span className="hs-rd" data-testid="hs-readout">{text}</span>}
-            option={option}
-            chartProps={chartProps}
-        />
     );
 }
 
