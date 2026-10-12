@@ -704,7 +704,7 @@ describe('Tag Point (click a point on the chart to compare it with others)', () 
         expect(capturedOptions[capturedOptions.length - 1].series[1].markLine).toBeUndefined();
     });
 
-    it('the table under the chart lists every shown sensor against every tag: description + tag left, value + unit per tag', () => {
+    it('the table under the chart lists every shown sensor against every tag: description + tag + the unit once on the left, the number per tag', () => {
         const columnar = columnarOf(headers, 5);
         const meta = headers.map((h, i) => ({ tag: h, description: i === 0 ? 'Bearing temp DE' : '', unit: i === 0 ? 'DEGC' : '', component: '' }));
         const { container } = render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} sensorMetadata={meta} />);
@@ -718,14 +718,15 @@ describe('Tag Point (click a point on the chart to compare it with others)', () 
         const table = screen.getByTestId('tag-table');
         const names = within(table).getAllByTestId('tag-table-name');
         expect(names).toHaveLength(headers.length);
-        expect(names[0].textContent).toBe(`Bearing temp DE${headers[0]}`);
+        expect(names[0].textContent).toBe(`Bearing temp DE${headers[0]}DEGC`); // the unit, once per row
+        expect(within(names[0]).getByTestId('tag-table-unit').textContent).toBe('DEGC');
         expect(names[1].textContent).toBe(headers[1]); // no description: the tag alone
         const vals = within(table).getAllByTestId('tag-table-val').map(v => v.textContent);
         expect(vals).toHaveLength(headers.length * 2); // sensors x tags, row by row
         const v = (sensor: number, row: number) => columnar.series[sensor][row] as number;
-        expect(vals[0]).toBe(`${v(0, 2).toFixed(3)} DEGC`);
-        expect(vals[1]).toBe(`${v(0, 4).toFixed(3)} DEGC`);
-        expect(vals[2]).toBe(v(1, 2).toFixed(3)); // no unit
+        expect(vals[0]).toBe(v(0, 2).toFixed(3)); // the number alone
+        expect(vals[1]).toBe(v(0, 4).toFixed(3));
+        expect(vals[2]).toBe(v(1, 2).toFixed(3));
         // Column heads: the tags, in badge order, each with its own ×.
         const heads = within(within(table).getByRole('list', { name: 'Tagged points' })).getAllByRole('listitem');
         expect(heads.map(h => h.textContent)).toEqual([formatDateTime(new Date(columnar.timestamps[2])), formatDateTime(new Date(columnar.timestamps[4]))]);

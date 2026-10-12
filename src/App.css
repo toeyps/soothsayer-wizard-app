@@ -2333,18 +2333,23 @@ body {
 
 .tag-table {
     flex: none;
-    /* Head + five sensor rows; more rows scroll, more tags scroll sideways. */
-    max-height: 142px;
+    /* Docked fallback (no tab to render into): head + five rows; more rows scroll. */
+    max-height: 196px;
     overflow: auto;
     border-top: 1px solid var(--border-strong);
     background: var(--card-bg);
 }
 
-/* In the Dashboard's tab: the whole tab is the table. */
+/* In the Dashboard's tab: the whole tab is the table (SPEC
+   docs/design/handoff/dashboard-tagged-points): the head band and the row lines cross the full
+   width, rows are 30 px, a point's head is two short lines (date, time) under a rule in the
+   tag's colour, the unit is printed once per row, and a hovered row lights up. */
 .tag-table--panel {
     max-height: none;
     height: 100%;
     border-top: 0;
+    display: flex;
+    flex-direction: column;
 }
 
 .tag-panel {
@@ -2363,35 +2368,48 @@ body {
     display: none;
 }
 
+/* No tagged point yet: the sentence, centred in the tab. */
 .tag-panel-empty {
-    padding: 1rem;
+    margin: auto;
+    max-width: 440px;
+    padding: 1.25rem 1rem;
+    text-align: center;
     font-size: 0.8rem;
-    line-height: 1.5;
+    line-height: 1.55;
     color: var(--text-secondary);
-    opacity: 0.75;
+    opacity: 0.8;
 }
 
 .tag-table-title {
-    padding: 0 4px;
+    padding: 0;
     font-size: 10.5px;
     font-weight: 600;
-    letter-spacing: 0.02em;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
     color: var(--text-secondary);
 }
 
 .tag-table-grid {
     display: grid;
     align-items: stretch;
-    justify-content: start;
+    justify-content: stretch;
+    width: 100%;
     min-width: min-content;
 }
 
+/* One element per row, laid out by the grid, so a hover on any cell reaches the whole row. */
+.tag-table-row {
+    display: contents;
+}
+
+/* Head band */
 .tag-table-corner,
-.tag-table .chart-tag-item {
+.tag-table .chart-tag-item,
+.tag-table-fill--head {
     position: sticky;
     top: 0;
     z-index: 2;
-    height: 28px;
+    height: 44px;
     box-sizing: border-box;
     background: var(--surface-hi);
     border-bottom: 1px solid var(--border-strong);
@@ -2408,7 +2426,7 @@ body {
     z-index: 3;
     display: flex;
     align-items: center;
-    padding: 0 8px;
+    padding: 0 12px;
 }
 
 .tag-table-toggle {
@@ -2442,20 +2460,81 @@ body {
     font-weight: 500;
 }
 
-/* The column heads are the tag list itself, each tag one cell of the grid. */
+/* The column heads are the tag list itself, each tag one cell of the grid:
+   [dot] date / time [×]. The rule on top is the tag's colour — the same colour as its dot
+   and dashed line on the chart. */
 .tag-table .chart-tag-list {
     display: contents;
 }
 
 .tag-table .chart-tag-item {
     justify-content: flex-end;
-    padding: 0 6px 0 10px;
+    gap: 8px;
+    padding: 0 6px 0 12px;
     border-radius: 0;
+    box-shadow: inset 0 2px 0 var(--tag-c, transparent);
+    border-left: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.tag-table .chart-tag-dot {
+    width: 9px;
+    height: 9px;
+    box-shadow: 0 0 0 2px var(--surface-hi), 0 0 0 3px color-mix(in srgb, var(--tag-c, transparent) 45%, transparent);
 }
 
 .tag-table .chart-tag-label {
     flex: 0 1 auto;
-    font-size: 10.5px;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 1px;
+    line-height: 1.2;
+    font-size: 11px;
+}
+
+.chart-tag-date {
+    font-size: 10px;
+    color: var(--text-secondary);
+}
+
+.chart-tag-time {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.chart-tag-date,
+.chart-tag-time {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* The × is quiet until its column head is pointed at or holds focus — never hidden, so it
+   can always be found and tabbed to. */
+.tag-table .chart-tag-remove {
+    opacity: 0.45;
+}
+
+.tag-table .chart-tag-item:hover .chart-tag-remove,
+.tag-table .chart-tag-remove:focus-visible {
+    opacity: 1;
+}
+
+/* Rows */
+.tag-table-name,
+.tag-table-val,
+.tag-table-fill {
+    height: 30px;
+    box-sizing: border-box;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.055);
+}
+
+/* ...except the filler of the head band, which is as tall as the heads beside it. */
+.tag-table-fill.tag-table-fill--head {
+    height: 44px;
+    border-bottom: 1px solid var(--border-strong);
 }
 
 .tag-table-name,
@@ -2463,42 +2542,101 @@ body {
     display: flex;
     align-items: center;
     min-width: 0;
-    height: 22px;
-    box-sizing: border-box;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
 }
 
 .tag-table-name {
     z-index: 1;
-    gap: 7px;
-    padding: 0 10px;
+    gap: 8px;
+    padding: 0 12px;
     background: var(--card-bg);
 }
 
 .tag-table-swatch {
     flex: none;
-    width: 8px;
-    height: 8px;
+    width: 9px;
+    height: 9px;
     border-radius: 2px;
 }
 
 .tag-table-lead {
     flex: none;
-    width: 14px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.07);
     font-family: 'JetBrains Mono', monospace;
     font-size: 10px;
     font-weight: 600;
+    color: var(--text-primary);
+}
+
+/* A narrow name cell gives its room to the description: the tag (still in the tooltip) hides
+   sooner here than the shared label's 150 px. */
+@container (max-width: 250px) {
+    .tag-table-name .sl-fit .sl-tag { display: none; }
+}
+
+/* The unit, once per row: at the right edge of the name cell, right before the numbers. */
+.tag-table-unit {
+    flex: none;
+    margin-left: auto;
+    padding-left: 10px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
     color: var(--text-secondary);
+    opacity: 0.8;
+    white-space: nowrap;
 }
 
 .tag-table-val {
     justify-content: flex-end;
-    padding: 0 28px 0 10px;
+    /* 34 px on the right = the ×'s width + gap in the head, so a number ends exactly
+       under the end of its point's time. */
+    padding: 0 34px 0 12px;
+    border-left: 1px solid rgba(255, 255, 255, 0.05);
     font-family: 'JetBrains Mono', monospace;
-    font-size: 11px;
-    font-weight: 600;
+    font-size: 12px;
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
     color: var(--text-primary);
     white-space: nowrap;
+}
+
+.tag-table-val--none {
+    color: var(--text-secondary);
+    opacity: 0.55;
+    font-weight: 400;
+}
+
+.tag-table-row:hover > .tag-table-val,
+.tag-table-row:hover > .tag-table-fill {
+    background: rgba(255, 255, 255, 0.035);
+}
+
+.tag-table-row:hover > .tag-table-name {
+    /* Opaque (the cell is sticky and slides over the values): the card colour, lightened. */
+    background: color-mix(in srgb, var(--card-bg) 96.5%, #fff);
+}
+
+/* The count under the table; stays at the left edge when the table scrolls sideways. */
+.tag-table-foot {
+    position: sticky;
+    left: 0;
+    width: max-content;
+    max-width: 100%;
+    margin: 0;
+    padding: 8px 12px 10px;
+    font-size: 11px;
+    color: var(--text-secondary);
+}
+
+.tag-table-foot b {
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 600;
+    color: var(--text-primary);
 }
 
 /* The tag-mode hint of the Scatter chart, in the right-hand column under its toolbox

@@ -1,4 +1,4 @@
-import { useRef, type RefObject } from 'react';
+import { Fragment, useRef, type CSSProperties, type RefObject } from 'react';
 import { X } from 'lucide-react';
 
 export interface TaggedPointListItem {
@@ -53,9 +53,20 @@ export default function TaggedPointList({ items, onRemove, emptyFocusRef }: Tagg
     return (
         <ul className="chart-tag-list" aria-label="Tagged points">
             {items.map((item, index) => (
-                <li key={item.id} className="chart-tag-item">
+                <li key={item.id} className="chart-tag-item" style={{ '--tag-c': item.color } as CSSProperties}>
                     <span className="chart-tag-dot" style={{ background: item.color }} aria-hidden="true" />
-                    <span className="chart-tag-label" title={item.label}>{item.label}</span>
+                    {/* "2026/06/21 03:10:00" reads as two short lines — the date, then the time —
+                        so a column can be narrow and the time is not squeezed against the ×.
+                        A label that is not a date and time ("Point 3") stays one line. The space
+                        between the two keeps the text one readable stamp for copy and assistive tech. */}
+                    <span className="chart-tag-label" title={item.label}>
+                        {splitStamp(item.label).map((part, i, all) => (
+                            <Fragment key={i}>
+                                {i > 0 && ' '}
+                                <span className={all.length === 2 && i === 0 ? 'chart-tag-date' : 'chart-tag-time'}>{part}</span>
+                            </Fragment>
+                        ))}
+                    </span>
                     <button
                         type="button"
                         className="chart-tag-remove"
@@ -73,6 +84,12 @@ export default function TaggedPointList({ items, onRemove, emptyFocusRef }: Tagg
             ))}
         </ul>
     );
+}
+
+/** "YYYY/MM/DD HH:mm:ss" → [date, time]; anything else stays whole. Display only. */
+export function splitStamp(label: string): string[] {
+    const m = /^(\d{4}\/\d{2}\/\d{2}) (\d{2}:\d{2}(?::\d{2})?)$/.exec(label);
+    return m ? [m[1], m[2]] : [label];
 }
 
 /** Colour slot for a NEW tag: the first palette index no remaining tag is

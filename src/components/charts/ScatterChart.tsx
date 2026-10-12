@@ -825,7 +825,7 @@ function ScatterChart({
                 cells: scatterTags.map(tag => {
                     const origIdx = origIndicesRef.current[tag.pointIdx];
                     const v = origIdx != null && col >= 0 ? data[origIdx]?.values[col] : null;
-                    return tagCell(typeof v === 'number' ? fmtNum(v) : null, info.unit);
+                    return tagCell(typeof v === 'number' ? fmtNum(v) : null);
                 }),
             };
         });

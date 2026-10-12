@@ -415,7 +415,7 @@ function LineChart({
                 key: sensor,
                 info,
                 color: sensorColors?.[sensor] ?? defaultSensorColor(sensor),
-                cells: idxOf.map(i => { const v = at(i); return tagCell(v == null ? null : fmtNum(v, true), info.unit); }),
+                cells: idxOf.map(i => { const v = at(i); return tagCell(v == null ? null : fmtNum(v, true)); }),
             };
         });
     }, [taggedPoints, xData, sensors, headers, columnar, data, sensorLookup, sensorColors]);
