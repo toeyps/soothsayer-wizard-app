@@ -38,7 +38,7 @@ const VALID_INPUTS: Record<string, Record<string, string>> = {
 
 /** The "2 Health score" page switch - disabled until the model is trained and fresh
  *  (and the gate passes), exactly when the old footer "Mark complete" could be enabled. */
-export const healthPageButton = (q: Q = screen) => q.getByTestId('page-health') as HTMLButtonElement;
+export const healthPageButton = (q: Q = screen) => q.getByTestId('next-health-score') as HTMLButtonElement;
 
 const settle = (ms = 30) => act(async () => { await new Promise(r => setTimeout(r, ms)); });
 

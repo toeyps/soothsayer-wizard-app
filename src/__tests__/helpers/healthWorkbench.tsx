@@ -171,7 +171,7 @@ export async function train() {
 }
 
 export async function openHealth() {
-    const b = bmw().getByTestId('page-health') as HTMLButtonElement;
+    const b = bmw().getByTestId('next-health-score') as HTMLButtonElement;
     expect(b.disabled, `Health page disabled: ${b.title}`).toBe(false);
     fireEvent.click(b);
     await settle(300);

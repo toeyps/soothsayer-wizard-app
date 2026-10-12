@@ -306,7 +306,7 @@ describe('a workspace saved before "just score it" (scoring periods with label /
         await waitFor(() => expect(dashDot(1, 'tag1', 'individual')).toBe('trained'));
         expect(dashDot(2, 'tag3', 'individual')).toBe('complete');
         // Train is not asked for: the Health score page stays open to the model.
-        expect((bmw().getByTestId('page-health') as HTMLButtonElement).disabled).toBe(false);
+        expect(bmwEl().querySelector('[data-testid="next-health-score"]:disabled')).toBeNull();
 
         // ── 5) Mark complete again ──────────────────────────────────────────────
         if (!bmwEl().querySelector('[data-testid="set-points-card"]')) await openHealth();

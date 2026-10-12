@@ -490,7 +490,7 @@ describe('misc edges', () => {
         expect(bmw().getByLabelText(/^L(\s|$)/, { selector: 'input' })).toBe(bmw().getByTestId('sp-lower'));
         expect(bmw().getByLabelText(/^H(\s|$)/, { selector: 'input' })).toBe(bmw().getByTestId('sp-upper'));
         expect(bmw().getByRole('button', { name: /Mark complete/ })).toBeTruthy();
-        expect(bmw().getAllByRole('button', { name: /Model fit/ }).length).toBeGreaterThanOrEqual(2); // page switch + footer
+        expect(bmw().getAllByRole('button', { name: /Model fit/ })).toHaveLength(1); // the footer's "← Model fit" (the header has no page switch)
         selectSensor('tag3');
         await waitForCharts();
         await openHealth();

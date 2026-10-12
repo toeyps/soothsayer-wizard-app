@@ -394,7 +394,7 @@ describe('(2) the Workbench footer reason and the Train button agree with the sh
             expect(reason).toBe(getBuildBlockReason(disk.models[0], disk, HEADERS));
             // Mark complete is not on this page at all (it lives on the Health score page, locked here).
             expect(screen.queryByText('✓ Mark complete')).toBeNull();
-            expect((screen.getByTestId('page-health') as HTMLButtonElement).disabled).toBe(true);
+            expect((screen.getByTestId('next-health-score') as HTMLButtonElement).disabled).toBe(true);
             fireEvent.click(trainBtn());
             await settle(30);
             expect(readDisk().failureGroupState.models[0].status).toBe(false);
@@ -631,7 +631,7 @@ describe('reason text consistency', () => {
         // Mark complete is not on this page (health score 3b-2) and the Health score page stays
         // locked; the Train sensor carries the same gate reason as the footer (preflight wording).
         expect(screen.queryByText('✓ Mark complete')).toBeNull();
-        expect((screen.getByTestId('page-health') as HTMLButtonElement).disabled).toBe(true);
+        expect((screen.getByTestId('next-health-score') as HTMLButtonElement).disabled).toBe(true);
         const train = trainBtn();
         expect(train.disabled).toBe(true);
         // Same reason, in the preflight wording ("above" reads wrong there).

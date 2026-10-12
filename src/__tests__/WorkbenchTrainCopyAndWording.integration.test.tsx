@@ -344,8 +344,8 @@ describe('A. Train sensor ▾ and the page states, on the real workspace file', 
         expect(pill()).toBe('Complete');
         expect(sentence()).toBe("Couldn't load the model · load it again");
         expect(tabWords('i3')).toBe("Complete · Couldn't load the model");
-        expect((bmw().getByTestId('page-health') as HTMLButtonElement).disabled).toBe(true);
-        expect(bmw().getByTestId('page-health').getAttribute('title')).toBe('Load the model again first');
+        expect((bmw().getByTestId('next-health-score') as HTMLButtonElement).disabled).toBe(true);
+        expect(bmw().getByTestId('next-health-score').getAttribute('title')).toBe('Load the model again first');
         // the other window knows nothing of it: still green
         expect(dashDot(1, 'tag3', 'individual')).toBe('complete');
         expect(bmwDot('i3').state).toBe('complete');
@@ -616,7 +616,7 @@ describe('B. "Relation model" everywhere — and a workspace that still holds th
         await waitFor(() => expect(bmw().getByTestId('save-error')).toBeTruthy(), { timeout: 8000 });
         expect(bmw().getByTestId('save-error-reason').textContent).toBe(ENGINE_NO_START);
         expectCleanWords('Mark complete failed');
-        fireEvent.click(bmw().getByTestId('page-model'));
+        fireEvent.click(bmw().getByTestId('footer-back-to-fit'));
         await settle(200);
         expectCleanWords('Model fit page after the failed Mark complete');
         await openHealth();

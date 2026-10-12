@@ -379,14 +379,14 @@ describe('drafts and the new page spine', () => {
         typeSp('sp-lower', '1');
         typeSp('sp-lower', '12'); // still typing
         expect(diskModel('i1').healthSetPoints.lower).toBe(20);
-        fireEvent.click(bmw().getByTestId('page-model'));
+        fireEvent.click(bmw().getByTestId('footer-back-to-fit'));
         await settle(100);
         expect(diskModel('i1').healthSetPoints.lower).toBe(12);
         const lowers = env.writes.filter(w => w.path === wsFile()).slice(before)
             .map(w => JSON.parse(w.content).failureGroupState.models[0].healthSetPoints.lower);
         expect(lowers.filter((v, i) => i === 0 || lowers[i - 1] !== v), 'one change of the value on disk').toEqual([12]);
         // and it is what the page shows when the user comes back
-        fireEvent.click(bmw().getByTestId('page-health'));
+        fireEvent.click(bmw().getByTestId('next-health-score'));
         await settle(350);
         expect(input('sp-lower').value).toBe('12');
     });

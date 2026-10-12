@@ -131,7 +131,7 @@ describe('(a) a COMPLETE Relation model whose fit Rust no longer holds', () => {
         expect(diskModel('r1').status).toBe(true);
 
         // Health score page: the same board, the same sentence
-        fireEvent.click(bmw().getByTestId('page-health'));
+        fireEvent.click(bmw().getByTestId('next-health-score'));
         await waitFor(() => expect(bmw().getByTestId('health-not-fitted')).toBeTruthy());
         const hboard = bmw().getByTestId('health-not-fitted');
         expect(hboard.querySelector('.wbx-msg-t')!.textContent).toBe('Fit no longer in memory');

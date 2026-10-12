@@ -6,7 +6,7 @@ vi.mock('../components/charts/ResponsiveECharts', () => ({
     default: (props: any) => <div data-testid="echarts-mock" data-series={props.option?.series?.length ?? 0} />,
 }));
 
-import { FitGoneBoard, LoadFailedBoard, PageSwitch, StaleBanner, StateBoard, TrainSensorLink, WorkbenchScroll } from '../components/windows/workbench/WorkbenchShellParts';
+import { FitGoneBoard, LoadFailedBoard, StaleBanner, StateBoard, TrainSensorLink, WorkbenchScroll } from '../components/windows/workbench/WorkbenchShellParts';
 import ChartCard, { LegendItem } from '../components/windows/workbench/ChartCard';
 import { SensorPickerSingle } from '../components/sensor/SensorPicker';
 
@@ -46,45 +46,6 @@ describe('StateBoard + TrainSensorLink', () => {
         expect(screen.getByTestId('b').querySelector('.wbx-msg-s')!.textContent).toBe('Re-train it with Train sensor ↑.');
         fireEvent.click(link);
         expect(go).toHaveBeenCalledTimes(1);
-    });
-});
-
-describe('PageSwitch', () => {
-    const base = { page: 'model' as const, healthDisabled: false, onPage: () => {} };
-
-    // Workbench redesign §1: a plain segmented control — it says where you are, with
-    // no step numbers and no ticks (a model's status is said once, in the footer).
-    it('marks the page on screen; the two buttons carry their name only — no numbers, no ticks', () => {
-        const { rerender } = render(<PageSwitch {...base} />);
-        expect(screen.getByTestId('page-model').getAttribute('aria-pressed')).toBe('true');
-        expect(screen.getByTestId('page-health').getAttribute('aria-pressed')).toBe('false');
-        expect(screen.getByTestId('page-model').className).toContain('wb2-pg--on');
-        for (const page of ['model', 'health'] as const) {
-            rerender(<PageSwitch {...base} page={page} />);
-            expect(screen.getByTestId('page-model').textContent).toBe('Model fit');
-            expect(screen.getByTestId('page-health').textContent).toBe('Health score');
-            const sw = screen.getByTestId('page-switch');
-            expect(sw.querySelector('svg')).toBeNull();
-            expect(sw.querySelector('b')).toBeNull();
-            expect(sw.textContent).not.toMatch(/[0-9✓]/);
-            expect(screen.queryByTestId('page-model-done')).toBeNull();
-            expect(screen.queryByTestId('page-health-done')).toBeNull();
-        }
-        expect(screen.getByTestId('page-health').getAttribute('aria-pressed')).toBe('true');
-    });
-
-    it('the second page can be disabled with a reason, and the buttons report the page', () => {
-        const onPage = vi.fn();
-        const { rerender } = render(<PageSwitch {...base} onPage={onPage} healthDisabled healthDisabledTitle="Re-train first" />);
-        const health = screen.getByTestId('page-health') as HTMLButtonElement;
-        expect(health.disabled).toBe(true);
-        expect(health.title).toBe('Re-train first');
-        fireEvent.click(health);
-        expect(onPage).not.toHaveBeenCalled();
-        rerender(<PageSwitch {...base} onPage={onPage} />);
-        fireEvent.click(screen.getByTestId('page-health'));
-        fireEvent.click(screen.getByTestId('page-model'));
-        expect(onPage.mock.calls.map(c => c[0])).toEqual(['health', 'model']);
     });
 });
 

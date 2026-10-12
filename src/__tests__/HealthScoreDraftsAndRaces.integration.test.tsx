@@ -287,7 +287,7 @@ describe('errors from Rust', () => {
         expect(bmw().getByTestId('results-not-fitted').textContent).toMatch(/^Fit no longer in memory/);
         expect(bmw().queryByTestId('results-not-fitted-retrain')).toBeNull();
         expect(bmw().getByTestId('footer-status').textContent).toBe('Fit no longer in memory · load it again, or re-train with Train sensor ↑');
-        fireEvent.click(bmw().getByTestId('page-health'));
+        fireEvent.click(bmw().getByTestId('next-health-score'));
         await settle(50);
         // "Load it again": ONE more fit of the same model, and the page is back — the model on disk
         // is exactly what it was (not re-trained: same train time and fingerprint, status untouched).

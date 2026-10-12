@@ -573,7 +573,7 @@ describe('(5) pill / footer / Mark complete agree with the results area', () => 
 
         await markIncompleteFromHealthPage();
         expect(pill()).toBe('Trained');
-        fireEvent.click(screen.getByTestId('page-model'));
+        fireEvent.click(screen.getByTestId('footer-back-to-fit'));
         fireEvent.click(screen.getByText('Model settings', { selector: 'b' }));
         fireEvent.click(screen.getByRole('button', { name: 'Strict' }));
         await act(async () => { fireEvent.click(screen.getByText('Save changes')); });

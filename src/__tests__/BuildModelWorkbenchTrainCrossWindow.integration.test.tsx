@@ -301,6 +301,6 @@ describe('Workbench training metadata vs. a stale Dashboard mirror', () => {
         });
         await settle(20);
         expect(bmw().getByTestId('results-stale')).toBeTruthy();
-        expect((bmw().getByTestId('page-health') as HTMLButtonElement).disabled).toBe(true); // Mark complete is only reachable from the Health score page
+        expect((bmw().getByTestId('next-health-score') as HTMLButtonElement).disabled).toBe(true); // Mark complete is only reachable from the Health score page
     });
 });

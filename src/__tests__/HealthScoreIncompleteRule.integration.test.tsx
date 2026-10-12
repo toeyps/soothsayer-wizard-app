@@ -104,7 +104,7 @@ async function expectDemoted(id: string, before: any, o: { group?: number; key?:
 /** Build Model shows the active (demoted) model as stale everywhere. */
 function expectStaleUi() {
     expect(pill()).toBe('Incomplete');
-    const h = bmw().getByTestId('page-health') as HTMLButtonElement;
+    const h = bmw().getByTestId('next-health-score') as HTMLButtonElement;
     expect(h.disabled).toBe(true);
     expect(h.title).toBe('Re-train first');
     expect(bmw().getByTestId('stale-banner')).toBeTruthy();
@@ -165,7 +165,7 @@ describe('model-setting triggers (Save changes)', () => {
         openSettings();
         fireEvent.click(bmw().getByRole('button', { name: 'Custom' }));
         // An unsaved draft already reads as out of date (draft-aware): Health page closed.
-        expect((bmw().getByTestId('page-health') as HTMLButtonElement).disabled).toBe(true);
+        expect((bmw().getByTestId('next-health-score') as HTMLButtonElement).disabled).toBe(true);
         expect(diskModel('i1').status).toBe(true); // nothing written yet
         await saveChanges();
         await expectDemoted('i1', before, { key: 'tag1', kind: 'individual' });
@@ -350,7 +350,7 @@ describe('ONE truth: Dashboard dot, Build Model dot, tab pill, page switch', () 
         // never trained
         expect(dashDot(1, 'tag1', 'individual')).toBe('none');
         expect(bmwDot('i1').state).toBe('none');
-        expect((bmw().getByTestId('page-health') as HTMLButtonElement).title).toBe('Train the model first');
+        expect((bmw().getByTestId('next-health-score') as HTMLButtonElement).title).toBe('Train the model first');
         expect(bmwEl().querySelector('[data-testid="page-model-done"]')).toBeNull();
 
         // trained, set points empty
@@ -365,7 +365,7 @@ describe('ONE truth: Dashboard dot, Build Model dot, tab pill, page switch', () 
         await waitFor(() => expect(dashDot(1, 'tag1', 'individual')).toBe('need'));
         // the page switch never carries a tick or a number; the status words are the footer's
         expect(bmwEl().querySelector('[data-testid="page-model-done"]')).toBeNull();
-        expect(bmw().getByTestId('page-switch').textContent).toBe('Model fitHealth score');
+        expect(bmwEl().querySelector('[data-testid="page-switch"]')).toBeNull(); // the header has no page switch any more
 
         // an invalid set point -> "Fix set point" (red) in Build Model
         await enterSp({ 'sp-lower': '49', 'sp-upper': '90' });

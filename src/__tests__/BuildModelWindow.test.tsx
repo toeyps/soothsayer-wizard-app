@@ -321,7 +321,7 @@ const exportCalls = () => mockInvoke.mock.calls.filter(c => c[0] === 'export_mod
 const VALID_IND = { kind: 'individual', lower: 1, upper: 9, masterLower: 1, masterUpper: 9 };
 /** Opens the Health score page of the (trained) active model and waits for its first answer. */
 const openHealthPage = async () => {
-    fireEvent.click(screen.getByTestId('page-health'));
+    fireEvent.click(screen.getByTestId('next-health-score'));
     await waitFor(() => expect(screen.getByTestId('set-points-card')).toBeTruthy());
 };
 
@@ -1120,7 +1120,7 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             render(<BuildModelWindow />);
             await deliverData(); // fully configured, gate satisfied, but never trained
             expect(screen.queryByText('✓ Mark complete')).toBeNull();
-            const health = screen.getByTestId('page-health') as HTMLButtonElement;
+            const health = screen.getByTestId('next-health-score') as HTMLButtonElement;
             expect(health.disabled).toBe(true);
             expect(health.title).toMatch(/Train the model/);
         });
@@ -1217,7 +1217,7 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: { groups: [makeGroup()], models: [makeModel()], runningConditionNoneConfirmed: false } });
             expect(screen.queryByText('✓ Mark complete')).toBeNull();
-            const health = screen.getByTestId('page-health') as HTMLButtonElement;
+            const health = screen.getByTestId('next-health-score') as HTMLButtonElement;
             expect(health.disabled).toBe(true);
         });
 
@@ -1329,7 +1329,7 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
         it('a never-trained model cannot reach Complete: the Health score page cannot be opened, nothing is exported', async () => {
             render(<BuildModelWindow />);
             await deliverData(); // fully configured, gate satisfied, but never trained
-            expect((screen.getByTestId('page-health') as HTMLButtonElement).disabled).toBe(true);
+            expect((screen.getByTestId('next-health-score') as HTMLButtonElement).disabled).toBe(true);
             expect(screen.queryByTestId('mark-complete')).toBeNull();
             expect(exportCalls()).toHaveLength(0);
         });
@@ -1795,7 +1795,7 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             mockUpdateWorkspaceData.mockImplementationOnce(() => new Promise((res) => { resolveUpdate = res; }));
 
             // "Mark incomplete" lives on the Health score page: a status-only write that stays pending.
-            fireEvent.click(screen.getByTestId('page-health'));
+            fireEvent.click(screen.getByTestId('next-health-score'));
             fireEvent.click(await screen.findByTestId('mark-incomplete'));
             fireEvent.click(screen.getByTitle('Close'));
             await act(async () => { await Promise.resolve(); });
@@ -2059,8 +2059,8 @@ describe('Custom running-condition editor (2026-09-30 port)', () => {
         // card + the model's own train and scoring periods
         await waitFor(() => expect(periodCountCalls()).toHaveLength(3));
 
-        await waitFor(() => expect((screen.getByTestId('page-health') as HTMLButtonElement).disabled).toBe(false));
-        fireEvent.click(screen.getByTestId('page-health'));
+        await waitFor(() => expect((screen.getByTestId('next-health-score') as HTMLButtonElement).disabled).toBe(false));
+        fireEvent.click(screen.getByTestId('next-health-score'));
         await waitFor(() => expect(screen.getByTestId('footer-back-to-fit')).toBeTruthy());
         expect(screen.queryByTestId('custom-rc-editor')).toBeNull(); // the panel is not on this page
         const counts = periodCountCalls().length;
@@ -3753,7 +3753,7 @@ describe('Running condition Step 1 — header, card, settings modal preview (202
             expect(train.title).toBe('Set the running condition first.');
             expect(screen.getByTestId('build-block-reason').textContent).toBe(REASON);
             expect(screen.queryByText('✓ Mark complete')).toBeNull(); // Mark complete lives on the Health score page
-            expect((screen.getByTestId('page-health') as HTMLButtonElement).disabled).toBe(true);
+            expect((screen.getByTestId('next-health-score') as HTMLButtonElement).disabled).toBe(true);
         });
 
         it('Invalid period: same lock with the "Running condition ↑" link, Train disabled with the period reason', async () => {
@@ -4387,37 +4387,40 @@ describe('Workbench two pages — shell + Model fit page (health score 3b-1)', (
         await deliverData({ failureGroupState: { groups: [makeGroup()], models, ...extraFg } }, payload);
     };
 
-    describe('page switch', () => {
-        it('shows "1 Model fit" and "2 Health score"; Health score is disabled for a model that was never trained', async () => {
+    // The header's "Model fit | Health score" switch was removed (user decision 2026-10-12: the
+    // footer already has the buttons). The two pages are reached from the footer only.
+    describe('the two pages are reached from the footer (no page switch in the header)', () => {
+        it('there is no page switch; "Next: Health score" is disabled for a model that was never trained', async () => {
             await mount([makeModel()]);
-            const sw = screen.getByTestId('page-switch');
-            expect(within(sw).getByTestId('page-model').getAttribute('aria-pressed')).toBe('true');
-            const health = within(sw).getByTestId('page-health') as HTMLButtonElement;
+            expect(screen.queryByTestId('page-switch')).toBeNull();
+            expect(screen.queryByRole('group', { name: 'Model pages' })).toBeNull();
+            expect(screen.queryByTestId('footer-back-to-fit')).toBeNull(); // already on Model fit
+            const health = screen.getByTestId('next-health-score') as HTMLButtonElement;
             expect(health.disabled).toBe(true);
             expect(health.title).toBe('Train the model first');
             expect(screen.queryByTestId('page-model-done')).toBeNull();
         });
 
-        it('while stale: Health score is disabled with the title "Re-train first"', async () => {
+        it('while stale: "Next: Health score" is disabled with the title "Re-train first"', async () => {
             await mount([{ ...withTrained(makeModel()), trainedFingerprint: 'old' }]);
-            const health = screen.getByTestId('page-health') as HTMLButtonElement;
+            const health = screen.getByTestId('next-health-score') as HTMLButtonElement;
             expect(health.disabled).toBe(true);
             expect(health.title).toBe('Re-train first');
             expect(screen.queryByTestId('page-model-done')).toBeNull();
         });
 
-        it('trained and fresh: the switch stays a plain segmented control (no tick, no number); Health score opens the real page (set points + checks) and back', async () => {
+        it('trained and fresh: "Next: Health score" opens the real page (set points + checks), "← Model fit" goes back', async () => {
             await mount([withTrained(makeModel())]);
             expect(screen.queryByTestId('page-model-done')).toBeNull();
             expect(screen.queryByTestId('page-health-done')).toBeNull();
-            expect(screen.getByTestId('page-switch').textContent).toBe('Model fitHealth score');
-            expect(screen.getByTestId('page-switch').querySelector('svg, b')).toBeNull();
-            fireEvent.click(screen.getByTestId('page-health'));
+            fireEvent.click(screen.getByTestId('next-health-score'));
             await waitFor(() => expect(screen.getByTestId('set-points-card')).toBeTruthy());
             expect(screen.getByTestId('checks-card')).toBeTruthy();
             expect(screen.queryByTestId('results-chart')).toBeNull();
             expect(screen.queryByTestId('add-model-form')).toBeNull(); // Model settings live on the Model fit page
-            fireEvent.click(screen.getByTestId('page-model'));
+            expect(screen.queryByTestId('next-health-score')).toBeNull(); // on the Health score page the footer offers the way back instead
+            expect(screen.getByTestId('footer-back-to-fit').textContent).toContain('Model fit');
+            fireEvent.click(screen.getByTestId('footer-back-to-fit'));
             expect(screen.queryByTestId('health-page')).toBeNull();
         });
 
@@ -4425,7 +4428,7 @@ describe('Workbench two pages — shell + Model fit page (health score 3b-1)', (
             await mount([withTrained(makeModel({ status: true }))]);
             expect(screen.queryByTestId('page-model-done')).toBeNull();
             expect(screen.queryByTestId('page-health-done')).toBeNull();
-            expect(screen.getByTestId('page-switch').textContent).toBe('Model fitHealth score');
+            expect(screen.queryByTestId('page-switch')).toBeNull();
             expect(screen.getByTestId('footer-pill').textContent).toBe('Complete');
             expect(screen.getAllByText('Complete', { selector: '.model-status-pill' })).toHaveLength(1);
         });
@@ -4434,7 +4437,7 @@ describe('Workbench two pages — shell + Model fit page (health score 3b-1)', (
             const rel = trainedRel();
             const ind = withTrained(makeModel({ id: 'i1' }));
             await mount([ind, rel]);
-            fireEvent.click(screen.getByTestId('page-health'));
+            fireEvent.click(screen.getByTestId('next-health-score'));
             fireEvent.click(screen.getByRole('tab', { name: /Relation model/ }));
             expect(screen.queryByTestId('health-page')).toBeNull(); // the Relationship model is still on Model fit
             fireEvent.click(screen.getByRole('tab', { name: /Individual/ }));
@@ -4442,7 +4445,9 @@ describe('Workbench two pages — shell + Model fit page (health score 3b-1)', (
             // Another window changes a training input of the Relationship model: it turns stale, so
             // its page falls back to Model fit (the stored choice is not erased, just not shown).
             fireEvent.click(screen.getByRole('tab', { name: /Relation model/ }));
-            fireEvent.click(screen.getByTestId('page-health'));
+            // "Next" opens once the model's fit is on screen (it is closed while the fit loads).
+            await waitFor(() => expect((screen.getByTestId('next-health-score') as HTMLButtonElement).disabled).toBe(false));
+            fireEvent.click(screen.getByTestId('next-health-score'));
             expect(screen.getByTestId('health-page')).toBeTruthy();
             await flush(); // the first-open set-point snapshot write of the Individual model lands before the other window's change
             await act(async () => {
@@ -4456,7 +4461,7 @@ describe('Workbench two pages — shell + Model fit page (health score 3b-1)', (
                 await Promise.resolve();
             });
             expect(screen.queryByTestId('health-page')).toBeNull();
-            expect((screen.getByTestId('page-health') as HTMLButtonElement).disabled).toBe(true);
+            expect((screen.getByTestId('next-health-score') as HTMLButtonElement).disabled).toBe(true);
         });
     });
 
@@ -4485,7 +4490,7 @@ describe('Workbench two pages — shell + Model fit page (health score 3b-1)', (
         it('there is no "Open full view" control and no full-view page any more (health score phase 4)', async () => {
             await mount([withTrained(makeModel())]);
             expect(screen.queryByText(/Open full view/)).toBeNull();
-            fireEvent.click(screen.getByTestId('page-health'));
+            fireEvent.click(screen.getByTestId('next-health-score'));
             expect(screen.queryByText(/Open full view/)).toBeNull();
         });
     });
@@ -4511,7 +4516,7 @@ describe('Workbench two pages — shell + Model fit page (health score 3b-1)', (
             await mount([withTrained(makeModel({ id: 'i1' })), trainedRel()]);
             fireEvent.click(screen.getByTitle('Hide sensor list'));
             fireEvent.click(screen.getByRole('tab', { name: /Relation model/ }));
-            fireEvent.click(screen.getByTestId('page-health'));
+            fireEvent.click(screen.getByTestId('next-health-score'));
             expect(screen.queryByLabelText('Search sensors')).toBeNull();
         });
     });
@@ -5167,7 +5172,7 @@ describe('Health score page - draft set points and when they are persisted (heal
             mockUpdateWorkspaceData.mockClear();
             fireEvent.click(screen.getByTestId('footer-back-to-fit'));
             await flush();
-            fireEvent.click(screen.getByTestId('page-health'));
+            fireEvent.click(screen.getByTestId('next-health-score'));
             await flush();
             expect(mockUpdateWorkspaceData).not.toHaveBeenCalled();
         });
@@ -5247,7 +5252,7 @@ describe('Health score page - Mark complete (the ONLY way a model becomes Comple
         statefulUpdateMock([HS_IND()]);
         render(<BuildModelWindow />);
         await deliverData({ failureGroupState: { groups: [makeGroup()], models: [HS_IND()] } });
-        fireEvent.click(screen.getByTestId('page-health'));
+        fireEvent.click(screen.getByTestId('next-health-score'));
         expect(hsMarkBtn().disabled).toBe(true);
         expect(screen.getByTestId('mark-block-reason').textContent).toBe('Checking the set points…');
     });
@@ -5694,7 +5699,7 @@ describe('Health score page - status pills and dots follow the verdict Rust gave
 describe('Health score page - edge cases', () => {
     it('a stale model never shows the Health score page, so Mark complete cannot be reached', async () => {
         await hsMount([{ ...HS_IND(), trainedFingerprint: 'old' }]);
-        expect((screen.getByTestId('page-health') as HTMLButtonElement).disabled).toBe(true);
+        expect((screen.getByTestId('next-health-score') as HTMLButtonElement).disabled).toBe(true);
         expect(screen.queryByTestId('mark-complete')).toBeNull();
     });
 
@@ -5704,8 +5709,8 @@ describe('Health score page - edge cases', () => {
         render(<BuildModelWindow />);
         await deliverData({ failureGroupState: { groups: [makeGroup()], models: [HS_IND()] } });
         await flush();
-        await waitFor(() => expect((screen.getByTestId('page-health') as HTMLButtonElement).disabled).toBe(true));
-        expect((screen.getByTestId('page-health') as HTMLButtonElement).title).toBe('Re-train first');
+        await waitFor(() => expect((screen.getByTestId('next-health-score') as HTMLButtonElement).disabled).toBe(true));
+        expect((screen.getByTestId('next-health-score') as HTMLButtonElement).title).toBe('Re-train first');
     });
 
     it('NOT_FITTED (Relationship fit gone from Rust\'s memory) on the Health score page: the board with "Load it again" + "Train sensor ↑", Mark complete disabled with that reason, Train sensor filled and Mark complete a ghost', async () => {
@@ -5716,7 +5721,7 @@ describe('Health score page - edge cases', () => {
         render(<BuildModelWindow />);
         await deliverData({ failureGroupState: { groups: [makeGroup()], models: [rel] } });
         await fitGoneSettled(); // (the fit is re-filled once automatically first; the mock keeps answering NOT_FITTED)
-        fireEvent.click(screen.getByTestId('page-health'));
+        fireEvent.click(screen.getByTestId('next-health-score'));
         await waitFor(() => expect(screen.getByTestId('health-not-fitted')).toBeTruthy());
         await waitFor(() => expect(screen.getByTestId('mark-block-reason').textContent).toBe('Fit no longer in memory · load it again, or re-train with Train sensor ↑'));
         const board = screen.getByTestId('health-not-fitted');
@@ -5761,7 +5766,7 @@ describe('Health score page - edge cases', () => {
         render(<BuildModelWindow />);
         await deliverData({ failureGroupState: { groups: [makeGroup()], models: [rel] } });
         await fitGoneSettled();
-        fireEvent.click(screen.getByTestId('page-health'));
+        fireEvent.click(screen.getByTestId('next-health-score'));
         await waitFor(() => expect(screen.getByTestId('health-not-fitted')).toBeTruthy());
         const board = () => screen.getByTestId('health-not-fitted');
         const fits = () => mockInvoke.mock.calls.filter(c => c[0] === 'preview_relationship_model');
@@ -7235,7 +7240,7 @@ describe('train queue wiring — review fixes (phase 4)', () => {
         fireEvent.click(screen.getByTestId('train-all-close'));
         expect(screen.getByTestId('queued-card')).toBeTruthy();
         expect(screen.getByTestId('settings-locked')).toBeTruthy();
-        fireEvent.click(screen.getByTestId('page-health'));
+        fireEvent.click(screen.getByTestId('next-health-score'));
         await waitFor(() => expect(screen.getByTestId('mark-complete')).toBeTruthy());
         expect((screen.getByTestId('mark-complete') as HTMLButtonElement).disabled).toBe(true);
         expect(screen.getByTestId('mark-block-reason').textContent).toBe('Wait for the training run to finish');
@@ -7285,7 +7290,7 @@ describe('train queue wiring — review fixes (phase 4)', () => {
         await flush();
         expect(mockInvoke.mock.calls.filter(c => c[0] === 'preview_relationship_model')).toHaveLength(fitsBefore);
         // The Health score page: the same board, and Mark complete waits for the run.
-        fireEvent.click(screen.getByTestId('page-health'));
+        fireEvent.click(screen.getByTestId('next-health-score'));
         await flush();
         await waitFor(() => expect(screen.getByTestId('health-not-fitted')).toBeTruthy());
         expect(screen.queryByTestId('health-not-fitted-retrain')).toBeNull();
@@ -7574,7 +7579,7 @@ describe('Workbench redesign §1 — the page spine', () => {
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: { groups: [makeGroup()], models: [rel] } });
             await fitGoneSettled();
-            fireEvent.click(screen.getByTestId('page-health'));
+            fireEvent.click(screen.getByTestId('next-health-score'));
             await waitFor(() => expect(screen.getByTestId('health-not-fitted')).toBeTruthy());
             await waitFor(() => expect(filled()).toEqual(['train-sensor']));
             expect(primary()).toBe('train');
@@ -7742,7 +7747,7 @@ describe('Workbench redesign §1 — the page spine', () => {
         });
     });
 
-    it('the header has ONE control group — category switch · page switch · Train sensor — and the category is still saved to FailureModel.category', async () => {
+    it('the header has ONE control group — category switch · Train sensor (no page switch) — and the category is still saved to FailureModel.category', async () => {
         const groups = [makeGroup()];
         const models = [makeModel({ category: 'performance' })];
         render(<BuildModelWindow />);
@@ -7750,11 +7755,10 @@ describe('Workbench redesign §1 — the page spine', () => {
         const ctl = screen.getByTestId('detail-controls');
         expect(ctl.className).toBe('wbx-dh-ctl');
         const kids = Array.from(ctl.children) as HTMLElement[];
-        expect(kids).toHaveLength(3);
+        expect(kids).toHaveLength(2);
         expect(kids[0]).toBe(screen.getByRole('group', { name: 'Category' }));
-        expect(kids[1]).toBe(screen.getByTestId('page-switch'));
-        expect(kids[2].contains(trainSensorBtn())).toBe(true);
-        expect(kids[2].contains(screen.getByTestId('train-sensor-why'))).toBe(true); // one short line under the button
+        expect(kids[1].contains(trainSensorBtn())).toBe(true);
+        expect(kids[1].contains(screen.getByTestId('train-sensor-why'))).toBe(true); // one short line under the button
         expect(within(kids[0]).getByRole('button', { name: 'Performance' }).getAttribute('aria-pressed')).toBe('true');
         expect(within(kids[0]).getByRole('button', { name: 'Condition' }).getAttribute('aria-pressed')).toBe('false');
 
@@ -8090,8 +8094,8 @@ describe('Workbench redesign §7 — page states of every kind (phase D)', () =>
         expect(primary()).toBe('none');
         expect(filled()).toEqual([]);
         // the Health score page stays shut meanwhile, and its tooltip names the way back that works
-        expect((screen.getByTestId('page-health') as HTMLButtonElement).disabled).toBe(true);
-        expect(screen.getByTestId('page-health').getAttribute('title')).toBe('Load the model again first');
+        expect((screen.getByTestId('next-health-score') as HTMLButtonElement).disabled).toBe(true);
+        expect(screen.getByTestId('next-health-score').getAttribute('title')).toBe('Load the model again first');
         expect(screen.getByTestId(`tab-status-${model.id}`).getAttribute('title')).toBe("Complete · Couldn't load the model");
         expect(screen.getByTestId(`tab-status-${model.id}`).getAttribute('data-dot')).toBe('bad');
         // the ▾ link opens the menu whose row really trains it
@@ -8324,7 +8328,7 @@ describe('Workbench redesign §7 — page states of every kind (phase D)', () =>
     const failRetrainFromSiblingTab = async (k: K, mode: { current: 'ok' | 'fail' | 'hold' }) => {
         fireEvent.click(tabOf(k.tab));
         await waitFor(() => expect(screen.getByTestId('results-chart')).toBeTruthy());
-        fireEvent.click(screen.getByTestId('page-health'));
+        fireEvent.click(screen.getByTestId('next-health-score'));
         await waitFor(() => expect(screen.getByTestId('set-points-card')).toBeTruthy());
         fireEvent.click(tabOf(k.kind === 'individual' ? 'Relation model' : 'Individual'));
         await waitFor(() => expect(screen.getByTestId('results-chart')).toBeTruthy()); // the sibling's own answer
@@ -8405,7 +8409,7 @@ describe('Workbench redesign §7 — page states of every kind (phase D)', () =>
         };
         await mountK([model]);
         await waitFor(() => expect(screen.getByTestId('results-chart')).toBeTruthy());
-        fireEvent.click(screen.getByTestId('page-health'));
+        fireEvent.click(screen.getByTestId('next-health-score'));
         await waitFor(() => expect(screen.getByTestId('set-points-card')).toBeTruthy());
         const again = () => screen.getByTestId('mark-complete-again') as HTMLButtonElement;
         await waitFor(() => expect(again().disabled).toBe(false));
@@ -8759,7 +8763,7 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
             expect(engineCalls('compute_health_preview')).toHaveLength(0);
 
             // ── the Health score page: open (not a closed tab), the SAME board, Mark incomplete reachable ──
-            const healthTab = screen.getByTestId('page-health') as HTMLButtonElement;
+            const healthTab = screen.getByTestId('next-health-score') as HTMLButtonElement;
             expect(healthTab.disabled).toBe(false);
             fireEvent.click(healthTab);
             const hBoard = await waitFor(() => screen.getByTestId('results-no-data'));
@@ -9107,7 +9111,7 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
             expect(screen.getByTestId('footer-pill').textContent).toBe('Complete');
             expect(screen.getByTestId('tab-status-m2').getAttribute('data-dot')).toBe('complete');
             expect(screen.getByTestId('tab-status-m2').getAttribute('title')).toBe('Complete · no data in the loaded file');
-            expect((screen.getByTestId('page-health') as HTMLButtonElement).disabled).toBe(false);
+            expect((screen.getByTestId('next-health-score') as HTMLButtonElement).disabled).toBe(false);
             await act(async () => { await new Promise(r => setTimeout(r, 400)); });
             expect(engineCalls('compute_sensor_stats')).toHaveLength(2); // one per model, no retry
             expect(document.body.textContent).not.toMatch(/Training failed|Couldn't load|No valid numeric values/);

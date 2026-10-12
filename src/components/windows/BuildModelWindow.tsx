@@ -43,7 +43,7 @@ import { useSubModelFits } from "./useSubModelFits";
 import ModelFitPage from "./workbench/ModelFitPage";
 import { CLUSTER_COLORS as CLUSTER_PALETTE, TYPED_DECIMALS_MAX, fmtClusterBound, shortDecimals } from "./workbench/chartTheme";
 import HealthScorePage from "./workbench/HealthScorePage";
-import { FIT_GONE_WORDS, FitGoneBoard, LoadFailedBoard, PageSwitch, SaveErrorNotice, StaleBanner, StateBoard, TrainSensorLink, WorkbenchScroll, type FitGoneActions, type StaleCantTrain } from "./workbench/WorkbenchShellParts";
+import { FIT_GONE_WORDS, FitGoneBoard, LoadFailedBoard, SaveErrorNotice, StaleBanner, StateBoard, TrainSensorLink, WorkbenchScroll, type FitGoneActions, type StaleCantTrain } from "./workbench/WorkbenchShellParts";
 import { buildCheckLines, healthVerdict, isBlockingIssue, sameSetPoints, verdictOfIssues, type HealthVerdict } from "./workbench/healthChecks";
 import type { SaveInfo, WorkbenchPage } from "./workbench/workbenchTypes";
 import { isPickerSurfaceOpen } from "../sensor/SensorPicker";
@@ -4298,6 +4298,9 @@ export default function BuildModelWindow() {
                         ref={nextHealthBtnRef}
                         className={`rcx-btn${primary === 'next' ? ' rcx-btn--pri' : ''}`}
                         data-testid="next-health-score"
+                        // The only way to the Health score page since the header's page switch went
+                        // (2026-10-12). Closed while this model's fit is still being worked out
+                        // (redesign §7): the Health score page reads that fit.
                         disabled={healthBlock !== null || training}
                         title={healthBlock ?? undefined}
                         onClick={() => setPage(m, 'health')}
@@ -4489,7 +4492,6 @@ export default function BuildModelWindow() {
         const category = selectedSensorKey !== null ? sensorCategory(allModels, selectedSensorKey) : null;
         const page = pageOf(activeModel);
         const stale = isModelStale(activeModel);
-        const healthBlock = healthPageBlock(activeModel);
         const training = trainStatus[activeModel.id] === 'loading';
         // One plan per model of the sensor, computed once: the Train sensor button and
         // the one-filled-button rule both read it.
@@ -4551,12 +4553,8 @@ export default function BuildModelWindow() {
                             );
                         })}
                     </div>
-                    <PageSwitch
-                        page={page}
-                        healthDisabled={healthBlock !== null}
-                        healthDisabledTitle={healthBlock ?? undefined}
-                        onPage={p => setPage(activeModel, p)}
-                    />
+                    {/* No page switch here (removed 2026-10-12, user decision): the two pages are
+                        reached from the footer — "Next: Health score →" and "← Model fit". */}
                     {renderSensorTrain(cands, primary === 'train')}
                     </div>
                 </div>

@@ -5167,11 +5167,6 @@ body {
 .wb2-sp { flex: 1; }
 
 /* page switch, right side of the detail header */
-.wb2-pages { display: flex; gap: 6px; }
-.wb2-pg { display: inline-flex; align-items: center; gap: 7px; height: 30px; padding: 0 12px; border: 1px solid var(--border-strong); background: var(--input-bg); border-radius: 8px; font: inherit; font-size: 12px; color: var(--text-secondary); cursor: pointer; white-space: nowrap; }
-.wb2-pg--on { border-color: var(--accent-color); color: var(--text-primary); background: var(--accent-muted); }
-.wb2-pg:disabled { opacity: 0.45; cursor: not-allowed; }
-.wb2-pg:focus-visible { outline: 2px solid var(--accent-color); outline-offset: 1px; }
 /* (The detail header's columns and its narrow-pane wrap live in the "Workbench
    redesign" block at the end of this file: identity | ONE control group.) */
 
@@ -6437,9 +6432,6 @@ body {
 .f4-catseg button { font-size: 0.68rem; padding: 3px 9px; }
 
 /* Page switch: a plain segmented control — it says WHERE, not how far */
-.wb2-pages { gap: 0; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--input-bg); padding: 2px; }
-.wb2-pg { height: 26px; padding: 0 12px; border: 0; background: none; border-radius: 6px; color: var(--text-secondary); font-weight: 500; }
-.wb2-pg--on { border: 0; background: var(--surface-hi); color: var(--text-primary); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35); }
 
 /* Train sensor: filled only while it is the pane's next action; the caption is one short line */
 .tq-sensortrain .tq-why { margin-top: -1px; }

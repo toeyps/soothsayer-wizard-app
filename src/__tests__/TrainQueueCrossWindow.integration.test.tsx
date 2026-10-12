@@ -451,7 +451,7 @@ describe('(b) Train all over two failure groups with one failure and one skip', 
         // Health score page of a trained model: the run banner, and "Next needing set points".
         fireEvent.click(bmw().getByTestId('sensor-list-row-fg:1-tag3'));
         await settle(50);
-        const healthBtn = bmw().getByTestId('page-health') as HTMLButtonElement;
+        const healthBtn = bmw().getByTestId('next-health-score') as HTMLButtonElement;
         expect(healthBtn.disabled).toBe(false);
         fireEvent.click(healthBtn);
         await waitFor(() => expect(bmw().getByTestId('run-setpoints-banner')).toBeTruthy());
@@ -471,6 +471,6 @@ describe('(b) Train all over two failure groups with one failure and one skip', 
         const next = bmw().getByTestId('next-health-score') as HTMLButtonElement;
         expect(next.disabled).toBe(true);
         expect(next.title).toBe('Train the model first');
-        expect((bmw().getByTestId('page-health') as HTMLButtonElement).disabled).toBe(true);
+        expect((bmw().getByTestId('next-health-score') as HTMLButtonElement).disabled).toBe(true);
     });
 });

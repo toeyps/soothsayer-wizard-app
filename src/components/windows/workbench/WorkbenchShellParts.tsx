@@ -113,44 +113,6 @@ export function FitGoneBoard({ testId, linkTestId, trainTestId, className, tail,
     );
 }
 
-interface PageSwitchProps {
-    page: WorkbenchPage;
-    /** The Health score page cannot be opened right now. */
-    healthDisabled: boolean;
-    /** Hover text of the disabled "Health score" button ("Re-train first"). */
-    healthDisabledTitle?: string;
-    onPage: (page: WorkbenchPage) => void;
-}
-
-/** A plain segmented control: it says WHERE you are, never how far (no numbers,
- *  no ticks — a model's status is said once, in the footer). */
-export function PageSwitch({ page, healthDisabled, healthDisabledTitle, onPage }: PageSwitchProps) {
-    return (
-        <div className="wb2-pages" role="group" aria-label="Model pages" data-testid="page-switch">
-            <button
-                type="button"
-                className={`wb2-pg${page === 'model' ? ' wb2-pg--on' : ''}`}
-                data-testid="page-model"
-                aria-pressed={page === 'model'}
-                onClick={() => onPage('model')}
-            >
-                Model fit
-            </button>
-            <button
-                type="button"
-                className={`wb2-pg${page === 'health' ? ' wb2-pg--on' : ''}`}
-                data-testid="page-health"
-                aria-pressed={page === 'health'}
-                disabled={healthDisabled}
-                title={healthDisabled ? healthDisabledTitle : undefined}
-                onClick={() => onPage('health')}
-            >
-                Health score
-            </button>
-        </div>
-    );
-}
-
 /**
  * The ONE scroll area of the detail pane (settings + banners + the page body;
  * the footer stays outside it). Switching the page or the kind tab — a new

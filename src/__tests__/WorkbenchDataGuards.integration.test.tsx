@@ -563,7 +563,7 @@ describe('R5 — the guards never touch what READS a model', () => {
         // ── the Complete model ───────────────────────────────────────────────
         selectSensor('tag3');
         await settle(400);
-        fireEvent.click(bmw().getByTestId('page-model'));
+        { const back = bmw().queryByTestId('footer-back-to-fit'); if (back) fireEvent.click(back); } // make sure its Model fit page is the one open
         await waitForCharts();
         expect(pill()).toBe('Complete');
         expect(tabWords('i3')).toBe('Complete');
@@ -666,14 +666,14 @@ describe('R5 — the guards never touch what READS a model', () => {
         expect(trainBtn().disabled).toBe(true);
         expect(trainWhy()).toBe("Can't train · No train period inside the data");
         // its Health score page is open (not a shut tab): the same board, Mark incomplete reachable
-        expect((bmw().getByTestId('page-health') as HTMLButtonElement).disabled).toBe(false);
-        fireEvent.click(bmw().getByTestId('page-health'));
+        expect((bmw().getByTestId('next-health-score') as HTMLButtonElement).disabled).toBe(false);
+        fireEvent.click(bmw().getByTestId('next-health-score'));
         await settle(400);
         expect(noDataBoard().title).toBe(NO_DATA_TITLE);
         expect(bmw().queryByTestId('set-points-card')).toBeNull();
         expect(pill()).toBe('Complete');
         expect((bmw().getByTestId('mark-incomplete') as HTMLButtonElement).disabled).toBe(false);
-        fireEvent.click(bmw().getByTestId('page-model'));
+        fireEvent.click(bmw().getByTestId('footer-back-to-fit'));
 
         // ── the trained model: still trained on disk, on the Dashboard AND here — never "Training failed" ──
         expect(dashDot(1, 'tag1', 'individual')).toBe('trained');
@@ -697,7 +697,7 @@ describe('R5 — the guards never touch what READS a model', () => {
         expect(noDataBoard().title).toBe(NO_DATA_TITLE);
         expect(markBtn().disabled).toBe(true);
         expect(markBtn().title).toBe('No data for this model in the loaded file — fix the running condition (Running condition → Edit) first');
-        fireEvent.click(bmw().getByTestId('page-model'));
+        fireEvent.click(bmw().getByTestId('footer-back-to-fit'));
         expect(dashDot(1, 'tag1', 'individual')).toBe('trained');
 
         // ── opening changed nothing on disk, nothing was broadcast, and the engine was never asked
