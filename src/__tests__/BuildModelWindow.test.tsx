@@ -6609,9 +6609,9 @@ describe('Train periods and scoring periods — review fixes (2026-10-07)', () =
             expect(screen.queryByTestId('train-test-card')).toBeNull();
             expect(screen.getByTestId('model-fit-individual').textContent).not.toMatch(/Train and scoring periods|includes 2 d of train running time/);
             await openHealthPage();
-            expect(screen.getByTestId('test-result-2').querySelector('.vt-th b')!.textContent).toBe('S2');
-            expect(screen.getByTestId('test-result-overlap-2').textContent).toContain('S2 includes');
-            expect(screen.queryByTestId('test-result-1')).toBeNull();
+            // ... which has no per-period tiles either (the "Scoring results" card was removed 2026-10-12)
+            expect(screen.queryByTestId('test-results')).toBeNull();
+            expect(screen.queryByTestId('test-result-2')).toBeNull();
         });
     });
 

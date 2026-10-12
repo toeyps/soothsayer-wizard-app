@@ -470,7 +470,7 @@ describe('a CSV stamp with "Z" / an offset shows its OWN wall clock everywhere (
     // The health score is computed on 1-hour averages: the Model fit page still shows every raw row
     // at its own clock (seconds included), while the Health score page has ONE point per clock hour,
     // placed at — and read out as — the START of the rows' own wall-clock hour.
-    it('Model fit plots every raw row at its own clock (10 s apart); the Health score page reads the rows\' own clock HOUR — lowest-score time, scoring tile and hover read-out say 22:00 / 23:00 on 2026/02/09; the footer\'s own stamps are the app\'s local time in the same format', async () => {
+    it('Model fit plots every raw row at its own clock (10 s apart); the Health score page reads the rows\' own clock HOUR — lowest-score time and hover read-out say 22:00 / 23:00 on 2026/02/09; the footer\'s own stamps are the app\'s local time in the same format', async () => {
         const data = zonedDataset();
         newBackend({ plant: data });
         // Rust also returns the scoring period's facts: its lowest hourly score, with that hour's start.
@@ -540,9 +540,8 @@ describe('a CSV stamp with "Z" / an offset shows its OWN wall clock everywhere (
         expect(bmw().getByTestId('score-lowest-at').textContent).toBe(`2026/02/09 ${low.timestamp.slice(11, 19)}`);
         expect(bmw().getByTestId('score-lowest-at').className).toContain('wbx-dt');
         expect(bmw().getByTestId('score-summary').textContent).toMatch(/of scored hours · 1-hour averages of the running rows$/);
-        // the scoring period's tile: the hour start as it is, and the period's own bounds
-        expect(bmw().getByTestId('test-result-1-lowest').textContent).toBe('Lowest 61 (1 h average) on 2026/02/09 23:00:00.');
-        expect(bmw().getByTestId('test-result-1').textContent).toContain('2026/02/09 23:00 → 2026/02/09 23:04');
+        // (no per-period tile any more — the "Scoring results" card was removed 2026-10-12)
+        expect(bmw().queryByTestId('test-results')).toBeNull();
 
         // the hover read-out: the hour START (a data row's time: "…22:00:00", never the raw text) and that hour's 1 h average
         const hover = async (h: number, m: number, s: number) => {

@@ -146,7 +146,6 @@ const chips = () => {
     if (details.getAttribute('aria-expanded') === 'false') fireEvent.click(details);
     return bmw().getAllByTestId('rc-card-test-chip').map(c => c.textContent ?? '');
 };
-const tile = (n: number) => bmw().getByTestId(`test-result-${n}`);
 /** Names in the strip above the last time chart drawn with `series` (the TRAIN shading — a scoring period is not drawn). */
 const stripOf = (series: string): string[] => {
     const chart = env.charts.filter(c => ((c.option?.series ?? []) as any[]).some(s => s?.name === series)).pop();
@@ -201,20 +200,12 @@ describe('a workspace saved before "just score it" (scoring periods with label /
         expect(bmw().queryByTestId('train-test-card')).toBeNull();
         expect(bmw().getByTestId('model-fit-individual').textContent).not.toMatch(REMOVED_UI);
 
-        // ── 2) Health score: neutral tiles, nothing judged ──────────────────────
+        // ── 2) Health score: nothing judged — and no per-period tiles (the "Scoring results" card was removed) ──
         await openHealth();
-        await waitFor(() => expect(tile(2)).toBeTruthy());
-        expect(within(bmw().getByTestId('test-results')).getByText('Scoring results')).toBeTruthy();
-        expect(bmw().getByTestId('test-results').textContent).toContain('for reading only — never blocks Mark complete');
-        expect(bmw().getByTestId('test-result-1-big').textContent).toBe('0.0% of running hours below 80');
-        expect(bmw().getByTestId('test-result-1-lowest').textContent).toBe('Lowest 91 (1 h average) on 2026/01/01 15:00:00.');
-        // S2 was "Known problem" with an event time: it reads exactly like S1 - two facts, no verdict, no lead time.
-        expect(bmw().getByTestId('test-result-2-big').textContent).toBe('12.5% of running hours below 80');
-        expect(bmw().getByTestId('test-result-2-lowest').textContent).toBe('Lowest 64 (1 h average) on 2026/01/02 15:00:00.');
-        for (const n of [1, 2]) {
-            expect(tile(n).className).toBe('vt-tile'); // no green / amber tone class
-            expect(tile(n).textContent).not.toMatch(REMOVED_UI);
-        }
+        await waitFor(() => expect(bmw().getByTestId('score-summary')).toBeTruthy());
+        expect(bmw().queryByTestId('test-results')).toBeNull();
+        expect(bmw().getByTestId('health-page').textContent).not.toMatch(REMOVED_UI);
+        expect(bmw().getByTestId('health-page').textContent).not.toMatch(/Scoring results/);
         expect(bmw().queryByTestId('scored-pill')).toBeNull(); // the "Scored · N" pill is gone (footer sentence instead)
         // Still Complete. Its files were saved before the health score moved to 1-hour averages (the
         // export record has no scoring interval): the footer says so and offers "Mark complete again" —
@@ -243,9 +234,8 @@ describe('a workspace saved before "just score it" (scoring periods with label /
         await waitFor(() => expect(previewsFor('TAG3').length).toBeGreaterThan(0));
         expect(lastPreviewFor('TAG3').test_periods).toEqual([{ start: '2026-01-02T06:00', end: '2026-01-02T20:00' }]);
         if (!bmwEl().querySelector('[data-testid="set-points-card"]')) await openHealth();
-        await waitFor(() => expect(tile(1).textContent).toContain('2026/01/02 06:00 → 2026/01/02 20:00'));
-        expect(bmw().queryByTestId('test-result-2')).toBeNull();
-        expect(bmw().getByTestId('test-results').textContent).not.toMatch(REMOVED_UI);
+        await waitFor(() => expect(bmw().getByTestId('score-summary')).toBeTruthy());
+        expect(bmw().getByTestId('health-page').textContent).not.toMatch(REMOVED_UI);
         // the Custom model was saved by the same old build: the same hint, still Complete
         expect(bmw().getByTestId('earlier-scoring').textContent).toBe(EARLIER_SCORING_HINT);
 
@@ -313,8 +303,7 @@ describe('a workspace saved before "just score it" (scoring periods with label /
         await waitFor(() => expect(bmw().getByTestId('tests-changed-banner').getAttribute('data-state')).toBe('changed'));
         const NEW_WIRE = [WIRE[0], { start: '2026-01-02T00:00', end: '2026-01-02T20:00' }];
         await waitFor(() => expect(lastPreviewFor('TAG1').test_periods).toEqual(NEW_WIRE));
-        await waitFor(() => expect(tile(2).textContent).toContain('2026/01/02 00:00 → 2026/01/02 20:00'));
-        // The scoring results never block it.
+        // The scoring periods never block it.
         const exportsBefore = env.backend!.cmds('export_model_files').length;
         expect(markBtn().textContent).toContain('Mark complete');
         await markComplete();

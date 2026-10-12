@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useState, type ComponentProps } from 'react';
+import { memo, useEffect, useMemo, useRef, useState, type ComponentProps } from 'react';
 import { samePageProps } from './pageMemo';
 import { connect } from 'echarts';
 import { Loader2 } from 'lucide-react';
@@ -26,7 +26,7 @@ import {
 } from './healthPageCharts';
 import { hourlyScopes, narrowScopes, scopesOf, sensorAxisTitle, type TimeScopes } from './healthCharts';
 import { formatDataStamp } from '../periodDisplay';
-import { SlowScoringNotice, TestResultsCard, TestScoringFailedNotice, TestsChangedBanner } from './ValidationCards';
+import { SlowScoringNotice, TestScoringFailedNotice, TestsChangedBanner } from './ValidationCards';
 import { testScoringFailure } from '../../../utils/trainTestValidation';
 import { FitGoneBoard, LoadFailedBoard, StateBoard, TrainSensorLink } from './WorkbenchShellParts';
 import type { HealthScorePageProps, SaveInfo } from './workbenchTypes';
@@ -100,6 +100,9 @@ function useHeldFor(flag: boolean, delayMs: number): boolean {
 function HealthScorePage(props: HealthScorePageProps) {
     const { model, stale, preview, unit, setPoints, attemptIssues, save } = props;
     const [hoverIdx, setHoverIdx] = useState<number | null>(null);
+    // One zoom window for the two time charts, kept when either is redrawn. (A hook: it must
+    // stay above the early returns of the state boards below.)
+    const zoom = useSharedZoom(props.model.id);
     // A failed request leaves `preview.data` null, but when an earlier answer for this
     // model exists the page (inputs, charts) stays on screen from `lastData` under the
     // red card with its Retry instead of being replaced.
@@ -221,11 +224,13 @@ function HealthScorePage(props: HealthScorePageProps) {
     const verdict = errorMode ? null : attemptIssues ? verdictOfIssues(attemptIssues) ?? healthVerdict(data) : healthVerdict(data);
     const scoreReady = !errorMode && data.valid && !!data.hourly.score && !!data.score_summary;
     // "The health score could not be calculated" (the Relation model's engine did not
-    // answer for the hours to score — the training hours need it too, so this can come
-    // with NO scoring period). The Scoring results card carries it when it has tiles to
-    // replace; without that card the notice takes the score card's place.
+    // answer for the hours to score): said in a card of its own. With no scored hour at
+    // all it stands in the score card's place; when some hours WERE scored (the training
+    // hours), the score chart still follows it. (The "Scoring results" card that used to
+    // carry it — one tile per scoring period — was removed 2026-10-12, user decision: not
+    // used. The score chart's own subtitle keeps the two facts for all scored hours.)
     const scoringFailure = errorMode ? null : testScoringFailure(data);
-    const failureCarried = (data.test_validation?.tests.length ?? 0) > 0;
+    const anyScored = !!data.hourly.score?.some(v => v !== null);
     const retryScoring = canRetry ? (props.onRetryTestScoring ?? props.onRetryPreview) : undefined;
 
     return (
@@ -242,6 +247,7 @@ function HealthScorePage(props: HealthScorePageProps) {
                 stale={stale}
                 unit={unit}
                 scopes={scopes}
+                zoom={zoom}
             />
             <div className="hs-spp">
                 {/* ONE card: the table of set points, its footnote, then the Checks. */}
@@ -259,12 +265,13 @@ function HealthScorePage(props: HealthScorePageProps) {
             </div>
             {/* "Changed after saving" is said ONCE — the footer sentence, next to its
                 "Mark complete again" button. */}
-            {scoringFailure && !failureCarried ? (
+            {scoringFailure && (
                 <section className="hs-card hs-full" data-testid="score-failed">
                     <div className="wb2-card-h"><b>Health score</b></div>
                     <TestScoringFailedNotice issue={scoringFailure} onRetry={retryScoring} testNumbers={testNumbers} />
                 </section>
-            ) : scoreReady && data.hourly.score && data.score_summary ? (
+            )}
+            {scoringFailure && !(scoreReady && anyScored) ? null : scoreReady && data.hourly.score && data.score_summary ? (
                 <ScoreChart
                     data={data}
                     score={data.hourly.score}
@@ -274,6 +281,7 @@ function HealthScorePage(props: HealthScorePageProps) {
                     onHover={setHoverIdx}
                     stale={stale}
                     scopes={scopes}
+                    zoom={zoom}
                 />
             ) : (
                 <section className="hs-card hs-full" data-testid="score-locked">
@@ -283,7 +291,6 @@ function HealthScorePage(props: HealthScorePageProps) {
                     </div>
                 </section>
             )}
-            <TestResultsCard data={data} scoreReady={scoreReady} unavailable={errorMode} custom={model.runningConditionMode === 'custom'} testNumbers={testNumbers} onRetry={retryScoring} />
         </div>
     );
 }
@@ -324,18 +331,111 @@ function SaveBanner({ save, slow, relation }: { save: SaveInfo; slow: boolean; r
  *  group: it is alone on screen, so the charts under the backdrop must not answer its hover
  *  with a cursor and tooltip of their own (they showed through, over the overlay), and a zoom
  *  in it redraws one chart instead of every linked one. */
-function joinSyncGroup(inst: { group?: string; getDom?: () => Element | null } | null | undefined) {
-    if (!inst) return;
+function joinSyncGroup(inst: { group?: string; getDom?: () => Element | null } | null | undefined): boolean {
+    if (!inst) return false;
     try {
-        if (inst.getDom?.()?.closest('.pm-chart-modal-backdrop')) return;
+        if (inst.getDom?.()?.closest('.pm-chart-modal-backdrop')) return false;
         inst.group = HEALTH_SYNC_GROUP;
         connect(HEALTH_SYNC_GROUP);
+        return true;
     } catch {
         // No sync is not worth breaking the page for.
+        return false;
     }
 }
 
-function SetPointChart({ data, props, hoverIdx, onHover, stale, unit, scopes }: {
+/** What the shared zoom needs of a chart instance. */
+interface ZoomChart {
+    group?: string;
+    getDom?: () => Element | null;
+    isDisposed?: () => boolean;
+    getOption?: () => { dataZoom?: { start?: number; end?: number }[] } | undefined;
+    dispatchAction?: (payload: Record<string, unknown>) => void;
+}
+
+export interface SharedZoom {
+    /** `onChartReady` of a time chart: joins the cursor group and takes the current window. */
+    join: (inst: ZoomChart | null | undefined) => void;
+    /** `datazoom` of a time chart (echarts-for-react passes the instance second). */
+    onZoom: (e: unknown, inst?: ZoomChart) => void;
+    /** After a chart was redrawn from a new option (which starts unzoomed): the window again. */
+    restore: () => void;
+}
+
+/** The time window a chart shows, in percent of its X range; null when it cannot be read. */
+function zoomWindowOf(inst: ZoomChart): [number, number] | null {
+    try {
+        const z = inst.getOption?.()?.dataZoom?.[0];
+        return z && typeof z.start === 'number' && typeof z.end === 'number' ? [z.start, z.end] : null;
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * ONE zoom window for the page's two time charts ("Sensor value over time" /
+ * "Residual over time" and "Health score"). They are the same width and share
+ * the plot margins, so with the same window a moment in time is at the same X in
+ * both — the user reads a spike straight down to its score (real-app request
+ * 2026-10-12: "no need to line the point up by eye").
+ *
+ * The ECharts group already forwards a wheel zoom, but a chart REDRAWN from a new
+ * option (a set point edited, a new score) starts unzoomed while the other keeps
+ * its window — the two then showed different spans. So the window is kept here:
+ * each zoom records it and pushes it to the other chart, and a redraw puts it back.
+ * A different model starts unzoomed.
+ */
+export function useSharedZoom(resetKey: string): SharedZoom {
+    const state = useRef<{ key: string; win: [number, number] | null; charts: Set<ZoomChart>; busy: boolean }>({ key: resetKey, win: null, charts: new Set(), busy: false });
+    if (state.current.key !== resetKey) state.current = { key: resetKey, win: null, charts: state.current.charts, busy: false };
+    return useMemo<SharedZoom>(() => {
+        const st = () => state.current;
+        const apply = (inst: ZoomChart) => {
+            const w = st().win;
+            if (!w || inst.isDisposed?.()) return;
+            const cur = zoomWindowOf(inst);
+            if (cur && Math.abs(cur[0] - w[0]) < 0.01 && Math.abs(cur[1] - w[1]) < 0.01) return;
+            // escapeConnect: this IS the sync — the group must not send it round again.
+            inst.dispatchAction?.({ type: 'dataZoom', dataZoomIndex: 0, start: w[0], end: w[1], escapeConnect: true });
+        };
+        const each = (f: (inst: ZoomChart) => void, except?: ZoomChart) => {
+            for (const inst of [...st().charts]) {
+                if (inst.isDisposed?.()) { st().charts.delete(inst); continue; }
+                if (inst !== except) f(inst);
+            }
+        };
+        return {
+            join: inst => {
+                if (!inst || !joinSyncGroup(inst)) return;
+                st().charts.add(inst);
+                apply(inst);
+            },
+            onZoom: (_e, inst) => {
+                if (!inst || st().busy || !st().charts.has(inst)) return;
+                const w = zoomWindowOf(inst);
+                if (!w) return;
+                st().win = w[0] <= 0.01 && w[1] >= 99.99 ? null : w;
+                const target: [number, number] = st().win ?? [0, 100];
+                st().busy = true;
+                try {
+                    each(other => {
+                        const cur = zoomWindowOf(other);
+                        if (cur && Math.abs(cur[0] - target[0]) < 0.01 && Math.abs(cur[1] - target[1]) < 0.01) return;
+                        other.dispatchAction?.({ type: 'dataZoom', dataZoomIndex: 0, start: target[0], end: target[1], escapeConnect: true });
+                    }, inst);
+                } finally {
+                    st().busy = false;
+                }
+            },
+            restore: () => {
+                st().busy = true;
+                try { each(apply); } finally { st().busy = false; }
+            },
+        };
+    }, []);
+}
+
+function SetPointChart({ data, props, hoverIdx, onHover, stale, unit, scopes, zoom }: {
     data: HealthPreview;
     props: HealthScorePageProps;
     hoverIdx: number | null;
@@ -343,6 +443,7 @@ function SetPointChart({ data, props, hoverIdx, onHover, stale, unit, scopes }: 
     stale: boolean;
     unit: string;
     scopes: TimeScopes | null;
+    zoom: SharedZoom;
 }) {
     const { model, setPoints } = props;
     const stats = data.stats;
@@ -352,7 +453,7 @@ function SetPointChart({ data, props, hoverIdx, onHover, stale, unit, scopes }: 
     const lookup = useSensorLookup();
     const scored = !!series.score;
     // This chart shares its row with the set-points card: its strip names are spaced for
-    // the narrower plot (the score chart below spans the board and uses `scopes` as is).
+    // the narrower plot (the score chart below is the same width and does the same).
     const sideScopes = useMemo(() => narrowScopes(scopes), [scopes]);
 
     const built = useMemo(() => {
@@ -398,6 +499,11 @@ function SetPointChart({ data, props, hoverIdx, onHover, stale, unit, scopes }: 
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [stats, series, setPoints, unit, model.xSensor, model.ySensor, sideScopes, lookup, scored, stats.kind === 'clustering' ? hoverIdx : null]);
 
+    // A new option redraws the chart unzoomed: put the shared window back.
+    const builtOption = built?.option;
+    const isTime = !!built?.time;
+    useEffect(() => { if (isTime) zoom.restore(); }, [builtOption, isTime, zoom]);
+
     if (!built) return null;
 
     // No key row under these charts: the time charts only zoom in time, so the names of
@@ -406,10 +512,11 @@ function SetPointChart({ data, props, hoverIdx, onHover, stale, unit, scopes }: 
     // in the rings' colours), which never leaves the view.
     const chartProps: Partial<ComponentProps<typeof ResponsiveECharts>> = built.time
         ? {
-            onChartReady: joinSyncGroup,
+            onChartReady: zoom.join,
             onEvents: {
                 updateAxisPointer: (e: unknown) => onHover(hoverIndexFromAxisEvent(e, series.timestamps)),
                 globalout: () => onHover(null),
+                datazoom: zoom.onZoom,
             },
         }
         : {
@@ -450,7 +557,7 @@ const SHARES: { key: 'share_80_100' | 'share_40_80' | 'share_0_40'; label: strin
     { key: 'share_0_40', label: '0–40', color: CHART.danger },
 ];
 
-function ScoreChart({ data, score, summary, unit, hoverIdx, onHover, stale, scopes }: {
+function ScoreChart({ data, score, summary, unit, hoverIdx, onHover, stale, scopes, zoom }: {
     data: HealthPreview;
     score: (number | null)[];
     summary: ScoreSummary;
@@ -459,24 +566,34 @@ function ScoreChart({ data, score, summary, unit, hoverIdx, onHover, stale, scop
     onHover: (i: number | null) => void;
     stale: boolean;
     scopes: TimeScopes | null;
+    zoom: SharedZoom;
 }) {
     const series = data.hourly;
-    const option = useMemo(() => buildScoreOption(series.timestamps, score, scopes), [series.timestamps, score, scopes]);
+    // The same width as the chart above it (both sit in the board's first column, beside a
+    // side card), so the strip names are spaced the same way.
+    const sideScopes = useMemo(() => narrowScopes(scopes), [scopes]);
+    const option = useMemo(() => buildScoreOption(series.timestamps, score, sideScopes), [series.timestamps, score, sideScopes]);
+    // A new option redraws the chart unzoomed: put the shared window back.
+    useEffect(() => { zoom.restore(); }, [option, zoom]);
     const lowest = summary.min_score;
     const text = readoutText(readoutAt(series, hoverIdx), unit);
     const chartProps = {
-        onChartReady: joinSyncGroup,
+        onChartReady: zoom.join,
         onEvents: {
             updateAxisPointer: (e: unknown) => onHover(hoverIndexFromAxisEvent(e, series.timestamps)),
             globalout: () => onHover(null),
+            datazoom: zoom.onZoom,
         },
     };
     const pct = summary.pct_below_80;
     return (
+        <>
+        {/* NOT full width: the card is exactly as wide as the chart above it, and the two
+            charts have the same plot margins, so their time axes line up. The shares sit
+            beside it, in the column of the set-points card. */}
         <ChartCard
             id="score"
             title="Health score"
-            full
             size="hs"
             stale={stale}
             sub={
@@ -487,27 +604,25 @@ function ScoreChart({ data, score, summary, unit, hoverIdx, onHover, stale, scop
                 </span>
             }
             extra={<span className="hs-rd" data-testid="hs-readout">{text}</span>}
-            render={() => (
-                <div className="hs-scorewrap">
-                    <div className="hs-scorechart">
-                        <ResponsiveECharts option={option} style={{ height: '100%', minHeight: 0 }} {...chartProps} />
-                    </div>
-                    <div className="hs-shares" data-testid="score-shares">
-                        <div className="hs-shares-h">Share of scored hours</div>
-                        {SHARES.map(s => {
-                            const v = summary[s.key];
-                            return (
-                                <div key={s.key} className="hs-share" data-testid={`share-${s.key}`}>
-                                    <span className="hs-share-l">{s.label}</span>
-                                    <span className="hs-share-bar"><i style={{ width: `${Math.max(v === null ? 0 : v, v ? 1 : 0)}%`, background: s.color }} /></span>
-                                    <span className="hs-share-v">{v === null ? '—' : shareText(v)}</span>
-                                </div>
-                            );
-                        })}
-                    </div>
-                </div>
-            )}
+            option={option}
+            chartProps={chartProps}
         />
+        <section className="hs-card hs-sharecard" data-testid="score-shares">
+            <div className="wb2-card-h"><b>Share of scored hours</b></div>
+            <div className="hs-shares">
+                {SHARES.map(s => {
+                    const v = summary[s.key];
+                    return (
+                        <div key={s.key} className="hs-share" data-testid={`share-${s.key}`}>
+                            <span className="hs-share-l">{s.label}</span>
+                            <span className="hs-share-bar"><i style={{ width: `${Math.max(v === null ? 0 : v, v ? 1 : 0)}%`, background: s.color }} /></span>
+                            <span className="hs-share-v">{v === null ? '—' : shareText(v)}</span>
+                        </div>
+                    );
+                })}
+            </div>
+        </section>
+        </>
     );
 }
 

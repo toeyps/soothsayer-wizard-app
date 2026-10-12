@@ -614,7 +614,7 @@ describe('Health score chart', () => {
         // the note sits in the card's own subtitle line (no new card, badge or banner)
         expect(screen.getByTestId('score-basis').textContent).toBe('· 1-hour averages of the running rows');
         expect(screen.getByTestId('score-basis').closest('.wb2-card-s')).not.toBeNull();
-        expect(screen.getByTestId('score-shares').querySelector('.hs-shares-h')!.textContent).toBe('Share of scored hours');
+        expect(screen.getByTestId('score-shares').querySelector('.wb2-card-h b')!.textContent).toBe('Share of scored hours');
         expect(screen.getByTestId('score-lowest-at').className).toContain('wbx-dt');
         expect(screen.getByTestId('score-below80').textContent).toBe('40.0%');
         expect(screen.getByTestId('share-share_80_100').textContent).toBe('80–10060.0%');
@@ -649,9 +649,33 @@ describe('Health score chart', () => {
         expect(screen.getByTestId('chart-expand-set-individual')).toBeTruthy();
         fireEvent.click(screen.getByTestId('chart-expand-score'));
         expect(screen.getByTestId('chart-overlay-score')).toBeTruthy();
-        expect(screen.getByTestId('chart-overlay-score').querySelector('[data-testid="score-shares"]')).toBeTruthy();
+        // the enlarged copy is the chart alone: the shares are a card of their own beside it
+        expect(screen.getByTestId('chart-overlay-score').querySelector('[data-testid="score-shares"]')).toBeNull();
         fireEvent.keyDown(window, { key: 'Escape' });
         expect(screen.queryByTestId('chart-overlay-score')).toBeNull();
+    });
+
+    // Real-app request 2026-10-12: "if the two charts were the same size it would be much easier
+    // to read — no need to line the point up by eye".
+    it('the two time charts are the same width and share their plot margins, so their time axes line up; the shares are a side card', () => {
+        mount({ sp: IND_VALID });
+        const setCard = screen.getByTestId('chart-card-set-individual');
+        const scoreCard = screen.getByTestId('chart-card-score');
+        // neither spans the board: both sit in its first column (the side cards take the second)
+        for (const card of [setCard, scoreCard]) expect(card.className).not.toMatch(/wb2-full|hs-full/);
+        expect(setCard.closest('.hs-setwrap')!.parentElement).toBe(scoreCard.parentElement);
+        const shares = screen.getByTestId('score-shares');
+        expect(shares.className).toBe('hs-card hs-sharecard');
+        expect(scoreCard.contains(shares)).toBe(false);
+        expect(shares.parentElement).toBe(scoreCard.parentElement);
+        expect(scoreCard.nextElementSibling).toBe(shares);
+        // the same plot box: left and right margins are equal
+        const g = (c: any) => [c.option.grid.left, c.option.grid.right];
+        expect(g(scoreChart())).toEqual(g(setChart()));
+        // one zoom window: both listen for a zoom and join through the same ready handler
+        expect(typeof scoreChart().onEvents.datazoom).toBe('function');
+        expect(scoreChart().onEvents.datazoom).toBe(setChart().onEvents.datazoom);
+        expect(scoreChart().onChartReady).toBe(setChart().onChartReady);
     });
 
     it('the Out of date film covers both charts while the model is stale', () => {
@@ -1323,9 +1347,8 @@ describe('Scoring periods on the Health score page ("just score it", 2026-10-10)
             expect(data.slice(i).map(p => p[0])).toEqual([2, 3, 4].map(hourAt)); // joined to the end
         }
         expect((scoreChart().option.series[0].data as [number, number | null][]).filter(p => p[1] !== null).map(p => p[1])).toEqual([100, 90, 80, 60, 30]);
-        // the numbers of the scoring periods are where they always were: the "Scoring results" tiles
-        expect(screen.getByTestId('test-result-1').querySelector('.vt-th b')!.textContent).toBe('S1');
-        expect(screen.getByTestId('test-result-2').querySelector('.vt-th b')!.textContent).toBe('S2');
+        // ... and there are no per-period tiles any more (the "Scoring results" card was removed)
+        expect(screen.queryByTestId('test-results')).toBeNull();
     });
 
     it('Clustering has no time chart of its own: the strip is on the SCORE chart, not on the scatter', () => {
@@ -1344,7 +1367,7 @@ describe('Scoring periods on the Health score page ("just score it", 2026-10-10)
     });
 
     // Many periods printed "TRAIN P1" … "TRAIN P20" on each other.
-    it('several train periods: "TRAIN" once then numbers; no scoring name among them; the chart beside the set-points card spaces its names for the narrower plot', () => {
+    it('several train periods: "TRAIN" once then numbers; no scoring name among them; both charts sit beside a side card and space their names for that width', () => {
         const hhmm = (m: number) => `2026-01-01T${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
         // 16 short train periods over the 4 hours of data
         const train_ranges = Array.from({ length: 16 }, (_, i) => ({ start: hhmm(i * 15), end: hhmm(i * 15 + 12) }));
@@ -1363,56 +1386,36 @@ describe('Scoring periods on the Health score page ("just score it", 2026-10-10)
             expect(bandsOf(chart)).toEqual(Array.from({ length: 16 }, (_, i) => `TRAIN P${i + 1}`));
         }
         const trainNames = (names: string[]) => names.filter(n => /P\d/.test(n)).length;
-        expect(trainNames(score)).toBeLessThan(16); // 16 names do not fit across the board either
-        expect(trainNames(set)).toBeLessThan(trainNames(score)); // fewer on the narrower chart
+        expect(trainNames(score)).toBeLessThan(16); // 16 names do not fit
+        expect(trainNames(set)).toBe(trainNames(score)); // the same width: the same names
         expect(trainNames(set)).toBeGreaterThanOrEqual(3);
     });
 
-    it('"Scoring results" under the score: neutral tiles with the two facts — never a verdict, never a tone', () => {
+    // User decision 2026-10-12 (real app): "the scoring result is not needed — not used".
+    it('there is NO "Scoring results" card: no per-period tiles, no quiet line, whatever the state of the set points', () => {
         mount({ sp: IND_VALID, data: withTests('individual', IND_VALID) });
-        const card = screen.getByTestId('test-results');
-        expect(card.querySelector('.wb2-card-h b')!.textContent).toBe('Scoring results');
-        expect(card.textContent).toContain('for reading only — never blocks Mark complete');
-        expect(within(card).getByTestId('test-result-1-big').textContent).toBe('7.0% of running hours below 80');
-        expect(within(card).getByTestId('test-result-1-lowest').textContent).toBe('Lowest 62 (1 h average) on 2026/01/01 02:00:00.');
-        expect(within(card).getByTestId('test-result-2-big').textContent).toBe('41.5% of running hours below 80');
-        expect(within(card).getByTestId('test-result-2-lowest').textContent).toBe('Lowest 12 (1 h average) on 2026/01/01 03:00:00.');
-        expect(card.querySelector('.vt-note')!.textContent).toMatch(/^Scores use 1-hour averages of the running rows\./);
-        for (const n of [1, 2]) {
-            const tile = within(card).getByTestId(`test-result-${n}`);
-            expect(tile.className).toBe('vt-tile');
-            expect(tile.hasAttribute('data-tone')).toBe(false);
-        }
-        expect(card.innerHTML).not.toMatch(/danger|--bad|--warn|--ok/);
-        expect(card.textContent).not.toMatch(/Known problem|Normal|Not detected|Detected|false alarm|event|lead/i);
+        const page = screen.getByTestId('health-page');
+        expect(screen.queryByTestId('test-results')).toBeNull();
+        expect(page.querySelector('.vt-tile, .vt-note, .vt-quiet, .vt-none')).toBeNull();
+        expect(page.textContent).not.toMatch(/Scoring results|for reading only|of running hours below 80/);
+        // what the page still says about the score: the chart's own subtitle (all scored hours)
+        expect(screen.getByTestId('score-summary').textContent).toMatch(/^Lowest \d+ on .* · below 80 for .*% of scored hours/);
+        cleanup();
+        mount({ kind: 'relationship', sp: REL_EMPTY, data: { ...withTests('relationship', REL_EMPTY) } });
+        expect(screen.queryByTestId('test-results')).toBeNull();
+        expect(screen.queryByTestId('test-results-pending')).toBeNull();
+        expect(screen.getByTestId('score-locked')).toBeTruthy(); // "Set the points above" says it
     });
 
-    it('until the set points are valid the card is one quiet line: "Scored once the set points are valid" (no tiles)', () => {
-        const data = { ...withTests('relationship', REL_EMPTY) };
-        mount({ kind: 'relationship', sp: REL_EMPTY, data });
-        const card = screen.getByTestId('test-results');
-        expect(within(card).getByTestId('test-results-pending').textContent).toBe('Scored once the set points are valid');
-        expect(card.querySelector('.vt-tile')).toBeNull();
-        expect(card.textContent).not.toContain('Not scored yet');
-    });
-
-    it('while the health score failed to load (last answer on screen) the quiet line says so, not "set points"', () => {
-        const failed = { data: null, lastData: withTests('individual', IND_VALID), loading: false, error: 'boom', errorCode: null, notFitted: false, needsRetrain: false, idle: null as null, retry: vi.fn() };
-        mount({ sp: IND_VALID, preview: failed });
-        expect(screen.getByTestId('test-results-pending').textContent).toBe('Not available until the health score loads');
-        expect(screen.queryByTestId('test-result-1')).toBeNull();
-    });
-
-    it('testNumbers name the tiles by the ORIGINAL list position; the chart strip names the train period only, whatever the number', () => {
+    it('the chart strip names the train period only, whatever the scoring periods\' numbers', () => {
         const data: HealthPreview = { ...previewFor('individual', IND_VALID), test_validation: makeValidation({ tests: [makeTestResult({ index: 1 })] }) };
         mount({ sp: IND_VALID, data, testNumbers: [2] });
-        expect(screen.getByTestId('test-result-2').querySelector('.vt-th b')!.textContent).toBe('S2');
-        expect(screen.queryByTestId('test-result-1')).toBeNull();
+        expect(screen.queryByTestId('test-result-2')).toBeNull();
         expect(stripOf(scoreChart())).toEqual(['TRAIN']);
         expect(stripOf(setChart())).toEqual(['TRAIN']);
     });
 
-    it('test_scoring_failed WITH scoring periods -> the Scoring results card carries the amber notice with "Try again" (the preview Retry) instead of tiles; the score card is not replaced', () => {
+    it('test_scoring_failed while some hours WERE scored -> the amber notice (with "Try again" = the preview Retry) in its own card, said once, and the score chart still follows it', () => {
         const onRetryPreview = vi.fn();
         const data: HealthPreview = {
             ...previewFor('relationship', REL_VALID),
@@ -1422,16 +1425,16 @@ describe('Scoring periods on the Health score page ("just score it", 2026-10-10)
         mount({ kind: 'relationship', sp: REL_VALID, data, onRetryPreview });
         expect(screen.getByTestId('test-scoring-failed').textContent).toContain('The health score could not be calculated — try again');
         expect(screen.getAllByTestId('test-scoring-failed')).toHaveLength(1); // said once
-        expect(screen.getByTestId('test-scoring-failed').closest('[data-testid="test-results"]')).not.toBeNull();
-        expect(screen.queryByTestId('score-failed')).toBeNull();
-        expect(screen.queryByTestId('test-result-1')).toBeNull();
-        expect(scoreChart()).toBeTruthy();
+        expect(screen.getByTestId('test-scoring-failed').closest('[data-testid="score-failed"]')).not.toBeNull();
+        expect(screen.queryByTestId('test-results')).toBeNull();
+        expect(scoreChart()).toBeTruthy(); // the hours that were scored are still drawn
+        expect(screen.getByTestId('score-failed').compareDocumentPosition(screen.getByTestId('chart-card-score')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
         fireEvent.click(screen.getByTestId('test-scoring-retry'));
         expect(onRetryPreview).toHaveBeenCalledTimes(1);
     });
 
     // The Relation model's TRAINING hours need the engine too, so the warning can come with no
-    // scoring period at all — and then there is no Scoring results card to say it.
+    // scored hour at all — the notice then stands in the score card's place.
     describe('"The health score could not be calculated" with NO scoring period: the notice takes the score card\'s place', () => {
         const failedIssue = { code: 'test_scoring_failed', severity: 'warning' as const, field: 'test_periods', message: 'The Relation model engine did not answer.' };
         /** What Rust sends then: set points valid, every hourly score null, nothing scored. */
@@ -1475,9 +1478,10 @@ describe('Scoring periods on the Health score page ("just score it", 2026-10-10)
             expect(onRetryPreview).not.toHaveBeenCalled();
         });
 
-        it('a Scoring results card with NO period in it ("No scoring period.") cannot carry it either: the notice is still shown, once', () => {
+        it('with an empty list of scoring periods: the same — the notice once, in the score card\'s place, and no "No scoring period." card', () => {
             mount({ kind: 'relationship', sp: REL_VALID, data: noScore({ test_validation: makeValidation({ tests: [] }) }) });
-            expect(screen.getByTestId('test-results-empty')).toBeTruthy();
+            expect(screen.queryByTestId('test-results-empty')).toBeNull();
+            expect(screen.queryByTestId('chart-card-score')).toBeNull();
             expect(screen.getAllByTestId('test-scoring-failed')).toHaveLength(1);
             expect(screen.getByTestId('test-scoring-failed').closest('[data-testid="score-failed"]')).not.toBeNull();
         });

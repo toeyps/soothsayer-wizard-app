@@ -204,11 +204,9 @@ describe('Individual on 5-minute data', () => {
         expect(await hoverTime(setChart, at(7, 25))).toBe('2024/03/01 07:00:00 · 1 h avg 52.5 bar · score 100');
         for (const ms of [at(5, 50), at(6, 10), at(6, 55)]) expect(await hoverTime(scoreChart, ms)).not.toContain('06:00'); // the stopped hour is not a point
 
-        // Scoring results: hours, not rows (row by row hour 04:00 alone would be 12 rows below 80)
-        expect(text('test-result-1-big')).toBe('20.0% of running hours below 80');
-        expect(text('test-result-1-lowest')).toBe('Lowest 0 (1 h average) on 2024/03/01 05:00:00.');
-        expect(text('test-result-1')).toContain('0.2 d running time'); // running time stays a raw fact (45 rows x 5 min)
-        expect(text('test-results')).toContain('Scores use 1-hour averages of the running rows.');
+        // (No per-period tiles: the "Scoring results" card was removed 2026-10-12. The chart's subtitle and
+        // the hover read-outs above are the page's numbers; the per-period block is checked in the file below.)
+        expect(bmw().queryByTestId('test-results')).toBeNull();
 
         // ── Mark complete: the file and the record ──
         await markComplete();
@@ -290,11 +288,6 @@ describe('Clustering (2 clusters) on 5-minute data', () => {
         expect(await hoverPoint(8)).toBe('2024/03/01 09:00:00 · score 0');
         expect(bmwEl().textContent).not.toMatch(/not running/i);
 
-        // Scoring results: S1 has no hour with a cluster; in S2 the lowest is the real 0 at 09:00, not 07:00
-        expect(text('test-result-1-big')).toBe('No scored hours');
-        expect(text('test-result-1-lowest')).toBe('No hour of this period got a score.');
-        expect(text('test-result-2-big')).toBe('50.0% of running hours below 80');
-        expect(text('test-result-2-lowest')).toBe('Lowest 0 (1 h average) on 2024/03/01 09:00:00.');
         expect(text('score-summary')).toBe('Lowest 100 on 2024/03/01 00:00:00 · below 80 for 0.0% of scored hours · 1-hour averages of the running rows');
 
         // Mark complete is not blocked by unscored hours
@@ -347,10 +340,7 @@ describe('Relation model on 5-minute data', () => {
         await openHealth();
         await waitFor(() => expect(bmw().getByTestId('score-summary')).toBeTruthy());
         // here too only the TRAIN period is shaded and named; the scoring periods' hours are on the line (below)
-        // and their numbers on the "Scoring results" tiles
         expect(stripOf(lastChart('Health score', from, true))).toEqual(['TRAIN']);
-        expect(bmw().getByTestId('test-result-1').querySelector('.vt-th b')!.textContent).toBe('S1');
-        expect(bmw().getByTestId('test-result-2').querySelector('.vt-th b')!.textContent).toBe('S2');
         // an hourly point's tooltip is headed by its hour START, date and time
         expect(tipHeading(lastChart('Health score', from, true), at(4))).toBe('2024/03/01 04:00:00');
         expect(tipHeading(lastChart('Residual', from, true), at(7))).toBe('2024/03/01 07:00:00');
@@ -371,10 +361,6 @@ describe('Relation model on 5-minute data', () => {
         expect(scores.map(p => Math.round(p[1] as number))).toEqual([100, 100, 100, 100, 27, 100, 0, 100, 100]);
         expect(text('chart-card-set-relationship')).toContain('actual − predicted (kW) · 1 h average');
         expect(await hoverTime(scoreChart, at(4, 5))).toMatch(/^2024\/03\/01 04:00:00 · residual 5(\.\d+)? kW · score 27$/);
-        expect(text('test-result-1-big')).toBe('50.0% of running hours below 80');
-        expect(text('test-result-1-lowest')).toBe('Lowest 27 (1 h average) on 2024/03/01 04:00:00.');
-        expect(text('test-result-2-big')).toBe('33.3% of running hours below 80');
-        expect(text('test-result-2-lowest')).toBe('Lowest 0 (1 h average) on 2024/03/01 07:00:00.');
 
         // ── remove S2: nothing is trained, the same fit is scored again ──
         const fingerprint = diskModel('r1').trainedFingerprint;
@@ -391,8 +377,7 @@ describe('Relation model on 5-minute data', () => {
         expect(trainsOfRelation()).toHaveLength(1);
         expect(diskModel('r1').trainedFingerprint).toBe(fingerprint);
         expect(pill()).toBe('Trained');
-        await waitFor(() => expect(bmw().queryByTestId('test-result-2')).toBeNull());
-        expect(text('test-result-1-big')).toBe('50.0% of running hours below 80');
+        await waitFor(() => expect(bmw().getByTestId('score-summary')).toBeTruthy());
 
         // ── add a period (08:00 → 09:59): again no training ──
         fireEvent.click(bmw().getByTestId('rc-card-open'));
@@ -413,7 +398,7 @@ describe('Relation model on 5-minute data', () => {
         expect(trainsOfRelation()).toHaveLength(1);
         expect(diskModel('r1').trainedFingerprint).toBe(fingerprint);
         expect(pill()).toBe('Trained');
-        await waitFor(() => expect(text('test-result-2-big')).toBe('0.0% of running hours below 80'));
+        await waitFor(() => expect(bmw().getByTestId('score-summary')).toBeTruthy());
         // no request of the session asked Rust to RETRY a failed prediction: nothing had failed
         expect(env.backend!.cmds('compute_health_preview').some(c => c.args.request.retry_test_scoring)).toBe(false);
         expect(env.backend!.calls.filter(c => c.error).map(c => `${c.cmd}: ${c.error}`)).toEqual([]);
