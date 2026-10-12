@@ -908,6 +908,32 @@ describe('Health score chart', () => {
         expect(stripOf(scoreChart())).toEqual([]);
     });
 
+    // Code review 2026-10-12: a new `onEvents` object on every render makes echarts-for-react bind
+    // the handlers again without removing the old ones — every hovered hour re-renders this
+    // card, so each mouse move cost more than the one before it.
+    it('the charts keep the SAME event handlers across a hover re-render (nothing is bound again on every mouse move)', () => {
+        mount({ sp: IND_VALID });
+        const before = { upper: setChart().onEvents, lower: scoreChart().onEvents };
+        for (const hour of ['2026-01-01 01:00:00', '2026-01-01 03:00:00']) {
+            act(() => { scoreChart().onEvents.updateAxisPointer({ axesInfo: [{ axisDim: 'x', value: new Date(hour).getTime() }] }); });
+        }
+        expect(screen.getByTestId('hs-readout').textContent).toMatch(/^2026\/01\/01 03:00:00/); // the hover really re-rendered the card
+        expect(setChart().onEvents).toBe(before.upper);
+        expect(scoreChart().onEvents).toBe(before.lower);
+        // ... and they still report the pointer: leaving the chart clears the read-out
+        act(() => { scoreChart().onEvents.globalout(); });
+        expect(screen.getByTestId('hs-readout').textContent).toBe('');
+    });
+
+    it('Clustering: the scatter keeps its handlers across a hover too', () => {
+        const sp = { kind: 'clustering', outerSd: 5 } as const;
+        mount({ kind: 'clustering', sp });
+        const before = setChart().onEvents;
+        act(() => { setChart().onEvents.mouseover({ seriesName: 'Points', dataIndex: 2 }); });
+        act(() => { setChart().onEvents.mouseover({ seriesName: 'Points', dataIndex: 3 }); });
+        expect(setChart().onEvents).toBe(before);
+    });
+
     it('one zoom window and one cursor for both: the two charts join through the same handler and report their zoom to the same one', () => {
         mount({ sp: IND_VALID });
         expect(typeof scoreChart().onEvents.datazoom).toBe('function');

@@ -50,7 +50,7 @@ import type { HealthScorePageProps, SaveInfo } from './workbenchTypes';
  *
  * Everything is drawn from the ONE bounded `HealthPreview` the container's
  * `useHealthPreview` returns for the DRAFT set points (so typing moves the
- * lines, the score and the Checks within ~250 ms). The footer (<- Model fit,
+ * lines, the score and the Checks within ~250 ms). The header (the state buttons,
  * status, Mark complete) is rendered by the container, because Mark complete
  * shares its persist flow.
  *
@@ -90,7 +90,7 @@ function sameFitGone(a: HealthScorePageProps['fitGone'], b: HealthScorePageProps
 }
 
 /** A save that has been running this long gets a line on the page; until then
- *  the footer sentence ("Saving the model files…") says it alone. */
+ *  the notice line ("Saving the model files…") says it alone. */
 export const SLOW_SAVE_NOTICE_MS = 4000;
 
 /** `flag`, but only once it has stayed true for `delayMs` (false at once). */
@@ -149,7 +149,7 @@ function HealthScorePage(props: HealthScorePageProps) {
     const canRetry = !!props.onRetryPreview && preview.errorCode !== 'STALE_SESSION';
     // The ONE shape of "the preview failed", with or without an earlier
     // answer under it: a red card, the reason, Retry. Mark complete is disabled
-    // meanwhile and the footer says why.
+    // meanwhile and the notice line says why.
     const errorCard = failed ? (
         <div className="hs-save hs-save--bad hs-full" role="alert" data-testid="health-error">
             <span>
@@ -273,7 +273,7 @@ function HealthScorePage(props: HealthScorePageProps) {
             >
                 <ChecksCard kind={data.kind} issues={issues} verdict={verdict} unavailable={errorMode} testNumbers={testNumbers} />
             </ScoreRuler>
-            {/* "Changed after saving" is said ONCE — the footer sentence, next to its
+            {/* "Changed after saving" is said ONCE — the notice line, with its
                 "Mark complete again" button. */}
             {scoringFailure && score && (
                 <section className="hs-card hs-full" data-testid="score-failed">
@@ -306,10 +306,6 @@ function HealthScorePage(props: HealthScorePageProps) {
     );
 }
 
-/** Why the score area is locked        </div>
-    );
-}
-
 /** Why the score area is locked: the request failed (`error`), a set point is rejected
  *  (`bad`), or nothing is rejected but the score cannot be drawn yet (`empty`). */
 export function lockReason(errorMode: boolean, verdict: HealthVerdict | null): 'error' | 'bad' | 'empty' {
@@ -326,8 +322,8 @@ export function scoreLockText(verdict: HealthVerdict | null): string {
 
 // ---------------------------------------------------------------------------
 // A FAILED save, and a save that is taking long. Saving is otherwise said by the
-// footer alone ("Saving the model files…" next to its button), and a successful
-// save is the footer sentence too ("Files saved 2026/02/09 23:50 · …\output\TAG").
+// notice line alone ("Saving the model files…"), and a successful save is the
+// notice line too ("Files saved 2026/02/09 23:50 · …\output\TAG").
 // ---------------------------------------------------------------------------
 
 function SaveBanner({ save, slow, relation }: { save: SaveInfo; slow: boolean; relation: boolean }) {
@@ -446,6 +442,12 @@ export function useSharedZoom(resetKey: string, scope: ZoomScope = 'page'): Shar
         return {
             join: inst => {
                 if (!inst || !joinSyncGroup(inst, scope)) return;
+                // The enlarged copy opens on the whole range EVERY time: when its charts of
+                // the last opening are all gone, so is their window.
+                if (scope === 'expanded') {
+                    for (const old of [...st().charts]) if (old.isDisposed?.()) st().charts.delete(old);
+                    if (st().charts.size === 0) st().win = null;
+                }
                 st().charts.add(inst);
                 apply(inst);
             },
@@ -567,6 +569,32 @@ function StackCharts({ data, props, hoverIdx, onHover, stale, unit, scopes, zoom
         zoomExpanded.restore();
     }, [upperOption, lowerOption, isTime, zoom, zoomExpanded]);
 
+    // The charts' event handlers are made ONCE (they read the latest `onHover` and
+    // timestamps through refs). A new `onEvents` object on every render — and every hovered
+    // hour re-renders this card — makes echarts-for-react bind the handlers again without
+    // ever removing the old ones (its unbind passes a different function than its bind
+    // registered), so each mouse move would cost more than the one before it.
+    const hoverRef = useRef(onHover);
+    hoverRef.current = onHover;
+    const stampsRef = useRef(series.timestamps);
+    stampsRef.current = series.timestamps;
+    const chartEvents = useMemo(() => {
+        const time = (z: SharedZoom) => ({
+            updateAxisPointer: (e: unknown) => hoverRef.current(hoverIndexFromAxisEvent(e, stampsRef.current)),
+            globalout: () => hoverRef.current(null),
+            datazoom: z.onZoom,
+        });
+        return {
+            page: time(zoom),
+            expanded: time(zoomExpanded),
+            // Clustering's scatter: hovering a point highlights its hour on the score chart.
+            scatter: {
+                mouseover: (p: { seriesName?: string; dataIndex?: number }) => { if (p.seriesName === 'Points' && typeof p.dataIndex === 'number') hoverRef.current(p.dataIndex); },
+                globalout: () => hoverRef.current(null),
+            },
+        };
+    }, [zoom, zoomExpanded]);
+
     if (!built || !upperOption) return null;
 
     const text = readoutText(readoutAt(series, hoverIdx), unit);
@@ -594,18 +622,9 @@ function StackCharts({ data, props, hoverIdx, onHover, stale, unit, scopes, zoom
         const z = expanded ? zoomExpanded : zoom;
         const timeProps: Partial<ComponentProps<typeof ResponsiveECharts>> = {
             onChartReady: z.join,
-            onEvents: {
-                updateAxisPointer: (e: unknown) => onHover(hoverIndexFromAxisEvent(e, series.timestamps)),
-                globalout: () => onHover(null),
-                datazoom: z.onZoom,
-            },
+            onEvents: expanded ? chartEvents.expanded : chartEvents.page,
         };
-        const upperProps: Partial<ComponentProps<typeof ResponsiveECharts>> = built.time ? timeProps : {
-            onEvents: {
-                mouseover: (p: { seriesName?: string; dataIndex?: number }) => { if (p.seriesName === 'Points' && typeof p.dataIndex === 'number') onHover(p.dataIndex); },
-                globalout: () => onHover(null),
-            },
-        };
+        const upperProps: Partial<ComponentProps<typeof ResponsiveECharts>> = built.time ? timeProps : { onEvents: chartEvents.scatter };
         // The test ids name the halves of the card ON THE PAGE; the enlarged copy has none
         // (it would repeat them).
         const id = (name: string) => (expanded ? undefined : name);
@@ -648,8 +667,6 @@ function StackCharts({ data, props, hoverIdx, onHover, stale, unit, scopes, zoom
 }
 
 // ---------------------------------------------------------------------------
-// KPI tiles
-// ---------------------------------------------------------------------------// ---------------------------------------------------------------------------
 // KPI tiles
 // ---------------------------------------------------------------------------
 

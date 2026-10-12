@@ -222,4 +222,42 @@ describe('useSharedZoom — the enlarged pair (scope "expanded")', () => {
         result.current.restore();
         expect(b.actions).toEqual([]);
     });
+
+    // Code review 2026-10-12: the overlay kept its window for as long as the page was mounted,
+    // so the second opening started zoomed.
+    it('the enlarged copy opens on the whole range EVERY time: closing it (its charts are disposed) forgets its window', () => {
+        const { result } = setupExpanded();
+        const a = fakeChart({ inModal: true });
+        const b = fakeChart({ inModal: true });
+        result.current.join(a);
+        result.current.join(b);
+        a.wheel(30, 70, result.current);
+        // the overlay closes: both instances are disposed
+        a.disposed = true;
+        b.disposed = true;
+        // ... and opens again with two new instances
+        const a2 = fakeChart({ inModal: true });
+        const b2 = fakeChart({ inModal: true });
+        result.current.join(a2);
+        result.current.join(b2);
+        expect([a2.start, a2.end, b2.start, b2.end]).toEqual([0, 100, 0, 100]);
+        expect([a2.actions, b2.actions]).toEqual([[], []]);
+        // while it is open the pair is linked as before, and a chart that joins late gets the window
+        a2.wheel(10, 40, result.current);
+        expect([b2.start, b2.end]).toEqual([10, 40]);
+        const late = fakeChart({ inModal: true });
+        result.current.join(late);
+        expect([late.start, late.end]).toEqual([10, 40]);
+    });
+
+    it('the page pair is not reset that way: a chart that replaces a disposed one still gets the window', () => {
+        const { result } = setup();
+        const a = fakeChart();
+        result.current.join(a);
+        a.wheel(20, 60, result.current);
+        a.disposed = true;
+        const a2 = fakeChart();
+        result.current.join(a2);
+        expect([a2.start, a2.end]).toEqual([20, 60]);
+    });
 });

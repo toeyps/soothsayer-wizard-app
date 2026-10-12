@@ -180,6 +180,17 @@ export function nearestIndex(ms: readonly number[], t: number): number {
     return lo;
 }
 
+/** Epoch ms of a series' timestamps, parsed once per array (the pointer asks on every move). */
+const PARSED_STAMPS = new WeakMap<readonly string[], number[] | null>();
+function parsedStamps(timestamps: readonly string[]): number[] | null {
+    let ms = PARSED_STAMPS.get(timestamps);
+    if (ms === undefined) {
+        ms = parseTimestamps([...timestamps]);
+        PARSED_STAMPS.set(timestamps, ms);
+    }
+    return ms;
+}
+
 /**
  * The index of the point the pointer is on, from an ECharts `updateAxisPointer`
  * event (`axesInfo[].value` = epoch ms on a time axis, the category index
@@ -191,7 +202,7 @@ export function hoverIndexFromAxisEvent(event: unknown, timestamps: readonly str
     const info = (event as { axesInfo?: { axisDim?: string; value?: unknown }[] } | null)?.axesInfo;
     const x = info?.find(a => a.axisDim === 'x') ?? info?.[0];
     if (!x || typeof x.value !== 'number' || !Number.isFinite(x.value)) return null;
-    const ms = parseTimestamps([...timestamps]);
+    const ms = parsedStamps(timestamps);
     const idx = ms ? nearestIndex(ms, x.value) : Math.round(x.value);
     return idx >= 0 && idx < timestamps.length ? idx : null;
 }

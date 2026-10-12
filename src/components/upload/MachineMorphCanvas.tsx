@@ -10,6 +10,7 @@ import {
   MACHINE_NAMES,
   MINI_PARTICLES,
   SPARK_W,
+  SPIN_PER_SECOND,
   SPARK_X,
   advanceMorph,
   formatReading,
@@ -360,7 +361,7 @@ export default function MachineMorphCanvas({ variant = 'hero', className, style 
           clock.idx = target;
           target = null;
         }
-        spin += dt * 3;
+        spin += dt * SPIN_PER_SECOND;
       }
       const r = canvas.getBoundingClientRect();
       if (r.width !== W || r.height !== H || (window.devicePixelRatio || 1) !== dpr) fit();
