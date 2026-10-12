@@ -845,6 +845,158 @@ describe('MachineMorphCanvas', () => {
     expect(screen.getByText(MACHINE_NAMES[1])).toBeTruthy();
   });
 
+  /* ---------- ‹ › buttons and dots: pick a machine ---------- */
+
+  const nameShown = () => screen.getByTestId('machine-name').textContent;
+
+  it('Next morphs to the next machine at once (no waiting for the hold), and the cycle goes on from there', () => {
+    useCtx(false);
+    useFakeClock();
+    render(<MachineMorphCanvas />);
+    tickFor(500);
+    expect(activeDot()).toBe(0);
+    fireEvent.click(screen.getByRole('button', { name: 'Next machine' }));
+    // The dissolve starts now: the name flips at its middle, far before the 4.6 s hold would end.
+    tickFor((TRANSITION_SECONDS / 2) * 1000 + 100);
+    expect(activeDot()).toBe(1);
+    expect(nameShown()).toBe(MACHINE_NAMES[1]);
+    // Landed: it holds on machine 1, then the usual cycle moves on to machine 2.
+    tickFor((TRANSITION_SECONDS / 2) * 1000 + 2000);
+    expect(activeDot()).toBe(1);
+    tickFor((HOLD_SECONDS + TRANSITION_SECONDS / 2) * 1000);
+    expect(activeDot()).toBe(2);
+  });
+
+  it('Previous goes back one machine (from the first to the last) and lands there, not on the next in line', () => {
+    useCtx(false);
+    useFakeClock();
+    render(<MachineMorphCanvas />);
+    tickFor(500);
+    fireEvent.click(screen.getByRole('button', { name: 'Previous machine' }));
+    tickFor(TRANSITION_SECONDS * 1000 + 300);
+    expect(activeDot()).toBe(MACHINE_NAMES.length - 1);
+    expect(nameShown()).toBe(MACHINE_NAMES[MACHINE_NAMES.length - 1]);
+    // Still there well into its hold (a wrong landing would show machine 1).
+    tickFor(2000);
+    expect(activeDot()).toBe(MACHINE_NAMES.length - 1);
+    // The callouts drawn are the last machine's own sensors.
+    const last = getShapes(HERO_PARTICLES)[MACHINE_NAMES.length - 1];
+    rec.fillText?.mockClear();
+    tick(16);
+    expect(texts()).toContain(last.sensors[0].name);
+  });
+
+  it('a dot jumps straight to its machine; the active dot is marked for assistive tech', () => {
+    useCtx(false);
+    useFakeClock();
+    render(<MachineMorphCanvas />);
+    tickFor(500);
+    const dots = screen.getAllByTestId('machine-dot');
+    expect(dots[3].getAttribute('aria-label')).toBe(`Show ${MACHINE_NAMES[3]}`);
+    fireEvent.click(dots[3]);
+    tickFor(TRANSITION_SECONDS * 1000 + 300);
+    expect(activeDot()).toBe(3);
+    expect(screen.getAllByTestId('machine-dot')[3].getAttribute('aria-current')).toBe('true');
+    expect(screen.getAllByTestId('machine-dot')[0].getAttribute('aria-current')).toBeNull();
+    // Clicking the machine already shown changes nothing.
+    fireEvent.click(screen.getAllByTestId('machine-dot')[3]);
+    tickFor(1000);
+    expect(activeDot()).toBe(3);
+  });
+
+  it('two quick Next clicks step two machines', () => {
+    useCtx(false);
+    useFakeClock();
+    render(<MachineMorphCanvas />);
+    tickFor(500);
+    const next = screen.getByRole('button', { name: 'Next machine' });
+    fireEvent.click(next);
+    tickFor(200); // the first dissolve has only begun
+    fireEvent.click(next);
+    tickFor(TRANSITION_SECONDS * 1000 + 300);
+    expect(activeDot()).toBe(2);
+    expect(nameShown()).toBe(MACHINE_NAMES[2]);
+  });
+
+  it('Next counts from the name on screen: early in an automatic dissolve it does not skip a machine', () => {
+    useCtx(false);
+    useFakeClock();
+    render(<MachineMorphCanvas />);
+    tickFor(HOLD_SECONDS * 1000 + 200); // the automatic dissolve 0 -> 1 has just begun; the name still says machine 0
+    expect(activeDot()).toBe(0);
+    fireEvent.click(screen.getByRole('button', { name: 'Next machine' }));
+    tickFor(TRANSITION_SECONDS * 1000 + 500);
+    expect(activeDot()).toBe(1);
+    // Previous from there (now holding on machine 1) goes back to machine 0.
+    fireEvent.click(screen.getByRole('button', { name: 'Previous machine' }));
+    tickFor(TRANSITION_SECONDS * 1000 + 300);
+    expect(activeDot()).toBe(0);
+  });
+
+  it('Previous early in an automatic dissolve turns back to the machine before the one on screen', () => {
+    useCtx(false);
+    useFakeClock();
+    render(<MachineMorphCanvas />);
+    tickFor((HOLD_SECONDS + TRANSITION_SECONDS) * 1000 + 500); // holding on machine 1
+    tickFor(HOLD_SECONDS * 1000 - 300); // its dissolve to machine 2 has just begun
+    expect(activeDot()).toBe(1);
+    fireEvent.click(screen.getByRole('button', { name: 'Previous machine' }));
+    tickFor(TRANSITION_SECONDS * 1000 + 300);
+    expect(activeDot()).toBe(0);
+  });
+
+  it('Next works while the machine is being held (dragging pauses only the automatic cycle)', () => {
+    useCtx(false);
+    useFakeClock();
+    render(<MachineMorphCanvas />);
+    const canvas = screen.getByRole('img') as HTMLCanvasElement;
+    tickFor(1000);
+    fireEvent.pointerDown(canvas, { pointerId: 1, pointerType: 'mouse', button: 0, buttons: 1, clientX: 300, clientY: 300 });
+    fireEvent.pointerUp(canvas, { pointerId: 1, pointerType: 'mouse', clientX: 300, clientY: 300 });
+    fireEvent.click(screen.getByRole('button', { name: 'Next machine' }));
+    tickFor(TRANSITION_SECONDS * 1000 + 300); // still inside RESUME_MS for part of it
+    expect(activeDot()).toBe(1);
+  });
+
+  it('reduced motion: Next switches the still frame at once, with no animation loop', () => {
+    setReducedMotion(true);
+    render(<MachineMorphCanvas />);
+    expect(rafSpy).not.toHaveBeenCalled();
+    rec.fillText?.mockClear();
+    fireEvent.click(screen.getByRole('button', { name: 'Next machine' }));
+    expect(nameShown()).toBe(MACHINE_NAMES[1]);
+    expect(activeDot()).toBe(1);
+    expect(rafSpy).not.toHaveBeenCalled();
+    const second = getShapes(HERO_PARTICLES)[1];
+    expect(texts()).toContain(second.sensors[0].name);
+    expect(texts()).toContain(ABNORMAL_LABEL); // the still frame keeps its ABNORMAL read-out
+    fireEvent.click(screen.getByRole('button', { name: 'Previous machine' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Previous machine' }));
+    expect(nameShown()).toBe(MACHINE_NAMES[MACHINE_NAMES.length - 1]);
+  });
+
+  it('the bar lets a drag through, its controls take the pointer; the mini variant has no controls', () => {
+    const { unmount } = render(<MachineMorphCanvas />);
+    const next = screen.getByRole('button', { name: 'Next machine' });
+    expect((next.parentElement as HTMLElement).style.pointerEvents).toBe('auto');
+    expect((next.parentElement!.parentElement as HTMLElement).style.pointerEvents).toBe('none');
+    expect((screen.getAllByTestId('machine-dot')[0].parentElement as HTMLElement).style.pointerEvents).toBe('auto');
+    unmount();
+    render(<MachineMorphCanvas variant="mini" />);
+    expect(screen.queryByRole('button')).toBeNull();
+  });
+
+  it('without a 2D canvas the name and dots still follow the buttons', () => {
+    ctx = null;
+    render(<MachineMorphCanvas />);
+    fireEvent.click(screen.getByRole('button', { name: 'Previous machine' }));
+    expect(nameShown()).toBe(MACHINE_NAMES[MACHINE_NAMES.length - 1]);
+    fireEvent.click(screen.getByRole('button', { name: 'Next machine' }));
+    expect(nameShown()).toBe(MACHINE_NAMES[0]);
+    fireEvent.click(screen.getAllByTestId('machine-dot')[4]);
+    expect(nameShown()).toBe(MACHINE_NAMES[4]);
+  });
+
   it('a fast release glides (the view keeps turning); a release after holding still does not', () => {
     const run = (stillMs: number) => {
       useCtx(false);

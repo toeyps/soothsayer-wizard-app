@@ -6354,3 +6354,60 @@ body {
 @media (prefers-reduced-motion: reduce) {
     .pm-spin { animation: none; }
 }
+
+/* Welcome page — machine illustration: the ‹ › buttons and the dots that pick a machine
+   (MachineMorphCanvas.tsx; the panel is always dark, so these do not follow the theme). */
+.machine-nav-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.04);
+    color: #b4b4bc;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.machine-nav-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+    border-color: rgba(255, 255, 255, 0.32);
+    color: #ededef;
+}
+
+.machine-dot-btn {
+    display: inline-flex;
+    align-items: center;
+    padding: 7px 2.5px;
+    border: 0;
+    background: none;
+    cursor: pointer;
+}
+
+.machine-dot-btn > i {
+    display: block;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.15);
+    transition: all 0.3s;
+}
+
+.machine-dot-btn:hover > i {
+    background: rgba(255, 255, 255, 0.42);
+}
+
+.machine-dot-btn[data-active='true'] > i {
+    width: 16px;
+    border-radius: 3px;
+    background: oklch(0.74 0.17 245);
+}
+
+.machine-nav-btn:focus-visible,
+.machine-dot-btn:focus-visible {
+    outline: 2px solid oklch(0.74 0.17 245);
+    outline-offset: 2px;
+}

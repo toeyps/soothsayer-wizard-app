@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
 import {
   ABNORMAL_LABEL,
   HERO_PARTICLES,
+  HOLD_SECONDS,
   LABEL_PAD_L,
   LABEL_PAD_R,
   MACHINE_NAMES,
@@ -46,12 +48,14 @@ import { DotRenderer } from './machineDots';
  * the setup rail (mini). A cloud of 6,000 edge-weighted dots (mini: 2,400)
  * re-forms into six different machines, drawn through one pixel buffer per
  * frame (`machineDots.ts`); hero also shows two simulated sensor read-outs per
- * machine, and can be turned like a 3D model (drag to orbit, double-click to
- * reset — `machineOrbit.ts`). Canvas 2D only, no dependencies.
+ * machine, can be turned like a 3D model (drag to orbit, double-click to
+ * reset — `machineOrbit.ts`), and lets the user step to another machine with
+ * the ‹ › buttons or the dots. Canvas 2D only, no dependencies.
  *
  * Reduced motion: no auto-spin, no machine cycle, no glide — one still frame
- * (the trending sensor already "● ABNORMAL"), redrawn only while the user drags
- * or when the canvas is resized / moved to a screen with another pixel ratio.
+ * (the trending sensor already "● ABNORMAL"), redrawn only while the user drags,
+ * picks another machine (it switches at once, no dissolve), or when the canvas
+ * is resized / moved to a screen with another pixel ratio.
  * The loop pauses while the document is hidden. The mini variant never takes
  * pointer input.
  */
@@ -69,7 +73,6 @@ const INK_MUTED = '#8c8c94';
 const LABEL_BG = 'rgba(16,16,18,0.86)';
 const WARN_RGB = '255,190,80';
 const NORMAL_RGB = '140,200,255';
-const ACCENT_HI = 'oklch(0.74 0.17 245)';
 const FONT_SANS = "Inter, system-ui, -apple-system, 'Segoe UI', sans-serif";
 const FONT_MONO = "'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace";
 
@@ -94,6 +97,8 @@ export default function MachineMorphCanvas({ variant = 'hero', className, style 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [reduced, setReduced] = useState<boolean>(prefersReducedMotion);
   const [activeIdx, setActiveIdx] = useState(0);
+  /** The running animation's "show this machine" entry points (null: nothing is animating). */
+  const navRef = useRef<{ go: (to: number) => void; step: (delta: number) => void } | null>(null);
 
   // Follow live changes of the OS setting.
   useEffect(() => {
@@ -138,6 +143,9 @@ export default function MachineMorphCanvas({ variant = 'hero', className, style 
     let shownIdx = 0;
     let lastTickBucket = -1;
     let histIdx = -1;
+    /** The machine a requested dissolve lands on (null: the next one in line). */
+    let target: number | null = null;
+    const nextIdx = () => target ?? (clock.idx + 1) % count;
     let bg: CanvasGradient | null = null;
     let bgW = -1;
     let bgH = -1;
@@ -300,7 +308,7 @@ export default function MachineMorphCanvas({ variant = 'hero', className, style 
       ctx.clearRect(0, 0, W, H);
       if (W <= 0 || H <= 0) return;
       const A = shapes[clock.idx];
-      const B = shapes[(clock.idx + 1) % count];
+      const B = shapes[nextIdx()];
       const { e, burst } = morphPhase(clock.t);
       const sc = mini ? W * 0.13 : Math.min(W * 0.17, H * 0.165);
       const cx = W * 0.5;
@@ -311,7 +319,7 @@ export default function MachineMorphCanvas({ variant = 'hero', className, style 
       // jsdom has no ImageData: the dot pass is skipped there (render returns false).
       dots.render(ctx, A, B, e, burst, cam, spin, jit, W, H, dpr);
 
-      const cur = e < 0.5 ? clock.idx : (clock.idx + 1) % count;
+      const cur = e < 0.5 ? clock.idx : nextIdx();
       if (cur !== shownIdx) {
         shownIdx = cur;
         setActiveIdx(cur);
@@ -344,8 +352,14 @@ export default function MachineMorphCanvas({ variant = 'hero', className, style 
       last = now;
       stepOrbit(view, now, dt, reduce);
       if (!reduce) {
+        const from = clock.idx;
         if (mini) advanceMorph(clock, dt, count);
         else stepHeldClock(clock, dt, isInteracting(view, now), count);
+        // A requested dissolve lands on the machine that was asked for, not on the next in line.
+        if (target !== null && clock.idx !== from) {
+          clock.idx = target;
+          target = null;
+        }
         spin += dt * 3;
       }
       const r = canvas.getBoundingClientRect();
@@ -372,6 +386,33 @@ export default function MachineMorphCanvas({ variant = 'hero', className, style 
         kick();
       }
     };
+
+    /* ---------------- ‹ › buttons and dots (hero only) ---------------- */
+    /** The machine the cloud is showing, or already dissolving into. */
+    const heading = () => (clock.t >= HOLD_SECONDS ? nextIdx() : clock.idx);
+    /** The machine the name chip shows (the nearer end of a dissolve). */
+    const shown = () => (morphPhase(clock.t).e < 0.5 ? clock.idx : nextIdx());
+    const goTo = (to: number) => {
+      const dest = ((to % count) + count) % count;
+      if (reduce) {
+        // No dissolve: the still frame switches at once.
+        clock.idx = dest;
+        clock.t = 0;
+        target = null;
+        draw(0, 0, true);
+        return;
+      }
+      if (dest === heading()) return; // already there, or already on its way
+      // Start the dissolve now, from the machine that is on screen.
+      clock.idx = shown();
+      target = dest;
+      clock.t = HOLD_SECONDS;
+      kick();
+    };
+    // ‹ › count from the machine the user asked for last (so fast clicks keep stepping),
+    // otherwise from the one the name chip shows.
+    const stepBy = (delta: number) => goTo((target !== null && clock.t >= HOLD_SECONDS ? target : shown()) + delta);
+    if (!mini) navRef.current = { go: goTo, step: stepBy };
 
     /* ---------------- orbit drag (hero only) ---------------- */
     let drag: DragState | null = null;
@@ -487,6 +528,7 @@ export default function MachineMorphCanvas({ variant = 'hero', className, style 
     }
 
     return () => {
+      navRef.current = null;
       if (rafId) window.cancelAnimationFrame(rafId);
       rafId = 0;
       document.removeEventListener('visibilitychange', onVisibility);
@@ -504,6 +546,17 @@ export default function MachineMorphCanvas({ variant = 'hero', className, style 
       }
     };
   }, [mini, reduced]);
+
+  // Without a running animation (no 2D canvas) the name and dots still follow the buttons.
+  const total = MACHINE_NAMES.length;
+  const stepMachine = (delta: number) => {
+    if (navRef.current) navRef.current.step(delta);
+    else setActiveIdx((i) => (i + delta + total) % total);
+  };
+  const showMachine = (i: number) => {
+    if (navRef.current) navRef.current.go(i);
+    else setActiveIdx(i);
+  };
 
   const wrapStyle: CSSProperties = {
     position: 'relative',
@@ -548,32 +601,48 @@ export default function MachineMorphCanvas({ variant = 'hero', className, style 
           }}
         >
           <b style={{ fontWeight: 500, color: INK_MUTED, marginRight: 6 }}>Works with any machine that has sensors</b>
-          <span
-            style={{
-              border: '1px solid oklch(0.7 0.15 235 / 0.6)',
-              borderRadius: 99,
-              padding: '3px 10px',
-              background: 'oklch(0.6 0.13 235 / 0.18)',
-              color: INK,
-            }}
-          >
-            {MACHINE_NAMES[activeIdx]}
+          {/* The bar lets a drag through to the canvas; only its controls take the pointer. */}
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, pointerEvents: 'auto' }}>
+            <button type="button" className="machine-nav-btn" aria-label="Previous machine" title="Previous machine" onClick={() => stepMachine(-1)}>
+              <ChevronLeft size={14} aria-hidden="true" />
+            </button>
+            <span
+              data-testid="machine-name"
+              aria-live="polite"
+              style={{
+                border: '1px solid oklch(0.7 0.15 235 / 0.6)',
+                borderRadius: 99,
+                padding: '3px 10px',
+                background: 'oklch(0.6 0.13 235 / 0.18)',
+                color: INK,
+                // Wide enough for the longest name, so the › button does not move as the name changes.
+                minWidth: 164,
+                boxSizing: 'border-box',
+                textAlign: 'center',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {MACHINE_NAMES[activeIdx]}
+            </span>
+            <button type="button" className="machine-nav-btn" aria-label="Next machine" title="Next machine" onClick={() => stepMachine(1)}>
+              <ChevronRight size={14} aria-hidden="true" />
+            </button>
           </span>
-          <span aria-hidden="true" style={{ display: 'inline-flex', gap: 5, paddingLeft: 4 }}>
+          <span style={{ display: 'inline-flex', paddingLeft: 2, pointerEvents: 'auto' }}>
             {MACHINE_NAMES.map((n, i) => (
-              <i
+              <button
                 key={n}
+                type="button"
+                className="machine-dot-btn"
                 data-testid="machine-dot"
                 data-active={i === activeIdx ? 'true' : 'false'}
-                style={{
-                  display: 'block',
-                  height: 6,
-                  width: i === activeIdx ? 16 : 6,
-                  borderRadius: i === activeIdx ? 3 : '50%',
-                  background: i === activeIdx ? ACCENT_HI : 'rgba(255,255,255,0.15)',
-                  transition: 'all .3s',
-                }}
-              />
+                aria-label={`Show ${n}`}
+                aria-current={i === activeIdx ? 'true' : undefined}
+                title={n}
+                onClick={() => showMachine(i)}
+              >
+                <i aria-hidden="true" />
+              </button>
             ))}
           </span>
           {/* --text-secondary so the required "simulated" label is legible. */}
