@@ -116,7 +116,8 @@ function HealthScorePage(props: HealthScorePageProps) {
     // The page is drawn from the last good answer, which does not describe what is typed.
     const errorMode = (failed || asking) && !!preview.lastData;
     const data = preview.data ?? (errorMode ? preview.lastData ?? null : null);
-    // Train / scoring scopes on the time charts (null = no scoring periods sent).
+    // Train / scoring scopes of the time charts (null = no scoring periods sent): the line
+    // shows the hours of both; only the train periods are highlighted and named.
     // Memoised on the payload so a hover re-render never rebuilds the time charts.
     const validation = data?.test_validation;
     // S-numbers of the sent scoring periods: memoised on their VALUE (the container
@@ -124,7 +125,7 @@ function HealthScorePage(props: HealthScorePageProps) {
     const testNumbers = props.testNumbers;
     const numbersKey = testNumbers ? testNumbers.join(',') : '';
     const scopes = useMemo(
-        // This page plots hourly points, so each band starts at its hour start (`hourlyScopes`).
+        // This page plots hourly points, so each period starts at its hour start (`hourlyScopes`).
         () => hourlyScopes(scopesOf(validation, numbersKey ? numbersKey.split(',').map(Number) : null)),
         [validation, numbersKey],
     );

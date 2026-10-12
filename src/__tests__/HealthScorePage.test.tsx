@@ -71,9 +71,15 @@ const scoreChart = () => charts.filter(c => c.option?.yAxis?.name === 'Score').p
 const setChart = () => charts.filter(c => c.option?.yAxis?.name !== 'Score' || c.option?.series?.[0]?.name === 'Points').pop();
 /** Text of the legend row under a card's chart, or null when the card has none. */
 const legendOf = (id: string) => screen.getByTestId(`chart-card-${id}`).querySelector('.wb2-legend')?.textContent ?? null;
-/** The names PRINTED in the strip above a time chart's plot (train / scoring scopes), in band order. */
+/** The names PRINTED in the strip above a time chart's plot (the TRAIN periods — a scoring period is not drawn), in band order. */
 const stripOf = (c: any): string[] => (c.option.series.find((x: any) => x.name === '__scopes')?.markArea?.data ?? [])
     .filter((a: any) => a[0].label.show).map((a: any) => a[0].label.formatter);
+/** Every band drawn under a time chart's data, by name. */
+const bandsOf = (c: any): string[] => (c.option.series.find((x: any) => x.name === '__scopes')?.markArea?.data ?? []).map((a: any) => a[0].name);
+/** Local wall-clock ms of hour `h` on 1 Jan 2026 — where the fixture's hourly point of that hour sits on the axis. */
+const hourAt = (h: number) => new Date(2026, 0, 1, h).getTime();
+/** The heading of a time chart's hover tooltip for the X value `ms` (the X axis' pointer-label formatter). */
+const tipHeading = (c: any, ms: number): string => c.option.xAxis.axisPointer.label.formatter({ value: ms });
 /** The ring levels named on the Clusters chart. */
 const ringLabelsOf = (c: any): string[] => (c.option.series.find((x: any) => x.name === 'Ring labels')?.data ?? []).map((x: any) => x.label.formatter);
 
@@ -550,6 +556,20 @@ describe('Health score chart', () => {
         expect([line.yAxis, line.label.formatter, line.label.position]).toEqual([80, '80', 'end']);
         expect(opt.tooltip.valueFormatter(85)).toBe('85');
         expect(opt.tooltip.valueFormatter(84.99)).toBe('85');
+    });
+
+    // User report 2026-10-12: the tooltip was headed by the date alone ("2026-01-01").
+    it('the hover tooltip of both time charts is headed by the hovered HOUR — date and time, the hour start, in the Workbench format', () => {
+        mount({ sp: IND_VALID });
+        for (const chart of [scoreChart(), setChart()]) {
+            expect(chart.option.xAxis.type).toBe('time');
+            expect(tipHeading(chart, hourAt(2))).toBe('1 Jan 2026 02:00');
+            expect(tipHeading(chart, hourAt(0))).toBe('1 Jan 2026 00:00'); // midnight still shows its time
+            // the same text as the read-out under the score chart, and nothing else about the tooltip changed
+            expect(chart.option.tooltip).toMatchObject({ trigger: 'axis', confine: true, transitionDuration: 0, hideDelay: 0, enterable: false });
+            expect(chart.option.tooltip.formatter).toBeUndefined(); // the value rows are ECharts' own
+            expect(chart.option.axisPointer).toEqual({ zlevel: 1, triggerEmphasis: false, link: [{ xAxisIndex: 'all' }] });
+        }
     });
 
     it('a share that is not zero never reads "0.0%": below a tenth of a percent it says "< 0.1%"', () => {
@@ -1267,7 +1287,8 @@ describe('Scoring periods on the Health score page ("just score it", 2026-10-10)
         test_validation: makeValidation({ tests: [makeTestResult({ pct_below_80: 7, lowest: 62, lowest_at: '2026-01-01T02:00:00' }), makeTestResult({ index: 2, start: '2026-01-01T03:00', end: '2026-01-01T04:00', pct_below_80: 41.5, lowest: 12, lowest_at: '2026-01-01T03:00:00' })] }),
     });
 
-    it('the set-point chart and the score chart both draw the train / scoring scopes — bands only, no EVENT line, no hatch', () => {
+    // User decision 2026-10-12: only the TRAIN period is highlighted — a scoring period has no band, no frame, no name.
+    it('the set-point chart and the score chart both highlight the TRAIN period only — one band, no "S1" / "S2", no EVENT line, no hatch', () => {
         mount({ sp: IND_VALID, data: withTests('individual', IND_VALID) });
         const names = (c: any) => c.option.series.map((x: any) => x.name);
         expect(names(scoreChart())).toContain('__scopes');
@@ -1276,8 +1297,10 @@ describe('Scoring periods on the Health score page ("just score it", 2026-10-10)
             const carrier = chart.option.series.find((x: any) => x.name === '__scopes');
             expect(carrier.markLine).toBeUndefined();
             expect(carrier.markPoint).toBeUndefined();
-            expect(stripOf(chart)).toEqual(['TRAIN', 'S1', 'S2']);
-            expect(JSON.stringify(carrier)).not.toMatch(/EVENT|KNOWN|NORMAL|PROBLEM|data:image/);
+            expect(stripOf(chart)).toEqual(['TRAIN']);
+            expect(bandsOf(chart)).toEqual(['TRAIN']);
+            expect(carrier.markArea.data[0][0].itemStyle.borderType).toBeUndefined(); // no dashed frame
+            expect(JSON.stringify(carrier)).not.toMatch(/EVENT|KNOWN|NORMAL|PROBLEM|data:image|S1|S2/);
             // the names are in the strip ABOVE the plot — no pill inside it
             for (const a of carrier.markArea.data) {
                 expect(a[0].label.position).toBe('top');
@@ -1286,11 +1309,31 @@ describe('Scoring periods on the Health score page ("just score it", 2026-10-10)
         }
     });
 
+    // The fixture: hourly points 00:00 … 04:00; TRAIN 00:00–01:30, S1 02:00–03:00, S2 03:00–04:00.
+    it('the hours of the scoring periods are still drawn on both charts, exactly as before: one cut (TRAIN → S1), none inside or between the scoring periods', () => {
+        mount({ sp: IND_VALID, data: withTests('individual', IND_VALID) });
+        for (const chart of [scoreChart(), setChart()]) {
+            const data = chart.option.series[0].data as [number, number | null][];
+            // every hourly point is on the line — 02:00, 03:00 and 04:00 are the scoring periods' own
+            expect(data.filter(p => p[1] !== null).map(p => p[0])).toEqual([0, 1, 2, 3, 4].map(hourAt));
+            // cut once, between 01:00 and 02:00 (no period covers 01:30–02:00). Cut from the train period alone it
+            // would be three cuts, and 02:00 / 03:00 / 04:00 would each stand apart, not drawn by a symbol-less line.
+            expect(data.filter(p => p[1] === null).map(p => p[0])).toEqual([(hourAt(1) + hourAt(2)) / 2]);
+            const i = data.findIndex(p => p[0] === hourAt(2));
+            expect(data.slice(i).map(p => p[0])).toEqual([2, 3, 4].map(hourAt)); // joined to the end
+        }
+        expect((scoreChart().option.series[0].data as [number, number | null][]).filter(p => p[1] !== null).map(p => p[1])).toEqual([100, 90, 80, 60, 30]);
+        // the numbers of the scoring periods are where they always were: the "Scoring results" tiles
+        expect(screen.getByTestId('test-result-1').querySelector('.vt-th b')!.textContent).toBe('S1');
+        expect(screen.getByTestId('test-result-2').querySelector('.vt-th b')!.textContent).toBe('S2');
+    });
+
     it('Clustering has no time chart of its own: the strip is on the SCORE chart, not on the scatter', () => {
         const sp = { kind: 'clustering', outerSd: 5 } as const;
         const data: HealthPreview = { ...previewFor('clustering', sp), test_validation: makeValidation({ tests: [makeTestResult(), makeTestResult({ index: 2, start: '2026-01-01T03:00', end: '2026-01-01T04:00' })] }) };
         mount({ kind: 'clustering', sp, data });
-        expect(stripOf(scoreChart())).toEqual(['TRAIN', 'S1', 'S2']);
+        expect(stripOf(scoreChart())).toEqual(['TRAIN']);
+        expect(bandsOf(scoreChart())).toEqual(['TRAIN']);
         expect(stripOf(setChart())).toEqual([]);
         expect(setChart().option.series.map((x: any) => x.name)).not.toContain('__scopes');
     });
@@ -1301,7 +1344,7 @@ describe('Scoring periods on the Health score page ("just score it", 2026-10-10)
     });
 
     // Many periods printed "TRAIN P1" … "TRAIN P20" on each other.
-    it('several train periods: "TRAIN" once then numbers; two periods at the same time print ONE name; the chart beside the set-points card spaces its names for the narrower plot', () => {
+    it('several train periods: "TRAIN" once then numbers; no scoring name among them; the chart beside the set-points card spaces its names for the narrower plot', () => {
         const hhmm = (m: number) => `2026-01-01T${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
         // 16 short train periods over the 4 hours of data
         const train_ranges = Array.from({ length: 16 }, (_, i) => ({ start: hhmm(i * 15), end: hhmm(i * 15 + 12) }));
@@ -1312,12 +1355,12 @@ describe('Scoring periods on the Health score page ("just score it", 2026-10-10)
         for (const names of [score, set]) {
             expect(names[0]).toBe('TRAIN P1');
             expect(names.filter(n => /TRAIN/.test(n))).toHaveLength(1);
-            // S1 and S2 cover the same time: one name there, not two on top of each other
-            expect(names.filter(n => /^S\d/.test(n))).toEqual(['S1']);
+            // the two scoring periods are not named
+            expect(names.some(n => /^S\d/.test(n))).toBe(false);
         }
-        // every band is drawn on both charts; only names are left out
+        // every TRAIN band is drawn on both charts (only names are left out) — and no band for S1 / S2
         for (const chart of [scoreChart(), setChart()]) {
-            expect(chart.option.series.find((x: any) => x.name === '__scopes').markArea.data).toHaveLength(18);
+            expect(bandsOf(chart)).toEqual(Array.from({ length: 16 }, (_, i) => `TRAIN P${i + 1}`));
         }
         const trainNames = (names: string[]) => names.filter(n => /P\d/.test(n)).length;
         expect(trainNames(score)).toBeLessThan(16); // 16 names do not fit across the board either
@@ -1360,13 +1403,13 @@ describe('Scoring periods on the Health score page ("just score it", 2026-10-10)
         expect(screen.queryByTestId('test-result-1')).toBeNull();
     });
 
-    it('testNumbers name the tiles and the names in the chart strip by the ORIGINAL list position', () => {
+    it('testNumbers name the tiles by the ORIGINAL list position; the chart strip names the train period only, whatever the number', () => {
         const data: HealthPreview = { ...previewFor('individual', IND_VALID), test_validation: makeValidation({ tests: [makeTestResult({ index: 1 })] }) };
         mount({ sp: IND_VALID, data, testNumbers: [2] });
         expect(screen.getByTestId('test-result-2').querySelector('.vt-th b')!.textContent).toBe('S2');
         expect(screen.queryByTestId('test-result-1')).toBeNull();
-        expect(stripOf(scoreChart())).toEqual(['TRAIN', 'S2']);
-        expect(stripOf(setChart())).toEqual(['TRAIN', 'S2']);
+        expect(stripOf(scoreChart())).toEqual(['TRAIN']);
+        expect(stripOf(setChart())).toEqual(['TRAIN']);
     });
 
     it('test_scoring_failed WITH scoring periods -> the Scoring results card carries the amber notice with "Try again" (the preview Retry) instead of tiles; the score card is not replaced', () => {

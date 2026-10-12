@@ -51,8 +51,10 @@ import type { WorkbenchPageProps } from './workbenchTypes';
  * the Clusters chart zooms on both axes, so its rings have a fixed key too.
  *
  * Train and scoring periods: when the
- * preview carries `test_validation`, every time chart draws the train /
- * scoring scopes (`scopesOf` → `TimeSeriesSpec.scopes`); an amber note shows
+ * preview carries `test_validation`, every time chart takes the train /
+ * scoring scopes (`scopesOf` → `TimeSeriesSpec.scopes`): the line shows the rows
+ * of both, but only the TRAIN periods are highlighted and named — a scoring
+ * period has no band and no "S1" on a chart; an amber note shows
  * below the recommended train time. The per-period numbers ("Scoring results")
  * and the "health score could not be calculated — try again" notice are on the Health score page.
  *

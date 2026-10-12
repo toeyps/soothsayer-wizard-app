@@ -510,17 +510,20 @@ describe('the scope strip with many periods', () => {
         expectNoOverlap(names);
     });
 
-    it('train and scoring names together: each lane is free of overlaps, and the two lanes are a text line apart', () => {
-        const ts = textsFor(option([...train, ...score]), STRIP_PLOT_WIDTH.full + 58 + 18, 250);
+    // User decision 2026-10-12: only the train periods are highlighted.
+    it('train and scoring periods together: the strip prints the train names only (one lane, no overlap) — no scoring name, nothing magenta', () => {
+        const width = STRIP_PLOT_WIDTH.full + 58 + 18;
+        const ts = textsFor(option([...train, ...score]), width, 250);
         const t = lane(ts, CHART.train);
-        const s = lane(ts, CHART.test);
-        expect(s[0].text).toBe('S1');
+        expect(t[0].text).toBe('TRAIN P1');
         expectNoOverlap(t);
-        expectNoOverlap(s);
-        expect(s[0].y - t[0].y).toBeGreaterThanOrEqual(11); // train above, scoring below
+        expect(lane(ts, CHART.test)).toEqual([]);
+        expect(ts.some(x => /^S\d+$/.test(x.text))).toBe(false);
+        // the strip is laid out exactly as without the scoring periods: the same names at the same places
+        expect(t).toEqual(lane(textsFor(option(train), width, 250), CHART.train));
     });
 
-    it('a few periods are all named: "TRAIN P1  P2  P3" and "S1  S2"', () => {
+    it('a few train periods are all named: "TRAIN P1  P2  P3"; the scoring periods beside them are not', () => {
         const few: TimeScope[] = [
             { kind: 'train', start: '2026-01-01T00:00', end: '2026-01-05T00:00', label: 'TRAIN P1', short: 'P1' },
             { kind: 'train', start: '2026-01-07T00:00', end: '2026-01-11T00:00', label: 'TRAIN P2', short: 'P2' },
@@ -530,6 +533,7 @@ describe('the scope strip with many periods', () => {
         ];
         const ts = textsFor(option(few), 620, 250);
         expect(lane(ts, CHART.train).map(t => t.text)).toEqual(['TRAIN P1', 'P2', 'P3']);
-        expect(lane(ts, CHART.test).map(t => t.text)).toEqual(['S1', 'S2']);
+        expect(lane(ts, CHART.test)).toEqual([]);
+        expect(ts.some(x => /^S\d+$/.test(x.text))).toBe(false);
     });
 });

@@ -56,7 +56,7 @@ vi.mock('../components/charts/ResponsiveECharts', () => ({
             data-testid="echarts-mock"
             data-series-count={props.option?.series?.length ?? 0}
             data-x-axis-name={props.option?.xAxis?.name ?? ''}
-            // the names in the strip above a time chart (train / scoring shading), in band order
+            // the names in the strip above a time chart (the train shading — a scoring period is not drawn), in band order
             data-strip={((props.option?.series ?? []).find((s: any) => s.name === '__scopes')?.markArea?.data ?? []).filter((a: any) => a[0].label.show).map((a: any) => a[0].label.formatter).join('|')}
         />
     ),
@@ -6571,7 +6571,7 @@ describe('Train periods and scoring periods — review fixes (2026-10-07)', () =
     });
 
     describe('scoring results are numbered by their ORIGINAL list position (should-fix 2b)', () => {
-        it('[S1 invalid, S2 valid]: only S2 is sent, and the Model fit chart band, the tile and its overlap note all say "S2"', async () => {
+        it('[S1 invalid, S2 valid]: only S2 is sent; the tile and its overlap note say "S2" — the Model fit chart names the train period only', async () => {
             const tests = [
                 { id: 'bad', start: '2024-02-10T00:00', end: '2024-02-01T00:00' },
                 { ...ONE_TEST[0], id: 'good' },
@@ -6582,7 +6582,7 @@ describe('Train periods and scoring periods — review fixes (2026-10-07)', () =
                     return Promise.resolve(makeSetPointAwarePreview(req, {
                         test_validation: makeValidation({
                             // one result per period SENT, numbered by wire position. Each keeps the fixture's own
-                            // start / end (inside the fixture's 5-point series), so its band is drawn on the chart.
+                            // start / end (inside the fixture's 5-point series).
                             tests: (req?.test_periods ?? []).map((_t: any, i: number) => makeTestResult({ index: i + 1, train_rows: 10, train_days: 2 })),
                         }),
                     }));
@@ -6593,10 +6593,11 @@ describe('Train periods and scoring periods — review fixes (2026-10-07)', () =
             statefulUpdateMock([model], { runningConditionTestPeriods: tests });
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: { groups: [makeGroup()], models: [model], runningConditionTestPeriods: tests } });
-            // Model fit: the scoring band on the time chart is named by the ORIGINAL position (S2, never S1).
+            // Model fit: the time chart highlights the train period only (user decision 2026-10-12) — a scoring
+            // period has no band and no name there, so its number is read off the Health score page below.
             // (The page has no "Train and scoring periods" table any more — removed 2026-10-11.)
             const strip = () => within(screen.getByTestId('chart-card-ts')).getByTestId('echarts-mock').getAttribute('data-strip');
-            await waitFor(() => expect(strip()).toBe('TRAIN|S2'));
+            await waitFor(() => expect(strip()).toBe('TRAIN'));
             expect(healthCalls().slice(-1)[0].test_periods).toEqual([{ start: ONE_TEST[0].start, end: ONE_TEST[0].end }]);
             expect(screen.queryByTestId('train-test-card')).toBeNull();
             expect(screen.getByTestId('model-fit-individual').textContent).not.toMatch(/Train and scoring periods|includes 2 d of train running time/);

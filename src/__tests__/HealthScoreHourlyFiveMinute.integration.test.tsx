@@ -130,9 +130,11 @@ const lastPreview = (kind: string) => env.backend!.cmds('compute_health_preview'
 const trainsOfRelation = () => env.backend!.cmds('preview_relationship_model').filter(c => c.args.cache_key);
 const infoFile = (rel: string) => JSON.parse(env.files.get(`workspaces/${WS}/output/${rel}`)!);
 const text = (id: string) => bmw().getByTestId(id).textContent;
-/** The period names printed in the strip above a time chart (the train / scoring shading). */
+/** The period names printed in the strip above a time chart (the TRAIN shading — a scoring period is not drawn). */
 const stripOf = (c: ChartRecord): string[] =>
     ((seriesOf(c, '__scopes')?.markArea?.data ?? []) as any[]).filter(x => x[0].label.show).map(x => x[0].label.formatter as string);
+/** The heading of a time chart's hover tooltip for the X value `ms` (the X axis' pointer-label formatter). */
+const tipHeading = (c: ChartRecord, ms: number): string => (c.option as any).xAxis.axisPointer.label.formatter({ value: ms });
 const hoverTime = async (chart: ChartRecord, ms: number) => {
     await act(async () => { chart.props.onEvents.updateAxisPointer({ axesInfo: [{ axisDim: 'x', value: ms }] }); });
     return text('hs-readout')!;
@@ -167,7 +169,12 @@ describe('Individual on 5-minute data', () => {
         expect(Math.max(...raw.map(p => p[1] as number))).toBe(85.5); // a single row's value, never the hour mean
         expect(raw.every(p => p[1] !== 9999), 'no stopped row is drawn').toBe(true);
         expect(env.charts.some(c => seriesOf(c, 'Health score')), 'no score chart on Model fit').toBe(false);
-        expect(stripOf(lastChart('Value', 0, false))).toEqual(['TRAIN', 'S1']); // the scoring period is still shaded here
+        // only the TRAIN period is shaded and named (user decision 2026-10-12): the scoring period has no band and
+        // no "S1" — its 45 rows are on the line all the same (counted above)
+        expect(stripOf(lastChart('Value', 0, false))).toEqual(['TRAIN']);
+        // the tooltip of a raw 5-minute row is headed by that row's date AND time (it read "2024-03-01" alone)
+        expect(tipHeading(lastChart('Value', 0, false), at(4, 35))).toBe('1 Mar 2024 04:35');
+        expect(tipHeading(lastChart('Value', 0, false), at(0, 5))).toBe('1 Mar 2024 00:05');
 
         // ── Health score: 1-hour averages ──
         const from = env.charts.length;
@@ -339,8 +346,14 @@ describe('Relation model on 5-minute data', () => {
         const from = env.charts.length;
         await openHealth();
         await waitFor(() => expect(bmw().getByTestId('score-summary')).toBeTruthy());
-        // here the scoring periods are shaded and named
-        expect(stripOf(lastChart('Health score', from, true))).toEqual(['TRAIN', 'S1', 'S2']);
+        // here too only the TRAIN period is shaded and named; the scoring periods' hours are on the line (below)
+        // and their numbers on the "Scoring results" tiles
+        expect(stripOf(lastChart('Health score', from, true))).toEqual(['TRAIN']);
+        expect(bmw().getByTestId('test-result-1').querySelector('.vt-th b')!.textContent).toBe('S1');
+        expect(bmw().getByTestId('test-result-2').querySelector('.vt-th b')!.textContent).toBe('S2');
+        // an hourly point's tooltip is headed by its hour START, date and time
+        expect(tipHeading(lastChart('Health score', from, true), at(4))).toBe('1 Mar 2024 04:00');
+        expect(tipHeading(lastChart('Residual', from, true), at(7))).toBe('1 Mar 2024 07:00');
         let sent = lastPreview('relationship');
         expect(sent.args.request).toMatchObject({ kind: 'relationship', target: 'T', predictors: ['P'], cache_key: key, test_periods: wire(S_TWO) });
         expect((sent.result as any).series.total_points).toBe(48);
@@ -495,9 +508,10 @@ describe('a scoring period that starts INSIDE an hour (04:30)', () => {
     });
 
     // A period that starts inside an hour (04:30): its first hourly point sits at the hour start
-    // (04:00), before the period's own start. The Health score page draws its bands from the hour
-    // start (`hourlyScopes`), so that point is inside the S band and on the line — with the raw
-    // band it stood alone between two cuts of a symbol-less line and was not drawn at all.
+    // (04:00), before the period's own start. The Health score page reads its periods from the hour
+    // start (`hourlyScopes`), so that point is inside the scoring period and on the line — with the raw
+    // range it stood alone between two cuts of a symbol-less line and was not drawn at all. (The
+    // scoring period itself is not shaded; its range still decides where the line runs.)
     it('the score of that hour is visible on the score chart (not a lone point of a symbol-less line)', async () => {
         const p = await ask();
         const option = buildScoreOption(p.hourly.timestamps, p.hourly.score, hourlyScopes(scopesOf(p.test_validation))) as any;

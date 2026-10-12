@@ -8,8 +8,13 @@ vi.mock('../components/charts/ResponsiveECharts', () => ({
             data-series={(props.option?.series ?? []).map((s: any) => s.name).join('|')}
             data-x-axis-name={props.option?.xAxis?.name ?? ''}
             data-y-axis-name={props.option?.yAxis?.name ?? ''}
-            // the names in the strip above the plot (train / scoring scopes), in band order
+            // the names in the strip above the plot (the TRAIN periods — a scoring period is not drawn), in band order
             data-strip={((props.option?.series ?? []).find((s: any) => s.name === '__scopes')?.markArea?.data ?? []).filter((a: any) => a[0].label.show).map((a: any) => a[0].label.formatter).join('|')}
+            // every band drawn under the data, by name (a band whose name is left off the strip is still listed)
+            data-bands={((props.option?.series ?? []).find((s: any) => s.name === '__scopes')?.markArea?.data ?? []).map((a: any) => a[0].name).join('|')}
+            // the first data line of a time chart: how many of its points carry a value, and how many gaps cut it
+            data-line-points={((props.option?.series?.[0]?.data ?? []) as any[]).filter(p => Array.isArray(p) && p.length === 2 && p[1] !== null).length}
+            data-line-gaps={((props.option?.series?.[0]?.data ?? []) as any[]).filter(p => Array.isArray(p) && p.length === 2 && p[1] === null).length}
             // a data line named ON the plot (an ECharts end label) — there must be none: it does not follow a zoom
             data-end-labels={(props.option?.series ?? []).filter((s: any) => s.endLabel).map((s: any) => s.name).join('|')}
             // the ring levels named on a Clusters chart
@@ -388,26 +393,47 @@ describe('ModelFitPage — train and scoring periods ("just score it", 2026-10-1
         mount(model({ kind: 'relationship', predictorSensors: ['A'] }), { target: 'T1', predictors: ['A'] }, { ...withTests('relationship'), validation });
         expect(screen.queryByTestId('test-scoring-failed')).toBeNull();
         expect(screen.queryByTestId('test-scoring-retry')).toBeNull();
-        // the charts still draw the train / scoring shading
-        expect(chartOf('res').getAttribute('data-strip')).toBe('TRAIN|S1|S2');
+        // the charts still draw the train shading (a scoring period is never shaded)
+        expect(chartOf('res').getAttribute('data-strip')).toBe('TRAIN');
     });
 
     // workbench-redesign SPEC §3: the scopes are named in the strip above the plot.
-    it('the strip names the scopes on every time chart: "TRAIN", "S1", "S2" — and the subtitle says the chart shows only those rows', () => {
+    // User decision 2026-10-12: only the TRAIN period is highlighted — no band, no frame and no "S1" / "S2" for a scoring period.
+    it('only the train period is highlighted on a time chart: the strip reads "TRAIN" alone, no scoring band is drawn — and the subtitle still says which rows the chart shows', () => {
         mount(model(), { target: 'T1' }, withTests('individual'));
-        expect(chartOf('ts').getAttribute('data-strip')).toBe('TRAIN|S1|S2');
+        expect(chartOf('ts').getAttribute('data-strip')).toBe('TRAIN');
+        expect(chartOf('ts').getAttribute('data-bands')).toBe('TRAIN'); // one band under the data: none for S1, none for S2
+        // the data did not change, so neither did the subtitle that describes it
         expect(screen.getByTestId('chart-card-ts').querySelector('.wb2-card-s')!.textContent).toBe('°C · rows in the train and scoring periods');
         expect(chartOf('dist').getAttribute('data-strip')).toBe(''); // not a time chart
+        expect(chartOf('dist').getAttribute('data-bands')).toBe('');
     });
 
-    it('several train periods: the full-width chart reads "TRAIN P1" then "P2" (the word once); the half-width one the short "P1", "P2"', () => {
+    // The fixture: 5 hourly rows 00:00 … 04:00; TRAIN 00:00–01:30, S1 02:00–03:00, S2 03:00–04:00.
+    it('the rows of the scoring periods are still drawn, exactly as before: the line is cut once (between TRAIN and S1), never inside or between the scoring periods', () => {
+        mount(model(), { target: 'T1' }, withTests('individual'));
+        expect(chartOf('ts').getAttribute('data-line-points')).toBe('5'); // 2 train rows + 3 scoring rows
+        // one gap, 01:00 → 02:00 (no period covers 01:30–02:00). Cut from the train period alone it would be three:
+        // the rows at 02:00, 03:00 and 04:00 would each stand apart.
+        expect(chartOf('ts').getAttribute('data-line-gaps')).toBe('1');
+        cleanup();
+        mount(model({ kind: 'relationship', predictorSensors: ['A'] }), { target: 'T1', predictors: ['A'] }, withTests('relationship'));
+        for (const id of ['tvp', 'res']) {
+            expect(chartOf(id).getAttribute('data-bands')).toBe('TRAIN');
+            expect(chartOf(id).getAttribute('data-line-points')).toBe('5');
+            expect(chartOf(id).getAttribute('data-line-gaps')).toBe('1');
+        }
+    });
+
+    it('several train periods: the full-width chart reads "TRAIN P1" then "P2" (the word once); the half-width one the short "P1", "P2" — the scoring period is on neither', () => {
         const test_validation = makeValidation({
             train_ranges: [{ start: '2026-01-01T00:00', end: '2026-01-01T00:30' }, { start: '2026-01-01T01:00', end: '2026-01-01T01:30' }],
             tests: [makeTestResult()],
         });
         mount(model({ kind: 'relationship', predictorSensors: ['A'] }), { target: 'T1', predictors: ['A'] }, { test_validation });
-        expect(chartOf('res').getAttribute('data-strip')).toBe('TRAIN P1|P2|S1');
-        expect(chartOf('tvp').getAttribute('data-strip')).toBe('P1|P2|S1');
+        expect(chartOf('res').getAttribute('data-strip')).toBe('TRAIN P1|P2');
+        expect(chartOf('tvp').getAttribute('data-strip')).toBe('P1|P2');
+        expect(chartOf('res').getAttribute('data-bands')).toBe('TRAIN P1|TRAIN P2');
         expect(chartOf('fit').getAttribute('data-strip')).toBe(''); // a scatter has no time axis
         expect(screen.getByTestId('chart-card-tvp').querySelector('.wb2-card-s')!.textContent).toBe('°C · rows in the train and scoring periods');
     });
@@ -421,12 +447,16 @@ describe('ModelFitPage — train and scoring periods ("just score it", 2026-10-1
         expectNoTrainTestCard('model-fit-clustering');
     });
 
-    it('testNumbers name the scoring period on the chart strip by its ORIGINAL list position; slowScoring shows the hint', () => {
+    // The S-number of a scoring period (its ORIGINAL list position) is shown by the "Scoring results" card on the
+    // Health score page (HealthScorePage.test.tsx, BuildModelWindow.test.tsx) — this page prints no scoring name at all.
+    it('whatever testNumbers says, the chart strip names no scoring period (neither "S1" nor "S2"); slowScoring shows the hint', () => {
         const data = { ...makeHealthPreview({ kind: 'individual', target: 'T1' }), test_validation: makeValidation({ tests: [makeTestResult({ index: 1 })] }) };
         render(<ModelFitPage model={model()} stale={false} preview={{ ...idle, data }} unit="°C" data={data}
             onXPredictorChange={vi.fn()} onCompare={vi.fn()} testNumbers={[2]} slowScoring />);
-        // the user's list is [S1 not sent, S2]: the band of wire entry 1 reads "S2", never "S1"
-        expect(chartOf('ts').getAttribute('data-strip')).toBe('TRAIN|S2');
+        // the user's list is [S1 not sent, S2]
+        expect(chartOf('ts').getAttribute('data-strip')).toBe('TRAIN');
+        expect(chartOf('ts').getAttribute('data-bands')).toBe('TRAIN');
+        expect(screen.getByTestId('model-fit-individual').textContent).not.toMatch(/\bS[12]\b/);
         expect(screen.getByTestId('slow-test-scoring').textContent).toContain('Calculating the health score with the Relation model');
     });
 

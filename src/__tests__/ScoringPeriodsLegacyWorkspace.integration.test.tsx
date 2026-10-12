@@ -147,7 +147,7 @@ const chips = () => {
     return bmw().getAllByTestId('rc-card-test-chip').map(c => c.textContent ?? '');
 };
 const tile = (n: number) => bmw().getByTestId(`test-result-${n}`);
-/** Names in the strip above the last time chart drawn with `series` (the train / scoring shading). */
+/** Names in the strip above the last time chart drawn with `series` (the TRAIN shading — a scoring period is not drawn). */
 const stripOf = (series: string): string[] => {
     const chart = env.charts.filter(c => ((c.option?.series ?? []) as any[]).some(s => s?.name === series)).pop();
     const scopes = ((chart?.option?.series ?? []) as any[]).find(s => s?.name === '__scopes');
@@ -193,9 +193,11 @@ describe('a workspace saved before "just score it" (scoring periods with label /
         openDashFgTab();
         await waitFor(() => expect(dashDot(1, 'tag1', 'individual')).toBe('complete'));
         expect(dashDot(2, 'tag3', 'individual')).toBe('complete');
-        // Model fit: both old scoring periods reached the page — its time chart shades them, numbered
-        // S1 / S2 (the "Train and scoring periods" table that also listed them was removed 2026-10-11).
-        await waitFor(() => expect(stripOf('Value')).toEqual(['TRAIN', 'S1', 'S2']));
+        // Model fit: the time chart highlights the TRAIN period only (user decision 2026-10-12) — the two old
+        // scoring periods have no band and no name on it. Their plain S1 / S2 numbering is on the Step-1 chips
+        // (above) and on the "Scoring results" tiles (below); that both reached Rust is checked in 3).
+        // (The "Train and scoring periods" table that also listed them was removed 2026-10-11.)
+        await waitFor(() => expect(stripOf('Value')).toEqual(['TRAIN']));
         expect(bmw().queryByTestId('train-test-card')).toBeNull();
         expect(bmw().getByTestId('model-fit-individual').textContent).not.toMatch(REMOVED_UI);
 

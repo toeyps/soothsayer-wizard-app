@@ -10,7 +10,7 @@ import type {
 } from '../../../types/health';
 import { testNumberFor } from '../../../utils/timePeriods';
 import type { SensorInfo } from '../../sensor/sensorInfo';
-import { parseLocal } from '../periodDisplay';
+import { formatDataStamp, formatStamp, parseLocal } from '../periodDisplay';
 import { CHART, CHART_MONO, CLUSTER_COLORS, FONT, axisValueFormatter, fmtAxisValue, fmtNum } from './chartTheme';
 
 /*
@@ -27,8 +27,12 @@ import { CHART, CHART_MONO, CLUSTER_COLORS, FONT, axisValueFormatter, fmtAxisVal
  *
  * How a Workbench chart reads (DESIGN_SYSTEM §4
  * "Time scopes on charts" / "Quiet charts"):
- *   - train / scoring periods are NAMED in a thin strip above the plot (plain
- *     coloured mono text, two lanes) and are only a faint fill inside it;
+ *   - the TRAIN periods are named in a thin strip above the plot (plain coloured
+ *     mono text) and are only a faint fill inside it. A scoring period is NOT
+ *     drawn — no band, no frame, no name (user decision, 2026-10-12) — but its
+ *     rows are: the line runs through it exactly as through a train period;
+ *   - the hover tooltip is headed by the point's own date AND time in the one
+ *     Workbench format ("9 Feb 2026 23:50" — `timeHeadingFormatter`);
  *   - reference lines (±1SD, ±3SD, ±2RMSE, 80) are labelled OUTSIDE the plot on
  *     its right edge, so they need no legend row under the chart. A DATA line is
  *     never named on the plot — ECharts does not move an end label with its line
@@ -279,10 +283,11 @@ export interface HBand {
 // Train / scoring time scopes (a scoring period is only start → end)
 // ---------------------------------------------------------------------------
 
-/** One scope band on a time chart. `start`/`end` `null` = open (runs to the
- *  edge of the data). */
+/** One period of a time chart. `start`/`end` `null` = open (runs to the
+ *  edge of the data). Every period keeps its rows ON the line (`scopeIslands`);
+ *  only a train period is DRAWN as a band with a name (`scopeSeries`). */
 export interface TimeScope {
-    /** `'score'` = a scoring period (the magenta band). */
+    /** `'score'` = a scoring period: its rows are on the line, nothing else is drawn. */
     kind: 'train' | 'score';
     start: string | null;
     end: string | null;
@@ -293,7 +298,8 @@ export interface TimeScope {
     short: string;
 }
 
-/** What every Workbench time chart draws on top of its data. Built from
+/** The periods of a Workbench time chart: which rows the line shows (train AND
+ *  scoring) and which bands it draws (train only). Built from
  *  `HealthPreview.test_validation` by `scopesOf`
  *  and passed in explicitly through `TimeSeriesSpec.scopes`. */
 export interface TimeScopes {
@@ -311,6 +317,10 @@ export interface TimeScopes {
  * period is open at both ends, i.e. the whole time axis) and every scoring
  * period with its S-number. `null` when the preview carried no scoring
  * periods: the chart is then drawn exactly as before.
+ *
+ * The scoring ranges MUST stay in the result although no chart draws a band for
+ * them: `scopeIslands` reads every range to decide where the line is cut, so
+ * dropping them here would cut the scoring periods' rows off the line.
  *
  * S-numbers are the period's POSITION in the user's full list (invalid periods
  * included — they are not sent): `numbers` is `testPeriodsWirePlan(...).numbers`
@@ -345,8 +355,9 @@ export function scopesOf(v: ValidationResult | null | undefined, numbers?: reado
  * The scopes for a chart of HOURLY points (the Health score page): every range starts at the
  * start of its clock hour. An hourly point is drawn at its hour start, so a period that begins
  * inside an hour (04:30) has its first point at 04:00 — just before the period's own start,
- * outside every band, where the line would be cut on both sides and the point not drawn at all.
- * Only the drawn band moves; the period itself (and every number) is unchanged.
+ * outside every range, where the line would be cut on both sides and the point not drawn at all.
+ * Only the range the chart reads moves (where the line is cut, and where a train band starts);
+ * the period itself (and every number) is unchanged.
  */
 export function hourlyScopes(s: TimeScopes | null | undefined): TimeScopes | null {
     if (!s) return null;
@@ -364,10 +375,12 @@ export function narrowScopes(s: TimeScopes | null | undefined): TimeScopes | nul
     return s ? { ...s, narrow: true } : null;
 }
 
-/** Height of the strip above the plot that names the scopes: two text lanes,
- *  train on the upper one and scoring periods on the lower one. */
+/** Height of the strip above the plot that names the train periods. It is two text
+ *  lanes tall: the names sit on the upper one; the lower one (where the scoring
+ *  names were until 2026-10-12) is kept empty so the plot does not move. */
 export const SCOPE_STRIP = 26;
-/** Distance of a scope name from the top of the plot, per lane. */
+/** Distance of a scope name from the top of the plot, per lane. No chart prints on
+ *  the `score` lane any more (a scoring period is not drawn). */
 export const SCOPE_LANE = { train: 15, score: 3 } as const;
 /** Room right of the plot for the reference-line labels ("+2RMSE"). */
 export const REF_LABEL_GUTTER = 52;
@@ -431,7 +444,8 @@ export function withScopeGaps(points: [number, number | null][], islands: [numbe
     return out;
 }
 
-/** One scope band as it is drawn: clamped to the data's time range. */
+/** One scope band as it is drawn: clamped to the data's time range. The charts
+ *  hand `scopeStripNames` train bands only (`scopeSeries`). */
 export interface StripBand { kind: TimeScope['kind']; label: string; short: string; a: number; b: number }
 
 /**
@@ -475,10 +489,15 @@ export function scopeStripNames(
 
 /** The carrier series of the scope bands (no data of its own, drawn under the
  *  data). Each band carries its NAME in the strip above the plot — plain
- *  coloured text, never a pill and never inside the plot. */
+ *  coloured text, never a pill and never inside the plot.
+ *
+ *  ONLY THE TRAIN PERIODS are drawn (user decision, 2026-10-12): a scoring period
+ *  gets no band, no dashed frame and no "S1" name. Its rows stay on the line —
+ *  that is `scopeIslands`, which still reads every range. */
 function scopeSeries(scopes: TimeScopes, xMin: number, xMax: number): Record<string, unknown> {
     const name = { fontSize: 9, fontWeight: 600, fontFamily: CHART_MONO, padding: 0 };
     const bands: StripBand[] = scopes.ranges.flatMap(r => {
+        if (r.kind !== 'train') return [];
         const a = Math.max(xMin, r.start ? (scopeMs(r.start) ?? xMin) : xMin);
         const b = Math.min(xMax, r.end ? (scopeMs(r.end) ?? xMax) : xMax);
         return b >= a ? [{ kind: r.kind, label: r.label, short: r.short, a, b }] : [];
@@ -487,26 +506,18 @@ function scopeSeries(scopes: TimeScopes, xMin: number, xMax: number): Record<str
         short: !!scopes.compact,
         plotWidth: scopes.compact || scopes.narrow ? STRIP_PLOT_WIDTH.narrow : STRIP_PLOT_WIDTH.full,
     });
-    const area = bands.map((band, i) => {
-        const train = band.kind === 'train';
-        const line = train ? CHART.train : CHART.test;
-        return [
-            {
-                name: band.label,
-                xAxis: band.a,
-                // Train and scoring may overlap: train = a faint blue fill, scoring = a
-                // faint magenta fill + dashed outline, so a scoring period over train
-                // stays readable.
-                itemStyle: train
-                    ? { color: CHART.trainFill, borderWidth: 0 }
-                    : { color: CHART.testFill, borderColor: CHART.testOutline, borderWidth: 1, borderType: 'dashed' },
-                // Two text lanes in the strip ABOVE the plot: train names on the upper
-                // lane, scoring names on the lower one (so S1 over TRAIN never collide).
-                label: { ...name, show: names[i] !== null, color: line, position: 'top', distance: train ? SCOPE_LANE.train : SCOPE_LANE.score, formatter: names[i] ?? band.short },
-            },
-            { xAxis: band.b },
-        ];
-    });
+    const area = bands.map((band, i) => [
+        {
+            name: band.label,
+            xAxis: band.a,
+            // A faint blue fill, no frame.
+            itemStyle: { color: CHART.trainFill, borderWidth: 0 },
+            // The name sits in the strip ABOVE the plot, on the train lane (the lane
+            // under it, once the scoring names', stays empty: the layout is unchanged).
+            label: { ...name, show: names[i] !== null, color: CHART.train, position: 'top', distance: SCOPE_LANE.train, formatter: names[i] ?? band.short },
+        },
+        { xAxis: band.b },
+    ]);
     return {
         type: 'line',
         name: '__scopes',
@@ -583,22 +594,58 @@ export interface TimeSeriesSpec {
     /** Fixed Y range (the Health score chart is always 0-100); overrides the
      *  data-driven one. */
     yRange?: [number, number];
-    /** Train / scoring scope bands (`scopesOf`). Absent / null = no scopes (the
-     *  chart is drawn as before). Only drawn on a time axis. */
+    /** The train / scoring periods (`scopesOf`): the line shows the rows of all of
+     *  them, a band + name is drawn for the train ones only. Absent / null = no
+     *  scopes (the chart is drawn as before). Only on a time axis. */
     scopes?: TimeScopes | null;
 }
 
 /** Value(s) over time with horizontal reference lines and shaded bands. The
  *  Y range always includes every `hLine` / `band`, so a ±3SD line outside the
- *  data is still on screen. With `scopes`, the train / scoring periods are
- *  faint bands named in the strip above the plot, and time outside every period
- *  is a gap in the line. Reference-line labels sit outside the plot on its right
- *  edge (the grid keeps a gutter for them), set-point labels inside it. */
+ *  data is still on screen. With `scopes`, the train periods are faint bands
+ *  named in the strip above the plot, and time outside every period (train or
+ *  scoring) is a gap in the line. Reference-line labels sit outside the plot on
+ *  its right edge (the grid keeps a gutter for them), set-point labels inside it.
+ *  The hover tooltip is headed by the point's date and time (`timeHeadingFormatter`). */
 /** The hover crosshair of every time chart: on its own canvas layer, and it never asks the
  *  series to "emphasise". Without both, every mousemove re-strokes every line of the chart
  *  (same fix, same reason, as the Dashboard's LineChart). An option that sets its own
  *  top-level `axisPointer` (the Health score page's linked cursor) must spread this in. */
 export const HOVER_AXIS_POINTER = { zlevel: 1, triggerEmphasis: false } as const;
+
+/**
+ * The heading of the hover tooltip on a TIME axis: the hovered point's own date and
+ * time in the one Workbench format — "9 Feb 2026 23:50", ":SS" added only when the
+ * row's seconds are not zero (`formatDataStamp`, the same text as the read-outs
+ * beside the charts). Goes on the X axis as `axisPointer.label.formatter`.
+ *
+ * Why it is needed: left alone, ECharts heads an axis tooltip with the time axis'
+ * DEFAULT pointer label, whose precision follows the axis' tick unit — a chart
+ * showing months or days has day ticks, so the heading read "2025-03-14" with no
+ * time at all (it only gained one after zooming in to hour ticks).
+ *
+ * `value` is the X value the pointer snapped to: one of `ms`, the wall-clock ms of
+ * a row (`parseTimestamps`). The heading is printed from that ROW'S OWN TEXT, so
+ * it is never shifted to another time zone and agrees with the read-out to the
+ * second. An X value that is no row (the `null` the line carries across a gap
+ * between two periods) is printed from the ms themselves — the same wall clock.
+ * The ms → row lookup is built at the first hover, not per chart build.
+ */
+export function timeHeadingFormatter(timestamps: readonly string[], ms: readonly number[]): (p: { value?: unknown }) => string {
+    let rowAt: Map<number, number> | null = null;
+    return ({ value }) => {
+        const x = typeof value === 'number' ? value : Number(value);
+        if (!Number.isFinite(x)) return String(value ?? '');
+        if (!rowAt) {
+            rowAt = new Map();
+            for (let i = ms.length - 1; i >= 0; i--) rowAt.set(ms[i], i);
+        }
+        const row = rowAt.get(x);
+        if (row !== undefined) return formatDataStamp(timestamps[row], { seconds: true });
+        const sec = new Date(x).getSeconds();
+        return `${formatStamp(x)}${sec !== 0 ? `:${String(sec).padStart(2, '0')}` : ''}`;
+    };
+}
 
 export function buildTimeSeriesOption(spec: TimeSeriesSpec) {
     const { timestamps, lines, hLines = [], bands = [], yName } = spec;
@@ -679,7 +726,9 @@ export function buildTimeSeriesOption(spec: TimeSeriesSpec) {
         grid: { left: 58, right, top: scopes ? 10 + SCOPE_STRIP : 14, bottom: 28, containLabel: false },
         dataZoom: [{ type: 'inside', xAxisIndex: 0, filterMode: 'none' }],
         xAxis: ms
-            ? { type: 'time', ...axisCommon, splitLine: { show: false } }
+            // The pointer label itself stays hidden (a tooltip's axis shows none); its
+            // formatter is what heads the tooltip — the value rows under it are ECharts' own.
+            ? { type: 'time', ...axisCommon, splitLine: { show: false }, axisPointer: { label: { formatter: timeHeadingFormatter(timestamps, ms) } } }
             : { type: 'category', data: timestamps, boundaryGap: false, ...axisCommon, axisLabel: { ...axisCommon.axisLabel, hideOverlap: true }, splitLine: { show: false } },
         yAxis: {
             type: 'value',

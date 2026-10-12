@@ -85,8 +85,10 @@ describe('SubModelsModal', () => {
 
     it('is a modal dialog; Escape, the backdrop and the X close it, a click inside does not', () => {
         const onClose = show(fits({ subModels: [] }));
-        expect(screen.getByRole('dialog', { name: 'Sub-models' })).toBeTruthy();
-        fireEvent.click(screen.getByText('Sub-models'));
+        expect(screen.getByRole('dialog', { name: 'Compare predictors' })).toBeTruthy();
+        // "Sub-model" reads as "more than one fitted model" to the user: the words never show.
+        expect(screen.getByTestId('sub-models-modal').textContent).not.toMatch(/sub-?\s?models?/i);
+        fireEvent.click(screen.getByText('Compare predictors'));
         expect(onClose).not.toHaveBeenCalled();
         fireEvent.keyDown(window, { key: 'Escape' });
         expect(onClose).toHaveBeenCalledTimes(1);
@@ -112,10 +114,10 @@ describe('SubModelsModal', () => {
         expect(screen.getByText('No target sensor selected.')).toBeTruthy();
         cleanup();
         show(fits(), { predictorCount: 0 });
-        expect(screen.getByText('Add at least one predictor to compute sub-models.')).toBeTruthy();
+        expect(screen.getByText('Add at least one predictor to compare.')).toBeTruthy();
         cleanup();
         show(fits({ loading: true, progress: { current: 1, total: 3 } }));
-        expect(screen.getByText(/Fitting Relation model 2 of 3/)).toBeTruthy();
+        expect(screen.getByText(/Fitting step 2 of 3/)).toBeTruthy();
         cleanup();
         show(fits({ error: 'The Relation model engine could not fit this model. The details are in the error log.' }));
         expect(screen.getByText('The Relation model engine could not fit this model. The details are in the error log.')).toBeTruthy();

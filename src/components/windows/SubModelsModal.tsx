@@ -145,13 +145,16 @@ export default function SubModelsModal({ fits, targetSensor, predictorCount, sti
     }, [onClose]);
 
     return (
-        <div className="pm-preview-modal-backdrop" onClick={onClose} role="dialog" aria-modal="true" aria-label="Sub-models" data-testid="sub-models-modal">
+        <div className="pm-preview-modal-backdrop" onClick={onClose} role="dialog" aria-modal="true" aria-label="Compare predictors" data-testid="sub-models-modal">
             <div className="pm-preview-modal-card pm-submodels-modal-card" onClick={e => e.stopPropagation()}>
                 <div className="pm-preview-modal-header">
                     <div className="pm-chart-title-block">
-                        <div className="pm-chart-title">Sub-models</div>
+                        {/* The user reads "sub-model" as "this model has more than one fitted model" (2026-10-12)
+                            — it has ONE; this view only refits it with the predictors added one
+                            at a time. So the words "sub-model(s)" never appear on screen. */}
+                        <div className="pm-chart-title">Compare predictors</div>
                         <div className="pm-chart-subtitle">
-                            One Relation model fit per cumulative-feature subset · target: <code>{targetSensor || '—'}</code> · stiffness: <code>{stiffnessText}</code>
+                            The fit with the predictors added one at a time — the last step is the model you trained · target: <code>{targetSensor || '—'}</code> · stiffness: <code>{stiffnessText}</code>
                         </div>
                     </div>
                     <button className="pm-chart-modal-close" onClick={onClose} title="Close (Esc)" aria-label="Close">
@@ -162,17 +165,17 @@ export default function SubModelsModal({ fits, targetSensor, predictorCount, sti
                     {!targetSensor ? (
                         <div className="pm-preview-empty">No target sensor selected.</div>
                     ) : predictorCount === 0 ? (
-                        <div className="pm-preview-empty">Add at least one predictor to compute sub-models.</div>
+                        <div className="pm-preview-empty">Add at least one predictor to compare.</div>
                     ) : loading ? (
                         <div className="pm-preview-empty">
                             <Loader2 size={14} className="animate-spin" />
-                            Fitting Relation model {Math.min(progress.current + 1, progress.total)} of {progress.total}…
+                            Fitting step {Math.min(progress.current + 1, progress.total)} of {progress.total}…
                         </div>
                     ) : error ? (
                         <div className="pm-preview-error">{error}</div>
                     ) : !subModels || subModels.length === 0 ? (
                         <div className="pm-preview-empty">
-                            No sub-models computed yet.
+                            Nothing compared yet.
                             <button className="pm-btn pm-btn-secondary pm-btn-sm" onClick={() => { void run(); }} style={{ marginLeft: 8 }}>
                                 Run now
                             </button>
