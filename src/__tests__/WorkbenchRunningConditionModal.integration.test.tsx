@@ -142,6 +142,26 @@ const changed = (a: Record<string, string>, b: Record<string, string>) => MODELS
 
 const wsWrites = (id = WS) => env.writes.filter(w => w.path === wsFile(id)).length;
 const counts = () => env.backend!.cmds('count_period_rows');
+/** Running rows Rust answered for the LAST count (what the card's "nothing to train on" verdict reads). */
+const lastCountRows = () => (counts().slice(-1)[0]?.result as { union: { running_rows: number } } | undefined)?.union.running_rows;
+/**
+ * User decision 2026-10-14: the Build Model window never says how many data rows are used.
+ * The card prints NO count whatever `count_period_rows` answered — no "N rows · x%", no
+ * "Counting rows…", no "— rows", no share meter.
+ */
+const expectCardHasNoRowCount = () => {
+    const c = bmw().getByTestId('rc-card');
+    for (const id of ['rc-card-rows', 'rc-card-pct', 'rc-card-rows-loading', 'rc-card-rows-error']) expect(within(c).queryByTestId(id)).toBeNull();
+    expect(c.querySelector('.rcc-meter')).toBeNull();
+    expect(c.textContent).not.toMatch(/\d[\d,]*\s*rows?\b|Counting rows|— rows|%/);
+};
+/** "M" of the caption's "(about M d running time)" — the only thing the settings print of a
+ *  count; null while no running time is claimed. The caption has NO rows part. */
+const runningTime = (dlg: ReturnType<typeof within>) => {
+    expect(dlg.queryByTestId('rc-caption-rows')).toBeNull();
+    expect(dlg.getByTestId('rc-caption').textContent).not.toMatch(/rows|%/);
+    return dlg.getByTestId('rc-caption-train').textContent!.match(/\(about (.+) d running time\)$/)?.[1] ?? null;
+};
 const trains = () => env.backend!.calls.filter(c =>
     c.cmd === 'preview_relationship_model' || c.cmd === 'compute_clustering_preview' || c.cmd === 'compute_sensor_stats');
 const openRc = () => {
@@ -308,15 +328,18 @@ describe('2. count_period_rows: how often it is asked, and that the card counts 
         expect(counts()[0].args.expected_generation).toBe(env.backend!.generation());
         expect(counts()[0].error).toBeUndefined();
         expect((counts()[0].result as any).union.running_rows).toBe(37);
-        expect(bmw().getByTestId('rc-card-rows').textContent).toBe('37');
-        expect(bmw().getByTestId('rc-card-pct').textContent).toBe('rows · 62%');
+        // …and the card prints none of it ("37 rows · 62%" is gone): it stays the plain green line
+        expectCardHasNoRowCount();
+        expect(bmw().getByTestId('rc-card').getAttribute('data-norows')).toBeNull();
+        expect(bmw().getByTestId('rc-card-use').textContent).toBe('');
         // closed modal: nothing more, however long the window sits there
         await settle(900);
         expect(counts()).toHaveLength(1);
 
         // ── open: the draft's train + scoring counts (two calls) ────────────
         const dlg = openRc();
-        await waitFor(() => expect(dlg.getByTestId('rc-caption-rows').textContent).toBe('37 of 60 rows (62%) used for training'));
+        // 37 running rows, one per hour = 1.5 d of running time — days, never "37 of 60 rows (62%) …"
+        await waitFor(() => expect(runningTime(dlg)).toBe('1.5'));
         await settle(600);
         expect(counts()).toHaveLength(3);
         expect(dlg.getByTestId('period-running-1').textContent).toMatch(/1\.5 d running/);
@@ -327,22 +350,24 @@ describe('2. count_period_rows: how often it is asked, and that the card counts 
         type(value, '20');
         type(value, '200');
         type(value, '20');
-        await waitFor(() => expect(dlg.getByTestId('rc-caption-rows').textContent).toBe('27 of 60 rows (45%) used for training'), { timeout: 4000 });
+        await waitFor(() => expect(runningTime(dlg)).toBe('1.1'), { timeout: 4000 }); // 27 running rows
         await settle(600);
         expect(counts().length).toBeLessThanOrEqual(5);
         expect(counts().length).toBeGreaterThan(3);
-        // the card is still the PERSISTED condition
-        expect(bmw().getByTestId('rc-card-rows').textContent).toBe('37');
+        // the card behind is still the PERSISTED condition — and still says nothing about rows
+        expectCardHasNoRowCount();
 
         // ── Apply: the card counts the new on-disk state, once ──────────────
         const n = counts().length;
         await act(async () => { fireEvent.click(apply()); });
         await waitFor(() => expect(readDisk().failureGroupState.runningConditionFilters[0].value1).toBe('20'));
-        await waitFor(() => expect(bmw().getByTestId('rc-card-rows').textContent).toBe('27'));
+        await waitFor(() => expect(counts().length).toBe(n + 1));
+        await waitFor(() => expect(lastCountRows()).toBe(27));
         await settle(600);
         expect(counts().slice(n)).toHaveLength(1);
+        expectCardHasNoRowCount();
         expect(cardCallFor([P1], 20)).not.toHaveLength(0);
-        expect(counts().slice(n)[0].args.periods).toHaveLength(1); // train only: the card prints no scoring count
+        expect(counts().slice(n)[0].args.periods).toHaveLength(1); // train only: the card reads no scoring count
 
         // ── a Custom model: its own counts on Model fit, NONE on Health score ─
         selectSensor('tag5', 2);
@@ -369,15 +394,17 @@ describe('2. count_period_rows: how often it is asked, and that the card counts 
         // the Dashboard's write kept the other writer's condition…
         expect(readDisk().failureGroupState.runningConditionFilters[0].value1).toBe('40');
         // …and the card now counts exactly that (rows 41..47 of P1 = 7), with one call
-        await waitFor(() => expect(bmw().getByTestId('rc-card-rows').textContent).toBe('7'), { timeout: 3000 });
+        await waitFor(() => expect(cardCallFor([P1], 40)).toHaveLength(1), { timeout: 3000 });
+        await waitFor(() => expect((cardCallFor([P1], 40)[0].result as any)?.union.running_rows).toBe(7));
         await settle(600);
+        expectCardHasNoRowCount();
         expect(counts().slice(beforeDash)).toHaveLength(1);
         expect(cardCallFor([P1], 40)).toHaveLength(1);
         // every call of the whole session was accepted by the strict fake (snake_case keys, generation)
         expect(counts().filter(c => c.error).map(c => c.error)).toEqual([]);
     });
 
-    it('STALE_SESSION (a window left over from another dataset): the quiet line instead of numbers — and Apply is not blocked by it', async () => {
+    it('STALE_SESSION (a window left over from another dataset): the quiet "data changed" line, no running time — and Apply is not blocked by it', async () => {
         seed();
         await mountWindows();
         selectSensor('tag1');
@@ -386,9 +413,10 @@ describe('2. count_period_rows: how often it is asked, and that the card counts 
         env.backend!.loadDataset('plant');
         const dlg = openRc();
         await waitFor(() => expect(counts().some(c => /^STALE_SESSION/.test(c.error ?? ''))).toBe(true));
-        await waitFor(() => expect(dlg.getByTestId('rc-caption-rows').textContent)
-            .toBe('The data changed — close this window and open Build Model again to count the rows'));
-        expect(dlg.getByTestId('rc-caption-rows').className).toContain('rct-cap-quiet');
+        await waitFor(() => expect(dlg.getByTestId('rc-caption-data-changed').textContent)
+            .toBe('The data changed — close this window and open Build Model again'));
+        expect(dlg.getByTestId('rc-caption-data-changed').className).toContain('rct-cap-quiet');
+        expect(runningTime(dlg)).toBeNull();
         expect(dlg.queryByTestId('rc-no-rows')).toBeNull();
         expect(bmw().queryByTestId('rc-apply-block')).toBeNull();
 
@@ -402,6 +430,7 @@ describe('2. count_period_rows: how often it is asked, and that the card counts 
         await waitFor(() => expect(readDisk().failureGroupState.runningConditionFilters[0].value1).toBe('20'));
         // the card: no number and no red "nothing to train on"
         await settle(300);
+        expectCardHasNoRowCount();
         expect(bmw().getByTestId('rc-card').getAttribute('data-norows')).toBeNull();
         expect(bmw().queryByTestId('rc-card-no-rows')).toBeNull();
     });
@@ -441,7 +470,12 @@ describe('2. count_period_rows: how often it is asked, and that the card counts 
         // the window shows ws2: its model list, its condition, its count (rows 51..59 = 9)
         expect(bmw().queryByTestId('sensor-list-row-fg:1-tag1')).toBeNull();
         expect(bmw().getByTestId('sensor-list-row-fg:1-tag3')).toBeTruthy();
-        await waitFor(() => expect(bmw().getByTestId('rc-card-rows').textContent).toBe('9'));
+        await waitFor(() => {
+            const c = counts().slice(-1)[0];
+            expect(c.args.periods.map((p: any) => p.start)).toEqual([P_WS2.start]);
+            expect((c.result as any)?.union.running_rows).toBe(9);
+        });
+        expectCardHasNoRowCount();
         expect(bmw().queryByTestId('rc-retrain-notice')).toBeNull();
         expect(bmwEl().querySelector('[role="dialog"]')).toBeNull();
         // ws1's slice was never broadcast from this window after it had moved on
@@ -459,13 +493,13 @@ describe('2. count_period_rows: how often it is asked, and that the card counts 
 // ---------------------------------------------------------------------------
 
 describe('3. typing a date in a period row', () => {
-    it('a complete date moves the timeline, the caption (with Rust\'s new count) and the impact line BEFORE Apply; a half-typed date shows the grey line and is never written; a cleared bound keeps its date through Apply', async () => {
+    it('a complete date moves the timeline, the caption (with the running time of Rust\'s new count) and the impact line BEFORE Apply; a half-typed date shows the grey line and is never written; a cleared bound keeps its date through Apply', async () => {
         seed();
         await mountWindows();
         selectSensor('tag1');
         await waitForCharts();
         const dlg = openRc();
-        await waitFor(() => expect(dlg.getByTestId('rc-caption-rows').textContent).toBe('37 of 60 rows (62%) used for training'));
+        await waitFor(() => expect(runningTime(dlg)).toBe('1.5')); // 37 running rows, one per hour
         const tl0 = dlg.getByTestId('rc-tl-P1').getAttribute('style');
         const train0 = dlg.getByTestId('rc-caption-train').textContent;
 
@@ -477,7 +511,8 @@ describe('3. typing a date in a period row', () => {
         expect(dlg.getByTestId('rc-caption-train').textContent).not.toBe(train0);
         expect(impact().textContent).toBe('Applying sets 3 models back to Incomplete — they need training again');
         expect(bmw().queryByTestId('rc-pending-date')).toBeNull();
-        await waitFor(() => expect(dlg.getByTestId('rc-caption-rows').textContent).toBe('14 of 60 rows (23%) used for training'), { timeout: 4000 });
+        await waitFor(() => expect(runningTime(dlg)).toBe('0.6'), { timeout: 4000 }); // 14 running rows
+        expect(lastCountRows()).toBe(14);
         expect(document.activeElement).toBe(end); // the row never moved under the cursor
         expect(readDisk().failureGroupState.runningConditionTimePeriods).toEqual([P1]);
 
@@ -489,15 +524,20 @@ describe('3. typing a date in a period row', () => {
         expect(impact().firstElementChild!.textContent).toBe('Applying sets 3 models back to Incomplete — they need training again');
         expect(bmw().queryByTestId('rc-apply-block')).toBeNull(); // not "P1 needs an end date"
         await settle(600);
-        expect(dlg.getByTestId('rc-caption-rows').textContent).toBe('14 of 60 rows (23%) used for training');
+        expect(runningTime(dlg)).toBe('0.6');
 
         // ── Apply with the field still half-typed: the last complete date is written, never '' ──
         const writes = wsWrites();
+        const countsBeforeApply = counts().length;
         await act(async () => { fireEvent.click(apply()); });
         await waitFor(() => expect(wsWrites()).toBeGreaterThan(writes));
         await settle(100);
         expect(readDisk().failureGroupState.runningConditionTimePeriods).toEqual([{ ...P1, end: '2026-01-02T00:00' }]);
-        await waitFor(() => expect(bmw().getByTestId('rc-card-rows').textContent).toBe('14'));
+        // the card counts what was written (its own call, after the Apply) — and prints none of it
+        await waitFor(() => expect(counts().length).toBeGreaterThan(countsBeforeApply));
+        await waitFor(() => expect(lastCountRows()).toBe(14));
+        expect(counts().slice(-1)[0].args.periods).toEqual([{ start: P1.start, end: '2026-01-02T00:00' }]);
+        expectCardHasNoRowCount();
 
         // ── a SET bound cleared in the field, then Apply (with another edit): the date stays ──
         const again = openRc();
@@ -512,7 +552,12 @@ describe('3. typing a date in a period row', () => {
         const fg = readDisk().failureGroupState;
         expect(fg.runningConditionFilters[0].value1).toBe('12');
         expect(fg.runningConditionTimePeriods).toEqual([{ ...P1, end: '2026-01-02T00:00' }]); // not "Start of data"
-        // the card counts what was written: rows 13..24 = 12
-        await waitFor(() => expect(bmw().getByTestId('rc-card-rows').textContent).toBe('12'));
+        // the card counts what was written: rows 13..24 = 12 (asked of Rust, never printed)
+        await waitFor(() => {
+            const c = counts().slice(-1)[0];
+            expect(c.args.filter.value_filters[0].value1).toBe(12);
+            expect((c.result as any)?.union.running_rows).toBe(12);
+        });
+        expectCardHasNoRowCount();
     });
 });

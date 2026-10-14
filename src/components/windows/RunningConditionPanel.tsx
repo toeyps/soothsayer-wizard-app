@@ -25,8 +25,9 @@ import TimePeriodsEditor, { type PeriodBounds } from './TimePeriodsEditor';
  *   Scoring periods            one eyebrow line · one quiet line per period
  *   When the plant is running  one eyebrow line · one radio row · one-line conditions
  *
- * No right-hand preview column (the row count lives in the caption) and no
- * callout boxes. Presentation only: every value and handler arrives through
+ * No right-hand preview column and no callout boxes. No number of data rows
+ * either (user decision 2026-10-14): the counts are shown as running DAYS — in
+ * the caption and at the end of each period row — never as rows or a percentage. Presentation only: every value and handler arrives through
  * props, and nothing here writes anything.
  */
 
@@ -115,8 +116,8 @@ export default function RunningConditionPanel({
     const custom = scope === 'custom';
     // "Only when running" without a complete condition: the count would be of
     // EVERY row (no condition is sent), which is not what will be trained on once
-    // the condition is set — so no running days on the rows, and the caption asks
-    // for the condition instead of printing "N of N rows (100%)".
+    // the condition is set — so no running days on the rows, and the caption
+    // claims no running time either.
     const rowCounts = configured ? counts : PERIOD_COUNTS_IDLE;
     const validCount = validatePeriods(periods).filter(s => !s.invalid).length;
     const headers = sensors.length ? sensors : null;

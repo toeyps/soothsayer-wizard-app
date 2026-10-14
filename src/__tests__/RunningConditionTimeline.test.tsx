@@ -185,51 +185,65 @@ describe('RunningConditionTimeline — lanes', () => {
 
 describe('RunningConditionTimeline — the one caption', () => {
     const cap = () => screen.getByTestId('rc-caption');
+    /**
+     * User decision 2026-10-14: the Build Model window never says how many data rows are
+     * used. The caption has no rows part in ANY state of the count — no "N of M rows (x%)
+     * used for training", no "Counting rows…", no "… to count the rows".
+     */
+    const expectNoRowsPart = () => {
+        expect(screen.queryByTestId('rc-caption-rows')).toBeNull();
+        expect(cap().querySelector('.rct-cap-rows')).toBeNull();
+        expect(cap().textContent).not.toMatch(/rows|%|used for training/i);
+        expect(cap().textContent).not.toMatch(/14,391|25,880|17,280/);
+    };
+    const parts = () => [...cap().children].map(x => x.getAttribute('data-testid'));
 
-    it('no train period: "no train period · no scoring time · add a train period to count the rows", no recommendation', () => {
+    it('no train period: "no train period · no scoring time" — no recommendation, nothing about rows', () => {
         show([], []);
         expect(cap().getAttribute('data-rows')).toBe('no-train');
         expect(screen.getByTestId('rc-caption-train').textContent).toBe('no train period');
         expect(screen.getByTestId('rc-caption-scoring').textContent).toBe('no scoring time');
-        expect(screen.getByTestId('rc-caption-rows').textContent).toBe('add a train period to count the rows');
+        expect(parts()).toEqual(['rc-caption-train', 'rc-caption-scoring']);
+        expectNoRowsPart();
         expect(screen.queryByTestId('rc-min-data')).toBeNull();
     });
 
-    it('the running condition is not configured: "set the condition to count the rows" instead of a count of every row; no running time, no amber', () => {
+    it('the running condition is not configured: the count of every row is not read — no running time, no amber, nothing about rows', () => {
         render(<RunningConditionTimeline periods={[P1, P2]} tests={[S1]} bounds={bounds} counts={st('ok', train(17_280, 60))} configured={false} />);
         expect(cap().getAttribute('data-rows')).toBe('no-condition');
-        expect(screen.getByTestId('rc-caption-rows').textContent).toBe('set the condition to count the rows');
         expect(screen.getByTestId('rc-caption-train').textContent).toBe('60 d train');
         expect(cap().className).not.toContain('rct-cap--warn');
-        expect(cap().textContent).not.toMatch(/%|of 25,880/);
+        expect(cap().textContent).toBe('60 d train15 d scoring≥ 30 d recommended');
+        expectNoRowsPart();
     });
 
-    it('first count on its way: calendar days at once, "Counting rows…" for the rows', () => {
+    it('first count on its way: calendar days at once — no "Counting rows…"', () => {
         show([P1, P2], [S1], st('loading', null));
         expect(cap().getAttribute('data-rows')).toBe('loading');
         expect(screen.getByTestId('rc-caption-train').textContent).toBe('60 d train');
         expect(screen.getByTestId('rc-caption-scoring').textContent).toBe('15 d scoring');
-        expect(screen.getByTestId('rc-caption-rows').textContent).toBe('Counting rows…');
         expect(screen.getByTestId('rc-min-data').textContent).toBe('≥ 30 d recommended');
+        expect(parts()).toEqual(['rc-caption-train', 'rc-caption-scoring', 'rc-min-data']);
+        expectNoRowsPart();
     });
 
-    it('counted: "60 d train (about 50 d running time) · 15 d scoring · 14,391 of 25,880 rows (56%) used for training · ≥ 30 d recommended"', () => {
+    it('counted: "60 d train (about 50 d running time) · 15 d scoring · ≥ 30 d recommended" — the running DAYS stay, the rows used / total / % are gone', () => {
         show([P1, P2], [S1], st('ok', train(14_391, 49.97)));
         expect(cap().getAttribute('data-rows')).toBe('counted');
-        expect(cap().textContent).toBe('60 d train (about 50 d running time)15 d scoring14,391 of 25,880 rows (56%) used for training≥ 30 d recommended');
-        const rows = screen.getByTestId('rc-caption-rows');
-        expect(rows.querySelector('b')!.textContent).toBe('14,391');
-        expect(rows.getAttribute('data-stale')).toBeNull();
+        expect(cap().textContent).toBe('60 d train (about 50 d running time)15 d scoring≥ 30 d recommended');
+        // three parts, no empty slot left where the rows part was
+        expect(parts()).toEqual(['rc-caption-train', 'rc-caption-scoring', 'rc-min-data']);
+        expect(cap().querySelector('b')).toBeNull();
+        expectNoRowsPart();
         expect(cap().className).not.toContain('rct-cap--warn');
         expect(screen.getByTestId('rc-min-data').getAttribute('data-below')).toBeNull();
     });
 
-    it('a new count on its way keeps the previous numbers, dimmed (no flicker back to "Counting rows…")', () => {
+    it('a new count on its way keeps the previous running time (no flicker) — and still no rows part', () => {
         show([P1, P2], [S1], st('loading', train(14_391, 49.97)));
-        const rows = screen.getByTestId('rc-caption-rows');
-        expect(rows.textContent).toBe('14,391 of 25,880 rows (56%) used for training');
-        expect(rows.getAttribute('data-stale')).toBe('true');
-        expect(rows.className).toContain('rct-stale');
+        expect(cap().getAttribute('data-rows')).toBe('counted');
+        expect(screen.getByTestId('rc-caption-train').textContent).toBe('60 d train (about 50 d running time)');
+        expectNoRowsPart();
     });
 
     it('below 30 d of train running time: the recommendation turns amber (the sentence is its tooltip) — it never blocks', () => {
@@ -242,32 +256,34 @@ describe('RunningConditionTimeline — the one caption', () => {
         expect(min.title).toMatch(/^Only 12 d of train running time/);
     });
 
-    it('a failed count: one quiet line instead of numbers', () => {
+    it('a failed count: the calendar days alone — no "Couldn\'t count the rows right now"', () => {
         show([P1], [S1], st('error', null));
         expect(cap().getAttribute('data-rows')).toBe('error');
-        const rows = screen.getByTestId('rc-caption-rows');
-        expect(rows.textContent).toBe("Couldn't count the rows right now");
-        expect(rows.className).toContain('rct-cap-quiet');
         expect(screen.getByTestId('rc-caption-train').textContent).toBe('30 d train');
-        expect(cap().textContent).not.toMatch(/\d of \d/);
+        expect(cap().textContent).toBe('30 d train15 d scoring≥ 30 d recommended');
+        expect(screen.queryByTestId('rc-caption-data-changed')).toBeNull();
+        expectNoRowsPart();
     });
 
-    it('the dataset changed under the window (STALE_SESSION): says to reopen, still no numbers', () => {
+    it('the dataset changed under the window (STALE_SESSION): one quiet line says to reopen — a warning, not a count', () => {
         show([P1], [], st('error', null, 'STALE_SESSION'));
-        expect(screen.getByTestId('rc-caption-rows').textContent).toBe('The data changed — close this window and open Build Model again to count the rows');
+        const line = screen.getByTestId('rc-caption-data-changed');
+        expect(line.textContent).toBe('The data changed — close this window and open Build Model again');
+        expect(line.className).toBe('rct-cap-quiet');
+        expectNoRowsPart();
     });
 
-    it('an invalid train period: no total until it is fixed', () => {
+    it('an invalid train period: the valid days only, no running time until it is fixed (and no "fix the period to count the rows")', () => {
         show([P1, p('b', '2026-04-01T00:00', '2026-03-02T00:00')], [], st('ok', train(14_391, 49.97)));
         expect(cap().getAttribute('data-rows')).toBe('fix');
-        expect(screen.getByTestId('rc-caption-rows').textContent).toBe('fix the period to count the rows');
         expect(screen.getByTestId('rc-caption-train').textContent).toBe('30 d train'); // the valid one only
+        expectNoRowsPart();
     });
 
     it('nothing is being counted (hook disabled): the calendar parts only', () => {
         show([P1], [S1]);
         expect(cap().getAttribute('data-rows')).toBe('idle');
-        expect(screen.queryByTestId('rc-caption-rows')).toBeNull();
         expect(cap().textContent).toBe('30 d train15 d scoring≥ 30 d recommended');
+        expectNoRowsPart();
     });
 });

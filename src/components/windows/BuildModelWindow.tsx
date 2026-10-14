@@ -32,7 +32,7 @@ import { validatePeriods, testPeriodsKey, testPeriodsError, testPeriodsWirePlan,
 import { SLOW_TEST_SCORING_TEXT, testsChangedNotice, testsChangedNoticeParts, testsChangedState } from "../../utils/trainTestValidation";
 import { STIFFNESS_OPTIONS, STIFFNESS_DEFAULT, stiffnessLabel, snapStiffness } from "../reports/pmReportTypes";
 import RunningConditionPanel, { RunningConditionPills } from "./RunningConditionPanel";
-import { RunningConditionCard, cardRowsFromCounts, type RcStepState } from "./RunningConditionCard";
+import { RunningConditionCard, type RcStepState } from "./RunningConditionCard";
 import { SensorPickerModal } from "./SensorPickers";
 import { SensorInline, SensorLabel } from "../sensor/SensorLabel";
 import { SensorMetaContext, fmtNumText, sensorHaystack, sensorTitle, useLayeredSensorLookup } from "../sensor/sensorInfo";
@@ -1300,10 +1300,12 @@ export default function BuildModelWindow() {
     // Nothing is written, and no model's `status`, fingerprint or `healthVerdict`
     // changes.
     //
-    // Row counts — ONE source for every "rows used" / "running days" number of this
-    // window: Rust's `count_period_rows` (`usePeriodCounts`), so the one-line card,
-    // the settings modal and the amber "below the recommended train time" note can
-    // never disagree about the same condition. Three instances:
+    // Period counts — ONE source for every "running days" number and every "nothing
+    // to train on" verdict of this window: Rust's `count_period_rows`
+    // (`usePeriodCounts`), so the one-line card, the settings modal and the amber
+    // "below the recommended train time" note can never disagree about the same
+    // condition. The NUMBER of rows is never shown anywhere in this window (user
+    // decision 2026-10-14) — the counts feed the gate and the days only. Three instances:
     //  - the card (here): the PERSISTED workspace condition — its train periods
     //    only, so ONE call per settled persisted state (none while the window loads);
     //  - the settings modal: its draft, only while it is open (debounced, at most
@@ -1326,7 +1328,7 @@ export default function BuildModelWindow() {
         enabled: !loading && rcConfigured && !persistedPeriodsInvalid && runningConditionTimePeriods.length > 0,
         workspaceId,
         trainPeriods: runningConditionTimePeriods,
-        // The card prints no scoring count: no second call.
+        // The card reads no scoring count: no second call.
         scoringPeriods: NO_PERIODS,
         filter: persistedCountFilter,
         expectedGeneration: generation,
@@ -1334,7 +1336,6 @@ export default function BuildModelWindow() {
         // write), never per keystroke: nothing to wait for.
         debounceMs: 0,
     });
-    const cardRows = useMemo(() => cardRowsFromCounts(cardCounts), [cardCounts]);
     /** The persisted workspace condition is counted (settled) and its train periods
      *  hold no running row: no Workspace-mode model can TRAIN (nothing else changes). */
     const cardNoRows = countedNoTrainRows(cardCounts);
@@ -4830,7 +4831,6 @@ export default function BuildModelWindow() {
                     headers={gateHeaders}
                     getDesc={getDesc}
                     getUnit={getUnit}
-                    rows={cardRows}
                     bounds={datasetBounds}
                     onOpen={() => setRcFilterOpen(true)}
                     testPeriods={runningConditionTestPeriods}

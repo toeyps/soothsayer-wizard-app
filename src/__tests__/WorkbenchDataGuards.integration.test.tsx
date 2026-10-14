@@ -96,6 +96,15 @@ const wsWrites = (id = WS) => env.writes.filter(w => w.path === wsFile(id)).leng
 const fgBytes = (id = WS) => JSON.stringify(readDisk(id).failureGroupState);
 const modelsBytes = (id = WS) => JSON.stringify(readDisk(id).failureGroupState.models);
 const card = () => bmw().getByTestId('rc-card');
+/** Running rows Rust answered for the LAST `count_period_rows` (the card's verdict reads it). */
+const lastCountRows = () => (env.backend!.cmds('count_period_rows').slice(-1)[0]?.result as { union: { running_rows: number } } | undefined)?.union.running_rows;
+/** User decision 2026-10-14: the card never says how many data rows are used — no "N rows · x%",
+ *  no "Counting rows…", no "— rows", no share meter; only its two warnings stay, in words. */
+const expectCardHasNoRowCount = () => {
+    for (const id of ['rc-card-rows', 'rc-card-pct', 'rc-card-rows-loading', 'rc-card-rows-error']) expect(within(card()).queryByTestId(id)).toBeNull();
+    expect(card().querySelector('.rcc-meter')).toBeNull();
+    expect(card().textContent).not.toMatch(/\d[\d,]*\s*rows?\b|Counting rows|— rows|%/);
+};
 const openRc = () => {
     fireEvent.click(bmw().getByTestId('rc-card-open'));
     return within(bmw().getByRole('dialog', { name: 'Running condition' }));
@@ -234,7 +243,10 @@ describe('R2 / R3 — a period outside the data: SAVED = a warning, NEW or CHANG
         expect(bmw().getByTestId('rc-card-outside').textContent)
             .toBe(`⚠ P2 is outside the data (${RANGE_26}) — it is not used · S1 is outside the data — nothing is scored there`);
         expect(bmw().queryByTestId('rc-card-test-bad')).toBeNull(); // never "to fix"
-        await waitFor(() => expect(bmw().getByTestId('rc-card-rows').textContent).toBe('37'));
+        // counted (37 running rows in P1; the outside period holds none) — and none of it printed
+        await waitFor(() => expect(lastCountRows()).toBe(37));
+        expectCardHasNoRowCount();
+        expect(card().getAttribute('data-norows')).toBeNull();
         // the trained model is simply trained: pill, dots, Train sensor
         expect(pill()).toBe('Trained');
         expect(bmwDot('i1').state).toBe('trained');
@@ -364,7 +376,9 @@ describe('R4 — "nothing to train on" blocks Train, with the named reason', () 
     /** Everything that offers Train says `short` for the Workspace-mode models; the Custom one is free. */
     async function expectTrainBlocked(reason: string, short: string) {
         expect(card().getAttribute('data-norows')).toBe('true');
-        expect(bmw().getByTestId('rc-card-use').textContent).toBe('0 rows — nothing to train on');
+        expect(bmw().getByTestId('rc-card-use').textContent).toBe('Nothing to train on'); // the warning in words — no "0 rows"
+        expect(bmw().getByTestId('rc-card-no-rows').getAttribute('role')).toBe('alert');
+        expectCardHasNoRowCount();
         expect(bmw().getByTestId('rc-card-open').textContent).toBe('Edit'); // not "Fix period": nobody just picked it
 
         // ── TAG4: its only model is blocked ──────────────────────────────────
@@ -640,7 +654,8 @@ describe('R5 — the guards never touch what READS a model', () => {
         // ── the card says it; the never-trained model cannot train ───────────
         expect(card().getAttribute('data-norows')).toBe('true');
         expect(card().getAttribute('data-state')).toBe('set');
-        expect(bmw().getByTestId('rc-card-use').textContent).toBe('0 rows — nothing to train on');
+        expect(bmw().getByTestId('rc-card-use').textContent).toBe('Nothing to train on');
+        expectCardHasNoRowCount();
         expect(bmw().getByTestId('rc-card-outside').textContent)
             .toBe(`⚠ P1 is outside the data (${RANGE_27}) — it is not used · S1 is outside the data — nothing is scored there`);
         expect(footReason()).toBe(REASON);
@@ -730,7 +745,9 @@ describe('R5 — the guards never touch what READS a model', () => {
         await act(async () => { fireEvent.click(apply()); });
         await waitFor(() => expect(readDisk().failureGroupState.runningConditionTimePeriods).toEqual([{ ...P25, start: '2027-01-01T00:00', end: '2027-01-02T23:00' }]));
         await waitFor(() => expect(card().getAttribute('data-norows')).toBeNull());
-        await waitFor(() => expect(bmw().getByTestId('rc-card-rows').textContent).toBe('37'));
+        await waitFor(() => expect(lastCountRows()).toBe(37));
+        expect(bmw().queryByTestId('rc-card-no-rows')).toBeNull();
+        expectCardHasNoRowCount();
         // the saved scoring period is still outside the data: one amber line, not a block
         expect(bmw().getByTestId('rc-card-outside').textContent).toBe('⚠ S1 is outside the data — nothing is scored there');
 

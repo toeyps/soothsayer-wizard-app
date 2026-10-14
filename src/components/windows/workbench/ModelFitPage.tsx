@@ -49,6 +49,10 @@ import { shareText } from './HealthScorePage';
  *    not items of their own (2RMSE and the residual mean are captions).
  *  - Tiles never judge: plain values, no threshold colour, no "fair / weak fit".
  *  - A share that is not zero never reads as zero (`shareText`, `outsideText`).
+ *  - NO count of data rows anywhere on this page (user decision 2026-10-14: the
+ *    Build Model window never says how many rows are used). A tile gives the
+ *    share (%) and its caption says what the share is OF in words — never
+ *    "≈ N rows" / "N rows outside every criteria range". Do not add them back.
  * The strip needs a preview, so the chart-less boards (not trained, queued,
  * training, failed, …) — drawn by `BuildModelWindow`, not here — have none.
  *
@@ -103,6 +107,13 @@ export function outsideText(pct: number): string {
     return pct > 0 && pct < 0.01 ? '< 0.01%' : `${pct.toFixed(2)}%`;
 }
 
+/** Caption of Clustering's "In a cluster" tile: what the share is of, in words —
+ *  never the number of rows. */
+export function inClusterSub(unassignedRows: number, hasCriteriaSensor: boolean): string {
+    if (unassignedRows > 0) return 'the rest is outside every criteria range';
+    return hasCriteriaSensor ? 'every training row is in a criteria range' : 'every training row is in the cluster';
+}
+
 /** Memo comparison (see `samePageProps`): small data the window rebuilds per
  *  render is compared by value — the model (re-read from disk after every
  *  write), the scoring-period numbers; everything else by identity. */
@@ -148,7 +159,7 @@ function ModelFitPage(props: ModelFitPageProps) {
                         value={outsidePct === null ? '—' : outsideText(outsidePct)}
                         sub={outside === null
                             ? 'no distribution'
-                            : `≈ ${outside.toLocaleString('en-US')} ${outside === 1 ? 'row' : 'rows'} · ±3SD ${fmtNum(stats.boundary_3sd[0])} – ${fmtNum(stats.boundary_3sd[1])}`}
+                            : `±3SD ${fmtNum(stats.boundary_3sd[0])} – ${fmtNum(stats.boundary_3sd[1])}`}
                         title="Estimated from the distribution bins"
                         testId="stat-outside3"
                     />
@@ -280,7 +291,7 @@ function ModelFitPage(props: ModelFitPageProps) {
                     <Kpi
                         label="In a cluster"
                         value={stats.rows ? shareText((stats.assigned_rows / stats.rows) * 100) : '—'}
-                        sub={`${stats.unassigned_rows.toLocaleString('en-US')} ${stats.unassigned_rows === 1 ? 'row' : 'rows'} outside every criteria range`}
+                        sub={inClusterSub(stats.unassigned_rows, !!stats.criteria_sensor)}
                         testId="stat-assigned"
                     />
                     <Kpi

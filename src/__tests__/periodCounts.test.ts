@@ -9,7 +9,7 @@ vi.mock('@tauri-apps/api/core', () => ({
 
 import {
     countPeriodRows, countCondition, trainCountPlan, scoringCountPlan,
-    periodCalendarDays, unionCalendarDays, percentText, runningDaysText, countFor,
+    periodCalendarDays, unionCalendarDays, runningDaysText, countFor,
     trainRowModels, scoringRowModels, runningConditionCaption, countedTrainRunningDays, CAPTION_RECOMMENDED_TEXT, PERIOD_COUNTS_IDLE,
     type PeriodCountsState,
 } from '../utils/periodCounts';
@@ -143,15 +143,7 @@ describe('calendar days from the dates', () => {
     });
 });
 
-describe('percentText / runningDaysText', () => {
-    it('percentText rounds to a whole percent; "<1%" for a tiny share, "0%" for none, em dash when unknown', () => {
-        expect(percentText(14_391, 25_880)).toBe('56%');
-        expect(percentText(3, 10_000)).toBe('<1%');
-        expect(percentText(0, 100)).toBe('0%');
-        expect(percentText(null, 100)).toBe('—');
-        expect(percentText(5, 0)).toBe('—');
-        expect(percentText(100, 100)).toBe('100%');
-    });
+describe('runningDaysText', () => {
     it('runningDaysText: whole days from 10 d up, one decimal below (a short dataset never reads "0 d")', () => {
         expect(runningDaysText(99.9)).toBe('100');
         expect(runningDaysText(69.2)).toBe('69');
@@ -234,83 +226,89 @@ describe('runningConditionCaption (the one line under the timeline)', () => {
     const caption = (over: Partial<Parameters<typeof runningConditionCaption>[0]> = {}) =>
         runningConditionCaption({ trainPeriods: [P1, P2], scoringPeriods: [S1], bounds: BOUNDS, counts: state(), ...over });
 
-    it('the SPEC line: days of train (about N d running time) · days of scoring · rows used of total (%) · ≥ 30 d recommended', () => {
+    // User decision 2026-10-14: the Build Model window never says how many data rows are
+    // used. The caption is DAYS only; the count still drives the running time and `noRows`.
+    const NO_ROW_NUMBERS = /rows|%|14,391|25,880/i;
+
+    it('the line: days of train (about N d running time) · days of scoring · ≥ 30 d recommended — and NO rows used / total / %', () => {
         const c = caption();
         expect(c.trainText).toBe('117 d train (about 100 d running time)');
         expect(c.scoringText).toBe('59 d scoring');
-        expect(c.rowsText).toBe('14,391 of 25,880 rows (56%) used for training');
         expect(c.recommendedText).toBe('≥ 30 d recommended');
-        expect(c.text).toBe('117 d train (about 100 d running time) · 59 d scoring · 14,391 of 25,880 rows (56%) used for training · ≥ 30 d recommended');
+        expect(c.text).toBe('117 d train (about 100 d running time) · 59 d scoring · ≥ 30 d recommended');
+        expect(c.text).not.toMatch(NO_ROW_NUMBERS);
+        expect(c).not.toHaveProperty('rowsText');
         expect(c).toMatchObject({ noTrain: false, trainCalendarDays: 117, trainRunningDays: 99.9, scoringCalendarDays: 59, belowRecommended: false, warning: null });
-        expect(c.rows).toEqual({ kind: 'counted', used: 14_391, total: 25_880, percent: '56%', stale: false });
+        // The state of the count carries no numbers either.
+        expect(c.rows).toEqual({ kind: 'counted', stale: false });
     });
-    it('ONE source for "rows used / total": the TRAIN call union.running_rows of its total_rows — never the per-period sum or the scoring call', () => {
+    it('ONE source for the running time: the TRAIN call union (rows shared by two periods count once) — never the per-period sum or the scoring call', () => {
         const overlapping: PeriodCounts = {
             total_rows: 1_000, interval_secs: 600,
             periods: [one(P1.start, P1.end, 1, 600, 300, 2.1), one(P2.start, P2.end, 2, 600, 300, 2.1)],
             union: { rows_in_period: 800, running_rows: 400, running_days: 2.8 }, // rows shared by both periods count once
         };
         const c = caption({ counts: state({ train: overlapping, scoring: { ...SCORING_COUNTS, total_rows: 999_999 } }) });
-        expect(c.rows).toMatchObject({ used: 400, total: 1_000, percent: '40%' });
-        expect(c.rowsText).toBe('400 of 1,000 rows (40%) used for training');
+        expect(c.trainRunningDays).toBe(2.8);
+        expect(c.trainText).toBe('117 d train (about 2.8 d running time)');
+        expect(c.text).not.toMatch(/rows|%|400|1,000/);
     });
-    it('no train period: "no train period · no scoring time · add a train period to count the rows" (no recommendation)', () => {
+    it('no train period: "no train period · no scoring time" (no recommendation, nothing about rows)', () => {
         const c = caption({ trainPeriods: [], scoringPeriods: [], counts: state({ train: null, scoring: null }) });
-        expect(c.text).toBe('no train period · no scoring time · add a train period to count the rows');
+        expect(c.text).toBe('no train period · no scoring time');
         expect(c).toMatchObject({ noTrain: true, recommendedText: null, trainCalendarDays: null, rows: { kind: 'no-train' } });
         // scoring periods without a train period still say their days
-        expect(caption({ trainPeriods: [], counts: state({ train: null }) }).text).toBe('no train period · 59 d scoring · add a train period to count the rows');
+        expect(caption({ trainPeriods: [], counts: state({ train: null }) }).text).toBe('no train period · 59 d scoring');
     });
     it('no scoring period: "no scoring time"; an invalid scoring period is not counted as scoring time', () => {
         expect(caption({ scoringPeriods: [] }).scoringText).toBe('no scoring time');
         expect(caption({ scoringPeriods: [t('2026-05-11T00:00', '2026-05-01T00:00')] }).scoringText).toBe('no scoring time');
         expect(caption({ scoringPeriods: [S1, t('2026-05-11T00:00', '')] }).scoringText).toBe('59 d scoring');
     });
-    it('an invalid train period: no total until it is fixed — and no running time is claimed', () => {
+    it('an invalid train period: no running time is claimed until it is fixed (and no "fix the period to count the rows")', () => {
         const c = caption({ trainPeriods: [P1, p('2026-05-11T00:00', '2026-05-01T00:00')] });
         expect(c.rows).toEqual({ kind: 'fix' });
-        expect(c.rowsText).toBe('fix the period to count the rows');
         expect(c.trainText).toBe('81 d train');
         expect(c.trainRunningDays).toBeNull();
+        expect(c.text).toBe('81 d train · 59 d scoring · ≥ 30 d recommended');
     });
-    // "Only when running" without a complete condition. No condition
-    // is sent then, so Rust counts EVERY row of the periods — "N of N rows (100%) used for
-    // training" next to a header pill that says "Required".
-    it('the running condition is not configured yet: "set the condition to count the rows" — no rows, no percent and no running time, whatever the counts say', () => {
+    // "Only when running" without a complete condition. No condition is sent then, so
+    // Rust counts EVERY row of the periods: that answer is not the condition's and is not read.
+    it('the running condition is not configured yet: no running time and no verdict, whatever the counts say (and no "set the condition to count the rows")', () => {
         const allRows: PeriodCounts = { ...TRAIN_COUNTS, union: { rows_in_period: 16_848, running_rows: 16_848, running_days: 117 } };
         const c = caption({ configured: false, counts: state({ train: allRows }) });
         expect(c.rows).toEqual({ kind: 'no-condition' });
-        expect(c.rowsText).toBe('set the condition to count the rows');
         expect(c.trainText).toBe('117 d train');
         expect(c.trainRunningDays).toBeNull();
         expect(c.belowRecommended).toBe(false);
         expect(c.warning).toBeNull();
-        expect(c.text).toBe('117 d train · 59 d scoring · set the condition to count the rows · ≥ 30 d recommended');
-        expect(c.text).not.toMatch(/100%|of 25,880/);
+        expect(c.noRows).toBe(false);
+        expect(c.text).toBe('117 d train · 59 d scoring · ≥ 30 d recommended');
+        expect(c.text).not.toMatch(NO_ROW_NUMBERS);
         // the same while the count is on its way, failed, or not asked
         for (const counts of [state({ status: 'loading' }), state({ status: 'error', train: null, scoring: null }), PERIOD_COUNTS_IDLE]) {
-            expect(caption({ configured: false, counts }).rowsText).toBe('set the condition to count the rows');
+            expect(caption({ configured: false, counts })).toMatchObject({ rows: { kind: 'no-condition' }, text: '117 d train · 59 d scoring · ≥ 30 d recommended' });
         }
     });
-    it('what is missing FIRST is said first: no train period, then an invalid one, then the condition', () => {
-        expect(caption({ configured: false, trainPeriods: [] }).rowsText).toBe('add a train period to count the rows');
-        expect(caption({ configured: false, trainPeriods: [P1, p('2026-05-11T00:00', '2026-05-01T00:00')] }).rowsText).toBe('fix the period to count the rows');
+    it('what is missing FIRST decides the state: no train period, then an invalid one, then the condition', () => {
+        expect(caption({ configured: false, trainPeriods: [] }).rows.kind).toBe('no-train');
+        expect(caption({ configured: false, trainPeriods: [P1, p('2026-05-11T00:00', '2026-05-01T00:00')] }).rows.kind).toBe('fix');
     });
     it('`configured` defaults to true (a caller that does not say is counted as before)', () => {
         expect(caption().rows.kind).toBe('counted');
-        expect(caption({ configured: true }).rowsText).toBe('14,391 of 25,880 rows (56%) used for training');
+        expect(caption({ configured: true }).text).toBe(caption().text);
     });
-    it('counting for the first time / failed / not counting', () => {
-        expect(caption({ counts: state({ status: 'loading', train: null, scoring: null }) })).toMatchObject({ rows: { kind: 'loading' }, rowsText: 'Counting rows…', trainText: '117 d train' });
+    it('counting for the first time / failed / not counting: the days alone — no "Counting rows…", no "Couldn\'t count the rows right now"', () => {
+        const DAYS_ONLY = '117 d train · 59 d scoring · ≥ 30 d recommended';
+        expect(caption({ counts: state({ status: 'loading', train: null, scoring: null }) })).toMatchObject({ rows: { kind: 'loading' }, trainText: '117 d train', text: DAYS_ONLY });
         const failed = caption({ counts: state({ status: 'error', train: null, scoring: null, error: 'x' }) });
-        expect(failed).toMatchObject({ rows: { kind: 'error' }, rowsText: "Couldn't count the rows right now", trainText: '117 d train' });
+        expect(failed).toMatchObject({ rows: { kind: 'error' }, trainText: '117 d train', text: DAYS_ONLY, noRows: false });
         const idle = caption({ counts: PERIOD_COUNTS_IDLE });
-        expect(idle).toMatchObject({ rows: { kind: 'idle' }, rowsText: '' });
-        expect(idle.text).toBe('117 d train · 59 d scoring · ≥ 30 d recommended');
+        expect(idle).toMatchObject({ rows: { kind: 'idle' }, text: DAYS_ONLY });
     });
-    it('while a new answer is on its way the previous numbers stay, flagged stale (no flicker)', () => {
+    it('while a new answer is on its way the previous running time stays, flagged stale (no flicker)', () => {
         const c = caption({ counts: state({ status: 'loading' }) });
-        expect(c.rows).toEqual({ kind: 'counted', used: 14_391, total: 25_880, percent: '56%', stale: true });
+        expect(c.rows).toEqual({ kind: 'counted', stale: true });
         expect(c.text).toBe(caption().text);
     });
     it('below the recommended train running time: amber flag + the existing warning sentence — never a block', () => {
@@ -324,11 +322,12 @@ describe('runningConditionCaption (the one line under the timeline)', () => {
         // exactly at the recommendation is fine
         expect(caption({ counts: state({ train: { ...few, union: { ...few.union, running_days: 30 } } }) }).belowRecommended).toBe(false);
     });
-    it('a dataset with no sample interval (fewer than two dated rows): rows are counted, running time is not claimed', () => {
+    it('a dataset with no sample interval (fewer than two dated rows): counted, but running time is not claimed', () => {
         const noInterval: PeriodCounts = { ...TRAIN_COUNTS, interval_secs: null, union: { rows_in_period: 1, running_rows: 1, running_days: 0 }, total_rows: 1 };
         const c = caption({ counts: state({ train: noInterval }) });
         expect(c.trainText).toBe('117 d train');
-        expect(c.rowsText).toBe('1 of 1 rows (100%) used for training');
+        expect(c.rows).toEqual({ kind: 'counted', stale: false });
+        expect(c.text).toBe('117 d train · 59 d scoring · ≥ 30 d recommended');
         expect(c).toMatchObject({ trainRunningDays: null, belowRecommended: false, warning: null });
     });
     it('a dataset whose time range is unknown: an open-ended train period has no calendar days to print', () => {

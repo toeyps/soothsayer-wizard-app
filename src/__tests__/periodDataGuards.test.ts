@@ -420,21 +420,22 @@ describe('countedNoTrainRows — only a SETTLED count of zero', () => {
     it('the caption carries the same answer (`noRows`), and never for a stale / unconfigured count', () => {
         const cap = (st: PeriodCountsState, configured = true) => runningConditionCaption({ trainPeriods: [INSIDE], scoringPeriods: [], bounds: DATA, counts: st, configured });
         expect(cap(state('ok', ZERO)).noRows).toBe(true);
-        expect(cap(state('ok', ZERO)).rowsText).toBe('0 of 10,000 rows (0%) used for training');
+        // …as a verdict only: the caption never prints the count ("0 of 10,000 rows (0%) …" is gone).
+        expect(cap(state('ok', ZERO)).text).not.toMatch(/rows|%|10,000/);
         expect(cap(state('loading', ZERO)).noRows).toBe(false);
-        expect(cap(state('ok', ZERO), false).noRows).toBe(false); // "set the condition to count the rows"
+        expect(cap(state('ok', ZERO), false).noRows).toBe(false); // the condition is not set: the count is not read
         expect(cap(state('ok', SOME)).noRows).toBe(false);
         expect(cap(state('error', null)).noRows).toBe(false);
     });
 
-    it('the caption treats a NEW period outside the data as a period to fix (no total) — a SAVED one is counted like any other', () => {
+    it('the caption treats a NEW period outside the data as a period to fix (not counted) — a SAVED one is counted like any other', () => {
         const cap = runningConditionCaption({ trainPeriods: [AFTER], scoringPeriods: [], bounds: DATA, counts: state('ok', SOME) });
         expect(cap.rows.kind).toBe('fix');
-        expect(cap.rowsText).toBe('fix the period to count the rows');
+        expect(cap.trainRunningDays).toBeNull();
         expect(cap.noRows).toBe(false);
         const saved = runningConditionCaption({ trainPeriods: [INSIDE, AFTER], scoringPeriods: [], bounds: DATA, counts: state('ok', SOME), savedTrain: [INSIDE, AFTER] });
-        expect(saved.rows.kind).toBe('counted');
-        expect(saved.rowsText).toBe('120 of 10,000 rows (1%) used for training');
+        expect(saved.rows).toEqual({ kind: 'counted', stale: false });
+        expect(saved.text).not.toMatch(/rows|%|10,000/);
     });
 });
 

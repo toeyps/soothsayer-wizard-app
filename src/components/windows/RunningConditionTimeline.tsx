@@ -19,6 +19,11 @@ import { boundsMs, formatPeriod, type DataBounds } from './periodDisplay';
  * train periods hold no running row, one red line under the caption says there
  * is nothing to train on.
  *
+ * The caption reads days only — train days (and the running time inside them),
+ * scoring days, the recommendation. It NEVER says how many rows are used (user
+ * decision 2026-10-14: no "N of M rows (x%) used for training", no "Counting
+ * rows…"; do not add them back).
+ *
  * Plain DOM positioned in percent of the dataset's time range — no chart
  * library, nothing to resize. It draws the lists it is given: the row editors
  * hand a typed date up as soon as it is complete (a half-typed one stays in its
@@ -169,8 +174,8 @@ export interface RunningConditionTimelineProps {
     bounds: DataBounds | null | undefined;
     counts: PeriodCountsState;
     /** The running condition (as drafted) is configured. `false` = "Only when
-     *  running" without a complete condition: the caption asks for the condition
-     *  instead of counting every row. Default `true`. */
+     *  running" without a complete condition: the count (of every row) is not
+     *  read — no running time, no "nothing to train on". Default `true`. */
     configured?: boolean;
     /** "Use all rows" is chosen: there is no condition to relax, so the no-rows
      *  line only says "Widen a train period". Default `false`. */
@@ -186,11 +191,8 @@ function RunningConditionTimeline({ periods, tests, bounds, counts, configured =
     const cap = runningConditionCaption({ trainPeriods: periods, scoringPeriods: tests, bounds, counts, configured, savedTrain: savedPeriods, savedScoring: savedTests });
     const trainBlocks = timelineBlocks(periods, validatePeriods(periods, bounds, savedPeriods).map(s => s.invalid), bounds, 'P');
     const scoreBlocks = timelineBlocks(tests, validateTestPeriods(tests, bounds, savedTests).map(s => s.invalid), bounds, 'S');
-    const rows = cap.rows;
-    // The dataset this window was opened on is gone: one quiet line, never numbers.
-    const errorLine = counts.errorCode === 'STALE_SESSION'
-        ? 'The data changed — close this window and open Build Model again to count the rows'
-        : cap.rowsText;
+    // The dataset this window was opened on is gone: one quiet line.
+    const dataChanged = counts.errorCode === 'STALE_SESSION';
     return (
         <section className="rct" data-testid="rc-timeline" aria-label="Timeline of the train and scoring periods">
             {b ? (
@@ -210,20 +212,14 @@ function RunningConditionTimeline({ periods, tests, bounds, counts, configured =
             <div
                 className={`rct-cap${cap.belowRecommended ? ' rct-cap--warn' : ''}`}
                 data-testid="rc-caption"
-                data-rows={rows.kind}
+                data-rows={cap.rows.kind}
                 aria-live="polite"
             >
                 <span className="rct-cap-tr" data-testid="rc-caption-train"><i className="tpe-sw tpe-sw--tr" aria-hidden="true" />{cap.trainText}</span>
                 <span className="rct-cap-sc" data-testid="rc-caption-scoring"><i className="tpe-sw tpe-sw--te" aria-hidden="true" />{cap.scoringText}</span>
-                {rows.kind !== 'idle' && (
-                    <span
-                        className={`rct-cap-rows${rows.kind === 'counted' && rows.stale ? ' rct-stale' : ''}${rows.kind === 'error' ? ' rct-cap-quiet' : ''}`}
-                        data-testid="rc-caption-rows"
-                        data-stale={rows.kind === 'counted' && rows.stale ? 'true' : undefined}
-                    >
-                        {rows.kind === 'counted'
-                            ? <><b>{rows.used.toLocaleString('en-US')}</b> of {rows.total.toLocaleString('en-US')} rows ({rows.percent}) used for training</>
-                            : rows.kind === 'error' ? errorLine : cap.rowsText}
+                {dataChanged && (
+                    <span className="rct-cap-quiet" data-testid="rc-caption-data-changed">
+                        The data changed — close this window and open Build Model again
                     </span>
                 )}
                 {cap.recommendedText && (

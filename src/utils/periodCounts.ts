@@ -12,10 +12,14 @@ import { parseLocal } from './workbenchDate';
  * request builders, and the pure builders of what the modal prints from the
  * answer — the one caption under the timeline
  *
- *   117 d train (about 100 d running time) · 59 d scoring ·
- *   14,391 of 25,880 rows (56%) used for training · ≥ 30 d recommended
+ *   117 d train (about 100 d running time) · 59 d scoring · ≥ 30 d recommended
  *
  * and one quiet line per period row ("P1 · 81 d · 69 d running").
+ *
+ * The counts are read as DAYS of running time and as the "nothing to train on"
+ * verdict only. NO number of data rows is ever printed (user decision
+ * 2026-10-14: the Build Model window never says how many rows are used — do not
+ * add a "N of M rows (x%)" sentence, a "Counting rows…" text or a percentage back).
  *
  * The React side (debounce, stale-answer guard, the two calls) is
  * `usePeriodCounts` in `src/hooks/usePeriodCounts.ts`.
@@ -191,15 +195,6 @@ export function unionCalendarDays(
     return Math.round(total / DAY_MS);
 }
 
-/** "25%" / "<1%" / "0%" / "—" for used-of-total (the running-condition line's
- *  own rounding, so the modal and the line behind it agree). */
-export function percentText(used: number | null | undefined, total: number | null | undefined): string {
-    if (typeof used !== 'number' || typeof total !== 'number' || !(total > 0)) return '—';
-    if (used <= 0) return '0%';
-    const pct = (used / total) * 100;
-    return pct < 1 ? '<1%' : `${Math.round(pct)}%`;
-}
-
 /** Running-time days for display: whole days from 10 d up ("69"), one decimal
  *  below that ("2.5", "0.3") so a short dataset does not read "0 d". */
 export function runningDaysText(days: number): string {
@@ -208,8 +203,6 @@ export function runningDaysText(days: number): string {
     const r = Math.round(days * 10) / 10;
     return Number.isInteger(r) ? String(r) : r.toFixed(1);
 }
-
-const rowsText = (n: number) => n.toLocaleString('en-US');
 
 const sameBound = (a: string | null | undefined, b: string | null | undefined) => ((a ?? '').trim() || null) === ((b ?? '').trim() || null);
 
@@ -333,8 +326,9 @@ export function scoringRowModels(tests: readonly TestPeriod[], bounds: CountBoun
 // The caption under the timeline
 // ---------------------------------------------------------------------------
 
-/** The "rows used for training" part of the caption. ONE source for both
- *  numbers: the train call's `union.running_rows` of its `total_rows`. */
+/** Where the count of the TRAIN periods stands for the draft on screen. It is
+ *  never printed (no row numbers anywhere): it says whether the running time is
+ *  known and whether the "nothing to train on" verdict may be read. */
 export type CaptionRows =
     | { kind: 'no-train' }
     /** A train period is invalid: no total until it is fixed. */
@@ -346,7 +340,8 @@ export type CaptionRows =
     | { kind: 'error' }
     /** Nothing is being counted (the hook is disabled). */
     | { kind: 'idle' }
-    | { kind: 'counted'; used: number; total: number; percent: string; stale: boolean };
+    /** Counted. `stale`: the answer is the PREVIOUS draft's (a new one is on its way). */
+    | { kind: 'counted'; stale: boolean };
 
 export interface RunningConditionCaption {
     /** No train period at all. */
@@ -363,10 +358,6 @@ export interface RunningConditionCaption {
     trainText: string;
     /** "59 d scoring" / "no scoring time". */
     scoringText: string;
-    /** "14,391 of 25,880 rows (56%) used for training" / "add a train period to
-     *  count the rows" / "fix the period to count the rows" / "set the condition
-     *  to count the rows" / "Counting rows…" / "Couldn't count the rows right now". */
-    rowsText: string;
     /** "≥ 30 d recommended"; null with no train period. */
     recommendedText: string | null;
     /** The counted train running time is below the recommendation (amber — never a block). */
@@ -385,25 +376,24 @@ export const CAPTION_RECOMMENDED_TEXT = `≥ ${RECOMMENDED_TRAIN_DAYS} d recomme
 
 /**
  * The ONE caption under the Running-condition timeline, from the draft's
- * periods (calendar days, from the dates) and the counts (running time and
- * rows, from Rust):
+ * periods (calendar days, from the dates) and the counts (running time, from
+ * Rust):
  *
- *   117 d train (about 100 d running time) · 59 d scoring ·
- *   14,391 of 25,880 rows (56%) used for training · ≥ 30 d recommended
+ *   117 d train (about 100 d running time) · 59 d scoring · ≥ 30 d recommended
  *
- * With no train period: "no train period · no scoring time · add a train
- * period to count the rows".
+ * With no train period: "no train period · no scoring time". It never says how
+ * many rows are used (see the note at the top of this file).
  *
  * `configured: false` = the running condition is still "Required" ("Only when
  * running" with no complete condition). The count Rust gives then is of every
- * row in the train periods (an incomplete condition is not sent), which would
- * read "N of N rows (100%) used for training" — so the rows part says "set the
- * condition to count the rows" instead and no running time is printed.
+ * row in the train periods (an incomplete condition is not sent), so it is not
+ * read: no running time is printed and there is no verdict (`rows.kind:
+ * 'no-condition'`).
  *
  * A period that is new / changed in the draft and lies entirely outside the
  * loaded data (`bounds`, judged against `savedTrain` / `savedScoring` — see
- * `validatePeriods`) is invalid like any other: "fix the period to count the
- * rows". A SAVED period outside the data is not: its rows (none) are counted.
+ * `validatePeriods`) is invalid like any other (`rows.kind: 'fix'`: no running
+ * time until it is fixed). A SAVED period outside the data is not: it is counted.
  */
 export function runningConditionCaption(input: {
     trainPeriods: readonly TimePeriod[];
@@ -432,13 +422,11 @@ export function runningConditionCaption(input: {
     else if (!configured) rows = { kind: 'no-condition' };
     else if (counts.status === 'error') rows = { kind: 'error' };
     else if (counts.train && (counts.status === 'ok' || counts.status === 'loading')) {
-        const used = counts.train.union.running_rows;
-        const total = counts.train.total_rows;
-        rows = { kind: 'counted', used, total, percent: percentText(used, total), stale: counts.status === 'loading' };
+        rows = { kind: 'counted', stale: counts.status === 'loading' };
     } else rows = { kind: counts.status === 'loading' ? 'loading' : 'idle' };
 
-    // Running time comes with the row count (kept, like it, while a new answer is
-    // on its way — `rows.stale` says so). Unknown when the dataset has no sample
+    // Running time comes with the count (kept while a new answer is on its way —
+    // `rows.stale` says so). Unknown when the dataset has no sample
     // interval (fewer than two dated rows): Rust's days are 0 then, not a fact.
     const trainRunningDays = rows.kind === 'counted' && counts.train?.interval_secs != null
         ? counts.train.union.running_days : null;
@@ -446,20 +434,13 @@ export function runningConditionCaption(input: {
     const trainText = noTrain ? 'no train period'
         : `${trainCalendarDays === null ? '—' : trainCalendarDays} d train${trainRunningDays !== null ? ` (about ${runningDaysText(trainRunningDays)} d running time)` : ''}`;
     const scoringText = scoringCalendarDays === null ? 'no scoring time' : `${scoringCalendarDays} d scoring`;
-    const rowsLine = rows.kind === 'no-train' ? 'add a train period to count the rows'
-        : rows.kind === 'fix' ? 'fix the period to count the rows'
-        : rows.kind === 'no-condition' ? 'set the condition to count the rows'
-        : rows.kind === 'loading' ? 'Counting rows…'
-        : rows.kind === 'error' ? "Couldn't count the rows right now"
-        : rows.kind === 'counted' ? `${rowsText(rows.used)} of ${rowsText(rows.total)} rows (${rows.percent}) used for training`
-        : '';
     const recommendedText = noTrain ? null : CAPTION_RECOMMENDED_TEXT;
     return {
         noTrain, trainCalendarDays, trainRunningDays, scoringCalendarDays, rows,
-        trainText, scoringText, rowsText: rowsLine, recommendedText,
+        trainText, scoringText, recommendedText,
         belowRecommended: isBelowRecommendedTrainDays(trainRunningDays),
         warning: trainDaysWarning(trainRunningDays),
         noRows: rows.kind === 'counted' && !rows.stale && zeroTrainRows(counts.train),
-        text: [trainText, scoringText, rowsLine, recommendedText].filter(Boolean).join(' · '),
+        text: [trainText, scoringText, recommendedText].filter(Boolean).join(' · '),
     };
 }

@@ -356,7 +356,8 @@ describe('usePeriodCounts + the fake Rust — the numbers the modal shows', () =
         expect(result.current.train?.union).toEqual({ rows_in_period: 432, running_rows: 216, running_days: 1.5 }); // days 1-3 once, not 288 + 288
         expect(trainRowModels([D12, D23], BOUNDS, result.current).map(r => r.text)).toEqual(['P1 · 2 d · 1 d running', 'P2 · 2 d · 1 d running']);
         const caption = runningConditionCaption({ trainPeriods: [D12, D23], scoringPeriods: [D4], bounds: BOUNDS, counts: result.current });
-        expect(caption.text).toBe('3 d train (about 1.5 d running time) · 1 d scoring · 216 of 576 rows (38%) used for training · ≥ 30 d recommended');
+        // Days only — the caption never prints the rows it was counted from (user decision 2026-10-14).
+        expect(caption.text).toBe('3 d train (about 1.5 d running time) · 1 d scoring · ≥ 30 d recommended');
         expect(caption.belowRecommended).toBe(true);
     });
 
@@ -368,7 +369,10 @@ describe('usePeriodCounts + the fake Rust — the numbers the modal shows', () =
         expect(rust.cmds('count_period_rows')).toHaveLength(1);
         expect(rust.cmds('count_period_rows')[0].args).toEqual({ periods: [{ start: null, end: null }], filter: null, expected_generation: 1 });
         const caption = runningConditionCaption({ trainPeriods: [{ id: 'all', start: '', end: '' }], scoringPeriods: [], bounds: BOUNDS, counts: result.current });
-        expect(caption.rowsText).toBe('576 of 576 rows (100%) used for training');
+        expect(result.current.train?.union.running_rows).toBe(576);
+        expect(result.current.train?.total_rows).toBe(576);
+        expect(caption.rows).toEqual({ kind: 'counted', stale: false });
+        expect(caption.text).not.toMatch(/rows|%|576/);
         expect(caption.scoringText).toBe('no scoring time');
     });
 

@@ -1,7 +1,6 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
 import { Check, ChevronDown, ChevronUp } from 'lucide-react';
 import type { TestPeriod, TimePeriod, WorkspaceSensorFilter } from '../../types';
-import { percentText, type PeriodCountsState } from '../../utils/periodCounts';
 import { isCompleteCondition } from '../../utils/runningCondition';
 import { allPeriodsOutsideData, dataRangeText, savedOutsideDataNotes, testTrainOverlaps, validatePeriods, validateTestPeriods } from '../../utils/timePeriods';
 import { conditionChipParts, formatPeriodChip, parseLocal, type DataBounds } from './periodDisplay';
@@ -19,15 +18,16 @@ import { sensorTitle, useSensorLookup } from '../sensor/sensorInfo';
  *
  * Once the running condition is SET the card is ONE line of workspace
  * context — ✓ · Train n periods + span · Scoring n periods · When running: n
- * conditions · rows · % · Details · Edit. "Details" unfolds the full grid in
+ * conditions · Details · Edit. "Details" unfolds the full grid in
  * place — that is where the period strip is; the line itself carries none
  * (user decision 2026-10-11: it is visible on opening anyway). Unset and invalid stay loud cards with their own
  * button, marked "!" (there is no step number).
  *
- * The row count: "N rows · x%" is Rust's `count_period_rows` of the PERSISTED
- * condition — the running rows inside the train periods, of all the
- * dataset's rows — the same two numbers the settings modal's caption prints
- * for that condition (`cardRowsFromCounts`).
+ * NO count of data rows is shown anywhere on this card (user decision
+ * 2026-10-14: the Build Model window never says how many rows are used — no
+ * "N rows · x%", no "Counting rows…", no share meter; do not add them back).
+ * Rust's `count_period_rows` still runs for the PERSISTED condition, but only
+ * the window's gate reads it; the card gets its verdict as `noRows`.
  *
  * Guards against "no data to train on". The card shows the PERSISTED state,
  * so a period outside the loaded data is never "invalid" here — the user did
@@ -36,29 +36,12 @@ import { sensorTitle, useSensorLookup } from '../sensor/sensorInfo';
  *    warning — "P2 is outside the data (…) — it is not used", "S1 is outside
  *    the data — nothing is scored there" — on the line and on its chip; the
  *    card stays "set" and nothing is blocked;
- *  - truly nothing to train on turns the card red — "0 rows — nothing to train
- *    on": NO train period is inside the data, or the settled count is ZERO
- *    running rows (`noRows`). The card only shows it; the window blocks Train
- *    (and only Train — trained models keep their charts).
+ *  - truly nothing to train on turns the card red — "Nothing to train on": NO
+ *    train period is inside the data, or the settled count holds no running
+ *    row (`noRows`). The card only shows it; the window blocks Train (and only
+ *    Train — trained models keep their charts).
+ * With no train period at all the card says "Add a train period" (amber).
  */
-
-/** The card's row count: rows used for training of all the dataset's rows.
- *  `loading` keeps the previous numbers (if any) so the line does not flicker. */
-export interface RcCardRows {
-    status: 'idle' | 'loading' | 'ok' | 'error';
-    used: number | null;
-    total: number | null;
-}
-
-/** The card's two numbers from the period counts of the persisted condition
- *  (`usePeriodCounts` with the persisted train periods). */
-export function cardRowsFromCounts(counts: PeriodCountsState): RcCardRows {
-    return {
-        status: counts.status,
-        used: counts.train ? counts.train.union.running_rows : null,
-        total: counts.train ? counts.train.total_rows : null,
-    };
-}
 
 /** unset = nothing configured yet · invalid = configured but a period is broken · set = good to go. */
 export type RcStepState = 'set' | 'unset' | 'invalid';
@@ -73,8 +56,6 @@ interface RunningConditionCardProps {
     headers: string[] | null;
     getDesc: (tag: string) => string;
     getUnit: (tag: string) => string;
-    /** Row count of the PERSISTED condition (`cardRowsFromCounts`). */
-    rows: RcCardRows;
     /** Dataset extent (`useDatasetTimeBounds`) — null/unknown hides the period strip. */
     bounds?: DataBounds | null;
     /** Opens the settings modal (Edit / Set running condition / Fix period). */
@@ -87,8 +68,10 @@ interface RunningConditionCardProps {
     noRows?: boolean;
 }
 
-/** What the card says instead of a share of rows when nothing can be trained on. */
-export const CARD_NO_ROWS_TEXT = 'rows — nothing to train on';
+/** What the card says (red, an alert) when nothing can be trained on. */
+export const CARD_NO_ROWS_TEXT = 'Nothing to train on';
+/** What the card says (amber) while there is no train period at all. */
+export const CARD_NO_TRAIN_TEXT = 'Add a train period';
 /** The tooltip of that state. With no condition ("Use all rows") there is nothing to relax. */
 function noRowsTitle(allOutside: boolean, hasCondition: boolean, bounds: DataBounds | null | undefined): string {
     if (allOutside) return `No train period is inside the data (${dataRangeText(bounds)}) — move a train period inside the data`;
@@ -179,7 +162,7 @@ function trainSpan(periods: TimePeriod[]): string {
 
 const plural = (n: number, word: string) => `${word}${n === 1 ? '' : 's'}`;
 
-export function RunningConditionCard({ state, periods, filters, combine, noneConfirmed, headers, getDesc, getUnit, rows, bounds, onOpen, testPeriods = [], noRows: noRowsCounted = false }: RunningConditionCardProps) {
+export function RunningConditionCard({ state, periods, filters, combine, noneConfirmed, headers, getDesc, getUnit, bounds, onOpen, testPeriods = [], noRows: noRowsCounted = false }: RunningConditionCardProps) {
     const lookup = useSensorLookup();
     // Set = one line; "Details" unfolds the full grid (toggling re-renders this card only).
     const [detailsOpen, setDetailsOpen] = useState(false);
@@ -243,8 +226,6 @@ export function RunningConditionCard({ state, periods, filters, combine, noneCon
             ⚠ {outsideNotes.join(' · ')}
         </span>
     );
-    const showCount = !noTrain && (rows.status === 'ok' || (rows.status === 'loading' && rows.used !== null));
-    const pct = rows.used !== null && rows.total ? Math.min(100, (rows.used / rows.total) * 100) : 0;
 
     if (!detailsOpen) {
         const nTrain = periods.length;
@@ -274,16 +255,14 @@ export function RunningConditionCard({ state, periods, filters, combine, noneCon
                     <span className="rcc-line-item" data-testid="rc-card-cond">
                         {noneConfirmed || nCond === 0 ? 'All rows — no condition' : <>When running: <b>{nCond}</b> {plural(nCond, 'condition')}</>}
                     </span>
-                    <span className="rcc-line-item rcc-line-rows" data-testid="rc-card-use" aria-live="polite">
-                        {noTrain ? (
-                            <><b data-testid="rc-card-rows">0</b> <span data-testid="rc-card-no-train">rows — add a train period</span></>
-                        ) : noRows ? (
-                            <><b data-testid="rc-card-rows">0</b> <span className="rcc-line-bad" role="alert" data-testid="rc-card-no-rows" title={noRowsTip}>{CARD_NO_ROWS_TEXT}</span></>
-                        ) : rows.status === 'idle' ? null : showCount ? (
-                            <><b data-testid="rc-card-rows">{(rows.used ?? 0).toLocaleString()}</b> <span data-testid="rc-card-pct">rows · {percentText(rows.used, rows.total)}</span></>
-                        ) : rows.status === 'error'
-                            ? <span title="Couldn't count the rows" data-testid="rc-card-rows-error">— rows</span>
-                            : <span data-testid="rc-card-rows-loading">Counting rows…</span>}
+                    {/* Only the two warnings — never a count of rows. Empty (hidden by
+                        `.rcc-line-item:empty`) when there is nothing to warn about. */}
+                    <span className="rcc-line-item" data-testid="rc-card-use" aria-live="polite">
+                        {noTrain
+                            ? <span className="rcc-line-warn" data-testid="rc-card-no-train">{CARD_NO_TRAIN_TEXT}</span>
+                            : noRows
+                                ? <span className="rcc-line-bad" role="alert" data-testid="rc-card-no-rows" title={noRowsTip}>{CARD_NO_ROWS_TEXT}</span>
+                                : null}
                     </span>
                     {outsideLine}
                 </div>
@@ -338,31 +317,12 @@ export function RunningConditionCard({ state, periods, filters, combine, noneCon
                 </div>
             </div>
             <div className="rcc-use" data-testid="rc-card-use" aria-live="polite">
-                {noTrain ? (
-                    <div className="rcc-use-n">
-                        <b data-testid="rc-card-rows">0</b>
-                        <span className="rcc-use-none" data-testid="rc-card-no-train">rows — add a train period</span>
-                    </div>
-                ) : noRows ? (
-                    <div className="rcc-use-n">
-                        <b data-testid="rc-card-rows">0</b>
-                        <span className="rcc-line-bad" role="alert" data-testid="rc-card-no-rows" title={noRowsTip}>{CARD_NO_ROWS_TEXT}</span>
-                    </div>
-                ) : rows.status === 'idle' ? null : (
-                    <>
-                        <div className="rcc-use-n">
-                            {showCount ? (
-                                <>
-                                    <b data-testid="rc-card-rows">{(rows.used ?? 0).toLocaleString()}</b>
-                                    <span data-testid="rc-card-pct">rows · {percentText(rows.used, rows.total)}</span>
-                                </>
-                            ) : rows.status === 'error'
-                                ? <span title="Couldn't count the rows" data-testid="rc-card-rows-error">— rows</span>
-                                : <span data-testid="rc-card-rows-loading">Counting rows…</span>}
-                        </div>
-                        <div className="rcc-meter" role="img" aria-label="Share of rows used"><span style={{ width: `${pct}%` }} /></div>
-                    </>
-                )}
+                {/* Only the two warnings — never a count of rows, no share meter. */}
+                {noTrain
+                    ? <span className="rcc-use-note rcc-line-warn" data-testid="rc-card-no-train">{CARD_NO_TRAIN_TEXT}</span>
+                    : noRows
+                        ? <span className="rcc-use-note rcc-line-bad" role="alert" data-testid="rc-card-no-rows" title={noRowsTip}>{CARD_NO_ROWS_TEXT}</span>
+                        : null}
                 {/* Small period strip. PERSISTED periods only —
                     the settings modal's draft never reaches this card. Hidden while the
                     dataset bounds are unknown. */}

@@ -1,9 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup, within } from '@testing-library/react';
-import { RunningConditionCard, cardRowsFromCounts, type RcCardRows } from '../components/windows/RunningConditionCard';
+import { CARD_NO_ROWS_TEXT, CARD_NO_TRAIN_TEXT, RunningConditionCard } from '../components/windows/RunningConditionCard';
 import { SensorMetaProvider } from '../components/sensor/SensorLabel';
-import { PERIOD_COUNTS_IDLE, type PeriodCountsState } from '../utils/periodCounts';
-import type { PeriodCounts } from '../types/periodCounts';
 import type { TestPeriod, WorkspaceSensorFilter } from '../types';
 
 afterEach(cleanup);
@@ -13,7 +11,6 @@ const f = (id: string, sensor: string, operation: WorkspaceSensorFilter['operati
     ({ id, sensor, operation, value1, value2 });
 const DESC: Record<string, string> = { POWER: 'GENERATOR ACTIVE POWER', SPEED: 'TURBINE SPEED' };
 const UNIT: Record<string, string> = { POWER: 'kW', SPEED: 'RPM' };
-const OK: RcCardRows = { status: 'ok', used: 11_066, total: 52_340 };
 // The window's SensorMetaProvider (BuildModelWindow) supplies the chip labels.
 const META = Object.keys(DESC).map(tag => ({ tag, description: DESC[tag], unit: UNIT[tag], component: 'Generator' }));
 
@@ -30,7 +27,6 @@ function card(over: Partial<React.ComponentProps<typeof RunningConditionCard>> =
             headers={['POWER', 'SPEED']}
             getDesc={t => DESC[t] ?? ''}
             getUnit={t => UNIT[t] ?? ''}
-            rows={OK}
             onOpen={onOpen}
             {...over}
         />
@@ -38,7 +34,7 @@ function card(over: Partial<React.ComponentProps<typeof RunningConditionCard>> =
     );
     return onOpen;
 }
-/** Once SET the card is one line; "Details" unfolds the full card (chips, meter, strip). */
+/** Once SET the card is one line; "Details" unfolds the full card (chips, strip). */
 const openDetails = () => fireEvent.click(screen.getByTestId('rc-card-details'));
 function detailsCard(over: Partial<React.ComponentProps<typeof RunningConditionCard>> = {}) {
     const onOpen = card(over);
@@ -46,28 +42,22 @@ function detailsCard(over: Partial<React.ComponentProps<typeof RunningConditionC
     return onOpen;
 }
 
-// The card's two numbers are Rust's `count_period_rows` of the persisted condition — the
-// same source as the settings modal's caption.
-describe('cardRowsFromCounts', () => {
-    const TRAIN: PeriodCounts = {
-        total_rows: 52_340, interval_secs: 600, periods: [],
-        // rows inside the train periods vs. the ones that also pass the running condition
-        union: { rows_in_period: 30_000, running_rows: 11_066, running_days: 76.8 },
-    };
-    const st = (over: Partial<PeriodCountsState>): PeriodCountsState => ({ status: 'ok', train: TRAIN, scoring: null, error: null, errorCode: null, ...over });
-
-    it('used = the RUNNING rows inside the train periods, total = every row of the dataset', () => {
-        expect(cardRowsFromCounts(st({}))).toEqual({ status: 'ok', used: 11_066, total: 52_340 });
-    });
-    it('while a new count is on its way the previous numbers are kept (the card does not flicker)', () => {
-        expect(cardRowsFromCounts(st({ status: 'loading' }))).toEqual({ status: 'loading', used: 11_066, total: 52_340 });
-        expect(cardRowsFromCounts(st({ status: 'loading', train: null }))).toEqual({ status: 'loading', used: null, total: null });
-    });
-    it('a failed count and "nothing is counted" carry no numbers', () => {
-        expect(cardRowsFromCounts(st({ status: 'error', train: null, error: 'boom' }))).toEqual({ status: 'error', used: null, total: null });
-        expect(cardRowsFromCounts(PERIOD_COUNTS_IDLE)).toEqual({ status: 'idle', used: null, total: null });
-    });
-});
+/**
+ * User decision 2026-10-14: the Build Model window never says how many data rows
+ * are used. The card shows NO count — no "N rows · x%", no "Counting rows…", no
+ * "— rows", no share meter — in the one line and in the Details view alike.
+ */
+function expectNoRowCount() {
+    const c = screen.getByTestId('rc-card');
+    for (const id of ['rc-card-rows', 'rc-card-pct', 'rc-card-rows-loading', 'rc-card-rows-error']) {
+        expect(within(c).queryByTestId(id)).toBeNull();
+    }
+    expect(c.querySelector('.rcc-meter')).toBeNull();
+    expect(within(c).queryByRole('img', { name: 'Share of rows used' })).toBeNull();
+    // "All rows — no condition" is the condition's name, not a count: only numbers of rows are gone.
+    expect(c.textContent).not.toMatch(/\d[\d,]*\s*rows?\b/i);
+    expect(c.textContent).not.toMatch(/Counting rows|— rows|rows ·|%/);
+}
 
 describe('RunningConditionCard — Not set', () => {
     it('big yellow card marked "!" (no step number, no "Step 1"), "Set the running condition", the one-sentence reason, its own primary "Set running condition →" button', () => {
@@ -93,7 +83,7 @@ describe('RunningConditionCard — Not set', () => {
         expect(onOpen).toHaveBeenCalledTimes(1);
     });
 
-    it('shows neither the chips nor the row count', () => {
+    it('shows neither the chips nor the warning slot', () => {
         card({ state: 'unset', periods: [], filters: [] });
         expect(screen.queryByTestId('rc-card-time')).toBeNull();
         expect(screen.queryByTestId('rc-card-use')).toBeNull();
@@ -138,7 +128,7 @@ describe('RunningConditionCard — Set: ONE line (workbench redesign §1)', () =
     const B = { min: '2025-01-01 00:00:00', max: '2026-07-31 23:50:00' };
     const S = (id: string, start: string, end: string): TestPeriod => ({ id, start, end });
 
-    it('✓ · Train n periods + span · Scoring n periods · When running: n conditions · rows · % · Details · Edit — no period strip on the line', () => {
+    it('✓ · Train n periods + span · Scoring n periods · When running: n conditions · Details · Edit — no row count, no period strip on the line', () => {
         const onOpen = card({
             bounds: B,
             periods: [p('a', '2026-01-01T00:00', '2026-03-31T23:59'), p('b', '2026-04-15T00:00', '2026-06-30T23:59')],
@@ -156,8 +146,13 @@ describe('RunningConditionCard — Set: ONE line (workbench redesign §1)', () =
         expect(screen.getByTestId('rc-card-span').className).toContain('wbx-dt');
         expect(screen.getByTestId('rc-card-test').textContent).toBe('Scoring 2 periods');
         expect(screen.getByTestId('rc-card-cond').textContent).toBe('When running: 1 condition');
-        expect(screen.getByTestId('rc-card-rows').textContent).toBe('11,066');
-        expect(screen.getByTestId('rc-card-pct').textContent).toBe('rows · 21%');
+        // No count of rows (2026-10-14): the slot that holds the two warnings is empty, so the
+        // line ends with the conditions (an empty `.rcc-line-item` is hidden by the stylesheet).
+        expectNoRowCount();
+        expect(screen.getByTestId('rc-card-use').textContent).toBe('');
+        expect(screen.getByTestId('rc-card-use').childNodes).toHaveLength(0);
+        expect(screen.getByTestId('rc-card-use').className).toBe('rcc-line-item');
+        expect(c.querySelector('.rcc-line-main')!.textContent).toBe('Running conditionTrain 2 periods 2026/01/01 00:00 → 2026/06/30 23:59Scoring 2 periodsWhen running: 1 condition');
         // No period strip on the line (user decision 2026-10-11) — it is in the Details view.
         expect(within(c).queryByTestId('period-coverage')).toBeNull();
         expect(c.querySelector('.rcc-line-strip')).toBeNull();
@@ -204,8 +199,11 @@ describe('RunningConditionCard — Set: ONE line (workbench redesign §1)', () =
         card({ periods: [] });
         expect(screen.getByTestId('rc-card-time').textContent).toBe('No train period');
         expect(screen.getByTestId('rc-card-time').querySelector('.rcc-line-warn')).not.toBeNull();
-        expect(screen.getByTestId('rc-card-rows').textContent).toBe('0');
-        expect(screen.getByTestId('rc-card-no-train').textContent).toBe('rows — add a train period');
+        // The warning stays, in words only — no "0 rows".
+        expect(screen.getByTestId('rc-card-no-train').textContent).toBe('Add a train period');
+        expect(screen.getByTestId('rc-card-no-train').className).toBe('rcc-line-warn');
+        expect(screen.getByTestId('rc-card-use').textContent).toBe(CARD_NO_TRAIN_TEXT);
+        expectNoRowCount();
         expect(screen.getByTestId('rc-card-test').textContent).toBe('No scoring period');
         expect(screen.getByTestId('rc-card-test').querySelector('.rcc-line-warn')!.getAttribute('title')).toBe('Needed before Mark complete');
         expect(screen.queryByTestId('rc-card-test-bad')).toBeNull();
@@ -224,7 +222,7 @@ describe('RunningConditionCard — Set: ONE line (workbench redesign §1)', () =
         expect(c.className).not.toContain('rcc-line');
         expect(screen.getAllByTestId('rc-card-period-chip')).toHaveLength(2);
         expect(screen.getByTestId('rc-card-cond-chip')).toBeTruthy();
-        expect(screen.getByTestId('rc-card-use').querySelector('.rcc-meter')).not.toBeNull();
+        expectNoRowCount();
         const hide = screen.getByTestId('rc-card-details');
         expect(hide.textContent).toBe('Hide details ');
         expect(hide.getAttribute('aria-expanded')).toBe('true');
@@ -241,8 +239,7 @@ describe('RunningConditionCard — Set: ONE line (workbench redesign §1)', () =
         expect(group(screen.getByTestId('rc-card-details'))).toEqual(openGroup);
         expect(screen.getByTestId('rc-card').lastElementChild).toBe(screen.getByTestId('rc-card-details').closest('.rcc-acts'));
         expect(screen.queryByTestId('rc-card-period-chip')).toBeNull();
-        // the numbers on the line are the same ones the Details view showed (same props, nothing re-asked)
-        expect(screen.getByTestId('rc-card-rows').textContent).toBe('11,066');
+        expectNoRowCount();
     });
 
     // "Details" / "Hide details" are two elements in two
@@ -306,15 +303,17 @@ describe('RunningConditionCard — Set', () => {
         expect(screen.getByTestId('rc-card-period-chip').textContent).toBe('Start → 2026/03/31 23:59');
     });
 
-    it('no train period = an AMBER "No train period — add one" chip and "0 rows" (never "Whole dataset"; red is only for invalid input)', () => {
+    it('no train period = an AMBER "No train period — add one" chip and an amber "Add a train period" — no "0 rows" (never "Whole dataset"; red is only for invalid input)', () => {
         detailsCard({ periods: [] });
         const chip = screen.getByTestId('rc-card-period-chip');
         expect(chip.textContent).toBe('No train period — add one');
         expect(chip.className).toContain('rcc-chip--warn');
         expect(chip.className).not.toContain('rcc-chip--bad');
-        expect(screen.getByTestId('rc-card-rows').textContent).toBe('0');
-        expect(screen.getByTestId('rc-card-no-train').textContent).toBe('rows — add a train period');
-        expect(screen.getByTestId('rc-card-no-train').className).toBe('rcc-use-none');
+        expect(screen.getByTestId('rc-card-no-train').textContent).toBe('Add a train period');
+        expect(screen.getByTestId('rc-card-no-train').className).toBe('rcc-use-note rcc-line-warn');
+        expect(screen.getByTestId('rc-card-no-train').getAttribute('role')).toBeNull(); // a step to do, not an alert
+        expect(screen.queryByTestId('rc-card-no-rows')).toBeNull();
+        expectNoRowCount();
         expect(screen.getByTestId('rc-card').textContent).not.toContain('Whole dataset');
     });
 
@@ -358,12 +357,13 @@ describe('RunningConditionCard — Set', () => {
         expect(screen.getAllByTestId('rc-card-cond-chip')).toHaveLength(1);
     });
 
-    it('right side: rows used, "rows · %" and a bar; the Edit button opens the settings', () => {
-        const onOpen = detailsCard();
-        expect(screen.getByTestId('rc-card-rows').textContent).toBe('11,066');
-        expect(screen.getByTestId('rc-card-pct').textContent).toBe('rows · 21%');
-        const bar = screen.getByTestId('rc-card-use').querySelector('.rcc-meter span') as HTMLElement;
-        expect(parseFloat(bar.style.width)).toBeCloseTo(21.14, 1);
+    it('right side: NO rows used, no "rows · %", no share bar — only the period strip; the Edit button opens the settings', () => {
+        const onOpen = detailsCard({ bounds: { min: '2025-01-01 00:00:00', max: '2026-07-31 23:50:00' } });
+        expectNoRowCount();
+        const use = screen.getByTestId('rc-card-use');
+        expect([...use.children].map(x => x.getAttribute('data-testid'))).toEqual(['period-coverage']);
+        expect(screen.queryByTestId('rc-card-no-train')).toBeNull();
+        expect(screen.queryByTestId('rc-card-no-rows')).toBeNull();
         const edit = screen.getByTestId('rc-card-open');
         expect(edit.textContent).toBe('Edit');
         fireEvent.click(edit);
@@ -375,7 +375,7 @@ describe('RunningConditionCard — Set', () => {
         const B = { min: '2025-01-01 00:00:00', max: '2026-07-31 23:50:00' };
         const cov = () => within(screen.getByTestId('rc-card')).getByTestId('period-coverage');
 
-        it('draws one block per PERSISTED period under the rows-used bar, with start/end year-month and a short day count', () => {
+        it('draws one block per PERSISTED period, with start/end year-month and a short day count (days — never rows)', () => {
             detailsCard({ bounds: B });
             expect(cov().querySelectorAll('.f4-strip i')).toHaveLength(2);
             expect(cov().className).toContain('f4-cov--mini');
@@ -385,22 +385,24 @@ describe('RunningConditionCard — Set', () => {
             expect(cov().textContent).not.toMatch(/Jan|Jul/);
             expect(within(cov()).getByTestId('period-coverage-days').textContent).toBe('198 d train · 0 d scoring'); // Jan1-Mar31 2026 (90 d) + Apr15 2026-end of data (108 d)
             expect(screen.getByTestId('rc-card-use').contains(cov())).toBe(true);
-            // the rows-used count, % and bar are all still there
-            expect(screen.getByTestId('rc-card-rows').textContent).toBe('11,066');
-            expect(screen.getByTestId('rc-card-use').querySelector('.rcc-meter')).not.toBeNull();
+            // the strip is the column's only content: the rows-used count, % and bar are gone
+            expect(screen.getByTestId('rc-card-use').firstElementChild).toBe(cov());
+            expect(screen.getByTestId('rc-card-use').childElementCount).toBe(1);
+            expect(screen.queryByTestId('rc-card-rows')).toBeNull();
+            expect(screen.getByTestId('rc-card').querySelector('.rcc-meter')).toBeNull();
         });
 
         it('reads the periods prop only: re-rendering with the same persisted periods does not change it', () => {
             const { rerender } = render(
                 <RunningConditionCard state="set" periods={[p('a', '2025-01-01T00:00', '2025-01-31T23:59')]} filters={[]} combine="and" noneConfirmed headers={[]}
-                    getDesc={() => ''} getUnit={() => ''} rows={OK} bounds={B} onOpen={vi.fn()} />,
+                    getDesc={() => ''} getUnit={() => ''} bounds={B} onOpen={vi.fn()} />,
             );
             openDetails(); // the strip lives in the Details view only
             const first = within(cov()).getByTestId('period-coverage-days').textContent;
             expect(first).toBe('31 d train · 0 d scoring');
             rerender(
                 <RunningConditionCard state="set" periods={[p('a', '2025-01-01T00:00', '2025-01-31T23:59')]} filters={[]} combine="and" noneConfirmed headers={[]}
-                    getDesc={() => ''} getUnit={() => ''} rows={{ status: 'ok', used: 1, total: 2 }} bounds={B} onOpen={vi.fn()} />,
+                    getDesc={() => ''} getUnit={() => ''} noRows={false} bounds={B} onOpen={vi.fn()} />,
             );
             expect(within(cov()).getByTestId('period-coverage-days').textContent).toBe(first);
         });
@@ -428,10 +430,12 @@ describe('RunningConditionCard — Set', () => {
             expect(Math.round(parseFloat(b.style.left) + parseFloat(b.style.width))).toBe(100);
         });
 
-        it('hidden (no strip, nothing else changes) while the dataset bounds are unknown', () => {
+        it('hidden while the dataset bounds are unknown: the right column is then EMPTY (the stylesheet hides it — no blank 230 px gap)', () => {
             detailsCard({ bounds: null });
             expect(screen.queryByTestId('period-coverage')).toBeNull();
-            expect(screen.getByTestId('rc-card-rows').textContent).toBe('11,066');
+            const use = screen.getByTestId('rc-card-use');
+            expect(use.className).toBe('rcc-use');
+            expect(use.childNodes).toHaveLength(0); // `:empty` matches: `.rcc-use:empty { display: none }`
             cleanup();
             detailsCard({ bounds: { min: null, max: null } });
             expect(screen.queryByTestId('period-coverage')).toBeNull();
@@ -443,29 +447,52 @@ describe('RunningConditionCard — Set', () => {
         });
     });
 
-    it('while counting: "Counting rows…" first, then the previous numbers stay; on failure: "— rows" with a title; idle: nothing', () => {
-        detailsCard({ rows: { status: 'loading', used: null, total: null } });
-        expect(screen.getByTestId('rc-card-rows-loading').textContent).toBe('Counting rows…');
-        cleanup();
-        detailsCard({ rows: { status: 'loading', used: 5, total: 10 } });
-        expect(screen.getByTestId('rc-card-rows').textContent).toBe('5');
-        expect(screen.getByTestId('rc-card-pct').textContent).toBe('rows · 50%');
-        cleanup();
-        detailsCard({ rows: { status: 'error', used: null, total: null } });
-        expect(screen.getByTestId('rc-card-rows-error').textContent).toBe('— rows');
-        expect(screen.getByTestId('rc-card-rows-error').getAttribute('title')).toBe("Couldn't count the rows");
-        cleanup();
-        detailsCard({ rows: { status: 'idle', used: null, total: null } });
+    // The gate's verdict (`countedNoTrainRows`, passed as `noRows`) is all the card gets of
+    // the count: while it is not "nothing to train on" the card says nothing about rows —
+    // counting, counted, failed or not asked all look the same.
+    it('says nothing about rows while there is something to train on, in both views', () => {
+        card({ noRows: false });
+        expectNoRowCount();
         expect(screen.getByTestId('rc-card-use').textContent).toBe('');
+        openDetails();
+        expectNoRowCount();
+        expect(screen.getByTestId('rc-card-use').textContent).toBe('');
+        expect(screen.getByTestId('rc-card').className).toContain('rcc-card--ok');
     });
 
-    it('<1% rows and a zero count are formatted, not rounded away', () => {
-        detailsCard({ rows: { status: 'ok', used: 3, total: 10_000 } });
-        expect(screen.getByTestId('rc-card-pct').textContent).toBe('rows · <1%');
-        cleanup();
-        detailsCard({ rows: { status: 'ok', used: 0, total: 10_000 } });
-        expect(screen.getByTestId('rc-card-rows').textContent).toBe('0');
-        expect(screen.getByTestId('rc-card-pct').textContent).toBe('rows · 0%');
+    it('the settled "no running row" verdict is still a red alert — in words, "Nothing to train on", with no "0" in front', () => {
+        card({ noRows: true });
+        let c = screen.getByTestId('rc-card');
+        expect(c.className).toContain('rcc-card--bad');
+        expect(c.getAttribute('data-norows')).toBe('true');
+        let alert = screen.getByTestId('rc-card-no-rows');
+        expect(alert.textContent).toBe('Nothing to train on');
+        expect(alert.textContent).toBe(CARD_NO_ROWS_TEXT);
+        expect(alert.getAttribute('role')).toBe('alert');
+        expect(alert.className).toBe('rcc-line-bad');
+        expect(alert.getAttribute('title')).toBe('No rows match the running condition inside the train periods — widen a train period or relax the condition');
+        expect(screen.getByTestId('rc-card-use').textContent).toBe('Nothing to train on'); // no leading "0"
+        expect(screen.getByTestId('rc-card-tick').textContent).toBe('!');
+        expectNoRowCount();
+        openDetails();
+        c = screen.getByTestId('rc-card');
+        expect(c.className).toContain('rcc-card--bad');
+        expect(c.getAttribute('data-norows')).toBe('true');
+        alert = screen.getByTestId('rc-card-no-rows');
+        expect(alert.textContent).toBe('Nothing to train on');
+        expect(alert.getAttribute('role')).toBe('alert');
+        expect(alert.className).toBe('rcc-use-note rcc-line-bad');
+        expect(alert.getAttribute('title')).toBe('No rows match the running condition inside the train periods — widen a train period or relax the condition');
+        expect(screen.getByTestId('rc-card-use').firstElementChild).toBe(alert);
+        expect(screen.getByTestId('rc-card-pill').textContent).toBe('Nothing to train on');
+        expectNoRowCount();
+    });
+
+    it('no train period wins over the verdict: "Add a train period", never the red alert', () => {
+        card({ periods: [], noRows: false });
+        expect(screen.getByTestId('rc-card-no-train').textContent).toBe(CARD_NO_TRAIN_TEXT);
+        expect(screen.queryByTestId('rc-card-no-rows')).toBeNull();
+        expect(screen.getByTestId('rc-card').getAttribute('data-norows')).toBeNull();
     });
 });
 

@@ -7,7 +7,7 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
 import TimePeriodsEditor from '../components/windows/TimePeriodsEditor';
 import TestPeriodsEditor from '../components/windows/TestPeriodsEditor';
 import RunningConditionTimeline from '../components/windows/RunningConditionTimeline';
-import { RunningConditionCard, type RcCardRows } from '../components/windows/RunningConditionCard';
+import { RunningConditionCard } from '../components/windows/RunningConditionCard';
 import { SensorMetaProvider } from '../components/sensor/SensorLabel';
 import { PERIOD_COUNTS_IDLE, type PeriodCountsState } from '../utils/periodCounts';
 import type { PeriodCount, PeriodCounts } from '../types/periodCounts';
@@ -204,7 +204,7 @@ describe('The timeline hero', () => {
         expect(screen.getByTestId('rc-caption').getAttribute('data-rows')).toBe('fix');
     });
 
-    it('a SAVED period outside the data is an AMBER sliver (a warning), and the rows are counted as usual', () => {
+    it('a SAVED period outside the data is an AMBER sliver (a warning), and the periods are counted as usual (the count itself is never printed)', () => {
         const before = p('s', '2024-02-01T00:00', '2024-03-01T00:00');
         render(<RunningConditionTimeline periods={[INSIDE, AFTER]} tests={[before]} bounds={DATA} counts={st('ok', counts([pc(INSIDE, 800, 640), pc(AFTER, 0, 0, 2)]))} savedPeriods={[INSIDE, AFTER]} savedTests={[before]} />);
         const p2 = screen.getByTestId('rc-tl-P2');
@@ -215,7 +215,8 @@ describe('The timeline hero', () => {
         expect(p2.title).toMatch(/^P2 · .* — outside the data, not used$/);
         expect(screen.getByTestId('rc-tl-S1').title).toMatch(/— outside the data, nothing is scored there$/);
         expect(screen.getByTestId('rc-caption').getAttribute('data-rows')).toBe('counted');
-        expect(screen.getByTestId('rc-caption-rows').textContent).toBe('640 of 10,000 rows (6%) used for training');
+        expect(screen.queryByTestId('rc-caption-rows')).toBeNull();
+        expect(screen.getByTestId('rc-caption').textContent).not.toMatch(/640|10,000|rows|%/);
     });
 
     it('an OPEN-ENDED period outside the data is the outside sliver too, titled "outside the data" (not "not valid")', () => {
@@ -238,7 +239,9 @@ describe('The timeline hero', () => {
         expect(line.textContent).toBe('No rows match — nothing to train on. Widen a train period or relax the condition.');
         expect(line.getAttribute('role')).toBe('alert');
         expect(line.className).toBe('rct-norows');
-        expect(screen.getByTestId('rc-caption-rows').textContent).toBe('0 of 10,000 rows (0%) used for training');
+        // The warning is the red line — the caption itself never prints "0 of 10,000 rows (0%) …".
+        expect(screen.queryByTestId('rc-caption-rows')).toBeNull();
+        expect(screen.getByTestId('rc-caption').textContent).not.toMatch(/10,000|rows|%/);
 
         const again = (c: PeriodCountsState, configured = true) =>
             rerender(<RunningConditionTimeline periods={[INSIDE]} tests={[]} bounds={DATA} counts={c} configured={configured} />);
@@ -254,12 +257,11 @@ describe('The timeline hero', () => {
 });
 
 describe('The one-line running-condition card (the PERSISTED condition)', () => {
-    const OK: RcCardRows = { status: 'ok', used: 11_066, total: 52_340 };
     const card = (over: Partial<React.ComponentProps<typeof RunningConditionCard>> = {}) => render(
         <SensorMetaProvider metadata={[]}>
             <RunningConditionCard
                 state="set" periods={[INSIDE]} filters={[]} combine="and" noneConfirmed headers={null}
-                getDesc={() => ''} getUnit={() => ''} rows={OK} bounds={DATA} onOpen={() => {}}
+                getDesc={() => ''} getUnit={() => ''} bounds={DATA} onOpen={() => {}}
                 {...over}
             />
         </SensorMetaProvider>,
@@ -275,7 +277,8 @@ describe('The one-line running-condition card (the PERSISTED condition)', () => 
         expect(warn.textContent).toBe('⚠ P2 is outside the data (2025/01/01 00:00 – 2025/12/31 23:59) — it is not used');
         expect(warn.className).toContain('rcc-line-warn');
         expect(warn.getAttribute('role')).toBe('status');
-        expect(screen.getByTestId('rc-card-rows').textContent).toBe('11,066'); // the count is still shown
+        expect(screen.queryByTestId('rc-card-rows')).toBeNull(); // no count of rows on the card
+        expect(screen.queryByTestId('rc-card-no-rows')).toBeNull();
         expect(screen.getByTestId('rc-card-open').textContent).toBe('Edit');
         // unfolded: the chip is amber (never red), the pill stays "Set"
         fireEvent.click(screen.getByTestId('rc-card-details'));
@@ -289,13 +292,14 @@ describe('The one-line running-condition card (the PERSISTED condition)', () => 
     });
 
     it('NO saved train period inside the data: the red "nothing to train on" card (never "P1 needs fixing" — the user did not just pick it)', () => {
-        card({ periods: [AFTER], rows: { status: 'loading', used: null, total: null } });
+        card({ periods: [AFTER] }); // known from the dates alone: no settled count is needed
         const el = screen.getByTestId('rc-card');
         expect(el.getAttribute('data-state')).toBe('set');
         expect(el.getAttribute('data-norows')).toBe('true');
         expect(el.className).toContain('rcc-card--bad');
         expect(screen.queryByTestId('rc-card-title')).toBeNull();
-        expect(screen.getByTestId('rc-card-use').textContent).toBe('0 rows — nothing to train on');
+        expect(screen.getByTestId('rc-card-use').textContent).toBe('Nothing to train on');
+        expect(screen.queryByTestId('rc-card-rows')).toBeNull();
         expect(screen.getByTestId('rc-card-no-rows').title).toBe('No train period is inside the data (2025/01/01 00:00 – 2025/12/31 23:59) — move a train period inside the data');
         expect(screen.getByTestId('rc-card-outside').textContent).toBe('⚠ P1 is outside the data (2025/01/01 00:00 – 2025/12/31 23:59) — it is not used');
         expect(screen.getByTestId('rc-card-open').textContent).toBe('Edit');
@@ -309,8 +313,8 @@ describe('The one-line running-condition card (the PERSISTED condition)', () => 
         expect(screen.getByTestId('rc-card-open').textContent).toBe('Fix period');
     });
 
-    it('zero running rows: the line turns red — "!" instead of the tick, "0 rows — nothing to train on" — and Edit stays', () => {
-        card({ noRows: true, rows: { status: 'ok', used: 0, total: 52_340 } });
+    it('zero running rows: the line turns red — "!" instead of the tick, "Nothing to train on" (words, no "0 rows") — and Edit stays', () => {
+        card({ noRows: true });
         const el = screen.getByTestId('rc-card');
         expect(el.getAttribute('data-state')).toBe('set');
         expect(el.getAttribute('data-norows')).toBe('true');
@@ -318,9 +322,10 @@ describe('The one-line running-condition card (the PERSISTED condition)', () => 
         expect(el.className).not.toContain('rcc-card--ok');
         expect(screen.getByTestId('rc-card-tick').textContent).toBe('!');
         expect(screen.getByTestId('rc-card-tick').getAttribute('aria-label')).toBe('Nothing to train on');
-        expect(screen.getByTestId('rc-card-use').textContent).toBe('0 rows — nothing to train on');
+        expect(screen.getByTestId('rc-card-use').textContent).toBe('Nothing to train on');
         expect(screen.getByTestId('rc-card-no-rows').className).toBe('rcc-line-bad');
         expect(screen.getByTestId('rc-card-no-rows').getAttribute('role')).toBe('alert');
+        expect(screen.queryByTestId('rc-card-rows')).toBeNull();
         expect(screen.queryByTestId('rc-card-pct')).toBeNull();
         expect(screen.getByTestId('rc-card-open').textContent).toBe('Edit');
         // "Use all rows" (this fixture): there is no condition to relax
@@ -328,7 +333,10 @@ describe('The one-line running-condition card (the PERSISTED condition)', () => 
         // the same state in the unfolded card — and never a green "Set" pill on the red card
         fireEvent.click(screen.getByTestId('rc-card-details'));
         expect(screen.getByTestId('rc-card').className).toContain('rcc-card--bad');
-        expect(within(screen.getByTestId('rc-card-use')).getByTestId('rc-card-no-rows').textContent).toBe('rows — nothing to train on');
+        expect(within(screen.getByTestId('rc-card-use')).getByTestId('rc-card-no-rows').textContent).toBe('Nothing to train on');
+        expect(within(screen.getByTestId('rc-card-use')).getByTestId('rc-card-no-rows').getAttribute('role')).toBe('alert');
+        expect(screen.queryByTestId('rc-card-rows')).toBeNull();
+        expect(screen.getByTestId('rc-card').querySelector('.rcc-meter')).toBeNull();
         const pill = screen.getByTestId('rc-card-pill');
         expect(pill.textContent).toBe('Nothing to train on');
         expect(pill.className).toContain('f4-pill--bad');
@@ -337,7 +345,7 @@ describe('The one-line running-condition card (the PERSISTED condition)', () => 
 
     it('with a condition the no-rows tooltip also offers relaxing it', () => {
         card({
-            noRows: true, noneConfirmed: false, rows: { status: 'ok', used: 0, total: 52_340 },
+            noRows: true, noneConfirmed: false,
             filters: [{ id: 'f', sensor: 'TAG1', operation: 'greater_than', value1: '5', value2: '' }],
         });
         expect(screen.getByTestId('rc-card-no-rows').title).toBe('No rows match the running condition inside the train periods — widen a train period or relax the condition');
@@ -348,7 +356,10 @@ describe('The one-line running-condition card (the PERSISTED condition)', () => 
         expect(screen.getByTestId('rc-card').getAttribute('data-norows')).toBeNull();
         expect(screen.getByTestId('rc-card').className).toContain('rcc-card--ok');
         expect(screen.queryByTestId('rc-card-no-rows')).toBeNull();
-        expect(screen.getByTestId('rc-card-rows').textContent).toBe('11,066');
+        // …and it says nothing about rows: no count, no percentage.
+        expect(screen.queryByTestId('rc-card-rows')).toBeNull();
+        expect(screen.queryByTestId('rc-card-pct')).toBeNull();
+        expect(screen.getByTestId('rc-card-use').textContent).toBe('');
     });
 
     it('a saved SCORING period outside the data: never "to fix" — one amber line says nothing is scored there, the chip is amber', () => {

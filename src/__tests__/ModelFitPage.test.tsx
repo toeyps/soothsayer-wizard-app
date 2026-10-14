@@ -25,7 +25,7 @@ vi.mock('../components/charts/ResponsiveECharts', () => ({
 // The Fit chart's X selector is the REAL shared compact single picker;
 // its own behaviour is tested in SensorPicker.test.tsx.
 
-import ModelFitPage, { outsideText } from '../components/windows/workbench/ModelFitPage';
+import ModelFitPage, { inClusterSub, outsideText } from '../components/windows/workbench/ModelFitPage';
 import { SensorMetaProvider } from '../components/sensor/SensorLabel';
 import { openPickerSurface, pickSingle, pickerRows, rowTag } from './helpers/sensorPicker';
 import { makeHealthPreview } from './helpers/healthPreviewFixture';
@@ -108,7 +108,7 @@ describe('ModelFitPage — Individual', () => {
         expect(within(screen.getByTestId('chart-card-dist')).getByTestId('echarts-mock').getAttribute('data-series')).toBe('Rows|Normal curve');
     });
 
-    it('the strip has exactly three tiles — Mean, SD (with the ±1SD range) and Outside ±3SD (share, estimated rows, the ±3SD range)', () => {
+    it('the strip has exactly three tiles — Mean, SD (with the ±1SD range) and Outside ±3SD (the share and the ±3SD range — never a number of rows)', () => {
         page(model(), { target: 'T1' });
         const strip = screen.getByTestId('fit-kpis');
         expect(strip.className).toBe('wb3-kpis wb3-kpis--fit');
@@ -116,10 +116,19 @@ describe('ModelFitPage — Individual', () => {
         // the app's ONE formatter for computed values: up to 3 decimals, never padded
         expect(tile('stat-mean')).toEqual({ label: 'Mean', value: '5', unit: '°C', sub: 'learned normal' });
         expect(tile('stat-sd')).toEqual({ label: 'SD', value: '1', unit: '°C', sub: '±1SD 4 – 6' });
-        // the fixture's bins: 10 rows in 0–2 and 10 rows in 8–10 lie outside 2 … 8 → 20 of 1,000
-        expect(tile('stat-outside3')).toEqual({ label: 'Outside ±3SD', value: '2.00%', unit: null, sub: '≈ 20 rows · ±3SD 2 – 8' });
-        // the row count is an estimate from the bins: the tile says so on hover (the old table row's tooltip)
+        // the fixture's bins: 10 rows in 0–2 and 10 rows in 8–10 lie outside 2 … 8 → 20 of 1,000 = 2.00%.
+        // User decision 2026-10-14: the Build Model window never says how many rows — the caption
+        // used to start "≈ 20 rows · "; only the ±3SD range is left, with no dangling "·".
+        expect(tile('stat-outside3')).toEqual({ label: 'Outside ±3SD', value: '2.00%', unit: null, sub: '±3SD 2 – 8' });
+        expect(screen.getByTestId('stat-outside3').textContent).not.toMatch(/≈|rows?\b|\b20\b/);
+        // the share is an estimate from the bins: the tile says so on hover (the old table row's tooltip)
         expect(screen.getByTestId('stat-outside3').getAttribute('title')).toBe('Estimated from the distribution bins');
+    });
+
+    it('no tile of the strip prints a count of rows', () => {
+        page(model(), { target: 'T1' });
+        const strip = screen.getByTestId('fit-kpis');
+        expect(strip.textContent).not.toMatch(/≈|\d[\d,]*\s*rows?\b|1,000/);
     });
 
     it('no "Training rows" tile and no "Trained" tile; the row count is not an item of its own', () => {
@@ -136,12 +145,12 @@ describe('ModelFitPage — Individual', () => {
         tiny.stats = { ...(tiny.stats as any), rows: 1_000_000 };
         tiny.histogram = { bin_edges: [0, 2, 4, 6, 8, 10], counts: [1, 0, 999_999, 0, 0], curve: [0, 0, 0, 0, 0], bin_width: 2, n: 1_000_000 };
         render(<ModelFitPage model={model()} stale={false} preview={{ ...idle, data: tiny }} unit="" data={tiny} onXPredictorChange={() => {}} onCompare={() => {}} />);
-        expect(tile('stat-outside3')).toMatchObject({ value: '< 0.01%', sub: '≈ 1 row · ±3SD 2 – 8' });
+        expect(tile('stat-outside3')).toMatchObject({ value: '< 0.01%', sub: '±3SD 2 – 8' });
         cleanup();
         const none = { ...makeHealthPreview({ kind: 'individual' }) };
         none.histogram = { bin_edges: [0, 2, 4, 6, 8, 10], counts: [0, 0, 1000, 0, 0], curve: [0, 0, 0, 0, 0], bin_width: 2, n: 1000 };
         render(<ModelFitPage model={model()} stale={false} preview={{ ...idle, data: none }} unit="" data={none} onXPredictorChange={() => {}} onCompare={() => {}} />);
-        expect(tile('stat-outside3')).toMatchObject({ value: '0.00%', sub: '≈ 0 rows · ±3SD 2 – 8' });
+        expect(tile('stat-outside3')).toMatchObject({ value: '0.00%', sub: '±3SD 2 – 8' });
         expect(outsideText(0.004)).toBe('< 0.01%');
         expect(outsideText(0.27)).toBe('0.27%');
         expect(outsideText(0)).toBe('0.00%');
@@ -370,8 +379,10 @@ describe('ModelFitPage — Clustering', () => {
         // "split by" names the criteria sensor with the shared muted Inline label (description, then tag)
         expect(tile('stat-clusters')).toEqual({ label: 'Clusters', value: '2', unit: null, sub: 'split by Label of LOADLOAD' });
         expect(screen.getByTestId('stat-clusters').querySelector('.wb3-kpi-s .sl--muted')).toBeTruthy();
-        // the fixture: 95 of 100 rows fall in a criteria range, 5 in none
-        expect(tile('stat-assigned')).toEqual({ label: 'In a cluster', value: '95.0%', unit: null, sub: '5 rows outside every criteria range' });
+        // the fixture: 95 of 100 rows fall in a criteria range, 5 in none — said as a share and in
+        // words, never as "5 rows outside every criteria range" (user decision 2026-10-14)
+        expect(tile('stat-assigned')).toEqual({ label: 'In a cluster', value: '95.0%', unit: null, sub: 'the rest is outside every criteria range' });
+        expect(strip.textContent).not.toMatch(/\d[\d,]*\s*rows?\b/);
         // the stats' own share (the fixture: 98.9% of the training rows inside the 3× SD ring)
         expect(tile('stat-inside3')).toEqual({ label: 'Inside 3× SD', value: '98.9%', unit: null, sub: 'of the training rows · score ≥ 80' });
         expect(tileLabels(strip)).not.toContain('Training rows');
@@ -393,14 +404,15 @@ describe('ModelFitPage — Clustering', () => {
         expect(tile('stat-inside3')).toMatchObject({ value: '—', sub: 'of the training rows · score ≥ 80' });
     });
 
-    it('a share that is not zero never reads "0.0%" (the shared `shareText`): "< 0.1%"; a single row outside is "1 row"', () => {
+    it('a share that is not zero never reads "0.0%" (the shared `shareText`): "< 0.1%"; the caption never counts the rows outside', () => {
         const base = makeHealthPreview({ kind: 'clustering', n_clusters: 2, criteria_sensor: 'LOAD' });
         const data = {
             ...base,
             stats: { ...(base.stats as any), rows: 100_000, assigned_rows: 50, unassigned_rows: 99_950, inside_3sd_ring_pct: 0.04 },
         };
         page(clu(), {}, { data, preview: { ...idle, data } });
-        expect(tile('stat-assigned')).toMatchObject({ value: '< 0.1%', sub: '99,950 rows outside every criteria range' });
+        expect(tile('stat-assigned')).toMatchObject({ value: '< 0.1%', sub: 'the rest is outside every criteria range' });
+        expect(screen.getByTestId('cl-stats').textContent).not.toMatch(/99,950|100,000/);
         expect(tile('stat-inside3').value).toBe('< 0.1%');
         cleanup();
         // nothing at all in a cluster is a real zero; no training row = no share to print
@@ -410,7 +422,26 @@ describe('ModelFitPage — Clustering', () => {
         cleanup();
         const one = { ...base, stats: { ...(base.stats as any), rows: 0, assigned_rows: 0, unassigned_rows: 1 } };
         page(clu(), {}, { data: one, preview: { ...idle, data: one } });
-        expect(tile('stat-assigned')).toMatchObject({ value: '—', sub: '1 row outside every criteria range' });
+        expect(tile('stat-assigned')).toMatchObject({ value: '—', sub: 'the rest is outside every criteria range' });
+    });
+
+    it('"In a cluster" caption, in words: some rows outside / every row in a range / one cluster with no criteria sensor', () => {
+        expect(inClusterSub(5, true)).toBe('the rest is outside every criteria range');
+        expect(inClusterSub(1, true)).toBe('the rest is outside every criteria range');
+        expect(inClusterSub(0, true)).toBe('every training row is in a criteria range');
+        expect(inClusterSub(0, false)).toBe('every training row is in the cluster');
+        // on the page: every training row in a criteria range
+        const base = makeHealthPreview({ kind: 'clustering', n_clusters: 2, criteria_sensor: 'LOAD' });
+        const all = { ...base, stats: { ...(base.stats as any), rows: 100, assigned_rows: 100, unassigned_rows: 0 } };
+        page(clu(), {}, { data: all, preview: { ...idle, data: all } });
+        expect(tile('stat-assigned')).toEqual({ label: 'In a cluster', value: '100.0%', unit: null, sub: 'every training row is in a criteria range' });
+        cleanup();
+        // one cluster, no criteria sensor: there is no range to be outside of
+        const single = makeHealthPreview({ kind: 'clustering', n_clusters: 1 });
+        const one = { ...single, stats: { ...(single.stats as any), rows: 100, assigned_rows: 100, unassigned_rows: 0, criteria_sensor: null } };
+        page(clu(), {}, { data: one, preview: { ...idle, data: one } });
+        expect(tile('stat-assigned')).toEqual({ label: 'In a cluster', value: '100.0%', unit: null, sub: 'every training row is in the cluster' });
+        expect(screen.getByTestId('cl-stats').textContent).not.toMatch(/\d[\d,]*\s*rows?\b/);
     });
 
     // A name drawn on the chart is the ONLY key

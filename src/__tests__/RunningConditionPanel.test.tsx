@@ -121,19 +121,24 @@ describe('RunningConditionPanel — one column (workbench redesign §5)', () => 
         expect(screen.queryByTestId('period-coverage')).toBeNull();
     });
 
-    it('the counts feed the caption AND every row ("30 d · 26 d running")', () => {
+    // User decision 2026-10-14: the count is read as running DAYS only — the number of rows
+    // (14,391 of 25,880, 56%) is never printed in the settings.
+    it('the counts feed the caption AND every row as running DAYS ("30 d · 26 d running") — no number of rows anywhere in the panel', () => {
         setup({ counts: COUNTED });
-        expect(screen.getByTestId('rc-caption').textContent).toBe('60 d train (about 50 d running time)15 d scoring14,391 of 25,880 rows (56%) used for training≥ 30 d recommended');
+        expect(screen.getByTestId('rc-caption').textContent).toBe('60 d train (about 50 d running time)15 d scoring≥ 30 d recommended');
+        expect(screen.queryByTestId('rc-caption-rows')).toBeNull();
+        expect(screen.getByTestId('rc-panel').textContent).not.toMatch(/14,391|25,880|17,280|8,?640|7,?000|56%|\d rows|rows \(|Counting rows/);
         expect(screen.getByTestId('period-days-1').textContent).toBe('30 d · 26 d running');
         expect(screen.getByTestId('period-days-2').textContent).toBe('30 d · 24 d running');
         expect(screen.getByTestId('test-days-1').textContent).toBe('15 d · 13 d running');
     });
 
     // The count of an unset condition is a count of every row.
-    it('not configured ("Only when running", no complete condition): the caption asks for the condition and no row claims running days', () => {
+    it('not configured ("Only when running", no complete condition): the caption claims no running time and no row claims running days', () => {
         setup({ configured: false, filters: [], counts: COUNTED });
         expect(screen.getByTestId('rc-caption').getAttribute('data-rows')).toBe('no-condition');
-        expect(screen.getByTestId('rc-caption-rows').textContent).toBe('set the condition to count the rows');
+        expect(screen.queryByTestId('rc-caption-rows')).toBeNull();
+        expect(screen.getByTestId('rc-caption').textContent).toBe('60 d train15 d scoring≥ 30 d recommended');
         expect(screen.getByTestId('rc-caption-train').textContent).toBe('60 d train');
         expect(screen.getByTestId('period-days-1').textContent).toBe('30 d');
         expect(screen.getByTestId('test-days-1').textContent).toBe('15 d');
@@ -167,10 +172,13 @@ describe('RunningConditionPanel — one column (workbench redesign §5)', () => 
         expect(screen.getByTestId('period-days-1').textContent).toBe('30 d');
     });
 
-    it('no train period: the amber line in the Train section, the caption says to add one', () => {
+    it('no train period: the amber line in the Train section says to add one; the caption reads "no train period" (nothing about rows)', () => {
         setup({ periods: [] });
         expect(screen.getByTestId('periods-empty').textContent).toBe('No train period yet — add at least one');
-        expect(screen.getByTestId('rc-caption-rows').textContent).toBe('add a train period to count the rows');
+        expect(screen.getByTestId('rc-caption').getAttribute('data-rows')).toBe('no-train');
+        expect(screen.getByTestId('rc-caption-train').textContent).toBe('no train period');
+        expect(screen.queryByTestId('rc-caption-rows')).toBeNull();
+        expect(screen.getByTestId('rc-caption').textContent).not.toMatch(/rows/);
     });
 
     it('no scoring period: one quiet grey note in the Scoring section', () => {
@@ -343,7 +351,10 @@ describe('RunningConditionPanel — scope="custom" (a model\'s own running condi
         ]);
         expect(screen.getByTestId('custom-rc-footnote').textContent).toBe('Only this model · the workspace default is untouched · saved with Save changes');
         expect(within(screen.getByTestId('custom-periods')).getByTestId('period-days-1').textContent).toBe('30 d · 26 d running');
-        expect(screen.getByTestId('rc-caption-rows').textContent).toBe('14,391 of 25,880 rows (56%) used for training');
+        // …and, like the workspace settings, no number of rows (2026-10-14)
+        expect(screen.getByTestId('rc-caption').textContent).toBe('60 d train (about 50 d running time)15 d scoring≥ 30 d recommended');
+        expect(screen.queryByTestId('rc-caption-rows')).toBeNull();
+        expect(panel.textContent).not.toMatch(/14,391|25,880|56%|\d rows|rows \(/);
         expect(within(screen.getByTestId('custom-condition')).getByRole('radiogroup')).toBeTruthy();
     });
 

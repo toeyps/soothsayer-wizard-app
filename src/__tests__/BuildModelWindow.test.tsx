@@ -293,6 +293,23 @@ function fakePeriodCounts(args: any) {
 }
 /** The `count_period_rows` calls so far: `[periods, filter]` per call. */
 const periodCountCalls = () => mockInvoke.mock.calls.filter(c => c[0] === 'count_period_rows').map(c => c[1] as { periods: { start: string | null; end: string | null }[]; filter: unknown; expected_generation: unknown });
+/**
+ * User decision 2026-10-14: the Build Model window never says how many data rows are used.
+ * The running-condition card prints NO count in any state of `count_period_rows` (counting,
+ * counted, failed): no "N rows · x%", no "Counting rows…", no "— rows", no share meter.
+ */
+const expectCardHasNoRowCount = () => {
+    const card = screen.getByTestId('rc-card');
+    for (const id of ['rc-card-rows', 'rc-card-pct', 'rc-card-rows-loading', 'rc-card-rows-error']) expect(within(card).queryByTestId(id)).toBeNull();
+    expect(card.querySelector('.rcc-meter')).toBeNull();
+    expect(card.textContent).not.toMatch(/\d[\d,]*\s*rows?\b|Counting rows|— rows|%/);
+};
+/** The settings' caption has no rows part: no "N of M rows (x%) used for training", no "Counting rows…", no "… to count the rows". */
+const expectCaptionHasNoRowCount = (root: HTMLElement = document.body) => {
+    const cap = within(root).getByTestId('rc-caption');
+    expect(within(root).queryByTestId('rc-caption-rows')).toBeNull();
+    expect(cap.textContent).not.toMatch(/rows|%/);
+};
 const healthCalls = () => mockInvoke.mock.calls.filter(c => c[0] === 'compute_health_preview').map(c => (c[1] as any).request);
 /** A Relation model whose preview keeps answering NOT_FITTED: the window re-fits it silently ONCE and
  *  only then settles on the "Fit no longer in memory" state. Waits until that board is on screen and
@@ -2089,7 +2106,11 @@ describe('Custom running-condition editor (2026-09-30 port)', () => {
         const editor = within(screen.getByTestId('custom-rc-editor'));
         expect([...editor.getByTestId('custom-rc-panel').children].map(c => c.getAttribute('data-testid')))
             .toEqual(['rc-timeline', 'custom-periods', 'custom-test-periods', 'custom-condition', 'custom-rc-footnote']);
-        await waitFor(() => expect(editor.getByTestId('rc-caption-rows').textContent).toBe('800 of 5,000 rows (16%) used for training'));
+        // the count arrives as running DAYS only — never as a number of rows (2026-10-14)
+        await waitFor(() => expect(editor.getByTestId('rc-caption').getAttribute('data-rows')).toBe('counted'));
+        await waitFor(() => expect(editor.getByTestId('rc-caption-train').textContent).toBe('28 d train (about 20 d running time)'));
+        expectCaptionHasNoRowCount(screen.getByTestId('custom-rc-editor'));
+        expect(screen.getByTestId('custom-rc-editor').textContent).not.toMatch(/800|5,000|16%/);
         expect(editor.getByTestId('period-days-1').textContent).toBe('28 d · 20 d running');
         expect(editor.getByTestId('test-days-1').textContent).toBe('9 d · 20 d running');
         expect(editor.getByTestId('rc-timeline')).toBeTruthy(); // (no lanes here: this fixture has no dataset time range)
@@ -3134,9 +3155,9 @@ describe('Running Condition Filter modal — draft + explicit Apply (2026-10-03)
     });
 
     // With "Only when running" and no complete condition the count
-    // is of EVERY row (an incomplete condition is not sent) — the caption used to read
-    // "N of N rows (100%) used for training" while the header pill said "Required".
-    it('"Only when running" without a complete condition: the caption says "set the condition to count the rows" — no "100%", no running days on the rows', async () => {
+    // is of EVERY row (an incomplete condition is not sent): that answer is not the
+    // condition's, so it is not read — no running time, while the header pill says "Required".
+    it('"Only when running" without a complete condition: the caption claims no running time — no "100%", no running days on the rows, nothing about rows', async () => {
         // the condition row has no value yet: the workspace is "not set", so the modal opens by itself
         render(<BuildModelWindow />);
         await deliverData({ failureGroupState: { ...fgSeed(), runningConditionFilters: [{ ...seededFilter, value1: '' }] } });
@@ -3144,18 +3165,22 @@ describe('Running Condition Filter modal — draft + explicit Apply (2026-10-03)
         await waitFor(() => expect(periodCountCalls().length).toBeGreaterThan(0));
         await flush();
         expect(screen.getByTestId('rc-required-pill')).toBeTruthy();
-        expect(screen.getByTestId('rc-caption-rows').textContent).toBe('set the condition to count the rows');
+        expectCaptionHasNoRowCount();
         expect(screen.getByTestId('rc-caption').getAttribute('data-rows')).toBe('no-condition');
         expect(screen.getByTestId('rc-caption-train').textContent).toBe('31 d train'); // no "(about … running time)"
         expect(screen.queryByTestId('period-running-1')).toBeNull();
         expect(screen.getByTestId('rc-caption').textContent).not.toMatch(/100%/);
-        // completing the condition brings the numbers
+        // completing the condition brings the running time (days — never a number of rows)
         fireEvent.change(within(screen.getByTestId('rc-cond-1')).getByLabelText('Value'), { target: { value: '5' } });
-        await waitFor(() => expect(screen.getByTestId('rc-caption-rows').textContent).toBe('800 of 5,000 rows (16%) used for training'), { timeout: 3000 });
+        await waitFor(() => expect(screen.getByTestId('rc-caption-train').textContent).toBe('31 d train (about 20 d running time)'), { timeout: 3000 });
+        expect(screen.getByTestId('rc-caption').getAttribute('data-rows')).toBe('counted');
         expect(screen.getByTestId('period-running-1').textContent).toBe(' · 20 d running');
+        expectCaptionHasNoRowCount();
         // "Use all rows" is a configured choice: every row in the periods IS what is trained on
         fireEvent.click(screen.getByTestId('rc-mode-none'));
-        await waitFor(() => expect(screen.getByTestId('rc-caption-rows').textContent).toBe('1,000 of 5,000 rows (20%) used for training'), { timeout: 3000 });
+        await waitFor(() => expect(screen.getByTestId('rc-caption-train').textContent).toBe('31 d train (about 25 d running time)'), { timeout: 3000 });
+        expectCaptionHasNoRowCount();
+        expect(screen.getByRole('dialog', { name: 'Running condition' }).textContent).not.toMatch(/800 of|1,000 of|5,000|16%|20%/);
     });
 
     describe('change warnings: the impact line before Apply, the notice after it (workbench redesign §5)', () => {
@@ -3552,9 +3577,10 @@ describe('Running Condition Filter modal — draft + explicit Apply (2026-10-03)
 
 // The Step-1 card
 // (replaces the one-line rcbar), the redesigned settings modal and its live
-// per-period counts (`count_period_rows`, of the DRAFT). Since the
-// card's own "N rows · x%" comes from `count_period_rows` too (ONE call for the
-// persisted condition) — nothing here counts through `compute_sensor_stats`.
+// per-period counts (`count_period_rows`, of the DRAFT). The card asks
+// `count_period_rows` too (ONE call for the persisted condition) — for its
+// "nothing to train on" verdict only: since 2026-10-14 neither the card nor the
+// modal prints a number of rows. Nothing here counts through `compute_sensor_stats`.
 // The draft / Apply guarantees themselves are tested in the describe above.
 describe('Running condition Step 1 — header, card, settings modal preview (2026-10-03)', () => {
     const periods = [
@@ -3602,7 +3628,7 @@ describe('Running condition Step 1 — header, card, settings modal preview (202
     });
 
     describe('Step-1 card', () => {
-        it('Set: compact card with the period chips, the condition chips (sensor name + operator + value + unit) and the row count', async () => {
+        it('Set: compact card with the period chips and the condition chips (sensor name + operator + value + unit) — and NO row count, in the line or in Details', async () => {
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: setFg() });
             expect(state()).toBe('set');
@@ -3613,29 +3639,42 @@ describe('Running condition Step 1 — header, card, settings modal preview (202
             expect(screen.getByTestId('rc-card-test').textContent).toBe('Scoring 1 period');
             expect(screen.getByTestId('rc-card-cond').textContent).toBe('When running: 1 condition');
             expect(screen.getByTestId('rc-card').textContent).not.toMatch(/Step\s*1/i);
+            // Rust's `count_period_rows` of the persisted condition is asked (2 periods x 800 running
+            // rows of 5,000) and settles — the line prints none of it ("1,600 rows · 32%" is gone).
+            await waitFor(() => expect(periodCountCalls()).toHaveLength(1));
+            await flush();
+            expectCardHasNoRowCount();
+            expect(screen.getByTestId('rc-card-use').textContent).toBe('');
+            expect(screen.getByTestId('rc-card').textContent).not.toMatch(/1,600|5,000|32%/);
             fireEvent.click(screen.getByTestId('rc-card-details'));
             expect(screen.getAllByTestId('rc-card-period-chip').map(c => c.textContent)).toEqual(['P1 · 2026/01/01 00:00 → 2026/03/31 23:59', 'P2 · 2026/04/15 00:00 → End']);
             // the persisted scoring periods sit on their own "Scoring" row: S# · start → end
             expect(within(screen.getByTestId('rc-card-test')).getByText('Scoring')).toBeTruthy();
             expect(screen.getAllByTestId('rc-card-test-chip').map(c => c.textContent)).toEqual(['S1 · 2024/01/01 00:00 → 2024/01/31 23:59']);
             expect(screen.getByTestId('rc-card-cond-chip').textContent).toBe('Pump PressureTAG1 > 5 bar'); // Inline label (description then tag) + condition; description + unit come from the sensor metadata
-            // Rust's `count_period_rows` of the persisted condition: 2 periods x 800 running rows of 5,000
-            await waitFor(() => expect(screen.getByTestId('rc-card-rows').textContent).toBe('1,600'));
-            expect(screen.getByTestId('rc-card-pct').textContent).toBe('rows · 32%');
+            // …and the Details view prints none of it either: no number, no percentage, no share bar
+            expectCardHasNoRowCount();
+            expect(screen.getByTestId('rc-card').textContent).not.toMatch(/1,600|5,000|32%/);
+            expect(screen.getByTestId('rc-card').className).toContain('rcc-card--ok');
         });
 
-        // The card counted "rows where the FIRST sensor has a value"
-        // (`compute_sensor_stats`) while the modal counts with `count_period_rows` — with gaps in
-        // that sensor the two disagreed about the SAME applied condition.
-        it('the card and the settings modal print the same two numbers for the applied condition (one source: count_period_rows)', async () => {
-            // the first sensor has a value in only 100 rows: the old card would have read "100 rows · 100%"
+        // The card and the modal read ONE source (`count_period_rows`) for the applied condition —
+        // nothing goes through `compute_sensor_stats` — and since 2026-10-14 NEITHER prints its
+        // rows: the card says nothing, the modal's caption gives the running days only.
+        it('the card and the settings modal count the applied condition from one source (count_period_rows) and neither prints a number of rows', async () => {
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: setFg() });
-            await waitFor(() => expect(screen.getByTestId('rc-card-rows').textContent).toBe('1,600'));
+            await waitFor(() => expect(periodCountCalls()).toHaveLength(1));
+            await flush();
             expect(statsCalls()).toEqual([]); // nothing is counted through compute_sensor_stats any more
+            expectCardHasNoRowCount();
             fireEvent.click(screen.getByTestId('rc-card-open'));
-            await waitFor(() => expect(screen.getByTestId('rc-caption-rows').textContent).toBe('1,600 of 5,000 rows (32%) used for training'));
-            expect(screen.getByTestId('rc-card-pct').textContent).toBe('rows · 32%');
+            await waitFor(() => expect(screen.getByTestId('rc-caption').getAttribute('data-rows')).toBe('counted'));
+            await waitFor(() => expect(screen.getByTestId('rc-caption-train').textContent).toMatch(/ d train \(about 40 d running time\)$/)); // 2 periods x 20 d
+            expectCaptionHasNoRowCount();
+            expect(screen.getByRole('dialog', { name: 'Running condition' }).textContent).not.toMatch(/1,600|5,000|32%/);
+            expectCardHasNoRowCount();
+            expect(statsCalls()).toEqual([]);
         });
 
         it('the Set card\'s Details view carries the small period strip (persisted periods); the one-line card has none; the modal draft moves its own strip only, Apply moves the card strip', async () => {
@@ -3687,8 +3726,14 @@ describe('Running condition Step 1 — header, card, settings modal preview (202
         it('🆕 2026-10-03: no period strip on the card while the dataset bounds are unknown', async () => {
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: setFg() });
-            await waitFor(() => expect(screen.getByTestId('rc-card-rows')).toBeTruthy());
+            await waitFor(() => expect(periodCountCalls()).toHaveLength(1));
+            await flush();
             expect(within(screen.getByTestId('rc-card')).queryByTestId('period-coverage')).toBeNull();
+            // …and with no count to print either, the Details view's right column is EMPTY
+            // (`.rcc-use:empty` hides it — no blank gap where the rows-used block was).
+            fireEvent.click(screen.getByTestId('rc-card-details'));
+            expect(within(screen.getByTestId('rc-card')).queryByTestId('period-coverage')).toBeNull();
+            expect(screen.getByTestId('rc-card-use').childNodes).toHaveLength(0);
         });
 
         it('Set with "Use all rows": "All rows — no condition" and ONE count call without a condition', async () => {
@@ -3696,7 +3741,9 @@ describe('Running condition Step 1 — header, card, settings modal preview (202
             // one train period open at both ends = the whole time range, chosen explicitly
             await deliverData({ failureGroupState: setFg({ runningConditionNoneConfirmed: true, runningConditionTimePeriods: ALL_TIME_TRAIN }) });
             expect(within(screen.getByTestId('rc-card-cond')).getByText('All rows — no condition')).toBeTruthy();
-            await waitFor(() => expect(screen.getByTestId('rc-card-rows').textContent).toBe('1,000'));
+            await waitFor(() => expect(periodCountCalls()).toHaveLength(1));
+            await flush();
+            expectCardHasNoRowCount(); // "All rows — no condition" names the condition; "1,000 rows · 20%" is gone
             expect(periodCountCalls()).toEqual([{
                 periods: ALL_TIME_TRAIN.map(p => ({ start: p.start || null, end: p.end || null })),
                 filter: null, expected_generation: null,
@@ -3704,15 +3751,18 @@ describe('Running condition Step 1 — header, card, settings modal preview (202
             expect(statsCalls()).toEqual([]);
         });
 
-        it('Train/Test validation: NO train period = "0 rows — add a train period" on the card and no count query at all (never a whole-dataset count)', async () => {
+        it('Train/Test validation: NO train period = "Add a train period" on the card (no "0 rows") and no count query at all (never a whole-dataset count)', async () => {
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: setFg({ runningConditionNoneConfirmed: true, runningConditionTimePeriods: [] }) });
             await flush();
             expect(screen.getByTestId('rc-card-time').textContent).toBe('No train period');
-            expect(screen.getByTestId('rc-card-no-train').textContent).toBe('rows — add a train period');
+            expect(screen.getByTestId('rc-card-no-train').textContent).toBe('Add a train period');
+            expect(screen.getByTestId('rc-card-use').textContent).toBe('Add a train period'); // the warning in words, no leading "0"
+            expectCardHasNoRowCount();
             fireEvent.click(screen.getByTestId('rc-card-details'));
             expect(screen.getByTestId('rc-card-period-chip').textContent).toBe('No train period — add one');
-            expect(screen.getByTestId('rc-card-no-train').textContent).toBe('rows — add a train period');
+            expect(screen.getByTestId('rc-card-no-train').textContent).toBe('Add a train period');
+            expectCardHasNoRowCount();
             await act(async () => { await new Promise(r => setTimeout(r, 50)); });
             expect(periodCountCalls()).toEqual([]);
             expect(statsCalls()).toEqual([]);
@@ -3734,12 +3784,16 @@ describe('Running condition Step 1 — header, card, settings modal preview (202
             expect(statsCalls()).toEqual([]);
         });
 
-        it('Set: a failing count shows "— rows" and never blocks anything', async () => {
+        it('Set: a failing count shows nothing on the card (no "— rows") and never blocks anything', async () => {
             const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
             mockInvoke.mockImplementation((cmd: string, args?: any) => cmd === 'count_period_rows' ? Promise.reject(new Error('NO_DATA: No data loaded')) : defaultInvoke(cmd, args));
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: setFg() });
-            await waitFor(() => expect(screen.getByTestId('rc-card-rows-error').textContent).toBe('— rows'));
+            await waitFor(() => expect(periodCountCalls()).toHaveLength(1));
+            await flush();
+            expectCardHasNoRowCount();
+            expect(screen.queryByTestId('rc-card-no-rows')).toBeNull(); // a failed count is never "nothing to train on"
+            expect(screen.getByTestId('rc-card').className).toContain('rcc-card--ok');
             expect(state()).toBe('set');
             expect(trainSensorBtn().disabled).toBe(false);
             warn.mockRestore();
@@ -3844,7 +3898,11 @@ describe('Running condition Step 1 — header, card, settings modal preview (202
             await flush();
         }
 
-        const caption = () => screen.getByTestId('rc-caption-rows').textContent;
+        /** The caption's train part — "N d train (about M d running time)". The running DAYS are all
+         *  the settings print of a count: there is no rows part (user decision 2026-10-14). */
+        const caption = () => screen.getByTestId('rc-caption-train').textContent ?? '';
+        /** "M" of "(about M d running time)", or null while no running time is claimed. */
+        const runningTime = () => caption().match(/\(about (.+) d running time\)$/)?.[1] ?? null;
         /** The running-condition card's own count of the PERSISTED condition: one call, made
          *  when the window loads (before the modal opens). Everything after it is the modal's. */
         const CARD = 1;
@@ -3856,7 +3914,8 @@ describe('Running condition Step 1 — header, card, settings modal preview (202
                 if (r instanceof Error) return Promise.reject(r);
                 if (typeof r !== 'number') return r;
                 const base = fakePeriodCounts(args);
-                return Promise.resolve({ ...base, union: { ...base.union, running_rows: r } });
+                // 40 running rows = one day of running time (1,600 rows = the default 40 d)
+                return Promise.resolve({ ...base, union: { ...base.union, running_rows: r, running_days: r / 40 } });
             });
 
         it('is the one-column "Running condition" dialog: title + subtitle, the timeline, three sections — no preview column', async () => {
@@ -3894,7 +3953,10 @@ describe('Running condition Step 1 — header, card, settings modal preview (202
             for (const c of [train, scoring]) {
                 expect(c.filter).toEqual({ value_filters: [{ sensor: 'TAG1', operation: 'greater_than', value1: 5, value2: null }], combine: 'and' });
             }
-            await waitFor(() => expect(caption()).toBe('1,600 of 5,000 rows (32%) used for training'));
+            // the answer is shown as running DAYS (2 periods x 20 d) — never as "1,600 of 5,000 rows (32%) …"
+            await waitFor(() => expect(runningTime()).toBe('40'));
+            expectCaptionHasNoRowCount();
+            expect(screen.getByRole('dialog', { name: 'Running condition' }).textContent).not.toMatch(/1,600|5,000|32%|Counting rows/);
             expect(screen.getByTestId('period-days-1').textContent).toMatch(/ d · 20 d running$/);
             expect(screen.getByTestId('test-days-1').textContent).toMatch(/ d · 20 d running$/);
             // settled: nothing more is asked
@@ -3946,30 +4008,35 @@ describe('Running condition Step 1 — header, card, settings modal preview (202
             expect(periodCountCalls()[CARD + 2].periods[0]).toEqual({ start: '2026-01-01T00:00', end: '2026-03-20T23:59' });
         });
 
-        it('while a new count is on its way the previous numbers stay (dimmed); a slow answer for an older draft never overwrites the newer one', async () => {
+        it('while a new count is on its way the previous running time stays (the period rows dimmed); a slow answer for an older draft never overwrites the newer one', async () => {
             await open();
-            await waitFor(() => expect(caption()).toBe('1,600 of 5,000 rows (32%) used for training'));
+            await waitFor(() => expect(runningTime()).toBe('40'));
             const release: { slow?: (v: unknown) => void } = {};
             countsWith(v => (v === 7 ? new Promise(res => { release.slow = res; }) : v === 8 ? 42 : 1600));
             fireEvent.change(screen.getByDisplayValue('5'), { target: { value: '7' } });
-            // the old numbers are kept, marked as being counted again — no flicker to "Counting rows…"
-            expect(caption()).toBe('1,600 of 5,000 rows (32%) used for training');
-            expect(screen.getByTestId('rc-caption-rows').getAttribute('data-stale')).toBe('true');
+            // the old running time is kept, the rows marked as being counted again — no flicker, and no "Counting rows…"
+            expect(runningTime()).toBe('40');
+            expect(screen.getByTestId('rc-caption').getAttribute('data-rows')).toBe('counted');
+            expect(screen.getByTestId('period-running-1').getAttribute('data-stale')).toBe('true');
+            expectCaptionHasNoRowCount();
             await waitFor(() => expect(release.slow).toBeTruthy(), { timeout: 3000 });
             fireEvent.change(screen.getByDisplayValue('7'), { target: { value: '8' } });
-            await waitFor(() => expect(caption()).toBe('42 of 5,000 rows (<1%) used for training'), { timeout: 3000 });
+            await waitFor(() => expect(runningTime()).toBe('1.1'), { timeout: 3000 }); // 42 running rows
             await act(async () => { release.slow!({ ...fakePeriodCounts({ periods: [], filter: {} }), union: { rows_in_period: 99, running_rows: 99, running_days: 1 } }); });
-            expect(caption()).toBe('42 of 5,000 rows (<1%) used for training'); // the late answer was dropped
+            expect(runningTime()).toBe('1.1'); // the late answer was dropped
+            expectCaptionHasNoRowCount();
         });
 
-        it('a failing count shows one quiet line instead of numbers and does not stop editing or Apply', async () => {
+        it('a failing count shows the calendar days alone (no running time, no "Couldn\'t count the rows right now") and does not stop editing or Apply', async () => {
             const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
             await open();
             await waitFor(() => expect(periodCountCalls()).toHaveLength(CARD + 2));
             countsWith(() => new Error('boom'));
             fireEvent.change(screen.getByDisplayValue('5'), { target: { value: '9' } });
-            await waitFor(() => expect(caption()).toBe("Couldn't count the rows right now"), { timeout: 3000 });
-            expect(screen.getByTestId('rc-caption').getAttribute('data-rows')).toBe('error');
+            await waitFor(() => expect(screen.getByTestId('rc-caption').getAttribute('data-rows')).toBe('error'), { timeout: 3000 });
+            expect(runningTime()).toBeNull();
+            expectCaptionHasNoRowCount();
+            expect(screen.queryByTestId('rc-caption-data-changed')).toBeNull();
             expect(screen.queryByTestId('period-running-1')).toBeNull(); // rows fall back to their calendar days
             expect((screen.getByTestId('rc-apply') as HTMLButtonElement).disabled).toBe(false);
             fireEvent.click(screen.getByTestId('rc-apply'));
@@ -3983,19 +4050,23 @@ describe('Running condition Step 1 — header, card, settings modal preview (202
             const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
             countsWith(() => new Error('STALE_SESSION: the dataset changed'));
             await open();
-            await waitFor(() => expect(caption()).toBe('The data changed — close this window and open Build Model again to count the rows'), { timeout: 3000 });
+            await waitFor(() => expect(screen.getByTestId('rc-caption-data-changed').textContent).toBe('The data changed — close this window and open Build Model again'), { timeout: 3000 });
+            expect(runningTime()).toBeNull();
+            expectCaptionHasNoRowCount();
             fireEvent.change(screen.getByDisplayValue('5'), { target: { value: '9' } });
             expect((screen.getByTestId('rc-apply') as HTMLButtonElement).disabled).toBe(false);
             warn.mockRestore();
         });
 
-        it('an invalid draft period is never sent (only the valid ones are counted); the caption says to fix it and Apply is blocked', async () => {
+        it('an invalid draft period is never sent (only the valid ones are counted); the caption claims no running time and Apply is blocked', async () => {
             await open();
             await waitFor(() => expect(periodCountCalls()).toHaveLength(CARD + 2));
             const end = screen.getByLabelText('P1 end') as HTMLInputElement;
             fireEvent.change(end, { target: { value: '2025-01-01T00:00' } });
             // the typed date is in the draft at once: no blur is needed for the block to show
-            expect(caption()).toBe('fix the period to count the rows');
+            expect(screen.getByTestId('rc-caption').getAttribute('data-rows')).toBe('fix');
+            expect(runningTime()).toBeNull();
+            expectCaptionHasNoRowCount();
             expect((screen.getByTestId('rc-apply') as HTMLButtonElement).disabled).toBe(true);
             fireEvent.blur(end);
             await waitFor(() => expect(periodCountCalls()).toHaveLength(CARD + 3), { timeout: 3000 });
@@ -9311,7 +9382,7 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
     describe('B1 — the PERSISTED state: NO saved train period is inside the loaded data (R4)', () => {
         const NO_DATA_REASON = 'No train period is inside the data (2025/01/01 00:00 – 2025/12/31 23:59) — nothing to train on. Move a train period inside the data (Running condition → Edit).';
 
-        it('the card turns red ("0 rows — nothing to train on" — never "P1 needs fixing"), Train is blocked with the named reason (Train sensor, the board, the notice line, Train all "Skipped" + Fix →) — and nothing is written or trained', async () => {
+        it('the card turns red ("Nothing to train on", in words — never "0 rows", never "P1 needs fixing"), Train is blocked with the named reason (Train sensor, the board, the notice line, Train all "Skipped" + Fix →) — and nothing is written or trained', async () => {
             rust({ running: () => 800 });
             // a Workspace-mode model that would otherwise be ready, and a Custom one that IS ready
             const ws = makeModel({ id: 'm1', targetSensor: 'TAG1' });
@@ -9321,7 +9392,9 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
             // the condition IS set — the user did not just pick this period: no "needs fixing" card
             expect(screen.getByTestId('rc-card').getAttribute('data-state')).toBe('set');
             expect(screen.queryByTestId('rc-card-title')).toBeNull();
-            expect(screen.getByTestId('rc-card-use').textContent).toBe('0 rows — nothing to train on');
+            expect(screen.getByTestId('rc-card-use').textContent).toBe('Nothing to train on');
+            expect(screen.getByTestId('rc-card-no-rows').getAttribute('role')).toBe('alert');
+            expectCardHasNoRowCount();
             expect(screen.getByTestId('rc-card-outside').textContent).toBe(`⚠ ${OUTSIDE_REASON} — it is not used`);
             expect(screen.getByTestId('rc-card-open').textContent).toBe('Edit');
             // the model has nothing to show yet: its board and footer say why Train will not start
@@ -9525,7 +9598,12 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
             rust({ running });
             await mountB([makeModel()], fgCond);
             const dlg = openRc();
-            await waitFor(() => expect(dlg.getByTestId('rc-caption-rows').textContent).toBe('800 of 5,000 rows (16%) used for training'));
+            /** "(about M d running time)" of the caption: 800 running rows = 2.8 d. The caption
+             *  never prints the rows themselves (user decision 2026-10-14). */
+            const runningTime = () => dlg.getByTestId('rc-caption-train').textContent!.match(/\(about (.+) d running time\)$/)?.[1] ?? null;
+            await waitFor(() => expect(runningTime()).toBe('2.8'));
+            expect(dlg.getByTestId('rc-caption').getAttribute('data-rows')).toBe('counted');
+            expect(dlg.queryByTestId('rc-caption-rows')).toBeNull();
             const CARD = 1;
             expect(periodCountCalls()).toHaveLength(CARD + 2); // the card, then train + scoring of the open modal
             expect(dlg.queryByTestId('rc-no-rows')).toBeNull();
@@ -9538,7 +9616,10 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
             // settled: zero running rows
             await waitFor(() => expect(dlg.getByTestId('rc-no-rows')).toBeTruthy(), { timeout: 3000 });
             expect(dlg.getByTestId('rc-no-rows').textContent).toBe('No rows match — nothing to train on. Widen a train period or relax the condition.');
-            expect(dlg.getByTestId('rc-caption-rows').textContent).toBe('0 of 5,000 rows (0%) used for training');
+            // the WARNING is the red line; the caption prints no "0 of 5,000 rows (0%) used for training"
+            expect(dlg.queryByTestId('rc-caption-rows')).toBeNull();
+            expect(dlg.getByTestId('rc-caption').textContent).not.toMatch(/rows|%|5,000/);
+            expect(runningTime()).toBe('0');
             expect(apply().disabled).toBe(true);
             const block = screen.getByTestId('rc-apply-block');
             expect(block.textContent).toBe('No rows to train on');
@@ -9554,7 +9635,10 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
 
             // relaxing the condition: rows again, Apply allowed
             type(dlg.getByPlaceholderText('value'), '6');
-            await waitFor(() => expect(dlg.getByTestId('rc-caption-rows').textContent).toBe('800 of 5,000 rows (16%) used for training'), { timeout: 3000 });
+            await waitFor(() => expect(dlg.queryByTestId('rc-no-rows')).toBeNull(), { timeout: 3000 });
+            await waitFor(() => expect(runningTime()).toBe('2.8'), { timeout: 3000 });
+            expect(dlg.getByTestId('rc-caption').getAttribute('data-rows')).toBe('counted');
+            await waitFor(() => expect(screen.queryByTestId('rc-apply-block')).toBeNull(), { timeout: 3000 });
             expect(dlg.queryByTestId('rc-no-rows')).toBeNull();
             expect(screen.queryByTestId('rc-apply-block')).toBeNull();
             expect(apply().disabled).toBe(false);
@@ -9593,7 +9677,9 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
             rust({ running: () => new Error('count failed') });
             await mountB([makeModel()], fgCond);
             const dlg = openRc();
-            await waitFor(() => expect(dlg.getByTestId('rc-caption-rows').textContent).toBe("Couldn't count the rows right now"));
+            await waitFor(() => expect(dlg.getByTestId('rc-caption').getAttribute('data-rows')).toBe('error'));
+            expect(dlg.queryByTestId('rc-caption-rows')).toBeNull(); // no "Couldn't count the rows right now" either
+            expect(dlg.getByTestId('rc-caption').textContent).not.toMatch(/rows/);
             type(dlg.getByPlaceholderText('value'), '500');
             await act(async () => { await new Promise(r => setTimeout(r, 500)); });
             expect(dlg.queryByTestId('rc-no-rows')).toBeNull();
@@ -9604,14 +9690,17 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
     });
 
     describe('B3 — the card: the PERSISTED condition counted at zero running rows', () => {
-        it('the one-line card turns red ("0 rows — nothing to train on") and Train is blocked with that reason — nothing is written, and no second count is asked', async () => {
+        it('the one-line card turns red ("Nothing to train on" — no "0 rows") and Train is blocked with that reason — nothing is written, and no second count is asked', async () => {
             rust({ running: () => 0 });
             const ws = makeModel({ id: 'm1', targetSensor: 'TAG1' });
             const own = makeModel({ id: 'm2', name: 'Own', targetSensor: 'TAG2', runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true, filterTimePeriods: [P_IN], customTestPeriods: S_IN });
             await mountB([ws, own], { runningConditionNoneConfirmed: false, runningConditionFilters: [COND] });
             await waitFor(() => expect(screen.getByTestId('rc-card').getAttribute('data-norows')).toBe('true'));
             expect(screen.getByTestId('rc-card').getAttribute('data-state')).toBe('set');
-            expect(screen.getByTestId('rc-card-use').textContent).toBe('0 rows — nothing to train on');
+            expect(screen.getByTestId('rc-card-use').textContent).toBe('Nothing to train on');
+            expect(screen.getByTestId('rc-card-no-rows').getAttribute('role')).toBe('alert');
+            expect(screen.getByTestId('rc-card').className).toContain('rcc-card--bad');
+            expectCardHasNoRowCount();
             expect(screen.getByTestId('rc-card-tick').textContent).toBe('!');
             expect(screen.getByTestId('rc-card-open').textContent).toBe('Edit');
             // the model: the reason in the footer and on the board (one link, into the settings), a red dot
@@ -9838,7 +9927,10 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
             rust({ running: p => (p.end === EMPTY_END ? 0 : 800) });
             await mountB([customModel()]);
             openSettings();
-            await waitFor(() => expect(own().getByTestId('rc-caption-rows').textContent).toBe('800 of 5,000 rows (16%) used for training'));
+            // its first count is in (800 running rows = 2.8 d of running time; the rows themselves are never printed)
+            await waitFor(() => expect(own().getByTestId('rc-caption-train').textContent).toMatch(/\(about 2\.8 d running time\)$/));
+            expect(own().queryByTestId('rc-caption-rows')).toBeNull();
+            expect(own().getByTestId('rc-caption').textContent).not.toMatch(/rows|%|5,000/);
             type(own().getByLabelText('P1 end'), EMPTY_END);
             expect(save().disabled).toBe(false); // the new count is not in yet
             await waitFor(() => expect(own().getByTestId('rc-no-rows')).toBeTruthy(), { timeout: 3000 });
@@ -9909,8 +10001,12 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
             expect(card.getAttribute('data-state')).toBe('set');
             expect(card.getAttribute('data-norows')).toBeNull();
             expect(card.className).toContain('rcc-card--ok');
-            // the count of the persisted condition is still asked and shown (the outside period simply holds no row)
-            await waitFor(() => expect(screen.getByTestId('rc-card-rows').textContent).toBe('800'));
+            // the count of the persisted condition is still asked (the outside period simply holds no row) —
+            // it is never shown: the card stays the green line, with no number of rows
+            await waitFor(() => expect(periodCountCalls().length).toBeGreaterThan(0));
+            await flush();
+            expect(screen.getByTestId('rc-card').getAttribute('data-norows')).toBeNull();
+            expectCardHasNoRowCount();
             // read paths: exactly as before the guards existed
             await waitFor(() => expect(screen.getByTestId('results-chart')).toBeTruthy());
             expect(healthCalls().length).toBeGreaterThan(0);
@@ -10169,7 +10265,10 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
             const fgCond = { runningConditionNoneConfirmed: false, runningConditionFilters: [COND] };
             const models = [makeModel({ id: 'm1', targetSensor: 'TAG1' }), makeModel({ id: 'm2', name: 'Two', targetSensor: 'TAG2' })];
             await mountB(models, fgCond);
-            await waitFor(() => expect(screen.getByTestId('rc-card-rows').textContent).toBe('800'));
+            // the card's count is in (800 running rows: something to train on)
+            await waitFor(() => expect(periodCountCalls().length).toBeGreaterThan(0));
+            await flush();
+            expect(screen.getByTestId('rc-card').getAttribute('data-norows')).toBeNull();
             await act(async () => { fireEvent.click(screen.getByTestId('train-all')); });
             expect(screen.getByTestId('train-row-status-m2').textContent).toBe('Ready');
             await act(async () => { fireEvent.click(screen.getByTestId('train-all-start')); await Promise.resolve(); await Promise.resolve(); });

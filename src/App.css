@@ -5140,11 +5140,12 @@ body {
 .rcc-chip--bad { border-color: var(--danger-line); color: var(--danger); }
 .rcc-andor { font: 700 10px var(--mono); color: var(--text-faint); padding: 0 2px; }
 .rcc-use { width: 230px; flex-shrink: 0; display: flex; flex-direction: column; gap: 6px; }
-.rcc-use-n { display: flex; align-items: baseline; gap: 6px; min-height: 22px; font-size: 11.5px; color: var(--text-secondary); }
-.rcc-use-n b { font: 600 18px var(--mono); color: var(--text-primary); }
-.rcc-meter { height: 8px; border-radius: 99px; background: var(--chip-bg); overflow: hidden; }
-.rcc-meter span { display: block; height: 100%; background: var(--ok); border-radius: 99px; transition: width 0.25s; }
-/* small period strip under the rows-used meter (same PeriodCoverageBar, "mini") */
+/* Holds the small period strip and, above it, the card's one warning. Never a count of
+   rows. "Add a train period" is amber (`.rcc-line-warn`: a step still to do, like the
+   modal's Apply hint), "Nothing to train on" red (`.rcc-line-bad`). Nothing to show = no column. */
+.rcc-use:empty { display: none; }
+.rcc-use-note { font-size: 11.5px; line-height: 1.45; }
+/* small period strip (same PeriodCoverageBar, "mini") */
 .rcc-use .f4-cov--mini { margin-top: 2px; }
 .rcc-use .f4-cov--mini .f4-strip { height: 8px; border-radius: 99px; }
 
@@ -5184,7 +5185,6 @@ body {
 .rct-empty { position: absolute; left: 8px; top: 0; height: 100%; display: flex; align-items: center; font-size: 11px; color: var(--text-faint); font-style: italic; }
 .rct-nobounds { font-size: 11.5px; color: var(--text-faint); font-style: italic; padding: 2px 0 4px; }
 .rct-cap { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-top: 8px; padding-top: 7px; border-top: 1px solid var(--border); font-size: 11.5px; color: var(--text-secondary); }
-.rct-cap b { color: var(--text-primary); font-family: var(--mono); font-weight: 600; }
 .rct-cap-tr, .rct-cap-sc { display: inline-flex; align-items: center; gap: 6px; }
 .rct-cap-quiet { color: var(--text-faint); }
 .rct-cap-min { color: var(--text-faint); margin-left: auto; }
@@ -5582,9 +5582,6 @@ body {
 .tpe-sw--te { background: var(--test); }
 .rcc-chip--warn { border-color: var(--warn-line); color: var(--warn); font-family: Inter, system-ui, sans-serif; }
 .rcc-chip--test { border-color: var(--test-line); }
-/* No train period yet: a step still to do, not an error — amber, like the
-   modal's "Add a train period" Apply hint (red stays for invalid input). */
-.rcc-use-none { font-size: 11.5px; color: var(--warn); }
 
 /* the quiet "i" note of the Workbench result cards */
 .vt-info { font-size: 11.5px; color: var(--text-secondary); display: flex; gap: 6px; align-items: baseline; line-height: 1.45; }
@@ -6627,8 +6624,6 @@ body {
 .rcc-line-dt { font-size: 11px; color: var(--text-faint); }
 .rcc-line-warn { color: var(--warn); }
 .rcc-line-bad { color: var(--danger); }
-.rcc-line-rows { font-size: 11.5px; }
-.rcc-line-rows b { font-family: var(--mono); }
 .rcc-line-more { color: var(--text-secondary); }
 /* Details / Hide details + Edit: one group, the same two small buttons in both views. In the
    full card the group sits at the top-right and is nudged by the difference between the two
