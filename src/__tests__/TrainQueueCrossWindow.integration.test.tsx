@@ -451,8 +451,8 @@ describe('(b) Train all over two failure groups with one failure and one skip', 
         // Health score page of a trained model: the run banner, and "Next needing set points".
         fireEvent.click(bmw().getByTestId('sensor-list-row-fg:1-tag3'));
         await settle(50);
-        const healthBtn = bmw().getByTestId('next-health-score') as HTMLButtonElement;
-        expect(healthBtn.disabled).toBe(false);
+        const healthBtn = bmw().getByTestId('page-tab-health') as HTMLButtonElement;
+        expect(healthBtn.getAttribute('aria-disabled')).toBeNull();
         fireEvent.click(healthBtn);
         await waitFor(() => expect(bmw().getByTestId('run-setpoints-banner')).toBeTruthy());
         // ONE line: "Trained in the run 22:41 · 3 need set points · this is 1 of 3"
@@ -469,7 +469,7 @@ describe('(b) Train all over two failure groups with one failure and one skip', 
         await settle(50);
         expect(bmw().getByTestId('footer-status').textContent).toContain('Training failed');
         expect(bmw().getByTestId('wb-notice').getAttribute('data-tone')).toBe('bad');
-        expect(bmw().queryByTestId('next-health-score')).toBeNull(); // no disabled copy: page tab ② says why
+        expect(bmw().queryByTestId('next-health-score')).toBeNull(); // no Next button: page tab ② says why
         expect(bmw().getByTestId('page-tab-health-why').textContent).toBe('Train the model first');
         expect(bmw().getByTestId('page-tab-health').getAttribute('aria-disabled')).toBe('true');
     });

@@ -352,7 +352,7 @@ describe('A. Train sensor ▾ and the page states, on the real workspace file', 
         expect(tabWords('i3')).toBe("Complete · Couldn't load the model");
         expect(bmw().getByTestId('page-tab-health').getAttribute('aria-disabled')).toBe('true');
         expect(bmw().getByTestId('page-tab-health-why').textContent).toBe('Load the model again first');
-        expect(bmw().queryByTestId('next-health-score')).toBeNull(); // no disabled copy of it
+        expect(bmw().queryByTestId('next-health-score')).toBeNull(); // no Next button in any state
         // the other window knows nothing of it: still green
         expect(dashDot(1, 'tag3', 'individual')).toBe('complete');
         expect(bmwDot('i3').state).toBe('complete');

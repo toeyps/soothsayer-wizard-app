@@ -353,7 +353,7 @@ describe('ONE truth: Dashboard dot, Build Model dot, kind-tab words, page tabs',
         expect(dashDot(1, 'tag1', 'individual')).toBe('none');
         expect(bmwDot('i1').state).toBe('none');
         expect(bmw().getByTestId('page-tab-health-why').textContent).toBe('Train the model first');
-        expect(bmw().queryByTestId('next-health-score')).toBeNull(); // no disabled copy of it
+        expect(bmw().queryByTestId('next-health-score')).toBeNull(); // no Next button in any state
         expect(bmwEl().querySelector('[data-testid="page-model-done"]')).toBeNull();
 
         // trained, set points empty

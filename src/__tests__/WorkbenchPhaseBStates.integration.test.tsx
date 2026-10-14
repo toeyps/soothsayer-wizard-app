@@ -405,7 +405,7 @@ describe('drafts and the new page spine', () => {
             .map(w => JSON.parse(w.content).failureGroupState.models[0].healthSetPoints.lower);
         expect(lowers.filter((v, i) => i === 0 || lowers[i - 1] !== v), 'one change of the value on disk').toEqual([12]);
         // and it is what the page shows when the user comes back
-        fireEvent.click(bmw().getByTestId('next-health-score'));
+        fireEvent.click(bmw().getByTestId('page-tab-health'));
         await settle(350);
         expect(input('sp-lower').value).toBe('12');
     });

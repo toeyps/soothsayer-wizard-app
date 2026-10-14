@@ -220,7 +220,7 @@ describe('Workbench detail v2 — one model of each kind through the whole new s
         await settle(50);
         expect(modelTab().getAttribute('aria-current')).toBe('page');
         expect(q(tid('set-points-card'))).toBeNull();
-        // "Next: Health score →" has no disabled copy; Train sensor is the one filled button; nothing to fix or wait for
+        // no "Next: Health score →" in any state; Train sensor is the one filled button; nothing to fix or wait for
         expect(q(tid('next-health-score'))).toBeNull();
         expect(primaryAction(bmwEl())).toBe('train');
         expect(filled()).toEqual(['train-sensor']);
@@ -242,12 +242,15 @@ describe('Workbench detail v2 — one model of each kind through the whole new s
         expect(words(k.id).getAttribute('data-tone')).toBe('need');
         expect(tabDot(k.id)).toBe('need');
         expect(openTabStatus(bmwEl())).toBe('Trained');
-        // page tab 2 is open now: no reason, its caption is back; "Next" exists and is THE filled button
+        // page tab 2 is open now: no reason; it carries the next-step cue (amber dot + "set points
+        // needed", the kind tab's own verdict) — and there is NO filled button on Model fit
         expect(healthTab().getAttribute('aria-disabled')).toBeNull();
         expect(q(tid('page-tab-health-why'))).toBeNull();
-        expect(healthTab().textContent).toContain('set points · score · mark complete');
-        expect(primaryAction(bmwEl())).toBe('next');
-        expect(filled()).toEqual(['next-health-score']);
+        expect(bmw().getByTestId('page-tab-health-cue').textContent).toBe('set points needed');
+        expect(bmw().getByTestId('page-tab-health-dot').getAttribute('data-tone')).toBe('need');
+        expect(q(tid('next-health-score'))).toBeNull();
+        expect(primaryAction(bmwEl())).toBe('none');
+        expect(filled()).toEqual([]);
         expect(noticeEl(bmwEl()), 'trained and up to date: no notice line').toBeNull();
         expect(diskModel(k.id).status).toBe(false);
         expectNoOldShell('trained');
@@ -442,7 +445,7 @@ describe('Workbench detail v2 — the Health score page is never shown for a mod
         expect(bmw().getByTestId('stale-banner')).toBeTruthy();
         expect(noticeEl(bmwEl())!.getAttribute('data-tone')).toBe('warn');
         expect(noticeSentence(bmwEl())).toBe('Settings or running condition changed · train again with Train sensor ↑');
-        expect(q(tid('next-health-score')), 'no disabled copy of Next').toBeNull();
+        expect(q(tid('next-health-score')), 'no Next button in any state').toBeNull();
         expect(q(tid('mark-complete')), 'Mark complete belongs to the Health score page').toBeNull();
         expect(filled()).toEqual(['train-sensor']);
         expect(primaryAction(bmwEl())).toBe('train');

@@ -95,7 +95,7 @@ type Dash = 'none' | 'trained' | 'need' | 'bad' | 'complete';
 
 interface Spine {
     /** `data-primary` of the header's state buttons. */
-    primary: 'none' | 'save' | 'train' | 'next' | 'mark';
+    primary: 'none' | 'save' | 'train' | 'mark';
     /** Test ids of every filled button in the window. */
     filled: string[];
     /** The model's status, as its kind tab's words say it (see `openTabStatus`). */
@@ -201,8 +201,7 @@ describe('ONE filled button + status said once, through a whole Individual journ
             sentence: null, words: 'Not trained yet', dot: 'none', dash: 'none',
         });
         expect(bmw().getByTestId('train-sensor').textContent).toBe('▶ Train sensor · 1 of 1');
-        // "Next: Health score" cannot be pressed and is not the next step: it is not rendered at
-        // all (no disabled copy) — page tab 2 says why the page is closed
+        // There is no "Next: Health score" button in any state — page tab 2 says why the page is closed
         expect(bmw().queryByTestId('next-health-score')).toBeNull();
         expect(bmw().getByTestId('page-tab-health-why').textContent).toBe('Train the model first');
 
@@ -230,17 +229,23 @@ describe('ONE filled button + status said once, through a whole Individual journ
         await settle(350);
         await waitForCharts();
 
-        // 4) trained, set points still empty: "Next: Health score →" is the button
+        // 4) trained, set points still empty: NO filled button on Model fit (navigation is never
+        // dressed as an action) — page tab 2 carries the cue: an amber dot + "set points needed"
         await expectSpine('trained', 'i1', 'tag1', 'individual', {
-            primary: 'next', filled: ['next-health-score'], pill: 'Trained',
+            primary: 'none', filled: [], pill: 'Trained',
             sentence: null,
             words: 'Set points needed', dot: 'need', dash: 'need',
         });
         expect(bmw().getByTestId('train-sensor').className).not.toContain('rcx-btn--pri');
         expect(bmw().getByTestId('train-sensor').textContent).toBe('▶ Train sensor');
 
+        expect(bmw().queryByTestId('next-health-score')).toBeNull();
+        expect(bmw().getByTestId('page-tab-health-dot').getAttribute('data-tone')).toBe('need');
+        expect(bmw().getByTestId('page-tab-health-cue').textContent).toBe('set points needed');
+        expect(bmw().getByTestId('page-tab-health').getAttribute('aria-label')).toBe('Health score, set points needed');
+
         // 5) Health score, set points empty: Mark complete is THE button (disabled, with the reason)
-        await act(async () => { fireEvent.click(bmw().getByTestId('next-health-score')); });
+        await act(async () => { fireEvent.click(bmw().getByTestId('page-tab-health')); });
         await settle(300);
         await waitFor(() => expect(bmw().getByTestId('set-points-card')).toBeTruthy());
         await expectSpine('health score, empty set points', 'i1', 'tag1', 'individual', {
@@ -314,6 +319,8 @@ describe('ONE filled button + status said once, through a whole Individual journ
         await settle(100);
         await waitFor(() => expect(bmw().queryByTestId('save-changes')).toBeNull());
         expect(diskModel('i1')).toMatchObject({ name: 'Renamed in QA', status: true }); // a name never makes it Incomplete
+        // the focus that was on Save changes lands on the open page tab, never on <body>
+        expect(document.activeElement).toBe(bmw().getByTestId('page-tab-model'));
         await expectSpine('saved', 'i1', 'tag1', 'individual', {
             primary: 'none', filled: [], pill: 'Complete',
             sentence: null, words: 'Complete', dot: 'complete', dash: 'complete',
@@ -370,9 +377,10 @@ describe('a Custom-mode model while the WORKSPACE running condition is not set',
             sentence: null,
             words: 'Set points needed', dot: 'need', dash: 'need',
         });
-        const next = bmw().getByTestId('next-health-score') as HTMLButtonElement;
-        expect(next.disabled).toBe(false);
-        expect(next.className).toBe('rcx-btn');
+        // no Next button; page tab 2 is open and carries the "set points needed" cue
+        expect(bmw().queryByTestId('next-health-score')).toBeNull();
+        expect(bmw().getByTestId('page-tab-health').getAttribute('aria-disabled')).toBeNull();
+        expect(bmw().getByTestId('page-tab-health-dot').getAttribute('data-tone')).toBe('need');
 
         await openHealth();
         await enterSp({ 'sp-lower': '0', 'sp-upper': '99' });

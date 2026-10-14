@@ -6706,9 +6706,14 @@ body {
 .wb3-page--on .wb3-page-n { border-color: transparent; background: var(--accent-color); color: #06111f; }
 .wb3-page-s { font-size: 10.5px; font-weight: 400; color: var(--text-faint); }
 .wb3-page-why { font-size: 10.5px; font-weight: 500; color: var(--warn); }
+/* ② open, trained, set points missing / not valid: its "next step" cue (it replaced the
+   header's "Next: Health score →") — the kind tab's dot (`.f4-sdot`) + its caption in the
+   same colour: amber "set points needed", red "fix set point". */
+.wb3-page-s--need { font-weight: 500; color: var(--warn); }
+.wb3-page-s--bad { font-weight: 500; color: var(--danger); }
 @container (max-width: 760px) {
-    /* The captions go; a closed tab's reason (`.wb3-page-why`) stays. */
-    .wb3-page-s { display: none; }
+    /* The plain captions go; a closed tab's reason (`.wb3-page-why`) and ②'s cue stay. */
+    .wb3-page-s:not(.wb3-page-s--need):not(.wb3-page-s--bad) { display: none; }
 }
 @container (max-width: 480px) {
     .wb3-kindtabs .f4-tab { white-space: normal; text-align: left; }

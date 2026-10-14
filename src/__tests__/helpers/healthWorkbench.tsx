@@ -174,8 +174,8 @@ export async function train() {
 }
 
 export async function openHealth() {
-    // Page tab ② is the door that is always on screen ("Next: Health score →" exists only
-    // while it is the next step or can be pressed).
+    // Page tab ② is the one door to the page, always on screen (there is no
+    // "Next: Health score →" button any more).
     const b = bmw().getByTestId('page-tab-health') as HTMLButtonElement;
     expect(b.getAttribute('aria-disabled'), `Health score page closed: ${b.title}`).toBeNull();
     fireEvent.click(b);

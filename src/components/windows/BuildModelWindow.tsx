@@ -280,7 +280,7 @@ const RUN_CLOSE_WAIT_NOTICE = 'Still training a model — the window stays open 
 const KIND_TAB_LABEL: Record<ModelKind, string> = MODEL_KIND_LABEL;
 /** The ONE filled button of the detail pane (at most one filled button on
  *  screen) — see `primaryActionOf`. */
-type PrimaryAction = 'save' | 'train' | 'next' | 'mark' | null;
+type PrimaryAction = 'save' | 'train' | 'mark' | null;
 
 // ─── Train in place ───────────────────────────────────────────────────────
 // Shape returned by Rust's `compute_sensor_stats`.
@@ -585,11 +585,10 @@ export default function BuildModelWindow() {
     const trainSensorBtnRef = useRef<HTMLButtonElement>(null);
     /** The ▾ of Train sensor: the "Marked complete" board points at its menu. */
     const trainMenuBtnRef = useRef<HTMLButtonElement>(null);
-    /** Where the focus moves when the focused "Save changes" unmounts (see the effect on `drafts`). */
-    const nextHealthBtnRef = useRef<HTMLButtonElement>(null);
     /** The notice line at the bottom of the detail pane — set only while it is on screen. */
     const noticeRef = useRef<HTMLDivElement>(null);
-    /** The page tab that is open (① Model fit / ② Health score). */
+    /** The page tab that is open (① Model fit / ② Health score) — also where the focus
+     *  moves when the focused "Save changes" unmounts (see the effect on `drafts`). */
     const activePageTabRef = useRef<HTMLButtonElement>(null);
     /** Id of the model whose "Save changes" was pressed (see the effect on `drafts`). */
     const saveFocusRef = useRef<string | null>(null);
@@ -1294,7 +1293,7 @@ export default function BuildModelWindow() {
     //      card / the panels already ask for — no new request).
     //  R5. The guards block ACTIONS only — Train (`trainBlockReason`), Apply and
     //      Save changes. The READ paths (`buildBlockReason` and `gateReasonOf`: a
-    //      trained model's charts, its Health score page, "Next: Health score →",
+    //      trained model's charts, its Health score page (page tab ②),
     //      the preview / auto-recompute, the sub-model fits, Mark complete, Mark
     //      incomplete, the dots of a trained or Complete model) never see them.
     // Nothing is written, and no model's `status`, fingerprint or `healthVerdict`
@@ -2866,9 +2865,9 @@ export default function BuildModelWindow() {
     /** "Train sensor ↑": every sentence's link to the ONE place to train. */
     const focusTrainSensor = useCallback(() => { trainSensorBtnRef.current?.focus(); }, []);
     // The focused "Save changes" disappears once its draft is saved. Move the focus to
-    // the button that takes its place ("Next: Health score →") when that one can be
-    // pressed; else to the notice line when one is on screen; else to the open page
-    // tab — so it never falls back to <body>.
+    // the open page tab (no header button takes Save's place: the way on to the Health
+    // score page is page tab ②, next to it); else to the notice line — so it never
+    // falls back to <body>.
     useEffect(() => {
         const id = saveFocusRef.current;
         if (!id) return;
@@ -2876,8 +2875,7 @@ export default function BuildModelWindow() {
         if (id in drafts) return; // not saved (or edited again): the button is still there
         const active = document.activeElement;
         if (active && active !== document.body) return; // the focus is somewhere real
-        const next = nextHealthBtnRef.current;
-        (next && !next.disabled ? next : noticeRef.current ?? activePageTabRef.current)?.focus();
+        (activePageTabRef.current ?? noticeRef.current)?.focus();
     }, [drafts]);
 
     if (loading) {
@@ -3661,14 +3659,17 @@ export default function BuildModelWindow() {
      *              "Trained" asks for nothing and stays neutral grey, and that a Complete
      *              model whose files are out of date reads AMBER (user decision
      *              2026-10-14: green looked like nothing was left to do). Its dot stays
-     *              the list's green — the model is still Complete. */
-    const tabDotOf = (m: FailureModel, st: ModelDotState): { dot: TabDot; tone: TabDot; words: string } => {
+     *              the list's green — the model is still Complete.
+     *   - `flag`:  the set-point flag the words say ("Set points needed" → 'needed',
+     *              "Fix set point" → 'fix'), else null — page tab ② reads THIS for its
+     *              cue, so the tab and page tab ② can never disagree. */
+    const tabDotOf = (m: FailureModel, st: ModelDotState): { dot: TabDot; tone: TabDot; words: string; flag: SetPointFlag } => {
         // Unsaved Model-settings edits and saved files that no longer match the set
         // points are said for EVERY tab of the sensor, not only the one that is open.
         const outOfDate = filesOutOfDateFor(m);
         const tail = `${outOfDate ? ' · files out of date' : ''}${m.id in drafts ? ' · unsaved changes' : ''}`;
         const toneOf = (dot: TabDot, plain = false): TabDot => (outOfDate && dot === 'complete' ? 'need' : plain ? null : dot);
-        if (trainError[m.id]) return { dot: 'bad', tone: 'bad', words: `${failedWordsOf(m)}${tail}` };
+        if (trainError[m.id]) return { dot: 'bad', tone: 'bad', words: `${failedWordsOf(m)}${tail}`, flag: null };
         const badge = gateBadge(m);
         // Results, but no row of the loaded data: nothing about the model changed — its
         // own dot and words ("Complete", "Trained", its set-point flag), plus why there
@@ -3677,16 +3678,18 @@ export default function BuildModelWindow() {
             const flag = setPointFlagOf(m, st);
             const own = flag === 'fix' ? 'Fix set point' : flag === 'needed' ? 'Set points needed' : TAB_WORDS[st];
             const dot = flag === 'fix' ? 'bad' : DOT_CLASS[st];
-            return { dot, tone: toneOf(dot, own === TAB_WORDS.trained), words: `${own} · ${NO_MODEL_DATA_WORDS}${tail}` };
+            return { dot, tone: toneOf(dot, own === TAB_WORDS.trained), words: `${own} · ${NO_MODEL_DATA_WORDS}${tail}`, flag };
         }
         // A trained model whose fit is gone needs training again (amber, like "Re-train needed").
         if (badge === null && fitGoneOf(m) && (st === 'trained' || st === 'complete')) {
-            return { dot: DOT_CLASS[st], tone: toneOf(DOT_CLASS[st]), words: `${st === 'complete' ? 'Complete · ' : ''}${FIT_GONE_WORDS}${tail}` };
+            return { dot: DOT_CLASS[st], tone: toneOf(DOT_CLASS[st]), words: `${st === 'complete' ? 'Complete · ' : ''}${FIT_GONE_WORDS}${tail}`, flag: null };
         }
-        const flag = setPointFlagOf(m, st);
+        const setPointFlag = setPointFlagOf(m, st);
+        // A gate badge replaces the set-point words: no set-point flag is said then.
+        const flag = badge === null ? setPointFlag : null;
         const words = badge ?? (flag === 'fix' ? 'Fix set point' : flag === 'needed' ? 'Set points needed' : TAB_WORDS[st]);
-        const dot = flag === 'fix' ? 'bad' : DOT_CLASS[st];
-        return { dot, tone: toneOf(dot, words === TAB_WORDS.trained), words: `${words}${tail}` };
+        const dot = setPointFlag === 'fix' ? 'bad' : DOT_CLASS[st];
+        return { dot, tone: toneOf(dot, words === TAB_WORDS.trained), words: `${words}${tail}`, flag };
     };
 
     /** Props the two pages share (`WorkbenchPageProps`) for the ACTIVE model. */
@@ -4082,8 +4085,10 @@ export default function BuildModelWindow() {
      *  state buttons of `renderStateParts`). Every other button is a ghost or a text button:
      *   - the running condition is not set / not valid -> none here (its own card has it)
      *   - Model fit:    Save changes while a draft exists · else Train sensor while a
-     *                   model of this sensor needs training · else "Next: Health score"
-     *                   for a trained model · a Complete model has none
+     *                   model of this sensor needs training · else none (a trained,
+     *                   up-to-date model has no filled button here: the way on is page
+     *                   tab ②, which carries the "set points needed" cue — navigation
+     *                   is never dressed as a required action)
      *   - Health score: Train sensor when THIS model must train again · else Mark
      *                   complete (again, when the files are out of date or were saved
      *                   with the earlier row-by-row scoring) · a Complete
@@ -4094,10 +4099,7 @@ export default function BuildModelWindow() {
         const sensorNeedsTrain = cands.some(c => c.plan.kind === 'ready');
         if (page === 'model') {
             if (m.id in drafts) return 'save';
-            if (sensorNeedsTrain) return 'train';
-            // (No data for it in the loaded file: the Health score page is the same board — no next step.)
-            if (isModelDone(m) || noDataOf(m)) return null;
-            return healthPageBlock(m) === null && !queue.isLocked(m.id) ? 'next' : null;
+            return sensorNeedsTrain ? 'train' : null;
         }
         if (cands.find(c => c.id === m.id)?.plan.kind === 'ready') return 'train';
         // ...and Mark complete could only fail.
@@ -4109,9 +4111,9 @@ export default function BuildModelWindow() {
     /** What a model's state asks for, in TWO parts (Workbench detail v2 §1 + §4 — there
      *  is no footer bar and no status pill; the kind tab says the status in words):
      *   - `actions`: the state buttons of the header's right side, next to Train sensor.
-     *     Model fit: "Save changes" (only while a draft exists) · "Next: Health score →"
-     *     (only when it is the next step or can be pressed — a closed Health score page
-     *     is said by page tab ②, never by a disabled copy of this button).
+     *     Model fit: "Save changes" (only while a draft exists) — nothing else: the way
+     *     on to the Health score page is page tab ② (always visible; it says why it is
+     *     closed, and carries the "set points needed" / "fix set point" cue).
      *     Health score: Mark complete ("Mark incomplete", a text button, once Complete;
      *     "Mark complete again" only when the files are out of date or were saved with
      *     the earlier row-by-row scoring). At most one of them is filled (`primary`).
@@ -4130,7 +4132,6 @@ export default function BuildModelWindow() {
         const lineReason = orderedBlockReason(saveReason, gateBlockOf(m) ?? shownGuardBlockOf(m));
         const trainedFresh = isModelTrainedFresh(m);
         const stale = isModelStale(m);
-        const training = trainStatus[m.id] === 'loading';
         const done = isModelDone(m);
         // A run that failed IN THIS SESSION — whether an explicit Re-train or
         // the silent auto-recompute on reopen — overrides the happy-path
@@ -4147,7 +4148,6 @@ export default function BuildModelWindow() {
         const noDataLine: ReactNode = noData
             ? <span data-testid="footer-no-data">{noModelDataFooter(done ? 'Complete' : 'Trained', noData.mode)}</span>
             : null;
-        const healthBlock = healthPageBlock(m);
         const markBlock = page === 'health' ? markCompleteBlock(m) : null;
         const savePhase = saveInfo[m.id]?.phase;
         const saving = savePhase === 'running';
@@ -4281,8 +4281,8 @@ export default function BuildModelWindow() {
                 : <>Trained · the charts did not load — try again above</>;
             tone = 'bad';
         }
-        // (Trained and up to date: the charts are on screen, the next step is the header's
-        // button — no line.)
+        // (Trained and up to date: the charts are on screen, the next step is page tab ②
+        // and its "set points needed" cue — no line.)
         else if (trainedFresh) line = null;
         else if (stale) { line = <>Settings or running condition changed · train again with {goTrainSensor}</>; tone = 'warn'; }
         // (Never trained: its board says so, with the "Train sensor ↑" link; page tab ②
@@ -4306,9 +4306,9 @@ export default function BuildModelWindow() {
                 </span>
             </div>
         );
-        // "Next: Health score →" exists only when it is the next step or can be pressed:
-        // a disabled copy would repeat page tab ②, which already says why it is closed.
-        const nextShown = page === 'model' && (primary === 'next' || (healthBlock === null && !training));
+        // (No "Next: Health score →" here, in any state: it went to the same place as page
+        // tab ②, and a filled copy beside a ghost Train sensor read as a required action.
+        // Tab ② says why it is closed and carries the "set points needed" cue.)
         const saveShown = page === 'model' && hasDraft;
         const saveDisabled = saveReason !== null || locked;
         const saveTitle = locked ? 'Settings are locked while this model is in the run' : saveReason ?? undefined;
@@ -4341,22 +4341,6 @@ export default function BuildModelWindow() {
                         </button>
                         {whyLine}
                     </div>
-                )}
-                {nextShown && (
-                    <button
-                        type="button"
-                        ref={nextHealthBtnRef}
-                        className={`rcx-btn${primary === 'next' ? ' rcx-btn--pri' : ''}`}
-                        data-testid="next-health-score"
-                        // The same door as page tab ② (and closed by the same rules). Closed while
-                        // this model's fit is still being worked out (redesign §7): the Health score
-                        // page reads that fit.
-                        disabled={healthBlock !== null || training}
-                        title={healthBlock ?? undefined}
-                        onClick={() => setPage(m, 'health')}
-                    >
-                        Next: Health score →
-                    </button>
                 )}
                 {page === 'health' && (
                     <div className="wb3-act">
@@ -4555,14 +4539,20 @@ export default function BuildModelWindow() {
         // the one-filled-button rule both read it.
         const cands = orderedDetail.map(candidateOf);
         const primary = primaryActionOf(activeModel, page, cands);
-        // Page tab ② is closed exactly when "Next: Health score →" is disabled (the same
-        // two rules: `healthPageBlock`, and this model's fit still being worked out) —
-        // and only while it is not the page that is open: the open page's tab is never
-        // shown as closed. Its reason takes the caption's place; the "still loading /
-        // training" moment has no reason text (the page body says it).
+        // Page tab ② is closed by two rules: `healthPageBlock`, and this model's fit still
+        // being worked out (the Health score page reads that fit) — and only while it is
+        // not the page that is open: the open page's tab is never shown as closed. Its
+        // reason takes the caption's place; the "still loading / training" moment has no
+        // reason text (the page body says it).
         const healthBlock = healthPageBlock(activeModel);
         const healthTabClosed = page !== 'health' && (healthBlock !== null || training);
         const healthTabWhy = healthTabClosed ? healthBlock : null;
+        // The "next step" cue of tab ② (it replaced "Next: Health score →"): trained and
+        // fresh (tab ② open) but the set points are missing / not valid — the SAME flag
+        // the kind tab says ("Set points needed" / "Fix set point"), in its dot colours.
+        // A Complete model has none (its flag is null), and a closed tab keeps its reason.
+        const healthCue: SetPointFlag = healthTabClosed ? null : tabDotOf(activeModel, dotStateOf(activeModel)).flag;
+        const healthCueWords = healthCue === 'fix' ? 'fix set point' : healthCue === 'needed' ? 'set points needed' : null;
         const parts = renderStateParts(activeModel, page, primary);
         return (
             <>
@@ -4623,9 +4613,10 @@ export default function BuildModelWindow() {
                         </div>
                     </div>
                     {/* Actions only: Train sensor (a ghost unless training is the next step) and
-                        the state buttons — Save changes → Next: Health score → Mark complete —
-                        of which at most ONE is filled (`primaryActionOf`). No page switch here:
-                        the two pages are the tab row under the kind tabs (v2 §3). */}
+                        the state buttons — Save changes / Mark complete (again) / Mark
+                        incomplete — of which at most ONE is filled (`primaryActionOf`). No
+                        page switch here, no "Next": the two pages are the tab row under the
+                        kind tabs (v2 §3), and tab ② carries the next-step cue. */}
                     <div className="wbx-dh-ctl" data-testid="detail-controls">
                         {renderSensorTrain(cands, primary === 'train')}
                         {parts.actions}
@@ -4704,14 +4695,26 @@ export default function BuildModelWindow() {
                         data-testid="page-tab-health"
                         aria-current={page === 'health' ? 'page' : undefined}
                         aria-disabled={healthTabClosed ? true : undefined}
+                        // The cue is not colour-only: it is part of the tab's name.
+                        aria-label={healthCueWords ? `Health score, ${healthCueWords}` : undefined}
                         title={healthTabWhy ?? undefined}
                         onClick={() => { if (!healthTabClosed) setPage(activeModel, 'health'); }}
                     >
                         <span className="wb3-page-n">2</span>
                         <span className="wb3-page-t">Health score</span>
+                        {healthCue !== null && (
+                            <span
+                                className={`f4-sdot f4-sdot--${healthCue === 'fix' ? 'bad' : 'need'}`}
+                                data-testid="page-tab-health-dot"
+                                data-tone={healthCue === 'fix' ? 'bad' : 'need'}
+                                aria-hidden="true"
+                            />
+                        )}
                         {healthTabWhy !== null
                             ? <span className="wb3-page-why" data-testid="page-tab-health-why">{healthTabWhy}</span>
-                            : <span className="wb3-page-s">set points · score · mark complete</span>}
+                            : healthCueWords !== null
+                                ? <span className={`wb3-page-s wb3-page-s--${healthCue === 'fix' ? 'bad' : 'need'}`} data-testid="page-tab-health-cue">{healthCueWords}</span>
+                                : <span className="wb3-page-s">set points · score · mark complete</span>}
                     </button>
                 </nav>
 

@@ -344,7 +344,7 @@ const exportCalls = () => mockInvoke.mock.calls.filter(c => c[0] === 'export_mod
 const VALID_IND = { kind: 'individual', lower: 1, upper: 9, masterLower: 1, masterUpper: 9 };
 /** Opens the Health score page of the (trained) active model and waits for its first answer. */
 const openHealthPage = async () => {
-    fireEvent.click(screen.getByTestId('next-health-score'));
+    fireEvent.click(screen.getByTestId('page-tab-health'));
     await waitFor(() => expect(screen.getByTestId('set-points-card')).toBeTruthy());
 };
 
@@ -1066,7 +1066,7 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             expect(trainSensorBtn().disabled).toBe(true);
             expect(screen.queryByText('▶ Train model')).toBeNull();
             expect(screen.queryByText('✓ Mark complete')).toBeNull();
-            expect((screen.getByTestId('next-health-score') as HTMLButtonElement).disabled).toBe(false);
+            expect(screen.getByTestId('page-tab-health').getAttribute('aria-disabled')).toBeNull();
             expect(tabStatus()).toBe('Trained');
         });
 
@@ -1194,7 +1194,7 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             render(<BuildModelWindow />);
             await deliverData(); // fully configured, gate satisfied, but never trained
             expect(screen.queryByText('✓ Mark complete')).toBeNull();
-            // The Health score page is closed: page tab ② says why (there is no disabled "Next" copy).
+            // The Health score page is closed: page tab ② says why (there is no "Next" button).
             expect(screen.queryByTestId('next-health-score')).toBeNull();
             expect(screen.getByTestId('page-tab-health').getAttribute('aria-disabled')).toBe('true');
             expect(screen.getByTestId('page-tab-health-why').textContent).toMatch(/Train the model/);
@@ -1874,7 +1874,7 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             mockUpdateWorkspaceData.mockImplementationOnce(() => new Promise((res) => { resolveUpdate = res; }));
 
             // "Mark incomplete" lives on the Health score page: a status-only write that stays pending.
-            fireEvent.click(screen.getByTestId('next-health-score'));
+            fireEvent.click(screen.getByTestId('page-tab-health'));
             fireEvent.click(await screen.findByTestId('mark-incomplete'));
             fireEvent.click(screen.getByTitle('Close'));
             await act(async () => { await Promise.resolve(); });
@@ -2142,8 +2142,8 @@ describe('Custom running-condition editor (2026-09-30 port)', () => {
         // card + the model's own train and scoring periods
         await waitFor(() => expect(periodCountCalls()).toHaveLength(3));
 
-        await waitFor(() => expect((screen.getByTestId('next-health-score') as HTMLButtonElement).disabled).toBe(false));
-        fireEvent.click(screen.getByTestId('next-health-score'));
+        await waitFor(() => expect(screen.getByTestId('page-tab-health').getAttribute('aria-disabled')).toBeNull());
+        fireEvent.click(screen.getByTestId('page-tab-health'));
         await waitFor(() => expect(screen.getByTestId('page-tab-health').getAttribute('aria-current')).toBe('page'));
         expect(screen.queryByTestId('custom-rc-editor')).toBeNull(); // the panel is not on this page
         const counts = periodCountCalls().length;
@@ -4522,7 +4522,7 @@ describe('Workbench two pages — shell + Model fit page (health score 3b-1)', (
 
     // Workbench detail v2 §3: the two pages of a model are a tab row under the kind tabs —
     // "① Model fit" / "② Health score". (The header's segmented "Model fit | Health score"
-    // switch stays removed; the footer's "Next: Health score →" is the same door as tab ②.)
+    // switch stays removed, and there is no "Next: Health score →" either: tab ② is the one door.)
     describe('the two pages are a tab row under the kind tabs (no page switch in the header)', () => {
         const pageTabs = () => screen.getByTestId('page-tabs');
         const tabModel = () => screen.getByTestId('page-tab-model');
@@ -4570,7 +4570,7 @@ describe('Workbench two pages — shell + Model fit page (health score 3b-1)', (
             expect(tabHealth().getAttribute('aria-current')).toBe('page');
             expect(tabHealth().className).toBe('wb3-page wb3-page--on');
             expect(tabModel().getAttribute('aria-current')).toBeNull();
-            expect(screen.queryByTestId('next-health-score')).toBeNull(); // "Next" is a Model fit button
+            expect(screen.queryByTestId('next-health-score')).toBeNull(); // no Next button on either page
             expect(screen.queryByTestId('footer-back-to-fit')).toBeNull();
             expect(screen.queryByTestId('wb-footer')).toBeNull(); // there is no footer bar at all
             // clicking the open tab again changes nothing
@@ -4581,20 +4581,103 @@ describe('Workbench two pages — shell + Model fit page (health score 3b-1)', (
             fireEvent.click(tabModel());
             expect(screen.queryByTestId('health-page')).toBeNull();
             expect(tabModel().getAttribute('aria-current')).toBe('page');
-            expect(screen.getByTestId('next-health-score')).toBeTruthy();
+            expect(screen.queryByTestId('next-health-score')).toBeNull();
         });
 
-        it('"Next: Health score →" still opens the page, and tab ② follows it', async () => {
-            await mount([withTrained(makeModel())]);
-            fireEvent.click(screen.getByTestId('next-health-score'));
-            await waitFor(() => expect(screen.getByTestId('set-points-card')).toBeTruthy());
-            expect(tabHealth().getAttribute('aria-current')).toBe('page');
-            expect(tabModel().getAttribute('aria-current')).toBeNull();
+        // "Next: Health score →" was removed (2026-10-14): it went to the same place as tab ②.
+        it.each([
+            ['never trained', () => [makeModel()]],
+            ['stale', () => [{ ...withTrained(makeModel()), trainedFingerprint: 'old' }]],
+            ['trained, set points empty', () => [withTrained(makeModel({ healthSetPoints: HS_EMPTY_IND }))]],
+            ['trained, set points valid', () => [withTrained(makeModel({ healthSetPoints: VALID_IND }))]],
+            ['Complete', () => [withTrained(makeModel({ status: true, healthSetPoints: VALID_IND }))]],
+        ] as [string, () => any[]][])('no "Next: Health score" button on either page — %s', async (_state, models) => {
+            await mount(models());
+            await flush();
+            expect(screen.queryByTestId('next-health-score')).toBeNull();
+            expect(screen.queryByText(/Next: Health score/)).toBeNull();
+            if (tabHealth().getAttribute('aria-disabled') === null) {
+                await waitFor(() => expect(tabHealth().getAttribute('aria-disabled')).toBeNull());
+                fireEvent.click(tabHealth());
+                expect(screen.getByTestId('health-page')).toBeTruthy();
+                expect(screen.queryByTestId('next-health-score')).toBeNull();
+                expect(screen.queryByText(/Next: Health score/)).toBeNull();
+            }
+        });
+
+        it('trained and up to date on Model fit: NO filled button at all (tab ② is the way on)', async () => {
+            await mount([withTrained(makeModel({ healthSetPoints: HS_EMPTY_IND }))]);
+            await flush();
+            expect(screen.getByTestId('wb-actions').getAttribute('data-primary')).toBe('none');
+            expect(document.querySelectorAll('.bmw-detail .rcx-btn--pri, .bmw-detail .bmw-btn-ok, .bmw-detail .f4-btn-save')).toHaveLength(0);
+            expect(trainSensorBtn().className).not.toContain('rcx-btn--pri');
+        });
+
+        describe('tab ② carries the next-step cue (the kind tab\'s own set-point verdict)', () => {
+            const dot = () => screen.queryByTestId('page-tab-health-dot');
+            const cue = () => screen.queryByTestId('page-tab-health-cue');
+
+            it('set points empty: an amber dot + "set points needed", in the tab\'s name too — and the kind tab says the same', async () => {
+                await mount([withTrained(makeModel({ healthSetPoints: HS_EMPTY_IND, healthVerdict: 'incomplete' }))]);
+                await waitFor(() => expect(dot()).toBeTruthy());
+                expect(dot()!.getAttribute('data-tone')).toBe('need');
+                expect(dot()!.className).toBe('f4-sdot f4-sdot--need');
+                expect(dot()!.getAttribute('aria-hidden')).toBe('true');
+                expect(cue()!.textContent).toBe('set points needed');
+                expect(cue()!.className).toBe('wb3-page-s wb3-page-s--need');
+                expect(tabHealth().getAttribute('aria-label')).toBe('Health score, set points needed');
+                expect(tabHealth().textContent).toBe('2Health scoreset points needed');
+                expect(tabHealth().getAttribute('aria-disabled')).toBeNull();
+                expect(screen.queryByTestId('page-tab-health-why')).toBeNull();
+                expect(screen.getByTestId('tab-words-m1').textContent).toBe('Set points needed');
+            });
+
+            it('set points filled but not valid: a red dot + "fix set point" — the kind tab says "Fix set point"', async () => {
+                await mount([withTrained(makeModel({ healthSetPoints: { kind: 'individual', lower: 9, upper: 1, masterLower: 1, masterUpper: 9 }, healthVerdict: 'invalid' }))]);
+                await waitFor(() => expect(screen.getByTestId('tab-words-m1').textContent).toBe('Fix set point'));
+                expect(dot()!.getAttribute('data-tone')).toBe('bad');
+                expect(dot()!.className).toBe('f4-sdot f4-sdot--bad');
+                expect(cue()!.textContent).toBe('fix set point');
+                expect(cue()!.className).toBe('wb3-page-s wb3-page-s--bad');
+                expect(tabHealth().getAttribute('aria-label')).toBe('Health score, fix set point');
+            });
+
+            it('set points valid: tab ② is plain (its usual caption, no dot)', async () => {
+                await mount([withTrained(makeModel({ healthSetPoints: VALID_IND }))]);
+                await flush();
+                expect(screen.getByTestId('tab-words-m1').textContent).toBe('Trained');
+                expect(dot()).toBeNull();
+                expect(cue()).toBeNull();
+                expect(tabHealth().textContent).toBe('2Health scoreset points · score · mark complete');
+                expect(tabHealth().getAttribute('aria-label')).toBeNull();
+            });
+
+            it('a Complete model: no dot, also when its files are out of date', async () => {
+                const record = { at: '2026-10-01T00:00:00.000Z', outputDir: 'C:\\x\\workspaces\\ws1\\output\\TAG1', setPoints: { ...VALID_IND, upper: 8 } };
+                await mount([withTrained(makeModel({ status: true, healthSetPoints: VALID_IND, healthExport: record }))]);
+                await flush();
+                expect(screen.getByTestId('tab-words-m1').textContent).toMatch(/^Complete/);
+                expect(dot()).toBeNull();
+                expect(cue()).toBeNull();
+                expect(tabHealth().textContent).toBe('2Health scoreset points · score · mark complete');
+            });
+
+            it.each([
+                ['never trained', () => [makeModel({ healthSetPoints: HS_EMPTY_IND })], 'Train the model first'],
+                ['stale', () => [{ ...withTrained(makeModel({ healthSetPoints: HS_EMPTY_IND })), trainedFingerprint: 'old' }], 'Re-train first'],
+            ] as [string, () => any[], string][])('a closed tab ② (%s): no dot, its reason caption unchanged', async (_s, models, reason) => {
+                await mount(models());
+                await flush();
+                expect(tabHealth().getAttribute('aria-disabled')).toBe('true');
+                expect(screen.getByTestId('page-tab-health-why').textContent).toBe(reason);
+                expect(dot()).toBeNull();
+                expect(cue()).toBeNull();
+                expect(tabHealth().getAttribute('aria-label')).toBeNull();
+            });
         });
 
         // A closed ②: aria-disabled (never `disabled` — it stays focusable), its REASON in place of
-        // the caption, and a click that does nothing. The reasons are `healthPageBlock`'s own strings
-        // — the ones "Next: Health score →" carries as its tooltip.
+        // the caption, and a click that does nothing. The reasons are `healthPageBlock`'s own strings.
         it.each([
             ['Train the model first', () => [makeModel()]],
             ['Re-train first', () => [{ ...withTrained(makeModel()), trainedFingerprint: 'old' }]],
@@ -4614,8 +4697,10 @@ describe('Workbench two pages — shell + Model fit page (health score 3b-1)', (
             expect(health.querySelector('.wb3-page-s')).toBeNull();
             expect(health.textContent).toBe(`2Health score${reason}`);
             expect(health.title).toBe(reason);
-            // ...and there is no disabled copy of "Next: Health score →" beside it
+            // ...and there is no "Next: Health score →" beside it, and no set-point cue on a closed tab
             expect(screen.queryByTestId('next-health-score')).toBeNull();
+            expect(screen.queryByTestId('page-tab-health-dot')).toBeNull();
+            expect(health.getAttribute('aria-label')).toBeNull();
             // a click does nothing
             fireEvent.click(health);
             expect(screen.queryByTestId('health-page')).toBeNull();
@@ -4634,7 +4719,7 @@ describe('Workbench two pages — shell + Model fit page (health score 3b-1)', (
             expect(screen.getByTestId('page-tab-health-why').textContent).toBe('Re-train first');
         });
 
-        it('while the model\'s fit is still being worked out, tab ② is closed like "Next" (no reason text) and opens when the fit is there', async () => {
+        it('while the model\'s fit is still being worked out, tab ② is closed (no reason text) and opens when the fit is there', async () => {
             let release: () => void = () => {};
             mockInvoke.mockImplementation((cmd: string, args?: any) =>
                 cmd === 'compute_sensor_stats' ? new Promise(res => { release = () => res(healthInvoke(cmd, args)); }) : healthInvoke(cmd, args));
@@ -4644,18 +4729,18 @@ describe('Workbench two pages — shell + Model fit page (health score 3b-1)', (
             await waitFor(() => expect(screen.getByTestId('results-loading')).toBeTruthy());
             expect(screen.getByTestId('page-tab-health').getAttribute('aria-disabled')).toBe('true');
             expect(tabHealth().getAttribute('aria-disabled')).toBe('true');
-            expect(screen.queryByTestId('page-tab-health-why')).toBeNull(); // "Next" has no reason for this moment either
+            expect(screen.queryByTestId('page-tab-health-why')).toBeNull(); // no reason text for this moment (the page body says it)
             expect(tabHealth().title).toBe('');
             fireEvent.click(tabHealth());
             expect(screen.queryByTestId('health-page')).toBeNull();
             await act(async () => { release(); await Promise.resolve(); await Promise.resolve(); });
             await waitFor(() => expect(tabHealth().getAttribute('aria-disabled')).toBeNull());
-            expect((screen.getByTestId('next-health-score') as HTMLButtonElement).disabled).toBe(false);
+            expect(screen.getByTestId('page-tab-health').getAttribute('aria-disabled')).toBeNull();
             fireEvent.click(tabHealth());
             expect(screen.getByTestId('health-page')).toBeTruthy();
         });
 
-        it('"Next: Health score" is not rendered for a model that was never trained (no disabled copy)', async () => {
+        it('a model that was never trained: no "Next: Health score" button; page tab ② says "Train the model first"', async () => {
             await mount([makeModel()]);
             expect(screen.queryByTestId('page-switch')).toBeNull();
             expect(screen.queryByRole('group', { name: 'Model pages' })).toBeNull();
@@ -4665,18 +4750,18 @@ describe('Workbench two pages — shell + Model fit page (health score 3b-1)', (
             expect(screen.queryByTestId('page-model-done')).toBeNull();
         });
 
-        it('while stale: "Next: Health score" is not rendered; page tab ② says "Re-train first"', async () => {
+        it('while stale: no "Next: Health score" button; page tab ② says "Re-train first"', async () => {
             await mount([{ ...withTrained(makeModel()), trainedFingerprint: 'old' }]);
             expect(screen.queryByTestId('next-health-score')).toBeNull();
             expect(screen.getByTestId('page-tab-health-why').textContent).toBe('Re-train first');
             expect(screen.queryByTestId('page-model-done')).toBeNull();
         });
 
-        it('trained and fresh: "Next: Health score" opens the real page (set points + checks), tab ① goes back', async () => {
+        it('trained and fresh: page tab ② opens the real page (set points + checks), tab ① goes back', async () => {
             await mount([withTrained(makeModel())]);
             expect(screen.queryByTestId('page-model-done')).toBeNull();
             expect(screen.queryByTestId('page-health-done')).toBeNull();
-            fireEvent.click(screen.getByTestId('next-health-score'));
+            fireEvent.click(screen.getByTestId('page-tab-health'));
             await waitFor(() => expect(screen.getByTestId('set-points-card')).toBeTruthy());
             expect(screen.getByTestId('checks-card')).toBeTruthy();
             expect(screen.queryByTestId('results-chart')).toBeNull();
@@ -4702,7 +4787,7 @@ describe('Workbench two pages — shell + Model fit page (health score 3b-1)', (
             const rel = trainedRel();
             const ind = withTrained(makeModel({ id: 'i1' }));
             await mount([ind, rel]);
-            fireEvent.click(screen.getByTestId('next-health-score'));
+            fireEvent.click(screen.getByTestId('page-tab-health'));
             fireEvent.click(screen.getByRole('tab', { name: /Relation model/ }));
             expect(screen.queryByTestId('health-page')).toBeNull(); // the Relationship model is still on Model fit
             fireEvent.click(screen.getByRole('tab', { name: /Individual/ }));
@@ -4710,9 +4795,9 @@ describe('Workbench two pages — shell + Model fit page (health score 3b-1)', (
             // Another window changes a training input of the Relationship model: it turns stale, so
             // its page falls back to Model fit (the stored choice is not erased, just not shown).
             fireEvent.click(screen.getByRole('tab', { name: /Relation model/ }));
-            // "Next" opens once the model's fit is on screen (it is closed while the fit loads).
-            await waitFor(() => expect((screen.getByTestId('next-health-score') as HTMLButtonElement).disabled).toBe(false));
-            fireEvent.click(screen.getByTestId('next-health-score'));
+            // Tab ② opens once the model's fit is on screen (it is closed while the fit loads).
+            await waitFor(() => expect(screen.getByTestId('page-tab-health').getAttribute('aria-disabled')).toBeNull());
+            fireEvent.click(screen.getByTestId('page-tab-health'));
             expect(screen.getByTestId('health-page')).toBeTruthy();
             await flush(); // the first-open set-point snapshot write of the Individual model lands before the other window's change
             await act(async () => {
@@ -4760,20 +4845,23 @@ describe('Workbench two pages — shell + Model fit page (health score 3b-1)', (
     });
 
     describe('header state buttons', () => {
-        it('"Next: Health score →" is rendered only when it can be pressed or is the next step: absent while untrained or stale (page tab ② has the reason), it opens the Health score page when fresh', async () => {
+        it('no "Next: Health score →" in the header: page tab ② is closed with its reason while untrained or stale, and opens the Health score page when fresh', async () => {
             await mount([makeModel()]);
-            const next = () => screen.getByTestId('next-health-score') as HTMLButtonElement;
+            const tab = () => screen.getByTestId('page-tab-health');
             const why = () => screen.getByTestId('page-tab-health-why').textContent;
             expect(screen.queryByTestId('next-health-score')).toBeNull();
+            expect(tab().getAttribute('aria-disabled')).toBe('true');
             expect(why()).toBe('Train the model first');
             cleanup();
             await mount([{ ...withTrained(makeModel()), trainedFingerprint: 'old' }]);
             expect(screen.queryByTestId('next-health-score')).toBeNull();
+            expect(tab().getAttribute('aria-disabled')).toBe('true');
             expect(why()).toBe('Re-train first');
             cleanup();
             await mount([withTrained(makeModel())]);
-            expect(next().disabled).toBe(false);
-            fireEvent.click(next());
+            expect(screen.queryByTestId('next-health-score')).toBeNull();
+            expect(tab().getAttribute('aria-disabled')).toBeNull();
+            fireEvent.click(tab());
             expect(screen.getByTestId('health-page')).toBeTruthy();
             expect(screen.queryByTestId('next-health-score')).toBeNull();
             // Page tab ① goes back (the footer has no "← Model fit"); Mark complete lives on this page (3b-2).
@@ -4785,7 +4873,7 @@ describe('Workbench two pages — shell + Model fit page (health score 3b-1)', (
         it('there is no "Open full view" control and no full-view page any more (health score phase 4)', async () => {
             await mount([withTrained(makeModel())]);
             expect(screen.queryByText(/Open full view/)).toBeNull();
-            fireEvent.click(screen.getByTestId('next-health-score'));
+            fireEvent.click(screen.getByTestId('page-tab-health'));
             expect(screen.queryByText(/Open full view/)).toBeNull();
         });
     });
@@ -4811,7 +4899,7 @@ describe('Workbench two pages — shell + Model fit page (health score 3b-1)', (
             await mount([withTrained(makeModel({ id: 'i1' })), trainedRel()]);
             fireEvent.click(screen.getByTitle('Hide sensor list'));
             fireEvent.click(screen.getByRole('tab', { name: /Relation model/ }));
-            fireEvent.click(screen.getByTestId('next-health-score'));
+            fireEvent.click(screen.getByTestId('page-tab-health'));
             expect(screen.queryByLabelText('Search sensors')).toBeNull();
         });
     });
@@ -5003,7 +5091,7 @@ describe('Workbench two pages — shell + Model fit page (health score 3b-1)', (
             // the words on the tab (v2 §2): uncut, amber — it needs loading / training again
             expect(screen.getByTestId('tab-words-r1').textContent).toBe('Fit no longer in memory');
             expect(screen.getByTestId('tab-words-r1').className).toBe('wb3-tab-words wb3-tab-words--need');
-            expect(screen.getByTestId('next-health-score').className).toBe('rcx-btn'); // a ghost: training comes first
+            expect(screen.queryByTestId('next-health-score')).toBeNull(); // no Next button: training comes first, tab ② is the door
             // the link goes to the ONE place to train, and that place trains it
             fireEvent.click(within(b).getByTestId('board-train-sensor'));
             expect(document.activeElement).toBe(trainSensorBtn());
@@ -5484,7 +5572,7 @@ describe('Health score page - draft set points and when they are persisted (heal
             mockUpdateWorkspaceData.mockClear();
             fireEvent.click(screen.getByTestId('page-tab-model'));
             await flush();
-            fireEvent.click(screen.getByTestId('next-health-score'));
+            fireEvent.click(screen.getByTestId('page-tab-health'));
             await flush();
             expect(mockUpdateWorkspaceData).not.toHaveBeenCalled();
         });
@@ -5564,7 +5652,7 @@ describe('Health score page - Mark complete (the ONLY way a model becomes Comple
         statefulUpdateMock([HS_IND()]);
         render(<BuildModelWindow />);
         await deliverData({ failureGroupState: { groups: [makeGroup()], models: [HS_IND()] } });
-        fireEvent.click(screen.getByTestId('next-health-score'));
+        fireEvent.click(screen.getByTestId('page-tab-health'));
         expect(hsMarkBtn().disabled).toBe(true);
         expect(hsMarkBtn().title).toBe('Checking the set points…');
         // said under the button, in neutral grey — a moment, not a warning: it is NOT a notice
@@ -6051,7 +6139,7 @@ describe('Health score page - edge cases', () => {
         render(<BuildModelWindow />);
         await deliverData({ failureGroupState: { groups: [makeGroup()], models: [rel] } });
         await fitGoneSettled(); // (the fit is re-filled once automatically first; the mock keeps answering NOT_FITTED)
-        fireEvent.click(screen.getByTestId('next-health-score'));
+        fireEvent.click(screen.getByTestId('page-tab-health'));
         await waitFor(() => expect(screen.getByTestId('health-not-fitted')).toBeTruthy());
         await waitFor(() => expect(screen.getByTestId('mark-block-reason').textContent).toBe('Fit no longer in memory · load it again, or re-train with Train sensor ↑'));
         const board = screen.getByTestId('health-not-fitted');
@@ -6096,7 +6184,7 @@ describe('Health score page - edge cases', () => {
         render(<BuildModelWindow />);
         await deliverData({ failureGroupState: { groups: [makeGroup()], models: [rel] } });
         await fitGoneSettled();
-        fireEvent.click(screen.getByTestId('next-health-score'));
+        fireEvent.click(screen.getByTestId('page-tab-health'));
         await waitFor(() => expect(screen.getByTestId('health-not-fitted')).toBeTruthy());
         const board = () => screen.getByTestId('health-not-fitted');
         const fits = () => mockInvoke.mock.calls.filter(c => c[0] === 'preview_relationship_model');
@@ -7586,7 +7674,7 @@ describe('train queue wiring — review fixes (phase 4)', () => {
         fireEvent.click(screen.getByTestId('train-all-close'));
         expect(screen.getByTestId('queued-card')).toBeTruthy();
         expect(screen.getByTestId('settings-locked')).toBeTruthy();
-        fireEvent.click(screen.getByTestId('next-health-score'));
+        fireEvent.click(screen.getByTestId('page-tab-health'));
         await waitFor(() => expect(screen.getByTestId('mark-complete')).toBeTruthy());
         expect((screen.getByTestId('mark-complete') as HTMLButtonElement).disabled).toBe(true);
         expect(screen.getByTestId('mark-block-reason').textContent).toBe('Wait for the training run to finish');
@@ -7636,7 +7724,7 @@ describe('train queue wiring — review fixes (phase 4)', () => {
         await flush();
         expect(mockInvoke.mock.calls.filter(c => c[0] === 'preview_relationship_model')).toHaveLength(fitsBefore);
         // The Health score page: the same board, and Mark complete waits for the run.
-        fireEvent.click(screen.getByTestId('next-health-score'));
+        fireEvent.click(screen.getByTestId('page-tab-health'));
         await flush();
         await waitFor(() => expect(screen.getByTestId('health-not-fitted')).toBeTruthy());
         expect(screen.queryByTestId('health-not-fitted-retrain')).toBeNull();
@@ -7701,13 +7789,13 @@ describe('Workbench redesign §1 — the page spine', () => {
     };
 
     describe('at most ONE filled button on screen, and it follows the state', () => {
-        it('not trained yet: Train sensor (Next is a ghost — training comes first)', async () => {
+        it('not trained yet: Train sensor (no Next button — training comes first)', async () => {
             render(<BuildModelWindow />);
             await deliverData();
             expect(filled()).toEqual(['train-sensor']);
             expect(primary()).toBe('train');
             expect(screen.getByTestId('train-sensor-menu-toggle').className).toContain('rcx-btn--pri'); // both halves follow
-            // "Next" cannot be pressed and is not the next step: not rendered (no disabled ghost copy)
+            // there is no "Next: Health score" button in any state
             expect(screen.queryByTestId('next-health-score')).toBeNull();
             expect(screen.queryByTestId('save-changes')).toBeNull();
         });
@@ -7726,22 +7814,23 @@ describe('Workbench redesign §1 — the page spine', () => {
             expect(filled()).toEqual(['train-sensor']);
         });
 
-        it('trained and up to date: "Next: Health score →" — Train sensor is a ghost', async () => {
+        it('trained and up to date: NO filled button on Model fit — Train sensor is a ghost, tab ② is the way on', async () => {
             await hsMount([HS_IND()]);
             await waitFor(() => expect(screen.getByTestId('results-chart')).toBeTruthy());
-            expect(filled()).toEqual(['next-health-score']);
-            expect(primary()).toBe('next');
+            expect(filled()).toEqual([]);
+            expect(primary()).toBe('none');
+            expect(screen.queryByTestId('next-health-score')).toBeNull();
             expect(trainSensorBtn().className).not.toContain('rcx-btn--pri');
             expect(screen.getByTestId('train-sensor-menu-toggle').className).not.toContain('rcx-btn--pri');
+            expect(screen.getByTestId('page-tab-health').getAttribute('aria-disabled')).toBeNull();
         });
 
-        it('a sibling model of the same sensor still needs training: Train sensor — Next is a ghost even on the trained model', async () => {
+        it('a sibling model of the same sensor still needs training: Train sensor is filled even on the trained model; tab ② stays open', async () => {
             await hsMount([HS_IND(), makeModel({ id: 'r1', kind: 'relationship', targetSensor: 'TAG1', predictorSensors: ['TAG2'] })]);
             expect(screen.getAllByRole('tab').find(t => t.getAttribute('aria-selected') === 'true')!.textContent).toContain('Individual');
             expect(filled()).toEqual(['train-sensor']);
-            const next = screen.getByTestId('next-health-score') as HTMLButtonElement;
-            expect(next.className).toBe('rcx-btn');
-            expect(next.disabled).toBe(false); // only its weight changes
+            expect(screen.queryByTestId('next-health-score')).toBeNull();
+            expect(screen.getByTestId('page-tab-health').getAttribute('aria-disabled')).toBeNull();
         });
 
         it('Health score: Mark complete (green) only', async () => {
@@ -7958,7 +8047,7 @@ describe('Workbench redesign §1 — the page spine', () => {
 
         it('the words are never cut and the tooltip keeps the full sentence: every suffix is in both', async () => {
             await hsMount([HS_IND({ status: true, healthExport: record }), HS_REL()]);
-            fireEvent.click(screen.getByTestId('next-health-score'));
+            fireEvent.click(screen.getByTestId('page-tab-health'));
             await waitFor(() => expect(screen.getByTestId('set-points-card')).toBeTruthy());
             hsType('sp-upper', '12'); // files out of date
             fireEvent.click(screen.getByTestId('page-tab-model'));
@@ -8027,7 +8116,7 @@ describe('Workbench redesign §1 — the page spine', () => {
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: { groups: [makeGroup()], models: [rel] } });
             await fitGoneSettled();
-            fireEvent.click(screen.getByTestId('next-health-score'));
+            fireEvent.click(screen.getByTestId('page-tab-health'));
             await waitFor(() => expect(screen.getByTestId('health-not-fitted')).toBeTruthy());
             await waitFor(() => expect(filled()).toEqual(['train-sensor']));
             expect(primary()).toBe('train');
@@ -8276,7 +8365,7 @@ describe('Workbench redesign §1 — the page spine', () => {
             expect(why()!.previousElementSibling).toBe(save());
             expect(why()!.parentElement!.className).toBe('wb3-act');
             expect(Array.from(why()!.parentElement!.children)).toEqual([save(), why()]);
-            // (the draft makes the settings incomplete, so "Next" is not offered — page tab ② says why)
+            // (the draft makes the settings incomplete — page tab ② says why; there is no "Next" button)
             expect(screen.queryByTestId('next-health-score')).toBeNull();
             expect(screen.getByTestId('page-tab-health-why').textContent).toBe('Fix the settings first');
             expect(notice()!.getAttribute('data-tone')).toBe('warn');
@@ -8286,31 +8375,31 @@ describe('Workbench redesign §1 — the page spine', () => {
             expect(filled()).toEqual(['save-changes']);
         });
 
-        it('"Next: Health score →": rendered when it can be pressed (a ghost when it is not the next step, filled when it is) and never as a disabled copy', async () => {
-            // can be pressed AND is the next step: filled
+        it('no "Next: Health score →" in any state — the header holds real actions only; page tab ② is the door (open, or closed with its reason)', async () => {
+            const next = () => screen.queryByTestId('next-health-score');
+            const tab = () => screen.getByTestId('page-tab-health');
+            // trained and up to date: nothing in the actions, nothing filled — tab ② is open
             await hsMount([HS_IND()]);
             await waitFor(() => expect(screen.getByTestId('results-chart')).toBeTruthy());
-            const next = () => screen.queryByTestId('next-health-score') as HTMLButtonElement | null;
-            expect(next()!.disabled).toBe(false);
-            expect(next()!.className).toBe('rcx-btn rcx-btn--pri');
-            expect(actions().contains(next())).toBe(true);
-            // a draft: Save changes is the filled one, Next stays as a pressable ghost beside it —
-            // and a reason line belongs to Save's own column, never to Next
+            expect(next()).toBeNull();
+            expect(actions().children).toHaveLength(0);
+            expect(filled()).toEqual([]);
+            expect(tab().getAttribute('aria-disabled')).toBeNull();
+            // a draft: Save changes is the filled one, alone, with its reason line in its own column
             rename();
-            expect(next()!.className).toBe('rcx-btn');
-            expect(next()!.disabled).toBe(false);
+            expect(next()).toBeNull();
             expect(filled()).toEqual(['save-changes']);
-            expect(next()!.parentElement).toBe(actions());
+            expect(Array.from(actions().children)).toEqual([screen.getByTestId('save-changes').parentElement]);
             expect(screen.getByTestId('save-changes').parentElement!.className).toBe('wb3-act');
             cleanup();
-            // Complete: no filled button — Next is a pressable ghost
+            // Complete: no filled button, no Next
             await hsMount([HS_IND({ status: true, healthExport: record })]);
             await waitFor(() => expect(screen.getByTestId('results-chart')).toBeTruthy());
-            expect(next()!.className).toBe('rcx-btn');
-            expect(next()!.disabled).toBe(false);
+            expect(next()).toBeNull();
             expect(filled()).toEqual([]);
+            expect(tab().getAttribute('aria-disabled')).toBeNull();
             cleanup();
-            // cannot be pressed and is not the next step: NOT rendered — page tab ② says why
+            // tab ② closed: no Next and no disabled state button — the tab says why
             for (const [models, reason] of [
                 [[makeModel()], 'Train the model first'],
                 [[{ ...HS_IND(), trainedFingerprint: 'old' }], 'Re-train first'],
@@ -8320,17 +8409,21 @@ describe('Workbench redesign §1 — the page spine', () => {
                 await flush();
                 expect(next(), reason).toBeNull();
                 expect(document.querySelector('[data-testid="wb-actions"] button:disabled'), `no disabled state button (${reason})`).toBeNull();
+                expect(tab().getAttribute('aria-disabled')).toBe('true');
                 expect(screen.getByTestId('page-tab-health-why').textContent).toBe(reason);
+                // the reason belongs to tab ② only: no "state-why" line in the header for it
+                expect(screen.queryByTestId('state-why'), reason).toBeNull();
                 cleanup();
             }
         });
 
-        it('every state button lives in the header\'s right side — Save changes, Next, Mark complete, Mark incomplete, Mark complete again', async () => {
+        it('every state button lives in the header\'s right side — Save changes, Mark complete, Mark incomplete, Mark complete again', async () => {
             await hsMount([HS_IND()]);
             await waitFor(() => expect(screen.getByTestId('results-chart')).toBeTruthy());
             const ctl = () => screen.getByTestId('detail-controls');
             rename();
-            for (const id of ['save-changes', 'next-health-score']) expect(ctl().contains(screen.getByTestId(id)), id).toBe(true);
+            expect(ctl().contains(screen.getByTestId('save-changes'))).toBe(true);
+            expect(screen.queryByTestId('next-health-score')).toBeNull();
             await act(async () => { fireEvent.click(screen.getByTestId('save-changes')); await Promise.resolve(); await Promise.resolve(); });
             await waitFor(() => expect(screen.queryByTestId('save-changes')).toBeNull());
             await onHealth();
@@ -8363,15 +8456,17 @@ describe('Workbench redesign §1 — the page spine', () => {
             await waitFor(() => expect(screen.queryByTestId('save-changes')).toBeNull());
         };
 
-        it('the focused "Save changes" disappears once saved: the focus moves to "Next: Health score →"', async () => {
+        it('the focused "Save changes" disappears once saved: the focus moves to the open page tab (there is no "Next" to take its place)', async () => {
             await hsMount([HS_IND()]);
             await waitFor(() => expect(screen.getByTestId('results-chart')).toBeTruthy());
             rename();
             await focusAndSave();
-            await waitFor(() => expect(document.activeElement).toBe(screen.getByTestId('next-health-score')));
+            expect(screen.queryByTestId('next-health-score')).toBeNull();
+            await waitFor(() => expect(document.activeElement).toBe(screen.getByTestId('page-tab-model')));
+            expect(screen.getByTestId('page-tab-model').getAttribute('aria-current')).toBe('page');
         });
 
-        it('...or to the notice line when there is no "Next" to press and a notice is on screen (a stale model: "… train again")', async () => {
+        it('...also when a notice line is on screen (a stale model: "… train again") — the open page tab, not the notice', async () => {
             const stale = { ...HS_IND(), trainedFingerprint: 'old' };
             mockInvoke.mockImplementation(healthInvoke);
             statefulUpdateMock([stale]);
@@ -8382,12 +8477,12 @@ describe('Workbench redesign §1 — the page spine', () => {
             expect(screen.queryByTestId('next-health-score')).toBeNull();
             await focusAndSave();
             const notice = () => screen.getByTestId('wb-notice');
-            await waitFor(() => expect(document.activeElement).toBe(notice()));
+            await waitFor(() => expect(document.activeElement).toBe(screen.getByTestId('page-tab-model')));
             expect(notice().getAttribute('tabindex')).toBe('-1');
             expect(notice().textContent).toBe('Settings or running condition changed · train again with Train sensor ↑');
         });
 
-        it('...or to the open page tab when there is neither a "Next" to press nor a notice line (a model that was never trained)', async () => {
+        it('...and when there is no notice line either (a model that was never trained)', async () => {
             statefulUpdateMock([makeModel()]);
             render(<BuildModelWindow />);
             await deliverData();
@@ -9041,7 +9136,7 @@ describe('Workbench redesign §7 — page states of every kind (phase D)', () =>
     const failRetrainFromSiblingTab = async (k: K, mode: { current: 'ok' | 'fail' | 'hold' }) => {
         fireEvent.click(tabOf(k.tab));
         await waitFor(() => expect(screen.getByTestId('results-chart')).toBeTruthy());
-        fireEvent.click(screen.getByTestId('next-health-score'));
+        fireEvent.click(screen.getByTestId('page-tab-health'));
         await waitFor(() => expect(screen.getByTestId('set-points-card')).toBeTruthy());
         fireEvent.click(tabOf(k.kind === 'individual' ? 'Relation model' : 'Individual'));
         await waitFor(() => expect(screen.getByTestId('results-chart')).toBeTruthy()); // the sibling's own answer
@@ -9122,7 +9217,7 @@ describe('Workbench redesign §7 — page states of every kind (phase D)', () =>
         };
         await mountK([model]);
         await waitFor(() => expect(screen.getByTestId('results-chart')).toBeTruthy());
-        fireEvent.click(screen.getByTestId('next-health-score'));
+        fireEvent.click(screen.getByTestId('page-tab-health'));
         await waitFor(() => expect(screen.getByTestId('set-points-card')).toBeTruthy());
         const again = () => screen.getByTestId('mark-complete-again') as HTMLButtonElement;
         await waitFor(() => expect(again().disabled).toBe(false));
@@ -9192,7 +9287,8 @@ describe('Workbench redesign §7 — page states of every kind (phase D)', () =>
         expect(pill()).toBe('Trained');
         expect(sentence()).toBe('Trained · the charts did not load — try again above');
         expect(foot()!.querySelector('.wbx-reason')!.getAttribute('data-tone')).toBe('bad');
-        expect(primary()).toBe('next');
+        expect(primary()).toBe('none'); // no filled button on Model fit: tab ② is the way on
+        expect(screen.queryByTestId('next-health-score')).toBeNull();
         cleanup();
 
         reject = 'STALE_SESSION: the dataset was reloaded';
@@ -9204,25 +9300,27 @@ describe('Workbench redesign §7 — page states of every kind (phase D)', () =>
         expect(within(b.el).queryByTestId('board-retry-charts')).toBeNull();
         expect(b.buttonShaped).toBe(0);
         expect(sentence()).toBe('Trained · the charts did not load. The data in this window is out of date. Close it and open Build Model again from the Dashboard.');
-        expect(primary()).toBe('next');
+        expect(primary()).toBe('none');
     });
 
-    each('%s — loading (a trained model being worked out again): no notice line; "Next" is the next step but cannot be pressed until it has loaded', async (_n, k) => {
+    each('%s — loading (a trained model being worked out again): no notice line, no filled button; page tab ② is closed (no reason text) until it has loaded', async (_n, k) => {
         const mode = { current: 'hold' as 'ok' | 'fail' | 'hold' };
         const release = trainAnswers(k, mode);
         await mountK([withTrained(k.make())]);
         expect(boardOf('results-loading').title).toBe(`Loading the ${k.name}…`);
         expect(pill()).toBe('Trained');
         expect(foot(), 'the board says "Loading…": no notice line').toBeNull();
-        // "Next: Health score →" is the pane's next step (so it IS rendered), but it cannot be pressed while loading
-        expect(primary()).toBe('next');
-        expect((screen.getByTestId('next-health-score') as HTMLButtonElement).disabled).toBe(true);
+        // no Next button; tab ② is closed while the fit is worked out, with no reason text (the board says it)
+        expect(primary()).toBe('none');
+        expect(screen.queryByTestId('next-health-score')).toBeNull();
         expect(screen.queryByTestId('state-why')).toBeNull();
         expect(screen.getByTestId('page-tab-health').getAttribute('aria-disabled')).toBe('true');
+        expect(screen.queryByTestId('page-tab-health-why')).toBeNull();
+        expect(screen.queryByTestId('page-tab-health-dot')).toBeNull();
         expect(screen.queryByTestId('footer-load-again')).toBeNull();
         await release();
         await waitFor(() => expect(screen.getByTestId('results-chart')).toBeTruthy());
-        expect((screen.getByTestId('next-health-score') as HTMLButtonElement).disabled).toBe(false);
+        expect(screen.getByTestId('page-tab-health').getAttribute('aria-disabled')).toBeNull();
     });
 
     it('the list legend reads "Needs input / re-train"', async () => {
@@ -9482,8 +9580,9 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
             expect(engineCalls('compute_health_preview')).toHaveLength(0);
 
             // ── the Health score page: open (not a closed tab), the SAME board, Mark incomplete reachable ──
-            const healthTab = screen.getByTestId('next-health-score') as HTMLButtonElement;
-            expect(healthTab.disabled).toBe(false);
+            const healthTab = screen.getByTestId('page-tab-health') as HTMLButtonElement;
+            expect(healthTab.getAttribute('aria-disabled')).toBeNull();
+            expect(screen.queryByTestId('page-tab-health-dot')).toBeNull(); // Complete: no set-point cue
             fireEvent.click(healthTab);
             const hBoard = await waitFor(() => screen.getByTestId('results-no-data'));
             expect(hBoard.querySelector('.wbx-msg-t')!.textContent).toBe('No data for this model in the loaded file');
@@ -9760,12 +9859,12 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
             expect(trainSensorBtn().disabled).toBe(true);
             expect(trainSensorWhy()).toBe("Can't train · No rows to train on");
             expect(trainSensorBtn().title).toBe("Can't train: Individual — No rows to train on");
-            // "Next: Health score →" is reachable but never the filled next step
-            expect((screen.getByTestId('next-health-score') as HTMLButtonElement).disabled).toBe(false);
+            // page tab ② is open; nothing is a filled next step
+            expect(screen.getByTestId('page-tab-health').getAttribute('aria-disabled')).toBeNull();
             expect(screen.getByTestId('wb-actions').getAttribute('data-primary')).toBe('none');
 
             // ── the Health score page: the same board; Mark complete could only fail ──
-            fireEvent.click(screen.getByTestId('next-health-score'));
+            fireEvent.click(screen.getByTestId('page-tab-health'));
             await waitFor(() => expect(screen.getByTestId('page-tab-health').getAttribute('aria-current')).toBe('page'));
             expect(screen.getByTestId('results-no-data')).toBeTruthy();
             expect(screen.queryByTestId('set-points-card')).toBeNull();
@@ -9852,7 +9951,7 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
             expect(tabStatus()).toBe('Complete');
             expect(screen.getByTestId('tab-status-m2').getAttribute('data-dot')).toBe('complete');
             expect(screen.getByTestId('tab-status-m2').getAttribute('title')).toBe('Complete · no data in the loaded file');
-            expect((screen.getByTestId('next-health-score') as HTMLButtonElement).disabled).toBe(false);
+            expect(screen.getByTestId('page-tab-health').getAttribute('aria-disabled')).toBeNull();
             await act(async () => { await new Promise(r => setTimeout(r, 400)); });
             expect(engineCalls('compute_sensor_stats')).toHaveLength(2); // one per model, no retry
             expect(document.body.textContent).not.toMatch(/Training failed|Couldn't load|No valid numeric values/);
@@ -9993,7 +10092,7 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
         };
         const outsideIsEmpty = (pp: { start: string | null }) => (pp.start === P_OUT2.start ? 0 : 800);
 
-        it('a TRAINED model: the card is amber-warned (still "set"), charts + "Next: Health score →" + the preview are there, the dot and the kind tab keep their words, and Mark complete works', async () => {
+        it('a TRAINED model: the card is amber-warned (still "set"), charts + an open page tab ② + the preview are there, the dot and the kind tab keep their words, and Mark complete works', async () => {
             rust({ running: outsideIsEmpty });
             await mountB([trainedModel()], { runningConditionTimePeriods: [P_IN, P_OUT2] });
             await waitFor(() => expect(screen.getByTestId('rc-card-outside').textContent).toBe(WARN));
@@ -10015,7 +10114,7 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
             expect(screen.getByTestId('tab-status-m1').getAttribute('title')).toBe('Trained');
             expect(screen.getByTestId('tab-status-m1').getAttribute('data-dot')).not.toBe('bad');
             expect(screen.getByTestId('sensor-kind-badge-dot-m1').getAttribute('data-state')).toBe('trained');
-            expect((screen.getByTestId('next-health-score') as HTMLButtonElement).disabled).toBe(false);
+            expect(screen.getByTestId('page-tab-health').getAttribute('aria-disabled')).toBeNull();
             // Train is not blocked either: one period inside the data is enough
             expect(trainSensorWhy()).toBe('1 model up to date — nothing to train');
             // R5: Mark complete is not blocked by the data guards

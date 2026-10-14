@@ -41,13 +41,11 @@ const VALID_INPUTS: Record<string, Record<string, string>> = {
  *  (and the gate passes), exactly when the old footer "Mark complete" could be enabled. */
 export const healthPageTab = (q: Q = screen) => q.getByTestId('page-tab-health') as HTMLButtonElement;
 
-/** True while the Health score page cannot be opened. "Next: Health score →" is then
- *  never a pressable button either (it is rendered only when it is the next step or can
- *  be pressed — Workbench detail v2 §1). */
+/** True while the Health score page cannot be opened. Page tab ② is the ONLY door: the
+ *  header's "Next: Health score →" was removed (2026-10-14) — asserted here on every call. */
 export const healthPageClosed = (q: Q = screen): boolean => {
     const closed = healthPageTab(q).getAttribute('aria-disabled') === 'true';
-    const next = q.queryByTestId('next-health-score') as HTMLButtonElement | null;
-    if (closed) expect(next === null || next.disabled, 'no pressable "Next: Health score" while page tab ② is closed').toBe(true);
+    expect(q.queryByTestId('next-health-score'), 'no "Next: Health score" button in any state').toBeNull();
     return closed;
 };
 

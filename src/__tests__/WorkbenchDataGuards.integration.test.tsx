@@ -574,7 +574,8 @@ describe('R5 — the guards never touch what READS a model', () => {
         expect(tabWords('i1')).toBe('Trained');
         expect(bmwDot('i1').state).toBe('trained');
         expect(footReason()).toBeNull();
-        expect((bmw().getByTestId('next-health-score') as HTMLButtonElement).disabled).toBe(false);
+        expect(bmw().getByTestId('page-tab-health').getAttribute('aria-disabled')).toBeNull();
+        expect(bmw().queryByTestId('page-tab-health-why')).toBeNull();
         await openHealth();
         await waitFor(() => expect(bmw().getByTestId('check-valid')).toBeTruthy());
         expect(markBtn().disabled).toBe(false);
@@ -686,8 +687,10 @@ describe('R5 — the guards never touch what READS a model', () => {
         expect(trainBtn().disabled).toBe(true);
         expect(trainWhy()).toBe("Can't train · No train period inside the data");
         // its Health score page is open (not a shut tab): the same board, Mark incomplete reachable
-        expect((bmw().getByTestId('next-health-score') as HTMLButtonElement).disabled).toBe(false);
-        fireEvent.click(bmw().getByTestId('next-health-score'));
+        expect(bmw().getByTestId('page-tab-health').getAttribute('aria-disabled')).toBeNull();
+        // a Complete model: no "set points needed" cue on tab ②
+        expect(bmw().queryByTestId('page-tab-health-dot')).toBeNull();
+        fireEvent.click(bmw().getByTestId('page-tab-health'));
         await settle(400);
         expect(noDataBoard().title).toBe(NO_DATA_TITLE);
         expect(bmw().queryByTestId('set-points-card')).toBeNull();
@@ -712,7 +715,7 @@ describe('R5 — the guards never touch what READS a model', () => {
         expect(trainBtn().disabled).toBe(true);
         expect(trainWhy()).toBe("Can't train · No train period inside the data");
         // Mark complete could only fail (the export needs the data): disabled, with that reason
-        fireEvent.click(bmw().getByTestId('next-health-score'));
+        fireEvent.click(bmw().getByTestId('page-tab-health'));
         await settle(400);
         expect(noDataBoard().title).toBe(NO_DATA_TITLE);
         expect(markBtn().disabled).toBe(true);
