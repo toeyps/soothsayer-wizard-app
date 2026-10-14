@@ -9,7 +9,7 @@ import type { SubModelFit, SubModelFitsState } from './useSubModelFits';
 
 /*
  * "Sub-models" / "Compare predictors" modal: one Relation-model fit per
- * cumulative predictor subset, each with its own R^2 / RMSE / 2*RMSE / N and a
+ * cumulative predictor subset, each with its own R^2 / RMSE / 2*RMSE and a
  * scatter that shares the first predictor as X so the cards compare
  * apples-to-apples.
  *
@@ -217,16 +217,19 @@ export default function SubModelsModal({ fits, targetSensor, predictorCount, sti
                                         <div className="pm-submodel-header">
                                             <div className="pm-submodel-title-block">
                                                 <div className="pm-submodel-step">Step {idx + 1} of {subModels.length}</div>
-                                                {/* Every sensor with its description (then its tag) — never the tag alone. */}
+                                                {/* Every sensor with its description (then its tag) — never the tag alone.
+                                                    The TARGET comes first (user decision 2026-10-14): it is the same on
+                                                    every card, so it starts every title at the same place and the
+                                                    predictors — the part that differs — follow it. */}
                                                 <div className="pm-submodel-predictors" data-testid="sub-model-sensors">
+                                                    <span className="pm-submodel-sensor"><SensorInline tag={targetSensor} size="sm" /></span>
+                                                    <span className="pm-submodel-arrow" title="predicted from"> ← </span>
                                                     {fit.predictors.map((tag, i) => (
                                                         <Fragment key={tag}>
                                                             {i > 0 && <span className="pm-submodel-plus"> + </span>}
                                                             <span className="pm-submodel-sensor"><SensorInline tag={tag} size="sm" /></span>
                                                         </Fragment>
                                                     ))}
-                                                    <span className="pm-submodel-arrow"> → </span>
-                                                    <span className="pm-submodel-sensor"><SensorInline tag={targetSensor} size="sm" /></span>
                                                 </div>
                                             </div>
                                             <div className="pm-submodel-stats">
@@ -242,10 +245,8 @@ export default function SubModelsModal({ fits, targetSensor, predictorCount, sti
                                                     <span className="pm-submodel-stat-label">2·RMSE</span>
                                                     <span className="pm-submodel-stat-value">{typeof rmse2 === 'number' ? rmse2.toFixed(4) : '—'}</span>
                                                 </div>
-                                                <div className="pm-submodel-stat">
-                                                    <span className="pm-submodel-stat-label">N</span>
-                                                    <span className="pm-submodel-stat-value">{typeof fit.result.n_rows === 'number' ? fit.result.n_rows.toLocaleString() : '—'}</span>
-                                                </div>
+                                                {/* No "N" (row count) tile: every step is fitted on the same rows, so the
+                                                    number told nothing apart (user decision 2026-10-14). */}
                                             </div>
                                         </div>
                                         <div className="pm-submodel-chart">

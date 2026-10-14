@@ -75,7 +75,7 @@ describe('SubModelsModal', () => {
         return onClose;
     };
 
-    it('one card per cumulative step with R², RMSE, 2·RMSE and N, and a scatter each', () => {
+    it('one card per cumulative step with R², RMSE and 2·RMSE, and a scatter each', () => {
         show(fits({ subModels: [{ predictors: ['A'], result: result(3, 0.61, 2) }, { predictors: ['A', 'B'], result: result(3, 0.94, 1) }] }));
         const cards = screen.getAllByTestId('sub-model-card');
         expect(cards).toHaveLength(2);
@@ -84,7 +84,6 @@ describe('SubModelsModal', () => {
         expect(cards[0].textContent).toMatch(/RMSE1\.0000/); // 2·RMSE / 2
         expect(cards[0].textContent).toMatch(/2·RMSE2\.0000/);
         expect(cards[1].textContent).toMatch(/A \+ B/);
-        expect(cards[1].textContent).toMatch(/N3/);
         expect(within(cards[1]).getByTestId('echarts-mock').getAttribute('data-x-axis-name')).toBe('A'); // every card shares the first predictor
         expect(screen.getByText(/stiffness:/).textContent).toMatch(/Medium/);
     });
@@ -105,10 +104,12 @@ describe('SubModelsModal', () => {
         const cards = screen.getAllByTestId('sub-model-card');
         const chips = (card: HTMLElement) => [...within(card).getByTestId('sub-model-sensors').querySelectorAll('.pm-submodel-sensor')]
             .map(el => [el.querySelector('.sl-desc')?.textContent, el.querySelector('.sl-tag')?.textContent ?? null]);
-        expect(chips(cards[0])).toEqual([['FUEL GAS FLOW', 'A'], ['VALVE POSITION', 'TARGET']]);
+        // the TARGET first (2026-10-14), then the predictors of the step
+        expect(chips(cards[0])).toEqual([['VALVE POSITION', 'TARGET'], ['FUEL GAS FLOW', 'A']]);
         // B has no description: its tag is its label (once — no second line)
-        expect(chips(cards[1])).toEqual([['FUEL GAS FLOW', 'A'], ['B', null], ['VALVE POSITION', 'TARGET']]);
-        expect(within(cards[1]).getByTestId('sub-model-sensors').textContent).toMatch(/\+.*→/);
+        expect(chips(cards[1])).toEqual([['VALVE POSITION', 'TARGET'], ['FUEL GAS FLOW', 'A'], ['B', null]]);
+        expect(within(cards[1]).getByTestId('sub-model-sensors').textContent).toMatch(/TARGET ← .*A \+ B$/);
+        expect(within(cards[1]).getByTestId('sub-model-sensors').textContent).not.toContain('→');
         // the X axis of every card: the first predictor's description + unit
         expect(within(cards[1]).getByTestId('echarts-mock').getAttribute('data-x-axis-name')).toBe('FUEL GAS FLOW · kg/s');
         // the header's "target:" too
@@ -117,20 +118,21 @@ describe('SubModelsModal', () => {
         expect(sub.querySelector('.sl-tag')?.textContent).toBe('TARGET');
     });
 
-    it('N is the real row count (n_rows), not the length of the bounded sample', () => {
+    // User decision 2026-10-14: "N" was the number of data rows — the same for every step — so it is gone.
+    it('a card has exactly three numbers — R², RMSE, 2·RMSE — and no row count ("N")', () => {
         show(fits({ subModels: [{ predictors: ['A'], result: result(3, 0.8, 0.4, 159000) }] }));
         const card = screen.getByTestId('sub-model-card');
-        expect(card.textContent).toMatch(/N159[,.\s\u00a0\u202f]?000/);
-        expect(card.textContent).not.toMatch(/N3(?!\d)/);
+        expect([...card.querySelectorAll('.pm-submodel-stat-label')].map(l => l.textContent)).toEqual(['R²', 'RMSE', '2·RMSE']);
+        expect(card.textContent).not.toMatch(/159[,.\s\u00a0\u202f]?000/);
         // ...and the scatter still draws from the sample it was given.
         expect(within(card).getByTestId('echarts-mock')).toBeTruthy();
     });
 
-    it('a response without n_rows shows a dash instead of crashing', () => {
+    it('a response without n_rows still renders its card', () => {
         const r: any = { ...result(3) };
         delete r.n_rows;
         show(fits({ subModels: [{ predictors: ['A'], result: r }] }));
-        expect(screen.getByTestId('sub-model-card').textContent).toMatch(/N—/);
+        expect(screen.getByTestId('sub-model-card').textContent).toMatch(/R²0\.8000/);
     });
 
     it('is a modal dialog; Escape, the backdrop and the X close it, a click inside does not', () => {
@@ -217,7 +219,7 @@ describe('useSubModelFits', () => {
         expect(hook.current.subModels![2].result).toBe(full);
     });
 
-    it('the logged row count comes from n_rows, and N of the cards from the same field', async () => {
+    it('the logged row count comes from n_rows (the real count, not the bounded sample)', async () => {
         mockInvoke.mockImplementation((_c: string, args: any) => Promise.resolve(result(2, 0.5, 0.4, 159000 - args.predictors.length)));
         const { result: hook } = renderHook(() => useSubModelFits(base));
         await act(async () => { await hook.current.run(); });

@@ -17,7 +17,7 @@ import { HEALTH_DEFAULT_MAX_POINTS } from '../../utils/healthRequest';
  * These calls pass NO `cache_key`, so they never touch the Rust fit cache the
  * health score reads (only the main Train fit is cached). They DO pass
  * `max_points`: each response carries only a bounded sample of rows for the
- * scatter, and the true row count in `n_rows` (the "N" on each card). The reused
+ * scatter, and the true row count in `n_rows` (logged; no longer shown on the cards). The reused
  * Train response (`reusable`) is bounded the same way.
  *
  * Lives next to the components, not in
