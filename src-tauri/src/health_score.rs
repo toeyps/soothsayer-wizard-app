@@ -388,28 +388,32 @@ impl IndividualParams {
 /// the checks that don't need it run). Per side (residual = actual − predicted,
 /// so the lower side is negative): `|80-point| > W` and `|0-point| > |80-point|`,
 /// both STRICT, plus sign sanity and "all four entered".
+///
+/// The messages name a point the way the score ruler does — "80 low", "0 low",
+/// "80 high", "0 high" (user decision 2026-10-14; they used to say "the lower
+/// 80-point" while the ruler beside them said "80 low").
 pub fn validate_relationship(w: Option<f64>, sp: &SetPointsArg) -> Vec<Issue> {
     let mut out = Vec::new();
     let fields: [(&str, Option<f64>, &str); 4] = [
         (
             "residual_at_80_lower",
             sp.residual_at_80_lower,
-            "the lower 80-point (residual where health is 80, negative)",
+            "80 low (the residual where the score is 80 on the low side, negative)",
         ),
         (
             "residual_at_80_upper",
             sp.residual_at_80_upper,
-            "the upper 80-point (residual where health is 80, positive)",
+            "80 high (the residual where the score is 80 on the high side, positive)",
         ),
         (
             "residual_at_0_lower",
             sp.residual_at_0_lower,
-            "the lower 0-point (residual where health is 0, negative)",
+            "0 low (the residual where the score reaches 0 on the low side, negative)",
         ),
         (
             "residual_at_0_upper",
             sp.residual_at_0_upper,
-            "the upper 0-point (residual where health is 0, positive)",
+            "0 high (the residual where the score reaches 0 on the high side, positive)",
         ),
     ];
     for (name, v, label) in fields {
@@ -452,9 +456,10 @@ pub fn validate_relationship(w: Option<f64>, sp: &SetPointsArg) -> Vec<Issue> {
                 sp.residual_at_0_upper,
             ),
         };
-        let name = match side {
-            Side::Lower => "lower",
-            Side::Upper => "upper",
+        // The ruler's names of this side's two points.
+        let (p80, p0) = match side {
+            Side::Lower => ("80 low", "0 low"),
+            Side::Upper => ("80 high", "0 high"),
         };
         let sign_ok = |v: f64| match side {
             Side::Lower => v < 0.0,
@@ -476,7 +481,7 @@ pub fn validate_relationship(w: Option<f64>, sp: &SetPointsArg) -> Vec<Issue> {
                     sign_code,
                     f80,
                     format!(
-                        "The {name} 80-point must be {sign_word} (residual = actual − predicted); got {}.",
+                        "{p80} must be {sign_word} (residual = actual − predicted); got {}.",
                         fmt_typed(v)
                     ),
                 ));
@@ -490,7 +495,7 @@ pub fn validate_relationship(w: Option<f64>, sp: &SetPointsArg) -> Vec<Issue> {
                     sign_code,
                     f0,
                     format!(
-                        "The {name} 0-point must be {sign_word} (residual = actual − predicted); got {}.",
+                        "{p0} must be {sign_word} (residual = actual − predicted); got {}.",
                         fmt_typed(v)
                     ),
                 ));
@@ -503,7 +508,7 @@ pub fn validate_relationship(w: Option<f64>, sp: &SetPointsArg) -> Vec<Issue> {
                     "point80_equals_band",
                     f80,
                     format!(
-                        "The {name} 80-point ({}) sits exactly on the ±2RMSE band edge ({}), so the \
+                        "{p80} ({}) sits exactly on the ±2RMSE band edge ({}), so the \
                          100 and the 80 point would coincide. Move it further from zero.",
                         fmt_typed(v),
                         fmt_num(w)
@@ -514,8 +519,7 @@ pub fn validate_relationship(w: Option<f64>, sp: &SetPointsArg) -> Vec<Issue> {
                     "point80_inside_band",
                     f80,
                     format!(
-                        "The {name} 80-point ({}) must be further from zero than the ±2RMSE band \
-                         edge ({}).",
+                        "{p80} ({}) must be further from zero than the ±2RMSE band edge ({}).",
                         fmt_typed(v),
                         fmt_num(w)
                     ),
@@ -529,8 +533,8 @@ pub fn validate_relationship(w: Option<f64>, sp: &SetPointsArg) -> Vec<Issue> {
                     "point0_equals_point80",
                     f0,
                     format!(
-                        "The {name} 0-point ({}) equals the {name} 80-point, so the score would \
-                         drop from 80 to 0 instantly. Move the 0-point further from zero.",
+                        "{p0} ({}) equals {p80}, so the score would drop from 80 to 0 instantly. \
+                         Move {p0} further from zero.",
                         fmt_typed(b)
                     ),
                 ));
@@ -539,8 +543,7 @@ pub fn validate_relationship(w: Option<f64>, sp: &SetPointsArg) -> Vec<Issue> {
                     "point0_inside_point80",
                     f0,
                     format!(
-                        "The {name} 0-point ({}) must be further from zero than the {name} \
-                         80-point ({}).",
+                        "{p0} ({}) must be further from zero than {p80} ({}).",
                         fmt_typed(b),
                         fmt_typed(a)
                     ),
@@ -1887,24 +1890,24 @@ mod tests {
         };
         assert_eq!(
             msg("must_be_negative", "residual_at_80_lower"),
-            "The lower 80-point must be negative (residual = actual − predicted); got 0.05."
+            "80 low must be negative (residual = actual − predicted); got 0.05."
         );
         assert_eq!(
             msg("must_be_positive", "residual_at_80_upper"),
-            "The upper 80-point must be positive (residual = actual − predicted); got -2."
+            "80 high must be positive (residual = actual − predicted); got -2."
         );
         // 80-point against the band: the typed point exact, the computed 2RMSE rounded.
         let v = validate_relationship(Some(2.123456), &sp_rel(-1.23456, 6.0, -10.0, 20.0));
         assert_eq!(codes(&v), vec!["point80_inside_band"]);
         assert_eq!(
             v[0].message,
-            "The lower 80-point (-1.23456) must be further from zero than the ±2RMSE band edge (2.123)."
+            "80 low (-1.23456) must be further from zero than the ±2RMSE band edge (2.123)."
         );
         let v = validate_relationship(Some(2.0), &sp_rel(-4.0, 2.0, -10.0, 20.0));
         assert_eq!(codes(&v), vec!["point80_equals_band"]);
         assert_eq!(
             v[0].message,
-            "The upper 80-point (2) sits exactly on the ±2RMSE band edge (2), so the 100 and the 80 \
+            "80 high (2) sits exactly on the ±2RMSE band edge (2), so the 100 and the 80 \
              point would coincide. Move it further from zero."
         );
         // 0-point against the 80-point: both typed, both exact.
@@ -1913,14 +1916,14 @@ mod tests {
         assert_eq!(v[0].field, "residual_at_0_lower");
         assert_eq!(
             v[0].message,
-            "The lower 0-point (-3.00001) must be further from zero than the lower 80-point (-4.56789)."
+            "0 low (-3.00001) must be further from zero than 80 low (-4.56789)."
         );
         let v = validate_relationship(Some(2.0), &sp_rel(-4.0, 6.00001, -10.0, 6.00001));
         assert_eq!(codes(&v), vec!["point0_equals_point80"]);
         assert_eq!(
             v[0].message,
-            "The upper 0-point (6.00001) equals the upper 80-point, so the score would drop from 80 \
-             to 0 instantly. Move the 0-point further from zero."
+            "0 high (6.00001) equals 80 high, so the score would drop from 80 to 0 instantly. \
+             Move 0 high further from zero."
         );
     }
 

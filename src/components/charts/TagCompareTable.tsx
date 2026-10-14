@@ -19,7 +19,7 @@ export interface TagCompareRow {
 }
 
 interface TagCompareTableProps {
-    /** One column per tagged point, in badge order. */
+    /** One column per tagged point, in TIME order (the charts sort them: `sortTagsByTime`). */
     items: TaggedPointListItem[];
     /** One row per sensor. */
     rows: TagCompareRow[];

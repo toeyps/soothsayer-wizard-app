@@ -683,6 +683,24 @@ describe('ScatterChart', () => {
             expect(table.textContent).not.toContain('Δ');
         });
 
+        // User decision 2026-10-14: the columns run in TIME order (the row's own wall clock).
+        it('the table columns are in TIME order, not tagging order; a row with no readable time keeps tagging order, after the dated ones', () => {
+            const dated = [
+                { timestamp: '2025-03-14 21:00:00', values: [1, 10] },
+                { timestamp: '2025-03-14 22:00:00', values: [2, 20] },
+                { timestamp: 'no time', values: [3, 30] },
+            ] as any;
+            const { container } = render(<ScatterChart data={dated} sensors={['A', 'B']} headers={headers} />);
+            fireEvent.click(screen.getByTitle(/compare 2\+ points/i));
+            for (const i of [2, 1, 0]) { // tagged newest → oldest, the undated one first
+                act(() => { lastInstance!.__subs['pointover'](i); });
+                fireEvent.click(getCanvas(container));
+            }
+            const table = screen.getByTestId('tag-table');
+            expect([...table.querySelectorAll('.chart-tag-label')].map(h => h.textContent)).toEqual(['2025/03/14 21:00:00', '2025/03/14 22:00:00', 'no time']);
+            expect(within(table).getAllByTestId('tag-table-val').map(v => v.textContent)).toEqual(['1', '2', '3', '10', '20', '30']);
+        });
+
         it('"Clear all" only appears once a tag exists, and clears every tag', () => {
             const { container } = render(<ScatterChart data={data} sensors={['A', 'B']} headers={headers} />);
             expect(screen.queryByTitle('Clear all tags')).toBeNull();

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { useRef, useState } from 'react';
 import { render, screen, fireEvent, within } from '@testing-library/react';
-import TaggedPointList, { firstFreeColorIndex, splitStamp, type TaggedPointListItem } from '../components/charts/TaggedPointList';
+import TaggedPointList, { firstFreeColorIndex, sortTagsByTime, splitStamp, type TaggedPointListItem } from '../components/charts/TaggedPointList';
 
 const items = [
     { id: 'a', badge: '①', color: '#ff0000', label: '2026/01/01 00:01' },
@@ -112,6 +112,27 @@ describe('firstFreeColorIndex', () => {
     it('ignores unknown (-1) slots and falls back to wrapping when every slot is taken', () => {
         expect(firstFreeColorIndex([-1, 0], 8)).toBe(1);
         expect(firstFreeColorIndex([0, 1], 2)).toBe(0);
+    });
+});
+
+describe('sortTagsByTime (the table\'s columns run oldest → newest, not in tagging order)', () => {
+    const t = (id: string, ms: number) => ({ id, ms });
+    const sort = (tags: { id: string; ms: number }[]) => sortTagsByTime(tags, x => x.ms).map(x => x.id);
+
+    it('oldest first, whatever order the points were tagged in; the input is not changed', () => {
+        const tags = [t('c', 300), t('a', 100), t('b', 200)];
+        expect(sort(tags)).toEqual(['a', 'b', 'c']);
+        expect(tags.map(x => x.id)).toEqual(['c', 'a', 'b']);
+    });
+
+    it('two tags at the same time keep the order they were tagged in', () => {
+        expect(sort([t('late', 200), t('x', 100), t('y', 100)])).toEqual(['x', 'y', 'late']);
+    });
+
+    it('a tag with no readable time goes after the dated ones, in tagging order', () => {
+        expect(sort([t('n1', NaN), t('b', 200), t('n2', NaN), t('a', 100)])).toEqual(['a', 'b', 'n1', 'n2']);
+        expect(sort([t('n1', NaN), t('n2', NaN)])).toEqual(['n1', 'n2']);
+        expect(sort([])).toEqual([]);
     });
 });
 

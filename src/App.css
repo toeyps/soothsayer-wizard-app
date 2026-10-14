@@ -1791,6 +1791,27 @@ body {
     color: var(--text-secondary);
     margin: 0 2px;
 }
+/* One sensor of a step: the shared inline label (description, then tag) in a chip. The row
+   wraps, so three predictors with long descriptions take two lines instead of pushing the
+   numbers out of the card. */
+.pm-submodel-predictors {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 2px;
+}
+.pm-submodel-sensor {
+    display: inline-flex;
+    min-width: 0;
+    max-width: 100%;
+    padding: 2px 7px;
+    border-radius: 4px;
+    background: var(--hover-bg);
+}
+.pm-submodel-plus {
+    color: var(--text-secondary);
+    margin: 0 2px;
+}
 .pm-submodel-stats {
     display: flex;
     gap: 8px;

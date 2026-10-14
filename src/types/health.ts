@@ -250,6 +250,10 @@ export interface ClusteringStats {
     cluster_count: number;
     criteria_sensor: string | null;
     clusters: ClusterStat[];
+    /** Share (%) of the training rows with a cluster that sit inside its 3× SD ring
+     *  (score ≥ 80) — sent with or without scoring periods; null when no training row
+     *  has a usable cluster. */
+    inside_3sd_ring_pct: number | null;
 }
 
 export type HealthStats = IndividualStats | RelationshipStats | ClusteringStats;

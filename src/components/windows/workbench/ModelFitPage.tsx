@@ -263,9 +263,9 @@ function ModelFitPage(props: ModelFitPageProps) {
         const scatter = data.cluster_scatter;
         const xTag = model.xSensor ?? '';
         const yTag = model.ySensor ?? '';
-        // Rust sends the train block (`test_validation`) only with scoring periods:
-        // without it this share is not known here and the tile reads "—".
-        const insideRing = data.test_validation?.train.inside_3sd_ring_pct;
+        // In the stats, so it is known with or without scoring periods ("—" only when no
+        // training row has a usable cluster).
+        const insideRing = stats.inside_3sd_ring_pct;
         return (
             <div className="wb2-board wb2-g2" data-testid="model-fit-clustering">
                 <KpiStrip fit testId="cl-stats">

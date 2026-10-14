@@ -856,6 +856,31 @@ describe('Tag Point (click a point on the chart to compare it with others)', () 
         expect(table.textContent).not.toContain('Δ');
     });
 
+    // User decision 2026-10-14: with the number gone a tag is told apart by colour alone, so the
+    // columns run left → right in TIME order — the same order as the dots on the chart.
+    it('the table columns are in TIME order, not tagging order: a later point tagged FIRST is still the right-hand column, and keeps its colour', () => {
+        const columnar = columnarOf(headers, 6);
+        const { container } = render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} />);
+        fireEvent.click(tagToggle(container));
+        mockConvertFromPixel.mockReturnValue([msOf(columnar.timestamps[4]), 0]);
+        act(() => { zrClickHandler!({ offsetX: 1, offsetY: 1 }); });
+        mockConvertFromPixel.mockReturnValue([msOf(columnar.timestamps[1]), 0]);
+        act(() => { zrClickHandler!({ offsetX: 2, offsetY: 2 }); });
+        const table = screen.getByTestId('tag-table');
+        const heads = [...table.querySelectorAll('.chart-tag-label')].map(h => h.textContent);
+        expect(heads).toEqual(['2026/01/01 00:01:00', '2026/01/01 00:04:00']);
+        // first sensor's row: its value at 00:01, then at 00:04 (series 0 = the row index)
+        expect(within(table).getAllByTestId('tag-table-val').slice(0, 2).map(v => v.textContent)).toEqual(['1.000', '4.000']);
+        // the colour belongs to the TAG (first tagged = first palette colour), not to the column
+        const marks = capturedOptions[capturedOptions.length - 1].series[0].markPoint.data;
+        const dots = [...table.querySelectorAll('.chart-tag-dot')].map(d => (d as HTMLElement).style.background);
+        expect(dots[0]).not.toBe(dots[1]);
+        expect(marks).toHaveLength(2);
+        // the × of a column removes THAT column's tag (the earlier point, tagged second)
+        fireEvent.click(within(table).getAllByTitle('Remove this tag')[0]);
+        expect([...screen.getByTestId('tag-table').querySelectorAll('.chart-tag-label')].map(h => h.textContent)).toEqual(['2026/01/01 00:04:00']);
+    });
+
     it('the marker needs no edge handling: a tag at either end of the data is the same plain dot', () => {
         const columnar = columnarOf(headers, 10);
         const { container } = render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} />);

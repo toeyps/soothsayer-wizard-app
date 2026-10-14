@@ -6,13 +6,14 @@ import { ChartProps } from './ChartTypes';
 import type { TimeHighlight, ValueHighlightRange } from '../../types';
 import { firstMatchingHighlight } from '../../utils/timeHighlights';
 import { formatDataStamp } from '../../utils/workbenchDate';
+import { readWallClock } from '../../utils/dateFormat';
 import { SensorPickerSingle } from '../sensor/SensorPicker';
 import { FxBadge, SensorInline } from '../sensor/SensorLabel';
 import { SensorMetaContext, fmtNum, sensorTitle, useLayeredSensorLookup, type SensorInfo } from '../sensor/sensorInfo';
 import { hexToRgba, rgbaToHex, RANGE_PALETTE, TAG_BADGES, MAX_TAGGED_POINTS } from './pairPlotColors';
 import { reportError } from '../../errorReporter';
 import { useCoalescedDraw } from '../../hooks/useCoalescedDraw';
-import { firstFreeColorIndex } from './TaggedPointList';
+import { firstFreeColorIndex, sortTagsByTime } from './TaggedPointList';
 import { TagTableSlot, tagCell, type TagCompareRow } from './TagCompareTable';
 
 // Re-exported so callers (Dashboard.tsx, charts/index.ts) can import
@@ -802,7 +803,13 @@ function ScatterChart({
     const removeScatterTag = useCallback((id: string) => {
         setScatterTags(prev => prev.filter(t => t.id !== id));
     }, []);
-    const tagListItems = useMemo(() => scatterTags.map((tag, order) => {
+    // The table's columns run in TIME order (the row's own wall clock), like the Line chart's.
+    const tagsByTime = useMemo(() => sortTagsByTime(scatterTags, tag => {
+        const origIdx = origIndicesRef.current[tag.pointIdx];
+        const w = origIdx != null && data[origIdx]?.timestamp ? readWallClock(data[origIdx].timestamp) : null;
+        return w ? Date.UTC(w.year, w.month - 1, w.day, w.hour, w.minute, w.second) : NaN;
+    }), [scatterTags, data]);
+    const tagListItems = useMemo(() => tagsByTime.map((tag, order) => {
         const origIdx = origIndicesRef.current[tag.pointIdx];
         const row = origIdx != null ? data[origIdx] : null;
         return {
@@ -811,10 +818,10 @@ function ScatterChart({
             color: rgbaToHex(RANGE_PALETTE[tag.colorIdx % RANGE_PALETTE.length]),
             label: row?.timestamp ? formatDataStamp(row.timestamp) : `Point ${order + 1}`,
         };
-    }), [scatterTags, data]);
+    }), [tagsByTime, data]);
     // ... and its two rows: the X and the Y sensor's value at each tagged point.
     const tagTableRows = useMemo<TagCompareRow[]>(() => {
-        if (scatterTags.length === 0) return [];
+        if (tagsByTime.length === 0) return [];
         return ([['X', scatterX], ['Y', scatterY]] as const).map(([lead, sensor]) => {
             const col = headers.indexOf(sensor);
             const info = sensorLookup(sensor);
@@ -822,14 +829,14 @@ function ScatterChart({
                 key: lead,
                 lead,
                 info,
-                cells: scatterTags.map(tag => {
+                cells: tagsByTime.map(tag => {
                     const origIdx = origIndicesRef.current[tag.pointIdx];
                     const v = origIdx != null && col >= 0 ? data[origIdx]?.values[col] : null;
                     return tagCell(typeof v === 'number' ? fmtNum(v) : null);
                 }),
             };
         });
-    }, [scatterTags, data, scatterX, scatterY, headers, sensorLookup]);
+    }, [tagsByTime, data, scatterX, scatterY, headers, sensorLookup]);
 
     if (sensors.length < 2) {
         return <div style={{ color: 'var(--text-secondary)', textAlign: 'center', marginTop: '20%' }}>Select at least 2 sensors</div>;

@@ -92,6 +92,25 @@ export function splitStamp(label: string): string[] {
     return m ? [m[1], m[2]] : [label];
 }
 
+/**
+ * The tags in TIME order, oldest first — the order of the table's columns (user decision
+ * 2026-10-14). A tag is told apart by its colour alone, so left → right in the table now
+ * matches left → right on the Line chart. A tag whose time cannot be read keeps the order it
+ * was tagged in, after the dated ones. `timeOf` returns epoch ms (NaN = no readable time).
+ */
+export function sortTagsByTime<T>(tags: readonly T[], timeOf: (tag: T) => number): T[] {
+    return tags
+        .map((tag, i) => ({ tag, i, ms: timeOf(tag) }))
+        .sort((a, b) => {
+            const at = Number.isFinite(a.ms);
+            const bt = Number.isFinite(b.ms);
+            if (at && bt) return a.ms - b.ms || a.i - b.i;
+            if (at !== bt) return at ? -1 : 1;
+            return a.i - b.i;
+        })
+        .map(e => e.tag);
+}
+
 /** Colour slot for a NEW tag: the first palette index no remaining tag is
  *  using. Picking `tags.length` instead (the old rule) re-used a colour that
  *  was still on the chart as soon as any tag other than the last had been

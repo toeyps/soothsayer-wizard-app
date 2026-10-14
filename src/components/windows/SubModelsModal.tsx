@@ -1,7 +1,10 @@
-import { useEffect } from 'react';
+import { Fragment, useEffect } from 'react';
 import { Activity, Loader2, X } from 'lucide-react';
 import ResponsiveECharts from '../charts/ResponsiveECharts';
 import { isPickerSurfaceOpen } from '../sensor/SensorPicker';
+import { SensorInline } from '../sensor/SensorLabel';
+import { sensorInlineHtml, useSensorLookup, type SensorInfo } from '../sensor/sensorInfo';
+import { sensorAxisTitle } from './workbench/healthCharts';
 import type { SubModelFit, SubModelFitsState } from './useSubModelFits';
 
 /*
@@ -15,8 +18,15 @@ import type { SubModelFit, SubModelFitsState } from './useSubModelFits';
  */
 
 /** ECharts scatter option for ONE sub-model fit — Raw (blue) vs Model (red)
- *  against `xSensor`. Compact margins/fonts for the card layout. */
-export function buildSubModelOption(fit: SubModelFit, xSensor: string, targetSensor: string) {
+ *  against `xSensor`. Compact margins/fonts for the card layout.
+ *
+ *  A sensor is never shown by its tag alone (user rule 2026-10-14): the axis titles are
+ *  the description + unit (the tag is in the card's title, right above the chart) and the
+ *  tooltip rows are the shared inline label (description, then tag). `lookup` is the
+ *  window's sensor lookup; without one a sensor reads as its tag. */
+export function buildSubModelOption(fit: SubModelFit, xSensor: string, targetSensor: string, lookup: (tag: string) => SensorInfo = tag => ({ tag })) {
+    const xInfo = lookup(xSensor);
+    const yInfo = lookup(targetSensor);
     const { result, predictors } = fit;
     const xRaw = result.predictor_raw;
     const yRaw = result.target_raw;
@@ -76,8 +86,8 @@ export function buildSubModelOption(fit: SubModelFit, xSensor: string, targetSen
             formatter: (p: any) => {
                 const v = p.value as [number, number];
                 return `<div style="font-weight:bold;margin-bottom:4px;color:${p.color}">${p.seriesName}</div>`
-                    + `<div>${xSensor}: ${typeof v?.[0] === 'number' ? v[0].toFixed(4) : '—'}</div>`
-                    + `<div>${targetSensor}: ${typeof v?.[1] === 'number' ? v[1].toFixed(4) : '—'}</div>`;
+                    + sensorInlineHtml(xInfo, undefined, typeof v?.[0] === 'number' ? v[0].toFixed(4) : '—')
+                    + sensorInlineHtml(yInfo, undefined, typeof v?.[1] === 'number' ? v[1].toFixed(4) : '—');
             },
         },
         legend: {
@@ -95,10 +105,12 @@ export function buildSubModelOption(fit: SubModelFit, xSensor: string, targetSen
         ],
         xAxis: {
             type: 'value',
-            name: xSensor,
+            name: sensorAxisTitle(xInfo),
             nameLocation: 'middle',
             nameGap: 26,
             nameTextStyle: { color: txtSecondary, fontSize: 11 },
+            // A long description is cut with "…" instead of running off the card.
+            nameTruncate: { maxWidth: 520, ellipsis: '…' },
             scale: true,
             axisLabel: { color: txtSecondary, fontSize: 10 },
             axisLine: { lineStyle: { color: gridLine } },
@@ -106,10 +118,12 @@ export function buildSubModelOption(fit: SubModelFit, xSensor: string, targetSen
         },
         yAxis: {
             type: 'value',
-            name: targetSensor,
+            name: sensorAxisTitle(yInfo),
             nameLocation: 'middle',
             nameGap: 40,
             nameTextStyle: { color: txtSecondary, fontSize: 11 },
+            // The chart is 280 px high: a longer title would be clipped at both ends.
+            nameTruncate: { maxWidth: 200, ellipsis: '…' },
             scale: true,
             axisLabel: { color: txtSecondary, fontSize: 10 },
             axisLine: { lineStyle: { color: gridLine } },
@@ -135,6 +149,7 @@ export interface SubModelsModalProps {
 
 export default function SubModelsModal({ fits, targetSensor, predictorCount, stiffnessText, onClose }: SubModelsModalProps) {
     const { subModels, loading, error, progress, stale, run } = fits;
+    const lookup = useSensorLookup();
 
     // Escape closes the modal (same convention as the chart-expand modals).
     useEffect(() => {
@@ -154,7 +169,7 @@ export default function SubModelsModal({ fits, targetSensor, predictorCount, sti
                             at a time. So the words "sub-model(s)" never appear on screen. */}
                         <div className="pm-chart-title">Compare predictors</div>
                         <div className="pm-chart-subtitle">
-                            The fit with the predictors added one at a time — the last step is the model you trained · target: <code>{targetSensor || '—'}</code> · stiffness: <code>{stiffnessText}</code>
+                            The fit with the predictors added one at a time — the last step is the model you trained · target: {targetSensor ? <SensorInline tag={targetSensor} size="sm" muted /> : '—'} · stiffness: <code>{stiffnessText}</code>
                         </div>
                     </div>
                     <button className="pm-chart-modal-close" onClick={onClose} title="Close (Esc)" aria-label="Close">
@@ -196,16 +211,22 @@ export default function SubModelsModal({ fits, targetSensor, predictorCount, sti
                                 const r2 = fit.result.r2_per_step[fit.result.r2_per_step.length - 1];
                                 const rmse2 = fit.result.rmse2_per_step[fit.result.rmse2_per_step.length - 1];
                                 const xSensor = fit.predictors[0] ?? '';
-                                const opt = buildSubModelOption(fit, xSensor, targetSensor);
+                                const opt = buildSubModelOption(fit, xSensor, targetSensor, lookup);
                                 return (
                                     <div key={idx} className="pm-submodel-card" data-testid="sub-model-card">
                                         <div className="pm-submodel-header">
                                             <div className="pm-submodel-title-block">
                                                 <div className="pm-submodel-step">Step {idx + 1} of {subModels.length}</div>
-                                                <div className="pm-submodel-predictors">
-                                                    <code>{fit.predictors.join(' + ')}</code>
+                                                {/* Every sensor with its description (then its tag) — never the tag alone. */}
+                                                <div className="pm-submodel-predictors" data-testid="sub-model-sensors">
+                                                    {fit.predictors.map((tag, i) => (
+                                                        <Fragment key={tag}>
+                                                            {i > 0 && <span className="pm-submodel-plus"> + </span>}
+                                                            <span className="pm-submodel-sensor"><SensorInline tag={tag} size="sm" /></span>
+                                                        </Fragment>
+                                                    ))}
                                                     <span className="pm-submodel-arrow"> → </span>
-                                                    <code>{targetSensor}</code>
+                                                    <span className="pm-submodel-sensor"><SensorInline tag={targetSensor} size="sm" /></span>
                                                 </div>
                                             </div>
                                             <div className="pm-submodel-stats">

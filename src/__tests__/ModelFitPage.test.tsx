@@ -372,16 +372,24 @@ describe('ModelFitPage — Clustering', () => {
         expect(screen.getByTestId('stat-clusters').querySelector('.wb3-kpi-s .sl--muted')).toBeTruthy();
         // the fixture: 95 of 100 rows fall in a criteria range, 5 in none
         expect(tile('stat-assigned')).toEqual({ label: 'In a cluster', value: '95.0%', unit: null, sub: '5 rows outside every criteria range' });
-        // the train block of the preview (makeValidation): 98.9% of the training rows inside the 3× SD ring
+        // the stats' own share (the fixture: 98.9% of the training rows inside the 3× SD ring)
         expect(tile('stat-inside3')).toEqual({ label: 'Inside 3× SD', value: '98.9%', unit: null, sub: 'of the training rows · score ≥ 80' });
         expect(tileLabels(strip)).not.toContain('Training rows');
         expect(strip.textContent).not.toMatch(/Training rows|Trained/);
     });
 
-    it('one cluster has no criteria sensor: the Clusters tile says so; without the train block "Inside 3× SD" is a dash', () => {
+    it('one cluster has no criteria sensor: the Clusters tile says so; "Inside 3× SD" has its number WITHOUT a scoring period', () => {
         page(clu(), { n_clusters: 1 });
         expect(tile('stat-clusters')).toEqual({ label: 'Clusters', value: '1', unit: null, sub: 'one cluster · no criteria sensor' });
-        // Rust sends `test_validation` only with scoring periods
+        // No `test_validation` here (no scoring period): the share comes from the stats (2026-10-14 —
+        // the tile used to read "—" for every model without a scoring period).
+        expect(tile('stat-inside3')).toMatchObject({ value: '98.9%', sub: 'of the training rows · score ≥ 80' });
+    });
+
+    it('"Inside 3× SD" is a dash only when Rust has no share (no training row with a usable cluster)', () => {
+        const base = makeHealthPreview({ kind: 'clustering', n_clusters: 2, criteria_sensor: 'LOAD' });
+        const data = { ...base, stats: { ...(base.stats as any), inside_3sd_ring_pct: null } };
+        page(clu(), {}, { data, preview: { ...idle, data } });
         expect(tile('stat-inside3')).toMatchObject({ value: '—', sub: 'of the training rows · score ≥ 80' });
     });
 
@@ -389,8 +397,7 @@ describe('ModelFitPage — Clustering', () => {
         const base = makeHealthPreview({ kind: 'clustering', n_clusters: 2, criteria_sensor: 'LOAD' });
         const data = {
             ...base,
-            stats: { ...(base.stats as any), rows: 100_000, assigned_rows: 50, unassigned_rows: 99_950 },
-            test_validation: makeValidation({ train: { ...makeValidation().train, inside_3sd_ring_pct: 0.04 } }),
+            stats: { ...(base.stats as any), rows: 100_000, assigned_rows: 50, unassigned_rows: 99_950, inside_3sd_ring_pct: 0.04 },
         };
         page(clu(), {}, { data, preview: { ...idle, data } });
         expect(tile('stat-assigned')).toMatchObject({ value: '< 0.1%', sub: '99,950 rows outside every criteria range' });

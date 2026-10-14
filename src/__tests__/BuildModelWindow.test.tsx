@@ -7871,16 +7871,18 @@ describe('Workbench redesign §1 — the page spine', () => {
             await openHealthPage();
             hsType('sp-upper', '12');
             await waitFor(() => expect(tabWords('m1').textContent).toBe('Complete · files out of date'));
-            // the model IS still Complete: the dot and the words stay green
-            expect(tabWords('m1').className).toBe('wb3-tab-words wb3-tab-words--complete');
+            // the model IS still Complete, so its dot stays green — but the WORDS turn amber
+            // (user decision 2026-10-14: all green read as "nothing left to do")
+            expect(tabWords('m1').className).toBe('wb3-tab-words wb3-tab-words--need');
             expect(screen.getByTestId('tab-status-m1').className).toContain('f4-sdot--complete');
             const tab = screen.getByRole('tab');
             expect(tab.getAttribute('title')).toBe('Individual · Complete · files out of date');
             expect(tab.getAttribute('aria-label')).toBe('Individual, Complete · files out of date');
             expect(screen.getByTestId('tab-status-m1').getAttribute('title')).toBe('Complete · files out of date');
-            // typed back: the words go back
+            // typed back: the words go back, green again
             hsType('sp-upper', '9');
             await waitFor(() => expect(tabWords('m1').textContent).toBe('Complete'));
+            expect(tabWords('m1').className).toBe('wb3-tab-words wb3-tab-words--complete');
         });
 
         it('the words are never cut and the tooltip keeps the full sentence: every suffix is in both', async () => {

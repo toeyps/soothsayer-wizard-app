@@ -248,6 +248,7 @@ When unsure between two sizes, start with the smaller one and step up only if it
 - ❌ Re-parsing timestamp strings per query, or row-major loops over `ColumnarData`
 - ❌ Shipping unbounded row counts to the frontend (use the bounded `chart_query` commands / `get_scatter_sample`)
 - ❌ Exposing "LinearGAM" in user-facing UI (say "Relation model")
+- ❌ Showing a sensor by its **tag alone** anywhere on screen — titles, chips, card headers, chart/axis titles, tooltips, modals, tables (user rule 2026-10-14: "ถ้าจะแสดงชื่อ sensor ต้องเอา description มาด้วย"). Every sensor name is description first, then tag, through the shared pieces: `SensorLabel` / `SensorInline` (JSX), `sensorInlineHtml` (ECharts HTML tooltips), `sensorAxisTitle` (axis titles: description · unit, with the tag in the card title), `sensorPlainLabel` (attributes / canvas). Tag alone is allowed only when the sensor has no description, inside formula text (`$TAG`), and on pair-plot cell headers (`AxisLabel`, hover shows the full label) — `docs/design/DESIGN_SYSTEM.md` §4 "Sensor label" is the full standard. A new screen or chart that prints `{tag}` / `<code>{sensor}</code>` directly is a review reject.
 - ❌ Using Tauri v1 API syntax
 - ❌ An agent modifying files outside its zone, or adding/removing npm/cargo dependencies without the main session's go-ahead
 - ❌ Landing a code change (new or modified) without a matching new/updated test in the same pass

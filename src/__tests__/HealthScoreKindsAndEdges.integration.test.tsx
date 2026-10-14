@@ -295,7 +295,7 @@ describe('Relationship specifics', () => {
         await openHealth();
         const w = env.backend!.lastOk('compute_health_preview').stats.two_rmse as number;
         await enterSp({ 'sp-residual_at_80_lower': String(-w * 3), 'sp-residual_at_0_lower': String(-w * 2) });
-        await waitFor(() => expect(bmw().getAllByTestId('check-line').map(l => l.textContent).join('|')).toMatch(/lower 0-point .* must be further from zero than the lower 80-point/));
+        await waitFor(() => expect(bmw().getAllByTestId('check-line').map(l => l.textContent).join('|')).toMatch(/0 low .* must be further from zero than 80 low/));
         await enterSp({ 'sp-residual_at_0_lower': String(-w * 6) });
         await waitFor(() => expect(bmw().getByTestId('check-valid')).toBeTruthy());
         const req = env.backend!.cmds('compute_health_preview').pop()!.args.request;

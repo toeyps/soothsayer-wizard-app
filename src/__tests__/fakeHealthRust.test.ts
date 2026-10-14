@@ -68,17 +68,26 @@ describe('fakeHealthRust — messages echo a typed set point exactly; computed v
     it('Relation model: the user reported "-2.000" — a typed residual point is "-2"; 2RMSE keeps its rounding', () => {
         const sign = validateRelationship(1.23456, { residual_at_80_lower: 2, residual_at_80_upper: -2, residual_at_0_lower: -0, residual_at_0_upper: 0.05 });
         expect(sign.filter(i => i.code === 'must_be_negative').map(i => i.message)).toEqual([
-            'The lower 80-point must be negative (residual = actual − predicted); got 2.',
-            'The lower 0-point must be negative (residual = actual − predicted); got 0.',
+            '80 low must be negative (residual = actual − predicted); got 2.',
+            '0 low must be negative (residual = actual − predicted); got 0.',
         ]);
-        expect(msg(sign, 'must_be_positive')).toBe('The upper 80-point must be positive (residual = actual − predicted); got -2.');
+        expect(msg(sign, 'must_be_positive')).toBe('80 high must be positive (residual = actual − predicted); got -2.');
         const band = validateRelationship(1.23456, { residual_at_80_lower: -0.5, residual_at_80_upper: 1.23456, residual_at_0_lower: -3, residual_at_0_upper: 3 });
-        expect(msg(band, 'point80_inside_band')).toBe('The lower 80-point (-0.5) must be further from zero than the ±2RMSE band edge (1.235).');
-        expect(msg(band, 'point80_equals_band')).toBe('The upper 80-point (1.23456) sits exactly on the ±2RMSE band edge (1.235), so the 100 and the 80 point would coincide. Move it further from zero.');
+        expect(msg(band, 'point80_inside_band')).toBe('80 low (-0.5) must be further from zero than the ±2RMSE band edge (1.235).');
+        expect(msg(band, 'point80_equals_band')).toBe('80 high (1.23456) sits exactly on the ±2RMSE band edge (1.235), so the 100 and the 80 point would coincide. Move it further from zero.');
         const order = validateRelationship(1, { residual_at_80_lower: -2, residual_at_80_upper: 4.61234, residual_at_0_lower: -2, residual_at_0_upper: 4.5 });
-        expect(msg(order, 'point0_equals_point80')).toBe('The lower 0-point (-2) equals the lower 80-point, so the score would drop from 80 to 0 instantly. Move the 0-point further from zero.');
-        expect(msg(order, 'point0_inside_point80')).toBe('The upper 0-point (4.5) must be further from zero than the upper 80-point (4.61234).');
+        expect(msg(order, 'point0_equals_point80')).toBe('0 low (-2) equals 80 low, so the score would drop from 80 to 0 instantly. Move 0 low further from zero.');
+        expect(msg(order, 'point0_inside_point80')).toBe('0 high (4.5) must be further from zero than 80 high (4.61234).');
         for (const i of [...sign, ...band, ...order]) expect(i.message).not.toMatch(/\d\.\d*0\b|-2\.0/); // nothing padded
+        // The sentences name a point the way the score ruler does (2026-10-14) — never "lower 80-point".
+        const empty = validateRelationship(1, {});
+        expect(empty.filter(i => i.code === 'required').map(i => i.message)).toEqual([
+            'Enter 80 low (the residual where the score is 80 on the low side, negative).',
+            'Enter 80 high (the residual where the score is 80 on the high side, positive).',
+            'Enter 0 low (the residual where the score reaches 0 on the low side, negative).',
+            'Enter 0 high (the residual where the score reaches 0 on the high side, positive).',
+        ]);
+        for (const i of [...sign, ...band, ...order, ...empty]) expect(i.message).not.toMatch(/-point|lower|upper/);
     });
 
     it('Clustering: N as typed', () => {
@@ -582,6 +591,13 @@ describe('fakeHealthRust — compute_health_preview scores 1-hour averages', () 
         expect(p.series.score).toBeNull();
         expect(p.series.cluster.slice(48, 60)).toEqual([1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2]);
         expect(p.stats).toMatchObject({ rows: 48, assigned_rows: 48, unassigned_rows: 0 }); // raw training rows
+        // "Inside 3× SD" is in the stats: the train block's share with scoring periods ...
+        expect((p.stats as any).inside_3sd_ring_pct).toBe(p.test_validation.train.inside_3sd_ring_pct);
+        expect((p.stats as any).inside_3sd_ring_pct).toBe(100);
+        // ... and still there WITHOUT any (the Model fit tile used to read "—" then)
+        const noPeriods = await preview(rust, { ...CLU_REQ, test_periods: [] });
+        expect(noPeriods.test_validation).toBeNull();
+        expect((noPeriods.stats as any).inside_3sd_ring_pct).toBe(100);
         expect(p.cluster_scatter.total).toBe(48);
 
         // HOURLY: hour 4 has rows in BOTH clusters -> no cluster (its mean MODE, 50, lies in

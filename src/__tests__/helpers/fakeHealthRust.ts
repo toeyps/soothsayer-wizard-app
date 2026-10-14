@@ -243,10 +243,10 @@ export function validateIndividual(b: IndividualBand, sp: SetPointsArg): Issue[]
 export function validateRelationship(w: number | null, sp: SetPointsArg): Issue[] {
     const out: Issue[] = [];
     const fields: [keyof SetPointsArg, string][] = [
-        ['residual_at_80_lower', 'the lower 80-point (residual where health is 80, negative)'],
-        ['residual_at_80_upper', 'the upper 80-point (residual where health is 80, positive)'],
-        ['residual_at_0_lower', 'the lower 0-point (residual where health is 0, negative)'],
-        ['residual_at_0_upper', 'the upper 0-point (residual where health is 0, positive)'],
+        ['residual_at_80_lower', '80 low (the residual where the score is 80 on the low side, negative)'],
+        ['residual_at_80_upper', '80 high (the residual where the score is 80 on the high side, positive)'],
+        ['residual_at_0_lower', '0 low (the residual where the score reaches 0 on the low side, negative)'],
+        ['residual_at_0_upper', '0 high (the residual where the score reaches 0 on the high side, positive)'],
     ];
     for (const [k, label] of fields) if ((sp[k] ?? null) === null) out.push(issue('required', k, `Enter ${label}.`));
     let bandOk = false;
@@ -262,26 +262,29 @@ export function validateRelationship(w: number | null, sp: SetPointsArg): Issue[
         const signOk = (v: number) => (side === 'lower' ? v < 0 : v > 0);
         const code = side === 'lower' ? 'must_be_negative' : 'must_be_positive';
         const word = side === 'lower' ? 'negative' : 'positive';
+        // The ruler's names of this side's two points (as Rust prints them).
+        const p80 = side === 'lower' ? '80 low' : '80 high';
+        const p0 = side === 'lower' ? '0 low' : '0 high';
         let ok80 = false;
         let ok0 = false;
         if (v80 !== null) {
             if (signOk(v80)) ok80 = true;
-            else out.push(issue(code, f80, `The ${side} 80-point must be ${word} (residual = actual − predicted); got ${fmtTyped(v80)}.`));
+            else out.push(issue(code, f80, `${p80} must be ${word} (residual = actual − predicted); got ${fmtTyped(v80)}.`));
         }
         if (v0 !== null) {
             if (signOk(v0)) ok0 = true;
-            else out.push(issue(code, f0, `The ${side} 0-point must be ${word} (residual = actual − predicted); got ${fmtTyped(v0)}.`));
+            else out.push(issue(code, f0, `${p0} must be ${word} (residual = actual − predicted); got ${fmtTyped(v0)}.`));
         }
         if (bandOk && ok80 && w !== null && v80 !== null) {
             const m = Math.abs(v80);
-            if (m === w) out.push(issue('point80_equals_band', f80, `The ${side} 80-point (${fmtTyped(v80)}) sits exactly on the ±2RMSE band edge (${fmtNum(w)}), so the 100 and the 80 point would coincide. Move it further from zero.`));
-            else if (m < w) out.push(issue('point80_inside_band', f80, `The ${side} 80-point (${fmtTyped(v80)}) must be further from zero than the ±2RMSE band edge (${fmtNum(w)}).`));
+            if (m === w) out.push(issue('point80_equals_band', f80, `${p80} (${fmtTyped(v80)}) sits exactly on the ±2RMSE band edge (${fmtNum(w)}), so the 100 and the 80 point would coincide. Move it further from zero.`));
+            else if (m < w) out.push(issue('point80_inside_band', f80, `${p80} (${fmtTyped(v80)}) must be further from zero than the ±2RMSE band edge (${fmtNum(w)}).`));
         }
         if (ok80 && ok0 && v80 !== null && v0 !== null) {
             const m80 = Math.abs(v80);
             const m0 = Math.abs(v0);
-            if (m0 === m80) out.push(issue('point0_equals_point80', f0, `The ${side} 0-point (${fmtTyped(v0)}) equals the ${side} 80-point, so the score would drop from 80 to 0 instantly. Move the 0-point further from zero.`));
-            else if (m0 < m80) out.push(issue('point0_inside_point80', f0, `The ${side} 0-point (${fmtTyped(v0)}) must be further from zero than the ${side} 80-point (${fmtTyped(v80)}).`));
+            if (m0 === m80) out.push(issue('point0_equals_point80', f0, `${p0} (${fmtTyped(v0)}) equals ${p80}, so the score would drop from 80 to 0 instantly. Move ${p0} further from zero.`));
+            else if (m0 < m80) out.push(issue('point0_inside_point80', f0, `${p0} (${fmtTyped(v0)}) must be further from zero than ${p80} (${fmtTyped(v80)}).`));
         }
     }
     return out;
@@ -1254,10 +1257,14 @@ export function createFakeHealthRust(opts: FakeHealthRustOptions) {
             const d = sdDistance(g, x, y);
             return Number.isFinite(d) ? d : null;
         };
-        const ring = (ds: (number | null)[]) => {
+        const ringPct = (ds: (number | null)[]) => {
             const ok = ds.filter((d): d is number => d !== null);
-            return metrics({ inside_3sd_ring_pct: sharePct(ok.filter(d => d <= 3).length, ok.length) });
+            return sharePct(ok.filter(d => d <= 3).length, ok.length);
         };
+        const ring = (ds: (number | null)[]) => metrics({ inside_3sd_ring_pct: ringPct(ds) });
+        // The RAW training rows against their own clusters — in the stats with or without
+        // scoring periods, and the train block's metric when there are some.
+        const trainDists = rows.flatMap((r, i) => (isTrain[i] ? [distOf(assign[i], c1[r], c2[r])] : []));
         const test_validation = plan
             ? buildHourly(
                 plan,
@@ -1265,7 +1272,7 @@ export function createFakeHealthRust(opts: FakeHealthRustOptions) {
                 { groups, isTrain: hTrain, scores: hScores },
                 trainN,
                 // The train block: the RAW training rows against their own clusters.
-                ring(rows.flatMap((r, i) => (isTrain[i] ? [distOf(assign[i], c1[r], c2[r])] : []))),
+                ring(trainDists),
                 // A period's metric: over its HOURLY points.
                 hours => ring(hours.map(h => distOf(hAssign[h], hX[h], hY[h]))),
             )
@@ -1280,6 +1287,7 @@ export function createFakeHealthRust(opts: FakeHealthRustOptions) {
                 cluster_count: n,
                 criteria_sensor: preview.criteria_sensor,
                 clusters: preview.clusters.map((c: any, i: number) => ({ ...geoms[i], cluster_id: c.cluster_id, range: c.range, n_rows: c.n_rows })),
+                inside_3sd_ring_pct: ringPct(trainDists) ?? null,
             },
             validation,
             valid,

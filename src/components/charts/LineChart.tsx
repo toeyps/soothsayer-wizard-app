@@ -6,7 +6,7 @@ import { formatAxisTick, formatDateTime } from '../../utils/dateFormat';
 import { fmtNum, sensorInlineHtml, useLayeredSensorLookup } from '../sensor/sensorInfo';
 import { hexToRgbaCss, rgbaToHex, RANGE_PALETTE, TAG_BADGES, MAX_TAGGED_POINTS } from './pairPlotColors';
 import type { LineTaggedPoint } from '../../types';
-import { firstFreeColorIndex } from './TaggedPointList';
+import { firstFreeColorIndex, sortTagsByTime } from './TaggedPointList';
 import { TagTableSlot, tagCell, type TagCompareRow } from './TagCompareTable';
 
 /** Parses one `xData` entry to epoch ms, or `null` for a missing/unparseable
@@ -380,7 +380,9 @@ function LineChart({
     // moves to the nearest one — the list must name the same instant, not the
     // stale stored one. Falls back to the stored text when there is nothing
     // to snap to (no data, or an unparseable timestamp).
-    const tagListItems = useMemo(() => taggedPoints.map((tag, order) => {
+    // The table's columns run in TIME order, not in the order the points were tagged.
+    const tagsByTime = useMemo(() => sortTagsByTime(taggedPoints, tag => new Date(tag.timestamp).getTime()), [taggedPoints]);
+    const tagListItems = useMemo(() => tagsByTime.map((tag, order) => {
         const tagMs = new Date(tag.timestamp).getTime();
         let resolved: string = tag.timestamp;
         if (!isNaN(tagMs) && xData.length > 0) {
@@ -393,13 +395,13 @@ function LineChart({
             color: tag.color,
             label: isNaN(d.getTime()) ? tag.timestamp : formatDateTime(d),
         };
-    }), [taggedPoints, xData]);
+    }), [tagsByTime, xData]);
 
     // The table under the chart: one row per shown sensor, one value per tag — read at the SAME
     // nearest plotted point as the marker and the column head above.
     const tagTableRows = useMemo<TagCompareRow[]>(() => {
-        if (taggedPoints.length === 0) return [];
-        const idxOf = taggedPoints.map(tag => {
+        if (tagsByTime.length === 0) return [];
+        const idxOf = tagsByTime.map(tag => {
             const ms = new Date(tag.timestamp).getTime();
             return isNaN(ms) || xData.length === 0 ? -1 : nearestXIndex(xData, ms);
         });
@@ -418,7 +420,7 @@ function LineChart({
                 cells: idxOf.map(i => { const v = at(i); return tagCell(v == null ? null : fmtNum(v, true)); }),
             };
         });
-    }, [taggedPoints, xData, sensors, headers, columnar, data, sensorLookup, sensorColors]);
+    }, [tagsByTime, xData, sensors, headers, columnar, data, sensorLookup, sensorColors]);
 
     const zoomOut = useCallback(() => {
         chartInstance?.dispatchAction({ type: 'dataZoom', start: 0, end: 100 });

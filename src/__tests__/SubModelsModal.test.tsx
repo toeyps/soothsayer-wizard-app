@@ -11,6 +11,7 @@ import SubModelsModal, { buildSubModelOption } from '../components/windows/SubMo
 import { useSubModelFits, type SubModelFit, type SubModelFitsState } from '../components/windows/useSubModelFits';
 import type { RelationshipPreviewResult } from '../types/commands';
 import { HEALTH_DEFAULT_MAX_POINTS } from '../utils/healthRequest';
+import { SensorMetaContext, type SensorInfo } from '../components/sensor/sensorInfo';
 
 // `total` = the real row count the fit used (`n_rows`); the arrays are the BOUNDED sample
 // of `n` rows the Rust command sends when `max_points` is passed (total defaults to n).
@@ -34,6 +35,27 @@ describe('buildSubModelOption', () => {
         expect(o.series[0].data).toEqual([[0, 0.1], [2, 1.1], [4, 2.1]]); // column of B in predictor_raw
         expect(o.xAxis.name).toBe('B');
         expect(o.yAxis.name).toBe('TARGET');
+    });
+
+    // User rule 2026-10-14: a sensor is never shown by its tag alone.
+    it('with the window\'s sensor lookup: axis titles are description · unit, tooltip rows are description then tag (escaped)', () => {
+        const info: Record<string, SensorInfo> = {
+            B: { tag: 'B', description: 'FUEL GAS <FLOW>', unit: 'kg/s' },
+            TARGET: { tag: 'TARGET', description: 'VALVE POSITION', unit: '%' },
+        };
+        const o: any = buildSubModelOption(fit, 'B', 'TARGET', tag => info[tag] ?? { tag });
+        expect(o.xAxis.name).toBe('FUEL GAS <FLOW> · kg/s');
+        expect(o.yAxis.name).toBe('VALVE POSITION · %');
+        expect(o.xAxis.nameTruncate.ellipsis).toBe('…');
+        expect(o.yAxis.nameTruncate.maxWidth).toBeLessThan(280); // the chart is 280 px high
+        const html: string = o.tooltip.formatter({ value: [2, 1.1], color: '#3b82f6', seriesName: 'Raw' });
+        expect(html).toContain('<span class="tt-desc">FUEL GAS &lt;FLOW&gt;</span><span class="tt-tag">B</span>');
+        expect(html).toContain('<span class="tt-desc">VALVE POSITION</span><span class="tt-tag">TARGET</span>');
+        expect(html).toContain('2.0000');
+        expect(html).toContain('1.1000');
+        // a sensor with no description reads as its tag (nothing else to show)
+        const plain: any = buildSubModelOption(fit, 'A', 'TARGET', tag => info[tag] ?? { tag });
+        expect(plain.xAxis.name).toBe('A');
     });
 
     it('null when the predictor is not part of the fit or the arrays are missing', () => {
@@ -65,6 +87,34 @@ describe('SubModelsModal', () => {
         expect(cards[1].textContent).toMatch(/N3/);
         expect(within(cards[1]).getByTestId('echarts-mock').getAttribute('data-x-axis-name')).toBe('A'); // every card shares the first predictor
         expect(screen.getByText(/stiffness:/).textContent).toMatch(/Medium/);
+    });
+
+    it('every sensor carries its description: the step title, the target in the subtitle and the axis titles — never the tag alone', () => {
+        const info: Record<string, SensorInfo> = {
+            A: { tag: 'A', description: 'FUEL GAS FLOW', unit: 'kg/s' },
+            TARGET: { tag: 'TARGET', description: 'VALVE POSITION', unit: '%' },
+        };
+        render(
+            <SensorMetaContext.Provider value={tag => info[tag] ?? { tag }}>
+                <SubModelsModal
+                    fits={fits({ subModels: [{ predictors: ['A'], result: result(3) }, { predictors: ['A', 'B'], result: result(3) }] })}
+                    targetSensor="TARGET" predictorCount={2} stiffnessText="Medium" onClose={vi.fn()}
+                />
+            </SensorMetaContext.Provider>,
+        );
+        const cards = screen.getAllByTestId('sub-model-card');
+        const chips = (card: HTMLElement) => [...within(card).getByTestId('sub-model-sensors').querySelectorAll('.pm-submodel-sensor')]
+            .map(el => [el.querySelector('.sl-desc')?.textContent, el.querySelector('.sl-tag')?.textContent ?? null]);
+        expect(chips(cards[0])).toEqual([['FUEL GAS FLOW', 'A'], ['VALVE POSITION', 'TARGET']]);
+        // B has no description: its tag is its label (once — no second line)
+        expect(chips(cards[1])).toEqual([['FUEL GAS FLOW', 'A'], ['B', null], ['VALVE POSITION', 'TARGET']]);
+        expect(within(cards[1]).getByTestId('sub-model-sensors').textContent).toMatch(/\+.*→/);
+        // the X axis of every card: the first predictor's description + unit
+        expect(within(cards[1]).getByTestId('echarts-mock').getAttribute('data-x-axis-name')).toBe('FUEL GAS FLOW · kg/s');
+        // the header's "target:" too
+        const sub = screen.getByText(/target:/);
+        expect(sub.querySelector('.sl-desc')?.textContent).toBe('VALVE POSITION');
+        expect(sub.querySelector('.sl-tag')?.textContent).toBe('TARGET');
     });
 
     it('N is the real row count (n_rows), not the length of the bounded sample', () => {

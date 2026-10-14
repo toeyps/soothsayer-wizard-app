@@ -173,7 +173,7 @@ const KINDS: Kind[] = [
                 'sp-residual_at_0_lower': String(-w * 4), 'sp-residual_at_80_lower': String(-w * 1.5),
                 'sp-residual_at_0_upper': String(w * 4), 'sp-residual_at_80_upper': String(-w * 2),
             });
-            return { field: 'residual_at_80_upper', input: 'sp-residual_at_80_upper', marker: /^80 high = −/, check: /upper 80-point must be positive/ };
+            return { field: 'residual_at_80_upper', input: 'sp-residual_at_80_upper', marker: /^80 high = −/, check: /80 high must be positive/ };
         },
         fix: async () => {
             const w = lastPreview().stats.two_rmse as number;

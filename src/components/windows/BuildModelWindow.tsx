@@ -3657,11 +3657,16 @@ export default function BuildModelWindow() {
      *              file", "· files out of date", "· unsaved changes") — shown on the tab
      *              uncut, and the same string in the tooltip and the tab's name;
      *   - `tone`:  the colour of those words — the dot's colour, except that a plain
-     *              "Trained" asks for nothing and stays neutral grey. */
+     *              "Trained" asks for nothing and stays neutral grey, and that a Complete
+     *              model whose files are out of date reads AMBER (user decision
+     *              2026-10-14: green looked like nothing was left to do). Its dot stays
+     *              the list's green — the model is still Complete. */
     const tabDotOf = (m: FailureModel, st: ModelDotState): { dot: TabDot; tone: TabDot; words: string } => {
         // Unsaved Model-settings edits and saved files that no longer match the set
         // points are said for EVERY tab of the sensor, not only the one that is open.
-        const tail = `${filesOutOfDateFor(m) ? ' · files out of date' : ''}${m.id in drafts ? ' · unsaved changes' : ''}`;
+        const outOfDate = filesOutOfDateFor(m);
+        const tail = `${outOfDate ? ' · files out of date' : ''}${m.id in drafts ? ' · unsaved changes' : ''}`;
+        const toneOf = (dot: TabDot, plain = false): TabDot => (outOfDate && dot === 'complete' ? 'need' : plain ? null : dot);
         if (trainError[m.id]) return { dot: 'bad', tone: 'bad', words: `${failedWordsOf(m)}${tail}` };
         const badge = gateBadge(m);
         // Results, but no row of the loaded data: nothing about the model changed — its
@@ -3671,16 +3676,16 @@ export default function BuildModelWindow() {
             const flag = setPointFlagOf(m, st);
             const own = flag === 'fix' ? 'Fix set point' : flag === 'needed' ? 'Set points needed' : TAB_WORDS[st];
             const dot = flag === 'fix' ? 'bad' : DOT_CLASS[st];
-            return { dot, tone: own === TAB_WORDS.trained ? null : dot, words: `${own} · ${NO_MODEL_DATA_WORDS}${tail}` };
+            return { dot, tone: toneOf(dot, own === TAB_WORDS.trained), words: `${own} · ${NO_MODEL_DATA_WORDS}${tail}` };
         }
         // A trained model whose fit is gone needs training again (amber, like "Re-train needed").
         if (badge === null && fitGoneOf(m) && (st === 'trained' || st === 'complete')) {
-            return { dot: DOT_CLASS[st], tone: DOT_CLASS[st], words: `${st === 'complete' ? 'Complete · ' : ''}${FIT_GONE_WORDS}${tail}` };
+            return { dot: DOT_CLASS[st], tone: toneOf(DOT_CLASS[st]), words: `${st === 'complete' ? 'Complete · ' : ''}${FIT_GONE_WORDS}${tail}` };
         }
         const flag = setPointFlagOf(m, st);
         const words = badge ?? (flag === 'fix' ? 'Fix set point' : flag === 'needed' ? 'Set points needed' : TAB_WORDS[st]);
         const dot = flag === 'fix' ? 'bad' : DOT_CLASS[st];
-        return { dot, tone: words === TAB_WORDS.trained ? null : dot, words: `${words}${tail}` };
+        return { dot, tone: toneOf(dot, words === TAB_WORDS.trained), words: `${words}${tail}` };
     };
 
     /** Props the two pages share (`WorkbenchPageProps`) for the ACTIVE model. */

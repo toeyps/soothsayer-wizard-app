@@ -236,7 +236,7 @@ describe('Relationship: the whole journey', () => {
         const w = env.backend!.lastOk('compute_health_preview').stats.two_rmse as number;
         // signs: a positive LOWER point is rejected with Rust's message
         await enterSp({ 'sp-residual_at_80_lower': String(w * 2), 'sp-residual_at_80_upper': String(w * 2), 'sp-residual_at_0_lower': String(-w * 4), 'sp-residual_at_0_upper': String(w * 4) });
-        await waitFor(() => expect(bmw().getAllByTestId('check-line').map(l => l.textContent).join('|')).toMatch(/lower 80-point must be negative/));
+        await waitFor(() => expect(bmw().getAllByTestId('check-line').map(l => l.textContent).join('|')).toMatch(/80 low must be negative/));
         // inside the ±2RMSE band
         await enterSp({ 'sp-residual_at_80_lower': String(-w / 2) });
         await waitFor(() => expect(bmw().getAllByTestId('check-line').map(l => l.textContent).join('|')).toMatch(/further from zero than the ±2RMSE band edge/));

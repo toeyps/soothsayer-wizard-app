@@ -88,7 +88,7 @@ describe('buildCheckLines', () => {
     });
 
     it('Relationship: a single empty point keeps Rust\'s message; other issues stay next to the collapsed line', () => {
-        expect(buildCheckLines('relationship', [issue('required', 'residual_at_80_lower', 'Enter the lower 80-point')])[0].text).toBe('Enter the lower 80-point');
+        expect(buildCheckLines('relationship', [issue('required', 'residual_at_80_lower', 'Enter 80 low')])[0].text).toBe('Enter 80 low');
         const lines = buildCheckLines('relationship', [
             issue('required', 'residual_at_0_lower'),
             issue('point80_inside_band', 'residual_at_80_upper', 'upper 80 is inside ±2RMSE'),

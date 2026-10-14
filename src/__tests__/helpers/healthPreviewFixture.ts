@@ -120,6 +120,7 @@ export function makeHealthPreview(req: HealthPreviewRequest | Record<string, any
                 cluster_count: n,
                 criteria_sensor: r.criteria_sensor ?? null,
                 clusters,
+                inside_3sd_ring_pct: 98.9,
             },
             validation: [],
             valid: false,
@@ -210,10 +211,10 @@ export function makeHealthPreview(req: HealthPreviewRequest | Record<string, any
 const REQUIRED_MSG: Record<string, string> = {
     lower: 'Enter the lower set point (L): the value where health reaches 0 on the low side.',
     upper: 'Enter the upper set point (H): the value where health reaches 0 on the high side.',
-    residual_at_80_lower: 'Enter the lower 80-point (residual where health is 80, negative).',
-    residual_at_80_upper: 'Enter the upper 80-point (residual where health is 80, positive).',
-    residual_at_0_lower: 'Enter the lower 0-point (residual where health is 0, negative).',
-    residual_at_0_upper: 'Enter the upper 0-point (residual where health is 0, positive).',
+    residual_at_80_lower: 'Enter 80 low (the residual where the score is 80 on the low side, negative).',
+    residual_at_80_upper: 'Enter 80 high (the residual where the score is 80 on the high side, positive).',
+    residual_at_0_lower: 'Enter 0 low (the residual where the score reaches 0 on the low side, negative).',
+    residual_at_0_upper: 'Enter 0 high (the residual where the score reaches 0 on the high side, positive).',
     outer_sd: 'Enter the outer ring (N × SD): the distance where health reaches 0.',
 };
 

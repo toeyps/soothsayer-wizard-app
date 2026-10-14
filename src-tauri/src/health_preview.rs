@@ -240,6 +240,11 @@ pub struct ClusteringStats {
     /// Centre / SDs / angle ROUNDED like `CLUS_INFO_*.json` (the score uses
     /// these same numbers).
     pub clusters: Vec<ClusterStat>,
+    /// Share (%) of the training rows with a cluster that sit inside its
+    /// 3x SD ring (score >= 80). Sent with or without scoring periods (the
+    /// Model fit page's "Inside 3x SD" tile); `None` when no training row has
+    /// a usable cluster.
+    pub inside_3sd_ring_pct: Option<f64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -1384,31 +1389,36 @@ pub fn clustering_preview(
         total: train_n,
     };
 
+    // Distance to the assigned cluster's centre in SD units, from the
+    // TRAIN-fitted clusters (independent of the set points; a collapsed
+    // cluster has no meaningful distance).
+    let dist_of = |a: u32, x: f64, y: f64| -> Option<f64> {
+        if a == NONE {
+            return None;
+        }
+        let g = geoms.get(a as usize)?;
+        if g.is_degenerate() {
+            return None;
+        }
+        Some(g.sd_distance(x, y)).filter(|d| d.is_finite())
+    };
+    let ring = |ds: Vec<f64>| -> Option<f64> {
+        share_pct(ds.iter().filter(|&&d| d <= crate::health_score::ANCHOR_SD).count(), ds.len())
+    };
+    // The RAW training rows against their own clusters: the share inside the
+    // 3x SD ring. Known with or without scoring periods (without them every
+    // row of the universe is a training row).
+    let train_ring_pct = ring(
+        (0..rows.len())
+            .filter(|&i| !with_tests || is_train[i])
+            .filter_map(|i| dist_of(assign[i], c1[rows[i] as usize], c2[rows[i] as usize]))
+            .collect(),
+    );
+
     let test_validation = plan.as_ref().map(|plan| {
-        // Distance to the assigned cluster's centre in SD units, from the
-        // TRAIN-fitted clusters (independent of the set points; a collapsed
-        // cluster has no meaningful distance).
-        let dist_of = |a: u32, x: f64, y: f64| -> Option<f64> {
-            if a == NONE {
-                return None;
-            }
-            let g = geoms.get(a as usize)?;
-            if g.is_degenerate() {
-                return None;
-            }
-            Some(g.sd_distance(x, y)).filter(|d| d.is_finite())
-        };
-        let ring = |ds: Vec<f64>| -> Option<f64> {
-            share_pct(ds.iter().filter(|&&d| d <= crate::health_score::ANCHOR_SD).count(), ds.len())
-        };
-        // The train block: the RAW training rows against their own clusters.
+        // The train block: the same share.
         let train_metrics = KindMetrics {
-            inside_3sd_ring_pct: ring(
-                (0..rows.len())
-                    .filter(|&i| is_train[i])
-                    .filter_map(|i| dist_of(assign[i], c1[rows[i] as usize], c2[rows[i] as usize]))
-                    .collect(),
-            ),
+            inside_3sd_ring_pct: train_ring_pct,
             ..Default::default()
         };
         // A period's metric: over its HOURLY points.
@@ -1445,6 +1455,7 @@ pub fn clustering_preview(
             cluster_count: preview.cluster_count,
             criteria_sensor: preview.criteria_sensor.clone(),
             clusters: stats_clusters,
+            inside_3sd_ring_pct: train_ring_pct,
         }),
         validation,
         valid,
@@ -2487,6 +2498,20 @@ mod tests {
         assert_eq!(st.unassigned_rows, 0);
     }
 
+    // The Model fit page's "Inside 3x SD" tile: the share is in the stats with
+    // or without scoring periods (it used to exist only in the train block of
+    // `test_validation`, so the tile read "-" for a model with no period).
+    #[test]
+    fn clustering_stats_carry_the_inside_3sd_share_without_scoring_periods() {
+        let p = clustering_preview(&cl_data(), &cl_req(2, Some(5.0))).unwrap();
+        assert!(p.test_validation.is_none());
+        let pct = clus(&p).0.inside_3sd_ring_pct.expect("known without scoring periods");
+        assert!(pct > 90.0 && pct <= 100.0, "{pct}");
+        // No set point is needed for it (the ring is the TRAIN-fitted cluster's).
+        let p0 = clustering_preview(&cl_data(), &cl_req(2, None)).unwrap();
+        assert_eq!(clus(&p0).0.inside_3sd_ring_pct, Some(pct));
+    }
+
     #[test]
     fn clustering_requires_n_above_3_and_returns_issues_without_scores() {
         let d = cl_data();
@@ -2737,6 +2762,10 @@ mod tests {
         assert_eq!(t.scored, 3, "but it is not a scored one");
         // Of the 3 hours with a cluster: 2 inside the ring, 1 (the excursion) out.
         assert_eq!(t.metrics.inside_3sd_ring_pct, Some(66.7));
+        // With scoring periods the stats' share is the train block's: the training rows only.
+        let train_pct = p.test_validation.as_ref().unwrap().train.metrics.inside_3sd_ring_pct;
+        assert!(train_pct.is_some());
+        assert_eq!(clus(&p).0.inside_3sd_ring_pct, train_pct);
         assert_eq!(t.pct_below_80, Some(33.3));
         assert_eq!(t.lowest, Some(0.0));
         assert_eq!(t.lowest_at.as_deref(), Some(hour_text(7).as_str()), "never the transition hour");
