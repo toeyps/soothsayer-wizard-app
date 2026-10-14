@@ -280,7 +280,7 @@ describe('Relationship specifics', () => {
         // last card) both ask for at most max_points rows, never every row.
         expect(sub[0].args.max_points).toBe(4000);
         expect(env.backend!.cmds('preview_relationship_model').filter(c => c.args.cache_key).every(c => c.args.max_points === 4000)).toBe(true);
-        expect(modal.getAllByTestId('sub-model-card')[0].textContent).toMatch(/N\d/);
+        expect(modal.getAllByTestId('sub-model-card')[0].textContent).toMatch(/2·RMSE\d/); // no row-count ("N") tile any more
         expect(env.backend!.relCacheKeys()).toEqual(cacheBefore);
         fireEvent.keyDown(window, { key: 'Escape' });
         await settle(50);
