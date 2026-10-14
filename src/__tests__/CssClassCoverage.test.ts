@@ -257,6 +257,24 @@ describe('CSS class coverage (static — jsdom cannot see App.css)', () => {
     });
 
     // Layout rules no component test can see (jsdom lays nothing out).
+    // Real-app report 2026-10-14: with 6 steps the cards of "Compare predictors" were squeezed
+    // into the window's height and every chart ran over the card below it.
+    it('Compare predictors: a row is as tall as its cards need (the body scrolls), a card never shrinks, and the chart fills its own box', () => {
+        expect(CSS).toMatch(/\.pm-submodels-body \{[^}]*grid-auto-rows: max-content;[^}]*\}/);
+        const card = /\.pm-submodel-card \{([^}]*)\}/.exec(CSS)![1].replace(/\/\*[\s\S]*?\*\//g, '');
+        expect(card).not.toMatch(/min-height/);
+        expect(CSS).toMatch(/\.pm-submodel-chart \{[^}]*height: clamp\(220px, calc\(50vh - 140px\), 420px\);[^}]*flex: none;[^}]*overflow: hidden;[^}]*\}/);
+        // the sensor chips of a step wrap instead of pushing the numbers out
+        expect(CSS).toMatch(/\.pm-submodel-predictors \{[^}]*flex-wrap: wrap;[^}]*\}/);
+    });
+
+    // Real-app report 2026-10-14 ("ทำไมสีมันไม่เหมือนกัน"): hovering the left half of Train sensor
+    // lit only that half.
+    it('Train sensor split button: pointing at either half lights BOTH halves (one control, one colour)', () => {
+        expect(CSS).toMatch(/\.tq-split:has\(\.rcx-btn:hover:not\(:disabled\)\) \.rcx-btn:not\(\.rcx-btn--pri\):not\(:disabled\) \{ border-color: var\(--accent-color\); \}/);
+        expect(CSS).toMatch(/\.tq-split:has\(\.rcx-btn--pri:hover:not\(:disabled\)\) \.rcx-btn--pri:not\(:disabled\) \{ background: var\(--accent-hi\); \}/);
+    });
+
     it('Health score page: ONE column — every card (the ruler, both time charts) is as wide as the board', () => {
         expect(CSS).toMatch(/\.hs-board \{ grid-template-columns: minmax\(0, 1fr\); \}/);
         // the two-column layout and the set-point table are gone, rules and all

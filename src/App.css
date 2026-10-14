@@ -1714,6 +1714,10 @@ body {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 14px;
     align-content: start;
+    /* Every row is as tall as its cards NEED and the body scrolls. With plain `auto` rows and
+       cards that may shrink, three or more rows (5+ predictors) were squeezed into the height
+       of the window and each chart ran over the card below it. */
+    grid-auto-rows: max-content;
     padding: 14px 16px;
 }
 @media (max-width: 900px) {
@@ -1753,7 +1757,8 @@ body {
     display: flex;
     flex-direction: column;
     gap: 8px;
-    min-height: 0;
+    /* No `min-height: 0` here: a card never shrinks below its header + chart (see the rows
+       of `.pm-submodels-body`). */
 }
 .pm-submodel-header {
     display: flex;
@@ -1849,8 +1854,12 @@ body {
        without the bottom card clipping. Clamped to a 180px floor for
        legibility and a 420px ceiling so big monitors don't get
        sparse-looking cards. */
-    height: clamp(180px, calc(50vh - 140px), 420px);
-    min-height: 180px;
+    height: clamp(220px, calc(50vh - 140px), 420px);
+    min-height: 220px;
+    /* The chart fills THIS box (it used to be a fixed 280 px inside a box that could be
+       shorter, so it hung out of the card on a short window). */
+    flex: none;
+    overflow: hidden;
 }
 /* ── Configure Clustering Model layout ────────────────────────────── */
 
@@ -6665,6 +6674,11 @@ body {
 /* Train sensor: filled only while it is the pane's next action; the caption is one short line */
 .tq-sensortrain .tq-why { margin-top: -1px; }
 .tq-split-caret:not(.rcx-btn--pri) { border-left-color: transparent; margin-left: -1px; }
+/* The two halves are ONE control: pointing at either half lights the border of both (only
+   the half under the pointer gets the hover fill). With the plain button rule the hovered
+   half turned blue while the other stayed grey, and the button read as two colours. */
+.tq-split:has(.rcx-btn:hover:not(:disabled)) .rcx-btn:not(.rcx-btn--pri):not(:disabled) { border-color: var(--accent-color); }
+.tq-split:has(.rcx-btn--pri:hover:not(:disabled)) .rcx-btn--pri:not(:disabled) { background: var(--accent-hi); }
 
 /* Kind tabs: kind badge + name + ONE dot */
 .f4-tab { padding: 8px 10px 7px; }

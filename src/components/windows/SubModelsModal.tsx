@@ -122,8 +122,8 @@ export function buildSubModelOption(fit: SubModelFit, xSensor: string, targetSen
             nameLocation: 'middle',
             nameGap: 40,
             nameTextStyle: { color: txtSecondary, fontSize: 11 },
-            // The chart is 280 px high: a longer title would be clipped at both ends.
-            nameTruncate: { maxWidth: 200, ellipsis: '…' },
+            // The chart can be as low as 220 px: a longer title would be clipped at both ends.
+            nameTruncate: { maxWidth: 150, ellipsis: '…' },
             scale: true,
             axisLabel: { color: txtSecondary, fontSize: 10 },
             axisLine: { lineStyle: { color: gridLine } },
@@ -250,7 +250,7 @@ export default function SubModelsModal({ fits, targetSensor, predictorCount, sti
                                         </div>
                                         <div className="pm-submodel-chart">
                                             {opt ? (
-                                                <ResponsiveECharts option={opt} style={{ height: '280px', minHeight: '280px' }} />
+                                                <ResponsiveECharts option={opt} style={{ height: '100%', minHeight: 0 }} />
                                             ) : (
                                                 <div className="plot-placeholder pm-chart-placeholder">
                                                     <Activity size={32} style={{ opacity: 0.2 }} />

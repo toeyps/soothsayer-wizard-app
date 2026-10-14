@@ -47,7 +47,7 @@ describe('buildSubModelOption', () => {
         expect(o.xAxis.name).toBe('FUEL GAS <FLOW> · kg/s');
         expect(o.yAxis.name).toBe('VALVE POSITION · %');
         expect(o.xAxis.nameTruncate.ellipsis).toBe('…');
-        expect(o.yAxis.nameTruncate.maxWidth).toBeLessThan(280); // the chart is 280 px high
+        expect(o.yAxis.nameTruncate.maxWidth).toBeLessThan(220); // the chart can be as low as 220 px
         const html: string = o.tooltip.formatter({ value: [2, 1.1], color: '#3b82f6', seriesName: 'Raw' });
         expect(html).toContain('<span class="tt-desc">FUEL GAS &lt;FLOW&gt;</span><span class="tt-tag">B</span>');
         expect(html).toContain('<span class="tt-desc">VALVE POSITION</span><span class="tt-tag">TARGET</span>');
