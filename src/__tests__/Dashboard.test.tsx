@@ -580,6 +580,48 @@ describe('Dashboard', () => {
             expect(screen.getByText('Pump Pressure')).toBeTruthy();
         });
 
+        // Real-app report 2026-10-14: hide 3 of 4 sensors in the Selected Sensor tab, add a
+        // sensor in the Sensor panel -> every hidden sensor came back on the chart.
+        describe('a sensor hidden in the Selected Sensor tab stays hidden when the selection changes', () => {
+            const shown = () => screen.queryAllByTitle('Hide from chart').length;
+            const hidden = () => screen.queryAllByTitle('Show on chart').length;
+
+            it('adding a sensor shows ONLY the new one; the hidden ones stay hidden', () => {
+                renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1', 'TAG2', 'TAG3'], visibleSensors: ['TAG1'] }) });
+                expect([shown(), hidden()]).toEqual([1, 2]);
+                act(() => { last(sensorSelectionProps).onSensorChange(['TAG1', 'TAG2', 'TAG3', 'TAG4']); });
+                expect([shown(), hidden()]).toEqual([2, 2]); // TAG1 + the new TAG4
+            });
+
+            it('removing another sensor does not bring a hidden one back either', () => {
+                renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1', 'TAG2', 'TAG3'], visibleSensors: ['TAG1', 'TAG3'] }) });
+                act(() => { last(sensorSelectionProps).onSensorChange(['TAG2', 'TAG3']); });
+                expect([shown(), hidden()]).toEqual([1, 1]); // TAG3 shown, TAG2 still hidden
+            });
+
+            it('hidden with the checkbox in this session, then a sensor added: still hidden', () => {
+                renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1', 'TAG2'], visibleSensors: ['TAG1', 'TAG2'] }) });
+                fireEvent.click(screen.getAllByTitle('Hide from chart')[1]);
+                expect([shown(), hidden()]).toEqual([1, 1]);
+                act(() => { last(sensorSelectionProps).onSensorChange(['TAG1', 'TAG2', 'TAG3']); });
+                expect([shown(), hidden()]).toEqual([2, 1]);
+            });
+
+            it('a deselected-then-reselected sensor comes back visible (it is new again)', () => {
+                renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1', 'TAG2'], visibleSensors: ['TAG1'] }) });
+                act(() => { last(sensorSelectionProps).onSensorChange(['TAG1']); });
+                act(() => { last(sensorSelectionProps).onSensorChange(['TAG1', 'TAG2']); });
+                expect([shown(), hidden()]).toEqual([2, 0]);
+            });
+
+            it('a workspace saved without visibleSensors shows every selected sensor', () => {
+                const state: any = makeInitialState({ selectedSensors: ['TAG1', 'TAG2'] });
+                delete state.visibleSensors;
+                renderDashboard({ initialState: state });
+                expect([shown(), hidden()]).toEqual([2, 0]);
+            });
+        });
+
         it('assigns default palette colors by selection order for sensors with no explicit color', () => {
             renderDashboard();
             fireEvent.click(screen.getByText('select-tag1-tag2'));

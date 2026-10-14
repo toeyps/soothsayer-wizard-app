@@ -315,10 +315,19 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     // that get deselected drop out, but a sensor the user hid via the
     // "Selected Sensor" tab (see toggleSensorVisibility) stays hidden across
     // unrelated selection changes instead of being forced visible again.
+    //
+    // "Newly selected" = not in the PREVIOUS selection. It used to be "not in
+    // visibleSensors", which also matched every HIDDEN sensor, so adding any
+    // sensor put every hidden one back on the chart (real-app report
+    // 2026-10-14). A workspace saved before visibleSensors existed starts with
+    // no previous selection, so its sensors all show on the first pass.
+    const prevSelectedRef = useRef<string[]>(initialState?.visibleSensors ? selectedSensors : []);
     useEffect(() => {
+        const before = prevSelectedRef.current;
+        prevSelectedRef.current = selectedSensors;
         setVisibleSensors(prev => {
             const stillSelected = prev.filter(s => selectedSensors.includes(s));
-            const newlySelected = selectedSensors.filter(s => !prev.includes(s));
+            const newlySelected = selectedSensors.filter(s => !before.includes(s) && !stillSelected.includes(s));
             return [...stillSelected, ...newlySelected];
         });
     }, [selectedSensors]);
@@ -1560,6 +1569,8 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                 });
                 setSensorHeaders(prev => renameTagInArray(prev, oldTag, newTag));
                 setSelectedSensors(prev => renameTagInArray(prev, oldTag, newTag));
+                // ... and the previous selection, so a renamed HIDDEN sensor is not taken for a new one.
+                prevSelectedRef.current = renameTagInArray(prevSelectedRef.current, oldTag, newTag);
                 setVisibleSensors(prev => renameTagInArray(prev, oldTag, newTag));
                 setSensorColors(prev => renameTagInRecord(prev, oldTag, newTag));
                 setSensorAxisRange(prev => renameTagInRecord(prev, oldTag, newTag));
