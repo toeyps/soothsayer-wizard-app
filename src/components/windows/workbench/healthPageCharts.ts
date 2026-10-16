@@ -11,6 +11,7 @@ import type {
     RelationshipHealthSetPoints,
 } from '../../../types';
 import { fmtNumExact } from '../../sensor/sensorInfo';
+import { keepFollowY } from '../../charts/followYAxis';
 import { CHART, CHART_MONO, CLUSTER_COLORS, FONT, fmtScoreAxisValue } from './chartTheme';
 import {
     HOVER_AXIS_POINTER,
@@ -82,11 +83,11 @@ export const STACK_INNER_GAP = 8;
  */
 export function asStackUpper<T extends StackableOption>(opt: T): T {
     const axisLabel = (opt.xAxis.axisLabel ?? {}) as Record<string, unknown>;
-    return {
+    return keepFollowY(opt, {
         ...opt,
         grid: { ...opt.grid, bottom: STACK_INNER_GAP },
         xAxis: { ...opt.xAxis, axisLabel: { ...axisLabel, show: false }, axisTick: { show: false } },
-    };
+    });
 }
 
 /**
@@ -100,7 +101,7 @@ export function asStackLower<T extends StackableOption>(opt: T): T {
         const area = s.markArea as { data: [Record<string, unknown>, Record<string, unknown>][] } & Record<string, unknown>;
         return { ...s, markArea: { ...area, data: area.data.map(([from, to]) => [{ ...from, label: { ...(from.label as Record<string, unknown>), show: false } }, to]) } };
     });
-    return { ...opt, grid: { ...opt.grid, top: STACK_INNER_GAP }, series };
+    return keepFollowY(opt, { ...opt, grid: { ...opt.grid, top: STACK_INNER_GAP }, series });
 }
 
 const finite = (v: number | null | undefined): v is number => typeof v === 'number' && Number.isFinite(v);
@@ -161,17 +162,15 @@ export function buildIndividualSetPointOption(
     const hLines: HLine[] = sdReferenceLines(stats);
     if (sp && finite(sp.upper)) hLines.push({ y: sp.upper, color: CHART.danger, width: SET_POINT_WIDTH, label: `H ${typedText(sp.upper)}`, inside: 'top' });
     if (sp && finite(sp.lower)) hLines.push({ y: sp.lower, color: CHART.danger, width: SET_POINT_WIDTH, label: `L ${typedText(sp.lower)}`, inside: 'bottom' });
-    return {
-        ...buildTimeSeriesOption({
-            timestamps: series.timestamps,
-            scopes,
-            yName: unit || undefined,
-            lines: [{ name: 'Value', values: series.value, color: CHART.series }],
-            bands: [{ from: l1, to: u1, color: CHART.okFill }],
-            hLines,
-        }),
-        ...SYNC,
-    };
+    const opt = buildTimeSeriesOption({
+        timestamps: series.timestamps,
+        scopes,
+        yName: unit || undefined,
+        lines: [{ name: 'Value', values: series.value, color: CHART.series }],
+        bands: [{ from: l1, to: u1, color: CHART.okFill }],
+        hLines,
+    });
+    return keepFollowY(opt, { ...opt, ...SYNC });
 }
 
 // ---------------------------------------------------------------------------
@@ -198,17 +197,15 @@ export function buildRelationshipSetPointOption(
         if (finite(sp.residualAt0Upper)) hLines.push(point(sp.residualAt0Upper, 0, 'top'));
         if (finite(sp.residualAt0Lower)) hLines.push(point(sp.residualAt0Lower, 0, 'bottom'));
     }
-    return {
-        ...buildTimeSeriesOption({
-            timestamps: series.timestamps,
-            scopes,
-            yName: unit || undefined,
-            lines: [{ name: 'Residual', values: series.residual, color: CHART.series }],
-            bands: [{ from: -twoRmse, to: twoRmse, color: CHART.okFill }],
-            hLines,
-        }),
-        ...SYNC,
-    };
+    const opt = buildTimeSeriesOption({
+        timestamps: series.timestamps,
+        scopes,
+        yName: unit || undefined,
+        lines: [{ name: 'Residual', values: series.residual, color: CHART.series }],
+        bands: [{ from: -twoRmse, to: twoRmse, color: CHART.okFill }],
+        hLines,
+    });
+    return keepFollowY(opt, { ...opt, ...SYNC });
 }
 
 // ---------------------------------------------------------------------------

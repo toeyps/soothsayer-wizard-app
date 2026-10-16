@@ -13,6 +13,7 @@ import { testNumberFor } from '../../../utils/timePeriods';
 import type { SensorInfo } from '../../sensor/sensorInfo';
 import { formatDataStamp, parseLocal } from '../periodDisplay';
 import { CHART, CHART_MONO, CLUSTER_COLORS, FONT, axisValueFormatter, fmtAxisValue, fmtNum } from './chartTheme';
+import { withFollowY } from '../../charts/followYAxis';
 
 /*
  * Pure ECharts option builders for the Build Model Workbench's health charts.
@@ -665,12 +666,18 @@ export function buildTimeSeriesOption(spec: TimeSeriesSpec) {
     const take = (v: number | null | undefined) => {
         if (typeof v === 'number' && Number.isFinite(v)) { if (v < lo) lo = v; if (v > hi) hi = v; }
     };
-    for (const l of lines) for (const v of l.values) take(v);
     for (const h of hLines) take(h.y);
     for (const b of bands) { take(b.from); take(b.to); }
+    // The reference lines alone: the Y axis never leaves them, zoomed or not (`withFollowY` below).
+    const refLo = lo;
+    const refHi = hi;
+    for (const l of lines) for (const v of l.values) take(v);
     if (!Number.isFinite(lo) || !Number.isFinite(hi)) { lo = 0; hi = 1; }
-    const pad = (hi - lo) * 0.06 || Math.abs(hi) * 0.05 || 1;
-    const [yMin, yMax, yStep]: NiceRange = spec.yRange ?? niceExtent(lo - pad, hi + pad);
+    const yRangeOf = (a: number, b: number): NiceRange => {
+        const pad = (b - a) * 0.06 || Math.abs(b) * 0.05 || 1;
+        return niceExtent(a - pad, b + pad);
+    };
+    const [yMin, yMax, yStep]: NiceRange = spec.yRange ?? yRangeOf(lo, hi);
     const stacks = stackedEdgeLabels(hLines, (yMax - yMin) * REF_LABEL_MIN_GAP);
 
     const series: Record<string, unknown>[] = lines.map((l, i) => {
@@ -724,7 +731,7 @@ export function buildTimeSeriesOption(spec: TimeSeriesSpec) {
     // Room right of the plot for the reference-line labels.
     const right = hLines.some(h => h.label && !h.inside) ? REF_LABEL_GUTTER : 18;
 
-    return {
+    const option = {
         backgroundColor: 'transparent',
         textStyle: { fontFamily: FONT },
         animation: false,
@@ -753,6 +760,19 @@ export function buildTimeSeriesOption(spec: TimeSeriesSpec) {
         },
         series,
     };
+    // Zoomed in, the Y axis follows what is visible — the values inside the window plus every
+    // reference line (user decision 2026-10-16; `followYAxis.ts`). Not for a fixed range (the
+    // Health score chart is always 0-100) nor without a time axis.
+    if (spec.yRange || !ms) return option;
+    return withFollowY(option, {
+        xs: ms,
+        lines: lines.map(l => l.values),
+        refLo,
+        refHi,
+        range: yRangeOf,
+        // The step the range was rounded to: every tick is round and evenly spaced.
+        axis: (a, b, step) => ({ min: a, max: b, interval: step, ...fixedValueAxisCommon(a, b) }),
+    });
 }
 
 // ---------------------------------------------------------------------------

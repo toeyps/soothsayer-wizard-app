@@ -533,3 +533,22 @@ describe('asStackUpper / asStackLower — the two halves of the stacked card', (
         }
     });
 });
+
+// User decision 2026-10-16: the set-point charts follow the zoom window on Y without losing a
+// set point. The spec must survive every copy these builders make (`keepFollowY`).
+describe('the Health score set-point charts keep the follow-Y spec', () => {
+    it('Individual: the set points L / H are reference lines of the spec; the stacked upper chart keeps it', async () => {
+        const { getFollowY } = await import('../components/charts/followYAxis');
+        const opt = buildIndividualSetPointOption(indSeries, indStats, { kind: 'individual', lower: -30, upper: 39 } as any, 'bar');
+        const s = getFollowY(opt)!;
+        expect([s.refLo, s.refHi]).toEqual([-30, 39]);
+        expect(getFollowY(healthPageCharts.asStackUpper(opt as any))).toBe(s);
+    });
+
+    it('Relation model: the ±2RMSE band and the typed 80 / 0 points are in it', async () => {
+        const { getFollowY } = await import('../components/charts/followYAxis');
+        const opt = buildRelationshipSetPointOption(relSeries, 2, { kind: 'relationship', residualAt80Upper: 5, residualAt0Upper: 9, residualAt80Lower: -5, residualAt0Lower: -12 } as any, 'bar');
+        const s = getFollowY(opt)!;
+        expect([s.refLo, s.refHi]).toEqual([-12, 9]);
+    });
+});

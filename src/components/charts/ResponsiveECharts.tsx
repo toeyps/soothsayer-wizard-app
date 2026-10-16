@@ -1,6 +1,7 @@
 import { useRef, useEffect, useState, useCallback, CSSProperties } from 'react';
 import ReactECharts from 'echarts-for-react';
 import { attachEvenTimeTicks, hasTimeXAxis } from './evenTimeAxis';
+import { attachFollowY, getFollowY } from './followYAxis';
 
 interface ResponsiveEChartsProps {
     option: any;
@@ -63,6 +64,14 @@ export default function ResponsiveECharts({
         if (!instance || !timeAxis) return;
         return attachEvenTimeTicks(instance);
     }, [instance, timeAxis, option]);
+
+    // A chart whose builder asked for it (`withFollowY`): its Y axis follows the zoom window
+    // without losing its reference lines. A new option carries its own spec.
+    const followY = getFollowY(option);
+    useEffect(() => {
+        if (!instance || !followY) return;
+        return attachFollowY(instance, followY);
+    }, [instance, followY]);
 
     useEffect(() => {
         if (!containerRef.current) return;
