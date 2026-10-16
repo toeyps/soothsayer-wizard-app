@@ -1371,6 +1371,19 @@ pub fn load_metadata(path: &str) -> Result<Vec<SensorMetadata>, String> {
 mod tests {
     use super::*;
 
+    // The Import page lists these as the supported date/time shapes
+    // (`SensorDataPanel.tsx` SUPPORTED_TIMESTAMPS): each must parse, and the
+    // shapes it names as NOT read must not.
+    #[test]
+    fn the_timestamp_shapes_the_import_page_lists_are_the_ones_parsed() {
+        for s in ["2025-01-31 13:05:00", "2025-01-31 13:05", "2025-01-31T13:05:00", "2025-01-31 13:05:00.250", "2025-01-31 13:05:00+07:00"] {
+            assert!(parse_timestamp(s).is_some(), "{s} should parse");
+        }
+        for s in ["31/01/2025 13:05", "2025/01/31 13:05:00"] {
+            assert!(parse_timestamp(s).is_none(), "{s} is listed as not read");
+        }
+    }
+
     /// Build a pre-merge ColumnarData from a row-major spec (readability):
     /// each row is (timestamp, per-column Option values). `ts_parsed` is
     /// left empty, exactly like `read_csv_with_stats` output.

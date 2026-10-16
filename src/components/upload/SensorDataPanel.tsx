@@ -1,4 +1,4 @@
-import { Activity, AlertTriangle, Check, Download, Loader2, Plus, X } from 'lucide-react';
+import { Activity, AlertTriangle, Check, Clock, Download, Loader2, Plus, X } from 'lucide-react';
 import type { CsvLoadProgress, CsvLoadReport } from '../../types/dataUpload';
 import { mono, type Tokens } from './uploadTheme';
 import { Card, Pill, SectionHeader } from './SetupPrimitives';
@@ -33,6 +33,44 @@ interface SensorDataPanelProps {
 }
 
 const REQUIREMENTS = ['First column is date/time', 'Unique column names', 'Up to 2 GB per file'];
+
+/** Date/time shapes the reader understands (`csv_processor.rs` `parse_timestamp`): year first,
+ *  `-` between the date parts, a space or `T` before the time, seconds / fractions / a `+07:00`
+ *  offset optional. Slashes (`2025/01/31`) and day-first dates are NOT read. */
+export const SUPPORTED_TIMESTAMPS = ['2025-01-31 13:05:00', '2025-01-31 13:05', '2025-01-31T13:05:00', '2025-01-31 13:05:00.250', '2025-01-31 13:05:00+07:00'];
+
+/**
+ * Two or more files are merged row by row on the TEXT of their timestamps, so the same moment
+ * written two ways ("2025-01-31 13:05:00" and "2025-01-31T13:05:00") becomes two rows. Real exports
+ * from one system all use one shape; a file re-saved in Excel often does not. The user asked
+ * (2026-10-15) for the program to say so, with examples, rather than to merge mixed shapes.
+ */
+function TimestampFormatNote({ T }: { T: Tokens }) {
+  const code = { fontFamily: mono, fontSize: 11, color: T.text, padding: '1px 6px', borderRadius: 5, background: T.bg, border: `1px solid ${T.border}` };
+  return (
+    <div
+      data-testid="timestamp-format-note"
+      role="note"
+      style={{ display: 'flex', gap: 10, padding: '10px 12px', borderRadius: 11, fontSize: 12.5, border: `1px solid ${T.border}`, background: T.accentMuted }}
+    >
+      <Clock size={15} style={{ color: T.accentHi, flexShrink: 0, marginTop: 1 }} />
+      <div style={{ minWidth: 0, color: T.textMuted, lineHeight: 1.5 }}>
+        <b style={{ color: T.text, fontWeight: 600 }}>Every file must write the date/time the same way</b>
+        <div>Files are merged on the timestamp text, so the same moment written in two shapes becomes two rows.</div>
+        <div style={{ marginTop: 6 }}>
+          Same in every file, e.g. <span style={code}>2025-01-31 13:05:00</span> — not <span style={code}>2025-01-31 13:05:00</span> in one and <span style={code}>2025-01-31T13:05</span> in another.
+        </div>
+        <div style={{ marginTop: 6, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 5 }} data-testid="supported-timestamps">
+          <span>Supported:</span>
+          {SUPPORTED_TIMESTAMPS.map((f) => <span key={f} style={code}>{f}</span>)}
+        </div>
+        <div style={{ marginTop: 4, color: T.textFaint }}>
+          Year first with <span style={{ fontFamily: mono }}>-</span>. Dates with <span style={{ fontFamily: mono }}>/</span> (<span style={{ fontFamily: mono }}>31/01/2025</span>, <span style={{ fontFamily: mono }}>2025/01/31</span>) are not read. A Buddhist-era year (<span style={{ fontFamily: mono }}>2568-01-31</span>) is converted to <span style={{ fontFamily: mono }}>2025</span>.
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function Kpi({
   T, label, value, sub, wide = false, small = false,
@@ -312,6 +350,9 @@ export default function SensorDataPanel({
             </div>
           </div>
         )}
+
+        {/* Two or more files: they must write the date/time the same way. */}
+        {files.length >= 2 && <TimestampFormatNote T={T} />}
 
         {hasFiles && (
           <button

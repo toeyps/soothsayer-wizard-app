@@ -424,6 +424,24 @@ describe('B. File selection', () => {
     expect(screen.getByText('/path/to/run-01.csv')).toBeTruthy();
   });
 
+  // User request 2026-10-15: files are merged on the timestamp TEXT, so the program must say
+  // that every file writes the date/time the same way, with examples of what it reads.
+  it('B10b. two or more files: a note says every file must write the date/time the same way, with the supported shapes; one file: no note', () => {
+    useDataUploadMock.mockReturnValue(makeDataUpload({ selectedFiles: ['/x.csv'] }));
+    const { unmount } = renderAtStep2();
+    expect(screen.queryByTestId('timestamp-format-note')).toBeNull();
+    unmount();
+
+    useDataUploadMock.mockReturnValue(makeDataUpload({ selectedFiles: ['/path/to/run-01.csv', '/other/run-02.csv'] }));
+    renderAtStep2();
+    const note = screen.getByTestId('timestamp-format-note');
+    expect(note.getAttribute('role')).toBe('note');
+    expect(note.textContent).toMatch(/Every file must write the date\/time the same way/);
+    const shapes = [...screen.getByTestId('supported-timestamps').querySelectorAll('span')].slice(1).map(x => x.textContent);
+    expect(shapes).toEqual(['2025-01-31 13:05:00', '2025-01-31 13:05', '2025-01-31T13:05:00', '2025-01-31 13:05:00.250', '2025-01-31 13:05:00+07:00']);
+    expect(note.textContent).toMatch(/31\/01\/2025.*not read/);
+  });
+
   it('B11. clicking remove on a file row calls removeFile(path)', () => {
     const hook = makeDataUpload({ selectedFiles: ['/path/to/run-01.csv'] });
     useDataUploadMock.mockReturnValue(hook);
