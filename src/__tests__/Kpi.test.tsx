@@ -114,10 +114,11 @@ describe('KPI tiles — the look the SPEC fixes (App.css)', () => {
         return css.slice(at, css.indexOf('}', at));
     };
 
-    it('the Model fit strip is three equal tiles, each capped at 420 px and kept to the left; the strip spans the board', () => {
+    it('the Model fit strip is three equal tiles that share the whole board (real-app report 2026-10-16), like the Health score row', () => {
         expect(rule('.wb3-kpis')).toMatch(/grid-column: 1 \/ -1/);
-        expect(rule('.wb3-kpis--fit')).toMatch(/grid-template-columns: repeat\(3, minmax\(0, 420px\)\)/);
-        expect(rule('.wb3-kpis--fit')).toMatch(/justify-content: start/);
+        expect(rule('.wb3-kpis--fit')).toMatch(/grid-template-columns: repeat\(3, minmax\(0, 1fr\)\)/);
+        // full width, like the Health score row: no cap, nothing pushed to the left
+        expect(rule('.wb3-kpis--fit')).not.toMatch(/420px|justify-content/);
     });
 
     it('the number is mono 24; the caption and the unit use --text-secondary, never --text-faint', () => {

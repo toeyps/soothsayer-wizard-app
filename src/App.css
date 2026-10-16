@@ -5374,9 +5374,9 @@ body {
    A tile never judges: the value is plain text. Only a value that IS a health score
    takes its band colour (the --ok / --warn / --bad modifiers). */
 .wb3-kpis { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
-/* Model fit: three equal tiles, kept to the left and capped so they do not stretch
-   across a wide window. */
-.wb3-kpis--fit { grid-template-columns: repeat(3, minmax(0, 420px)); justify-content: start; }
+/* Model fit: three equal tiles across the whole board, like the Health score page's row
+   (real-app report 2026-10-16: capped at 420 px they left an empty strip on the right). */
+.wb3-kpis--fit { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .wb3-kpi { background: var(--card-bg); border: 1px solid var(--border-strong); border-radius: 12px; padding: 10px 14px 9px; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .wb3-kpi-l { font-size: 10.5px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-secondary); display: flex; align-items: center; gap: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .wb3-kpi-v { font: 600 24px var(--mono); letter-spacing: -0.03em; color: var(--text-primary); line-height: 1.15; display: flex; align-items: baseline; gap: 6px; white-space: nowrap; overflow: hidden; }
