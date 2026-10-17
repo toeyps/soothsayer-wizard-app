@@ -38,7 +38,8 @@ export function withFailureGroupState(
  *  - Already there (same id) -> no change, so Undo is idempotent.
  *  - A group the model belonged to was deleted in the meantime -> that group is
  *    dropped from its memberships; if none is left it parks in "Not in Group"
- *    (0), exactly where `deleteGroup` parks any model that loses its last group.
+ *    (0) — the same fallback a model gets when it loses its last group in any other way.
+ *    (`deleteGroup` itself deletes the models that were only in the deleted group, since 2026-10-17.)
  *  - The user re-added the same kind for the same sensor before undoing (that
  *    made a fresh, blank model with a new id) -> the original takes its place
  *    and the two memberships are merged, so the sensor never ends up with two

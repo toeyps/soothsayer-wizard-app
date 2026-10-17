@@ -1386,7 +1386,9 @@ describe('Dashboard', () => {
                 expect(state.failureGroupState.models[0].groupNos).toEqual([newGroupNo]); // 0 dropped, replaced by the real group
             });
 
-            it('deleteGroup only strips that one membership -- a model that also belongs to another group survives untouched there', async () => {
+            // User decision 2026-10-17: a group's models that are ONLY in it are deleted with it
+            // (with their saved files); a model also in another group just loses this one.
+            it('deleteGroup deletes the models only in that group (and their files); a model also in another group survives there', async () => {
                 const initial = makeInitialState({
                         failureGroupState: {
                             groups: [{ no: 1, name: 'Group A' }, { no: 2, name: 'Group B' }],
@@ -1412,11 +1414,12 @@ describe('Dashboard', () => {
                 renderDashboard({ initialState: initial });
                 fireEvent.click(screen.getByText('delete-group')); // deletes group 1 (mock always passes 1)
                 const state = await last(mockUpdateWorkspaceData.mock.results)!.value;
-                expect(state.failureGroupState.models).toHaveLength(2); // neither model deleted
+                expect(state.failureGroupState.models.map((m: any) => m.id)).toEqual(['m1']); // OnlyInA is deleted
                 const shared = state.failureGroupState.models.find((m: any) => m.id === 'm1');
-                const onlyInA = state.failureGroupState.models.find((m: any) => m.id === 'm2');
                 expect(shared.groupNos).toEqual([2]); // lost group 1, still in group 2
-                expect(onlyInA.groupNos).toEqual([0]); // lost its only group -> falls back to "Not in Group"
+                // the deleted model's files go once the write is on disk; the shared one's stay
+                await waitFor(() => expect(mockInvoke).toHaveBeenCalledWith('remove_model_files', { workspace_id: initial.id, kind: 'individual', sensor: 'TAG2' }));
+                expect(mockInvoke.mock.calls.filter(c => c[0] === 'remove_model_files')).toHaveLength(1);
             });
         });
     });
@@ -1579,15 +1582,67 @@ describe('Dashboard', () => {
                 expect(setPointsJson(box)).toBe(JSON.stringify(entered()));
             });
 
-            it('deleting a Failure Group re-parks the model without rebuilding it', async () => {
-                const initial = stateFor([model({ groupNos: [1] })]); // the panel mock always deletes group 1 -> model parks in 0
+            // User decision 2026-10-17: a model removed with its last group keeps its saved files while
+            // its Undo is on screen; the files go once the deletion is final (Undo expired / closed).
+            it('a model removed with its last group: Undo brings it back and no file is removed; otherwise its files go when the Dashboard closes', async () => {
+                const initial = stateFor([model({ id: 'm1', targetSensor: 'TAG1', groupNos: [1] })]);
+                const box1 = statefulDisk(initial);
+                mockLoadWorkspaceData.mockImplementation(async () => box1.disk); // the final check reads disk
+                const first = renderDashboard({ initialState: initial });
+                toggle('TAG1', 1, 'individual');
+                await flush();
+                fireEvent.click(screen.getByRole('button', { name: /undo/i }));
+                await flush();
+                first.unmount();
+                expect(mockInvoke.mock.calls.filter(c => c[0] === 'remove_model_files')).toHaveLength(0);
+
+                const again = stateFor([model({ id: 'm2', targetSensor: 'TAG2', groupNos: [1] })]);
+                const box2 = statefulDisk(again);
+                mockLoadWorkspaceData.mockImplementation(async () => box2.disk);
+                const second = renderDashboard({ initialState: again });
+                toggle('TAG2', 1, 'individual');
+                await flush();
+                expect(mockInvoke.mock.calls.filter(c => c[0] === 'remove_model_files')).toHaveLength(0); // Undo still possible
+                second.unmount();
+                await flush();
+                expect(mockInvoke).toHaveBeenCalledWith('remove_model_files', { workspace_id: again.id, kind: 'individual', sensor: 'TAG2' });
+            });
+
+            // Code review 2026-10-17: the final check reads DISK — a model that survives there
+            // (another window put it in a second group) keeps its files even if the mirror lost it.
+            it('the undo finalize keeps the files of a model that disk still holds', async () => {
+                const initial = stateFor([model({ id: 'm3', targetSensor: 'TAG3', groupNos: [1] })]);
+                statefulDisk(initial);
+                mockLoadWorkspaceData.mockImplementation(async () => initial); // disk still has m3
+                const view = renderDashboard({ initialState: initial });
+                toggle('TAG3', 1, 'individual');
+                await flush();
+                view.unmount();
+                await flush();
+                expect(mockInvoke.mock.calls.filter(c => c[0] === 'remove_model_files')).toHaveLength(0);
+            });
+
+            it('deleting a Failure Group the model shares with another one keeps the model as it was', async () => {
+                const initial = stateFor([model({ groupNos: [1, 2] })]); // the panel mock always deletes group 1
                 const box = statefulDisk(initial);
                 renderDashboard({ initialState: initial });
                 fireEvent.click(screen.getByText('delete-group'));
                 await flush();
                 const m = box.disk.failureGroupState.models.find((x: any) => x.id === 'keep-1');
-                expect(m.groupNos).toEqual([0]);
+                expect(m.groupNos).toEqual([2]);
                 expect(setPointsJson(box)).toBe(JSON.stringify(entered()));
+            });
+
+            // User decision 2026-10-17: a deleted model's files leave the output folder with it.
+            it('deleting a model removes its saved files (once on disk)', async () => {
+                const doomed = model({ id: 'm1', targetSensor: 'TAG2' });
+                const initial = stateFor([model(), doomed]);
+                statefulDisk(initial);
+                renderDashboard({ initialState: initial });
+                fireEvent.click(screen.getByText('Failure Groups'));
+                fireEvent.click(screen.getByText('delete-model-fg')); // the panel mock deletes 'm1'
+                await flush();
+                expect(mockInvoke).toHaveBeenCalledWith('remove_model_files', { workspace_id: initial.id, kind: 'individual', sensor: 'TAG2' });
             });
 
             it('deleting ANOTHER model leaves this one\'s set points untouched', async () => {

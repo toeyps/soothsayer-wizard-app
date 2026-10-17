@@ -8216,6 +8216,28 @@ fn get_model_output_dir(workspace_id: String, app: tauri::AppHandle) -> Result<S
     Ok(dirs.output_dir.to_string_lossy().into_owned())
 }
 
+/// Delete one model's files from `{app_data}/workspaces/{workspace_id}/output/`:
+/// individual (`sensor` = target) `{sensor}/INDV_INFO_{sensor}.json`;
+/// relationship (`sensor` = target) `{sensor}/REL_{DATASET,INFO,MODEL}_*_{sensor}.*`;
+/// clustering (`sensor` = the FIRST / x sensor) `{folder}/CLUS_INFO_{sensor}_{folder}.json`
+/// in every direct sub-folder. Other models' files are kept; every folder that
+/// ends up empty is removed. Returns the number of files removed (0 = nothing
+/// there, not an error). Bad workspace id / kind / sensor name -> `BAD_REQUEST:`.
+#[tauri::command(rename_all = "snake_case")]
+fn remove_model_files(
+    workspace_id: String,
+    kind: String,
+    sensor: String,
+    app: tauri::AppHandle,
+) -> Result<u32, String> {
+    use tauri::Manager;
+    let app_data = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("cannot resolve app data dir: {e}"))?;
+    model_export::remove_model_files_in(&app_data, &workspace_id, &kind, &sensor)
+}
+
 /// "Mark complete": validate the set points, then write the model's files
 /// (`INDV_INFO_*.json` / `CLUS_INFO_*.json` / `REL_INFO_*.json` + `.pkl` +
 /// `REL_DATASET_*.csv`) into the app-managed output folder. Returns
@@ -8334,6 +8356,7 @@ fn plan_export(
                 .into_owned(),
             validation: pre,
             warnings: Vec::new(),
+            removed: Vec::new(),
         }));
     }
     Ok(ExportPlan::RunSidecar)
@@ -8376,7 +8399,7 @@ async fn export_model_files_in(
     .await
     .map(|_| ());
     let warnings = model_export::overwrite_warnings(request, &dirs.output_dir);
-    model_export::finalize_with(staging, &dirs.output_dir, outcome, warnings)
+    model_export::finalize_export(staging, &dirs.output_dir, outcome, warnings, request)
 }
 
 /// The session cache, the set-point values written into
@@ -10028,6 +10051,7 @@ pub fn run() {
             train_relationship_model,
             compute_health_preview,
             export_model_files,
+            remove_model_files,
             get_model_output_dir,
             count_period_rows,
             write_user_file,

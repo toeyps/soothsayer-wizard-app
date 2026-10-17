@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
+import { groupDeleteCounts, groupDeleteSentence } from '../../utils/modelOutputFiles';
 import { Plus, Trash2, Play, ChevronRight, Check, FolderPlus } from 'lucide-react';
 import { FailureGroup, FailureModel, FailureGroupStateSlice, ModelKind, SensorMetadata, SpecialSensorRecipe } from '../../types';
 import { SensorLabel } from '../sensor/SensorLabel';
@@ -82,6 +83,8 @@ export default function FailureGroupsPanel({
     // version exactly (moved here, not duplicated — see the doc comment
     // above and this component's own top-level doc comment).
     const [expandedGroupNo, setExpandedGroupNo] = useState<number | null>(null);
+    // Deleting a group now deletes the models that are only in it (and their files): ask first.
+    const [confirmDeleteNo, setConfirmDeleteNo] = useState<number | null>(null);
     const [groupNameDraft, setGroupNameDraft] = useState('');
     const [groupNameError, setGroupNameError] = useState('');
     const [groupDescDraft, setGroupDescDraft] = useState('');
@@ -426,8 +429,8 @@ export default function FailureGroupsPanel({
                                     <button
                                         className="fg-icon-btn fg-icon-btn-danger"
                                         title="Delete group"
-                                        // No confirmation dialog — click delete, it's deleted.
-                                        onClick={() => onDeleteGroup(group.no)}
+                                        aria-expanded={confirmDeleteNo === group.no}
+                                        onClick={() => setConfirmDeleteNo(n => (n === group.no ? null : group.no))}
                                     >
                                         <Trash2 size={11} />
                                     </button>
@@ -436,6 +439,15 @@ export default function FailureGroupsPanel({
                                     {groupModels.length > 0 ? <><b>{doneInGroup}</b> / {groupModels.length}</> : '0'}
                                 </span>
                             </div>
+
+                            {confirmDeleteNo === group.no && (
+                                <GroupDeleteConfirm
+                                    name={group.name}
+                                    {...groupDeleteCounts(fgModels, group.no)}
+                                    onCancel={() => setConfirmDeleteNo(null)}
+                                    onConfirm={() => { setConfirmDeleteNo(null); onDeleteGroup(group.no); }}
+                                />
+                            )}
 
                             {isExpanded && (
                                 <div className="fg-group-edit">
@@ -582,5 +594,18 @@ export default function FailureGroupsPanel({
             </div>
         </div>
         </SensorMetaContext.Provider>
+    );
+}
+
+/** The inline "Delete <group>?" row — the same look as the assignment sheet's. */
+export function GroupDeleteConfirm({ name, deleted, kept, onCancel, onConfirm }: {
+    name: string; deleted: number; kept: number; onCancel: () => void; onConfirm: () => void;
+}) {
+    return (
+        <div className="fg-sheet-confirm" role="alertdialog" aria-label={`Delete ${name}`} data-testid="fg-delete-confirm">
+            <span>{groupDeleteSentence(name, deleted, kept)}</span>
+            <button type="button" className="fg-sheet-btn" onClick={onCancel}>Cancel</button>
+            <button type="button" className="fg-sheet-btn fg-sheet-btn--danger" onClick={onConfirm}>Delete</button>
+        </div>
     );
 }

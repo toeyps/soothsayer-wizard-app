@@ -393,19 +393,20 @@ describe('FailureGroupAssignSheet', () => {
             const { props } = renderSheet();
             openDelete('Group A'); // i1 + r1 are in Group A
             const confirm = screen.getByRole('alertdialog', { name: 'Delete Group A' });
-            expect(confirm.textContent).toContain('Delete Group A for every sensor? 2 models lose this group.');
+            // i1 is only in Group A (deleted with its files); r1 is also in Group B (kept there)
+            expect(confirm.textContent).toContain('Delete Group A? 1 model used only by this group is deleted with its saved files. 1 model stays in its other groups.');
             expect(props.onDeleteGroup).not.toHaveBeenCalled();
         });
 
         it('singular, and zero', () => {
             renderSheet();
             openDelete('Group C'); // only TAG2's individual
-            expect(screen.getByRole('alertdialog').textContent).toContain('1 model lose this group.');
+            expect(screen.getByRole('alertdialog').textContent).toContain('1 model used only by this group is deleted with its saved files.');
             fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
             cleanup();
             renderSheet({ fgModels: [] });
             openDelete('Group C');
-            expect(screen.getByRole('alertdialog').textContent).toContain('0 models lose this group.');
+            expect(screen.getByRole('alertdialog').textContent).toContain('Delete Group C? It has no models.');
         });
 
         it('Delete calls onDeleteGroup(no); once the Dashboard drops the group its row is gone and the Assigned bucket forgets it', () => {

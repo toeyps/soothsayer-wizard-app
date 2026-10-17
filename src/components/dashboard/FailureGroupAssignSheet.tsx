@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { groupDeleteCounts, groupDeleteSentence } from '../../utils/modelOutputFiles';
 import { Check, Plus, Search, X, Pencil, Trash2 } from 'lucide-react';
 import Portal from '../Portal';
 import { SensorLabel } from '../sensor/SensorLabel';
@@ -413,7 +414,7 @@ function SheetBody({
 
         const menuOpen = menuFor === g.no;
         const confirming = confirmFor === g.no;
-        const lostModels = fgModels.filter(m => m.groupNos.includes(g.no)).length;
+        const counts = groupDeleteCounts(fgModels, g.no);
         return (
             <div key={g.no} className={rowClass} data-group-no={g.no} data-testid={`fg-sheet-row-${g.no}`}>
                 <span className="fg-group-dot fg-sheet-dot" />
@@ -463,9 +464,7 @@ function SheetBody({
                 )}
                 {confirming && (
                     <div className="fg-sheet-confirm" role="alertdialog" aria-label={`Delete ${g.name}`}>
-                        <span>
-                            Delete <b>{g.name}</b> for every sensor? {lostModels} model{lostModels === 1 ? '' : 's'} lose this group.
-                        </span>
+                        <span>{groupDeleteSentence(g.name, counts.deleted, counts.kept)}</span>
                         <button type="button" className="fg-sheet-btn" onClick={() => setConfirmFor(null)}>Cancel</button>
                         <button type="button" className="fg-sheet-btn fg-sheet-btn--danger" onClick={() => confirmDelete(g.no)}>Delete</button>
                     </div>

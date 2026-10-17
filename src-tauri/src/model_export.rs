@@ -13,9 +13,13 @@
 //! are handed `{app_data}/workspaces/{workspace_id}` — or the staging dir — as
 //! their `save_path`).
 //!
-//! Known limitation (no manifest is kept): re-exporting a Relationship model
-//! with a DIFFERENT predictor list writes new file names (the predictors are
-//! part of them) and leaves the previous predictors' files in place.
+//! Re-exporting a Relationship model with a DIFFERENT predictor list (or a
+//! Clustering model — identified by its x / first sensor — with a different y
+//! sensor) writes new file names, so the export also removes that model's
+//! previous files ("stale siblings", see [`stale_model_files`]) in the SAME
+//! all-or-nothing commit: moved aside like every backup, put back on failure,
+//! deleted only when the export succeeded. `remove_model_files_in` removes one
+//! model's files on request.
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -148,6 +152,7 @@ pub fn refuse_bad_test_periods(
             .into_owned(),
         validation: plan.issues,
         warnings: Vec::new(),
+        removed: Vec::new(),
     }))
 }
 
@@ -250,6 +255,9 @@ pub struct ModelFilesResult {
     pub output_dir: String,
     pub validation: Vec<Issue>,
     pub warnings: Vec<String>,
+    /// File names of the model's previous files (an older predictor set / X
+    /// sensor) that this successful export removed. Empty otherwise.
+    pub removed: Vec<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -529,6 +537,209 @@ pub fn overwrite_warnings(req: &ModelFilesRequest, final_output: &Path) -> Vec<S
 }
 
 // ---------------------------------------------------------------------------
+// A model kind's files (stale siblings / remove_model_files)
+// ---------------------------------------------------------------------------
+//
+// Model identity: Individual / Relationship = the target (its folder);
+// Clustering = the FIRST (x) sensor, whose file `CLUS_INFO_{first}_{second}.json`
+// sits in the SECOND sensor's folder — so two clustering models with the same
+// y share a folder, and a model whose y changed left its old file elsewhere.
+
+/// `(prefix, extension)` of the files an Individual / Relationship model
+/// writes into its target's folder. `None` for any other kind.
+fn target_kind_patterns(kind: &str) -> Option<&'static [(&'static str, &'static str)]> {
+    match kind {
+        "individual" => Some(&[("INDV_INFO", "json")]),
+        "relationship" => Some(&[("REL_DATASET", "csv"), ("REL_INFO", "json"), ("REL_MODEL", "pkl")]),
+        _ => None,
+    }
+}
+
+fn is_known_kind(kind: &str) -> bool {
+    matches!(kind, "individual" | "relationship" | "clustering")
+}
+
+/// Does `name`, found in the folder `folder`, belong to the `kind` model whose
+/// identity is `sensor`?
+/// - Individual: exactly `INDV_INFO_{sensor}.json` in folder `sensor`.
+/// - Relationship: `REL_{DATASET,INFO,MODEL}_` + a NON-EMPTY predictor token +
+///   the exact `_{sensor}.{ext}` ending, in folder `sensor` (the ending is the
+///   folder itself, so target `B` never matches `..._AB.json`).
+/// - Clustering (`sensor` = the first / x sensor): exactly
+///   `CLUS_INFO_{sensor}_{folder}.json` — prefix AND the folder as the suffix,
+///   which is unambiguous even when names contain `_` (first `A` never
+///   matches `CLUS_INFO_AB_T.json` nor `CLUS_INFO_A_B_T.json` in folder `T`).
+fn is_model_file(kind: &str, sensor: &str, folder: &str, name: &str) -> bool {
+    if kind == "clustering" {
+        return name == format!("CLUS_INFO_{sensor}_{folder}.json");
+    }
+    if folder != sensor {
+        return false;
+    }
+    let Some(pats) = target_kind_patterns(kind) else {
+        return false;
+    };
+    pats.iter().any(|(prefix, ext)| {
+        if kind == "individual" {
+            return name == format!("{prefix}_{sensor}.{ext}");
+        }
+        let head = format!("{prefix}_");
+        let tail = format!("_{sensor}.{ext}");
+        name.len() > head.len() + tail.len() && name.starts_with(&head) && name.ends_with(&tail)
+    })
+}
+
+/// A directory that is not a symlink (nor a junction / reparse point that
+/// `symlink_metadata` reports as a link).
+fn is_real_dir(p: &Path) -> bool {
+    std::fs::symlink_metadata(p).map(|m| m.file_type().is_dir()).unwrap_or(false)
+}
+
+/// Names of the real (non-symlink) sub-folders directly in `output` whose name
+/// is a usable sensor name (sorted).
+fn sensor_folders(output: &Path) -> Vec<String> {
+    if !is_real_dir(output) {
+        return Vec::new();
+    }
+    let Ok(rd) = std::fs::read_dir(output) else {
+        return Vec::new();
+    };
+    let mut out: Vec<String> = rd
+        .flatten()
+        .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
+        .filter_map(|e| e.file_name().to_str().map(String::from))
+        .filter(|n| file_name_problem(n).is_none())
+        .collect();
+    out.sort();
+    out
+}
+
+/// Names of the plain files (never symlinks) directly in `output/{folder}`
+/// that belong to the `kind` model `sensor` (sorted).
+fn model_files_in(output: &Path, folder: &str, kind: &str, sensor: &str) -> Vec<String> {
+    let dir = output.join(folder);
+    if !is_real_dir(&dir) {
+        return Vec::new();
+    }
+    let Ok(rd) = std::fs::read_dir(&dir) else {
+        return Vec::new();
+    };
+    let mut out: Vec<String> = rd
+        .flatten()
+        .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
+        .filter_map(|e| e.file_name().to_str().map(String::from))
+        .filter(|n| is_model_file(kind, sensor, folder, n))
+        .collect();
+    out.sort();
+    out
+}
+
+/// Every file of the `kind` model `sensor`, as paths relative to `output`
+/// (`{folder}/{name}`): Individual / Relationship look in `output/{sensor}/`
+/// only; Clustering looks in EVERY direct sub-folder (its y may have changed).
+fn model_file_rels(output: &Path, kind: &str, sensor: &str) -> Vec<PathBuf> {
+    let folders = if kind == "clustering" { sensor_folders(output) } else { vec![sensor.to_string()] };
+    folders
+        .iter()
+        .flat_map(|f| {
+            model_files_in(output, f, kind, sensor)
+                .into_iter()
+                .map(move |n| Path::new(f).join(n))
+        })
+        .collect()
+}
+
+/// The model's PREVIOUS files that this export replaces without overwriting
+/// (a Relationship with another predictor set; a Clustering model — same x —
+/// with another y, whose old file sits in the old y's folder), as paths
+/// relative to `final_output`. The files this export writes itself are never
+/// in the list (they are overwritten as usual); Individual has a single fixed
+/// name, so nothing.
+pub fn stale_model_files(req: &ModelFilesRequest, final_output: &Path) -> Vec<PathBuf> {
+    let (identity, new_folder) = match req.kind.as_str() {
+        "relationship" => (req.target.as_deref(), req.target.as_deref()),
+        "clustering" => (req.first_sensor.as_deref(), req.second_sensor.as_deref()),
+        _ => (None, None),
+    };
+    let (Some(identity), Some(new_folder)) = (identity, new_folder) else {
+        return Vec::new();
+    };
+    if file_name_problem(identity).is_some() || file_name_problem(new_folder).is_some() {
+        return Vec::new();
+    }
+    let new_rels: Vec<PathBuf> =
+        composed_file_names(req).iter().map(|n| Path::new(new_folder).join(n)).collect();
+    model_file_rels(final_output, &req.kind, identity)
+        .into_iter()
+        .filter(|r| !new_rels.contains(r))
+        .collect()
+}
+
+/// Delete every file of the `kind` model identified by `sensor` from
+/// `{app_data}/workspaces/{id}/output/`, leaving other models' files alone:
+/// Individual / Relationship: `sensor` = the target, files in
+/// `output/{sensor}/`; Clustering: `sensor` = the FIRST (x) sensor, the file
+/// `CLUS_INFO_{sensor}_{folder}.json` in every direct sub-folder. Each folder
+/// that ends up empty is removed. Returns how many files were removed; nothing
+/// there is `Ok(0)`. Bad workspace id / kind / sensor name -> `BAD_REQUEST:`.
+pub fn remove_model_files_in(
+    app_data: &Path,
+    workspace_id: &str,
+    kind: &str,
+    sensor: &str,
+) -> Result<u32, String> {
+    let output = output_dir_path(app_data, workspace_id).map_err(|e| format!("BAD_REQUEST: {e}"))?;
+    if !is_known_kind(kind) {
+        return Err(format!("BAD_REQUEST: unknown kind '{}'", shown(kind)));
+    }
+    if let Some(why) = file_name_problem(sensor) {
+        return Err(format!(
+            "BAD_REQUEST: the sensor name '{}' cannot be used in a file name: {why}",
+            shown(sensor)
+        ));
+    }
+    let mut removed = 0u32;
+    let mut folders: Vec<PathBuf> = if kind == "clustering" { Vec::new() } else { vec![output.join(sensor)] };
+    let mut failed: Vec<String> = Vec::new();
+    // Every matching file is tried (one locked file, e.g. open in Excel, must
+    // not leave the rest behind); the failures are reported together.
+    for rel in model_file_rels(&output, kind, sensor) {
+        let p = output.join(&rel);
+        match std::fs::remove_file(&p) {
+            Ok(()) => removed += 1,
+            Err(e) => failed.push(format!("{}: {e}", p.display())),
+        }
+        if let Some(parent) = p.parent() {
+            if !folders.iter().any(|f| f == parent) {
+                folders.push(parent.to_path_buf());
+            }
+        }
+    }
+    // Only an EMPTY real folder is removed (remove_dir refuses anything else).
+    for folder in folders {
+        let empty = is_real_dir(&folder)
+            && std::fs::read_dir(&folder).map(|mut rd| rd.next().is_none()).unwrap_or(false);
+        if empty {
+            let _ = std::fs::remove_dir(&folder);
+        }
+    }
+    removal_outcome(removed, &failed)
+}
+
+/// `Ok(removed)` when nothing failed, otherwise an error naming every file
+/// that could not be removed (and how many were).
+fn removal_outcome(removed: u32, failed: &[String]) -> Result<u32, String> {
+    if failed.is_empty() {
+        return Ok(removed);
+    }
+    Err(format!(
+        "Failed to remove {} file(s) ({removed} removed): {}",
+        failed.len(),
+        failed.join("; ")
+    ))
+}
+
+// ---------------------------------------------------------------------------
 // Staging + all-or-nothing commit
 // ---------------------------------------------------------------------------
 
@@ -680,7 +891,21 @@ fn file_kind(name: &str) -> &'static str {
 /// aside to a backup (`{staging}/.backup/{relative path}`); if any step fails every
 /// placed file is removed and every backup restored, so the previous export is
 /// left exactly as it was. Returns the final files (sorted by path).
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn commit(staged_output: &Path, final_output: &Path) -> Result<Vec<WrittenFile>, String> {
+    commit_replacing(staged_output, final_output, &[]).map(|(files, _)| files)
+}
+
+/// [`commit`] that also REMOVES `stale` (paths relative to `final_output`, see
+/// [`stale_model_files`]) in the same transaction: each one still present as a
+/// plain file (and not about to be overwritten) is moved aside to the backup
+/// FIRST, so any later failure puts it back with the rest; on success it goes
+/// with the staging dir. Returns the written files and the removed file names.
+pub fn commit_replacing(
+    staged_output: &Path,
+    final_output: &Path,
+    stale: &[PathBuf],
+) -> Result<(Vec<WrittenFile>, Vec<String>), String> {
     let rels = list_files(staged_output)
         .map_err(|e| format!("Failed to read staged files: {e}"))?;
     if rels.is_empty() {
@@ -694,6 +919,7 @@ pub fn commit(staged_output: &Path, final_output: &Path) -> Result<Vec<WrittenFi
     // (destination, backup of what was there before)
     let mut placed: Vec<(PathBuf, Option<PathBuf>)> = Vec::new();
     let mut failure: Option<String> = None;
+    let mut removed: Vec<String> = Vec::new();
     for rel in rels.iter() {
         let src = staged_output.join(rel);
         let dst = final_output.join(rel);
@@ -731,6 +957,44 @@ pub fn commit(staged_output: &Path, final_output: &Path) -> Result<Vec<WrittenFi
         }
     }
 
+    // Stale siblings LAST, once every new file is in place, into `.removed/`
+    // (NOT `.backup/`): the in-process rollback below puts them back on a
+    // failure, but the crash sweep (`sweep_stale_staging`) only restores
+    // `.backup/` and deletes `.removed/` with the leftover dir, so a file
+    // removed on purpose never comes back after a crash. Moving them last
+    // means a crash can at worst leave some old files behind, never lose the
+    // previous set before the new one is written.
+    if failure.is_none() {
+        let removed_dir = staged_output.parent().unwrap_or(staged_output).join(".removed");
+        for rel in stale.iter().filter(|r| !rels.contains(r)) {
+            let in_output = rel.components().all(|c| matches!(c, std::path::Component::Normal(_)));
+            let dst = final_output.join(rel);
+            let plain_file = std::fs::symlink_metadata(&dst)
+                .map(|m| m.file_type().is_file())
+                .unwrap_or(false);
+            if !in_output || !plain_file {
+                continue;
+            }
+            let b = removed_dir.join(rel);
+            let moved = b
+                .parent()
+                .map_or(Ok(()), std::fs::create_dir_all)
+                .and_then(|_| std::fs::rename(&dst, &b));
+            match moved {
+                Ok(()) => {
+                    placed.push((dst, Some(b)));
+                    removed.push(
+                        rel.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
+                    );
+                }
+                Err(e) => {
+                    failure = Some(format!("Failed to remove the previous file {}: {e}", dst.display()));
+                    break;
+                }
+            }
+        }
+    }
+
     if let Some(msg) = failure {
         let mut rollback_problems = Vec::new();
         for (dst, backup) in placed.into_iter().rev() {
@@ -752,7 +1016,7 @@ pub fn commit(staged_output: &Path, final_output: &Path) -> Result<Vec<WrittenFi
         });
     }
 
-    Ok(rels
+    let files = rels
         .iter()
         .map(|rel| {
             let name = rel
@@ -765,7 +1029,8 @@ pub fn commit(staged_output: &Path, final_output: &Path) -> Result<Vec<WrittenFi
                 path: final_output.join(rel).to_string_lossy().into_owned(),
             }
         })
-        .collect())
+        .collect();
+    Ok((files, removed))
 }
 
 /// Turn a writer's outcome into the command's result: validation failures
@@ -788,6 +1053,30 @@ pub fn finalize_with(
     outcome: Result<(), CoreError>,
     warnings: Vec<String>,
 ) -> Result<ModelFilesResult, String> {
+    finalize_replacing(staging, output_dir, outcome, warnings, &[])
+}
+
+/// What "Mark complete" uses: [`finalize_with`] that also removes the model's
+/// previous files ([`stale_model_files`] of `req`) in the same all-or-nothing
+/// commit. A refused / failed export removes nothing.
+pub fn finalize_export(
+    staging: Staging,
+    output_dir: &Path,
+    outcome: Result<(), CoreError>,
+    warnings: Vec<String>,
+    req: &ModelFilesRequest,
+) -> Result<ModelFilesResult, String> {
+    let stale = if outcome.is_ok() { stale_model_files(req, output_dir) } else { Vec::new() };
+    finalize_replacing(staging, output_dir, outcome, warnings, &stale)
+}
+
+fn finalize_replacing(
+    staging: Staging,
+    output_dir: &Path,
+    outcome: Result<(), CoreError>,
+    warnings: Vec<String>,
+    stale: &[PathBuf],
+) -> Result<ModelFilesResult, String> {
     let output_dir_s = output_dir.to_string_lossy().into_owned();
     match outcome {
         Err(CoreError::Validation(issues)) => Ok(ModelFilesResult {
@@ -796,16 +1085,18 @@ pub fn finalize_with(
             output_dir: output_dir_s,
             validation: issues,
             warnings: Vec::new(),
+            removed: Vec::new(),
         }),
         Err(CoreError::Other(e)) => Err(e),
         Ok(()) => {
-            let files = commit(&staging.output_dir(), output_dir)?;
+            let (files, removed) = commit_replacing(&staging.output_dir(), output_dir, stale)?;
             Ok(ModelFilesResult {
                 ok: true,
                 files,
                 output_dir: output_dir_s,
                 validation: Vec::new(),
                 warnings,
+                removed,
             })
         }
     }
@@ -907,7 +1198,7 @@ pub fn export_sync(
         Ok(())
     });
     let warnings = overwrite_warnings(req, &dirs.output_dir);
-    finalize_with(staging, &dirs.output_dir, outcome, warnings)
+    finalize_export(staging, &dirs.output_dir, outcome, warnings, req)
 }
 
 // ---------------------------------------------------------------------------
@@ -1090,12 +1381,14 @@ mod tests {
             output_dir: "/p".into(),
             validation: vec![],
             warnings: vec![],
+            removed: vec!["REL_INFO_old_T.json".into()],
         };
         let j = serde_json::to_value(&res).unwrap();
         assert_eq!(j["ok"], true);
         assert_eq!(j["files"][0]["kind"], "info");
         assert_eq!(j["files"][0]["file_name"], "a.json");
         assert_eq!(j["output_dir"], "/p");
+        assert_eq!(j["removed"][0], "REL_INFO_old_T.json");
     }
 
     // ---------- orphaned staging sweep ----------
@@ -1347,5 +1640,406 @@ mod tests {
         assert!(second.warnings[0].contains("CLUS_INFO_X_Y.json"));
         // Exporting the same model again: no warning.
         assert!(export_sync(&data, &two, app.path()).unwrap().warnings.is_empty());
+    }
+
+    // ---------- stale siblings / remove_model_files ----------
+
+    fn rel_req(target: &str, preds: &[&str]) -> ModelFilesRequest {
+        ModelFilesRequest {
+            kind: "relationship".into(),
+            workspace_id: "ws".into(),
+            target: Some(target.into()),
+            predictors: preds.iter().map(|p| p.to_string()).collect(),
+            ..Default::default()
+        }
+    }
+
+    fn rel_set(dir: &Path, tok: &str, target: &str, body: &str) {
+        for (p, ext) in [("REL_DATASET", "csv"), ("REL_INFO", "json"), ("REL_MODEL", "pkl")] {
+            write(&dir.join(target).join(format!("{p}_{tok}_{target}.{ext}")), body);
+        }
+    }
+
+    fn names_in(dir: &Path) -> Vec<String> {
+        let mut v: Vec<String> = fs::read_dir(dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        v.sort();
+        v
+    }
+
+    /// Same folder `B`: another kind's files, a file of target `AB` (same
+    /// ending), an empty-middle name and a stray file — none is the model's.
+    fn neighbours(out: &Path) {
+        write(&out.join("B").join("INDV_INFO_B.json"), "indv");
+        write(&out.join("B").join("CLUS_INFO_X_B.json"), "clus");
+        write(&out.join("B").join("REL_INFO_P_AB.json"), "other target");
+        write(&out.join("B").join("REL_INFO__B.json"), "empty middle");
+        write(&out.join("B").join("notes.txt"), "user");
+        rel_set(out, "A", "AB", "target AB");
+    }
+
+    fn assert_neighbours_kept(out: &Path) {
+        for f in ["INDV_INFO_B.json", "CLUS_INFO_X_B.json", "REL_INFO_P_AB.json", "REL_INFO__B.json", "notes.txt"] {
+            assert!(out.join("B").join(f).is_file(), "{f} must be kept");
+        }
+        assert_eq!(names_in(&out.join("AB")).len(), 3, "the other target's folder is untouched");
+    }
+
+    #[test]
+    fn is_model_file_is_anchored_on_prefix_and_exact_suffix() {
+        assert!(is_model_file("relationship", "B", "B", "REL_INFO_A+C_B.json"));
+        assert!(is_model_file("relationship", "B", "B", "REL_MODEL_A_B.pkl"));
+        assert!(is_model_file("relationship", "B", "B", "REL_DATASET_A_B.csv"));
+        assert!(is_model_file("relationship", "B", "B", "REL_INFO_P_Q_B.json"), "underscored predictor");
+        assert!(!is_model_file("relationship", "B", "B", "REL_INFO_A_AB.json"), "target AB, not B");
+        assert!(!is_model_file("relationship", "B", "B", "REL_INFO_A_B.pkl"), "wrong extension");
+        assert!(!is_model_file("relationship", "B", "B", "REL_INFO__B.json"), "empty middle");
+        assert!(!is_model_file("relationship", "B", "B", "XREL_INFO_A_B.json"));
+        assert!(!is_model_file("relationship", "B", "B", "CLUS_INFO_A_B.json"));
+        assert!(!is_model_file("relationship", "B", "C", "REL_INFO_A_B.json"), "only in its own folder");
+        // Clustering: identity = first sensor, the folder is the exact suffix.
+        assert!(is_model_file("clustering", "X", "Y", "CLUS_INFO_X_Y.json"));
+        assert!(!is_model_file("clustering", "Y", "Y", "CLUS_INFO_X_Y.json"), "y is not the identity");
+        assert!(!is_model_file("clustering", "A", "T", "CLUS_INFO_AB_T.json"), "first AB, not A");
+        assert!(!is_model_file("clustering", "A", "T", "CLUS_INFO_A_B_T.json"), "first A_B (folder T)");
+        assert!(is_model_file("clustering", "A_B", "T", "CLUS_INFO_A_B_T.json"));
+        assert!(is_model_file("clustering", "A", "B_T", "CLUS_INFO_A_B_T.json"), "first A, folder B_T");
+        assert!(!is_model_file("clustering", "X", "Y", "CLUS_INFO_X_XY.json"));
+        assert!(is_model_file("individual", "S", "S", "INDV_INFO_S.json"));
+        assert!(!is_model_file("individual", "S", "S", "INDV_INFO_XS.json"));
+        assert!(!is_model_file("bogus", "S", "S", "INDV_INFO_S.json"));
+    }
+
+    #[test]
+    fn relationship_reexport_with_other_predictors_replaces_the_old_set_only() {
+        let d = tmp();
+        let w = prepare_workspace(d.path(), "ws").unwrap();
+        let out = &w.output_dir;
+        rel_set(out, "A", "B", "OLD");
+        neighbours(out);
+        let req = rel_req("B", &["C", "D"]);
+        let st = Staging::create(&w.ws_dir).unwrap();
+        rel_set(&st.output_dir(), "C+D", "B", "NEW");
+        let res = finalize_export(st, out, Ok(()), Vec::new(), &req).unwrap();
+        assert!(res.ok);
+        assert_eq!(res.files.len(), 3);
+        assert_eq!(res.removed, vec!["REL_DATASET_A_B.csv", "REL_INFO_A_B.json", "REL_MODEL_A_B.pkl"]);
+        for (p, ext) in [("REL_DATASET", "csv"), ("REL_INFO", "json"), ("REL_MODEL", "pkl")] {
+            assert!(!out.join("B").join(format!("{p}_A_B.{ext}")).exists());
+            assert_eq!(fs::read_to_string(out.join("B").join(format!("{p}_C+D_B.{ext}"))).unwrap(), "NEW");
+        }
+        assert_neighbours_kept(out);
+        // Nothing comes back with the next export's sweep: the backups went
+        // with the staging dir.
+        drop(Staging::create(&w.ws_dir).unwrap());
+        assert!(!out.join("B").join("REL_INFO_A_B.json").exists());
+    }
+
+    #[test]
+    fn reexporting_the_same_predictors_removes_nothing() {
+        let d = tmp();
+        let w = prepare_workspace(d.path(), "ws").unwrap();
+        rel_set(&w.output_dir, "A", "B", "OLD");
+        let st = Staging::create(&w.ws_dir).unwrap();
+        rel_set(&st.output_dir(), "A", "B", "NEW");
+        let res = finalize_export(st, &w.output_dir, Ok(()), Vec::new(), &rel_req("B", &["A"])).unwrap();
+        assert!(res.removed.is_empty());
+        assert_eq!(fs::read_to_string(w.output_dir.join("B").join("REL_INFO_A_B.json")).unwrap(), "NEW");
+    }
+
+    #[test]
+    fn a_failing_export_leaves_the_old_set_exactly_in_place() {
+        let d = tmp();
+        let w = prepare_workspace(d.path(), "ws").unwrap();
+        let out = &w.output_dir;
+        rel_set(out, "A", "B", "OLD");
+        neighbours(out);
+        let req = rel_req("B", &["C"]);
+
+        // 1. Refused (validation): nothing committed, nothing removed.
+        let st = Staging::create(&w.ws_dir).unwrap();
+        rel_set(&st.output_dir(), "C", "B", "NEW");
+        let issue = vec![Issue {
+            code: "required".into(),
+            severity: crate::health_score::Severity::Error,
+            message: "x".into(),
+            field: "f".into(),
+        }];
+        let r = finalize_export(st, out, Err(CoreError::Validation(issue)), Vec::new(), &req).unwrap();
+        assert!(!r.ok && r.removed.is_empty());
+
+        // 2. A disk failure during the commit (Z exists as a FILE, so Z/y.json
+        //    cannot be created) AFTER the stale set was moved aside.
+        write(&out.join("Z"), "i am a file");
+        let st = Staging::create(&w.ws_dir).unwrap();
+        rel_set(&st.output_dir(), "C", "B", "NEW");
+        write(&st.output_dir().join("Z").join("y.json"), "NEW-Z");
+        let stale = stale_model_files(&req, out);
+        assert_eq!(stale.len(), 3);
+        let err = commit_replacing(&st.output_dir(), out, &stale).unwrap_err();
+        assert!(err.contains("Failed to write") && err.contains("nothing was changed"), "{err}");
+        drop(st);
+
+        for (p, ext) in [("REL_DATASET", "csv"), ("REL_INFO", "json"), ("REL_MODEL", "pkl")] {
+            assert_eq!(fs::read_to_string(out.join("B").join(format!("{p}_A_B.{ext}"))).unwrap(), "OLD");
+            assert!(!out.join("B").join(format!("{p}_C_B.{ext}")).exists());
+        }
+        assert_neighbours_kept(out);
+        assert_eq!(fs::read_to_string(out.join("Z")).unwrap(), "i am a file");
+    }
+
+    fn clus_data() -> crate::csv_processor::ColumnarData {
+        use crate::csv_processor::ColumnarData;
+        let n = 400;
+        let ts: Vec<Option<String>> = (0..n).map(|i| Some(format!("2024-01-01T{:02}:{:02}:00", (i / 60) % 24, i % 60))).collect();
+        let col = |f: &dyn Fn(usize) -> f64| (0..n).map(f).collect::<Vec<f64>>();
+        ColumnarData::from_parts(
+            vec!["timestamp".into(), "X".into(), "Y".into(), "W".into()],
+            ts,
+            vec![vec![f64::NAN; n], col(&|i| (i % 17) as f64), col(&|i| (i % 13) as f64 + 0.5 * (i % 5) as f64), col(&|i| (i % 11) as f64 * 1.5)],
+        )
+    }
+
+    fn clus_req(first: &str, second: &str) -> ModelFilesRequest {
+        ModelFilesRequest {
+            kind: "clustering".into(),
+            workspace_id: "ws".into(),
+            first_sensor: Some(first.into()),
+            second_sensor: Some(second.into()),
+            n_clusters: Some(1),
+            set_points: Some(SetPointsArg { outer_sd: Some(6.0), ..Default::default() }),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn clustering_models_sharing_a_y_sensor_never_remove_each_other() {
+        let data = clus_data();
+        let app = tmp();
+        let ydir = app.path().join("workspaces").join("ws").join("output").join("Y");
+        // x=X,y=Y and x=W,y=Y are two different models in the same folder.
+        let a = export_sync(&data, &clus_req("X", "Y"), app.path()).unwrap();
+        assert!(a.ok && a.removed.is_empty(), "{:?}", a.validation);
+        write(&ydir.join("INDV_INFO_Y.json"), "indv");
+        write(&ydir.join("REL_INFO_P_Y.json"), "rel");
+        let b = export_sync(&data, &clus_req("W", "Y"), app.path()).unwrap();
+        assert!(b.ok, "{:?}", b.validation);
+        assert!(b.removed.is_empty(), "{:?}", b.removed);
+        // Re-exporting X (same y) removes nothing either.
+        let a2 = export_sync(&data, &clus_req("X", "Y"), app.path()).unwrap();
+        assert!(a2.ok && a2.removed.is_empty(), "{:?}", a2.removed);
+        assert_eq!(
+            names_in(&ydir),
+            vec!["CLUS_INFO_W_Y.json", "CLUS_INFO_X_Y.json", "INDV_INFO_Y.json", "REL_INFO_P_Y.json"]
+        );
+    }
+
+    #[test]
+    fn clustering_reexport_with_another_y_removes_its_old_file_in_the_old_folder() {
+        let data = clus_data();
+        let app = tmp();
+        let out = app.path().join("workspaces").join("ws").join("output");
+        assert!(export_sync(&data, &clus_req("X", "Y"), app.path()).unwrap().ok);
+        assert!(export_sync(&data, &clus_req("W", "Y"), app.path()).unwrap().ok);
+        // Prefix traps in other folders: first `XX`, and first `X_Q` in folder Y
+        // spelled so that a loose `CLUS_INFO_X_*` match would catch it.
+        write(&out.join("Y").join("CLUS_INFO_XX_Y.json"), "first XX");
+        write(&out.join("Q_Y").join("CLUS_INFO_X_Q_Y.json"), "first X, y Q_Y - its own");
+        write(&out.join("Y").join("CLUS_INFO_X_Q_Y.json"), "first X_Q, y Y");
+        // x=X now uses y=W: the file in Y/ (and X's file in Q_Y/) are its old ones.
+        let r = export_sync(&data, &clus_req("X", "W"), app.path()).unwrap();
+        assert!(r.ok, "{:?}", r.validation);
+        let mut removed = r.removed.clone();
+        removed.sort();
+        assert_eq!(removed, vec!["CLUS_INFO_X_Q_Y.json", "CLUS_INFO_X_Y.json"]);
+        assert!(!out.join("Q_Y").join("CLUS_INFO_X_Q_Y.json").exists());
+        assert!(out.join("Q_Y").is_dir(), "the export leaves folders in place");
+        assert_eq!(
+            names_in(&out.join("Y")),
+            vec!["CLUS_INFO_W_Y.json", "CLUS_INFO_XX_Y.json", "CLUS_INFO_X_Q_Y.json"]
+        );
+        assert_eq!(names_in(&out.join("W")), vec!["CLUS_INFO_X_W.json"]);
+    }
+
+    #[test]
+    fn remove_model_files_removes_only_that_kinds_files() {
+        let d = tmp();
+        let out = d.path().join("workspaces").join("ws").join("output");
+        rel_set(&out, "A", "B", "r1");
+        rel_set(&out, "C+D", "B", "r2");
+        neighbours(&out);
+        assert_eq!(remove_model_files_in(d.path(), "ws", "relationship", "B").unwrap(), 6);
+        assert_eq!(
+            names_in(&out.join("B")),
+            vec!["CLUS_INFO_X_B.json", "INDV_INFO_B.json", "REL_INFO_P_AB.json", "REL_INFO__B.json", "notes.txt"]
+        );
+        // Clustering is identified by its FIRST sensor (X), not the folder (B).
+        assert_eq!(remove_model_files_in(d.path(), "ws", "clustering", "B").unwrap(), 0);
+        assert_eq!(remove_model_files_in(d.path(), "ws", "clustering", "X").unwrap(), 1);
+        assert_eq!(remove_model_files_in(d.path(), "ws", "individual", "B").unwrap(), 1);
+        assert!(out.join("B").join("notes.txt").is_file(), "not a model file: kept, folder kept");
+        assert_eq!(names_in(&out.join("AB")).len(), 3, "another target is never touched");
+        // Again: nothing there is not an error.
+        assert_eq!(remove_model_files_in(d.path(), "ws", "relationship", "B").unwrap(), 0);
+    }
+
+    #[test]
+    fn remove_clustering_files_by_first_sensor_across_folders() {
+        let d = tmp();
+        let out = d.path().join("workspaces").join("ws").join("output");
+        // x=A,y=T and x=B,y=T share T/; A also has a file under U/ (old y).
+        write(&out.join("T").join("CLUS_INFO_A_T.json"), "A");
+        write(&out.join("T").join("CLUS_INFO_B_T.json"), "B");
+        write(&out.join("T").join("CLUS_INFO_AB_T.json"), "AB");
+        write(&out.join("T").join("CLUS_INFO_A_B_T.json"), "first A_B");
+        write(&out.join("U").join("CLUS_INFO_A_U.json"), "A old");
+        assert_eq!(remove_model_files_in(d.path(), "ws", "clustering", "A").unwrap(), 2);
+        assert_eq!(
+            names_in(&out.join("T")),
+            vec!["CLUS_INFO_AB_T.json", "CLUS_INFO_A_B_T.json", "CLUS_INFO_B_T.json"]
+        );
+        assert!(!out.join("U").exists(), "U/ became empty: removed");
+        // The underscore name is the model x=A_B (folder T).
+        assert_eq!(remove_model_files_in(d.path(), "ws", "clustering", "A_B").unwrap(), 1);
+        assert_eq!(names_in(&out.join("T")), vec!["CLUS_INFO_AB_T.json", "CLUS_INFO_B_T.json"]);
+        assert_eq!(remove_model_files_in(d.path(), "ws", "clustering", "A").unwrap(), 0);
+    }
+
+    #[test]
+    fn remove_model_files_removes_the_folder_once_empty() {
+        let d = tmp();
+        let out = d.path().join("workspaces").join("ws").join("output");
+        write(&out.join("S").join("INDV_INFO_S.json"), "x");
+        write(&out.join("S").join("CLUS_INFO_X_S.json"), "x");
+        assert_eq!(remove_model_files_in(d.path(), "ws", "individual", "S").unwrap(), 1);
+        assert!(out.join("S").is_dir(), "the clustering file is still there");
+        assert_eq!(remove_model_files_in(d.path(), "ws", "clustering", "X").unwrap(), 1);
+        assert!(!out.join("S").exists(), "empty folder removed");
+        assert!(out.is_dir(), "the output folder itself stays");
+    }
+
+    #[test]
+    fn a_crash_after_a_successful_commit_never_brings_removed_files_back() {
+        let d = tmp();
+        let w = prepare_workspace(d.path(), "ws").unwrap();
+        let out = &w.output_dir;
+        rel_set(out, "A", "B", "OLD");
+        let req = rel_req("B", &["C"]);
+        let st = Staging::create(&w.ws_dir).unwrap();
+        rel_set(&st.output_dir(), "C", "B", "NEW");
+        let stale = stale_model_files(&req, out);
+        let (_, removed) = commit_replacing(&st.output_dir(), out, &stale).unwrap();
+        assert_eq!(removed.len(), 3);
+        // Removed files are kept apart from overwrite backups.
+        assert!(st.root().join(".removed").join("B").join("REL_INFO_A_B.json").is_file());
+        assert!(!st.root().join(".backup").join("B").join("REL_INFO_A_B.json").exists());
+        // Simulate the crash: the staging dir outlives the process (no Drop).
+        let root = st.root().to_path_buf();
+        lock_active().retain(|p| p != &root);
+        std::mem::forget(st);
+        // ...plus a real overwrite backup whose destination was lost.
+        write(&root.join(".backup").join("B").join("lost.json"), "PREVIOUS");
+        drop(Staging::create(&w.ws_dir).unwrap());
+        assert!(!root.exists(), "the leftover dir is swept");
+        assert_eq!(fs::read_to_string(out.join("B").join("lost.json")).unwrap(), "PREVIOUS");
+        for (p, ext) in [("REL_DATASET", "csv"), ("REL_INFO", "json"), ("REL_MODEL", "pkl")] {
+            assert!(!out.join("B").join(format!("{p}_A_B.{ext}")).exists(), "{p} stays removed");
+            assert!(out.join("B").join(format!("{p}_C_B.{ext}")).is_file());
+        }
+    }
+
+    #[test]
+    fn a_failure_while_moving_stale_files_rolls_everything_back() {
+        let d = tmp();
+        let w = prepare_workspace(d.path(), "ws").unwrap();
+        let out = &w.output_dir;
+        rel_set(out, "A", "B", "OLD");
+        let req = rel_req("B", &["C"]);
+        let st = Staging::create(&w.ws_dir).unwrap();
+        rel_set(&st.output_dir(), "C", "B", "NEW");
+        let stale = stale_model_files(&req, out);
+        // `.removed/B/REL_INFO_A_B.json` already exists as a non-empty DIR,
+        // so moving that stale file there fails after the new set was placed.
+        write(&st.root().join(".removed").join("B").join("REL_INFO_A_B.json").join("x"), "block");
+        let err = commit_replacing(&st.output_dir(), out, &stale).unwrap_err();
+        assert!(err.contains("Failed to remove the previous file") && err.contains("nothing was changed"), "{err}");
+        drop(st);
+        for (p, ext) in [("REL_DATASET", "csv"), ("REL_INFO", "json"), ("REL_MODEL", "pkl")] {
+            assert_eq!(fs::read_to_string(out.join("B").join(format!("{p}_A_B.{ext}"))).unwrap(), "OLD");
+            assert!(!out.join("B").join(format!("{p}_C_B.{ext}")).exists());
+        }
+    }
+
+    #[test]
+    fn remove_model_files_tries_every_file_and_names_the_failures() {
+        let d = tmp();
+        let out = d.path().join("workspaces").join("ws").join("output");
+        // A directory carrying a model file's name is never a plain file, so
+        // it is skipped (not an error) and the walk goes on to the next folder.
+        write(&out.join("T").join("CLUS_INFO_A_T.json").join("inner"), "a dir, not a file");
+        write(&out.join("U").join("CLUS_INFO_A_U.json"), "A");
+        assert_eq!(remove_model_files_in(d.path(), "ws", "clustering", "A").unwrap(), 1);
+        assert!(out.join("T").join("CLUS_INFO_A_T.json").is_dir(), "never a plain file: untouched");
+        assert!(!out.join("U").exists());
+        // Aggregation: all ok -> the count; any failure -> Err naming each.
+        assert_eq!(removal_outcome(3, &[]), Ok(3));
+        let e = removal_outcome(2, &["p/x.json: denied".into(), "p/y.pkl: in use".into()]).unwrap_err();
+        assert!(e.contains("Failed to remove 2 file(s) (2 removed)"), "{e}");
+        assert!(e.contains("p/x.json: denied") && e.contains("p/y.pkl: in use"), "{e}");
+    }
+
+    /// A real locked file (Windows: opened with no sharing, like Excel does):
+    /// the other files are still removed and the error names the locked one.
+    #[cfg(windows)]
+    #[test]
+    fn remove_model_files_goes_on_past_a_locked_file() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let d = tmp();
+        let out = d.path().join("workspaces").join("ws").join("output");
+        rel_set(&out, "A", "B", "r");
+        let locked = out.join("B").join("REL_INFO_A_B.json");
+        let handle = fs::OpenOptions::new().read(true).share_mode(0).open(&locked).unwrap();
+        let e = remove_model_files_in(d.path(), "ws", "relationship", "B").unwrap_err();
+        assert!(e.contains("Failed to remove 1 file(s) (2 removed)"), "{e}");
+        assert!(e.contains("REL_INFO_A_B.json"), "{e}");
+        assert!(!out.join("B").join("REL_DATASET_A_B.csv").exists());
+        assert!(!out.join("B").join("REL_MODEL_A_B.pkl").exists());
+        assert!(out.join("B").is_dir(), "not empty: kept");
+        drop(handle);
+        assert_eq!(remove_model_files_in(d.path(), "ws", "relationship", "B").unwrap(), 1);
+        assert!(!out.join("B").exists());
+    }
+
+    #[test]
+    fn remove_model_files_with_nothing_there_is_ok_zero() {
+        let d = tmp();
+        // No workspace folder at all: nothing is created either.
+        assert_eq!(remove_model_files_in(d.path(), "ws", "individual", "S").unwrap(), 0);
+        assert!(!d.path().join("workspaces").exists());
+    }
+
+    #[test]
+    fn remove_model_files_refuses_bad_input() {
+        let d = tmp();
+        let outside = d.path().join("workspaces").join("ws").join("x");
+        write(&outside.join("INDV_INFO_x.json"), "keep");
+        for (ws, kind, sensor) in [
+            ("../evil", "individual", "S"),
+            ("", "individual", "S"),
+            ("ws", "bogus", "S"),
+            ("ws", "", "S"),
+            ("ws", "individual", "../x"),
+            ("ws", "individual", ".."),
+            ("ws", "individual", "a/b"),
+            ("ws", "individual", "a\\b"),
+            ("ws", "individual", ""),
+        ] {
+            let e = remove_model_files_in(d.path(), ws, kind, sensor).unwrap_err();
+            assert!(e.starts_with("BAD_REQUEST:"), "{ws:?} {kind:?} {sensor:?}: {e}");
+        }
+        assert!(outside.join("INDV_INFO_x.json").is_file(), "../x never reaches the workspace folder");
     }
 }

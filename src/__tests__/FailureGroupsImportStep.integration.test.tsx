@@ -306,8 +306,12 @@ describe('Import step 3 -> Dashboard -> Recent-project chip, through the real wo
         expect(entry('Alpha')).toMatchObject({ failureGroupCount: 3, failureGroupNos: [1, 2, 3] });
         expect(summaryText()).toMatch(/^3 groups · 1 sensor assigned/);
 
-        // Delete FG-2 (no confirmation in this app) -> count 2, swatches FG-1 + FG-3.
+        // Delete FG-2 -> count 2, swatches FG-1 + FG-3. Since 2026-10-17 the trash asks first (a group
+        // now deletes the models that are only in it); FG-2 has none: "It has no models."
         await act(async () => { fireEvent.click(within(groupCard('Oil pressure low')).getByTitle('Delete group')); });
+        const confirm = app().getByTestId('fg-delete-confirm');
+        expect(confirm.textContent).toContain('It has no models.');
+        await act(async () => { fireEvent.click(within(confirm).getByRole('button', { name: 'Delete' })); });
         await settle(400);
         expect(disk(A).failureGroupState.groups.map((g: any) => g.no)).toEqual([0, 1, 3]);
         expect(disk(A).failureGroupState.models).toHaveLength(1); // the TAG1 model is untouched

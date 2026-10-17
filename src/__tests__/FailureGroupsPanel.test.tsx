@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent, act } from '@testing-library/react';
+import { render, screen, fireEvent, act, within } from '@testing-library/react';
 import FailureGroupsPanel from '../components/dashboard/FailureGroupsPanel';
 import * as fgSummary from '../utils/failureGroupSummary';
 
@@ -664,10 +664,22 @@ describe('FailureGroupsPanel', () => {
     });
 
     describe('deleting a group', () => {
-        it('calls onDeleteGroup immediately on click, with no confirmation dialog (2026-08-31: no confirmations anywhere in the app, per explicit user request)', () => {
+        // 2026-10-17: deleting a group now deletes the models only in it, with their saved files —
+        // an exception to the 2026-08-31 "no confirmations" rule, chosen by the user with this
+        // behaviour: the trash asks first and says how many models go.
+        it('the trash opens an inline confirm that says how many models are deleted / kept; Delete calls onDeleteGroup, Cancel does not', () => {
             const onDeleteGroup = vi.fn();
             render(<FailureGroupsPanel {...makeProps({ onDeleteGroup })} />);
             fireEvent.click(screen.getByTitle('Delete group'));
+            expect(onDeleteGroup).not.toHaveBeenCalled();
+            const confirm = screen.getByTestId('fg-delete-confirm');
+            expect(confirm.getAttribute('role')).toBe('alertdialog');
+            expect(confirm.textContent).toMatch(/^Delete .+\?/);
+            fireEvent.click(within(confirm).getByRole('button', { name: 'Cancel' }));
+            expect(screen.queryByTestId('fg-delete-confirm')).toBeNull();
+            expect(onDeleteGroup).not.toHaveBeenCalled();
+            fireEvent.click(screen.getByTitle('Delete group'));
+            fireEvent.click(within(screen.getByTestId('fg-delete-confirm')).getByRole('button', { name: 'Delete' }));
             expect(onDeleteGroup).toHaveBeenCalledWith(1);
         });
 
@@ -726,5 +738,15 @@ describe('FailureGroupsPanel', () => {
             expect(screen.getByText('A failure group named "group a" already exists')).toBeTruthy();
             expect(screen.getByPlaceholderText('New group name')).toBeTruthy();
         });
+    });
+});
+
+describe('groupDeleteCounts / groupDeleteSentence', () => {
+    it('counts the models only in the group (deleted) and those also elsewhere (kept), and says it', async () => {
+        const { groupDeleteCounts, groupDeleteSentence } = await import('../utils/modelOutputFiles');
+        const models = [{ groupNos: [1] }, { groupNos: [1] }, { groupNos: [1, 2] }, { groupNos: [2] }];
+        expect(groupDeleteCounts(models, 1)).toEqual({ deleted: 2, kept: 1 });
+        expect(groupDeleteSentence('FG-1', 2, 1)).toBe('Delete FG-1? 2 models used only by this group are deleted with their saved files. 1 model stays in its other groups.');
+        expect(groupDeleteSentence('FG-1', 0, 2)).toBe('Delete FG-1? 2 models stay in their other groups.');
     });
 });
