@@ -34,10 +34,14 @@ interface SensorDataPanelProps {
 
 const REQUIREMENTS = ['First column is date/time', 'Unique column names', 'Up to 2 GB per file'];
 
-/** Date/time shapes the reader understands (`csv_processor.rs` `parse_timestamp`): year first,
- *  `-` between the date parts, a space or `T` before the time, seconds / fractions / a `+07:00`
- *  offset optional. Slashes (`2025/01/31`) and day-first dates are NOT read. */
-export const SUPPORTED_TIMESTAMPS = ['2025-01-31 13:05:00', '2025-01-31 13:05', '2025-01-31T13:05:00', '2025-01-31 13:05:00.250', '2025-01-31 13:05:00+07:00'];
+/** Date/time shapes the reader understands (`csv_processor.rs`; since 2026-10-19 also the
+ *  year-last shapes Excel writes, with day/month order decided per file — a value over 12 is
+ *  the day; otherwise the order that keeps the rows in sequence). The Rust test
+ *  `the_timestamp_shapes_the_import_page_lists_are_the_ones_parsed` keeps this list true. */
+export const SUPPORTED_TIMESTAMPS = [
+  '2025-01-31 13:05:00', '2025-01-31T13:05:00', '2025-01-31 13:05:00+07:00', '2025/01/31 13:05:00',
+  '1/31/2025 13:05', '31/01/2025 13:05', '31.01.2025 13:05', '1/31/2025 1:05 PM',
+];
 
 /**
  * Two or more files are merged row by row on the TEXT of their timestamps, so the same moment
@@ -65,7 +69,7 @@ function TimestampFormatNote({ T }: { T: Tokens }) {
           {SUPPORTED_TIMESTAMPS.map((f) => <span key={f} style={code}>{f}</span>)}
         </div>
         <div style={{ marginTop: 4, color: T.textFaint }}>
-          Year first with <span style={{ fontFamily: mono }}>-</span>. Dates with <span style={{ fontFamily: mono }}>/</span> (<span style={{ fontFamily: mono }}>31/01/2025</span>, <span style={{ fontFamily: mono }}>2025/01/31</span>) are not read. A Buddhist-era year (<span style={{ fontFamily: mono }}>2568-01-31</span>) is converted to <span style={{ fontFamily: mono }}>2025</span>.
+          Day/month order is read from the file: a number over 12 is the day; if none is, the order that keeps the rows in sequence — the box above says which was used. The year needs 4 digits (<span style={{ fontFamily: mono }}>31/01/25</span> is not read). A Buddhist-era year (<span style={{ fontFamily: mono }}>2568</span>) is converted to <span style={{ fontFamily: mono }}>2025</span>.
         </div>
       </div>
     </div>

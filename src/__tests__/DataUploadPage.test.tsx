@@ -438,8 +438,13 @@ describe('B. File selection', () => {
     expect(note.getAttribute('role')).toBe('note');
     expect(note.textContent).toMatch(/Every file must write the date\/time the same way/);
     const shapes = [...screen.getByTestId('supported-timestamps').querySelectorAll('span')].slice(1).map(x => x.textContent);
-    expect(shapes).toEqual(['2025-01-31 13:05:00', '2025-01-31 13:05', '2025-01-31T13:05:00', '2025-01-31 13:05:00.250', '2025-01-31 13:05:00+07:00']);
-    expect(note.textContent).toMatch(/31\/01\/2025.*not read/);
+    expect(shapes).toEqual([
+      '2025-01-31 13:05:00', '2025-01-31T13:05:00', '2025-01-31 13:05:00+07:00', '2025/01/31 13:05:00',
+      '1/31/2025 13:05', '31/01/2025 13:05', '31.01.2025 13:05', '1/31/2025 1:05 PM',
+    ]);
+    // 2026-10-19: year-last dates are read; the order rule is stated, 2-digit years are not read
+    expect(note.textContent).toMatch(/a number over 12 is the day/);
+    expect(note.textContent).toMatch(/31\/01\/25 is not read/);
   });
 
   it('B11. clicking remove on a file row calls removeFile(path)', () => {

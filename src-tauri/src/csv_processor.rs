@@ -37,7 +37,9 @@ pub struct ColumnarData {
     /// the merge step.
     pub headers: Vec<String>,
     /// Timestamp text per row, round-tripped to the frontend as-is — EXCEPT
-    /// a detected Buddhist-Era year (see [`normalize_buddhist_era`]), which
+    /// a non-ISO shape (`1/2/2026 0:05`, `2026/01/02 …`, AM/PM), which is
+    /// rewritten to `YYYY-MM-DD HH:MM:SS[.f]` per file at read time
+    /// ([`normalize_file_timestamps`]), and a detected Buddhist-Era year (see [`normalize_buddhist_era`]), which
     /// `from_parts` rewrites to Gregorian here too, not just in `ts_parsed`.
     /// Keeping this text and `ts_parsed` derived from the exact same
     /// (possibly-corrected) string is what keeps Raw-mode display (which
@@ -212,16 +214,44 @@ fn buddhist_era_warning<'a>(timestamps: impl IntoIterator<Item = &'a str>) -> Op
 /// or `None` if no format matches. Single source of truth for every
 /// timestamp parse in the app (load-time row parsing and per-query filter
 /// bounds alike).
+///
+/// Reads the year-first ISO shapes only (plus a trailing `Z`, read as the
+/// wall clock written — the same way a `+07:00` offset is read). The non-ISO
+/// shapes (`M/D/YYYY`, `D.M.YYYY`, `YYYY/MM/DD`, AM/PM …) are rewritten to
+/// ISO text per file at read time by [`normalize_file_timestamps`] — the
+/// day/month order of `A/B/YYYY` can only be decided from the whole file, so
+/// a single string can never be read here.
 pub fn parse_timestamp(s: &str) -> Option<chrono::NaiveDateTime> {
+    parse_iso_timestamp(s).or_else(|| {
+        // `…Z` (UTC designator): the app reads the wall clock as written,
+        // exactly like `DateTime::naive_local()` does for `+07:00` below.
+        let rest = s.strip_suffix('Z').or_else(|| s.strip_suffix('z'))?;
+        if rest.ends_with(|c: char| c.is_ascii_digit()) {
+            parse_naive_iso(rest)
+        } else {
+            None
+        }
+    })
+}
+
+/// The offset-less ISO shapes.
+fn parse_naive_iso(s: &str) -> Option<chrono::NaiveDateTime> {
     chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S%.f")
         .or_else(|_| chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S"))
         .or_else(|_| chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M"))
         .or_else(|_| chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S%.f"))
         .or_else(|_| chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S"))
         .or_else(|_| chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M"))
-        .or_else(|_| {
-            chrono::DateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S%:z").map(|dt| dt.naive_local())
-        })
+        .ok()
+}
+
+/// Offset-less ISO, then ISO with a `±HH:MM` offset (wall clock as written).
+fn parse_iso_timestamp(s: &str) -> Option<chrono::NaiveDateTime> {
+    if let Some(dt) = parse_naive_iso(s) {
+        return Some(dt);
+    }
+    chrono::DateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S%:z")
+        .map(|dt| dt.naive_local())
         .or_else(|_| {
             chrono::DateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S%:z").map(|dt| dt.naive_local())
         })
@@ -245,6 +275,401 @@ pub fn ts_to_micros(dt: chrono::NaiveDateTime) -> i64 {
 /// bounds. `None` only for values outside chrono's representable range.
 pub fn micros_to_naive(us: i64) -> Option<chrono::NaiveDateTime> {
     chrono::DateTime::from_timestamp_micros(us).map(|dt| dt.naive_utc())
+}
+
+// ── Non-ISO timestamp shapes (read per file, rewritten to ISO text) ────────
+//
+// Excel and friends export dates as `1/2/2026 0:05` (US), `2/1/2026 0:05`
+// (most other locales), `2.1.2026`, `2026/01/02 …`, `… 12:05 AM`. These are
+// read ONCE per file, right after the file is read and BEFORE the multi-file
+// merge (which keys rows by timestamp TEXT), and rewritten to
+// `YYYY-MM-DD HH:MM:SS[.f]` so every later step (merge order, `from_parts`'
+// one-time parse, the frontend's year-first `readWallClock`) sees ISO text.
+//
+// The year is written out AS GIVEN: a Buddhist-Era year (`1/2/2569`) stays
+// `2569-01-02 …` here and is converted exactly once, by `from_parts`'
+// `normalize_buddhist_era`, which also produces the BE load-report warning.
+
+/// Day/month order of an `A/B/YYYY` date — decided per FILE, never per row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DayMonthOrder {
+    /// `A` is the month (`M/D/YYYY`, Excel's US default).
+    MonthFirst,
+    /// `A` is the day (`D/M/YYYY`).
+    DayFirst,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LooseDate {
+    /// `YYYY/MM/DD` — unambiguous.
+    YearFirst { y: i32, m: u32, d: u32 },
+    /// `A/B/YYYY`, `A.B.YYYY`, `A-B-YYYY` — order decided per file.
+    YearLast { a: u32, b: u32, y: i32 },
+}
+
+/// One non-ISO timestamp, split into fields (24-hour clock already applied).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct LooseTs {
+    date: LooseDate,
+    h: u32,
+    mi: u32,
+    s: u32,
+    /// Fractional-second digits as written (`frac_len` digits, leading zeros
+    /// kept through the width), so the rewritten text keeps them verbatim.
+    frac: u32,
+    frac_len: u8,
+}
+
+fn digits_in(s: &str, min: usize, max: usize) -> Option<u32> {
+    if (min..=max).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_digit()) {
+        s.parse().ok()
+    } else {
+        None
+    }
+}
+
+/// `H:MM`, `H:MM:SS`, `H:MM:SS.f`, each optionally followed by ` AM`/` PM`.
+fn parse_loose_time(t: &str) -> Option<(u32, u32, u32, u32, u8)> {
+    let mut toks = t.split_whitespace();
+    let clock = toks.next()?;
+    let meridiem = match toks.next() {
+        None => None,
+        Some(m) if m.eq_ignore_ascii_case("AM") => Some(false),
+        Some(m) if m.eq_ignore_ascii_case("PM") => Some(true),
+        Some(_) => return None,
+    };
+    if toks.next().is_some() {
+        return None;
+    }
+    let mut parts = clock.split(':');
+    let mut h = digits_in(parts.next()?, 1, 2)?;
+    let mi = digits_in(parts.next()?, 2, 2)?;
+    let (s, frac, frac_len) = match parts.next() {
+        None => (0, 0, 0),
+        Some(sec) => {
+            let (whole, f) = match sec.split_once('.') {
+                Some((w, f)) => (w, Some(f)),
+                None => (sec, None),
+            };
+            let s = digits_in(whole, 2, 2)?;
+            match f {
+                None => (s, 0, 0),
+                Some(f) => (s, digits_in(f, 1, 9)?, f.len() as u8),
+            }
+        }
+    };
+    if parts.next().is_some() || mi > 59 || s > 59 {
+        return None;
+    }
+    match meridiem {
+        // 12-hour clock: 12 AM = 00, 1..11 AM as is, 12 PM = 12, 1..11 PM + 12.
+        Some(pm) => {
+            if !(1..=12).contains(&h) {
+                return None;
+            }
+            h = h % 12 + if pm { 12 } else { 0 };
+        }
+        None => {
+            if h > 23 {
+                return None;
+            }
+        }
+    }
+    Some((h, mi, s, frac, frac_len))
+}
+
+/// Split a non-ISO timestamp into fields, or `None` when `s` is not one of
+/// the non-ISO shapes (ISO text — `YYYY-MM-DD…` — is never matched here).
+/// Field ranges (month ≤ 12, real calendar day) are NOT checked yet: that
+/// depends on the file's day/month order.
+fn parse_loose(s: &str) -> Option<LooseTs> {
+    let s = s.trim();
+    let (date_part, rest) = match s.find(char::is_whitespace) {
+        Some(i) => (&s[..i], s[i..].trim()),
+        None => (s, ""),
+    };
+    let sep = date_part
+        .bytes()
+        .find(|b| matches!(b, b'/' | b'.' | b'-'))? as char;
+    let mut it = date_part.split(sep);
+    let (p1, p2, p3) = (it.next()?, it.next()?, it.next()?);
+    if it.next().is_some() {
+        return None;
+    }
+    let date = if sep == '/' && p1.len() == 4 {
+        LooseDate::YearFirst {
+            y: digits_in(p1, 4, 4)? as i32,
+            m: digits_in(p2, 1, 2)?,
+            d: digits_in(p3, 1, 2)?,
+        }
+    } else {
+        LooseDate::YearLast {
+            a: digits_in(p1, 1, 2)?,
+            b: digits_in(p2, 1, 2)?,
+            y: digits_in(p3, 4, 4)? as i32,
+        }
+    };
+    let (h, mi, sec, frac, frac_len) = if rest.is_empty() {
+        (0, 0, 0, 0, 0)
+    } else {
+        parse_loose_time(rest)?
+    };
+    Some(LooseTs { date, h, mi, s: sec, frac, frac_len })
+}
+
+impl LooseTs {
+    /// (year as written, month, day) under `order`.
+    fn ymd(&self, order: DayMonthOrder) -> (i32, u32, u32) {
+        match self.date {
+            LooseDate::YearFirst { y, m, d } => (y, m, d),
+            LooseDate::YearLast { a, b, y } => match order {
+                DayMonthOrder::MonthFirst => (y, a, b),
+                DayMonthOrder::DayFirst => (y, b, a),
+            },
+        }
+    }
+
+    /// The instant under `order`, validated against the calendar with the
+    /// Buddhist-Era year already corrected (BE 2567-02-29 is a real day).
+    fn to_naive(self, order: DayMonthOrder) -> Option<chrono::NaiveDateTime> {
+        let (y, m, d) = self.ymd(order);
+        let ce = if y >= 2400 { y - 543 } else { y };
+        let nanos = self.frac * 10u32.pow(9 - self.frac_len as u32);
+        chrono::NaiveDate::from_ymd_opt(ce, m, d)?.and_hms_nano_opt(self.h, self.mi, self.s, nanos)
+    }
+
+    /// `YYYY-MM-DD HH:MM:SS[.f]` (year as written), or `None` when the date
+    /// does not exist under `order` (e.g. `2/30/2026`, `13/13/2026`).
+    fn to_iso_text(self, order: DayMonthOrder) -> Option<String> {
+        self.to_naive(order)?;
+        let (y, m, d) = self.ymd(order);
+        let mut out = format!(
+            "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
+            y, m, d, self.h, self.mi, self.s
+        );
+        if self.frac_len > 0 {
+            out.push_str(&format!(".{:0w$}", self.frac, w = self.frac_len as usize));
+        }
+        Some(out)
+    }
+}
+
+/// Evidence about a file's year-last dates (pass 1 of
+/// [`normalize_file_timestamps`]).
+#[derive(Default, Clone, Copy)]
+struct OrderEvidence {
+    /// Rows in the `A/B/YYYY` shape.
+    year_last: usize,
+    /// Rows where only the day-first reading is possible (`A > 12 ≥ B`).
+    day_first: usize,
+    /// Rows where only the month-first reading is possible (`B > 12 ≥ A`).
+    month_first: usize,
+    /// Some year-last row has `A != B` (otherwise both readings are equal).
+    differ: bool,
+}
+
+impl OrderEvidence {
+    fn add(mut self, l: &LooseTs) -> Self {
+        if let LooseDate::YearLast { a, b, .. } = l.date {
+            self.year_last += 1;
+            if a > 12 && b <= 12 {
+                self.day_first += 1;
+            }
+            if b > 12 && a <= 12 {
+                self.month_first += 1;
+            }
+            self.differ |= a != b;
+        }
+        self
+    }
+    fn merge(self, o: Self) -> Self {
+        OrderEvidence {
+            year_last: self.year_last + o.year_last,
+            day_first: self.day_first + o.day_first,
+            month_first: self.month_first + o.month_first,
+            differ: self.differ || o.differ,
+        }
+    }
+}
+
+/// How well the rows sit in time when the year-last dates are read with
+/// `order`: (backwards steps between consecutive readable rows in file
+/// order, total size of all steps in seconds). Smaller is more plausible:
+/// a sensor log runs forwards in small regular steps, so the wrong reading
+/// either steps backwards or jumps by weeks (`1/1 23:55` → `1/2 0:00` is
+/// 5 minutes as month/day but a month as day/month — in order both ways).
+fn order_fit(timestamps: &[Option<String>], order: DayMonthOrder) -> (usize, u128) {
+    let mut prev: Option<chrono::NaiveDateTime> = None;
+    let mut back = 0usize;
+    let mut travel = 0u128;
+    for t in timestamps.iter().flatten() {
+        let cur = match parse_loose(t) {
+            Some(l) => l.to_naive(order),
+            None => parse_timestamp(t),
+        };
+        if let Some(cur) = cur {
+            if let Some(p) = prev {
+                if cur < p {
+                    back += 1;
+                }
+                travel += (cur - p).num_seconds().unsigned_abs() as u128;
+            }
+            prev = Some(cur);
+        }
+    }
+    (back, travel)
+}
+
+fn order_name(order: DayMonthOrder) -> &'static str {
+    match order {
+        DayMonthOrder::MonthFirst => "month/day/year",
+        DayMonthOrder::DayFirst => "day/month/year",
+    }
+}
+
+/// The date part (before the first space) of a raw timestamp.
+fn date_part_of(s: &str) -> &str {
+    let s = s.trim();
+    s.split_whitespace().next().unwrap_or(s)
+}
+
+/// Rewrite one file's non-ISO timestamps to ISO text in place and return the
+/// load-report warnings this produced (empty for a file with ISO timestamps
+/// only — those are never touched).
+///
+/// Day/month order of `A/B/YYYY` is decided for the WHOLE file:
+/// - some `A > 12` → day/month; some `B > 12` → month/day;
+/// - both → the file contradicts itself: every year-last row is left
+///   unreadable ([`TS_MISSING`]) and a warning says so;
+/// - neither → the reading with fewer backwards steps between consecutive
+///   readable rows wins, then the one whose rows sit closer together
+///   ([`order_fit`]); a full tie → month/day (Excel's default), flagged as
+///   a guess.
+///
+/// A row whose date does not exist under the chosen order keeps its original
+/// text and so becomes [`TS_MISSING`] (counted in its own warning).
+pub(crate) fn normalize_file_timestamps(
+    file_name: &str,
+    timestamps: &mut [Option<String>],
+) -> Vec<String> {
+    // Cheap exit for the common ISO file: `parse_loose` rejects `YYYY-…` at
+    // its first field, and `any` stops at the first non-ISO row.
+    if !timestamps
+        .par_iter()
+        .any(|t| t.as_deref().is_some_and(|s| parse_loose(s).is_some()))
+    {
+        return Vec::new();
+    }
+
+    let ev = timestamps
+        .par_iter()
+        .filter_map(|t| t.as_deref().and_then(parse_loose))
+        .fold(OrderEvidence::default, |acc, l| acc.add(&l))
+        .reduce(OrderEvidence::default, OrderEvidence::merge);
+
+    let mut warnings = Vec::new();
+    let conflict = ev.day_first > 0 && ev.month_first > 0;
+    let (order, guessed) = if conflict || ev.day_first == 0 && ev.month_first == 0 {
+        if conflict || ev.year_last == 0 || !ev.differ {
+            // Conflict: order unused for year-last rows. No year-last rows,
+            // or every A == B: both readings are the same — nothing to guess.
+            (DayMonthOrder::MonthFirst, false)
+        } else {
+            let mf = order_fit(timestamps, DayMonthOrder::MonthFirst);
+            let df = order_fit(timestamps, DayMonthOrder::DayFirst);
+            if df < mf {
+                (DayMonthOrder::DayFirst, false)
+            } else {
+                (DayMonthOrder::MonthFirst, df == mf)
+            }
+        }
+    } else if ev.day_first > 0 {
+        (DayMonthOrder::DayFirst, false)
+    } else {
+        (DayMonthOrder::MonthFirst, false)
+    };
+
+    if conflict {
+        let example = |want_day_first: bool| {
+            timestamps
+                .iter()
+                .flatten()
+                .find(|t| {
+                    matches!(parse_loose(t).map(|l| l.date), Some(LooseDate::YearLast { a, b, .. })
+                        if if want_day_first { a > 12 && b <= 12 } else { b > 12 && a <= 12 })
+                })
+                .map(|t| date_part_of(t).to_string())
+                .unwrap_or_default()
+        };
+        warnings.push(format!(
+            "Dates in {} mix day/month/year ({}) and month/day/year ({}) — the order cannot be decided, so {} row(s) with a year-last date could not be read",
+            file_name,
+            example(true),
+            example(false),
+            ev.year_last
+        ));
+    }
+
+    // Example for the order warning, taken from the ORIGINAL text (pass 2
+    // overwrites it): the first readable year-last row, preferring one with
+    // A != B (it shows which number became the month). Output shown in CE.
+    let example = if ev.year_last > 0 && !conflict {
+        let mut first: Option<(String, String)> = None;
+        let mut telling: Option<(String, String)> = None;
+        for s in timestamps.iter().flatten() {
+            let Some(l) = parse_loose(s) else { continue };
+            let LooseDate::YearLast { a, b, .. } = l.date else { continue };
+            let Some(iso) = l.to_iso_text(order) else { continue };
+            let shown = normalize_buddhist_era(iso[..10].to_string());
+            let pair = (date_part_of(s).to_string(), shown);
+            if a != b {
+                telling = Some(pair);
+                break;
+            }
+            if first.is_none() {
+                first = Some(pair);
+            }
+        }
+        telling.or(first)
+    } else {
+        None
+    };
+
+    // Pass 2: rewrite in place. Rows left alone (conflict / impossible date)
+    // keep their original text, which `parse_timestamp` does not read.
+    let invalid = AtomicUsize::new(0);
+    timestamps.par_iter_mut().for_each(|t| {
+        let Some(s) = t.as_deref() else { return };
+        let Some(l) = parse_loose(s) else { return };
+        if conflict && matches!(l.date, LooseDate::YearLast { .. }) {
+            return;
+        }
+        match l.to_iso_text(order) {
+            Some(iso) => *t = Some(iso),
+            None => {
+                invalid.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+    });
+
+    if ev.year_last > 0 && !conflict {
+        let mut w = format!("Dates in {} read as {}", file_name, order_name(order));
+        if let Some((raw, shown)) = example {
+            w.push_str(&format!(" ({} → {})", raw, shown));
+        }
+        if guessed {
+            w.push_str(" — could not be told apart from the values; check the dates");
+        }
+        warnings.push(w);
+    }
+    let invalid = invalid.into_inner();
+    if invalid > 0 {
+        warnings.push(format!(
+            "{} timestamp(s) in {} are not real dates and could not be read",
+            invalid, file_name
+        ));
+    }
+    warnings
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -653,10 +1078,14 @@ pub fn read_merge_csvs_with_progress(
     // 1. Read all files individually (with stats)
     let mut results = Vec::new();
     let mut files: Vec<CsvFileInfo> = Vec::with_capacity(file_count);
+    let mut date_warnings: Vec<String> = Vec::new();
     for (i, path) in paths.iter().enumerate() {
         let name = file_name_only(path);
         on_progress(CsvLoadProgress::reading(i, file_count, &name, false));
-        let r = read_csv_with_stats(path)?;
+        let mut r = read_csv_with_stats(path)?;
+        // Non-ISO shapes (`1/2/2026 0:05`, `2026/01/02 …`) → ISO text, per
+        // file and before the merge, which keys rows by timestamp TEXT.
+        date_warnings.extend(normalize_file_timestamps(&name, &mut r.data.timestamps));
         // Several files: each file's own range needs its own parse (the
         // merged `ts_parsed` no longer knows which file a row came from).
         // One file: filled from the merged `ts_parsed` below, no extra pass.
@@ -696,8 +1125,11 @@ pub fn read_merge_csvs_with_progress(
             );
         }
         merged.files = files;
+        merged.warnings.splice(0..0, date_warnings);
         return Ok(merged);
     }
+
+    warnings.extend(date_warnings);
 
     // Buddhist-Era detection across every file's raw timestamps, before any
     // merge/parse step touches them — see `buddhist_era_warning`'s docstring.
@@ -1371,17 +1803,257 @@ pub fn load_metadata(path: &str) -> Result<Vec<SensorMetadata>, String> {
 mod tests {
     use super::*;
 
+    /// What one file's timestamp column reads as: the per-file rewrite, then
+    /// the same parse `from_parts` runs (Buddhist-Era year corrected first).
+    fn read_file_ts(raw: &[&str]) -> (Vec<Option<chrono::NaiveDateTime>>, Vec<String>, Vec<String>) {
+        let mut ts: Vec<Option<String>> = raw.iter().map(|s| Some(s.to_string())).collect();
+        let warnings = normalize_file_timestamps("run-01.csv", &mut ts);
+        let texts: Vec<String> = ts.iter().map(|t| t.clone().unwrap()).collect();
+        let parsed = texts
+            .iter()
+            .map(|t| parse_timestamp(&normalize_buddhist_era(t.clone())))
+            .collect();
+        (parsed, texts, warnings)
+    }
+
+    fn dt(s: &str) -> chrono::NaiveDateTime {
+        parse_timestamp(s).unwrap()
+    }
+
     // The Import page lists these as the supported date/time shapes
-    // (`SensorDataPanel.tsx` SUPPORTED_TIMESTAMPS): each must parse, and the
-    // shapes it names as NOT read must not.
+    // (`SensorDataPanel.tsx` SUPPORTED_TIMESTAMPS): each must be read (one
+    // file of that shape) to the 31 Jan 2025 13:05 wall clock, and the shapes
+    // listed as NOT read must not be.
     #[test]
     fn the_timestamp_shapes_the_import_page_lists_are_the_ones_parsed() {
-        for s in ["2025-01-31 13:05:00", "2025-01-31 13:05", "2025-01-31T13:05:00", "2025-01-31 13:05:00.250", "2025-01-31 13:05:00+07:00"] {
-            assert!(parse_timestamp(s).is_some(), "{s} should parse");
+        let want = dt("2025-01-31 13:05:00");
+        for s in [
+            "2025-01-31 13:05:00",
+            "2025-01-31 13:05",
+            "2025-01-31T13:05:00",
+            "2025-01-31 13:05:00+07:00",
+            "2025-01-31T13:05:00Z",
+            "2025/01/31 13:05:00",
+            "1/31/2025 13:05",
+            "31/01/2025 13:05",
+            "31.01.2025 13:05",
+            "31-01-2025 13:05",
+            "1/31/2025 1:05 PM",
+        ] {
+            let (p, _, _) = read_file_ts(&[s]);
+            assert_eq!(p[0], Some(want), "{s} should read as 2025-01-31 13:05");
         }
-        for s in ["31/01/2025 13:05", "2025/01/31 13:05:00"] {
-            assert!(parse_timestamp(s).is_none(), "{s} is listed as not read");
+        let (p, _, _) = read_file_ts(&["2025-01-31 13:05:00.250"]);
+        assert_eq!(p[0], Some(dt("2025-01-31 13:05:00.250")));
+        let (p, _, _) = read_file_ts(&["31/01/2025"]);
+        assert_eq!(p[0], Some(dt("2025-01-31 00:00:00")));
+        for s in ["Jan 31 2025 13:05", "31/01/25 13:05", "1738328700", "2025-01-31 25:00"] {
+            let (p, _, _) = read_file_ts(&[s]);
+            assert_eq!(p[0], None, "{s} is listed as not read");
         }
+    }
+
+    // ── Non-ISO shapes: per-row field parsing ──────────────────────────────
+
+    #[test]
+    fn each_non_iso_shape_reads_to_the_right_wall_clock() {
+        let mf = DayMonthOrder::MonthFirst;
+        let txt = |s: &str| parse_loose(s).and_then(|l| l.to_iso_text(mf));
+        assert_eq!(txt("1/2/2026 0:05").as_deref(), Some("2026-01-02 00:05:00"));
+        assert_eq!(txt("01/02/2026 23:55:07").as_deref(), Some("2026-01-02 23:55:07"));
+        assert_eq!(txt("1/2/2026 0:05:09.050").as_deref(), Some("2026-01-02 00:05:09.050"));
+        assert_eq!(txt("1.2.2026 7:00").as_deref(), Some("2026-01-02 07:00:00"));
+        assert_eq!(txt("1-2-2026 7:00").as_deref(), Some("2026-01-02 07:00:00"));
+        assert_eq!(txt("2026/1/2 7:00").as_deref(), Some("2026-01-02 07:00:00"));
+        assert_eq!(txt("2026/01/02 07:00:00.5").as_deref(), Some("2026-01-02 07:00:00.5"));
+        // A date with no time is midnight.
+        assert_eq!(txt("1/2/2026").as_deref(), Some("2026-01-02 00:00:00"));
+        assert_eq!(txt("2026/01/02").as_deref(), Some("2026-01-02 00:00:00"));
+        // DayFirst swaps A and B.
+        let df = parse_loose("1/2/2026 0:05").unwrap().to_iso_text(DayMonthOrder::DayFirst);
+        assert_eq!(df.as_deref(), Some("2026-02-01 00:05:00"));
+        // ISO is never a "loose" shape.
+        assert!(parse_loose("2026-01-02 00:05:00").is_none());
+        assert!(parse_loose("2026-01-02T00:05:00Z").is_none());
+    }
+
+    #[test]
+    fn am_pm_twelve_o_clock_edges() {
+        let txt = |s: &str| parse_loose(s).and_then(|l| l.to_iso_text(DayMonthOrder::MonthFirst));
+        assert_eq!(txt("1/2/2026 12:05 AM").as_deref(), Some("2026-01-02 00:05:00"));
+        assert_eq!(txt("1/2/2026 12:05 PM").as_deref(), Some("2026-01-02 12:05:00"));
+        assert_eq!(txt("1/2/2026 1:05 AM").as_deref(), Some("2026-01-02 01:05:00"));
+        assert_eq!(txt("1/2/2026 11:59:59 PM").as_deref(), Some("2026-01-02 23:59:59"));
+        assert_eq!(txt("1/2/2026 1:05 pm").as_deref(), Some("2026-01-02 13:05:00"));
+        // 0 or 13 o'clock with AM/PM is not a 12-hour time.
+        assert!(parse_loose("1/2/2026 0:05 AM").is_none());
+        assert!(parse_loose("1/2/2026 13:05 PM").is_none());
+    }
+
+    #[test]
+    fn a_trailing_z_is_read_as_the_wall_clock_written() {
+        assert_eq!(parse_timestamp("2026-02-09T23:50:00Z"), Some(dt("2026-02-09 23:50:00")));
+        assert_eq!(parse_timestamp("2026-02-09 23:50:00.5Z"), Some(dt("2026-02-09 23:50:00.5")));
+        assert_eq!(parse_timestamp("2026-02-09T23:50Z"), Some(dt("2026-02-09 23:50:00")));
+        // Same convention as an explicit offset: the clock as written.
+        assert_eq!(
+            parse_timestamp("2026-02-09T23:50:00+07:00"),
+            parse_timestamp("2026-02-09T23:50:00Z")
+        );
+        assert_eq!(parse_timestamp("Z"), None);
+    }
+
+    // ── Non-ISO shapes: day/month order per file ───────────────────────────
+
+    #[test]
+    fn a_day_over_12_in_the_first_field_means_day_month() {
+        let (p, texts, w) = read_file_ts(&["12/1/2026 0:00", "13/1/2026 0:00", "1/2/2026 0:00"]);
+        assert_eq!(texts, vec!["2026-01-12 00:00:00", "2026-01-13 00:00:00", "2026-02-01 00:00:00"]);
+        assert!(p.iter().all(|x| x.is_some()));
+        assert_eq!(w, vec!["Dates in run-01.csv read as day/month/year (12/1/2026 → 2026-01-12)"]);
+    }
+
+    #[test]
+    fn a_day_over_12_in_the_second_field_means_month_day() {
+        let (_, texts, w) = read_file_ts(&["1/12/2026 0:00", "1/13/2026 0:00"]);
+        assert_eq!(texts, vec!["2026-01-12 00:00:00", "2026-01-13 00:00:00"]);
+        assert_eq!(w, vec!["Dates in run-01.csv read as month/day/year (1/12/2026 → 2026-01-12)"]);
+    }
+
+    #[test]
+    fn all_values_12_or_less_picks_the_reading_that_is_in_order() {
+        // 11 Feb, 12 Feb, 1 Mar as D/M (in order) = Nov 2, Dec 2, Jan 3 as
+        // M/D (one step backwards) → D/M wins.
+        let (_, texts, w) = read_file_ts(&["11/2/2026", "12/2/2026", "1/3/2026"]);
+        assert_eq!(texts, vec!["2026-02-11 00:00:00", "2026-02-12 00:00:00", "2026-03-01 00:00:00"]);
+        assert_eq!(w, vec!["Dates in run-01.csv read as day/month/year (11/2/2026 → 2026-02-11)"]);
+    }
+
+    #[test]
+    fn a_true_tie_reads_month_day_and_says_it_was_a_guess() {
+        let (_, texts, w) = read_file_ts(&["3/4/2026 0:00"]);
+        assert_eq!(texts, vec!["2026-03-04 00:00:00"]);
+        assert_eq!(
+            w,
+            vec!["Dates in run-01.csv read as month/day/year (3/4/2026 → 2026-03-04) — could not be told apart from the values; check the dates"]
+        );
+    }
+
+    #[test]
+    fn identical_day_and_month_everywhere_is_not_a_guess() {
+        let (_, texts, w) = read_file_ts(&["1/1/2026 0:00", "1/1/2026 0:05"]);
+        assert_eq!(texts, vec!["2026-01-01 00:00:00", "2026-01-01 00:05:00"]);
+        assert_eq!(w, vec!["Dates in run-01.csv read as month/day/year (1/1/2026 → 2026-01-01)"]);
+    }
+
+    #[test]
+    fn contradicting_day_month_rows_are_unreadable_with_a_warning() {
+        let raw = ["13/1/2026 0:00", "1/13/2026 0:00", "1/2/2026 0:00", "2026/01/05 00:00"];
+        let (p, texts, w) = read_file_ts(&raw);
+        // Every year-last row stays as written and so reads as missing; the
+        // unambiguous year-first row is still read.
+        assert_eq!(&texts[..3], &raw[..3]);
+        assert_eq!(&p[..3], &[None, None, None]);
+        assert_eq!(texts[3], "2026-01-05 00:00:00");
+        assert_eq!(
+            w,
+            vec!["Dates in run-01.csv mix day/month/year (13/1/2026) and month/day/year (1/13/2026) — the order cannot be decided, so 3 row(s) with a year-last date could not be read"]
+        );
+    }
+
+    #[test]
+    fn an_impossible_date_under_the_file_order_is_unreadable_and_counted() {
+        let (p, texts, w) = read_file_ts(&["1/13/2026 0:00", "2/30/2026 0:00"]);
+        assert_eq!(texts[1], "2/30/2026 0:00");
+        assert_eq!(p[1], None);
+        assert_eq!(w.len(), 2);
+        assert_eq!(w[1], "1 timestamp(s) in run-01.csv are not real dates and could not be read");
+    }
+
+    #[test]
+    fn year_first_slash_only_is_rewritten_without_an_order_warning() {
+        let (_, texts, w) = read_file_ts(&["2026/01/02 00:05:00", "2026/01/02 00:10:00"]);
+        assert_eq!(texts, vec!["2026-01-02 00:05:00", "2026-01-02 00:10:00"]);
+        assert!(w.is_empty());
+    }
+
+    #[test]
+    fn iso_files_are_left_untouched() {
+        let raw = ["2026-02-09T23:50:00Z", "2026-02-09 23:55", "2567-02-29 00:00:00+07:00"];
+        let mut ts: Vec<Option<String>> = raw.iter().map(|s| Some(s.to_string())).collect();
+        assert!(normalize_file_timestamps("a.csv", &mut ts).is_empty());
+        assert_eq!(ts.iter().map(|t| t.as_deref().unwrap()).collect::<Vec<_>>(), raw);
+    }
+
+    #[test]
+    fn a_buddhist_era_year_in_a_slash_date_is_converted_once() {
+        // BE 2567-02-29 = CE 2024-02-29 (a real leap day) — validated in CE.
+        let (p, texts, w) = read_file_ts(&["1/2/2569 0:05", "2/29/2567 0:00"]);
+        // The rewrite keeps the year as written; `from_parts` converts it.
+        assert_eq!(texts, vec!["2569-01-02 00:05:00", "2567-02-29 00:00:00"]);
+        assert_eq!(p[0], Some(dt("2026-01-02 00:05:00")));
+        assert_eq!(p[1], Some(dt("2024-02-29 00:00:00")));
+        // The example is shown in CE.
+        assert_eq!(w, vec!["Dates in run-01.csv read as month/day/year (1/2/2569 → 2026-01-02)"]);
+    }
+
+    // ── Non-ISO shapes: whole load path ────────────────────────────────────
+
+    /// The real-app report (2026-10-19): 5-minute rows across midnight,
+    /// month/day/year as Excel writes it on a US PC. Every value is ≤ 12, so
+    /// the order is decided by which reading keeps the rows in order.
+    #[test]
+    fn the_reported_us_excel_file_reads_jan_1_to_jan_2() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = write_csv(
+            &dir,
+            "run-01.csv",
+            "timestamp,A\n1/1/2026 23:50,1\n1/1/2026 23:55,2\n1/2/2026 0:00,3\n1/2/2026 0:05,4\n",
+        );
+        let (m, rep) = load(vec![p]);
+        let texts: Vec<_> = m.data.timestamps.iter().map(|t| t.clone().unwrap()).collect();
+        assert_eq!(
+            texts,
+            vec!["2026-01-01 23:50:00", "2026-01-01 23:55:00", "2026-01-02 00:00:00", "2026-01-02 00:05:00"]
+        );
+        assert!(m.data.ts_parsed.iter().all(|&t| t != TS_MISSING));
+        assert_eq!(m.data.ts_parsed[3], ts_to_micros(dt("2026-01-02 00:05:00")));
+        assert_eq!(rep.interval_seconds, Some(300.0));
+        assert_eq!(
+            rep.warnings,
+            vec!["Dates in run-01.csv read as month/day/year (1/2/2026 → 2026-01-02)"]
+        );
+    }
+
+    #[test]
+    fn two_files_of_the_same_moments_in_different_shapes_merge_per_moment() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = write_csv(&dir, "us.csv", "timestamp,A\n1/13/2026 0:00,1\n1/13/2026 0:05,2\n");
+        let b = write_csv(
+            &dir,
+            "asia.csv",
+            "timestamp,B\n2026/01/13 00:00:00,10\n2026/01/13 00:05:00,20\n",
+        );
+        let (m, rep) = load(vec![a, b]);
+        assert_eq!(m.data.n_rows(), 2);
+        assert_eq!(m.data.timestamps[0].as_deref(), Some("2026-01-13 00:00:00"));
+        assert_eq!(row_vals(&m.data, 1), vec![None, Some(2.0), Some(20.0)]);
+        assert_eq!(rep.warnings[0], "Dates in us.csv read as month/day/year (1/13/2026 → 2026-01-13)");
+        // Per-file ranges are read from the rewritten text too.
+        assert_eq!(rep.files[0].start.as_deref(), Some("2026-01-13 00:00:00"));
+        assert_eq!(rep.files[1].end.as_deref(), Some("2026-01-13 00:05:00"));
+    }
+
+    #[test]
+    fn a_buddhist_era_slash_date_file_loads_in_ce_with_both_warnings() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = write_csv(&dir, "be.csv", "timestamp,A\n1/13/2569 0:05,1\n");
+        let (m, rep) = load(vec![p]);
+        assert_eq!(m.data.timestamps[0].as_deref(), Some("2026-01-13 00:05:00"));
+        assert_eq!(m.data.ts_parsed[0], ts_to_micros(dt("2026-01-13 00:05:00")));
+        assert_eq!(rep.warnings.len(), 2, "{:?}", rep.warnings);
+        assert_eq!(rep.warnings[0], "Dates in be.csv read as month/day/year (1/13/2569 → 2026-01-13)");
+        assert!(rep.warnings[1].starts_with("1 timestamp(s) used a Buddhist-Era year"));
     }
 
     /// Build a pre-merge ColumnarData from a row-major spec (readability):
