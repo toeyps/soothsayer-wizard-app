@@ -17,7 +17,7 @@
 | [`handover/`](handover/README.md) | บันทึกงานรายเดือน `YYYY-MM.md` (ต่อท้ายอย่างเดียว) | ทุก session — 1 งาน 1 บันทึก |
 | [`BACKLOG.md`](BACKLOG.md) | งานค้างที่ยืนยันแล้ว | ทุก session |
 | [`PERSISTENCE_PLAN.md`](PERSISTENCE_PLAN.md) | แผนการบันทึก workspace (อยู่ที่ root เพราะ `BACKLOG.md` ลิงก์ถึงด้วย path นี้) | — |
-| [`release/`](release/) | `CHANGELOG.md` — section ใหม่ทุกครั้งที่ build installer | `release-agent` |
+| [`release/`](release/) | `CHANGELOG.md` — section ใหม่ทุกครั้งที่ build installer · `Wizard_Release_Versions.txt` — สรุปทุกเวอร์ชันแบบเปิดด้วย Notepad (tag / commit / installer) | `release-agent` |
 | [`testing/`](testing/) | `MANUAL_TEST_PLAN.md` (ต้นฉบับ) → `manual-test-plan.html` (สร้างจาก .md ด้วย `scripts/build-manual-test-html.py`, เปิดในเบราว์เซอร์ได้เลย), `AUDIT_2026-10-14.md` (ผลตรวจแผนเทียบโค้ด + บั๊กที่สงสัย — แผนมี 2 ส่วน: ทีละฟังก์ชัน + workflow ผู้ใช้ WFA–WFH ซึ่งใช้ข้อมูลจาก `scripts/make-wf-testdata.py`), `MANUAL_TEST_NEW_SINCE_2026-10-02.md` (รายการทดสอบเฉพาะของใหม่ ณ ต้นเดือน), `RELEASE_0.5.0_TEST_REPORT.md` | `qa-agent` / ผู้ทดสอบ |
 | [`design/`](design/) | `DESIGN_SYSTEM.md`, `APP_MAP.md` และ `handoff/` (สเปกที่ส่งจากทีมออกแบบให้ทีม dev ทีละงาน) | `ui-design-lead` |
 | [`reference/`](reference/) | `tech-stack.html` (สรุป stack หน้าเดียว), `figma/` (SVG mockup รุ่นเก่า **ไม่ได้อัปเดตตามโค้ด** — อย่าแก้) | — |
