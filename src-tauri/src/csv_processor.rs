@@ -279,16 +279,27 @@ pub fn micros_to_naive(us: i64) -> Option<chrono::NaiveDateTime> {
 
 // ── Non-ISO timestamp shapes (read per file, rewritten to ISO text) ────────
 //
-// Excel and friends export dates as `1/2/2026 0:05` (US), `2/1/2026 0:05`
-// (most other locales), `2.1.2026`, `2026/01/02 …`, `… 12:05 AM`. These are
+// Real exports come in many shapes: `1/2/2026 0:05` (US Excel),
+// `2/1/2026 0:05` (most other locales), `01-Jan-25 12:00 AM` (historians),
+// `Mon, 01 Jan 2025 13:05:00 +0700` (RFC), `20250131130500` (compact),
+// `1 ม.ค. 2568 13:05 น.` (Thai), Excel serial numbers, Unix epochs … These are
 // read ONCE per file, right after the file is read and BEFORE the multi-file
 // merge (which keys rows by timestamp TEXT), and rewritten to
 // `YYYY-MM-DD HH:MM:SS[.f]` so every later step (merge order, `from_parts`'
 // one-time parse, the frontend's year-first `readWallClock`) sees ISO text.
+// Text already in a shape `parse_timestamp` reads ([`is_plain_iso`]) is
+// never touched.
+//
+// The parser is token based rather than one big pattern: the text is split
+// on whitespace, the decoration is peeled off (weekday, time zone, AM/PM,
+// Thai `น.`), the time token is taken off the end, and what is left must be
+// one of a small table of date shapes (see [`parse_date_tokens`]).
 //
 // The year is written out AS GIVEN: a Buddhist-Era year (`1/2/2569`) stays
 // `2569-01-02 …` here and is converted exactly once, by `from_parts`'
 // `normalize_buddhist_era`, which also produces the BE load-report warning.
+// A time zone (`Z`, `+0700`, `GMT+0700`, `UTC`) is dropped: the app reads
+// the wall clock as written, exactly like `+07:00` offsets in ISO text.
 
 /// Day/month order of an `A/B/YYYY` date — decided per FILE, never per row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -299,12 +310,32 @@ pub(crate) enum DayMonthOrder {
     DayFirst,
 }
 
+/// Where the month NAME sits in a month-name date (or that it is Thai).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NameStyle {
+    /// `01-Jan-25`, `1 January 2025`, `Mon, 01 Jan 2025`.
+    DayFirst,
+    /// `Jan 31 2025`, `Monday, January 1, 2025`, `Wed Jan 01 2025`.
+    MonthFirst,
+    /// `2025-Jan-31`, `2025 Jan 31`.
+    YearFirst,
+    /// Thai month name, day first (`1 ม.ค. 2568`).
+    Thai,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LooseDate {
-    /// `YYYY/MM/DD` — unambiguous.
+    /// `YYYY/MM/DD`, `YYYY.MM.DD`, `YYYY-M-D`, ISO-like texts that
+    /// `parse_timestamp` does not take (`2025-01-31T130500`, lowercase `t`,
+    /// comma fraction, date only) — unambiguous.
     YearFirst { y: i32, m: u32, d: u32 },
-    /// `A/B/YYYY`, `A.B.YYYY`, `A-B-YYYY` — order decided per file.
+    /// `YYYYMMDD[HHMM[SS]]` — unambiguous.
+    Compact { y: i32, m: u32, d: u32 },
+    /// `A/B/YYYY`, `A.B.YYYY`, `A-B-YYYY` (or a 2-digit `YY`) — order
+    /// decided per file.
     YearLast { a: u32, b: u32, y: i32 },
+    /// A month NAME — the name settles day vs month, no per-file order.
+    Named { y: i32, m: u32, d: u32, style: NameStyle },
 }
 
 /// One non-ISO timestamp, split into fields (24-hour clock already applied).
@@ -318,6 +349,10 @@ struct LooseTs {
     /// kept through the width), so the rewritten text keeps them verbatim.
     frac: u32,
     frac_len: u8,
+    /// The year was written with 2 digits: read as `2000 + YY` (no sensor
+    /// log predates 2000), or `2500 + YY` (Buddhist-Era) next to a Thai
+    /// month name.
+    two_digit_year: bool,
 }
 
 fn digits_in(s: &str, min: usize, max: usize) -> Option<u32> {
@@ -328,41 +363,200 @@ fn digits_in(s: &str, min: usize, max: usize) -> Option<u32> {
     }
 }
 
-/// `H:MM`, `H:MM:SS`, `H:MM:SS.f`, each optionally followed by ` AM`/` PM`.
-fn parse_loose_time(t: &str) -> Option<(u32, u32, u32, u32, u8)> {
-    let mut toks = t.split_whitespace();
-    let clock = toks.next()?;
-    let meridiem = match toks.next() {
-        None => None,
-        Some(m) if m.eq_ignore_ascii_case("AM") => Some(false),
-        Some(m) if m.eq_ignore_ascii_case("PM") => Some(true),
-        Some(_) => return None,
-    };
-    if toks.next().is_some() {
-        return None;
+/// `YYYY` as is, `YY` as `century + YY`; the bool says it was 2 digits.
+fn year_in(s: &str, century: i32) -> Option<(i32, bool)> {
+    match s.len() {
+        2 => Some((century + digits_in(s, 2, 2)? as i32, true)),
+        4 => Some((digits_in(s, 4, 4)? as i32, false)),
+        _ => None,
     }
-    let mut parts = clock.split(':');
-    let mut h = digits_in(parts.next()?, 1, 2)?;
-    let mi = digits_in(parts.next()?, 2, 2)?;
-    let (s, frac, frac_len) = match parts.next() {
-        None => (0, 0, 0),
-        Some(sec) => {
-            let (whole, f) = match sec.split_once('.') {
-                Some((w, f)) => (w, Some(f)),
-                None => (sec, None),
-            };
-            let s = digits_in(whole, 2, 2)?;
-            match f {
-                None => (s, 0, 0),
-                Some(f) => (s, digits_in(f, 1, 9)?, f.len() as u8),
+}
+
+/// Month name → (1..=12, is Thai). English: 3-letter, `Sept`, or full, any
+/// case, a trailing `.` allowed (`Jan.`). Thai: the abbreviations with or
+/// without dots (`ม.ค.` / `มค`) and the full names (`มกราคม`).
+fn month_from_name(s: &str) -> Option<(u32, bool)> {
+    if s.is_ascii() {
+        const NAMES: [(&str, &str); 12] = [
+            ("jan", "january"),
+            ("feb", "february"),
+            ("mar", "march"),
+            ("apr", "april"),
+            ("may", "may"),
+            ("jun", "june"),
+            ("jul", "july"),
+            ("aug", "august"),
+            ("sep", "september"),
+            ("oct", "october"),
+            ("nov", "november"),
+            ("dec", "december"),
+        ];
+        let s = s.strip_suffix('.').unwrap_or(s);
+        if s.eq_ignore_ascii_case("sept") {
+            return Some((9, false));
+        }
+        return NAMES
+            .iter()
+            .position(|(short, full)| s.eq_ignore_ascii_case(short) || s.eq_ignore_ascii_case(full))
+            .map(|i| (i as u32 + 1, false));
+    }
+    const THAI_FULL: [&str; 12] = [
+        "มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน",
+        "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม",
+    ];
+    const THAI_ABBR: [&str; 12] = [
+        "มค", "กพ", "มีค", "เมย", "พค", "มิย", "กค", "สค", "กย", "ตค", "พย", "ธค",
+    ];
+    if let Some(i) = THAI_FULL.iter().position(|f| *f == s) {
+        return Some((i as u32 + 1, true));
+    }
+    let no_dots: String = s.chars().filter(|&c| c != '.').collect();
+    THAI_ABBR
+        .iter()
+        .position(|a| *a == no_dots)
+        .map(|i| (i as u32 + 1, true))
+}
+
+fn is_weekday(s: &str) -> bool {
+    const DAYS: [&str; 18] = [
+        "mon", "monday", "tue", "tues", "tuesday", "wed", "wednesday", "thu", "thur", "thurs",
+        "thursday", "fri", "friday", "sat", "saturday", "sun", "sunday", "weds",
+    ];
+    let s = s.strip_suffix('.').unwrap_or(s);
+    DAYS.iter().any(|d| s.eq_ignore_ascii_case(d))
+}
+
+/// `+0700`, `+07:00`, `+07`, `-0500` (a whole token or a suffix).
+fn is_offset(s: &str) -> bool {
+    let Some(rest) = s.strip_prefix('+').or_else(|| s.strip_prefix('-')) else {
+        return false;
+    };
+    let b = rest.as_bytes();
+    match b.len() {
+        1 | 2 | 4 => b.iter().all(u8::is_ascii_digit),
+        5 => b[2] == b':' && [0, 1, 3, 4].iter().all(|&i| b[i].is_ascii_digit()),
+        _ => false,
+    }
+}
+
+/// A whole token that is only a time zone: `Z`, `UTC`, `GMT`, `GMT+0700`,
+/// `UTC+7`, `+0700`, `+07:00`.
+fn is_zone_token(s: &str) -> bool {
+    if s.eq_ignore_ascii_case("z") || s.eq_ignore_ascii_case("utc") || s.eq_ignore_ascii_case("gmt") {
+        return true;
+    }
+    let tail = if s.len() > 3 && (s[..3].eq_ignore_ascii_case("utc") || s[..3].eq_ignore_ascii_case("gmt")) {
+        &s[3..]
+    } else {
+        s
+    };
+    is_offset(tail)
+}
+
+/// `AM`/`PM`/`a.m.`/`p.m.` (any case) → `Some(is_pm)`.
+fn meridiem_of(s: &str) -> Option<bool> {
+    // No allocation: this runs on the last token of every non-ISO row.
+    if ["am", "a.m.", "a.m"].iter().any(|m| s.eq_ignore_ascii_case(m)) {
+        Some(false)
+    } else if ["pm", "p.m.", "p.m"].iter().any(|m| s.eq_ignore_ascii_case(m)) {
+        Some(true)
+    } else {
+        None
+    }
+}
+
+/// Peel a meridiem glued to a time (`1:05pm`, `1:05p.m.`).
+fn split_glued_meridiem(t: &str) -> (&str, Option<bool>) {
+    for (suffix, pm) in [("a.m.", false), ("p.m.", true), ("am", false), ("pm", true)] {
+        if t.len() > suffix.len() {
+            let cut = t.len() - suffix.len();
+            if t.is_char_boundary(cut) && t[cut..].eq_ignore_ascii_case(suffix) {
+                return (&t[..cut], Some(pm));
             }
         }
+    }
+    (t, None)
+}
+
+/// Peel a time zone glued to a time (`13:05:00Z`, `13:05:00+0700`).
+fn strip_glued_zone(t: &str) -> &str {
+    if let Some(rest) = t.strip_suffix('Z').or_else(|| t.strip_suffix('z')) {
+        return rest;
+    }
+    if let Some(i) = t.rfind(['+', '-']) {
+        if i > 0 && is_offset(&t[i..]) {
+            return &t[..i];
+        }
+    }
+    t
+}
+
+/// One time token → (h, mi, s, frac, frac_len). Shapes: `H:MM`, `H:MM:SS`,
+/// `H:MM:SS.f` / `,f`, compact `HHMM` / `HHMMSS[.f]`, and `H.MM` after a
+/// Thai `น.`. `meridiem` applies the 12-hour clock (12 AM = 00, 12 PM = 12).
+fn parse_clock(t: &str, mut meridiem: Option<bool>, thai: bool) -> Option<(u32, u32, u32, u32, u8)> {
+    let t = strip_glued_zone(t);
+    let (t, glued) = split_glued_meridiem(t);
+    if glued.is_some() {
+        if meridiem.is_some() {
+            return None;
+        }
+        meridiem = glued;
+    }
+    let (h, mi, s, frac, frac_len) = if t.contains(':') {
+        // `H:MM`, `H:MM:SS`, `H:MM:SS.f` / `H:MM:SS,f`
+        let (clock, f) = match t.find([',', '.']) {
+            Some(i) => (&t[..i], Some(&t[i + 1..])),
+            None => (t, None),
+        };
+        let mut parts = clock.split(':');
+        let h = digits_in(parts.next()?, 1, 2)?;
+        let mi = digits_in(parts.next()?, 2, 2)?;
+        let sec = parts.next();
+        if parts.next().is_some() || (sec.is_none() && f.is_some()) {
+            return None;
+        }
+        let s = match sec {
+            Some(x) => digits_in(x, 2, 2)?,
+            None => 0,
+        };
+        let (frac, frac_len) = match f {
+            Some(f) => (digits_in(f, 1, 9)?, f.len() as u8),
+            None => (0, 0),
+        };
+        (h, mi, s, frac, frac_len)
+    } else if thai && t.contains('.') {
+        // Thai `13.05 น.`
+        let (h, mi) = t.split_once('.')?;
+        (digits_in(h, 1, 2)?, digits_in(mi, 2, 2)?, 0, 0, 0)
+    } else {
+        // Compact `HHMM`, `HHMMSS`, `HHMMSS.f`
+        let (clock, f) = match t.find([',', '.']) {
+            Some(i) => (&t[..i], Some(&t[i + 1..])),
+            None => (t, None),
+        };
+        let (frac, frac_len) = match f {
+            Some(f) if clock.len() == 6 => (digits_in(f, 1, 9)?, f.len() as u8),
+            Some(_) => return None,
+            None => (0, 0),
+        };
+        match clock.len() {
+            4 => (digits_in(&clock[..2], 2, 2)?, digits_in(&clock[2..], 2, 2)?, 0, 0, 0),
+            6 => (
+                digits_in(&clock[..2], 2, 2)?,
+                digits_in(&clock[2..4], 2, 2)?,
+                digits_in(&clock[4..], 2, 2)?,
+                frac,
+                frac_len,
+            ),
+            _ => return None,
+        }
     };
-    if parts.next().is_some() || mi > 59 || s > 59 {
+    let mut h = h;
+    if mi > 59 || s > 59 {
         return None;
     }
     match meridiem {
-        // 12-hour clock: 12 AM = 00, 1..11 AM as is, 12 PM = 12, 1..11 PM + 12.
         Some(pm) => {
             if !(1..=12).contains(&h) {
                 return None;
@@ -378,50 +572,257 @@ fn parse_loose_time(t: &str) -> Option<(u32, u32, u32, u32, u8)> {
     Some((h, mi, s, frac, frac_len))
 }
 
-/// Split a non-ISO timestamp into fields, or `None` when `s` is not one of
-/// the non-ISO shapes (ISO text — `YYYY-MM-DD…` — is never matched here).
-/// Field ranges (month ≤ 12, real calendar day) are NOT checked yet: that
-/// depends on the file's day/month order.
-fn parse_loose(s: &str) -> Option<LooseTs> {
-    let s = s.trim();
-    let (date_part, rest) = match s.find(char::is_whitespace) {
-        Some(i) => (&s[..i], s[i..].trim()),
-        None => (s, ""),
-    };
-    let sep = date_part
-        .bytes()
-        .find(|b| matches!(b, b'/' | b'.' | b'-'))? as char;
-    let mut it = date_part.split(sep);
+/// Thai digits `๐`–`๙` → ASCII (other characters kept).
+fn thai_digits_to_ascii(s: &str) -> String {
+    s.chars()
+        .map(|c| match c {
+            '\u{0E50}'..='\u{0E59}' => char::from(b'0' + (c as u32 - 0x0E50) as u8),
+            _ => c,
+        })
+        .collect()
+}
+
+/// A single date token: `YYYYMMDD`, `A/B/Y`, `YYYY/M/D`, `D-Mon-Y`,
+/// `Mon-D-Y`, `YYYY-Mon-D` (separator `/`, `.` or `-`).
+fn parse_date_token(tok: &str) -> Option<(LooseDate, bool)> {
+    if tok.len() == 8 && tok.bytes().all(|b| b.is_ascii_digit()) {
+        return Some((
+            LooseDate::Compact {
+                y: digits_in(&tok[..4], 4, 4)? as i32,
+                m: digits_in(&tok[4..6], 2, 2)?,
+                d: digits_in(&tok[6..], 2, 2)?,
+            },
+            false,
+        ));
+    }
+    let sep = tok.chars().find(|c| matches!(c, '/' | '.' | '-'))?;
+    let mut it = tok.split(sep);
     let (p1, p2, p3) = (it.next()?, it.next()?, it.next()?);
     if it.next().is_some() {
         return None;
     }
-    let date = if sep == '/' && p1.len() == 4 {
-        LooseDate::YearFirst {
-            y: digits_in(p1, 4, 4)? as i32,
-            m: digits_in(p2, 1, 2)?,
-            d: digits_in(p3, 1, 2)?,
+    if let Some((m, false)) = month_from_name(p2) {
+        return if p1.len() == 4 {
+            Some((LooseDate::Named { y: digits_in(p1, 4, 4)? as i32, m, d: digits_in(p3, 1, 2)?, style: NameStyle::YearFirst }, false))
+        } else {
+            let (y, yy) = year_in(p3, 2000)?;
+            Some((LooseDate::Named { y, m, d: digits_in(p1, 1, 2)?, style: NameStyle::DayFirst }, yy))
+        };
+    }
+    if let Some((m, false)) = month_from_name(p1) {
+        let (y, yy) = year_in(p3, 2000)?;
+        return Some((LooseDate::Named { y, m, d: digits_in(p2, 1, 2)?, style: NameStyle::MonthFirst }, yy));
+    }
+    if p1.len() == 4 {
+        return Some((
+            LooseDate::YearFirst {
+                y: digits_in(p1, 4, 4)? as i32,
+                m: digits_in(p2, 1, 2)?,
+                d: digits_in(p3, 1, 2)?,
+            },
+            false,
+        ));
+    }
+    let (y, yy) = year_in(p3, 2000)?;
+    Some((LooseDate::YearLast { a: digits_in(p1, 1, 2)?, b: digits_in(p2, 1, 2)?, y }, yy))
+}
+
+/// The date-shape table: one token (see [`parse_date_token`]) or three
+/// tokens `D Mon Y`, `Mon D Y`, `Y Mon D` (English or Thai month name).
+fn parse_date_tokens(toks: &[&str]) -> Option<(LooseDate, bool)> {
+    match *toks {
+        [one] => parse_date_token(one),
+        [a, b, c] => {
+            if let Some((m, thai)) = month_from_name(b) {
+                if a.len() == 4 && !thai {
+                    let d = digits_in(c, 1, 2)?;
+                    return Some((LooseDate::Named { y: digits_in(a, 4, 4)? as i32, m, d, style: NameStyle::YearFirst }, false));
+                }
+                let (y, yy) = year_in(c, if thai { 2500 } else { 2000 })?;
+                let style = if thai { NameStyle::Thai } else { NameStyle::DayFirst };
+                return Some((LooseDate::Named { y, m, d: digits_in(a, 1, 2)?, style }, yy));
+            }
+            let (m, thai) = month_from_name(a)?;
+            if thai {
+                return None;
+            }
+            let (y, yy) = year_in(c, 2000)?;
+            Some((LooseDate::Named { y, m, d: digits_in(b, 1, 2)?, style: NameStyle::MonthFirst }, yy))
         }
-    } else {
-        LooseDate::YearLast {
-            a: digits_in(p1, 1, 2)?,
-            b: digits_in(p2, 1, 2)?,
-            y: digits_in(p3, 4, 4)? as i32,
+        _ => None,
+    }
+}
+
+/// True when `s` is in a shape [`parse_timestamp`] reads directly (ISO with
+/// `T`/space, `HH:MM[:SS[.f]]`, optional `Z` or — with seconds — `±HH:MM`).
+/// Such text is never rewritten. A plain byte check: cheap enough to run on
+/// every row of an ISO file.
+fn is_plain_iso(s: &str) -> bool {
+    let b = s.as_bytes();
+    let dig = |r: std::ops::Range<usize>| b.len() >= r.end && b[r].iter().all(u8::is_ascii_digit);
+    if !(b.len() >= 16
+        && dig(0..4)
+        && b[4] == b'-'
+        && dig(5..7)
+        && b[7] == b'-'
+        && dig(8..10)
+        && (b[10] == b'T' || b[10] == b' ')
+        && dig(11..13)
+        && b[13] == b':'
+        && dig(14..16))
+    {
+        return false;
+    }
+    let mut i = 16;
+    let mut has_secs = false;
+    if b.get(i) == Some(&b':') {
+        if !dig(i + 1..i + 3) {
+            return false;
         }
+        i += 3;
+        has_secs = true;
+        if b.get(i) == Some(&b'.') {
+            let start = i + 1;
+            i = start;
+            while b.get(i).is_some_and(u8::is_ascii_digit) {
+                i += 1;
+            }
+            if i == start {
+                return false;
+            }
+        }
+    }
+    match b.get(i) {
+        None => true,
+        Some(b'Z') | Some(b'z') => i + 1 == b.len(),
+        Some(b'+') | Some(b'-') => {
+            has_secs && b.len() == i + 6 && dig(i + 1..i + 3) && b[i + 3] == b':' && dig(i + 4..i + 6)
+        }
+        _ => false,
+    }
+}
+
+/// Split a non-ISO timestamp into fields, or `None` when it is not one of
+/// the known shapes. Field ranges (month ≤ 12, real calendar day) are NOT
+/// checked yet: that depends on the file's day/month order.
+fn parse_loose(raw: &str) -> Option<LooseTs> {
+    let converted;
+    let mut s = raw.trim();
+    if !s.is_ascii() {
+        converted = thai_digits_to_ascii(s);
+        s = converted.as_str().trim();
+    }
+    // JS `Date.toString()`: `… GMT+0700 (Indochina Time)` — drop the comment.
+    if let Some(i) = s.find('(') {
+        s = s[..i].trim_end();
+    }
+
+    const MAX_TOKENS: usize = 10;
+    let mut toks: [&str; MAX_TOKENS] = [""; MAX_TOKENS];
+    let mut n = 0usize;
+    let mut thai_marker = false;
+    for (k, tok) in s.split_whitespace().enumerate() {
+        let tok = tok.trim_end_matches(',');
+        if tok.is_empty() {
+            continue;
+        }
+        // Words that carry no date information.
+        if tok == "น." || tok == "น" {
+            thai_marker = true;
+            continue;
+        }
+        if matches!(tok, "เวลา" | "พ.ศ." | "ค.ศ.") || tok.eq_ignore_ascii_case("at") {
+            continue;
+        }
+        if k == 0 && is_weekday(tok) {
+            continue;
+        }
+        if n == MAX_TOKENS {
+            return None;
+        }
+        toks[n] = tok;
+        n += 1;
+    }
+    let mut toks = &mut toks[..n];
+    // Trailing time zone / meridiem tokens (in either order).
+    let mut meridiem: Option<bool> = None;
+    loop {
+        match toks.last() {
+            Some(t) if is_zone_token(t) => {}
+            Some(t) if meridiem.is_none() && meridiem_of(t).is_some() => meridiem = meridiem_of(t),
+            _ => break,
+        }
+        let len = toks.len();
+        toks = &mut toks[..len - 1];
+    }
+    // `asctime`: `Jan 01 13:05:00 2025` → `Jan 01 2025 13:05:00`.
+    if toks.len() == 4 && toks[2].contains(':') && toks[3].len() == 4 {
+        toks.swap(2, 3);
+    }
+
+    // Take the time token off the end.
+    let (date_toks, time_tok): (&[&str], Option<&str>) = match &*toks {
+        [] => return None,
+        [one] => {
+            let b = one.as_bytes();
+            if let Some(i) = (1..b.len().saturating_sub(1)).find(|&i| {
+                (b[i] == b'T' || b[i] == b't') && b[i - 1].is_ascii_digit() && b[i + 1].is_ascii_digit()
+            }) {
+                // `20250131T130500`, `2025-01-31T130500`, `2025-01-31t13:05:00`
+                let (d, t) = (&one[..i], &one[i + 1..]);
+                return finish(parse_date_tokens(&[d])?, Some(t), meridiem, thai_marker);
+            }
+            if (b.len() == 12 || b.len() == 14) && b.iter().all(u8::is_ascii_digit) {
+                // `202501311305`, `20250131130500`
+                return finish(parse_date_token(&one[..8])?, Some(&one[8..]), meridiem, thai_marker);
+            }
+            (&toks[..], None)
+        }
+        [.., last] if last.contains(':') || (thai_marker && last.contains('.') && toks.len() > 1) => {
+            let k = toks.len() - 1;
+            (&toks[..k], Some(toks[k]))
+        }
+        [_, t] if matches!(t.len(), 4 | 6) && t.bytes().all(|c| c.is_ascii_digit()) => {
+            // `20250131 130500`, `2025-01-31 1305`
+            (&toks[..1], Some(*t))
+        }
+        _ => (&toks[..], None),
     };
-    let (h, mi, sec, frac, frac_len) = if rest.is_empty() {
-        (0, 0, 0, 0, 0)
+    finish(parse_date_tokens(date_toks)?, time_tok, meridiem, thai_marker)
+}
+
+/// Combine a parsed date with an optional time token.
+fn finish(
+    (date, two_digit_year): (LooseDate, bool),
+    time_tok: Option<&str>,
+    meridiem: Option<bool>,
+    thai: bool,
+) -> Option<LooseTs> {
+    let (h, mi, s, frac, frac_len) = match time_tok {
+        Some(t) => parse_clock(t, meridiem, thai)?,
+        None if meridiem.is_some() => return None,
+        None => (0, 0, 0, 0, 0),
+    };
+    Some(LooseTs { date, h, mi, s, frac, frac_len, two_digit_year })
+}
+
+/// [`parse_loose`] for rows that need a rewrite: text `parse_timestamp`
+/// already reads ([`is_plain_iso`]) is left alone.
+fn loose_of(s: &str) -> Option<LooseTs> {
+    if is_plain_iso(s) {
+        None
     } else {
-        parse_loose_time(rest)?
-    };
-    Some(LooseTs { date, h, mi, s: sec, frac, frac_len })
+        parse_loose(s)
+    }
 }
 
 impl LooseTs {
     /// (year as written, month, day) under `order`.
     fn ymd(&self, order: DayMonthOrder) -> (i32, u32, u32) {
         match self.date {
-            LooseDate::YearFirst { y, m, d } => (y, m, d),
+            LooseDate::YearFirst { y, m, d }
+            | LooseDate::Compact { y, m, d }
+            | LooseDate::Named { y, m, d, .. } => (y, m, d),
             LooseDate::YearLast { a, b, y } => match order {
                 DayMonthOrder::MonthFirst => (y, a, b),
                 DayMonthOrder::DayFirst => (y, b, a),
@@ -452,9 +853,41 @@ impl LooseTs {
         }
         Some(out)
     }
+
+    /// Which info line describes this row (`None` for year-last rows, which
+    /// get the day/month order line instead).
+    fn family(&self) -> Option<Family> {
+        match self.date {
+            LooseDate::YearLast { .. } => None,
+            LooseDate::YearFirst { .. } => Some(Family::YearFirst),
+            LooseDate::Compact { .. } => Some(Family::Compact),
+            LooseDate::Named { style, .. } => Some(Family::Named(style)),
+        }
+    }
 }
 
-/// Evidence about a file's year-last dates (pass 1 of
+/// The unambiguous shape families, for the per-file info line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Family {
+    YearFirst,
+    Compact,
+    Named(NameStyle),
+}
+
+const FAMILIES: [Family; 6] = [
+    Family::YearFirst,
+    Family::Compact,
+    Family::Named(NameStyle::DayFirst),
+    Family::Named(NameStyle::MonthFirst),
+    Family::Named(NameStyle::YearFirst),
+    Family::Named(NameStyle::Thai),
+];
+
+fn family_index(f: Family) -> usize {
+    FAMILIES.iter().position(|&x| x == f).unwrap_or(0)
+}
+
+/// Evidence about a file's non-ISO rows (pass 1 of
 /// [`normalize_file_timestamps`]).
 #[derive(Default, Clone, Copy)]
 struct OrderEvidence {
@@ -466,6 +899,12 @@ struct OrderEvidence {
     month_first: usize,
     /// Some year-last row has `A != B` (otherwise both readings are equal).
     differ: bool,
+    /// Some year-last row wrote a 2-digit year.
+    year_last_two_digit: bool,
+    /// Rows per unambiguous family (index = [`family_index`]).
+    families: [usize; 6],
+    /// Per family: some row wrote a 2-digit year.
+    family_two_digit: [bool; 6],
 }
 
 impl OrderEvidence {
@@ -479,16 +918,26 @@ impl OrderEvidence {
                 self.month_first += 1;
             }
             self.differ |= a != b;
+            self.year_last_two_digit |= l.two_digit_year;
+        }
+        if let Some(f) = l.family() {
+            let i = family_index(f);
+            self.families[i] += 1;
+            self.family_two_digit[i] |= l.two_digit_year;
         }
         self
     }
-    fn merge(self, o: Self) -> Self {
-        OrderEvidence {
-            year_last: self.year_last + o.year_last,
-            day_first: self.day_first + o.day_first,
-            month_first: self.month_first + o.month_first,
-            differ: self.differ || o.differ,
+    fn merge(mut self, o: Self) -> Self {
+        self.year_last += o.year_last;
+        self.day_first += o.day_first;
+        self.month_first += o.month_first;
+        self.differ |= o.differ;
+        self.year_last_two_digit |= o.year_last_two_digit;
+        for i in 0..FAMILIES.len() {
+            self.families[i] += o.families[i];
+            self.family_two_digit[i] |= o.family_two_digit[i];
         }
+        self
     }
 }
 
@@ -503,7 +952,7 @@ fn order_fit(timestamps: &[Option<String>], order: DayMonthOrder) -> (usize, u12
     let mut back = 0usize;
     let mut travel = 0u128;
     for t in timestamps.iter().flatten() {
-        let cur = match parse_loose(t) {
+        let cur = match loose_of(t) {
             Some(l) => l.to_naive(order),
             None => parse_timestamp(t),
         };
@@ -520,10 +969,27 @@ fn order_fit(timestamps: &[Option<String>], order: DayMonthOrder) -> (usize, u12
     (back, travel)
 }
 
+/// Appended inside a warning's example brackets when 2-digit years were read.
+const TWO_DIGIT_NOTE: &str = ", 2-digit year read as 20YY";
+/// The same for a Thai month-name file (2-digit years there are BE).
+const TWO_DIGIT_NOTE_THAI: &str = ", 2-digit year read as พ.ศ. 25YY";
+
 fn order_name(order: DayMonthOrder) -> &'static str {
     match order {
         DayMonthOrder::MonthFirst => "month/day/year",
         DayMonthOrder::DayFirst => "day/month/year",
+    }
+}
+
+/// How the info line names an unambiguous family.
+fn family_description(f: Family) -> &'static str {
+    match f {
+        Family::YearFirst => "year-month-day",
+        Family::Compact => "compact year-month-day digits",
+        Family::Named(NameStyle::DayFirst) => "day-month-year with month names",
+        Family::Named(NameStyle::MonthFirst) => "month-day-year with month names",
+        Family::Named(NameStyle::YearFirst) => "year-month-day with month names",
+        Family::Named(NameStyle::Thai) => "day-month-year with Thai month names",
     }
 }
 
@@ -533,37 +999,187 @@ fn date_part_of(s: &str) -> &str {
     s.split_whitespace().next().unwrap_or(s)
 }
 
+// ── Numeric timestamp columns (Excel serial dates, Unix epochs) ────────────
+
+/// What an all-numeric timestamp column holds — decided per FILE.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SerialKind {
+    /// Excel 1900 date system: days since 1899-12-30 (this epoch absorbs
+    /// Excel's fictitious 1900-02-29 for every serial ≥ 61), fraction = time
+    /// of day, rounded to the nearest second (Excel stores float noise).
+    Excel,
+    /// Seconds since 1970-01-01 UTC (10 integer digits).
+    EpochSeconds,
+    /// Milliseconds since 1970-01-01 UTC (13 integer digits).
+    EpochMillis,
+}
+
+/// `123`, `123.45` (digits, at most one `.`, a digit before it).
+fn plain_number(s: &str) -> Option<(&str, &str)> {
+    let s = s.trim();
+    let (int, frac) = s.split_once('.').unwrap_or((s, ""));
+    (!int.is_empty()
+        && int.bytes().all(|b| b.is_ascii_digit())
+        && frac.bytes().all(|b| b.is_ascii_digit()))
+    .then_some((int, frac))
+}
+
+/// Excel serial range accepted: 20000 (1954-10-03) ..= 80000 (2119-01-10).
+const EXCEL_SERIAL_RANGE: std::ops::RangeInclusive<f64> = 20000.0..=80000.0;
+
+fn serial_kind_of(s: &str) -> Option<SerialKind> {
+    let (int, _) = plain_number(s)?;
+    match int.len() {
+        5 => s.trim().parse::<f64>().ok().filter(|v| EXCEL_SERIAL_RANGE.contains(v)).map(|_| SerialKind::Excel),
+        10 => Some(SerialKind::EpochSeconds),
+        13 => Some(SerialKind::EpochMillis),
+        _ => None,
+    }
+}
+
+/// One numeric value → `YYYY-MM-DD HH:MM:SS[.f]` under `kind`.
+fn serial_to_iso(s: &str, kind: SerialKind) -> Option<String> {
+    if serial_kind_of(s)? != kind {
+        return None;
+    }
+    let (int, frac) = plain_number(s)?;
+    let dt = match kind {
+        SerialKind::Excel => {
+            let v: f64 = s.trim().parse().ok()?;
+            let days = v.floor();
+            let mut secs = ((v - days) * 86_400.0).round() as i64;
+            let mut days = days as i64;
+            if secs >= 86_400 {
+                days += 1;
+                secs -= 86_400;
+            }
+            let base = chrono::NaiveDate::from_ymd_opt(1899, 12, 30)?.and_hms_opt(0, 0, 0)?;
+            return Some(
+                (base + chrono::Duration::days(days) + chrono::Duration::seconds(secs))
+                    .format("%Y-%m-%d %H:%M:%S")
+                    .to_string(),
+            );
+        }
+        SerialKind::EpochSeconds => chrono::DateTime::from_timestamp(int.parse().ok()?, 0)?.naive_utc(),
+        SerialKind::EpochMillis => {
+            chrono::DateTime::from_timestamp_millis(int.parse().ok()?)?.naive_utc()
+        }
+    };
+    let mut out = dt.format("%Y-%m-%d %H:%M:%S").to_string();
+    match kind {
+        SerialKind::EpochMillis => {
+            let ms = dt.and_utc().timestamp_subsec_millis();
+            if ms != 0 || !frac.is_empty() {
+                out.push_str(&format!(".{:03}{}", ms, frac));
+            }
+        }
+        _ if !frac.is_empty() && frac.len() <= 9 => out.push_str(&format!(".{}", frac)),
+        _ => {}
+    }
+    Some(out)
+}
+
+/// When EVERY timestamp of the file is a plain number that is not a compact
+/// `YYYYMMDD…` date, read the column as Excel serials or Unix epochs (kind
+/// chosen from the first readable rows) and return the warnings; `None` when
+/// the column is not like that (the text path then handles it).
+fn normalize_serial_column(file_name: &str, timestamps: &mut [Option<String>]) -> Option<Vec<String>> {
+    let all_numeric = timestamps
+        .par_iter()
+        .flatten()
+        .all(|s| plain_number(s).is_some_and(|(int, _)| !matches!(int.len(), 8 | 12 | 14)));
+    if !all_numeric {
+        return None;
+    }
+    // Decide from a sample: the most common kind among the first 1000 rows.
+    let mut counts = [0usize; 3];
+    for s in timestamps.iter().flatten().take(1000) {
+        match serial_kind_of(s) {
+            Some(SerialKind::Excel) => counts[0] += 1,
+            Some(SerialKind::EpochSeconds) => counts[1] += 1,
+            Some(SerialKind::EpochMillis) => counts[2] += 1,
+            None => {}
+        }
+    }
+    let best = (0..3).max_by_key(|&i| (counts[i], std::cmp::Reverse(i)))?;
+    if counts[best] == 0 {
+        return None;
+    }
+    let kind = [SerialKind::Excel, SerialKind::EpochSeconds, SerialKind::EpochMillis][best];
+    let example = timestamps
+        .iter()
+        .flatten()
+        .find_map(|s| serial_to_iso(s, kind).map(|iso| (s.trim().to_string(), iso)));
+    let unreadable = AtomicUsize::new(0);
+    timestamps.par_iter_mut().for_each(|t| {
+        let Some(s) = t.as_deref() else { return };
+        match serial_to_iso(s, kind) {
+            Some(iso) => *t = Some(iso),
+            None => {
+                unreadable.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+    });
+    let what = match kind {
+        SerialKind::Excel => "Excel serial dates",
+        SerialKind::EpochSeconds => "Unix epoch seconds (UTC)",
+        SerialKind::EpochMillis => "Unix epoch milliseconds (UTC)",
+    };
+    let mut warnings = Vec::new();
+    let mut w = format!("Times in {} read as {}", file_name, what);
+    if let Some((raw, iso)) = example {
+        w.push_str(&format!(" ({} → {})", raw, iso));
+    }
+    warnings.push(w);
+    let unreadable = unreadable.into_inner();
+    if unreadable > 0 {
+        warnings.push(unreadable_warning(unreadable, file_name));
+    }
+    Some(warnings)
+}
+
+fn unreadable_warning(n: usize, file_name: &str) -> String {
+    format!("{} timestamp(s) in {} could not be read as a date and time", n, file_name)
+}
+
 /// Rewrite one file's non-ISO timestamps to ISO text in place and return the
-/// load-report warnings this produced (empty for a file with ISO timestamps
-/// only — those are never touched).
+/// load-report warnings this produced (empty for a file whose timestamps are
+/// all in a shape `parse_timestamp` reads — those are never touched).
 ///
-/// Day/month order of `A/B/YYYY` is decided for the WHOLE file:
-/// - some `A > 12` → day/month; some `B > 12` → month/day;
-/// - both → the file contradicts itself: every year-last row is left
-///   unreadable ([`TS_MISSING`]) and a warning says so;
-/// - neither → the reading with fewer backwards steps between consecutive
-///   readable rows wins, then the one whose rows sit closer together
-///   ([`order_fit`]); a full tie → month/day (Excel's default), flagged as
-///   a guess.
+/// - An all-numeric column → Excel serials / Unix epochs
+///   ([`normalize_serial_column`]).
+/// - Day/month order of `A/B/YYYY` is decided for the WHOLE file: some
+///   `A > 12` → day/month; some `B > 12` → month/day; both → the file
+///   contradicts itself: every year-last row is left unreadable
+///   ([`TS_MISSING`]) and a warning says so; neither → the reading with fewer
+///   backwards steps between consecutive readable rows wins, then the one
+///   whose rows sit closer together ([`order_fit`]); a full tie → month/day
+///   (Excel's default), flagged as a guess.
+/// - Every other shape is unambiguous; one info line names the file's main
+///   one with an example.
 ///
-/// A row whose date does not exist under the chosen order keeps its original
-/// text and so becomes [`TS_MISSING`] (counted in its own warning).
+/// A row that cannot be read (unknown shape, or a date that does not exist,
+/// e.g. `2/30/2026`) keeps its original text and so becomes [`TS_MISSING`];
+/// those rows are counted in their own warning.
 pub(crate) fn normalize_file_timestamps(
     file_name: &str,
     timestamps: &mut [Option<String>],
 ) -> Vec<String> {
-    // Cheap exit for the common ISO file: `parse_loose` rejects `YYYY-…` at
-    // its first field, and `any` stops at the first non-ISO row.
+    // Cheap exit for the common ISO file: a byte-shape check per row, and
+    // `any` stops at the first row that is not plain ISO.
     if !timestamps
         .par_iter()
-        .any(|t| t.as_deref().is_some_and(|s| parse_loose(s).is_some()))
+        .any(|t| t.as_deref().is_some_and(|s| !is_plain_iso(s)))
     {
         return Vec::new();
+    }
+    if let Some(w) = normalize_serial_column(file_name, timestamps) {
+        return w;
     }
 
     let ev = timestamps
         .par_iter()
-        .filter_map(|t| t.as_deref().and_then(parse_loose))
+        .filter_map(|t| t.as_deref().and_then(loose_of))
         .fold(OrderEvidence::default, |acc, l| acc.add(&l))
         .reduce(OrderEvidence::default, OrderEvidence::merge);
 
@@ -595,7 +1211,7 @@ pub(crate) fn normalize_file_timestamps(
                 .iter()
                 .flatten()
                 .find(|t| {
-                    matches!(parse_loose(t).map(|l| l.date), Some(LooseDate::YearLast { a, b, .. })
+                    matches!(loose_of(t).map(|l| l.date), Some(LooseDate::YearLast { a, b, .. })
                         if if want_day_first { a > 12 && b <= 12 } else { b > 12 && a <= 12 })
                 })
                 .map(|t| date_part_of(t).to_string())
@@ -617,7 +1233,7 @@ pub(crate) fn normalize_file_timestamps(
         let mut first: Option<(String, String)> = None;
         let mut telling: Option<(String, String)> = None;
         for s in timestamps.iter().flatten() {
-            let Some(l) = parse_loose(s) else { continue };
+            let Some(l) = loose_of(s) else { continue };
             let LooseDate::YearLast { a, b, .. } = l.date else { continue };
             let Some(iso) = l.to_iso_text(order) else { continue };
             let shown = normalize_buddhist_era(iso[..10].to_string());
@@ -634,20 +1250,42 @@ pub(crate) fn normalize_file_timestamps(
     } else {
         None
     };
+    // The file's main unambiguous family and its first readable row, shown
+    // whole (raw → rewritten text, year in CE).
+    let main_family = (0..FAMILIES.len())
+        .filter(|&i| ev.families[i] > 0)
+        .max_by_key(|&i| (ev.families[i], std::cmp::Reverse(i)));
+    let family_example = main_family.and_then(|i| {
+        timestamps.iter().flatten().find_map(|s| {
+            let l = loose_of(s)?;
+            if l.family() != Some(FAMILIES[i]) {
+                return None;
+            }
+            let iso = l.to_iso_text(order)?;
+            Some((s.trim().to_string(), normalize_buddhist_era(iso)))
+        })
+    });
 
-    // Pass 2: rewrite in place. Rows left alone (conflict / impossible date)
-    // keep their original text, which `parse_timestamp` does not read.
-    let invalid = AtomicUsize::new(0);
+    // Pass 2: rewrite in place. Rows left alone (conflict / impossible date /
+    // unknown shape) keep their original text, which `parse_timestamp` does
+    // not read.
+    let unreadable = AtomicUsize::new(0);
     timestamps.par_iter_mut().for_each(|t| {
         let Some(s) = t.as_deref() else { return };
-        let Some(l) = parse_loose(s) else { return };
-        if conflict && matches!(l.date, LooseDate::YearLast { .. }) {
+        if is_plain_iso(s) {
             return;
+        }
+        let Some(l) = parse_loose(s) else {
+            unreadable.fetch_add(1, Ordering::Relaxed);
+            return;
+        };
+        if conflict && matches!(l.date, LooseDate::YearLast { .. }) {
+            return; // counted in the conflict line
         }
         match l.to_iso_text(order) {
             Some(iso) => *t = Some(iso),
             None => {
-                invalid.fetch_add(1, Ordering::Relaxed);
+                unreadable.fetch_add(1, Ordering::Relaxed);
             }
         }
     });
@@ -655,19 +1293,32 @@ pub(crate) fn normalize_file_timestamps(
     if ev.year_last > 0 && !conflict {
         let mut w = format!("Dates in {} read as {}", file_name, order_name(order));
         if let Some((raw, shown)) = example {
-            w.push_str(&format!(" ({} → {})", raw, shown));
+            let yy = if ev.year_last_two_digit { TWO_DIGIT_NOTE } else { "" };
+            w.push_str(&format!(" ({} → {}{})", raw, shown, yy));
         }
         if guessed {
             w.push_str(" — could not be told apart from the values; check the dates");
         }
         warnings.push(w);
     }
-    let invalid = invalid.into_inner();
-    if invalid > 0 {
+    if let (Some(i), Some((raw, shown))) = (main_family, family_example) {
+        let yy = match (ev.family_two_digit[i], FAMILIES[i]) {
+            (false, _) => "",
+            (true, Family::Named(NameStyle::Thai)) => TWO_DIGIT_NOTE_THAI,
+            (true, _) => TWO_DIGIT_NOTE,
+        };
         warnings.push(format!(
-            "{} timestamp(s) in {} are not real dates and could not be read",
-            invalid, file_name
+            "Dates in {} read as {} ({} → {}{})",
+            file_name,
+            family_description(FAMILIES[i]),
+            raw,
+            shown,
+            yy
         ));
+    }
+    let unreadable = unreadable.into_inner();
+    if unreadable > 0 {
+        warnings.push(unreadable_warning(unreadable, file_name));
     }
     warnings
 }
@@ -840,6 +1491,15 @@ pub struct ReadCsvResult {
     pub size_bytes: u64,
 }
 
+/// A header name as the app uses it: surrounding whitespace and any UTF-8
+/// byte-order mark (`\u{FEFF}`, written by Excel/historians at the start of
+/// the file and so glued to the FIRST header) removed. Without this a
+/// `\u{FEFF}TimeStamp` column is not recognised as the timestamp column.
+fn clean_header(s: &str) -> String {
+    s.trim_matches(|c: char| c == '\u{FEFF}' || c.is_whitespace())
+        .to_string()
+}
+
 pub fn read_csv_with_stats(path: &str) -> Result<ReadCsvResult, String> {
     let total_start = Instant::now();
     // Refuse pathologically-large CSVs up front so we don't OOM partway
@@ -857,7 +1517,7 @@ pub fn read_csv_with_stats(path: &str) -> Result<ReadCsvResult, String> {
     let mut rdr = csv::Reader::from_reader(BufReader::new(file));
 
     let headers = rdr.headers().map_err(|e| e.to_string())?.clone();
-    let header_list: Vec<String> = headers.iter().map(|s| s.trim().to_string()).collect();
+    let header_list: Vec<String> = headers.iter().map(clean_header).collect();
     let num_cols = header_list.len();
 
     let timestamp_idx = header_list
@@ -1141,32 +1801,27 @@ pub fn read_merge_csvs_with_progress(
         warnings.push(w);
     }
 
-    // 2. Detect duplicate column names across files
+    // 2. The same column in several files is NOT reported: adding several files means adding
+    //    more of the same data (another period), so the files share their sensors by design
+    //    and their values are merged on the timestamp (user decision 2026-10-19 — the old
+    //    "Duplicate column 'x' found in file 1, file 2" lines listed every shared sensor).
+    //    A column that appears twice INSIDE one file is still reported: only one of the two
+    //    can be kept.
     let is_timestamp =
         |h: &str| h.eq_ignore_ascii_case("timestamp") || h.eq_ignore_ascii_case("time");
 
     if paths.len() > 1 {
-        let mut header_sources: HashMap<String, Vec<usize>> = HashMap::new();
         for (file_idx, result) in results.iter().enumerate() {
+            let mut seen: HashSet<String> = HashSet::new();
+            let mut reported: HashSet<String> = HashSet::new();
             for h in &result.data.headers {
                 if is_timestamp(h) {
                     continue;
                 }
-                header_sources
-                    .entry(h.to_lowercase())
-                    .or_default()
-                    .push(file_idx);
-            }
-        }
-        for (col_lower, file_indices) in &header_sources {
-            if file_indices.len() > 1 {
-                let file_nums: Vec<String> =
-                    file_indices.iter().map(|i| format!("file {}", i + 1)).collect();
-                warnings.push(format!(
-                    "Duplicate column '{}' found in {}",
-                    col_lower,
-                    file_nums.join(", ")
-                ));
+                let key = h.to_lowercase();
+                if !seen.insert(key.clone()) && reported.insert(key.clone()) {
+                    warnings.push(format!("Duplicate column '{}' found in file {}", key, file_idx + 1));
+                }
             }
         }
     }
@@ -1669,10 +2324,7 @@ pub fn load_mapping_csv_data(path: &str) -> Result<MappingData, String> {
     let mut rdr = csv::Reader::from_reader(BufReader::new(file));
 
     let headers_record = rdr.headers().map_err(|e| e.to_string())?.clone();
-    let headers: Vec<String> = headers_record
-        .iter()
-        .map(|s| s.trim().to_string())
-        .collect();
+    let headers: Vec<String> = headers_record.iter().map(clean_header).collect();
 
     let mut rows: Vec<Vec<String>> = Vec::new();
     for result in rdr.records() {
@@ -1753,7 +2405,7 @@ pub fn load_metadata(path: &str) -> Result<Vec<SensorMetadata>, String> {
     let mut comp_idx = None;
 
     for (i, h) in headers.iter().enumerate() {
-        match h.trim().to_lowercase().as_str() {
+        match clean_header(h).to_lowercase().as_str() {
             "tag" => tag_idx = Some(i),
             "description" => desc_idx = Some(i),
             "unit" => unit_idx = Some(i),
@@ -1839,6 +2491,20 @@ mod tests {
             "31.01.2025 13:05",
             "31-01-2025 13:05",
             "1/31/2025 1:05 PM",
+            "31/01/25 13:05",
+            "Jan 31 2025 13:05",
+            "31-Jan-25 1:05 PM",
+            "Fri, 31 Jan 2025 13:05:00 +0700",
+            "Friday, January 31, 2025 1:05 PM",
+            "Fri Jan 31 2025 13:05:00 GMT+0700 (Indochina Time)",
+            "20250131130500",
+            "20250131 1305",
+            "2025-01-31T130500",
+            "2025-01-31t13:05:00",
+            "31 ม.ค. 2568 13:05",
+            "๓๑ มกราคม ๒๕๖๘ 13.05 น.",
+            "1738328700",
+            "1738328700000",
         ] {
             let (p, _, _) = read_file_ts(&[s]);
             assert_eq!(p[0], Some(want), "{s} should read as 2025-01-31 13:05");
@@ -1847,7 +2513,11 @@ mod tests {
         assert_eq!(p[0], Some(dt("2025-01-31 13:05:00.250")));
         let (p, _, _) = read_file_ts(&["31/01/2025"]);
         assert_eq!(p[0], Some(dt("2025-01-31 00:00:00")));
-        for s in ["Jan 31 2025 13:05", "31/01/25 13:05", "1738328700", "2025-01-31 25:00"] {
+        let (p, _, _) = read_file_ts(&["01-Jan-25 12:00 AM"]);
+        assert_eq!(p[0], Some(dt("2025-01-01 00:00:00")));
+        let (p, _, _) = read_file_ts(&["45688.5451389"]);
+        assert_eq!(p[0], Some(want), "Excel serial");
+        for s in ["31/01/5 13:05", "Foo 31 2025 13:05", "12345", "2025-01-31 25:00", "13:05", "yesterday"] {
             let (p, _, _) = read_file_ts(&[s]);
             assert_eq!(p[0], None, "{s} is listed as not read");
         }
@@ -1872,9 +2542,10 @@ mod tests {
         // DayFirst swaps A and B.
         let df = parse_loose("1/2/2026 0:05").unwrap().to_iso_text(DayMonthOrder::DayFirst);
         assert_eq!(df.as_deref(), Some("2026-02-01 00:05:00"));
-        // ISO is never a "loose" shape.
-        assert!(parse_loose("2026-01-02 00:05:00").is_none());
-        assert!(parse_loose("2026-01-02T00:05:00Z").is_none());
+        // Text `parse_timestamp` already reads is never rewritten.
+        assert!(loose_of("2026-01-02 00:05:00").is_none());
+        assert!(loose_of("2026-01-02T00:05:00Z").is_none());
+        assert!(loose_of("2026-01-02 00:05:00.5+07:00").is_none());
     }
 
     #[test]
@@ -1957,7 +2628,10 @@ mod tests {
         assert_eq!(texts[3], "2026-01-05 00:00:00");
         assert_eq!(
             w,
-            vec!["Dates in run-01.csv mix day/month/year (13/1/2026) and month/day/year (1/13/2026) — the order cannot be decided, so 3 row(s) with a year-last date could not be read"]
+            vec![
+                "Dates in run-01.csv mix day/month/year (13/1/2026) and month/day/year (1/13/2026) — the order cannot be decided, so 3 row(s) with a year-last date could not be read",
+                "Dates in run-01.csv read as year-month-day (2026/01/05 00:00 → 2026-01-05 00:00:00)",
+            ]
         );
     }
 
@@ -1967,14 +2641,177 @@ mod tests {
         assert_eq!(texts[1], "2/30/2026 0:00");
         assert_eq!(p[1], None);
         assert_eq!(w.len(), 2);
-        assert_eq!(w[1], "1 timestamp(s) in run-01.csv are not real dates and could not be read");
+        assert_eq!(w[1], "1 timestamp(s) in run-01.csv could not be read as a date and time");
     }
 
     #[test]
-    fn year_first_slash_only_is_rewritten_without_an_order_warning() {
+    fn year_first_slash_only_is_rewritten_with_one_info_line() {
         let (_, texts, w) = read_file_ts(&["2026/01/02 00:05:00", "2026/01/02 00:10:00"]);
         assert_eq!(texts, vec!["2026-01-02 00:05:00", "2026-01-02 00:10:00"]);
-        assert!(w.is_empty());
+        assert_eq!(
+            w,
+            vec!["Dates in run-01.csv read as year-month-day (2026/01/02 00:05:00 → 2026-01-02 00:05:00)"]
+        );
+    }
+
+    // ── More shape families (weekday/RFC, compact, ISO-like, Thai, serial) ─
+
+    fn iso(s: &str) -> Option<String> {
+        loose_of(s).and_then(|l| l.to_iso_text(DayMonthOrder::MonthFirst))
+    }
+
+    #[test]
+    fn weekday_and_rfc_styles_read_the_written_wall_clock() {
+        let want = Some("2025-01-01 13:05:00".to_string());
+        for s in [
+            "Mon, 01 Jan 2025 13:05:00",
+            "Wed, 01 Jan 2025 13:05:00 +0700",
+            "Wed, 01 Jan 2025 13:05:00 GMT",
+            "Wednesday, January 1, 2025 1:05 PM",
+            "Wed Jan 01 2025 13:05:00",
+            "Wed Jan 01 2025 13:05:00 GMT+0700",
+            "Wed Jan 01 2025 13:05:00 GMT+0700 (Indochina Time)",
+            "Wed Jan 01 2025 13:05:00 UTC",
+            "Wed Jan 01 2025 13:05:00Z",
+            "Wed Jan 01 2025 13:05:00+07:00",
+            "Wed Jan  1 13:05:00 2025",
+            "January 1, 2025 at 1:05 PM",
+            "Jan. 1, 2025 1:05 p.m.",
+        ] {
+            assert_eq!(iso(s), want, "{s}");
+        }
+        let (_, _, w) = read_file_ts(&["Wed, 01 Jan 2025 13:05:00 +0700"]);
+        assert_eq!(
+            w,
+            vec!["Dates in run-01.csv read as day-month-year with month names (Wed, 01 Jan 2025 13:05:00 +0700 → 2025-01-01 13:05:00)"]
+        );
+    }
+
+    #[test]
+    fn compact_digit_shapes_read() {
+        assert_eq!(iso("20250131 130500").as_deref(), Some("2025-01-31 13:05:00"));
+        assert_eq!(iso("20250131130500").as_deref(), Some("2025-01-31 13:05:00"));
+        assert_eq!(iso("20250131T130500").as_deref(), Some("2025-01-31 13:05:00"));
+        assert_eq!(iso("20250131T130500.25").as_deref(), Some("2025-01-31 13:05:00.25"));
+        assert_eq!(iso("202501311305").as_deref(), Some("2025-01-31 13:05:00"));
+        assert_eq!(iso("20250131").as_deref(), Some("2025-01-31 00:00:00"));
+        assert_eq!(iso("20251331"), None); // month 13
+        let (_, texts, w) = read_file_ts(&["20250131130500", "20250131131000"]);
+        assert_eq!(texts, vec!["2025-01-31 13:05:00", "2025-01-31 13:10:00"]);
+        assert_eq!(
+            w,
+            vec!["Dates in run-01.csv read as compact year-month-day digits (20250131130500 → 2025-01-31 13:05:00)"]
+        );
+    }
+
+    #[test]
+    fn iso_like_texts_parse_timestamp_does_not_take_are_rewritten() {
+        assert_eq!(iso("2025-01-31T130500").as_deref(), Some("2025-01-31 13:05:00"));
+        assert_eq!(iso("2025-01-31t13:05:00").as_deref(), Some("2025-01-31 13:05:00"));
+        assert_eq!(iso("2025-01-31 13:05:00,250").as_deref(), Some("2025-01-31 13:05:00.250"));
+        assert_eq!(iso("2025-01-31T13:05:00.250+0700").as_deref(), Some("2025-01-31 13:05:00.250"));
+        assert_eq!(iso("2025-01-31 1:05pm").as_deref(), Some("2025-01-31 13:05:00"));
+        assert_eq!(iso("2025-01-31 1:05 p.m.").as_deref(), Some("2025-01-31 13:05:00"));
+        assert_eq!(iso("2025-01-31 12:05a.m.").as_deref(), Some("2025-01-31 00:05:00"));
+        assert_eq!(iso("2025-1-31 7:05").as_deref(), Some("2025-01-31 07:05:00"));
+        assert_eq!(iso("2025.01.31 13:05").as_deref(), Some("2025-01-31 13:05:00"));
+        assert_eq!(iso("2025-01-31").as_deref(), Some("2025-01-31 00:00:00"));
+        assert_eq!(iso("2025-Jan-31 13:05").as_deref(), Some("2025-01-31 13:05:00"));
+        assert_eq!(iso("2025 Jan 31 13:05").as_deref(), Some("2025-01-31 13:05:00"));
+        // A comma fraction needs seconds; hour-only times are not read.
+        assert_eq!(iso("2025-01-31 13:05,5"), None);
+        assert_eq!(iso("2025-01-31 13"), None);
+    }
+
+    #[test]
+    fn thai_month_names_digits_and_buddhist_era_years() {
+        // Rewritten text keeps the BE year; `from_parts` converts it once.
+        assert_eq!(iso("1 ม.ค. 2568 13:05").as_deref(), Some("2568-01-01 13:05:00"));
+        assert_eq!(iso("01 มกราคม 2568 13:05 น.").as_deref(), Some("2568-01-01 13:05:00"));
+        assert_eq!(iso("1 มค 68 13:05").as_deref(), Some("2568-01-01 13:05:00"));
+        assert_eq!(iso("๑ ก.พ. ๒๕๖๘ ๑๓:๐๕").as_deref(), Some("2568-02-01 13:05:00"));
+        assert_eq!(iso("วันที่"), None);
+        for (s, m) in [
+            ("1 มี.ค. 2568", 3),
+            ("1 เม.ย. 2568", 4),
+            ("1 พ.ค. 2568", 5),
+            ("1 มิ.ย. 2568", 6),
+            ("1 ก.ค. 2568", 7),
+            ("1 ส.ค. 2568", 8),
+            ("1 ก.ย. 2568", 9),
+            ("1 ต.ค. 2568", 10),
+            ("1 พ.ย. 2568", 11),
+            ("1 ธ.ค. 2568", 12),
+            ("1 ธันวาคม 2568", 12),
+            ("1 กุมภาพันธ์ 2568", 2),
+        ] {
+            assert_eq!(iso(s), Some(format!("2568-{m:02}-01 00:00:00")), "{s}");
+        }
+        let (p, _, w) = read_file_ts(&["1 ม.ค. 68 13:05 น.", "1 ม.ค. 68 13:10 น."]);
+        assert_eq!(p[0], Some(dt("2025-01-01 13:05:00")));
+        assert_eq!(
+            w,
+            vec!["Dates in run-01.csv read as day-month-year with Thai month names (1 ม.ค. 68 13:05 น. → 2025-01-01 13:05:00, 2-digit year read as พ.ศ. 25YY)"]
+        );
+    }
+
+    #[test]
+    fn an_all_numeric_column_reads_as_excel_serials_or_unix_epochs() {
+        // Excel: 45658 = 2025-01-01 (the 1899-12-30 epoch absorbs the
+        // fictitious 1900-02-29); fraction = time of day, nearest second.
+        let (p, texts, w) = read_file_ts(&["45658", "45658.5", "45658.5416667"]);
+        assert_eq!(texts, vec!["2025-01-01 00:00:00", "2025-01-01 12:00:00", "2025-01-01 13:00:00"]);
+        assert!(p.iter().all(|x| x.is_some()));
+        assert_eq!(w, vec!["Times in run-01.csv read as Excel serial dates (45658 → 2025-01-01 00:00:00)"]);
+        assert_eq!(serial_to_iso("60", SerialKind::Excel), None); // out of range
+        assert_eq!(serial_to_iso("45657.999999", SerialKind::Excel).as_deref(), Some("2025-01-01 00:00:00"));
+
+        let (_, texts, w) = read_file_ts(&["1735736700", "1735737000"]);
+        assert_eq!(texts, vec!["2025-01-01 13:05:00", "2025-01-01 13:10:00"]);
+        assert_eq!(w, vec!["Times in run-01.csv read as Unix epoch seconds (UTC) (1735736700 → 2025-01-01 13:05:00)"]);
+
+        let (_, texts, w) = read_file_ts(&["1735736700250", "1735737000000"]);
+        assert_eq!(texts, vec!["2025-01-01 13:05:00.250", "2025-01-01 13:10:00"]);
+        assert_eq!(
+            w,
+            vec!["Times in run-01.csv read as Unix epoch milliseconds (UTC) (1735736700250 → 2025-01-01 13:05:00.250)"]
+        );
+
+        // Numbers of another kind inside a numeric column: unreadable, counted.
+        let (p, _, w) = read_file_ts(&["45658", "45659", "1735736700"]);
+        assert_eq!(p[2], None);
+        assert_eq!(w[1], "1 timestamp(s) in run-01.csv could not be read as a date and time");
+    }
+
+    #[test]
+    fn numbers_mixed_with_text_dates_are_unreadable_and_counted() {
+        let (p, texts, w) = read_file_ts(&["01-Jan-25 12:00 AM", "45658", "01-Jan-25 12:10 AM"]);
+        assert_eq!(texts[1], "45658");
+        assert_eq!(p[1], None);
+        assert_eq!(w.len(), 2);
+        assert_eq!(w[1], "1 timestamp(s) in run-01.csv could not be read as a date and time");
+        // Also inside an otherwise ISO file.
+        let (_, _, w) = read_file_ts(&["2025-01-01 00:00:00", "junk"]);
+        assert_eq!(w, vec!["1 timestamp(s) in run-01.csv could not be read as a date and time"]);
+    }
+
+    #[test]
+    fn plain_iso_detection_matches_what_parse_timestamp_reads() {
+        for s in [
+            "2025-01-31 13:05",
+            "2025-01-31T13:05:00",
+            "2025-01-31 13:05:00.250",
+            "2025-01-31 13:05:00+07:00",
+            "2025-01-31T13:05:00.5-05:00",
+            "2025-01-31T13:05:00Z",
+            "2025-01-31T13:05Z",
+        ] {
+            assert!(is_plain_iso(s), "{s}");
+            assert!(parse_timestamp(s).is_some(), "{s}");
+        }
+        for s in ["2025-01-31", "2025-01-31T130500", "2025-01-31t13:05", "2025-01-31 13:05:00,5", "2025-01-31 1:05"] {
+            assert!(!is_plain_iso(s), "{s}");
+        }
     }
 
     #[test]
@@ -1995,6 +2832,147 @@ mod tests {
         assert_eq!(p[1], Some(dt("2024-02-29 00:00:00")));
         // The example is shown in CE.
         assert_eq!(w, vec!["Dates in run-01.csv read as month/day/year (1/2/2569 → 2026-01-02)"]);
+    }
+
+    // ── Month names, 2-digit years, BOM ────────────────────────────────────
+
+    #[test]
+    fn the_historian_lines_read_with_month_names_and_12_hour_clock() {
+        let (p, texts, w) = read_file_ts(&[
+            "01-Jan-25 12:00 AM",
+            "01-Jan-25 12:05 AM",
+            "01-Jan-25 12:05 PM",
+            "30-Dec-25 11:55 PM",
+        ]);
+        assert_eq!(
+            texts,
+            vec!["2025-01-01 00:00:00", "2025-01-01 00:05:00", "2025-01-01 12:05:00", "2025-12-30 23:55:00"]
+        );
+        assert!(p.iter().all(|x| x.is_some()));
+        // No order guess for month names — one info line.
+        assert_eq!(
+            w,
+            vec!["Dates in run-01.csv read as day-month-year with month names (01-Jan-25 12:00 AM → 2025-01-01 00:00:00, 2-digit year read as 20YY)"]
+        );
+    }
+
+    #[test]
+    fn every_month_name_shape_reads() {
+        let txt = |s: &str| parse_loose(s).and_then(|l| l.to_iso_text(DayMonthOrder::MonthFirst));
+        let want = Some("2025-09-07 08:30:00".to_string());
+        for s in [
+            "07-Sep-25 8:30",
+            "07-Sep-2025 08:30:00",
+            "7-September-2025 8:30 AM",
+            "07 Sep 2025 8:30",
+            "7 sept 2025 08:30",
+            "Sep 7 2025 8:30",
+            "SEPT 07, 2025 8:30 AM",
+            "September 7, 2025 08:30",
+        ] {
+            assert_eq!(txt(s), want, "{s}");
+        }
+        for (s, iso) in [
+            ("1 January 2026", "2026-01-01 00:00:00"),
+            ("28-feb-2026 23:59:59.5", "2026-02-28 23:59:59.5"),
+            ("Mar 3 2026", "2026-03-03 00:00:00"),
+            ("15-April-26 1:00 PM", "2026-04-15 13:00:00"),
+            ("1-May-26", "2026-05-01 00:00:00"),
+            ("1 June 2026", "2026-06-01 00:00:00"),
+            ("1 July 2026", "2026-07-01 00:00:00"),
+            ("1 August 2026", "2026-08-01 00:00:00"),
+            ("1 October 2026", "2026-10-01 00:00:00"),
+            ("1 November 2026", "2026-11-01 00:00:00"),
+            ("1 December 2026", "2026-12-01 00:00:00"),
+        ] {
+            assert_eq!(txt(s).as_deref(), Some(iso), "{s}");
+        }
+        // Month-first example → "month-day-year" in the info line, 4-digit year → no 20YY note.
+        let (_, _, w) = read_file_ts(&["Jan 31, 2025 13:05"]);
+        assert_eq!(
+            w,
+            vec!["Dates in run-01.csv read as month-day-year with month names (Jan 31, 2025 13:05 → 2025-01-31 13:05:00)"]
+        );
+        // Not real dates / not month names.
+        assert!(parse_loose("31-Feb-25").and_then(|l| l.to_iso_text(DayMonthOrder::MonthFirst)).is_none());
+        assert!(parse_loose("07-Sem-25 8:30").is_none());
+        assert!(parse_loose("07-Sep-125 8:30").is_none());
+    }
+
+    #[test]
+    fn two_digit_numeric_years_follow_the_file_order_and_say_20yy() {
+        let (_, texts, w) = read_file_ts(&["31/01/25 13:05", "01/02/25 13:05"]);
+        assert_eq!(texts, vec!["2025-01-31 13:05:00", "2025-02-01 13:05:00"]);
+        assert_eq!(
+            w,
+            vec!["Dates in run-01.csv read as day/month/year (31/01/25 → 2025-01-31, 2-digit year read as 20YY)"]
+        );
+        let (_, texts, w) = read_file_ts(&["1/31/25 1:05 PM"]);
+        assert_eq!(texts, vec!["2025-01-31 13:05:00"]);
+        assert_eq!(
+            w,
+            vec!["Dates in run-01.csv read as month/day/year (1/31/25 → 2025-01-31, 2-digit year read as 20YY)"]
+        );
+    }
+
+    #[test]
+    fn a_bom_and_any_case_of_timestamp_are_cleaned_from_headers() {
+        assert_eq!(clean_header("\u{FEFF}TimeStamp"), "TimeStamp");
+        assert_eq!(clean_header(" \u{FEFF} A "), "A");
+        let dir = tempfile::tempdir().unwrap();
+        for header in ["\u{FEFF}TimeStamp", "TIMESTAMP", "timeStamp"] {
+            let p = write_csv(&dir, "bom.csv", &format!("{header},A\n2026-01-01 00:00:00,1\n"));
+            let (m, rep) = load(vec![p]);
+            assert_eq!(m.data.headers, vec![header.trim_start_matches('\u{FEFF}'), "A"]);
+            assert_eq!(rep.columns[0].dtype, "datetime");
+            assert!(m.data.ts_parsed.iter().all(|&t| t != TS_MISSING));
+        }
+    }
+
+    /// The user's two historian exports (2025.csv / 2026.csv): BOM-prefixed
+    /// `TimeStamp` header, `DD-Mon-YY h:mm AM/PM`, the same sensors in both.
+    #[test]
+    fn the_two_historian_files_load_as_one_continuous_series() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = write_csv(
+            &dir,
+            "2025.csv",
+            "\u{FEFF}TimeStamp,BIG3-PIC-6072.PV,BIG3-PIC-6072.OUT\n\
+             01-Jan-25 12:00 AM,0,105\n01-Jan-25 12:05 AM,1,106\n30-Dec-25 11:55 PM,2,107\n",
+        );
+        let b = write_csv(
+            &dir,
+            "2026.csv",
+            "\u{FEFF}TimeStamp,BIG3-PIC-6072.PV,BIG3-PIC-6072.OUT\n\
+             01-Jan-26 12:00 AM,3,108\n16-Oct-26 2:10 PM,4,109\n",
+        );
+        let (m, rep) = load(vec![a, b]);
+        assert_eq!(m.data.headers, vec!["TimeStamp", "BIG3-PIC-6072.PV", "BIG3-PIC-6072.OUT"]);
+        assert!(m.data.headers.iter().all(|h| !h.contains('\u{FEFF}')));
+        assert_eq!(rep.columns[0].dtype, "datetime");
+        let texts: Vec<_> = m.data.timestamps.iter().map(|t| t.clone().unwrap()).collect();
+        assert_eq!(
+            texts,
+            vec![
+                "2025-01-01 00:00:00",
+                "2025-01-01 00:05:00",
+                "2025-12-30 23:55:00",
+                "2026-01-01 00:00:00",
+                "2026-10-16 14:10:00"
+            ]
+        );
+        assert!(m.data.ts_parsed.windows(2).all(|w| w[0] < w[1]));
+        assert_eq!(rep.period_start.as_deref(), Some("2025-01-01 00:00:00"));
+        assert_eq!(rep.period_end.as_deref(), Some("2026-10-16 14:10:00"));
+        assert_eq!(row_vals(&m.data, 4), vec![None, Some(4.0), Some(109.0)]);
+        assert!(!rep.warnings.iter().any(|w| w.contains("Duplicate column")), "{:?}", rep.warnings);
+        assert_eq!(
+            rep.warnings,
+            vec![
+                "Dates in 2025.csv read as day-month-year with month names (01-Jan-25 12:00 AM → 2025-01-01 00:00:00, 2-digit year read as 20YY)",
+                "Dates in 2026.csv read as day-month-year with month names (01-Jan-26 12:00 AM → 2026-01-01 00:00:00, 2-digit year read as 20YY)",
+            ]
+        );
     }
 
     // ── Non-ISO shapes: whole load path ────────────────────────────────────
@@ -2022,6 +3000,33 @@ mod tests {
         assert_eq!(
             rep.warnings,
             vec!["Dates in run-01.csv read as month/day/year (1/2/2026 → 2026-01-02)"]
+        );
+    }
+
+    #[test]
+    fn sensors_shared_by_several_files_are_not_reported_but_a_column_twice_in_one_file_is() {
+        // User decision 2026-10-19: several files = more of the same data (another period), so
+        // shared sensors are the normal case and get no "Duplicate column" line.
+        let dir = tempfile::tempdir().unwrap();
+        let a = write_csv(&dir, "jan.csv", "timestamp,A,B
+2026-01-01 00:00:00,1,2
+");
+        let b = write_csv(&dir, "feb.csv", "timestamp,A,B
+2026-02-01 00:00:00,3,4
+");
+        let (_, rep) = load(vec![a, b]);
+        assert!(rep.warnings.iter().all(|w| !w.contains("Duplicate column")), "{:?}", rep.warnings);
+
+        let c = write_csv(&dir, "mar.csv", "timestamp,A,B
+2026-03-01 00:00:00,5,6
+");
+        let d = write_csv(&dir, "apr.csv", "timestamp,A,a
+2026-04-01 00:00:00,7,8
+");
+        let (_, rep) = load(vec![c, d]);
+        assert_eq!(
+            rep.warnings.iter().filter(|w| w.contains("Duplicate column")).collect::<Vec<_>>(),
+            vec!["Duplicate column 'a' found in file 2"]
         );
     }
 

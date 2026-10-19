@@ -438,13 +438,14 @@ describe('B. File selection', () => {
     expect(note.getAttribute('role')).toBe('note');
     expect(note.textContent).toMatch(/Every file must write the date\/time the same way/);
     const shapes = [...screen.getByTestId('supported-timestamps').querySelectorAll('span')].slice(1).map(x => x.textContent);
-    expect(shapes).toEqual([
-      '2025-01-31 13:05:00', '2025-01-31T13:05:00', '2025-01-31 13:05:00+07:00', '2025/01/31 13:05:00',
-      '1/31/2025 13:05', '31/01/2025 13:05', '31.01.2025 13:05', '1/31/2025 1:05 PM',
+    expect(shapes.slice(0, -1)).toEqual([
+      '2025-01-31 13:05:00', '1/31/2025 1:05 PM', '31/01/2025 13:05', '01-Jan-25 12:00 AM',
+      'Fri, 31 Jan 2025 13:05:00 +0700', '20250131130500', '31 ม.ค. 2568 13:05', '45688.5451389',
     ]);
-    // 2026-10-19: year-last dates are read; the order rule is stated, 2-digit years are not read
+    expect(shapes[shapes.length - 1]).toBe('and more');
+    // 2026-10-19: the order rule is stated; 2-digit and Buddhist-era years are explained
     expect(note.textContent).toMatch(/a number over 12 is the day/);
-    expect(note.textContent).toMatch(/31\/01\/25 is not read/);
+    expect(note.textContent).toMatch(/2-digit year is read as 20YY/);
   });
 
   it('B11. clicking remove on a file row calls removeFile(path)', () => {

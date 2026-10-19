@@ -34,13 +34,14 @@ interface SensorDataPanelProps {
 
 const REQUIREMENTS = ['First column is date/time', 'Unique column names', 'Up to 2 GB per file'];
 
-/** Date/time shapes the reader understands (`csv_processor.rs`; since 2026-10-19 also the
- *  year-last shapes Excel writes, with day/month order decided per file — a value over 12 is
- *  the day; otherwise the order that keeps the rows in sequence). The Rust test
- *  `the_timestamp_shapes_the_import_page_lists_are_the_ones_parsed` keeps this list true. */
+/** A few of the date/time shapes the reader understands (`csv_processor.rs` reads many more:
+ *  month names, weekdays, compact digits, Thai, Excel serials, epoch …; day/month order of a
+ *  year-last date is decided per file — a value over 12 is the day; otherwise the order that
+ *  keeps the rows in sequence). The Rust test `the_timestamp_shapes_the_import_page_lists_are_the_ones_parsed`
+ *  checks every one of these. */
 export const SUPPORTED_TIMESTAMPS = [
-  '2025-01-31 13:05:00', '2025-01-31T13:05:00', '2025-01-31 13:05:00+07:00', '2025/01/31 13:05:00',
-  '1/31/2025 13:05', '31/01/2025 13:05', '31.01.2025 13:05', '1/31/2025 1:05 PM',
+  '2025-01-31 13:05:00', '1/31/2025 1:05 PM', '31/01/2025 13:05', '01-Jan-25 12:00 AM',
+  'Fri, 31 Jan 2025 13:05:00 +0700', '20250131130500', '31 ม.ค. 2568 13:05', '45688.5451389',
 ];
 
 /**
@@ -67,9 +68,10 @@ function TimestampFormatNote({ T }: { T: Tokens }) {
         <div style={{ marginTop: 6, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 5 }} data-testid="supported-timestamps">
           <span>Supported:</span>
           {SUPPORTED_TIMESTAMPS.map((f) => <span key={f} style={code}>{f}</span>)}
+          <span>and more</span>
         </div>
         <div style={{ marginTop: 4, color: T.textFaint }}>
-          Day/month order is read from the file: a number over 12 is the day; if none is, the order that keeps the rows in sequence — the box above says which was used. The year needs 4 digits (<span style={{ fontFamily: mono }}>31/01/25</span> is not read). A Buddhist-era year (<span style={{ fontFamily: mono }}>2568</span>) is converted to <span style={{ fontFamily: mono }}>2025</span>.
+          Day/month order is read from the file: a number over 12 is the day; if none is, the order that keeps the rows in sequence — the box above says which was used. A 2-digit year is read as 20YY, a Buddhist-era year (<span style={{ fontFamily: mono }}>2568</span>) as <span style={{ fontFamily: mono }}>2025</span>.
         </div>
       </div>
     </div>
