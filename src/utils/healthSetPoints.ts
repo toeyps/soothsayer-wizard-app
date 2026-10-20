@@ -158,3 +158,27 @@ export function patchModelHealthSetPoints(
     if (!models.some(m => m.id === modelId)) return models;
     return models.map(m => (m.id === modelId ? { ...m, healthSetPoints: next } : m));
 }
+
+
+/** The numbers a set-point value carries (master snapshots excluded: they are
+ *  bookkeeping, not part of what the files contain). */
+function setPointNumbers(sp: HealthSetPoints): (number | null)[] | null {
+    switch (sp.kind) {
+        case 'individual': return [finiteOrNull(sp.lower), finiteOrNull(sp.upper)];
+        case 'relationship': return [finiteOrNull(sp.residualAt80Lower), finiteOrNull(sp.residualAt80Upper), finiteOrNull(sp.residualAt0Lower), finiteOrNull(sp.residualAt0Upper)];
+        case 'clustering': return [finiteOrNull(sp.outerSd)];
+        default: return null;
+    }
+}
+
+/** Same kind and the same entered numbers (master snapshots ignored). The
+ *  utils copy of the Health page's `sameSetPoints` (`healthChecks.ts`), so the
+ *  workspace write rules do not import component code; the two must agree
+ *  (`healthSetPoints.test.ts` checks). */
+export function sameHealthSetPoints(a: HealthSetPoints | null | undefined, b: HealthSetPoints | null | undefined): boolean {
+    if (!a || !b) return !a && !b;
+    if (a.kind !== b.kind) return false;
+    const x = setPointNumbers(a);
+    const y = setPointNumbers(b);
+    return !!x && !!y && x.length === y.length && x.every((v, i) => v === y[i]);
+}

@@ -128,6 +128,7 @@ fn downsample_and_assignment_public_helpers() {
     assert!(idx.len() <= 100 && idx.contains(&4321));
     let ranges = [(None, Some(10.0)), (Some(10.0), None)];
     assert_eq!(assign_cluster(9.0, &ranges), Some(0));
-    assert_eq!(assign_cluster(10.0, &ranges), Some(1));
+    assert_eq!(assign_cluster(10.0, &ranges), Some(0), "(min, max]");
+    assert_eq!(assign_cluster(10.5, &ranges), Some(1));
     assert_eq!(assign_cluster(f64::NAN, &ranges), None);
 }

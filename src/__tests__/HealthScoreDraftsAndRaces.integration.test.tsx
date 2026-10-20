@@ -548,18 +548,20 @@ describe('Mark complete: races and failures', () => {
         expect(diskModel('i1').status).toBe(false);
     });
 
-    it('"Changed after saving" + "Mark complete again" rewrites the files and the export record; reverting the value clears the hint', async () => {
+    it('a set-point change on a Complete model makes it Incomplete; Mark complete then rewrites the files and the export record', async () => {
         await readyI1();
         await markComplete();
         await waitFor(() => expect(bmw().getByTestId('save-ok')).toBeTruthy());
         const first = diskModel('i1').healthExport;
         expect(first.setPoints).toMatchObject({ lower: 20, upper: 80 });
-        await enterSp({ 'sp-upper': '81' });
-        expect(bmw().getByTestId('files-out-of-date')).toBeTruthy();
-        await enterSp({ 'sp-upper': '80' });
-        expect(bmwEl().querySelector('[data-testid="files-out-of-date"]')).toBeNull();
+        // a set-point change makes the model Incomplete in the same write (export round
+        // 2026-10-20): no "changed after saving" hint, the plain Mark complete is back
         await enterSp({ 'sp-upper': '82' });
-        await act(async () => { fireEvent.click(bmw().getByTestId('mark-complete-again')); });
+        expect(diskModel('i1').status).toBe(false);
+        expect(bmwEl().querySelector('[data-testid="files-out-of-date"]')).toBeNull();
+        expect(bmwEl().querySelector('[data-testid="mark-complete-again"]')).toBeNull();
+        await waitFor(() => expect(markBtn().disabled).toBe(false));
+        await act(async () => { fireEvent.click(markBtn()); });
         await settle(150);
         const second = diskModel('i1').healthExport;
         expect(second.setPoints).toMatchObject({ lower: 20, upper: 82 });
@@ -685,7 +687,7 @@ describe('multi-workspace isolation of the health state', () => {
     // workspace's folder, but does not copy that folder (deliberately).
     // The copy therefore shows "Complete · files saved to <original's folder>"; once the
     // original is deleted those files are gone and the copy still claims them.
-    it('DESIGN GAP: a duplicated workspace does not claim files that live in the ORIGINAL workspace\'s output folder', async () => {
+    it('a duplicated workspace keeps the model Complete (user decision 2026-10-20) but does not claim files in the ORIGINAL workspace output folder', async () => {
         writeDisk(trainedWs({ i1: { healthSetPoints: { ...EMPTY_I, lower: 20, upper: 80 } } }));
         await mountWindows({ dashboard: false });
         await openI1Health();
@@ -695,10 +697,10 @@ describe('multi-workspace isolation of the health state', () => {
         const copy = await duplicateWorkspace(WS);
         await deleteWorkspace(WS);
         const m = copy!.failureGroupState!.models.find(x => x.id === 'i1')!;
-        const claimsOriginal = m.status && m.healthExport?.outputDir?.includes(`/workspaces/${WS}/`);
+        const claimsOriginal = !!(m.status && m.healthExport?.outputDir?.includes(`/workspaces/${WS}/`));
         expect(claimsOriginal).toBe(false);
-        // ... the copy keeps everything else and must be marked complete again
-        expect(m.status).toBe(false);
+        // ... the copy keeps its status and everything else, without the original's export record
+        expect(m.status).toBe(true);
         expect(m.healthExport).toBeUndefined();
         expect(m.healthSetPoints).toMatchObject({ lower: 20, upper: 80 });
         expect(m.lastTrainedAt).toBeTruthy();

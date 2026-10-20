@@ -518,8 +518,10 @@ fn singular_or_tiny_clusters_are_rejected_by_validation() {
 fn assign_cluster_edges_overlaps_unsorted_and_missing() {
     let r = vec![(None, Some(10.0)), (Some(10.0), Some(20.0)), (Some(20.0), None)];
     assert_eq!(assign_cluster(9.999_999, &r), Some(0));
-    assert_eq!(assign_cluster(10.0, &r), Some(1), "[min,max): 10 belongs to the second range");
-    assert_eq!(assign_cluster(20.0, &r), Some(2));
+    assert_eq!(assign_cluster(10.0, &r), Some(0), "(min,max]: 10 belongs to the first range");
+    assert_eq!(assign_cluster(10.000_001, &r), Some(1));
+    assert_eq!(assign_cluster(20.0, &r), Some(1), "(min,max]: 20 is the second range's top");
+    assert_eq!(assign_cluster(20.000_001, &r), Some(2));
     assert_eq!(assign_cluster(-1e300, &r), Some(0));
     assert_eq!(assign_cluster(1e300, &r), Some(2));
     for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
@@ -528,7 +530,8 @@ fn assign_cluster_edges_overlaps_unsorted_and_missing() {
     // Gap.
     let gap = vec![(None, Some(10.0)), (Some(15.0), None)];
     assert_eq!(assign_cluster(12.0, &gap), None);
-    assert_eq!(assign_cluster(15.0, &gap), Some(1));
+    assert_eq!(assign_cluster(15.0, &gap), None, "(min,max]: 15 is the second range's open bottom");
+    assert_eq!(assign_cluster(15.5, &gap), Some(1));
     // Overlapping -> first wins.
     let ov = vec![(Some(0.0), Some(20.0)), (Some(10.0), Some(30.0))];
     assert_eq!(assign_cluster(15.0, &ov), Some(0));
@@ -536,8 +539,9 @@ fn assign_cluster_edges_overlaps_unsorted_and_missing() {
     // Unsorted -> still by containment, first match.
     let un = vec![(Some(20.0), None), (None, Some(20.0))];
     assert_eq!(assign_cluster(5.0, &un), Some(1));
-    assert_eq!(assign_cluster(20.0, &un), Some(0));
-    // Empty range [a, a) contains nothing.
+    assert_eq!(assign_cluster(20.0, &un), Some(1), "(min,max]: 20 is the top of (.., 20]");
+    assert_eq!(assign_cluster(20.5, &un), Some(0));
+    // Empty range (a, a] contains nothing.
     let empty = vec![(Some(5.0), Some(5.0))];
     assert_eq!(assign_cluster(5.0, &empty), None);
     // No ranges at all.

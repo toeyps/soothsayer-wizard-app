@@ -6,6 +6,7 @@ import { testPeriodsKey } from './timePeriods';
 import { computeTrainFingerprint } from './trainFingerprint';
 import { migratePeriods } from './workspaceMigrations';
 import { demoteModelsForRecipeChange, stampTrainedFormulas } from './specialSensorSignature';
+import { sameHealthSetPoints } from './healthSetPoints';
 
 /**
  * "Incomplete immediately".
@@ -23,8 +24,11 @@ import { demoteModelsForRecipeChange, stampTrainedFormulas } from './specialSens
  *
  * The same change also drops a saved `healthVerdict` (it described the old fit).
  *
- * What does NOT trigger it: set points, name, notes, category, status, group
- * membership, `scatterXSensor` — none of them is in `computeTrainFingerprint`.
+ * What does NOT trigger it: name, notes, category, status, group membership,
+ * `scatterXSensor`, the workspace's export `runningStatus` — none of them is in
+ * `computeTrainFingerprint`. SET POINTS are not either, but changing them takes
+ * the third road described on `applyIncompleteRule` (Complete -> Incomplete,
+ * still trained, everything else kept).
  * SCORING periods are not in it either; a
  * change of ONLY them takes the second road described on `applyIncompleteRule`
  * (Complete -> Incomplete + `testsChangedAt`, but still trained).
@@ -107,6 +111,27 @@ export function changedScoringPeriodIds(prevFg: RuleSlice, nextFg: RuleSlice): s
     return changed;
 }
 
+/**
+ * Ids of the models that are Complete on BOTH sides and whose saved set points
+ * differ between `prev` and `next` (`sameHealthSetPoints`: the entered numbers,
+ * master snapshots ignored). A model that this write itself takes from
+ * Incomplete to Complete (Mark complete's write, which stores the set points it
+ * validated) is not in it. Models only on one side are ignored.
+ */
+export function modelsWithChangedSetPoints(prev: WorkspaceState, next: WorkspaceState): string[] {
+    const prevFg = prev.failureGroupState;
+    const nextFg = next.failureGroupState;
+    if (!prevFg || !nextFg || !Array.isArray(prevFg.models) || !Array.isArray(nextFg.models)) return [];
+    const before = new Map(prevFg.models.map(m => [m.id, m]));
+    const changed: string[] = [];
+    for (const m of nextFg.models) {
+        const old = before.get(m.id);
+        if (!old || !old.status || !m.status) continue;
+        if (!sameHealthSetPoints(old.healthSetPoints, m.healthSetPoints)) changed.push(m.id);
+    }
+    return changed;
+}
+
 /** Ids of the models in `next` whose training inputs differ from `prev`
  *  (models that only exist on one side are ignored — nothing to compare). */
 export function modelsWithChangedInputs(prev: WorkspaceState, next: WorkspaceState): string[] {
@@ -152,7 +177,14 @@ export interface IncompleteRuleOptions {
  *    back to `status: false` and gets `testsChangedAt` in the SAME write — the
  *    scoring results in its saved files no longer match. Its
  *    `healthVerdict` is kept (the set points still describe the same fit).
- *    Not-Complete models are left alone (nothing to mark again).
+ *    Not-Complete models are left alone (nothing to mark again);
+ *  - a change of ONLY the saved SET POINTS of a model that is Complete before
+ *    AND after the write (`modelsWithChangedSetPoints`) sets it back to
+ *    `status: false` in the same write — the Complete it had was for the old
+ *    numbers. It stays trained; `healthVerdict` and everything else are kept
+ *    (the writer that changed the numbers decides about the verdict). A write
+ *    that itself completes the model (status false -> true, Mark complete)
+ *    is not affected. Whichever writer changes the numbers, the rule applies.
  * Idempotent: a second pass finds no Complete model to demote.
  *
  * Special-sensor recipes (editing a special sensor's formula makes the models
@@ -179,16 +211,19 @@ export function applyIncompleteRule(prev: WorkspaceState, prevNext: WorkspaceSta
     if (!fg || !Array.isArray(fg.models) || !fg.models.some(m => m.status || m.healthVerdict !== undefined || m.testsChangedAt !== undefined)) return next;
     let changed: Set<string>;
     let testsChanged: Set<string>;
+    let setPointsChanged: Set<string>;
     try {
         changed = new Set(modelsWithChangedInputs(prev, next));
-        testsChanged = fg.models.some(m => m.status) ? new Set(modelsWithChangedTests(prev, next)) : new Set();
+        const anyComplete = fg.models.some(m => m.status);
+        testsChanged = anyComplete ? new Set(modelsWithChangedTests(prev, next)) : new Set();
+        setPointsChanged = anyComplete ? new Set(modelsWithChangedSetPoints(prev, next)) : new Set();
     } catch (e) {
         // A malformed record must never make a workspace write fail: this rule is
         // a guard on top of the write, not part of it.
         console.warn('applyIncompleteRule: could not compare model inputs, leaving statuses alone:', e);
         return next;
     }
-    if (changed.size === 0 && testsChanged.size === 0) return next;
+    if (changed.size === 0 && testsChanged.size === 0 && setPointsChanged.size === 0) return next;
     let demoted = false;
     let stamp: string | undefined;
     const models = fg.models.map(m => {
@@ -207,6 +242,10 @@ export function applyIncompleteRule(prev: WorkspaceState, prevNext: WorkspaceSta
             demoted = true;
             stamp ??= opts.now ?? new Date().toISOString();
             return { ...m, status: false, testsChangedAt: stamp };
+        }
+        if (setPointsChanged.has(m.id) && m.status) {
+            demoted = true;
+            return { ...m, status: false };
         }
         return m;
     });

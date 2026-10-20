@@ -44,11 +44,14 @@ function withoutTestsChanged(m: FailureModel): FailureModel {
 
 /**
  * Save the set points the user typed onto the model — on every explicit Save /
- * blur. Changes `healthSetPoints` ONLY (plus dropping a saved `healthVerdict`
- * that described the OLD numbers): not `status`, not `lastTrainedAt` /
- * `trainedFingerprint`, and (since set points are not part of the train
- * fingerprint) it never makes a model stale. Returns the new workspace state,
- * or `null` when the workspace could not be read.
+ * blur. Writes `healthSetPoints` (plus dropping a saved `healthVerdict` that
+ * described the OLD numbers). Different numbers on a Complete model also set
+ * it back to Incomplete (`status: false`) in this same write — not done here
+ * but by the incomplete rule `updateWorkspaceData` runs on every write
+ * (`applyIncompleteRule`, set-point road), so any writer is covered. Never
+ * touches `lastTrainedAt` / `trainedFingerprint`, and (set points are not part
+ * of the train fingerprint) never makes a model stale. Returns the new
+ * workspace state, or `null` when the workspace could not be read.
  */
 export async function commitSetPoints(
     workspaceId: string,

@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { mk } from './helpers/failureModelFixture';
 import type { FailureGroupStateSlice, FailureModel, TestPeriod, WorkspaceState } from '../types';
 import {
-    applyIncompleteRule, applyRecipeRule, changedScoringPeriodIds, changedTrainInputIds, modelsWithChangedInputs, modelsWithChangedTests, recipesDiffer,
+    applyIncompleteRule, applyRecipeRule, changedScoringPeriodIds, changedTrainInputIds, modelsWithChangedInputs, modelsWithChangedSetPoints, modelsWithChangedTests, recipesDiffer,
 } from '../utils/incompleteRule';
 import { isModelComplete, isModelStale, modelDotState, modelSetPointFlag, NOT_TRAINED_BLOCK_REASON } from '../utils/modelStatus';
 import { computeTrainFingerprint } from '../utils/trainFingerprint';
@@ -97,7 +97,6 @@ describe('applyIncompleteRule - a Complete model goes back to Incomplete the mom
 
 describe('applyIncompleteRule - what must NOT trigger it', () => {
     const untouched: Array<[string, Partial<FailureModel>]> = [
-        ['set points', { healthSetPoints: { kind: 'individual', lower: 1, upper: 9 } }],
         ['the export record of the saved files (health score 3b-2)', { healthExport: { at: '2026-10-04T01:00:00Z', outputDir: 'C:/ws/output', setPoints: { kind: 'individual', lower: 1, upper: 9 } } }],
         ['model name', { name: 'Another name' }],
         ['notes', { notes: 'some notes' }],
@@ -112,6 +111,18 @@ describe('applyIncompleteRule - what must NOT trigger it', () => {
             expect(editModel(individual(), patch).status).toBe(true);
         });
     }
+
+    it('the workspace runningStatus (export: "machine is running when …") is not a training input', () => {
+        const m = { ...individual(), lastTrainedAt: 't' };
+        m.trainedFingerprint = computeTrainFingerprint(m, slice([m]));
+        const prev = ws(slice([m]));
+        const next = ws(slice([m], { runningStatus: { sensor: 'SPEED', stopAtOrBelow: '1200' } }));
+        expect(applyIncompleteRule(prev, next)).toBe(next);
+        expect(computeTrainFingerprint(m, next.failureGroupState!)).toBe(computeTrainFingerprint(m, prev.failureGroupState!));
+        expect(modelsWithChangedInputs(prev, next)).toEqual([]);
+        const cleared = ws(slice([m], { runningStatus: null }));
+        expect(applyIncompleteRule(next, cleared)).toBe(cleared);
+    });
 
     it('reordering the same predictors', () => {
         const two = { ...relationship(), predictorSensors: ['P1', 'P2'] };
@@ -605,5 +616,48 @@ describe('applyIncompleteRule - special-sensor recipes', () => {
         expect(recipesDiffer(undefined, undefined)).toBe(false);
         expect(recipesDiffer([], [{ kind: 'formula', tag: 'T', formula: '$A' }])).toBe(true);
         expect(recipesDiffer([{ kind: 'formula', tag: 'T', formula: '$A' }], [{ kind: 'formula', tag: 'T', formula: '$B' }])).toBe(true);
+    });
+});
+
+describe('applyIncompleteRule - set points on a Complete model (export round, 2026-10-20)', () => {
+    const SP = { kind: 'individual' as const, lower: 1, upper: 9 };
+    const done = () => ({ ...individual(), healthSetPoints: SP, lastTrainedAt: 't', trainedFingerprint: 'fp', healthVerdict: 'valid' as const });
+
+    it('different numbers set it back to Incomplete in the same write; train record, set points and verdict kept', () => {
+        const after = editModel(done(), { healthSetPoints: { ...SP, upper: 10 } });
+        expect(after).toMatchObject({ status: false, healthSetPoints: { lower: 1, upper: 10 }, lastTrainedAt: 't', trainedFingerprint: 'fp', healthVerdict: 'valid' });
+        expect(after.testsChangedAt).toBeUndefined();
+    });
+
+    it('set points added, removed, or of another kind count as different', () => {
+        expect(editModel({ ...done(), healthSetPoints: undefined }, { healthSetPoints: SP }).status).toBe(false);
+        expect(editModel(done(), { healthSetPoints: undefined }).status).toBe(false);
+        expect(editModel(done(), { healthSetPoints: { kind: 'clustering', outerSd: 4 } }).status).toBe(false);
+    });
+
+    it('the same numbers (a master snapshot taken, a new object) keep it Complete', () => {
+        expect(editModel(done(), { healthSetPoints: { ...SP, masterLower: 0, masterUpper: null } }).status).toBe(true);
+    });
+
+    it('a write that itself completes the model (false -> true, Mark complete) keeps its new set points Complete', () => {
+        const after = editModel({ ...done(), status: false }, { status: true, healthSetPoints: { ...SP, upper: 10 } });
+        expect(after.status).toBe(true);
+    });
+
+    it('an Incomplete model stays Incomplete and is otherwise untouched', () => {
+        const m = { ...done(), status: false };
+        const prev = ws(slice([m]));
+        const next = ws(slice([{ ...m, healthSetPoints: { ...SP, upper: 10 } }]));
+        expect(applyIncompleteRule(prev, next)).toBe(next);
+    });
+
+    it('only the edited model is demoted, and a second pass changes nothing (idempotent)', () => {
+        const a = done();
+        const b = { ...done(), id: 'b' };
+        const prev = ws(slice([a, b]));
+        const once = applyIncompleteRule(prev, ws(slice([{ ...a, healthSetPoints: { ...SP, lower: 0 } }, b])));
+        expect(once.failureGroupState!.models.map(m => m.status)).toEqual([false, true]);
+        expect(modelsWithChangedSetPoints(prev, once)).toEqual([]);
+        expect(applyIncompleteRule(prev, once)).toBe(once);
     });
 });

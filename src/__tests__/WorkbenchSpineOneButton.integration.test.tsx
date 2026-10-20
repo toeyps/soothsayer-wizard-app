@@ -163,7 +163,7 @@ async function trainSensor() {
 }
 
 describe('ONE filled button + status said once, through a whole Individual journey (Dashboard + Build Model, one workspace file)', () => {
-    it('condition unset → set → needs training → training → trained → empty set points → valid → Complete → changed after saving → Mark complete again → a settings draft → saved', async () => {
+    it('condition unset → set → needs training → training → trained → empty set points → valid → Complete → set points changed (Incomplete) → Mark complete → a settings draft → saved', async () => {
         // The workspace running condition is NOT set (no condition, "use all rows" not chosen).
         writeDisk(wsState({
             runningConditionFilters: [],
@@ -282,18 +282,20 @@ describe('ONE filled button + status said once, through a whole Individual journ
         expect(bmw().queryByTestId('mark-complete-again')).toBeNull();
         expect(diskModel('i1').status).toBe(true);
 
-        // 8) a set point changed after saving: "Mark complete again" appears and is the one filled button
+        // 8) a set point changed on a Complete model (export round 2026-10-20): Incomplete in the
+        // same write — the spine is back to "valid set points", Mark complete is the filled button
         await enterSp({ 'sp-upper': '91' });
         await waitFor(() => expect(bmw().getByTestId('check-valid')).toBeTruthy());
-        await expectSpine('files out of date', 'i1', 'tag1', 'individual', {
-            primary: 'mark', filled: ['mark-complete-again'], pill: 'Complete',
-            sentence: 'Files out of date — set points changed after saving · Mark complete again to update them',
-            // the tab says it too (v2 §2) — the model is still Complete, so the dot stays green
-            words: 'Complete · files out of date', dot: 'complete', dash: 'complete',
+        expect(diskModel('i1').status).toBe(false);
+        await waitFor(() => expect(diskModel('i1').healthVerdict).toBe('valid'));
+        await expectSpine('set points changed on a Complete model', 'i1', 'tag1', 'individual', {
+            primary: 'mark', filled: ['mark-complete'], pill: 'Trained',
+            sentence: null,
+            words: 'Trained', dot: 'need', dash: 'trained',
         });
-        expect(diskModel('i1').status).toBe(true); // a set point never makes it Incomplete
-        await waitFor(() => expect((bmw().getByTestId('mark-complete-again') as HTMLButtonElement).disabled).toBe(false));
-        await act(async () => { fireEvent.click(bmw().getByTestId('mark-complete-again')); });
+        expect(bmw().queryByTestId('mark-complete-again')).toBeNull();
+        await waitFor(() => expect(markBtn().disabled).toBe(false));
+        await act(async () => { fireEvent.click(markBtn()); });
         await settle(100);
         await waitFor(() => expect(diskModel('i1').healthExport.setPoints.upper).toBe(91));
         await expectSpine('complete again', 'i1', 'tag1', 'individual', {

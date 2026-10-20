@@ -556,7 +556,7 @@ describe('R4 — "nothing to train on" blocks Train, with the named reason', () 
 // ---------------------------------------------------------------------------
 
 describe('R5 — the guards never touch what READS a model', () => {
-    it('[inside, outside] train periods: a trained and a Complete model keep charts, Health score, dots and words; opening both writes nothing to the models; "Mark complete again" and "Mark incomplete" work', async () => {
+    it('[inside, outside] train periods: a trained and a Complete model keep charts, Health score, dots and words; opening both writes nothing to the models; a set-point change, Mark complete and "Mark incomplete" work', async () => {
         writeDisk(wsTrained({ runningConditionTimePeriods: [P_IN, P_OUT], runningConditionTestPeriods: [S_IN] }, [
             model({ id: 'i1', name: 'Pressure band', targetSensor: 'TAG1', healthSetPoints: SP1, healthVerdict: 'valid' }),
             model({ id: 'i3', name: 'Flow band', targetSensor: 'TAG3', status: true, healthSetPoints: SP_WIDE, healthVerdict: 'valid', healthExport: record(SP_WIDE) }),
@@ -601,12 +601,13 @@ describe('R5 — the guards never touch what READS a model', () => {
         expect(dashDot(1, 'tag3', 'individual')).toBe('complete');
         expect(env.backend!.calls.filter(c => c.error).map(c => `${c.cmd}: ${c.error}`)).toEqual([]);
 
-        // ── "Mark complete again" after a set-point change, then "Mark incomplete" ──
+        // ── a set-point change makes it Incomplete (export round 2026-10-20): Mark complete, then "Mark incomplete" ──
         await enterSp({ 'sp-upper': '400' });
-        const again = await waitFor(() => bmw().getByTestId('mark-complete-again') as HTMLButtonElement);
-        await waitFor(() => expect(again.disabled).toBe(false));
+        expect(diskModel('i3').status).toBe(false);
+        expect(bmw().queryByTestId('mark-complete-again')).toBeNull();
+        await waitFor(() => expect(markBtn().disabled).toBe(false));
         const exportsBefore = env.backend!.cmds('export_model_files').length;
-        await act(async () => { fireEvent.click(bmw().getByTestId('mark-complete-again')); });
+        await act(async () => { fireEvent.click(markBtn()); });
         await waitFor(() => expect(env.backend!.cmds('export_model_files').length).toBe(exportsBefore + 1));
         await waitFor(() => expect(diskModel('i3').healthExport.setPoints.upper).toBe(400));
         expect(diskModel('i3').status).toBe(true);

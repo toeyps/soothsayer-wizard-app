@@ -423,6 +423,13 @@ export interface FailureGroupStateSlice {
     /** `'pending'` = legacy workspace with models but no configured running
      *  condition, user hasn't answered yet. `undefined` = step not run; `null` = handled. */
     rcLegacyNotice?: 'pending' | null;
+    /** "Machine is running when <sensor> is above <stopAtOrBelow>" — the
+     *  export's running status, kept only when the running condition does not
+     *  hold exactly one "sensor > value" condition to take it from.
+     *  `stopAtOrBelow` is the text the user typed (never rounded). Not a
+     *  training input: it is NOT in `computeTrainFingerprint` and never makes a
+     *  model Incomplete. Optional; `undefined`/`null` = not set. */
+    runningStatus?: { sensor: string; stopAtOrBelow: string } | null;
 }
 
 /** One training period. `''` = open end (only valid on the first period's
@@ -726,4 +733,32 @@ export interface WorkspaceState {
     /** "By value" highlighting — see `ValueHighlight`. Scatter-only. Absent
      *  = no sensor picked (the pre-feature default). */
     valueHighlight?: ValueHighlight;
+    /** The machine this project is about (Project details). The project's
+     *  `name` ("Plant · Machine") and `description` ("tag · notes") are derived
+     *  from it by `saveProjectDetails` (`utils/projectDetails.ts`), the ONE
+     *  writer of all four. Absent on a project made before it existed. */
+    machine?: MachineDetails;
+    /** The time zone the data's timestamps are in, minutes east of UTC
+     *  (-720..840). Absent until `ensureDataUtcOffset` fills in the PC's. */
+    dataUtcOffsetMin?: number;
+}
+
+/** The machine fields of Project details. `plant`, `name`, `tag` are required
+ *  for an export; `notes` is optional free text. */
+export interface MachineDetails {
+    plant: string;
+    name: string;
+    tag: string;
+    notes: string;
+}
+
+/** Cross-window event: a project's name/description changed (Project details
+ *  saved). Receivers drop a payload whose `workspaceId` is not theirs. */
+export const PROJECT_DETAILS_CHANGED = 'project-details-changed';
+
+/** Payload of `PROJECT_DETAILS_CHANGED`. */
+export interface ProjectDetailsChangedPayload {
+    workspaceId: string;
+    name: string;
+    description: string;
 }

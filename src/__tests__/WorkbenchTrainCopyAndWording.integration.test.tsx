@@ -443,7 +443,7 @@ describe('A. Train sensor ▾ and the page states, on the real workspace file', 
 // ---------------------------------------------------------------------------
 
 describe('B. "Relation model" everywhere — and a workspace that still holds the old word in its model names', () => {
-    it('saved names "X (Relationship)": both windows open with the same names, statuses and train records (nothing is rewritten); Mark complete again exports under the saved name; a suggested name says "(Relation model)"', async () => {
+    it('saved names "X (Relationship)": both windows open with the same names, statuses and train records (nothing is rewritten); Mark complete (after a set-point change) exports under the saved name; a suggested name says "(Relation model)"', async () => {
         writeDisk(wsTrained(FG, [
             model({ id: 'i1', name: 'Pump Pressure', targetSensor: 'TAG1', healthSetPoints: SP1, healthVerdict: 'valid' }),
             model({
@@ -488,13 +488,13 @@ describe('B. "Relation model" everywhere — and a workspace that still holds th
         expect(modelsBytes()).toBe(bytes);
         expect(pill()).toBe('Complete');
 
-        // ── Mark complete again (a set point changed): the files are exported under the SAVED name ──
+        // ── a set point changed (Incomplete, export round 2026-10-20) → Mark complete: the files are exported under the SAVED name ──
         await openHealth();
         await waitFor(() => expect(bmw().getByTestId('check-valid')).toBeTruthy());
         await enterSp({ 'sp-residual_at_0_upper': '12' });
-        const again = await waitFor(() => bmw().getByTestId('mark-complete-again') as HTMLButtonElement);
-        await waitFor(() => expect(again.disabled).toBe(false));
-        await act(async () => { fireEvent.click(bmw().getByTestId('mark-complete-again')); });
+        expect(diskModel('r1').status).toBe(false);
+        await waitFor(() => expect(markBtn().disabled).toBe(false));
+        await act(async () => { fireEvent.click(markBtn()); });
         await waitFor(() => expect(diskModel('r1').healthExport.setPoints.residualAt0Upper).toBe(12), { timeout: 8000 });
         const exp = env.backend!.cmds('export_model_files').slice(-1)[0];
         expect(exp.error).toBeUndefined();

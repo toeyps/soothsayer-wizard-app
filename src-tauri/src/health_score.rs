@@ -737,15 +737,16 @@ pub fn score_clustering_distance(d: f64, outer_sd: f64) -> Option<f64> {
 }
 
 /// Cluster index (0-based) of a criteria value: the FIRST range that contains
-/// it (half-open `[min, max)`, `None` bound = unbounded — the same test
-/// `compute_clustering_preview` uses). `None` when the value is missing or in
+/// it (half-open `(min, max]`, i.e. `min < v <= max` — Wizard Output Spec
+/// §4.4; `None` bound = unbounded — the same test `compute_clustering_preview`
+/// uses via `ClusterRange::contains`). `None` when the value is missing or in
 /// no range.
 pub fn assign_cluster(c: f64, ranges: &[(Option<f64>, Option<f64>)]) -> Option<usize> {
     if !c.is_finite() {
         return None;
     }
     ranges.iter().position(|&(lo, hi)| {
-        lo.is_none_or(|lo| c >= lo) && hi.is_none_or(|hi| c < hi)
+        lo.is_none_or(|lo| c > lo) && hi.is_none_or(|hi| c <= hi)
     })
 }
 
@@ -2195,9 +2196,11 @@ mod tests {
         let ranges = [(None, Some(10.0)), (Some(10.0), Some(20.0)), (Some(20.0), None)];
         assert_eq!(assign_cluster(-5.0, &ranges), Some(0));
         assert_eq!(assign_cluster(9.999, &ranges), Some(0));
-        assert_eq!(assign_cluster(10.0, &ranges), Some(1)); // [min, max)
+        assert_eq!(assign_cluster(10.0, &ranges), Some(0)); // (min, max]: 10 is the first range's top
+        assert_eq!(assign_cluster(10.001, &ranges), Some(1));
         assert_eq!(assign_cluster(19.9, &ranges), Some(1));
-        assert_eq!(assign_cluster(20.0, &ranges), Some(2));
+        assert_eq!(assign_cluster(20.0, &ranges), Some(1));
+        assert_eq!(assign_cluster(20.001, &ranges), Some(2));
         assert_eq!(assign_cluster(1e9, &ranges), Some(2));
         // Overlap: first range wins.
         let overlap = [(Some(0.0), Some(10.0)), (Some(5.0), Some(15.0))];
@@ -2210,7 +2213,9 @@ mod tests {
         let gap = [(Some(0.0), Some(10.0)), (Some(20.0), Some(30.0))];
         assert_eq!(assign_cluster(15.0, &gap), None);
         assert_eq!(assign_cluster(-1.0, &gap), None);
-        assert_eq!(assign_cluster(30.0, &gap), None);
+        assert_eq!(assign_cluster(0.0, &gap), None, "(min, max]: the bottom edge is outside");
+        assert_eq!(assign_cluster(30.0, &gap), Some(1), "(min, max]: the top edge is inside");
+        assert_eq!(assign_cluster(30.5, &gap), None);
         assert_eq!(assign_cluster(f64::NAN, &gap), None);
         assert_eq!(assign_cluster(f64::INFINITY, &gap), None);
     }

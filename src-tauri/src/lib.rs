@@ -10,6 +10,7 @@ pub mod metrics;
 mod model_export;
 pub mod operation_registry;
 mod period_counts;
+mod workspace_export;
 // QA-owned in-crate tests (private surface); the file lives in tests/internal/.
 #[cfg(test)]
 #[path = "../tests/internal/qa_health_internal.rs"]
@@ -2052,36 +2053,18 @@ async fn preview_relationship_model(
             .collect();
         let target_col: &[f64] = &data.columns[target_idx];
 
-        let mut x_matrix: Vec<Vec<f64>> = Vec::with_capacity(data.n_rows());
-        let mut y_vector: Vec<f64> = Vec::with_capacity(data.n_rows());
-        // Dataset row of each surviving row (for timestamps in the health view).
-        let mut row_idx: Vec<u32> = Vec::with_capacity(data.n_rows());
-        for r in 0..data.n_rows() {
-            if !resolved.is_noop() && !resolved.keeps(data, r) {
-                continue;
-            }
-            let mut x_row: Vec<f64> = Vec::with_capacity(pred_cols.len());
-            let mut ok = true;
-            for col in &pred_cols {
-                let v = col[r];
-                if v.is_finite() {
-                    x_row.push(v);
-                } else {
-                    ok = false;
-                    break;
-                }
-            }
-            if !ok {
-                continue;
-            }
-            let y_val = target_col[r];
-            if !y_val.is_finite() {
-                continue;
-            }
-            x_matrix.push(x_row);
-            y_vector.push(y_val);
-            row_idx.push(r as u32);
-        }
+        // The training rows: THE shared row rule (also what "Export results"
+        // writes as the model's training CSV) — in scope, predictors + target
+        // all finite. Dataset row of each surviving row kept for timestamps in
+        // the health view.
+        let mut model_cols = predictor_indices.clone();
+        model_cols.push(target_idx);
+        let row_idx: Vec<u32> = workspace_export::training_rows(data, &resolved, &model_cols, None);
+        let x_matrix: Vec<Vec<f64>> = row_idx
+            .iter()
+            .map(|&r| pred_cols.iter().map(|c| c[r as usize]).collect())
+            .collect();
+        let y_vector: Vec<f64> = row_idx.iter().map(|&r| target_col[r as usize]).collect();
 
         if x_matrix.is_empty() {
             return Err("No rows remain after dropping nulls.".into());
@@ -2703,11 +2686,13 @@ fn write_individual_info(
     })
 }
 
-/// Half-open interval `[min, max)` over the criteria sensor's value.
-/// `None` on either bound means "unbounded in that direction" — i.e.
-/// the cluster catches everything at/above min (if max is None) or
-/// strictly below max (if min is None). Mirrors `wizard.py`'s use of
-/// `-inf` / `+inf` sentinels via `Option` so JSON stays well-formed.
+/// Half-open interval `(min, max]` over the criteria sensor's value, i.e.
+/// `min < v <= max` (Wizard Output Spec §4.4, `from < value <= to` — user
+/// decision 2026-10-20; it was `[min, max)` before). `None` on either bound
+/// means "unbounded in that direction" — the cluster catches everything
+/// strictly above min (if max is None) or at/below max (if min is None).
+/// Used by clustering training / preview (here) and mirrored by
+/// `health_score::assign_cluster` (health score) and the export's row rule.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClusterRange {
     pub min: Option<f64>,
@@ -2717,10 +2702,10 @@ pub struct ClusterRange {
 impl ClusterRange {
     fn contains(&self, v: f64) -> bool {
         if let Some(lo) = self.min {
-            if v < lo { return false; }
+            if v <= lo { return false; }
         }
         if let Some(hi) = self.max {
-            if v >= hi { return false; }
+            if v > hi { return false; }
         }
         true
     }
@@ -2761,7 +2746,7 @@ pub struct ClusteringPreview {
 ///   • `n_clusters > 1`: multi-cluster path — requires `criteria_sensor`
 ///     and a `cluster_ranges` vec of length `n_clusters`. For each
 ///     range, filters rows whose criteria_sensor value falls in
-///     `[range.min, range.max)`, drops NaNs on (first, second), and fits
+///     `(range.min, range.max]`, drops NaNs on (first, second), and fits
 ///     a single Gaussian to produce an ellipse. Mirrors
 ///     `wizard.py::PreviewModel.clustering` semantics.
 #[tauri::command(rename_all = "snake_case")]
@@ -8211,6 +8196,132 @@ mod count_period_rows_tests {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Export results (core in `workspace_export.rs`)
+// ---------------------------------------------------------------------------
+
+/// Folders written by `export_workspace_results` in THIS process — the only
+/// paths `reveal_export_folder` will open.
+static EXPORTED_FOLDERS: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+fn remember_exported_folder(folder: &str) {
+    if let Ok(mut v) = EXPORTED_FOLDERS.lock() {
+        if !v.iter().any(|f| f == folder) {
+            v.push(folder.to_string());
+        }
+    }
+}
+
+fn was_exported_here(path: &str) -> bool {
+    EXPORTED_FOLDERS.lock().map(|v| v.iter().any(|f| f == path)).unwrap_or(false)
+}
+
+/// "Export results" dry run: issues, the exact `machine_info` / model JSON,
+/// CSV columns, rows, bytes and a 6-row Peek per model — built by the same
+/// function the write uses. Writes nothing. Errors: `BAD_REQUEST:` (malformed
+/// request), `NO_DATA:`, `STALE_SESSION:`.
+#[tauri::command(rename_all = "snake_case")]
+async fn plan_workspace_export(
+    request: workspace_export::WorkspaceExportRequest,
+    app: tauri::AppHandle,
+) -> Result<workspace_export::WorkspaceExportPlan, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        use tauri::Manager;
+        let state = app.state::<AppState>();
+        workspace_export::plan_in(&state, &request)
+    })
+    .await
+    .map_err(|e| format!("export plan task failed: {e}"))?
+}
+
+/// "Export results": write `<dest_dir>/<folder_name>` (or `_2` … `_99`) with
+/// `machine_info.json` + `models/<key>.json|.csv`, all or nothing. One export
+/// at a time; `workspace-export-progress` is emitted after each model. Errors:
+/// `BAD_REQUEST:` / `NO_DATA:` / `STALE_SESSION:` / `NOT_READY: <n> problem(s)`
+/// / `CANCELLED:` / `WRITE_FAILED:` — nothing is left behind for any of them.
+#[tauri::command(rename_all = "snake_case")]
+async fn export_workspace_results(
+    request: workspace_export::WorkspaceExportRequest,
+    dest_dir: String,
+    folder_name: String,
+    export_id: String,
+    app: tauri::AppHandle,
+) -> Result<workspace_export::WorkspaceExportResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        use tauri::Manager;
+        let guard = workspace_export::EXPORTS.begin(&export_id)?;
+        let cancel = guard.cancel_flag();
+        let state = app.state::<AppState>();
+        let workspace_id = request.workspace_id.clone();
+        let result = workspace_export::write_export(
+            &state,
+            &request,
+            &dest_dir,
+            &folder_name,
+            &cancel,
+            |written, total, key| {
+                let _ = app.emit(
+                    workspace_export::PROGRESS_EVENT,
+                    workspace_export::ExportProgressEvent {
+                        export_id: export_id.clone(),
+                        workspace_id: workspace_id.clone(),
+                        written,
+                        total,
+                        model_key: key.to_string(),
+                    },
+                );
+            },
+        );
+        if let Ok(r) = &result {
+            remember_exported_folder(&r.folder);
+        }
+        drop(guard);
+        result
+    })
+    .await
+    .map_err(|e| format!("export task failed: {e}"))?
+}
+
+/// Ask the running export `export_id` to stop (checked between files and every
+/// 64k rows). `false` = no export with that id is running.
+#[tauri::command(rename_all = "snake_case")]
+fn cancel_workspace_export(export_id: String) -> bool {
+    workspace_export::EXPORTS.cancel(&export_id)
+}
+
+/// Open an exported folder in the system file manager. Only folders written by
+/// `export_workspace_results` in this process (exact path as returned in
+/// `folder`); anything else is `BAD_REQUEST`.
+#[tauri::command(rename_all = "snake_case")]
+fn reveal_export_folder(path: String, app: tauri::AppHandle) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    if !was_exported_here(&path) {
+        return Err("BAD_REQUEST: this folder was not exported in this session".into());
+    }
+    if !std::path::Path::new(&path).is_dir() {
+        return Err("BAD_REQUEST: the exported folder no longer exists".into());
+    }
+    app.opener()
+        .open_path(path, None::<&str>)
+        .map_err(|e| format!("cannot open the folder: {e}"))
+}
+
+#[cfg(test)]
+mod exported_folder_tests {
+    use super::*;
+
+    #[test]
+    fn only_remembered_folders_may_be_revealed() {
+        let p = "Z:/never/exported/by/this/test";
+        assert!(!was_exported_here(p));
+        remember_exported_folder(p);
+        remember_exported_folder(p);
+        assert!(was_exported_here(p));
+        assert_eq!(EXPORTED_FOLDERS.lock().unwrap().iter().filter(|f| *f == p).count(), 1);
+        assert!(!was_exported_here("Z:/never/exported"));
+    }
+}
+
 /// `{app_data}/workspaces/{workspace_id}/output` — the folder "Mark complete"
 /// writes into (created if missing, so the UI can reveal it right away).
 #[tauri::command(rename_all = "snake_case")]
@@ -10062,6 +10173,10 @@ pub fn run() {
             remove_model_files,
             get_model_output_dir,
             count_period_rows,
+            plan_workspace_export,
+            export_workspace_results,
+            cancel_workspace_export,
+            reveal_export_folder,
             write_user_file,
             get_scatter_sample,
             log_frontend_error,

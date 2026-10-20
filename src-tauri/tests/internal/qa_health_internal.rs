@@ -362,7 +362,7 @@ fn file_cluster_distance(c: &serde_json::Map<String, serde_json::Value>, x: f64,
 }
 
 /// Assign a criteria value with ONLY the file: clusters in id order, the
-/// first whose `[higher_than, lower_than)` contains it. `spelling` picks the
+/// first whose `(higher_than, lower_than]` contains it (Wizard Output Spec §4.4). `spelling` picks the
 /// key family (`criteria_` or legacy `critera_`).
 fn file_assign(info: &serde_json::Value, c: f64, spelling: &str) -> Option<u32> {
     if !c.is_finite() {
@@ -375,7 +375,7 @@ fn file_assign(info: &serde_json::Value, c: f64, spelling: &str) -> Option<u32> 
         let e = ci[&id.to_string()].as_object().unwrap();
         let lo = e.get(&format!("{spelling}_sensor_value_higher_than")).and_then(|v| v.as_f64());
         let hi = e.get(&format!("{spelling}_sensor_value_lower_than")).and_then(|v| v.as_f64());
-        if lo.is_none_or(|lo| c >= lo) && hi.is_none_or(|hi| c < hi) {
+        if lo.is_none_or(|lo| c > lo) && hi.is_none_or(|hi| c <= hi) {
             return Some(id);
         }
     }

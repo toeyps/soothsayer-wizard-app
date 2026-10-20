@@ -844,7 +844,7 @@ describe('updateWorkspaceData applies the Incomplete-immediately rule to every w
         });
     });
 
-    it('an unrelated write (rename, set points, name/notes/category, group membership) leaves a Complete model Complete', async () => {
+    it('an unrelated write (rename, name/notes/category, group membership, runningStatus) leaves a Complete model Complete', async () => {
         mockStoreGet.mockResolvedValue([]);
         mockReadTextFile.mockResolvedValue(disk([model()]));
         const { updateWorkspaceData } = await freshModule();
@@ -853,13 +853,29 @@ describe('updateWorkspaceData applies the Incomplete-immediately rule to every w
             name: 'Renamed',
             failureGroupState: {
                 ...prev.failureGroupState!,
+                runningStatus: { sensor: 'SPEED', stopAtOrBelow: '1200' },
                 models: prev.failureGroupState!.models.map(m => ({
                     ...m, name: 'New name', notes: 'n', category: 'performance' as const, groupNos: [2],
-                    healthSetPoints: { kind: 'individual' as const, lower: 5, upper: 50 },
                 })),
             },
         }));
         expect(next!.failureGroupState!.models[0].status).toBe(true);
+    });
+
+    it('changed set points on a Complete model set it back to Incomplete in the same write (export round 2026-10-20), and what is written is the demoted state', async () => {
+        mockStoreGet.mockResolvedValue([]);
+        mockReadTextFile.mockResolvedValue(disk([model({ lastTrainedAt: '2026-10-03T00:00:00Z', trainedFingerprint: 'fp' })]));
+        const { updateWorkspaceData } = await freshModule();
+        const next = await updateWorkspaceData('ws1', prev => ({
+            ...prev,
+            failureGroupState: {
+                ...prev.failureGroupState!,
+                models: prev.failureGroupState!.models.map(m => ({ ...m, healthSetPoints: { kind: 'individual' as const, lower: 5, upper: 50 } })),
+            },
+        }));
+        expect(next!.failureGroupState!.models[0]).toMatchObject({ status: false, lastTrainedAt: '2026-10-03T00:00:00Z', trainedFingerprint: 'fp' });
+        const written = JSON.parse(mockWriteTextFile.mock.calls[0][1] as string);
+        expect(written.failureGroupState.models[0].status).toBe(false);
     });
 
     it('does not throw (and leaves statuses alone) on a malformed model record', async () => {
@@ -1079,7 +1095,7 @@ describe('duplicateWorkspace', () => {
         expect(result?.id).not.toBe('ws1');
         expect(mockWriteTextFile).toHaveBeenCalled();
     });
-    it('(QA 2026-10-04) the copy does not claim the ORIGINAL workspace\'s exported files: every model becomes Incomplete and drops healthExport, keeping everything else', async () => {
+    it('(2026-10-20, user decision) the copy keeps every model status, set points, train record and verdict; only the export record (files of the ORIGINAL) is dropped', async () => {
         mockStoreGet.mockResolvedValue([
             { id: 'ws1', name: 'A', description: '', lastModified: 1, filePath: 'workspaces/ws1.json' },
         ]);
@@ -1090,27 +1106,44 @@ describe('duplicateWorkspace', () => {
             lastTrainedAt: '2026-10-01T00:00:00Z', trainedFingerprint: 'fp', name: 'keep me',
             healthExport: { at: 'x', outputDir: 'C:/data/workspaces/ws1/output', setPoints: sp },
         };
-        const incompleteWithRecord = { ...done, id: 'm2', status: false };
         const never = { id: 'm3', kind: 'clustering', status: false };
         mockReadTextFile.mockResolvedValue(JSON.stringify({
-            id: 'ws1', name: 'A', failureGroupState: { groups: [], models: [done, incompleteWithRecord, never], runningConditionNoneConfirmed: true },
+            id: 'ws1', name: 'A', failureGroupState: { groups: [], models: [done, never], runningConditionNoneConfirmed: true },
         }));
         const { duplicateWorkspace } = await freshModule();
 
         const result = await duplicateWorkspace('ws1');
-        const [m1, m2, m3] = result!.failureGroupState!.models as any[];
-        expect(m1.status).toBe(false);
+        const [m1, m3] = result!.failureGroupState!.models as any[];
+        const { healthExport: _record, ...doneWithoutRecord } = done;
+        void _record;
+        expect(m1).toMatchObject(doneWithoutRecord);
         expect(m1).not.toHaveProperty('healthExport');
-        expect(m1).toMatchObject({ healthSetPoints: sp, healthVerdict: 'valid', lastTrainedAt: '2026-10-01T00:00:00Z', trainedFingerprint: 'fp', name: 'keep me' });
-        expect(m2).not.toHaveProperty('healthExport'); // an Incomplete model's record pointed at the original's folder too
-        expect(m3).toMatchObject({ id: 'm3', kind: 'clustering', status: false }); // nothing to change
-        expect((result!.failureGroupState as any).runningConditionNoneConfirmed).toBe(true); // slice fields carried
-        // ... and what is SAVED is the same thing
+        expect(m3).toMatchObject(never);
+        expect((result!.failureGroupState as any).runningConditionNoneConfirmed).toBe(true);
         const saved = JSON.parse(mockWriteTextFile.mock.calls.pop()![1] as string);
-        expect(saved.failureGroupState.models[0].status).toBe(false);
-        expect(saved.failureGroupState.models[0]).not.toHaveProperty('healthExport');
+        expect(saved.failureGroupState.models[0].status).toBe(true);
         // the ORIGINAL file is never written
         expect(savedFiles().every(([path]) => path !== 'workspaces/ws1.json')).toBe(true);
+    });
+
+    it('a project with machine details: the machine name gains " (Copy)" and the name is derived ("Plant · Machine (Copy)"); description, tag and time zone kept', async () => {
+        mockStoreGet.mockResolvedValue([{ id: 'ws1', name: 'Bang Pakong · GEG 4', description: 'U-2010', lastModified: 1, filePath: 'workspaces/ws1.json' }]);
+        mockExists.mockResolvedValue(true);
+        const machine = { plant: 'Bang Pakong', name: 'GEG 4', tag: 'U-2010', notes: '' };
+        mockReadTextFile.mockResolvedValue(JSON.stringify({ id: 'ws1', name: 'Bang Pakong · GEG 4', description: 'U-2010', machine, dataUtcOffsetMin: 420 }));
+        const { duplicateWorkspace } = await freshModule();
+        const result = await duplicateWorkspace('ws1');
+        expect(result!.name).toBe('Bang Pakong · GEG 4 (Copy)');
+        expect(result!.machine).toEqual({ ...machine, name: 'GEG 4 (Copy)' });
+        expect(result!.description).toBe('U-2010');
+        expect(result!.dataUtcOffsetMin).toBe(420);
+    });
+
+    it('duplicateNaming: legacy project without machine keeps "<name> (Copy)"', async () => {
+        const { duplicateNaming } = await freshModule();
+        expect(duplicateNaming({ name: 'Old project' })).toEqual({ name: 'Old project (Copy)' });
+        expect(duplicateNaming({ name: 'x', machine: { plant: 'P', name: ' M ', tag: 't', notes: '' } }))
+            .toEqual({ name: 'P · M (Copy)', machine: { plant: 'P', name: 'M (Copy)', tag: 't', notes: '' } });
     });
 
     it('(QA 2026-10-04) a workspace with no failure-group slice is copied as before', async () => {

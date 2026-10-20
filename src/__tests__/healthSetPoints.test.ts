@@ -5,6 +5,9 @@ import {
     resetToMaster, ensureHealthSetPoints, patchModelHealthSetPoints,
 } from '../utils/healthSetPoints';
 import { mk } from './helpers/failureModelFixture';
+import { sameHealthSetPoints } from '../utils/healthSetPoints';
+import { sameSetPoints } from '../components/windows/workbench/healthChecks';
+import type { HealthSetPoints } from '../types';
 
 const meta = (tag: string, o: Partial<SensorMetadata> = {}): SensorMetadata =>
     ({ tag, description: tag, unit: '', component: 'C', ...o });
@@ -223,5 +226,26 @@ describe('patchModelHealthSetPoints', () => {
     it('unknown id -> same array', () => {
         const models = [mk({ id: 'a' })];
         expect(patchModelHealthSetPoints(models, 'zzz', { kind: 'clustering', outerSd: 4 })).toBe(models);
+    });
+});
+
+
+describe('sameHealthSetPoints (utils copy of the Health page sameSetPoints)', () => {
+    const cases: Array<[HealthSetPoints | undefined, HealthSetPoints | undefined]> = [
+        [undefined, undefined],
+        [{ kind: 'individual', lower: 1, upper: 9 }, undefined],
+        [{ kind: 'individual', lower: 1, upper: 9 }, { kind: 'individual', lower: 1, upper: 9, masterLower: 0, masterUpper: null }],
+        [{ kind: 'individual', lower: 1, upper: 9 }, { kind: 'individual', lower: 1, upper: 10 }],
+        [{ kind: 'individual', lower: null, upper: 9 }, { kind: 'individual', lower: Number.NaN, upper: 9 }],
+        [{ kind: 'clustering', outerSd: 4 }, { kind: 'clustering', outerSd: 4 }],
+        [{ kind: 'clustering', outerSd: 4 }, { kind: 'individual', lower: 4, upper: null }],
+        [{ kind: 'relationship', residualAt80Lower: -1, residualAt80Upper: 1, residualAt0Lower: -2, residualAt0Upper: 2 },
+         { kind: 'relationship', residualAt80Lower: -1, residualAt80Upper: 1, residualAt0Lower: -2, residualAt0Upper: 3 }],
+    ];
+    it('agrees with the Health page rule on every case', () => {
+        for (const [a, b] of cases) expect(sameHealthSetPoints(a, b)).toBe(sameSetPoints(a, b));
+    });
+    it('the expected answers', () => {
+        expect(cases.map(([a, b]) => sameHealthSetPoints(a, b))).toEqual([true, false, true, false, true, true, false, false]);
     });
 });

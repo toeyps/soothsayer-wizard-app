@@ -257,20 +257,30 @@ describe('model-setting triggers (Save changes)', () => {
     });
 });
 
-describe('NOT triggers: the model stays Complete', () => {
-    it('set points, model name, category, notes (another window), FG membership (Dashboard sheet), scatter X', async () => {
+describe('set points: a Complete model goes back to Incomplete (export round 2026-10-20)', () => {
+    it('a set-point change on the Health page writes status:false with the numbers, keeps the train record, and touches no other model', async () => {
         writeDisk(completeWorkspace({}, [], ['TAG3', 'TAG2']));
         await mountWindows();
         selectSensor('tag1');
         await settle(400);
-
-        // set points (Health page, blur-committed)
+        const othersBefore = ['r1', 'c1', 'u1'].map(id => diskModel(id).status);
         await openHealth();
         await enterSp({ 'sp-upper': '81' });
         expect(diskModel('i1').healthSetPoints.upper).toBe(81);
-        expect(diskModel('i1').status).toBe(true);
-        expect(bmw().getByTestId('files-out-of-date')).toBeTruthy();
-        fireEvent.click(bmw().getByTestId('page-tab-model'));
+        expect(diskModel('i1').status).toBe(false);
+        expect(diskModel('i1').lastTrainedAt).toBeTruthy();
+        expect(diskModel('i1').trainedFingerprint).toBeTruthy();
+        expect(bmwEl().querySelector('[data-testid="files-out-of-date"]')).toBeNull();
+        expect(['r1', 'c1', 'u1'].map(id => diskModel(id).status)).toEqual(othersBefore);
+    });
+});
+
+describe('NOT triggers: the model stays Complete', () => {
+    it('model name, category, notes (another window), FG membership (Dashboard sheet), scatter X', async () => {
+        writeDisk(completeWorkspace({}, [], ['TAG3', 'TAG2']));
+        await mountWindows();
+        selectSensor('tag1');
+        await settle(400);
 
         // model name
         openSettings();
@@ -394,15 +404,19 @@ describe('ONE truth: Dashboard dot, Build Model dot, kind-tab words, page tabs',
         expect(bmwEl().querySelector('[data-testid="footer-pill"]')).toBeNull(); // no status pill: the kind tab says it
         expect(bmwEl().querySelector('[data-testid="tab-words-i1"]')!.textContent).toBe('Complete');
 
-        // complete but changed after saving: still Complete everywhere + the hint
+        // set points changed on a Complete model (export round 2026-10-20): Incomplete in the
+        // same write everywhere, still trained — Mark complete is the next step again
         await enterSp({ 'sp-lower': '11' });
-        expect(bmw().getByTestId('files-out-of-date')).toBeTruthy();
-        expect(bmw().getByTestId('mark-complete-again')).toBeTruthy();
-        expect(bmwDot('i1').state).toBe('complete');
-        expect(dashDot(1, 'tag1', 'individual')).toBe('complete');
-        // revert -> hint gone
-        await enterSp({ 'sp-lower': '10' });
+        expect(diskModel('i1').status).toBe(false);
+        expect(diskModel('i1').lastTrainedAt).toBeTruthy();
+        await waitFor(() => expect(bmwDot('i1').state).toBe('trained'));
+        await waitFor(() => expect(dashDot(1, 'tag1', 'individual')).not.toBe('complete'));
         expect(bmwEl().querySelector('[data-testid="files-out-of-date"]')).toBeNull();
+        expect(bmwEl().querySelector('[data-testid="mark-complete-again"]')).toBeNull();
+        await waitFor(() => expect(bmw().getByTestId('mark-complete')).toBeTruthy());
+        // reverting the value does not bring Complete back by itself
+        await enterSp({ 'sp-lower': '10' });
+        expect(diskModel('i1').status).toBe(false);
 
         // stale
         await applyWorkspaceRc(m => { fireEvent.change(m.getByPlaceholderText('value'), { target: { value: '30' } }); });

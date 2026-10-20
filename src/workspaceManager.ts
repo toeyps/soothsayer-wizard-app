@@ -8,6 +8,7 @@ import { applyIncompleteRule } from './utils/incompleteRule';
 import { withFailureGroupState } from './utils/failureGroupState';
 import { failureGroupMetaFields } from './utils/failureGroupSummary';
 import { logToFile } from './errorReporter';
+import { projectDisplayName } from './utils/projectDetails';
 import { applyLegacyConversion, legacyConversionMessage } from './utils/legacyFormulaConversion';
 import type { LegacyFormulaConversion } from './types/formula';
 
@@ -531,6 +532,21 @@ export async function deleteWorkspace(id: string) {
     await removeWorkspaceFolder(id);
 }
 
+/** The name / machine a duplicate gets: the machine name gains " (Copy)" and
+ *  the project name is derived from it ("Plant · Machine (Copy)"). A project
+ *  made before machine details existed has no machine: its name gains
+ *  " (Copy)" directly. Pure. */
+export function duplicateNaming(state: Pick<WorkspaceState, 'name' | 'machine'>): Pick<WorkspaceState, 'name' | 'machine'> {
+    if (!state.machine) return { name: `${state.name} (Copy)` };
+    const machine = { ...state.machine, name: `${state.machine.name.trim()} (Copy)` };
+    return { name: projectDisplayName(machine), machine };
+}
+
+/** A copy of the project under a new id, with the name from `duplicateNaming`.
+ *  Models keep their status, set points, train record and verdict (user
+ *  decision 2026-10-20: a copy is the same work). Only `healthExport` is
+ *  dropped: it records files in the ORIGINAL project's output folder, which
+ *  is not copied, so the copy must not point at them. */
 export async function duplicateWorkspace(id: string) {
     try {
         const state = await loadWorkspaceData(id);
@@ -538,21 +554,16 @@ export async function duplicateWorkspace(id: string) {
             const copy: WorkspaceState = {
                 ...state,
                 id: `ws_${Date.now()}`,
-                name: `${state.name} (Copy)`
+                ...duplicateNaming(state),
             };
-            // The files a model's "Mark complete" wrote live in
-            // the ORIGINAL workspace's output folder, which is deliberately not
-            // copied. A copy must not claim them (nor lose them the day the original
-            // is deleted): its models become Incomplete and drop the export record,
-            // keeping everything else (set points, train record, verdict, settings) —
-            // the user marks them complete again to write files for the copy.
-            const newState: WorkspaceState = state.failureGroupState
+            const models = state.failureGroupState?.models;
+            const newState: WorkspaceState = Array.isArray(models) && models.some(m => m.healthExport !== undefined)
                 ? withFailureGroupState(copy, {
-                    models: (state.failureGroupState.models ?? []).map(m => {
-                        if (!m.status && m.healthExport === undefined) return m;
+                    models: models.map(m => {
+                        if (m.healthExport === undefined) return m;
                         const { healthExport: dropped, ...rest } = m;
                         void dropped;
-                        return { ...rest, status: false };
+                        return rest;
                     }),
                 })
                 : copy;

@@ -53,18 +53,36 @@ const ind = (over: Partial<FailureModel> = {}) => mk({ id: 'i1', kind: 'individu
 beforeEach(() => { mockEmit.mockClear(); });
 
 describe('commitSetPoints', () => {
-    it('writes ONLY healthSetPoints (status, train record and every other model untouched) and broadcasts the whole slice', async () => {
+    it('writes healthSetPoints (train record and every other model untouched) and broadcasts the whole slice; an Incomplete model stays Incomplete', async () => {
         const other = ind({ id: 'o', status: true });
-        setDisk([trained(ind({ status: true })), other]);
+        setDisk([trained(ind()), other]);
         const next = await commitSetPoints('ws1', 'i1', sp);
         const m = next!.failureGroupState!.models.find(x => x.id === 'i1')!;
         expect(m.healthSetPoints).toEqual(sp);
-        expect(m.status).toBe(true); // a set-point save never changes the status
+        expect(m.status).toBe(false);
         expect(m.lastTrainedAt).toBe('2026-10-03T00:00:00Z');
         expect(next!.failureGroupState!.models.find(x => x.id === 'o')).toEqual(other);
         expect(mockEmit).toHaveBeenCalledWith('failure-group-state-changed', expect.objectContaining({
             workspaceId: 'ws1', origin: 'build-model', models: next!.failureGroupState!.models,
         }));
+    });
+
+    it('different numbers on a Complete model set it back to Incomplete in the SAME write (still trained, verdict and export record kept)', async () => {
+        const record = { at: 'x', outputDir: 'C:/ws/output', setPoints: sp };
+        setDisk([{ ...trained(ind({ status: true, healthSetPoints: sp, healthExport: record })), healthVerdict: 'valid' }]);
+        const next = await commitSetPoints('ws1', 'i1', { kind: 'individual', lower: 0, upper: 99 });
+        const m = next!.failureGroupState!.models[0];
+        expect(m).toMatchObject({ status: false, healthSetPoints: { lower: 0, upper: 99 }, lastTrainedAt: '2026-10-03T00:00:00Z', healthExport: record });
+        // commitSetPoints itself drops the verdict of the OLD numbers (unchanged behaviour)
+        expect(m.healthVerdict).toBeUndefined();
+        // the broadcast carries the demoted model
+        expect(mockEmit.mock.calls[0][1].models[0].status).toBe(false);
+    });
+
+    it('the SAME numbers (only a snapshot change) keep a Complete model Complete', async () => {
+        setDisk([trained(ind({ status: true, healthSetPoints: sp }))]);
+        const next = await commitSetPoints('ws1', 'i1', { ...sp, masterLower: 1, masterUpper: 9 } as HealthSetPoints);
+        expect(next!.failureGroupState!.models[0].status).toBe(true);
     });
 
     it('computes against what is on disk: a field another window just changed is not reverted', async () => {
@@ -103,10 +121,10 @@ describe('persistModelComplete', () => {
         const { next } = await persistModelComplete('ws1', 'i1', sp, null, 'build-model', record);
         expect(next!.failureGroupState!.models[0].healthExport).toEqual(record);
         await commitSetPoints('ws1', 'i1', { kind: 'individual', lower: 0, upper: 99 });
-        // the files still carry the old points: the record is what lets the page say "changed after saving"
         expect(disk.failureGroupState!.models[0].healthExport).toEqual(record);
         expect(disk.failureGroupState!.models[0].healthSetPoints).toMatchObject({ lower: 0, upper: 99 });
-        expect(disk.failureGroupState!.models[0].status).toBe(true);
+        // changed set points: the Complete was for the old numbers
+        expect(disk.failureGroupState!.models[0].status).toBe(false);
     });
 
     it('without a record (the old call shape) an earlier record is kept, none is invented', async () => {
@@ -142,13 +160,27 @@ describe('persistModelComplete', () => {
         expect((await persistModelComplete('ws1', 'gone', sp, null)).reason).toMatch(/no longer exists/);
     });
 
-    it('after completing, an UNRELATED write (a set-point save) keeps it Complete; a scope change sets it Incomplete again', async () => {
+    it('the completing write keeps its new set points AND Complete (status false -> true is exempt from the set-point rule)', async () => {
+        setDisk([trained(ind({ healthSetPoints: { kind: 'individual', lower: 5, upper: 6 } }))]);
+        const { reason } = await persistModelComplete('ws1', 'i1', sp, null);
+        expect(reason).toBeNull();
+        expect(disk.failureGroupState!.models[0]).toMatchObject({ status: true, healthSetPoints: sp });
+    });
+
+    it('after completing, an UNRELATED write (a model name) keeps it Complete; a scope change sets it Incomplete again', async () => {
         setDisk([trained(ind())]);
         await persistModelComplete('ws1', 'i1', sp, null);
+        const { updateWorkspaceData } = await import('../workspaceManager');
+        await updateWorkspaceData('ws1', prev => ({
+            ...prev,
+            failureGroupState: { ...prev.failureGroupState!, models: prev.failureGroupState!.models.map(m => ({ ...m, name: 'renamed' })) },
+        }));
+        expect(disk.failureGroupState!.models[0].status).toBe(true);
         await commitSetPoints('ws1', 'i1', { kind: 'individual', lower: 0, upper: 99 });
+        expect(disk.failureGroupState!.models[0].status).toBe(false);
+        await persistModelComplete('ws1', 'i1', { kind: 'individual', lower: 0, upper: 99 }, null);
         expect(disk.failureGroupState!.models[0].status).toBe(true);
         // Another window changes the target -> the same rule the real write applies.
-        const { updateWorkspaceData } = await import('../workspaceManager');
         await updateWorkspaceData('ws1', prev => ({
             ...prev,
             failureGroupState: { ...prev.failureGroupState!, models: prev.failureGroupState!.models.map(m => ({ ...m, targetSensor: 'T2' })) },

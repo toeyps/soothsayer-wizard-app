@@ -1,6 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { findSameSensorNameConflict, kindModelName, MODEL_KIND_LABEL, suggestDistinctModelName } from '../utils/modelNames';
 import type { FailureModel } from '../types';
+import {
+    CATEGORY_FIRST_REASON, WORKSPACE_DUPLICATE_NAME_REASON, findWorkspaceNameTwin, markCompleteProjectBlock, modelTagOf, nameTwinMarkCompleteReason,
+} from '../utils/modelNames';
 
 const mk = (o: Partial<FailureModel>): FailureModel => ({
     id: 'x', name: 'n', kind: 'individual', targetSensor: 'TAG1', xSensor: '', groupNos: [1], ...o,
@@ -82,5 +85,46 @@ describe('suggestDistinctModelName', () => {
             findSameSensorNameConflict(models, rel, 'TAG1 (Relation model)');
             expect(JSON.stringify(models)).toBe(before);
         });
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Export round (2026-10-20): model names are unique across the WORKSPACE
+// ---------------------------------------------------------------------------
+
+
+describe('findWorkspaceNameTwin', () => {
+    const a = mk({ id: 'a', name: 'Bearing temp', targetSensor: 'TAG1' });
+    const b = mk({ id: 'b', kind: 'clustering', name: 'Other', targetSensor: '', xSensor: 'TAG9' });
+    it('matches ANY sensor and kind, trimmed and case-insensitive', () => {
+        expect(findWorkspaceNameTwin([a, b], b, '  BEARING TEMP ')?.id).toBe('a');
+    });
+    it('skips the model itself and never matches an empty name', () => {
+        expect(findWorkspaceNameTwin([a, b], a, 'Bearing temp')).toBeNull();
+        expect(findWorkspaceNameTwin([a, mk({ id: 'c', name: '' })], b, '   ')).toBeNull();
+    });
+    it('a model without a name is never a twin', () => {
+        expect(findWorkspaceNameTwin([mk({ id: 'c', name: undefined as unknown as string })], a, 'x')).toBeNull();
+    });
+});
+
+describe('Mark complete project blocks', () => {
+    const labelOf = (t: string) => (t === 'TAG9' ? 'Vibration · TAG9' : t);
+    const ind = mk({ id: 'a', name: 'Shared', targetSensor: 'TAG1' });
+    const clus = mk({ id: 'b', kind: 'clustering', name: 'shared ', targetSensor: '', xSensor: 'TAG9' });
+    it('the reason strings', () => {
+        expect(WORKSPACE_DUPLICATE_NAME_REASON).toBe('Model name is already used by another model in this project');
+        expect(CATEGORY_FIRST_REASON).toBe('Pick a category on the sensor first (Performance or Condition)');
+        expect(nameTwinMarkCompleteReason(' Shared ', clus, labelOf))
+            .toBe('Model name “Shared” is also used by the Clustering model of Vibration · TAG9 — rename one in Model settings');
+    });
+    it('no category first, then a name twin, else null', () => {
+        expect(markCompleteProjectBlock([ind, clus], ind, null, labelOf)).toBe(CATEGORY_FIRST_REASON);
+        expect(markCompleteProjectBlock([ind, clus], ind, 'condition', labelOf)).toMatch(/^Model name “Shared” is also used by the Clustering model of Vibration · TAG9/);
+        expect(markCompleteProjectBlock([ind], ind, 'performance', labelOf)).toBeNull();
+    });
+    it('modelTagOf: target, X sensor for Clustering', () => {
+        expect(modelTagOf(ind)).toBe('TAG1');
+        expect(modelTagOf(clus)).toBe('TAG9');
     });
 });
