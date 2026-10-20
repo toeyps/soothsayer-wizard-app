@@ -27,6 +27,14 @@ mod qa_special_sensor_internal;
 #[cfg(test)]
 #[path = "../tests/internal/formula_preview_internal.rs"]
 mod formula_preview_internal;
+// Timestamp import edge cases through the whole load path (same arrangement).
+#[cfg(test)]
+#[path = "../tests/internal/qa_timestamp_import_internal.rs"]
+mod qa_timestamp_import_internal;
+// A model's output files: Mark complete -> delete round trip (same arrangement).
+#[cfg(test)]
+#[path = "../tests/internal/qa_model_files_internal.rs"]
+mod qa_model_files_internal;
 use formula_diagnostics::FormulaIssue;
 use csv_processor::{
     load_metadata, micros_to_naive, parse_timestamp, ts_to_micros, ColumnarData, CsvLoadReport,

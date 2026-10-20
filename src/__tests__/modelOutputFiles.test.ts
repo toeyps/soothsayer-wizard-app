@@ -46,3 +46,24 @@ describe('modelsOnlyIn', () => {
         expect(modelsOnlyIn(ms, 1).map(m => m.id)).toEqual(['a']);
     });
 });
+
+// QA 2026-10-19: the confirm sentence both delete buttons show, and the edge cases of the counts.
+describe('groupDeleteCounts / groupDeleteSentence — edges', () => {
+    it('a model listed twice in the same group is still only in it; a model in no group is never counted', async () => {
+        const { groupDeleteCounts } = await import('../utils/modelOutputFiles');
+        expect(groupDeleteCounts([{ groupNos: [1, 1] }, { groupNos: [] }, { groupNos: [0] }], 1)).toEqual({ deleted: 1, kept: 0 });
+        expect(groupDeleteCounts([], 1)).toEqual({ deleted: 0, kept: 0 });
+    });
+
+    it('singular and plural wording', async () => {
+        const { groupDeleteSentence } = await import('../utils/modelOutputFiles');
+        expect(groupDeleteSentence('G', 1, 0)).toBe('Delete G? 1 model used only by this group is deleted with its saved files.');
+        expect(groupDeleteSentence('G', 0, 1)).toBe('Delete G? 1 model stays in its other groups.');
+        expect(groupDeleteSentence('G', 0, 0)).toBe('Delete G? It has no models.');
+    });
+
+    it('a Clustering model without an X sensor has no files to remove', async () => {
+        expect(await removeModelOutputFiles('ws1', { kind: 'clustering', targetSensor: 'T1', xSensor: '' }, [])).toBe(0);
+        expect(mockInvoke).not.toHaveBeenCalled();
+    });
+});

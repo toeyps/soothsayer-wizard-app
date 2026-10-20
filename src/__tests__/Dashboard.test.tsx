@@ -1622,6 +1622,100 @@ describe('Dashboard', () => {
                 expect(mockInvoke.mock.calls.filter(c => c[0] === 'remove_model_files')).toHaveLength(0);
             });
 
+            // QA 2026-10-19: the Undo toast's own lifecycle (expiry timer, pushed out of the stack,
+            // Undo then expiry, re-created before expiry) — the paths between the toast, the
+            // Dashboard's disk check and the `remove_model_files` command.
+            describe('QA — undo toast lifecycle and the model\'s saved files', () => {
+                const removeCalls = () => mockInvoke.mock.calls.filter(c => c[0] === 'remove_model_files');
+                const expire = () => act(() => { vi.advanceTimersByTime(7000); });
+
+                it('the toast expiring on its own (7 s) removes the files once; closing the Dashboard later does not repeat it', async () => {
+                    vi.useFakeTimers();
+                    const initial = stateFor([model({ id: 'm2', targetSensor: 'TAG2', groupNos: [1] })]);
+                    const box = statefulDisk(initial);
+                    mockLoadWorkspaceData.mockImplementation(async () => box.disk);
+                    const view = renderDashboard({ initialState: initial });
+                    toggle('TAG2', 1, 'individual');
+                    await flush();
+                    expect(screen.getAllByTestId('fg-undo-toast')).toHaveLength(1);
+                    act(() => { vi.advanceTimersByTime(6900); });
+                    await flush();
+                    expect(removeCalls()).toHaveLength(0); // Undo still possible
+                    act(() => { vi.advanceTimersByTime(200); });
+                    await flush();
+                    await flush();
+                    expect(removeCalls()).toEqual([['remove_model_files', { workspace_id: initial.id, kind: 'individual', sensor: 'TAG2' }]]);
+                    expect(screen.queryByTestId('fg-undo-toast')).toBeNull();
+                    view.unmount();
+                    await flush();
+                    expect(removeCalls()).toHaveLength(1);
+                });
+
+                it('Undo, then the 7 s pass: the model is back and no file is ever removed', async () => {
+                    vi.useFakeTimers();
+                    const initial = stateFor([model({ id: 'm2', targetSensor: 'TAG2', groupNos: [1] })]);
+                    const box = statefulDisk(initial);
+                    mockLoadWorkspaceData.mockImplementation(async () => box.disk);
+                    renderDashboard({ initialState: initial });
+                    toggle('TAG2', 1, 'individual');
+                    await flush();
+                    fireEvent.click(screen.getByRole('button', { name: /undo/i }));
+                    await flush();
+                    expire();
+                    await flush();
+                    await flush();
+                    expect(box.disk.failureGroupState.models.map((m: any) => m.id)).toEqual(['m2']);
+                    expect(removeCalls()).toHaveLength(0);
+                });
+
+                it('a fourth deletion pushes the oldest toast out: only that model\'s files go, at once', async () => {
+                    const tags = ['TAG1', 'TAG2', 'TAG3', 'TAG4'];
+                    const initial = stateFor(tags.map((t, i) => model({ id: `m${i}`, targetSensor: t, groupNos: [1] })));
+                    const box = statefulDisk(initial);
+                    mockLoadWorkspaceData.mockImplementation(async () => box.disk);
+                    renderDashboard({ initialState: initial });
+                    for (const t of tags.slice(0, 3)) { toggle(t, 1, 'individual'); await flush(); }
+                    expect(screen.getAllByTestId('fg-undo-toast')).toHaveLength(3);
+                    expect(removeCalls()).toHaveLength(0);
+                    toggle('TAG4', 1, 'individual');
+                    await flush();
+                    await flush();
+                    expect(screen.getAllByTestId('fg-undo-toast')).toHaveLength(3);
+                    expect(removeCalls()).toEqual([['remove_model_files', { workspace_id: initial.id, kind: 'individual', sensor: 'TAG1' }]]);
+                });
+
+                it('the same kind re-added for the sensor before the toast expires keeps the files (they are the new model\'s)', async () => {
+                    vi.useFakeTimers();
+                    const initial = stateFor([model({ id: 'm2', targetSensor: 'TAG2', groupNos: [1] })]);
+                    const box = statefulDisk(initial);
+                    mockLoadWorkspaceData.mockImplementation(async () => box.disk);
+                    renderDashboard({ initialState: initial });
+                    toggle('TAG2', 1, 'individual');
+                    await flush();
+                    toggle('TAG2', 2, 'individual'); // a fresh Individual model of TAG2
+                    await flush();
+                    expect(box.disk.failureGroupState.models.filter((m: any) => m.targetSensor === 'TAG2' && m.kind === 'individual')).toHaveLength(1);
+                    expire();
+                    await flush();
+                    await flush();
+                    expect(removeCalls()).toHaveLength(0);
+                });
+
+                it('deleting a group whose model has another kind of the same sensor elsewhere removes only that kind\'s files', async () => {
+                    const initial = stateFor([
+                        model({ id: 'ind', targetSensor: 'TAG2', kind: 'individual', groupNos: [1] }),
+                        model({ id: 'clu', kind: 'clustering', targetSensor: '', xSensor: 'TAG2', ySensor: 'TAG1', groupNos: [2] }),
+                    ]);
+                    const box = statefulDisk(initial);
+                    renderDashboard({ initialState: initial });
+                    fireEvent.click(screen.getByText('delete-group')); // the panel mock deletes group 1
+                    await flush();
+                    await flush();
+                    expect(box.disk.failureGroupState.models.map((m: any) => m.id)).toEqual(['clu']);
+                    expect(removeCalls()).toEqual([['remove_model_files', { workspace_id: initial.id, kind: 'individual', sensor: 'TAG2' }]]);
+                });
+            });
+
             it('deleting a Failure Group the model shares with another one keeps the model as it was', async () => {
                 const initial = stateFor([model({ groupNos: [1, 2] })]); // the panel mock always deletes group 1
                 const box = statefulDisk(initial);
