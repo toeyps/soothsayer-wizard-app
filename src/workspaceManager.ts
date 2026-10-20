@@ -50,6 +50,32 @@ export async function saveRecentWorkspaces(workspaces: WorkspaceMetadata[]) {
     }
 }
 
+/** plugin-store key of the folder the last Export results went into. */
+export const LAST_EXPORT_DIR_KEY = 'lastExportDir';
+
+/** The folder the last Export results went into (`settings.json`), or null. */
+export async function getLastExportDir(): Promise<string | null> {
+    try {
+        const s = await getStore();
+        const v = await s.get(LAST_EXPORT_DIR_KEY);
+        return typeof v === 'string' && v.trim() !== '' ? v : null;
+    } catch (e) {
+        console.error("Failed to read the last export folder:", e);
+        return null;
+    }
+}
+
+/** Remember the folder an export went into (app-wide, not per project). */
+export async function setLastExportDir(dir: string): Promise<void> {
+    try {
+        const s = await getStore();
+        await s.set(LAST_EXPORT_DIR_KEY, dir);
+        await s.save();
+    } catch (e) {
+        console.error("Failed to save the last export folder:", e);
+    }
+}
+
 // Serializes every disk-touching operation below (within THIS window's own
 // module instance — each Tauri webview loads its own copy of this module,
 // so this queue does NOT coordinate across windows; see updateWorkspaceData's

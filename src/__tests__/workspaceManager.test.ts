@@ -1318,3 +1318,23 @@ describe('saveLegacyFormulaConversion', () => {
         expect(savedFiles().filter(([p]) => p === 'workspaces/ws1.json')).toHaveLength(1);
     });
 });
+
+describe('last export folder (app-wide, settings.json key lastExportDir)', () => {
+    it('reads it, null when absent or not a string', async () => {
+        const { getLastExportDir, LAST_EXPORT_DIR_KEY } = await freshModule();
+        expect(LAST_EXPORT_DIR_KEY).toBe('lastExportDir');
+        mockStoreGet.mockResolvedValue('D:/exports');
+        expect(await getLastExportDir()).toBe('D:/exports');
+        expect(mockStoreGet).toHaveBeenCalledWith('lastExportDir');
+        mockStoreGet.mockResolvedValue(undefined);
+        expect(await getLastExportDir()).toBeNull();
+        mockStoreGet.mockResolvedValue(42);
+        expect(await getLastExportDir()).toBeNull();
+    });
+    it('saves it to the store', async () => {
+        const { setLastExportDir } = await freshModule();
+        await setLastExportDir('D:/x');
+        expect(mockStoreSet).toHaveBeenCalledWith('lastExportDir', 'D:/x');
+        expect(mockStoreSave).toHaveBeenCalled();
+    });
+});

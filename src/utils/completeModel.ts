@@ -86,7 +86,10 @@ export type CompleteModelResult =
 const fail = (
     reason: 'validation' | 'error' | 'inputs',
     over: Partial<{ issues: HealthIssue[]; code: HealthErrorCode | null; error: string | null }> = {},
-): CompleteModelResult => ({ ok: false, reason, issues: [], code: null, error: null, ...over });
+): CompleteModelFailure => ({ ok: false, reason, issues: [], code: null, error: null, ...over });
+
+/** The failure half of `CompleteModelResult` / `CheckModelResult`. */
+export type CompleteModelFailure = Extract<CompleteModelResult, { ok: false }>;
 
 export interface CompleteModelOptions extends HealthRequestOptions {
     workspaceId: string;
@@ -148,6 +151,35 @@ export async function completeModel(opts: CompleteModelOptions): Promise<Complet
         warnings: result.warnings,
         ...(interval !== undefined ? { scoringIntervalSecs: interval } : {}),
     };
+}
+
+/** Outcome of `checkModelForComplete`: `completeModel`'s result without the
+ *  written files. */
+export type CheckModelResult =
+    | { ok: true; setPoints: HealthSetPoints; scoringIntervalSecs?: number }
+    | CompleteModelFailure;
+
+/**
+ * The validate-only half of `completeModel`: a valid scoring period
+ * (`markCompleteBlockReason`), then `compute_health_preview` with the set
+ * points. Writes NO files (never calls `export_model_files`) — the files are
+ * written by Export results. Never throws: every failure is a typed result.
+ */
+export async function checkModelForComplete(opts: HealthRequestOptions & { setPoints: HealthSetPoints }): Promise<CheckModelResult> {
+    const noTest = markCompleteBlockReason(opts.model, opts.fg);
+    if (noTest !== null) return fail('inputs', { error: noTest });
+    const previewReq = buildHealthPreviewRequest({ ...opts, maxPoints: 8, maxScatterPoints: 1 });
+    if (!previewReq) return fail('inputs', { error: 'A required sensor is missing for this model.' });
+    let preview: HealthPreview;
+    try {
+        preview = await invoke<HealthPreview>('compute_health_preview', { request: previewReq });
+    } catch (e) {
+        const { code, message } = parseHealthError(e);
+        return fail('error', { code, error: message });
+    }
+    if (!preview.valid) return fail('validation', { issues: preview.validation });
+    const interval = scoringIntervalOf(preview);
+    return { ok: true, setPoints: opts.setPoints, ...(interval !== undefined ? { scoringIntervalSecs: interval } : {}) };
 }
 
 /** The preview's `scoring_interval_secs` when it is a usable number (finite,

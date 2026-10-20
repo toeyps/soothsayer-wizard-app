@@ -8,7 +8,7 @@ vi.mock('@tauri-apps/api/core', () => ({
     invoke: (...args: unknown[]) => mockInvoke(...args),
 }));
 
-import { completeModel, getModelOutputDir, healthExportRecord, HEALTH_ERROR_TEXT, parseHealthError } from '../utils/completeModel';
+import { checkModelForComplete, completeModel, getModelOutputDir, healthExportRecord, HEALTH_ERROR_TEXT, parseHealthError } from '../utils/completeModel';
 
 // An open-ended train period (= no time filter on the wire) and one scoring
 // period, which Mark complete requires. The period is deliberately in the shape
@@ -274,5 +274,34 @@ describe('getModelOutputDir', () => {
         mockInvoke.mockResolvedValue('C:/data/workspaces/ws1/output');
         expect(await getModelOutputDir('ws1')).toBe('C:/data/workspaces/ws1/output');
         expect(mockInvoke).toHaveBeenCalledWith('get_model_output_dir', { workspace_id: 'ws1' });
+    });
+});
+
+describe('checkModelForComplete (validate only, export round 2026-10-20)', () => {
+    const check = (m: FailureModel = model, setPoints: HealthSetPoints = sp) =>
+        checkModelForComplete({ model: m, fg, headers: HEADERS, setPoints, expectedGeneration: 2 });
+    beforeEach(() => { mockInvoke.mockReset(); });
+
+    it('valid set points: ok with the set points and the scoring interval; NO export_model_files call', async () => {
+        mockInvoke.mockResolvedValue(previewOk);
+        const res = await check();
+        expect(res).toEqual({ ok: true, setPoints: sp, scoringIntervalSecs: 3600 });
+        expect(mockInvoke.mock.calls.map(c => c[0])).toEqual(['compute_health_preview']);
+        expect(mockInvoke.mock.calls[0][1].request).toMatchObject({ kind: 'individual', target: 'T', set_points: { lower: 1, upper: 9 }, expected_generation: 2, test_periods: TESTS_WIRE });
+    });
+    it('rejected set points: the issues, still no export', async () => {
+        mockInvoke.mockResolvedValue(previewBad);
+        expect(await check()).toEqual({ ok: false, reason: 'validation', issues: [issue], code: null, error: null });
+        expect(mockInvoke.mock.calls.map(c => c[0])).not.toContain('export_model_files');
+    });
+    it('a Rust error is parsed', async () => {
+        mockInvoke.mockRejectedValue('NOT_FITTED: gone');
+        expect(await check()).toMatchObject({ ok: false, reason: 'error', code: 'NOT_FITTED' });
+    });
+    it('no scoring period / missing sensor: inputs, no call at all', async () => {
+        const noTests = await checkModelForComplete({ model, fg: { ...fg, runningConditionTestPeriods: [] }, headers: HEADERS, setPoints: sp });
+        expect(noTests).toMatchObject({ ok: false, reason: 'inputs' });
+        expect(await check(mk({ id: 'x', kind: 'individual', targetSensor: '' }))).toMatchObject({ ok: false, reason: 'inputs' });
+        expect(mockInvoke).not.toHaveBeenCalled();
     });
 });
