@@ -128,7 +128,6 @@ function App() {
       <ErrorBoundary>
         <TitleBar
           workspaceName={metadata ? workspaceName : undefined}
-          onRename={handleRename}
           renameTrigger={renameTrigger}
           onOpenDetails={metadata ? () => { void openDetails(); } : undefined}
         />

@@ -10,10 +10,10 @@ vi.mock('@tauri-apps/plugin-dialog', () => ({
     open: (opts: unknown) => mockOpenDialog(opts),
 }));
 
-import { ExportBar, ExportModal, fmtBytes, type ExportModalProps } from '../components/windows/workbench/ExportParts';
+import { ExportBar, ExportIssueLine, ExportModal, EXPORT_ISSUE_WORDS, fmtBytes, type ExportModalProps } from '../components/windows/workbench/ExportParts';
 import type { UseWorkspaceExport } from '../hooks/useWorkspaceExport';
 import type { ExportReadiness, ExportReadinessItem, ExportReadinessRow, NoComponentSensor } from '../utils/exportReadiness';
-import type { WorkspaceExportPlan } from '../types/export';
+import type { ExportIssue, WorkspaceExportPlan, WorkspaceExportRequest } from '../types/export';
 import { FIRST_ABOVE_NOTE } from '../utils/runningStatus';
 import { SensorMetaContext } from '../components/sensor/sensorInfo';
 
@@ -176,7 +176,7 @@ describe('ExportBar (the Build Model window\'s workspace status bar)', () => {
         expect(btn().className).not.toContain('rcx-btn--pri');
     });
 
-    it('failed: red "Export failed · nothing was written" with Show', () => {
+    it('failed (a failed write): red "Export failed · nothing was written" with Show', () => {
         const p = bar({ phase: 'failed' });
         expect(screen.getByTestId('export-bar').textContent).toContain('Export failed · nothing was written');
         fireEvent.click(screen.getByText('Show'));
@@ -273,11 +273,126 @@ describe('ExportModal — the checklist', () => {
         expect(t).toContain('1 repeated timestamp — the last row of each is kept.');
     });
 
-    it('a problem the dry run found blocks Export even when the checklist is complete', () => {
-        renderModal({ exp: fakeExp({ exportPlan: plan({ ok: false, issues: [{ code: 'no_training_rows', severity: 'error', model_id: 'm1', message: 'No training rows for TAG1-I1' }] }) }) });
+    it('a problem the dry run found blocks Export even when the checklist is complete — in fixed words, never the raw Rust text', () => {
+        const request = { models: [{ id: 'm1', kind: 'individual', display_name: 'Pump Pressure' }] } as unknown as WorkspaceExportRequest;
+        renderModal({ exp: fakeExp({ request, exportPlan: plan({ ok: false, issues: [{ code: 'no_training_rows', severity: 'error', model_id: 'm1', message: 'No training rows for TAG1-I1' }] }) }) });
         expect(screen.getByTestId('export-why').textContent).toBe('1 problem found by the export check');
         fireEvent.click(screen.getByText('Show'));
-        expect(screen.getByTestId('ready-plan').textContent).toContain('No training rows for TAG1-I1');
+        const t = screen.getByTestId('ready-plan').textContent ?? '';
+        expect(t).toContain('Pump Pressure (Individual) · No training rows in the loaded data');
+        expect(t).not.toContain('TAG1-I1');
+    });
+
+    it('no dry run while something is missing: the files section waits, and nothing calls plan', () => {
+        const exp = fakeExp({ exportPlan: null, phase: 'idle' });
+        renderModal({ exp, readiness: readiness({ items: items({ machineMissing: ['Machine tag'] }) }) });
+        expect(screen.getByTestId('export-written-later').textContent).toContain('once every model is Complete');
+        expect(screen.queryByTestId('export-planning')).toBeNull();
+        expect(exp.plan).not.toHaveBeenCalled();
+    });
+
+    it('when the last missing item is filled in while the dialog is open, the dry run runs then', () => {
+        const exp = fakeExp({ exportPlan: null, phase: 'idle' });
+        const missing = readiness({ items: items({ machineMissing: ['Machine tag'] }) });
+        const { props, rerender } = renderModal({ exp, readiness: missing });
+        expect(exp.plan).not.toHaveBeenCalled();
+        rerender(
+            <SensorMetaContext.Provider value={lookup}>
+                <ExportModal {...props} readiness={readiness()} />
+            </SensorMetaContext.Provider>,
+        );
+        expect(exp.plan).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe('ExportModal — a refused dry run is not a failed export', () => {
+    const planFailedExp = (o: Partial<UseWorkspaceExport> = {}) =>
+        fakeExp({ phase: 'failed', exportPlan: null, error: { code: 'BAD_REQUEST', message: 'model m9 is not complete' }, ...o });
+
+    it('keeps the checklist with one inline line; never "Export failed · Nothing was written"', () => {
+        const exp = planFailedExp();
+        renderModal({ exp, planFailed: true });
+        expect(screen.queryByTestId('export-failed')).toBeNull();
+        expect(screen.queryByText('Export failed')).toBeNull();
+        expect(screen.getByTestId('export-readiness')).toBeTruthy();
+        expect(screen.getByTestId('export-plan-error').textContent).toContain('Couldn’t check the export: model m9 is not complete');
+        expect(screen.getByTestId('export-why').textContent).toBe('Couldn’t check the export');
+        expect((screen.getByTestId('export-start') as HTMLButtonElement).disabled).toBe(true);
+        expect(screen.getByTestId('export-written-later').textContent).toContain('did not run');
+        fireEvent.click(within(screen.getByTestId('export-plan-error')).getByText('Try again'));
+        expect(exp.plan).toHaveBeenCalledTimes(1);
+        expect(exp.start).not.toHaveBeenCalled();
+    });
+
+    it('a stale plan from before is not shown as what will be written', () => {
+        renderModal({ exp: planFailedExp({ exportPlan: plan() }), planFailed: true });
+        expect(screen.queryByTestId('export-written')).toBeNull();
+    });
+
+    it('a failed WRITE still says "Export failed · Nothing was written"', () => {
+        renderModal({ exp: planFailedExp({ error: { code: 'WRITE_FAILED', message: 'denied' } }), planFailed: false });
+        expect(screen.getByTestId('export-failed').textContent).toContain('Nothing was written');
+    });
+
+    it('a failed write whose Try again finds something missing goes back to the checklist (no dry run, no write)', () => {
+        const exp = fakeExp({ phase: 'failed', error: { code: 'WRITE_FAILED', message: 'denied' } });
+        renderModal({ exp, readiness: readiness({ items: items({ machineMissing: ['Machine tag'] }) }) });
+        fireEvent.click(screen.getByText('Try again'));
+        expect(exp.reset).toHaveBeenCalled();
+        expect(exp.plan).not.toHaveBeenCalled();
+        expect(exp.start).not.toHaveBeenCalled();
+    });
+});
+
+describe('ExportIssueLine — export-check problems in the user words', () => {
+    const line = (issue: Partial<ExportIssue>, o: Partial<Parameters<typeof ExportIssueLine>[0]> = {}) => {
+        render(
+            <SensorMetaContext.Provider value={lookup}>
+                <ExportIssueLine issue={{ code: 'unknown_sensor', severity: 'error', message: 'raw TAG1 text', ...issue }} {...o} />
+            </SensorMetaContext.Provider>,
+        );
+        return screen.getByTestId('export-issue');
+    };
+
+    it('a sensor is named description first (SensorInline), never by Rust text with the raw tag', () => {
+        const el = line({ code: 'running_status_sensor_unknown', tag: 'RUN' });
+        expect(el.textContent).toContain('Generator power');
+        expect(el.textContent).toContain('The running-status sensor is not in the loaded data');
+        expect(el.textContent).not.toContain('raw TAG1 text');
+    });
+
+    it('a model issue names the model by its name and kind, then the sensor it is about', () => {
+        const el = line({ code: 'input_equals_output', model_id: 'm2', tag: 'TAG1' }, { row: row({ id: 'm2', kind: 'relationship', tag: 'TAG2' }), spec: { display_name: 'Temp model', kind: 'relationship' } });
+        const t = el.textContent ?? '';
+        expect(t.startsWith('Temp model (Relation model) · Pump Pressure')).toBe(true);
+        expect(t.endsWith(' · A predictor is the same sensor as the target')).toBe(true);
+    });
+
+    it('a model without a name falls back to its sensor (SensorInline) and kind, without naming the sensor twice', () => {
+        const el = line({ code: 'regimes_not_contiguous', model_id: 'm1', tag: 'TAG1' }, { row: row({ kind: 'clustering' }) });
+        const t = el.textContent ?? '';
+        expect(t).toContain('Pump Pressure');
+        expect(t).toContain('(Clustering)');
+        expect(t).toContain('Cluster ranges must meet end to end');
+        expect(t.split('Pump Pressure').length - 1).toBe(1);
+    });
+
+    it('a failure-group issue names the group', () => {
+        expect(line({ code: 'fg_name_duplicate', group_no: 3 }).textContent).toBe('FG-3 · Another failure group has the same name');
+    });
+
+    it('an unknown code falls back to the message', () => {
+        expect(line({ code: 'something_new', message: 'Something new happened' }).textContent).toBe('Something new happened');
+    });
+
+    it('every code of the contract (and the new ones) has fixed wording; none says "invalid" or names the algorithm', () => {
+        for (const code of ['machine_missing', 'running_status_missing', 'running_status_sensor_unknown', 'offset_out_of_range', 'no_models',
+            'duplicate_model_id', 'unknown_sensor', 'category_missing', 'display_name_duplicate', 'set_points_invalid', 'fit_profile_unknown',
+            'regimes_not_contiguous', 'no_training_rows', 'derived_recipe_missing', 'fg_text_missing', 'model_incomplete', 'bad_training_scope',
+            'input_equals_output', 'x_equals_y', 'fg_name_duplicate']) {
+            expect(EXPORT_ISSUE_WORDS[code], code).toBeTruthy();
+            expect(EXPORT_ISSUE_WORDS[code]).not.toMatch(/invalid|gam/i);
+        }
     });
 });
 

@@ -240,8 +240,8 @@ export function LoadFailedBoard({ testId, linkTestId, className, kindName, tail,
  * "The model was not saved. <why>" — shown on the Model fit page when a "Mark
  * complete" was refused or failed. The Health score page
  * renders the same message in its own banner, but that page cannot be shown for
- * a model that went stale during the export (the usual reason the save is
- * refused AFTER the files were written), so without this the user would never
+ * a model that went stale while Mark complete was validating (the usual reason
+ * the save is refused at the last write), so without this the user would never
  * learn that their Mark complete did not take effect. Dismissible.
  */
 export function SaveErrorNotice({ message, onDismiss }: { message: string; onDismiss: () => void }) {

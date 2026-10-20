@@ -50,9 +50,6 @@ export interface WorkbenchPageProps {
 export type SaveInfo =
     | { phase: 'idle' }
     | { phase: 'running' }
-    /** The folder the files were written to and when (this session's save, or the
-     *  model's persisted export record). */
-    | { phase: 'ok'; outputDir: string; at: string }
     | { phase: 'error'; message: string };
 
 export interface HealthScorePageProps extends WorkbenchPageProps {

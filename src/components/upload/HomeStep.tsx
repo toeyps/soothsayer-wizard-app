@@ -24,7 +24,6 @@ interface HomeStepProps {
   error: string | null;
   onNewProject: () => void;
   onOpenWorkspace: (id: string) => void;
-  onRenameWorkspace: (id: string, newName: string, currentName: string) => void;
   /** Rename on a card opens Project details (the name is "Plant · Machine"). */
   onEditWorkspace?: (id: string) => void;
   onDeleteWorkspace: (id: string) => void;
@@ -40,7 +39,7 @@ const FIRST_STEPS = [
  *  Recent projects on the left, the machine illustration on the right. */
 export default function HomeStep({
   T, workspaces, loaded, activeWorkspaceId, busy, error,
-  onNewProject, onOpenWorkspace, onRenameWorkspace, onEditWorkspace, onDeleteWorkspace,
+  onNewProject, onOpenWorkspace, onEditWorkspace, onDeleteWorkspace,
 }: HomeStepProps) {
   const [query, setQuery] = useState('');
   const [version, setVersion] = useState<string | null>(null);
@@ -239,7 +238,6 @@ export default function HomeStep({
                     project={w}
                     active={w.id === activeWorkspaceId}
                     onOpen={() => onOpenWorkspace(w.id)}
-                    onRename={(newName) => onRenameWorkspace(w.id, newName, w.name)}
                     onEditDetails={onEditWorkspace ? () => onEditWorkspace(w.id) : undefined}
                     onDelete={() => onDeleteWorkspace(w.id)}
                   />

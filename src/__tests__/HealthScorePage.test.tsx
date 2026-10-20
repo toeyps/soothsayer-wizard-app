@@ -1611,21 +1611,6 @@ describe('Mark complete: checking, result and failure (it writes no files)', () 
         }
     });
 
-    // Workbench redesign §1: a SUCCESSFUL save has no banner on the page — it is the
-    // footer sentence ("Files saved <date> · <folder>", BuildModelWindow.test.tsx).
-    it('ok: NO "Saved N files to …" / "Files saved to …" banner on the page (this session or an earlier one)', () => {
-        save({ phase: 'ok', outputDir: 'C:/data/workspaces/ws1/output', at: '2026-10-08T20:31:00' });
-        const page = screen.getByTestId('health-page');
-        expect(screen.queryByTestId('save-ok')).toBeNull();
-        expect(screen.queryByTestId('save-files')).toBeNull();
-        expect(page.querySelector('.hs-save')).toBeNull();
-        expect(page.textContent).not.toMatch(/Files saved|Saved 2 files|workspaces\/ws1/);
-        cleanup();
-        save({ phase: 'ok', outputDir: 'C:/o', at: 'earlier' });
-        expect(screen.getByTestId('health-page').querySelector('.hs-save')).toBeNull();
-        expect(screen.getByTestId('health-page').textContent).not.toMatch(/Files saved/);
-    });
-
     it('error: a red card that says the model was not saved and why — with the file it could not write', () => {
         const why = "Couldn't write C:\\Users\\me\\AppData\\Roaming\\app\\workspaces\\ws1\\output\\TAG1\\INDV_INFO_TAG1.json — the file is open in another program.";
         save({ phase: 'error', message: why });

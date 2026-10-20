@@ -21,7 +21,7 @@ vi.mock('../workspaceManager', () => ({
 const mockInvoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a: unknown[]) => mockInvoke(...a) }));
 
-import { commitHealthVerdict, commitSetPoints, persistModelComplete, SETTINGS_CHANGED_DURING_EXPORT_REASON, TESTS_CHANGED_DURING_EXPORT_REASON } from '../utils/healthPersist';
+import { commitHealthVerdict, commitSetPoints, persistModelComplete, SET_POINTS_CHANGED_DURING_EXPORT_REASON, SETTINGS_CHANGED_DURING_EXPORT_REASON, TESTS_CHANGED_DURING_EXPORT_REASON } from '../utils/healthPersist';
 import { checkModelForComplete } from '../utils/completeModel';
 import { NO_TEST_PERIOD_REASON } from '../utils/runningCondition';
 import { testPeriodsKey, toScoringPeriods } from '../utils/timePeriods';
@@ -209,16 +209,30 @@ describe('persistModelComplete - changes made while the export ran (QA 2026-10-0
     const edited: HealthSetPoints = { kind: 'individual', lower: 20, upper: 85 };
     const raceFor = (m: FailureModel, before: HealthSetPoints | undefined = saved) => ({ fingerprint: computeTrainFingerprint(m, baseFg([])), setPointsBefore: before });
 
-    it('set points committed DURING the check keep their newer values; the model is still Complete', async () => {
+    it('set points committed DURING the check keep their newer values; the model stays Incomplete (never validated)', async () => {
         const m = trained(ind({ healthSetPoints: saved }));
         setDisk([m]);
         const race = raceFor(m);
-        await commitSetPoints('ws1', 'i1', edited); // the user commits 85 while the files are being written
+        await commitSetPoints('ws1', 'i1', edited); // the user commits 85 while it is being checked
+        mockEmit.mockClear();
+        const { reason } = await persistModelComplete('ws1', 'i1', saved, null, 'build-model', race);
+        expect(reason).toBe(SET_POINTS_CHANGED_DURING_EXPORT_REASON);
+        expect(SET_POINTS_CHANGED_DURING_EXPORT_REASON).toBe('the set points changed while it was being checked — mark it complete again.');
+        const out = disk.failureGroupState!.models[0];
+        expect(out.status).toBe(false);
+        expect(out.healthSetPoints).toEqual(edited); // NOT reverted to the checked 80
+        expect(out.healthVerdict).not.toBe('valid');
+        expect(mockEmit).not.toHaveBeenCalled(); // nothing written, nothing broadcast
+    });
+
+    it('set points committed during the check that equal the checked ones: marked Complete', async () => {
+        const m = trained(ind({ healthSetPoints: { kind: 'individual', lower: 20, upper: 70 } }));
+        setDisk([m]);
+        const race = raceFor(m, { kind: 'individual', lower: 20, upper: 70 });
+        await commitSetPoints('ws1', 'i1', saved); // committed the same values that were checked
         const { reason } = await persistModelComplete('ws1', 'i1', saved, null, 'build-model', race);
         expect(reason).toBeNull();
-        const out = disk.failureGroupState!.models[0];
-        expect(out.status).toBe(true);
-        expect(out.healthSetPoints).toEqual(edited); // NOT reverted to the exported 80
+        expect(disk.failureGroupState!.models[0].status).toBe(true);
     });
 
     it('set points typed but never committed (disk unchanged since the click): the exported values are stored, as before', async () => {

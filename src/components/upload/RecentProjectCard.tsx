@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react';
-import { Check, Pencil, Trash2, TriangleAlert, X } from 'lucide-react';
+import { Pencil, Trash2, TriangleAlert } from 'lucide-react';
 import type { WorkspaceMetadata } from '../../types';
 import { mono, type Tokens } from './uploadTheme';
 import { formatRelativeTime, projectColor, projectInitials } from './homeHelpers';
@@ -16,15 +16,14 @@ interface RecentProjectCardProps {
    * Static, non-interactive rendering of the SAME card ("Shows in recent
    * projects as" on the Name step): no open / rename / delete, "just now" for the
    * time, a muted "Plant · Machine" placeholder for an empty name and "Machine tag ·
-   * notes" for an empty description. `onOpen` / `onRename` / `onDelete` are not used.
+   * notes" for an empty description. `onOpen` / `onEditDetails` / `onDelete` are not used.
    */
   preview?: boolean;
   /** True while this project is the one being opened (loading overlay is up). */
   active?: boolean;
   onOpen?: () => void;
-  /** Called with the edited name; the caller owns the "empty / unchanged = no-op" rules. */
-  onRename?: (newName: string) => void;
-  /** When given, Rename opens Project details instead of editing the name in place. */
+  /** Rename opens Project details (the name is "Plant · Machine"; Project details'
+   *  save is the only writer of the name). No Rename button without it. */
   onEditDetails?: () => void;
   /** Called once the user confirmed the in-row "Delete this project?" prompt. */
   onDelete?: () => void;
@@ -33,12 +32,12 @@ interface RecentProjectCardProps {
 /**
  * One row of the "Recent projects" list on the Get-started page: coloured
  * initial, name, description (only when there is one), relative time. Hovering
- * (or focusing anything inside) reveals Rename / Delete. Rename edits in place
- * (Enter saves, Esc cancels); Delete asks for confirmation inside the row.
+ * (or focusing anything inside) reveals Rename / Delete. Rename opens Project
+ * details; Delete asks for confirmation inside the row.
  */
-export default function RecentProjectCard({ T, project, preview = false, active = false, onOpen, onRename, onEditDetails, onDelete }: RecentProjectCardProps) {
+export default function RecentProjectCard({ T, project, preview = false, active = false, onOpen, onEditDetails, onDelete }: RecentProjectCardProps) {
   if (preview) return <ProjectCardPreview T={T} project={project} />;
-  return <InteractiveProjectCard T={T} project={project} active={active} onOpen={onOpen ?? noop} onRename={onRename ?? noop} onEditDetails={onEditDetails} onDelete={onDelete ?? noop} />;
+  return <InteractiveProjectCard T={T} project={project} active={active} onOpen={onOpen ?? noop} onEditDetails={onEditDetails} onDelete={onDelete ?? noop} />;
 }
 
 const noop = () => {};
@@ -110,23 +109,16 @@ function ProjectCardPreview({ T, project }: { T: Tokens; project: RecentProjectC
 }
 
 function InteractiveProjectCard({
-  T, project, active, onOpen, onRename, onEditDetails, onDelete,
+  T, project, active, onOpen, onEditDetails, onDelete,
 }: {
   T: Tokens; project: RecentProjectCardProps['project']; active: boolean;
-  onOpen: () => void; onRename: (newName: string) => void; onEditDetails?: () => void; onDelete: () => void;
+  onOpen: () => void; onEditDetails?: () => void; onDelete: () => void;
 }) {
   const { name, description } = project;
   const [hover, setHover] = useState(false);
   const [focusWithin, setFocusWithin] = useState(false);
-  const [editing, setEditing] = useState(false);
   const [confirming, setConfirming] = useState(false);
-  const [draft, setDraft] = useState(name);
-  const inputRef = useRef<HTMLInputElement>(null);
   const cancelBtnRef = useRef<HTMLButtonElement>(null);
-  // Enter/Esc/blur/save-button can all end an edit; only the first one counts
-  // (unmounting the focused input may fire a blur that would otherwise commit
-  // the text the user just cancelled).
-  const editDoneRef = useRef(false);
   /** The time / Rename / Delete cell. Nothing that happens inside it may ever
    *  open the project. */
   const actionsCellRef = useRef<HTMLDivElement>(null);
@@ -146,17 +138,6 @@ function InteractiveProjectCard({
   };
   useEffect(() => () => { stopWatchingPressRef.current?.(); }, []);
 
-  useEffect(() => {
-    if (!editing) setDraft(name);
-  }, [name, editing]);
-
-  useEffect(() => {
-    if (editing && inputRef.current) {
-      inputRef.current.focus();
-      inputRef.current.select();
-    }
-  }, [editing]);
-
   // Esc cancels the delete prompt; Cancel is focused first so Enter / Space
   // never confirms a destructive action by accident.
   useEffect(() => {
@@ -169,27 +150,12 @@ function InteractiveProjectCard({
     return () => window.removeEventListener('keydown', onKey);
   }, [confirming]);
 
-  const startEdit = () => {
-    if (onEditDetails) { setConfirming(false); onEditDetails(); return; }
-    editDoneRef.current = false;
-    setDraft(name);
+  const openDetails = () => {
     setConfirming(false);
-    setEditing(true);
-  };
-  const commitEdit = () => {
-    if (editDoneRef.current) return;
-    editDoneRef.current = true;
-    setEditing(false);
-    onRename(draft);
-  };
-  const cancelEdit = () => {
-    if (editDoneRef.current) return;
-    editDoneRef.current = true;
-    setEditing(false);
-    setDraft(name);
+    onEditDetails?.();
   };
 
-  const showActions = !editing && !confirming && (hover || focusWithin);
+  const showActions = !confirming && (hover || focusWithin);
   const hasFgChip = recentProjectFgChip(project) !== null;
   const highlighted = active || hover || focusWithin;
 
@@ -224,7 +190,7 @@ function InteractiveProjectCard({
   const handleCardClick = (e: ReactMouseEvent<HTMLDivElement>) => {
     const press = pressRef.current;
     clearPress();
-    if (editing || confirming) return;
+    if (confirming) return;
     if (e.target instanceof Node && actionsCellRef.current?.contains(e.target)) return;
     if (e.detail > 0 && press.inActions) return;
     onOpen();
@@ -275,13 +241,13 @@ function InteractiveProjectCard({
         padding: '10px 12px', borderRadius: 12,
         border: `1px solid ${highlighted ? T.borderStrong : T.border}`,
         background: highlighted ? T.surfaceHi : T.surface,
-        cursor: editing || confirming ? 'default' : 'pointer',
+        cursor: confirming ? 'default' : 'pointer',
         transition: 'border-color 120ms ease, background 120ms ease',
       }}
     >
       {/* Keyboard / screen-reader entry point; mouse clicks anywhere on the card
           reach it too and bubble to the card's own onClick. */}
-      {!editing && !confirming && (
+      {!confirming && (
         <button
           type="button"
           aria-label={`Open ${name}`}
@@ -300,33 +266,13 @@ function InteractiveProjectCard({
         {projectInitials(name)}
       </span>
 
-      <div style={{ minWidth: 0, position: 'relative', zIndex: 1, pointerEvents: editing ? 'auto' : 'none' }}>
-        {editing ? (
-          <input
-            ref={inputRef}
-            aria-label="Project name"
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onClick={(e) => e.stopPropagation()}
-            onBlur={commitEdit}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') { e.preventDefault(); commitEdit(); }
-              else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); cancelEdit(); }
-            }}
-            style={{
-              width: '100%', boxSizing: 'border-box', fontSize: 13, fontWeight: 600, fontFamily: 'inherit',
-              color: T.text, background: T.surface, border: `1px solid ${T.accent}`,
-              borderRadius: 6, padding: '2px 6px', outline: 'none',
-            }}
-          />
-        ) : (
-          <div title={name} style={{
-            fontSize: 13.5, fontWeight: 600, color: T.text, letterSpacing: '-0.005em',
-            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-          }}>
-            {name}
-          </div>
-        )}
+      <div style={{ minWidth: 0, position: 'relative', zIndex: 1, pointerEvents: 'none' }}>
+        <div title={name} style={{
+          fontSize: 13.5, fontWeight: 600, color: T.text, letterSpacing: '-0.005em',
+          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+        }}>
+          {name}
+        </div>
         {description ? (
           <div title={description} style={{
             marginTop: 1, fontSize: 12, color: T.textFaint,
@@ -359,7 +305,7 @@ function InteractiveProjectCard({
         data-testid="project-card-actions"
         style={{ display: 'grid', alignItems: 'center', justifyItems: 'end', position: 'relative', zIndex: 1, cursor: 'default' }}
       >
-        {!confirming && !editing && (
+        {!confirming && (
           <span style={{
             gridArea: '1 / 1', fontFamily: mono, fontSize: 11, color: T.textFaint, whiteSpace: 'nowrap',
             opacity: showActions ? 0 : 1, transition: 'opacity 120ms ease',
@@ -368,40 +314,22 @@ function InteractiveProjectCard({
             {formatRelativeTime(project.lastModified)}
           </span>
         )}
-        {editing && (
-          <span style={{ gridArea: '1 / 1', display: 'flex', gap: 2 }}>
-            <button
-              type="button" title="Save (Enter)" aria-label="Save name"
-              onMouseDown={(e) => e.preventDefault() /* keep the input focused */}
-              onClick={(e) => { e.stopPropagation(); commitEdit(); }}
-              style={{ ...iconBtn, color: T.accentHi }}
-            >
-              <Check size={14} />
-            </button>
-            <button
-              type="button" title="Cancel (Esc)" aria-label="Cancel rename"
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={(e) => { e.stopPropagation(); cancelEdit(); }}
-              style={iconBtn}
-            >
-              <X size={14} />
-            </button>
-          </span>
-        )}
-        {!editing && !confirming && (
+        {!confirming && (
           <span style={{
             gridArea: '1 / 1', display: 'flex', gap: 2,
             position: 'relative', zIndex: 1,
             opacity: showActions ? 1 : 0,
             transition: 'opacity 120ms ease',
           }}>
-            <button
-              type="button" title={onEditDetails ? 'Rename (opens Project details)' : 'Rename project'} aria-label={`Rename project ${name}`}
-              onClick={(e) => runAction(e, startEdit)}
-              style={iconBtn}
-            >
-              <Pencil size={14} />
-            </button>
+            {onEditDetails && (
+              <button
+                type="button" title="Rename (opens Project details)" aria-label={`Rename project ${name}`}
+                onClick={(e) => runAction(e, openDetails)}
+                style={iconBtn}
+              >
+                <Pencil size={14} />
+              </button>
+            )}
             <button
               type="button" title="Delete project" aria-label={`Delete project ${name}`}
               onClick={(e) => runAction(e, () => setConfirming(true))}
@@ -428,7 +356,7 @@ function InteractiveProjectCard({
           <TriangleAlert size={14} style={{ color: T.danger, flexShrink: 0 }} />
           <span style={{ color: T.text, fontWeight: 600 }}>Delete this project?</span>
           <span style={{ flex: 1, minWidth: 160, color: T.textFaint }}>
-            Its saved data and exported model files are removed. This can&rsquo;t be undone.
+            Its saved data is removed. Folders you exported are kept.
           </span>
           <button
             type="button"

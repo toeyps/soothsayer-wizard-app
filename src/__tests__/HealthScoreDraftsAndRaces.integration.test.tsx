@@ -435,9 +435,10 @@ describe('Mark complete: races and failures (it only CHECKS the set points — E
     });
 
     // `persistModelComplete` keeps the newer on-disk set points when they were committed while
-    // the check ran. Guards against: set points typed + committed WHILE Mark complete runs being
-    // silently reverted to the values that were checked.
-    it('a set point edited and committed while the check runs is kept on disk (not reverted to the checked value)', async () => {
+    // the check ran, and does NOT mark the model Complete (those numbers were never validated).
+    // Guards against: set points typed + committed WHILE Mark complete runs being silently
+    // reverted to the values that were checked, or marked Complete unvalidated.
+    it('a set point edited and committed while the check runs is kept on disk and the model stays Incomplete', async () => {
         await readyI1();
         const g = env.backend!.gate('compute_health_preview', isCheck);
         await act(async () => { fireEvent.click(markBtn()); });
@@ -447,6 +448,8 @@ describe('Mark complete: races and failures (it only CHECKS the set points — E
         await act(async () => { g.release(); });
         await settle(150);
         expect(diskModel('i1').healthSetPoints.upper).toBe(85);
+        expect(diskModel('i1').status).toBe(false);
+        expect(bmwEl().textContent).toContain('the set points changed while it was being checked');
         expect(bmwEl().querySelector('[data-testid="files-out-of-date"]')).toBeNull();
         expect(bmwEl().querySelector('[data-testid="mark-complete-again"]')).toBeNull();
     });

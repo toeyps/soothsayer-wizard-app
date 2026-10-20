@@ -1156,27 +1156,6 @@ describe('duplicateWorkspace', () => {
     });
 });
 
-describe('renameWorkspaceFile', () => {
-    it('returns false when the workspace does not exist', async () => {
-        mockStoreGet.mockResolvedValue([]);
-        mockExists.mockResolvedValue(false);
-        const { renameWorkspaceFile } = await freshModule();
-        expect(await renameWorkspaceFile('missing', 'New Name')).toBe(false);
-    });
-
-    it('saves the state with the new name and returns true', async () => {
-        mockStoreGet.mockResolvedValue([
-            { id: 'ws1', name: 'Old', description: '', lastModified: 1, filePath: 'workspaces/ws1.json' },
-        ]);
-        mockExists.mockResolvedValue(true);
-        mockReadTextFile.mockResolvedValue(JSON.stringify({ id: 'ws1', name: 'Old' }));
-        const { renameWorkspaceFile } = await freshModule();
-
-        expect(await renameWorkspaceFile('ws1', 'New Name')).toBe(true);
-        expect(savedFiles()).toContainEqual(['workspaces/ws1.json', JSON.stringify({ id: 'ws1', name: 'New Name' })]);
-    });
-});
-
 describe('recent-project Failure Group fields (customer batch 2026-10, item 5)', () => {
     /** A store whose `recent_workspaces` actually persists between calls. */
     function liveStore(initial: any[]) {
@@ -1258,12 +1237,10 @@ describe('recent-project Failure Group fields (customer batch 2026-10, item 5)',
         expect(mockStoreSave).toHaveBeenCalledTimes(1);
     });
 
-    it('renameWorkspaceFile and duplicateWorkspace carry the count from the workspace on disk', async () => {
+    it('duplicateWorkspace carries the count from the workspace on disk', async () => {
         const recent = liveStore([entry()]);
         liveDisk({ id: 'ws1', name: 'A', failureGroupState: { groups: groups(0, 1, 2), models: [] } });
-        const { renameWorkspaceFile, duplicateWorkspace } = await freshModule();
-        await renameWorkspaceFile('ws1', 'B');
-        expect(recent().find(w => w.id === 'ws1')).toMatchObject({ name: 'B', failureGroupCount: 2, failureGroupNos: [1, 2] });
+        const { duplicateWorkspace } = await freshModule();
         const copy = await duplicateWorkspace('ws1');
         expect(recent().find(w => w.id === copy!.id)).toMatchObject({ failureGroupCount: 2, failureGroupNos: [1, 2] });
     });

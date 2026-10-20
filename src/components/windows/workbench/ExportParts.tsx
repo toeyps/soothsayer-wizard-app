@@ -3,7 +3,7 @@ import { Check, ChevronDown, ChevronRight, Download, FileJson, FileSpreadsheet, 
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { SensorInline } from '../../sensor/SensorLabel';
 import type { ModelKind } from '../../../types';
-import type { ExportPlanModel } from '../../../types/export';
+import type { ExportIssue, ExportModelSpec, ExportPlanModel } from '../../../types/export';
 import type { UseWorkspaceExport, WorkspaceExportPhase, WorkspaceExportProgressState } from '../../../hooks/useWorkspaceExport';
 import type { ExportReadiness, ExportReadinessItem, ExportReadinessRow, NoComponentSensor } from '../../../utils/exportReadiness';
 import { FIRST_ABOVE_NOTE } from '../../../utils/runningStatus';
@@ -227,6 +227,11 @@ export interface ExportModalProps {
     projectName: string;
     machineTag: string;
     exp: UseWorkspaceExport;
+    /** The last `exp.plan()` (the dry run) was refused. Not a failed export: the
+     *  checklist stays, with one inline line; "Export failed · Nothing was
+     *  written" is only for a failed write. The hook says `failed` for both, so
+     *  the window (which knows which call it made) tells the dialog. */
+    planFailed?: boolean;
     /** Another dialog (Project details) is open on top: this one leaves Esc and Tab alone. */
     stacked: boolean;
     unitOf: (tag: string) => string;
@@ -236,7 +241,7 @@ export interface ExportModalProps {
     onOpenRunningCondition: () => void;
 }
 
-export function ExportModal({ readiness, groups, projectName, machineTag, exp, stacked, unitOf, onClose, onOpenModel, onOpenProjectDetails, onOpenRunningCondition }: ExportModalProps) {
+export function ExportModal({ readiness, groups, projectName, machineTag, exp, planFailed = false, stacked, unitOf, onClose, onOpenModel, onOpenProjectDetails, onOpenRunningCondition }: ExportModalProps) {
     const ref = useRef<HTMLDivElement>(null);
     const { phase, exportPlan: plan, result, error, progress, showProgress, hidden } = exp;
     const [confirming, setConfirming] = useState(false);
@@ -254,12 +259,24 @@ export function ExportModal({ readiness, groups, projectName, machineTag, exp, s
     const notReady = rows.filter(r => !r.ready);
     const blocking = items.filter(i => i.blocking);
     const allReady = counts.allReady;
+    const writeFailed = phase === 'failed' && !planFailed;
     const planErrors = plan?.issues.filter(i => i.severity === 'error') ?? [];
-    const planned = plan !== null && phase !== 'planning';
+    const planned = plan !== null && phase !== 'planning' && !planFailed;
     // The checklist unfolds by itself while something is missing; once everything is
     // there it is one green line with "Show".
     const [showList, setShowList] = useState(!allReady);
     useEffect(() => { if (!allReady) setShowList(true); }, [allReady]);
+    // The dry run only runs once everything is there: when the last item is filled
+    // in while the dialog is open (Project details on top of it), it runs then.
+    const prevReadyRef = useRef(allReady);
+    useEffect(() => {
+        const was = prevReadyRef.current;
+        prevReadyRef.current = allReady;
+        if (!allReady || was) return;
+        if (phase === 'idle' || phase === 'ready' || phase === 'cancelled' || planFailed) void exp.plan();
+        // Only on the not-ready -> ready step.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [allReady]);
 
     // ---- keyboard: first focus, Tab kept inside, Esc closes only the top dialog ----
     const stackedRef = useRef(stacked);
@@ -309,11 +326,12 @@ export function ExportModal({ readiness, groups, projectName, machineTag, exp, s
     useEffect(() => { if (confirming) backRef.current?.focus(); }, [confirming]);
     useEffect(() => {
         if (hidden || stacked) return;
-        if (phase === 'running' || phase === 'done' || phase === 'failed') focusRef.current?.focus();
-    }, [phase, showProgress, hidden, stacked]);
+        if (phase === 'running' || phase === 'done' || writeFailed) focusRef.current?.focus();
+    }, [phase, writeFailed, showProgress, hidden, stacked]);
 
     const planById = new Map<string, ExportPlanModel>((plan?.models ?? []).map(m => [m.id, m]));
     const rowById = new Map(rows.map(r => [r.id, r]));
+    const specById = new Map<string, ExportModelSpec>((exp.request?.models ?? []).map(m => [m.id, m]));
     const folderName = exportFolderName(projectName, machineTag, startedAt ?? new Date());
     const tzItem = items.find((i): i is Extract<ExportReadinessItem, { id: 'tz' }> => i.id === 'tz');
     const offsetText = `UTC${fmtOffset(tzItem?.offsetMin ?? 0)}`;
@@ -405,7 +423,7 @@ export function ExportModal({ readiness, groups, projectName, machineTag, exp, s
                 </button>
             </>
         );
-    } else if (phase === 'failed') {
+    } else if (writeFailed) {
         head = <div>Export failed</div>;
         body = (
             <div className="ex-card ex-card--bad" role="alert" data-testid="export-failed">
@@ -420,14 +438,15 @@ export function ExportModal({ readiness, groups, projectName, machineTag, exp, s
         foot = (
             <>
                 <span className="tq-reason" />
-                <button type="button" className="rcx-btn" onClick={() => { void pick().then(ok => { if (ok) void exp.plan(); }); }}>Choose another folder…</button>
+                <button type="button" className="rcx-btn" onClick={() => { void pick().then(ok => { if (!ok) return; if (allReady) void exp.plan(); else exp.reset(); }); }}>Choose another folder…</button>
                 <button type="button" className="rcx-btn" onClick={onClose}>Close</button>
                 <button
                     type="button"
                     className="rcx-btn rcx-btn--pri"
                     ref={focusRef}
                     disabled={!dest}
-                    onClick={() => { if (allReady) run(); else void exp.plan(); }}
+                    // Not everything is there any more: back to the checklist (no dry run).
+                    onClick={() => { if (allReady) run(); else exp.reset(); }}
                 >
                     Try again
                 </button>
@@ -469,8 +488,8 @@ export function ExportModal({ readiness, groups, projectName, machineTag, exp, s
         );
         const nItems = items.filter(i => !i.info).length;
         const notes: string[] = [];
-        if (plan && plan.rows_without_timestamp > 0) notes.push(`${plural(plan.rows_without_timestamp, 'row')} without a timestamp ${plan.rows_without_timestamp === 1 ? 'is' : 'are'} left out.`);
-        if (plan && plan.duplicate_instants_dropped > 0) notes.push(`${plural(plan.duplicate_instants_dropped, 'repeated timestamp')} — the last row of each is kept.`);
+        if (plan && allReady && !planFailed && plan.rows_without_timestamp > 0) notes.push(`${plural(plan.rows_without_timestamp, 'row')} without a timestamp ${plan.rows_without_timestamp === 1 ? 'is' : 'are'} left out.`);
+        if (plan && allReady && !planFailed && plan.duplicate_instants_dropped > 0) notes.push(`${plural(plan.duplicate_instants_dropped, 'repeated timestamp')} — the last row of each is kept.`);
         const peekPanel = plan && peek ? (() => {
             const m = peek.kind === 'machine' ? null : planById.get(peek.id);
             const title = peek.kind === 'machine' ? 'machine_info.json' : `models/${m?.key}.${peek.kind}`;
@@ -537,11 +556,18 @@ export function ExportModal({ readiness, groups, projectName, machineTag, exp, s
                                         id="plan"
                                         ok={false}
                                         text={<><b>Export check</b> · {plural(planErrors.length, 'problem')} found</>}
-                                        sub={<>{planErrors.map((p, i) => <div key={i}>{p.message}</div>)}</>}
+                                        sub={<>{planErrors.map((p, i) => <ExportIssueLine key={i} issue={p} row={p.model_id ? rowById.get(p.model_id) : undefined} spec={p.model_id ? specById.get(p.model_id) : undefined} />)}</>}
                                     />
                                 )}
                             </div>
                         </>
+                    )}
+                    {allReady && planFailed && (
+                        <div className="ex-line ex-line--plain" role="status" data-testid="export-plan-error">
+                            <TriangleAlert size={12} aria-hidden="true" />
+                            <span>Couldn’t check the export: {error?.message || 'no reason was given.'}</span>
+                            <button type="button" className="tq-link" onClick={() => { void exp.plan(); }}>Try again</button>
+                        </div>
                     )}
                     {notes.length > 0 && (
                         <div className="rd-notes" data-testid="export-notes">{notes.map(n => <div key={n} className="ex-hint ex-hint--faint">{n}</div>)}</div>
@@ -568,7 +594,11 @@ export function ExportModal({ readiness, groups, projectName, machineTag, exp, s
 
                 <div className="ex-sec">
                     <div className="ex-lbl">What is written</div>
-                    {!plan ? (
+                    {!allReady ? (
+                        <div className="ex-hint" data-testid="export-written-later">Worked out once every model is Complete and every item above is filled in.</div>
+                    ) : planFailed ? (
+                        <div className="ex-hint" data-testid="export-written-later">Not known yet — the export check did not run.</div>
+                    ) : !plan ? (
                         <div className="ex-line" data-testid="export-planning"><Loader2 size={12} className="pm-spin" aria-hidden="true" /> Working out the files…</div>
                     ) : (
                         <>
@@ -623,6 +653,7 @@ export function ExportModal({ readiness, groups, projectName, machineTag, exp, s
         );
         const why = !allReady
             ? (notReady.length ? `${plural(notReady.length, 'model')} not Complete yet` : `${plural(blocking.length, 'item')} to fill in`)
+            : planFailed ? 'Couldn’t check the export'
             : !planned ? 'Checking what the export writes…'
             : planErrors.length ? `${plural(planErrors.length, 'problem')} found by the export check`
             : !dest ? 'Choose a folder first'
@@ -661,6 +692,54 @@ export function ExportModal({ readiness, groups, projectName, machineTag, exp, s
                 <div className="tq-mb">{body}</div>
                 <div className="tq-mf">{foot}</div>
             </div>
+        </div>
+    );
+}
+
+/** What each export-check code means, in the user's words (Rust's `message`
+ *  carries raw tags, so it is shown only for a code this app does not know). */
+export const EXPORT_ISSUE_WORDS: Record<string, string> = {
+    machine_missing: 'Plant name, Machine name or Machine tag not filled in',
+    running_status_missing: 'Running status not set',
+    running_status_sensor_unknown: 'The running-status sensor is not in the loaded data',
+    offset_out_of_range: 'The time zone of the data is out of range',
+    no_models: 'No models to export',
+    duplicate_model_id: 'Two models have the same id — close and reopen the project, then try again',
+    unknown_sensor: 'Sensor not found in the loaded data',
+    category_missing: 'No category — pick Performance or Condition on the sensor',
+    display_name_duplicate: 'Model name is already used by another model in this project',
+    set_points_invalid: 'The health set points need fixing',
+    fit_profile_unknown: 'The stiffness setting is not known',
+    regimes_not_contiguous: 'Cluster ranges must meet end to end',
+    no_training_rows: 'No training rows in the loaded data',
+    derived_recipe_missing: 'The formula of this special sensor was not found',
+    fg_text_missing: 'No description or recommendation',
+    model_incomplete: 'Not Complete yet',
+    bad_training_scope: 'The training data settings need fixing',
+    input_equals_output: 'A predictor is the same sensor as the target',
+    x_equals_y: 'X and Y are the same sensor',
+    fg_name_duplicate: 'Another failure group has the same name',
+};
+
+/** One export-check problem: the model it is about (its name, or its sensor and
+ *  kind), the failure group, the sensor (`SensorInline`, never the raw tag), then
+ *  the fixed wording of its code. */
+export function ExportIssueLine({ issue, row, spec }: { issue: ExportIssue; row?: ExportReadinessRow; spec?: Pick<ExportModelSpec, 'display_name' | 'kind'> }) {
+    const words = Object.prototype.hasOwnProperty.call(EXPORT_ISSUE_WORDS, issue.code) ? EXPORT_ISSUE_WORDS[issue.code] : undefined;
+    const kind = spec?.kind ?? row?.kind;
+    const name = spec?.display_name?.trim();
+    const parts: ReactNode[] = [];
+    if (issue.model_id) {
+        if (name) parts.push(<b>{name}{kind ? ` (${MODEL_KIND_LABEL[kind]})` : ''}</b>);
+        else if (row) parts.push(<><SensorInline tag={row.tag} />{` (${MODEL_KIND_LABEL[row.kind]})`}</>);
+    }
+    if (issue.group_no !== undefined && issue.group_no !== 0) parts.push(<>FG-{issue.group_no}</>);
+    // The sensor the problem is about, unless it is already named as the model's own.
+    if (issue.tag && !(row && !name && row.tag === issue.tag)) parts.push(<SensorInline tag={issue.tag} />);
+    parts.push(<>{words ?? issue.message}</>);
+    return (
+        <div data-testid="export-issue" data-code={issue.code}>
+            {parts.map((p, i) => <span key={i}>{i > 0 ? ' · ' : ''}{p}</span>)}
         </div>
     );
 }

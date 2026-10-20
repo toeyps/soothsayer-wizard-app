@@ -506,10 +506,27 @@ fn order_by_time(data: &ColumnarData, rows: Vec<u32>) -> (Vec<u32>, usize, usize
 // ---------------------------------------------------------------------------
 
 /// `[^A-Za-z0-9._-]` → `_` (spec §2.1).
+/// A Windows reserved device name before the first dot (`CON`, `NUL.X`, ...)
+/// gets a leading `_` so the key is always a usable file name.
 pub(crate) fn sanitize_key_tag(tag: &str) -> String {
-    tag.chars()
+    let out: String = tag
+        .chars()
         .map(|c| if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') { c } else { '_' })
-        .collect()
+        .collect();
+    if is_windows_device_name(out.split('.').next().unwrap_or("")) {
+        format!("_{out}")
+    } else {
+        out
+    }
+}
+
+fn is_windows_device_name(stem: &str) -> bool {
+    let u = stem.to_ascii_uppercase();
+    if matches!(u.as_str(), "CON" | "PRN" | "AUX" | "NUL") {
+        return true;
+    }
+    let b = u.as_bytes();
+    b.len() == 4 && (u.starts_with("COM") || u.starts_with("LPT")) && (b'1'..=b'9').contains(&b[3])
 }
 
 /// Relation-model stiffness → profile NAME (spec §4.5; the number is never
@@ -638,11 +655,60 @@ fn bad_request(msg: impl std::fmt::Display) -> String {
     format!("BAD_REQUEST: {msg}")
 }
 
-fn required_tag<'a>(v: &'a Option<String>, what: &str, id: &str) -> Result<&'a str, String> {
+fn incomplete(id: &str, field: &str, message: &str) -> Box<ExportIssue> {
+    Box::new(ExportIssue::error("model_incomplete", message).model(id).field(field))
+}
+
+fn required_tag<'a>(v: &'a Option<String>, field: &str, message: &str, id: &str) -> Result<&'a str, Box<ExportIssue>> {
     v.as_deref()
         .map(str::trim)
         .filter(|s| !s.is_empty())
-        .ok_or_else(|| bad_request(format!("model '{id}': {what} is required")))
+        .ok_or_else(|| incomplete(id, field, message))
+}
+
+/// `(CSV columns, key tag, regime criteria)` of one model, or the
+/// `model_incomplete` issue that keeps it out of the plan.
+fn model_columns(kind: Kind, m: &ExportModelSpec) -> Result<(Vec<String>, String, Option<String>), Box<ExportIssue>> {
+    match kind {
+        Kind::Relationship => {
+            let target = required_tag(&m.target, "target", "Choose the output sensor", &m.id)?.to_string();
+            if m.predictors.is_empty() || m.predictors.iter().any(|p| p.trim().is_empty()) {
+                return Err(incomplete(&m.id, "predictors", "Add at least one input sensor"));
+            }
+            let mut cols = m.predictors.clone();
+            cols.push(target.clone());
+            Ok((cols, target, None))
+        }
+        Kind::Individual => {
+            let target = required_tag(&m.target, "target", "Choose the sensor", &m.id)?.to_string();
+            Ok((vec![target.clone()], target, None))
+        }
+        Kind::Clustering => {
+            let x = required_tag(&m.x_sensor, "x_sensor", "Choose the X sensor", &m.id)?.to_string();
+            let y = required_tag(&m.y_sensor, "y_sensor", "Choose the Y sensor", &m.id)?.to_string();
+            let n = m.n_clusters.unwrap_or(0);
+            if n == 0 {
+                return Err(incomplete(&m.id, "n_clusters", "Set the number of clusters (at least 1)"));
+            }
+            let mut cols = vec![x.clone(), y.clone()];
+            let criteria = if n > 1 {
+                let c = required_tag(
+                    &m.criteria_sensor,
+                    "criteria_sensor",
+                    "Choose the sensor that splits the clusters",
+                    &m.id,
+                )?
+                .to_string();
+                if c != x && c != y {
+                    cols.push(c.clone());
+                }
+                Some(c)
+            } else {
+                None
+            };
+            Ok((cols, x, criteria))
+        }
+    }
 }
 
 /// ISO 8601 with the data's UTC offset: `YYYY-MM-DDTHH:MM:SS[.fff]±HH:MM`
@@ -816,41 +882,33 @@ pub fn build_plan(
         let kind = Kind::parse(&m.kind)
             .ok_or_else(|| bad_request(format!("model '{}': unknown kind '{}'", m.id, m.kind)))?;
 
-        // Columns in CSV order + the key tag + the regime criteria.
-        let (columns, key_tag, criteria): (Vec<String>, String, Option<String>) = match kind {
-            Kind::Relationship => {
-                let target = required_tag(&m.target, "target", &m.id)?.to_string();
-                if m.predictors.is_empty() {
-                    return Err(bad_request(format!("model '{}': at least one input is required", m.id)));
-                }
-                let mut cols = m.predictors.clone();
-                cols.push(target.clone());
-                (cols, target, None)
-            }
-            Kind::Individual => {
-                let target = required_tag(&m.target, "target", &m.id)?.to_string();
-                (vec![target.clone()], target, None)
-            }
-            Kind::Clustering => {
-                let x = required_tag(&m.x_sensor, "x_sensor", &m.id)?.to_string();
-                let y = required_tag(&m.y_sensor, "y_sensor", &m.id)?.to_string();
-                let n = m.n_clusters.unwrap_or(0);
-                if n == 0 {
-                    return Err(bad_request(format!("model '{}': n_clusters must be at least 1", m.id)));
-                }
-                let mut cols = vec![x.clone(), y.clone()];
-                let criteria = if n > 1 {
-                    let c = required_tag(&m.criteria_sensor, "criteria_sensor", &m.id)?.to_string();
-                    if c != x && c != y {
-                        cols.push(c.clone());
-                    }
-                    Some(c)
-                } else {
-                    None
-                };
-                (cols, x, criteria)
+        // Columns in CSV order + the key tag + the regime criteria. An
+        // unfinished model (normal while a project is being set up) is a
+        // per-model error issue and is left out of the plan, never a
+        // BAD_REQUEST for the whole request.
+        let (columns, key_tag, criteria) = match model_columns(kind, m) {
+            Ok(v) => v,
+            Err(issue) => {
+                issues.push(*issue);
+                continue;
             }
         };
+        if kind == Kind::Relationship && m.predictors.iter().any(|p| p.trim() == key_tag) {
+            issues.push(
+                ExportIssue::error("input_equals_output", "An input sensor cannot also be the output sensor")
+                    .model(&m.id)
+                    .field("predictors")
+                    .tag(&key_tag),
+            );
+        }
+        if kind == Kind::Clustering && columns[0] == columns[1] {
+            issues.push(
+                ExportIssue::error("x_equals_y", "The X and Y sensors must be different")
+                    .model(&m.id)
+                    .field("y_sensor")
+                    .tag(&columns[0]),
+            );
+        }
 
         // Key.
         let stem = format!("{}-{}", sanitize_key_tag(&key_tag), kind.letter());
@@ -927,8 +985,17 @@ pub fn build_plan(
             (Vec::new(), Vec::new())
         } else {
             let col_idx: Vec<usize> = columns.iter().map(|t| col_of(t).unwrap_or(0)).collect();
-            let resolved = ResolvedFilter::resolve(m.filter.as_ref(), &data.headers)
-                .map_err(|e| bad_request(format!("model '{}': invalid training scope: {e}", m.id)))?;
+            let resolved = match ResolvedFilter::resolve(m.filter.as_ref(), &data.headers) {
+                Ok(r) => r,
+                Err(e) => {
+                    issues.push(
+                        ExportIssue::error("bad_training_scope", format!("The training scope cannot be used: {e}"))
+                            .model(&m.id)
+                            .field("filter"),
+                    );
+                    continue;
+                }
+            };
             let crit = criteria.as_deref().and_then(col_of);
             let ranges = m.cluster_ranges.as_deref().unwrap_or(&[]);
             let selected = training_rows(data, &resolved, &col_idx, crit.map(|ci| (ci, ranges)));
@@ -1193,6 +1260,7 @@ pub fn build_plan(
     // ---- failure groups (only groups with at least one exported model) ----
     let mut fg_out: Vec<FailureGroupOut> = Vec::new();
     let mut fg_seen: HashSet<i64> = HashSet::new();
+    let mut fg_out_nos: Vec<i64> = Vec::new();
     for fg in &req.failure_groups {
         if !fg_seen.insert(fg.no) {
             continue;
@@ -1219,12 +1287,31 @@ pub fn build_plan(
                 );
             }
         }
+        fg_out_nos.push(fg.no);
         fg_out.push(FailureGroupOut {
             name: fg.name.trim().to_string(),
             description: fg.description.trim().to_string(),
             recommendation: fg.recommendation.trim().to_string(),
             models,
         });
+    }
+
+    // ---- failure-group names unique among used groups (trimmed, case-insensitive) ----
+    let mut fg_name_count: HashMap<String, usize> = HashMap::new();
+    for fg in &fg_out {
+        let n = fg.name.to_lowercase();
+        if !n.is_empty() {
+            *fg_name_count.entry(n).or_insert(0) += 1;
+        }
+    }
+    for (fg, no) in fg_out.iter().zip(&fg_out_nos) {
+        if fg_name_count.get(&fg.name.to_lowercase()).copied().unwrap_or(0) > 1 {
+            issues.push(
+                ExportIssue::error("fg_name_duplicate", "Another failure group has the same name")
+                    .group(*no)
+                    .field("name"),
+            );
+        }
     }
 
     let machine_info = MachineInfo {
@@ -2220,6 +2307,121 @@ mod tests {
         let mut bad = request(vec![ind("a", "Y")]);
         bad.models[0].kind = "neural".into();
         assert!(build_plan(&data(), &derived(), &bad).unwrap_err().starts_with("BAD_REQUEST:"));
+    }
+
+    // ---- unfinished models / spec rules (review fixes) ----
+
+    fn issues_of<'a>(p: &'a WorkspaceExportPlan, id: &str) -> Vec<(&'static str, Option<&'a str>)> {
+        p.issues
+            .iter()
+            .filter(|i| i.model_id.as_deref() == Some(id))
+            .map(|i| (i.code, i.field.as_deref()))
+            .collect()
+    }
+
+    #[test]
+    fn unfinished_models_are_per_model_issues_and_the_others_are_still_planned() {
+        let no_inputs = rel("r_new", "Y", &[]);
+        let mut no_criteria = clus("c_new", "A", "Y", None, None);
+        no_criteria.n_clusters = Some(2);
+        let mut no_target = ind("i_new", "Y");
+        no_target.target = Some("  ".into());
+        let mut zero = clus("c_zero", "A", "Y", None, None);
+        zero.n_clusters = Some(0);
+        let mut no_y = clus("c_noy", "A", "Y", None, None);
+        no_y.y_sensor = None;
+        let mut bad_scope = ind("i_scope", "A");
+        bad_scope.filter = Some(PreviewFilter { timestamp_start: Some("not a time".into()), ..Default::default() });
+        let p = build_plan(
+            &data(),
+            &derived(),
+            &request(vec![rel("r1", "Y", &["A"]), no_inputs, no_criteria, no_target, zero, no_y, bad_scope, ind("i1", "B")]),
+        )
+        .expect("an unfinished model must not fail the whole request")
+        .plan;
+        assert!(!p.ok);
+        assert_eq!(issues_of(&p, "r_new"), vec![("model_incomplete", Some("predictors"))]);
+        assert_eq!(issues_of(&p, "c_new"), vec![("model_incomplete", Some("criteria_sensor"))]);
+        assert_eq!(issues_of(&p, "i_new"), vec![("model_incomplete", Some("target"))]);
+        assert_eq!(issues_of(&p, "c_zero"), vec![("model_incomplete", Some("n_clusters"))]);
+        assert_eq!(issues_of(&p, "c_noy"), vec![("model_incomplete", Some("y_sensor"))]);
+        assert_eq!(issues_of(&p, "i_scope"), vec![("bad_training_scope", Some("filter"))]);
+        assert!(p.issues.iter().all(|i| i.is_error() || i.code != "model_incomplete"));
+        // Skipped models have no key / JSON / rows; the finished ones keep theirs.
+        let ids: Vec<&str> = p.models.iter().map(|m| m.id.as_str()).collect();
+        assert_eq!(ids, ["r1", "i1"]);
+        assert_eq!(p.files, 2 * 2 + 1);
+        assert!(p.models.iter().all(|m| m.rows > 0));
+    }
+
+    #[test]
+    fn export_refuses_with_not_ready_when_a_model_is_unfinished() {
+        let st = state(data(), 1);
+        let dir = tempfile::tempdir().unwrap();
+        let req = request(vec![rel("r1", "Y", &["A"]), rel("r_new", "Y", &[])]);
+        let err = write_export(&st, &req, dir.path().to_str().unwrap(), "out", &AtomicBool::new(false), |_, _, _| {})
+            .unwrap_err();
+        assert!(err.starts_with("NOT_READY:"), "{err}");
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0, "nothing written");
+    }
+
+    #[test]
+    fn relation_input_equal_to_output_is_an_error() {
+        let p = plan(&request(vec![rel("r1", "Y", &["A", "Y"])]));
+        assert!(!p.ok);
+        let i = p.issues.iter().find(|i| i.code == "input_equals_output").expect("issue");
+        assert!(i.is_error());
+        assert_eq!(i.model_id.as_deref(), Some("r1"));
+        assert_eq!(i.field.as_deref(), Some("predictors"));
+        assert!(plan(&request(vec![rel("r1", "Y", &["A"])])).issues.iter().all(|i| i.code != "input_equals_output"));
+    }
+
+    #[test]
+    fn clustering_x_equal_to_y_is_an_error() {
+        let p = plan(&request(vec![clus("c1", "A", "A", None, None)]));
+        assert!(!p.ok);
+        let i = p.issues.iter().find(|i| i.code == "x_equals_y").expect("issue");
+        assert!(i.is_error());
+        assert_eq!(i.model_id.as_deref(), Some("c1"));
+        assert!(plan(&request(vec![clus("c1", "A", "Y", None, None)])).issues.iter().all(|i| i.code != "x_equals_y"));
+    }
+
+    #[test]
+    fn duplicate_failure_group_names_among_used_groups_are_errors() {
+        let mut r2 = ind("i2", "B");
+        r2.group_nos = vec![3];
+        let mut r1 = ind("i1", "Y");
+        r1.group_nos = vec![1];
+        let mut req = request(vec![r1, r2]);
+        req.failure_groups.push(FailureGroupArg {
+            no: 3,
+            name: "  fg ONE ".into(),
+            description: "d".into(),
+            recommendation: "r".into(),
+        });
+        let p = plan(&req);
+        let groups: Vec<Option<i64>> =
+            p.issues.iter().filter(|i| i.code == "fg_name_duplicate").map(|i| i.group_no).collect();
+        assert_eq!(groups, vec![Some(1), Some(3)]);
+        assert!(!p.ok);
+        // An unused group with the same name does not count.
+        let mut req = request(vec![ind("i1", "Y")]);
+        req.models[0].group_nos = vec![1];
+        req.failure_groups[1].name = "FG one".into();
+        assert!(plan(&req).issues.iter().all(|i| i.code != "fg_name_duplicate"));
+    }
+
+    #[test]
+    fn sanitize_key_tag_guards_windows_device_names() {
+        assert_eq!(sanitize_key_tag("NUL.X"), "_NUL.X");
+        assert_eq!(sanitize_key_tag("con"), "_con");
+        assert_eq!(sanitize_key_tag("Aux"), "_Aux");
+        assert_eq!(sanitize_key_tag("PRN.a.b"), "_PRN.a.b");
+        assert_eq!(sanitize_key_tag("COM1"), "_COM1");
+        assert_eq!(sanitize_key_tag("lpt9.v"), "_lpt9.v");
+        for ok in ["COM0", "COM10", "CONSOLE", "LPT", "NULL", "A.NUL", "X-CON"] {
+            assert_eq!(sanitize_key_tag(ok), ok, "{ok}");
+        }
     }
 
     // ---- spec §6 guard ----

@@ -36,7 +36,6 @@ vi.mock('../components/TitleBar', () => ({
         titleBarProps.push(props);
         return (
             <div data-testid="titlebar">
-                <button onClick={() => props.onRename?.('Renamed via TitleBar')}>trigger-rename</button>
                 {props.onOpenDetails && <button onClick={() => props.onOpenDetails()}>trigger-details</button>}
             </div>
         );
@@ -160,13 +159,11 @@ describe('App', () => {
         expect(last(titleBarProps).workspaceName).toBeUndefined();
     });
 
-    it('TitleBar\'s onRename updates the displayed name and forwards to the Dashboard ref', async () => {
+    it('the TitleBar gets no rename writer: Project details is the only place that renames', async () => {
         render(<App />);
         fireEvent.click(screen.getByText('trigger-data-ready'));
-        await screen.findByText('trigger-back'); // wait for the lazy Dashboard (and its ref) to mount
-        fireEvent.click(screen.getByText('trigger-rename'));
-        expect(last(titleBarProps).workspaceName).toBe('Renamed via TitleBar');
-        expect(mockRenameWorkspace).toHaveBeenCalledWith('Renamed via TitleBar');
+        await screen.findByText('trigger-back');
+        expect(last(titleBarProps)).not.toHaveProperty('onRename');
     });
 
     describe('native app-menu wiring', () => {

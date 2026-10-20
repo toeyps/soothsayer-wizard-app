@@ -6,18 +6,17 @@ import { debugLog } from "../utils/debugLog";
 
 interface TitleBarProps {
   workspaceName?: string;
-  onRename?: (newName: string) => void;
-  // Increments when the app menu's "Rename Workspace" is invoked; entering edit mode here.
+  /** Increments when the app menu's "Rename Workspace" is invoked: opens Project details. */
   renameTrigger?: number;
   /** Given: the project name is a menu button ("Rename…" / "Project details…",
    *  both open Project details — the name is "Plant · Machine") and the app
-   *  menu's Rename Workspace opens Project details too. */
+   *  menu's Rename Workspace opens Project details too. Project details' save
+   *  is the only writer of the name; without this the name is plain text. */
   onOpenDetails?: () => void;
 }
 
 export default function TitleBar({
   workspaceName,
-  onRename,
   renameTrigger,
   onOpenDetails,
 }: TitleBarProps) {
@@ -56,38 +55,14 @@ export default function TitleBar({
   };
   const appWindow = getCurrentWindow();
   const isMacOS = useIsMacOS();
-  const [isEditing, setIsEditing] = useState(false);
-  const [tempName, setTempName] = useState(workspaceName || "");
-
-  useEffect(() => {
-    setTempName(workspaceName || "");
-  }, [workspaceName]);
-
   // App menu > Rename Workspace. Acts once per trigger (a later rename must not
   // re-open anything just because the name changed).
   const handledTriggerRef = useRef(renameTrigger ?? 0);
   useEffect(() => {
     if (!renameTrigger || renameTrigger === handledTriggerRef.current || workspaceName === undefined) return;
     handledTriggerRef.current = renameTrigger;
-    if (onOpenDetails) onOpenDetails();
-    else setIsEditing(true);
+    onOpenDetails?.();
   }, [renameTrigger, workspaceName, onOpenDetails]);
-
-  const handleBlur = () => {
-    setIsEditing(false);
-    if (onRename && tempName.trim() !== "" && tempName !== workspaceName) {
-      onRename(tempName);
-    }
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter") {
-      handleBlur();
-    } else if (e.key === "Escape") {
-      setIsEditing(false);
-      setTempName(workspaceName || "");
-    }
-  };
 
   return (
     <div className={`titlebar ${isMacOS ? "macos" : ""}`}>
@@ -141,42 +116,8 @@ export default function TitleBar({
                   </div>
                 )}
               </span>
-            ) : isEditing ? (
-              <input
-                autoFocus
-                value={tempName}
-                onChange={(e) => setTempName(e.target.value)}
-                onBlur={handleBlur}
-                onKeyDown={handleKeyDown}
-                style={{
-                  background: "var(--input-bg)",
-                  border: "1px solid var(--accent-color)",
-                  color: "var(--text-primary)",
-                  fontSize: "0.85rem",
-                  padding: "2px 6px",
-                  borderRadius: "4px",
-                  outline: "none",
-                  minWidth: "200px",
-                }}
-              />
             ) : (
-              <span
-                onClick={() => setIsEditing(true)}
-                style={{
-                  fontSize: "0.85rem",
-                  fontWeight: 600,
-                  cursor: "pointer",
-                  padding: "2px 6px",
-                  borderRadius: "4px",
-                  border: "1px solid transparent",
-                }}
-                onMouseEnter={(e) =>
-                  (e.currentTarget.style.borderColor = "var(--border)")
-                }
-                onMouseLeave={(e) =>
-                  (e.currentTarget.style.borderColor = "transparent")
-                }
-              >
+              <span style={{ fontSize: "0.85rem", fontWeight: 600, padding: "2px 6px" }}>
                 {workspaceName || "Unnamed project"}
               </span>
             )}

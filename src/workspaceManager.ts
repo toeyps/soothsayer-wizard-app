@@ -602,20 +602,3 @@ export async function duplicateWorkspace(id: string) {
     }
     return null;
 }
-
-export async function renameWorkspaceFile(id: string, newName: string) {
-    try {
-        const state = await loadWorkspaceData(id);
-        if (state) {
-            const newState: WorkspaceState = {
-                ...state,
-                name: newName
-            };
-            await saveWorkspaceData(newState);
-            return true;
-        }
-    } catch (e) {
-        console.error("Failed to rename workspace:", e);
-    }
-    return false;
-}

@@ -27,11 +27,11 @@ const PROJECT = { id: 'ws_1', name: 'test', description: '', lastModified: Date.
 
 function setup() {
     const onOpen = vi.fn();
-    const onRename = vi.fn();
+    const onEditDetails = vi.fn();
     const onDelete = vi.fn();
-    render(<RecentProjectCard T={DARK} project={PROJECT} onOpen={onOpen} onRename={onRename} onDelete={onDelete} />);
+    render(<RecentProjectCard T={DARK} project={PROJECT} onOpen={onOpen} onEditDetails={onEditDetails} onDelete={onDelete} />);
     return {
-        onOpen, onRename, onDelete,
+        onOpen, onEditDetails, onDelete,
         card: screen.getByTestId('project-card'),
         actions: screen.getByTestId('project-card-actions'),
         rename: screen.getByLabelText('Rename project test'),
@@ -98,13 +98,13 @@ describe('RecentProjectCard -- Rename/Delete never open the project', () => {
         expect(onOpen).not.toHaveBeenCalled();
     });
 
-    it('clicking Rename after a lost hover still starts the rename (and never opens)', () => {
-        const { onOpen, card, rename } = setup();
+    it('clicking Rename after a lost hover still opens Project details (and never opens the project)', () => {
+        const { onOpen, onEditDetails, card, rename } = setup();
         fireEvent.mouseEnter(card);
         fireEvent.mouseLeave(card);
         fireEvent.pointerDown(rename, { pointerType: 'mouse' });
         fireEvent.click(rename, { detail: 1 });
-        expect(screen.getByLabelText('Project name')).toBeTruthy();
+        expect(onEditDetails).toHaveBeenCalledTimes(1);
         expect(onOpen).not.toHaveBeenCalled();
     });
 
@@ -167,7 +167,6 @@ describe('RecentProjectCard -- Rename/Delete never open the project', () => {
             fireEvent.pointerDown(rename, { pointerType: 'mouse' });
             fireEvent.pointerUp(rename, { pointerType: 'mouse' });
             fireEvent.click(rename, { detail: 1 });
-            fireEvent.keyDown(screen.getByLabelText('Project name'), { key: 'Escape' });
             clickBodyWithoutPress();
             expect(onOpen).toHaveBeenCalledTimes(1);
         });
@@ -203,18 +202,29 @@ describe('RecentProjectCard -- Project details (Plant · Machine)', () => {
         expect(screen.getByText('U-2010 · Rated 8 MW')).toBeTruthy();
     });
 
-    it('with onEditDetails, Rename opens Project details instead of an in-place edit, and never opens the project', () => {
+    it('Rename opens Project details (there is no in-place edit), and never opens the project', () => {
         const onOpen = vi.fn();
-        const onRename = vi.fn();
         const onEditDetails = vi.fn();
-        render(<RecentProjectCard T={DARK} project={MACHINE_PROJECT} onOpen={onOpen} onRename={onRename} onEditDetails={onEditDetails} />);
+        render(<RecentProjectCard T={DARK} project={MACHINE_PROJECT} onOpen={onOpen} onEditDetails={onEditDetails} />);
         const rename = screen.getByLabelText(`Rename project ${MACHINE_PROJECT.name}`);
         expect(rename.getAttribute('title')).toBe('Rename (opens Project details)');
         fireEvent.click(rename);
         expect(onEditDetails).toHaveBeenCalledTimes(1);
         expect(screen.queryByLabelText('Project name')).toBeNull();
-        expect(onRename).not.toHaveBeenCalled();
+        expect(screen.queryByRole('textbox')).toBeNull();
         expect(onOpen).not.toHaveBeenCalled();
+    });
+
+    it('without onEditDetails there is no Rename button (nothing else may write the name)', () => {
+        render(<RecentProjectCard T={DARK} project={MACHINE_PROJECT} onOpen={vi.fn()} onDelete={vi.fn()} />);
+        expect(screen.queryByLabelText(`Rename project ${MACHINE_PROJECT.name}`)).toBeNull();
+        expect(screen.getByLabelText(`Delete project ${MACHINE_PROJECT.name}`)).toBeTruthy();
+    });
+
+    it('the delete prompt says the saved data goes and exported folders stay', () => {
+        render(<RecentProjectCard T={DARK} project={MACHINE_PROJECT} onOpen={vi.fn()} onDelete={vi.fn()} />);
+        fireEvent.click(screen.getByLabelText(`Delete project ${MACHINE_PROJECT.name}`));
+        expect(screen.getByText('Its saved data is removed. Folders you exported are kept.')).toBeTruthy();
     });
 
     it('the static preview shows "Plant · Machine" / "Machine tag · notes" placeholders while empty', () => {

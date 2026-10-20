@@ -186,7 +186,6 @@ vi.mock('../workspaceManager', () => {
         getRecentWorkspaces: async () =>
             [...h.disk.values()].map((s: any) => ({ id: s.id, name: s.name, lastModified: 1, filePath: `/ws/${s.id}.json` })),
         deleteWorkspace: async () => {},
-        renameWorkspaceFile: async () => {},
         duplicateWorkspace: async () => {},
     };
 });

@@ -10587,6 +10587,35 @@ describe('Export results (bottom bar + dialog, DESIGN_SYSTEM §4.2)', () => {
         expect(document.activeElement?.textContent).toBe('Choose folder…');
     });
 
+    it('a refused dry run is not a failed export: the bar never says "Export failed", the dialog keeps its checklist', async () => {
+        mockInvoke.mockImplementation((cmd: string, args?: any) => {
+            if (cmd === 'plan_workspace_export') return Promise.reject('BAD_REQUEST: model m1 is not complete');
+            return defaultInvoke(cmd, args);
+        });
+        render(<BuildModelWindow />);
+        await deliverData(READY_WS());
+        await flush();
+        fireEvent.click(screen.getByTestId('export-results'));
+        await flush();
+        await waitFor(() => expect(screen.getByTestId('export-plan-error')).toBeTruthy());
+        expect(screen.getByTestId('export-plan-error').textContent).toContain('Couldn’t check the export: model m1 is not complete');
+        expect(screen.queryByTestId('export-failed')).toBeNull();
+        expect(screen.getByTestId('export-readiness')).toBeTruthy();
+        expect(barText()).not.toContain('Export failed');
+        expect(barText()).toContain('1 model Complete · ready to export');
+    });
+
+    it('"Show which" on an incomplete workspace only shows the checklist — no dry run', async () => {
+        render(<BuildModelWindow />);
+        await deliverData();
+        await flush();
+        fireEvent.click(screen.getByText('Show which'));
+        await flush();
+        expect(screen.getByTestId('export-dialog')).toBeTruthy();
+        expect(screen.getByTestId('export-readiness')).toBeTruthy();
+        expect(mockInvoke.mock.calls.some(c => c[0] === 'plan_workspace_export')).toBe(false);
+    });
+
     it('writes into the picked folder; progress of ANOTHER export is ignored; done = the exported line, cleared by a status change', async () => {
         const args = await startExport();
         expect(args.dest_dir).toBe('C:\\out');

@@ -79,7 +79,6 @@ const mockGetRecent = vi.fn();
 const mockLoadWorkspace = vi.fn();
 const mockSaveWorkspace = vi.fn();
 const mockDeleteWorkspace = vi.fn();
-const mockRenameWorkspaceFile = vi.fn();
 const mockSaveLegacyConversion = vi.fn();
 
 vi.mock('../workspaceManager', () => ({
@@ -87,7 +86,6 @@ vi.mock('../workspaceManager', () => ({
   loadWorkspaceData: (...args: unknown[]) => mockLoadWorkspace(...args),
   saveWorkspaceData: (...args: unknown[]) => mockSaveWorkspace(...args),
   deleteWorkspace: (...args: unknown[]) => mockDeleteWorkspace(...args),
-  renameWorkspaceFile: (...args: unknown[]) => mockRenameWorkspaceFile(...args),
   saveLegacyFormulaConversion: (...args: unknown[]) => mockSaveLegacyConversion(...args),
 }));
 
@@ -298,7 +296,6 @@ beforeEach(() => {
   mockGetRecent.mockResolvedValue([]);
   mockGetVersion.mockResolvedValue('9.8.7');
   mockDeleteWorkspace.mockResolvedValue(undefined);
-  mockRenameWorkspaceFile.mockResolvedValue(undefined);
   mockEnsureOffset.mockResolvedValue(420);
   mockSaveProjectDetails.mockResolvedValue(null);
   // `listen` must return a Promise<unlisten>; the page chains `.then()` on it
@@ -2320,7 +2317,6 @@ describe('L. Get started page (step 0)', () => {
       });
       await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
       await waitFor(() => expect(mockGetRecent).toHaveBeenCalledTimes(2));
-      expect(mockRenameWorkspaceFile).not.toHaveBeenCalled();
     });
 
     it('L10. a pair another project already uses blocks Save (red reason); a missing field says which', async () => {
@@ -2379,7 +2375,8 @@ describe('L. Get started page (step 0)', () => {
       fireEvent.click(screen.getByLabelText('Delete project Compressor health'));
 
       const card = cardOf('Compressor health');
-      expect(within(card).getByText(/exported model files/)).toBeTruthy();
+      expect(within(card).getByText('Its saved data is removed. Folders you exported are kept.')).toBeTruthy();
+      expect(within(card).queryByText(/exported model files/)).toBeNull();
       expect(within(card).queryByLabelText('Rename project Compressor health')).toBeNull();
       // Clicking the card body while confirming is not "open".
       fireEvent.click(within(card).getByText('Compressor health'));

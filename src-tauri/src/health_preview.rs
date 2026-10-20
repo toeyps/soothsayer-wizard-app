@@ -54,7 +54,6 @@ use crate::health_validation::{
     TestValidation,
 };
 use crate::metrics::{self, round_metric, round_metric_scaled};
-use crate::model_export::unsafe_name_warnings;
 use crate::{
     clustering_preview_in, individual_rounded_metrics, ClusterRange, PreviewFilter, ResolvedFilter,
 };
@@ -619,7 +618,6 @@ pub fn individual_preview(
     let sp = req.set_points();
     let mut validation = validate_individual(&band, &sp);
     let valid = !has_errors(&validation);
-    validation.extend(unsafe_name_warnings(&[("target", target)]));
     if let Some(p) = &plan {
         validation.extend(p.issues.iter().cloned());
     }
@@ -941,10 +939,6 @@ pub fn relationship_preview_ex(
     let sp = req.set_points();
     let mut validation = validate_relationship(Some(stats.two_rmse), &sp);
     let valid = !has_errors(&validation);
-    let names: Vec<(&str, &str)> = std::iter::once(("target", fit.target.as_str()))
-        .chain(fit.predictors.iter().map(|p| ("predictor", p.as_str())))
-        .collect();
-    validation.extend(unsafe_name_warnings(&names));
     if let Some(p) = &plan {
         validation.extend(p.issues.iter().cloned());
     }
@@ -1243,7 +1237,6 @@ pub fn clustering_preview(
     let sp = req.set_points();
     let mut validation = validate_clustering(&geoms, &sp);
     let valid = !has_errors(&validation);
-    validation.extend(unsafe_name_warnings(&[("first_sensor", first), ("second_sensor", second)]));
     if let Some(p) = &plan {
         validation.extend(p.issues.iter().cloned());
     }
@@ -3216,15 +3209,15 @@ mod tests {
     }
 
     #[test]
-    fn unsafe_sensor_names_add_a_warning_but_never_block_the_preview() {
+    fn unusual_sensor_names_never_add_a_file_name_warning() {
+        // Export results sanitizes every key tag, so the preview no longer
+        // warns about a sensor name that is not a valid file name.
         let v: Vec<f64> = (0..300).map(|i| 10.0 + (i % 9) as f64).collect();
         let d = dataset(vec![("A/B", v)]);
         let mut r = ind_req(None, None);
         r.target = Some("A/B".into());
         let p = individual_preview(&d, &r).unwrap();
-        assert!(p.validation.iter().any(|i| i.code == "unsafe_file_name"
-            && i.severity == crate::health_score::Severity::Warning
-            && i.field == "target"));
+        assert!(p.validation.iter().all(|i| i.code != "unsafe_file_name"));
         // Scores still come out once the set points are valid.
         let st = individual(&p).0;
         r.set_points = Some(SetPointsArg {
@@ -3234,18 +3227,14 @@ mod tests {
         });
         let p = individual_preview(&d, &r).unwrap();
         assert!(p.valid && individual_hourly(&p).score.is_some());
-        // A normal name gets no warning.
-        let (ind, ..) = ind_data();
-        let p = individual_preview(&ind, &ind_req(None, None)).unwrap();
         assert!(p.validation.iter().all(|i| i.code != "unsafe_file_name"));
-        // Relationship: one warning per bad name (target and predictors).
+        // Relationship with a predictor name holding ':'.
         let mut fit = rel_fit(100);
         fit.predictors = vec!["X".into(), "Z:1".into()];
         let dd = dataset(vec![("X", vec![0.0; 100])]);
         let mut rq = rel_req(None);
         rq.predictors = vec![];
         let p = relationship_preview(&dd, &fit, &rq).unwrap();
-        let w: Vec<&str> = p.validation.iter().filter(|i| i.code == "unsafe_file_name").map(|i| i.field.as_str()).collect();
-        assert_eq!(w, vec!["predictor"]);
+        assert!(p.validation.iter().all(|i| i.code != "unsafe_file_name"));
     }
 }

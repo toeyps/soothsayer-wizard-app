@@ -181,6 +181,31 @@ describe('useWorkspaceExport', () => {
         await act(async () => { run.resolve(RESULT); await first; });
     });
 
+    it('reset while the progress listener is still being registered: the export is never invoked, a following start works', async () => {
+        const gate = deferred<void>();
+        mockListen.mockImplementationOnce(async (event: string, cb: Handler) => {
+            await gate.promise;
+            if (!listeners.has(event)) listeners.set(event, new Set());
+            listeners.get(event)!.add(cb);
+            return () => { listeners.get(event)?.delete(cb); };
+        });
+        mockInvoke.mockResolvedValue(RESULT);
+        const { result } = renderHook(() => useWorkspaceExport('ws1', CTX));
+        let first!: Promise<unknown>;
+        await act(async () => { first = result.current.start('D:/out', AT); await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+        expect(mockListen).toHaveBeenCalledTimes(1); // subscribed, `ready` still pending
+        act(() => { result.current.reset(); });
+        let firstOut: unknown;
+        await act(async () => { gate.resolve(); firstOut = await first; });
+        expect(firstOut).toBeNull();
+        expect(mockInvoke.mock.calls.filter(c => c[0] === 'export_workspace_results')).toHaveLength(0);
+        expect(listeners.get(EVT)?.size ?? 0).toBe(0); // the late listener was removed
+        expect(result.current.phase).toBe('idle');
+        await act(async () => { await result.current.start('D:/out', AT); });
+        expect(mockInvoke.mock.calls.filter(c => c[0] === 'export_workspace_results')).toHaveLength(1);
+        expect(result.current.phase).toBe('done');
+    });
+
     it('re-pointed at another workspace: the old export is cancelled, its answer and events are ignored', async () => {
         const run = deferred<typeof RESULT>();
         mockInvoke.mockImplementation((cmd: string) => (cmd === 'export_workspace_results' ? run.promise : Promise.resolve(true)));

@@ -991,7 +991,7 @@ export default function BuildModelWindow() {
                 setAttemptIssues({});
                 setPointsSeededRef.current = new Set();
                 // `completeRunningRef` / `markRunsRef` are deliberately NOT reset: a Mark
-                // complete of the old workspace may still be exporting. It finishes and saves
+                // complete of the old workspace may still be validating. It finishes and saves
                 // into ITS workspace (see `runMarkComplete`), and a window close must still
                 // wait for it (`flushAllPending`); model ids are unique across workspaces, so
                 // keeping them cannot block a model of the new one.
@@ -3044,6 +3044,21 @@ export default function BuildModelWindow() {
         void run.finally(() => { if (exportRunRef.current === run) exportRunRef.current = null; });
         return run;
     }, [exportStart]);
+    /** Which call the hook's phase answers: the dry run (`plan`) or the write. The
+     *  hook says `failed` for both; a failed PLAN is not a failed export — the
+     *  dialog keeps its checklist with an inline line, and the bar never says
+     *  "Export failed" for it. */
+    const [exportStep, setExportStep] = useState<'plan' | 'write'>('plan');
+    const exportPlanRaw = workspaceExport.plan;
+    const planExport = useCallback<UseWorkspaceExport['plan']>(() => {
+        setExportStep('plan');
+        return exportPlanRaw();
+    }, [exportPlanRaw]);
+    const writeExport = useCallback<UseWorkspaceExport['start']>((destDir, at) => {
+        setExportStep('write');
+        return startExport(destDir, at);
+    }, [startExport]);
+    const exportPlanFailed = workspaceExport.phase === 'failed' && exportStep === 'plan';
 
     if (loading) {
         return <div style={{ background: 'var(--card-bg)', height: '100vh' }} />;
@@ -4235,8 +4250,7 @@ export default function BuildModelWindow() {
     /** What the Health score page says about this model's Mark complete: running,
      *  failed, or nothing (Mark complete writes no files — Export results does). */
     const saveInfoFor = (m: FailureModel): SaveInfo => {
-        const info = saveInfo[m.id];
-        return info && info.phase !== 'ok' ? info : { phase: 'idle' };
+        return saveInfo[m.id] ?? { phase: 'idle' };
     };
 
     /** THE one filled button of the detail pane right now (at most ONE filled button
@@ -5025,12 +5039,14 @@ export default function BuildModelWindow() {
     // At most ONE filled button on screen: Export is filled only when nothing in the
     // detail pane / Step-1 card is (every model Complete, no draft, the condition set).
     const exportFilled = readiness.counts.allReady && rcStepState === 'set' && Object.keys(drafts).length === 0;
-    const exportApi: UseWorkspaceExport = { ...workspaceExport, start: startExport };
-    /** Opens the Export dialog. `plan` = ask Rust for the dry run (a fresh look at the disk). */
+    const exportApi: UseWorkspaceExport = { ...workspaceExport, plan: planExport, start: writeExport };
+    /** Opens the Export dialog. `plan` = ask Rust for the dry run (a fresh look at the
+     *  disk) — only once the checklist says everything is there; until then the
+     *  dialog just shows the checklist ("Show which"). */
     const openExport = (plan: boolean) => {
         workspaceExport.show();
         setExportOpen(true);
-        if (plan && !exporting) void workspaceExport.plan();
+        if (plan && !exporting && readiness.counts.allReady) void planExport();
     };
 
     return (
@@ -5238,7 +5254,7 @@ export default function BuildModelWindow() {
                 {/* Export results: the window's bottom bar, under the list AND the detail pane. */}
                 <ExportBar
                     counts={readiness.counts}
-                    phase={workspaceExport.phase}
+                    phase={exportPlanFailed ? 'idle' : workspaceExport.phase}
                     progress={workspaceExport.progress}
                     exported={exportedLine}
                     filled={exportFilled}
@@ -5372,6 +5388,7 @@ export default function BuildModelWindow() {
                     projectName={projectInfo?.name ?? ''}
                     machineTag={projectInfo?.machine?.tag ?? ''}
                     exp={exportApi}
+                    planFailed={exportPlanFailed}
                     stacked={projectDetails !== null}
                     unitOf={getUnit}
                     onClose={() => setExportOpen(false)}

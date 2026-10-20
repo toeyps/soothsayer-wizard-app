@@ -12,7 +12,6 @@ import {
   loadWorkspaceData,
   getRecentWorkspaces,
   deleteWorkspace,
-  renameWorkspaceFile,
   saveLegacyFormulaConversion,
 } from "../../workspaceManager";
 import { formatDateTime } from "../../utils/dateFormat";
@@ -580,19 +579,6 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
     refreshWorkspaces();
   };
 
-  // Rename a workspace from the inline edit field on a Get-started card.
-  // No-ops on empty / unchanged names to avoid pointless file rewrites.
-  const handleRenameWorkspace = async (id: string, newName: string, currentName: string) => {
-    const trimmed = newName.trim();
-    if (!trimmed || trimmed === currentName) return;
-    try {
-      await renameWorkspaceFile(id, trimmed);
-    } catch (err) {
-      setWorkspaceError(String(err));
-    }
-    refreshWorkspaces();
-  };
-
   // Native File > New Workspace (App bumps `newProjectSignal`): on step 0 it
   // starts a new project; on steps 1-2 and while a load is running it is a
   // no-op, same as before. Idempotent with HomeStep's own Ctrl+N handler --
@@ -671,7 +657,6 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
           error={workspaceError}
           onNewProject={startNewProject}
           onOpenWorkspace={handleLoadWorkspace}
-          onRenameWorkspace={handleRenameWorkspace}
           onEditWorkspace={(id) => { void openDetails(id); }}
           onDeleteWorkspace={handleDeleteWorkspace}
         />

@@ -25,6 +25,7 @@ import SensorSelection from './SensorSelection';
 import UndoToastStack from './UndoToastStack';
 import { UNDO_SECONDS } from './FailureGroupAssignSheet';
 import { kindModelName } from '../../utils/modelNames';
+import { defaultModelName } from './defaultModelName';
 import FailureGroupsPanel from './FailureGroupsPanel';
 import { NOT_IN_GROUP, appendFailureGroup, applyFailureGroupDetails, isDuplicateFailureGroupName } from './failureGroupOps';
 import { getFgGroupColor } from '../../utils/failureGroupColor';
@@ -548,10 +549,12 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     // set on Build Model's sensor header), so a new model inherits it instead
     // of starting unset. Callers compute it via `sensorCategory` against the
     // same models list they append to.
-    const makeDefaultModelForKind = useCallback((tag: string, groupNos: number[], kind: ModelKind, category: ModelCategory | null = null): FailureModel => ({
+    // `models` = every model of the project the new one joins: its default name
+    // must not be a twin of any of them (`defaultModelName`).
+    const makeDefaultModelForKind = useCallback((models: readonly FailureModel[], tag: string, groupNos: number[], kind: ModelKind, category: ModelCategory | null = null): FailureModel => ({
         id: `model-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         groupNos,
-        name: getSensorMeta(tag)?.description || tag,
+        name: defaultModelName(models, getSensorMeta(tag)?.description || tag, kind),
         kind,
         category,
         notes: '',
@@ -617,7 +620,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                 ? { ...m, groupNos: [...new Set([...m.groupNos.filter(n => n !== 0), groupNo])] }
                 : m);
         }
-        return [...models, makeDefaultModelForKind(tag, [groupNo], kind, sensorCategory(models, normalizeSensorTag(tag)))];
+        return [...models, makeDefaultModelForKind(models, tag, [groupNo], kind, sensorCategory(models, normalizeSensorTag(tag)))];
     }, [makeDefaultModelForKind]);
 
     // Removing a model's LAST group deletes the model at once (no confirm) and
@@ -717,7 +720,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                     ? models.map(m => m === existing
                         ? { ...m, groupNos: [...new Set([...m.groupNos.filter(n => n !== 0), newGroupNo])] }
                         : m)
-                    : [...models, makeDefaultModelForKind(tag, [newGroupNo], 'individual', sensorCategory(models, normalizeSensorTag(tag)))],
+                    : [...models, makeDefaultModelForKind(models, tag, [newGroupNo], 'individual', sensorCategory(models, normalizeSensorTag(tag)))],
             };
         };
         const optimistic = build(fgGroups, fgModels);

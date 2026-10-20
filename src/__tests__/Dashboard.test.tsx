@@ -1289,6 +1289,34 @@ describe('Dashboard', () => {
                     expect(created.category).toBe('performance');
                 });
 
+                describe('a new model never starts as a name twin (names are unique in the project)', () => {
+                    const createdName = async (initialState: any, tag: string, kind: string) => {
+                        seedDisk(initialState);
+                        renderDashboard({ initialState });
+                        act(() => { last(sensorSelectionProps).onToggleSensorGroupKind(tag, 1, kind); });
+                        const state = await last(mockUpdateWorkspaceData.mock.results)!.value;
+                        return state.failureGroupState.models.find((m: any) => m.kind === kind && (m.targetSensor === tag || m.xSensor === tag)).name;
+                    };
+
+                    it('the first model of a sensor keeps the plain description / tag', async () => {
+                        expect(await createdName(stateWith([]), 'TAG1', 'individual')).toBe('Pump Pressure'); // TAG1's description
+                    });
+
+                    it('a second kind of the same sensor gets "<name> (Relation model)" / "(Clustering)" — never the algorithm name', async () => {
+                        const rel = await createdName(stateWith([baseModel({ name: 'Pump Pressure' })]), 'TAG1', 'relationship');
+                        expect(rel).toBe('Pump Pressure (Relation model)');
+                        expect(rel).not.toMatch(/GAM/i);
+                    });
+
+                    it('counts on when the suffixed name is taken anywhere in the project (another sensor\'s model too)', async () => {
+                        const initialState = stateWith([
+                            baseModel({ name: 'Pump Pressure' }),
+                            baseModel({ id: 'm2', targetSensor: 'TAG2', name: 'pump pressure (clustering)' }),
+                        ]);
+                        expect(await createdName(initialState, 'TAG1', 'clustering')).toBe('Pump Pressure (Clustering) 2');
+                    });
+                });
+
                 it('inherits from what is on DISK inside the write, not from a stale mirror', async () => {
                     const initialState = stateWith([baseModel({ category: null })]); // what this window loaded
                     renderDashboard({ initialState });

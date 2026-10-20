@@ -187,6 +187,8 @@ export function useWorkspaceExport(workspaceId: string | null, context: Workspac
             });
             offRef.current = off;
             await off.ready;
+            // Reset / re-pointed / closed while the listener was being set up.
+            if (seq !== seqRef.current) { off(); if (offRef.current === off) offRef.current = null; finish(); return null; }
             timerRef.current = setTimeout(() => {
                 if (exportIdRef.current === exportId) setShowProgress(true);
             }, EXPORT_PROGRESS_DELAY_MS);

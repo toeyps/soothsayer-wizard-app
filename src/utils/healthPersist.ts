@@ -139,6 +139,9 @@ export interface MarkCompleteRace {
 export const TESTS_CHANGED_DURING_EXPORT_REASON =
     'the scoring periods changed while it was being checked — mark it complete again.';
 
+export const SET_POINTS_CHANGED_DURING_EXPORT_REASON =
+    'the set points changed while it was being checked — mark it complete again.';
+
 export const SETTINGS_CHANGED_DURING_EXPORT_REASON =
     "the model's settings changed while it was being checked — re-train, then mark it complete again.";
 
@@ -158,10 +161,12 @@ export const SETTINGS_CHANGED_DURING_EXPORT_REASON =
  *    the check is "fresh" against its NEW settings but was validated against the
  *    OLD ones — it stays Incomplete (`SETTINGS_CHANGED_DURING_EXPORT_REASON`).
  *  - Set points edited and committed while the check ran (what is on disk now
- *    differs from `race.setPointsBefore`, the saved values at click time): the newer
- *    values on disk are KEPT (never reverted to the checked ones) and the model is
- *    still marked Complete. The saved verdict is only written
- *    ('valid') for the numbers that were actually validated.
+ *    differs from `race.setPointsBefore`, the saved values at click time, and from
+ *    the checked ones): the newer values on disk were never validated, so nothing
+ *    is written — the model keeps its status and its newer set points (never
+ *    reverted to the checked ones), and `reason` is
+ *    `SET_POINTS_CHANGED_DURING_EXPORT_REASON`. Complete is only ever set for
+ *    the numbers that were actually validated.
  *
  * Writes NO files and no `healthExport` record (since 2026-10-20 Export results
  * is the only writer of the output folder).
@@ -196,11 +201,14 @@ export async function persistModelComplete(
             && testPeriodsKey(effectiveRunningCondition(target, fg).testPeriods) !== race.testsKey) {
             res.reason = TESTS_CHANGED_DURING_EXPORT_REASON;
         }
-        if (res.reason !== null) return prev;
-        // Set points committed during the export keep their newer values.
-        const keepDisk = !!race && !!target.healthSetPoints
+        // Set points committed during the check: the newer values on disk were
+        // never validated -- keep them, leave the status alone.
+        if (res.reason === null && race && target.healthSetPoints
             && !sameSetPoints(target.healthSetPoints, race.setPointsBefore)
-            && !sameSetPoints(target.healthSetPoints, setPoints);
+            && !sameSetPoints(target.healthSetPoints, setPoints)) {
+            res.reason = SET_POINTS_CHANGED_DURING_EXPORT_REASON;
+        }
+        if (res.reason !== null) return prev;
         return withFailureGroupState(prev, {
             models: (fg?.models ?? []).map(m => {
                 if (m.id !== modelId) return m;
@@ -208,8 +216,8 @@ export async function persistModelComplete(
                     // Mark complete answers a "scoring periods changed" stamp.
                     ...withoutTestsChanged(withoutVerdict(m)),
                     status: true,
-                    healthSetPoints: keepDisk ? target.healthSetPoints : setPoints,
-                    ...(keepDisk ? {} : { healthVerdict: 'valid' as const }),
+                    healthSetPoints: setPoints,
+                    healthVerdict: 'valid' as const,
                 };
             }),
         });

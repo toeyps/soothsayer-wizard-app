@@ -64,7 +64,7 @@ interface EllipseFit {
 }
 
 /**
- * Half-open `[min, max)` range over the criteria sensor's value used to
+ * Half-open `(min, max]` range (min < v <= max) over the criteria sensor's value used to
  * assign rows to a cluster. `null` on either bound means "unbounded in
  * that direction" — matches Rust's `Option<f64>` (which is how
  * `wizard.py`'s `-inf` / `+inf` round-trips through JSON without
