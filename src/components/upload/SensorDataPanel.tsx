@@ -3,6 +3,9 @@ import type { CsvLoadProgress, CsvLoadReport } from '../../types/dataUpload';
 import { mono, type Tokens } from './uploadTheme';
 import { Card, Pill, SectionHeader } from './SetupPrimitives';
 import TimeCoverage from './TimeCoverage';
+import { useEffect, useRef, useState } from 'react';
+import { fmtOffset, pcOffsetMin } from '../../utils/projectDetails';
+import { TimeZoneSelect } from './MachineFields';
 import {
   baseName,
   fileReadState,
@@ -30,6 +33,10 @@ interface SensorDataPanelProps {
   onBrowse: () => void;
   onRemove: (path: string) => void;
   onParse: () => void;
+  /** The time zone the data's timestamps are in (minutes east of UTC); defaults to this PC's. */
+  tzOffsetMin?: number;
+  /** Given: the time-zone line offers "Change". */
+  onTzChange?: (min: number) => void;
 }
 
 const REQUIREMENTS = ['First column is date/time', 'Unique column names', 'Up to 2 GB per file'];
@@ -105,7 +112,7 @@ function Kpi({
 
 /** Step 2, left column: "Sensor data" -- dropzone, file rows with read progress, summary, time coverage, fixed-while-reading warnings. */
 export default function SensorDataPanel({
-  T, files, report, isReady, isStale, isLoading, error, progress, onBrowse, onRemove, onParse,
+  T, files, report, isReady, isStale, isLoading, error, progress, onBrowse, onRemove, onParse, tzOffsetMin, onTzChange,
 }: SensorDataPanelProps) {
   const hasFiles = files.length > 0;
   const summary = summarizeReport(report);
@@ -332,6 +339,7 @@ export default function SensorDataPanel({
             </div>
 
             <TimeCoverage T={T} files={report?.files} />
+            <TimeZoneLine T={T} value={tzOffsetMin ?? pcOffsetMin()} onChange={onTzChange} />
           </>
         )}
 
@@ -380,5 +388,55 @@ export default function SensorDataPanel({
         )}
       </div>
     </Card>
+  );
+}
+
+const TZ_TOOLTIP = 'The data carries no time zone; this offset is added to every timestamp when the results are exported.';
+
+/** One line under the time coverage: the time zone the timestamps are read in
+ *  (default this PC's) and "Change", which swaps in the picker and focuses it.
+ *  The explanation is in the tooltip so the line never wraps. */
+function TimeZoneLine({ T, value, onChange }: { T: Tokens; value: number; onChange?: (min: number) => void }) {
+  const [editing, setEditing] = useState(false);
+  const selectRef = useRef<HTMLSelectElement>(null);
+  const changeRef = useRef<HTMLButtonElement>(null);
+  const returnFocus = useRef(false);
+  useEffect(() => {
+    if (editing) selectRef.current?.focus();
+    else if (returnFocus.current) { returnFocus.current = false; changeRef.current?.focus(); }
+  }, [editing]);
+  const done = () => { returnFocus.current = true; setEditing(false); };
+  const isPc = value === pcOffsetMin();
+  return (
+    <div
+      data-testid="tz-line"
+      title={TZ_TOOLTIP}
+      style={{ display: 'flex', alignItems: 'center', gap: 8, whiteSpace: 'nowrap', minWidth: 0, fontSize: 11.5, color: T.textMuted }}
+    >
+      <Clock size={12} style={{ flexShrink: 0, color: T.textFaint }} />
+      <span>Timestamps read as local time ·</span>
+      {editing && onChange ? (
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ width: 190 }}>
+            <TimeZoneSelect
+              selectRef={selectRef}
+              value={value}
+              onChange={v => { onChange(v); done(); }}
+            />
+          </span>
+          <button type="button" className="tq-link" onClick={done}>Done</button>
+        </span>
+      ) : (
+        <>
+          <b style={{ fontFamily: mono, fontWeight: 500, color: T.text }}>UTC{fmtOffset(value)}{isPc ? ' (this PC)' : ''}</b>
+          {onChange && (
+            <>
+              <span aria-hidden="true">·</span>
+              <button ref={changeRef} type="button" className="tq-link" onClick={() => setEditing(true)}>Change</button>
+            </>
+          )}
+        </>
+      )}
+    </div>
   );
 }

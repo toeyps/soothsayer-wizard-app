@@ -15,8 +15,8 @@ interface RecentProjectCardProps {
   /**
    * Static, non-interactive rendering of the SAME card ("Shows in recent
    * projects as" on the Name step): no open / rename / delete, "just now" for the
-   * time, a muted placeholder for an empty name and "No description" for an empty
-   * description. `onOpen` / `onRename` / `onDelete` are not used.
+   * time, a muted "Plant · Machine" placeholder for an empty name and "Machine tag ·
+   * notes" for an empty description. `onOpen` / `onRename` / `onDelete` are not used.
    */
   preview?: boolean;
   /** True while this project is the one being opened (loading overlay is up). */
@@ -24,6 +24,8 @@ interface RecentProjectCardProps {
   onOpen?: () => void;
   /** Called with the edited name; the caller owns the "empty / unchanged = no-op" rules. */
   onRename?: (newName: string) => void;
+  /** When given, Rename opens Project details instead of editing the name in place. */
+  onEditDetails?: () => void;
   /** Called once the user confirmed the in-row "Delete this project?" prompt. */
   onDelete?: () => void;
 }
@@ -34,9 +36,9 @@ interface RecentProjectCardProps {
  * (or focusing anything inside) reveals Rename / Delete. Rename edits in place
  * (Enter saves, Esc cancels); Delete asks for confirmation inside the row.
  */
-export default function RecentProjectCard({ T, project, preview = false, active = false, onOpen, onRename, onDelete }: RecentProjectCardProps) {
+export default function RecentProjectCard({ T, project, preview = false, active = false, onOpen, onRename, onEditDetails, onDelete }: RecentProjectCardProps) {
   if (preview) return <ProjectCardPreview T={T} project={project} />;
-  return <InteractiveProjectCard T={T} project={project} active={active} onOpen={onOpen ?? noop} onRename={onRename ?? noop} onDelete={onDelete ?? noop} />;
+  return <InteractiveProjectCard T={T} project={project} active={active} onOpen={onOpen ?? noop} onRename={onRename ?? noop} onEditDetails={onEditDetails} onDelete={onDelete ?? noop} />;
 }
 
 const noop = () => {};
@@ -93,13 +95,13 @@ function ProjectCardPreview({ T, project }: { T: Tokens; project: RecentProjectC
           fontSize: 13.5, fontWeight: 600, letterSpacing: '-0.005em', color: name ? T.text : T.textFaint,
           whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
         }}>
-          {name || 'Project name'}
+          {name || 'Plant · Machine'}
         </div>
         <div style={{
           marginTop: 1, fontSize: 12, color: T.textFaint, opacity: description ? 1 : 0.7,
           whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
         }}>
-          {description || 'No description'}
+          {description || 'Machine tag · notes'}
         </div>
       </div>
       <span style={{ fontFamily: mono, fontSize: 11, color: T.textFaint, whiteSpace: 'nowrap' }}>just now</span>
@@ -108,10 +110,10 @@ function ProjectCardPreview({ T, project }: { T: Tokens; project: RecentProjectC
 }
 
 function InteractiveProjectCard({
-  T, project, active, onOpen, onRename, onDelete,
+  T, project, active, onOpen, onRename, onEditDetails, onDelete,
 }: {
   T: Tokens; project: RecentProjectCardProps['project']; active: boolean;
-  onOpen: () => void; onRename: (newName: string) => void; onDelete: () => void;
+  onOpen: () => void; onRename: (newName: string) => void; onEditDetails?: () => void; onDelete: () => void;
 }) {
   const { name, description } = project;
   const [hover, setHover] = useState(false);
@@ -168,6 +170,7 @@ function InteractiveProjectCard({
   }, [confirming]);
 
   const startEdit = () => {
+    if (onEditDetails) { setConfirming(false); onEditDetails(); return; }
     editDoneRef.current = false;
     setDraft(name);
     setConfirming(false);
@@ -317,7 +320,7 @@ function InteractiveProjectCard({
             }}
           />
         ) : (
-          <div style={{
+          <div title={name} style={{
             fontSize: 13.5, fontWeight: 600, color: T.text, letterSpacing: '-0.005em',
             whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
           }}>
@@ -325,7 +328,7 @@ function InteractiveProjectCard({
           </div>
         )}
         {description ? (
-          <div style={{
+          <div title={description} style={{
             marginTop: 1, fontSize: 12, color: T.textFaint,
             whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
           }}>
@@ -393,7 +396,7 @@ function InteractiveProjectCard({
             transition: 'opacity 120ms ease',
           }}>
             <button
-              type="button" title="Rename project" aria-label={`Rename project ${name}`}
+              type="button" title={onEditDetails ? 'Rename (opens Project details)' : 'Rename project'} aria-label={`Rename project ${name}`}
               onClick={(e) => runAction(e, startEdit)}
               style={iconBtn}
             >

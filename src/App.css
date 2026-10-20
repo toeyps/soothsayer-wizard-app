@@ -6819,3 +6819,45 @@ body {
     outline: 2px solid oklch(0.74 0.17 245);
     outline-offset: 2px;
 }
+
+/* ===== Project details (2026-10-20): machine fields (Step 1 + Project details dialog),
+   the Project details dialog, the title bar's project menu ===== */
+.mf-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 14px; }
+.mf-f { display: grid; gap: 5px; min-width: 0; }
+.mf-f--full { grid-column: 1 / -1; }
+.mf-f--note { align-self: end; }
+.mf-f > span { display: flex; align-items: baseline; gap: 8px; font-size: 12.5px; font-weight: 600; color: var(--text-primary); }
+.mf-f > span i { font-family: var(--mono); font-style: normal; font-size: 10.5px; font-weight: 500; color: var(--text-faint); }
+.mf-f > span i.mf-req { color: var(--warn); font-weight: 600; }
+.mf-in { width: 100%; box-sizing: border-box; height: 34px; padding: 0 11px; background: var(--bg-primary); border: 1px solid var(--border-strong); border-radius: 9px; color: var(--text-primary); font: inherit; font-size: 13px; outline: none; }
+.mf-in:focus { border-color: var(--accent-color); }
+.mf-in:focus-visible { outline: 2px solid var(--accent-color); outline-offset: 1px; }
+.mf-in--big { height: 44px; font-size: 17px; font-weight: 600; letter-spacing: -0.01em; }
+.mf-in--mono { font-family: var(--mono); }
+.mf-in--req { border-style: dashed; border-color: var(--warn); }
+.mf-in--dup { border-color: var(--danger); }
+.mf-ta { height: auto; min-height: 74px; padding: 9px 11px; line-height: 1.5; resize: vertical; }
+.mf-sel { appearance: auto; }
+.mf-dup { font-size: 11.5px; line-height: 1.45; color: var(--danger); }
+.mf-cap { font-size: 11.5px; line-height: 1.4; color: var(--text-faint); padding-bottom: 8px; }
+@media (max-width: 560px) { .mf-grid { grid-template-columns: 1fr; } .mf-f--note > span { display: none; } }
+
+.pdm { width: min(640px, 100%); }
+.pdm .mf-in { background: var(--input-bg); }
+.pdm-sec { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-primary); }
+.pdm-lbl { font-size: 10.5px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-faint); }
+.pdm-old { margin: 0 0 2px; padding: 7px 10px; border-radius: 8px; background: var(--input-bg); font-size: 11.5px; line-height: 1.45; color: var(--text-secondary); }
+.pdm-old b { color: var(--text-primary); font-weight: 600; }
+.pdm-hint { font-size: 11.5px; line-height: 1.45; color: var(--text-secondary); }
+.pdm-mono { font-family: var(--mono); font-size: 11.5px; color: var(--text-primary); }
+.pdm-nw { white-space: nowrap; }
+
+.tb-proj { display: inline-flex; align-items: center; gap: 6px; font: inherit; font-size: 0.85rem; font-weight: 600; color: var(--text-primary); background: none; border: 1px solid transparent; border-radius: 5px; padding: 2px 6px; cursor: pointer; }
+.tb-proj:hover, .tb-proj[aria-expanded="true"] { border-color: var(--border-strong); background: var(--input-bg); }
+.tb-proj:focus-visible { outline: 2px solid var(--accent-color); outline-offset: 1px; }
+.tb-caret { font-size: 10px; color: var(--text-faint); }
+.tb-menu { position: absolute; top: calc(100% + 4px); left: 0; z-index: 10001; min-width: 240px; padding: 4px; display: grid; background: var(--pop); border: 1px solid var(--border-strong); border-radius: 9px; box-shadow: 0 14px 40px rgba(0, 0, 0, 0.5); }
+.tb-menu button { display: grid; gap: 1px; padding: 7px 10px; text-align: left; border: 0; border-radius: 6px; background: none; color: var(--text-primary); font: inherit; font-size: 12.5px; cursor: pointer; }
+.tb-menu button small { font-size: 11px; color: var(--text-faint); }
+.tb-menu button:hover, .tb-menu button:focus-visible { background: var(--hover-bg); outline: none; }
+.tb-menu button:focus-visible { box-shadow: inset 0 0 0 2px var(--accent-color); }

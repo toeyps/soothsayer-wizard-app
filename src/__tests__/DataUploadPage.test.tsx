@@ -98,6 +98,19 @@ const useDataUploadMock = vi.fn();
 const useMappingDataMock = vi.fn();
 const buildSensorMetadataMock = vi.fn();
 
+// Project details: the real rules (duplicate pair, required fields, derived
+// name) run; only the two writers are stubbed.
+const mockEnsureOffset = vi.fn();
+const mockSaveProjectDetails = vi.fn();
+vi.mock('../utils/projectDetails', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../utils/projectDetails')>();
+  return {
+    ...actual,
+    ensureDataUtcOffset: (...args: unknown[]) => mockEnsureOffset(...args),
+    saveProjectDetails: (...args: unknown[]) => mockSaveProjectDetails(...args),
+  };
+});
+
 vi.mock('../hooks/useDataUpload', () => ({
   useDataUpload: () => useDataUploadMock(),
 }));
@@ -196,9 +209,10 @@ function rowFor(text: string): HTMLElement {
 // their own coverage in group J.
 // ─────────────────────────────────────────────────────────────────────────
 
-const NAME_PLACEHOLDER = /Compressor Line 3/;
-const DESC_PLACEHOLDER = 'What is this workspace for?';
-const PROJECT_NAME = 'Test project';
+const PLANT_PLACEHOLDER = 'e.g. Bang Pakong';
+const MACHINE_PLACEHOLDER = 'e.g. Gas Engine Generator 4';
+const TAG_PLACEHOLDER = 'e.g. U-2010';
+const NOTES_PLACEHOLDER = /What this project is about/;
 
 const renderPage = () => render(<DataUploadPage onDataReady={onDataReady} />);
 
@@ -225,28 +239,39 @@ function addGroup(name: string) {
   fireEvent.keyDown(quickAddInput(), { key: 'Enter' });
 }
 
-/** Render and advance to step 1 ("Name your project"). */
+const plantInput = () => screen.getByPlaceholderText(PLANT_PLACEHOLDER) as HTMLInputElement;
+const machineInput = () => screen.getByPlaceholderText(MACHINE_PLACEHOLDER) as HTMLInputElement;
+const tagInput = () => screen.getByPlaceholderText(TAG_PLACEHOLDER) as HTMLInputElement;
+const notesInput = () => screen.getByPlaceholderText(NOTES_PLACEHOLDER) as HTMLTextAreaElement;
+
+interface MachineInput { plant?: string; machine?: string; tag?: string; notes?: string }
+
+/** Fill step 1's machine fields (only the ones given). */
+function fillMachine({ plant, machine, tag, notes }: MachineInput) {
+  if (plant !== undefined) fireEvent.change(plantInput(), { target: { value: plant } });
+  if (machine !== undefined) fireEvent.change(machineInput(), { target: { value: machine } });
+  if (tag !== undefined) fireEvent.change(tagInput(), { target: { value: tag } });
+  if (notes !== undefined) fireEvent.change(notesInput(), { target: { value: notes } });
+}
+
+/** Render and advance to step 1 ("Which machine is this?"). */
 function renderAtStep1() {
   const utils = renderPage();
   fireEvent.click(newProjectButton());
   return utils;
 }
 
-/** Render and advance to step 2 ("Add your sensor data"), naming the project
- *  on the way through since step 1's Continue is gated on a non-empty name. */
+/** Render and advance to step 2 ("Add your sensor data"), filling the
+ *  required machine fields on the way (step 1's Continue is gated on them).
+ *  The project is then named "plant · machine". */
 function renderAtStep2({
-  name = PROJECT_NAME,
-  description,
-}: { name?: string; description?: string } = {}) {
+  plant = 'Test plant',
+  machine = 'Test machine',
+  tag = 'T-1',
+  notes,
+}: MachineInput = {}) {
   const utils = renderAtStep1();
-  fireEvent.change(screen.getByPlaceholderText(NAME_PLACEHOLDER), {
-    target: { value: name },
-  });
-  if (description !== undefined) {
-    fireEvent.change(screen.getByPlaceholderText(DESC_PLACEHOLDER), {
-      target: { value: description },
-    });
-  }
+  fillMachine({ plant, machine, tag, notes });
   fireEvent.click(continueButton());
   return utils;
 }
@@ -254,7 +279,7 @@ function renderAtStep2({
 /** Render and advance to step 3 ("Which failures should Wizard look for?").
  *  The data hook must already report a ready dataset (step 2's Continue is
  *  gated on it). */
-function renderAtStep3(opts: { name?: string; description?: string } = {}) {
+function renderAtStep3(opts: MachineInput = {}) {
   const utils = renderAtStep2(opts);
   fireEvent.click(continueButton());
   return utils;
@@ -274,6 +299,8 @@ beforeEach(() => {
   mockGetVersion.mockResolvedValue('9.8.7');
   mockDeleteWorkspace.mockResolvedValue(undefined);
   mockRenameWorkspaceFile.mockResolvedValue(undefined);
+  mockEnsureOffset.mockResolvedValue(420);
+  mockSaveProjectDetails.mockResolvedValue(null);
   // `listen` must return a Promise<unlisten>; the page chains `.then()` on it
   // (e.g. the `upload-page-resumed` subscription). Default to a no-op.
   mockListen.mockResolvedValue(() => {});
@@ -327,7 +354,7 @@ describe('A. Recent projects', () => {
     expect(screen.queryByText('No workspaces yet')).toBeNull();
     expect(screen.getByTestId('setup-rail')).toBeTruthy();
 
-    fireEvent.change(screen.getByPlaceholderText(NAME_PLACEHOLDER), { target: { value: 'x' } });
+    fillMachine({ plant: 'x', machine: 'y', tag: 'z' });
     fireEvent.click(continueButton());
     expect(screen.queryByPlaceholderText('Find workspace…')).toBeNull();
     expect(screen.getByTestId('setup-rail')).toBeTruthy();
@@ -688,7 +715,7 @@ describe('E. Open Dashboard button', () => {
 
     // Name + description come from step 1 and the groups from step 3; Open
     // Dashboard on step 3 is the only place any of them get written to disk.
-    renderAtStep3({ name: 'Line 3 baseline', description: 'Q3 compressor run' });
+    renderAtStep3({ plant: 'Line 3', machine: 'Baseline', tag: 'U-3', notes: 'Q3 compressor run' });
     expect(mockSaveWorkspace).not.toHaveBeenCalled();
     addGroup('Bearing overheating');
     addGroup('Lube oil pressure low');
@@ -716,8 +743,12 @@ describe('E. Open Dashboard button', () => {
       selectedSensors: [],
       visibleSensors: [],
       operationConfig: null,
-      name: 'Line 3 baseline',
-      description: 'Q3 compressor run',
+      // The project IS the machine: "Plant · Machine", described "tag · notes",
+      // plus the data's time zone picked on step 2 (default: this PC's).
+      name: 'Line 3 · Baseline',
+      description: 'U-3 · Q3 compressor run',
+      machine: { plant: 'Line 3', name: 'Baseline', tag: 'U-3', notes: 'Q3 compressor run' },
+      dataUtcOffsetMin: -new Date().getTimezoneOffset() || 0,
     });
     expect(saved.id).toMatch(/^ws_\d+$/);
 
@@ -766,10 +797,10 @@ describe('S. Step 3 "Failure groups"', () => {
   });
 
   it('S1. arriving: heading + eyebrow, the cursor in the quick-add field, rail step 3 current with "0 groups", Open Dashboard disabled, Skip is a link', () => {
-    renderAtStep3({ name: 'GT-11 Generator' });
+    renderAtStep3({ plant: 'GT-11', machine: 'Generator' });
 
     expect(screen.getByRole('heading', { name: 'Which failures should Wizard look for?' })).toBeTruthy();
-    expect(screen.getByText('Step 3 of 3 · GT-11 Generator')).toBeTruthy();
+    expect(screen.getByText('Step 3 of 3 · GT-11 · Generator')).toBeTruthy();
     expect(document.activeElement).toBe(quickAddInput());
     expect(screen.getByTestId('fg-step-empty').textContent).toContain('No failure groups yet');
 
@@ -872,12 +903,12 @@ describe('S. Step 3 "Failure groups"', () => {
   });
 
   it('S7. Skip for now: step 4 "Opening the Dashboard…" with a dashed "Skipped · 0 groups" step 3 (never a ✓), then a workspace with only "Not in Group"', async () => {
-    renderAtStep3({ name: 'CW-3 pump' });
+    renderAtStep3({ plant: 'CW-3', machine: 'pump' });
     addGroup('Typed but skipped');
     fireEvent.click(skipButton());
 
     expect(screen.getByTestId('opening-dashboard').textContent).toContain('Opening the Dashboard…');
-    expect(screen.getByTestId('opening-dashboard').textContent).toContain('CW-3 pump · 2 sensors');
+    expect(screen.getByTestId('opening-dashboard').textContent).toContain('CW-3 · pump · 2 sensors');
     expect(screen.getByTestId('rail-marker-3').getAttribute('data-state')).toBe('skipped');
     expect(screen.getByTestId('rail-marker-3').textContent).toBe('–');
     expect(screen.getByTestId('rail-value-3').textContent).toBe('Skipped · 0 groups');
@@ -930,7 +961,7 @@ describe('S. Step 3 "Failure groups"', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'All projects' }));
     fireEvent.click(newProjectButton());
-    fireEvent.change(screen.getByPlaceholderText(NAME_PLACEHOLDER), { target: { value: 'Another' } });
+    fillMachine({ plant: 'Another', machine: 'M', tag: 'T' });
     fireEvent.click(continueButton());
     fireEvent.click(continueButton());
     expect(screen.getByTestId('fg-step-empty')).toBeTruthy();
@@ -1009,8 +1040,8 @@ describe('S. Step 3 "Failure groups"', () => {
       (control.compareDocumentPosition(screen.getByTestId('setup-rail')) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
 
     renderAtStep1();
-    expect(railFollows(screen.getByPlaceholderText(NAME_PLACEHOLDER))).toBe(true);
-    fireEvent.change(screen.getByPlaceholderText(NAME_PLACEHOLDER), { target: { value: 'P' } });
+    expect(railFollows(plantInput())).toBe(true);
+    fillMachine({ plant: 'P', machine: 'M', tag: 'T' });
     expect(railFollows(continueButton())).toBe(true);
     fireEvent.click(continueButton());
     expect(railFollows(continueButton())).toBe(true);
@@ -1130,8 +1161,40 @@ describe('F. Load workspace flow', () => {
     await waitFor(() => expect(onDataReady).toHaveBeenCalledTimes(1));
     const [metaArg, stateArg, smArg] = onDataReady.mock.calls[0];
     expect(metaArg).toEqual(loadedMeta);
-    expect(stateArg).toEqual(loaded);
+    // A project without a data time zone gets this PC's, written once by
+    // ensureDataUtcOffset (its ONE caller) and handed to the Dashboard too.
+    expect(mockEnsureOffset).toHaveBeenCalledTimes(1);
+    expect(mockEnsureOffset).toHaveBeenCalledWith('ws_1');
+    expect(stateArg).toEqual({ ...loaded, dataUtcOffsetMin: 420 });
     expect(smArg).toBeNull();
+  });
+
+  it('F30b. a project that already has a data time zone keeps it; a failing ensureDataUtcOffset never blocks the open', async () => {
+    mockLoadWorkspace.mockResolvedValue({ ...baseLoadedWs, dataUtcOffsetMin: -180 });
+    mockEnsureOffset.mockRejectedValue(new Error('disk full'));
+    mockInvoke.mockImplementation((cmd: string) =>
+      cmd === 'load_csv' ? Promise.resolve({ headers: ['timestamp', 'sensor_a'], total_rows: 9 }) : Promise.resolve(null));
+
+    render(<DataUploadPage onDataReady={onDataReady} />);
+    await waitFor(() => screen.getByText('Engine pressure run'));
+    fireEvent.click(screen.getByText('Engine pressure run'));
+
+    await waitFor(() => expect(onDataReady).toHaveBeenCalledTimes(1));
+    expect((onDataReady.mock.calls[0][1] as WorkspaceState).dataUtcOffsetMin).toBe(-180);
+  });
+
+  it('F30c. a load whose load_csv fails never writes the data time zone (the file stays untouched)', async () => {
+    mockLoadWorkspace.mockResolvedValue({ ...baseLoadedWs });
+    mockInvoke.mockImplementation((cmd: string) =>
+      cmd === 'load_csv' ? Promise.reject(new Error('file is locked')) : Promise.resolve(null));
+
+    render(<DataUploadPage onDataReady={onDataReady} />);
+    await waitFor(() => screen.getByText('Engine pressure run'));
+    fireEvent.click(screen.getByText('Engine pressure run'));
+
+    await waitFor(() => expect(screen.getByText(/file is locked/)).toBeTruthy());
+    expect(mockEnsureOffset).not.toHaveBeenCalled();
+    expect(onDataReady).not.toHaveBeenCalled();
   });
 
   it('F31. load failure renders workspaceError and clears active workspace', async () => {
@@ -1740,7 +1803,7 @@ describe('J. Onboarding flow', () => {
     renderPage();
 
     await waitFor(() => expect(screen.getByText('No projects yet')).toBeTruthy());
-    expect(screen.getByText('Name the project')).toBeTruthy();
+    expect(screen.getByText('Which machine')).toBeTruthy();
     expect(screen.getByText('Add data')).toBeTruthy();
     expect(screen.getByText('Explore in Dashboard')).toBeTruthy();
     expect(screen.queryByPlaceholderText('Find project')).toBeNull();
@@ -1769,12 +1832,15 @@ describe('J. Onboarding flow', () => {
 
     fireEvent.click(newProjectButton());
 
-    expect(screen.getByText('Name your project')).toBeTruthy();
-    expect(screen.getByPlaceholderText(NAME_PLACEHOLDER)).toBeTruthy();
-    expect(screen.getByPlaceholderText(DESC_PLACEHOLDER)).toBeTruthy();
+    expect(screen.getByText('Which machine is this?')).toBeTruthy();
+    expect(plantInput()).toBeTruthy();
+    expect(machineInput()).toBeTruthy();
+    expect(tagInput()).toBeTruthy();
+    expect(notesInput()).toBeTruthy();
     // The rail lists all four steps from step 1 onwards
     const rail = within(screen.getByTestId('setup-rail'));
-    expect(rail.getByText('Name the project')).toBeTruthy();
+    expect(rail.getByText('Which machine')).toBeTruthy();
+    expect(rail.getByText('Plant · machine · tag')).toBeTruthy();
     expect(rail.getByText('Add sensor data')).toBeTruthy();
     expect(rail.getByText('Failure groups')).toBeTruthy();
     expect(rail.getByText('Explore in Dashboard')).toBeTruthy();
@@ -1783,23 +1849,49 @@ describe('J. Onboarding flow', () => {
     expect(screen.queryByTestId('home-step')).toBeNull();
   });
 
-  it('J49. step 1 Continue stays disabled until a non-blank project name is entered', () => {
+  it('J49. step 1 Continue stays disabled until plant, machine and tag are all filled (notes optional)', () => {
     renderAtStep1();
 
     expect(continueButton().disabled).toBe(true);
-    expect(screen.getByText('Enter a project name to continue')).toBeTruthy();
+    expect(screen.getByTestId('step1-status').textContent).toBe('Enter the plant name, machine name and machine tag to continue');
 
-    // Whitespace-only is still "empty" — canCreateProject trims.
-    fireEvent.change(screen.getByPlaceholderText(NAME_PLACEHOLDER), {
-      target: { value: '   ' },
-    });
+    // Whitespace-only is still "empty".
+    fillMachine({ plant: '   ' });
     expect(continueButton().disabled).toBe(true);
 
-    fireEvent.change(screen.getByPlaceholderText(NAME_PLACEHOLDER), {
-      target: { value: 'Line 3 baseline' },
-    });
+    fillMachine({ plant: 'Line 3' });
+    expect(screen.getByTestId('step1-status').textContent).toBe('Enter the machine name and machine tag to continue');
+    fillMachine({ machine: 'Baseline' });
+    expect(screen.getByTestId('step1-status').textContent).toBe('Enter the machine tag to continue');
+    expect(continueButton().disabled).toBe(true);
+
+    fillMachine({ tag: 'U-3' });
     expect(continueButton().disabled).toBe(false);
     expect(screen.getByText('Ready to continue')).toBeTruthy();
+  });
+
+  it('J49b. a Plant · Machine pair another project uses is checked first and blocks Continue with a red line', async () => {
+    mockGetRecent.mockResolvedValue([
+      { id: 'ws_9', name: 'Bang Pakong · GEG 4', lastModified: 1, filePath: '/ws/ws_9.json' },
+    ]);
+    renderPage();
+    await act(async () => { await Promise.resolve(); });
+    fireEvent.click(newProjectButton());
+
+    // Duplicate pair (case-insensitive, trimmed) with the tag still empty:
+    // the duplicate reason wins over "Enter the machine tag".
+    fillMachine({ plant: ' bang pakong ', machine: 'geg 4' });
+    expect(screen.getByRole('alert').textContent).toBe('Another project already uses this plant and machine — change one of them.');
+    expect(screen.getByTestId('step1-status').textContent).toBe('Another project already uses this plant and machine');
+    fillMachine({ tag: 'U-1' });
+    expect(continueButton().disabled).toBe(true);
+    fireEvent.click(continueButton());
+    expect(screen.getByText('Which machine is this?')).toBeTruthy();
+
+    // Changing one of them clears it.
+    fillMachine({ machine: 'GEG 5' });
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(continueButton().disabled).toBe(false);
   });
 
   it('J50. clicking the disabled Continue on step 1 does not advance', () => {
@@ -1807,16 +1899,14 @@ describe('J. Onboarding flow', () => {
 
     fireEvent.click(continueButton());
 
-    expect(screen.getByText('Name your project')).toBeTruthy();
+    expect(screen.getByText('Which machine is this?')).toBeTruthy();
     expect(screen.queryByText('Add your sensor data')).toBeNull();
   });
 
-  it('J51. a named project + Continue advances to step 2', () => {
+  it('J51. a filled machine + Continue advances to step 2', () => {
     renderAtStep1();
 
-    fireEvent.change(screen.getByPlaceholderText(NAME_PLACEHOLDER), {
-      target: { value: 'Line 3 baseline' },
-    });
+    fillMachine({ plant: 'Line 3', machine: 'Baseline', tag: 'U-3' });
     fireEvent.click(continueButton());
 
     expect(screen.getByText('Add your sensor data')).toBeTruthy();
@@ -1826,15 +1916,15 @@ describe('J. Onboarding flow', () => {
   });
 
   it('J52. Back walks step 2 → 1 → 0, preserving what was typed', () => {
-    renderAtStep2({ name: 'Line 3 baseline', description: 'Q3 compressor run' });
+    renderAtStep2({ plant: 'Line 3', machine: 'Baseline', tag: 'U-3', notes: 'Q3 compressor run' });
 
     fireEvent.click(screen.getByText('‹ Back'));
 
-    expect(screen.getByText('Name your project')).toBeTruthy();
-    expect((screen.getByPlaceholderText(NAME_PLACEHOLDER) as HTMLInputElement).value)
-      .toBe('Line 3 baseline');
-    expect((screen.getByPlaceholderText(DESC_PLACEHOLDER) as HTMLTextAreaElement).value)
-      .toBe('Q3 compressor run');
+    expect(screen.getByText('Which machine is this?')).toBeTruthy();
+    expect(plantInput().value).toBe('Line 3');
+    expect(machineInput().value).toBe('Baseline');
+    expect(tagInput().value).toBe('U-3');
+    expect(notesInput().value).toBe('Q3 compressor run');
 
     fireEvent.click(screen.getByText('‹ Back'));
 
@@ -1846,14 +1936,14 @@ describe('J. Onboarding flow', () => {
   it('J53. the rail steps navigate backward only', () => {
     renderAtStep2();
 
-    // step 2 → 1 by clicking the completed "Name the project" step
-    fireEvent.click(screen.getByText('Name the project'));
-    expect(screen.getByText('Name your project')).toBeTruthy();
+    // step 2 → 1 by clicking the completed "Which machine" step
+    fireEvent.click(screen.getByText('Which machine'));
+    expect(screen.getByText('Which machine is this?')).toBeTruthy();
 
     // …but the "Add sensor data" step is not a shortcut forward; that path has
     // to go through Continue so the project-name validation always runs.
     fireEvent.click(screen.getByText('Add sensor data'));
-    expect(screen.getByText('Name your project')).toBeTruthy();
+    expect(screen.getByText('Which machine is this?')).toBeTruthy();
     expect(screen.queryByText('Add your sensor data')).toBeNull();
   });
 });
@@ -2191,75 +2281,93 @@ describe('L. Get started page (step 0)', () => {
     });
   });
 
-  describe('rename in the row', () => {
-    const startRename = async (name = 'Engine pressure run') => {
+  describe('Rename in the row opens Project details', () => {
+    const NOW_WS = (over: Partial<WorkspaceState> = {}): WorkspaceState => ({
+      ...baseLoadedWs, id: 'ws_1', name: 'Engine pressure run', ...over,
+    });
+    const startRename = async (ws: WorkspaceState = NOW_WS()) => {
       mockGetRecent.mockResolvedValue(WS);
+      mockLoadWorkspace.mockResolvedValue(ws);
       renderPage();
-      await waitFor(() => screen.getByText(name));
-      fireEvent.click(screen.getByLabelText(`Rename project ${name}`));
-      return screen.getByLabelText('Project name') as HTMLInputElement;
+      await waitFor(() => screen.getByText('Engine pressure run'));
+      fireEvent.click(screen.getByLabelText('Rename project Engine pressure run'));
+      return await screen.findByRole('dialog', { name: 'Project details' });
     };
 
-    it('L8. Rename opens a prefilled input without opening the project; Enter saves via renameWorkspaceFile and refreshes the list', async () => {
-      const input = await startRename();
-      expect(input.value).toBe('Engine pressure run');
-      expect(mockLoadWorkspace).not.toHaveBeenCalled();
+    it('L8. Rename opens Project details (no in-place edit, the project is not opened); an old project shows Plant = its old name and why', async () => {
+      const dialog = await startRename();
+      expect(screen.queryByLabelText('Project name')).toBeNull();
+      expect(mockLoadWorkspace).toHaveBeenCalledWith('ws_1');
+      expect(mockInvoke).not.toHaveBeenCalledWith('load_csv', expect.anything());
+      expect((within(dialog).getByPlaceholderText(PLANT_PLACEHOLDER) as HTMLInputElement).value).toBe('Engine pressure run');
+      expect(within(dialog).getByTestId('pdm-old-project')).toBeTruthy();
+      // First focus: the first EMPTY required field (Machine name).
+      expect(document.activeElement).toBe(within(dialog).getByPlaceholderText(MACHINE_PLACEHOLDER));
+    });
 
-      fireEvent.change(input, { target: { value: '  Engine run v2  ' } });
-      fireEvent.keyDown(input, { key: 'Enter' });
+    it('L9. Save goes through saveProjectDetails, then the list refreshes', async () => {
+      mockSaveProjectDetails.mockResolvedValue({ workspaceId: 'ws_1', name: 'Bang Pakong · GEG 4', description: 'U-1' });
+      const dialog = await startRename();
+      fireEvent.change(within(dialog).getByPlaceholderText(PLANT_PLACEHOLDER), { target: { value: 'Bang Pakong' } });
+      fireEvent.change(within(dialog).getByPlaceholderText(MACHINE_PLACEHOLDER), { target: { value: 'GEG 4' } });
+      fireEvent.change(within(dialog).getByPlaceholderText(TAG_PLACEHOLDER), { target: { value: 'U-1' } });
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
 
-      await waitFor(() => expect(mockRenameWorkspaceFile).toHaveBeenCalledWith('ws_1', 'Engine run v2'));
-      expect(mockRenameWorkspaceFile).toHaveBeenCalledTimes(1);
+      await waitFor(() => expect(mockSaveProjectDetails).toHaveBeenCalledTimes(1));
+      expect(mockSaveProjectDetails).toHaveBeenCalledWith('ws_1', {
+        machine: { plant: 'Bang Pakong', name: 'GEG 4', tag: 'U-1', notes: '' },
+        dataUtcOffsetMin: -new Date().getTimezoneOffset() || 0,
+      });
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
       await waitFor(() => expect(mockGetRecent).toHaveBeenCalledTimes(2));
-      expect(screen.queryByLabelText('Project name')).toBeNull();
-    });
-
-    it('L9. Esc cancels: nothing is renamed and the old name is back', async () => {
-      const input = await startRename();
-      fireEvent.change(input, { target: { value: 'Something else' } });
-      fireEvent.keyDown(input, { key: 'Escape' });
-
-      expect(screen.queryByLabelText('Project name')).toBeNull();
-      expect(screen.getByText('Engine pressure run')).toBeTruthy();
-      await act(async () => { await Promise.resolve(); });
       expect(mockRenameWorkspaceFile).not.toHaveBeenCalled();
     });
 
-    it('L10. unchanged and empty/blank names are no-ops (no file rewrite, no list refresh)', async () => {
-      let input = await startRename();
-      fireEvent.keyDown(input, { key: 'Enter' }); // unchanged
-      await act(async () => { await Promise.resolve(); });
-
+    it('L10. a pair another project already uses blocks Save (red reason); a missing field says which', async () => {
+      mockGetRecent.mockResolvedValue([...WS, { id: 'ws_3', name: 'Compressor · Health', lastModified: NOW, filePath: '/ws/ws_3.json' }]);
+      mockLoadWorkspace.mockResolvedValue(NOW_WS({ machine: { plant: 'Engine', name: 'Run', tag: 'E-1', notes: '' } }));
+      renderPage();
+      await waitFor(() => screen.getByText('Engine pressure run'));
       fireEvent.click(screen.getByLabelText('Rename project Engine pressure run'));
-      input = screen.getByLabelText('Project name') as HTMLInputElement;
-      fireEvent.change(input, { target: { value: '   ' } });
-      fireEvent.keyDown(input, { key: 'Enter' }); // blank
-      await act(async () => { await Promise.resolve(); });
+      const dialog = await screen.findByRole('dialog', { name: 'Project details' });
+      const save = () => within(dialog).getByRole('button', { name: 'Save' }) as HTMLButtonElement;
+      // Not an old project: no explanatory line; first focus = Plant name.
+      expect(within(dialog).queryByTestId('pdm-old-project')).toBeNull();
+      expect(document.activeElement).toBe(within(dialog).getByPlaceholderText(PLANT_PLACEHOLDER));
+      expect(save().disabled).toBe(true); // nothing changed yet
 
-      expect(mockRenameWorkspaceFile).not.toHaveBeenCalled();
-      expect(mockGetRecent).toHaveBeenCalledTimes(1);
+      fireEvent.change(within(dialog).getByPlaceholderText(PLANT_PLACEHOLDER), { target: { value: 'compressor' } });
+      fireEvent.change(within(dialog).getByPlaceholderText(MACHINE_PLACEHOLDER), { target: { value: ' health ' } });
+      expect(save().disabled).toBe(true);
+      expect(within(dialog).getByRole('status').textContent).toBe('Another project already uses this plant and machine');
+      expect(within(dialog).getByRole('alert').textContent).toContain('change one of them');
+
+      fireEvent.change(within(dialog).getByPlaceholderText(MACHINE_PLACEHOLDER), { target: { value: '' } });
+      expect(save().disabled).toBe(true);
+      expect(within(dialog).getByRole('status').textContent).toBe('Enter the machine name to save');
+
+      fireEvent.change(within(dialog).getByPlaceholderText(MACHINE_PLACEHOLDER), { target: { value: 'Line 2' } });
+      expect(save().disabled).toBe(false);
+      expect(within(dialog).getByRole('status').textContent).toBe('Saving renames the project to compressor · Line 2');
     });
 
-    it('L11. the save button commits, the cancel button discards', async () => {
-      let input = await startRename();
-      fireEvent.change(input, { target: { value: 'Saved by button' } });
-      fireEvent.click(screen.getByLabelText('Save name'));
-      await waitFor(() => expect(mockRenameWorkspaceFile).toHaveBeenCalledWith('ws_1', 'Saved by button'));
-
-      fireEvent.click(screen.getByLabelText('Rename project Engine pressure run'));
-      input = screen.getByLabelText('Project name') as HTMLInputElement;
-      fireEvent.change(input, { target: { value: 'Discarded' } });
-      fireEvent.click(screen.getByLabelText('Cancel rename'));
-      await act(async () => { await Promise.resolve(); });
-      expect(mockRenameWorkspaceFile).toHaveBeenCalledTimes(1);
+    it('L11. Esc closes only the dialog; nothing is saved', async () => {
+      const dialog = await startRename();
+      fireEvent.change(within(dialog).getByPlaceholderText(MACHINE_PLACEHOLDER), { target: { value: 'Changed' } });
+      fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+      expect(screen.queryByRole('dialog')).toBeNull();
+      expect(screen.getByTestId('home-step')).toBeTruthy();
+      expect(mockSaveProjectDetails).not.toHaveBeenCalled();
     });
 
-    it('L12. a failing rename surfaces the error banner instead of an unhandled rejection', async () => {
-      mockRenameWorkspaceFile.mockRejectedValue(new Error('disk full'));
-      const input = await startRename();
-      fireEvent.change(input, { target: { value: 'New name' } });
-      fireEvent.keyDown(input, { key: 'Enter' });
+    it('L12. a project that cannot be read shows the error banner instead of a dialog', async () => {
+      mockGetRecent.mockResolvedValue(WS);
+      mockLoadWorkspace.mockRejectedValue(new Error('disk full'));
+      renderPage();
+      await waitFor(() => screen.getByText('Engine pressure run'));
+      fireEvent.click(screen.getByLabelText('Rename project Engine pressure run'));
       await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('disk full'));
+      expect(screen.queryByRole('dialog')).toBeNull();
     });
   });
 
@@ -2347,12 +2455,12 @@ describe('L. Get started page (step 0)', () => {
     it('L19. Ctrl+N (and Cmd+N) on step 0 starts a new project', () => {
       renderPage();
       ctrlN();
-      expect(screen.getByText('Name your project')).toBeTruthy();
+      expect(screen.getByText('Which machine is this?')).toBeTruthy();
       cleanup();
 
       renderPage();
       fireEvent.keyDown(window, { key: 'N', metaKey: true });
-      expect(screen.getByText('Name your project')).toBeTruthy();
+      expect(screen.getByText('Which machine is this?')).toBeTruthy();
     });
 
     it('L20. other key combos do nothing (plain N, Ctrl+Shift+N, Ctrl+Alt+N, Ctrl+M)', () => {
@@ -2362,7 +2470,7 @@ describe('L. Get started page (step 0)', () => {
       ctrlN(window, { altKey: true });
       fireEvent.keyDown(window, { key: 'm', ctrlKey: true });
       expect(screen.getByTestId('home-step')).toBeTruthy();
-      expect(screen.queryByText('Name your project')).toBeNull();
+      expect(screen.queryByText('Which machine is this?')).toBeNull();
     });
 
     it('L21. Ctrl+N is ignored while typing in the search box or renaming a project', async () => {
@@ -2373,8 +2481,10 @@ describe('L. Get started page (step 0)', () => {
       ctrlN(screen.getByLabelText('Search projects'));
       expect(screen.getByTestId('home-step')).toBeTruthy();
 
+      mockLoadWorkspace.mockResolvedValue({ ...baseLoadedWs });
       fireEvent.click(screen.getByLabelText('Rename project Engine pressure run'));
-      ctrlN(screen.getByLabelText('Project name'));
+      const dialog = await screen.findByRole('dialog', { name: 'Project details' });
+      ctrlN(within(dialog).getByPlaceholderText(PLANT_PLACEHOLDER));
       expect(screen.getByTestId('home-step')).toBeTruthy();
     });
 
@@ -2392,9 +2502,9 @@ describe('L. Get started page (step 0)', () => {
 
     it('L23. on step 1 the shortcut is a no-op -- it never resets what the user typed', () => {
       renderAtStep1();
-      fireEvent.change(screen.getByPlaceholderText(NAME_PLACEHOLDER), { target: { value: 'Keep me' } });
+      fireEvent.change(plantInput(), { target: { value: 'Keep me' } });
       ctrlN();
-      expect((screen.getByPlaceholderText(NAME_PLACEHOLDER) as HTMLInputElement).value).toBe('Keep me');
+      expect(plantInput().value).toBe('Keep me');
     });
 
     it('L24. the shortcut listener is removed when step 0 unmounts (no stray handler on later steps)', () => {
@@ -2414,26 +2524,26 @@ describe('L. Get started page (step 0)', () => {
     it('L25. a bumped signal on step 0 starts a new project; the key handler and the signal together are idempotent', () => {
       const { rerender } = render(<DataUploadPage onDataReady={onDataReady} newProjectSignal={0} />);
       rerender(<DataUploadPage onDataReady={onDataReady} newProjectSignal={1} />);
-      expect(screen.getByText('Name your project')).toBeTruthy();
+      expect(screen.getByText('Which machine is this?')).toBeTruthy();
       // The key event of the same press arriving afterwards finds step 1: nothing changes.
       ctrlN();
-      expect(screen.getByText('Name your project')).toBeTruthy();
+      expect(screen.getByText('Which machine is this?')).toBeTruthy();
     });
 
     it('L26. keydown first, then the menu signal: still exactly one transition, and typed text survives', () => {
       const { rerender } = render(<DataUploadPage onDataReady={onDataReady} newProjectSignal={0} />);
       ctrlN();
-      fireEvent.change(screen.getByPlaceholderText(NAME_PLACEHOLDER), { target: { value: 'Typed' } });
+      fireEvent.change(plantInput(), { target: { value: 'Typed' } });
       rerender(<DataUploadPage onDataReady={onDataReady} newProjectSignal={1} />);
-      expect((screen.getByPlaceholderText(NAME_PLACEHOLDER) as HTMLInputElement).value).toBe('Typed');
+      expect(plantInput().value).toBe('Typed');
     });
 
     it('L27. a signal while on step 1/2 is ignored, and so is one that arrives while a project is loading', async () => {
       const { rerender } = render(<DataUploadPage onDataReady={onDataReady} newProjectSignal={0} />);
       ctrlN();
-      fireEvent.change(screen.getByPlaceholderText(NAME_PLACEHOLDER), { target: { value: 'Typed' } });
+      fireEvent.change(plantInput(), { target: { value: 'Typed' } });
       rerender(<DataUploadPage onDataReady={onDataReady} newProjectSignal={2} />);
-      expect((screen.getByPlaceholderText(NAME_PLACEHOLDER) as HTMLInputElement).value).toBe('Typed');
+      expect(plantInput().value).toBe('Typed');
       cleanup();
 
       mockGetRecent.mockResolvedValue(WS);
@@ -2492,7 +2602,7 @@ describe('M. Setup rail (steps 1-2)', () => {
   it('M1. step 1: step 1 is current, 2 and 3 are upcoming, nothing is summarised yet, and the mini illustration is a faint decoration', () => {
     renderAtStep1();
     const rail = within(screen.getByTestId('setup-rail'));
-    expect(rail.getByText('Name the project').closest('[aria-current="step"]')).toBeTruthy();
+    expect(rail.getByText('Which machine').closest('[aria-current="step"]')).toBeTruthy();
     expect(rail.getByText('Add sensor data').closest('[aria-current="step"]')).toBeNull();
     expect(screen.queryByTestId('rail-value-1')).toBeNull();
     expect(screen.queryByTestId('rail-value-2')).toBeNull();
@@ -2506,11 +2616,11 @@ describe('M. Setup rail (steps 1-2)', () => {
   });
 
   it('M2. step 2: the project name is summarised under the completed step and that step is a back button', () => {
-    renderAtStep2({ name: 'Line 3 baseline' });
-    expect(screen.getByTestId('rail-value-1').textContent).toBe('Line 3 baseline');
+    renderAtStep2({ plant: 'Line 3', machine: 'Baseline' });
+    expect(screen.getByTestId('rail-value-1').textContent).toBe('Line 3 · Baseline');
     const rail = within(screen.getByTestId('setup-rail'));
     expect(rail.getByText('Add sensor data').closest('[aria-current="step"]')).toBeTruthy();
-    expect(rail.getByRole('button', { name: 'Go back to Name the project' })).toBeTruthy();
+    expect(rail.getByRole('button', { name: 'Go back to Which machine' })).toBeTruthy();
     // the current / upcoming steps are not buttons
     expect(rail.queryByRole('button', { name: /Go back to Add sensor data/ })).toBeNull();
     expect(rail.queryByRole('button', { name: /Explore in Dashboard/ })).toBeNull();
@@ -2540,12 +2650,12 @@ describe('M. Setup rail (steps 1-2)', () => {
     expect(screen.getByTestId('rail-value-2').textContent).toBe('1 file · 2 tags');
   });
 
-  it('M5. clicking the completed "Name the project" step goes back and keeps what was typed', () => {
-    renderAtStep2({ name: 'Keep me', description: 'and me' });
-    fireEvent.click(screen.getByRole('button', { name: 'Go back to Name the project' }));
-    expect(screen.getByText('Name your project')).toBeTruthy();
-    expect((screen.getByPlaceholderText(NAME_PLACEHOLDER) as HTMLInputElement).value).toBe('Keep me');
-    expect((screen.getByPlaceholderText(DESC_PLACEHOLDER) as HTMLTextAreaElement).value).toBe('and me');
+  it('M5. clicking the completed "Which machine" step goes back and keeps what was typed', () => {
+    renderAtStep2({ plant: 'Keep me', notes: 'and me' });
+    fireEvent.click(screen.getByRole('button', { name: 'Go back to Which machine' }));
+    expect(screen.getByText('Which machine is this?')).toBeTruthy();
+    expect(plantInput().value).toBe('Keep me');
+    expect(notesInput().value).toBe('and me');
   });
 
   it('M6. "All projects" returns to the Get-started page from step 1 and from step 2', () => {
@@ -2561,57 +2671,61 @@ describe('M. Setup rail (steps 1-2)', () => {
   });
 });
 
-describe('N. Step 1 "Name your project"', () => {
-  it('N1. shows the step heading, a name counter that starts at 0/80 and follows typing', () => {
+describe('N. Step 1 "Which machine is this?"', () => {
+  it('N1. shows the step heading and the four machine fields, the three required ones labelled the same way, the cursor in Plant name', () => {
     renderAtStep1();
     expect(screen.getByText('Step 1 of 3')).toBeTruthy();
-    expect(screen.getByTestId('name-counter').textContent).toBe('0/80');
-    fireEvent.change(screen.getByPlaceholderText(NAME_PLACEHOLDER), { target: { value: 'Pump A' } });
-    expect(screen.getByTestId('name-counter').textContent).toBe('6/80');
+    expect(screen.getByRole('heading', { name: 'Which machine is this?' })).toBeTruthy();
+    expect(screen.getByLabelText(/Plant name/)).toBe(plantInput());
+    expect(screen.getByLabelText(/Machine name/)).toBe(machineInput());
+    expect(screen.getByLabelText(/Machine tag/)).toBe(tagInput());
+    expect(screen.getByLabelText(/Notes/)).toBe(notesInput());
+    expect(screen.getAllByText('required')).toHaveLength(3);
+    expect(screen.getByText('optional')).toBeTruthy();
+    expect(document.activeElement).toBe(plantInput());
+    // No more free project name / description fields.
+    expect(screen.queryByLabelText('Project name')).toBeNull();
+    expect(screen.queryByLabelText(/Description/)).toBeNull();
   });
 
-  it('N2. the name input enforces the 80-character limit', () => {
+  it('N2. the fields keep sensible length limits', () => {
     renderAtStep1();
-    expect((screen.getByPlaceholderText(NAME_PLACEHOLDER) as HTMLInputElement).maxLength).toBe(80);
+    expect(plantInput().maxLength).toBe(60);
+    expect(machineInput().maxLength).toBe(60);
+    expect(tagInput().maxLength).toBe(40);
   });
 
-  it('N3. an existing project name (case-insensitive, trimmed) shows a NON-blocking warning', async () => {
-    mockGetRecent.mockResolvedValue(FAKE_WORKSPACES);
+  it('N3. an existing Plant · Machine pair (case-insensitive, trimmed) BLOCKS Continue', async () => {
+    mockGetRecent.mockResolvedValue([{ id: 'ws_7', name: 'Engine · Pressure run', lastModified: 1, filePath: '/ws/ws_7.json' }]);
     renderAtStep1();
     await act(async () => { await Promise.resolve(); });
 
-    expect(screen.queryByText(/already exists/)).toBeNull();
-    fireEvent.change(screen.getByPlaceholderText(NAME_PLACEHOLDER), { target: { value: '  engine PRESSURE run ' } });
-    expect(screen.getByText(/A project with this name already exists/)).toBeTruthy();
-    // non-blocking: Continue still works and the flow goes on
+    fillMachine({ plant: '  engine ', machine: 'PRESSURE RUN', tag: 'E-1' });
+    expect(screen.getByRole('alert').textContent).toContain('Another project already uses this plant and machine');
+    expect(continueButton().disabled).toBe(true);
+  });
+
+  it('N4. a pair no project uses (same plant, other machine) shows no duplicate line', async () => {
+    mockGetRecent.mockResolvedValue([{ id: 'ws_7', name: 'Engine · Pressure run', lastModified: 1, filePath: '/ws/ws_7.json' }]);
+    renderAtStep1();
+    await act(async () => { await Promise.resolve(); });
+    fillMachine({ plant: 'Engine', machine: 'Pressure', tag: 'E-1' });
+    expect(screen.queryByRole('alert')).toBeNull();
     expect(continueButton().disabled).toBe(false);
-    fireEvent.click(continueButton());
-    expect(screen.getByText('Add your sensor data')).toBeTruthy();
   });
 
-  it('N4. a different or partial name shows no warning (the tip is shown instead)', async () => {
-    mockGetRecent.mockResolvedValue(FAKE_WORKSPACES);
-    renderAtStep1();
-    await act(async () => { await Promise.resolve(); });
-    fireEvent.change(screen.getByPlaceholderText(NAME_PLACEHOLDER), { target: { value: 'Engine pressure' } });
-    expect(screen.queryByText(/already exists/)).toBeNull();
-    expect(screen.getByText(/Tip: unit \+ topic/)).toBeTruthy();
-  });
-
-  it('N5. "Shows in recent projects as" previews the card live: placeholder, then name + description + initials', () => {
+  it('N5. "Shows in recent projects as" previews the card live: placeholders, then "Plant · Machine" + "tag · notes" + initials', () => {
     renderAtStep1();
     expect(screen.getByText('Shows in recent projects as')).toBeTruthy();
     const card = screen.getByTestId('project-card-preview');
-    expect(within(card).getByText('Project name')).toBeTruthy();
-    expect(within(card).getByText('No description')).toBeTruthy();
+    expect(within(card).getByText('Plant · Machine')).toBeTruthy();
+    expect(within(card).getByText('Machine tag · notes')).toBeTruthy();
     expect(within(card).getByText('just now')).toBeTruthy();
 
-    fireEvent.change(screen.getByPlaceholderText(NAME_PLACEHOLDER), { target: { value: 'GEG-4 Bearing study' } });
-    fireEvent.change(screen.getByPlaceholderText(DESC_PLACEHOLDER), { target: { value: 'Drift Jan-Mar' } });
-    expect(within(card).getByText('GEG-4 Bearing study')).toBeTruthy();
-    expect(within(card).getByText('Drift Jan-Mar')).toBeTruthy();
-    expect(within(card).getByText('GB')).toBeTruthy();
-    expect(within(card).queryByText('No description')).toBeNull();
+    fillMachine({ plant: 'Gulf Bay', machine: 'GEG-4', tag: 'U-2010', notes: 'Drift Jan-Mar' });
+    expect(within(card).getByText('Gulf Bay · GEG-4')).toBeTruthy();
+    expect(within(card).getByText('U-2010 · Drift Jan-Mar')).toBeTruthy();
+    expect(within(card).queryByText('Machine tag · notes')).toBeNull();
   });
 
   it('N6. the preview card is not interactive: no open / rename / delete controls, and it is not counted as a recent project', () => {
@@ -2629,19 +2743,21 @@ describe('N. Step 1 "Name your project"', () => {
     expect(screen.getByText('Open the Dashboard')).toBeTruthy();
   });
 
-  it('N8. the footer keeps Back + Continue (enabled only with a name)', () => {
+  it('N8. the footer keeps Back + Continue (enabled only with the required fields)', () => {
     renderAtStep1();
     expect(screen.getByText('‹ Back')).toBeTruthy();
     expect(continueButton().disabled).toBe(true);
-    fireEvent.change(screen.getByPlaceholderText(NAME_PLACEHOLDER), { target: { value: 'X' } });
+    fillMachine({ plant: 'X', machine: 'Y' });
+    expect(continueButton().disabled).toBe(true);
+    fillMachine({ tag: 'Z' });
     expect(continueButton().disabled).toBe(false);
   });
 });
 
 describe('O. Step 2 "Sensor data" panel', () => {
   it('O1. empty: a large dropzone with the three conditions as chips and the step eyebrow with the project name', () => {
-    renderAtStep2({ name: 'Line 3 baseline' });
-    expect(screen.getByText('Step 2 of 3 · Line 3 baseline')).toBeTruthy();
+    renderAtStep2({ plant: 'Line 3', machine: 'Baseline' });
+    expect(screen.getByText('Step 2 of 3 · Line 3 · Baseline')).toBeTruthy();
     expect(screen.getByText('Drop CSV files here')).toBeTruthy();
     expect(screen.getByText('First column is date/time')).toBeTruthy();
     expect(screen.getByText('Unique column names')).toBeTruthy();
@@ -2649,6 +2765,35 @@ describe('O. Step 2 "Sensor data" panel', () => {
     // nothing about a dataset that does not exist yet
     expect(screen.queryByTestId('summary-grid')).toBeNull();
     expect(screen.queryByTestId('time-coverage')).toBeNull();
+  });
+
+  it('O1b. after reading: ONE time-zone line (default this PC, explanation in the tooltip); Change focuses the picker; the pick is saved with the project', async () => {
+    const pc = -new Date().getTimezoneOffset() || 0;
+    const other = pc === 0 ? 60 : 0;
+    const fmt = (m: number) => `${m < 0 ? '-' : '+'}${String(Math.floor(Math.abs(m) / 60)).padStart(2, '0')}:${String(Math.abs(m) % 60).padStart(2, '0')}`;
+    useDataUploadMock.mockReturnValue(makeDataUpload({ selectedFiles: ['/a.csv'], loadReport: FAKE_REPORT }));
+    mockSaveWorkspace.mockResolvedValue(undefined);
+    renderAtStep2();
+
+    const line = screen.getByTestId('tz-line');
+    expect(line.textContent).toContain(`Timestamps read as local time ·UTC${fmt(pc)} (this PC)`);
+    expect(line.getAttribute('title')).toMatch(/no time zone.*added to every timestamp when the results are exported/);
+    expect(line.style.whiteSpace).toBe('nowrap');
+
+    fireEvent.click(within(line).getByRole('button', { name: 'Change' }));
+    const select = within(line).getByRole('combobox', { name: 'Time zone of the data' }) as HTMLSelectElement;
+    expect(document.activeElement).toBe(select);
+    fireEvent.change(select, { target: { value: String(other) } });
+    expect(screen.getByTestId('tz-line').textContent).toContain(`UTC${fmt(other)}`);
+    expect(screen.getByTestId('tz-line').textContent).not.toContain('(this PC)');
+    // Focus goes back to Change.
+    expect(document.activeElement).toBe(within(screen.getByTestId('tz-line')).getByRole('button', { name: 'Change' }));
+
+    fireEvent.click(continueButton());
+    fireEvent.click(skipButton());
+    await waitFor(() => expect(mockSaveWorkspace).toHaveBeenCalledTimes(1));
+    expect((mockSaveWorkspace.mock.calls[0][0] as WorkspaceState).dataUtcOffsetMin).toBe(other);
+    await waitFor(() => expect(onDataReady).toHaveBeenCalledTimes(1), { timeout: 3000 });
   });
 
   it('O2. with files the big dropzone becomes an "Add more files" button that calls selectFiles (disabled while parsing)', () => {

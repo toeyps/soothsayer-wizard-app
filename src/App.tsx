@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, lazy, Suspense } from "react";
 import { DataUploadPage } from "./components/upload";
 import type { DashboardRef } from "./components/dashboard";
-import { CsvMetadata, SensorMetadata, WorkspaceState } from "./types";
+import { CsvMetadata, PROJECT_DETAILS_CHANGED, SensorMetadata, WorkspaceMetadata, WorkspaceState, type ProjectDetailsChangedPayload } from "./types";
 
 // Dashboard pulls in echarts + regl-scatterplot (the app's two heaviest
 // dependencies) — deferring it until a workspace is actually open keeps
@@ -13,6 +13,9 @@ import { listen } from "@tauri-apps/api/event";
 import { getVersion } from "@tauri-apps/api/app";
 import { message } from "@tauri-apps/plugin-dialog";
 import TitleBar from "./components/TitleBar";
+import { ProjectDetailsModal } from "./components/windows/ProjectDetailsModal";
+import { getRecentWorkspaces, loadWorkspaceData } from "./workspaceManager";
+import { subscribe } from "./utils/tauriEvents";
 import { useAppMenu } from "./hooks/useAppMenu";
 import ErrorBoundary from "./components/ErrorBoundary";
 import ErrorToasts from "./components/ErrorToasts";
@@ -28,6 +31,11 @@ function App() {
   const [initialWorkspaceState, setInitialWorkspaceState] = useState<WorkspaceState | null>(null);
   const [workspaceName, setWorkspaceName] = useState<string>("");
   const [renameTrigger, setRenameTrigger] = useState(0);
+  // Project details, opened from the title bar's project menu: the project as
+  // it is on disk plus the other projects (the Plant · Machine pair is unique).
+  const [details, setDetails] = useState<{ ws: WorkspaceState; others: WorkspaceMetadata[] } | null>(null);
+  const workspaceIdRef = useRef<string | undefined>(undefined);
+  workspaceIdRef.current = metadata ? initialWorkspaceState?.id : undefined;
 
   const dashboardRef = useRef<DashboardRef>(null);
 
@@ -51,6 +59,7 @@ function App() {
   const [newProjectSignal, setNewProjectSignal] = useState(0);
 
   const handleBackToImport = () => {
+    setDetails(null);
     setMetadata(null);
     setSensorMetadata(null);
     setInitialWorkspaceState(null);
@@ -62,6 +71,32 @@ function App() {
     if (dashboardRef.current) {
         dashboardRef.current.renameWorkspace(newName);
     }
+  };
+
+  // A Project details save -- from this window or another (Build Model) --
+  // renames the open project. Only THIS project's: a payload for another
+  // workspace (or with no id) is dropped.
+  const handleRenameRef = useRef(handleRename);
+  handleRenameRef.current = handleRename;
+  useEffect(() => subscribe<ProjectDetailsChangedPayload>(PROJECT_DETAILS_CHANGED, (event) => {
+    const p = event.payload;
+    if (!p?.workspaceId || p.workspaceId !== workspaceIdRef.current) return;
+    handleRenameRef.current(p.name);
+  }), []);
+
+  const openDetails = async () => {
+    const id = workspaceIdRef.current;
+    if (!id) return;
+    let ws: WorkspaceState | null = null;
+    try {
+      ws = await loadWorkspaceData(id);
+    } catch (e) {
+      console.warn('Could not read the project for Project details:', e);
+    }
+    if (!ws || ws.id !== workspaceIdRef.current) return;
+    let others: WorkspaceMetadata[] = [];
+    try { others = await getRecentWorkspaces(); } catch { /* list unavailable: no duplicate check */ }
+    setDetails({ ws, others });
   };
 
   useAppMenu({
@@ -95,7 +130,16 @@ function App() {
           workspaceName={metadata ? workspaceName : undefined}
           onRename={handleRename}
           renameTrigger={renameTrigger}
+          onOpenDetails={metadata ? () => { void openDetails(); } : undefined}
         />
+        {details && (
+          <ProjectDetailsModal
+            workspace={details.ws}
+            existing={details.others}
+            onSaved={(p) => { if (p.workspaceId === workspaceIdRef.current) handleRename(p.name); }}
+            onClose={() => setDetails(null)}
+          />
+        )}
         <main className="app-container">
           {!metadata ? (
             <div className="app-page-transition">

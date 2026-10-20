@@ -387,6 +387,37 @@ describe('Dashboard', () => {
         expect(saved.failureGroupState).toEqual(fresherFailureGroupState);
     });
 
+    it('an autosave after a Project details save keeps the new name, description, machine and data time zone from disk -- it never writes the old name back', async () => {
+        vi.useFakeTimers();
+        renderDashboard({
+            initialState: makeInitialState({ name: 'Old name', description: 'old', failureGroupState: { groups: [], models: [] } }),
+        });
+        await act(async () => { vi.advanceTimersByTime(300); });
+        mockSaveWorkspaceData.mockClear();
+
+        // Project details (this or another window) wrote the file; this
+        // Dashboard's own copy still says "Old name".
+        const machine = { plant: 'Bang Pakong', name: 'GEG 4', tag: 'U-1', notes: 'Rated 8 MW' };
+        mockLoadWorkspaceData.mockResolvedValue({
+            id: 'ws1',
+            name: 'Bang Pakong · GEG 4',
+            description: 'U-1 · Rated 8 MW',
+            machine,
+            dataUtcOffsetMin: 330,
+            failureGroupState: { groups: [], models: [] },
+        });
+
+        act(() => { fireEvent.click(screen.getByText('select-tag1')); });
+        await act(async () => { vi.advanceTimersByTime(300); });
+
+        expect(mockSaveWorkspaceData).toHaveBeenCalledTimes(1);
+        const saved = last(mockSaveWorkspaceData.mock.calls)[0];
+        expect(saved.name).toBe('Bang Pakong · GEG 4');
+        expect(saved.description).toBe('U-1 · Rated 8 MW');
+        expect(saved.machine).toEqual(machine);
+        expect(saved.dataUtcOffsetMin).toBe(330);
+    });
+
     it('never writes its in-memory copy over the file when the disk read FAILS (2026-10-07 data-loss fix: a project created in this session opens with no Failure Groups in its snapshot; under tauri dev a hot-reload remount resets the mirror to that snapshot; one failed read -- the file caught half-written -- then made the autosave write that empty copy over every saved group). It retries on the next change once the file reads again', async () => {
         vi.useFakeTimers();
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});

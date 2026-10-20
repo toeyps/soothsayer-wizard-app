@@ -1102,8 +1102,13 @@ describe('5. "New project" right after working in A', () => {
 
         await act(async () => { fireEvent.click(A().getByRole('button', { name: /New project/ })); });
         await flush();
-        const nameInput = app!.container.querySelector('input[placeholder="e.g. Compressor Line 3 — Q3 Baseline"]') as HTMLInputElement;
-        await act(async () => { fireEvent.change(nameInput, { target: { value: 'Gamma' } }); });
+        // Step 1 names the project "Plant · Machine" -> "Gamma · Unit".
+        const field = (ph: string) => app!.container.querySelector(`input[placeholder="${ph}"]`) as HTMLInputElement;
+        await act(async () => {
+            fireEvent.change(field('e.g. Bang Pakong'), { target: { value: 'Gamma' } });
+            fireEvent.change(field('e.g. Gas Engine Generator 4'), { target: { value: 'Unit' } });
+            fireEvent.change(field('e.g. U-2010'), { target: { value: 'T-1' } });
+        });
         await act(async () => { fireEvent.click(A().getByText('Continue')); });
         await flush();
         h.dialogOpen = [PATH_A];
@@ -1126,7 +1131,7 @@ describe('5. "New project" right after working in A', () => {
         expect(dashSelected()).toEqual([]);
         expect(dashMeta('S1')).toBeUndefined();
         expect(dashMeta('Live')).toBeUndefined();
-        const gamma = [...h.disk.values()].find((s: any) => s.name === 'Gamma') as WorkspaceState;
+        const gamma = [...h.disk.values()].find((s: any) => s.name === 'Gamma · Unit') as WorkspaceState;
         expect(gamma).toBeTruthy();
         expect(gamma.specialSensorRecipes ?? []).toEqual([]);
         expect(gamma.extraSensorMetadata ?? []).toEqual([]);

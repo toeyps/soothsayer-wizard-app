@@ -221,6 +221,21 @@ export interface DashboardRef {
     renameWorkspace: (newName: string) => void;
 }
 
+
+/** The project's name, description, machine and data time zone as they are on
+ *  disk. Only Project details (`saveProjectDetails`) writes them, so every
+ *  full-object write here carries them over instead of this window's copy. */
+function projectDetailsFromDisk(disk: WorkspaceState | null | undefined): Partial<WorkspaceState> {
+    if (!disk) return {};
+    return {
+        // A file always has a name; never blank this window's out if not.
+        ...(disk.name !== undefined ? { name: disk.name } : {}),
+        description: disk.description,
+        machine: disk.machine,
+        dataUtcOffsetMin: disk.dataUtcOffsetMin,
+    };
+}
+
 const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMetadata: sensorMetadataProp, onBack, initialState }, ref) => {
     const [localName, setLocalName] = useState(initialState?.name || "");
 
@@ -486,7 +501,10 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                 // then skips rewriting the very same content ~250ms later.
                 const build = buildWorkspaceStateRef.current;
                 if (build && next?.failureGroupState) {
-                    lastSavedPayloadRef.current = JSON.stringify(build({ failureGroupState: next.failureGroupState }));
+                    lastSavedPayloadRef.current = JSON.stringify(build({
+                        failureGroupState: next.failureGroupState,
+                        ...projectDetailsFromDisk(next),
+                    }));
                 }
                 if (onWritten && next?.failureGroupState) onWritten(next.failureGroupState.models);
             })
@@ -2054,7 +2072,15 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                 autosaveDirtyRef.current = true;
                 return;
             }
-            const built = buildWorkspaceState({ failureGroupState: freshFailureGroupState });
+            // The project's name, description, machine and data time zone are
+            // written ONLY by Project details (`saveProjectDetails`, possibly
+            // from another window): this full-object write carries them over
+            // from disk, like the failure-group slice, so it never writes this
+            // window's old name back or erases the machine.
+            const built = buildWorkspaceState({
+                failureGroupState: freshFailureGroupState,
+                ...projectDetailsFromDisk(onDisk),
+            });
             // A special-sensor recipe change that reaches disk THROUGH this
             // autosave sends the models trained on it back to Incomplete (and
             // out of date) in the SAME write. Only the recipe rule, and only

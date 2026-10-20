@@ -37,9 +37,31 @@ vi.mock('../components/TitleBar', () => ({
         return (
             <div data-testid="titlebar">
                 <button onClick={() => props.onRename?.('Renamed via TitleBar')}>trigger-rename</button>
+                {props.onOpenDetails && <button onClick={() => props.onOpenDetails()}>trigger-details</button>}
             </div>
         );
     },
+}));
+
+const detailsProps: any[] = [];
+vi.mock('../components/windows/ProjectDetailsModal', () => ({
+    ProjectDetailsModal: (props: any) => {
+        detailsProps.push(props);
+        return (
+            <div role="dialog" aria-label="Project details">
+                <span>details-for-{props.workspace.name}</span>
+                <button onClick={() => { props.onSaved({ workspaceId: props.workspace.id, name: 'Plant · Machine', description: 'T-1' }); props.onClose(); }}>details-save</button>
+                <button onClick={props.onClose}>details-close</button>
+            </div>
+        );
+    },
+}));
+
+const mockLoadWorkspaceData = vi.fn();
+const mockGetRecentWorkspaces = vi.fn();
+vi.mock('../workspaceManager', () => ({
+    loadWorkspaceData: (id: string) => mockLoadWorkspaceData(id),
+    getRecentWorkspaces: () => mockGetRecentWorkspaces(),
 }));
 
 vi.mock('../components/ErrorBoundary', () => ({
@@ -89,6 +111,12 @@ beforeEach(() => {
     dataUploadProps.length = 0;
     dashboardProps.length = 0;
     titleBarProps.length = 0;
+    detailsProps.length = 0;
+    mockLoadWorkspaceData.mockReset().mockResolvedValue({
+        id: 'ws1', name: 'Loaded WS (disk)', lastRoute: 'dashboard', dataFilePaths: [], metadataFilePath: null,
+        selectedSensors: [], visibleSensors: [], operationConfig: null,
+    });
+    mockGetRecentWorkspaces.mockReset().mockResolvedValue([{ id: 'ws9', name: 'Other · Machine', lastModified: 1, filePath: '' }]);
     mockRenameWorkspace.mockClear();
     listenCallbacks = {};
     mockListen.mockClear();
@@ -223,6 +251,60 @@ describe('App', () => {
             }
         });
         expect(last(titleBarProps).workspaceName).toBe('External Rename');
+    });
+
+    describe('Project details', () => {
+        it('no project open: the TitleBar gets no onOpenDetails', () => {
+            render(<App />);
+            expect(last(titleBarProps).onOpenDetails).toBeUndefined();
+        });
+
+        it('the title bar opens Project details with the project read fresh from disk and the other projects; a save renames the open project', async () => {
+            render(<App />);
+            fireEvent.click(screen.getByText('trigger-data-ready'));
+            await screen.findByText('trigger-back');
+            await act(async () => { fireEvent.click(screen.getByText('trigger-details')); });
+
+            expect(mockLoadWorkspaceData).toHaveBeenCalledWith('ws1');
+            expect(screen.getByText('details-for-Loaded WS (disk)')).toBeTruthy();
+            expect(last(detailsProps).existing).toEqual([{ id: 'ws9', name: 'Other · Machine', lastModified: 1, filePath: '' }]);
+
+            fireEvent.click(screen.getByText('details-save'));
+            expect(screen.queryByRole('dialog')).toBeNull();
+            expect(last(titleBarProps).workspaceName).toBe('Plant · Machine');
+            expect(mockRenameWorkspace).toHaveBeenCalledWith('Plant · Machine');
+        });
+
+        it('subscribes to PROJECT_DETAILS_CHANGED and adopts only the new name of the open project (another id, or none, is dropped)', async () => {
+            render(<App />);
+            fireEvent.click(screen.getByText('trigger-data-ready'));
+            await screen.findByText('trigger-back');
+            const fire = async (payload: unknown) => {
+                await act(async () => {
+                    for (const cb of listenCallbacks['project-details-changed'] ?? []) cb({ payload });
+                });
+            };
+            expect(listenCallbacks['project-details-changed']).toHaveLength(1);
+
+            await fire({ workspaceId: 'ws_other', name: 'Foreign', description: '' });
+            await fire({ name: 'No id', description: '' });
+            expect(last(titleBarProps).workspaceName).toBe('Loaded WS');
+            expect(mockRenameWorkspace).not.toHaveBeenCalled();
+
+            await fire({ workspaceId: 'ws1', name: 'Bang Pakong · GEG 4', description: 'U-1' });
+            expect(last(titleBarProps).workspaceName).toBe('Bang Pakong · GEG 4');
+            expect(mockRenameWorkspace).toHaveBeenCalledWith('Bang Pakong · GEG 4');
+        });
+
+        it('a payload arriving after the project was closed is dropped', async () => {
+            render(<App />);
+            fireEvent.click(screen.getByText('trigger-data-ready'));
+            fireEvent.click(await screen.findByText('trigger-back'));
+            await act(async () => {
+                for (const cb of listenCallbacks['project-details-changed'] ?? []) cb({ payload: { workspaceId: 'ws1', name: 'Late', description: '' } });
+            });
+            expect(last(titleBarProps).workspaceName).toBeUndefined();
+        });
     });
 
     it('installs the global error reporter once at module load', () => {

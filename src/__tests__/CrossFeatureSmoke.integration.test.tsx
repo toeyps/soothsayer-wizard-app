@@ -241,7 +241,11 @@ const onDashboard = () => !!document.querySelector('button[title="Back to Import
 async function importProject(name: string, path: string) {
     await act(async () => { fireEvent.click(app().getByRole('button', { name: /New project/ })); });
     await settle();
-    fireEvent.change(app().getByPlaceholderText('e.g. Compressor Line 3 — Q3 Baseline'), { target: { value: name } });
+    // Step 1 names the project "Plant · Machine": `name` is the plant, so
+    // the project is called `${name} · Unit`.
+    fireEvent.change(app().getByPlaceholderText('e.g. Bang Pakong'), { target: { value: name } });
+    fireEvent.change(app().getByPlaceholderText('e.g. Gas Engine Generator 4'), { target: { value: 'Unit' } });
+    fireEvent.change(app().getByPlaceholderText('e.g. U-2010'), { target: { value: 'T-1' } });
     await act(async () => { fireEvent.click(app().getByText('Continue')); });
     await settle();
     wins.dialogOpen = [path];
@@ -478,7 +482,7 @@ describe.each(['individual', 'relationship', 'clustering'] as Kind[])('cross-fea
 
         // 1) Import workspace A through the real import page.
         await importProject('Alpha', PATH_A);
-        const A = wsIdByName('Alpha');
+        const A = wsIdByName('Alpha · Unit');
         expect(A, 'workspace A in Recent').toBeTruthy();
         expect(be.cmds('load_csv').map(c => c.args.paths)).toEqual([[PATH_A]]);
 
@@ -575,7 +579,7 @@ describe.each(['individual', 'relationship', 'clustering'] as Kind[])('cross-fea
         expect(roots.has('build-model')).toBe(false);
         expect(roots.has('add-sensor')).toBe(false);
         await importProject('Beta', PATH_B);
-        const B = wsIdByName('Beta');
+        const B = wsIdByName('Beta · Unit');
         expect(B).not.toBe(A);
         expect(be.session.has('SP1')).toBe(false);
         await openSensorTab();
@@ -590,7 +594,7 @@ describe.each(['individual', 'relationship', 'clustering'] as Kind[])('cross-fea
 
         // 9) Reopen A from Recent: special sensor replayed, model Complete, set points intact.
         await backToImport();
-        await openRecent('Alpha');
+        await openRecent('Alpha · Unit');
         expect(be.session.has('SP1')).toBe(true);
         await openSensorTab();
         await searchSensors('SP1');
@@ -607,7 +611,7 @@ describe.each(['individual', 'relationship', 'clustering'] as Kind[])('cross-fea
         // 10) Back -> delete A: workspace file + model output folder gone; B untouched.
         await backToImport();
         // The delete confirms in the row -- trash button, then [Delete].
-        await act(async () => { fireEvent.click(app().getByLabelText('Delete project Alpha')); });
+        await act(async () => { fireEvent.click(app().getByLabelText('Delete project Alpha · Unit')); });
         expect(env.files.has(`workspaces/${A}.json`), 'nothing deleted before the in-row confirm').toBe(true);
         await act(async () => { fireEvent.click(within(app().getByRole('alertdialog')).getByRole('button', { name: 'Delete' })); });
         await settle(200);
@@ -648,7 +652,7 @@ describe('Dashboard VIS behaviour around a special sensor no model uses', () => 
     it('Filter tab + value highlight follow a rename; a chart-type switch closes the open colour popover; Reset period keeps an unapplied filter draft; no console errors', async () => {
         await renderApp();
         await importProject('Vis', PATH_A);
-        const W = wsIdByName('Vis');
+        const W = wsIdByName('Vis · Unit');
 
         await openAddSensorWindow();
         await createFormulaSensor('SP2', '$TAG2 + 0', 'Speed copy');
@@ -736,7 +740,7 @@ describe('Dashboard VIS behaviour around a special sensor no model uses', () => 
     it('the special-sensor lock is released when the model that used it is deleted from the FG sheet (Undo not used)', async () => {
         await renderApp();
         await importProject('Lock', PATH_A);
-        const L = wsIdByName('Lock');
+        const L = wsIdByName('Lock · Unit');
         await openAddSensorWindow();
         await createFormulaSensor('SP1', '$TAG1 * 2', 'Special one');
         await inSheet('SP1', async sheet => {
@@ -769,7 +773,7 @@ describe('Dashboard VIS behaviour around a special sensor no model uses', () => 
 async function relationshipReadyToComplete(): Promise<{ A: string; mid: string }> {
     await renderApp();
     await importProject('Alpha', PATH_A);
-    const A = wsIdByName('Alpha');
+    const A = wsIdByName('Alpha · Unit');
     await openAddSensorWindow();
     await createFormulaSensor('SP1', '$TAG3 * 2', 'Special one');
     await inSheet('TAG1', async sheet => {
@@ -850,7 +854,7 @@ describe('two undo windows at once: the FG-sheet model Undo vs the special-senso
     it('model deleted -> its special sensor deleted (8 s undo window) -> model Undo within 7 s: the pending sensor delete is CANCELLED at commit and the restored model keeps a real column', async () => {
         await renderApp();
         await importProject('Lock', PATH_A);
-        const L = wsIdByName('Lock');
+        const L = wsIdByName('Lock · Unit');
         await openAddSensorWindow();
         await createFormulaSensor('SP1', '$TAG1 * 2', 'Special one');
         await inSheet('SP1', async sheet => {

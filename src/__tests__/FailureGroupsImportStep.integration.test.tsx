@@ -123,7 +123,11 @@ async function renderApp() {
 async function toStep3(name: string) {
     await act(async () => { fireEvent.click(app().getByRole('button', { name: /New project/ })); });
     await settle();
-    fireEvent.change(app().getByPlaceholderText('e.g. Compressor Line 3 — Q3 Baseline'), { target: { value: name } });
+    // Step 1 names the project "Plant · Machine": `name` is the plant, so
+    // the project is called `${name} · Unit`.
+    fireEvent.change(app().getByPlaceholderText('e.g. Bang Pakong'), { target: { value: name } });
+    fireEvent.change(app().getByPlaceholderText('e.g. Gas Engine Generator 4'), { target: { value: 'Unit' } });
+    fireEvent.change(app().getByPlaceholderText('e.g. U-2010'), { target: { value: 'T-1' } });
     await act(async () => { fireEvent.click(app().getByText('Continue')); });
     await settle();
     dialog.open = [PATH];
@@ -217,7 +221,7 @@ describe('Import step 3 -> Dashboard -> Recent-project chip, through the real wo
         await waitDashboard();
 
         // Saved through the REAL saveWorkspaceData: groups shaped by failureGroupOps, recent entry carries the chip fields.
-        const A = entry('Alpha')?.id as string;
+        const A = entry('Alpha · Unit')?.id as string;
         expect(A).toBeTruthy();
         expect(disk(A).failureGroupState.groups).toEqual([
             { no: 0, name: 'Not in Group' },
@@ -225,7 +229,7 @@ describe('Import step 3 -> Dashboard -> Recent-project chip, through the real wo
             { no: 2, name: 'Oil pressure low' },
         ]);
         expect(disk(A).failureGroupState.models ?? []).toEqual([]);
-        expect(entry('Alpha')).toMatchObject({ failureGroupCount: 2, failureGroupNos: [1, 2] });
+        expect(entry('Alpha · Unit')).toMatchObject({ failureGroupCount: 2, failureGroupNos: [1, 2] });
 
         // Landing: FG tab, summary, "ready" callout, Assign sensors on both empty groups, Build Model disabled.
         expect(fgTabShowing(), 'lands on the Failure Groups tab').toBe(true);
@@ -285,15 +289,15 @@ describe('Import step 3 -> Dashboard -> Recent-project chip, through the real wo
         // Back to Import: the chip reads the entry workspaceManager refreshed.
         await settle(400); // autosave
         await backToImport();
-        let chip = cardChip('Alpha')!;
-        expect(chip, 'chip on Alpha').toBeTruthy();
+        let chip = cardChip('Alpha · Unit')!;
+        expect(chip, 'chip on Alpha · Unit').toBeTruthy();
         expect(chip.textContent).toBe('2 failure groups');
         expect(chip.className).not.toContain('fg-count-chip--zero');
         expect(swatchClasses(chip)).toEqual(['fg-group-color-amber', 'fg-group-color-violet']);
 
         // Reopen (it has groups now) -> add FG-3 on the Dashboard -> entry follows at once.
         // A project WITH groups reopens on the Sensor tab (the step-3 lastRoute was replaced by the autosave).
-        await openRecent('Alpha');
+        await openRecent('Alpha · Unit');
         expect(disk(A).lastRoute).toBe('dashboard');
         expect(fgTabShowing(), 'a project with groups reopens on the Sensor tab').toBe(false);
         await openFgTab();
@@ -303,7 +307,7 @@ describe('Import step 3 -> Dashboard -> Recent-project chip, through the real wo
         await act(async () => { fireEvent.keyDown(nameInput, { key: 'Enter' }); });
         await settle(400);
         expect(disk(A).failureGroupState.groups.map((g: any) => g.no)).toEqual([0, 1, 2, 3]);
-        expect(entry('Alpha')).toMatchObject({ failureGroupCount: 3, failureGroupNos: [1, 2, 3] });
+        expect(entry('Alpha · Unit')).toMatchObject({ failureGroupCount: 3, failureGroupNos: [1, 2, 3] });
         expect(summaryText()).toMatch(/^3 groups · 1 sensor assigned/);
 
         // Delete FG-2 -> count 2, swatches FG-1 + FG-3. Since 2026-10-17 the trash asks first (a group
@@ -315,11 +319,11 @@ describe('Import step 3 -> Dashboard -> Recent-project chip, through the real wo
         await settle(400);
         expect(disk(A).failureGroupState.groups.map((g: any) => g.no)).toEqual([0, 1, 3]);
         expect(disk(A).failureGroupState.models).toHaveLength(1); // the TAG1 model is untouched
-        expect(entry('Alpha')).toMatchObject({ failureGroupCount: 2, failureGroupNos: [1, 3] });
+        expect(entry('Alpha · Unit')).toMatchObject({ failureGroupCount: 2, failureGroupNos: [1, 3] });
 
         await settle(400);
         await backToImport();
-        chip = cardChip('Alpha')!;
+        chip = cardChip('Alpha · Unit')!;
         expect(chip.textContent).toBe('2 failure groups');
         expect(swatchClasses(chip)).toEqual(['fg-group-color-amber', 'fg-group-color-green']);
 
@@ -343,16 +347,16 @@ describe('Import step 3 -> Dashboard -> Recent-project chip, through the real wo
         await quickAdd('Never saved');
         await act(async () => { fireEvent.click(app().getByRole('button', { name: 'Skip for now' })); });
         await waitDashboard();
-        const S = entry('Skipper')?.id as string;
+        const S = entry('Skipper · Unit')?.id as string;
         expect(disk(S).failureGroupState.groups).toEqual([{ no: 0, name: 'Not in Group' }]);
-        expect(entry('Skipper')).toMatchObject({ failureGroupCount: 0, failureGroupNos: [] });
+        expect(entry('Skipper · Unit')).toMatchObject({ failureGroupCount: 0, failureGroupNos: [] });
         expect(fgTabShowing()).toBe(true);
         expect(summaryText()).toBe('0 groups · 0 sensors assigned · 0 of 0 models complete');
         expect(screen.getByTestId('fg-callout').textContent).toMatch(/No failure groups yet/);
 
         await settle(400);
         await backToImport();
-        const chip = cardChip('Skipper')!;
+        const chip = cardChip('Skipper · Unit')!;
         expect(chip.textContent).toBe('No failure groups');
         expect(chip.className).toContain('fg-count-chip--zero');
         expect(swatchClasses(chip)).toEqual([]);

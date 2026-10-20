@@ -2,7 +2,7 @@ import { Check, ChevronLeft } from 'lucide-react';
 import { mono, type Tokens } from './uploadTheme';
 import MachineMorphCanvas from './MachineMorphCanvas';
 
-/** 1 = Name the project, 2 = Add sensor data, 3 = Failure groups,
+/** 1 = Which machine, 2 = Add sensor data, 3 = Failure groups,
  *  4 = Explore in Dashboard (current only while the Dashboard opens). */
 export type SetupRailStep = 1 | 2 | 3 | 4;
 
@@ -10,7 +10,7 @@ interface SetupRailProps {
   T: Tokens;
   /** Current setup step. */
   step: SetupRailStep;
-  /** The project name typed on step 1 (shown under that step once it is done). */
+  /** The project name ("Plant · Machine") from step 1, shown under that step once it is done. */
   projectName: string;
   /** Summary of the data read on step 2 ("2 files · 159,264 rows · 132 tags"); null until the files have been read. May wrap to two lines. */
   dataSummary: string | null;
@@ -31,7 +31,7 @@ interface RailStep {
 }
 
 const STEPS: RailStep[] = [
-  { n: 1, title: 'Name the project', sub: 'What this workspace is about' },
+  { n: 1, title: 'Which machine', sub: 'Plant · machine · tag' },
   { n: 2, title: 'Add sensor data', sub: 'CSV files + optional tag names' },
   { n: 3, title: 'Failure groups', sub: 'The failures you want to find' },
   { n: 4, title: 'Explore in Dashboard', sub: 'Charts, assign sensors, build models' },

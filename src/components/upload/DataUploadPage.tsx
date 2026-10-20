@@ -6,7 +6,7 @@ import { message } from "@tauri-apps/plugin-dialog";
 import { subscribe } from "../../utils/tauriEvents";
 import { useDataUpload } from "../../hooks/useDataUpload";
 import { useMappingData, buildSensorMetadataFromMapping } from "../../hooks/useMappingData";
-import type { CsvMetadata, SensorMetadata, SpecialSensorRecipe, WorkspaceState, WorkspaceMetadata } from "../../types";
+import type { CsvMetadata, MachineDetails, SensorMetadata, SpecialSensorRecipe, WorkspaceState, WorkspaceMetadata } from "../../types";
 import {
   saveWorkspaceData,
   loadWorkspaceData,
@@ -32,6 +32,17 @@ import FailureGroupsStep, { type DraftGroup } from "./FailureGroupsStep";
 import { BackButton, PrimaryButton } from "./SetupPrimitives";
 import { useCsvLoadProgress } from "./useCsvLoadProgress";
 import { PROJECT_NAME_MAX, formatCount } from "./setupHelpers";
+import { DUPLICATE_PAIR_REASON, missingFieldsReason } from "./MachineFields";
+import { ProjectDetailsModal } from "../windows/ProjectDetailsModal";
+import {
+  EMPTY_MACHINE,
+  ensureDataUtcOffset,
+  isDuplicatePlantMachine,
+  missingMachineFields,
+  pcOffsetMin,
+  projectDescription as describeMachine,
+  projectDisplayName,
+} from "../../utils/projectDetails";
 
 interface DataUploadPageProps {
   /**
@@ -136,15 +147,36 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
   // handleLoadWorkspace never touches `step` (a reopened project is never
   // walked through step 3; it navigates away from this page entirely).
   const [step, setStep] = useState<0 | 1 | 2 | 3 | 4>(0);
-  const [projectName, setProjectName] = useState("");
-  const [projectDescription, setProjectDescription] = useState("");
+  // The project IS the machine: named "Plant · Machine", described "tag ·
+  // notes" (both derived -- see utils/projectDetails.ts). The data's time zone
+  // is picked on step 2 (default: this PC's offset).
+  const [machine, setMachine] = useState<MachineDetails>(EMPTY_MACHINE);
+  const [dataTz, setDataTz] = useState<number>(() => pcOffsetMin());
+  const projectName = projectDisplayName(machine);
+  const projectDescription = describeMachine(machine);
   const [draftGroups, setDraftGroups] = useState<DraftGroup[]>([]);
   const [groupsSkipped, setGroupsSkipped] = useState(false);
   // A step-3 card shows a duplicate name it could not save: Open Dashboard
   // waits until it is fixed (or Esc'd back), so the old name is never saved
   // silently in its place. Skip stays available — it saves no groups at all.
   const [groupsInvalid, setGroupsInvalid] = useState(false);
-  const canCreateProject = projectName.trim().length > 0;
+  // A Plant · Machine pair another project already uses is checked FIRST and
+  // blocks Continue; then every required field must be filled.
+  const pairTaken = isDuplicatePlantMachine(machine, workspaces);
+  const createWhy = pairTaken ? DUPLICATE_PAIR_REASON : missingFieldsReason(missingMachineFields(machine), "continue");
+  const canCreateProject = createWhy === null;
+  // Rename on a recent-project card opens Project details for that project
+  // (read fresh from disk right before opening).
+  const [detailsFor, setDetailsFor] = useState<WorkspaceState | null>(null);
+  const openDetails = async (id: string) => {
+    try {
+      const ws = await loadWorkspaceData(id);
+      if (ws) setDetailsFor(ws);
+      else setWorkspaceError("Workspace not found");
+    } catch (err) {
+      setWorkspaceError(String(err));
+    }
+  };
   const continuingRef = useRef(false);
   const startNewProject = () => {
     continuingRef.current = false;
@@ -290,6 +322,13 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
         id: workspaceId,
         name: projectName.trim() || `Workspace ${formatDateTime(new Date())}`,
         description: projectDescription.trim() || undefined,
+        machine: {
+          plant: machine.plant.trim(),
+          name: machine.name.trim(),
+          tag: machine.tag.trim(),
+          notes: machine.notes.trim(),
+        },
+        dataUtcOffsetMin: dataTz,
         // The Dashboard opens on its Failure Groups tab, where sensors are
         // assigned to the groups just named (or the first group is created).
         lastRoute: "failure-group",
@@ -443,7 +482,21 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
         };
       }
 
-      let stateForDashboard = opened;
+      // A project made before the data's time zone existed gets this PC's
+      // offset, once -- the ONE caller of ensureDataUtcOffset. Only after the
+      // data really loaded (a failed open leaves the file untouched), and
+      // never fatal.
+      let dataUtcOffsetMin: number | null = null;
+      try {
+        dataUtcOffsetMin = await ensureDataUtcOffset(id);
+      } catch (err) {
+        console.warn("Could not set the data's time zone:", err);
+      }
+      if (!isLatest()) return;
+
+      let stateForDashboard: WorkspaceState = dataUtcOffsetMin !== null && opened.dataUtcOffsetMin === undefined
+        ? { ...opened, dataUtcOffsetMin }
+        : opened;
       if (opened.specialSensorRecipes?.length) {
         if (noData.length > 0) {
           // A sensor with no column behind it must not stay plotted: its chart
@@ -619,9 +672,18 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
           onNewProject={startNewProject}
           onOpenWorkspace={handleLoadWorkspace}
           onRenameWorkspace={handleRenameWorkspace}
+          onEditWorkspace={(id) => { void openDetails(id); }}
           onDeleteWorkspace={handleDeleteWorkspace}
         />
         {loadingOverlay}
+        {detailsFor && (
+          <ProjectDetailsModal
+            workspace={detailsFor}
+            existing={workspaces}
+            onSaved={() => refreshWorkspaces()}
+            onClose={() => setDetailsFor(null)}
+          />
+        )}
       </div>
     );
   }
@@ -672,10 +734,8 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
             {step === 1 && (
               <ProjectNameStep
                 T={T}
-                name={projectName}
-                onNameChange={setProjectName}
-                description={projectDescription}
-                onDescriptionChange={setProjectDescription}
+                machine={machine}
+                onMachineChange={setMachine}
                 existing={workspaces}
               />
             )}
@@ -707,6 +767,8 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
                     onBrowse={dataUpload.selectFiles}
                     onRemove={dataUpload.removeFile}
                     onParse={dataUpload.uploadDataset}
+                    tzOffsetMin={dataTz}
+                    onTzChange={setDataTz}
                   />
                   <TagNamesPanel T={T} locked={!isReady} mapping={mapping} />
                 </div>
@@ -742,8 +804,8 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
           }}>
             {step === 1 ? (
               <>
-                <span style={statusStyle}>
-                  {canCreateProject ? "Ready to continue" : "Enter a project name to continue"}
+                <span style={pairTaken ? { ...statusStyle, color: T.danger } : statusStyle} data-testid="step1-status">
+                  {createWhy ?? "Ready to continue"}
                 </span>
                 <div style={{ flex: 1 }} />
                 <BackButton T={T} onClick={() => setStep(0)} />

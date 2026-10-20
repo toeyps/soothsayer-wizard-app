@@ -279,7 +279,11 @@ async function renderApp() {
 async function importProject(name: string, path: string) {
     await act(async () => { fireEvent.click(app().getByRole('button', { name: /New project/ })); });
     await settle();
-    fireEvent.change(app().getByPlaceholderText('e.g. Compressor Line 3 — Q3 Baseline'), { target: { value: name } });
+    // Step 1 names the project "Plant · Machine": `name` is the plant, so
+    // the project is called `${name} · Unit`.
+    fireEvent.change(app().getByPlaceholderText('e.g. Bang Pakong'), { target: { value: name } });
+    fireEvent.change(app().getByPlaceholderText('e.g. Gas Engine Generator 4'), { target: { value: 'Unit' } });
+    fireEvent.change(app().getByPlaceholderText('e.g. U-2010'), { target: { value: 'T-1' } });
     await act(async () => { fireEvent.click(app().getByText('Continue')); });
     await settle();
     wins.dialogOpen = [path];
@@ -406,7 +410,7 @@ describe('(a) opening an old workspace with a legacy round($TAG1, 2) special sen
     it('converts on open: new text + demotion in ONE write, the Dashboard holds and autosaves the converted recipe, the info dialog follows the Dashboard, a second open converts and writes nothing', async () => {
         await renderApp();
         await importProject('Legacy', PATH_A);
-        const A = wsIdByName('Legacy');
+        const A = wsIdByName('Legacy · Unit');
         expect(A).toBeTruthy();
         await backToImport();
 
@@ -430,7 +434,7 @@ describe('(a) opening an old workspace with a legacy round($TAG1, 2) special sen
         // ── first open ──
         const w0 = env.writes.length;
         const r0 = be.session.cmds('evaluate_formula').length;
-        await openRecent('Legacy');
+        await openRecent('Legacy · Unit');
         await settle(600); // Dashboard autosave debounce + the not-awaited dialog
 
         // Rust was asked once, with the stored text; the replay used the CONVERTED text, so the sensor has data.
@@ -514,7 +518,7 @@ describe('(a) opening an old workspace with a legacy round($TAG1, 2) special sen
         const onDiskBefore = env.files.get(wsFile(A));
         const c2 = extraCalls.filter(c => c.cmd === 'convert_legacy_formula').length;
         const m2 = probe.messages.length;
-        await openRecent('Legacy');
+        await openRecent('Legacy · Unit');
         await settle(600);
         expect(extraCalls.filter(c => c.cmd === 'convert_legacy_formula').length - c2, 'convert_legacy_formula calls on the second open').toBe(0);
         // Nothing changes on disk. (The Dashboard's first autosave after mount re-writes the SAME
@@ -540,7 +544,7 @@ describe('(b) Dashboard + Add Sensor + Build Model: a special sensor\'s recipe c
     it('Quick build Sum -> predictor -> Train + Mark complete -> locked -> replay fails on reopen -> Repair -> stale in both windows -> Re-train clears it; Build Model reads the disk only on recipesChanged', async () => {
         await renderApp();
         await importProject('Recipe', PATH_A);
-        const A = wsIdByName('Recipe');
+        const A = wsIdByName('Recipe · Unit');
 
         // 1) Quick build: pick TAG3 + TAG4 -> Sum -> "Use this formula" -> SP.
         await openAddSensorWindow();
@@ -627,7 +631,7 @@ describe('(b) Dashboard + Add Sensor + Build Model: a special sensor\'s recipe c
         await backToImport();
         expect(roots.size).toBe(0);
         be.session.failOn('evaluate_formula', a => a.customName === 'SP', 'Formula error: injected replay refusal');
-        await openRecent('Recipe');
+        await openRecent('Recipe · Unit');
         expect(be.session.has('SP'), 'SP not restored').toBe(false);
         expect(extraCalls.filter(c => c.cmd === 'convert_legacy_formula'), 'no legacy round -> no conversion call').toEqual([]);
         expect(diskModel(A, mid).status, 'reopening alone changes no model').toBe(true);

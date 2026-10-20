@@ -189,3 +189,37 @@ describe('RecentProjectCard -- Rename/Delete never open the project', () => {
         expect(onOpen).toHaveBeenCalledTimes(1);
     });
 });
+
+describe('RecentProjectCard -- Project details (Plant · Machine)', () => {
+    const MACHINE_PROJECT = {
+        id: 'ws_2', name: 'Bang Pakong · Gas Engine Generator 4', description: 'U-2010 · Rated 8 MW',
+        lastModified: Date.now() - 3_600_000,
+    };
+
+    it('title is "Plant · Machine" (full name in the title tooltip); the second line is "tag · notes"', () => {
+        render(<RecentProjectCard T={DARK} project={MACHINE_PROJECT} />);
+        const title = screen.getByText('Bang Pakong · Gas Engine Generator 4');
+        expect(title.getAttribute('title')).toBe('Bang Pakong · Gas Engine Generator 4');
+        expect(screen.getByText('U-2010 · Rated 8 MW')).toBeTruthy();
+    });
+
+    it('with onEditDetails, Rename opens Project details instead of an in-place edit, and never opens the project', () => {
+        const onOpen = vi.fn();
+        const onRename = vi.fn();
+        const onEditDetails = vi.fn();
+        render(<RecentProjectCard T={DARK} project={MACHINE_PROJECT} onOpen={onOpen} onRename={onRename} onEditDetails={onEditDetails} />);
+        const rename = screen.getByLabelText(`Rename project ${MACHINE_PROJECT.name}`);
+        expect(rename.getAttribute('title')).toBe('Rename (opens Project details)');
+        fireEvent.click(rename);
+        expect(onEditDetails).toHaveBeenCalledTimes(1);
+        expect(screen.queryByLabelText('Project name')).toBeNull();
+        expect(onRename).not.toHaveBeenCalled();
+        expect(onOpen).not.toHaveBeenCalled();
+    });
+
+    it('the static preview shows "Plant · Machine" / "Machine tag · notes" placeholders while empty', () => {
+        render(<RecentProjectCard T={DARK} preview project={{ id: '', name: '', description: '', lastModified: 0 }} />);
+        expect(screen.getByText('Plant · Machine')).toBeTruthy();
+        expect(screen.getByText('Machine tag · notes')).toBeTruthy();
+    });
+});
