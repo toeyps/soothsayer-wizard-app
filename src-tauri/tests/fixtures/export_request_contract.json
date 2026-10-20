@@ -1,0 +1,255 @@
+{
+  "workspace_id": "ws-contract",
+  "data_utc_offset_min": 420,
+  "machine": {
+    "plant": "Yadana",
+    "name": "MP Train",
+    "tag": "U-2010",
+    "notes": "Gas turbine"
+  },
+  "running_status": {
+    "sensor": "SPEED",
+    "stop_if_lower_than": 100
+  },
+  "sensor_meta": [
+    {
+      "tag": "T1",
+      "name": "Bearing temp",
+      "unit": "DegC",
+      "component": "Engine"
+    },
+    {
+      "tag": "P1",
+      "name": "Load",
+      "unit": "%",
+      "component": "Generator"
+    },
+    {
+      "tag": "POWER",
+      "name": "Power",
+      "unit": "W",
+      "component": "Electrical"
+    },
+    {
+      "tag": "X",
+      "name": "Flow",
+      "unit": "m3/h",
+      "component": "Pump"
+    },
+    {
+      "tag": "Y",
+      "name": "Head",
+      "unit": "m",
+      "component": "Pump"
+    },
+    {
+      "tag": "C",
+      "name": "Valve",
+      "unit": "%",
+      "component": "Pump"
+    },
+    {
+      "tag": "SPEED",
+      "name": "Speed",
+      "unit": "rpm",
+      "component": "Engine"
+    },
+    {
+      "tag": "V",
+      "name": "Volt",
+      "unit": "V",
+      "component": "Electrical"
+    },
+    {
+      "tag": "I",
+      "name": "Amp",
+      "unit": "A",
+      "component": "Electrical"
+    }
+  ],
+  "derived_sensors": [
+    {
+      "tag": "POWER",
+      "how_to_build": "Calculated as V × I",
+      "source_tags": [
+        "V",
+        "I"
+      ]
+    }
+  ],
+  "failure_groups": [
+    {
+      "no": 1,
+      "name": "Overheat",
+      "description": "Bearing runs hot.",
+      "recommendation": "Check the lube oil."
+    },
+    {
+      "no": 2,
+      "name": "Pump wear",
+      "description": "Pump curve drifts.",
+      "recommendation": "Inspect the impeller."
+    },
+    {
+      "no": 3,
+      "name": "Unused",
+      "description": "",
+      "recommendation": ""
+    }
+  ],
+  "models": [
+    {
+      "id": "i1",
+      "kind": "individual",
+      "display_name": "Bearing band",
+      "category": "condition",
+      "group_nos": [
+        1
+      ],
+      "filter": {
+        "timestamp_ranges": [
+          {
+            "start": "2024-01-09T22:00",
+            "end": "2024-01-10T23:59"
+          }
+        ],
+        "value_filters": [
+          {
+            "sensor": "SPEED",
+            "operation": "greater_than",
+            "value1": 100,
+            "value2": null
+          }
+        ],
+        "combine": "and"
+      },
+      "set_points": {
+        "lower": 20,
+        "upper": 35
+      },
+      "training_note": "Running only: SPEED > 100; train periods 2024-01-09 22:00 to 2024-01-10 23:59; rows with a missing value removed",
+      "target": "T1"
+    },
+    {
+      "id": "r1",
+      "kind": "relationship",
+      "display_name": "Bearing vs load",
+      "category": "condition",
+      "group_nos": [
+        1,
+        2
+      ],
+      "filter": {
+        "timestamp_ranges": [
+          {
+            "start": "2024-01-09T22:30",
+            "end": null
+          }
+        ],
+        "value_filters": [
+          {
+            "sensor": "P1",
+            "operation": "less_than",
+            "value1": 50,
+            "value2": null
+          },
+          {
+            "sensor": "SPEED",
+            "operation": "greater_than",
+            "value1": 1000,
+            "value2": null
+          }
+        ],
+        "combine": "or"
+      },
+      "set_points": {
+        "residual_at_80_lower": -4,
+        "residual_at_80_upper": 4,
+        "residual_at_0_lower": -8,
+        "residual_at_0_upper": 8
+      },
+      "training_note": "Running only: P1 < 50 OR SPEED > 1000; train periods 2024-01-09 22:30 to end of data; own condition of this model; rows with a missing value removed",
+      "target": "T1",
+      "predictors": [
+        "P1",
+        "POWER"
+      ],
+      "rel_stiffness": 100000
+    },
+    {
+      "id": "c1",
+      "kind": "clustering",
+      "display_name": "Pump pattern",
+      "category": "performance",
+      "group_nos": [
+        2
+      ],
+      "filter": {
+        "timestamp_ranges": [
+          {
+            "start": "2024-01-09T22:00",
+            "end": "2024-01-10T23:59"
+          }
+        ],
+        "value_filters": [
+          {
+            "sensor": "SPEED",
+            "operation": "greater_than",
+            "value1": 100,
+            "value2": null
+          }
+        ],
+        "combine": "and"
+      },
+      "set_points": {
+        "outer_sd": 5
+      },
+      "training_note": "Running only: SPEED > 100; train periods 2024-01-09 22:00 to 2024-01-10 23:59; rows with a missing value removed",
+      "x_sensor": "X",
+      "y_sensor": "Y",
+      "n_clusters": 2,
+      "criteria_sensor": "C",
+      "cluster_ranges": [
+        {
+          "min": null,
+          "max": 2
+        },
+        {
+          "min": 2,
+          "max": null
+        }
+      ]
+    },
+    {
+      "id": "i2",
+      "kind": "individual",
+      "display_name": "Power band",
+      "category": "performance",
+      "group_nos": [],
+      "filter": {
+        "timestamp_ranges": [
+          {
+            "start": "2024-01-09T22:00",
+            "end": "2024-01-10T23:59"
+          }
+        ],
+        "value_filters": [
+          {
+            "sensor": "SPEED",
+            "operation": "greater_than",
+            "value1": 100,
+            "value2": null
+          }
+        ],
+        "combine": "and"
+      },
+      "set_points": {
+        "lower": 100,
+        "upper": 900
+      },
+      "training_note": "Running only: SPEED > 100; train periods 2024-01-09 22:00 to 2024-01-10 23:59; rows with a missing value removed",
+      "target": "POWER"
+    }
+  ],
+  "expected_generation": 1
+}

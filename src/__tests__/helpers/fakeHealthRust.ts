@@ -1194,11 +1194,16 @@ export function createFakeHealthRust(opts: FakeHealthRustOptions) {
         for (let r = 0; r < nRows(); r++) if (Number.isFinite(c1[r]) && Number.isFinite(c2[r]) && (f.noop || inTest.has(r) || f.keeps(r))) rows.push(r);
         if (!rows.length) throw 'NO_DATA: No rows remain after dropping nulls.';
         const isTrain = rows.map(r => f.noop || f.keeps(r));
-        /** `assign_cluster`: half-open ranges, first match; `null` = none. */
+        /** `assign_cluster`: `(lo, hi]`, first match; with 2+ ranges the lowest range has no
+         *  lower bound and the highest no upper bound (outer edges open); `null` = none. */
+        const lowKey = (lo: number | null) => (lo === null ? -Infinity : lo);
+        const lowest = ranges.length >= 2 ? ranges.reduce((b, r, i) => (lowKey(r[0]) < lowKey(ranges[b][0]) ? i : b), 0) : -1;
+        const highest = ranges.length >= 2 ? ranges.reduce((b, r, i) => (lowKey(r[0]) > lowKey(ranges[b][0]) ? i : b), 0) : -1;
         const assignCluster = (v: number): number | null => {
             if (!cc) return 0; // single cluster: everything
             if (!Number.isFinite(v)) return null;
-            const k = ranges.findIndex(([lo, hi]) => (lo === null || v >= lo) && (hi === null || v < hi));
+            const k = ranges.findIndex(([lo, hi], i) =>
+                (i === lowest || lo === null || v > lo) && (i === highest || hi === null || v <= hi));
             return k < 0 ? null : k;
         };
         const assign = rows.map(r => assignCluster(cc ? cc[r] : NaN));

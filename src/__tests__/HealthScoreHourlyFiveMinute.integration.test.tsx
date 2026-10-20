@@ -110,7 +110,7 @@ const REL = () => model({
 });
 const CLU = () => model({
     id: 'c1', kind: 'clustering', xSensor: 'X', ySensor: 'Y', criteriaSensor: 'MODE', numClusters: 2,
-    clusterRanges: [{ min: 0, max: 50 }, { min: 50, max: 100 }], healthSetPoints: { kind: 'clustering', outerSd: 6 },
+    clusterRanges: [{ min: 0, max: 50 }, { min: 60, max: 100 }], healthSetPoints: { kind: 'clustering', outerSd: 6 },
 });
 
 // ── reading what was drawn ──

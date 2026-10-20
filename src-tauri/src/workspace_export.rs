@@ -447,8 +447,10 @@ pub struct BuiltPlan {
 /// THE training-row rule of Train, in dataset order: the row passes the
 /// training scope (`resolved`), every column in `cols` is finite and — when
 /// `regimes` is given (clustering with more than one regime) — the criteria
-/// value is finite and inside at least one range (`ClusterRange::contains`,
-/// `min < v <= max`). A row inside two overlapping ranges appears once.
+/// value is finite and falls in a range under `health_score::assign_cluster`
+/// (`min < v <= max`, outer edges open with two or more ranges — the same
+/// rule as Train and the health score). A row inside two overlapping ranges
+/// appears once.
 pub(crate) fn training_rows(
     data: &ColumnarData,
     resolved: &ResolvedFilter,
@@ -456,6 +458,7 @@ pub(crate) fn training_rows(
     regimes: Option<(usize, &[ClusterRange])>,
 ) -> Vec<u32> {
     let noop = resolved.is_noop();
+    let regimes = regimes.map(|(ci, ranges)| (ci, ClusterRange::bounds(ranges)));
     (0..data.n_rows())
         .into_par_iter()
         .filter(|&r| {
@@ -465,11 +468,10 @@ pub(crate) fn training_rows(
             if !cols.iter().all(|&c| data.columns[c][r].is_finite()) {
                 return false;
             }
-            match regimes {
+            match &regimes {
                 None => true,
-                Some((ci, ranges)) => {
-                    let v = data.columns[ci][r];
-                    v.is_finite() && ranges.iter().any(|range| range.contains(v))
+                Some((ci, bounds)) => {
+                    crate::health_score::assign_cluster(data.columns[*ci][r], bounds).is_some()
                 }
             }
         })
@@ -540,8 +542,12 @@ pub(crate) fn fit_profile(stiffness: Option<f64>) -> Option<&'static str> {
 }
 
 /// Clustering regimes for more than one range (spec §4.4): sorted by `min`,
-/// contiguous (`prev.max == next.min`), first `from` and last `to` unbounded,
-/// every inner range non-empty. `Err(())` = a gap, an overlap or a bad bound.
+/// contiguous on the INNER boundaries (`prev.max == next.min`), every inner
+/// range non-empty. The first `from` and the last `to` are ALWAYS written as
+/// null (open outer edges, 2026-10-20) whatever the stored value — the
+/// Workbench's auto-divide stores the criteria's real data min/max there and
+/// the UI cannot edit them; `assign_cluster` ignores them the same way.
+/// `Err(())` = an inner gap, an overlap or a bad bound.
 pub(crate) fn regimes_from_ranges(ranges: &[ClusterRange]) -> Result<Vec<Regime>, ()> {
     if ranges.len() < 2 {
         return Err(());
@@ -557,23 +563,33 @@ pub(crate) fn regimes_from_ranges(ranges: &[ClusterRange]) -> Result<Vec<Regime>
             .partial_cmp(&b.min.unwrap_or(f64::NEG_INFINITY))
             .unwrap_or(std::cmp::Ordering::Equal)
     });
-    if sorted[0].min.is_some() || sorted[sorted.len() - 1].max.is_some() {
-        return Err(());
-    }
     for pair in sorted.windows(2) {
         match (pair[0].max, pair[1].min) {
             (Some(a), Some(b)) if a == b => {}
             _ => return Err(()),
         }
     }
-    for r in &sorted {
+    // Inner ranges must be non-empty; the outer ones only need their inner
+    // edge (their stored outer edge is dropped).
+    let last = sorted.len() - 1;
+    for (i, r) in sorted.iter().enumerate() {
+        if i == 0 || i == last {
+            continue;
+        }
         if let (Some(lo), Some(hi)) = (r.min, r.max) {
             if lo >= hi {
                 return Err(());
             }
         }
     }
-    Ok(sorted.iter().map(|r| Regime { from: r.min, to: r.max }).collect())
+    Ok(sorted
+        .iter()
+        .enumerate()
+        .map(|(i, r)| Regime {
+            from: if i == 0 { None } else { r.min },
+            to: if i == last { None } else { r.max },
+        })
+        .collect())
 }
 
 fn finite(v: Option<f64>) -> Option<f64> {
@@ -1988,8 +2004,9 @@ mod tests {
         for ranges in [
             vec![rng(None, Some(1.0)), rng(Some(1.5), None)],         // gap
             vec![rng(None, Some(2.0)), rng(Some(1.0), None)],         // overlap
-            vec![rng(Some(0.0), Some(1.0)), rng(Some(1.0), None)],    // bounded bottom
-            vec![rng(None, Some(1.0)), rng(Some(1.0), Some(5.0))],    // bounded top
+            vec![rng(Some(0.0), Some(1.0)), rng(Some(1.5), Some(3.0))],          // inner gap, finite outer edges
+            vec![rng(None, Some(1.0)), rng(Some(1.0), Some(2.0)), rng(Some(2.5), None)], // gap between inner edges
+            vec![rng(None, Some(1.0)), rng(Some(2.0), Some(1.5)), rng(Some(1.5), None)], // empty inner range
         ] {
             let p = plan(&request(vec![clus("c1", "A", "Y", Some("C"), Some(ranges.clone()))]));
             let issue = p.issues.iter().find(|i| i.code == "regimes_not_contiguous").expect("issue");
@@ -1997,6 +2014,46 @@ mod tests {
             assert_eq!(issue.model_id.as_deref(), Some("c1"));
             assert!(!p.ok);
         }
+    }
+
+    #[test]
+    fn clustering_outer_edges_are_written_open_whatever_is_stored() {
+        // What the Workbench's auto-divide stores: the criteria's real data
+        // [min, max] = [0, 3] as finite outer edges (2026-10-20 fix).
+        for (ranges, want) in [
+            (
+                vec![rng(Some(0.0), Some(1.5)), rng(Some(1.5), Some(3.0))],
+                serde_json::json!([{"from": null, "to": 1.5}, {"from": 1.5, "to": null}]),
+            ),
+            (
+                // Stored out of order: sorted by min, outer edges still open.
+                vec![rng(Some(2.0), Some(3.0)), rng(Some(0.0), Some(1.0)), rng(Some(1.0), Some(2.0))],
+                serde_json::json!([{"from": null, "to": 1.0}, {"from": 1.0, "to": 2.0}, {"from": 2.0, "to": null}]),
+            ),
+        ] {
+            let p = plan(&request(vec![clus("c1", "A", "Y", Some("C"), Some(ranges))]));
+            assert!(!p.issues.iter().any(|i| i.code == "regimes_not_contiguous"), "{:?}", p.issues);
+            let j = serde_json::to_value(&p.models[0].json).unwrap();
+            assert_eq!(j["regimes"], want);
+        }
+    }
+
+    #[test]
+    fn training_rows_put_values_beyond_the_outer_edges_in_the_outer_clusters() {
+        // C = i % 4 over 20 rows (values 0..3). Stored outer edges [0, 3] like
+        // the auto-divide: C == 0 (the data minimum) is kept, as are values
+        // beyond either outer edge; only an inner gap drops rows.
+        let d = data();
+        let resolved = ResolvedFilter::resolve(None, &d.headers).unwrap();
+        let auto = [rng(Some(0.0), Some(1.5)), rng(Some(1.5), Some(3.0))];
+        assert_eq!(training_rows(&d, &resolved, &[1, 4], Some((3, &auto))).len(), 20);
+        let narrow = [rng(Some(1.0), Some(1.5)), rng(Some(1.5), Some(2.0))];
+        assert_eq!(training_rows(&d, &resolved, &[1, 4], Some((3, &narrow))).len(), 20, "0 below, 3 above");
+        let gap = [rng(None, Some(0.5)), rng(Some(1.5), None)]; // C == 1 falls in the gap
+        assert_eq!(training_rows(&d, &resolved, &[1, 4], Some((3, &gap))).len(), 15);
+        // Train (the clustering preview core) splits the same way.
+        let p = clustering_preview_in(&d, "A".into(), "Y".into(), 2, Some("C".into()), Some(auto.to_vec()), None).unwrap();
+        assert_eq!(p.clusters.iter().map(|c| c.n_rows).collect::<Vec<_>>(), [10, 10]);
     }
 
     #[test]

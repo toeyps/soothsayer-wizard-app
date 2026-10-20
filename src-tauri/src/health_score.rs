@@ -738,16 +738,40 @@ pub fn score_clustering_distance(d: f64, outer_sd: f64) -> Option<f64> {
 
 /// Cluster index (0-based) of a criteria value: the FIRST range that contains
 /// it (half-open `(min, max]`, i.e. `min < v <= max` — Wizard Output Spec
-/// §4.4; `None` bound = unbounded — the same test `compute_clustering_preview`
-/// uses via `ClusterRange::contains`). `None` when the value is missing or in
+/// §4.4; `None` bound = unbounded). `None` when the value is missing or in
 /// no range.
+///
+/// OUTER EDGES ARE OPEN (2026-10-20): with two or more ranges, the lowest
+/// range (smallest `min`, `None` first; ties keep list order) accepts any
+/// value `<= its max` and the highest range (largest `min`, last on a tie)
+/// accepts any value `> its min` — their stored outer bounds (the Workbench's
+/// auto-divide writes the data's real min/max there) are ignored, matching
+/// the exported regimes (first `from` / last `to` = null). Inner ranges keep
+/// `min < v <= max`; a single range keeps both its bounds. THE one rule for
+/// Train (`compute_clustering_preview`), the health score and the export's
+/// row selection (`workspace_export::training_rows`).
 pub fn assign_cluster(c: f64, ranges: &[(Option<f64>, Option<f64>)]) -> Option<usize> {
     if !c.is_finite() {
         return None;
     }
-    ranges.iter().position(|&(lo, hi)| {
+    let (lowest, highest) = outer_range_indices(ranges);
+    ranges.iter().enumerate().position(|(i, &(lo, hi))| {
+        let lo = if Some(i) == lowest { None } else { lo };
+        let hi = if Some(i) == highest { None } else { hi };
         lo.is_none_or(|lo| c > lo) && hi.is_none_or(|hi| c <= hi)
     })
+}
+
+/// Indices of the lowest and highest range by `min` (`None` = -inf), stable
+/// on ties. `(None, None)` for fewer than two ranges (nothing is opened).
+fn outer_range_indices(ranges: &[(Option<f64>, Option<f64>)]) -> (Option<usize>, Option<usize>) {
+    if ranges.len() < 2 {
+        return (None, None);
+    }
+    let mut idx: Vec<usize> = (0..ranges.len()).collect();
+    let key = |i: usize| ranges[i].0.unwrap_or(f64::NEG_INFINITY);
+    idx.sort_by(|&a, &b| key(a).partial_cmp(&key(b)).unwrap_or(std::cmp::Ordering::Equal));
+    (idx.first().copied(), idx.last().copied())
 }
 
 /// Validated parameters of a Clustering score.
@@ -2209,15 +2233,45 @@ mod tests {
     }
 
     #[test]
-    fn assign_cluster_gives_nothing_for_a_gap_or_missing_value() {
+    fn assign_cluster_gives_nothing_for_an_inner_gap_or_missing_value() {
+        // Outer edges are open with >= 2 ranges, so only the INNER gap is empty.
         let gap = [(Some(0.0), Some(10.0)), (Some(20.0), Some(30.0))];
-        assert_eq!(assign_cluster(15.0, &gap), None);
-        assert_eq!(assign_cluster(-1.0, &gap), None);
-        assert_eq!(assign_cluster(0.0, &gap), None, "(min, max]: the bottom edge is outside");
-        assert_eq!(assign_cluster(30.0, &gap), Some(1), "(min, max]: the top edge is inside");
-        assert_eq!(assign_cluster(30.5, &gap), None);
+        assert_eq!(assign_cluster(15.0, &gap), None, "inner gap");
+        assert_eq!(assign_cluster(20.0, &gap), None, "(min, max]: the inner bottom edge is outside");
         assert_eq!(assign_cluster(f64::NAN, &gap), None);
         assert_eq!(assign_cluster(f64::INFINITY, &gap), None);
+        assert_eq!(assign_cluster(f64::NEG_INFINITY, &gap), None);
+        let three_with_gap = [(None, Some(1.0)), (Some(2.0), Some(3.0)), (Some(3.0), None)];
+        assert_eq!(assign_cluster(1.5, &three_with_gap), None);
+        assert_eq!(assign_cluster(2.0, &three_with_gap), None);
+    }
+
+    #[test]
+    fn assign_cluster_opens_the_outer_edges_of_two_or_more_ranges() {
+        // Auto-divide over the data's real [min, max] = [0, 30] stores finite
+        // outer bounds; they are ignored.
+        let auto = [(Some(0.0), Some(10.0)), (Some(10.0), Some(20.0)), (Some(20.0), Some(30.0))];
+        assert_eq!(assign_cluster(0.0, &auto), Some(0), "the data minimum is in the first cluster");
+        assert_eq!(assign_cluster(-1e9, &auto), Some(0), "below the lowest edge -> first cluster");
+        assert_eq!(assign_cluster(10.0, &auto), Some(0));
+        assert_eq!(assign_cluster(10.5, &auto), Some(1));
+        assert_eq!(assign_cluster(30.0, &auto), Some(2));
+        assert_eq!(assign_cluster(1e9, &auto), Some(2), "above the highest edge -> last cluster");
+        // Lowest / highest are picked by `min`, not by list position.
+        let shuffled = [(Some(10.0), Some(20.0)), (Some(20.0), Some(30.0)), (Some(0.0), Some(10.0))];
+        assert_eq!(assign_cluster(-5.0, &shuffled), Some(2));
+        assert_eq!(assign_cluster(99.0, &shuffled), Some(1));
+        assert_eq!(assign_cluster(15.0, &shuffled), Some(0));
+    }
+
+    #[test]
+    fn assign_cluster_keeps_both_bounds_of_a_single_range() {
+        let one = [(Some(0.0), Some(10.0))];
+        assert_eq!(assign_cluster(0.0, &one), None);
+        assert_eq!(assign_cluster(5.0, &one), Some(0));
+        assert_eq!(assign_cluster(10.0, &one), Some(0));
+        assert_eq!(assign_cluster(10.5, &one), None);
+        assert_eq!(assign_cluster(1e9, &[(None, None)]), Some(0));
     }
 
     #[test]

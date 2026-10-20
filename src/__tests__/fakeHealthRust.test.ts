@@ -550,7 +550,8 @@ describe('fakeHealthRust — compute_health_preview scores 1-hour averages', () 
     //   hours 0-1  MODE 10 -> cluster 1 around (10, 20)
     //   hours 2-3  MODE 90 -> cluster 2 around (30, 60)
     //   hour  4    half its rows in each mode (every ROW sits on a cluster centre)
-    //   hour  5    MODE 200: in no criteria range
+    //   hour  5    MODE 55: in the gap between the two ranges (outer edges are open, so only
+    //              an inner gap leaves a row in no range)
     const wobX = (i: number) => (((i * 7) % 5) - 2) * 0.5;
     const wobY = (i: number) => (((i * 3) % 7) - 3) * 0.5;
     const modeOf = (i: number) => {
@@ -558,7 +559,7 @@ describe('fakeHealthRust — compute_health_preview scores 1-hour averages', () 
         if (h <= 1) return 10;
         if (h <= 3) return 90;
         if (h === 4) return i % 12 < 6 ? 10 : 90;
-        return 200;
+        return 55;
     };
     const clusterData = (): HealthDataset => {
         const idx = Array.from({ length: 72 }, (_, i) => i);
@@ -575,7 +576,7 @@ describe('fakeHealthRust — compute_health_preview scores 1-hour averages', () 
     };
     const CLU_REQ = {
         kind: 'clustering', first_sensor: 'X', second_sensor: 'Y', n_clusters: 2, criteria_sensor: 'MODE',
-        cluster_ranges: [{ min: 0, max: 50 }, { min: 50, max: 100 }],
+        cluster_ranges: [{ min: 0, max: 50 }, { min: 60, max: 100 }],
         filter: { timestamp_ranges: [{ start: '2024-03-01T00:00', end: '2024-03-01T03:59' }], value_filters: [], combine: 'and' },
         set_points: { outer_sd: 6 },
         test_periods: [{ start: '2024-03-01T04:00', end: '2024-03-01T05:59' }],
@@ -601,8 +602,8 @@ describe('fakeHealthRust — compute_health_preview scores 1-hour averages', () 
         expect(p.cluster_scatter.total).toBe(48);
 
         // HOURLY: hour 4 has rows in BOTH clusters -> no cluster (its mean MODE, 50, lies in
-        // cluster 2's range [50, 100), which is what it used to be judged against); hour 5
-        // (MODE 200) has no row in any range.
+        // the gap between the ranges); hour 5
+        // (MODE 55, the inner gap) has no row in any range.
         expect(p.hourly.total_points).toBe(6); // both are still hourly points
         expect(p.hourly.timestamps).toEqual([0, 1, 2, 3, 4, 5].map(hourStart));
         expect(p.hourly.rows).toEqual([0, 12, 24, 36, 48, 60]);
@@ -639,7 +640,7 @@ describe('fakeHealthRust — compute_health_preview scores 1-hour averages', () 
     //   hour  7    split A / C, every row exactly on its own centre
     //   hour  8    every row in C, far from C's centre
     //   hour  9    C, but one row's criteria value is MISSING (that row's X is 42, not 30)
-    //   hour 10    C, but one row's criteria value (200) is outside every range
+    //   hour 10    C, but one row's criteria value (65) is in the inner gap between B and C
     //   hour 11    every row in B, on B's centre
     const A = [10, 20], B = [20, 40], C = [30, 60];
     const mixMode = (i: number): number | null => {
@@ -651,7 +652,7 @@ describe('fakeHealthRust — compute_health_preview scores 1-hour averages', () 
         if (h <= 7) return k < 6 ? 10 : 75;
         if (h === 8) return 75;
         if (h === 9) return k === 4 ? null : 75;
-        if (h === 10) return k === 4 ? 200 : 75;
+        if (h === 10) return k === 4 ? 65 : 75;
         return 45;
     };
     const mixData = (): HealthDataset => {
@@ -672,7 +673,7 @@ describe('fakeHealthRust — compute_health_preview scores 1-hour averages', () 
     };
     const MIX_REQ = {
         kind: 'clustering', first_sensor: 'X', second_sensor: 'Y', n_clusters: 3, criteria_sensor: 'MODE',
-        cluster_ranges: [{ min: 0, max: 30 }, { min: 30, max: 60 }, { min: 60, max: 90 }],
+        cluster_ranges: [{ min: 0, max: 30 }, { min: 30, max: 60 }, { min: 70, max: 90 }],
         filter: { timestamp_ranges: [{ start: '2024-03-01T00:00', end: '2024-03-01T06:59' }], value_filters: [], combine: 'and' },
         set_points: { outer_sd: 6 },
         test_periods: [{ start: '2024-03-01T07:00', end: '2024-03-01T11:59' }],
@@ -705,7 +706,7 @@ describe('fakeHealthRust — compute_health_preview scores 1-hour averages', () 
         // means (x = (11 x 30 + 42) / 12), but the hour has no cluster.
         expect([h.x[9], h.y[9]]).toEqual([31, 60]);
         expect([h.cluster[9], h.sd_distance[9], h.score[9]]).toEqual([null, null, null]);
-        // hour 10 — one row whose criteria value is outside every range among rows of C.
+        // hour 10 — one row whose criteria value is in the inner gap (no range) among rows of C.
         expect([h.x[10], h.y[10]]).toEqual(C);
         expect([h.cluster[10], h.sd_distance[10], h.score[10]]).toEqual([null, null, null]);
 

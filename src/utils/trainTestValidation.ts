@@ -68,7 +68,7 @@ export function testsChangedState(model: FailureModel, fg: RunningConditionFg): 
 export function testsChangedBannerText(state: TestsChangedState): string {
     return state === 'removed'
         ? 'Scoring periods removed — add at least one scoring period, then Mark complete again. The model was not re-trained.'
-        : 'Scoring periods changed — re-scored with the same trained model. Mark complete again to save the new results.';
+        : 'Scoring periods changed — re-scored with the same trained model. Mark complete again to confirm the new results.';
 }
 
 /** Workspace-wide summary for the notice under the running-condition line. */

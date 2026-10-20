@@ -419,12 +419,12 @@ fn clu_file(d: &ColumnarData, req: &HealthPreviewRequest, dir: &Path) -> Result<
     .map_err(CoreError::into_string)
 }
 
-/// Overlapping criteria ranges: the FIT of every cluster uses every row its
-/// own range contains (`clustering_preview_in`, legacy behaviour), but a row
-/// is SCORED against the first matching cluster only. Pinned so a change is
-/// deliberate; the UI should keep ranges from overlapping (observation).
+/// Overlapping criteria ranges: a row belongs to the FIRST matching cluster
+/// only, for the FIT and the SCORE alike (2026-10-20: Train, the health score
+/// and the export share `health_score::assign_cluster`; before, the fit used
+/// every row each range contained, so overlap rows were fitted twice).
 #[test]
-fn a2b_overlapping_ranges_fit_with_shared_rows_but_score_first_match_only() {
+fn a2b_overlapping_ranges_fit_and_score_first_match_only() {
     let d = three_cluster_data(9000, &|r: &mut Rng, _: usize| r.range(0.0, 30.0));
     let req = clu_req(
         vec![ClusterRange { min: Some(0.0), max: Some(20.0) }, ClusterRange { min: Some(10.0), max: Some(30.0) }],
@@ -434,11 +434,11 @@ fn a2b_overlapping_ranges_fit_with_shared_rows_but_score_first_match_only() {
     let p = clustering_preview(&d, &req).unwrap();
     let (st, se) = clu_parts(&p);
     let fit_rows: usize = st.clusters.iter().map(|c| c.n_rows).sum();
-    assert!(fit_rows > st.assigned_rows, "overlap rows are fitted twice: {fit_rows} vs {}", st.assigned_rows);
+    assert_eq!(fit_rows, st.assigned_rows, "every row is fitted once");
     let ci = d.col_index("C").unwrap();
     for i in 0..se.rows.len() {
         let c = d.columns[ci][se.rows[i] as usize];
-        if (10.0..20.0).contains(&c) {
+        if c > 10.0 && c <= 20.0 {
             assert_eq!(se.cluster[i], Some(1), "overlap row scored against the FIRST cluster");
         }
     }

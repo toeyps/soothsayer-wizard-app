@@ -32,6 +32,10 @@ mod formula_preview_internal;
 #[cfg(test)]
 #[path = "../tests/internal/qa_timestamp_import_internal.rs"]
 mod qa_timestamp_import_internal;
+// Export results end to end (same arrangement).
+#[cfg(test)]
+#[path = "../tests/internal/qa_workspace_export_internal.rs"]
+mod qa_workspace_export_internal;
 use formula_diagnostics::FormulaIssue;
 use csv_processor::{
     load_metadata, micros_to_naive, parse_timestamp, ts_to_micros, ColumnarData, CsvLoadReport,
@@ -2687,8 +2691,9 @@ fn write_individual_info(
 /// decision 2026-10-20; it was `[min, max)` before). `None` on either bound
 /// means "unbounded in that direction" — the cluster catches everything
 /// strictly above min (if max is None) or at/below max (if min is None).
-/// Used by clustering training / preview (here) and mirrored by
-/// `health_score::assign_cluster` (health score) and the export's row rule.
+/// Rows are assigned to a cluster by `health_score::assign_cluster` — Train
+/// (here), the health score and the export alike — which also opens the
+/// OUTER edges when there are two or more ranges (2026-10-20).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClusterRange {
     pub min: Option<f64>,
@@ -2696,6 +2701,15 @@ pub struct ClusterRange {
 }
 
 impl ClusterRange {
+    /// `(min, max)` tuples in list order — the shape
+    /// `health_score::assign_cluster` takes. Row selection over SEVERAL ranges
+    /// must go through `assign_cluster` (it opens the outer edges); `contains`
+    /// alone is the plain single-range test.
+    pub(crate) fn bounds(ranges: &[ClusterRange]) -> Vec<(Option<f64>, Option<f64>)> {
+        ranges.iter().map(|r| (r.min, r.max)).collect()
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
     fn contains(&self, v: f64) -> bool {
         if let Some(lo) = self.min {
             if v <= lo { return false; }
@@ -2872,6 +2886,9 @@ fn clustering_preview_in(
     let c2 = &data.columns[i2];
     let cc = &data.columns[ic];
 
+    // One rule with the health score and the export (outer edges open with
+    // >= 2 ranges; first match wins on an overlap).
+    let bounds = ClusterRange::bounds(&ranges);
     for (idx, range) in ranges.iter().enumerate() {
         let cluster_id = (idx + 1) as u32;
         let mut xs: Vec<f64> = Vec::new();
@@ -2880,8 +2897,7 @@ fn clustering_preview_in(
             if !resolved.is_noop() && !resolved.keeps(data, r) {
                 continue;
             }
-            let c = cc[r];
-            if !c.is_finite() || !range.contains(c) {
+            if health_score::assign_cluster(cc[r], &bounds) != Some(idx) {
                 continue;
             }
             let x = c1[r];

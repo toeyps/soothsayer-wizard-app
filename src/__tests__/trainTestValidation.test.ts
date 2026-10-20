@@ -264,7 +264,7 @@ describe('"scoring periods changed" banners (SPEC rule 8)', () => {
         expect(testsChangedState(stamped({ runningConditionMode: 'custom', customTestPeriods: [] }), fg())).toBe('removed');
         expect(testsChangedState(stamped({ status: true }), fg())).toBeNull();
         expect(testsChangedState(mk({ id: 'b' }), fg())).toBeNull();
-        expect(testsChangedBannerText('changed')).toBe('Scoring periods changed — re-scored with the same trained model. Mark complete again to save the new results.');
+        expect(testsChangedBannerText('changed')).toBe('Scoring periods changed — re-scored with the same trained model. Mark complete again to confirm the new results.');
         expect(testsChangedBannerText('removed')).toBe('Scoring periods removed — add at least one scoring period, then Mark complete again. The model was not re-trained.');
     });
 
