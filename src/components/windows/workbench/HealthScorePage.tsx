@@ -270,6 +270,7 @@ function HealthScorePage(props: HealthScorePageProps) {
                 unchecked={errorMode}
                 onChange={props.onSetPointsChange}
                 onCommit={props.onSetPointsCommit}
+                disabledReason={props.setPointsDisabledReason ?? null}
             >
                 <ChecksCard kind={data.kind} issues={issues} verdict={verdict} unavailable={errorMode} testNumbers={testNumbers} />
             </ScoreRuler>

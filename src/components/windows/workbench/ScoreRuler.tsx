@@ -380,6 +380,9 @@ export interface ScoreRulerProps {
     unchecked?: boolean;
     /** The Checks, rendered inside this card under the ruler. */
     children?: ReactNode;
+    /** Why the set points cannot be edited right now (an export is running): every
+     *  input and button of the ruler is disabled, with this as its tooltip. */
+    disabledReason?: string | null;
 }
 
 /** The card's state dot: colour class (the sensor list's) + the tooltip words. */
@@ -404,7 +407,9 @@ const REL_INPUT_LABEL: Record<(typeof REL_RULER_POINTS)[number]['key'], string> 
     residual_at_0_upper: '0 high — the residual where the score reaches 0 on the high side',
 };
 
-export default function ScoreRuler({ data, setPoints, unit, issues, verdict, onChange, onCommit, unchecked, children }: ScoreRulerProps) {
+export default function ScoreRuler({ data, setPoints, unit, issues, verdict, onChange, onCommit, unchecked, children, disabledReason = null }: ScoreRulerProps) {
+    const off = !!disabledReason;
+    const offTitle = disabledReason ?? undefined;
     const checksId = useId();
     // Every input points at the Checks: they say, in words, what its colour means.
     const describedBy = children ? checksId : undefined;
@@ -429,12 +434,13 @@ export default function ScoreRuler({ data, setPoints, unit, issues, verdict, onC
                 value={s === 'lower' ? sp.lower : sp.upper}
                 state={boxState(s)}
                 describedBy={describedBy}
+                disabledReason={disabledReason}
                 onChange={v => onChange({ ...sp, [s]: v })}
                 onCommit={onCommit}
             />
         );
         inputs = { lower: field('lower'), upper: field('upper') };
-        note = <MasterNote sp={sp} onChange={onChange} />;
+        note = <MasterNote sp={sp} onChange={onChange} disabledReason={disabledReason} />;
     } else if (model && setPoints.kind === 'relationship') {
         const sp = setPoints;
         // The four points start EMPTY (no defaults); the placeholder only shows the side's sign.
@@ -449,6 +455,7 @@ export default function ScoreRuler({ data, setPoints, unit, issues, verdict, onC
                     value={sp[p.prop]}
                     state={boxState(p.key)}
                     describedBy={describedBy}
+                    disabledReason={disabledReason}
                     onChange={v => onChange({ ...sp, [p.prop]: v })}
                     onCommit={onCommit}
                 />
@@ -465,7 +472,7 @@ export default function ScoreRuler({ data, setPoints, unit, issues, verdict, onC
         inputs = {
             outer_sd: (
                 <span className="hs-kstep" data-testid="ring-control">
-                    <button type="button" data-testid="ring-dec" aria-label="Smaller" onClick={() => set(stepRing(sp.outerSd, -1), true)}>−</button>
+                    <button type="button" data-testid="ring-dec" aria-label="Smaller" disabled={off} title={offTitle} onClick={() => set(stepRing(sp.outerSd, -1), true)}>−</button>
                     <NumField
                         big
                         wide
@@ -477,10 +484,11 @@ export default function ScoreRuler({ data, setPoints, unit, issues, verdict, onC
                         value={sp.outerSd}
                         state={boxState('outer_sd')}
                         describedBy={describedBy}
+                        disabledReason={disabledReason}
                         onChange={v => set(v)}
                         onCommit={onCommit}
                     />
-                    <button type="button" data-testid="ring-inc" aria-label="Larger" onClick={() => set(stepRing(sp.outerSd, 1), true)}>+</button>
+                    <button type="button" data-testid="ring-inc" aria-label="Larger" disabled={off} title={offTitle} onClick={() => set(stepRing(sp.outerSd, 1), true)}>+</button>
                 </span>
             ),
         };
@@ -488,7 +496,7 @@ export default function ScoreRuler({ data, setPoints, unit, issues, verdict, onC
             <div className="wb3-ruler-note" data-testid="ring-note">
                 <span className="hs-quick" data-testid="ring-quick">
                     {RING_QUICK.map(q => (
-                        <button key={q} type="button" data-testid={`ring-quick-${q}`} className={sp.outerSd === q ? 'on' : ''} aria-pressed={sp.outerSd === q} onClick={() => set(q, true)}>{q}×</button>
+                        <button key={q} type="button" data-testid={`ring-quick-${q}`} className={sp.outerSd === q ? 'on' : ''} aria-pressed={sp.outerSd === q} disabled={off} title={offTitle} onClick={() => set(q, true)}>{q}×</button>
                     ))}
                 </span>
                 <span>One N for every cluster: each cluster gets its own 1×, 3× and N× rings, sized by its own SD.</span>
@@ -513,7 +521,7 @@ export default function ScoreRuler({ data, setPoints, unit, issues, verdict, onC
 
 /** Individual: ONE footnote for both sides — where L / H come from, and the master-data
  *  rule. A "Use master …" link shows only for a side that differs from the master data. */
-function MasterNote({ sp, onChange }: { sp: IndividualHealthSetPoints; onChange: ScoreRulerProps['onChange'] }) {
+function MasterNote({ sp, onChange, disabledReason }: { sp: IndividualHealthSetPoints; onChange: ScoreRulerProps['onChange']; disabledReason: string | null }) {
     const srcL = setPointSource(sp, 'lower');
     const srcU = setPointSource(sp, 'upper');
     const words = (letter: 'L' | 'H', src: ReturnType<typeof setPointSource>) =>
@@ -525,7 +533,7 @@ function MasterNote({ sp, onChange }: { sp: IndividualHealthSetPoints; onChange:
         const master = s === 'lower' ? sp.masterLower : sp.masterUpper;
         if (typeof master !== 'number' || !canResetToMaster(sp, s)) return null;
         return (
-            <button key={s} type="button" className="hs-restore" data-testid={`sp-${s}-reset`} onClick={() => onChange(resetToMaster(sp, s), true)}>
+            <button key={s} type="button" className="hs-restore" data-testid={`sp-${s}-reset`} disabled={!!disabledReason} title={disabledReason ?? undefined} onClick={() => onChange(resetToMaster(sp, s), true)}>
                 Use master {s === 'lower' ? 'L' : 'H'} {fmtNumExact(master)}
             </button>
         );

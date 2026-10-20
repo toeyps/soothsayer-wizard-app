@@ -62,6 +62,9 @@ export interface HealthScorePageProps extends WorkbenchPageProps {
     onSetPointsChange: (next: HealthSetPoints, commit?: boolean) => void;
     /** The user is done typing in an input (blur / Enter): persist the draft. */
     onSetPointsCommit: () => void;
+    /** Why the set points cannot be edited right now (an export is running), or
+     *  null: the ruler's inputs are disabled with this as their tooltip. */
+    setPointsDisabledReason?: string | null;
     /** Issues Rust returned when the last Mark complete was refused (shown in
      *  Checks until the set points change); `null` = show the live preview's. */
     attemptIssues: HealthIssue[] | null;

@@ -48,6 +48,10 @@ import { buildCheckLines, healthVerdict, isBlockingIssue, sameSetPoints, verdict
 import type { SaveInfo, WorkbenchPage } from "./workbench/workbenchTypes";
 import { isPickerSurfaceOpen, SensorPickerSingle } from "../sensor/SensorPicker";
 import { aboveConditions } from "../../utils/runningStatus";
+import { ExportBar, ExportModal, type ExportedLine } from "./workbench/ExportParts";
+import { useWorkspaceExport, type UseWorkspaceExport } from "../../hooks/useWorkspaceExport";
+import { exportReadiness } from "../../utils/exportReadiness";
+import { revealExportFolder } from "../../utils/workspaceExport";
 import { CloseRunDialog, LockedSettingsHeader, QueuedCard, RunSetPointsBanner, RunStrip, SensorTrainButton, sensorTrainMenuCopy, TrainAllBar, TrainAllModal, type TrainGroupInfo, type TrainMenuItem, type TrainReasonTone, type TrainRowModel } from "./workbench/TrainQueueParts";
 import { useTrainQueue } from "../../hooks/useTrainQueue";
 import type { TrainCandidate, TrainFixTarget, TrainOutcome } from "../../types/trainQueue";
@@ -265,6 +269,10 @@ const MAX_CLUSTERS_REASON = `At most ${MAX_CLUSTERS} clusters`;
 const NO_PREDICTORS: string[] = [];
 /** Shown when a Train finds the dataset replaced since this window opened. */
 const DATASET_CHANGED_MESSAGE = 'The dataset changed since this window was opened — close it and reopen Build Model from the Dashboard.';
+/** Export results is writing: Train, Mark complete, set points and model settings wait. */
+const EXPORT_BUSY_REASON = 'Available when the export finishes';
+/** The close notice while a running export is finished first (capped like Mark complete). */
+const EXPORT_CLOSE_WAIT_NOTICE = 'Finishing the export first — the window closes by itself when it is done (at most 90 s).';
 /** Mark complete, Compare predictors and the Re-train buttons while a training
  *  run is active: one Relation-model sidecar call at a time. */
 const TRAIN_RUN_ACTIVE_REASON = 'Wait for the training run to finish';
@@ -588,6 +596,10 @@ export default function BuildModelWindow() {
      *  close attempt does not wait for it again. */
     const closeWaitGivenUpRef = useRef(false);
     const [closeNotice, setCloseNotice] = useState<string | null>(null);
+    /** The running Export results (its `start` promise), so a window close can wait for it. */
+    const exportRunRef = useRef<Promise<unknown> | null>(null);
+    /** Cancels the running export (a close that gave up waiting). */
+    const exportCancelRef = useRef<(() => Promise<void>) | null>(null);
 
     // ---- Train sensor / Train all with a queue ----
     // `useTrainQueue` runs models strictly one at a time through `trainForQueue`
@@ -835,6 +847,22 @@ export default function BuildModelWindow() {
         if (pendingSaveRef.current) await pendingSaveRef.current;
         return true;
     }, [commitSetPointDrafts]);
+
+    /** A running Export results is finished before the window closes — never forever:
+     *  after `MARK_COMPLETE_CLOSE_WAIT` it is cancelled (nothing is left half-written)
+     *  and the close goes on. */
+    const waitForExportBeforeClose = useCallback(async (): Promise<void> => {
+        const run = exportRunRef.current;
+        if (!run) return;
+        setCloseNotice(EXPORT_CLOSE_WAIT_NOTICE);
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const finished = run.then(() => true, () => true);
+        const gaveUp = new Promise<boolean>(resolve => { timer = setTimeout(() => resolve(false), MARK_COMPLETE_CLOSE_WAIT.ms); });
+        const ok = await Promise.race([finished, gaveUp]);
+        if (timer) clearTimeout(timer);
+        if (!ok) await exportCancelRef.current?.();
+        setCloseNotice(null);
+    }, []);
 
     // A draft for a model that no longer exists (deleted on the Dashboard
     // meanwhile) must not linger.
@@ -1096,8 +1124,6 @@ export default function BuildModelWindow() {
         if (!data || workspaceIdRef.current !== ws) return;
         setProjectDetails({ ws: projectInfoOf(data), others });
     }, []);
-    // No visible entry yet: the export checklist (next phase) opens it.
-    void openProjectDetails;
 
     // Returns the write's promise (also tracked via `trackPending`, so a
     // window close can await it) rather than being fire-and-forget itself.
@@ -2367,6 +2393,7 @@ export default function BuildModelWindow() {
      *  running Mark complete, capped), then close. */
     const closeNow = async () => {
         flushFocusedInput();
+        await waitForExportBeforeClose();
         // `false` = a running save did not finish in time: the window stays open (notice shown).
         if (!(await flushAllPending())) return;
         try {
@@ -2429,14 +2456,16 @@ export default function BuildModelWindow() {
             // A set-point draft typed but never blurred is a pending write too.
             void commitSetPointDrafts();
             const pending = pendingSaveRef.current;
-            // A running "Mark complete" (export + save) counts as pending too.
-            if (!pending && markRunsRef.current.size === 0) return;
+            // A running "Mark complete" (export + save) counts as pending too, and so does
+            // a running Export results.
+            if (!pending && markRunsRef.current.size === 0 && !exportRunRef.current) return;
             event.preventDefault();
+            await waitForExportBeforeClose();
             if (!(await flushAllPending())) return;
             await win.close();
         })).then(fn => { if (disposed) fn(); else unlisten = fn; });
         return () => { disposed = true; if (unlisten) unlisten(); };
-    }, [flushAllPending, commitSetPointDrafts]);
+    }, [flushAllPending, commitSetPointDrafts, waitForExportBeforeClose]);
 
     // The Dashboard that opened this window is going away (Back to Import / another
     // project): it closes this window right after. A run would hold that close
@@ -2965,6 +2994,57 @@ export default function BuildModelWindow() {
         (activePageTabRef.current ?? noticeRef.current)?.focus();
     }, [drafts]);
 
+    // ---- Export results (DESIGN_SYSTEM §4.2): the bottom bar + the dialog ----
+    const exportOrder = sensorGroupsAll.flatMap(sg => KIND_ORDER.flatMap(k => sg.models.filter(m => m.kind === k))).map(m => m.id);
+    const workspaceExport = useWorkspaceExport(workspaceId, {
+        metadata: sensorMetadata,
+        headers: allSensors.length ? allSensors : null,
+        recipes: specialRecipes,
+        order: exportOrder,
+        expectedGeneration: generation,
+    });
+    const exporting = workspaceExport.phase === 'running';
+    exportCancelRef.current = workspaceExport.cancel;
+    const [exportOpen, setExportOpen] = useState(false);
+    /** "N models exported … · Open folder": for the window's life, until a model's
+     *  status changes or the window is re-pointed at another project. */
+    const [exportedLine, setExportedLine] = useState<ExportedLine | null>(null);
+    /** The models' statuses when the last export finished. */
+    const exportedSigRef = useRef<string | null>(null);
+    const exportStatusSig = allModels.map(m => `${m.id}:${m.status ? 1 : 0}`).join(',');
+    const exportStatusSigRef = useRef(exportStatusSig);
+    exportStatusSigRef.current = exportStatusSig;
+    useEffect(() => {
+        setExportedLine(null);
+        exportedSigRef.current = null;
+        setExportOpen(false);
+    }, [workspaceId]);
+    const exportResult = workspaceExport.result;
+    const exportHidden = workspaceExport.hidden;
+    const exportShow = workspaceExport.show;
+    useEffect(() => {
+        if (workspaceExport.phase !== 'done' || !exportResult) return;
+        setExportedLine({ models: exportResult.models, folder: exportResult.folder, at: new Date() });
+        exportedSigRef.current = exportStatusSigRef.current;
+        // Finished while hidden: the bar says it; the dialog is not reopened.
+        if (exportHidden) { setExportOpen(false); exportShow(); }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [workspaceExport.phase, exportResult]);
+    useEffect(() => {
+        if (exportedSigRef.current !== null && exportedSigRef.current !== exportStatusSig) {
+            exportedSigRef.current = null;
+            setExportedLine(null);
+        }
+    }, [exportStatusSig]);
+    /** `start`, registered so a window close waits for it. */
+    const exportStart = workspaceExport.start;
+    const startExport = useCallback<UseWorkspaceExport['start']>((destDir, at) => {
+        const run = exportStart(destDir, at);
+        exportRunRef.current = run;
+        void run.finally(() => { if (exportRunRef.current === run) exportRunRef.current = null; });
+        return run;
+    }, [exportStart]);
+
     if (loading) {
         return <div style={{ background: 'var(--card-bg)', height: '100vh' }} />;
     }
@@ -3006,7 +3086,7 @@ export default function BuildModelWindow() {
     /** Why BOTH Train buttons are disabled (shared rule). A workspace without a
      *  running condition only blocks when nothing can train anyway (a Custom
      *  model with its own condition can still train). */
-    const trainAllReason = trainButtonsBlockedReason({
+    const trainAllReason = exporting ? EXPORT_BUSY_REASON : trainButtonsBlockedReason({
         stale: queue.stale,
         runningConditionSet: rcStepState !== 'unset' || allCounts.ready > 0,
         running: queue.isRunning,
@@ -3711,12 +3791,16 @@ export default function BuildModelWindow() {
                     {missing.length > 0 && <span data-testid="settings-to-fix" className="f4-pill f4-pill--warn">{missing.length} to fix</span>}
                 </button>
                 {isOpen && (
-                    <div
+                    // A fieldset, so `disabled` reaches every field of the settings while
+                    // Export results is writing (the notice line says why).
+                    <fieldset
                         data-testid="add-model-form"
                         className="bmw-sets-body"
+                        disabled={exporting}
+                        title={exporting ? EXPORT_BUSY_REASON : undefined}
                     >
                         {renderModelSettingsFields(m, d)}
-                    </div>
+                    </fieldset>
                 )}
             </div>
         );
@@ -4094,6 +4178,8 @@ export default function BuildModelWindow() {
      *  null. Only the active model has a health preview, so this is for the active
      *  model. Rust's validation is the source of "set points not valid". */
     const markCompleteBlock = (m: FailureModel): string | null => {
+        // Export results is writing: nothing about a model changes meanwhile.
+        if (exporting) return EXPORT_BUSY_REASON;
         // A category on the sensor, and a model name no other model of the project uses
         // (the export writes it as the model's display name).
         const projectBlock = markCompleteProjectBlock(allModels, m, categoryOf(m), plainSensorLabel);
@@ -4288,7 +4374,9 @@ export default function BuildModelWindow() {
         let line: ReactNode = null;
         let tone: 'plain' | 'warn' | 'bad' | 'ok' = 'plain';
         let lineId: 'footer-status' | 'mark-block-reason' | 'build-block-reason' = 'footer-status';
-        if (page === 'health') {
+        if (exporting) {
+            line = <><Loader2 size={11} className="pm-spin" aria-hidden="true" /> Exporting results · Train sensor, Mark complete and set points are available when the export finishes</>;
+        } else if (page === 'health') {
             // Checking is said HERE only (no card on the page unless it is slow).
             if (saving) line = <><Loader2 size={11} className="pm-spin" aria-hidden="true" /> Checking the set points…</>;
             // No data for it in the loaded file: the same sentence on both pages (it is
@@ -4374,8 +4462,8 @@ export default function BuildModelWindow() {
         // tab ②, and a filled copy beside a ghost Train sensor read as a required action.
         // Tab ② says why it is closed and carries the "set points needed" cue.)
         const saveShown = page === 'model' && hasDraft;
-        const saveDisabled = saveReason !== null || locked;
-        const saveTitle = locked ? 'Settings are locked while this model is in the run' : saveReason ?? undefined;
+        const saveDisabled = saveReason !== null || locked || exporting;
+        const saveTitle = exporting ? EXPORT_BUSY_REASON : locked ? 'Settings are locked while this model is in the run' : saveReason ?? undefined;
         // A Mark complete button is on screen (a Complete model has "Mark incomplete").
         const markShown = page === 'health' && !done;
         // The reason of the DISABLED state button, in ONE short line under it (the button's
@@ -4411,7 +4499,7 @@ export default function BuildModelWindow() {
                         <div className="wb3-act-row">
                             {done ? (
                                 <>
-                                    <button type="button" className="f4-btn f4-btn--plain f4-btn--small" data-testid="mark-incomplete" disabled={saving} onClick={() => markModelIncomplete(m.id)}>
+                                    <button type="button" className="f4-btn f4-btn--plain f4-btn--small" data-testid="mark-incomplete" disabled={saving || exporting} title={exporting ? EXPORT_BUSY_REASON : undefined} onClick={() => markModelIncomplete(m.id)}>
                                         Mark incomplete
                                     </button>
                                 </>
@@ -4497,8 +4585,9 @@ export default function BuildModelWindow() {
         else if (cant.length) { why = `${trains(ready)}${ownRcNote(ready)} · ${names(cant, ', ')} can't train, skipped`; tone = 'warn'; }
         else if (up.length) why = `${trains(ready)}${ownRcNote(ready)} · ${names(up, ', ')} up to date, skipped`;
         else why = `${trains(ready)}${ownRcNote(ready) || ` · ≈ ${formatTrainSeconds(roughTrainSeconds(ready.map(m => m.kind)))}`}`;
-        const busy = !queue.canStart;
-        const title = queue.stale ? TRAIN_STALE_MESSAGE
+        const busy = !queue.canStart || exporting;
+        const title = exporting ? EXPORT_BUSY_REASON
+            : queue.stale ? TRAIN_STALE_MESSAGE
             : queue.isRunning ? TRAIN_RUN_ACTIVE_REASON
             : rcBlocks ? TRAIN_NEEDS_RUNNING_CONDITION
             : ready.length === 0 ? (cant.length ? cantDetail : why)
@@ -4656,6 +4745,8 @@ export default function BuildModelWindow() {
                                             type="button"
                                             aria-pressed={active}
                                             className={active ? (c === 'condition' ? 'on-cond' : 'on-perf') : undefined}
+                                            disabled={exporting}
+                                            title={exporting ? EXPORT_BUSY_REASON : undefined}
                                             onClick={() => changeCategory(selectedSensorKey!, c)}
                                         >
                                             {CATEGORY_LABELS[c]}
@@ -4800,6 +4891,7 @@ export default function BuildModelWindow() {
                                 setPoints={setPointsOf(activeModel)}
                                 onSetPointsChange={onSpChange}
                                 onSetPointsCommit={onSpCommit}
+                                setPointsDisabledReason={exporting ? EXPORT_BUSY_REASON : null}
                                 attemptIssues={attemptIssues[activeModel.id] ?? null}
                                 save={saveInfoFor(activeModel)}
                                 fitGone={fitGoneActionsOf(activeModel)}
@@ -4903,6 +4995,43 @@ export default function BuildModelWindow() {
         { runningConditionFilters: rcView.filters, runningConditionNoneConfirmed: rcView.noneConfirmed },
         gateHeaders,
     );
+
+    // ---- Export results: what the bar and the checklist say ----
+    // The window's own view of the workspace (kept in step with the disk by every
+    // write and broadcast); the dialog's dry run (`plan_workspace_export`) reads the
+    // disk itself.
+    const exportWorkspace = {
+        id: workspaceId ?? '',
+        name: projectInfo?.name ?? '',
+        machine: projectInfo?.machine,
+        dataUtcOffsetMin: projectInfo?.dataUtcOffsetMin,
+        specialSensorRecipes: specialRecipes ?? undefined,
+        failureGroupState: {
+            ...gateFg,
+            groups: allGroups,
+            runningStatus: runningStatusSaved,
+        },
+    } as WorkspaceState;
+    const readiness = exportReadiness({
+        workspace: exportWorkspace,
+        metadata: sensorMetadata,
+        headers: gateHeaders,
+        recipes: specialRecipes,
+        noData: allModels.filter(m => noDataOf(m) !== null).map(m => m.id),
+        loadFailed: allModels.filter(loadFailedOf).map(m => m.id),
+        order: runOrder.map(m => m.id),
+        labelOf: tag => sensorPlainLabel(sensorLookup(tag)),
+    });
+    // At most ONE filled button on screen: Export is filled only when nothing in the
+    // detail pane / Step-1 card is (every model Complete, no draft, the condition set).
+    const exportFilled = readiness.counts.allReady && rcStepState === 'set' && Object.keys(drafts).length === 0;
+    const exportApi: UseWorkspaceExport = { ...workspaceExport, start: startExport };
+    /** Opens the Export dialog. `plan` = ask Rust for the dry run (a fresh look at the disk). */
+    const openExport = (plan: boolean) => {
+        workspaceExport.show();
+        setExportOpen(true);
+        if (plan && !exporting) void workspaceExport.plan();
+    };
 
     return (
         <SensorMetaContext.Provider value={sensorLookup}>
@@ -5106,6 +5235,19 @@ export default function BuildModelWindow() {
                     )}
                     <section className="bmw-detail">{renderDetailPane()}</section>
                 </div>
+                {/* Export results: the window's bottom bar, under the list AND the detail pane. */}
+                <ExportBar
+                    counts={readiness.counts}
+                    phase={workspaceExport.phase}
+                    progress={workspaceExport.progress}
+                    exported={exportedLine}
+                    filled={exportFilled}
+                    blockedWhy={queue.isRunning ? TRAIN_RUN_ACTIVE_REASON : null}
+                    onExport={() => openExport(true)}
+                    onShowWhich={() => openExport(true)}
+                    onShowRun={() => openExport(false)}
+                    onOpenFolder={() => { if (exportedLine) void revealExportFolder(exportedLine.folder).catch(e => console.warn('Open folder failed', e)); }}
+                />
             </div>
 
             {rcFilterOpen && (
@@ -5223,11 +5365,36 @@ export default function BuildModelWindow() {
                 </div>
             )}
 
+            {exportOpen && workspaceId && (
+                <ExportModal
+                    readiness={readiness}
+                    groups={trainGroups}
+                    projectName={projectInfo?.name ?? ''}
+                    machineTag={projectInfo?.machine?.tag ?? ''}
+                    exp={exportApi}
+                    stacked={projectDetails !== null}
+                    unitOf={getUnit}
+                    onClose={() => setExportOpen(false)}
+                    onOpenModel={id => {
+                        setExportOpen(false);
+                        const m = allModels.find(x => x.id === id);
+                        focusModel(id, m && isModelTrainedFresh(m) ? 'health' : 'model');
+                    }}
+                    onOpenProjectDetails={() => { void openProjectDetails(); }}
+                    onOpenRunningCondition={() => { setExportOpen(false); setRcFilterOpen(true); }}
+                />
+            )}
+            {/* After the Export dialog, so it sits on top of it (Esc closes only this one). */}
             {projectDetails && (
                 <ProjectDetailsModal
                     workspace={projectDetails.ws}
                     existing={projectDetails.others}
-                    onSaved={p => { if (p.workspaceId === workspaceIdRef.current) reloadProjectInfo(p.workspaceId); }}
+                    onSaved={p => {
+                        if (p.workspaceId !== workspaceIdRef.current) return;
+                        reloadProjectInfo(p.workspaceId);
+                        // The dry run's machine_info / folder name follow the new details.
+                        if (exportOpen && !exporting) void workspaceExport.plan();
+                    }}
                     onClose={() => setProjectDetails(null)}
                 />
             )}

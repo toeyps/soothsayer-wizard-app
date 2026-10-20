@@ -6872,3 +6872,126 @@ body {
 .rs-val input { width: 100%; min-width: 0; background: none; border: 0; outline: none; color: var(--text-primary); font: inherit; font-family: var(--mono); font-size: 12px; }
 .rs-val--empty { border-style: dashed; border-color: var(--warn); }
 .rs-note { font-size: 11.5px; line-height: 1.45; color: var(--text-faint); }
+
+/* ===== Export results (2026-10-20, DESIGN_SYSTEM §4.2): the Build Model window's
+   bottom bar (variant C) and the Export dialog — readiness checklist, Save to,
+   What is written + Peek, the confirm step, writing / done / failed ===== */
+/* The workspace status bar: full width, under the list AND the detail pane. */
+.exb { display: flex; align-items: center; gap: 12px; height: 40px; flex-shrink: 0; padding: 0 12px 0 16px; border-top: 1px solid var(--border); background: var(--card-bg); }
+.exb-state { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-secondary); }
+.exb-state svg { flex: none; }
+.exb-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.exb-t b { color: var(--text-primary); font-weight: 600; }
+.exb .tq-link { flex: none; }
+.exb-bar { flex-shrink: 0; width: 140px; height: 4px; border-radius: 2px; background: var(--border-strong); overflow: hidden; }
+.exb-bar span { display: block; height: 100%; background: var(--accent-color); transition: width 300ms; }
+.exb-path { font-family: var(--mono); font-size: 11px; color: var(--text-secondary); }
+.exb-why { flex: none; white-space: nowrap; color: var(--text-faint); }
+.exb--warn .exb-n { color: var(--warn); }
+.exb--ok .exb-state { color: var(--ok); }
+.exb--ok .exb-t b { color: var(--ok); }
+.exb--now .exb-state { color: var(--text-primary); }
+.exb--bad .exb-state { color: var(--danger); }
+.exb--bad .exb-t b { color: var(--danger); }
+@media (max-width: 760px) { .exb-bar { display: none; } }
+@media (prefers-reduced-motion: reduce) { .exb-bar span { transition: none; } }
+/* The model settings are a fieldset (disabled while an export writes): no fieldset chrome. */
+fieldset.bmw-sets-body { margin: 0; border: 0; min-width: 0; }
+
+/* The dialog */
+.ex-modal { width: min(820px, 100%); }
+.ex-sec { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-primary); }
+.ex-lbl { display: flex; align-items: center; gap: 8px; font-size: 10.5px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-faint); }
+.ex-lbl .tq-link { margin-left: auto; text-transform: none; letter-spacing: 0; }
+.ex-hint { font-size: 11.5px; line-height: 1.45; color: var(--text-secondary); }
+.ex-hint b { color: var(--text-primary); font-weight: 600; }
+.ex-hint--faint { color: var(--text-faint); }
+.ex-mono { font-family: var(--mono); font-size: 11.5px; color: var(--text-primary); }
+.ex-key { margin-left: 5px; font-size: 10.5px; color: var(--text-faint); }
+.ex-dest { display: flex; align-items: center; gap: 10px; min-width: 0; min-height: 32px; color: var(--text-secondary); }
+.ex-dest--empty { color: var(--warn); }
+.ex-dest .rcx-btn { margin-left: auto; flex: none; }
+.ex-path { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 11.5px; color: var(--text-primary); }
+.ex-path--wrap { margin: 2px 0 6px; white-space: normal; overflow-wrap: anywhere; }
+.ex-kinds { display: flex; flex-wrap: wrap; gap: 14px; font-size: 12px; color: var(--text-secondary); }
+.ex-kind { display: inline-flex; align-items: center; gap: 6px; }
+.ex-kind b { color: var(--text-primary); }
+.ex-disc { justify-self: start; display: inline-flex; align-items: center; gap: 4px; padding: 0; border: 0; border-radius: 4px; background: none; font: inherit; font-size: 11.5px; font-weight: 600; color: var(--accent-hi); cursor: pointer; }
+.ex-tree { display: grid; gap: 2px; max-height: 260px; overflow: auto; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--card-bg); }
+.ex-t { display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 24px; font-size: 12px; color: var(--text-secondary); }
+.ex-t svg { flex: none; color: var(--text-faint); }
+.ex-t--root svg { color: var(--accent-hi); }
+.ex-t--l1 { padding-left: 18px; }
+.ex-t--l2 { padding-left: 36px; margin-top: 4px; }
+.ex-t--l3 { padding-left: 54px; }
+.ex-t--btn { width: 100%; border: 0; border-radius: 6px; background: none; font: inherit; text-align: left; cursor: pointer; }
+.ex-t--btn:hover, .ex-t--on { background: var(--hover-bg); }
+.ex-t-note { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--text-faint); }
+.ex-t-peek { margin-left: auto; font-size: 11px; font-weight: 600; color: var(--text-faint); }
+.ex-t--on .ex-t-peek { color: var(--accent-hi); }
+.ex-t-sensor { min-width: 0; display: flex; }
+.ex-file { flex: none; color: var(--text-primary); }
+.ex-kb-s { width: 18px; height: 18px; font-size: 0.56rem; }
+.ex-peek { display: grid; gap: 6px; }
+.ex-peek-h { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.ex-manifest { margin: 0; max-height: 260px; overflow: auto; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--card-bg); font-family: var(--mono); font-size: 11px; line-height: 1.5; color: var(--text-primary); white-space: pre; }
+.ex-cap { font-size: 11px; color: var(--text-faint); }
+.ex-bar { display: flex; gap: 3px; height: 6px; }
+.ex-bar span { flex: 1; border-radius: 3px; background: repeating-linear-gradient(135deg, var(--border-strong) 0 3px, transparent 3px 6px); }
+.ex-bar span.done { background: var(--ok); }
+.ex-bar span.now { background: var(--accent-color); animation: exPulse 1s ease-in-out infinite alternate; }
+@keyframes exPulse { from { opacity: 0.5; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .ex-bar span.now { animation: none; } }
+.ex-line { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 12px; color: var(--text-secondary); }
+.ex-line--plain { padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; }
+.ex-line--now { color: var(--text-primary); }
+.ex-now-t { min-width: 0; display: flex; color: var(--text-secondary); }
+.ex-st--complete { color: var(--ok); }
+.ex-st--need { color: var(--warn); }
+.ex-st--bad { color: var(--danger); }
+.ex-st--none { color: var(--text-faint); }
+.ex-st--now { color: var(--accent-hi); }
+.ex-row .tq-st { max-width: 260px; white-space: normal; text-align: right; }
+.ex-card { display: flex; align-items: flex-start; gap: 12px; padding: 14px; border: 1px solid var(--border); border-radius: 10px; }
+.ex-card--ok { border-color: rgba(16, 185, 129, 0.3); background: var(--ok-m); }
+.ex-card--bad { border-color: var(--danger-line); background: var(--danger-muted); }
+.ex-card--warn { border-color: color-mix(in oklab, var(--warn) 45%, transparent); background: color-mix(in oklab, var(--warn) 7%, transparent); }
+.ex-card-ico { flex-shrink: 0; display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; }
+.ex-card--ok .ex-card-ico { background: var(--ok); color: #04150c; }
+.ex-card--bad .ex-card-ico { background: var(--danger); color: #fff; }
+.ex-card--warn .ex-card-ico { color: var(--warn); background: color-mix(in oklab, var(--warn) 16%, transparent); }
+.ex-card-t { font-size: 13px; font-weight: 600; color: var(--text-primary); }
+.ex-err { margin: 4px 0; font-family: var(--mono); font-size: 11.5px; color: var(--danger); overflow-wrap: anywhere; }
+.ex-nc { display: grid; gap: 4px; }
+.ex-nc-item { display: grid; gap: 2px; padding: 6px 0; border-top: 1px solid var(--border); }
+.ex-nc-item:first-child { padding-top: 0; border-top: 0; }
+.ex-nc-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; min-width: 0; font-size: 12px; }
+.ex-nc-s { min-width: 0; display: flex; font-weight: 500; color: var(--text-primary); }
+.ex-nc-m { color: var(--text-secondary); }
+.ex-nc-used { display: flex; flex-wrap: wrap; gap: 2px 6px; font-size: 11.5px; color: var(--text-secondary); }
+.ex-nc-used > span { display: inline-flex; align-items: baseline; gap: 5px; min-width: 0; }
+.ex-nc-fix { font-size: 11px; color: var(--text-faint); }
+.tq-link:focus-visible, .ex-disc:focus-visible, .ex-t--btn:focus-visible { outline: 2px solid var(--accent-color); outline-offset: 1px; }
+
+/* The readiness checklist ("Before export") */
+.rd-list { display: grid; gap: 4px; }
+.rd-row { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; align-items: start; gap: 10px; padding: 7px 8px; border-radius: 8px; }
+.rd-row--bad { background: var(--warn-muted); }
+.rd-ico { display: grid; place-items: center; width: 18px; height: 18px; margin-top: 1px; border-radius: 50%; }
+.rd-ico--ok { background: var(--ok-m); color: var(--ok); }
+.rd-ico--bad { background: rgba(0, 0, 0, 0.25); color: var(--warn); }
+.rd-ico--info { background: var(--chip-bg); color: var(--text-faint); }
+.rd-t { min-width: 0; font-size: 12.5px; color: var(--text-primary); }
+.rd-t b { font-weight: 600; }
+.rd-sub { margin-top: 1px; font-size: 11.5px; color: var(--text-secondary); }
+.rd-sub .ex-mono { color: var(--text-secondary); }
+.rd-der { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; min-width: 0; }
+.rd-where { margin-top: 2px; white-space: nowrap; font-size: 11px; color: var(--text-faint); }
+.rd-act { display: flex; align-items: center; gap: 8px; margin-top: 1px; }
+.rd-models { display: grid; gap: 4px; margin: 2px 0 0 28px; }
+.rd-all { display: flex; align-items: center; gap: 10px; font-size: 12.5px; color: var(--text-primary); }
+.rd-all .rd-ico { margin: 0; }
+.rd-sum { display: flex; flex-wrap: wrap; gap: 10px; font-size: 12px; color: var(--text-secondary); }
+.rd-sum b { color: var(--text-primary); }
+.rd-sum .rd-n { color: var(--warn); font-weight: 600; }
+.rd-notes { display: grid; gap: 2px; }

@@ -49,11 +49,13 @@ interface NumFieldProps {
     big?: boolean;
     /** Id of the element that explains this input's state (the Checks under the ruler). */
     describedBy?: string;
+    /** Why the input cannot be edited right now (e.g. an export is running): disables it, as its tooltip. */
+    disabledReason?: string | null;
 }
 
 /** A number input with its own text state, so "-", "1." and "" can be typed
  *  without the field fighting the parsed number. */
-export function NumField({ testId, ariaLabel, unit, value, state, onChange, onCommit, suffix, wide, hint, big, describedBy }: NumFieldProps) {
+export function NumField({ testId, ariaLabel, unit, value, state, onChange, onCommit, suffix, wide, hint, big, describedBy, disabledReason }: NumFieldProps) {
     const [text, setText] = useState(toText(value));
     // The draft changed from outside (use master, a stepper, a broadcast): follow
     // it - but never rewrite what the user is typing when it parses to the value
@@ -75,6 +77,8 @@ export function NumField({ testId, ariaLabel, unit, value, state, onChange, onCo
                 aria-required={state === 'required' ? true : undefined}
                 aria-invalid={state === 'error' ? true : undefined}
                 aria-describedby={describedBy}
+                disabled={!!disabledReason}
+                title={disabledReason ?? undefined}
                 onChange={e => { setText(e.target.value); onChange(parseNum(e.target.value)); }}
                 onBlur={onCommit}
                 onKeyDown={e => { if (e.key === 'Enter') onCommit(); }}

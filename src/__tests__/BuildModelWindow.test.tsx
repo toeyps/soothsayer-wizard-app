@@ -31,9 +31,15 @@ vi.mock('@tauri-apps/api/event', () => ({
 
 const mockUpdateWorkspaceData = vi.fn();
 const mockLoadWorkspaceData = vi.fn();
+const mockGetRecentWorkspaces = vi.fn().mockResolvedValue([]);
+const mockGetLastExportDir = vi.fn().mockResolvedValue(null);
+const mockSetLastExportDir = vi.fn().mockResolvedValue(undefined);
 vi.mock('../workspaceManager', () => ({
     updateWorkspaceData: (id: string, patch: any) => mockUpdateWorkspaceData(id, patch),
     loadWorkspaceData: (id: string) => mockLoadWorkspaceData(id),
+    getRecentWorkspaces: (...args: unknown[]) => mockGetRecentWorkspaces(...args),
+    getLastExportDir: () => mockGetLastExportDir(),
+    setLastExportDir: (dir: string) => mockSetLastExportDir(dir),
 }));
 
 // Train in place — mocks for the three preview
@@ -41,6 +47,11 @@ vi.mock('../workspaceManager', () => ({
 const mockInvoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({
     invoke: (cmd: string, args?: unknown) => mockInvoke(cmd, args),
+}));
+// Export results' folder picker.
+const mockOpenDialog = vi.fn();
+vi.mock('@tauri-apps/plugin-dialog', () => ({
+    open: (opts: unknown) => mockOpenDialog(opts),
 }));
 
 const mockUseChartData = vi.fn();
@@ -10493,5 +10504,276 @@ describe('Project details saved in another window', () => {
         expect(reads()).toBe(before + 1);
         expect(mockLoadWorkspaceData).toHaveBeenLastCalledWith('ws1');
         expect(projectName()).toBe('Bang Pakong · GEG 4');
+    });
+});
+
+describe('Export results (bottom bar + dialog, DESIGN_SYSTEM §4.2)', () => {
+    const READY_WS = (fg: Record<string, any> = {}) => ({
+        name: 'Plant A · GT-1',
+        machine: { plant: 'Plant A', name: 'GT-1', tag: 'GT01', notes: '' },
+        dataUtcOffsetMin: 420,
+        failureGroupState: {
+            groups: [makeGroup({ description: 'Bearing wear', recommendation: 'Check the bearing' })],
+            models: [withTrained(makeModel({ status: true, healthSetPoints: VALID_IND }))],
+            runningStatus: { sensor: 'TAG1', stopAtOrBelow: '5' },
+            ...fg,
+        },
+    });
+    const PLAN = (o: Record<string, any> = {}) => ({
+        ok: true, issues: [],
+        machine_info: { schema_version: '1.0', exported_at: null, plant: 'Plant A' },
+        models: [{ id: 'm1', key: 'TAG1-I1', json: { model_key: 'TAG1-I1' }, csv_columns: ['TimeStamp', 'TAG1'], rows: 100, bytes: 3000, peek: [['TimeStamp', 'TAG1']] }],
+        total_rows: 100, total_bytes: 3000, files: 3, rows_without_timestamp: 0, duplicate_instants_dropped: 0, uncategorized_tags: [],
+        ...o,
+    });
+    const RESULT = { folder: 'C:\\out\\Plant_A_GT-1_2026-10-20_1140', files: 3, models: 1, rows: 100, bytes: 3000, exported_at: '2026-10-20T11:40:00+07:00', warnings: [] };
+    const barText = () => screen.getByTestId('export-bar').textContent ?? '';
+    const exportCalls = () => mockInvoke.mock.calls.filter(c => c[0] === 'export_workspace_results');
+
+    let finishExport: (() => void) | null = null;
+    let failExport: ((msg: string) => void) | null = null;
+    beforeEach(() => {
+        finishExport = null;
+        failExport = null;
+        mockOpenDialog.mockReset().mockResolvedValue('C:\\out');
+        mockGetLastExportDir.mockReset().mockResolvedValue(null);
+        mockGetRecentWorkspaces.mockReset().mockResolvedValue([]);
+        mockInvoke.mockImplementation((cmd: string, args?: any) => {
+            if (cmd === 'plan_workspace_export') return Promise.resolve(PLAN());
+            if (cmd === 'export_workspace_results') {
+                return new Promise((res, rej) => {
+                    finishExport = () => res(RESULT);
+                    failExport = (msg: string) => rej(msg);
+                });
+            }
+            if (cmd === 'cancel_workspace_export') return Promise.resolve(true);
+            return defaultInvoke(cmd, args);
+        });
+    });
+
+    async function fire(event: string, payload: any) {
+        await act(async () => {
+            for (const cb of listenCallbacks[event] ?? []) cb({ payload });
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+    }
+
+    /** Ready workspace → Export results → a folder → Export 1 model (still writing). */
+    async function startExport(ws: Record<string, any> = READY_WS()) {
+        render(<BuildModelWindow />);
+        await deliverData(ws);
+        await flush();
+        fireEvent.click(screen.getByTestId('export-results'));
+        await flush();
+        await act(async () => { fireEvent.click(screen.getByText('Choose folder…')); });
+        await act(async () => { fireEvent.click(screen.getByTestId('export-start')); });
+        await waitFor(() => expect(exportCalls()).toHaveLength(1));
+        return exportCalls()[0][1] as { request: any; dest_dir: string; folder_name: string; export_id: string };
+    }
+
+    it('incomplete workspace: the bar says what stops it and Export results is disabled', async () => {
+        render(<BuildModelWindow />);
+        await deliverData();
+        expect(barText()).toContain('1 model not Complete yet');
+        const btn = screen.getByTestId('export-results') as HTMLButtonElement;
+        expect(btn.disabled).toBe(true);
+        expect(btn.title).toBe('Every model must be Complete first · 1 left');
+    });
+
+    it('ready workspace: the bar is green and Export results opens the dialog, which plans against the disk', async () => {
+        render(<BuildModelWindow />);
+        await deliverData(READY_WS());
+        await flush();
+        expect(barText()).toContain('1 model Complete · ready to export');
+        fireEvent.click(screen.getByTestId('export-results'));
+        await flush();
+        expect(screen.getByTestId('export-dialog')).toBeTruthy();
+        const planCall = mockInvoke.mock.calls.find(c => c[0] === 'plan_workspace_export');
+        expect(planCall?.[1]).toEqual({ request: expect.objectContaining({ workspace_id: 'ws1', running_status: { sensor: 'TAG1', stop_if_lower_than: 5 } }) });
+        expect(screen.getByTestId('export-ready-line').textContent).toContain('Everything the export needs is here · 1 model');
+        // First focus without a remembered folder: Choose folder…
+        expect(document.activeElement?.textContent).toBe('Choose folder…');
+    });
+
+    it('writes into the picked folder; progress of ANOTHER export is ignored; done = the exported line, cleared by a status change', async () => {
+        const args = await startExport();
+        expect(args.dest_dir).toBe('C:\\out');
+        expect(args.folder_name).toMatch(/^Plant_A_GT-1_\d{4}-\d{2}-\d{2}_\d{4}$/);
+        expect(args.request.workspace_id).toBe('ws1');
+        expect(barText()).toContain('Writing model 1 of 1');
+
+        await fire('workspace-export-progress', { export_id: 'someone-else', workspace_id: 'ws1', written: 3, total: 9, model_key: 'X-I1' });
+        expect(barText()).toContain('Writing model 1 of 1');
+        await fire('workspace-export-progress', { export_id: args.export_id, workspace_id: 'ws1', written: 1, total: 2, model_key: 'TAG1-I1' });
+        expect(barText()).toContain('Writing model 2 of 2');
+
+        await act(async () => { finishExport!(); });
+        await flush();
+        expect(screen.getByTestId('export-bar-exported').textContent).toContain('1 model exported');
+        expect(screen.getByTestId('export-bar-exported').textContent).toContain(RESULT.folder);
+        expect(screen.getByTestId('export-done')).toBeTruthy();
+
+        // The dialog closed, the line stays...
+        fireEvent.click(screen.getByText('Close'));
+        expect(screen.getByTestId('export-bar-exported')).toBeTruthy();
+        // ...until a model's status changes.
+        await fire('failure-group-state-changed', {
+            workspaceId: 'ws1', origin: 'dashboard',
+            groups: [makeGroup({ description: 'Bearing wear', recommendation: 'Check the bearing' })],
+            models: [withTrained(makeModel({ status: false, healthSetPoints: VALID_IND }))],
+            runningConditionNoneConfirmed: true, runningConditionTimePeriods: ALL_TIME_TRAIN, runningConditionTestPeriods: ONE_TEST,
+            runningStatus: { sensor: 'TAG1', stopAtOrBelow: '5' },
+        });
+        expect(screen.queryByTestId('export-bar-exported')).toBeNull();
+        expect(barText()).toContain('1 model not Complete yet');
+    });
+
+    it('while it writes: Train sensor / category wait with a reason; the notice line says why', async () => {
+        await startExport();
+        const train = screen.getByTestId('train-sensor') as HTMLButtonElement;
+        expect(train.disabled).toBe(true);
+        expect(train.title).toBe('Available when the export finishes');
+        expect(noticeText()).toContain('Exporting results');
+        const perf = screen.getByRole('button', { name: 'Performance' }) as HTMLButtonElement;
+        expect(perf.disabled).toBe(true);
+        expect((screen.getByTestId('export-results') as HTMLButtonElement).disabled).toBe(true);
+        await act(async () => { finishExport!(); });
+        await flush();
+        expect((screen.getByTestId('train-sensor') as HTMLButtonElement).title).not.toBe('Available when the export finishes');
+        expect((screen.getByRole('button', { name: 'Performance' }) as HTMLButtonElement).disabled).toBe(false);
+    });
+
+    it('while it writes, the Model settings fieldset is disabled (real `disabled`, every field inside)', async () => {
+        await startExport();
+        fireEvent.keyDown(window, { key: 'Escape' }); // Esc while writing = Hide
+        openSettings();
+        const form = screen.getByTestId('add-model-form') as HTMLFieldSetElement;
+        expect(form.tagName).toBe('FIELDSET');
+        expect(form.disabled).toBe(true);
+        expect(within(form).getAllByRole('textbox')[0].matches(':disabled')).toBe(true);
+    });
+
+    it('while it writes, the set points and Mark incomplete on the Health score page wait', async () => {
+        await startExport();
+        fireEvent.keyDown(window, { key: 'Escape' });
+        fireEvent.click(screen.getByTestId('page-tab-health'));
+        await flush();
+        const inc = await screen.findByTestId('mark-incomplete') as HTMLButtonElement;
+        expect(inc.disabled).toBe(true);
+        expect(inc.title).toBe('Available when the export finishes');
+        const lower = await screen.findByTestId('sp-lower') as HTMLInputElement;
+        expect(lower.disabled).toBe(true);
+    });
+
+    it('Cancel export asks Rust to stop THIS export; the dialog then says nothing was written', async () => {
+        const args = await startExport();
+        await act(async () => { fireEvent.click(screen.getByTestId('export-cancel')); });
+        expect(mockInvoke).toHaveBeenCalledWith('cancel_workspace_export', { export_id: args.export_id });
+        await act(async () => { failExport!('CANCELLED: stopped by the user'); });
+        await flush();
+        expect(screen.getByTestId('export-cancelled').textContent).toContain('Export cancelled · nothing was written');
+        expect(barText()).not.toContain('Export failed');
+    });
+
+    it('a failed export: "Nothing was written" with the reason; the bar says it too', async () => {
+        await startExport();
+        await act(async () => { failExport!('WRITE_FAILED: models/TAG1-I1.csv (Access is denied.)'); });
+        await flush();
+        expect(screen.getByTestId('export-error').textContent).toBe('models/TAG1-I1.csv (Access is denied.)');
+        expect(barText()).toContain('Export failed · nothing was written');
+    });
+
+    it('closing the window waits for a running export, then closes by itself', async () => {
+        await startExport();
+        fireEvent.click(screen.getByTitle('Close'));
+        await flush();
+        expect(mockClose).not.toHaveBeenCalled();
+        expect(screen.getByTestId('close-wait-notice').textContent).toContain('Finishing the export first');
+        await act(async () => { finishExport!(); });
+        await waitFor(() => expect(mockClose).toHaveBeenCalledTimes(1));
+    });
+
+    it('a native close waits too; an export that runs past the cap is cancelled and the window closes', async () => {
+        const wait = MARK_COMPLETE_CLOSE_WAIT.ms;
+        MARK_COMPLETE_CLOSE_WAIT.ms = 20;
+        try {
+            const args = await startExport();
+            const preventDefault = vi.fn();
+            await act(async () => { await mockCloseRequestedHandler!({ preventDefault }); });
+            expect(preventDefault).toHaveBeenCalled();
+            expect(mockInvoke).toHaveBeenCalledWith('cancel_workspace_export', { export_id: args.export_id });
+            await waitFor(() => expect(mockClose).toHaveBeenCalledTimes(1));
+        } finally {
+            MARK_COMPLETE_CLOSE_WAIT.ms = wait;
+        }
+    });
+
+    it('checklist "Fill in →" opens Project details ON TOP of the dialog; Esc closes only it and focus returns to the link', async () => {
+        render(<BuildModelWindow />);
+        await deliverData({ name: 'Old project' });
+        await flush();
+        fireEvent.click(screen.getByText('Show which'));
+        await flush();
+        const fix = screen.getByTestId('ready-machine-fix');
+        expect(fix.textContent).toBe('Fill in →');
+        fix.focus();
+        await act(async () => { fireEvent.click(fix); });
+        await flush();
+        expect(screen.getByRole('dialog', { name: 'Project details' })).toBeTruthy();
+        expect(screen.getByTestId('export-dialog')).toBeTruthy();
+        fireEvent.keyDown(window, { key: 'Escape' });
+        await flush();
+        expect(screen.queryByRole('dialog', { name: 'Project details' })).toBeNull();
+        expect(screen.getByTestId('export-dialog')).toBeTruthy();
+        expect(document.activeElement).toBe(screen.getByTestId('ready-machine-fix'));
+        // The next Esc closes the Export dialog.
+        fireEvent.keyDown(window, { key: 'Escape' });
+        expect(screen.queryByTestId('export-dialog')).toBeNull();
+    });
+
+    it('"Open running condition" closes the dialog and opens the running-condition editor', async () => {
+        render(<BuildModelWindow />);
+        await deliverData(READY_WS({ runningStatus: null }));
+        await flush();
+        fireEvent.click(screen.getByText('Show which'));
+        await flush();
+        expect(screen.getByTestId('ready-running').textContent).toContain('not set');
+        fireEvent.click(screen.getByText('Open running condition'));
+        expect(screen.queryByTestId('export-dialog')).toBeNull();
+        expect(screen.getByTestId('rc-panel')).toBeTruthy();
+    });
+
+    it('confirm step: a running-status sensor with no component is listed as "Used as the running-status sensor"; Back / Esc / Export anyway', async () => {
+        render(<BuildModelWindow />);
+        await deliverData(READY_WS({ runningStatus: { sensor: 'TAG3', stopAtOrBelow: '1' } }));
+        await flush();
+        fireEvent.click(screen.getByTestId('export-results'));
+        await flush();
+        await act(async () => { fireEvent.click(screen.getByText('Choose folder…')); });
+        fireEvent.click(screen.getByTestId('export-start'));
+        expect(screen.getByText('Export with sensors that have no component?')).toBeTruthy();
+        expect(screen.getByTestId('export-nc-TAG3').textContent).toContain('Used as the running-status sensor');
+        expect(document.activeElement?.textContent).toBe('Back');
+        fireEvent.keyDown(window, { key: 'Escape' });
+        expect(screen.queryByTestId('export-confirm')).toBeNull();
+        expect(screen.getByTestId('export-dialog')).toBeTruthy();
+        fireEvent.click(screen.getByTestId('export-start'));
+        fireEvent.click(screen.getByText('Back'));
+        expect(exportCalls()).toHaveLength(0);
+        fireEvent.click(screen.getByTestId('export-start'));
+        await act(async () => { fireEvent.click(screen.getByTestId('export-anyway')); });
+        await waitFor(() => expect(exportCalls()).toHaveLength(1));
+    });
+
+    it('re-pointing the window at another project clears the exported line', async () => {
+        await startExport();
+        await act(async () => { finishExport!(); });
+        await flush();
+        expect(screen.getByTestId('export-bar-exported')).toBeTruthy();
+        await deliverData({ id: 'ws2' }, { workspaceId: 'ws2' });
+        await flush();
+        expect(screen.queryByTestId('export-bar-exported')).toBeNull();
+        expect(screen.queryByTestId('export-dialog')).toBeNull();
     });
 });
