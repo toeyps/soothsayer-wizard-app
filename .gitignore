@@ -46,3 +46,4 @@ src-tauri/check_output.txt
 
 .claude/settings.local.json
 .claude/worktrees/
+__pycache__/

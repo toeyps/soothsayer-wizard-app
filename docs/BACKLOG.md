@@ -818,7 +818,7 @@ rounds of real-app testing with the user:
 
 Both confirmed fixed by the user testing the real app after each round.
 
-> **📋 2026-08-06 — superseded by [`docs/PERSISTENCE_PLAN.md`](PERSISTENCE_PLAN.md).**
+> **📋 2026-08-06 — superseded by `docs/PERSISTENCE_PLAN.md` (ลบออก 2026-10-20 — แผนนั้นทำไปแล้วใน 0.4.0–0.8.0; ดูได้จาก git history)**
 > That doc has a full project-wide audit (this turned out to be the ONLY
 > place where actual *data* is lost, but there are 6 more places where
 > *config* is lost), three additional approaches beyond the two recorded

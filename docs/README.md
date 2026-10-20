@@ -16,11 +16,10 @@
 | [`PROJECT_OVERVIEW.md`](PROJECT_OVERVIEW.md) | สถานะปัจจุบัน (เขียนทับ) | ทุก session แก้เมื่อสถานะเปลี่ยน |
 | [`handover/`](handover/README.md) | บันทึกงานรายเดือน `YYYY-MM.md` (ต่อท้ายอย่างเดียว) | ทุก session — 1 งาน 1 บันทึก |
 | [`BACKLOG.md`](BACKLOG.md) | งานค้างที่ยืนยันแล้ว | ทุก session |
-| [`PERSISTENCE_PLAN.md`](PERSISTENCE_PLAN.md) | แผนการบันทึก workspace (อยู่ที่ root เพราะ `BACKLOG.md` ลิงก์ถึงด้วย path นี้) | — |
 | [`release/`](release/) | `CHANGELOG.md` — section ใหม่ทุกครั้งที่ build installer · `Wizard_Release_Versions.txt` — สรุปทุกเวอร์ชันแบบเปิดด้วย Notepad (tag / commit / installer) | `release-agent` |
-| [`testing/`](testing/) | `MANUAL_TEST_PLAN.md` (ต้นฉบับ) → `manual-test-plan.html` (สร้างจาก .md ด้วย `scripts/build-manual-test-html.py`, เปิดในเบราว์เซอร์ได้เลย), `AUDIT_2026-10-14.md` (ผลตรวจแผนเทียบโค้ด + บั๊กที่สงสัย — แผนมี 2 ส่วน: ทีละฟังก์ชัน + workflow ผู้ใช้ WFA–WFH ซึ่งใช้ข้อมูลจาก `scripts/make-wf-testdata.py`), `MANUAL_TEST_NEW_SINCE_2026-10-02.md` (รายการทดสอบเฉพาะของใหม่ ณ ต้นเดือน), `RELEASE_0.5.0_TEST_REPORT.md` | `qa-agent` / ผู้ทดสอบ |
+| [`testing/`](testing/) | `MANUAL_TEST_PLAN.md` (ต้นฉบับ) → `manual-test-plan.html` (สร้างจาก .md ด้วย `scripts/build-manual-test-html.py`, เปิดในเบราว์เซอร์ได้เลย), `AUDIT_2026-10-14.md` (ผลตรวจแผนเทียบโค้ด + บั๊กที่สงสัย — แผนมี 2 ส่วน: ทีละฟังก์ชัน + workflow ผู้ใช้ WFA–WFI ซึ่งใช้ข้อมูลจาก `scripts/make-wf-testdata.py` และ `scripts/make-ts-testdata.py`) | `qa-agent` / ผู้ทดสอบ |
 | [`design/`](design/) | `DESIGN_SYSTEM.md`, `APP_MAP.md` และ `handoff/` (สเปกที่ส่งจากทีมออกแบบให้ทีม dev ทีละงาน) | `ui-design-lead` |
-| [`reference/`](reference/) | `tech-stack.html` (สรุป stack หน้าเดียว), `figma/` (SVG mockup รุ่นเก่า **ไม่ได้อัปเดตตามโค้ด** — อย่าแก้) | — |
+| [`reference/`](reference/) | `tech-stack.html` (สรุป stack หน้าเดียว) | — |
 | [`onboarding/`](onboarding/) | คู่มือ + ตัวอย่างงานสำหรับน้องฝึกงาน BA/SA | — |
 | [`archive/`](archive/) | ประวัติที่ไม่ใช้แล้ว: `planning/` (requirements / task / contracts ของ Feature 1–4), `handover-overview-2026-08.md` (ภาพรวมฉบับเก่า) | ห้ามแก้ |
 | [`PROJECT_HANDOVER.md`](PROJECT_HANDOVER.md) | ป้ายบอกว่าย้ายไปที่ไหน (ไฟล์เดิมแยกเป็นรายเดือนเมื่อ 2026-10-09) | — |
