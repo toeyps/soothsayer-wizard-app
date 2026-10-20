@@ -1,11 +1,10 @@
 import { useState, useEffect, useMemo } from 'react';
-import { groupDeleteCounts } from '../../utils/modelOutputFiles';
 import { groupDeleteText } from './groupDeleteText';
 import { Plus, Trash2, Play, ChevronRight, Check, FolderPlus } from 'lucide-react';
 import { FailureGroup, FailureModel, FailureGroupStateSlice, ModelKind, SensorMetadata, SpecialSensorRecipe } from '../../types';
 import { SensorLabel } from '../sensor/SensorLabel';
 import { SensorMetaContext, sensorHaystack, sensorTitle, useLayeredSensorLookup } from '../sensor/sensorInfo';
-import { groupModelsBySensor, type SensorModelGroup } from '../../utils/modelGrouping';
+import { groupDeleteCounts, groupModelsBySensor, type SensorModelGroup } from '../../utils/modelGrouping';
 import { MODEL_KIND_LABEL } from '../../utils/modelNames';
 import type { RunningConditionFg } from '../../utils/runningCondition';
 import { isModelComplete, modelDotState, modelSetPointFlag } from '../../utils/modelStatus';

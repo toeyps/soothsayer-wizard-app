@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { mk } from './helpers/failureModelFixture';
-import { modelSensorKey, groupModelsBySensor, sensorCategory, setSensorCategory, normalizeSensorCategories } from '../utils/modelGrouping';
+import { modelSensorKey, groupModelsBySensor, sensorCategory, setSensorCategory, normalizeSensorCategories, modelsOnlyIn, groupDeleteCounts } from '../utils/modelGrouping';
 
 describe('modelSensorKey', () => {
     it('keys individual/relationship by target, normalised', () => {
@@ -130,5 +130,19 @@ describe('normalizeSensorCategories', () => {
         const { models } = normalizeSensorCategories([a, b]);
         expect(b.category).toBeNull();
         expect(models[1]).toMatchObject({ id: 'b', notes: 'keep', category: 'condition' });
+    });
+});
+
+// Moved from the deleted modelOutputFiles.test.ts (2026-10-20: deletes no longer remove files).
+describe('modelsOnlyIn / groupDeleteCounts', () => {
+    it('modelsOnlyIn: the models whose every group is that one', () => {
+        const ms = [{ id: 'a', groupNos: [1] }, { id: 'b', groupNos: [1, 2] }, { id: 'c', groupNos: [2] }, { id: 'd', groupNos: [] as number[] }];
+        expect(modelsOnlyIn(ms, 1).map(m => m.id)).toEqual(['a']);
+    });
+
+    it('a model listed twice in the same group is still only in it; a model in no group is never counted', () => {
+        expect(groupDeleteCounts([{ groupNos: [1, 1] }, { groupNos: [] }, { groupNos: [0] }], 1)).toEqual({ deleted: 1, kept: 0 });
+        expect(groupDeleteCounts([], 1)).toEqual({ deleted: 0, kept: 0 });
+        expect(groupDeleteCounts([{ groupNos: [1] }, { groupNos: [1, 2] }], 1)).toEqual({ deleted: 1, kept: 1 });
     });
 });

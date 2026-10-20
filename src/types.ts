@@ -288,16 +288,11 @@ export interface FailureModel extends PredictiveModelStateSlice {
      *  neither invalidates a training run nor makes the model stale. All helpers
      *  live in `src/utils/healthSetPoints.ts`. */
     healthSetPoints?: HealthSetPoints;
-    /** Record of the last successful "Mark complete" file export: when it
-     *  happened, which folder the files went
-     *  to, and the set points the files were written with. Lets the Health
-     *  score page say "Changed after saving -- Mark complete again to update
-     *  the files" when the set points are edited while the model is Complete.
-     *  Optional and spread-safe: every writer maps models with `{ ...m }`, an
-     *  absent value means "unknown / never exported" (no hint), and it is
-     *  deliberately NOT part of `computeTrainFingerprint` (exporting never
-     *  makes a model stale). Kept when a model is marked Incomplete -- the
-     *  files stay on disk. */
+    /** @deprecated Since 2026-10-20 Mark complete writes no files and nothing
+     *  writes or reads this record (Export results is the only writer of the
+     *  model files). Old values stay in saved workspaces untouched -- kept in the
+     *  type only so those files still type-check; `duplicateWorkspace` drops it
+     *  from the copy. Never read it for a status or a hint. */
     healthExport?: HealthExportRecord;
     /** The last validation verdict Rust gave on this model's SAVED set points:
      *  `'valid'` = the score can be calculated,
@@ -317,6 +312,8 @@ export interface FailureModel extends PredictiveModelStateSlice {
 
 export type HealthVerdictValue = 'valid' | 'incomplete' | 'invalid';
 
+/** @deprecated The shape of the old `FailureModel.healthExport` record
+ *  (written by Mark complete before 2026-10-20). Nothing writes or reads it now. */
 export interface HealthExportRecord {
     /** ISO timestamp of the export. */
     at: string;
@@ -324,18 +321,8 @@ export interface HealthExportRecord {
     outputDir: string;
     /** The set points the exported files carry. */
     setPoints: HealthSetPoints;
-    /** The health score's sampling interval, in seconds, that the exported
-     *  results (the files' `validation` block) were computed with -- `3600` =
-     *  1-hour averages of the running rows. Copied at Mark complete from the
-     *  validating preview's `scoring_interval_secs` (`healthExportRecord` in
-     *  `utils/completeModel.ts`).
-     *
-     *  ABSENT on a record written before the health score moved to 1-hour
-     *  averages (2026-10-11): those files were scored ROW BY ROW. Such a model
-     *  STAYS Complete (user decision) -- `savedResultsUseEarlierScoring`
-     *  (`utils/modelStatus.ts`) is what the Health score page reads to show
-     *  "Mark complete again to update the files". Optional, spread-safe, NOT
-     *  part of `computeTrainFingerprint`. */
+    /** The scoring interval (seconds) the old files were computed with;
+     *  absent on records written before 2026-10-11. */
     scoringIntervalSecs?: number;
 }
 

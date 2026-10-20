@@ -3,7 +3,7 @@
  * assign sheet): "Delete FG-1? 2 models used only by this group are deleted · 1
  * model stays in its other groups." Deleting a model removes no files any more —
  * the files are written by Export results — so nothing here says "saved files".
- * The counts come from `groupDeleteCounts` (`utils/modelOutputFiles.ts`).
+ * The counts come from `groupDeleteCounts` (`utils/modelGrouping.ts`).
  */
 export function groupDeleteText(name: string, deleted: number, kept: number): string {
     const n = (k: number) => `${k} model${k === 1 ? '' : 's'}`;

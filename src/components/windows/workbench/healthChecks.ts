@@ -1,4 +1,3 @@
-import type { HealthSetPoints } from '../../../types';
 import type { HealthIssue, HealthPreview, HealthSeries } from '../../../types/health';
 import { fmtNum } from './chartTheme';
 import { parseTimestamps } from './healthCharts';
@@ -138,30 +137,9 @@ export function fieldState(issues: readonly HealthIssue[], ...fields: string[]):
     return mine.some(i => i.code !== 'required') ? 'error' : 'required';
 }
 
-// ---------------------------------------------------------------------------
-// Saved files out of date
-// ---------------------------------------------------------------------------
-
-const num = (v: number | null | undefined): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
-
-/** The numbers a set-point value carries (master snapshots excluded: they are
- *  bookkeeping, not part of what the files contain). */
-function pointsOf(sp: HealthSetPoints): (number | null)[] | null {
-    switch (sp.kind) {
-        case 'individual': return [num(sp.lower), num(sp.upper)];
-        case 'relationship': return [num(sp.residualAt80Lower), num(sp.residualAt80Upper), num(sp.residualAt0Lower), num(sp.residualAt0Upper)];
-        case 'clustering': return [num(sp.outerSd)];
-    }
-}
-
-/** Same kind and the same entered numbers. */
-export function sameSetPoints(a: HealthSetPoints | null | undefined, b: HealthSetPoints | null | undefined): boolean {
-    if (!a || !b) return !a && !b;
-    if (a.kind !== b.kind) return false;
-    const x = pointsOf(a);
-    const y = pointsOf(b);
-    return !!x && !!y && x.length === y.length && x.every((v, i) => v === y[i]);
-}
+/** Same kind and the same entered numbers — re-exported from the one
+ *  definition in `utils/healthSetPoints.ts`. */
+export { sameHealthSetPoints as sameSetPoints } from '../../../utils/healthSetPoints';
 
 // ---------------------------------------------------------------------------
 // Hover read-out

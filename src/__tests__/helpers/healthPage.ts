@@ -11,20 +11,11 @@ import { act, fireEvent, screen, waitFor, type BoundFunctions, type queries } fr
  * windows are mounted side by side).
  *
  * The mocked `invoke` of the test must answer `compute_health_preview` with
- * `makeSetPointAwarePreview` and `export_model_files` with a successful result
- * (see `EXPORT_RESULT_OK` below) for the flow to complete.
+ * `makeSetPointAwarePreview` for the flow to complete (Mark complete writes no
+ * files since 2026-10-20 — it only validates).
  */
 
 type Q = BoundFunctions<typeof queries>;
-
-/** A successful `export_model_files` answer. */
-export const EXPORT_RESULT_OK = {
-    ok: true,
-    files: [{ kind: 'info', file_name: 'INDV_INFO_TAG1.json', path: 'C:/data/workspaces/ws1/output/TAG1/INDV_INFO_TAG1.json' }],
-    output_dir: 'C:/data/workspaces/ws1/output',
-    validation: [],
-    warnings: [],
-};
 
 /** Values the `makeSetPointAwarePreview` fixture accepts (Individual 3SD band is 2..8). */
 const VALID_INPUTS: Record<string, Record<string, string>> = {

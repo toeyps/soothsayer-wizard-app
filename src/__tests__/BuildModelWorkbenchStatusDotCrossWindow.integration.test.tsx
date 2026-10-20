@@ -74,7 +74,6 @@ vi.mock('@tauri-apps/api/core', () => ({
     invoke: (cmd: string, args?: any) => {
         if (cmd === 'get_dataset_time_bounds') return Promise.resolve({ min: null, max: null });
         if (cmd === 'compute_health_preview') return Promise.resolve(makeSetPointAwarePreview(args?.request));
-        if (cmd === 'export_model_files') return Promise.resolve(EXPORT_RESULT_OK);
         if (cmd === 'compute_sensor_stats') return Promise.resolve({ mean: 5, sd: 1, min: 0, max: 10, count: 100, lower1: 4, upper1: 6, lower3: 2, upper3: 8 });
         return Promise.resolve(undefined);
     },
@@ -117,7 +116,7 @@ vi.mock('../components/charts/LineChart', () => ({ default: () => <div /> }));
 vi.mock('../components/charts/ResponsiveECharts', () => ({ default: () => <div /> }));
 
 import { makeSetPointAwarePreview } from './helpers/healthPreviewFixture';
-import { EXPORT_RESULT_OK, healthPageClosed, markCompleteFromHealthPage, markIncompleteFromHealthPage } from './helpers/healthPage';
+import { healthPageClosed, markCompleteFromHealthPage, markIncompleteFromHealthPage } from './helpers/healthPage';
 import Dashboard from '../components/dashboard/Dashboard';
 import BuildModelWindow from '../components/windows/BuildModelWindow';
 import { computeTrainFingerprint, isModelTrainedFresh } from '../utils/trainFingerprint';

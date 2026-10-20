@@ -15,7 +15,7 @@ import { act, cleanup, fireEvent, waitFor } from '@testing-library/react';
  *       "Load it again" (never "Train sensor ↑": that cannot train a Complete
  *       model) -> loaded -> still Complete, NOTHING written to the workspace
  *       file, the Dashboard dot never moved;
- *   (b) `export_model_files` itself answers NOT_FITTED on Mark complete -> the
+ *   (b) the validating preview answers NOT_FITTED on Mark complete -> the
  *       board, "Load it again" -> Mark complete succeeds;
  *   (c) the Add Sensor window replaces a special sensor while Build Model is open
  *       (Rust drops every cached fit; the Dashboard writes the new recipe and

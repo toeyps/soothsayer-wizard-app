@@ -56,12 +56,6 @@
  *    way the real engine is asked for the hourly rows. Statistics, band,
  *    ellipses, 2RMSE, histogram and both scatters still come from the RAW
  *    training rows.
- *  - `export_model_files` (`request`): Individual/Clustering re-validate against
- *    statistics computed in the call; Relationship pre-validates with the cached
- *    2RMSE (if cached) then "runs the sidecar" (gate-able) and validates again.
- *    Invalid = `ok:false` + `validation`, nothing written. Files land in the
- *    shared in-memory file map under `workspaces/{id}/output/...`.
- *  - `get_model_output_dir` (`workspace_id`).
  *  - `count_period_rows` (`periods`, `filter`, `expected_generation`;
  *    `rename_all = snake_case`): a port of `period_counts.rs` — per period the
  *    rows inside it (bounds inclusive, blank / null = open) and how many pass
@@ -72,7 +66,7 @@
  *    error. `STALE_SESSION` (checked first), `BAD_REQUEST` above 64 periods.
  *  - Tauri arg-key casing: an unexpected or missing top-level key rejects.
  *  - Scoring periods (`test_periods`, on the request of `compute_health_preview`
- *    / `export_model_files` and as an argument of `preview_relationship_model`):
+ *    and as an argument of `preview_relationship_model`):
  *    each item is `{ start, end }`. ONE deliberate difference from real Rust:
  *    Rust still ACCEPTS and ignores a legacy `label` / `event_time`, but the
  *    frontend must not send them, so
@@ -88,9 +82,7 @@
  *    `lowest` = the lowest hourly score (whole number), `lowest_at` = that
  *    hour's start; a period's kind metrics are over its hourly points, the train
  *    block's are the raw training rows'. An invalid period adds a `test_*` issue
- *    (never part of `valid`) and comes back with zeroes. The same block is
- *    written as `validation` into the exported `*_INFO_*.json`, with
- *    `scoring_interval_seconds: 3600` and `scoring_aggregation: 'mean'`.
+ *    (never part of `valid`) and comes back with zeroes.
  *    (A UI test that only needs a canned block can still use
  *    `helpers/validationFixture.ts`.)
  */
@@ -355,7 +347,7 @@ const HOUR_MS = 3_600_000;
 /** `health_hourly::SCORING_INTERVAL_SECS` (`scoring_interval_secs` of a preview,
  *  `scoring_interval_seconds` of the exported block). */
 export const SCORING_INTERVAL_SECS = 3600;
-/** `health_hourly::SCORING_AGGREGATION` (`scoring_aggregation` of the exported block). */
+/** `health_hourly::SCORING_AGGREGATION` (one point per clock hour = the mean of its running rows). */
 export const SCORING_AGGREGATION = 'mean';
 
 /** `chart_query::hour_label`: the START of clock hour `hour` (hours since the
@@ -527,8 +519,6 @@ function selectIdx(n: number, max: number): number[] {
 /** Allowed top-level argument keys, as Tauri v2 deserializes them. */
 const SIGNATURES: Record<string, { required: string[]; optional?: string[] }> = {
     compute_health_preview: { required: ['request'] },
-    export_model_files: { required: ['request'] },
-    get_model_output_dir: { required: ['workspace_id'] }, // rename_all = snake_case
     preview_relationship_model: { required: ['predictors', 'target', 'lambda'], optional: ['filter', 'cache_key', 'max_points', 'test_periods'] },
     compute_clustering_preview: { required: ['first_sensor', 'second_sensor', 'n_clusters'], optional: ['criteria_sensor', 'cluster_ranges', 'filter'] },
     compute_sensor_stats: { required: ['sensor'], optional: ['filter'] },
@@ -560,7 +550,8 @@ export interface FakeHealthRustOptions {
     datasets: Record<string, HealthDataset>;
     /** Dataset loaded at start (the first key when omitted). */
     initial?: string;
-    /** Shared file map (the test's plugin-fs) — exports are written into it. */
+    /** Shared file map (the test's plugin-fs). Nothing writes into it since
+     *  Mark complete stopped writing files (2026-10-20); kept so a test can share it. */
     files?: Map<string, string>;
 }
 
@@ -1327,96 +1318,9 @@ export function createFakeHealthRust(opts: FakeHealthRustOptions) {
         if (expected !== generation) throw STALE_SESSION_ERROR;
     };
 
+    /** Where the old Mark complete wrote a workspace's files — only for seeding
+     *  legacy `healthExport` records in tests (nothing writes there now). */
     const outputDirAbs = (ws: string) => `${APP_DATA}/workspaces/${ws}/output`;
-    const sanitizeWs = (ws: string) => {
-        if (!ws || ws === '.' || ws === '..' || /[\\/:*?"<>|\0]/.test(ws) || /^\s|\s$|\.$/.test(ws)) throw `BAD_REQUEST: invalid workspace id '${ws}'`;
-        return ws;
-    };
-
-    /** The files a successful export writes (relative paths inside `output/`). */
-    const writeFiles = (ws: string, entries: { kind: 'info' | 'model' | 'dataset'; rel: string; content: unknown }[]) => {
-        const out = entries.map(e => {
-            files.set(`workspaces/${ws}/output/${e.rel}`, typeof e.content === 'string' ? e.content : JSON.stringify(e.content));
-            return { kind: e.kind, file_name: e.rel.split('/').pop()!, path: `${outputDirAbs(ws)}/${e.rel}` };
-        });
-        exports.push({ workspaceId: ws, files: out.map(f => f.path), generation });
-        return out;
-    };
-    const exports: { workspaceId: string; files: string[]; generation: number }[] = [];
-
-    const okResult = (ws: string, written: any[]) => ({ ok: true, files: written, output_dir: outputDirAbs(ws), validation: [], warnings: [] });
-    const refused = (ws: string, validation: Issue[]) => ({ ok: false, files: [], output_dir: outputDirAbs(ws), validation, warnings: [] });
-
-    /**
-     * `health_validation::export_block`: the `validation` object of an exported
-     * `*_INFO_*.json` — the SAME block the preview code computes as
-     * `test_validation`, plus how the scores behind it were sampled
-     * (`scoring_interval_seconds` / `scoring_aggregation`: one point per clock
-     * hour, the mean of the hour's running rows). No block at all when the
-     * request carried no scoring period.
-     */
-    const exportBlock = (testValidation: any): Record<string, unknown> => (testValidation
-        ? {
-            validation: {
-                tested: true,
-                validated_at: new Date().toISOString(),
-                scoring_interval_seconds: SCORING_INTERVAL_SECS,
-                scoring_aggregation: SCORING_AGGREGATION,
-                train: testValidation.train,
-                train_ranges: testValidation.train_ranges,
-                tests: testValidation.tests,
-            },
-        }
-        : {});
-
-    /** Sync part of export (`export_sync`). */
-    const exportSync = (req: any) => {
-        const ws = sanitizeWs(req.workspace_id);
-        const sp = parseSetPoints(req.set_points);
-        if (req.kind === 'individual') {
-            if (!req.target) throw 'BAD_REQUEST: target is required';
-            const { c, rows } = inScopeIndividual(req.target, req.filter);
-            if (!rows.length) throw `No valid numeric values for sensor '${req.target}'`;
-            const { mean, sd } = meanSd(rows.map(r => c[r]));
-            const band = individualBandOf(mean, sd);
-            const v = validateIndividual(band, sp);
-            if (v.length) return refused(ws, v);
-            return okResult(ws, writeFiles(ws, [{
-                kind: 'info',
-                rel: `${req.target}/INDV_INFO_${req.target}.json`,
-                content: {
-                    model_metrics: { mean: band.mean, sd: band.sd, '1sd_boundary': [band.l1, band.u1], '3sd_boundary': [band.l3, band.u3], setpoint_health_score: [sp.lower, sp.upper] },
-                    model_name: req.model_name ?? null,
-                    ...exportBlock(individualPreview(req).test_validation),
-                },
-            }]));
-        }
-        if (req.kind === 'clustering') {
-            if (!req.first_sensor) throw 'BAD_REQUEST: first_sensor is required';
-            if (!req.second_sensor) throw 'BAD_REQUEST: second_sensor is required';
-            const { geoms, preview } = clusteringGeoms(req);
-            const v = validateClustering(geoms, sp);
-            if (v.length) return refused(ws, v);
-            const info: Record<string, unknown> = {};
-            preview.clusters.forEach((c: any, i: number) => {
-                info[String(c.cluster_id)] = {
-                    ...geoms[i],
-                    boundary_sd_health_score: sp.outer_sd,
-                    ...(c.range ? {
-                        criteria_sensor_value_higher_than: c.range.min, criteria_sensor_value_lower_than: c.range.max,
-                        critera_sensor_value_higher_than: c.range.min, critera_sensor_value_lower_than: c.range.max,
-                    } : {}),
-                };
-            });
-            return okResult(ws, writeFiles(ws, [{
-                kind: 'info',
-                rel: `${req.second_sensor}/CLUS_INFO_${req.first_sensor}_${req.second_sensor}.json`,
-                content: { cluster_info: info, ...exportBlock(clusteringPreview(req).test_validation) },
-            }]));
-        }
-        throw `BAD_REQUEST: unknown kind '${req.kind}'`;
-    };
-
     const fitRelationship = (predictors: string[], target: string, lambda: number, filter: any) => {
         if (!predictors?.length) throw 'At least one predictor is required.';
         if (!target) throw 'Target sensor is required.';
@@ -1581,47 +1485,6 @@ export function createFakeHealthRust(opts: FakeHealthRustOptions) {
                 }
                 throw `BAD_REQUEST: unknown kind '${req.kind}'`;
             }
-            case 'get_model_output_dir': {
-                const ws = sanitizeWs(a.workspace_id);
-                return outputDirAbs(ws);
-            }
-            case 'export_model_files': {
-                const req = a.request;
-                checkGeneration(req.expected_generation);
-                if (req.kind !== 'relationship') return exportSync(req);
-                const ws = sanitizeWs(req.workspace_id);
-                const cachedFit = req.cache_key ? relCache.get(req.cache_key) : undefined;
-                const cachedW = cachedFit ? relStats(cachedFit).two_rmse : null;
-                if (!req.target) throw 'BAD_REQUEST: target is required';
-                if (!req.predictors?.length) throw 'BAD_REQUEST: at least one predictor is required';
-                if (req.lambda === undefined || req.lambda === null) throw 'BAD_REQUEST: lambda is required';
-                const sp = parseSetPoints(req.set_points);
-                const pre = validateRelationship(cachedW, sp);
-                if (pre.length) return refused(ws, pre);
-                // The ~15 s sidecar re-fit (gate-able in tests).
-                const fit = fitRelationship(req.predictors, req.target, req.lambda, req.filter);
-                // The `validation` block: the same preview code, over this fresh train-only fit
-                // (the hourly points are predicted from each hour's mean predictors). It is
-                // computed from the data the export STARTED with - like the fit itself - so a
-                // dataset swapped while the engine runs never reaches the files.
-                const exportFit: RelFit = {
-                    target: req.target, predictors: [...req.predictors], lambda: req.lambda, rows: fit.rows,
-                    actual: fit.y, predicted: fit.predicted, x_cols: req.predictors.map((_: string, k: number) => fit.X.map(r => r[k])),
-                    r2_per_step: fit.r2_per_step, rmse2_per_step: fit.rmse2_per_step, generation, beta: fit.beta,
-                };
-                const block = exportBlock(relationshipPreview(exportFit, { kind: 'relationship', filter: req.filter, set_points: req.set_points, test_periods: req.test_periods }).test_validation);
-                await sidecar(cmd, a);
-                const e = rmse(fit.y, fit.predicted.map(roundMetric));
-                const w = roundMetric(2 * e);
-                const post = validateRelationship(w, sp);
-                if (post.length) return refused(ws, post);
-                const tok = req.predictors.join('_');
-                return okResult(ws, writeFiles(ws, [
-                    { kind: 'info', rel: `${req.target}/REL_INFO_${tok}_${req.target}.json`, content: { '2rmse': w, setpoint_health_score: { residual_at_health_80_lower: sp.residual_at_80_lower, residual_at_health_80_upper: sp.residual_at_80_upper, residual_at_health_0_lower: sp.residual_at_0_lower, residual_at_health_0_upper: sp.residual_at_0_upper }, ...block } },
-                    { kind: 'dataset', rel: `${req.target}/REL_DATASET_${tok}_${req.target}.csv`, content: 'x,y' },
-                    { kind: 'model', rel: `${req.target}/REL_MODEL_${tok}_${req.target}.pkl`, content: 'pkl' },
-                ]));
-            }
             default:
                 void entry;
                 return null;
@@ -1693,7 +1556,6 @@ export function createFakeHealthRust(opts: FakeHealthRustOptions) {
     return {
         invoke,
         calls,
-        exports,
         files,
         cmds: (cmd: string) => calls.filter(c => c.cmd === cmd),
         lastOk: (cmd: string) => [...calls].reverse().find(c => c.cmd === cmd && c.result !== undefined)?.result as any,

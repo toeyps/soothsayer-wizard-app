@@ -3,7 +3,6 @@ import type {
     HealthClusterRange,
     HealthPreviewRequest,
     HealthSetPointsWire,
-    ModelFilesRequest,
     TestPeriodWire,
 } from '../types/health';
 import { STIFFNESS_DEFAULT } from '../components/reports/pmReportTypes';
@@ -13,8 +12,7 @@ import { computeTrainFingerprint } from './trainFingerprint';
 import { trainingScopeFilter } from './trainingScope';
 
 /**
- * Pure builders for the health-score commands (`compute_health_preview`,
- * `export_model_files`).
+ * Pure builders for the health-score command `compute_health_preview`.
  *
  * They take the model the UI is currently looking at (pass the DRAFT-merged
  * model when there are unsaved edits, exactly like Train does), the workspace
@@ -175,39 +173,4 @@ export function buildHealthPreviewRequest(opts: HealthPreviewRequestOptions): He
 /** A stable string for a request — equal iff the call would be identical. */
 export function healthRequestKey(req: HealthPreviewRequest | null): string | null {
     return req ? JSON.stringify(req) : null;
-}
-
-export interface ModelFilesRequestOptions extends HealthRequestOptions {
-    workspaceId: string;
-}
-
-/**
- * Build the `export_model_files` request ("Mark complete"): `model_name` is the
- * model's own name; Relationship carries its `lambda` and the SAME `cache_key`
- * the preview used. `null` when a required sensor is missing.
- */
-export function buildModelFilesRequest(opts: ModelFilesRequestOptions): ModelFilesRequest | null {
-    const { model, fg, headers } = opts;
-    if (healthInputsMissing(model) !== null) return null;
-    const req: ModelFilesRequest = {
-        kind: model.kind,
-        workspace_id: opts.workspaceId,
-        model_name: model.name,
-        filter: trainingScopeFilter(model, fg, headers),
-        set_points: healthSetPointsToWire(model.kind, opts.setPoints),
-    };
-    if (model.kind === 'individual') {
-        req.target = model.targetSensor;
-    } else if (model.kind === 'relationship') {
-        req.target = model.targetSensor;
-        req.predictors = [...model.predictorSensors];
-        req.lambda = relationshipLambda(model);
-        req.cache_key = relationshipCacheKey(model, fg);
-    } else {
-        Object.assign(req, clusteringFields(model));
-    }
-    const tests = testPeriodsWireFor(model, fg);
-    if (tests) req.test_periods = tests;
-    if (opts.expectedGeneration !== undefined) req.expected_generation = opts.expectedGeneration;
-    return req;
 }

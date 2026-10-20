@@ -5,21 +5,19 @@
  *
  * The old "Use '<name> (Relationship)'" suggestion wrote names such as
  * "TAG1 (Relationship)" into saved models. A model's name is the user's data:
- * it is shown in the Dashboard and the Workbench and sent to Rust as the export
- * `model_name`. The wording change is DISPLAY ONLY, so for such a workspace:
+ * it is shown in the Dashboard and the Workbench and written into the exported
+ * files. The wording change is DISPLAY ONLY, so for such a workspace:
  *   - opening it rewrites nothing, and every name comes back byte for byte;
  *   - `kind` stays the value `'relationship'`;
  *   - the train fingerprint (the model name is not part of it) still equals the
  *     saved `trainedFingerprint`, so nothing turns stale and a Complete model
  *     stays Complete;
- *   - a later, unrelated write keeps the name and the status;
- *   - Mark complete still exports under the saved name.
+ *   - a later, unrelated write keeps the name and the status.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { FailureGroupStateSlice, FailureModel, WorkspaceState } from '../types';
 import { computeTrainFingerprint, isModelTrainedFresh } from '../utils/trainFingerprint';
 import { isModelComplete, isModelStale } from '../utils/modelStatus';
-import { buildModelFilesRequest } from '../utils/healthRequest';
 import { withFailureGroupState } from '../utils/failureGroupState';
 import { findSameSensorNameConflict, suggestDistinctModelName } from '../utils/modelNames';
 import { mk } from './helpers/failureModelFixture';
@@ -147,17 +145,6 @@ describe('a workspace saved before "Relationship" became "Relation model"', () =
         expect(written.length).toBeGreaterThan(0);
         const onDisk = JSON.parse(written[written.length - 1]) as WorkspaceState;
         expect(onDisk.failureGroupState!.models.map(m => m.name)).toEqual(['TAG1', LEGACY_NAME, 'TAG4 (Clustering)']);
-    });
-
-    it('Mark complete still exports under the saved name', () => {
-        const fg = savedSlice();
-        const rel = fg.models[1];
-        const req = buildModelFilesRequest({
-            model: rel, fg, headers: ['TAG1', 'TAG2', 'TAG3', 'TAG9'], setPoints: rel.healthSetPoints!, workspaceId: 'ws1',
-        });
-        expect(req).not.toBeNull();
-        expect(req!.model_name).toBe(LEGACY_NAME);
-        expect(req!.kind).toBe('relationship');
     });
 
     it('name logic reads both spellings: the saved name is no conflict for its own model, and a new suggestion never lands on its twin', () => {

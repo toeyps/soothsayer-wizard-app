@@ -1,11 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import { mk } from './helpers/failureModelFixture';
 import type { FailureGroupStateSlice, HealthSetPoints } from '../types';
-import type { HealthPreview, ModelFilesResult } from '../types/health';
+import type { HealthPreview } from '../types/health';
 import {
     HEALTH_DEFAULT_MAX_POINTS,
     buildHealthPreviewRequest,
-    buildModelFilesRequest,
     CLUSTERS_NEED_CRITERIA,
     healthInputsMissing,
     healthRequestKey,
@@ -227,40 +226,11 @@ describe('buildHealthPreviewRequest', () => {
     });
 });
 
-describe('buildModelFilesRequest', () => {
-    it('Individual: workspace id, model name, target, scope and set points', () => {
-        const model = mk({ id: 'i1', name: 'Pump A', kind: 'individual', targetSensor: 'T' });
-        expect(buildModelFilesRequest({ model, fg: fg(), headers: HEADERS, workspaceId: 'ws9', setPoints: indSp })).toEqual({
-            kind: 'individual', workspace_id: 'ws9', model_name: 'Pump A', target: 'T', filter: null, set_points: { lower: 1, upper: 9 },
-        });
-    });
-
-    it('Relationship: lambda = the stiffness the Workbench sends, and the SAME cache_key as the preview', () => {
-        const model = mk({ id: 'r1', name: 'Rel', kind: 'relationship', targetSensor: 'T', predictorSensors: ['P1'], relStiffness: 10_000 });
-        const slice = fg({ runningConditionNoneConfirmed: false, runningConditionFilters: [speedOver('3')] });
-        const files = buildModelFilesRequest({ model, fg: slice, headers: HEADERS, workspaceId: 'ws9', setPoints: relSp, expectedGeneration: 4 })!;
-        const preview = buildHealthPreviewRequest({ model, fg: slice, headers: HEADERS, setPoints: relSp })!;
-        expect(files).toMatchObject({ kind: 'relationship', model_name: 'Rel', target: 'T', predictors: ['P1'], lambda: 10_000, expected_generation: 4 });
-        expect(files.cache_key).toBe(preview.cache_key);
-        expect(files.filter).toEqual(preview.filter);
-    });
-
-    it('relationshipLambda uses relStiffness as is, falling back to Standard only when it is missing', () => {
+describe('relationshipLambda', () => {
+    it('uses relStiffness as is, falling back to Standard only when it is missing', () => {
         expect(relationshipLambda(mk({ id: 'a', relStiffness: 1_000 }))).toBe(1_000);
         expect(relationshipLambda(mk({ id: 'a', relStiffness: 5 }))).toBe(5);
         expect(relationshipLambda({ ...mk({ id: 'a' }), relStiffness: undefined as unknown as number })).toBe(100_000);
-    });
-
-    it('Clustering: sensors, count, criteria and ranges, no cache_key / lambda', () => {
-        const model = mk({ id: 'c1', name: 'Clu', kind: 'clustering', xSensor: 'X', ySensor: 'Y', numClusters: 1, criteriaSensor: '', clusterRanges: [] });
-        const req = buildModelFilesRequest({ model, fg: fg(), headers: HEADERS, workspaceId: 'ws9', setPoints: cluSp })!;
-        expect(req).toMatchObject({ kind: 'clustering', model_name: 'Clu', first_sensor: 'X', second_sensor: 'Y', n_clusters: 1, criteria_sensor: null, set_points: { outer_sd: 5 } });
-        expect(Object.keys(req)).not.toContain('lambda');
-        expect(Object.keys(req)).not.toContain('cache_key');
-    });
-
-    it('null while a required sensor is missing', () => {
-        expect(buildModelFilesRequest({ model: mk({ id: 'a', kind: 'relationship', targetSensor: 'T' }), fg: fg(), headers: HEADERS, workspaceId: 'w' })).toBeNull();
     });
 });
 
@@ -279,16 +249,12 @@ describe('test_periods — scoring periods are sent as start / end only ("just s
         { start: '2026-03-01T00:00', end: '2026-03-31T23:59' },
     ];
 
-    it('Workspace mode: the preview AND the export carry the workspace list — start / end only, no ids, no label, no event time', () => {
+    it('Workspace mode: the preview carries the workspace list — start / end only, no ids, no label, no event time', () => {
         const f = fg({ runningConditionTestPeriods: wsTests });
         const preview = buildHealthPreviewRequest({ model: ind, fg: f, headers: HEADERS })!;
-        const files = buildModelFilesRequest({ model: ind, fg: f, headers: HEADERS, workspaceId: 'ws' })!;
         expect(preview.test_periods).toEqual(WIRE);
-        expect(files.test_periods).toEqual(WIRE);
-        for (const req of [preview, files]) {
-            for (const item of req.test_periods!) expect(Object.keys(item).sort()).toEqual(['end', 'start']);
-            expect(JSON.stringify(req)).not.toMatch(/label|event_time|eventTime|fromHighlight|normal|problem|Bearing/);
-        }
+        for (const item of preview.test_periods!) expect(Object.keys(item).sort()).toEqual(['end', 'start']);
+        expect(JSON.stringify(preview)).not.toMatch(/label|event_time|eventTime|fromHighlight|normal|problem|Bearing/);
     });
 
     it('testPeriodsWireFor (also the `test_periods` argument of preview_relationship_model): the same start / end list, undefined when there is none', () => {
@@ -303,14 +269,12 @@ describe('test_periods — scoring periods are sent as start / end only ("just s
         const f = fg({ runningConditionTestPeriods: wsTests });
         const wire = [{ start: '2026-05-01T00:00', end: '2026-05-31T23:59' }];
         expect(buildHealthPreviewRequest({ model: custom, fg: f, headers: HEADERS })!.test_periods).toEqual(wire);
-        expect(buildModelFilesRequest({ model: custom, fg: f, headers: HEADERS, workspaceId: 'ws' })!.test_periods).toEqual(wire);
         // A Custom model without its own list sends none (the key is omitted).
         expect(buildHealthPreviewRequest({ model: { ...ind, runningConditionMode: 'custom' }, fg: f, headers: HEADERS })).not.toHaveProperty('test_periods');
     });
 
     it('no scoring periods -> the key is omitted (old workspaces send exactly what they sent before)', () => {
         expect(buildHealthPreviewRequest({ model: ind, fg: fg(), headers: HEADERS })).not.toHaveProperty('test_periods');
-        expect(buildModelFilesRequest({ model: ind, fg: fg(), headers: HEADERS, workspaceId: 'ws' })).not.toHaveProperty('test_periods');
     });
 
     it('changing ONLY the scoring periods keeps the Relationship cache_key (re-score, no re-train) but changes the request key', () => {
@@ -350,21 +314,11 @@ describe('an old workspace is scored like a new one (request -> fake Rust)', () 
         expect(res.score_summary!.scored).toBeGreaterThan(0);
     });
 
-    it('the export request is accepted too (Mark complete writes the files)', async () => {
-        const rust = createFakeHealthRust({ datasets: { plant: data } });
-        const req = buildModelFilesRequest({ model, fg: oldFg, headers: data.headers, workspaceId: 'ws-old', setPoints })!;
-        const res = await rust.invoke('export_model_files', { request: req }) as ModelFilesResult;
-        expect(res.ok).toBe(true);
-        expect(res.files.length).toBeGreaterThan(0);
-    });
-
     it('guard: the fake REJECTS a scoring period that still carries a label / event time (stricter than Rust, so a stale caller fails its test)', async () => {
         const rust = createFakeHealthRust({ datasets: { plant: data } });
         const legacyItem = { start: '2024-01-01T00:00', end: '2024-01-31T23:59', label: 'problem', event_time: '2024-01-20T08:00' };
         await expect(rust.invoke('compute_health_preview', { request: { ...request(), test_periods: [legacyItem] } }))
             .rejects.toMatch(/compute_health_preview: test_periods\[0\] carries 'label', 'event_time'/);
-        await expect(rust.invoke('export_model_files', { request: { ...buildModelFilesRequest({ model, fg: oldFg, headers: data.headers, workspaceId: 'ws-old', setPoints })!, test_periods: [{ start: null, end: null }, legacyItem] } }))
-            .rejects.toMatch(/export_model_files: test_periods\[1\] carries/);
         await expect(rust.invoke('preview_relationship_model', { predictors: ['TAG3'], target: 'TAG1', lambda: 1, test_periods: [{ start: '2024-01-01T00:00', end: '2024-01-31T23:59', label: 'normal' }] }))
             .rejects.toMatch(/preview_relationship_model: test_periods\[0\] carries 'label'/);
         // the new shape passes
@@ -374,13 +328,13 @@ describe('an old workspace is scored like a new one (request -> fake Rust)', () 
     // Real Rust deserialises `test_periods` as `Vec<TestPeriodArg>`: an item that is not a
     // struct (null, a string, a number) makes serde refuse the whole call. The fake used to let
     // a `null` item through as "no extra keys".
-    it('guard: the fake REJECTS a list item that is not a period object (null / string / number / list), on all three commands', async () => {
+    it('guard: the fake REJECTS a list item that is not a period object (null / string / number / list), on both commands', async () => {
         const rust = createFakeHealthRust({ datasets: { plant: data } });
         const good = { start: '2024-01-01T00:00', end: '2024-01-31T23:59' };
         await expect(rust.invoke('compute_health_preview', { request: { ...request(), test_periods: [null] } }))
             .rejects.toMatch(/compute_health_preview: test_periods\[0\] is null/);
-        await expect(rust.invoke('export_model_files', { request: { ...buildModelFilesRequest({ model, fg: oldFg, headers: data.headers, workspaceId: 'ws-old', setPoints })!, test_periods: [good, null] } }))
-            .rejects.toMatch(/export_model_files: test_periods\[1\] is null/);
+        await expect(rust.invoke('compute_health_preview', { request: { ...request(), test_periods: [good, null] } }))
+            .rejects.toMatch(/compute_health_preview: test_periods\[1\] is null/);
         await expect(rust.invoke('preview_relationship_model', { predictors: ['TAG3'], target: 'TAG1', lambda: 1, test_periods: [good, '2024-03-01T00:00'] }))
             .rejects.toMatch(/preview_relationship_model: test_periods\[1\] is a string/);
         await expect(rust.invoke('compute_health_preview', { request: { ...request(), test_periods: [7] } }))

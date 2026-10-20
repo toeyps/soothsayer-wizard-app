@@ -10,7 +10,8 @@
 //! This module is the one implementation of that maths. The three previews
 //! (`health_preview`) feed it the rows they already scored with the TRAIN-only
 //! model and it returns the `test_validation` block of `compute_health_preview`;
-//! the export (`export_model_files`) runs the very same preview code and writes
+//! a legacy `train_relationship_model` run with scoring periods runs the very
+//! same preview code (`model_export::relationship_block`) and writes
 //! the same block as `validation` into the `*_INFO_*.json` file. Nothing here
 //! ever fits or refits anything.
 //!

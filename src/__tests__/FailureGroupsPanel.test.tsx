@@ -743,7 +743,7 @@ describe('FailureGroupsPanel', () => {
 
 describe('groupDeleteCounts / groupDeleteText', () => {
     it('counts the models only in the group (deleted) and those also elsewhere (kept), and says it -- never "saved files" (deleting removes no files)', async () => {
-        const { groupDeleteCounts } = await import('../utils/modelOutputFiles');
+        const { groupDeleteCounts } = await import('../utils/modelGrouping');
         const { groupDeleteText } = await import('../components/dashboard/groupDeleteText');
         const models = [{ groupNos: [1] }, { groupNos: [1] }, { groupNos: [1, 2] }, { groupNos: [2] }];
         expect(groupDeleteCounts(models, 1)).toEqual({ deleted: 2, kept: 1 });

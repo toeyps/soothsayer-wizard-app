@@ -4,7 +4,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import Split from 'split.js';
 import { saveWorkspaceData, updateWorkspaceData, loadWorkspaceData } from '../../workspaceManager';
 import { withFailureGroupState, restoreDeletedModel } from '../../utils/failureGroupState';
-import { modelSensorKey, sensorCategory } from '../../utils/modelGrouping';
+import { modelsOnlyIn, modelSensorKey, sensorCategory } from '../../utils/modelGrouping';
 import { seedHealthSetPoints } from '../../utils/healthSetPoints';
 import { subscribe } from '../../utils/tauriEvents';
 import {
@@ -50,7 +50,6 @@ import { message } from '@tauri-apps/plugin-dialog';
 import { Plus, EyeOff, BarChart3, Radio, Calendar, ArrowLeft, Check, Trash2, LineChart as LineChartIcon, X, RotateCcw } from 'lucide-react';
 import { debugLog } from '../../utils/debugLog';
 import { formatDateTime } from '../../utils/dateFormat';
-import { modelsOnlyIn } from '../../utils/modelOutputFiles';
 
 // Panel configuration
 const PANELS = {

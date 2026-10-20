@@ -230,7 +230,7 @@ describe('patchModelHealthSetPoints', () => {
 });
 
 
-describe('sameHealthSetPoints (utils copy of the Health page sameSetPoints)', () => {
+describe('sameHealthSetPoints (the one definition; the Health page sameSetPoints re-exports it)', () => {
     const cases: Array<[HealthSetPoints | undefined, HealthSetPoints | undefined]> = [
         [undefined, undefined],
         [{ kind: 'individual', lower: 1, upper: 9 }, undefined],
@@ -242,8 +242,8 @@ describe('sameHealthSetPoints (utils copy of the Health page sameSetPoints)', ()
         [{ kind: 'relationship', residualAt80Lower: -1, residualAt80Upper: 1, residualAt0Lower: -2, residualAt0Upper: 2 },
          { kind: 'relationship', residualAt80Lower: -1, residualAt80Upper: 1, residualAt0Lower: -2, residualAt0Upper: 3 }],
     ];
-    it('agrees with the Health page rule on every case', () => {
-        for (const [a, b] of cases) expect(sameHealthSetPoints(a, b)).toBe(sameSetPoints(a, b));
+    it('the Health page sameSetPoints IS this function (a re-export, no second copy to keep in step)', () => {
+        expect(sameSetPoints).toBe(sameHealthSetPoints);
     });
     it('the expected answers', () => {
         expect(cases.map(([a, b]) => sameHealthSetPoints(a, b))).toEqual([true, false, true, false, true, true, false, false]);

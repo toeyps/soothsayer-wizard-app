@@ -3,7 +3,6 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import {
     COMPLETE_UP_TO_DATE_REASON,
-    DUPLICATE_NAME_BLOCK_REASON,
     REQUIRED_FIELDS_BLOCK_REASON,
     TRAIN_NEEDS_RUNNING_CONDITION,
     TRAIN_NOTHING_READY,
@@ -29,6 +28,7 @@ import {
     NO_TRAIN_PERIOD_REASON_CUSTOM,
 } from '../utils/runningCondition';
 import { testPeriodsError, validatePeriods } from '../utils/timePeriods';
+import { WORKSPACE_DUPLICATE_NAME_REASON } from '../utils/modelNames';
 import type { TrainCandidate, TrainQueueItem, TrainRun } from '../types/trainQueue';
 
 const run = (items: TrainQueueItem[], over: Partial<TrainRun> = {}): TrainRun => ({
@@ -76,8 +76,10 @@ describe('preflightReason', () => {
         expect(preflightReason(CATEGORY_BLOCK_REASON)).toEqual({ text: 'No category (Performance or Condition) on the sensor', fix: 'category' });
     });
 
-    it('duplicate model name', () => {
-        expect(preflightReason(DUPLICATE_NAME_BLOCK_REASON).text).toBe('Model name already used by another model of this sensor');
+    it('duplicate model name (project-wide since 2026-10-20) -> named, and Fix goes to the settings', () => {
+        expect(preflightReason(WORKSPACE_DUPLICATE_NAME_REASON)).toEqual({ text: 'Model name already used by another model in this project', fix: 'settings' });
+        // the old same-sensor wording is no longer a mapped reason
+        expect(preflightReason('Model name is already used by another model of this sensor').text).not.toMatch(/already used by another model in this project/);
     });
 
     it('running condition / train period: workspace → Running condition, Custom → its own settings', () => {
@@ -116,7 +118,8 @@ describe('the reason texts mapped above still exist in the Build Model window', 
     // `WORKSPACE_DUPLICATE_NAME_REASON` (utils/modelNames.ts), not a copy of its text.
     it('the window blocks a duplicate name with the shared WORKSPACE_DUPLICATE_NAME_REASON', () => {
         expect(src).toContain('WORKSPACE_DUPLICATE_NAME_REASON');
-        expect(src).not.toContain(`'${DUPLICATE_NAME_BLOCK_REASON}'`);
+        expect(src).not.toContain(`'${WORKSPACE_DUPLICATE_NAME_REASON}'`);
+        expect(src).not.toContain('already used by another model of this sensor');
     });
     it.each([
         'Pick a category',

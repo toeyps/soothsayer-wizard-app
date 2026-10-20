@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
-import { groupDeleteCounts } from '../../utils/modelOutputFiles';
+import { groupDeleteCounts, modelSensorKey } from '../../utils/modelGrouping';
 import { groupDeleteText } from './groupDeleteText';
 import { Check, Plus, Search, X, Pencil, Trash2 } from 'lucide-react';
 import Portal from '../Portal';
@@ -7,7 +7,6 @@ import { SensorLabel } from '../sensor/SensorLabel';
 import type { SensorInfo } from '../sensor/sensorInfo';
 import { isPickerSurfaceOpen } from '../sensor/SensorPicker';
 import type { FailureGroup, FailureModel, ModelKind } from '../../types';
-import { modelSensorKey } from '../../utils/modelGrouping';
 import { MODEL_KIND_LABEL, kindModelName } from '../../utils/modelNames';
 import { normalizeSensorTag } from '../../hooks/useSensorMetaMap';
 import { UNDO_SECONDS } from './UndoToastStack';

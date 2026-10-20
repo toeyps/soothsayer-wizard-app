@@ -2356,7 +2356,7 @@ export default function BuildModelWindow() {
                 // No export record: Mark complete writes no files.
                 const persisted: { reason: string | null } = { reason: null };
                 await trackPending((async () => {
-                    const r = await persistModelComplete(ws, id, res.setPoints, gateHeaders, 'build-model', undefined, race);
+                    const r = await persistModelComplete(ws, id, res.setPoints, gateHeaders, 'build-model', race);
                     persisted.reason = r.reason;
                     if (stillHere()) applyWritten(r.next);
                 })());

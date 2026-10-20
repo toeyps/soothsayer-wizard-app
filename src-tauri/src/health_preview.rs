@@ -477,7 +477,7 @@ fn mean_sd(values: &[f64]) -> (f64, f64) {
 }
 
 // ---------------------------------------------------------------------------
-// Request checks shared by the preview and the export (coded `BAD_REQUEST`)
+// Request checks of the preview (coded `BAD_REQUEST`)
 // ---------------------------------------------------------------------------
 
 /// The training scope must resolve (parseable bounds, no both-legacy-and-ranges,
@@ -486,30 +486,6 @@ pub fn check_scope(data: &ColumnarData, filter: Option<&PreviewFilter>) -> Resul
     ResolvedFilter::resolve(filter, &data.headers)
         .map(|_| ())
         .map_err(|e| bad_request(format!("invalid training scope: {e}")))
-}
-
-/// Individual: the target sensor exists and the scope resolves.
-pub fn check_individual_request(
-    data: &ColumnarData,
-    target: &str,
-    filter: Option<&PreviewFilter>,
-) -> Result<(), String> {
-    col_index(data, target, "Sensor")?;
-    check_scope(data, filter)
-}
-
-/// Relationship: target and every predictor exist and the scope resolves.
-pub fn check_relationship_request(
-    data: &ColumnarData,
-    target: &str,
-    predictors: &[String],
-    filter: Option<&PreviewFilter>,
-) -> Result<(), String> {
-    col_index(data, target, "Target")?;
-    for p in predictors {
-        col_index(data, p, "Predictor")?;
-    }
-    check_scope(data, filter)
 }
 
 /// Clustering: both sensors exist, the scope resolves and — for more than one
@@ -3230,13 +3206,8 @@ mod tests {
     }
 
     #[test]
-    fn check_helpers_agree_with_the_previews_and_accept_good_requests() {
+    fn check_clustering_request_accepts_good_requests_and_refuses_bad_ones() {
         let d = cl_data();
-        assert!(check_individual_request(&d, "X", None).is_ok());
-        assert!(check_individual_request(&d, "x", None).unwrap_err().starts_with("BAD_REQUEST"));
-        assert!(check_relationship_request(&d, "Y", &["X".into(), "C".into()], None).is_ok());
-        assert!(check_relationship_request(&d, "Y", &["nope".into()], None).unwrap_err().starts_with("BAD_REQUEST: Predictor"));
-        assert!(check_relationship_request(&d, "nope", &["X".into()], None).unwrap_err().starts_with("BAD_REQUEST: Target"));
         let ranges = [ClusterRange { min: None, max: Some(1.0) }, ClusterRange { min: Some(1.0), max: None }];
         assert!(check_clustering_request(&d, "X", "Y", 2, Some("C"), Some(&ranges), None).is_ok());
         assert!(check_clustering_request(&d, "X", "Y", 1, None, None, None).is_ok());

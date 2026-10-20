@@ -735,12 +735,6 @@ describe('fakeHealthRust — compute_health_preview scores 1-hour averages', () 
             inside_3sd_ring_pct: 50,    // over the two hours that have a cluster
         });
 
-        // The exported file carries the very same block.
-        expect(((await rust.invoke('export_model_files', { request: { ...MIX_REQ, workspace_id: 'ws1' } })) as any).ok).toBe(true);
-        const info = JSON.parse(rust.files.get('workspaces/ws1/output/Y/CLUS_INFO_X_Y.json')!);
-        expect(info.validation.train).toEqual(v.train);
-        expect(info.validation.tests).toEqual(v.tests);
-        expect(info.validation.tests[0]).toMatchObject({ hours: 5, scored: 2 });
     });
 
     it('Clustering with no criteria sensor (one cluster): every hour has that cluster and a score, whatever the rows are', async () => {
@@ -834,47 +828,5 @@ describe('fakeHealthRust — compute_health_preview scores 1-hour averages', () 
         expect(p.hourly.score).toEqual([100, 100, 100, 100]);
         expect(p.series.score).toBeNull();
         expect(p.test_validation).toBeNull();
-    });
-
-    it('export_model_files writes the same block as `validation`, declaring how the scores were sampled', async () => {
-        const rust = createFakeHealthRust({ datasets: { d: individualData() } });
-        const p = await preview(rust, IND_REQ);
-        const res = await rust.invoke('export_model_files', { request: { ...IND_REQ, workspace_id: 'ws1', model_name: 'Pump' } }) as any;
-        expect(res.ok).toBe(true);
-        const info = JSON.parse(rust.files.get('workspaces/ws1/output/V/INDV_INFO_V.json')!);
-        expect(Object.keys(info.validation).sort()).toEqual(['scoring_aggregation', 'scoring_interval_seconds', 'tested', 'tests', 'train', 'train_ranges', 'validated_at']);
-        expect(info.validation).toMatchObject({ tested: true, scoring_interval_seconds: 3600, scoring_aggregation: 'mean' });
-        expect(info.validation.train).toEqual(p.test_validation.train);
-        expect(info.validation.tests).toEqual(p.test_validation.tests);
-        // without a scoring period there is no block at all
-        await rust.invoke('export_model_files', { request: { ...IND_REQ, test_periods: undefined, workspace_id: 'ws2' } });
-        expect(JSON.parse(rust.files.get('workspaces/ws2/output/V/INDV_INFO_V.json')!)).not.toHaveProperty('validation');
-    });
-
-    it('Relation model + Clustering exports carry the hourly block too; a dataset swapped while the engine runs never reaches the files', async () => {
-        const rust = createFakeHealthRust({ datasets: { d: relData(), other: plantDataset() } });
-        await trainRel(rust);
-        const relReq = { kind: 'relationship', target: 'T', predictors: ['P'], lambda: 1, cache_key: 'r1::fp', filter: TRAIN, set_points: REL_SP, test_periods: REL_S };
-        const p = await preview(rust, relReq);
-        // the engine run of the export is held; meanwhile another dataset is loaded
-        const gate = rust.gate('sidecar:export_model_files');
-        const pending = rust.invoke('export_model_files', { request: { ...relReq, workspace_id: 'ws1' } }) as Promise<any>;
-        await Promise.resolve();
-        rust.loadDataset('other');
-        gate.release();
-        expect((await pending).ok).toBe(true);
-        const rel = JSON.parse(rust.files.get('workspaces/ws1/output/T/REL_INFO_P_T.json')!);
-        expect(rel.validation).toMatchObject({ tested: true, scoring_interval_seconds: 3600, scoring_aggregation: 'mean' });
-        expect(rel.validation.train).toEqual(p.test_validation.train);
-        expect(rel.validation.tests).toEqual(p.test_validation.tests);
-        expect(rel.validation.tests[0]).toMatchObject({ rows: 15, hours: 2, scored: 2 });
-
-        const clu = createFakeHealthRust({ datasets: { d: clusterData() } });
-        const cp = await preview(clu, CLU_REQ);
-        expect(((await clu.invoke('export_model_files', { request: { ...CLU_REQ, workspace_id: 'ws1' } })) as any).ok).toBe(true);
-        const info = JSON.parse(clu.files.get('workspaces/ws1/output/Y/CLUS_INFO_X_Y.json')!);
-        expect(info.validation).toMatchObject({ scoring_interval_seconds: 3600, scoring_aggregation: 'mean' });
-        expect(info.validation.tests).toEqual(cp.test_validation.tests);
-        expect(Object.keys(info.cluster_info)).toEqual(['1', '2']); // the model part of the file is unchanged
     });
 });

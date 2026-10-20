@@ -37,9 +37,9 @@ const LIB = readText(joinPath(ROOT, 'src-tauri', 'src', 'lib.rs'));
 
 /** Registered but intentionally not called from the frontend (decide before adding here). */
 const INTENTIONALLY_UNCALLED = new Set([
-    // The standalone train-and-save commands. Mark complete writes the model files via
-    // `export_model_files`; these three are kept registered as that export's public twins
-    // (same training code, direct entry points) and for future use — not dead code, don't delete.
+    // The standalone train-and-save commands. Export results writes the model files
+    // (Mark complete writes none since 2026-10-20); these three are kept registered as
+    // direct entry points to the same training code and for future use — not dead code, don't delete.
     'train_individual_model', 'train_clustering_model', 'train_relationship_model',
     // Diagnostic; no caller since the upload page stopped re-checking loaded paths.
     'get_loaded_paths',
@@ -175,6 +175,13 @@ describe('Tauri IPC contract (static: lib.rs <-> TS call sites)', () => {
         expect(dead).toEqual([]);
         const staleAllowList = [...INTENTIONALLY_UNCALLED].filter(c => called.has(c) || !COMMAND_NAMES.has(c));
         expect(staleAllowList).toEqual([]);
+    });
+
+    it('the old Mark-complete file commands are gone on both sides (2026-10-20: Export results is the only writer)', () => {
+        for (const cmd of ['export_model_files', 'remove_model_files', 'get_model_output_dir']) {
+            expect(registered, cmd).not.toContain(cmd);
+            expect(callSites.filter(c => c.cmd === cmd), cmd).toEqual([]);
+        }
     });
 
     it('every object-literal call site sends only keys Tauri will deserialize, and every required parameter', () => {

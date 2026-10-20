@@ -171,10 +171,9 @@ function setPointNumbers(sp: HealthSetPoints): (number | null)[] | null {
     }
 }
 
-/** Same kind and the same entered numbers (master snapshots ignored). The
- *  utils copy of the Health page's `sameSetPoints` (`healthChecks.ts`), so the
- *  workspace write rules do not import component code; the two must agree
- *  (`healthSetPoints.test.ts` checks). */
+/** Same kind and the same entered numbers (master snapshots ignored). THE one
+ *  definition: the Health page's `sameSetPoints` (`healthChecks.ts`) is a
+ *  re-export of this. */
 export function sameHealthSetPoints(a: HealthSetPoints | null | undefined, b: HealthSetPoints | null | undefined): boolean {
     if (!a || !b) return !a && !b;
     if (a.kind !== b.kind) return false;

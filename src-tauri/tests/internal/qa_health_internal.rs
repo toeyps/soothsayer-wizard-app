@@ -15,15 +15,15 @@
 //! `REL_DATASET` row for row.
 //!
 //! Covers what the in-module tests do not:
-//!   A. rounding consistency — write the model file through the export core,
+//!   A. rounding consistency — write the model file through the legacy `train_*` core,
 //!      read it back, re-score every hourly point with an independent
 //!      reference (Relationship: the file's rows averaged per hour, through
 //!      the model) and compare with the preview;
 //!   B. training-scope consistency between `compute_health_preview` and the
-//!      export path for many filter shapes, against an independent filter;
+//!      legacy `train_*` file for many filter shapes, against an independent filter;
 //!   C. Relationship cache: generation straddle, concurrency, foreign rows;
-//!   D. export robustness: failure injection, locked files, hostile names,
-//!      orphan staging dirs, odd workspace ids, exact JSON shapes;
+//!   D. exact JSON shapes of the legacy `train_*` files (the Mark-complete export
+//!      robustness tests went with that export, Export results phase 4);
 //!   E. edge datasets (empty, one row, duplicate / case-variant names,
 //!      TS_MISSING, Buddhist-Era timestamps, huge residuals, payload sizes);
 //!   F. REAL-DATA smoke tests (`#[ignore]`d — run explicitly, skip gracefully
@@ -43,9 +43,7 @@ use crate::health_preview::{
 };
 use crate::health_score::{IndividualBand, RelFit, SetPointsArg};
 use crate::metrics::{self, round_metric};
-use crate::model_export::{
-    commit, export_sync, output_dir_path, prepare_workspace, ModelFilesRequest, Staging,
-};
+use crate::model_export::CoreError;
 use crate::{
     commit_derived, health_preview_in, install_session, remove_derived_in_state,
     store_rel_fit, write_relationship_outputs, AppState, SessionStamp, ClusterRange, PreviewFilter,
@@ -216,26 +214,6 @@ fn sp_n(n: f64) -> SetPointsArg {
     SetPointsArg { outer_sd: Some(n), ..Default::default() }
 }
 
-/// Every `.staging-*` / `.backup` directory left anywhere under `root`.
-fn leftovers(root: &Path) -> Vec<String> {
-    let mut out = Vec::new();
-    fn walk(d: &Path, out: &mut Vec<String>) {
-        if let Ok(rd) = std::fs::read_dir(d) {
-            for e in rd.flatten() {
-                let name = e.file_name().to_string_lossy().into_owned();
-                if name.starts_with(".staging-") || name == ".backup" {
-                    out.push(e.path().display().to_string());
-                }
-                if e.path().is_dir() {
-                    walk(&e.path(), out);
-                }
-            }
-        }
-    }
-    walk(root, &mut out);
-    out
-}
-
 fn all_files(root: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
     fn walk(d: &Path, out: &mut Vec<PathBuf>) {
@@ -254,15 +232,14 @@ fn all_files(root: &Path) -> Vec<PathBuf> {
     out
 }
 
-fn ind_export(target: &str, ws: &str, sp: Option<SetPointsArg>, filter: Option<PreviewFilter>) -> ModelFilesRequest {
-    ModelFilesRequest {
-        kind: "individual".into(),
-        workspace_id: ws.into(),
-        target: Some(target.into()),
-        set_points: sp,
-        filter,
-        ..Default::default()
-    }
+/// The legacy `train_individual_model` writer (`INDV_INFO_{target}.json` under
+/// `{dir}/output/{target}/`); returns the file path. Mark complete no longer
+/// writes files (Export results phase 4), so these tests exercise the legacy
+/// `train_*` file instead.
+fn ind_file(d: &ColumnarData, target: &str, sp: Option<SetPointsArg>, filter: Option<PreviewFilter>, dir: &Path) -> Result<PathBuf, String> {
+    crate::write_individual_info(d, target.into(), None, dir.to_str().unwrap(), filter, sp.as_ref())
+        .map(|i| PathBuf::from(i.saved_path))
+        .map_err(CoreError::into_string)
 }
 
 // ===========================================================================
@@ -317,9 +294,7 @@ fn a1_individual_file_rescoring_matches_preview_for_every_hour_of_several_scales
         assert_eq!(se.rows.len(), hours.len(), "{name}: every hourly point at max_points=100000");
 
         let app = tempfile::tempdir().unwrap();
-        let r = export_sync(&d, &ind_export("S", "ws", Some(sp), None), app.path()).unwrap();
-        assert!(r.ok, "{name}: {:?}", r.validation);
-        let info = read_json(Path::new(&r.files[0].path));
+        let info = read_json(&ind_file(&d, "S", Some(sp), None, app.path()).unwrap_or_else(|e| panic!("{name}: {e}")));
         let m = &info["model_metrics"];
         // The file numbers ARE the preview numbers (bit-identical).
         assert_eq!(m["mean"].as_f64().unwrap(), st.mean, "{name} mean");
@@ -425,19 +400,23 @@ fn clu_req(ranges: Vec<ClusterRange>, n_out: f64, filter: Option<PreviewFilter>)
     }
 }
 
-fn clu_export(req: &HealthPreviewRequest, ws: &str) -> ModelFilesRequest {
-    ModelFilesRequest {
-        kind: "clustering".into(),
-        workspace_id: ws.into(),
-        first_sensor: req.first_sensor.clone(),
-        second_sensor: req.second_sensor.clone(),
-        n_clusters: req.n_clusters,
-        criteria_sensor: req.criteria_sensor.clone(),
-        cluster_ranges: req.cluster_ranges.clone(),
-        filter: req.filter.clone(),
-        set_points: req.set_points.clone(),
-        ..Default::default()
-    }
+/// The legacy `train_clustering_model` writer (`CLUS_INFO_{x}_{y}.json`);
+/// returns the file path.
+fn clu_file(d: &ColumnarData, req: &HealthPreviewRequest, dir: &Path) -> Result<PathBuf, String> {
+    crate::write_clustering_info(
+        d,
+        req.first_sensor.clone().unwrap_or_default(),
+        req.second_sensor.clone().unwrap_or_default(),
+        req.n_clusters.unwrap_or(1),
+        req.criteria_sensor.clone(),
+        req.cluster_ranges.clone(),
+        None,
+        dir.to_str().unwrap(),
+        req.filter.clone(),
+        req.set_points.as_ref(),
+    )
+    .map(|i| PathBuf::from(i.saved_path))
+    .map_err(CoreError::into_string)
 }
 
 /// Overlapping criteria ranges: the FIT of every cluster uses every row its
@@ -477,9 +456,7 @@ fn clustering_file_mismatches(d: &ColumnarData, req: &HealthPreviewRequest) -> (
     assert!(clu_parts(&p).1.score.is_none(), "the raw rows are not scored");
     let se = clu_hourly(&p);
     let app = tempfile::tempdir().unwrap();
-    let r = export_sync(d, &clu_export(req, "ws"), app.path()).unwrap();
-    assert!(r.ok, "{:?}", r.validation);
-    let info = read_json(Path::new(&r.files[0].path));
+    let info = read_json(&clu_file(d, req, app.path()).unwrap());
     let (xi, yi, ci_col) = (d.col_index("X").unwrap(), d.col_index("Y").unwrap(), d.col_index("C").unwrap());
     let hours = ref_hours(d, 0..d.n_rows());
     assert_eq!(se.rows.len(), hours.len(), "every hourly point at max_points=100000");
@@ -927,9 +904,7 @@ fn b1_individual_scope_preview_equals_export_and_an_independent_computation() {
 
         let sp = sp_ind(st.boundary_3sd[0] - 1.0, st.boundary_3sd[1] + 1.0);
         let app = tempfile::tempdir().unwrap();
-        let r = export_sync(&d, &ind_export("S", "w", Some(sp), f.clone()), app.path()).unwrap();
-        assert!(r.ok, "{name}: {:?}", r.validation);
-        let info = read_json(Path::new(&r.files[0].path));
+        let info = read_json(&ind_file(&d, "S", Some(sp), f.clone(), app.path()).unwrap_or_else(|e| panic!("{name}: {e}")));
         let m = &info["model_metrics"];
         assert_eq!((m["mean"].as_f64().unwrap(), m["sd"].as_f64().unwrap()), (st.mean, st.sd), "{name}");
         assert_eq!(m["3sd_boundary"][1].as_f64().unwrap(), st.boundary_3sd[1], "{name}");
@@ -957,9 +932,7 @@ fn b2_clustering_scope_preview_geometry_equals_the_exported_file() {
         assert_eq!(st.rows, kept.len(), "{name}");
         assert_eq!(se.rows.len(), kept.len().min(100_000));
         let app = tempfile::tempdir().unwrap();
-        let r = export_sync(&d, &clu_export(&req, "w"), app.path()).unwrap();
-        assert!(r.ok, "{name}: {:?}", r.validation);
-        let info = read_json(Path::new(&r.files[0].path));
+        let info = read_json(&clu_file(&d, &req, app.path()).unwrap_or_else(|e| panic!("{name}: {e}")));
         for c in &st.clusters {
             let e = &info["cluster_info"][c.cluster_id.to_string()];
             for (k, v) in [("x_cluster_center", c.x_center), ("y_cluster_center", c.y_center), ("x_sd", c.x_sd), ("y_sd", c.y_sd), ("angle_deg", c.angle_deg)] {
@@ -1210,7 +1183,7 @@ fn c4_concurrent_reload_store_and_preview_never_mix_datasets() {
 }
 
 // ===========================================================================
-// D. Export robustness
+// D. Legacy train_* file shapes
 // ===========================================================================
 
 fn ind_dataset() -> ColumnarData {
@@ -1220,224 +1193,6 @@ fn ind_dataset() -> ColumnarData {
 
 fn good_ind_sp(d: &ColumnarData) -> SetPointsArg {
     let p = individual_preview(d, &ind_req("S", None, None)).unwrap();
-    let st = ind_parts(&p).0;
-    sp_ind(st.boundary_3sd[0] - 3.0, st.boundary_3sd[1] + 3.0)
-}
-
-#[test]
-fn d1_failure_when_the_workspace_dir_is_a_file_writes_nothing() {
-    let d = ind_dataset();
-    let app = tempfile::tempdir().unwrap();
-    std::fs::create_dir_all(app.path().join("workspaces")).unwrap();
-    std::fs::write(app.path().join("workspaces").join("ws"), "i am a file").unwrap();
-    let e = export_sync(&d, &ind_export("S", "ws", Some(good_ind_sp(&d)), None), app.path()).unwrap_err();
-    assert!(e.contains("Failed to create"), "{e}");
-    assert_eq!(std::fs::read_to_string(app.path().join("workspaces").join("ws")).unwrap(), "i am a file");
-    assert!(leftovers(app.path()).is_empty());
-}
-
-#[test]
-fn d2_failure_when_the_final_target_folder_is_a_file_rolls_back_and_cleans_staging() {
-    let d = ind_dataset();
-    let app = tempfile::tempdir().unwrap();
-    let w = prepare_workspace(app.path(), "ws").unwrap();
-    std::fs::write(w.output_dir.join("S"), "blocker").unwrap();
-    let e = export_sync(&d, &ind_export("S", "ws", Some(good_ind_sp(&d)), None), app.path()).unwrap_err();
-    assert!(e.contains("nothing was changed"), "{e}");
-    assert_eq!(std::fs::read_to_string(w.output_dir.join("S")).unwrap(), "blocker");
-    assert!(leftovers(app.path()).is_empty(), "{:?}", leftovers(app.path()));
-}
-
-#[test]
-fn d3_a_refused_export_after_a_good_one_keeps_the_good_files_byte_identical() {
-    let d = ind_dataset();
-    let app = tempfile::tempdir().unwrap();
-    let ok = export_sync(&d, &ind_export("S", "ws", Some(good_ind_sp(&d)), None), app.path()).unwrap();
-    let before = std::fs::read(&ok.files[0].path).unwrap();
-    // Invalid set points, and missing set points.
-    for sp in [Some(sp_ind(49.0, 51.0)), None, Some(SetPointsArg::default())] {
-        let r = export_sync(&d, &ind_export("S", "ws", sp, None), app.path()).unwrap();
-        assert!(!r.ok && r.files.is_empty() && !r.validation.is_empty());
-        assert_eq!(std::fs::read(&ok.files[0].path).unwrap(), before);
-    }
-    // A scope under which the old L/H fall inside 3σ is refused at export
-    // even though the page last saw it valid (validation re-run per call).
-    let narrow_d = ds(vec![("S", (0..2000).map(|i| 50.0 + if i < 1000 { 0.1 } else { 40.0 } * ((i % 10) as f64 - 4.5)).collect())]);
-    let sp = good_ind_sp(&ind_dataset());
-    let r = export_sync(&narrow_d, &ind_export("S", "ws", Some(sp), None), app.path()).unwrap();
-    assert!(!r.ok, "wider σ must re-validate and refuse");
-    assert_eq!(std::fs::read(&ok.files[0].path).unwrap(), before);
-    assert!(leftovers(app.path()).is_empty());
-}
-
-#[cfg(windows)]
-fn lock_exclusively(p: &Path) -> std::fs::File {
-    use std::os::windows::fs::OpenOptionsExt;
-    std::fs::OpenOptions::new().read(true).share_mode(0).open(p).unwrap()
-}
-
-/// The user has the previous export open in Excel (Excel opens without
-/// FILE_SHARE_DELETE): re-export must fail cleanly and keep the old file.
-#[cfg(windows)]
-#[test]
-fn d4_re_export_while_the_old_file_is_locked_fails_cleanly() {
-    let d = ind_dataset();
-    let app = tempfile::tempdir().unwrap();
-    let ok = export_sync(&d, &ind_export("S", "ws", Some(good_ind_sp(&d)), None), app.path()).unwrap();
-    let before = std::fs::read(&ok.files[0].path).unwrap();
-    let lock = lock_exclusively(Path::new(&ok.files[0].path));
-    let r = export_sync(&d, &ind_export("S", "ws", Some(good_ind_sp(&d)), None), app.path());
-    drop(lock);
-    let e = r.unwrap_err();
-    assert!(e.contains("nothing was changed"), "{e}");
-    assert_eq!(std::fs::read(&ok.files[0].path).unwrap(), before);
-    assert!(leftovers(app.path()).is_empty(), "{:?}", leftovers(app.path()));
-}
-
-/// Relationship-shaped commit (INFO + pkl + CSV) where the SECOND file is
-/// locked: the first must be rolled back to the previous version.
-#[cfg(windows)]
-#[test]
-fn d5_multi_file_commit_with_a_locked_middle_file_restores_every_previous_file() {
-    let app = tempfile::tempdir().unwrap();
-    let w = prepare_workspace(app.path(), "ws").unwrap();
-    let names = ["REL_DATASET_X_Y.csv", "REL_INFO_X_Y.json", "REL_MODEL_X_Y.pkl"];
-    for n in names {
-        let p = w.output_dir.join("Y").join(n);
-        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
-        std::fs::write(&p, format!("OLD {n}")).unwrap();
-    }
-    let st = Staging::create(&w.ws_dir).unwrap();
-    for n in names {
-        let p = st.output_dir().join("Y").join(n);
-        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
-        std::fs::write(&p, format!("NEW {n}")).unwrap();
-    }
-    let lock = lock_exclusively(&w.output_dir.join("Y").join(names[1]));
-    let e = commit(&st.output_dir(), &w.output_dir).unwrap_err();
-    drop(lock);
-    assert!(e.contains("nothing was changed"), "{e}");
-    for n in names {
-        assert_eq!(std::fs::read_to_string(w.output_dir.join("Y").join(n)).unwrap(), format!("OLD {n}"));
-    }
-    drop(st);
-    assert!(leftovers(app.path()).is_empty(), "{:?}", leftovers(app.path()));
-}
-
-/// `Staging::create` sweeps stale `.staging-*` dirs, and a backup is restored
-/// when its final file is missing: an interrupted export (process killed /
-/// power loss between `Staging::create` and its `Drop`) leaves
-/// `{ws}/.staging-*` behind — possibly holding a `.backup` of the user's
-/// previous files.
-#[test]
-fn bug_d6_orphan_staging_dirs_are_swept_on_the_next_export() {
-    let d = ind_dataset();
-    let app = tempfile::tempdir().unwrap();
-    let w = prepare_workspace(app.path(), "ws").unwrap();
-    let orphan = w.ws_dir.join(".staging-99999-1-0");
-    std::fs::create_dir_all(orphan.join("output").join("S")).unwrap();
-    std::fs::write(orphan.join("output").join("S").join("INDV_INFO_S.json"), "half").unwrap();
-    export_sync(&d, &ind_export("S", "ws", Some(good_ind_sp(&d)), None), app.path()).unwrap();
-    assert!(!orphan.exists(), "orphan staging dir from a crashed export is still there");
-}
-
-#[test]
-fn d7_hostile_sensor_names_never_escape_the_output_folder_or_leave_debris() {
-    let names: Vec<String> = vec![
-        "..".into(), ".".into(), "a/b".into(), "a\\b".into(), "../../evil".into(), "C:evil".into(),
-        "CON".into(), "NUL".into(), "COM1".into(), "LPT1".into(), "AUX".into(), "PRN".into(),
-        "A.".into(), "A ".into(), " A".into(), "x".repeat(300), "温度センサー".into(), "ท่ออากาศ".into(),
-        "=cmd|' /C calc'!A0".into(), "-5".into(), "tab\tname".into(), "q?".into(), "a*b".into(), "\u{202e}rtl".into(),
-    ];
-    let app = tempfile::tempdir().unwrap();
-    let mut report = Vec::new();
-    for name in &names {
-        let mut rng = Rng::new(7);
-        let d = ds(vec![(name.as_str(), (0..300).map(|_| 10.0 + rng.normal()).collect())]);
-        let p = individual_preview(&d, &ind_req(name, None, None)).unwrap();
-        let st = ind_parts(&p).0;
-        let sp = sp_ind(st.boundary_3sd[0] - 1.0, st.boundary_3sd[1] + 1.0);
-        let res = export_sync(&d, &ind_export(name, "ws", Some(sp), None), app.path());
-        let outcome = match &res {
-            Ok(r) => {
-                assert!(r.ok);
-                for f in &r.files {
-                    let fp = Path::new(&f.path);
-                    assert!(fp.starts_with(app.path().join("workspaces").join("ws").join("output")), "{name:?} -> {}", f.path);
-                    // The reported file must really be there and be the INFO for THIS sensor.
-                    let ok_read = std::fs::read_to_string(fp).ok().and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok());
-                    match ok_read {
-                        Some(j) => assert_eq!(j["model_name"], format!("({name})")),
-                        None => report.push(format!("{name:?}: reported {} but it cannot be read back", f.path)),
-                    }
-                }
-                "ok".to_string()
-            }
-            Err(e) => format!("refused: {e}"),
-        };
-        eprintln!("{:<30} {}", format!("{name:?}").chars().take(30).collect::<String>(), outcome.chars().take(110).collect::<String>());
-    }
-    // Nothing outside {app}/workspaces, no staging debris.
-    for f in all_files(app.path()) {
-        assert!(f.starts_with(app.path().join("workspaces")), "escaped: {}", f.display());
-    }
-    assert!(leftovers(app.path()).is_empty(), "{:?}", leftovers(app.path()));
-    assert!(report.is_empty(), "{report:#?}");
-}
-
-/// Trailing dot / space are silently stripped by Win32: sensor "A." and "A"
-/// share ONE output folder. The file names still differ (INDV_INFO_A..json
-/// vs INDV_INFO_A.json), so nothing is overwritten — pinned here.
-#[test]
-fn d8_trailing_dot_or_space_sensor_names_do_not_overwrite_each_other() {
-    let app = tempfile::tempdir().unwrap();
-    let mut paths = Vec::new();
-    for name in ["A", "A.", "A "] {
-        let mut rng = Rng::new(8);
-        let d = ds(vec![(name, (0..300).map(|_| 10.0 + rng.normal()).collect())]);
-        let p = individual_preview(&d, &ind_req(name, None, None)).unwrap();
-        let st = ind_parts(&p).0;
-        let r = export_sync(&d, &ind_export(name, "ws", Some(sp_ind(st.boundary_3sd[0] - 1.0, st.boundary_3sd[1] + 1.0)), None), app.path());
-        if let Ok(r) = r {
-            paths.push((name, r.files[0].path.clone()));
-        }
-    }
-    for (name, p) in &paths {
-        let j = read_json(Path::new(p));
-        assert_eq!(j["model_name"], format!("({name})"), "{p} was overwritten by another sensor");
-    }
-}
-
-#[test]
-fn d9_two_models_same_target_different_kinds_coexist_and_re_export_overwrites_only_its_own_file() {
-    let mut rng = Rng::new(9);
-    let n = 3000;
-    let t: Vec<f64> = (0..n).map(|_| 20.0 + rng.normal()).collect();
-    let x: Vec<f64> = t.iter().map(|v| v * 2.0 + rng.normal()).collect();
-    let d = ds(vec![("T", t), ("X", x)]);
-    let app = tempfile::tempdir().unwrap();
-    let a = export_sync(&d, &ind_export("T", "ws", Some(good_ind_sp_for(&d, "T")), None), app.path()).unwrap();
-    let creq = HealthPreviewRequest {
-        kind: "clustering".into(),
-        first_sensor: Some("X".into()),
-        second_sensor: Some("T".into()),
-        n_clusters: Some(1),
-        set_points: Some(sp_n(6.0)),
-        ..Default::default()
-    };
-    let b = export_sync(&d, &clu_export(&creq, "ws"), app.path()).unwrap();
-    assert!(a.ok && b.ok);
-    let out = app.path().join("workspaces").join("ws").join("output").join("T");
-    let mut listed: Vec<String> = std::fs::read_dir(&out).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
-    listed.sort();
-    assert_eq!(listed, vec!["CLUS_INFO_X_T.json", "INDV_INFO_T.json"]);
-    let clus_before = std::fs::read(out.join("CLUS_INFO_X_T.json")).unwrap();
-    export_sync(&d, &ind_export("T", "ws", Some(good_ind_sp_for(&d, "T")), None), app.path()).unwrap();
-    assert_eq!(std::fs::read(out.join("CLUS_INFO_X_T.json")).unwrap(), clus_before);
-}
-
-fn good_ind_sp_for(d: &ColumnarData, s: &str) -> SetPointsArg {
-    let p = individual_preview(d, &ind_req(s, None, None)).unwrap();
     let st = ind_parts(&p).0;
     sp_ind(st.boundary_3sd[0] - 3.0, st.boundary_3sd[1] + 3.0)
 }
@@ -1453,11 +1208,9 @@ fn d10_info_json_shapes_are_exactly_the_spec() {
     // Individual
     let d = ind_dataset();
     let app = tempfile::tempdir().unwrap();
-    let r = export_sync(&d, &ind_export("S", "ws", Some(good_ind_sp(&d)), None), app.path()).unwrap();
-    assert_eq!(r.files.len(), 1);
-    assert_eq!(r.files[0].file_name, "INDV_INFO_S.json");
-    assert_eq!(r.files[0].kind, "info");
-    let j = read_json(Path::new(&r.files[0].path));
+    let f = ind_file(&d, "S", Some(good_ind_sp(&d)), None, app.path()).unwrap();
+    assert_eq!(f.file_name().unwrap(), "INDV_INFO_S.json");
+    let j = read_json(&f);
     assert_eq!(keys(&j), vec!["historical_sd_band_and_set_point", "model_composition", "model_metrics", "model_name", "model_training_set_info", "model_update_record"]);
     assert_eq!(keys(&j["model_metrics"]), vec!["1sd_boundary", "3sd_boundary", "mean", "sd", "setpoint_health_score"]);
     let sp = j["model_metrics"]["setpoint_health_score"].as_array().unwrap();
@@ -1475,9 +1228,9 @@ fn d10_info_json_shapes_are_exactly_the_spec() {
         4.25,
         None,
     );
-    let r = export_sync(&cd, &clu_export(&req, "ws"), app.path()).unwrap();
-    assert_eq!(r.files[0].file_name, "CLUS_INFO_X_Y.json");
-    let j = read_json(Path::new(&r.files[0].path));
+    let f = clu_file(&cd, &req, app.path()).unwrap();
+    assert_eq!(f.file_name().unwrap(), "CLUS_INFO_X_Y.json");
+    let j = read_json(&f);
     assert_eq!(keys(&j), vec!["cluster_info", "model_composition", "model_name", "model_training_set_info", "model_update_record"]);
     let base = ["angle_deg", "boundary_sd_health_score", "x_cluster_center", "x_sd", "y_cluster_center", "y_sd"];
     let with = |extra: &[&str]| {
@@ -1546,52 +1299,6 @@ fn d11_relationship_file_names_collide_for_a_predictor_named_with_plus() {
     assert_eq!(a, b, "documenting the collision");
 }
 
-#[test]
-fn d12_odd_workspace_ids_never_resolve_outside_app_data() {
-    let app = tempfile::tempdir().unwrap();
-    let ids: Vec<String> = vec![
-        "".into(), ".".into(), "..".into(), "../x".into(), "..\\x".into(), "a/b".into(), "a\\b".into(),
-        "C:\\x".into(), "C:x".into(), "\\\\srv\\share".into(), "/abs".into(), "ws.".into(), " ws".into(),
-        "ws ".into(), "ws\u{0}".into(), "CON".into(), "NUL".into(), "com1".into(), "%APPDATA%".into(),
-        "~".into(), "งาน-1".into(), "x".repeat(255), "x".repeat(400), "ws_ok-1".into(),
-    ];
-    for id in &ids {
-        match output_dir_path(app.path(), id) {
-            Ok(p) => {
-                assert!(p.starts_with(app.path().join("workspaces")), "{id:?} -> {}", p.display());
-                assert_eq!(p.parent().unwrap().parent().unwrap(), app.path().join("workspaces"), "{id:?} must be ONE component");
-                let r = prepare_workspace(app.path(), id);
-                eprintln!("workspace id {:<12} -> accepted, prepare: {}", format!("{id:?}").chars().take(12).collect::<String>(), if r.is_ok() { "ok" } else { "error" });
-            }
-            Err(e) => {
-                assert!(e.starts_with("workspace_id"), "{e}");
-                assert!(prepare_workspace(app.path(), id).is_err());
-            }
-        }
-    }
-    for f in all_files(app.path()) {
-        assert!(f.starts_with(app.path().join("workspaces")));
-    }
-    for traversal in ["..", "../x", "a/b", "a\\b", "C:\\x", "\\\\srv\\share", "/abs", "", "."] {
-        assert!(output_dir_path(app.path(), traversal).is_err(), "{traversal:?} must be refused");
-    }
-}
-
-/// Windows reserved device names as a workspace id: on Windows
-/// `{app}/workspaces/CON/output` is not a real folder (writes go to the
-/// console device / fail). `sanitize_workspace_id` should refuse them.
-/// Real ids are UUID-like, so this is defensive (low).
-#[cfg(windows)]
-#[test]
-fn d13_reserved_windows_names_as_workspace_id_behaviour() {
-    let app = tempfile::tempdir().unwrap();
-    for id in ["CON", "NUL", "COM1", "aux"] {
-        let ok = output_dir_path(app.path(), id).is_ok();
-        let made = prepare_workspace(app.path(), id).map(|w| w.output_dir.is_dir());
-        eprintln!("workspace id {id}: accepted={ok} prepare={made:?}");
-    }
-}
-
 // ===========================================================================
 // E. Edge datasets
 // ===========================================================================
@@ -1612,8 +1319,8 @@ fn e1_empty_and_one_row_datasets_never_panic() {
     };
     assert!(clustering_preview(&empty, &c).unwrap_err().starts_with("NO_DATA"));
     let app = tempfile::tempdir().unwrap();
-    assert!(export_sync(&empty, &ind_export("S", "ws", Some(sp_ind(0.0, 1.0)), None), app.path()).is_err());
-    assert!(leftovers(app.path()).is_empty());
+    assert!(ind_file(&empty, "S", Some(sp_ind(0.0, 1.0)), None, app.path()).is_err());
+    assert!(all_files(app.path()).is_empty());
 
     let one = ds(vec![("S", vec![5.0]), ("X", vec![1.0]), ("Y", vec![2.0])]);
     let p = individual_preview(&one, &ind_req("S", Some(sp_ind(0.0, 10.0)), None)).unwrap();
@@ -1624,8 +1331,7 @@ fn e1_empty_and_one_row_datasets_never_panic() {
     c1.set_points = Some(sp_n(5.0));
     let p = clustering_preview(&one, &c1).unwrap();
     assert!(!p.valid && p.validation.iter().any(|i| i.code == "degenerate_band"));
-    let r = export_sync(&one, &ind_export("S", "ws", Some(sp_ind(0.0, 10.0)), None), app.path()).unwrap();
-    assert!(!r.ok);
+    assert!(ind_file(&one, "S", Some(sp_ind(0.0, 10.0)), None, app.path()).unwrap_err().starts_with("VALIDATION"));
     // JSON of a degenerate preview has no NaN-turned-null surprises in stats.
     let j = serde_json::to_value(individual_preview(&one, &ind_req("S", None, None)).unwrap()).unwrap();
     for k in ["mean", "sd", "min", "max"] {
@@ -1650,16 +1356,17 @@ fn e2_duplicate_and_case_variant_names_resolve_the_same_way_in_preview_and_expor
     let st = ind_parts(&p).0;
     assert!(st.mean < 20.0, "first 'S' column expected");
     let app = tempfile::tempdir().unwrap();
-    let r = export_sync(&d, &ind_export("S", "ws", Some(sp_ind(st.boundary_3sd[0] - 1.0, st.boundary_3sd[1] + 1.0)), None), app.path()).unwrap();
-    assert_eq!(read_json(Path::new(&r.files[0].path))["model_metrics"]["mean"].as_f64().unwrap(), st.mean);
+    let f = ind_file(&d, "S", Some(sp_ind(st.boundary_3sd[0] - 1.0, st.boundary_3sd[1] + 1.0)), None, app.path()).unwrap();
+    assert_eq!(read_json(&f)["model_metrics"]["mean"].as_f64().unwrap(), st.mean);
     // "s" is a different, exact-match column (case-sensitive everywhere).
     let p = individual_preview(&d, &ind_req("s", None, None)).unwrap();
     assert!(ind_parts(&p).0.mean < 0.0);
     // Case-variant that does not exist: BAD_REQUEST in preview, plain error in export.
     let e = individual_preview(&d, &ind_req("S ", None, None)).unwrap_err();
     assert!(e.starts_with("BAD_REQUEST"), "{e}");
-    assert!(export_sync(&d, &ind_export("S ", "ws2", Some(sp_ind(0.0, 1.0)), None), app.path()).is_err());
-    assert!(leftovers(app.path()).is_empty());
+    let app2 = tempfile::tempdir().unwrap();
+    assert!(ind_file(&d, "S ", Some(sp_ind(0.0, 1.0)), None, app2.path()).is_err());
+    assert!(all_files(app2.path()).is_empty());
 }
 
 #[test]
@@ -2127,10 +1834,9 @@ mod real_data {
             if p.valid {
                 let app = tempfile::tempdir().unwrap();
                 let t = Instant::now();
-                let r = export_sync(&d, &clu_export(&req, "real"), app.path()).unwrap();
-                eprintln!("  export_model_files(clustering) core in {:?} -> {:?}", t.elapsed(), r.files.iter().map(|f| &f.file_name).collect::<Vec<_>>());
-                assert!(r.ok);
-                let info = read_json(Path::new(&r.files[0].path));
+                let f = clu_file(&d, &req, app.path()).unwrap();
+                eprintln!("  train_clustering_model core in {:?} -> {}", t.elapsed(), f.display());
+                let info = read_json(&f);
                 let ci = d.col_index(crit).unwrap();
                 let sc = se.score.as_ref().unwrap();
                 // Independent cluster of every hour: the cluster EVERY one of

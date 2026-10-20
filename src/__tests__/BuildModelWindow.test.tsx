@@ -341,17 +341,9 @@ const fitGoneSettled = async (boardId: 'results-not-fitted' | 'health-not-fitted
 };
 
 /** Health score page (3b-2): `defaultInvoke` + a health preview that FOLLOWS the request's set points
- *  (empty -> `required` issues, filled -> valid with a score) + a successful `export_model_files`. */
-const EXPORT_OK = {
-    ok: true,
-    files: [{ kind: 'info', file_name: 'INDV_INFO_TAG1.json', path: 'C:/data/workspaces/ws1/output/TAG1/INDV_INFO_TAG1.json' }],
-    output_dir: 'C:/data/workspaces/ws1/output',
-    validation: [],
-    warnings: [],
-};
+ *  (empty -> `required` issues, filled -> valid with a score). */
 function healthInvoke(cmd: string, args?: any): Promise<unknown> {
     if (cmd === 'compute_health_preview') return Promise.resolve(makeSetPointAwarePreview(args?.request));
-    if (cmd === 'export_model_files') return Promise.resolve(EXPORT_OK);
     return defaultInvoke(cmd, args);
 }
 /** `export_model_files` calls: Mark complete writes NO files any more (Export results
@@ -9260,7 +9252,6 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
         preview_relationship_model: 'No rows remain after dropping nulls.',
         compute_clustering_preview: 'No rows remain after dropping nulls.',
         compute_health_preview: 'NO_DATA: no rows in the training scope',
-        export_model_files: 'NO_DATA: no rows in the training scope',
     };
     const engineCalls = (cmd: string) => mockInvoke.mock.calls.filter(c => c[0] === cmd);
     /** The fake Rust of this block: the dataset bounds, (optionally) its own row counts — and, with

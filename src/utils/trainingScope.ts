@@ -6,7 +6,7 @@ import { toFilterRanges } from './timePeriods';
 /**
  * Wire shape the preview/train commands (`compute_sensor_stats`,
  * `preview_relationship_model`, `compute_clustering_preview`,
- * `compute_health_preview`, `export_model_files`) expect for `filter` —
+ * `compute_health_preview`) expect for `filter` —
  * `{timestamp_ranges, value_filters, combine}`, or `null` for "no filter at all".
  *
  * The Workbench's Train and the health-score requests build the

@@ -511,9 +511,10 @@ export async function loadWorkspaceData(id: string): Promise<WorkspaceState | nu
     return enqueue(() => readWorkspaceFile(id));
 }
 
-/** Where "Mark complete" writes a workspace's model files
- *  (`{app_data}/workspaces/{id}/output/...`, see Rust `get_model_output_dir`),
- *  relative to `$APPDATA`. The workspace's own JSON is the SIBLING
+/** The workspace's own app-data folder (`{app_data}/workspaces/{id}/`),
+ *  relative to `$APPDATA`. Before 2026-10-20 "Mark complete" wrote model files
+ *  into its `output/` subfolder; nothing writes there now, but old projects may
+ *  still have one. The workspace's own JSON is the SIBLING
  *  `workspaces/{id}.json`, never inside this folder. */
 export const workspaceFolderPath = (id: string): string => `workspaces/${id}`;
 
@@ -552,8 +553,8 @@ export async function deleteWorkspace(id: string) {
     } catch (e) {
         console.error("Failed to delete workspace:", e);
     }
-    // Model files exported by "Mark complete" live in their own folder; remove
-    // it too, independently of whether the workspace was still in the recent
+    // Model files the old "Mark complete" wrote (before 2026-10-20) live in
+    // their own folder; remove it too, independently of whether the workspace was still in the recent
     // list (that list is capped, so its absence says nothing about the folder).
     await removeWorkspaceFolder(id);
 }
@@ -570,9 +571,9 @@ export function duplicateNaming(state: Pick<WorkspaceState, 'name' | 'machine'>)
 
 /** A copy of the project under a new id, with the name from `duplicateNaming`.
  *  Models keep their status, set points, train record and verdict (user
- *  decision 2026-10-20: a copy is the same work). Only `healthExport` is
- *  dropped: it records files in the ORIGINAL project's output folder, which
- *  is not copied, so the copy must not point at them. */
+ *  decision 2026-10-20: a copy is the same work). Only the deprecated
+ *  `healthExport` record is dropped: it points at files in the ORIGINAL
+ *  project's folder, which is not copied. */
 export async function duplicateWorkspace(id: string) {
     try {
         const state = await loadWorkspaceData(id);

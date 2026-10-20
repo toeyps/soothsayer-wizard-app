@@ -1,9 +1,8 @@
 import { emit } from '@tauri-apps/api/event';
-import type { FailureModel, HealthExportRecord, HealthSetPoints, HealthVerdictValue, WorkspaceState } from '../types';
-import { sameSetPoints } from '../components/windows/workbench/healthChecks';
+import type { FailureModel, HealthSetPoints, HealthVerdictValue, WorkspaceState } from '../types';
 import { updateWorkspaceData } from '../workspaceManager';
 import { withFailureGroupState } from './failureGroupState';
-import { patchModelHealthSetPoints } from './healthSetPoints';
+import { patchModelHealthSetPoints, sameHealthSetPoints as sameSetPoints } from './healthSetPoints';
 import { NOT_TRAINED_BLOCK_REASON } from './modelStatus';
 import { effectiveRunningCondition, getBuildBlockReason, markCompleteBlockReason } from './runningCondition';
 import { testPeriodsKey } from './timePeriods';
@@ -138,40 +137,34 @@ export interface MarkCompleteRace {
 }
 
 export const TESTS_CHANGED_DURING_EXPORT_REASON =
-    'the scoring periods changed while the files were being written — mark it complete again.';
+    'the scoring periods changed while it was being checked — mark it complete again.';
 
 export const SETTINGS_CHANGED_DURING_EXPORT_REASON =
-    "the model's settings changed while its files were being written — re-train, then mark it complete again.";
+    "the model's settings changed while it was being checked — re-train, then mark it complete again.";
 
 /**
  * Mark a model Complete and store the validated set points, in ONE write — call
- * it only after `completeModel` returned `ok: true`. The gate and the
+ * it only after `checkModelForComplete` returned `ok: true`. The gate and the
  * "Trained and still fresh" requirement are re-checked against the model as it
  * is on disk INSIDE the write (the user may have changed something in another
  * window since): a model that is no longer fresh stays Incomplete and `reason`
- * says why — its files were written, but it is not reported complete.
+ * says why — it is not reported complete.
  *
- * Two more races of the (up to ~15 s) export are closed here:
+ * Two more races of the check (the validating preview can take seconds) are
+ * closed here:
  *  - `race.fingerprint` (the model's `computeTrainFingerprint` at click time):
  *    the model on disk must STILL have it, both as its current fingerprint and as
  *    its `trainedFingerprint`. A model that was re-configured AND re-trained during
- *    the export is "fresh" against its NEW settings but the files carry the OLD
- *    ones — it stays Incomplete (`SETTINGS_CHANGED_DURING_EXPORT_REASON`).
- *  - Set points edited and committed while the export ran (what is on disk now
- *    differs from `race.setPointsBefore`, the saved values at click time): the files
- *    hold the EXPORTED values, so `healthExport` records those; the newer values on
- *    disk are KEPT (never reverted to the exported ones) and the model is still marked
- *    Complete — the files exist and match the model that was trained — while the
- *    Health page's "Changed after saving / Mark complete again" hint
- *    tells the user the files are out of date. The saved verdict is only written
+ *    the check is "fresh" against its NEW settings but was validated against the
+ *    OLD ones — it stays Incomplete (`SETTINGS_CHANGED_DURING_EXPORT_REASON`).
+ *  - Set points edited and committed while the check ran (what is on disk now
+ *    differs from `race.setPointsBefore`, the saved values at click time): the newer
+ *    values on disk are KEPT (never reverted to the checked ones) and the model is
+ *    still marked Complete. The saved verdict is only written
  *    ('valid') for the numbers that were actually validated.
  *
- * `exportRecord` is stored WHOLE as `healthExport` in the same write — build it
- * with `healthExportRecord(result)` (`completeModel.ts`) so it carries
- * `scoringIntervalSecs` (the interval the exported results were scored with,
- * 3600 = 1-hour averages). That field is what clears
- * `savedResultsUseEarlierScoring` for a model completed before the health score
- * moved to 1-hour averages; a record without it keeps that hint on.
+ * Writes NO files and no `healthExport` record (since 2026-10-20 Export results
+ * is the only writer of the output folder).
  */
 export async function persistModelComplete(
     workspaceId: string,
@@ -179,7 +172,6 @@ export async function persistModelComplete(
     setPoints: HealthSetPoints,
     headers: string[] | null,
     origin: FailureGroupOrigin = 'build-model',
-    exportRecord?: HealthExportRecord,
     race?: MarkCompleteRace,
 ): Promise<PersistCompleteResult> {
     const res: { reason: string | null } = { reason: null };
@@ -218,7 +210,6 @@ export async function persistModelComplete(
                     status: true,
                     healthSetPoints: keepDisk ? target.healthSetPoints : setPoints,
                     ...(keepDisk ? {} : { healthVerdict: 'valid' as const }),
-                    ...(exportRecord ? { healthExport: exportRecord } : {}),
                 };
             }),
         });

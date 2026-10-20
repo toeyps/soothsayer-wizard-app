@@ -9,11 +9,12 @@
  * converted to `HealthSetPointsWire` by `healthSetPointsToWire`
  * (`src/utils/healthRequest.ts`) before it goes over IPC.
  *
- * The three commands (every call needs an explicit return type):
+ * The command (every call needs an explicit return type):
  *
  *   invoke<HealthPreview>('compute_health_preview', { request: HealthPreviewRequest })
- *   invoke<ModelFilesResult>('export_model_files', { request: ModelFilesRequest })
- *   invoke<string>('get_model_output_dir', { workspace_id })
+ *
+ * Mark complete writes NO files (2026-10-20); Export results is the only
+ * writer of the model files.
  *
  * Errors come back as a rejected string `"CODE: message"` — see `HealthErrorCode`
  * and `parseHealthError`.
@@ -419,8 +420,7 @@ export interface HealthPreview {
      *  value the mean of the hour's running rows. Everything on the Health
      *  score page reads this. */
     hourly: HealthSeries;
-    /** The health score's sampling interval in seconds: `3600`. Stored as
-     *  `HealthExportRecord.scoringIntervalSecs` at Mark complete. */
+    /** The health score's sampling interval in seconds: `3600`. */
     scoring_interval_secs: number;
     /** `null` when `valid` is false. Counts HOURS (`share_basis: 'hour_count'`). */
     score_summary: ScoreSummary | null;
@@ -433,55 +433,6 @@ export interface HealthPreview {
     /** Present when the request carried `test_periods` (`null`/absent otherwise).
      *  Mixes raw rows and hours — see `TestPeriodResult`. */
     test_validation?: ValidationResult | null;
-}
-
-// ---------------------------------------------------------------------------
-// export_model_files ("Mark complete" writes the model's files)
-// ---------------------------------------------------------------------------
-
-export interface ModelFilesRequest {
-    kind: ModelKind;
-    /** Names the output folder `{app_data}/workspaces/{workspace_id}/output`. */
-    workspace_id: string;
-    model_name?: string | null;
-    target?: string | null;
-    predictors?: string[];
-    /** Relationship stiffness as the LinearGAM lambda (required for Relationship). */
-    lambda?: number | null;
-    first_sensor?: string | null;
-    second_sensor?: string | null;
-    n_clusters?: number | null;
-    criteria_sensor?: string | null;
-    cluster_ranges?: HealthClusterRange[] | null;
-    filter?: TrainingScopeFilter | null;
-    set_points?: HealthSetPointsWire | null;
-    /** Relationship: the fit's cache key (lets Rust validate before the ~15 s sidecar run). */
-    cache_key?: string | null;
-    expected_generation?: number;
-    /** The scoring periods, written into the `*_INFO_*.json` `validation`
-     *  block (start / end only). Mark complete requires at least one
-     *  (`markCompleteBlockReason`); the model itself is trained on the train
-     *  periods only. Same wire shape as the preview's. */
-    test_periods?: TestPeriodWire[];
-}
-
-export interface WrittenFile {
-    /** `'info'` (`*_INFO_*.json`) | `'model'` (`.pkl`) | `'dataset'` (`.csv`). */
-    kind: 'info' | 'model' | 'dataset';
-    file_name: string;
-    /** Absolute path in the final output folder. */
-    path: string;
-}
-
-export interface ModelFilesResult {
-    /** `false` = the set points failed validation: NOTHING was written. Hard
-     *  failures (sidecar, disk) reject instead. */
-    ok: boolean;
-    files: WrittenFile[];
-    /** `{app_data}/workspaces/{workspace_id}/output`. */
-    output_dir: string;
-    validation: HealthIssue[];
-    warnings: string[];
 }
 
 // ---------------------------------------------------------------------------

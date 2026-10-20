@@ -14,6 +14,7 @@
 
 import type { ModelDotState } from './modelStatus';
 import { isStaleSessionText } from './staleSession';
+import { WORKSPACE_DUPLICATE_NAME_REASON } from './modelNames';
 import {
     CATEGORY_BLOCK_REASON,
     NO_RUNNING_CONDITION_REASON,
@@ -44,9 +45,6 @@ import type {
  *  menu and tooltip, the Health score page, the save card — the missing setting
  *  is named instead (`preflightReason` / `missingSettingsText`). */
 export const REQUIRED_FIELDS_BLOCK_REASON = 'Fill in the required fields above first';
-
-/** `DUPLICATE_NAME_BLOCK_REASON` in the Build Model window. */
-export const DUPLICATE_NAME_BLOCK_REASON = 'Model name is already used by another model of this sensor';
 
 /** The shipped STALE_SESSION wording of the Build Model window (Mark complete),
  *  reused by the run strip, the sidebar line and the Train-sensor reason. */
@@ -102,8 +100,8 @@ export function preflightReason(
     if (blockReason === REQUIRED_FIELDS_BLOCK_REASON) {
         return { text: missingSettingsText(opts.missing ?? []), fix: 'settings' };
     }
-    if (blockReason === DUPLICATE_NAME_BLOCK_REASON) {
-        return { text: 'Model name already used by another model of this sensor', fix: 'settings' };
+    if (blockReason === WORKSPACE_DUPLICATE_NAME_REASON) {
+        return { text: 'Model name already used by another model in this project', fix: 'settings' };
     }
     if (blockReason === NO_RUNNING_CONDITION_REASON) {
         return { text: custom ? 'No running condition in its own training data' : 'No running condition', fix: rcFix };

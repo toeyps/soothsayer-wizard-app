@@ -17,13 +17,12 @@ vi.mock('../workspaceManager', () => ({
     },
 }));
 
-// `completeModel` (used by the "Mark complete stores the scoring interval" flow below) calls Rust.
+// `checkModelForComplete` (used by the Mark complete flow below) calls Rust.
 const mockInvoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a: unknown[]) => mockInvoke(...a) }));
 
 import { commitHealthVerdict, commitSetPoints, persistModelComplete, SETTINGS_CHANGED_DURING_EXPORT_REASON, TESTS_CHANGED_DURING_EXPORT_REASON } from '../utils/healthPersist';
-import { completeModel, healthExportRecord } from '../utils/completeModel';
-import { savedResultsUseEarlierScoring } from '../utils/modelStatus';
+import { checkModelForComplete } from '../utils/completeModel';
 import { NO_TEST_PERIOD_REASON } from '../utils/runningCondition';
 import { testPeriodsKey, toScoringPeriods } from '../utils/timePeriods';
 import { computeTrainFingerprint } from '../utils/trainFingerprint';
@@ -115,25 +114,13 @@ describe('persistModelComplete', () => {
         expect(mockEmit.mock.calls[0][1].models[0].status).toBe(true);
     });
 
-    it('stores the export record (when / where / with which set points) in the same write, and a later set-point save leaves it alone', async () => {
+    it('writes NO healthExport record (2026-10-20: Mark complete writes no files); an old record on disk is left untouched', async () => {
         setDisk([trained(ind())]);
-        const record = { at: '2026-10-04T01:00:00.000Z', outputDir: 'C:/ws/output', setPoints: sp };
-        const { next } = await persistModelComplete('ws1', 'i1', sp, null, 'build-model', record);
-        expect(next!.failureGroupState!.models[0].healthExport).toEqual(record);
-        await commitSetPoints('ws1', 'i1', { kind: 'individual', lower: 0, upper: 99 });
-        expect(disk.failureGroupState!.models[0].healthExport).toEqual(record);
-        expect(disk.failureGroupState!.models[0].healthSetPoints).toMatchObject({ lower: 0, upper: 99 });
-        // changed set points: the Complete was for the old numbers
-        expect(disk.failureGroupState!.models[0].status).toBe(false);
-    });
-
-    it('without a record (the old call shape) an earlier record is kept, none is invented', async () => {
-        const record = { at: 'x', outputDir: 'C:/ws/output', setPoints: sp };
-        setDisk([trained(ind({ healthExport: record }))]);
         const { next } = await persistModelComplete('ws1', 'i1', sp, null);
-        expect(next!.failureGroupState!.models[0].healthExport).toEqual(record);
-        setDisk([trained(ind())]);
-        expect((await persistModelComplete('ws1', 'i1', sp, null)).next!.failureGroupState!.models[0].healthExport).toBeUndefined();
+        expect(next!.failureGroupState!.models[0]).not.toHaveProperty('healthExport');
+        const old = { at: 'x', outputDir: 'C:/ws/output', setPoints: sp };
+        setDisk([trained(ind({ healthExport: old }))]);
+        expect((await persistModelComplete('ws1', 'i1', sp, null)).next!.failureGroupState!.models[0].healthExport).toEqual(old);
     });
 
     it('a model whose inputs changed since it was trained is NOT marked (re-checked against disk), nothing broadcast', async () => {
@@ -190,73 +177,26 @@ describe('persistModelComplete', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Health score on 1-hour averages: the export record remembers the interval
+// The real Mark complete flow: validate (no files), then ONE write
 // ---------------------------------------------------------------------------
 
-describe('Mark complete stores the scoring interval (healthExport.scoringIntervalSecs)', () => {
+describe('Mark complete = checkModelForComplete + persistModelComplete (no files)', () => {
     const HEADERS = ['T'];
-    const filesOk = { ok: true, output_dir: 'C:/data/workspaces/ws1/output', validation: [], warnings: [], files: [] };
-    const rust = (preview: Record<string, unknown>) => mockInvoke.mockImplementation(async (cmd: string) => (cmd === 'compute_health_preview' ? preview : filesOk));
-    /** The real flow of the Mark complete button: validate + export, build the record, ONE write. */
-    const markComplete = async () => {
-        const fg = disk.failureGroupState!;
-        const model = fg.models.find(m => m.id === 'i1')!;
-        const res = await completeModel({ model, fg, headers: HEADERS, workspaceId: 'ws1', setPoints: sp });
-        if (!res.ok) throw new Error(`completeModel refused: ${res.reason} ${res.error ?? ''}`);
-        return persistModelComplete('ws1', 'i1', res.setPoints, HEADERS, 'build-model', healthExportRecord(res, '2026-10-11T09:00:00.000Z'));
-    };
-
     beforeEach(() => { mockInvoke.mockReset(); });
 
-    it('the interval the validating preview reported lands on disk with the rest of the record, in the same write that sets Complete', async () => {
+    it('validates with compute_health_preview only, then marks Complete in one write with one broadcast', async () => {
         setDisk([trained(ind())]);
-        rust({ kind: 'individual', valid: true, validation: [], scoring_interval_secs: 3600 });
-        const { next, reason } = await markComplete();
+        mockInvoke.mockResolvedValue({ kind: 'individual', valid: true, validation: [], scoring_interval_secs: 3600 });
+        const fg = disk.failureGroupState!;
+        const res = await checkModelForComplete({ model: fg.models[0], fg, headers: HEADERS, setPoints: sp });
+        if (!res.ok) throw new Error(`refused: ${res.reason} ${res.error ?? ''}`);
+        const { reason } = await persistModelComplete('ws1', 'i1', res.setPoints, HEADERS, 'build-model');
         expect(reason).toBeNull();
+        expect(mockInvoke.mock.calls.map(c => c[0])).toEqual(['compute_health_preview']);
         const m = disk.failureGroupState!.models[0];
-        expect(m.status).toBe(true);
-        expect(m.healthExport).toEqual({ at: '2026-10-11T09:00:00.000Z', outputDir: 'C:/data/workspaces/ws1/output', setPoints: sp, scoringIntervalSecs: 3600 });
-        expect(next!.failureGroupState!.models[0].healthExport!.scoringIntervalSecs).toBe(3600);
-        // one write, one broadcast - and the broadcast carries the record too
+        expect(m).toMatchObject({ status: true, healthSetPoints: sp, healthVerdict: 'valid' });
+        expect(m).not.toHaveProperty('healthExport');
         expect(mockEmit).toHaveBeenCalledTimes(1);
-        expect(mockEmit.mock.calls[0][1].models[0].healthExport.scoringIntervalSecs).toBe(3600);
-    });
-
-    it('a model completed BEFORE the change (record without the interval) stays Complete; marking it complete again writes the interval and clears the hint', async () => {
-        const old = { at: '2026-10-04T01:00:00.000Z', outputDir: 'C:/data/workspaces/ws1/output', setPoints: sp };
-        const before = trained(ind({ status: true, healthSetPoints: sp, healthVerdict: 'valid', healthExport: old }));
-        setDisk([before]);
-        // Reading the hint changes nothing on disk.
-        expect(savedResultsUseEarlierScoring(disk.failureGroupState!.models[0], disk.failureGroupState!)).toBe(true);
-        expect(disk.failureGroupState!.models[0]).toEqual(before);
-
-        rust({ kind: 'individual', valid: true, validation: [], scoring_interval_secs: 3600 });
-        expect((await markComplete()).reason).toBeNull();
-        const m = disk.failureGroupState!.models[0];
-        expect(m).toMatchObject({ status: true, healthVerdict: 'valid', healthSetPoints: sp });
-        expect(m.healthExport).toMatchObject({ at: '2026-10-11T09:00:00.000Z', scoringIntervalSecs: 3600 });
-        // the train record is untouched: marking complete again is not a re-train
-        expect([m.lastTrainedAt, m.trainedFingerprint]).toEqual([before.lastTrainedAt, before.trainedFingerprint]);
-        expect(savedResultsUseEarlierScoring(m, disk.failureGroupState!)).toBe(false);
-    });
-
-    it('a later set-point save keeps the interval on the record (every writer spreads the model)', async () => {
-        setDisk([trained(ind())]);
-        rust({ kind: 'individual', valid: true, validation: [], scoring_interval_secs: 3600 });
-        await markComplete();
-        await commitSetPoints('ws1', 'i1', { kind: 'individual', lower: 0, upper: 99 });
-        await commitHealthVerdict('ws1', 'i1', 'valid');
-        expect(disk.failureGroupState!.models[0].healthExport!.scoringIntervalSecs).toBe(3600);
-        expect(savedResultsUseEarlierScoring(disk.failureGroupState!.models[0], disk.failureGroupState!)).toBe(false);
-    });
-
-    it('a hand-built record without the interval (the old call shape) is stored as given - and keeps the hint on', async () => {
-        setDisk([trained(ind())]);
-        const record = { at: '2026-10-11T09:00:00.000Z', outputDir: 'C:/ws/output', setPoints: sp };
-        await persistModelComplete('ws1', 'i1', sp, HEADERS, 'build-model', record);
-        const m = disk.failureGroupState!.models[0];
-        expect(m.healthExport).toEqual(record);
-        expect(savedResultsUseEarlierScoring(m, disk.failureGroupState!)).toBe(true);
     });
 });
 
@@ -267,27 +207,25 @@ describe('Mark complete stores the scoring interval (healthExport.scoringInterva
 describe('persistModelComplete - changes made while the export ran (QA 2026-10-04)', () => {
     const saved: HealthSetPoints = { kind: 'individual', lower: 20, upper: 80 };
     const edited: HealthSetPoints = { kind: 'individual', lower: 20, upper: 85 };
-    const record = { at: '2026-10-04T01:00:00.000Z', outputDir: 'C:/ws/output', setPoints: saved };
     const raceFor = (m: FailureModel, before: HealthSetPoints | undefined = saved) => ({ fingerprint: computeTrainFingerprint(m, baseFg([])), setPointsBefore: before });
 
-    it('set points committed DURING the export keep their newer values; the record holds the EXPORTED ones; the model is still Complete', async () => {
+    it('set points committed DURING the check keep their newer values; the model is still Complete', async () => {
         const m = trained(ind({ healthSetPoints: saved }));
         setDisk([m]);
         const race = raceFor(m);
         await commitSetPoints('ws1', 'i1', edited); // the user commits 85 while the files are being written
-        const { reason } = await persistModelComplete('ws1', 'i1', saved, null, 'build-model', record, race);
+        const { reason } = await persistModelComplete('ws1', 'i1', saved, null, 'build-model', race);
         expect(reason).toBeNull();
         const out = disk.failureGroupState!.models[0];
         expect(out.status).toBe(true);
         expect(out.healthSetPoints).toEqual(edited); // NOT reverted to the exported 80
-        expect(out.healthExport!.setPoints).toEqual(saved); // what the files carry
     });
 
     it('set points typed but never committed (disk unchanged since the click): the exported values are stored, as before', async () => {
         const m = trained(ind({ healthSetPoints: { kind: 'individual', lower: null, upper: null } }));
         setDisk([m]);
         const race = raceFor(m, { kind: 'individual', lower: null, upper: null });
-        await persistModelComplete('ws1', 'i1', saved, null, 'build-model', record, race);
+        await persistModelComplete('ws1', 'i1', saved, null, 'build-model', race);
         expect(disk.failureGroupState!.models[0].healthSetPoints).toEqual(saved);
     });
 
@@ -297,17 +235,16 @@ describe('persistModelComplete - changes made while the export ran (QA 2026-10-0
         const race = raceFor(m);
         // another window: new target + re-train => fresh against its NEW settings
         disk = { ...disk, failureGroupState: { ...disk.failureGroupState!, models: [trained({ ...m, targetSensor: 'T2' })] } };
-        const { reason } = await persistModelComplete('ws1', 'i1', saved, null, 'build-model', record, race);
+        const { reason } = await persistModelComplete('ws1', 'i1', saved, null, 'build-model', race);
         expect(reason).toBe(SETTINGS_CHANGED_DURING_EXPORT_REASON);
         expect(disk.failureGroupState!.models[0].status).toBe(false);
-        expect(disk.failureGroupState!.models[0].healthExport).toBeUndefined();
         expect(mockEmit).not.toHaveBeenCalled();
     });
 
     it('the unchanged model passes the fingerprint check; without a race argument (old call shape) there is no check', async () => {
         const m = trained(ind({ healthSetPoints: saved }));
         setDisk([m]);
-        expect((await persistModelComplete('ws1', 'i1', saved, null, 'build-model', record, raceFor(m))).reason).toBeNull();
+        expect((await persistModelComplete('ws1', 'i1', saved, null, 'build-model', raceFor(m))).reason).toBeNull();
         const m2 = trained(ind({ healthSetPoints: saved }));
         setDisk([{ ...m2, targetSensor: 'T2', trainedFingerprint: computeTrainFingerprint({ ...m2, targetSensor: 'T2' }, baseFg([])) }]);
         expect((await persistModelComplete('ws1', 'i1', saved, null)).reason).toBeNull();
@@ -316,13 +253,13 @@ describe('persistModelComplete - changes made while the export ran (QA 2026-10-0
     it('marks the verdict valid when the validated numbers are what is on disk; drops it when newer numbers were kept', async () => {
         const m = trained(ind({ healthSetPoints: saved, healthVerdict: 'invalid' }));
         setDisk([m]);
-        await persistModelComplete('ws1', 'i1', saved, null, 'build-model', record, raceFor(m));
+        await persistModelComplete('ws1', 'i1', saved, null, 'build-model', raceFor(m));
         expect(disk.failureGroupState!.models[0].healthVerdict).toBe('valid');
         const m2 = trained(ind({ healthSetPoints: saved, healthVerdict: 'valid' }));
         setDisk([m2]);
         const race = raceFor(m2);
         await commitSetPoints('ws1', 'i1', edited);
-        await persistModelComplete('ws1', 'i1', saved, null, 'build-model', record, race);
+        await persistModelComplete('ws1', 'i1', saved, null, 'build-model', race);
         expect(disk.failureGroupState!.models[0].healthVerdict).toBeUndefined();
     });
 });
@@ -383,12 +320,12 @@ describe('persistModelComplete - scoring periods', () => {
         const race = { fingerprint: computeTrainFingerprint(m, baseFg([])), setPointsBefore: undefined, testsKey: testPeriodsKey([TEST]) };
         const moved = [{ ...TEST, end: '2026-02-15T00:00' }];
         disk = { ...disk, failureGroupState: { ...disk.failureGroupState!, runningConditionTestPeriods: moved } };
-        const { reason } = await persistModelComplete('ws1', 'i1', sp, null, 'build-model', undefined, race);
+        const { reason } = await persistModelComplete('ws1', 'i1', sp, null, 'build-model', race);
         expect(reason).toBe(TESTS_CHANGED_DURING_EXPORT_REASON);
-        expect(TESTS_CHANGED_DURING_EXPORT_REASON).toBe('the scoring periods changed while the files were being written — mark it complete again.');
+        expect(TESTS_CHANGED_DURING_EXPORT_REASON).toBe('the scoring periods changed while it was being checked — mark it complete again.');
         expect(disk.failureGroupState!.models[0].status).toBe(false);
         // Unchanged periods pass.
-        const ok = await persistModelComplete('ws1', 'i1', sp, null, 'build-model', undefined, { ...race, testsKey: testPeriodsKey(moved) });
+        const ok = await persistModelComplete('ws1', 'i1', sp, null, 'build-model', { ...race, testsKey: testPeriodsKey(moved) });
         expect(ok.reason).toBeNull();
     });
 
@@ -400,7 +337,7 @@ describe('persistModelComplete - scoring periods', () => {
         const race = { fingerprint: computeTrainFingerprint(m, baseFg([])), setPointsBefore: undefined, testsKey: testPeriodsKey(LEGACY_TESTS) };
         // ...while the export ran, an edit elsewhere re-wrote the same periods without the legacy keys
         disk = { ...disk, failureGroupState: { ...disk.failureGroupState!, runningConditionTestPeriods: toScoringPeriods(LEGACY_TESTS) } };
-        const { reason } = await persistModelComplete('ws1', 'i1', sp, null, 'build-model', undefined, race);
+        const { reason } = await persistModelComplete('ws1', 'i1', sp, null, 'build-model', race);
         expect(reason).toBeNull();
         expect(disk.failureGroupState!.models[0].status).toBe(true);
         expect(disk.failureGroupState!.models[0]).not.toHaveProperty('testsChangedAt');

@@ -38,10 +38,9 @@ use crate::health_score::{RelExtra, RelFit, RelHourPoints, SetPointsArg};
 use crate::health_validation::{
     RelCols, RelHours, RelTrain, RelX, TestPeriodArg, TestPlan, TestScoringFailure, TestValidation,
 };
-use crate::model_export::{export_sync, ModelFilesRequest};
 use crate::{
-    apply_rel_extra, health_preview_in, parse_predicted_extra, plan_export, plan_rel_extra,
-    store_rel_fit, session_stamp, AppState, ClusterRange, ExportPlan, PreviewFilter,
+    apply_rel_extra, health_preview_in, parse_predicted_extra, plan_rel_extra,
+    store_rel_fit, session_stamp, AppState, ClusterRange, PreviewFilter,
     PreviewValueFilter, SessionData, TimeRangeArg,
 };
 use std::collections::HashSet;
@@ -2254,162 +2253,6 @@ fn comparable(mut v: serde_json::Value) -> serde_json::Value {
     v
 }
 
-fn ind_export(tests: Vec<TestPeriodArg>, sp: SetPointsArg) -> ModelFilesRequest {
-    ModelFilesRequest {
-        kind: "individual".into(),
-        workspace_id: "ws".into(),
-        target: Some("S".into()),
-        filter: Some(train_to(2 * DAY - 1, vec![])),
-        set_points: Some(sp),
-        test_periods: if tests.is_empty() { None } else { Some(tests) },
-        ..Default::default()
-    }
-}
-
-#[test]
-fn individual_export_adds_a_validation_block_and_keeps_every_existing_key() {
-    let d = ind_data(400, 0..0);
-    let sp = ind_sp(&d);
-    let tests = vec![tp(288, 575), tp(576, 1151)];
-
-    let plain_dir = tempfile::tempdir().unwrap();
-    let r0 = export_sync(&d, &ind_export(vec![], sp.clone()), plain_dir.path()).unwrap();
-    assert!(r0.ok);
-    let plain = read_json(Path::new(&r0.files[0].path));
-    assert!(plain.get("validation").is_none(), "no test periods = no validation block");
-
-    let dir = tempfile::tempdir().unwrap();
-    let r = export_sync(&d, &ind_export(tests.clone(), sp.clone()), dir.path()).unwrap();
-    assert!(r.ok, "{:?}", r.validation);
-    assert_eq!(r.files.len(), 1);
-    let doc = read_json(Path::new(&r.files[0].path));
-    assert_eq!(comparable(doc.clone()), comparable(plain), "every existing key is untouched");
-
-    let v = &doc["validation"];
-    assert_eq!(v["tested"], true);
-    chrono::DateTime::parse_from_rfc3339(v["validated_at"].as_str().unwrap()).expect("RFC 3339");
-    assert_eq!(v["train_ranges"][0]["start"], ts_at(0));
-    assert_eq!(v["train_ranges"][0]["end"], ts_at(2 * DAY - 1));
-    assert_eq!(v["train"]["rows"], 288);
-    assert_eq!(v["train"]["hours"], 48);
-    // The block says how its scores were sampled: 1-hour means.
-    assert_eq!(v["scoring_interval_seconds"], 3600);
-    assert_eq!(v["scoring_aggregation"], "mean");
-    // Every key the block had before the hourly scoring is still there...
-    for key in ["tested", "validated_at", "train", "train_ranges", "tests"] {
-        assert!(v.get(key).is_some(), "{key}");
-    }
-    let tests_json = v["tests"].as_array().unwrap();
-    assert_eq!(tests_json.len(), 2);
-    for key in ["index", "start", "end", "rows", "days", "scored", "pct_below_80", "lowest", "lowest_at", "train_rows", "train_days", "within_3sd_pct", "mean_shift_sd"] {
-        assert!(tests_json[1].get(key).is_some(), "{key}");
-    }
-    // ...and the hour counts are added beside the raw ones.
-    assert_eq!((tests_json[1]["rows"].clone(), tests_json[1]["hours"].clone(), tests_json[1]["scored"].clone()), (576.into(), 96.into(), 96.into()));
-    assert_eq!(tests_json[1]["train_hours"], 0);
-    // Scoring periods are written as start -> end only: no label, no event time,
-    // no lead time, no detection.
-    for t in tests_json {
-        for gone in ["label", "event_time", "lead_days", "first_below_80"] {
-            assert!(t.get(gone).is_none(), "{gone} must not be written");
-        }
-    }
-    assert_eq!((tests_json[0]["index"].clone(), tests_json[1]["index"].clone()), (1.into(), 2.into()));
-    assert_eq!(tests_json[1]["start"], ts_at(576));
-    assert_eq!(tests_json[1]["end"], ts_at(1151));
-    assert_eq!(tests_json[1]["pct_below_80"], 65.6);
-    assert_eq!(tests_json[1]["lowest_at"], ts_at(PLATEAU_ROW));
-
-    // The export is the SAME computation as the preview.
-    let mut pr = ind_req(tests, Some(sp));
-    pr.max_points = Some(8);
-    let preview = individual_preview(&d, &pr).unwrap();
-    assert_eq!(v["tests"], serde_json::to_value(&tv(&preview).tests).unwrap());
-    assert_eq!(v["train"], serde_json::to_value(&tv(&preview).train).unwrap());
-}
-
-#[test]
-fn export_refuses_malformed_test_periods_before_writing_anything() {
-    let d = ind_data(400, 0..0);
-    let sp = ind_sp(&d);
-    let dir = tempfile::tempdir().unwrap();
-    let bad = vec![tp(1151, 576)]; // ends before it starts
-    let r = export_sync(&d, &ind_export(bad, sp.clone()), dir.path()).unwrap();
-    assert!(!r.ok);
-    assert!(r.files.is_empty());
-    assert_eq!(r.validation[0].code, "test_ends_before_start");
-    assert_eq!(r.validation[0].field, "test_period_1_end");
-    assert!(std::fs::read_dir(dir.path()).unwrap().next().is_none(), "nothing was created");
-    let bad_date = vec![TestPeriodArg { start: Some("not a date".into()), end: Some(ts_at(700)) }];
-    let r = export_sync(&d, &ind_export(bad_date, sp), dir.path()).unwrap();
-    assert!(!r.ok && r.files.is_empty());
-    assert_eq!(r.validation[0].code, "test_start_unparseable");
-    assert!(std::fs::read_dir(dir.path()).unwrap().next().is_none(), "nothing was created");
-}
-
-#[test]
-fn clustering_export_keeps_both_criteria_spellings_and_adds_validation() {
-    let d = clu_data();
-    let tests = vec![tp(288, 575), tp(576, 1151)];
-    let make = |tests: Vec<TestPeriodArg>| {
-        let r = clu_req(tests.clone(), 2);
-        ModelFilesRequest {
-            kind: "clustering".into(),
-            workspace_id: "ws".into(),
-            first_sensor: r.first_sensor.clone(),
-            second_sensor: r.second_sensor.clone(),
-            n_clusters: r.n_clusters,
-            criteria_sensor: r.criteria_sensor.clone(),
-            cluster_ranges: r.cluster_ranges.clone(),
-            filter: r.filter.clone(),
-            set_points: r.set_points.clone(),
-            test_periods: if tests.is_empty() { None } else { Some(tests) },
-            ..Default::default()
-        }
-    };
-    let d0 = tempfile::tempdir().unwrap();
-    let r0 = export_sync(&d, &make(vec![]), d0.path()).unwrap();
-    assert!(r0.ok, "{:?}", r0.validation);
-    let plain = read_json(Path::new(&r0.files[0].path));
-    let d1 = tempfile::tempdir().unwrap();
-    let r1 = export_sync(&d, &make(tests), d1.path()).unwrap();
-    assert!(r1.ok, "{:?}", r1.validation);
-    let doc = read_json(Path::new(&r1.files[0].path));
-    assert_eq!(comparable(doc.clone()), comparable(plain.clone()));
-    // Both spellings of the criteria keys are still there, exactly as without tests.
-    let text = serde_json::to_string(&doc).unwrap();
-    assert!(text.contains("criteria_") && text.contains("critera_"), "{text}");
-    assert_eq!(text.matches("critera_").count(), serde_json::to_string(&plain).unwrap().matches("critera_").count());
-    let v = &doc["validation"];
-    assert_eq!(v["tested"], true);
-    assert_eq!(v["tests"].as_array().unwrap().len(), 2);
-    assert!(v["tests"][0].get("inside_3sd_ring_pct").is_some());
-    assert_eq!(v["tests"][1]["pct_below_80"], 65.6);
-    assert_eq!((v["tests"][1]["rows"].clone(), v["tests"][1]["hours"].clone()), (576.into(), 96.into()));
-    assert_eq!((v["tests"][0]["hours"].clone(), v["tests"][0]["scored"].clone()), (48.into(), 48.into()));
-    assert_eq!((v["scoring_interval_seconds"].clone(), v["scoring_aggregation"].clone()), (3600.into(), "mean".into()));
-    assert!(!v.to_string().contains("lead_days") && !v.to_string().contains("label"));
-
-    // An hour whose rows are in two clusters (hour 50: one row of the other
-    // state) is unscored in the exported block exactly as in the preview: the
-    // export is the SAME computation.
-    let mut dm = clu_data();
-    dm.columns[3][300] = 15.0;
-    let tests = vec![tp(288, 575), tp(576, 1151)];
-    let d2 = tempfile::tempdir().unwrap();
-    let r2 = export_sync(&dm, &make(tests.clone()), d2.path()).unwrap();
-    assert!(r2.ok, "{:?}", r2.validation);
-    let v2 = &read_json(Path::new(&r2.files[0].path))["validation"];
-    assert_eq!((v2["tests"][0]["hours"].clone(), v2["tests"][0]["scored"].clone()), (48.into(), 47.into()));
-    assert_eq!(v2["tests"][0]["inside_3sd_ring_pct"], 100.0);
-    assert_eq!(v2["tests"][0]["pct_below_80"], 0.0, "the mixed hour is not a 0");
-    let mut pr = clu_req(tests, 2);
-    pr.max_points = Some(8);
-    let preview = clustering_preview(&dm, &pr).unwrap();
-    assert_eq!(v2["tests"], serde_json::to_value(&tv(&preview).tests).unwrap());
-    assert_eq!(v2["train"], serde_json::to_value(&tv(&preview).train).unwrap());
-}
-
 #[test]
 fn relationship_export_block_matches_the_preview_and_writes_into_the_info_file() {
     use crate::{write_relationship_outputs, RelationshipOutputs};
@@ -2449,14 +2292,8 @@ fn relationship_export_block_matches_the_preview_and_writes_into_the_info_file()
     .unwrap();
     let before = read_json(&info_path);
 
-    let req = ModelFilesRequest {
-        kind: "relationship".into(),
-        filter: Some(train_to(2 * DAY - 1, vec![])),
-        set_points: Some(sp),
-        test_periods: Some(tests.clone()),
-        ..Default::default()
-    };
-    let block = crate::model_export::relationship_block(&d, &fit, &extra, &req).unwrap();
+    let filter = train_to(2 * DAY - 1, vec![]);
+    let block = crate::model_export::relationship_block(&d, &fit, &extra, Some(&filter), Some(&sp), &tests).unwrap();
     crate::health_validation::inject_validation(&info_path, block).unwrap();
     let after = read_json(&info_path);
     assert_eq!(comparable(after.clone()), comparable(before.clone()), "every existing key is untouched");
@@ -2465,7 +2302,7 @@ fn relationship_export_block_matches_the_preview_and_writes_into_the_info_file()
     // The block IS the preview's `test_validation` plus `tested`, `validated_at`
     // and the two keys that declare the hourly scoring - nothing else.
     let v = &after["validation"];
-    let preview = relationship_preview_ex(&d, &fit, Some(&extra), &rel_req(tests)).unwrap();
+    let preview = relationship_preview_ex(&d, &fit, Some(&extra), &rel_req(tests.clone())).unwrap();
     let pv = serde_json::to_value(tv(&preview)).unwrap();
     for key in ["train", "train_ranges", "tests"] {
         assert_eq!(v[key], pv[key], "{key}");
@@ -2493,67 +2330,9 @@ fn relationship_export_block_matches_the_preview_and_writes_into_the_info_file()
     assert!(v["tests"][0].get("r2").is_some() && v["tests"][0].get("residual_sd").is_some());
     // An export whose engine answered for no hourly point of a period would write
     // "not scored" - the caller refuses before that (`export_extra_predictions`).
-    let none = crate::model_export::relationship_block(&d, &fit, &RelExtra::default(), &req).unwrap();
+    let none = crate::model_export::relationship_block(&d, &fit, &RelExtra::default(), Some(&filter), Some(&sp), &tests).unwrap();
     assert_eq!(none["tests"][1]["scored"], 0);
     assert!(none["tests"][1]["lowest"].is_null());
-}
-
-#[test]
-fn relationship_export_plan_refuses_malformed_test_periods_before_the_sidecar() {
-    let (state, _d) = rel_state();
-    let dir = tempfile::tempdir().unwrap();
-    let mut req = ModelFilesRequest {
-        kind: "relationship".into(),
-        workspace_id: "ws".into(),
-        target: Some("Y".into()),
-        predictors: vec!["X".into()],
-        lambda: Some(1.0),
-        filter: Some(train_to(2 * DAY - 1, vec![])),
-        set_points: Some(rel_sp()),
-        cache_key: Some("m1::fp".into()),
-        test_periods: Some(vec![tp(1151, 576)]), // ends before it starts
-        ..Default::default()
-    };
-    match plan_export(&req, dir.path(), &state).unwrap() {
-        ExportPlan::Finished(r) => {
-            assert!(!r.ok);
-            assert_eq!(r.validation[0].code, "test_ends_before_start");
-        }
-        ExportPlan::RunSidecar => panic!("a malformed test period must be refused before the sidecar"),
-    }
-    // A good period proceeds to the sidecar.
-    req.test_periods = Some(vec![tp(576, 1151)]);
-    assert!(matches!(plan_export(&req, dir.path(), &state).unwrap(), ExportPlan::RunSidecar));
-    // And so does a request without test periods.
-    req.test_periods = None;
-    assert!(matches!(plan_export(&req, dir.path(), &state).unwrap(), ExportPlan::RunSidecar));
-}
-
-#[test]
-fn export_request_deserializes_test_periods_from_the_frontend_json() {
-    let r: ModelFilesRequest = serde_json::from_str(
-        r#"{"kind":"individual","workspace_id":"w","target":"S",
-            "test_periods":[{"start":"2024-01-01T00:00","end":null,"label":"problem","event_time":"2024-01-02T00:00"}]}"#,
-    )
-    .unwrap();
-    // The legacy `label` / `event_time` keys are accepted and dropped.
-    let t = &r.test_periods.as_ref().unwrap()[0];
-    assert_eq!(*t, TestPeriodArg { start: Some("2024-01-01T00:00".into()), end: None });
-    assert!(r.tests_requested());
-    // What the frontend sends from now on: only start / end.
-    let new: ModelFilesRequest = serde_json::from_str(
-        r#"{"kind":"individual","workspace_id":"w","target":"S",
-            "test_periods":[{"start":"2024-01-01T00:00","end":"2024-01-02T00:00"}]}"#,
-    )
-    .unwrap();
-    assert_eq!(new.test_periods.as_ref().unwrap()[0].end.as_deref(), Some("2024-01-02T00:00"));
-    let none: ModelFilesRequest = serde_json::from_str(r#"{"kind":"individual","workspace_id":"w"}"#).unwrap();
-    assert!(!none.tests_requested());
-    let h: HealthPreviewRequest = serde_json::from_str(
-        r#"{"kind":"individual","test_periods":[{"start":null,"end":null,"label":"normal"}]}"#,
-    )
-    .unwrap();
-    assert_eq!(h.test_periods.as_ref().map(Vec::len), Some(1));
 }
 
 // ===========================================================================
@@ -2630,31 +2409,6 @@ fn assert_listed(actual: &serde_json::Value, listed: &serde_json::Value, what: &
     }
 }
 
-/// The exported `validation` block the fixture implies: the preview's
-/// `test_validation` plus how the scores were sampled.
-fn parity_export_block(want: &serde_json::Value) -> serde_json::Value {
-    let mut block = want["test_validation"].clone();
-    block["tested"] = true.into();
-    block["scoring_interval_seconds"] = 3600.into();
-    block["scoring_aggregation"] = "mean".into();
-    block
-}
-
-/// Export the fixture's request (as the frontend sends it, plus the workspace)
-/// and return the written `validation` block without its time stamp.
-fn parity_exported(d: &ColumnarData, request: &serde_json::Value) -> serde_json::Value {
-    let mut req = request.clone();
-    req["workspace_id"] = "ws".into();
-    let req: ModelFilesRequest = serde_json::from_value(req).expect("the request deserializes as the export request too");
-    let dir = tempfile::tempdir().unwrap();
-    let r = export_sync(d, &req, dir.path()).unwrap();
-    assert!(r.ok, "{:?}", r.validation);
-    let mut block = read_json(Path::new(&r.files[0].path))["validation"].clone();
-    let at = block.as_object_mut().unwrap().remove("validated_at").expect("validated_at");
-    chrono::DateTime::parse_from_rfc3339(at.as_str().unwrap()).expect("RFC 3339");
-    block
-}
-
 fn parity_col<'a>(d: &'a ColumnarData, tag: &str) -> &'a [f64] {
     &d.columns[d.headers.iter().position(|h| h == tag).unwrap_or_else(|| panic!("column {tag}"))]
 }
@@ -2697,8 +2451,6 @@ fn hourly_parity_individual_answers_the_fixture_the_frontend_fake_is_tested_with
     assert_same(&j["test_validation"], &want["test_validation"], "test_validation");
     // No stopped row (9999) reached a mean.
     assert!(ind_hourly(&p).value.iter().all(|&v| v < 100.0));
-    // The exported INFO file: the same block, plus how the scores were sampled.
-    assert_same(&parity_exported(&d, &case["request"]), &parity_export_block(want), "exported validation block");
 }
 
 #[test]
@@ -2751,10 +2503,5 @@ fn hourly_parity_clustering_answers_the_fixture_the_frontend_fake_is_tested_with
             assert!(t.get(k).is_none(), "{k}");
         }
     }
-
-    // The exported INFO file: the same block (S1 still without the key).
-    let block = parity_exported(&d, &case["request"]);
-    assert_same(&block, &parity_export_block(want), "exported validation block");
-    assert!(block["tests"][0].get("inside_3sd_ring_pct").is_none());
 }
 

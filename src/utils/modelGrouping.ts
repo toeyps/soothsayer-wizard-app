@@ -86,3 +86,18 @@ export function normalizeSensorCategories(models: FailureModel[]): { models: Fai
     });
     return { models: changes.length ? next : models, changes };
 }
+
+/** The models a Failure Group deletes with it: those that belong to that group ONLY. A model
+ *  that is also in another group just loses this one. */
+export function modelsOnlyIn<T extends Pick<FailureModel, 'groupNos'>>(models: readonly T[], groupNo: number): T[] {
+    return models.filter(m => m.groupNos.length > 0 && m.groupNos.every(n => n === groupNo));
+}
+
+/** What deleting a group does to its models: those only in it are deleted, those also in
+ *  another group just lose it. (Deleting never removes exported files — Export results is the
+ *  only writer of the output folder and nothing deletes from it.) */
+export function groupDeleteCounts(models: readonly { groupNos: number[] }[], groupNo: number): { deleted: number; kept: number } {
+    const inGroup = models.filter(m => m.groupNos.includes(groupNo));
+    const deleted = modelsOnlyIn(inGroup, groupNo).length;
+    return { deleted, kept: inGroup.length - deleted };
+}

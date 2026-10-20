@@ -90,7 +90,6 @@ vi.mock('@tauri-apps/api/core', () => ({
                 clusters: [{ cluster_id: 1, range: null, n_rows: 3, ellipse: { x_center: 1, y_center: 1, x_sd: 1, y_sd: 1, angle_deg: 0 }, xs: [1, 2, 3], ys: [1, 2, 3] }],
             };
             case 'compute_health_preview': return makeSetPointAwarePreview((args as any)?.request);
-            case 'export_model_files': return EXPORT_RESULT_OK;
             default: return {};
         }
     },
@@ -108,7 +107,7 @@ vi.mock('../components/charts/ResponsiveECharts', () => ({ default: () => <div d
 
 import BuildModelWindow from '../components/windows/BuildModelWindow';
 import { makeSetPointAwarePreview } from './helpers/healthPreviewFixture';
-import { EXPORT_RESULT_OK, healthPageClosed, markCompleteFromHealthPage, markIncompleteFromHealthPage } from './helpers/healthPage';
+import { healthPageClosed, markCompleteFromHealthPage, markIncompleteFromHealthPage } from './helpers/healthPage';
 import { emit } from '@tauri-apps/api/event';
 import { updateWorkspaceData, saveWorkspaceData, loadWorkspaceData, duplicateWorkspace } from '../workspaceManager';
 import { withFailureGroupState } from '../utils/failureGroupState';

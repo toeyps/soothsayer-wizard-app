@@ -22,8 +22,7 @@
  *   - a scoring period in which no hour has a cluster carries NO
  *     `inside_3sd_ring_pct` key at all (omitted — not `null`, not 0);
  *   - `rows` / `days` stay raw, `hours` / `scored` / `pct_below_80` / `lowest`
- *     are hourly; the exported `validation` block is the same block plus
- *     `scoring_interval_seconds: 3600` and `scoring_aggregation: "mean"`.
+ *     are hourly.
  */
 import { describe, it, expect } from 'vitest';
 import fixture from '../../src-tauri/tests/fixtures/hourly_score_parity.json';
@@ -68,15 +67,6 @@ describe('Individual — the fake answers the fixture exactly like Rust', () => 
         // no stopped row reached a mean
         expect(Math.max(...p.hourly.value)).toBeLessThan(100);
     });
-
-    it('the exported INFO file carries the same block, plus how the scores were sampled', async () => {
-        const r = rust();
-        const res = await r.invoke('export_model_files', { request: { ...request, workspace_id: 'ws' } }) as any;
-        expect(res.ok).toBe(true);
-        const { validated_at, ...block } = JSON.parse(r.files.get('workspaces/ws/output/V/INDV_INFO_V.json')!).validation;
-        expect(typeof validated_at).toBe('string');
-        expect(block).toStrictEqual({ tested: true, scoring_interval_seconds: 3600, scoring_aggregation: 'mean', ...want.test_validation });
-    });
 });
 
 describe('Clustering — the fake answers the fixture exactly like Rust', () => {
@@ -110,15 +100,5 @@ describe('Clustering — the fake answers the fixture exactly like Rust', () => 
         expect(s2.inside_3sd_ring_pct).toBe(50);
         // and a model kind never carries another kind's metric keys
         for (const t of [s1, s2]) for (const k of ['r2', 'rmse', 'residual_mean', 'residual_sd', 'mean', 'sd', 'within_3sd_pct', 'mean_shift_sd']) expect(Object.keys(t)).not.toContain(k);
-    });
-
-    it('the exported INFO file carries the same block (S1 still without the key), plus how the scores were sampled', async () => {
-        const r = rust();
-        const res = await r.invoke('export_model_files', { request: { ...request, workspace_id: 'ws' } }) as any;
-        expect(res.ok).toBe(true);
-        const { validated_at, ...block } = JSON.parse(r.files.get('workspaces/ws/output/Y/CLUS_INFO_X_Y.json')!).validation;
-        expect(typeof validated_at).toBe('string');
-        expect(block).toStrictEqual({ tested: true, scoring_interval_seconds: 3600, scoring_aggregation: 'mean', ...want.test_validation });
-        expect(Object.keys(block.tests[0])).not.toContain('inside_3sd_ring_pct');
     });
 });
