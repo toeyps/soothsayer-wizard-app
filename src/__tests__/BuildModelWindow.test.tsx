@@ -100,7 +100,7 @@ import { computeTrainFingerprint } from '../utils/trainFingerprint';
 import { snapshotTrainedFormulas } from '../utils/specialSensorSignature';
 import { ALL_TIME_TRAIN, LEGACY_TESTS, ONE_TEST } from './helpers/trainTestFixture';
 import { MARK_COMPLETE_CLOSE_WAIT } from '../utils/healthPersist';
-import { EARLIER_SCORING_HINT_TEXT } from '../utils/modelStatus';
+import { applyIncompleteRule } from '../utils/incompleteRule';
 import { ADD_TRAIN_PERIOD_HINT, NO_TEST_PERIOD_REASON } from '../utils/runningCondition';
 // @ts-expect-error - @types/node is not installed; vitest runs in Node so this resolves at runtime
 import { readFileSync } from 'node:fs';
@@ -311,6 +311,10 @@ const expectCaptionHasNoRowCount = (root: HTMLElement = document.body) => {
     expect(cap.textContent).not.toMatch(/rows|%/);
 };
 const healthCalls = () => mockInvoke.mock.calls.filter(c => c[0] === 'compute_health_preview').map(c => (c[1] as any).request);
+/** The validate-only check Mark complete runs (`checkModelForComplete`: a tiny preview). */
+const checkCalls = () => healthCalls().filter(r => r.max_points === 8 && r.max_scatter_points === 1);
+/** Is this `compute_health_preview` call Mark complete's check (not the page's own preview)? */
+const isCheck = (cmd: string, args?: any) => cmd === 'compute_health_preview' && args?.request?.max_points === 8 && args?.request?.max_scatter_points === 1;
 /** A Relation model whose preview keeps answering NOT_FITTED: the window re-fits it silently ONCE and
  *  only then settles on the "Fit no longer in memory" state. Waits until that board is on screen and
  *  the fake Rust has been quiet for a moment (longer than the preview's debounce), so nothing is
@@ -339,6 +343,8 @@ function healthInvoke(cmd: string, args?: any): Promise<unknown> {
     if (cmd === 'export_model_files') return Promise.resolve(EXPORT_OK);
     return defaultInvoke(cmd, args);
 }
+/** `export_model_files` calls: Mark complete writes NO files any more (Export results
+ *  does), so every test expects none. */
 const exportCalls = () => mockInvoke.mock.calls.filter(c => c[0] === 'export_model_files').map(c => (c[1] as any).request);
 /** Set points that are valid for the Individual fixture (3SD band 2..8): L below 2, H above 8. */
 const VALID_IND = { kind: 'individual', lower: 1, upper: 9, masterLower: 1, masterUpper: 9 };
@@ -1275,7 +1281,7 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             expect(state.failureGroupState.models[0].name).toBe('Renamed Model');
         });
 
-        it('"✓ Mark complete" (Health score page) validates, writes the files and then marks the model Complete', async () => {
+        it('"✓ Mark complete" (Health score page) validates the set points and marks the model Complete -- it writes NO files (Export results does)', async () => {
             mockInvoke.mockImplementation(healthInvoke);
             const model = withTrained(makeModel({ healthSetPoints: VALID_IND }));
             statefulUpdateMock([model]);
@@ -1284,12 +1290,19 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             await openHealthPage();
             await waitFor(() => expect((screen.getByTestId('mark-complete') as HTMLButtonElement).disabled).toBe(false));
             await act(async () => { fireEvent.click(screen.getByTestId('mark-complete')); await Promise.resolve(); });
-            await waitFor(() => expect(screen.getByTestId('save-ok')).toBeTruthy());
-            expect(exportCalls()).toHaveLength(1);
+            await waitFor(() => expect(tabStatus()).toBe('Complete'));
+            expect(exportCalls()).toHaveLength(0);
+            expect(mockInvoke.mock.calls.some(c => c[0] === 'export_model_files')).toBe(false);
+            expect(checkCalls()).toHaveLength(1);
+            expect(checkCalls()[0].set_points).toEqual({ lower: 1, upper: 9 });
             const written = (await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value).failureGroupState.models[0];
             expect(written.status).toBe(true);
             expect(written.healthSetPoints).toMatchObject({ lower: 1, upper: 9 });
-            expect(written.healthExport).toMatchObject({ outputDir: 'C:/data/workspaces/ws1/output', setPoints: { lower: 1, upper: 9 } });
+            // No export record: nothing was written to disk besides the workspace.
+            expect(written.healthExport).toBeUndefined();
+            // No "Files saved" line.
+            expect(screen.queryByTestId('save-ok')).toBeNull();
+            expect(noticeText()).not.toMatch(/Files saved/);
         });
 
         it('"✓ Mark complete" is blocked while the running-condition gate blocks the model: no button on Model fit, Health score cannot be opened', async () => {
@@ -1372,7 +1385,7 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
                 await openHealthPage();
                 await waitFor(() => expect((screen.getByTestId('mark-complete') as HTMLButtonElement).disabled).toBe(false));
                 await act(async () => { fireEvent.click(screen.getByTestId('mark-complete')); await Promise.resolve(); });
-                await waitFor(() => expect(screen.getByTestId('save-ok')).toBeTruthy());
+                await waitFor(() => expect(tabStatus()).toBe('Complete'));
                 written = (await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value).failureGroupState.models[0];
                 expect(written.status).toBe(true);
                 expect(sp(written)).toBe(JSON.stringify(valid));
@@ -1636,7 +1649,7 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             await waitFor(() => expect((screen.getByTestId('mark-complete') as HTMLButtonElement).disabled).toBe(false));
             mockEmit.mockClear();
             await act(async () => { fireEvent.click(screen.getByTestId('mark-complete')); await Promise.resolve(); });
-            await waitFor(() => expect(screen.getByTestId('save-ok')).toBeTruthy());
+            await waitFor(() => expect(tabStatus()).toBe('Complete'));
             expect(mockEmit).toHaveBeenCalledWith('failure-group-state-changed', expect.objectContaining({
                 workspaceId: 'ws1',
                 origin: 'build-model',
@@ -5663,7 +5676,7 @@ describe('Health score page - Mark complete (the ONLY way a model becomes Comple
         expect(screen.queryByTestId('mark-block-reason')).toBeNull();
     });
 
-    it('success: files exported with the typed points, model persisted Complete (+ set points + export record), "Saved N files to <path>" shown, the Dashboard is told', async () => {
+    it('success: the typed points are CHECKED (no files written), the model is persisted Complete with them (no export record), no "Files saved" line, the Dashboard is told', async () => {
         await hsMount([HS_IND({ healthSetPoints: { kind: 'individual', lower: null, upper: null, masterLower: 1, masterUpper: 90 } })]);
         await openHealthPage();
         hsType('sp-lower', '1');
@@ -5671,42 +5684,35 @@ describe('Health score page - Mark complete (the ONLY way a model becomes Comple
         await waitFor(() => expect(hsMarkBtn().disabled).toBe(false));
         mockEmit.mockClear();
         await hsClickMark();
-        await waitFor(() => expect(screen.getByTestId('save-ok')).toBeTruthy());
-        expect(exportCalls()).toHaveLength(1);
-        expect(exportCalls()[0]).toMatchObject({ kind: 'individual', workspace_id: 'ws1', target: 'TAG1', set_points: { lower: 1, upper: 9 } });
+        await waitFor(() => expect(tabStatus()).toBe('Complete'));
+        expect(exportCalls()).toHaveLength(0);
+        expect(checkCalls()).toHaveLength(1);
+        expect(checkCalls()[0]).toMatchObject({ kind: 'individual', target: 'TAG1', set_points: { lower: 1, upper: 9 } });
         const written = await hsLastModel();
         expect(written.status).toBe(true);
         expect(written.healthSetPoints).toMatchObject({ lower: 1, upper: 9, masterLower: 1, masterUpper: 90 });
-        expect(written.healthExport).toMatchObject({ outputDir: 'C:/data/workspaces/ws1/output', setPoints: { lower: 1, upper: 9 } });
-        // ...and the scoring interval the validating preview reported (1-hour averages)
-        expect(written.healthExport.scoringIntervalSecs).toBe(3600);
-        expect(typeof written.healthExport.at).toBe('string');
-        // No "Files saved to …" banner on the page: it is the notice line's ONE sentence (tone
-        // "ok"), with the app's one date format (mono, no seconds) and the folder (the full path
-        // is the tooltip).
-        const saved = screen.getByTestId('save-ok');
-        expect(saved.closest('[data-testid="wb-notice"]')).not.toBeNull();
-        expect(screen.getByTestId('wb-notice').getAttribute('data-tone')).toBe('ok');
-        expect(screen.getByTestId('wb-notice').getAttribute('role')).toBe('status');
-        expect(screen.getByTestId('wb-notice').className).toBe('wb3-notice wb3-notice--ok');
-        expect(saved.textContent).toMatch(/^Files saved \d{4}\/\d{2}\/\d{2} \d{2}:\d{2} · …\/workspaces\/ws1\/output$/);
-        expect(saved.querySelector('.wbx-dt')!.textContent).toMatch(/^\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}$/);
-        expect(screen.getByTestId('footer-saved-path').getAttribute('title')).toBe('C:/data/workspaces/ws1/output');
+        expect(written.healthExport).toBeUndefined();
+        // The green "Complete" on the kind tab says it: no "Files saved …" line, no banner.
+        expect(screen.queryByTestId('save-ok')).toBeNull();
+        expect(screen.queryByTestId('footer-saved-path')).toBeNull();
+        expect(screen.queryByTestId('wb-notice')).toBeNull();
         expect(screen.getByTestId('health-page').querySelector('.hs-save')).toBeNull();
-        expect(screen.queryByTestId('save-files')).toBeNull();
-        expect(screen.getByTestId('wb-notice').querySelectorAll('.f4-foot-reason')).toHaveLength(1);
-        expect(tabStatus()).toBe('Complete');
         expect(screen.getByTestId('mark-incomplete')).toBeTruthy();
         expect(screen.queryByTestId('mark-complete')).toBeNull();
+        expect(screen.queryByTestId('mark-complete-again')).toBeNull();
         const emitted = mockEmit.mock.calls.filter(c => c[0] === 'failure-group-state-changed').pop()![1];
         expect(emitted).toMatchObject({ workspaceId: 'ws1', origin: 'build-model' });
         expect(emitted.models[0].status).toBe(true);
     });
 
-    it('order of operations: the files are written FIRST, status is persisted only afterwards', async () => {
+    it('order of operations: the set points are checked FIRST, status is persisted only afterwards; export_model_files is never called', async () => {
         const order: string[] = [];
         await hsMount([HS_IND()]);
-        mockInvoke.mockImplementation((cmd: string, args?: any) => { if (cmd === 'export_model_files') order.push('export'); return healthInvoke(cmd, args); });
+        mockInvoke.mockImplementation((cmd: string, args?: any) => {
+            if (isCheck(cmd, args)) order.push('check');
+            if (cmd === 'export_model_files') order.push('export');
+            return healthInvoke(cmd, args);
+        });
         await openHealthPage();
         await waitFor(() => expect(hsMarkBtn().disabled).toBe(false));
         mockUpdateWorkspaceData.mockImplementation(async (_id: string, patch: (s: any) => any) => {
@@ -5715,12 +5721,12 @@ describe('Health score page - Mark complete (the ONLY way a model becomes Comple
             return next;
         });
         await hsClickMark();
-        await waitFor(() => expect(order).toEqual(['export', 'status']));
+        await waitFor(() => expect(order).toEqual(['check', 'status']));
     });
 
-    it('Rust refuses the set points when exporting (ok:false): NOTHING is marked complete, the issues show in Checks, the model stays Incomplete', async () => {
-        mockInvoke.mockImplementation((cmd: string, args?: any) => cmd === 'export_model_files'
-            ? Promise.resolve({ ok: false, files: [], output_dir: '', warnings: [], validation: [{ code: 'lower_equals_3sd', severity: 'error', field: 'lower', message: 'L equals the lower 3σ boundary (found at save time).' }] })
+    it('Rust refuses the set points when checking (valid:false): NOTHING is marked complete, the issues show in Checks, the model stays Incomplete', async () => {
+        mockInvoke.mockImplementation((cmd: string, args?: any) => isCheck(cmd, args)
+            ? Promise.resolve({ ...makeSetPointAwarePreview(args.request), valid: false, validation: [{ code: 'lower_equals_3sd', severity: 'error', field: 'lower', message: 'L equals the lower 3σ boundary (found when checking).' }] })
             : healthInvoke(cmd, args));
         statefulUpdateMock([HS_IND()]);
         render(<BuildModelWindow />);
@@ -5730,11 +5736,12 @@ describe('Health score page - Mark complete (the ONLY way a model becomes Comple
         mockUpdateWorkspaceData.mockClear();
         await hsClickMark();
         await waitFor(() => expect(screen.getByTestId('save-error')).toBeTruthy());
-        expect(screen.getByTestId('check-line').textContent).toMatch(/found at save time/);
+        expect(screen.getByTestId('check-line').textContent).toMatch(/found when checking/);
         expect(screen.getByTestId('hs-verdict').getAttribute('title')).toBe('A set point is not valid');
         expect(mockUpdateWorkspaceData).not.toHaveBeenCalled();
         expect(tabStatus()).toBe('Trained');
         expect(screen.queryByTestId('mark-incomplete')).toBeNull();
+        expect(exportCalls()).toHaveLength(0);
         // Changing a set point clears the refusal and brings the live Checks back.
         hsType('sp-lower', '0.5');
         await waitFor(() => expect(screen.getByTestId('check-valid')).toBeTruthy());
@@ -5743,8 +5750,8 @@ describe('Health score page - Mark complete (the ONLY way a model becomes Comple
     it.each([
         ['STALE_SESSION: the dataset was reloaded', /out of date/],
         ['The Relation model engine stopped without returning a result.', /The Relation model engine stopped without returning a result\./],
-    ])('an export error (%s) keeps the model Incomplete and says what to do', async (rejection, text) => {
-        mockInvoke.mockImplementation((cmd: string, args?: any) => cmd === 'export_model_files' ? Promise.reject(rejection) : healthInvoke(cmd, args));
+    ])('a check error (%s) keeps the model Incomplete and says what to do', async (rejection, text) => {
+        mockInvoke.mockImplementation((cmd: string, args?: any) => isCheck(cmd, args) ? Promise.reject(rejection) : healthInvoke(cmd, args));
         statefulUpdateMock([HS_IND()]);
         render(<BuildModelWindow />);
         await deliverData({ failureGroupState: { groups: [makeGroup()], models: [HS_IND()] } });
@@ -5755,15 +5762,16 @@ describe('Health score page - Mark complete (the ONLY way a model becomes Comple
         await waitFor(() => expect(screen.getByTestId('save-error').textContent).toMatch(text));
         expect(mockUpdateWorkspaceData).not.toHaveBeenCalled();
         expect(hsMarkBtn().disabled).toBe(false); // can retry
+        expect(noticeText()).toBe('Not marked complete · fix it, then Mark complete');
     });
 
     // The page still showed a valid preview, so Mark complete
     // stayed enabled and failed the same way on every click.
-    it('the export answers NOT_FITTED: the fit is marked gone and the preview asked again — the "Load it again" board appears and Mark complete is disabled with that reason; loading it brings Mark complete back', async () => {
+    it('the check answers NOT_FITTED: the fit is marked gone and the preview asked again — the "Load it again" board appears and Mark complete is disabled with that reason; loading it brings Mark complete back', async () => {
         let gone = false;
-        let exportFails = true;
+        let checkFails = true;
         mockInvoke.mockImplementation((cmd: string, args?: any) => {
-            if (cmd === 'export_model_files' && exportFails) { gone = true; return Promise.reject('NOT_FITTED: no fitted model for this key'); }
+            if (isCheck(cmd, args) && checkFails) { gone = true; return Promise.reject('NOT_FITTED: no fitted model for this key'); }
             if (cmd === 'compute_health_preview' && gone) return Promise.reject('NOT_FITTED: no fitted model for this key');
             return healthInvoke(cmd, args);
         });
@@ -5776,7 +5784,7 @@ describe('Health score page - Mark complete (the ONLY way a model becomes Comple
         const fits = () => mockInvoke.mock.calls.filter(c => c[0] === 'preview_relationship_model').length;
         const before = fits();
         await hsClickMark();
-        await waitFor(() => expect(screen.getByTestId('save-error').textContent).toBe('The model was not saved. The fitted Relation model was no longer in memory, so its files were not written. Mark complete again once it is loaded.'));
+        await waitFor(() => expect(screen.getByTestId('save-error').textContent).toBe('The model was not saved. The fitted Relation model is no longer in memory, so it was not marked complete. Load it again, then Mark complete.'));
         // asked again -> NOT_FITTED -> ONE silent re-fit -> still gone -> the board
         await fitGoneSettled('health-not-fitted');
         expect(fits()).toBe(before + 1);
@@ -5784,10 +5792,10 @@ describe('Health score page - Mark complete (the ONLY way a model becomes Comple
         expect(hsMarkBtn().title).toBe('Fit no longer in memory · load it again, or re-train with Train sensor ↑');
         expect(screen.getByTestId('mark-block-reason').textContent).toBe('Fit no longer in memory · load it again, or re-train with Train sensor ↑');
         expect(tabStatus()).toBe('Incomplete');
-        expect(mockInvoke.mock.calls.filter(c => c[0] === 'export_model_files')).toHaveLength(1);
+        expect(exportCalls()).toHaveLength(0);
         // "Load it again": the set points come back and Mark complete works
         gone = false;
-        exportFails = false;
+        checkFails = false;
         await act(async () => { fireEvent.click(screen.getByTestId('health-load-fit')); await Promise.resolve(); await Promise.resolve(); });
         await waitFor(() => expect(screen.getByTestId('set-points-card')).toBeTruthy());
         await waitFor(() => expect(hsMarkBtn().disabled).toBe(false));
@@ -5795,10 +5803,10 @@ describe('Health score page - Mark complete (the ONLY way a model becomes Comple
         await waitFor(() => expect(tabStatus()).toBe('Complete'));
     });
 
-    it('a double click starts ONE export (guarded), disables the button and says "Saving the model files…" in the NOTICE LINE only (no card on the page) until it finishes', async () => {
+    it('a double click starts ONE check (guarded), the button is busy ("Checking…" with a spinner) and the NOTICE LINE says "Checking the set points…" (no card on the page) until it finishes', async () => {
         let release!: () => void;
-        mockInvoke.mockImplementation((cmd: string, args?: any) => cmd === 'export_model_files'
-            ? new Promise(res => { release = () => res(EXPORT_OK); })
+        mockInvoke.mockImplementation((cmd: string, args?: any) => isCheck(cmd, args)
+            ? new Promise(res => { release = () => res(makeSetPointAwarePreview(args.request)); })
             : healthInvoke(cmd, args));
         statefulUpdateMock([HS_IND()]);
         render(<BuildModelWindow />);
@@ -5806,27 +5814,30 @@ describe('Health score page - Mark complete (the ONLY way a model becomes Comple
         await openHealthPage();
         await waitFor(() => expect(hsMarkBtn().disabled).toBe(false));
         await act(async () => { fireEvent.click(hsMarkBtn()); fireEvent.click(hsMarkBtn()); await Promise.resolve(); });
-        expect(exportCalls()).toHaveLength(1);
+        expect(checkCalls()).toHaveLength(1);
         expect(hsMarkBtn().disabled).toBe(true);
-        expect(hsMarkBtn().textContent).toBe('Saving…');
+        expect(hsMarkBtn().textContent!.trim()).toBe('Checking…');
+        expect(hsMarkBtn().getAttribute('aria-busy')).toBe('true');
+        expect(hsMarkBtn().querySelector('.pm-spin')).not.toBeNull();
         expect(screen.queryByTestId('save-running')).toBeNull();
         expect(screen.getByTestId('health-page').querySelector('.hs-save')).toBeNull();
-        expect(screen.getByTestId('health-page').textContent).not.toMatch(/Saving/);
-        expect(screen.getByTestId('footer-status').textContent).toMatch(/Saving the model files…/);
+        expect(screen.getByTestId('footer-status').textContent).toMatch(/Checking the set points…/);
+        expect(noticeText()).not.toMatch(/Saving/);
         // ...in the notice line: plain tone (a wait, not a warning), and no reason line under the button meanwhile
         expect(screen.getByTestId('wb-notice').getAttribute('data-tone')).toBe('plain');
         expect(screen.getByTestId('wb-notice').getAttribute('role')).toBe('status');
         expect(screen.queryByTestId('state-why')).toBeNull();
         await act(async () => { release(); await Promise.resolve(); await Promise.resolve(); });
-        await waitFor(() => expect(screen.getByTestId('save-ok')).toBeTruthy());
-        expect(exportCalls()).toHaveLength(1);
+        await waitFor(() => expect(tabStatus()).toBe('Complete'));
+        expect(checkCalls()).toHaveLength(1);
+        expect(exportCalls()).toHaveLength(0);
     });
 
-    it('Relationship: saving is the notice line\'s sentence too (the "can take longer than 15 seconds" line only once it IS slow), and the page stays usable meanwhile', async () => {
+    it('Relationship: checking is the notice line\'s sentence too, and the page stays usable meanwhile', async () => {
         let release!: () => void;
         const rel = HS_REL({ healthSetPoints: { kind: 'relationship', residualAt80Lower: -1.5, residualAt80Upper: 1.5, residualAt0Lower: -3, residualAt0Upper: 3 } });
-        mockInvoke.mockImplementation((cmd: string, args?: any) => cmd === 'export_model_files'
-            ? new Promise(res => { release = () => res(EXPORT_OK); })
+        mockInvoke.mockImplementation((cmd: string, args?: any) => isCheck(cmd, args)
+            ? new Promise(res => { release = () => res(makeSetPointAwarePreview(args.request)); })
             : healthInvoke(cmd, args));
         statefulUpdateMock([rel]);
         render(<BuildModelWindow />);
@@ -5835,19 +5846,40 @@ describe('Health score page - Mark complete (the ONLY way a model becomes Comple
         await waitFor(() => expect(hsMarkBtn().disabled).toBe(false));
         await hsClickMark();
         expect(screen.queryByTestId('save-running')).toBeNull();
-        expect(screen.getByTestId('footer-status').textContent).toMatch(/Saving the model files…/);
-        // (the "can take longer than 15 seconds" line shows only once the save IS slow — HealthScorePage.test.tsx)
+        expect(screen.getByTestId('footer-status').textContent).toMatch(/Checking the set points…/);
         hsType('sp-residual_at_0_upper', '3.5');
-        expect(screen.getByTestId('footer-status').textContent).toMatch(/Saving the model files…/); // typing does not end the save
+        expect(screen.getByTestId('footer-status').textContent).toMatch(/Checking the set points…/); // typing does not end the check
         expect(hsMarkBtn().disabled).toBe(true);
         expect(hsInput('sp-residual_at_0_upper').value).toBe('3.5');
-        expect(screen.getByTestId('page-tab-model').getAttribute('aria-disabled')).toBeNull(); // the way back stays open while saving
+        expect(screen.getByTestId('page-tab-model').getAttribute('aria-disabled')).toBeNull(); // the way back stays open
         await act(async () => { release(); await Promise.resolve(); await Promise.resolve(); });
         await waitFor(() => expect(screen.getByTestId('mark-incomplete')).toBeTruthy());
-        // 3.5 was typed while the files were being written with 3: the footer says they are out of date
-        await waitFor(() => expect(screen.getByTestId('files-out-of-date')).toBeTruthy());
-        expect(exportCalls()[0]).toMatchObject({ kind: 'relationship', lambda: 10_000 });
-        expect(exportCalls()[0].cache_key).toMatch(/^r1::/);
+        expect(checkCalls()[0]).toMatchObject({ kind: 'relationship' });
+        expect(checkCalls()[0].cache_key).toMatch(/^r1::/);
+        expect(exportCalls()).toHaveLength(0);
+        expect(screen.queryByTestId('files-out-of-date')).toBeNull();
+    });
+
+    it('no category on the sensor: the model cannot reach Mark complete (the Health score page stays closed), nothing is checked', async () => {
+        await hsMount([HS_IND({ category: null })]);
+        expect(screen.getByTestId('page-tab-health').getAttribute('aria-disabled')).toBe('true');
+        expect(screen.queryByTestId('mark-complete')).toBeNull();
+        expect(checkCalls()).toHaveLength(0);
+    });
+
+    it('Mark complete is blocked while another model of the PROJECT (another sensor, another kind) has the same name — tooltip and notice line name it by its sensor label (description first, no brackets)', async () => {
+        const twin = withTrained(makeModel({ id: 'r9', kind: 'relationship', name: ' model one ', targetSensor: 'TAG2', predictorSensors: ['TAG1'], groupNos: [1] }));
+        await hsMount([HS_IND({ name: 'Model One' }), twin]);
+        await openHealthPage();
+        const reason = 'Model name “Model One” is also used by the Relation model of Pump Temp · TAG2 — rename one in Model settings';
+        await waitFor(() => expect(hsMarkBtn().title).toBe(reason));
+        expect(hsMarkBtn().disabled).toBe(true);
+        const line = screen.getByTestId('name-twin-reason');
+        expect(line.textContent).toMatch(/^Model name “Model One” is also used by the Relation model of /);
+        expect(line.textContent).toMatch(/Pump Temp/);
+        expect(line.textContent).not.toMatch(/[()]/);
+        await hsClickMark();
+        expect(checkCalls()).toHaveLength(0);
     });
 
     it('a model that stopped being Trained-and-fresh in the meantime (another window changed a training input) is NOT marked complete - re-checked against disk inside the write', async () => {
@@ -5873,10 +5905,18 @@ describe('Health score page - Mark complete (the ONLY way a model becomes Comple
     });
 });
 
-describe('Health score page - Mark incomplete and "Changed after saving"', () => {
+describe('Health score page - Mark incomplete, and a set-point edit after Complete', () => {
     const record = { at: '2026-10-04T01:00:00.000Z', outputDir: 'C:/data/workspaces/ws1/output', setPoints: HS_SNAP, scoringIntervalSecs: 3600 };
+    /** A disk that runs the incomplete rule on every write, like `updateWorkspaceData` does. */
+    const ruleDisk = (models: any[]) => {
+        let ws: any = { id: 'ws1', failureGroupState: { groups: [makeGroup()], models, ...EMPTY_WS_FG } };
+        mockUpdateWorkspaceData.mockImplementation(async (_id: string, patch: (s: any) => any) => {
+            ws = applyIncompleteRule(ws, patch(ws));
+            return ws;
+        });
+    };
 
-    it('Mark incomplete replaces the button once Complete; it writes status:false only (files, set points and export record stay)', async () => {
+    it('Mark incomplete replaces the button once Complete; it writes status:false only (set points stay)', async () => {
         await hsMount([HS_IND({ status: true, healthExport: record })]);
         await openHealthPage();
         expect(screen.queryByTestId('mark-complete')).toBeNull();
@@ -5884,65 +5924,41 @@ describe('Health score page - Mark incomplete and "Changed after saving"', () =>
         await act(async () => { fireEvent.click(screen.getByTestId('mark-incomplete')); await Promise.resolve(); await Promise.resolve(); });
         await flush();
         const written = await hsLastModel();
-        expect(written).toMatchObject({ status: false, healthExport: record });
+        expect(written).toMatchObject({ status: false });
         expect(written.healthSetPoints).toMatchObject({ lower: 1, upper: 9 });
         expect(screen.getByTestId('mark-complete')).toBeTruthy();
         expect(exportCalls()).toHaveLength(0);
     });
 
-    it('same set points as the export: no hint; after an edit: the hint and "Mark complete again", status unchanged', async () => {
+    it('a Complete model (even one with an old export record) says nothing about files: no "Files saved", no "Mark complete again", no "files out of date"', async () => {
         await hsMount([HS_IND({ status: true, healthExport: record })]);
         await openHealthPage();
-        expect(screen.queryByTestId('files-out-of-date')).toBeNull();
-        expect(screen.queryByTestId('mark-complete-again')).toBeNull();
-        expect(screen.getByTestId('save-ok').textContent).toMatch(/^Files saved 2026\/10\/04 \d{2}:\d{2} · …\/workspaces\/ws1\/output$/); // from the stored record, in the footer
-        expect(screen.getByTestId('save-ok').closest('[data-testid="wb-notice"]')).not.toBeNull();
-        hsType('sp-upper', '12');
-        // said ONCE, in the notice line (no banner on the page); its button is in the header
-        const hint = screen.getByTestId('files-out-of-date');
-        expect(hint.textContent).toBe('Files out of date — set points changed after saving · Mark complete again to update them');
-        expect(hint.closest('[data-testid="wb-notice"]')).not.toBeNull();
-        expect(screen.getByTestId('wb-notice').getAttribute('data-tone')).toBe('warn');
-        expect(screen.getByTestId('wb-actions').contains(screen.getByTestId('mark-complete-again'))).toBe(true);
-        expect(screen.getByTestId('health-page').textContent).not.toMatch(/Changed after saving/);
         expect(screen.queryByTestId('save-ok')).toBeNull();
-        await hsBlur('sp-upper');
-        expect((await hsLastModel()).status).toBe(true);
-        expect(tabStatus()).toBe('Complete');
-        expect(screen.getByTestId('files-out-of-date')).toBeTruthy();
-    });
-
-    it('typing the original value back removes the hint', async () => {
-        await hsMount([HS_IND({ status: true, healthExport: record })]);
-        await openHealthPage();
-        hsType('sp-upper', '12');
-        expect(screen.getByTestId('files-out-of-date')).toBeTruthy();
-        hsType('sp-upper', '9');
+        expect(screen.queryByTestId('mark-complete-again')).toBeNull();
         expect(screen.queryByTestId('files-out-of-date')).toBeNull();
-    });
-
-    it('"Mark complete again" writes the files with the new points, keeps the model Complete and records the new export', async () => {
-        await hsMount([HS_IND({ status: true, healthExport: record })]);
-        await openHealthPage();
+        expect(noticeText()).not.toMatch(/Files saved|files out of date/i);
         hsType('sp-upper', '12');
-        const again = await screen.findByTestId('mark-complete-again') as HTMLButtonElement;
-        await waitFor(() => expect(again.disabled).toBe(false));
-        await act(async () => { fireEvent.click(again); await Promise.resolve(); });
-        await waitFor(() => expect(screen.getByTestId('save-ok')).toBeTruthy());
-        expect(exportCalls()).toHaveLength(1);
-        expect(exportCalls()[0].set_points).toEqual({ lower: 1, upper: 12 });
-        const written = await hsLastModel();
-        expect(written.status).toBe(true);
-        expect(written.healthExport.setPoints).toMatchObject({ upper: 12 });
         expect(screen.queryByTestId('files-out-of-date')).toBeNull();
         expect(screen.queryByTestId('mark-complete-again')).toBeNull();
+        expect(tabStatus()).not.toMatch(/files out of date/);
     });
 
-    it('a Complete model from before export records existed (no healthExport) shows no hint - there is nothing to compare', async () => {
-        await hsMount([HS_IND({ status: true })]);
+    it('editing a set point of a Complete model makes it Incomplete in the SAME write: the tab says Incomplete and Mark complete is back', async () => {
+        const model = HS_IND({ status: true });
+        statefulUpdateMock([model]);
+        render(<BuildModelWindow />);
+        await deliverData({ failureGroupState: { groups: [makeGroup()], models: [model] } });
+        ruleDisk([model]);
+        expect(tabStatus()).toBe('Complete');
         await openHealthPage();
         hsType('sp-upper', '12');
-        expect(screen.queryByTestId('files-out-of-date')).toBeNull();
+        await hsBlur('sp-upper');
+        const written = await hsLastModel();
+        expect(written.healthSetPoints).toMatchObject({ upper: 12 });
+        expect(written.status).toBe(false);
+        await waitFor(() => expect(tabStatus()).not.toBe('Complete'));
+        expect(screen.getByTestId('mark-complete')).toBeTruthy();
+        expect(screen.queryByTestId('mark-incomplete')).toBeNull();
     });
 
     it('the export record is not a training input: a Complete model carrying one is not stale', async () => {
@@ -5950,133 +5966,19 @@ describe('Health score page - Mark incomplete and "Changed after saving"', () =>
         expect(tabStatus()).toBe('Complete');
         expect(screen.queryByTestId('stale-banner')).toBeNull();
     });
-});
 
-// The health score moved to 1-hour averages (2026-10-11). A model that was already Complete
-// STAYS Complete (user decision, Q2): its export record has no `scoringIntervalSecs`, so the
-// Health score page footer says its saved results use the earlier scoring and offers
-// "Mark complete again" — nothing is written until the user presses it.
-describe('Health score page - saved with the earlier row-by-row scoring (a Complete model from before 1-hour averages)', () => {
-    /** A record as a build BEFORE the change wrote it: no scoring interval. */
-    const earlier = { at: '2026-10-04T01:00:00.000Z', outputDir: 'C:/data/workspaces/ws1/output', setPoints: HS_SNAP };
-    const current = { ...earlier, scoringIntervalSecs: 3600 };
-    const HINT = 'Saved results use the earlier row-by-row scoring — Mark complete again to update the files';
-    const hint = () => screen.queryByTestId('earlier-scoring');
-    const again = () => screen.queryByTestId('mark-complete-again') as HTMLButtonElement | null;
-
-    it('the notice line says so in its ONE sentence and "Mark complete again" is the filled button; the model stays Complete and nothing is written', async () => {
+    it('a Complete model saved before 1-hour averages (record without scoringIntervalSecs) stays Complete with no "earlier scoring" hint and no "Mark complete again"', async () => {
+        const earlier = { at: '2026-10-04T01:00:00.000Z', outputDir: 'C:/data/workspaces/ws1/output', setPoints: HS_SNAP };
         await hsMount([HS_IND({ status: true, healthExport: earlier })]);
         mockUpdateWorkspaceData.mockClear();
         await openHealthPage();
-        await waitFor(() => expect(hint()).not.toBeNull());
-        expect(hint()!.textContent).toBe(HINT);
-        expect(HINT).toBe(EARLIER_SCORING_HINT_TEXT);
-        expect(hint()!.getAttribute('data-tone')).toBe('warn');
-        expect(hint()!.closest('[data-testid="wb-notice"]')).not.toBeNull();
-        expect(screen.getByTestId('wb-notice').getAttribute('data-tone')).toBe('warn');
-        // ONE sentence: the hint takes the place of "Files saved …" (no second line, no banner on the page)
-        expect(screen.getByTestId('wb-notice').querySelectorAll('.wbx-reason')).toHaveLength(1);
-        expect(screen.queryByTestId('save-ok')).toBeNull();
-        expect(screen.getByTestId('health-page').textContent).not.toMatch(/row-by-row/);
-        // still Complete
-        expect(tabStatus()).toBe('Complete');
-        expect(screen.getByTestId('mark-incomplete')).toBeTruthy();
-        expect(screen.queryByTestId('mark-complete')).toBeNull();
-        // the filled button, the way "files out of date" does it
-        expect(again()).not.toBeNull();
-        expect(again()!.className).toBe('bmw-btn-ok');
-        expect(again()!.textContent).toBe('✓ Mark complete again');
-        expect(screen.getByTestId('wb-actions').getAttribute('data-primary')).toBe('mark');
-        await waitFor(() => expect(again()!.disabled).toBe(false));
-        // looking wrote nothing about the model's status or its record
         await flush();
-        expect(exportCalls()).toHaveLength(0);
-        for (const r of mockUpdateWorkspaceData.mock.results) {
-            const m = (await r.value).failureGroupState.models[0];
-            expect(m.status).toBe(true);
-            expect(m.healthExport).toEqual(earlier);
-        }
-    });
-
-    it('"Mark complete again" writes the files again, the record then carries scoringIntervalSecs: 3600, and the hint and the button are gone', async () => {
-        await hsMount([HS_IND({ status: true, healthExport: earlier })]);
-        await openHealthPage();
-        await waitFor(() => expect(again()).not.toBeNull());
-        await waitFor(() => expect(again()!.disabled).toBe(false));
-        await act(async () => { fireEvent.click(again()!); await Promise.resolve(); });
-        await waitFor(() => expect(screen.getByTestId('save-ok')).toBeTruthy());
-        expect(exportCalls()).toHaveLength(1);
-        expect(exportCalls()[0].set_points).toEqual({ lower: 1, upper: 9 }); // the same set points: only the files are renewed
-        const written = await hsLastModel();
-        expect(written.status).toBe(true);
-        expect(written.healthExport.scoringIntervalSecs).toBe(3600);
-        expect(written.healthExport.at).not.toBe(earlier.at);
-        expect(written.healthExport.setPoints).toMatchObject({ lower: 1, upper: 9 });
-        expect(hint()).toBeNull();
-        expect(again()).toBeNull();
-        expect(tabStatus()).toBe('Complete');
-    });
-
-    it('no hint for a record that carries the interval, for a Complete model with no record at all, and on the Model fit page', async () => {
-        await hsMount([HS_IND({ status: true, healthExport: current })]);
-        await openHealthPage();
-        expect(hint()).toBeNull();
-        expect(again()).toBeNull();
-        expect(screen.getByTestId('save-ok')).toBeTruthy();
-        cleanup();
-
-        await hsMount([HS_IND({ status: true })]); // completed before export records existed: nothing saved to be out of date
-        await openHealthPage();
-        expect(hint()).toBeNull();
-        expect(again()).toBeNull();
-        cleanup();
-
-        // the hint belongs to the Health score page: the Model fit footer keeps its own sentence and has no filled button
-        await hsMount([HS_IND({ status: true, healthExport: earlier })]);
-        await waitFor(() => expect(screen.getByTestId('results-chart')).toBeTruthy());
-        expect(hint()).toBeNull();
-        expect(again()).toBeNull();
-        expect(screen.getByTestId('wb-actions').getAttribute('data-primary')).toBe('none');
+        expect(screen.queryByTestId('earlier-scoring')).toBeNull();
+        expect(screen.queryByTestId('mark-complete-again')).toBeNull();
         expect(noticeText()).not.toMatch(/row-by-row/);
-    });
-
-    it('only a COMPLETE model: an Incomplete one with the same old record shows plain "Mark complete"; marking a Complete one incomplete removes the hint', async () => {
-        await hsMount([HS_IND({ status: false, healthExport: earlier })]);
-        await openHealthPage();
-        expect(hint()).toBeNull();
-        expect(again()).toBeNull();
-        expect(screen.getByTestId('mark-complete')).toBeTruthy();
-        cleanup();
-
-        await hsMount([HS_IND({ status: true, healthExport: earlier })]);
-        await openHealthPage();
-        await waitFor(() => expect(hint()).not.toBeNull());
-        await act(async () => { fireEvent.click(screen.getByTestId('mark-incomplete')); await Promise.resolve(); await Promise.resolve(); });
-        await flush();
-        expect((await hsLastModel()).status).toBe(false);
-        expect((await hsLastModel()).healthExport).toEqual(earlier); // the old record is kept as it was
-        expect(hint()).toBeNull();
-        expect(again()).toBeNull();
-        expect(screen.getByTestId('mark-complete')).toBeTruthy();
-    });
-
-    it('set points ALSO changed after saving: the "Files out of date" sentence says it (one sentence, one button) — Mark complete again fixes both', async () => {
-        await hsMount([HS_IND({ status: true, healthExport: earlier })]);
-        await openHealthPage();
-        await waitFor(() => expect(hint()).not.toBeNull());
-        hsType('sp-upper', '12');
-        expect(hint()).toBeNull();
-        expect(screen.getByTestId('files-out-of-date').textContent).toBe('Files out of date — set points changed after saving · Mark complete again to update them');
-        expect(screen.getAllByTestId('mark-complete-again')).toHaveLength(1);
-        await waitFor(() => expect(again()!.disabled).toBe(false));
-        await act(async () => { fireEvent.click(again()!); await Promise.resolve(); });
-        await waitFor(() => expect(screen.getByTestId('save-ok')).toBeTruthy());
-        const written = await hsLastModel();
-        expect(written.healthExport.setPoints).toMatchObject({ upper: 12 });
-        expect(written.healthExport.scoringIntervalSecs).toBe(3600);
-        expect(hint()).toBeNull();
-        expect(screen.queryByTestId('files-out-of-date')).toBeNull();
-        expect(again()).toBeNull();
+        expect(tabStatus()).toBe('Complete');
+        expect(screen.getByTestId('wb-actions').getAttribute('data-primary')).toBe('none');
+        expect(exportCalls()).toHaveLength(0);
     });
 });
 
@@ -6220,7 +6122,7 @@ describe('Health score page - edge cases', () => {
         fitMode = 'ok';
         await act(async () => { release(); await Promise.resolve(); await Promise.resolve(); });
         await waitFor(() => expect(screen.getByTestId('set-points-card')).toBeTruthy());
-        await waitFor(() => expect(screen.getByTestId('save-ok')).toBeTruthy()); // "Files saved …" again
+        await waitFor(() => expect(tabStatus()).toBe('Complete')); // "Files saved …" again
         expect(tabStatus()).toBe('Complete');
         expect(screen.getByTestId('mark-incomplete')).toBeTruthy();
         expect(mockInvoke.mock.calls.filter(c => c[0] === 'export_model_files')).toHaveLength(0);
@@ -6389,11 +6291,11 @@ describe('Health score - QA fixes 2026-10-04', () => {
         });
     });
 
-    describe('closing while "Mark complete" is exporting waits for the whole run', () => {
+    describe('closing while "Mark complete" is checking waits for the whole run', () => {
         let finishExport!: () => void;
         const slowExport = () => {
             mockInvoke.mockImplementation((cmd: string, args?: any) =>
-                cmd === 'export_model_files' ? new Promise(res => { finishExport = () => res(EXPORT_OK); }) : healthInvoke(cmd, args));
+                isCheck(cmd, args) ? new Promise(res => { finishExport = () => res(makeSetPointAwarePreview(args.request)); }) : healthInvoke(cmd, args));
         };
         const startMark = async () => {
             await hsMount([HS_IND()]);
@@ -6401,10 +6303,10 @@ describe('Health score - QA fixes 2026-10-04', () => {
             await waitFor(() => expect(hsMarkBtn().disabled).toBe(false));
             slowExport();
             await hsClickMark();
-            await waitFor(() => expect(exportCalls()).toHaveLength(1));
+            await waitFor(() => expect(checkCalls()).toHaveLength(1));
         };
 
-        it('a native close is held until the files are written AND the status is saved, then goes through', async () => {
+        it('a native close is held until the check answers AND the status is saved, then goes through', async () => {
             await startMark();
             const preventDefault = vi.fn();
             let closing!: Promise<void>;
@@ -6426,7 +6328,7 @@ describe('Health score - QA fixes 2026-10-04', () => {
             expect((await hsLastModel()).status).toBe(true);
         });
 
-        it('a hung export does not make the window impossible to close: it stays open ONCE with a notice, the next close goes through', async () => {
+        it('a hung check does not make the window impossible to close: it stays open ONCE with a notice, the next close goes through', async () => {
             const wait = MARK_COMPLETE_CLOSE_WAIT.ms;
             MARK_COMPLETE_CLOSE_WAIT.ms = 20;
             try {
@@ -6435,7 +6337,7 @@ describe('Health score - QA fixes 2026-10-04', () => {
                 await act(async () => { await mockCloseRequestedHandler!({ preventDefault: first }); });
                 expect(first).toHaveBeenCalledTimes(1);
                 expect(mockClose).not.toHaveBeenCalled();
-                expect(screen.getByTestId('close-wait-notice').textContent).toMatch(/Still saving the model files/);
+                expect(screen.getByTestId('close-wait-notice').textContent).toMatch(/Still checking a model for Mark complete/);
                 const second = vi.fn();
                 await act(async () => { await mockCloseRequestedHandler!({ preventDefault: second }); });
                 expect(mockClose).toHaveBeenCalledTimes(1); // gave up waiting
@@ -6461,7 +6363,7 @@ describe('Health score - QA fixes 2026-10-04', () => {
             await openHealthPage();
             await waitFor(() => expect(hsMarkBtn().disabled).toBe(false));
             mockInvoke.mockImplementation((cmd: string, args?: any) =>
-                cmd === 'export_model_files' ? Promise.reject(new Error('Failed to write INDV_INFO: access denied')) : healthInvoke(cmd, args));
+                isCheck(cmd, args) ? Promise.reject(new Error('Failed to read column: access denied')) : healthInvoke(cmd, args));
             await hsClickMark();
             await waitFor(() => expect(screen.getByTestId('save-error').textContent).toMatch(/access denied/));
             expect(screen.queryByTestId('save-notice')).toBeNull(); // the Health page shows its own banner, not both
@@ -6478,7 +6380,7 @@ describe('Health score - QA fixes 2026-10-04', () => {
             await openHealthPage();
             await waitFor(() => expect(hsMarkBtn().disabled).toBe(false));
             await hsClickMark();
-            await waitFor(() => expect(screen.getByTestId('save-ok')).toBeTruthy());
+            await waitFor(() => expect(tabStatus()).toBe('Complete'));
             fireEvent.click(screen.getByTestId('page-tab-model'));
             expect(screen.queryByTestId('save-notice')).toBeNull();
         });
@@ -6671,7 +6573,7 @@ describe('Train periods and scoring periods in the Build Model window', () => {
                 expect(fg.runningConditionTestPeriods.map((t: any) => t.id)).toEqual(['old-1', 'old-2']);
             });
 
-            it('the preview / export requests carry start / end only (the fake Rust refuses anything else)', async () => {
+            it('the preview / check requests carry start / end only (the fake Rust refuses anything else)', async () => {
                 await hsMount([HS_IND()], {}, { runningConditionTestPeriods: LEGACY_TESTS });
                 await openHealthPage();
                 await waitFor(() => expect(hsMarkBtn().disabled).toBe(false));
@@ -6680,9 +6582,11 @@ describe('Train periods and scoring periods in the Build Model window', () => {
                     { start: '2024-03-01T00:00', end: '2024-03-31T23:59' },
                 ]);
                 expect(screen.queryByTestId('scored-pill')).toBeNull(); // no pill: the Model fit footer sentence says "scored on 2 periods"
+                const shown = healthCalls().slice(-1)[0].test_periods;
                 await hsClickMark();
-                await waitFor(() => expect(exportCalls()).toHaveLength(1));
-                expect(exportCalls()[0].test_periods).toEqual(healthCalls().slice(-1)[0].test_periods);
+                await waitFor(() => expect(checkCalls()).toHaveLength(1));
+                expect(checkCalls()[0].test_periods).toEqual(shown);
+                expect(exportCalls()).toHaveLength(0);
             });
         });
 
@@ -6778,11 +6682,11 @@ describe('Train periods and scoring periods in the Build Model window', () => {
             expect(screen.queryByTestId('tested-pill')).toBeNull();
             expect(healthCalls().slice(-1)[0].test_periods).toEqual([{ start: ONE_TEST[0].start, end: ONE_TEST[0].end }]);
             await hsClickMark();
-            await waitFor(() => expect(exportCalls()).toHaveLength(1));
-            expect(exportCalls()[0].test_periods).toEqual([{ start: ONE_TEST[0].start, end: ONE_TEST[0].end }]);
-            // once Complete: "Files saved …" on Health score (its date is the SAVE, not the train) …
+            await waitFor(() => expect(checkCalls()).toHaveLength(1));
+            expect(checkCalls()[0].test_periods).toEqual([{ start: ONE_TEST[0].start, end: ONE_TEST[0].end }]);
+            // once Complete: no notice line at all on Health score (no "Files saved …") …
             await waitFor(() => expect(screen.getByTestId('mark-incomplete')).toBeTruthy());
-            expect(screen.getByTestId('wb-notice').textContent).toMatch(/^Files saved \d{4}\/\d{2}\/\d{2} \d{2}:\d{2} · /);
+            expect(screen.queryByTestId('wb-notice')).toBeNull();
             expect(pane()).not.toMatch(NO_DATE);
             // … and nothing at all on Model fit
             fireEvent.click(screen.getByTestId('page-tab-model'));
@@ -6819,7 +6723,7 @@ describe('Train periods and scoring periods in the Build Model window', () => {
             await openHealthPage();
             await waitFor(() => expect(hsMarkBtn().disabled).toBe(false));
             await hsClickMark();
-            await waitFor(() => expect(screen.getByTestId('save-ok')).toBeTruthy());
+            await waitFor(() => expect(tabStatus()).toBe('Complete'));
             await act(async () => { fireEvent.click(screen.getByTestId('mark-incomplete')); await Promise.resolve(); });
             await flush();
             expect(screen.queryByTestId('save-ok')).toBeNull();
@@ -6872,7 +6776,7 @@ describe('Train periods and scoring periods — review fixes (2026-10-07)', () =
         (await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value).failureGroupState;
 
     describe('Mark complete saves unsaved Model settings first (must-fix 1)', () => {
-        it('a Custom model with an UNSAVED scoring-period edit: Mark complete succeeds once, files written once, disk has the edited periods', async () => {
+        it('a Custom model with an UNSAVED scoring-period edit: Mark complete succeeds once, checked once, disk has the edited periods', async () => {
             await hsMount([customInd()]);
             openSettings();
             const end = customTests().getByLabelText('Scoring period 1 end');
@@ -6881,17 +6785,18 @@ describe('Train periods and scoring periods — review fixes (2026-10-07)', () =
             await openHealthPage();
             await waitFor(() => expect(hsMarkBtn().disabled).toBe(false));
             await hsClickMark();
-            await waitFor(() => expect(screen.getByTestId('save-ok')).toBeTruthy());
+            await waitFor(() => expect(tabStatus()).toBe('Complete'));
             expect(screen.queryByTestId('save-error')).toBeNull();
-            // the files describe the edited periods, and were written exactly once
-            expect(exportCalls()).toHaveLength(1);
-            expect(exportCalls()[0].test_periods).toEqual([{ start: ONE_TEST[0].start, end: '2024-01-25T00:00' }]);
+            // the check scored the edited periods, exactly once; no files were written
+            expect(checkCalls()).toHaveLength(1);
+            expect(checkCalls()[0].test_periods).toEqual([{ start: ONE_TEST[0].start, end: '2024-01-25T00:00' }]);
+            expect(exportCalls()).toHaveLength(0);
             // what is on disk: Complete, with the edited periods (id / start / end only), no "changed" stamp left
             const fg = await lastFg();
             expect(fg.models[0].status).toBe(true);
             expect(fg.models[0].customTestPeriods).toEqual([{ id: ONE_TEST[0].id, start: ONE_TEST[0].start, end: '2024-01-25T00:00' }]);
             expect(fg.models[0].testsChangedAt).toBeUndefined();
-            expect(fg.models[0].healthExport).toBeTruthy();
+            expect(fg.models[0].healthExport).toBeUndefined();
         });
 
     });
@@ -7757,14 +7662,14 @@ describe('train queue wiring — review fixes (phase 4)', () => {
         await waitFor(() => expect(trainSensorBtn().textContent).toBe('▶ Train sensor'));
     });
 
-    it('a model being saved (Mark complete running) is planned as can\'t train — "Its files are being saved"', async () => {
-        mockInvoke.mockImplementation((cmd: string, args?: any) => cmd === 'export_model_files' ? new Promise(() => {}) : healthInvoke(cmd, args));
+    it('a model being checked (Mark complete running) is planned as can\'t train — "It is being checked for Mark complete"', async () => {
+        mockInvoke.mockImplementation((cmd: string, args?: any) => isCheck(cmd, args) ? new Promise(() => {}) : healthInvoke(cmd, args));
         await mountModels([IND3T({ healthSetPoints: VALID_IND })]);
         await openHealthPage();
         await waitFor(() => expect((screen.getByTestId('mark-complete') as HTMLButtonElement).disabled).toBe(false));
         await act(async () => { fireEvent.click(screen.getByTestId('mark-complete')); await Promise.resolve(); });
         expect(screen.getByTestId('train-sensor-why').textContent).toBe("Can't train · see below");
-        expect(trainSensorBtn().title).toBe("Can't train: Individual — Its files are being saved");
+        expect(trainSensorBtn().title).toBe("Can't train: Individual — It is being checked for Mark complete");
         expect(trainSensorBtn().disabled).toBe(true);
         // every menu item is disabled too, so the ▾ toggle is
         expect((screen.getByTestId('train-sensor-menu-toggle') as HTMLButtonElement).disabled).toBe(true);
@@ -7855,12 +7760,13 @@ describe('Workbench redesign §1 — the page spine', () => {
             expect(screen.queryByTestId('mark-complete')).toBeNull();
         });
 
-        it('Complete with files out of date: "Mark complete again" appears and is the one filled button', async () => {
+        it('Complete, a set point being typed: still no "Mark complete again" (Mark complete writes no files) and nothing in the pane is filled', async () => {
             await hsMount([HS_IND({ status: true, healthExport: record })]);
             await openHealthPage();
             hsType('sp-upper', '12');
-            expect(filled()).toEqual(['mark-complete-again']);
-            expect(primary()).toBe('mark');
+            expect(screen.queryByTestId('mark-complete-again')).toBeNull();
+            expect(filled()).toEqual([]);
+            expect(primary()).toBe('none');
         });
 
         it('settings changed (stale): Train sensor — the stale banner has no button of its own, only the "Train sensor ↑" link', async () => {
@@ -8025,34 +7931,21 @@ describe('Workbench redesign §1 — the page spine', () => {
         });
 
         // The three suffixes are part of the VISIBLE words, uncut (v2 §2).
-        it('suffix "· files out of date": a Complete model whose set points changed after its files were saved — on the tab, in the tooltip and in the tab\'s name', async () => {
+        it('no "· files out of date" suffix: a Complete model whose set point is being typed still reads plain "Complete" (green)', async () => {
             await hsMount([HS_IND({ status: true, healthExport: record })]);
             expect(tabWords('m1').textContent).toBe('Complete');
             await openHealthPage();
             hsType('sp-upper', '12');
-            await waitFor(() => expect(tabWords('m1').textContent).toBe('Complete · files out of date'));
-            // the model IS still Complete, so its dot stays green — but the WORDS turn amber
-            // (user decision 2026-10-14: all green read as "nothing left to do")
-            expect(tabWords('m1').className).toBe('wb3-tab-words wb3-tab-words--need');
-            expect(screen.getByTestId('tab-status-m1').className).toContain('f4-sdot--complete');
-            const tab = screen.getByRole('tab');
-            expect(tab.getAttribute('title')).toBe('Individual · Complete · files out of date');
-            expect(tab.getAttribute('aria-label')).toBe('Individual, Complete · files out of date');
-            expect(screen.getByTestId('tab-status-m1').getAttribute('title')).toBe('Complete · files out of date');
-            // typed back: the words go back, green again
-            hsType('sp-upper', '9');
-            await waitFor(() => expect(tabWords('m1').textContent).toBe('Complete'));
+            await flush();
+            expect(tabWords('m1').textContent).toBe('Complete');
             expect(tabWords('m1').className).toBe('wb3-tab-words wb3-tab-words--complete');
+            expect(screen.getByRole('tab').getAttribute('title')).toBe('Individual · Complete');
         });
 
         it('the words are never cut and the tooltip keeps the full sentence: every suffix is in both', async () => {
             await hsMount([HS_IND({ status: true, healthExport: record }), HS_REL()]);
-            fireEvent.click(screen.getByTestId('page-tab-health'));
-            await waitFor(() => expect(screen.getByTestId('set-points-card')).toBeTruthy());
-            hsType('sp-upper', '12'); // files out of date
-            fireEvent.click(screen.getByTestId('page-tab-model'));
-            rename();                 // + an unsaved Model-settings draft
-            const full = 'Complete · files out of date · unsaved changes';
+            rename();                 // an unsaved Model-settings draft
+            const full = 'Complete · unsaved changes';
             await waitFor(() => expect(tabWords('m1').textContent).toBe(full));
             expect(screen.getByRole('tab', { name: /Individual/ }).getAttribute('title')).toBe(`Individual · ${full}`);
             expect(screen.getByRole('tab', { name: /Individual/ }).getAttribute('aria-label')).toBe(`Individual, ${full}`);
@@ -8126,9 +8019,9 @@ describe('Workbench redesign §1 — the page spine', () => {
 
     describe('Health score notice line: a failed Mark complete, the saved folder, a failed preview', () => {
         // "Not saved" used to stay for the rest of the session and hide the real reason.
-        it('a failed save says "Not saved · fix it, then Mark complete again" with the red card — and both go as soon as a set point changes; a later empty point shows ITS reason', async () => {
-            const why = "Couldn't write C:\\data\\workspaces\\ws1\\output\\TAG1\\INDV_INFO_TAG1.json — the file is open in another program.";
-            mockInvoke.mockImplementation((cmd: string, args?: any) => cmd === 'export_model_files' ? Promise.reject(why) : healthInvoke(cmd, args));
+        it('a failed Mark complete says "Not marked complete · fix it, then Mark complete" with the red card — and both go as soon as a set point changes; a later empty point shows ITS reason', async () => {
+            const why = 'Failed to read column TAG1: the file is open in another program.';
+            mockInvoke.mockImplementation((cmd: string, args?: any) => isCheck(cmd, args) ? Promise.reject(why) : healthInvoke(cmd, args));
             statefulUpdateMock([HS_IND()]);
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: { groups: [makeGroup()], models: [HS_IND()] } });
@@ -8136,11 +8029,11 @@ describe('Workbench redesign §1 — the page spine', () => {
             await waitFor(() => expect(hsMarkBtn().disabled).toBe(false));
             await hsClickMark();
             await waitFor(() => expect(screen.getByTestId('save-error')).toBeTruthy());
-            // the red card carries the file; the notice line (red) says what to do
+            // the red card carries the reason; the notice line (red) says what to do
             expect(screen.getByTestId('save-error').className).toContain('hs-save--bad');
-            expect(screen.getByTestId('save-error-reason').textContent).toContain('output\\TAG1\\INDV_INFO_TAG1.json');
+            expect(screen.getByTestId('save-error-reason').textContent).toContain('the file is open in another program');
             const line = () => screen.getByTestId('wb-notice').querySelector('.wbx-reason') as HTMLElement;
-            expect(line().textContent).toBe('Not saved · fix it, then Mark complete again');
+            expect(line().textContent).toBe('Not marked complete · fix it, then Mark complete');
             expect(line().getAttribute('data-tone')).toBe('bad');
             expect(line().className).toContain('f4-foot-reason--bad');
             expect(screen.getByTestId('wb-notice').className).toBe('wb3-notice wb3-notice--bad');
@@ -8150,19 +8043,19 @@ describe('Workbench redesign §1 — the page spine', () => {
             // the user changes a set point: that attempt's outcome no longer describes the page
             hsType('sp-upper', '9.5');
             expect(screen.queryByTestId('save-error')).toBeNull();
-            // valid set points and nothing failed: no notice line at all
-            await waitFor(() => expect(screen.queryByTestId('state-why')).toBeNull()); // (Rust has answered: no "Checking…" left)
+            await waitFor(() => expect(screen.queryByTestId('state-why')).toBeNull());
             expect(screen.queryByTestId('wb-notice')).toBeNull();
-            // ...and later empties one: the notice line shows the block reason, not "Not saved"
+            // ...and later empties one: the notice line shows the block reason, not "Not marked complete"
             hsType('sp-upper', '');
             await waitFor(() => expect(screen.getByTestId('mark-block-reason').textContent).toBe('1 set point still empty'));
-            expect(noticeText()).not.toMatch(/Not saved/);
+            expect(noticeText()).not.toMatch(/Not marked complete/);
             expect(hsMarkBtn().disabled).toBe(true);
         });
 
-        it('export REFUSED by Rust for a set point → the user fixes it → later empties one: the notice line shows that block reason ("1 set point still empty"), not "Not saved"', async () => {
-            const refused = { ok: false, files: [], output_dir: '', warnings: [], validation: [{ code: 'lower_equals_3sd', severity: 'error', field: 'lower', message: 'L equals the lower 3σ boundary (found at save time).' }] };
-            mockInvoke.mockImplementation((cmd: string, args?: any) => cmd === 'export_model_files' ? Promise.resolve(refused) : healthInvoke(cmd, args));
+        it('Mark complete REFUSED by Rust for a set point → the user fixes it → later empties one: the notice line shows that block reason ("1 set point still empty"), not "Not marked complete"', async () => {
+            mockInvoke.mockImplementation((cmd: string, args?: any) => isCheck(cmd, args)
+                ? Promise.resolve({ ...makeSetPointAwarePreview(args.request), valid: false, validation: [{ code: 'lower_equals_3sd', severity: 'error', field: 'lower', message: 'L equals the lower 3σ boundary (found when checking).' }] })
+                : healthInvoke(cmd, args));
             statefulUpdateMock([HS_IND()]);
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: { groups: [makeGroup()], models: [HS_IND()] } });
@@ -8170,8 +8063,8 @@ describe('Workbench redesign §1 — the page spine', () => {
             await waitFor(() => expect(hsMarkBtn().disabled).toBe(false));
             await hsClickMark();
             await waitFor(() => expect(screen.getByTestId('save-error')).toBeTruthy());
-            expect(screen.getByTestId('check-line').textContent).toMatch(/found at save time/);
-            expect(screen.getByTestId('wb-notice').querySelector('.wbx-reason')!.textContent).toBe('Not saved · fix it, then Mark complete again');
+            expect(screen.getByTestId('check-line').textContent).toMatch(/found when checking/);
+            expect(screen.getByTestId('wb-notice').querySelector('.wbx-reason')!.textContent).toBe('Not marked complete · fix it, then Mark complete');
             // the user fixes the set point
             hsType('sp-lower', '0.5');
             await waitFor(() => expect(screen.getByTestId('check-valid')).toBeTruthy());
@@ -8180,21 +8073,20 @@ describe('Workbench redesign §1 — the page spine', () => {
             // ...and later empties one: an EMPTY point is a warning (amber), in the notice line and under the button
             hsType('sp-lower', '');
             await waitFor(() => expect(screen.getByTestId('mark-block-reason').textContent).toBe('1 set point still empty'));
-            expect(noticeText()).not.toMatch(/Not saved/);
+            expect(noticeText()).not.toMatch(/Not marked complete/);
             expect(screen.getByTestId('mark-block-reason').getAttribute('data-tone')).toBe('warn');
             expect(screen.getByTestId('wb-notice').getAttribute('data-tone')).toBe('warn');
             expect(screen.getByTestId('state-why').textContent).toBe('1 set point still empty');
             expect(screen.getByTestId('state-why').className).toBe('tq-why tq-why--warn');
         });
 
-        it('the saved folder of a Windows path is shortened to "…\\workspaces\\<id>\\output\\<sensor>" (the full path is the tooltip)', async () => {
+        it('a Complete model with an old export record shows no saved folder and no "Files saved" line (Export results writes the files)', async () => {
             const dir = 'C:\\Users\\me\\AppData\\Roaming\\com.wizard.app\\workspaces\\ws1\\output\\TAG1';
             await hsMount([HS_IND({ status: true, healthExport: { ...record, outputDir: dir } })]);
             await openHealthPage();
-            const path = screen.getByTestId('footer-saved-path');
-            expect(path.textContent).toBe('…\\workspaces\\ws1\\output\\TAG1');
-            expect(path.getAttribute('title')).toBe(dir);
-            expect(screen.getByTestId('save-ok').textContent).toMatch(/^Files saved 2026\/10\/04 \d{2}:\d{2} · …\\workspaces\\ws1\\output\\TAG1$/);
+            expect(screen.queryByTestId('footer-saved-path')).toBeNull();
+            expect(screen.queryByTestId('save-ok')).toBeNull();
+            expect(screen.queryByTestId('wb-notice')).toBeNull();
         });
 
         it('the health score failed to load: the red card + Retry on the page; Mark complete is disabled and the notice line says what to do', async () => {
@@ -8237,15 +8129,13 @@ describe('Workbench redesign §1 — the page spine', () => {
             expect(hsInput('sp-upper').value).toBe('9.5');
         });
 
-        it('a Complete model with files out of date whose new set point is NOT valid: "Mark complete again" is disabled and the notice line (and the line under the button) says why', async () => {
+        it('a Complete model whose set point is emptied while typing: no "Mark complete again" and no "Files out of date" line; it stays Complete until the edit is saved', async () => {
             await hsMount([HS_IND({ status: true, healthExport: record })]);
             await openHealthPage();
-            hsType('sp-upper', '12');
-            expect(screen.getByTestId('files-out-of-date').textContent).toBe('Files out of date — set points changed after saving · Mark complete again to update them');
             hsType('sp-upper', '');
-            await waitFor(() => expect(screen.getByTestId('files-out-of-date').textContent).toBe('Files out of date · 1 set point still empty'));
-            expect((screen.getByTestId('mark-complete-again') as HTMLButtonElement).disabled).toBe(true);
-            expect(screen.getByTestId('state-why').textContent).toBe('1 set point still empty');
+            await flush();
+            expect(screen.queryByTestId('files-out-of-date')).toBeNull();
+            expect(screen.queryByTestId('mark-complete-again')).toBeNull();
             expect(tabStatus()).toBe('Complete');
         });
     });
@@ -8417,7 +8307,7 @@ describe('Workbench redesign §1 — the page spine', () => {
             }
         });
 
-        it('every state button lives in the header\'s right side — Save changes, Mark complete, Mark incomplete, Mark complete again', async () => {
+        it('every state button lives in the header\'s right side — Save changes, Mark complete, Mark incomplete', async () => {
             await hsMount([HS_IND()]);
             await waitFor(() => expect(screen.getByTestId('results-chart')).toBeTruthy());
             const ctl = () => screen.getByTestId('detail-controls');
@@ -8431,19 +8321,15 @@ describe('Workbench redesign §1 — the page spine', () => {
             expect(hsMarkBtn().className).toBe('bmw-btn-ok');
             await hsClickMark();
             await waitFor(() => expect(screen.getByTestId('mark-incomplete')).toBeTruthy());
-            // Complete and up to date: "Mark incomplete" is a TEXT button and nothing is filled
+            // Complete: "Mark incomplete" is a TEXT button and nothing is filled
             expect(ctl().contains(screen.getByTestId('mark-incomplete'))).toBe(true);
             expect(screen.getByTestId('mark-incomplete').className).toBe('f4-btn f4-btn--plain f4-btn--small');
             expect(screen.queryByTestId('mark-complete')).toBeNull();
             expect(filled()).toEqual([]);
             expect(primary()).toBe('none');
-            expect(notice()!.getAttribute('data-tone')).toBe('ok'); // "Files saved …"
+            expect(notice()).toBeNull(); // no "Files saved …"
             hsType('sp-upper', '12');
-            await waitFor(() => expect(screen.getByTestId('mark-complete-again')).toBeTruthy());
-            expect(ctl().contains(screen.getByTestId('mark-complete-again'))).toBe(true);
-            expect(filled()).toEqual(['mark-complete-again']);
-            // nothing button-shaped is left at the bottom of the pane
-            expect(notice()!.querySelector('.rcx-btn, .bmw-btn-ok, .f4-btn-save, .f4-btn')).toBeNull();
+            expect(screen.queryByTestId('mark-complete-again')).toBeNull();
         });
     });
 
@@ -8589,7 +8475,7 @@ describe('Workbench redesign §1 — the page spine', () => {
         expect(sc().scrollTop).toBe(0);
     });
 
-    it('NO train date on the page (user decision 2026-10-12); the one date the notice line prints — "Files saved 2026/02/09 23:50" — is in the ONE format, in mono, never a locale date', async () => {
+    it('NO train date on the page (user decision 2026-10-12), and a Complete model prints no "Files saved" date either', async () => {
         // trained, up to date: no notice line, and the train date is nowhere in the detail pane
         await hsMount([{ ...HS_IND(), lastTrainedAt: '2026-02-09T23:50:00' }]);
         await waitFor(() => expect(screen.getByTestId('results-chart')).toBeTruthy());
@@ -8601,13 +8487,11 @@ describe('Workbench redesign §1 — the page spine', () => {
         expect(document.querySelector('.model-status-pill')).toBeNull();
         expect(tabStatus()).toBe('Trained');
         cleanup();
-        // Complete: the SAVE date of its files, on the Health score page
+        // Complete with an old export record: no save date anywhere on the Health score page
         await hsMount([HS_IND({ status: true, healthExport: { ...record, at: '2026-02-09T23:50:00' } })]);
         await openHealthPage();
-        const line = screen.getByTestId('save-ok');
-        expect(line.textContent).toMatch(/^Files saved 2026\/02\/09 23:50 · /);
-        expect(line.querySelector('.wbx-dt')!.textContent).toBe('2026/02/09 23:50');
-        expect(line.textContent).not.toMatch(/\b(AM|PM)\b|\d{4}-\d{2}-\d{2}|T\d\d:|Feb|:\d\d:\d\d/); // no locale form, no month name, no seconds
+        expect(screen.queryByTestId('save-ok')).toBeNull();
+        expect(pane().textContent).not.toMatch(/2026\/02\/09|Files saved/);
     });
 
     it('"Training the … · about N s" only for a model IN THE RUN; a trained model whose result is worked out again says "Loading the … model…" (no time estimate)', async () => {
@@ -9130,8 +9014,8 @@ describe('Workbench redesign §7 — page states of every kind (phase D)', () =>
      *  `k.isTrain`): opening its tab asks for ITS preview, which replaces the answer the
      *  window held for the first model. */
     const siblingOf = (k: K) => withTrained(k.kind === 'individual'
-        ? makeModel({ id: 'sib', kind: 'relationship', targetSensor: 'TAG2', predictorSensors: ['TAG1'] })
-        : makeModel({ id: 'sib', targetSensor: 'TAG1' }));
+        ? makeModel({ id: 'sib', name: 'Sibling', kind: 'relationship', targetSensor: 'TAG2', predictorSensors: ['TAG1'] })
+        : makeModel({ id: 'sib', name: 'Sibling', targetSensor: 'TAG1' }));
     const tabOf = (label: string) => screen.getByRole('tab', { name: new RegExp(`^${label}`) });
     const failRetrainFromSiblingTab = async (k: K, mode: { current: 'ok' | 'fail' | 'hold' }) => {
         fireEvent.click(tabOf(k.tab));
@@ -9207,7 +9091,7 @@ describe('Workbench redesign §7 — page states of every kind (phase D)', () =>
 
     // A3: while the user's "load it again" runs, an earlier answer may still be on screen —
     // "Mark complete again" must not be enabled from it.
-    it('Complete + files out of date + a failed ▾ re-train: "Mark complete again" stays disabled while "load it again" runs, and is back when it has loaded', async () => {
+    it('Complete + a failed ▾ re-train: "Couldn\'t load the model · load it again" on the Health score page, and no "Mark complete again" at any point', async () => {
         const k = KINDS[0];
         const mode = { current: 'ok' as 'ok' | 'fail' | 'hold' };
         const release = trainAnswers(k, mode);
@@ -9219,24 +9103,21 @@ describe('Workbench redesign §7 — page states of every kind (phase D)', () =>
         await waitFor(() => expect(screen.getByTestId('results-chart')).toBeTruthy());
         fireEvent.click(screen.getByTestId('page-tab-health'));
         await waitFor(() => expect(screen.getByTestId('set-points-card')).toBeTruthy());
-        const again = () => screen.getByTestId('mark-complete-again') as HTMLButtonElement;
-        await waitFor(() => expect(again().disabled).toBe(false));
+        expect(screen.queryByTestId('mark-complete-again')).toBeNull();
         mode.current = 'fail';
         openMenu();
         await act(async () => { fireEvent.click(screen.getByTestId(`train-menu-only-${k.kind}`)); await Promise.resolve(); await Promise.resolve(); });
         await waitFor(() => expect(screen.getByTestId('footer-load-again')).toBeTruthy());
-        expect(again().disabled).toBe(true);
-        expect(screen.getByTestId('files-out-of-date').textContent).toBe("Files out of date · Couldn't load the model · load it again");
-        // the load is asked for and held: not enabled meanwhile
+        expect(screen.queryByTestId('mark-complete-again')).toBeNull();
+        expect(screen.queryByTestId('files-out-of-date')).toBeNull();
         mode.current = 'hold';
         const calls = trainCalls(k);
         await act(async () => { fireEvent.click(screen.getByTestId('footer-load-again')); await Promise.resolve(); await Promise.resolve(); });
         await waitFor(() => expect(trainCalls(k)).toBe(calls + 1));
-        expect(again().disabled).toBe(true);
-        expect(again().title).toBe('Checking the set points…');
         expect(exportCalls()).toHaveLength(0);
         await release();
-        await waitFor(() => expect(again().disabled).toBe(false));
+        await waitFor(() => expect(screen.getByTestId('set-points-card')).toBeTruthy());
+        expect(screen.queryByTestId('mark-complete-again')).toBeNull();
     });
 
     // A5 + A6: the disabled states of "Load it again" and of the ▾ menu phrase.
@@ -9911,8 +9792,9 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
             await waitFor(() => expect(hsMarkBtn().disabled).toBe(false));
             expect(screen.queryByTestId('mark-block-reason')).toBeNull();
             await hsClickMark();
-            await waitFor(() => expect(screen.getByTestId('save-ok')).toBeTruthy());
-            expect(exportCalls()).toHaveLength(1);
+            await waitFor(() => expect(tabStatus()).toBe('Complete'));
+            expect(exportCalls()).toHaveLength(0);
+            expect(checkCalls()).toHaveLength(1);
             expect((await hsLastModel()).status).toBe(true);
         });
 
@@ -10121,12 +10003,13 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
             await openHealthPage();
             await waitFor(() => expect(hsMarkBtn().disabled).toBe(false));
             await hsClickMark();
-            await waitFor(() => expect(screen.getByTestId('save-ok')).toBeTruthy());
-            expect(exportCalls()).toHaveLength(1);
+            await waitFor(() => expect(tabStatus()).toBe('Complete'));
+            expect(exportCalls()).toHaveLength(0);
+            expect(checkCalls()).toHaveLength(1);
             expect((await hsLastModel()).status).toBe(true);
         });
 
-        it('a COMPLETE model: charts, the Health score page, "Mark complete again" and "Mark incomplete" are all available; the dot stays Complete and it is not listed under "Needs setup"', async () => {
+        it('a COMPLETE model: charts, the Health score page and "Mark incomplete" are all available; the dot stays Complete and it is not listed under "Needs setup"', async () => {
             rust({ running: outsideIsEmpty });
             await mountB([trainedModel({ status: true, healthExport: record })], { runningConditionTimePeriods: [P_IN, P_OUT2] });
             await waitFor(() => expect(screen.getByTestId('rc-card-outside').textContent).toBe(WARN));
@@ -10140,18 +10023,12 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
             expect(screen.getByRole('button', { name: /^Complete/ }).textContent).toBe('Complete 1');
             expect(trainSensorWhy()).toBe('1 model up to date — nothing to train');
             await openHealthPage();
-            // Mark complete again (its own precondition: the set points changed after saving)
-            hsType('sp-upper', '12');
-            const again = await screen.findByTestId('mark-complete-again') as HTMLButtonElement;
-            await waitFor(() => expect(again.disabled).toBe(false));
-            await act(async () => { fireEvent.click(again); await Promise.resolve(); });
-            await waitFor(() => expect(screen.getByTestId('save-ok')).toBeTruthy());
-            expect(exportCalls()).toHaveLength(1);
-            expect((await hsLastModel()).status).toBe(true);
+            expect(screen.queryByTestId('mark-complete-again')).toBeNull();
             // Mark incomplete
             await act(async () => { fireEvent.click(screen.getByTestId('mark-incomplete')); await Promise.resolve(); });
             await flush();
             expect((await hsLastModel()).status).toBe(false);
+            expect(exportCalls()).toHaveLength(0);
         });
 
         it('the settings modal: the saved period warns on its row (amber, not red) and an unrelated edit applies — the outside period is written back untouched', async () => {
@@ -10458,5 +10335,163 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
             await flush();
             expect(boundsCalls()).toBe(1);
         });
+    });
+});
+
+
+// ─────────────────────────────────────────────────────────────────────────
+// Export results (2026-10-20): the export's running status in the running-
+// condition editor, workspace-wide unique model names, and Project details
+// following a save made in another window.
+// ─────────────────────────────────────────────────────────────────────────
+describe('Running status line ("Machine is running when … is above …")', () => {
+    const ABOVE1 = { id: 'f1', sensor: 'TAG1', operation: 'greater_than', value1: '5', value2: '' };
+    const ABOVE2 = { id: 'f2', sensor: 'TAG2', operation: 'greater_than', value1: '40', value2: '' };
+    const BELOW = { id: 'f3', sensor: 'TAG2', operation: 'less_than', value1: '90', value2: '' };
+    const WHY = 'Enter the value for “Machine is running when … is above …”';
+    let disk: any;
+    const mount = async (fg: Record<string, any>) => {
+        const full = { groups: [makeGroup()], models: [makeModel()], runningConditionNoneConfirmed: false, rcLegacyNotice: null, runningConditionTimePeriods: ALL_TIME_TRAIN, runningConditionTestPeriods: ONE_TEST, ...fg };
+        disk = { id: 'ws1', failureGroupState: full };
+        render(<BuildModelWindow />);
+        await deliverData({ failureGroupState: full });
+        mockUpdateWorkspaceData.mockImplementation(async (_id: string, patch: (s: any) => any) => { disk = patch(disk); return disk; });
+        mockUpdateWorkspaceData.mockClear();
+        fireEvent.click(screen.getByTestId('rc-card-open'));
+    };
+    const line = () => screen.queryByTestId('rc-running-status');
+    const applyBtn = () => screen.getByTestId('rc-apply') as HTMLButtonElement;
+    const sensorTrigger = () => within(line()!).getByLabelText('Sensor that tells the machine is running');
+    const valueInput = () => within(line()!).getByLabelText('Running above this value') as HTMLInputElement;
+
+    it('exactly ONE "above" condition: the line is not shown (that condition IS the running status)', async () => {
+        await mount({ runningConditionFilters: [ABOVE1, BELOW] });
+        expect(line()).toBeNull();
+    });
+
+    it('two "above" conditions: shown, prefilled from the first one — the prefill is NOT an edit (Apply stays off); the note says why it is shown', async () => {
+        await mount({ runningConditionFilters: [ABOVE1, ABOVE2] });
+        expect(line()).toBeTruthy();
+        expect(sensorTrigger().textContent).toMatch(/Pump Pressure/);
+        expect(valueInput().value).toBe('5');
+        expect(applyBtn().disabled).toBe(true);
+        const note = screen.getByTestId('rc-running-status-note').textContent!;
+        expect(note).toMatch(/^Used by the export only — /);
+        expect(note).toMatch(/Training still uses the conditions above\./);
+        expect(note).toMatch(/There are 2 “above” conditions, so say which one it is\./);
+    });
+
+    it('"Use all rows" (no condition): shown empty, with its own reason; a sensor without a value blocks Apply with the reason', async () => {
+        await mount({ runningConditionNoneConfirmed: true, runningConditionFilters: [] });
+        expect(line()).toBeTruthy();
+        expect(valueInput().value).toBe('');
+        expect(screen.getByTestId('rc-running-status-note').textContent).toMatch(/“Use all rows” has no condition to take it from\./);
+        pickSingle(sensorTrigger(), 'TAG2');
+        expect(applyBtn().disabled).toBe(true);
+        expect(screen.getByTestId('rc-running-status-why').textContent).toBe(WHY);
+        expect(applyBtn().title).toBe(WHY);
+        fireEvent.change(valueInput(), { target: { value: '3' } });
+        expect(screen.queryByTestId('rc-running-status-why')).toBeNull();
+        expect(applyBtn().disabled).toBe(false);
+    });
+
+    it('Apply writes the running status in ONE write (with withFailureGroupState: the running condition stays as it was)', async () => {
+        await mount({ runningConditionNoneConfirmed: true, runningConditionFilters: [] });
+        pickSingle(sensorTrigger(), 'TAG2');
+        fireEvent.change(valueInput(), { target: { value: '3' } });
+        await act(async () => { fireEvent.click(applyBtn()); await Promise.resolve(); await Promise.resolve(); });
+        await flush();
+        expect(mockUpdateWorkspaceData).toHaveBeenCalledTimes(1);
+        const fg = disk.failureGroupState;
+        expect(fg.runningStatus).toEqual({ sensor: 'TAG2', stopAtOrBelow: '3' });
+        expect(fg.runningConditionNoneConfirmed).toBe(true);
+        expect(fg.models).toHaveLength(1);
+        expect(screen.queryByRole('dialog', { name: 'Running condition' })).toBeNull();
+    });
+
+    it('a condition edit AND a running-status edit go out in the SAME write; reopening shows the saved value', async () => {
+        await mount({ runningConditionFilters: [ABOVE1, ABOVE2] });
+        // edit the running status: the second "above" sensor, its own value
+        pickSingle(sensorTrigger(), 'TAG2');
+        fireEvent.change(valueInput(), { target: { value: '41' } });
+        // and a condition edit
+        fireEvent.click(screen.getByText('Add condition'));
+        await act(async () => { fireEvent.click(applyBtn()); await Promise.resolve(); await Promise.resolve(); });
+        await flush();
+        expect(mockUpdateWorkspaceData).toHaveBeenCalledTimes(1);
+        expect(disk.failureGroupState.runningStatus).toEqual({ sensor: 'TAG2', stopAtOrBelow: '41' });
+        expect(disk.failureGroupState.runningConditionFilters).toHaveLength(3);
+        // reopen: the saved value is what the line shows (still not an edit)
+        fireEvent.click(screen.getByTestId('rc-card-open'));
+        await flush();
+        expect(line()).toBeTruthy();
+        expect(sensorTrigger().textContent).toMatch(/Pump Temp/);
+        expect(valueInput().value).toBe('41');
+        expect(applyBtn().disabled).toBe(true);
+    });
+
+    it('Cancel discards a running-status edit (nothing is written)', async () => {
+        await mount({ runningConditionFilters: [ABOVE1, ABOVE2] });
+        fireEvent.change(valueInput(), { target: { value: '7' } });
+        expect(applyBtn().disabled).toBe(false);
+        fireEvent.click(screen.getByTestId('rc-cancel'));
+        await flush();
+        expect(mockUpdateWorkspaceData).not.toHaveBeenCalled();
+        expect(disk.failureGroupState.runningStatus).toBeUndefined();
+    });
+});
+
+describe('Model names are unique across the PROJECT (export display names)', () => {
+    it('Save changes is blocked when another model of ANY sensor / kind already has the name (trimmed, any case)', async () => {
+        const ind = makeModel({ id: 'm1', name: 'Model One', targetSensor: 'TAG1' });
+        const rel = makeModel({ id: 'r2', name: 'Bearing check', kind: 'relationship', targetSensor: 'TAG2', predictorSensors: ['TAG1'] });
+        statefulUpdateMock([ind, rel]);
+        render(<BuildModelWindow />);
+        await deliverData({ failureGroupState: { groups: [makeGroup()], models: [ind, rel] } });
+        openSettings();
+        fireEvent.change(screen.getByPlaceholderText('e.g. Bearing vibration model'), { target: { value: '  bearing CHECK ' } });
+        const save = screen.getByTestId('save-changes') as HTMLButtonElement;
+        expect(save.disabled).toBe(true);
+        expect(save.title).toBe('Model name is already used by another model in this project');
+        expect(screen.getByTestId('state-why').textContent).toBe('Model name is already used by another model in this project');
+        fireEvent.change(screen.getByPlaceholderText('e.g. Bearing vibration model'), { target: { value: 'Bearing check 2' } });
+        expect((screen.getByTestId('save-changes') as HTMLButtonElement).disabled).toBe(false);
+    });
+});
+
+describe('Project details saved in another window', () => {
+    async function fireEvt(event: string, payload: any) {
+        await act(async () => {
+            for (const cb of listenCallbacks[event] ?? []) cb({ payload });
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+    }
+    const projectName = () => document.querySelector('[data-project-name]')?.getAttribute('data-project-name') ?? null;
+
+    it('PROJECT_DETAILS_CHANGED for THIS project re-reads name / machine from disk; one for another project (or without an id) is dropped', async () => {
+        render(<BuildModelWindow />);
+        await deliverData({ name: 'Old name' });
+        expect(projectName()).toBe('Old name');
+        expect(listenCallbacks['project-details-changed']).toHaveLength(1);
+
+        const reads = () => mockLoadWorkspaceData.mock.calls.length;
+        const before = reads();
+        mockLoadWorkspaceData.mockResolvedValue({ id: 'ws1', name: 'Foreign', failureGroupState: { groups: [makeGroup()], models: [makeModel()] } });
+        await fireEvt('project-details-changed', { workspaceId: 'ws-other', name: 'Foreign', description: '' });
+        await fireEvt('project-details-changed', { name: 'No id', description: '' });
+        await flush();
+        expect(reads()).toBe(before);
+        expect(projectName()).toBe('Old name');
+
+        mockLoadWorkspaceData.mockResolvedValue({
+            id: 'ws1', name: 'Bang Pakong · GEG 4', machine: { plant: 'Bang Pakong', name: 'GEG 4', tag: 'U-1', notes: '' },
+            failureGroupState: { groups: [makeGroup()], models: [makeModel()] },
+        });
+        await fireEvt('project-details-changed', { workspaceId: 'ws1', name: 'Bang Pakong · GEG 4', description: 'U-1' });
+        await flush();
+        expect(reads()).toBe(before + 1);
+        expect(mockLoadWorkspaceData).toHaveBeenLastCalledWith('ws1');
+        expect(projectName()).toBe('Bang Pakong · GEG 4');
     });
 });

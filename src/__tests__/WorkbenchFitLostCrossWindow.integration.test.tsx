@@ -170,7 +170,7 @@ describe('(a) a COMPLETE Relation model whose fit Rust no longer holds', () => {
         expect(diskModel('r1')).toMatchObject({ status: true, lastTrainedAt: before.trainedAt, healthSetPoints: REL_SP });
         // back to a plain Complete model everywhere
         expect(footPill()).toBe('Complete');
-        expect(sentence()).toMatch(/^Files saved \d{4}\/\d{2}\/\d{2} \d{2}:\d{2} · /);
+        expect(sentence()).toBeNull(); // no "Files saved …": Mark complete writes no files
         expect(tabWords('r1')).toBe('Complete');
         expect(tabDot('r1')).toBe('complete');
         expect(bmwDot('r1').colour).toBe('complete');
@@ -184,7 +184,7 @@ describe('(a) a COMPLETE Relation model whose fit Rust no longer holds', () => {
     });
 });
 
-describe('(b) Mark complete answered NOT_FITTED by export_model_files', () => {
+describe('(b) Mark complete answered NOT_FITTED by its check', () => {
     it('nothing is written and the model stays Trained; the board appears; "Load it again" → Mark complete succeeds', async () => {
         writeDisk(wsTrained({}, [model({ id: 'r1', kind: 'relationship', predictorSensors: ['TAG3'], healthSetPoints: REL_SP })]));
         await mountWindows();
@@ -204,9 +204,9 @@ describe('(b) Mark complete answered NOT_FITTED by export_model_files', () => {
         await waitFor(() => expect(markBtn().disabled).toBe(false));
         expect(bmw().queryByTestId('health-not-fitted')).toBeNull();
 
-        // Mark complete: the validating preview still answers, but by the time the files are
-        // written Rust has dropped the fit — `export_model_files` answers NOT_FITTED.
-        env.backend!.override('export_model_files', a => a.request?.kind === 'relationship', () => {
+        // Mark complete: the page's preview still answers, but by the time Mark complete
+        // checks the set points Rust has dropped the fit — its check answers NOT_FITTED.
+        env.backend!.override('compute_health_preview', a => a.request?.kind === 'relationship' && a.request?.max_points === 8, () => {
             env.backend!.clearRelCache();
             throw FIT_GONE_ERROR;
         });
@@ -214,12 +214,13 @@ describe('(b) Mark complete answered NOT_FITTED by export_model_files', () => {
         await act(async () => { fireEvent.click(markBtn()); });
         await settle(400);
         await settle(400);
-        expect(env.backend!.cmds('export_model_files').pop()!.error).toMatch(/^NOT_FITTED/);
+        expect(env.backend!.cmds('compute_health_preview').filter(c => c.args?.request?.max_points === 8).pop()!.error).toMatch(/^NOT_FITTED/);
+        expect(env.backend!.cmds('export_model_files')).toHaveLength(0);
         expect(diskModel('r1').status).toBe(false);
         expect(diskModel('r1').healthExport).toBeUndefined();
         expect([...env.files.keys()].some(k => k.includes('/output/'))).toBe(false);
         // the page says what happened, and the board with "Load it again" is there
-        expect(bmw().getByTestId('save-error-reason').textContent).toBe('The fitted Relation model was no longer in memory, so its files were not written. Mark complete again once it is loaded.');
+        expect(bmw().getByTestId('save-error-reason').textContent).toBe('The fitted Relation model is no longer in memory, so it was not marked complete. Load it again, then Mark complete.');
         await waitFor(() => expect(bmw().getByTestId('health-not-fitted')).toBeTruthy());
         expect(fits(), 'no second silent re-fit of the same fit').toBe(fitsBefore);
         expect(buttonsOf(bmw().getByTestId('health-not-fitted'))).toEqual(['health-load-fit', 'health-go-train-sensor']);
@@ -260,9 +261,10 @@ describe('(b) Mark complete answered NOT_FITTED by export_model_files', () => {
         await waitFor(() => expect(markBtn().disabled).toBe(false));
         await act(async () => { fireEvent.click(markBtn()); });
         await waitFor(() => expect(diskModel('r1').status).toBe(true));
-        await waitFor(() => expect(bmw().getByTestId('save-ok')).toBeTruthy());
-        expect(diskModel('r1').healthExport.setPoints).toMatchObject({ residualAt0Upper: 11 });
-        expect(env.files.has(`workspaces/${WS}/output/TAG1/REL_INFO_TAG3_TAG1.json`)).toBe(true);
+        await waitFor(() => expect(bmw().getByTestId('mark-incomplete')).toBeTruthy());
+        expect(diskModel('r1').healthSetPoints).toMatchObject({ residualAt0Upper: 11 });
+        expect(diskModel('r1').healthExport).toBeUndefined();
+        expect([...env.files.keys()].some(k => k.includes('/output/'))).toBe(false);
         expect(footPill()).toBe('Complete');
         expect(tabWords('r1')).toBe('Complete');
         expect(filled()).toEqual([]);

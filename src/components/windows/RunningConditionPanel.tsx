@@ -1,4 +1,4 @@
-import { Fragment, type KeyboardEvent } from 'react';
+import { Fragment, type KeyboardEvent, type ReactNode } from 'react';
 import { Plus, X } from 'lucide-react';
 import type { TestPeriod, TimeHighlight, TimePeriod, WorkspaceSensorFilter } from '../../types';
 import { PERIOD_COUNTS_IDLE, type PeriodCountsState } from '../../utils/periodCounts';
@@ -69,6 +69,9 @@ export interface RunningConditionPanelProps {
      *  running condition — different test ids on the root and the sections,
      *  "save" wording, and the footnote at the end. */
     scope?: 'workspace' | 'custom';
+    /** Workspace scope only: the export's "Machine is running when … is above …"
+     *  line, shown at the end of the conditions section (the owner decides when). */
+    runningStatusSlot?: ReactNode;
     /** The running condition (as drafted) is configured. */
     configured: boolean;
     /** TRAIN periods. */
@@ -111,7 +114,7 @@ export interface RunningConditionPanelProps {
 export default function RunningConditionPanel({
     scope = 'workspace', configured, periods, onPeriodsChange, bounds, filters, combine, noneConfirmed,
     onNoneChange, onCombineChange, onAddFilter, onUpdateFilter, onRemoveFilter, sensors, getComponent, getUnit,
-    counts = PERIOD_COUNTS_IDLE, testPeriods, onTestPeriodsChange, highlights, onPendingDate, savedPeriods, savedTestPeriods,
+    counts = PERIOD_COUNTS_IDLE, testPeriods, onTestPeriodsChange, highlights, onPendingDate, savedPeriods, savedTestPeriods, runningStatusSlot,
 }: RunningConditionPanelProps) {
     const custom = scope === 'custom';
     // "Only when running" without a complete condition: the count would be of
@@ -322,6 +325,7 @@ export default function RunningConditionPanel({
                         Choose “Only when running” with a condition, or “Use all rows”, before training a model.
                     </div>
                 )}
+                {!custom && runningStatusSlot}
             </section>
 
             {custom && <div className="rcx-footnote" data-testid="custom-rc-footnote">{CUSTOM_PANEL_FOOTNOTE}</div>}

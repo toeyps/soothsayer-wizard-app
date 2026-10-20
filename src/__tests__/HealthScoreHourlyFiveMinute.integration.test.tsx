@@ -129,7 +129,6 @@ function lastChart(name: string, from = 0, linked?: boolean): ChartRecord {
 }
 const lastPreview = (kind: string) => env.backend!.cmds('compute_health_preview').filter(c => c.args.request.kind === kind && c.result !== undefined).pop()!;
 const trainsOfRelation = () => env.backend!.cmds('preview_relationship_model').filter(c => c.args.cache_key);
-const infoFile = (rel: string) => JSON.parse(env.files.get(`workspaces/${WS}/output/${rel}`)!);
 const text = (id: string) => bmw().getByTestId(id).textContent;
 /** The period names printed in the strip above a time chart (the TRAIN shading — a scoring period is not drawn). */
 const stripOf = (c: ChartRecord): string[] =>
@@ -140,8 +139,6 @@ const hoverTime = async (chart: ChartRecord, ms: number) => {
     await act(async () => { chart.props.onEvents.updateAxisPointer({ axesInfo: [{ axisDim: 'x', value: ms }] }); });
     return text('hs-readout')!;
 };
-/** The exported `validation` block the fixture implies (what Rust is asserted to write for the same request). */
-const exportedBlock = (want: { test_validation: object }) => ({ tested: true, scoring_interval_seconds: 3600, scoring_aggregation: 'mean', ...want.test_validation });
 
 beforeEach(() => {
     resetEnv();
@@ -152,7 +149,7 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 describe('Individual on 5-minute data', () => {
-    it('Model fit keeps every raw row; the Health score page has ONE point per clock hour (a partly-running hour averages its running rows, a stopped hour has no point); Mark complete writes the hourly block into the INFO file and the record carries the interval', async () => {
+    it('Model fit keeps every raw row; the Health score page has ONE point per clock hour (a partly-running hour averages its running rows, a stopped hour has no point); Mark complete checks the set points and writes no INFO file', async () => {
         const { request, expect: want } = fixture.cases.individual;
         writeDisk(workspace(S_WHOLE, [IND()]));
         await mountWindows(OPTS);
@@ -214,40 +211,35 @@ describe('Individual on 5-minute data', () => {
         // the hover read-outs above are the page's numbers; the per-period block is checked in the file below.)
         expect(bmw().queryByTestId('test-results')).toBeNull();
 
-        // ── Mark complete: the file and the record ──
+        // ── Mark complete: the set points are CHECKED (no INFO file: Export results writes the files) ──
         await markComplete();
-        await waitFor(() => expect(bmw().getByTestId('save-ok')).toBeTruthy());
-        const info = infoFile('V/INDV_INFO_V.json');
-        const { validated_at, ...block } = info.validation;
-        expect(typeof validated_at).toBe('string');
-        expect(block).toStrictEqual(exportedBlock(want));
-        // the model part of the file is the RAW training fit (48 rows): mean 55.5, the user's set points
-        expect(info.model_metrics.mean).toBe(55.5);
-        expect(info.model_metrics.setpoint_health_score).toEqual([20, 69]);
-        expect(env.backend!.cmds('export_model_files').slice(-1)[0].args.request).toMatchObject({ ...request, workspace_id: WS });
-
+        await waitFor(() => expect(bmw().getByTestId('mark-incomplete')).toBeTruthy());
+        expect(env.files.has(`workspaces/${WS}/output/V/INDV_INFO_V.json`)).toBe(false);
+        expect(env.backend!.cmds('export_model_files')).toHaveLength(0);
+        const check = env.backend!.cmds('compute_health_preview').filter(c => c.args.request?.max_points === 8).slice(-1)[0];
+        expect(check.args.request).toMatchObject({ kind: request.kind, test_periods: request.test_periods });
         const saved = diskModel('i1');
         expect(saved.status).toBe(true);
-        expect(saved.healthExport.scoringIntervalSecs).toBe(3600);
+        expect(saved.healthExport).toBeUndefined();
         expect(pill()).toBe('Complete');
         expect(bmw().queryByTestId('earlier-scoring')).toBeNull();
         expect(bmw().queryByTestId('mark-complete-again')).toBeNull();
 
-        // ── close and reopen: still Complete, the record kept its interval, no "earlier scoring" hint ──
+        // ── close and reopen: still Complete, no "earlier scoring" hint ──
         await restartApp(OPTS);
         selectSensor('v');
         await settle(400);
         expect(pill()).toBe('Complete');
         await openHealth();
-        await waitFor(() => expect(bmw().getByTestId('save-ok')).toBeTruthy());
+        await waitFor(() => expect(bmw().getByTestId('mark-incomplete')).toBeTruthy());
         expect(bmw().queryByTestId('earlier-scoring')).toBeNull();
-        expect(diskModel('i1').healthExport.scoringIntervalSecs).toBe(3600);
+        expect(diskModel('i1').status).toBe(true);
         expect(readDisk().failureGroupState.runningConditionTestPeriods).toEqual(S_WHOLE);
     });
 });
 
 describe('Clustering (2 clusters) on 5-minute data', () => {
-    it('an hour in which the machine changed cluster — or a row has no criteria value, or is in no range — is a point with NO score: the read-out says "no score", "Lowest" never lands on it, a period with no cluster hour reads "No scored hours"; the INFO file carries the same block', async () => {
+    it('an hour in which the machine changed cluster — or a row has no criteria value, or is in no range — is a point with NO score: the read-out says "no score", "Lowest" never lands on it, a period with no cluster hour reads "No scored hours"; Mark complete writes no INFO file', async () => {
         const { request, expect: want } = fixture.cases.clustering;
         writeDisk(workspace(S_TWO, [CLU()]));
         await mountWindows(OPTS);
@@ -298,16 +290,11 @@ describe('Clustering (2 clusters) on 5-minute data', () => {
 
         // Mark complete is not blocked by unscored hours
         await markComplete();
-        await waitFor(() => expect(bmw().getByTestId('save-ok')).toBeTruthy());
-        const info = infoFile('Y/CLUS_INFO_X_Y.json');
-        const { validated_at, ...block } = info.validation;
-        expect(typeof validated_at).toBe('string');
-        expect(block).toStrictEqual(exportedBlock(want));
-        expect(Object.keys(block.tests[0])).not.toContain('inside_3sd_ring_pct'); // omitted, not null / 0
-        expect(block.tests[1]).toMatchObject({ hours: 3, scored: 2, inside_3sd_ring_pct: 50 });
-        expect(Object.keys(info.cluster_info)).toEqual(['1', '2']);
+        await waitFor(() => expect(bmw().getByTestId('mark-incomplete')).toBeTruthy());
+        // no CLUS_INFO file: Mark complete writes none (Export results does)
+        expect(env.files.has(`workspaces/${WS}/output/Y/CLUS_INFO_X_Y.json`)).toBe(false);
+        expect(env.backend!.cmds('export_model_files')).toHaveLength(0);
         expect(diskModel('c1').status).toBe(true);
-        expect(diskModel('c1').healthExport.scoringIntervalSecs).toBe(3600);
         expect(bmw().queryByTestId('earlier-scoring')).toBeNull();
     });
 });
@@ -315,7 +302,7 @@ describe('Clustering (2 clusters) on 5-minute data', () => {
 describe('Relation model on 5-minute data', () => {
     const hourlyOf = (c: { result?: unknown }) => (c.result as any).hourly as { timestamps: string[]; residual: (number | null)[]; score: (number | null)[]; total_points: number };
 
-    it('Train asks for the scoring periods once; Model fit stops at the training rows; the Health score page is hourly; removing / adding a scoring period afterwards never trains again; Mark complete writes the hourly block', async () => {
+    it('Train asks for the scoring periods once; Model fit stops at the training rows; the Health score page is hourly; removing / adding a scoring period afterwards never trains again; Mark complete checks (no files)', async () => {
         writeDisk(workspace(S_TWO, [REL()]));
         await mountWindows(OPTS);
         selectSensor('t');
@@ -415,19 +402,12 @@ describe('Relation model on 5-minute data', () => {
         // ── Mark complete ──
         if (!bmwEl().querySelector('[data-testid="set-points-card"]')) await openHealth();
         await markComplete();
-        await waitFor(() => expect(bmw().getByTestId('save-ok')).toBeTruthy());
-        const exported = env.backend!.cmds('export_model_files').slice(-1)[0];
-        expect(exported.args.request).toMatchObject({ kind: 'relationship', cache_key: key, test_periods: added });
-        const info = infoFile('T/REL_INFO_P_T.json');
-        const preview = (lastPreview('relationship').result as any).test_validation;
-        expect(Object.keys(info.validation).sort()).toEqual(['scoring_aggregation', 'scoring_interval_seconds', 'tested', 'tests', 'train', 'train_ranges', 'validated_at']);
-        expect(info.validation).toMatchObject({ tested: true, scoring_interval_seconds: 3600, scoring_aggregation: 'mean' });
-        expect(info.validation.tests).toEqual(preview.tests);     // hourly: what the page showed
-        expect(info.validation.tests.map((t: any) => [t.rows, t.hours, t.scored])).toEqual([[15, 2, 2], [24, 2, 2]]);
-        expect(info.validation.train).toMatchObject({ rows: 48, hours: 4 }); // the train block stays the raw fit
-        expect(Object.keys(info.validation.train)).toEqual(expect.arrayContaining(['r2', 'rmse', 'residual_mean', 'residual_sd']));
+        await waitFor(() => expect(bmw().getByTestId('mark-incomplete')).toBeTruthy());
+        const checked = env.backend!.cmds('compute_health_preview').filter(c => c.args.request?.max_points === 8).slice(-1)[0];
+        expect(checked.args.request).toMatchObject({ kind: 'relationship', cache_key: key, test_periods: added });
+        expect(env.files.has(`workspaces/${WS}/output/T/REL_INFO_P_T.json`)).toBe(false);
+        expect(env.backend!.cmds('export_model_files')).toHaveLength(0);
         expect(diskModel('r1').status).toBe(true);
-        expect(diskModel('r1').healthExport.scoringIntervalSecs).toBe(3600);
         expect(bmw().queryByTestId('earlier-scoring')).toBeNull();
     });
 

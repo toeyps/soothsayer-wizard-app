@@ -664,7 +664,7 @@ describe('FailureGroupsPanel', () => {
     });
 
     describe('deleting a group', () => {
-        // 2026-10-17: deleting a group now deletes the models only in it, with their saved files —
+        // 2026-10-17: deleting a group deletes the models only in it (no files are removed since 2026-10-20) —
         // an exception to the 2026-08-31 "no confirmations" rule, chosen by the user with this
         // behaviour: the trash asks first and says how many models go.
         it('the trash opens an inline confirm that says how many models are deleted / kept; Delete calls onDeleteGroup, Cancel does not', () => {
@@ -741,12 +741,15 @@ describe('FailureGroupsPanel', () => {
     });
 });
 
-describe('groupDeleteCounts / groupDeleteSentence', () => {
-    it('counts the models only in the group (deleted) and those also elsewhere (kept), and says it', async () => {
-        const { groupDeleteCounts, groupDeleteSentence } = await import('../utils/modelOutputFiles');
+describe('groupDeleteCounts / groupDeleteText', () => {
+    it('counts the models only in the group (deleted) and those also elsewhere (kept), and says it -- never "saved files" (deleting removes no files)', async () => {
+        const { groupDeleteCounts } = await import('../utils/modelOutputFiles');
+        const { groupDeleteText } = await import('../components/dashboard/groupDeleteText');
         const models = [{ groupNos: [1] }, { groupNos: [1] }, { groupNos: [1, 2] }, { groupNos: [2] }];
         expect(groupDeleteCounts(models, 1)).toEqual({ deleted: 2, kept: 1 });
-        expect(groupDeleteSentence('FG-1', 2, 1)).toBe('Delete FG-1? 2 models used only by this group are deleted with their saved files. 1 model stays in its other groups.');
-        expect(groupDeleteSentence('FG-1', 0, 2)).toBe('Delete FG-1? 2 models stay in their other groups.');
+        expect(groupDeleteText('FG-1', 2, 1)).toBe('Delete FG-1? 2 models used only by this group are deleted · 1 model stays in its other groups.');
+        expect(groupDeleteText('FG-1', 1, 0)).toBe('Delete FG-1? 1 model used only by this group is deleted.');
+        expect(groupDeleteText('FG-1', 0, 2)).toBe('Delete FG-1? 2 models stay in their other groups.');
+        expect(groupDeleteText('FG-1', 0, 0)).toBe('Delete FG-1? It has no models.');
     });
 });

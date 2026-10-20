@@ -147,17 +147,17 @@ describe('Individual: the whole journey', () => {
         await settle(350);
         await waitFor(() => expect(bmw().getByTestId('check-valid')).toBeTruthy());
 
-        // 5) Mark complete -> files written, path shown, status Complete on disk.
+        // 5) Mark complete -> the set points are checked (no files: Export results writes them),
+        //    status Complete on disk with the checked set points.
         await markComplete();
-        await waitFor(() => expect(bmw().getByTestId('save-ok')).toBeTruthy());
-        expect(bmw().getByTestId('save-ok').textContent).toContain(`workspaces/${WS}/output`);
-        expect(env.files.has(`workspaces/${WS}/output/TAG1/INDV_INFO_TAG1.json`)).toBe(true);
-        const info = JSON.parse(env.files.get(`workspaces/${WS}/output/TAG1/INDV_INFO_TAG1.json`)!);
-        expect(info.model_metrics.setpoint_health_score).toEqual([20, 80]);
+        await waitFor(() => expect(bmw().getByTestId('mark-incomplete')).toBeTruthy());
+        expect(bmw().queryByTestId('save-ok')).toBeNull();
+        expect(env.files.has(`workspaces/${WS}/output/TAG1/INDV_INFO_TAG1.json`)).toBe(false);
+        expect(env.backend!.cmds('export_model_files')).toHaveLength(0);
         let m = diskModel(id);
         expect(m.status).toBe(true);
-        expect(m.healthExport.setPoints).toMatchObject({ lower: 20, upper: 80 });
-        expect(m.healthExport.outputDir).toBe(env.backend!.outputDir(WS));
+        expect(m.healthSetPoints).toMatchObject({ lower: 20, upper: 80 });
+        expect(m.healthExport).toBeUndefined();
         expect(pill()).toBe('Complete');
 
         // Dashboard dot green; Build Model dot green.
@@ -165,13 +165,12 @@ describe('Individual: the whole journey', () => {
         await waitFor(() => expect(dashDot(1, 'tag1', 'individual')).toBe('complete'));
         expect(bmwDot(id).state).toBe('complete');
 
-        // 6) Mark incomplete keeps set points + export record.
+        // 6) Mark incomplete keeps the set points.
         await act(async () => { fireEvent.click(bmw().getByTestId('mark-incomplete')); });
         await settle(50);
         m = diskModel(id);
         expect(m.status).toBe(false);
         expect(m.healthSetPoints).toMatchObject({ lower: 20, upper: 80 });
-        expect(m.healthExport).toBeTruthy();
         await waitFor(() => expect(dashDot(1, 'tag1', 'individual')).toBe('trained'));
 
         // Mark complete again, then "close and reopen the app": both windows re-hydrate from disk.
@@ -185,8 +184,8 @@ describe('Individual: the whole journey', () => {
         expect(dashDot(1, 'tag1', 'individual')).toBe('complete');
         await openHealth();
         expect((bmw().getByTestId('sp-lower') as HTMLInputElement).value).toBe('20');
-        // The export record survives the restart: the page says where the files are.
-        expect(bmw().getByTestId('save-ok').textContent).toContain(`workspaces/${WS}/output`);
+        // Complete survives the restart (no "Files saved" line: there are no per-model files).
+        expect(bmw().queryByTestId('save-ok')).toBeNull();
         expect(bmw().getByTestId('mark-incomplete')).toBeTruthy();
     });
 });
@@ -245,31 +244,25 @@ describe('Relationship: the whole journey', () => {
         await waitFor(() => expect(bmw().getByTestId('check-valid')).toBeTruthy());
         expect(bmwEl().querySelector('[data-testid="score-locked"]')).toBeNull();
 
-        // Mark complete: the export re-runs the sidecar; held -> progress + disabled.
-        const gate = env.backend!.gate('sidecar:export_model_files');
+        // Mark complete: only the set points are CHECKED (the cached fit, no files); held -> busy + disabled.
+        const gate = env.backend!.gate('compute_health_preview', (a: any) => a?.request?.max_points === 8);
         await act(async () => { fireEvent.click(markBtn()); });
         await settle(30);
-        // saving is the notice line's sentence (a line on the page only once the save IS slow)
+        // checking is the notice line's sentence (a line on the page only once it IS slow)
         expect(bmw().queryByTestId('save-running')).toBeNull();
-        expect(bmw().getByTestId('footer-status').textContent).toMatch(/Saving the model files…/);
+        expect(bmw().getByTestId('footer-status').textContent).toMatch(/Checking the set points…/);
         expect(markBtn().disabled).toBe(true);
-        expect(markBtn().textContent).toBe('Saving…');
+        expect(markBtn().textContent!.trim()).toBe('Checking…');
         gate.release();
         await settle(50);
-        await waitFor(() => expect(bmw().getByTestId('save-ok')).toBeTruthy());
-        // the saved message is the notice line (no banner, no file list on the page)
-        expect(bmw().getByTestId('save-ok').textContent).toMatch(/^Files saved \d{4}\/\d{2}\/\d{2} \d{2}:\d{2} · /);
-        expect(bmw().getByTestId('save-ok').closest('[data-testid="wb-notice"]')).not.toBeNull();
-        expect(bmw().getByTestId('wb-notice').getAttribute('data-tone')).toBe('ok');
-        const exp = env.backend!.cmds('export_model_files').pop()!;
-        expect(exp.args.request.cache_key).toBe(pr.args.cache_key);
-        expect(exp.args.request.lambda).toBe(100_000);
+        await waitFor(() => expect(bmw().getByTestId('mark-incomplete')).toBeTruthy());
+        // no "Files saved" line: the green "Complete" on the tab says it
+        expect(bmw().queryByTestId('save-ok')).toBeNull();
+        const chk = env.backend!.cmds('compute_health_preview').filter(c => c.args.request?.max_points === 8).pop()!;
+        expect(chk.args.request.cache_key).toBe(pr.args.cache_key);
+        expect(env.backend!.cmds('export_model_files')).toHaveLength(0);
         expect(diskModel(id).status).toBe(true);
-        expect([...env.files.keys()].filter(k => k.startsWith(`workspaces/${WS}/output/TAG1/REL_`)).sort()).toEqual([
-            `workspaces/${WS}/output/TAG1/REL_DATASET_TAG3_TAG1.csv`,
-            `workspaces/${WS}/output/TAG1/REL_INFO_TAG3_TAG1.json`,
-            `workspaces/${WS}/output/TAG1/REL_MODEL_TAG3_TAG1.pkl`,
-        ]);
+        expect([...env.files.keys()].filter(k => k.includes('/output/'))).toEqual([]);
         openDashFgTab();
         await waitFor(() => expect(dashDot(1, 'tag1', 'relationship')).toBe('complete'));
 
@@ -288,7 +281,7 @@ describe('Relationship: the whole journey', () => {
 });
 
 describe('Clustering: the whole journey', () => {
-    it('FG sheet (X) -> Y + criteria + 2 clusters -> Train -> Model fit -> N rings for every cluster -> Mark complete -> CLUS_INFO with N for every cluster', async () => {
+    it('FG sheet (X) -> Y + criteria + 2 clusters -> Train -> Model fit -> N rings for every cluster -> Mark complete (no files written)', async () => {
         writeDisk(wsState({ models: [] }));
         await mountWindows();
         await createViaSheet('TAG3', 'Clustering');
@@ -345,11 +338,9 @@ describe('Clustering: the whole journey', () => {
         expect(chartsWithSeries('Cluster 2 3× SD').length).toBeGreaterThan(0);
 
         await markComplete();
-        await waitFor(() => expect(bmw().getByTestId('save-ok')).toBeTruthy());
-        const info = JSON.parse(env.files.get(`workspaces/${WS}/output/TAG5/CLUS_INFO_TAG3_TAG5.json`)!);
-        expect(Object.keys(info.cluster_info)).toEqual(['1', '2']);
-        expect(info.cluster_info['1'].boundary_sd_health_score).toBe(5);
-        expect(info.cluster_info['2'].boundary_sd_health_score).toBe(5);
+        await waitFor(() => expect(bmw().getByTestId('mark-incomplete')).toBeTruthy());
+        // no CLUS_INFO file: Mark complete writes none (Export results does)
+        expect(env.files.has(`workspaces/${WS}/output/TAG5/CLUS_INFO_TAG3_TAG5.json`)).toBe(false);
         expect(diskModel(id).status).toBe(true);
         expect(diskModel(id).healthSetPoints).toEqual({ kind: 'clustering', outerSd: 5 });
         openDashFgTab();

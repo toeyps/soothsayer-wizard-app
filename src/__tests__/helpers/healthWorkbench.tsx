@@ -36,11 +36,13 @@ export const BASE_FG = {
     categoryNormalisationNotice: null,
 };
 
-/** A model as Dashboard's `makeDefaultModelForKind` would build it, plus overrides. */
+/** A model as Dashboard's `makeDefaultModelForKind` would build it, plus overrides.
+ *  Its default name carries the id ("QA model i1"): model names are unique across the
+ *  project (2026-10-20), so two fixture models must not share one by accident. */
 export function model(o: Record<string, unknown>): Record<string, any> {
     const kind = (o.kind as string) ?? 'individual';
     return {
-        id: 'x', groupNos: [1], name: 'QA model', kind, category: 'performance', notes: '', status: false,
+        id: 'x', groupNos: [1], name: o.id ? `QA model ${String(o.id)}` : 'QA model', kind, category: 'performance', notes: '', status: false,
         targetSensor: kind === 'clustering' ? '' : 'TAG1', predictorSensors: [], xSensor: kind === 'clustering' ? 'TAG3' : '', ySensor: '',
         individualChecked: true, rcMode: null, scatterXSensor: '', relModelName: '', relStiffness: 100_000,
         clusterModelName: '', numClusters: 3, criteriaSensor: '',

@@ -609,7 +609,7 @@ describe('(b) Dashboard + Add Sensor + Build Model: a special sensor\'s recipe c
         });
         await waitFor(() => expect(bmw().getByTestId('check-valid')).toBeTruthy(), { timeout: 4000 });
         await markComplete();
-        await waitFor(() => expect(bmw().getByTestId('save-ok')).toBeTruthy(), { timeout: 4000 });
+        await waitFor(() => expect(bmw().getByTestId('mark-incomplete')).toBeTruthy(), { timeout: 4000 });
         expect(diskModel(A, mid).status).toBe(true);
         const completeModel = diskModel(A, mid);
 
@@ -692,7 +692,7 @@ describe('(b) Dashboard + Add Sensor + Build Model: a special sensor\'s recipe c
         expect(bmw().queryByTestId('mark-block-reason')?.textContent ?? '').not.toMatch(/re-train|Train the model/i);
         await waitFor(() => expect(bmw().getByTestId('check-valid')).toBeTruthy(), { timeout: 4000 });
         await markComplete();
-        await waitFor(() => expect(bmw().getByTestId('save-ok')).toBeTruthy(), { timeout: 4000 });
+        await waitFor(() => expect(bmw().getByTestId('mark-incomplete')).toBeTruthy(), { timeout: 4000 });
         expect(diskModel(A, mid).status).toBe(true);
         await waitFor(() => expect(bmwDotState(mid)).toBe('complete'));
         await settle(300);

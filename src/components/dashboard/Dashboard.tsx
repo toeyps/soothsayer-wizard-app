@@ -50,7 +50,7 @@ import { message } from '@tauri-apps/plugin-dialog';
 import { Plus, EyeOff, BarChart3, Radio, Calendar, ArrowLeft, Check, Trash2, LineChart as LineChartIcon, X, RotateCcw } from 'lucide-react';
 import { debugLog } from '../../utils/debugLog';
 import { formatDateTime } from '../../utils/dateFormat';
-import { modelsOnlyIn, removeModelOutputFiles } from '../../utils/modelOutputFiles';
+import { modelsOnlyIn } from '../../utils/modelOutputFiles';
 
 // Panel configuration
 const PANELS = {
@@ -632,31 +632,13 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     const dismissUndo = useCallback((id: string) => {
         setUndoToasts(prev => prev.filter(t => t.id !== id));
     }, []);
-    // The deletion is final once its Undo is gone without being used (expired, or pushed out
-    // by newer toasts, or the Dashboard closed): only then do the model's files go — Undo must
-    // be able to bring back the model WITH its files. `removeModelOutputFiles` checks the
-    // models of that moment, so a model the user re-created meanwhile keeps its files.
-    const fgModelsRef = useRef(fgModels);
-    fgModelsRef.current = fgModels;
+    // An Undo that is gone without being used (expired, or pushed out by newer toasts)
+    // just disappears: deleting a model removes no files (Export results writes them).
     const undoToastsRef = useRef(undoToasts);
     undoToastsRef.current = undoToasts;
-    const finalizeDeletion = useCallback((e: FgUndoEntry) => {
-        // Checked against what is on DISK, not the mirror (code review 2026-10-17): the toggle's
-        // write may still be queued, or another window may have added the model to a second group
-        // meanwhile. A write still pending leaves the model on disk -> its files are kept (an
-        // orphan at worst, never another model's files lost). Disk unreadable -> keep them too.
-        const id = initialState?.id;
-        if (!id) return;
-        void loadWorkspaceData(id)
-            .then(ws => { if (ws?.failureGroupState) return removeModelOutputFiles(id, e.captured.model, ws.failureGroupState.models); })
-            .catch(err => console.warn('Could not check the workspace before removing model files:', err));
-    }, [initialState?.id]);
     const expireUndo = useCallback((id: string) => {
-        const e = undoToastsRef.current.find(t => t.id === id);
         dismissUndo(id);
-        if (e) finalizeDeletion(e);
-    }, [dismissUndo, finalizeDeletion]);
-    useEffect(() => () => { for (const e of undoToastsRef.current) finalizeDeletion(e); }, [finalizeDeletion]);
+    }, [dismissUndo]);
 
     const toggleSensorGroupKind = useCallback((tag: string, groupNo: number, kind: ModelKind) => {
         const existing = findKindIn(fgModels, tag, kind);
@@ -672,8 +654,6 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         const announce = (e: FgUndoEntry) => {
             if (announced) return;
             announced = true;
-            const all = [...undoToastsRef.current, e];
-            for (const pushedOut of all.slice(0, Math.max(0, all.length - MAX_UNDO_TOASTS))) finalizeDeletion(pushedOut);
             setUndoToasts(prev => [...prev, e].slice(-MAX_UNDO_TOASTS));
         };
         if (entry) announce(entry);
@@ -702,7 +682,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
             }
             return { groups: disk.groups, models };
         });
-    }, [fgModels, applyToggle, persistFailureGroupStateFrom, getSensorMeta, dismissUndo, finalizeDeletion]);
+    }, [fgModels, applyToggle, persistFailureGroupStateFrom, getSensorMeta, dismissUndo]);
 
     const undoModelDeletion = useCallback((id: string) => {
         const entry = undoToasts.find(t => t.id === id);
@@ -749,16 +729,11 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
 
     // Model deletion lives on Dashboard (Failure Groups tab's own per-model
     // delete button) — Build Model has no "Remove model" control. No
-    // confirmation dialog. The model's files in the output folder go with it
-    // (user decision 2026-10-17) once the deletion is on disk.
+    // confirmation dialog, and no files to remove (Export results writes them).
     const deleteModel = useCallback((modelId: string) => {
-        let removed = fgModels.find(m => m.id === modelId);
         setFgModels(fgModels.filter(m => m.id !== modelId));
-        persistFailureGroupStateFrom(disk => {
-            removed = disk.models.find(m => m.id === modelId) ?? removed;
-            return { groups: disk.groups, models: disk.models.filter(m => m.id !== modelId) };
-        }, models => { if (removed) void removeModelOutputFiles(initialState?.id, removed, models); });
-    }, [fgModels, persistFailureGroupStateFrom, initialState?.id]);
+        persistFailureGroupStateFrom(disk => ({ groups: disk.groups, models: disk.models.filter(m => m.id !== modelId) }));
+    }, [fgModels, persistFailureGroupStateFrom]);
 
     // Renaming/deleting a group is global (not tied to one sensor's model),
     // so these operate on fgGroups/fgModels directly rather than through
@@ -784,8 +759,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         persistFailureGroupStateFrom(disk => ({ groups: apply(disk.groups), models: disk.models }));
     }, [fgGroups, persistFailureGroupStateFrom]);
 
-    // Deleting a group deletes the models that belong to THAT group only,
-    // with their files in the output folder (user decision 2026-10-17); a model
+    // Deleting a group deletes the models that belong to THAT group only; a model
     // that also belongs to another group just loses this one and keeps living
     // there untouched. Both delete buttons confirm first and say how many
     // models go (FailureGroupsPanel, FailureGroupAssignSheet).
@@ -803,12 +777,8 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         const optimistic = apply(fgGroups, fgModels);
         setFgGroups(optimistic.groups);
         setFgModels(optimistic.models);
-        let deleted: FailureModel[] = modelsOnlyIn(fgModels, groupNo);
-        persistFailureGroupStateFrom(disk => {
-            deleted = modelsOnlyIn(disk.models, groupNo);
-            return apply(disk.groups, disk.models);
-        }, models => { for (const m of deleted) void removeModelOutputFiles(initialState?.id, m, models); });
-    }, [fgGroups, fgModels, persistFailureGroupStateFrom, initialState?.id]);
+        persistFailureGroupStateFrom(disk => apply(disk.groups, disk.models));
+    }, [fgGroups, fgModels, persistFailureGroupStateFrom]);
 
     // ── Failure Groups tab (group-centric preview) ───────────────────────
     // Supports FailureGroupsPanel.tsx. Reuses fgGroups/fgModels/

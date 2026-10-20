@@ -76,7 +76,6 @@ afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 const IND_SP = { kind: 'individual', lower: 20, upper: 80, masterLower: 20, masterUpper: 80 };
 const REL_SP = { kind: 'relationship', residualAt80Lower: -5, residualAt80Upper: 5, residualAt0Lower: -10, residualAt0Upper: 10 };
-const STAMP = String.raw`\d{4}/\d{2}/\d{2} \d{2}:\d{2}`;
 
 const wsWrites = () => env.writes.filter(w => w.path === wsFile()).length;
 /** The models' slice of the workspace file, as text. */
@@ -169,8 +168,9 @@ describe('the health score failed to load (SPEC §4 "Preview failed")', () => {
         expect(footer()).toBeNull();
         await markComplete();
         await waitFor(() => expect(diskModel('i1').status).toBe(true));
-        expect(diskModel('i1').healthExport.setPoints).toMatchObject({ lower: 15, upper: 85 });
-        expect(JSON.parse(env.files.get(`workspaces/${WS}/output/TAG1/INDV_INFO_TAG1.json`)!).model_metrics.setpoint_health_score).toEqual([15, 85]);
+        expect(diskModel('i1').healthSetPoints).toMatchObject({ lower: 15, upper: 85 });
+        expect(env.backend!.cmds('compute_health_preview').filter(c => c.args.request?.max_points === 8).pop()!.args.request.set_points).toMatchObject({ lower: 15, upper: 85 });
+        expect(env.backend!.cmds('export_model_files')).toHaveLength(0);
         await waitFor(() => expect(dashDot(1, 'tag1', 'individual')).toBe('complete'));
     });
 
@@ -204,17 +204,17 @@ describe('the health score failed to load (SPEC §4 "Preview failed")', () => {
 // Save error, then the way out
 // ---------------------------------------------------------------------------
 
-describe('a save error and the recovery (SPEC §4 "Save error")', () => {
-    it('Mark complete fails writing → red card with the file + "Not saved…" → a set point is edited → both go and the notice line goes with them (nothing left to fix) → Mark complete succeeds → "Files saved <date>" in the one date format', async () => {
+describe('a Mark complete error and the recovery (SPEC §4 "Save error")', () => {
+    it('Mark complete fails checking → red card with the reason + "Not marked complete…" → a set point is edited → both go and the notice line goes with them (nothing left to fix) → Mark complete succeeds → no "Files saved" line', async () => {
         await readyIndividual();
-        const why = `Couldn't write ${env.backend!.outputDir(WS)}/TAG1/INDV_INFO_TAG1.json — the file is open in another program.`;
-        env.backend!.failOn('export_model_files', () => true, why);
+        const why = 'Failed to read column TAG1: the data file is open in another program.';
+        env.backend!.failOn('compute_health_preview', (a: any) => a?.request?.max_points === 8, why);
         await act(async () => { fireEvent.click(markBtn()); });
         await waitFor(() => expect(bmw().getByTestId('save-error')).toBeTruthy());
         // the red card carries the file; the notice line (red) says what to do
         expect(bmw().getByTestId('save-error').className).toContain('hs-save--bad');
         expect(bmw().getByTestId('save-error-reason').textContent).toBe(why);
-        expect(sentence()).toBe('Not saved · fix it, then Mark complete again');
+        expect(sentence()).toBe('Not marked complete · fix it, then Mark complete');
         expect((footer()!.querySelector('.wbx-reason') as HTMLElement).getAttribute('data-tone')).toBe('bad');
         expect(footer()!.getAttribute('data-tone')).toBe('bad');
         expect(footer()!.getAttribute('role')).toBe('status');
@@ -242,21 +242,16 @@ describe('a save error and the recovery (SPEC §4 "Save error")', () => {
 
         // Mark complete succeeds (the fault was a one-off)
         await markComplete();
-        await waitFor(() => expect(bmw().getByTestId('save-ok')).toBeTruthy());
-        expect(bmw().getByTestId('save-ok').textContent).toMatch(new RegExp(`^Files saved ${STAMP} · .*workspaces/${WS}/output$`));
-        // ONE date format: the stamp is the mono "2026/02/09 23:50" of the moment it was saved (local time, no seconds)
-        const at = new Date(diskModel('i1').healthExport.at);
-        const pad = (n: number) => String(n).padStart(2, '0');
-        expect(bmw().getByTestId('save-ok').querySelector('.wbx-dt')!.textContent)
-            .toBe(`${at.getFullYear()}/${pad(at.getMonth() + 1)}/${pad(at.getDate())} ${pad(at.getHours())}:${pad(at.getMinutes())}`);
-        expect(bmw().getByTestId('footer-saved-path').getAttribute('title')).toBe(env.backend!.outputDir(WS));
-        // the confirmation is the notice line (tone "ok") — there is no banner and no footer bar
-        expect(bmw().getByTestId('save-ok').closest('[data-testid="wb-notice"]')).not.toBeNull();
-        expect(footer()!.getAttribute('data-tone')).toBe('ok');
-        expect(bmwEl().textContent).not.toMatch(/Files saved to/);
+        await waitFor(() => expect(bmw().getByTestId('mark-incomplete')).toBeTruthy());
+        // no confirmation line: the green "Complete" on the kind tab says it (no files are written)
+        expect(bmw().queryByTestId('save-ok')).toBeNull();
+        expect(bmw().queryByTestId('footer-saved-path')).toBeNull();
+        expect(footer()).toBeNull();
+        expect(bmwEl().textContent).not.toMatch(/Files saved/);
         expect(footPill()).toBe('Complete');
         expect(diskModel('i1')).toMatchObject({ status: true, healthSetPoints: { lower: 20, upper: 85 } });
-        expect(env.files.has(`workspaces/${WS}/output/TAG1/INDV_INFO_TAG1.json`)).toBe(true);
+        expect(diskModel('i1').healthExport).toBeUndefined();
+        expect([...env.files.keys()].some(k => k.includes('/output/'))).toBe(false);
         await waitFor(() => expect(dashDot(1, 'tag1', 'individual')).toBe('complete'));
     });
 });
@@ -346,10 +341,10 @@ describe('at most 5 clusters (user decision 2026-10-10)', () => {
         await waitFor(() => expect(bmw().getByTestId('check-valid')).toBeTruthy());
         for (let k = 1; k <= 7; k++) expect(chartsWithSeries(`Cluster ${k} 5× SD`).length, `5× ring of cluster ${k}`).toBeGreaterThan(0);
         expect(bmw().getByTestId('mark-incomplete')).toBeTruthy();
-        // an older build's export record has no scoring interval: the footer offers "Mark complete
-        // again" for the 1-hour averages — an offer only, the model stays Complete and untouched
-        expect(bmw().getByTestId('earlier-scoring').textContent).toBe('Saved results use the earlier row-by-row scoring — Mark complete again to update the files');
-        expect(bmw().getByTestId('mark-complete-again')).toBeTruthy();
+        // an older build's export record has no scoring interval: nothing is offered for it any
+        // more (Mark complete writes no files) — the model stays Complete and untouched
+        expect(bmw().queryByTestId('earlier-scoring')).toBeNull();
+        expect(bmw().queryByTestId('mark-complete-again')).toBeNull();
         expect(footPill()).toBe('Complete');
         expect(fgOnDisk(), 'both pages were opened: still nothing changed').toBe(seeded.fg);
 

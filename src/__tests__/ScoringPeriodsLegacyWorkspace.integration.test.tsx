@@ -86,7 +86,6 @@ const SP_TAG1 = { kind: 'individual', lower: 20, upper: 80, masterLower: 20, mas
 const SP_TAG3 = { kind: 'individual', lower: 0, upper: 200, masterLower: null, masterUpper: 90 };
 /** An export record as an OLD build wrote it: no `scoringIntervalSecs` — its files were scored row by row. */
 const exportRecord = (setPoints: unknown) => ({ at: '2026-10-05T08:00:00.000Z', outputDir: env.backend!.outputDir(WS), setPoints });
-const EARLIER_SCORING_HINT = 'Saved results use the earlier row-by-row scoring — Mark complete again to update the files';
 
 /** Everything of the removed feature that must never be shown or sent. */
 const REMOVED_UI = /Known problem|Bearing failure|Seal leak|From Highlights?|event time|lead time|Test periods?|detected|false alarm/i;
@@ -207,15 +206,15 @@ describe('a workspace saved before "just score it" (scoring periods with label /
         expect(bmw().getByTestId('health-page').textContent).not.toMatch(REMOVED_UI);
         expect(bmw().getByTestId('health-page').textContent).not.toMatch(/Scoring results/);
         expect(bmw().queryByTestId('scored-pill')).toBeNull(); // the "Scored · N" pill is gone (footer sentence instead)
-        // Still Complete. Its files were saved before the health score moved to 1-hour averages (the
-        // export record has no scoring interval): the footer says so and offers "Mark complete again" —
-        // it is NOT demoted, and nothing is written until the user presses the button (checked below:
-        // the model on disk is byte-for-byte what the file held).
+        // Still Complete. Its export record is from before 1-hour averages, but Mark complete writes
+        // no files any more (Export results does), so there is no "earlier scoring" hint and no
+        // "Mark complete again" — nothing is written (checked below: the model on disk is
+        // byte-for-byte what the file held).
         expect(bmw().queryByTestId('tests-changed-banner')).toBeNull();
         expect(pill()).toBe('Complete');
-        expect(bmw().getByTestId('earlier-scoring').textContent).toBe(EARLIER_SCORING_HINT);
-        expect(bmw().getByTestId('mark-complete-again').className).toBe('bmw-btn-ok');
-        expect(bmw().getByTestId('wb-actions').getAttribute('data-primary')).toBe('mark');
+        expect(bmw().queryByTestId('earlier-scoring')).toBeNull();
+        expect(bmw().queryByTestId('mark-complete-again')).toBeNull();
+        expect(bmw().getByTestId('wb-actions').getAttribute('data-primary')).toBe('none');
         expect(bmw().getByTestId('mark-incomplete')).toBeTruthy();
         expect(env.backend!.cmds('export_model_files')).toHaveLength(0);
 
@@ -236,8 +235,8 @@ describe('a workspace saved before "just score it" (scoring periods with label /
         if (!bmwEl().querySelector('[data-testid="set-points-card"]')) await openHealth();
         await waitFor(() => expect(bmw().getByTestId('score-summary').dataset.state).toBe('ready'));
         expect(bmw().getByTestId('health-page').textContent).not.toMatch(REMOVED_UI);
-        // the Custom model was saved by the same old build: the same hint, still Complete
-        expect(bmw().getByTestId('earlier-scoring').textContent).toBe(EARLIER_SCORING_HINT);
+        // the Custom model was saved by the same old build: no hint either, still Complete
+        expect(bmw().queryByTestId('earlier-scoring')).toBeNull();
 
         // Not one call of the session carried a legacy key or value, and none was refused.
         expect(JSON.stringify(env.backend!.calls.map(c => c.args))).not.toMatch(REMOVED_WIRE);
@@ -305,31 +304,30 @@ describe('a workspace saved before "just score it" (scoring periods with label /
         const NEW_WIRE = [WIRE[0], { start: '2026-01-02T00:00', end: '2026-01-02T20:00' }];
         await waitFor(() => expect(lastPreviewFor('TAG1').test_periods).toEqual(NEW_WIRE));
         // The scoring periods never block it.
-        const exportsBefore = env.backend!.cmds('export_model_files').length;
+        const checksBefore = env.backend!.cmds('compute_health_preview').filter(c => c.args.request?.max_points === 8).length;
         expect(markBtn().textContent).toContain('Mark complete');
         await markComplete();
         await waitFor(() => expect(diskModel('i1').status).toBe(true));
         const done = diskModel('i1');
         expect(done.testsChangedAt).toBeUndefined();
         expect(done.lastTrainedAt).toBe(before.i1.lastTrainedAt); // Mark complete is not a re-train
-        expect(done.healthExport.at).not.toBe(before.i1.healthExport.at);
-        expect(done.healthExport.setPoints).toEqual(SP_TAG1);
-        // The new record says how the saved results were scored: 1-hour averages.
-        expect(before.i1.healthExport.scoringIntervalSecs).toBeUndefined();
-        expect(done.healthExport.scoringIntervalSecs).toBe(3600);
-        // The export described the edited periods, start / end only, and the files exist.
-        const exports = env.backend!.cmds('export_model_files').slice(exportsBefore);
-        expect(exports).toHaveLength(1);
-        expect(exports[0].args.request.test_periods).toEqual(NEW_WIRE);
-        onlyStartEnd(exports[0].args.request.test_periods);
-        expect(exports[0].error).toBeUndefined();
-        expect(env.files.has(`workspaces/${WS}/output/TAG1/INDV_INFO_TAG1.json`)).toBe(true);
+        expect(done.healthSetPoints).toEqual(SP_TAG1);
+        // No new export record (Mark complete writes no files); the old one is left as it was.
+        expect(done.healthExport).toEqual(before.i1.healthExport);
+        // The check scored the edited periods, start / end only; no file was written.
+        const checks = env.backend!.cmds('compute_health_preview').filter(c => c.args.request?.max_points === 8).slice(checksBefore);
+        expect(checks).toHaveLength(1);
+        expect(checks[0].args.request.test_periods).toEqual(NEW_WIRE);
+        onlyStartEnd(checks[0].args.request.test_periods);
+        expect(checks[0].error).toBeUndefined();
+        expect(env.backend!.cmds('export_model_files')).toHaveLength(0);
+        expect(env.files.has(`workspaces/${WS}/output/TAG1/INDV_INFO_TAG1.json`)).toBe(false);
         // Everyone agrees it is Complete again.
-        await waitFor(() => expect(bmw().getByTestId('save-ok')).toBeTruthy());
+        await waitFor(() => expect(bmw().getByTestId('mark-incomplete')).toBeTruthy());
         expect(pill()).toBe('Complete');
         expect(bmw().queryByTestId('tests-changed-notice')).toBeNull();
         expect(bmw().queryByTestId('tests-changed-banner')).toBeNull();
-        // ...and the "earlier scoring" hint is gone with its button: the files are current now.
+        // ...and there is still no "earlier scoring" hint or "Mark complete again".
         expect(bmw().queryByTestId('earlier-scoring')).toBeNull();
         expect(bmw().queryByTestId('mark-complete-again')).toBeNull();
         await waitFor(() => expect(dashDot(1, 'tag1', 'individual')).toBe('complete'));
@@ -343,15 +341,16 @@ describe('a workspace saved before "just score it" (scoring periods with label /
         selectSensor('tag1');
         await settle(400);
         expect(pill()).toBe('Complete');
-        // after a restart too: the re-saved model has no hint; the one never re-saved still has it
+        // after a restart too: neither model shows an "earlier scoring" hint
         if (!bmwEl().querySelector('[data-testid="set-points-card"]')) await openHealth();
-        await waitFor(() => expect(bmw().getByTestId('save-ok')).toBeTruthy());
+        await waitFor(() => expect(bmw().getByTestId('mark-incomplete')).toBeTruthy());
         expect(bmw().queryByTestId('earlier-scoring')).toBeNull();
         selectSensor('tag3', 2);
         await settle(400);
         expect(pill()).toBe('Complete');
         if (!bmwEl().querySelector('[data-testid="set-points-card"]')) await openHealth();
-        await waitFor(() => expect(bmw().getByTestId('earlier-scoring').textContent).toBe(EARLIER_SCORING_HINT));
+        await waitFor(() => expect(bmw().getByTestId('mark-incomplete')).toBeTruthy());
+        expect(bmw().queryByTestId('earlier-scoring')).toBeNull();
         expect(diskModel('c3').healthExport.scoringIntervalSecs).toBeUndefined();
         expect(readDisk().failureGroupState.models.map((m: any) => [m.id, m.status])).toEqual([['i1', true], ['c3', true]]);
         expect(JSON.stringify(readDisk().failureGroupState.runningConditionTestPeriods)).not.toMatch(REMOVED_WIRE);
@@ -393,9 +392,10 @@ describe('a workspace saved before "just score it" (scoring periods with label /
         await markComplete();
         await waitFor(() => expect(diskModel('c3').status).toBe(true));
         expect(diskModel('c3').testsChangedAt).toBeUndefined();
-        const exp = env.backend!.cmds('export_model_files').slice(-1)[0];
-        expect(exp.args.request.test_periods).toEqual([{ start: '2026-01-02T06:00', end: '2026-01-02T22:00' }]);
-        expect(exp.error).toBeUndefined();
+        const chk = env.backend!.cmds('compute_health_preview').filter(c => c.args.request?.max_points === 8).slice(-1)[0];
+        expect(chk.args.request.test_periods).toEqual([{ start: '2026-01-02T06:00', end: '2026-01-02T22:00' }]);
+        expect(chk.error).toBeUndefined();
+        expect(env.backend!.cmds('export_model_files')).toHaveLength(0);
         await waitFor(() => expect(dashDot(2, 'tag3', 'individual')).toBe('complete'));
         expect(JSON.stringify(env.backend!.calls.map(c => c.args))).not.toMatch(REMOVED_WIRE);
         expect(env.backend!.calls.filter(c => c.error).map(c => `${c.cmd}: ${c.error}`)).toEqual([]);

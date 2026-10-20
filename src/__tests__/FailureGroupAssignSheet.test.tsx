@@ -393,15 +393,15 @@ describe('FailureGroupAssignSheet', () => {
             const { props } = renderSheet();
             openDelete('Group A'); // i1 + r1 are in Group A
             const confirm = screen.getByRole('alertdialog', { name: 'Delete Group A' });
-            // i1 is only in Group A (deleted with its files); r1 is also in Group B (kept there)
-            expect(confirm.textContent).toContain('Delete Group A? 1 model used only by this group is deleted with its saved files. 1 model stays in its other groups.');
+            // i1 is only in Group A (deleted); r1 is also in Group B (kept there)
+            expect(confirm.textContent).toContain('Delete Group A? 1 model used only by this group is deleted · 1 model stays in its other groups.');
             expect(props.onDeleteGroup).not.toHaveBeenCalled();
         });
 
         it('singular, and zero', () => {
             renderSheet();
             openDelete('Group C'); // only TAG2's individual
-            expect(screen.getByRole('alertdialog').textContent).toContain('1 model used only by this group is deleted with its saved files.');
+            expect(screen.getByRole('alertdialog').textContent).toContain('1 model used only by this group is deleted.');
             fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
             cleanup();
             renderSheet({ fgModels: [] });

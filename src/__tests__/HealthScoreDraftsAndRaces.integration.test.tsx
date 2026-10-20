@@ -348,7 +348,10 @@ describe('errors from Rust', () => {
 // Mark complete races and failures
 // ---------------------------------------------------------------------------
 
-describe('Mark complete: races and failures', () => {
+describe('Mark complete: races and failures (it only CHECKS the set points — Export results writes the files)', () => {
+    /** Mark complete's own check: the tiny `compute_health_preview` (`checkModelForComplete`). */
+    const isCheck = (a: any) => a?.request?.max_points === 8;
+    const checks = () => env.backend!.cmds('compute_health_preview').filter(c => isCheck(c.args));
     async function readyI1() {
         writeDisk(trainedWs({ i1: { healthSetPoints: { ...EMPTY_I, lower: 20, upper: 80 } } }));
         await mountWindows();
@@ -356,21 +359,23 @@ describe('Mark complete: races and failures', () => {
         await waitFor(() => expect(bmw().getByTestId('check-valid')).toBeTruthy());
     }
 
-    it('a double click exports ONCE', async () => {
+    it('a double click checks ONCE; no file is ever written', async () => {
         await readyI1();
         await waitFor(() => expect(markBtn().disabled).toBe(false));
         await act(async () => { fireEvent.click(markBtn()); fireEvent.click(markBtn()); });
         await settle(100);
-        expect(env.backend!.cmds('export_model_files')).toHaveLength(1);
+        expect(checks()).toHaveLength(1);
+        expect(env.backend!.cmds('export_model_files')).toHaveLength(0);
         expect(diskModel('i1').status).toBe(true);
+        expect([...env.files.keys()].some(k => k.includes('/output/'))).toBe(false);
     });
 
-    it('export ok:false -> Rust\'s issues in Checks, nothing written, the model stays Incomplete', async () => {
+    it('the check says not valid -> Rust\'s issues in Checks, nothing written, the model stays Incomplete', async () => {
         await readyI1();
-        env.backend!.override('export_model_files', () => true, () => ({
-            ok: false, files: [], output_dir: env.backend!.outputDir(WS),
+        env.backend!.override('compute_health_preview', isCheck, async (_a, real) => ({
+            ...(await real() as any),
+            valid: false,
             validation: [{ code: 'lower_inside_3sd', severity: 'error', message: 'The lower set point (L = 20) must be below the lower 3σ boundary (25).', field: 'lower' }],
-            warnings: [],
         }));
         await markComplete();
         await waitFor(() => expect(bmw().getByTestId('save-error')).toBeTruthy());
@@ -380,20 +385,20 @@ describe('Mark complete: races and failures', () => {
         expect([...env.files.keys()].some(k => k.includes('/output/'))).toBe(false);
     });
 
-    it('export rejects (sidecar / disk) -> the error is shown, the model stays Incomplete, Mark complete can be retried', async () => {
+    it('the check rejects -> the error is shown, the model stays Incomplete, Mark complete can be retried', async () => {
         await readyI1();
-        env.backend!.failOn('export_model_files', () => true, 'Failed to write INDV_INFO: access denied');
+        env.backend!.failOn('compute_health_preview', isCheck, 'Failed to read column TAG1: access denied');
         await markComplete();
         await waitFor(() => expect(bmw().getByTestId('save-error').textContent).toMatch(/access denied/));
         expect(diskModel('i1').status).toBe(false);
         await markComplete();
-        await waitFor(() => expect(bmw().getByTestId('save-ok')).toBeTruthy());
+        await waitFor(() => expect(bmw().getByTestId('mark-incomplete')).toBeTruthy());
         expect(diskModel('i1').status).toBe(true);
     });
 
-    it('the disk changed during the export (another window applied a new running condition) -> files written but NOT Complete, and the user is told', async () => {
+    it('the disk changed during the check (another window applied a new running condition) -> NOT Complete, and the user is told', async () => {
         await readyI1();
-        const g = env.backend!.gate('export_model_files');
+        const g = env.backend!.gate('compute_health_preview', isCheck);
         await act(async () => { fireEvent.click(markBtn()); });
         await settle(30);
         // Another window changes the workspace condition meanwhile.
@@ -406,37 +411,16 @@ describe('Mark complete: races and failures', () => {
         await act(async () => { g.release(); });
         await settle(150);
         expect(diskModel('i1').status).toBe(false);
-        expect(env.files.has(`workspaces/${WS}/output/TAG1/INDV_INFO_TAG1.json`)).toBe(true);
+        expect([...env.files.keys()].some(k => k.includes('/output/'))).toBe(false);
         // the model is now out of date, so the window shows the Model fit page + stale banner
         expect(bmw().getByTestId('stale-banner')).toBeTruthy();
-    });
-
-    // The refusal is also shown as a dismissible banner on the Model fit page (`save-notice`).
-    // Guards against: when the save is refused because the model went out of date during
-    // the export (the usual reason: another window changed the running condition), the
-    // "files were written, but the model was not marked complete" message is stored in
-    // `saveInfo` but only the Health score page renders it, and that page can no longer be
-    // shown for a stale model (`pageOf` falls back to Model fit). The user never learns
-    // that their Mark complete was refused or that files were written.
-    it('UX BUG: "files were written, but the model was not marked complete" is visible after the disk changed during the export', async () => {
-        await readyI1();
-        const g = env.backend!.gate('export_model_files');
-        await act(async () => { fireEvent.click(markBtn()); });
-        await settle(30);
-        await act(async () => {
-            const next = await updateWorkspaceData(WS, prev => withFailureGroupState(prev, {
-                runningConditionFilters: [{ id: 'rc1', sensor: 'TAG2', operation: 'greater_than', value1: '30', value2: '' }],
-            }));
-            await emit('failure-group-state-changed', { ...next!.failureGroupState, workspaceId: WS, origin: 'other-window' });
-        });
-        await act(async () => { g.release(); });
-        await settle(150);
+        // ...and the refusal is visible there too (the Health score page can no longer be shown)
         expect(bmwEl().textContent).toMatch(/not marked complete/);
     });
 
-    it('switching sensor while saving: the save still lands on the right model', async () => {
+    it('switching sensor while checking: the save still lands on the right model', async () => {
         await readyI1();
-        const g = env.backend!.gate('export_model_files');
+        const g = env.backend!.gate('compute_health_preview', isCheck);
         await act(async () => { fireEvent.click(markBtn()); });
         await settle(30);
         selectSensor('tag3');
@@ -450,40 +434,26 @@ describe('Mark complete: races and failures', () => {
         expect(pill()).toBe('Complete');
     });
 
-    // `persistModelComplete` keeps the newer on-disk set points, records the EXPORTED values in
-    // `healthExport` (so "Changed after saving" shows) and still marks the model Complete.
-    // Guards against: set points typed + committed WHILE the export runs are silently
-    // reverted. `runMarkComplete` -> `persistModelComplete(..., res.setPoints)` writes the
-    // set points that were EXPORTED (captured at click time) over whatever is on disk by
-    // then (BuildModelWindow.tsx:1450, healthPersist.ts `persistModelComplete`), and the
-    // newer value's draft was already dropped by its own commit, so the user's edit
-    // vanishes from disk and from the screen without any message. A Relationship export
-    // takes ~15 s and the page stays editable during it, so this is easy to hit.
-    it('BUG: a set point edited and committed while the export runs is kept on disk (not reverted to the exported value)', async () => {
+    // `persistModelComplete` keeps the newer on-disk set points when they were committed while
+    // the check ran. Guards against: set points typed + committed WHILE Mark complete runs being
+    // silently reverted to the values that were checked.
+    it('a set point edited and committed while the check runs is kept on disk (not reverted to the checked value)', async () => {
         await readyI1();
-        const g = env.backend!.gate('export_model_files');
+        const g = env.backend!.gate('compute_health_preview', isCheck);
         await act(async () => { fireEvent.click(markBtn()); });
         await settle(30);
-        await enterSp({ 'sp-upper': '85' }); // blur-committed during the export
+        await enterSp({ 'sp-upper': '85' }); // blur-committed during the check
         expect(diskModel('i1').healthSetPoints.upper).toBe(85);
         await act(async () => { g.release(); });
         await settle(150);
         expect(diskModel('i1').healthSetPoints.upper).toBe(85);
-        // the files hold the EXPORTED 80: the page says so and offers Mark complete again
-        expect(diskModel('i1').healthExport.setPoints.upper).toBe(80);
-        expect(bmw().getByTestId('files-out-of-date')).toBeTruthy();
-        expect(bmw().getByTestId('mark-complete-again')).toBeTruthy();
+        expect(bmwEl().querySelector('[data-testid="files-out-of-date"]')).toBeNull();
+        expect(bmwEl().querySelector('[data-testid="mark-complete-again"]')).toBeNull();
     });
 
-    // The save is refused unless the on-disk model still has the fingerprint that was exported.
-    // Guards against: a model whose settings change AND are re-trained while its export
-    // runs ends up Complete with files from the OLD settings. `persistModelComplete`
-    // only checks "trained and fresh" against the disk (healthPersist.ts), not that the
-    // disk model still has the fingerprint that was exported, so a re-train during the
-    // ~15 s Relationship export (the Model fit page and Re-train stay usable) passes.
-    // A model whose Mark complete is writing its files cannot be
-    // trained meanwhile ("being saved") — so the re-train half of this race is now refused up front.
-    it('BUG: a Relationship model re-configured during its export does NOT end up Complete with the old files, and cannot be re-trained until the export ends', async () => {
+    // The save is refused unless the on-disk model still has the fingerprint that was checked,
+    // and a model whose Mark complete is running cannot be trained meanwhile.
+    it('a Relationship model re-configured during its check does NOT end up Complete, and cannot be re-trained until the check ends', async () => {
         writeDisk(trainedWs());
         await mountWindows();
         selectSensor('tag1');
@@ -491,39 +461,33 @@ describe('Mark complete: races and failures', () => {
         await waitForCharts();
         await openHealth();
         await waitFor(() => expect(bmw().getByTestId('check-valid')).toBeTruthy());
-        const g = env.backend!.gate('sidecar:export_model_files');
+        const g = env.backend!.gate('compute_health_preview', isCheck);
         await act(async () => { fireEvent.click(markBtn()); });
         await settle(30);
-        const exportedKey = env.backend!.cmds('export_model_files')[0].args.request.cache_key;
-        // back to Model fit: change stiffness, Save, Re-train — all while the export runs
+        const checkedKey = checks()[0].args.request.cache_key;
+        // back to Model fit: change stiffness, Save — all while the check runs
         fireEvent.click(bmw().getByTestId('page-tab-model'));
         openSettings();
         fireEvent.click(bmw().getByRole('button', { name: 'Strict' }));
         await saveChanges();
-        // Train is refused while the files are being written (one sidecar call at a time).
+        // Train is refused while Mark complete runs.
         fireEvent.click(bmw().getByTestId('train-sensor-menu-toggle'));
         const only = bmw().getByTestId('train-menu-only-relationship') as HTMLButtonElement;
         expect(only.disabled).toBe(true);
-        // the row's state line is the reason itself
-        expect(only.querySelector('small')!.textContent).toBe('Its files are being saved');
+        expect(only.querySelector('small')!.textContent).toBe('It is being checked for Mark complete');
         await act(async () => { g.release(); });
         await settle(150);
         const m = diskModel('r1');
-        expect(`r1::${m.trainedFingerprint}`).toBe(exportedKey); // not re-trained meanwhile
+        expect(`r1::${m.trainedFingerprint}`).toBe(checkedKey); // not re-trained meanwhile
         expect(m.relStiffness).toBe(1_000_000); // the Strict edit was saved (the model really changed)
-        expect(m.status).toBe(false); // the files carry the OLD settings
+        expect(m.status).toBe(false);
         expect(bmwEl().textContent).toMatch(/not marked complete/);
     });
 
-    // The WHOLE Mark-complete run is registered (`markRunsRef`) and both close paths wait for it.
-    // Guards against: closing the window while "Mark complete" is exporting does not wait:
-    // `onCloseRequested` only waits for `pendingSaveRef`, and `runMarkComplete` puts its
-    // promise there only for the final persist step (BuildModelWindow.tsx:1449), not for
-    // `completeModel`'s export. In the real app the webview is destroyed, so the files are
-    // written but `status: true` is never persisted — the model silently stays Incomplete.
-    it('BUG: a native close during the export waits for Mark complete to finish', async () => {
+    // The WHOLE Mark-complete run is registered and both close paths wait for it.
+    it('a native close during the check waits for Mark complete to finish', async () => {
         await readyI1();
-        const g = env.backend!.gate('export_model_files');
+        const g = env.backend!.gate('compute_health_preview', isCheck);
         await act(async () => { fireEvent.click(markBtn()); });
         await settle(30);
         let prevented = false;
@@ -537,9 +501,9 @@ describe('Mark complete: races and failures', () => {
         expect(env.windowClose).toBe(1);
     });
 
-    it('a model made stale (not re-trained) during the export is NOT marked Complete', async () => {
+    it('a model made stale (not re-trained) during the check is NOT marked Complete', async () => {
         await readyI1();
-        const g = env.backend!.gate('export_model_files');
+        const g = env.backend!.gate('compute_health_preview', isCheck);
         await act(async () => { fireEvent.click(markBtn()); });
         await settle(30);
         await applyWorkspaceRc(m => { fireEvent.change(m.getByPlaceholderText('value'), { target: { value: '25' } }); });
@@ -548,12 +512,11 @@ describe('Mark complete: races and failures', () => {
         expect(diskModel('i1').status).toBe(false);
     });
 
-    it('a set-point change on a Complete model makes it Incomplete; Mark complete then rewrites the files and the export record', async () => {
+    it('a set-point change on a Complete model makes it Incomplete; Mark complete then checks the new points and marks it Complete again (no files)', async () => {
         await readyI1();
         await markComplete();
-        await waitFor(() => expect(bmw().getByTestId('save-ok')).toBeTruthy());
-        const first = diskModel('i1').healthExport;
-        expect(first.setPoints).toMatchObject({ lower: 20, upper: 80 });
+        await waitFor(() => expect(bmw().getByTestId('mark-incomplete')).toBeTruthy());
+        expect(diskModel('i1').healthSetPoints).toMatchObject({ lower: 20, upper: 80 });
         // a set-point change makes the model Incomplete in the same write (export round
         // 2026-10-20): no "changed after saving" hint, the plain Mark complete is back
         await enterSp({ 'sp-upper': '82' });
@@ -563,12 +526,11 @@ describe('Mark complete: races and failures', () => {
         await waitFor(() => expect(markBtn().disabled).toBe(false));
         await act(async () => { fireEvent.click(markBtn()); });
         await settle(150);
-        const second = diskModel('i1').healthExport;
-        expect(second.setPoints).toMatchObject({ lower: 20, upper: 82 });
-        expect(second.at >= first.at).toBe(true);
-        expect(JSON.parse(env.files.get(`workspaces/${WS}/output/TAG1/INDV_INFO_TAG1.json`)!).model_metrics.setpoint_health_score).toEqual([20, 82]);
-        expect(bmwEl().querySelector('[data-testid="files-out-of-date"]')).toBeNull();
+        expect(checks().slice(-1)[0].args.request.set_points).toMatchObject({ lower: 20, upper: 82 });
         expect(diskModel('i1').status).toBe(true);
+        expect(diskModel('i1').healthSetPoints).toMatchObject({ lower: 20, upper: 82 });
+        expect(diskModel('i1').healthExport).toBeUndefined();
+        expect(env.backend!.cmds('export_model_files')).toHaveLength(0);
     });
 });
 
@@ -583,7 +545,7 @@ describe('multi-workspace isolation of the health state', () => {
         await mountWindows({ dashboard: false });
         await openI1Health();
         await markComplete();
-        await waitFor(() => expect(bmw().getByTestId('save-ok')).toBeTruthy());
+        await waitFor(() => expect(bmw().getByTestId('mark-incomplete')).toBeTruthy());
         await sendBuildModelData('ws2');
         await settle(200);
         selectSensor('tag1');
@@ -601,7 +563,7 @@ describe('multi-workspace isolation of the health state', () => {
         await mountWindows({ dashboard: false });
         await openI1Health();
         await waitFor(() => expect(markBtn().disabled).toBe(false));
-        const g = env.backend!.gate('export_model_files');
+        const g = env.backend!.gate('compute_health_preview', (a: any) => a?.request?.max_points === 8);
         await act(async () => { fireEvent.click(markBtn()); });
         await settle(30);
         const ws2Before = env.files.get('workspaces/ws2.json');
@@ -671,7 +633,9 @@ describe('multi-workspace isolation of the health state', () => {
         await mountWindows({ dashboard: false });
         await openI1Health();
         await markComplete();
-        await waitFor(() => expect(bmw().getByTestId('save-ok')).toBeTruthy());
+        await waitFor(() => expect(bmw().getByTestId('mark-incomplete')).toBeTruthy());
+        // files an older build's Mark complete left behind (Mark complete writes none any more)
+        env.files.set(`workspaces/${WS}/output/TAG1/INDV_INFO_TAG1.json`, '{}');
         env.files.set('workspaces/ws10/output/TAG1/INDV_INFO_TAG1.json', '{}'); // a sibling with a prefix-like id
         expect(env.files.has(`workspaces/${WS}/output/TAG1/INDV_INFO_TAG1.json`)).toBe(true);
         cleanup();
@@ -692,7 +656,7 @@ describe('multi-workspace isolation of the health state', () => {
         await mountWindows({ dashboard: false });
         await openI1Health();
         await markComplete();
-        await waitFor(() => expect(bmw().getByTestId('save-ok')).toBeTruthy());
+        await waitFor(() => expect(bmw().getByTestId('mark-incomplete')).toBeTruthy());
         cleanup();
         const copy = await duplicateWorkspace(WS);
         await deleteWorkspace(WS);

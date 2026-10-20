@@ -396,7 +396,7 @@ describe('ONE truth: Dashboard dot, Build Model dot, kind-tab words, page tabs',
         // complete
         await act(async () => { fireEvent.click(bmw().getByTestId('mark-complete')); });
         await settle(50);
-        await waitFor(() => expect(bmw().getByTestId('save-ok')).toBeTruthy());
+        await waitFor(() => expect(bmw().getByTestId('mark-incomplete')).toBeTruthy());
         expect(bmwDot('i1').state).toBe('complete');
         await waitFor(() => expect(dashDot(1, 'tag1', 'individual')).toBe('complete'));
         expect(bmwEl().querySelector('[data-testid="page-health-done"]')).toBeNull();

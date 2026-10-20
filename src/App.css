@@ -6861,3 +6861,14 @@ body {
 .tb-menu button small { font-size: 11px; color: var(--text-faint); }
 .tb-menu button:hover, .tb-menu button:focus-visible { background: var(--hover-bg); outline: none; }
 .tb-menu button:focus-visible { box-shadow: inset 0 0 0 2px var(--accent-color); }
+
+/* ===== Running status (2026-10-20): "Machine is running when … is above …" in the
+   workspace running-condition editor — the export's running status ===== */
+.rs-line { margin-top: 12px; padding: 10px 12px; border: 1px dashed var(--border-strong); border-radius: 9px; display: grid; gap: 6px; }
+.rs-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12.5px; color: var(--text-secondary); }
+.rs-l { white-space: nowrap; }
+.rs-pick { flex: 0 1 320px; min-width: 200px; max-width: 360px; }
+.rs-val { flex: 0 0 140px; }
+.rs-val input { width: 100%; min-width: 0; background: none; border: 0; outline: none; color: var(--text-primary); font: inherit; font-family: var(--mono); font-size: 12px; }
+.rs-val--empty { border-style: dashed; border-color: var(--warn); }
+.rs-note { font-size: 11.5px; line-height: 1.45; color: var(--text-faint); }

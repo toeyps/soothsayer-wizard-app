@@ -606,12 +606,11 @@ describe('R5 — the guards never touch what READS a model', () => {
         expect(diskModel('i3').status).toBe(false);
         expect(bmw().queryByTestId('mark-complete-again')).toBeNull();
         await waitFor(() => expect(markBtn().disabled).toBe(false));
-        const exportsBefore = env.backend!.cmds('export_model_files').length;
         await act(async () => { fireEvent.click(markBtn()); });
-        await waitFor(() => expect(env.backend!.cmds('export_model_files').length).toBe(exportsBefore + 1));
-        await waitFor(() => expect(diskModel('i3').healthExport.setPoints.upper).toBe(400));
-        expect(diskModel('i3').status).toBe(true);
-        expect(env.backend!.cmds('export_model_files').slice(-1)[0].error).toBeUndefined();
+        // Mark complete only checks the set points (no files: Export results writes them)
+        await waitFor(() => expect(diskModel('i3').status).toBe(true));
+        expect(diskModel('i3').healthSetPoints.upper).toBe(400);
+        expect(env.backend!.cmds('export_model_files')).toHaveLength(0);
         await waitFor(() => expect(dashDot(1, 'tag3', 'individual')).toBe('complete'));
         await act(async () => { fireEvent.click(bmw().getByTestId('mark-incomplete')); });
         await waitFor(() => expect(diskModel('i3').status).toBe(false));

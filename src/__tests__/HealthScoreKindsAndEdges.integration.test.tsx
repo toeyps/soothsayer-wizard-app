@@ -178,8 +178,11 @@ describe('Individual: master-data prefill (snapshot, chips, reset, never written
         await enterSp({ 'sp-lower': '-50', 'sp-upper': '80' });
         await waitFor(() => expect(bmw().getByTestId('check-valid')).toBeTruthy());
         await markComplete();
-        await waitFor(() => expect(bmw().getByTestId('save-ok')).toBeTruthy());
-        expect(env.files.has(`workspaces/${WS}/output/Pump ΔP (ปั๊ม)/INDV_INFO_Pump ΔP (ปั๊ม).json`)).toBe(true);
+        await waitFor(() => expect(bmw().getByTestId('mark-incomplete')).toBeTruthy());
+        expect(diskModel('s1').status).toBe(true);
+        expect(diskModel('s1').healthSetPoints).toMatchObject({ lower: -50, upper: 80 });
+        // no per-model file (Export results writes the files)
+        expect(env.files.has(`workspaces/${WS}/output/Pump ΔP (ปั๊ม)/INDV_INFO_Pump ΔP (ปั๊ม).json`)).toBe(false);
     });
 
     // BEHAVIOUR PIN (reported, not a failure): an old model opened while the window has
@@ -380,7 +383,7 @@ describe('Mark complete (Health score page) is the only way a model becomes Comp
         expect(diskModel('i1').status).toBe(false);
     });
 
-    it('Individual with valid SAVED set points: Mark complete writes the files and marks Complete with an export record', async () => {
+    it('Individual with valid SAVED set points: Mark complete checks them and marks Complete — no files, no export record', async () => {
         writeDisk(wsTrained({}, [model({ id: 'i1', kind: 'individual', healthSetPoints: { kind: 'individual', lower: 20, upper: 80, masterLower: 20, masterUpper: 80 } })]));
         await mountWindows();
         selectSensor('tag1');
@@ -389,9 +392,11 @@ describe('Mark complete (Health score page) is the only way a model becomes Comp
         await waitFor(() => expect(markBtn().disabled).toBe(false));
         await act(async () => { fireEvent.click(markBtn()); });
         await settle(400);
-        expect(env.backend!.cmds('export_model_files')).toHaveLength(1);
+        expect(env.backend!.cmds('export_model_files')).toHaveLength(0);
+        expect(env.backend!.cmds('compute_health_preview').filter(c => c.args.request?.max_points === 8)).toHaveLength(1);
         expect(diskModel('i1').status).toBe(true);
-        expect(diskModel('i1').healthExport.setPoints).toMatchObject({ lower: 20, upper: 80 });
+        expect(diskModel('i1').healthSetPoints).toMatchObject({ lower: 20, upper: 80 });
+        expect(diskModel('i1').healthExport).toBeUndefined();
         openDashFgTab();
         await waitFor(() => expect(dashDot(1, 'tag1', 'individual')).toBe('complete'));
     });
@@ -420,7 +425,7 @@ describe('Mark complete (Health score page) is the only way a model becomes Comp
         await settle(400);
         expect(env.backend!.cmds('export_model_files')).toHaveLength(0);
         expect(diskModel('r1').status).toBe(false);
-        expect(bmw().getByTestId('save-error').textContent).toMatch(/was no longer in memory, so its files were not written/);
+        expect(bmw().getByTestId('save-error').textContent).toMatch(/is no longer in memory, so it was not marked complete/);
         // The refusal marks the fit as gone and asks the preview again: NOT_FITTED -> the one
         // silent re-fit -> the page is back and Mark complete can be pressed again (it used to stay
         // enabled on the old preview and fail the same way on every click).
@@ -429,10 +434,10 @@ describe('Mark complete (Health score page) is the only way a model becomes Comp
         // The fit came back BY ITSELF, so the refusal stays on the page (it is what tells the
         // user to click again) — but the notice line no longer says "fix it": nothing is left
         // to fix, only the second click is missing.
-        expect(bmw().getByTestId('save-error').textContent).toMatch(/Mark complete again once it is loaded\.$/);
+        expect(bmw().getByTestId('save-error').textContent).toMatch(/Load it again, then Mark complete\.$/);
         expect(bmw().getByTestId('wb-notice').getAttribute('data-tone')).toBe('bad');
         const footSentence = bmw().getByTestId('wb-notice').querySelector('.wbx-reason')!.textContent;
-        expect(footSentence).toBe('Not saved · the Relation model is loaded again — Mark complete again');
+        expect(footSentence).toBe('Not marked complete · the Relation model is loaded again — Mark complete');
         expect(footSentence).not.toMatch(/fix it/);
         await act(async () => { fireEvent.click(markBtn()); });
         await waitFor(() => expect(diskModel('r1').status).toBe(true));

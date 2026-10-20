@@ -55,7 +55,7 @@ vi.mock('../components/charts/LineChart', () => ({ default: () => <div /> }));
 import { env, resetEnv } from './helpers/healthEnv';
 import { ALL_TIME_TRAIN, ONE_TEST } from './helpers/trainTestFixture';
 import {
-    WS, bmw, bmwDot, bmwEl, dashDot, diskModel, enterSp, markBtn, markComplete, model, mountWindows, newBackend,
+    bmw, bmwDot, bmwEl, dashDot, diskModel, enterSp, markBtn, markComplete, model, mountWindows, newBackend,
     openDashFgTab, openHealth, openSettings, readDisk, selectSensor, settle, waitForCharts, writeDisk, wsState,
 } from './helpers/healthWorkbench';
 
@@ -146,7 +146,6 @@ async function expectSpine(step: string, id: string, key: string, kind: string, 
 }
 
 const EMPTY_IND = { kind: 'individual', lower: null, upper: null, masterLower: null, masterUpper: null };
-const STAMP = String.raw`\d{4}/\d{2}/\d{2} \d{2}:\d{2}`;
 
 /** Closes the Running condition modal that opens by itself when nothing is set. */
 function closeRcModal() {
@@ -269,12 +268,12 @@ describe('ONE filled button + status said once, through a whole Individual journ
         });
         expect(markBtn().className).toBe('bmw-btn-ok');
 
-        // 7) Complete: NO filled button; "Mark incomplete" is a text button; the saved files are the sentence
+        // 7) Complete: NO filled button; "Mark incomplete" is a text button; no sentence (no "Files saved")
         await markComplete();
-        await waitFor(() => expect(bmw().getByTestId('save-ok')).toBeTruthy());
+        await waitFor(() => expect(bmw().getByTestId('mark-incomplete')).toBeTruthy());
         await expectSpine('complete', 'i1', 'tag1', 'individual', {
             primary: 'none', filled: [], pill: 'Complete',
-            sentence: new RegExp(`^Files saved ${STAMP} · .*workspaces/${WS}/output`), words: 'Complete', dot: 'complete', dash: 'complete',
+            sentence: null, words: 'Complete', dot: 'complete', dash: 'complete',
         });
         expect(bmw().getByTestId('mark-incomplete').className).toContain('f4-btn--plain');
         expect(bmw().getByTestId('mark-incomplete').className).not.toMatch(/rcx-btn--pri|bmw-btn-ok/);
@@ -297,10 +296,11 @@ describe('ONE filled button + status said once, through a whole Individual journ
         await waitFor(() => expect(markBtn().disabled).toBe(false));
         await act(async () => { fireEvent.click(markBtn()); });
         await settle(100);
-        await waitFor(() => expect(diskModel('i1').healthExport.setPoints.upper).toBe(91));
+        await waitFor(() => expect(diskModel('i1').status).toBe(true));
+        expect(diskModel('i1').healthSetPoints.upper).toBe(91);
         await expectSpine('complete again', 'i1', 'tag1', 'individual', {
             primary: 'none', filled: [], pill: 'Complete',
-            sentence: new RegExp(`^Files saved ${STAMP} · `), words: 'Complete', dot: 'complete', dash: 'complete',
+            sentence: null, words: 'Complete', dot: 'complete', dash: 'complete',
         });
 
         // 9) back on Model fit a Model-settings draft appears: "Save changes" exists only while it does
@@ -397,7 +397,7 @@ describe('a Custom-mode model while the WORKSPACE running condition is not set',
         await waitFor(() => expect(diskModel('u1').status).toBe(true));
         await expectSpine('custom model, complete', 'u1', 'tag5', 'individual', {
             primary: 'none', filled: ['rc-card-open'], pill: 'Complete',
-            sentence: new RegExp(`^Files saved ${STAMP} · `), words: 'Complete', dot: 'complete', dash: 'complete',
+            sentence: null, words: 'Complete', dot: 'complete', dash: 'complete',
         });
         // the workspace model is exactly where it was
         expect(bmwDot('i1').colour).toBe('bad');

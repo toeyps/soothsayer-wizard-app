@@ -374,17 +374,16 @@ describe('Workbench detail v2 — one model of each kind through the whole new s
         await waitFor(() => expect(dashDot(1, k.key, k.kind)).toBe('trained'));
         expectNoOldShell('valid set points');
 
-        // ── 6) Mark complete: "Complete" on the tab, "Files saved …" as the notice, no filled button ──
+        // ── 6) Mark complete: "Complete" on the tab, no notice line, no filled button, no file ──
         await markComplete();
-        await waitFor(() => expect(bmw().getByTestId('save-ok')).toBeTruthy(), { timeout: 8000 });
-        expect(env.files.has(k.file), `${k.file} written`).toBe(true);
+        await waitFor(() => expect(bmw().getByTestId('mark-incomplete')).toBeTruthy(), { timeout: 8000 });
+        expect(env.files.has(k.file), `${k.file} not written (Export results writes the files)`).toBe(false);
         expect(diskModel(k.id).status).toBe(true);
         await waitFor(() => expect(words(k.id).textContent).toBe('Complete'));
         expect(words(k.id).getAttribute('data-tone')).toBe('complete');
         expect(tabDot(k.id)).toBe('complete');
         expect(openTabStatus(bmwEl())).toBe('Complete');
-        expect(noticeEl(bmwEl())!.getAttribute('data-tone')).toBe('ok');
-        expect(noticeSentence(bmwEl())).toMatch(new RegExp(String.raw`^Files saved \d{4}/\d{2}/\d{2} \d{2}:\d{2} · .*workspaces/${WS}/output`));
+        expect(noticeEl(bmwEl())).toBeNull();
         expect(primaryAction(bmwEl())).toBe('none');
         expect(filled(), 'a Complete, up-to-date model has no filled button').toEqual([]);
         expect(q(tid('mark-complete'))).toBeNull();

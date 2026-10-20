@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
-import { groupDeleteCounts, groupDeleteSentence } from '../../utils/modelOutputFiles';
+import { groupDeleteCounts } from '../../utils/modelOutputFiles';
+import { groupDeleteText } from './groupDeleteText';
 import { Check, Plus, Search, X, Pencil, Trash2 } from 'lucide-react';
 import Portal from '../Portal';
 import { SensorLabel } from '../sensor/SensorLabel';
@@ -464,7 +465,7 @@ function SheetBody({
                 )}
                 {confirming && (
                     <div className="fg-sheet-confirm" role="alertdialog" aria-label={`Delete ${g.name}`}>
-                        <span>{groupDeleteSentence(g.name, counts.deleted, counts.kept)}</span>
+                        <span>{groupDeleteText(g.name, counts.deleted, counts.kept)}</span>
                         <button type="button" className="fg-sheet-btn" onClick={() => setConfirmFor(null)}>Cancel</button>
                         <button type="button" className="fg-sheet-btn fg-sheet-btn--danger" onClick={() => confirmDelete(g.no)}>Delete</button>
                     </div>

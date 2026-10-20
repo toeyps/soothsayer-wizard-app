@@ -89,8 +89,8 @@ function sameFitGone(a: HealthScorePageProps['fitGone'], b: HealthScorePageProps
         && !!a.gone === !!b.gone;
 }
 
-/** A save that has been running this long gets a line on the page; until then
- *  the notice line ("Saving the model files…") says it alone. */
+/** A Mark complete check that has been running this long gets a line on the page;
+ *  until then the notice line ("Checking the set points…") says it alone. */
 export const SLOW_SAVE_NOTICE_MS = 4000;
 
 /** `flag`, but only once it has stayed true for `delayMs` (false at once). */
@@ -184,7 +184,7 @@ function HealthScorePage(props: HealthScorePageProps) {
         const kindName = model.kind === 'relationship' ? 'Relation model' : `${model.kind === 'clustering' ? 'Clustering' : 'Individual'} model`;
         return (
             <div className="wb2-board" data-testid="health-page">
-                <SaveBanner save={save} slow={slowSave} relation={model.kind === 'relationship'} />
+                <SaveBanner save={save} slow={slowSave} />
                 <SlowScoringNotice show={props.slowScoring} />
                 {!loadError && errorCard}
                 {loadError ? (
@@ -255,7 +255,7 @@ function HealthScorePage(props: HealthScorePageProps) {
             {/* The page's numbers first, as tiles — they replace the score chart's old
                 subtitle and the "Share of scored hours" card. */}
             <ScoreKpis summary={scoreReady ? data.score_summary : null} state={errorMode ? 'error' : scoreReady ? 'ready' : 'locked'} />
-            <SaveBanner save={save} slow={slowSave} relation={model.kind === 'relationship'} />
+            <SaveBanner save={save} slow={slowSave} />
             <SlowScoringNotice show={props.slowScoring} />
             {errorCard}
             <TestsChangedBanner state={props.testsChanged} />
@@ -273,8 +273,6 @@ function HealthScorePage(props: HealthScorePageProps) {
             >
                 <ChecksCard kind={data.kind} issues={issues} verdict={verdict} unavailable={errorMode} testNumbers={testNumbers} />
             </ScoreRuler>
-            {/* "Changed after saving" is said ONCE — the notice line, with its
-                "Mark complete again" button. */}
             {scoringFailure && score && (
                 <section className="hs-card hs-full" data-testid="score-failed">
                     <div className="wb2-card-h"><b>Health score</b></div>
@@ -321,19 +319,19 @@ export function scoreLockText(verdict: HealthVerdict | null): string {
 }
 
 // ---------------------------------------------------------------------------
-// A FAILED save, and a save that is taking long. Saving is otherwise said by the
-// notice line alone ("Saving the model files…"), and a successful save is the
-// notice line too ("Files saved 2026/02/09 23:50 · …\output\TAG").
+// A FAILED Mark complete, and a check that is taking long. Checking is otherwise
+// said by the notice line alone ("Checking the set points…"); a successful one
+// is the green "Complete" on the kind tab. Mark complete writes no files — the
+// files are written by Export results.
 // ---------------------------------------------------------------------------
 
-function SaveBanner({ save, slow, relation }: { save: SaveInfo; slow: boolean; relation: boolean }) {
+function SaveBanner({ save, slow }: { save: SaveInfo; slow: boolean }) {
     if (save.phase === 'running' && slow) {
         return (
             <div className="hs-save hs-full" role="status" data-testid="save-running">
                 <Loader2 size={14} className="pm-spin" aria-hidden="true" />
                 <span>
-                    <b>Still saving…</b>
-                    {relation ? ' The Relation model is fitted again for the saved files and its scoring periods are scored. This can take longer than 15 seconds, especially the first time.' : ' Writing the model files is taking longer than usual.'}
+                    <b>Still checking…</b> Checking the model is taking longer than usual.
                 </span>
             </div>
         );

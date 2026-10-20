@@ -537,17 +537,18 @@ describe.each(['individual', 'relationship', 'clustering'] as Kind[])('cross-fea
         await plan.setPoints();
         await waitFor(() => expect(bmw().getByTestId('check-valid')).toBeTruthy(), { timeout: 4000 });
         await markComplete();
-        await waitFor(() => expect(bmw().getByTestId('save-ok')).toBeTruthy(), { timeout: 4000 });
-        expect(env.files.has(plan.outputFile(A)), `export ${plan.outputFile(A)}`).toBe(true);
+        await waitFor(() => expect(bmw().getByTestId('mark-incomplete')).toBeTruthy(), { timeout: 4000 });
+        // Mark complete writes NO files (Export results does) — it only checks the set points
+        expect(env.files.has(plan.outputFile(A)), `no file ${plan.outputFile(A)}`).toBe(false);
+        expect(be.cmds('export_model_files')).toHaveLength(0);
         expect(disk(A).failureGroupState.models.find((m: any) => m.id === mid).status).toBe(true);
-        // the export carried the scoring period (the files' validation block) as start / end
-        // only, and the footer says "Scored · 1"
-        expect(be.cmds('export_model_files').slice(-1)[0].args.request.test_periods).toEqual([
+        // the check scored the scoring period as start / end only
+        expect(be.cmds('compute_health_preview').filter(c => c.args.request?.max_points === 8).slice(-1)[0].args.request.test_periods).toEqual([
             { start: '2026-01-01T00:00', end: '2026-01-03T00:00' },
         ]);
-        // no "Scored · N" pill: the saved message is the footer's one sentence
+        // no "Scored · N" pill and no "Files saved" line
         expect(bmw().queryByTestId('scored-pill')).toBeNull();
-        expect(bmw().getByTestId('save-ok').textContent).toMatch(/^Files saved \d{4}\/\d{2}\/\d{2} \d{2}:\d{2} · /);
+        expect(bmw().queryByTestId('save-ok')).toBeNull();
 
         // 6) The special sensor is now locked in Manage (a model uses it).
         if (!roots.has('add-sensor')) await openAddSensorWindow();
@@ -798,40 +799,39 @@ async function relationshipReadyToComplete(): Promise<{ A: string; mid: string }
     return { A, mid };
 }
 
-describe('leaving the workspace while a Relationship Mark complete is still saving (sidecar running)', () => {
-    it('Back to Import while saving: the Build Model window refuses to close until the save lands, then closes; A ends Complete with its files', async () => {
+describe('leaving the workspace while a Relationship Mark complete is still checking', () => {
+    it('Back to Import while checking: the Build Model window refuses to close until the check and the save land, then closes; A ends Complete (no files)', async () => {
         const { A, mid } = await relationshipReadyToComplete();
         wins.selfClose = 'build-model';
-        const gate = be.health.gate('sidecar:export_model_files');
+        const gate = be.health.gate('compute_health_preview', (a: any) => a?.request?.max_points === 8);
         await act(async () => { fireEvent.click(bmw().getByTestId('mark-complete')); });
         await settle(30);
-        // saving is said in the notice line only (no card on the page unless the save is slow)
+        // checking is said in the notice line only (no card on the page unless it is slow)
         expect(bmw().queryByTestId('save-running')).toBeNull();
-        expect(bmw().getByTestId('footer-status').textContent).toMatch(/Saving the model files…/);
+        expect(bmw().getByTestId('footer-status').textContent).toMatch(/Checking the set points…/);
 
         await backToImport();
-        expect(roots.has('build-model'), 'window kept open while the export runs').toBe(true);
+        expect(roots.has('build-model'), 'window kept open while the check runs').toBe(true);
         gate.release();
         await settle(300);
         await processClosedWindows();
         expect(roots.has('build-model'), 'window closes itself once saved').toBe(false);
-        expect(env.files.has(`workspaces/${A}/output/TAG1/REL_INFO_SP1_TAG1.json`)).toBe(true);
+        expect(env.files.has(`workspaces/${A}/output/TAG1/REL_INFO_SP1_TAG1.json`)).toBe(false);
         const m = disk(A).failureGroupState.models.find((x: any) => x.id === mid);
         expect(m.status).toBe(true);
-        expect(m.healthExport?.outputDir).toBeTruthy();
+        expect(m.healthExport).toBeUndefined();
         expect(reactWarnings(), 'React warnings').toEqual([]);
         expect(rejections, 'unhandled rejections').toEqual([]);
     });
 
-    // Regression: `runMarkComplete` used to bail out with
-    // 'The workspace changed.' AFTER `completeModel` had already written the model
-    // files, so a window re-pointed at workspace B mid-export dropped A's Complete.
-    // The save now always goes to the workspace id captured at click time; only the
-    // window's own state is left alone once it points elsewhere.
-    it('re-pointing the still-open window at workspace B before the export finishes must not drop A\'s Complete', async () => {
+    // Mark complete writes no files any more, so nothing can be left half-done: a check
+    // still in flight when the window is re-pointed at workspace B (whose dataset Rust now
+    // holds) is answered STALE_SESSION — A simply stays Incomplete, nothing is written into
+    // A or B, and the user marks it complete again once A is open.
+    it('re-pointing the still-open window at workspace B before the check finishes leaves A Incomplete and untouched (never half-done)', async () => {
         const { A, mid } = await relationshipReadyToComplete();
         wins.selfClose = 'build-model';
-        const gate = be.health.gate('sidecar:export_model_files');
+        const gate = be.health.gate('compute_health_preview', (a: any) => a?.request?.max_points === 8);
         await act(async () => { fireEvent.click(bmw().getByTestId('mark-complete')); });
         await settle(30);
 
@@ -844,9 +844,11 @@ describe('leaving the workspace while a Relationship Mark complete is still savi
         gate.release();
         await settle(500);
 
-        expect(env.files.has(`workspaces/${A}/output/TAG1/REL_INFO_SP1_TAG1.json`), 'files were written into A').toBe(true);
         const m = disk(A).failureGroupState.models.find((x: any) => x.id === mid);
-        expect({ status: m.status, exported: !!m.healthExport }).toEqual({ status: true, exported: true });
+        expect(m.status).toBe(false);
+        expect(m.healthExport).toBeUndefined();
+        expect(be.cmds('compute_health_preview').filter(c => c.args.request?.max_points === 8).slice(-1)[0].error).toMatch(/^STALE_SESSION/);
+        expect(be.cmds('export_model_files')).toHaveLength(0);
     });
 });
 

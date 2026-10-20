@@ -393,3 +393,17 @@ describe('RunningConditionPills (modal header)', () => {
         expect(screen.getByTestId('rc-count-pill')).toBeTruthy();
     });
 });
+
+describe('RunningConditionPanel — runningStatusSlot (the export running-status line)', () => {
+    it('workspace scope: the slot is rendered at the end of the condition section', () => {
+        setup({ runningStatusSlot: <div data-testid="rs-slot">slot</div> });
+        const section = screen.getByTestId('rc-condition');
+        expect(within(section).getByTestId('rs-slot')).toBeTruthy();
+        expect(section.lastElementChild?.getAttribute('data-testid')).toBe('rs-slot');
+    });
+
+    it('custom scope: never rendered (a model\'s own condition has no running status)', () => {
+        setup({ scope: 'custom', runningStatusSlot: <div data-testid="rs-slot">slot</div> });
+        expect(screen.queryByTestId('rs-slot')).toBeNull();
+    });
+});

@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
-import { groupDeleteCounts, groupDeleteSentence } from '../../utils/modelOutputFiles';
+import { groupDeleteCounts } from '../../utils/modelOutputFiles';
+import { groupDeleteText } from './groupDeleteText';
 import { Plus, Trash2, Play, ChevronRight, Check, FolderPlus } from 'lucide-react';
 import { FailureGroup, FailureModel, FailureGroupStateSlice, ModelKind, SensorMetadata, SpecialSensorRecipe } from '../../types';
 import { SensorLabel } from '../sensor/SensorLabel';
@@ -83,7 +84,7 @@ export default function FailureGroupsPanel({
     // version exactly (moved here, not duplicated — see the doc comment
     // above and this component's own top-level doc comment).
     const [expandedGroupNo, setExpandedGroupNo] = useState<number | null>(null);
-    // Deleting a group now deletes the models that are only in it (and their files): ask first.
+    // Deleting a group deletes the models that are only in it: ask first.
     const [confirmDeleteNo, setConfirmDeleteNo] = useState<number | null>(null);
     const [groupNameDraft, setGroupNameDraft] = useState('');
     const [groupNameError, setGroupNameError] = useState('');
@@ -603,7 +604,7 @@ export function GroupDeleteConfirm({ name, deleted, kept, onCancel, onConfirm }:
 }) {
     return (
         <div className="fg-sheet-confirm" role="alertdialog" aria-label={`Delete ${name}`} data-testid="fg-delete-confirm">
-            <span>{groupDeleteSentence(name, deleted, kept)}</span>
+            <span>{groupDeleteText(name, deleted, kept)}</span>
             <button type="button" className="fg-sheet-btn" onClick={onCancel}>Cancel</button>
             <button type="button" className="fg-sheet-btn fg-sheet-btn--danger" onClick={onConfirm}>Delete</button>
         </div>

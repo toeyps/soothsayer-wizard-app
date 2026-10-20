@@ -443,7 +443,7 @@ describe('A. Train sensor ▾ and the page states, on the real workspace file', 
 // ---------------------------------------------------------------------------
 
 describe('B. "Relation model" everywhere — and a workspace that still holds the old word in its model names', () => {
-    it('saved names "X (Relationship)": both windows open with the same names, statuses and train records (nothing is rewritten); Mark complete (after a set-point change) exports under the saved name; a suggested name says "(Relation model)"', async () => {
+    it('saved names "X (Relationship)": both windows open with the same names, statuses and train records (nothing is rewritten); Mark complete (after a set-point change) keeps the saved name; a suggested name says "(Relation model)"', async () => {
         writeDisk(wsTrained(FG, [
             model({ id: 'i1', name: 'Pump Pressure', targetSensor: 'TAG1', healthSetPoints: SP1, healthVerdict: 'valid' }),
             model({
@@ -488,18 +488,19 @@ describe('B. "Relation model" everywhere — and a workspace that still holds th
         expect(modelsBytes()).toBe(bytes);
         expect(pill()).toBe('Complete');
 
-        // ── a set point changed (Incomplete, export round 2026-10-20) → Mark complete: the files are exported under the SAVED name ──
+        // ── a set point changed (Incomplete, export round 2026-10-20) → Mark complete: Complete again under the SAVED name (no files) ──
         await openHealth();
         await waitFor(() => expect(bmw().getByTestId('check-valid')).toBeTruthy());
         await enterSp({ 'sp-residual_at_0_upper': '12' });
         expect(diskModel('r1').status).toBe(false);
         await waitFor(() => expect(markBtn().disabled).toBe(false));
         await act(async () => { fireEvent.click(markBtn()); });
-        await waitFor(() => expect(diskModel('r1').healthExport.setPoints.residualAt0Upper).toBe(12), { timeout: 8000 });
-        const exp = env.backend!.cmds('export_model_files').slice(-1)[0];
-        expect(exp.error).toBeUndefined();
-        expect(exp.args.request.model_name).toBe('Pump Pressure (Relationship)');
-        expect(exp.args.request.kind).toBe('relationship'); // the VALUE on the wire is unchanged
+        await waitFor(() => expect(diskModel('r1').status).toBe(true), { timeout: 8000 });
+        expect(diskModel('r1').healthSetPoints.residualAt0Upper).toBe(12);
+        expect(env.backend!.cmds('export_model_files')).toHaveLength(0);
+        const chk = env.backend!.cmds('compute_health_preview').filter(c => c.args.request?.max_points === 8).slice(-1)[0];
+        expect(chk.error).toBeUndefined();
+        expect(chk.args.request.kind).toBe('relationship'); // the VALUE on the wire is unchanged
         expect(diskModel('r1')).toMatchObject({ name: 'Pump Pressure (Relationship)', kind: 'relationship', status: true });
         expect(diskModel('r1').trainedFingerprint).toBe(JSON.parse(bytes).find((m: any) => m.id === 'r1').trainedFingerprint);
         await waitFor(() => expect(dashDot(1, 'tag1', 'relationship')).toBe('complete'));
@@ -618,7 +619,7 @@ describe('B. "Relation model" everywhere — and a workspace that still holds th
         await enterSp({ 'sp-residual_at_80_lower': String(-w * 1.5), 'sp-residual_at_80_upper': String(w * 2), 'sp-residual_at_0_lower': String(-w * 4), 'sp-residual_at_0_upper': String(w * 4) });
         await waitFor(() => expect(bmw().getByTestId('check-valid')).toBeTruthy());
         expectCleanWords('Health score page, valid set points');
-        env.backend!.failOn('export_model_files', () => true, ENGINE_NO_START);
+        env.backend!.failOn('compute_health_preview', (a: any) => a?.request?.max_points === 8, ENGINE_NO_START);
         await act(async () => { fireEvent.click(markBtn()); });
         await waitFor(() => expect(bmw().getByTestId('save-error')).toBeTruthy(), { timeout: 8000 });
         expect(bmw().getByTestId('save-error-reason').textContent).toBe(ENGINE_NO_START);
@@ -629,7 +630,7 @@ describe('B. "Relation model" everywhere — and a workspace that still holds th
         await openHealth();
         await markComplete();
         await waitFor(() => expect(diskModel(id).status).toBe(true), { timeout: 8000 });
-        await waitFor(() => expect(bmw().getByTestId('save-ok')).toBeTruthy());
+        await waitFor(() => expect(bmw().getByTestId('mark-incomplete')).toBeTruthy());
         expectCleanWords('Complete');
         await waitFor(() => expect(dashDot(1, 'tag1', 'relationship')).toBe('complete'));
         expectCleanWords('Dashboard, Complete');
@@ -722,10 +723,10 @@ describe('C. the Relation model engine fails: only Rust\'s fixed sentence is sho
         const dot0 = dashDot(1, 'tag1', 'relationship');
 
         for (const said of [ENGINE_NO_START, ENGINE_NO_OUTPUT, ENGINE_FIT_FAILED]) {
-            env.backend!.failOn('export_model_files', () => true, said);
+            env.backend!.failOn('compute_health_preview', (a: any) => a?.request?.max_points === 8, said);
             await act(async () => { fireEvent.click(markBtn()); });
             await waitFor(() => expect(bmw().getByTestId('save-error-reason').textContent).toBe(said), { timeout: 8000 });
-            expect(sentence()).toBe('Not saved · fix it, then Mark complete again');
+            expect(sentence()).toBe('Not marked complete · fix it, then Mark complete');
             expect(diskModel('r1').status).toBe(false);
             expect(diskModel('r1').healthExport).toBeUndefined();
             expect([...env.files.keys()].some(k => k.includes('/output/'))).toBe(false);
@@ -733,7 +734,7 @@ describe('C. the Relation model engine fails: only Rust\'s fixed sentence is sho
             expect(bmwEl().textContent).not.toMatch(FORBIDDEN);
         }
         // Rust's coded "engine out of date" answer is worded by the app — the code is never shown
-        env.backend!.failOn('export_model_files', () => true, ENGINE_OUTDATED);
+        env.backend!.failOn('compute_health_preview', (a: any) => a?.request?.max_points === 8, ENGINE_OUTDATED);
         await act(async () => { fireEvent.click(markBtn()); });
         await waitFor(() => expect(bmw().getByTestId('save-error-reason').textContent)
             .toBe('The Relation model engine in this build is out of date — reinstall or update the app, then try again.'), { timeout: 8000 });

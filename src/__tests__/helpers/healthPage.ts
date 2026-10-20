@@ -68,13 +68,13 @@ export async function fillValidSetPoints(kind: 'individual' | 'relationship' | '
     await settle();
 }
 
-/** Open the Health score page, enter valid set points, press "Mark complete" and wait until saved. */
+/** Open the Health score page, enter valid set points, press "Mark complete" and wait until it is Complete (it writes no files). */
 export async function markCompleteFromHealthPage(kind: 'individual' | 'relationship' | 'clustering', q: Q = screen) {
     await openHealthPage(q);
     await fillValidSetPoints(kind, q);
     await waitFor(() => expect((q.getByTestId('mark-complete') as HTMLButtonElement).disabled).toBe(false));
     await act(async () => { fireEvent.click(q.getByTestId('mark-complete')); });
-    await waitFor(() => expect(q.getByTestId('save-ok')).toBeTruthy());
+    await waitFor(() => expect(q.getByTestId('mark-incomplete')).toBeTruthy());
     await settle();
 }
 

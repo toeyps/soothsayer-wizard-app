@@ -5,14 +5,15 @@ import { emit } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { subscribe } from "../../utils/tauriEvents";
 import { X, Check, ChevronRight, Lock, CircleAlert, TriangleAlert, Search, Loader2 } from "lucide-react";
-import { FailureGroup, FailureModel, ModelKind, ModelCategory, SensorMetadata, CsvMetadata, WorkspaceSensorFilter, CategoryChange, TimePeriod, TestPeriod, TimeHighlight, FailureGroupStateSlice, FailureGroupStateChangedPayload, HealthSetPoints, HealthVerdictValue, SpecialSensorRecipe, WorkspaceState } from "../../types";
+import { FailureGroup, FailureModel, ModelKind, ModelCategory, SensorMetadata, CsvMetadata, WorkspaceSensorFilter, CategoryChange, TimePeriod, TestPeriod, TimeHighlight, FailureGroupStateSlice, FailureGroupStateChangedPayload, HealthSetPoints, HealthVerdictValue, SpecialSensorRecipe, WorkspaceState, WorkspaceMetadata, PROJECT_DETAILS_CHANGED, type ProjectDetailsChangedPayload } from "../../types";
 import type { HealthIssue } from "../../types/health";
 import type { RelationshipPreviewResult, ClusteringPreview } from "../../types/commands";
-import { loadWorkspaceData, updateWorkspaceData } from "../../workspaceManager";
+import { getRecentWorkspaces, loadWorkspaceData, updateWorkspaceData } from "../../workspaceManager";
+import { ProjectDetailsModal } from "./ProjectDetailsModal";
 import { withFailureGroupState } from "../../utils/failureGroupState";
 import { modelSensorKey, groupModelsBySensor, sensorCategory, setSensorCategory, type SensorModelGroup } from "../../utils/modelGrouping";
 import { normalizeCategories, flagLegacyGate, migratePeriods } from "../../utils/workspaceMigrations";
-import { findSameSensorNameConflict, kindModelName, MODEL_KIND_LABEL, suggestDistinctModelName } from "../../utils/modelNames";
+import { findWorkspaceNameTwin, kindModelName, markCompleteProjectBlock, MODEL_KIND_LABEL, suggestDistinctModelName, WORKSPACE_DUPLICATE_NAME_REASON } from "../../utils/modelNames";
 import { CATEGORY_BLOCK_REASON, customBlockText, customSummaryText, getBuildBlock, getBuildBlockReason, isRunningConditionConfigured, isWorkspaceRunningConditionConfigured, effectiveRunningCondition, markCompleteBlockReason, NO_MODEL_DATA_TITLE, NO_MODEL_DATA_WORDS, NO_TRAIN_DATA_SHORT, NO_TRAIN_PERIOD_REASON_CUSTOM, NO_TRAIN_ROWS_FOOTER, noModelDataCauseText, noModelDataFooter, noModelDataMarkReason, noTrainRowsReason, runningConditionApplyBlock, seedCustomFromWorkspace, type BuildBlock, type GateOptions, type NoModelDataCause, type RunningConditionApplyBlock, type RunningConditionFg } from "../../utils/runningCondition";
 import { modelsStillNeedingTraining, retrainNoticeParts, runningConditionImpact } from "../../utils/runningConditionImpact";
 import { usePeriodCounts } from "../../hooks/usePeriodCounts";
@@ -20,10 +21,10 @@ import { countedNoTrainRows, countedTrainRunningDays, trainCountKey } from "../.
 import { computeTrainFingerprint, isModelTrainedFresh as trainedFreshFor } from "../../utils/trainFingerprint";
 import { buildPreviewFilterPayload } from "../../utils/trainingScope";
 import { applyIncompleteRule } from "../../utils/incompleteRule";
-import { EARLIER_SCORING_HINT_TEXT, isModelStale as isModelStaleFor, modelDotState, modelSetPointFlag, NOT_TRAINED_BLOCK_REASON, savedResultsUseEarlierScoring, type ModelDotState, type SetPointFlag } from "../../utils/modelStatus";
+import { isModelStale as isModelStaleFor, modelDotState, modelSetPointFlag, NOT_TRAINED_BLOCK_REASON, type ModelDotState, type SetPointFlag } from "../../utils/modelStatus";
 import { CLUSTERS_NEED_CRITERIA, HEALTH_DEFAULT_MAX_POINTS, relationshipLambda, testPeriodsWireFor } from "../../utils/healthRequest";
 import { ensureHealthSetPoints } from "../../utils/healthSetPoints";
-import { completeModel, healthExportRecord, parseHealthError } from "../../utils/completeModel";
+import { checkModelForComplete, parseHealthError } from "../../utils/completeModel";
 import { commitHealthVerdict, commitSetPoints, MARK_COMPLETE_CLOSE_WAIT, persistModelComplete } from "../../utils/healthPersist";
 import { useSensorMetaMap, normalizeSensorTag } from "../../hooks/useSensorMetaMap";
 import { useDatasetTimeBounds } from "../../hooks/useDatasetTimeBounds";
@@ -35,9 +36,8 @@ import RunningConditionPanel, { RunningConditionPills } from "./RunningCondition
 import { RunningConditionCard, type RcStepState } from "./RunningConditionCard";
 import { SensorPickerModal } from "./SensorPickers";
 import { SensorInline, SensorLabel } from "../sensor/SensorLabel";
-import { SensorMetaContext, fmtNumText, sensorHaystack, sensorTitle, useLayeredSensorLookup } from "../sensor/sensorInfo";
+import { SensorMetaContext, fmtNumText, sensorHaystack, sensorPlainLabel, sensorTitle, useLayeredSensorLookup } from "../sensor/sensorInfo";
 import { useModalFocus } from "./useModalFocus";
-import { formatStamp } from "./periodDisplay";
 import SubModelsModal from "./SubModelsModal";
 import { useSubModelFits } from "./useSubModelFits";
 import ModelFitPage from "./workbench/ModelFitPage";
@@ -46,7 +46,8 @@ import HealthScorePage from "./workbench/HealthScorePage";
 import { FIT_GONE_WORDS, FitGoneBoard, LoadFailedBoard, SaveErrorNotice, StaleBanner, StateBoard, TrainSensorLink, WorkbenchScroll, type FitGoneActions, type StaleCantTrain } from "./workbench/WorkbenchShellParts";
 import { buildCheckLines, healthVerdict, isBlockingIssue, sameSetPoints, verdictOfIssues, type HealthVerdict } from "./workbench/healthChecks";
 import type { SaveInfo, WorkbenchPage } from "./workbench/workbenchTypes";
-import { isPickerSurfaceOpen } from "../sensor/SensorPicker";
+import { isPickerSurfaceOpen, SensorPickerSingle } from "../sensor/SensorPicker";
+import { aboveConditions } from "../../utils/runningStatus";
 import { CloseRunDialog, LockedSettingsHeader, QueuedCard, RunSetPointsBanner, RunStrip, SensorTrainButton, sensorTrainMenuCopy, TrainAllBar, TrainAllModal, type TrainGroupInfo, type TrainMenuItem, type TrainReasonTone, type TrainRowModel } from "./workbench/TrainQueueParts";
 import { useTrainQueue } from "../../hooks/useTrainQueue";
 import type { TrainCandidate, TrainFixTarget, TrainOutcome } from "../../types/trainQueue";
@@ -222,7 +223,7 @@ const TRAIN_FAILED_WORDS = 'Training failed';
 const FIT_GONE_BLOCK_REASON = `${FIT_GONE_WORDS} · load it again, or re-train with Train sensor ↑`;
 const FIT_GONE_BLOCK_REASON_COMPLETE = `${FIT_GONE_WORDS} · load it again first`;
 /** Mark complete answered NOT_FITTED: the files need the fit Rust no longer holds. */
-const FIT_GONE_SAVE_MESSAGE = 'The fitted Relation model was no longer in memory, so its files were not written. Mark complete again once it is loaded.';
+const FIT_GONE_SAVE_MESSAGE = 'The fitted Relation model is no longer in memory, so it was not marked complete. Load it again, then Mark complete.';
 /** A COMPLETE model whose result could not be worked out again when it was opened (the
  *  silent load failed for another reason than a lost fit): tab / list tooltip, and the
  *  reason Mark complete again is blocked. Train sensor never trains an up-to-date
@@ -264,12 +265,11 @@ const MAX_CLUSTERS_REASON = `At most ${MAX_CLUSTERS} clusters`;
 const NO_PREDICTORS: string[] = [];
 /** Shown when a Train finds the dataset replaced since this window opened. */
 const DATASET_CHANGED_MESSAGE = 'The dataset changed since this window was opened — close it and reopen Build Model from the Dashboard.';
-const DUPLICATE_NAME_BLOCK_REASON = 'Model name is already used by another model of this sensor';
 /** Mark complete, Compare predictors and the Re-train buttons while a training
  *  run is active: one Relation-model sidecar call at a time. */
 const TRAIN_RUN_ACTIVE_REASON = 'Wait for the training run to finish';
-/** A model whose Mark complete is writing its files is not trained meanwhile. */
-const BEING_SAVED_REASON = 'Its files are being saved';
+/** A model whose Mark complete is being checked is not trained meanwhile. */
+const BEING_SAVED_REASON = 'It is being checked for Mark complete';
 /** The close notice when "Stop after this model and close" gave up waiting. */
 const RUN_CLOSE_WAIT_NOTICE = 'Still training a model — the window stays open so nothing is cut off half-way. Close it again to leave without waiting.';
 /** THE kind names of this window — tabs, tooltips, notices: Individual / Relation
@@ -346,6 +346,18 @@ interface RcDraft {
     testPeriods: TestPeriod[];
 }
 
+/** The export's running status as the settings modal edits it
+ *  ("Machine is running when <sensor> is above <value>"). */
+type RunningStatusDraft = { sensor: string; stopAtOrBelow: string };
+const sameRunningStatus = (a: RunningStatusDraft | null, b: RunningStatusDraft | null): boolean =>
+    (a?.sensor ?? '') === (b?.sensor ?? '') && (a?.stopAtOrBelow ?? '').trim() === (b?.stopAtOrBelow ?? '').trim();
+/** What Build Model keeps of the project's details. */
+type ProjectInfo = Pick<WorkspaceState, 'id' | 'name' | 'machine' | 'dataUtcOffsetMin'>;
+const projectInfoOf = (ws: WorkspaceState): ProjectInfo =>
+    ({ id: ws.id, name: ws.name, machine: ws.machine, dataUtcOffsetMin: ws.dataUtcOffsetMin });
+/** Why Apply waits when the running-status line has a sensor but no value. */
+const RUNNING_STATUS_VALUE_REASON = 'Enter the value for “Machine is running when … is above …”';
+
 /** Draft vs. persisted comparison. JSON is enough: every draft object is built
  *  by spreading the persisted one (key order preserved) and the period editor
  *  hands back already-sorted lists. Scoring periods are compared as id / start /
@@ -359,10 +371,6 @@ function rcDraftEqual(a: RcDraft, b: RcDraft): boolean {
         && JSON.stringify(a.periods) === JSON.stringify(b.periods)
         && JSON.stringify(toScoringPeriods(a.testPeriods)) === JSON.stringify(toScoringPeriods(b.testPeriods));
 }
-
-/** A date in the notice line ("Files saved …"): an instant the app
- *  recorded, in the app's one date format — "2026/02/09 23:50", in mono. */
-const Stamp = ({ at }: { at: string }) => <span className="wbx-dt">{formatStamp(at)}</span>;
 
 /**
  * The single Build Model window — a singleton (label `build-model`) opened
@@ -459,6 +467,25 @@ export default function BuildModelWindow() {
     // "No condition - use all rows" was explicitly confirmed for the workspace.
     // Mirrors failureGroupState.runningConditionNoneConfirmed.
     const [runningConditionNoneConfirmed, setRunningConditionNoneConfirmed] = useState(false);
+    // The export's running status the user said ("Machine is running when … is above …",
+    // `failureGroupState.runningStatus`). Used by the export only, never by training.
+    const [runningStatusSaved, setRunningStatusSaved] = useState<RunningStatusDraft | null>(null);
+    // The project's details as they are on disk (name "Plant · Machine", machine, the
+    // data's time zone) — re-read whenever any window saves Project details.
+    const [projectInfo, setProjectInfo] = useState<ProjectInfo | null>(null);
+    const projectSeq = useRef(0);
+    // Project details dialog: the project read fresh from disk and the other projects
+    // (loaded BEFORE it opens, so Save never runs without the duplicate check).
+    const [projectDetails, setProjectDetails] = useState<{ ws: ProjectInfo; others: WorkspaceMetadata[] } | null>(null);
+    // The modal's edit of it: `null` = not touched (the line shows the saved value, or
+    // the first "above" condition — a prefill is never an edit). Mirrored in a ref for
+    // the Apply click (same reason as `rcDraftRef`).
+    const [rsDraft, setRsDraftState] = useState<RunningStatusDraft | null>(null);
+    const rsDraftRef = useRef<RunningStatusDraft | null>(null);
+    const setRsDraft = useCallback((next: RunningStatusDraft | null) => {
+        rsDraftRef.current = next;
+        setRsDraftState(next);
+    }, []);
     // Legacy-workspace banner: the STORED flag (failureGroupState.rcLegacyNotice,
     // written at hydration) plus a session-only "Remind me later" (never persisted).
     const [rcLegacyNotice, setRcLegacyNotice] = useState<'pending' | null>(null);
@@ -709,6 +736,7 @@ export default function BuildModelWindow() {
         setRunningConditionTimePeriods(fg?.runningConditionTimePeriods ?? []);
         setRunningConditionTestPeriods(fg?.runningConditionTestPeriods ?? []);
         setRunningConditionNoneConfirmed(fg?.runningConditionNoneConfirmed ?? false);
+        setRunningStatusSaved(fg?.runningStatus ?? null);
         setRcLegacyNotice(fg?.rcLegacyNotice ?? null);
         setCategoryNotice(fg?.categoryNormalisationNotice ?? null);
     }, []);
@@ -800,7 +828,7 @@ export default function BuildModelWindow() {
             if (timer) clearTimeout(timer);
             if (!ok) {
                 closeWaitGivenUpRef.current = true;
-                setCloseNotice('Still saving the model files — the window stays open so nothing is lost. Close it again to leave without waiting.');
+                setCloseNotice('Still checking a model for Mark complete — the window stays open so nothing is lost. Close it again to leave without waiting.');
                 return false;
             }
         }
@@ -911,6 +939,8 @@ export default function BuildModelWindow() {
                 setRunningConditionTestPeriods([]);
                 setDashHighlights([]);
                 setRunningConditionNoneConfirmed(false);
+                setRunningStatusSaved(null);
+                setRsDraft(null);
                 setRcLegacyNotice(null);
                 setLegacyRemindLater(false);
                 setRcFilterOpen(false);
@@ -964,6 +994,8 @@ export default function BuildModelWindow() {
                 const ws = await loadWorkspaceData(d.workspaceId);
                 if (seq !== loadSeq.current || workspaceIdRef.current !== d.workspaceId) return;
                 setDashHighlights(ws?.timeHighlights ?? []);
+                projectSeq.current++;
+                setProjectInfo(ws ? projectInfoOf(ws) : null);
                 recipeSeq.current++;
                 setSpecialRecipes(ws?.specialSensorRecipes ?? null);
                 // One-time legacy cleanup: a sensor whose models disagree on category is
@@ -1035,6 +1067,38 @@ export default function BuildModelWindow() {
         };
     }, [applyFg, applyWritten, trackPending, writeSpDrafts, commitSetPointDrafts, queueReset]);
 
+    // A Project details save in ANY window (Dashboard title bar, a recent card, or here)
+    // renames the project: re-read name / machine / time zone from disk. Only this
+    // window's project — a payload for another workspace (or with no id) is dropped.
+    const reloadProjectInfo = useCallback((ws: string) => {
+        const seq = ++projectSeq.current;
+        loadWorkspaceData(ws)
+            .then(data => {
+                if (seq !== projectSeq.current || workspaceIdRef.current !== ws) return;
+                setProjectInfo(data ? projectInfoOf(data) : null);
+            })
+            .catch(() => { /* keep the last details */ });
+    }, []);
+    useEffect(() => subscribe<ProjectDetailsChangedPayload>(PROJECT_DETAILS_CHANGED, (event) => {
+        const ws = event.payload?.workspaceId;
+        if (!ws || ws !== workspaceIdRef.current) return;
+        reloadProjectInfo(ws);
+    }), [reloadProjectInfo]);
+    /** Opens Project details for this window's project (the export checklist's "Fix →"
+     *  calls it). The recent list is read first, then the project itself. */
+    const openProjectDetails = useCallback(async () => {
+        const ws = workspaceIdRef.current;
+        if (!ws) return;
+        let others: WorkspaceMetadata[] = [];
+        try { others = await getRecentWorkspaces(); } catch { /* list unavailable: no duplicate check */ }
+        let data: WorkspaceState | null = null;
+        try { data = await loadWorkspaceData(ws); } catch { /* the project could not be read */ }
+        if (!data || workspaceIdRef.current !== ws) return;
+        setProjectDetails({ ws: projectInfoOf(data), others });
+    }, []);
+    // No visible entry yet: the export checklist (next phase) opens it.
+    void openProjectDetails;
+
     // Returns the write's promise (also tracked via `trackPending`, so a
     // window close can await it) rather than being fire-and-forget itself.
     const persist = useCallback((
@@ -1073,6 +1137,8 @@ export default function BuildModelWindow() {
         periods?: TimePeriod[];
         noneConfirmed?: boolean;
         testPeriods?: TestPeriod[];
+        /** The export's running status — written in the SAME write as the rest. */
+        runningStatus?: RunningStatusDraft | null;
     }): Promise<void> => {
         if (!workspaceId) return Promise.resolve();
         return trackPending((async () => {
@@ -1085,6 +1151,7 @@ export default function BuildModelWindow() {
                     // Scoring periods are WRITTEN as id / start / end only: a legacy label /
                     // event time (an old workspace file) never goes back to disk.
                     ...(patch.testPeriods !== undefined ? { runningConditionTestPeriods: toScoringPeriods(patch.testPeriods) } : {}),
+                    ...(patch.runningStatus !== undefined ? { runningStatus: patch.runningStatus } : {}),
                 });
                 // Any edit made through this panel settles the legacy notice.
                 const fg = applied.failureGroupState;
@@ -1133,6 +1200,11 @@ export default function BuildModelWindow() {
      *  is zero AND the draft changed what is trained on. `applyRcDraft` re-checks
      *  the gate with it. */
     const rcGateRef = useRef<{ draft: RcDraft | null; bounds: PeriodDataBounds | null; noTrainRows: boolean }>({ draft: null, bounds: null, noTrainRows: false });
+    /** What Apply does with the running-status line, worked out on the last render:
+     *  `undefined` = nothing to write (not touched, unchanged, or the line is hidden),
+     *  the value to write (`null` clears it), or `RUNNING_STATUS_VALUE_REASON` when a
+     *  sensor was picked without a value (Apply waits). */
+    const rsChangeRef = useRef<() => RunningStatusDraft | null | undefined | typeof RUNNING_STATUS_VALUE_REASON>(() => undefined);
 
     /** Applies a patch (or a function of the current draft) to the draft,
      *  updating the ref synchronously so a blur-commit followed immediately by
@@ -1183,6 +1255,8 @@ export default function BuildModelWindow() {
     const closeRc = useCallback(() => {
         rcDraftRef.current = null;
         setRcDraftState(null);
+        rsDraftRef.current = null;
+        setRsDraftState(null);
         setRcPendingDate(prev => (prev.train === null && prev.scoring === null ? prev : { train: null, scoring: null }));
         setRcDiscardPrompt(false);
         setRcFilterOpen(false);
@@ -1195,7 +1269,7 @@ export default function BuildModelWindow() {
         // sorted), so it counts as "dirty".
         flushFocusedInput();
         const d = rcDraftRef.current;
-        if (d && !rcDraftEqual(d, rcPersistedRef.current)) {
+        if ((d && !rcDraftEqual(d, rcPersistedRef.current)) || rsChangeRef.current() !== undefined) {
             setRcDiscardPrompt(true);
             return;
         }
@@ -1207,8 +1281,20 @@ export default function BuildModelWindow() {
         // commit of a date still pending) has re-rendered; this forces it, and the
         // ref picks it up at once.
         flushFocusedInput();
+        const rs = rsChangeRef.current();
+        // A running-status line with a sensor but no value keeps the modal open.
+        if (rs === RUNNING_STATUS_VALUE_REASON) return;
+        const rsPatch = rs === undefined ? {} : { runningStatus: rs };
         const d = rcDraftRef.current;
-        if (!d || rcDraftEqual(d, rcPersistedRef.current)) { closeRc(); return; }
+        if (!d || rcDraftEqual(d, rcPersistedRef.current)) {
+            // Only the running status changed: it is written alone (nothing about training).
+            if (rs !== undefined) {
+                setRunningStatusSaved(rs);
+                void persistRunningCondition(rsPatch);
+            }
+            closeRc();
+            return;
+        }
         // Invalid train period, NO train period (rule 1), an invalid scoring period (a
         // missing date, or an end before its start), a period that was added / changed
         // in this draft and lies entirely outside the loaded data, or a settled count
@@ -1237,7 +1323,8 @@ export default function BuildModelWindow() {
         setRunningConditionTimePeriods(d.periods);
         setRunningConditionNoneConfirmed(d.noneConfirmed);
         setRunningConditionTestPeriods(d.testPeriods);
-        void persistRunningCondition({ filters: d.filters, combine: d.combine, periods: d.periods, noneConfirmed: d.noneConfirmed, testPeriods: d.testPeriods });
+        if (rs !== undefined) setRunningStatusSaved(rs);
+        void persistRunningCondition({ filters: d.filters, combine: d.combine, periods: d.periods, noneConfirmed: d.noneConfirmed, testPeriods: d.testPeriods, ...rsPatch });
         closeRc();
     }, [closeRc, persistRunningCondition]);
 
@@ -1448,14 +1535,17 @@ export default function BuildModelWindow() {
         return effectiveRunningCondition(effectiveModelFor(m), gateFg).periods.length === 0 ? 'Needs train period' : 'Fix periods';
     };
 
-    /** Another model of the same sensor already using the name being saved.
+    /** Another model of the WORKSPACE (any sensor, any kind) already using the name
+     *  being saved — the export writes each name as the model's display name.
      *  Only the model being edited is gated: an untouched draft (or one reverted
-     *  to its saved name) is never blocked, so already-saved duplicates stay. */
+     *  to its saved name) is never blocked; a saved twin blocks Mark complete. */
     const nameConflictOf = (m: FailureModel): FailureModel | null => {
         const d = drafts[m.id];
         if (!d || d.name.trim() === (m.name ?? '').trim()) return null;
-        return findSameSensorNameConflict(allModels, m, d.name);
+        return findWorkspaceNameTwin(allModels, m, d.name);
     };
+    /** "DESCRIPTION · TAG" (the tag alone without a description) for plain-text reasons. */
+    const plainSensorLabel = (tag: string): string => sensorPlainLabel(sensorLookup(tag));
 
     /** A Custom model's own lists as they are SAVED — what its draft is judged
      *  against (R2 / R3): the model's own saved lists. For a model that is saved in
@@ -1535,7 +1625,7 @@ export default function BuildModelWindow() {
         // the workspace Apply blocks this save too (`customSaveBlockOf`).
         const own = customSaveBlockOf(m, data);
         if (own) return customSaveReason(m, own);
-        return nameConflictOf(m) ? DUPLICATE_NAME_BLOCK_REASON : null;
+        return nameConflictOf(m) ? WORKSPACE_DUPLICATE_NAME_REASON : null;
     };
 
     /** The notice line's words when what blocks Save changes is in the Custom model's
@@ -2146,19 +2236,18 @@ export default function BuildModelWindow() {
         if (commit) void commitSetPointDrafts();
     };
 
-    /** The ONE way a model becomes Complete: `completeModel` (validate the set
-     *  points -> `export_model_files`, all-or-nothing) and only then
-     *  `persistModelComplete` (`status: true` + the validated set points + the export
-     *  record, in one write, gate + "trained and fresh" re-checked against what is on
-     *  disk). Returns `null` on success, otherwise the reason it was not marked
-     *  (also shown on the Health score page). Never throws; guarded against a
-     *  double click (a Relationship export re-runs the sidecar for ~15 s). */
+    /** The ONE way a model becomes Complete: `checkModelForComplete` (validate the
+     *  set points — writes NO files; Export results writes them) and only then
+     *  `persistModelComplete` (`status: true` + the validated set points, in one
+     *  write, gate + "trained and fresh" re-checked against what is on disk).
+     *  Returns `null` on success, otherwise the reason it was not marked (also
+     *  shown on the Health score page). Never throws; guarded against a double click. */
     const runMarkComplete = async (m: FailureModel): Promise<string | null> => {
         const fg: RunningConditionFg = gateFg;
         const model = effectiveModelFor(m);
         const ws = workspaceIdRef.current;
         if (!ws) return 'No workspace is open.';
-        if (completeRunningRef.current.has(m.id)) return 'Saving is already in progress.';
+        if (completeRunningRef.current.has(m.id)) return 'Mark complete is already being checked.';
         const id = m.id;
         // `true` while this window still shows the workspace the click was made in. The
         // run can outlive that (the window is re-pointed at another project meanwhile): the
@@ -2171,6 +2260,9 @@ export default function BuildModelWindow() {
             if (issues) setAttemptIssues(prev => ({ ...prev, [id]: issues }));
             return message;
         };
+        // A category on the sensor, and a name no other model of the project uses.
+        const projectBlock = markCompleteProjectBlock(allModels, model, categoryOf(m), plainSensorLabel);
+        if (projectBlock !== null) return fail(projectBlock);
         // Nothing is written for a model that is not allowed to be Complete anyway:
         // the gate, and "trained and still fresh" (the same rules `persistModelComplete`
         // re-checks against the disk inside its write).
@@ -2210,18 +2302,15 @@ export default function BuildModelWindow() {
             try {
                 if (hasDraft) await commitModel(m);
                 const sp = setPointsOf(m);
-                const res = await completeModel({
+                const res = await checkModelForComplete({
                     model,
                     fg,
                     headers: gateHeaders,
-                    workspaceId: ws,
                     setPoints: sp,
                     expectedGeneration: generation,
                 });
-                // No "workspace changed" bail-out here: `completeModel` has already written
-                // the model files into A's output folder, so the save below MUST still
-                // happen — into `ws` (the id captured at click time), never into whatever
-                // this window points at now.
+                // The save below always goes into `ws` (the id captured at click time),
+                // never into whatever this window points at now.
                 if (!res.ok) {
                     if (res.reason === 'validation') return fail('Some set points are not valid — fix them in Checks first.', res.issues);
                     if (res.code === 'NOT_FITTED') {
@@ -2236,18 +2325,16 @@ export default function BuildModelWindow() {
                         return fail(FIT_GONE_SAVE_MESSAGE);
                     }
                     if (res.code === 'STALE_SESSION') return fail('The data in this window is out of date. Close it and open Build Model again from the Dashboard.');
-                    return fail(res.error ?? 'The model could not be saved.');
+                    return fail(res.error ?? 'The model could not be marked complete.');
                 }
-                // Built by the ONE builder: it carries the scoring interval the validating
-                // preview reported (`scoringIntervalSecs`, 3600 = 1-hour averages).
-                const record = healthExportRecord(res, new Date().toISOString());
+                // No export record: Mark complete writes no files.
                 const persisted: { reason: string | null } = { reason: null };
                 await trackPending((async () => {
-                    const r = await persistModelComplete(ws, id, res.setPoints, gateHeaders, 'build-model', record, race);
+                    const r = await persistModelComplete(ws, id, res.setPoints, gateHeaders, 'build-model', undefined, race);
                     persisted.reason = r.reason;
                     if (stillHere()) applyWritten(r.next);
                 })());
-                if (persisted.reason !== null) return fail(`The files were written, but the model was not marked complete: ${persisted.reason}`);
+                if (persisted.reason !== null) return fail(`The model was not marked complete: ${persisted.reason}`);
                 // Re-pointed meanwhile: A's Complete is on disk (and was broadcast with A's
                 // id by `persistModelComplete`); this window's own state is B's — leave it.
                 if (!stillHere()) return null;
@@ -2257,7 +2344,7 @@ export default function BuildModelWindow() {
                     delete rest[id];
                     writeSpDrafts(rest);
                 }
-                setSaveInfo(prev => ({ ...prev, [id]: { phase: 'ok', outputDir: res.outputDir, at: record.at } }));
+                setSaveInfo(prev => { const rest = { ...prev }; delete rest[id]; return rest; });
                 return null;
             } catch (e) {
                 return fail(e instanceof Error ? e.message : String(e));
@@ -3653,22 +3740,18 @@ export default function BuildModelWindow() {
      *  a model whose run failed in this session.
      *   - `dot`:   the dot's colour (the sensor list's colours);
      *   - `words`: the status in words, with every suffix ("· no data in the loaded
-     *              file", "· files out of date", "· unsaved changes") — shown on the tab
+     *              file", "· unsaved changes") — shown on the tab
      *              uncut, and the same string in the tooltip and the tab's name;
      *   - `tone`:  the colour of those words — the dot's colour, except that a plain
-     *              "Trained" asks for nothing and stays neutral grey, and that a Complete
-     *              model whose files are out of date reads AMBER (user decision
-     *              2026-10-14: green looked like nothing was left to do). Its dot stays
-     *              the list's green — the model is still Complete.
+     *              "Trained" asks for nothing and stays neutral grey.
      *   - `flag`:  the set-point flag the words say ("Set points needed" → 'needed',
      *              "Fix set point" → 'fix'), else null — page tab ② reads THIS for its
      *              cue, so the tab and page tab ② can never disagree. */
     const tabDotOf = (m: FailureModel, st: ModelDotState): { dot: TabDot; tone: TabDot; words: string; flag: SetPointFlag } => {
-        // Unsaved Model-settings edits and saved files that no longer match the set
-        // points are said for EVERY tab of the sensor, not only the one that is open.
-        const outOfDate = filesOutOfDateFor(m);
-        const tail = `${outOfDate ? ' · files out of date' : ''}${m.id in drafts ? ' · unsaved changes' : ''}`;
-        const toneOf = (dot: TabDot, plain = false): TabDot => (outOfDate && dot === 'complete' ? 'need' : plain ? null : dot);
+        // Unsaved Model-settings edits are said for EVERY tab of the sensor, not only
+        // the one that is open.
+        const tail = m.id in drafts ? ' · unsaved changes' : '';
+        const toneOf = (dot: TabDot, plain = false): TabDot => (plain ? null : dot);
         if (trainError[m.id]) return { dot: 'bad', tone: 'bad', words: `${failedWordsOf(m)}${tail}`, flag: null };
         const badge = gateBadge(m);
         // Results, but no row of the loaded data: nothing about the model changed — its
@@ -4011,7 +4094,11 @@ export default function BuildModelWindow() {
      *  null. Only the active model has a health preview, so this is for the active
      *  model. Rust's validation is the source of "set points not valid". */
     const markCompleteBlock = (m: FailureModel): string | null => {
-        // A training run owns the sidecar (a Relation-model export re-runs it): wait for the run.
+        // A category on the sensor, and a model name no other model of the project uses
+        // (the export writes it as the model's display name).
+        const projectBlock = markCompleteProjectBlock(allModels, m, categoryOf(m), plainSensorLabel);
+        if (projectBlock !== null) return projectBlock;
+        // A training run owns the sidecar: wait for the run.
         if (queue.isRunning) return TRAIN_RUN_ACTIVE_REASON;
         if (isModelStale(m)) return 'Settings changed — re-train first.';
         // Unsaved settings are saved by Mark complete first; ones that cannot be saved block it.
@@ -4059,26 +4146,12 @@ export default function BuildModelWindow() {
         return null;
     };
 
-    /** What the Health score page says about the model's saved files. */
-    const saveInfoFor = (m: FailureModel): SaveInfo =>
-        // "Saved N files" only while the model is still Complete: a change of only its
-        // scoring periods makes it Incomplete without touching
-        // this session's record, and the old message would then be misleading.
-        (saveInfo[m.id]?.phase === 'ok' && !isModelDone(m) ? undefined : saveInfo[m.id]) ?? (m.healthExport && isModelDone(m)
-            ? { phase: 'ok', outputDir: m.healthExport.outputDir, at: m.healthExport.at }
-            : { phase: 'idle' });
-    /** Complete, but the set points on screen differ from the ones the files were written with. */
-    const filesOutOfDateFor = (m: FailureModel): boolean =>
-        isModelDone(m) && !!m.healthExport && !sameSetPoints(m.healthExport.setPoints, setPointsOf(m));
-    /** Complete, but its files were written before the health score moved to 1-hour
-     *  averages (the export record has no scoring interval). The model STAYS Complete:
-     *  the notice line only says so and the header offers "Mark complete again", like `filesOutOfDateFor`.
-     *  Nothing is written until the user presses the button. */
-    const earlierScoringFor = (m: FailureModel): boolean =>
-        savedResultsUseEarlierScoring(effectiveModelFor(m), gateFg, specialRecipes);
-
-    /** "…\workspaces\<id>\output\<sensor>": the saved folder without the machine's own prefix (the full path is the tooltip). */
-    const shortOutputDir = (dir: string): string => dir.replace(/^.*([\\/])(workspaces[\\/])/, '…$1$2');
+    /** What the Health score page says about this model's Mark complete: running,
+     *  failed, or nothing (Mark complete writes no files — Export results does). */
+    const saveInfoFor = (m: FailureModel): SaveInfo => {
+        const info = saveInfo[m.id];
+        return info && info.phase !== 'ok' ? info : { phase: 'idle' };
+    };
 
     /** THE one filled button of the detail pane right now (at most ONE filled button
      *  on screen; all of them sit in the header's right side — Train sensor and the
@@ -4090,9 +4163,8 @@ export default function BuildModelWindow() {
      *                   tab ②, which carries the "set points needed" cue — navigation
      *                   is never dressed as a required action)
      *   - Health score: Train sensor when THIS model must train again · else Mark
-     *                   complete (again, when the files are out of date or were saved
-     *                   with the earlier row-by-row scoring) · a Complete
-     *                   model has none, unless a sibling model needs training
+     *                   complete · a Complete model has none, unless a sibling model
+     *                   needs training
      *  Presentation only: it never enables, disables or hides anything. */
     const primaryActionOf = (m: FailureModel, page: WorkbenchPage, cands: readonly TrainCandidate[]): PrimaryAction => {
         if (rcStepState !== 'set') return null;
@@ -4104,7 +4176,7 @@ export default function BuildModelWindow() {
         if (cands.find(c => c.id === m.id)?.plan.kind === 'ready') return 'train';
         // ...and Mark complete could only fail.
         if (noDataOf(m)) return sensorNeedsTrain ? 'train' : null;
-        if (!isModelDone(m) || filesOutOfDateFor(m) || earlierScoringFor(m)) return 'mark';
+        if (!isModelDone(m)) return 'mark';
         return sensorNeedsTrain ? 'train' : null;
     };
 
@@ -4114,16 +4186,14 @@ export default function BuildModelWindow() {
      *     Model fit: "Save changes" (only while a draft exists) — nothing else: the way
      *     on to the Health score page is page tab ② (always visible; it says why it is
      *     closed, and carries the "set points needed" / "fix set point" cue).
-     *     Health score: Mark complete ("Mark incomplete", a text button, once Complete;
-     *     "Mark complete again" only when the files are out of date or were saved with
-     *     the earlier row-by-row scoring). At most one of them is filled (`primary`).
+     *     Health score: Mark complete ("Mark incomplete", a text button, once Complete).
+     *     At most one of them is filled (`primary`).
      *     A disabled Save changes / Mark complete has ONE short reason line under it,
      *     in the same slot and style as Train sensor's line.
      *   - `notice`: ONE line at the bottom of the pane, ONLY while there is something to
      *     fix or wait for — a warning (amber), an error (red; a rejected set point is
-     *     one), saving, an unsaved draft, queued / training — or the "Files saved <date>
-     *     · <folder>" confirmation. Otherwise null: no line at all. It never says a
-     *     train date or "scored on N periods". */
+     *     one), checking, an unsaved draft, queued / training. Otherwise null: no line
+     *     at all. It never says a train date or "scored on N periods". */
     const renderStateParts = (m: FailureModel, page: WorkbenchPage, primary: PrimaryAction): { notice: ReactNode; actions: ReactNode } => {
         // Save changes is an action: the draft's data guards apply to it.
         const saveReason = modelBlockReason(m, true);
@@ -4151,9 +4221,6 @@ export default function BuildModelWindow() {
         const markBlock = page === 'health' ? markCompleteBlock(m) : null;
         const savePhase = saveInfo[m.id]?.phase;
         const saving = savePhase === 'running';
-        const outOfDate = page === 'health' && filesOutOfDateFor(m);
-        // Saved before the score moved to 1-hour averages: still Complete, with a hint.
-        const earlierScoring = page === 'health' && earlierScoringFor(m);
         // Train queue: queued or training in the run = settings locked (Save disabled).
         const qItem = queue.isRunning ? queue.itemOf(m.id) : undefined;
         const locked = queue.isLocked(m.id);
@@ -4161,12 +4228,8 @@ export default function BuildModelWindow() {
         // The header's Train sensor is the one place to train. This link focuses it.
         const goTrainSensor = trainSensorLink('footer-train-sensor');
         // (No train date and no "scored on N periods" anywhere on the page — user decision
-        // 2026-10-12: the periods are in the running-condition line.)
-        // A successful save is THIS sentence (there is no "Files saved to …" banner).
-        const saved = saveInfoFor(m);
-        const savedLine: ReactNode = saved.phase === 'ok'
-            ? <span data-testid="save-ok">Files saved <Stamp at={saved.at} /> · <span className="hs-path" data-testid="footer-saved-path" title={saved.outputDir}>{shortOutputDir(saved.outputDir)}</span></span>
-            : null;
+        // 2026-10-12: the periods are in the running-condition line. A successful Mark
+        // complete is the green "Complete" on the kind tab: no confirmation line.)
 
         // The fit-gone sentence of BOTH pages: "load it again" as a link, and — only for a
         // model Train sensor really trains (not Complete) — "Train sensor ↑".
@@ -4208,18 +4271,26 @@ export default function BuildModelWindow() {
         // Why Mark complete is disabled, as the sentence shows it: the fit-gone reason gets
         // its links; the moment Rust is still checking what was typed is not
         // a reason worth replacing a Complete model's sentence for.
+        // A name twin names the other model's sensor with its label (description first).
+        const twin = findWorkspaceNameTwin(allModels, m, m.name ?? '');
+        const twinLine: ReactNode = twin ? (
+            <span data-testid="name-twin-reason">
+                Model name “{(m.name ?? '').trim()}” is also used by the {kindModelName(twin.kind)} of <SensorInline tag={modelTagOf(twin)} /> — rename one in Model settings
+            </span>
+        ) : null;
         const blockWhy: ReactNode = markBlock === null || markBlock === CHECKING_SET_POINTS ? null
+            : twinLine && markBlock.startsWith('Model name “') ? twinLine
             : markBlock === LOAD_FAILED_BLOCK_REASON ? loadFailedLine
             : markBlock === FIT_GONE_BLOCK_REASON || markBlock === FIT_GONE_BLOCK_REASON_COMPLETE ? fitGoneLine
             : ownGateText(m, markBlock);
         // The ONE sentence of the notice line (first match wins) — or null: nothing to
-        // fix or wait for, so no line. `ok` is the "Files saved …" confirmation.
+        // fix or wait for, so no line.
         let line: ReactNode = null;
         let tone: 'plain' | 'warn' | 'bad' | 'ok' = 'plain';
-        let lineId: 'footer-status' | 'mark-block-reason' | 'build-block-reason' | 'files-out-of-date' | 'earlier-scoring' = 'footer-status';
+        let lineId: 'footer-status' | 'mark-block-reason' | 'build-block-reason' = 'footer-status';
         if (page === 'health') {
-            // Saving is said HERE only (no card on the page unless it is slow).
-            if (saving) line = <><Loader2 size={11} className="pm-spin" aria-hidden="true" /> Saving the model files…</>;
+            // Checking is said HERE only (no card on the page unless it is slow).
+            if (saving) line = <><Loader2 size={11} className="pm-spin" aria-hidden="true" /> Checking the set points…</>;
             // No data for it in the loaded file: the same sentence on both pages (it is
             // also why Mark complete / Mark complete again is disabled — the button's tooltip).
             else if (noDataLine) { line = noDataLine; tone = 'warn'; }
@@ -4229,31 +4300,24 @@ export default function BuildModelWindow() {
             // warning nor something to fix, and a line that came and went on every keystroke
             // would make the page jump — it is the neutral line under the button only.)
             else if (!done && markBlock !== null && markBlock !== CHECKING_SET_POINTS) { line = blockWhy ?? markBlock; tone = 'warn'; lineId = 'mark-block-reason'; }
-            else if (done && outOfDate && blockWhy !== null) { line = <>Files out of date · {blockWhy}</>; tone = 'warn'; lineId = 'files-out-of-date'; }
             // (A refusal for a lost fit that was loaded again since — by itself — has
             // nothing left to "fix": only the second click is missing.)
             else if (savePhase === 'error') {
                 line = (saveInfo[m.id] as { message?: string }).message === FIT_GONE_SAVE_MESSAGE
-                    ? 'Not saved · the Relation model is loaded again — Mark complete again'
-                    : 'Not saved · fix it, then Mark complete again';
+                    ? 'Not marked complete · the Relation model is loaded again — Mark complete'
+                    : 'Not marked complete · fix it, then Mark complete';
                 tone = 'bad';
             }
-            else if (done && outOfDate) { line = 'Files out of date — set points changed after saving · Mark complete again to update them'; tone = 'warn'; lineId = 'files-out-of-date'; }
             // A Complete model whose fit is gone stays Complete — but the page cannot score
             // until the fit is loaded again: say that, not only "Files saved …".
             else if (done && fitGone) { line = fitGoneLine; tone = 'warn'; }
             // ...and so does one whose load failed — whether or not an earlier answer is
             // still on screen: the tab's red dot and this sentence always agree.
             else if (loadFailed) { line = loadFailedLine; tone = 'bad'; }
-            // The saved files were scored row by row (written before the 1-hour averages):
-            // the model stays Complete; "Mark complete again" writes them again.
-            else if (done && earlierScoring) { line = EARLIER_SCORING_HINT_TEXT; tone = 'warn'; lineId = 'earlier-scoring'; }
             // A Model-settings draft is waiting on the other page.
             else if (hasDraft) line = 'Unsaved changes in Model settings';
-            // The confirmation of a save (nowhere else says it).
-            else if (done && savedLine) { line = savedLine; tone = 'ok'; }
-            // (Complete with no save record, or valid set points waiting for Mark complete:
-            // nothing to fix or wait for — no line.)
+            // (Complete, or valid set points waiting for Mark complete: nothing to fix or
+            // wait for — no line.)
         } else if (qItem && locked) {
             line = qItem.state === 'running'
                 ? <><Loader2 size={11} className="pm-spin" aria-hidden="true" /> Training now · about {formatTrainSeconds(ROUGH_TRAIN_SECONDS[m.kind])}</>
@@ -4312,8 +4376,8 @@ export default function BuildModelWindow() {
         const saveShown = page === 'model' && hasDraft;
         const saveDisabled = saveReason !== null || locked;
         const saveTitle = locked ? 'Settings are locked while this model is in the run' : saveReason ?? undefined;
-        // A Mark complete button is on screen (a Complete model has one only for "again").
-        const markShown = page === 'health' && (!done || outOfDate || earlierScoring);
+        // A Mark complete button is on screen (a Complete model has "Mark incomplete").
+        const markShown = page === 'health' && !done;
         // The reason of the DISABLED state button, in ONE short line under it (the button's
         // own tooltip, in words on screen): Save changes on Model fit, Mark complete on
         // Health score. Never while saving — the notice line says that.
@@ -4350,18 +4414,6 @@ export default function BuildModelWindow() {
                                     <button type="button" className="f4-btn f4-btn--plain f4-btn--small" data-testid="mark-incomplete" disabled={saving} onClick={() => markModelIncomplete(m.id)}>
                                         Mark incomplete
                                     </button>
-                                    {(outOfDate || earlierScoring) && (
-                                        <button
-                                            type="button"
-                                            className={markClass}
-                                            data-testid="mark-complete-again"
-                                            disabled={markBlock !== null || saving}
-                                            title={markBlock ?? 'Write the files again with the current set points'}
-                                            onClick={() => { void runMarkComplete(m); }}
-                                        >
-                                            {saving ? 'Saving…' : '✓ Mark complete again'}
-                                        </button>
-                                    )}
                                 </>
                             ) : (
                                 <button
@@ -4369,10 +4421,11 @@ export default function BuildModelWindow() {
                                     className={markClass}
                                     data-testid="mark-complete"
                                     disabled={markBlock !== null || saving}
-                                    title={markBlock ?? 'Write the model files and mark it complete'}
+                                    title={markBlock ?? 'Check the set points and mark it complete'}
+                                    aria-busy={saving || undefined}
                                     onClick={() => { void runMarkComplete(m); }}
                                 >
-                                    {saving ? 'Saving…' : '✓ Mark complete'}
+                                    {saving ? <><Loader2 size={12} className="pm-spin" aria-hidden="true" /> Checking…</> : '✓ Mark complete'}
                                 </button>
                             )}
                         </div>
@@ -4768,7 +4821,22 @@ export default function BuildModelWindow() {
     // values. Only the modal reads these — everything above (Step-1 card, gate,
     // models) stays on the persisted state.
     const rcView = rcDraft ?? rcPersisted;
-    const rcDirty = rcDraft !== null && !rcDraftEqual(rcDraft, rcPersisted);
+    // ---- "Machine is running when … is above …" (the export's running status) ----
+    // Shown only when the conditions (as drafted) are not exactly ONE "above": with one,
+    // that condition IS the running status.
+    const rsAbove = aboveConditions({ runningConditionFilters: rcView.filters, runningConditionNoneConfirmed: rcView.noneConfirmed }, gateHeaders);
+    const rsShown = rsAbove.length !== 1;
+    // What the line shows untouched: the saved value, else the first "above" condition.
+    const rsBase: RunningStatusDraft = runningStatusSaved
+        ?? (rsAbove[0] ? { sensor: rsAbove[0].sensor, stopAtOrBelow: rsAbove[0].value1 } : { sensor: '', stopAtOrBelow: '' });
+    const rsView = rsDraft ?? rsBase;
+    const rsWhy = rsShown && rsView.sensor !== '' && rsView.stopAtOrBelow.trim() === '' ? RUNNING_STATUS_VALUE_REASON : null;
+    const rsChange: RunningStatusDraft | null | undefined | typeof RUNNING_STATUS_VALUE_REASON =
+        !rsShown || rsDraft === null || sameRunningStatus(rsDraft, rsBase) ? undefined
+            : rsWhy ?? (rsDraft.sensor ? { sensor: rsDraft.sensor, stopAtOrBelow: rsDraft.stopAtOrBelow.trim() } : null);
+    rsChangeRef.current = () => rsChange;
+    const rsDirty = rsChange !== undefined;
+    const rcDirty = (rcDraft !== null && !rcDraftEqual(rcDraft, rcPersisted)) || rsDirty;
     const rcViewInvalid = validatePeriods(rcView.periods, datasetBounds, rcPersisted.periods).some(s => s.invalid);
     // Apply gate: an invalid train period, NO train period, an invalid scoring
     // period (a missing date, an end before its start), a train or scoring period
@@ -4788,7 +4856,7 @@ export default function BuildModelWindow() {
     // complete — so "dirty" is the whole condition, and the impact line below is on
     // screen whenever Apply is enabled. A half-typed date changes nothing (it
     // never reaches the draft): it only shows the neutral line.
-    const rcApplyEnabled = rcApplyBlock === null && rcDirty;
+    const rcApplyEnabled = rcApplyBlock === null && rcDirty && rsWhy === null;
     const rcPendingName = rcPendingDate.train ?? rcPendingDate.scoring;
     const rcTestsNotice = testsChangedNotice(allModels, gateFg);
     const rcRetrainLeft = rcRetrainIds.length > 0
@@ -4796,9 +4864,41 @@ export default function BuildModelWindow() {
         : [];
     // What applying the draft does to the models (never blocks Apply). Only
     // worked out while the modal is open on an edited draft.
-    const rcImpact = rcFilterOpen && rcDirty && rcDraft
+    const rcImpact = rcFilterOpen && rcDraft && !rcDraftEqual(rcDraft, rcPersisted)
         ? runningConditionImpact(gateFg, rcDraft, { recipes: specialRecipes ?? undefined })
         : null;
+    const rsUnit = rsView.sensor ? getUnit(rsView.sensor) : '';
+    const rsSlot = !rsShown ? null : (
+        <div className="rs-line" data-testid="rc-running-status">
+            <div className="rs-row">
+                <span className="rs-l">Machine is running when</span>
+                <span className="rs-pick">
+                    <SensorPickerSingle
+                        sensors={allSensors}
+                        value={rsView.sensor}
+                        onSelect={t => setRsDraft({ ...rsView, sensor: t })}
+                        getComponent={getComponent}
+                        ariaLabel="Sensor that tells the machine is running"
+                    />
+                </span>
+                <span className="rs-l">is above</span>
+                <label className={`rcm-val rs-val${rsWhy ? ' rs-val--empty' : ''}`}>
+                    <input
+                        type="number"
+                        value={rsView.stopAtOrBelow}
+                        aria-label="Running above this value"
+                        placeholder="value"
+                        onChange={e => setRsDraft({ ...rsView, stopAtOrBelow: e.target.value })}
+                    />
+                    {rsUnit && <span>{rsUnit}</span>}
+                </label>
+            </div>
+            <div className="rs-note" data-testid="rc-running-status-note">
+                Used by the export only — the customer's monitoring system needs one sensor that tells the machine is running. Training still uses the conditions above.
+                {rsAbove.length > 1 ? ` There are ${rsAbove.length} “above” conditions, so say which one it is.` : rcView.noneConfirmed ? ' “Use all rows” has no condition to take it from.' : ' No “above” condition to take it from.'}
+            </div>
+        </div>
+    );
     const rcViewConfigured = isWorkspaceRunningConditionConfigured(
         { runningConditionFilters: rcView.filters, runningConditionNoneConfirmed: rcView.noneConfirmed },
         gateHeaders,
@@ -4806,7 +4906,7 @@ export default function BuildModelWindow() {
 
     return (
         <SensorMetaContext.Provider value={sensorLookup}>
-        <div className="flex flex-col h-screen overflow-hidden" style={{ backgroundColor: 'var(--card-bg)', color: 'var(--text-primary)' }}>
+        <div className="flex flex-col h-screen overflow-hidden" data-project-name={projectInfo?.name ?? undefined} style={{ backgroundColor: 'var(--card-bg)', color: 'var(--text-primary)' }}>
             <div data-tauri-drag-region className="flex justify-between items-center gap-3 shrink-0" style={{ padding: '12px 16px', backgroundColor: 'var(--card-bg)', borderBottom: '1px solid var(--border)' }}>
                 <h2 className="pointer-events-none" style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>
                     Build Model
@@ -5056,6 +5156,7 @@ export default function BuildModelWindow() {
                                 onTestPeriodsChange={updateRunningConditionTestPeriods}
                                 highlights={dashHighlights}
                                 onPendingDate={onRcPendingDate}
+                                runningStatusSlot={rsSlot}
                             />
                         </div>
                         <div className="bmw-modal-foot" data-testid="rc-modal-foot">
@@ -5075,14 +5176,18 @@ export default function BuildModelWindow() {
                                         data-testid="rc-apply"
                                         className="filter-apply-btn"
                                         disabled={!rcApplyEnabled}
-                                        title={rcApplyBlock?.footer}
+                                        title={rcApplyBlock?.footer ?? rsWhy ?? undefined}
                                         onClick={applyRcDraft}
                                     >
                                         <Check size={12} /> Apply
                                     </button>
                                     <button type="button" data-testid="rc-cancel" className="f4-btn f4-btn--plain" onClick={closeRc}>Cancel</button>
                                     <span className="filter-panel-spacer" />
-                                    {rcApplyBlock ? (
+                                    {!rcApplyBlock && rsWhy ? (
+                                        <span data-testid="rc-running-status-why" role="alert" className="rc-impact rc-impact--amber">
+                                            <span>{rsWhy}</span>
+                                        </span>
+                                    ) : rcApplyBlock ? (
                                         // Why Apply is disabled: "Fix P2 before applying" (red),
                                         // "Add a train period" (amber), "Fix S1 before applying" (red),
                                         // "No rows to train on" (red).
@@ -5116,6 +5221,15 @@ export default function BuildModelWindow() {
                         </div>
                     </div>
                 </div>
+            )}
+
+            {projectDetails && (
+                <ProjectDetailsModal
+                    workspace={projectDetails.ws}
+                    existing={projectDetails.others}
+                    onSaved={p => { if (p.workspaceId === workspaceIdRef.current) reloadProjectInfo(p.workspaceId); }}
+                    onClose={() => setProjectDetails(null)}
+                />
             )}
 
             {/* Train all: the pre-flight list, then the run's details (also the strip's Details). */}

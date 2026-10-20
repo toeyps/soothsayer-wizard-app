@@ -112,8 +112,13 @@ describe('the reason texts mapped above still exist in the Build Model window', 
         expect(src).not.toContain(REQUIRED_FIELDS_BLOCK_REASON);
         expect(src).toContain('missingSettingsText(missingItems(m))');
     });
+    // 2026-10-20: model names are unique across the PROJECT; the window uses the shared
+    // `WORKSPACE_DUPLICATE_NAME_REASON` (utils/modelNames.ts), not a copy of its text.
+    it('the window blocks a duplicate name with the shared WORKSPACE_DUPLICATE_NAME_REASON', () => {
+        expect(src).toContain('WORKSPACE_DUPLICATE_NAME_REASON');
+        expect(src).not.toContain(`'${DUPLICATE_NAME_BLOCK_REASON}'`);
+    });
     it.each([
-        DUPLICATE_NAME_BLOCK_REASON,
         'Pick a category',
         'Model name is required',
         'Add at least 1 predictor',

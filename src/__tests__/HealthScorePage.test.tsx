@@ -1564,7 +1564,7 @@ describe('states of the preview', () => {
     });
 });
 
-describe('saved files: progress, result and "changed after saving"', () => {
+describe('Mark complete: checking, result and failure (it writes no files)', () => {
     const save = (s: SaveInfo) => mount({ sp: IND_VALID, save: s });
 
     it('nothing to say while idle', () => {
@@ -1574,24 +1574,25 @@ describe('saved files: progress, result and "changed after saving"', () => {
         expect(screen.queryByTestId('save-error')).toBeNull();
     });
 
-    // Saving is the FOOTER only — no card on the page, unless the save is slow.
-    it('running: no "Saving…" card on the page; one appears only once the save has been running for a while', () => {
+    // Checking is the FOOTER only — no card on the page, unless the check is slow.
+    it('running: no "Still checking…" card on the page; one appears only once the check has been running for a while', () => {
         vi.useFakeTimers();
         try {
             save({ phase: 'running' });
             expect(screen.queryByTestId('save-running')).toBeNull();
             expect(screen.getByTestId('health-page').querySelector('.hs-save')).toBeNull();
-            expect(screen.getByTestId('health-page').textContent).not.toMatch(/Saving/);
+            expect(screen.getByTestId('health-page').textContent).not.toMatch(/Saving|Still checking/);
             act(() => { vi.advanceTimersByTime(SLOW_SAVE_NOTICE_MS - 1); });
             expect(screen.queryByTestId('save-running')).toBeNull();
             act(() => { vi.advanceTimersByTime(1); });
-            expect(screen.getByTestId('save-running').textContent).toBe('Still saving… Writing the model files is taking longer than usual.');
+            expect(screen.getByTestId('save-running').textContent).toBe('Still checking… Checking the model is taking longer than usual.');
             cleanup();
-            // a Relation model: not at once either (it used to show the card from the first moment)
+            // a Relation model: the same words (nothing is fitted again for files any more)
             mount({ kind: 'relationship', sp: REL_VALID, save: { phase: 'running' } });
             expect(screen.queryByTestId('save-running')).toBeNull();
             act(() => { vi.advanceTimersByTime(SLOW_SAVE_NOTICE_MS); });
-            expect(screen.getByTestId('save-running').textContent).toMatch(/Still saving….*longer than 15 seconds, especially the first time/);
+            expect(screen.getByTestId('save-running').textContent).toBe('Still checking… Checking the model is taking longer than usual.');
+            expect(screen.getByTestId('save-running').textContent).not.toMatch(/15 seconds|files/);
         } finally {
             vi.useRealTimers();
         }
