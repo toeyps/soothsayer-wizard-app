@@ -6,6 +6,59 @@
 
 ---
 
+## [0.12.0] — 2026-10-21
+
+Minor release — **Export results**: ส่งผลโมเดลทั้ง workspace ออกเป็นไฟล์ชุดเดียวสำหรับระบบ health score พร้อมข้อมูลเครื่อง (Plant · Machine) ที่ต้องกรอกเพื่อใช้ในการ export
+workspace เก่าเปิดได้ตามเดิม (ไม่มีอะไรพัง) แต่มีพฤติกรรมบางอย่างเปลี่ยน ดูหัวข้อ "สิ่งที่เปลี่ยนจากเดิม" ด้านล่าง
+
+### ✨ Features
+
+- **ปุ่ม Export results ที่แถบล่างของหน้าต่าง Build Model** — กดได้เมื่อโมเดลทุกตัวเป็น Complete
+  - หน้าต่าง Export แสดง checklist (ข้อมูลเครื่อง, time zone, running status, special sensor, โมเดล) ว่าอะไรครบ/ยังขาด พร้อมตัวอย่างโครงสร้างไฟล์และดูตัวอย่างเนื้อไฟล์ (Peek)
+  - เลือกโฟลเดอร์ปลายทางเอง แอปสร้างโฟลเดอร์ใหม่ให้ทุกครั้ง (ชื่อเป็นภาษาอังกฤษ + วันที่เวลา) ไม่เขียนทับของเดิม
+  - ไฟล์ที่ได้ตามสเปกกลางของ Wizard: `machine_info.json` และ `models/<ชื่อ>.json` + `.csv` ต่อโมเดล — ไม่มีไฟล์ `.pkl` ไม่มีข้อมูลดิบทั้งชุด ไม่มีชื่ออัลกอริทึม
+  - ถ้ามี sensor ที่ไม่ได้ระบุ component แอปถามยืนยันก่อน export
+  - ระหว่าง export ช่องตั้งค่าถูกล็อก มีสถานะ writing / done / failed, ยกเลิกได้, และเปิดโฟลเดอร์ผลลัพธ์ได้จากหน้าต่าง
+- **ข้อมูลเครื่อง (Plant · Machine)** — กรอก Plant, Machine, Machine tag (บังคับ) และ Notes ตอนสร้าง project ชื่อ project คือ "Plant · Machine" (คู่นี้ห้ามซ้ำกับ project อื่น)
+  - เมนู **Project details** เปิดได้จากปุ่ม Rename บน Recent card, เมนูชื่อ project บน title bar และเมนูแอป — บันทึกครั้งเดียวทั้งชื่อ, รายละเอียด, machine และ time zone
+  - Step 2 แสดงบรรทัด time zone ของข้อมูล (ค่าเริ่มต้นตามเครื่อง เปลี่ยนได้) ใช้ประทับเวลาในไฟล์ที่ export
+  - project เก่า: Plant ใช้ชื่อเดิม Machine/tag ว่างไว้ให้กรอก — แสดงชื่อเดิมจนกว่าจะกรอกครบ; Duplicate project ต่อท้ายชื่อ machine ด้วย " (Copy)" และคงสถานะ Complete ของโมเดล
+- **Running status** — ระบุเงื่อนไขว่าเครื่องกำลังทำงานเมื่อ sensor ใดสูงกว่าค่าเท่าไร (ใช้เงื่อนไข "above" ตัวเดียวที่มีอยู่ หรือกำหนดที่บรรทัดใหม่ใน running condition) ส่งออกไปใน `machine_info.json`
+- **ชื่อโมเดลห้ามซ้ำทั้ง project** — แอปตรวจตอนบันทึกและตอน Mark complete พร้อมบอกเหตุผล; โมเดลใหม่ได้ชื่อเริ่มต้นที่ไม่ซ้ำกันเอง (ต่อท้าย "(Relation model)" / "(Clustering)" / "(Individual)" เมื่อชน)
+- โมเดลที่ไม่มี Category ถูกกันไม่ให้ Mark complete พร้อมบอกเหตุผล (เดิมบังคับเฉพาะก่อน Train)
+- ตรวจสเปกก่อน export: input = output, X = Y, ชื่อ Failure Group ซ้ำ, ปัญหารายโมเดล — แสดงเป็นรายการปัญหาพร้อมชื่อ sensor (description ก่อน tag)
+
+### ⚠️ สิ่งที่เปลี่ยนจากเดิม (workspace เก่าเปิดได้ แต่ผลอาจต่างจากเดิม)
+
+- **Mark complete ไม่เขียนไฟล์อีกแล้ว** — เหลือแค่ตรวจและตั้งสถานะ Complete (ปุ่มแสดง "Checking…") ไฟล์ผลลัพธ์เขียนตอน Export results เท่านั้น; ลบข้อความ "Mark complete again" ที่เคยเตือนเมื่อไฟล์เก่ากว่าการตั้งค่า, และการลบโมเดล/Failure Group ไม่ต้องลบไฟล์ใน AppData อีก
+- **แก้ set point ของโมเดลที่ Complete แล้ว → กลับเป็น Incomplete ทันที** ต้อง Mark complete ใหม่ (เดิมแก้ได้โดยสถานะคงเดิม)
+- **ขอบเขตช่วง cluster ของ Clustering เปลี่ยนเป็น `min < ค่า <= max`** ค่าที่ตรงเส้นแบ่งพอดีจะอยู่ในช่วงล่าง (เดิมอยู่ช่วงบน) และใช้กติกาเดียวกันทั้ง Train, health score และ export
+- **ขอบนอกของ cluster เปิด** — ค่า criteria ที่อยู่นอกช่วงที่ตั้งไว้จะได้คะแนนตาม cluster ริมสุด (เดิมไม่มีคะแนน); ถ้าช่วงซ้อนกัน แถวในส่วนซ้อนจะถูกใช้ train กับ cluster แรกเท่านั้น (เดิม train ทั้งสอง)
+- ข้อความเตือน scoring periods เปลี่ยนจาก "…to save the new results" เป็น "…to confirm the new results"
+
+### 🐛 Bug fixes
+
+- Dashboard autosave ไม่เขียนทับชื่อ/รายละเอียด/ข้อมูลเครื่อง/time zone ที่เพิ่งบันทึกจากหน้าต่างอื่น
+- Rename project มีทางบันทึกทางเดียว (Project details) — ไม่มีทางที่ชื่อสองที่ไม่ตรงกันอีก
+- ถ้าแก้ set point ระหว่างที่แอปกำลังตรวจ Mark complete โมเดลจะคงเป็น Incomplete (ไม่ถูกตั้งเป็น Complete ด้วยค่าที่ยังไม่ได้ตรวจ)
+- การตรวจ export ล้มเหลวทั้งชุดเพราะมีโมเดลเดียวตั้งค่าไม่ครบ ไม่ขึ้น "Export failed" ที่ไม่มีคำอธิบายอีก — แสดงเป็นปัญหารายโมเดลพร้อมปุ่ม Try again
+- ชื่อไฟล์ที่ตรงกับชื่อ device ของ Windows (เช่น `NUL`) ถูกแปลงให้ปลอดภัยตอน export
+
+### 🧪 Tests
+
+- เพิ่มชุดทดสอบ contract ระหว่างหน้าจอกับ Rust ของ export, ทดสอบ export จริงแล้วตรวจไฟล์ตามสเปก, ทดสอบ import วันเวลาหลายรูปแบบและ follow-Y chart; อัปเดต manual test plan (827 รายการ)
+
+### 🗑️ Removed
+
+- การเขียนไฟล์ผลโมเดลตอน Mark complete (โฟลเดอร์ output ใน AppData, ไฟล์ `.pkl` และ `REL_DATASET.csv`) — แทนที่ด้วย Export results
+- ปุ่มแก้ชื่อ project แบบ inline (ใช้ Project details แทน)
+
+### 📝 Docs
+
+- เพิ่มสเปกไฟล์ผลลัพธ์ของ Wizard (`docs/specs/WIZARD_OUTPUT_SPEC.md`) และลบเอกสารเก่าที่ไม่ได้ใช้แล้ว
+
+---
+
 ## [0.11.1] — 2026-10-19
 
 Patch release — ต่อจาก 0.11.0: **นำเข้า CSV ที่วันเวลาเขียนได้หลากหลายรูปแบบมากขึ้น** และ **เลิกเตือนเรื่อง sensor ซ้ำข้ามไฟล์**
