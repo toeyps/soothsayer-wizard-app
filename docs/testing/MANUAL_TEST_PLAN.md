@@ -1,6 +1,6 @@
 # Wizard — Manual Test Plan
 
-> 827 ข้อ · **อัปเดต 2026-10-20 — Export results + ข้อมูลเครื่อง Plant · Machine · tag: ขั้น 1 ใหม่, Project details, เขตเวลาของข้อมูล, ชื่อโมเดลไม่ซ้ำทั้งโปรเจกต์, Mark complete ตรวจอย่างเดียว, แก้ set point = Incomplete, แถบและหน้าต่าง Export results, เนื้อหาไฟล์ตาม WIZARD_OUTPUT_SPEC (APP-12, IMP-100 – IMP-106, SEN-36, FG-29, BMW-335 – BMW-354, MULTI-22, PER-21, PER-22, WFA-20 – WFA-22, WFB-19, WFG-15, WFH-15 – WFH-18, WFI-9, WFI-10) · ก่อนหน้า 2026-10-19 — เพิ่มทดสอบการอ่านวันเวลาทุกรูปแบบ (IMP-89..99 + ไฟล์ทดสอบจาก `scripts/make-ts-testdata.py`), ไฟล์โมเดลใน output (BMW-328..334) และ workflow WFI · ก่อนหน้า 2026-10-14 — ตรวจทั้งแผนเทียบกับโค้ดปัจจุบันทุกหมวด + เพิ่มทดสอบตาม workflow ผู้ใช้จริง** — แบ่งเป็น 2 ส่วน: **ส่วนที่ 1 ทดสอบทีละฟังก์ชัน** (702 ข้อ, หมวด PREP–VIS) และ **ส่วนที่ 2 ทดสอบตาม workflow ผู้ใช้** (125 จุดตรวจ, หมวด WFA–WFI — แต่ละหมวดเป็นสถานการณ์ใช้งานจริง 1 เรื่องเล่าต่อเนื่อง ทำตามลำดับจุดตรวจ ไม่รีเซ็ตระหว่างจุด) · ข้อที่มีคำว่า "สงสัยว่าเป็นบั๊ก" / "⚠ สงสัยว่ายังไม่ผ่าน" เขียนตามพฤติกรรมที่ถูกต้อง — โค้ดตอนนี้น่าจะยังไม่ผ่าน ให้บันทึกผลตามจริง · รายละเอียดว่าข้อไหนเปลี่ยน/ลบ/เพิ่ม และบั๊กที่สงสัยจากการอ่านโค้ด: `docs/testing/AUDIT_2026-10-14.md`
+> 874 ข้อ · **อัปเดต 2026-10-21 — เพิ่มทดสอบเชิงลึกของ Export results (กฎการตรวจทุกข้อ, ชื่อไฟล์จาก tag แปลก ๆ, เนื้อหาไฟล์ทีละช่อง, เขตเวลา, โฟลเดอร์ปลายทางที่เขียนไม่ได้, ปิดโปรแกรมกลางคัน — ข้อมูลทดสอบจาก `scripts/make-export-testdata.py`) + workflow WFJ, แก้ข้อที่ยังพูดถึงโฟลเดอร์ output เก่า · ก่อนหน้า 2026-10-20 — Export results + ข้อมูลเครื่อง Plant · Machine · tag: ขั้น 1 ใหม่, Project details, เขตเวลาของข้อมูล, ชื่อโมเดลไม่ซ้ำทั้งโปรเจกต์, Mark complete ตรวจอย่างเดียว, แก้ set point = Incomplete, แถบและหน้าต่าง Export results, เนื้อหาไฟล์ตาม WIZARD_OUTPUT_SPEC (APP-12, IMP-100 – IMP-106, SEN-36, FG-29, BMW-335 – BMW-354, MULTI-22, PER-21, PER-22, WFA-20 – WFA-22, WFB-19, WFG-15, WFH-15 – WFH-18, WFI-9, WFI-10) · ก่อนหน้า 2026-10-19 — เพิ่มทดสอบการอ่านวันเวลาทุกรูปแบบ (IMP-89..99 + ไฟล์ทดสอบจาก `scripts/make-ts-testdata.py`), ไฟล์โมเดลใน output (BMW-328..334) และ workflow WFI · ก่อนหน้า 2026-10-14 — ตรวจทั้งแผนเทียบกับโค้ดปัจจุบันทุกหมวด + เพิ่มทดสอบตาม workflow ผู้ใช้จริง** — แบ่งเป็น 2 ส่วน: **ส่วนที่ 1 ทดสอบทีละฟังก์ชัน** (737 ข้อ, หมวด PREP–VIS) และ **ส่วนที่ 2 ทดสอบตาม workflow ผู้ใช้** (137 จุดตรวจ, หมวด WFA–WFJ — แต่ละหมวดเป็นสถานการณ์ใช้งานจริง 1 เรื่องเล่าต่อเนื่อง ทำตามลำดับจุดตรวจ ไม่รีเซ็ตระหว่างจุด) · ข้อที่มีคำว่า "สงสัยว่าเป็นบั๊ก" / "⚠ สงสัยว่ายังไม่ผ่าน" เขียนตามพฤติกรรมที่ถูกต้อง — โค้ดตอนนี้น่าจะยังไม่ผ่าน ให้บันทึกผลตามจริง · รายละเอียดว่าข้อไหนเปลี่ยน/ลบ/เพิ่ม และบั๊กที่สงสัยจากการอ่านโค้ด: `docs/testing/AUDIT_2026-10-14.md`
 >
 > **ต้องทดสอบบน installer ที่ติดตั้งแล้ว ไม่ใช่ `npm run tauri dev`** — CSP และ path ของ Python sidecar เป็นคนละกลไกกันระหว่าง dev กับ build จริง บั๊กหลายตัวที่เจอมาเห็นเฉพาะในตัวติดตั้ง
 >
@@ -13,8 +13,8 @@
 **ส่วนที่ 1 — ทดสอบทีละฟังก์ชัน**
 
 - [PREP — เตรียมก่อนเริ่ม](#prep) (6 ข้อ)
-- [APP — เปิดโปรแกรม & โครงหน้าต่าง](#app) (11 ข้อ)
-- [IMP — หน้า Import (หน้าแรก + 3 ขั้น)](#imp) (80 ข้อ)
+- [APP — เปิดโปรแกรม & โครงหน้าต่าง](#app) (12 ข้อ)
+- [IMP — หน้า Import (หน้าแรก + 3 ขั้น)](#imp) (87 ข้อ)
 - [LAY — โครง Dashboard](#lay) (6 ข้อ)
 - [SEN — แผง Sensor](#sen) (27 ข้อ)
 - [SEL — แท็บ Selected Sensor](#sel) (17 ข้อ)
@@ -27,12 +27,12 @@
 - [SPC — Add Special Sensor — แท็บ Create](#spc) (70 ข้อ)
 - [MNG — Manage — ดูรายการและลบ special sensor](#mng) (36 ข้อ)
 - [EDT — Manage — แก้ไข special sensor (ดินสอ)](#edt) (61 ข้อ)
-- [FG — แท็บ Failure Groups](#fg) (20 ข้อ)
-- [BMW — หน้าต่าง Build Model — Workbench (Model fit + Health score)](#bmw) (185 ข้อ)
-- [MULTI — เปิดมากกว่า 1 โปรเจกต์ (ข้อมูลต้องไม่ปนกัน)](#multi) (19 ข้อ)
-- [PER — ปิดเปิดโปรแกรม & การบันทึก](#per) (18 ข้อ)
-- [ERR — ความผิดพลาด & ขอบ](#err) (8 ข้อ)
-- [PERF — ประสิทธิภาพ](#perf) (9 ข้อ)
+- [FG — แท็บ Failure Groups](#fg) (21 ข้อ)
+- [BMW — หน้าต่าง Build Model — Workbench (Model fit + Health score)](#bmw) (207 ข้อ)
+- [MULTI — เปิดมากกว่า 1 โปรเจกต์ (ข้อมูลต้องไม่ปนกัน)](#multi) (20 ข้อ)
+- [PER — ปิดเปิดโปรแกรม & การบันทึก](#per) (19 ข้อ)
+- [ERR — ความผิดพลาด & ขอบ](#err) (9 ข้อ)
+- [PERF — ประสิทธิภาพ](#perf) (10 ข้อ)
 - [VIS — กวาดหน้าตา (หลังล้าง CSS ที่ไม่ได้ใช้ และลบโค้ดตาย)](#vis) (16 ข้อ)
 
 **ส่วนที่ 2 — ทดสอบตาม workflow ผู้ใช้จริง**
@@ -46,6 +46,7 @@
 - [WFG — Workflow G — ข้อมูลขนาดจริง 2 ปี ทุก 1 นาที 120 sensor](#wfg) (14 ข้อ)
 - [WFH — Workflow H — จัดระเบียบโปรเจกต์ ส่งต่อผล Export results และอัปเกรดโปรแกรม](#wfh) (14 ข้อ)
 - [WFI — Workflow I — ข้อมูลหลายแหล่งหลายรูปแบบวันเวลา → โมเดล Complete → Export results → แก้แล้ว Export ซ้ำ](#wfi) (4 ข้อ)
+- [WFJ — Workflow J — ทำโมเดลส่งให้ระบบของลูกค้า: ตั้งข้อมูลเครื่อง → โมเดลครบ 3 ชนิด → Export → ลูกค้าขอแก้ → Export รอบสอง](#wfj) (12 ข้อ)
 
 ---
 
@@ -160,6 +161,12 @@ _ทำให้ครบก่อน ไม่งั้นข้อหลัง
   - เปิด Wizard จาก Start menu แล้วเปิดอีกครั้งขณะตัวแรกยังเปิดอยู่
   - (ถ้าได้ 2 หน้าต่าง) เปิดโปรเจกต์เดียวกันในทั้งสองตัว · ตัวแรกเพิ่ม Failure Group "A" · ตัวที่สองเปลี่ยนสีเส้น 1 เส้น · ปิดทั้งสองแล้วเปิดโปรเจกต์นั้นใหม่
   - **คาดหวัง:** การเปิดครั้งที่สองควรดึงหน้าต่างเดิมขึ้นมา (มีโปรแกรมทำงานตัวเดียว) หรืออย่างน้อยเตือน — ไม่ควรมีทางที่สองตัวเขียนทับไฟล์โปรเจกต์เดียวกัน · ⚠ สงสัยว่ายังไม่ผ่าน (ไม่มีตัวกันเปิดซ้อน และคิวบันทึกทำงานแยกในแต่ละหน้าต่าง) — ถ้าได้ 2 ตัว ให้จดว่ากลุ่ม "A" ยังอยู่หลังเปิดใหม่หรือหายไป
+
+- [ ] **APP-13 — เมนูชื่อโปรเจกต์บน title bar ใช้คีย์บอร์ดได้ และชื่ออัปเดตเมื่อแก้จากหน้าต่างอื่น** 🆕
+  - เปิดโปรเจกต์ → Tab ไปที่ชื่อโปรเจกต์บน title bar → Enter / Space เปิดเมนู → ลูกศรขึ้น-ลง → Esc
+  - เปิดเมนูอีกครั้ง → คลิกที่ว่างนอกเมนู
+  - เปิด Build Model → Export results → "Fill in →" ของ Machine → เปลี่ยน Machine name → Save → ดู title bar ของหน้าต่างหลัก
+  - **คาดหวัง:** เมนูเปิดด้วยคีย์บอร์ดได้ มี 2 รายการ "Rename…" และ "Project details…" (บรรทัดเล็ก "Plant, machine, tag, notes, time zone") · Esc / คลิกนอกเมนูปิดเมนูโดยไม่เปิดอะไร และโฟกัสกลับที่ชื่อ · ชื่อบน title bar เปลี่ยนเป็น "Plant · Machine ใหม่" ทันทีหลัง Save จากหน้าต่าง Build Model (ไม่ต้องปิดเปิด)
 
 ---
 
@@ -596,6 +603,41 @@ _Step 0 = หน้าแรก "Get started" (สร้างโปรเจก
   - เปิดโปรเจกต์เก่าที่ไม่มีชิป ทำอะไรก็ได้แล้วกลับหน้าแรก
   - ทำให้หน้าต่างแคบลงจนการ์ดแคบ
   - **คาดหวัง:** "1 failure group" / "N failure groups" พร้อมสี่เหลี่ยมสีกลุ่มไม่เกิน 3 อัน (สีเดียวกับใน Dashboard) · ไม่มีกลุ่ม = ชิปเส้นประสีเทา "No failure groups" · โปรเจกต์เก่าที่ยังไม่ถูกบันทึกใหม่ = **ไม่มีชิป** (ไม่ใช่ "No failure groups") และหลังเปิดแล้วกลับมาก็มีชิปตามจริง · ชิปอัปเดตตามที่เพิ่ง/ลบกลุ่ม · การ์ดแคบ = ชิปย้ายไปอยู่ใต้ description ไม่ทับเวลา/ปุ่ม · กดที่ชิปก็เปิดโปรเจกต์เหมือนกดการ์ด
+
+- [ ] **IMP-107 — ช่อง Plant / Machine / tag: ความยาวสูงสุด, ช่องว่างล้วน, วางข้อความยาว** 🆕
+  - New project → ขั้น 1: พิมพ์ Plant name ยาว 70 ตัวอักษร, Machine name ยาว 70, Machine tag ยาว 50 (หรือวางจากคลิปบอร์ด)
+  - ใส่เฉพาะช่องว่าง (space) ในช่อง Plant name แล้วกด Continue · ใส่ช่องว่างนำหน้า/ต่อท้ายชื่อ (" Bang Pakong ")
+  - **คาดหวัง:** Plant / Machine รับได้ไม่เกิน **60** ตัวอักษร, Machine tag ไม่เกิน **40** (ที่เกินถูกตัด ไม่ล้นกรอบ) · ช่องว่างล้วน = ถือว่าว่าง → Continue ไม่ได้ ขึ้นเหตุผลให้กรอก · ช่องว่างหน้า-หลังถูกตัดออกตอนบันทึก (การ์ดหน้าแรกเป็น "Bang Pakong · …" ไม่มีช่องว่างเกิน)
+
+- [ ] **IMP-108 — Plant · Machine ซ้ำ: ไม่สนตัวพิมพ์เล็ก-ใหญ่และช่องว่างหน้า-หลัง, แต่ tag ต่างกันไม่นับ** 🆕
+  - มีโปรเจกต์ "Bang Pakong · GEG-4" อยู่แล้ว → New project: พิมพ์ "bang pakong " + " geg-4" · แล้วลอง "Bang Pakong" + "GEG-5" · แล้วลอง "Bang Pakong" + "GEG-4" แต่ Machine tag ต่างจากของเดิม
+  - เปิดโปรเจกต์เดิม → Project details → Save โดยไม่แก้อะไร
+  - **คาดหวัง:** "bang pakong " / " geg-4" = **ซ้ำ** เส้นแดง "Another project already uses this plant and machine — change one of them." และ Continue กดไม่ได้ · GEG-5 = ไม่ซ้ำ ผ่าน · tag ต่างแต่ Plant + Machine เหมือน = ยังซ้ำ (คู่ Plant · Machine คือชื่อโปรเจกต์) · Save โปรเจกต์ตัวเองโดยไม่แก้ = ไม่ขึ้นว่าซ้ำกับตัวเอง
+
+- [ ] **IMP-109 — ชื่อ Plant / Machine ภาษาไทยและอักขระพิเศษ** 🆕
+  - New project: Plant "โรงไฟฟ้าบางปะกง", Machine "เครื่องยนต์ "A" / ตัวที่ 4", Machine tag "GEG-4", Notes ภาษาไทยยาว 2 บรรทัด (ถ้าช่องรับขึ้นบรรทัดใหม่)
+  - Continue → Import ข้อมูล → Open Dashboard → กลับหน้าแรก ดูการ์ด · เปิด Project details
+  - **คาดหวัง:** ชื่อไทย เครื่องหมายคำพูด และ `/` แสดงถูกทุกที่ (การ์ด, title bar, Project details) ไม่กลายเป็นสี่เหลี่ยม/อักขระแปลก · บันทึกแล้วปิดเปิดโปรแกรม ค่าเหมือนเดิมทุกตัวอักษร · (ชื่อโฟลเดอร์ export ของโปรเจกต์นี้ทดสอบใน BMW-367)
+
+- [ ] **IMP-110 — ตัวเลือกเขตเวลาของข้อมูล: ช่วง UTC−12:00 ถึง UTC+14:00, ค่าเริ่มต้น = เครื่องนี้, เปลี่ยนแล้วจำ** 🆕
+  - ขั้น 2 (Add your sensor data): ดูบรรทัด "Timestamps in the CSV are local time of …" → กด Change → เปิดรายการ
+  - เลื่อนดูตัวแรก / ตัวสุดท้าย และค้นหาค่าที่เป็น 45 นาที · เลือก UTC+05:45 → Open Dashboard → ปิดโปรแกรม → เปิดโปรเจกต์ → Project details
+  - **คาดหวัง:** ค่าเริ่มต้นตรงกับเขตเวลาของ Windows (ไทย = UTC+07:00 พร้อมคำว่า this PC) · รายการเริ่ม UTC−12:00 จบ UTC+14:00 ทุกครึ่งชั่วโมง + UTC+05:45, +08:45, +12:45, +13:45 · ค่าที่เลือก (+05:45) ยังอยู่หลังปิดเปิดโปรแกรม และ Project details แสดงค่าเดียวกัน · **กราฟ Dashboard ไม่เลื่อนเวลา** (เขตเวลาใช้ตอน export อย่างเดียว — ค่าบนแกนเวลาเหมือนในไฟล์ CSV)
+
+- [ ] **IMP-111 — Project details: Cancel / Esc ไม่บันทึก, Save กดได้เมื่อครบ, โฟกัสช่องที่ว่างช่องแรก** 🆕
+  - การ์ดโปรเจกต์ → Rename → แก้ Machine name → กด Cancel · เปิดใหม่ → แก้ → Esc · เปิดใหม่ → ลบ Machine tag ให้ว่าง → ดูปุ่ม Save และตำแหน่งโฟกัสตอนเปิด
+  - โปรเจกต์เก่า (Machine + tag ว่าง) → เปิด Project details
+  - **คาดหวัง:** Cancel / Esc = ไม่มีอะไรเปลี่ยน (การ์ดและ title bar ชื่อเดิม) · tag ว่าง = Save กดไม่ได้ พร้อมเหตุผลให้กรอก · โปรเจกต์เก่า: เปิดแล้วโฟกัสอยู่ที่ช่องบังคับที่ว่างช่องแรก (Machine name) · Save ครั้งเดียวบันทึกทุกช่อง + เขตเวลา
+
+- [ ] **IMP-112 — เปลี่ยนชื่อผ่าน Project details ระหว่างที่หน้าต่าง Build Model / Dashboard เปิดอยู่** 🆕
+  - เปิดโปรเจกต์ → Dashboard → เปิด Build Model → กลับหน้าต่างหลัก → title bar → Project details… → เปลี่ยน Plant name → Save
+  - ทำงานต่อใน Dashboard 1–2 นาที (เปิด/ปิด sensor, ซูม) → ปิดโปรแกรม → เปิดใหม่
+  - **คาดหวัง:** ชื่อใหม่ขึ้นทั้ง title bar หน้าต่างหลัก หัวหน้าต่าง Build Model และการ์ดหน้าแรก · หลังทำงานต่อใน Dashboard และปิดเปิด ชื่อ / machine / เขตเวลา **ยังเป็นค่าใหม่** (autosave ของ Dashboard ไม่เขียนชื่อเก่ากลับ) · ไม่มีโปรเจกต์ซ้ำสองการ์ด
+
+- [ ] **IMP-113 — เปลี่ยนเขตเวลาหลังโมเดล Complete แล้ว** 🆕
+  - โปรเจกต์ที่ทุกโมเดล Complete และ export แล้ว 1 ครั้ง (เขตเวลา UTC+07:00) → Project details → เปลี่ยนเป็น UTC−03:30 → Save
+  - เปิด Build Model → ดูสถานะโมเดล → Export results อีกครั้ง → เทียบ CSV สองโฟลเดอร์
+  - **คาดหวัง:** โมเดลยัง Complete (เขตเวลาไม่กระทบการ Train) · แถบ Export พร้อม · CSV ใหม่: เวลาเหมือนเดิมทุกแถว (ตัวเลขวัน-เวลาเท่าเดิม) แต่ท้ายเป็น `-03:30` แทน `+07:00` · `exported_at` ใน machine_info ยังเป็นเวลาเครื่องพร้อม `+07:00` (คนละค่ากับเขตเวลาของข้อมูล)
 
 ---
 
@@ -2679,6 +2721,11 @@ _ดินสอที่แถวในแท็บ Manage เปิดช่�
   - Mark complete โมเดลหนึ่งใน Build Model แล้วกลับมาดู
   - **คาดหวัง:** กลุ่มว่าง = "0" · มีโมเดล = "**เสร็จ** / ทั้งหมด" (นับโมเดลในกลุ่มนั้น — sensor ที่มี I และ R นับ 2) · Mark complete แล้วตัวเลขซ้ายเพิ่ม 1 ทันที และตรงกับบรรทัดสรุปด้านบน · โมเดลที่ Complete แต่ล้าสมัย (แก้ค่าที่ทำให้ต้อง Train ใหม่) ไม่ถูกนับว่าเสร็จ
 
+- [ ] **FG-30 — Description / Recommendation ของ Failure group ภาษาไทย ยาว และมีอักขระพิเศษ ไปถึงไฟล์ export ครบ** 🆕
+  - Dashboard → Failure Groups → Edit details: Description ภาษาไทย ~300 ตัวอักษร มีเครื่องหมาย `"`, `,`, `\`, ขึ้นบรรทัดใหม่ (ถ้ารับ) · Recommendation ภาษาอังกฤษ
+  - ใส่โมเดลที่ Complete → Export → เปิด `machine_info.json`
+  - **คาดหวัง:** `failure_groups[].description` / `recommendation` ตรงกับที่พิมพ์ทุกตัวอักษร (JSON escape ถูก, ภาษาไทยอ่านออก) · กลุ่มที่ไม่มีโมเดลไม่อยู่ใน `failure_groups` · กลุ่ม "Not in Group" ไม่อยู่ในไฟล์ · โมเดลที่อยู่สองกลุ่มมี key ในทั้งสองกลุ่ม
+
 ---
 
 ---
@@ -3080,7 +3127,7 @@ _ดินสอที่แถวในแท็บ Manage เปิดช่�
 - [ ] **BMW-352 — Clustering: ค่า criteria ที่ตรงเส้นแบ่งพอดีอยู่ช่วงล่าง (`from < value <= to`) และ export ช่วงได้** 🆕
   - โมเดล Clustering 2 cluster ที่ criteria มีค่าตรงเส้นแบ่งพอดี (พิมพ์เส้นแบ่งให้เป็นค่าที่มีในข้อมูล เช่น 50) → Train → ดูจำนวนแถวต่อ cluster
   - Mark complete → Export results
-  - **คาดหวัง:** แถวที่ criteria = 50 พอดีอยู่ cluster **ล่าง** (ก่อนอัปเดตนี้อยู่ cluster บน — จำนวนแถวต่อ cluster อาจต่างจากเดิมเล็กน้อย) · export ได้ และใน `<X>-C1.json` regimes เป็น `[{from: null, to: 50}, {from: 50, to: null}]` · ⚠ สงสัยว่ายังไม่ผ่าน: QA พบว่าช่วงที่แบ่งให้อัตโนมัติมีขอบนอกเป็นค่าต่ำสุด/สูงสุดของข้อมูล และตัว export ปฏิเสธว่า "Cluster ranges must meet end to end" — ถ้าเจอให้จดไว้ (และแถวที่ค่า criteria = ค่าต่ำสุดของข้อมูลอาจหายจากการ Train) 
+  - **คาดหวัง:** แถวที่ criteria = 50 พอดีอยู่ cluster **ล่าง** (ก่อนอัปเดตนี้อยู่ cluster บน — จำนวนแถวต่อ cluster อาจต่างจากเดิมเล็กน้อย) · export ได้ และใน `<X>-C1.json` regimes เป็น `[{from: null, to: 50}, {from: 50, to: null}]` · ช่วงที่แบ่งให้อัตโนมัติ export ได้ (ขอบนอกเปิด — แก้แล้วหลัง QA 2026-10-20) และแถวที่ criteria = ค่าต่ำสุดของข้อมูลยังอยู่ในการ Train
 
 - [ ] **BMW-289 — ปิดหน้าต่างตอนมีค่าใน Model settings หรือ popup Running condition ที่ยังไม่ Save / Apply: ค่าที่แก้ค้างถูกทิ้งโดยไม่ถาม** 🆕
   - แก้ชื่อโมเดล / Stiffness ค้างไว้ (ยังไม่กด Save changes) แล้วกดปุ่ม X ของหน้าต่าง → เปิด Build Model ใหม่ดูค่า
@@ -3827,20 +3874,10 @@ _ดินสอที่แถวในแท็บ Manage เปิดช่�
   - ลอง set point ที่ไม่ผ่าน แล้วกด Mark complete
   - **คาดหวัง:** ระหว่างตรวจ ปุ่มเขียน "Checking…" (วงหมุน) และบรรทัดแจ้ง "Checking the set points…" · ผ่าน = แท็บเป็น Complete จุดเขียว ปุ่มหัวเป็น "Mark incomplete" · **ไม่มีบรรทัด "Files saved …" และไม่มีโฟลเดอร์ `output` ใหม่ใน app data** · ไม่ผ่าน = ไม่ Complete และบอกเหตุผลที่ set point · แถบ Export results นับโมเดลนี้เป็น Complete
 
-- [ ] **BMW-326 — โมเดลกลับเป็น Incomplete: ไฟล์ที่บันทึกไว้ยังอยู่จนกว่าจะ Mark complete ใหม่** 🆕
-  - โมเดลที่ Complete แล้ว: กด Mark incomplete · อีกโมเดล: แก้ค่าที่กระทบการ Train (เช่นช่วงเวลา) ให้กลับเป็น Incomplete
-  - ดูโฟลเดอร์ output · แล้ว Train + Mark complete ใหม่
-  - **คาดหวัง:** ระหว่าง Incomplete ไฟล์เดิม**ยังอยู่** (ไม่ถูกลบ) · Mark complete ใหม่แล้วไฟล์ถูกแทนด้วยชุดใหม่ ไม่มีไฟล์ซ้ำ
-
 - [ ] **BMW-327 — ลบโมเดลแล้วไฟล์ใน output หายด้วย (ปุ่มลบโมเดล และเอา sensor ออกจากกลุ่มสุดท้าย)** 🆕
   - โมเดลที่มีไฟล์ใน output: กดถังขยะของโมเดลในแท็บ Failure Groups
   - อีกโมเดล: เอา sensor ออกจากกลุ่มสุดท้าย → **กด Undo** ภายใน 7 วินาที · ทำซ้ำแต่**ไม่กด Undo** รอให้ toast หาย · ทำซ้ำแล้วกดกลับหน้า Import ก่อน toast หาย
   - **คาดหวัง:** ปุ่มลบโมเดล: ไฟล์ของโมเดลนั้นหายทันที · Undo: โมเดลกลับมา**พร้อมไฟล์ครบ** · ไม่ Undo (toast หาย / กลับหน้า Import / ปิดโปรแกรม): ไฟล์หาย · ไฟล์ของโมเดลอื่นใน sensor เดียวกันไม่หาย · ไฟล์ที่เปิดค้างใน Excel อาจลบไม่ได้ (ไม่มีข้อความแจ้ง — ข้อจำกัดที่รู้อยู่)
-
-- [ ] **BMW-332 — ปิดโปรแกรมกลางคัน Mark complete (Relation model ~15 วินาที) แล้วเปิดใหม่** 👀
-  - เตรียม: Relation model ที่ Complete แล้ว (มีไฟล์ชุดเก่า) → เปลี่ยน predictor → Train
-  - กด Mark complete แล้วปิดโปรแกรมทันทีด้วย Task Manager (End task) ระหว่างหมุนรอ · เปิดโปรแกรม → เปิด project เดิม → ดูโฟลเดอร์ output · Train + Mark complete ใหม่
-  - **คาดหวัง:** หลังเปิดใหม่ โฟลเดอร์ของ sensor นั้นมี**ชุดใดชุดหนึ่งครบ** (เก่าหรือใหม่) ไม่มีไฟล์ครึ่งชุด · โมเดลแสดงสถานะตรงกับไฟล์ (ถ้ายังเป็นชุดเก่า = ไม่ Complete กับ predictor ใหม่) · Mark complete รอบหลังสำเร็จ เหลือชุดเดียว ไม่มีโฟลเดอร์ `.staging-…` ค้าง
 
 - [ ] **BMW-334 — แกน Y ตามการซูม: กราฟคู่ที่ซูมไปด้วยกัน, หน้าต่าง Expand, ปุ่มรีเซ็ตซูม** 🆕
   - Health score ของ Individual: กราฟ set point (บน) กับกราฟคะแนน (ล่าง) ซูมไปด้วยกัน — ซูมช่วงที่ค่านิ่งด้วยล้อเมาส์บนกราฟบน แล้วบนกราฟล่าง
@@ -3868,12 +3905,12 @@ _ดินสอที่แถวในแท็บ Manage เปิดช่�
   - สลับไปดูโมเดลอื่นของ sensor เดียวกันที่ยังไม่เคยเปิดดูในรอบนี้ และดูแท็บ Failure Groups ที่ Dashboard (ดู FG-14)
   - **คาดหวัง:** ว่าง = จุดเหลือง + คำ **"Set points needed"** สีเหลืองบนแท็บ · ค่าที่ไม่ผ่าน = จุดแดง + **"Fix set point"** สีแดง (ทั้งแท็บและจุดในลิสต์) · ผ่านแล้วจุดกลับเป็นเหลือง คำเป็น "Trained" สีเทา · ระหว่างพิมพ์ คำและจุดของโมเดลที่เปิดอยู่เปลี่ยนตามทันทีที่ Rust ตอบ ส่วนค่าที่บันทึกกับโมเดล (และจุดที่ Dashboard) ตามมาเมื่อค่าถูกบันทึก (blur/Enter) · โมเดลที่ไม่เคยถูกเปิดดูในรอบนี้ใช้ผลที่บันทึกไว้ครั้งล่าสุด (ถ้ามี) · Warning จาก Rust ไม่ทำให้คำ / จุดเป็นแดงหรือเหลือง — แสดงเป็นบรรทัด "Note: …" ใน Checks (ไม่มีคำเตือนเรื่องชื่อไฟล์แล้ว)
 
-- [ ] **BMW-84 — ทุกโมเดลเข้าถึงและทำให้ Complete ได้จากสองหน้าของ Workbench เท่านั้น (Individual / Relation model / Clustering)** 🐍
+- [ ] **BMW-379 — ทุกโมเดลเข้าถึงและทำให้ Complete ได้จากสองหน้าของ Workbench เท่านั้น — Mark complete ตรวจอย่างเดียว (แทน BMW-84)** 🐍
   - **Individual:** เลือก sensor → กาง Model settings แก้ชื่อโมเดล **โดยไม่กด Save changes** → กด "▶ Train sensor" (หรือ ▾ → "Individual only") → แท็บ "2 Health score" → กรอก L / H ที่ผ่าน Checks → "✓ Mark complete"
-  - **Relation model:** เลือก predictor อย่างน้อย 1 ตัวใน Model settings (ยังไม่ Save) → Train → ตั้ง Stiffness เป็น Strict แล้วดูว่ากลายเป็น stale ต้อง Re-train → "Compare predictors" เปิดได้ (หน้าต่างชื่อ "Compare predictors" ไม่มีคำว่า Sub-models) → Health score กรอกช่อง 80 / 0 ทั้ง 4 ช่อง → Mark complete
+  - **Relation model:** เลือก predictor อย่างน้อย 1 ตัว (ยังไม่ Save) → Train → ตั้ง Stiffness เป็น Strict แล้วดูว่ากลายเป็น stale ต้อง Re-train → "Compare predictors" เปิดได้ → Health score กรอกช่อง 80 / 0 ทั้ง 4 ช่อง → Mark complete
   - **Clustering:** เลือก X / Y sensor และจำนวน cluster → Train → Health score กรอกวงนอก N× SD → Mark complete
   - ปิดเปิดหน้าต่าง Build Model แล้วดูสถานะของทั้ง 3 โมเดล
-  - **คาดหวัง:** ค่าที่แก้ใน Model settings โดยไม่กด Save ถูกบันทึกให้เองตอนกด Train (ผล Train ตรงกับค่าที่แก้ ไม่ใช่ค่าเก่า) · ทั้ง 3 ชนิดไปถึง Complete ได้ด้วยลำดับนี้เท่านั้น — ไม่มีเส้นทางอื่น (ไม่มี Finish) · Mark complete เขียนไฟล์ของโมเดลลงโฟลเดอร์ output ของ workspace (Relation model ใช้ ~15 วินาที และ**ต้องสำเร็จบนแอปที่ติดตั้งแล้ว** — เป็นเส้นทางเดียวที่เรียก Python sidecar) · ไม่มีคำว่า "LinearGAM" ที่ใดเลย ใช้ "Relation model" · หลังปิดเปิดหน้าต่าง ทั้ง 3 โมเดลยังเป็น Complete พร้อมกราฟ
+  - **คาดหวัง:** ค่าที่แก้ใน Model settings โดยไม่กด Save ถูกบันทึกให้เองตอนกด Train · ทั้ง 3 ชนิดไปถึง Complete ได้ด้วยลำดับนี้เท่านั้น (ไม่มี Finish) · Mark complete เป็น "Checking…" สั้น ๆ แล้ว Complete — **ไม่เขียนไฟล์ใดเลย** (ไฟล์มีแค่ตอน Export results) · Relation model Train ใช้ ~15 วินาทีและ**ต้องสำเร็จบนแอปที่ติดตั้งแล้ว** (Python sidecar) · ไม่มีคำว่า "LinearGAM" ที่ใดเลย ใช้ "Relation model" · หลังปิดเปิดหน้าต่าง ทั้ง 3 โมเดลยังเป็น Complete พร้อมกราฟ
 
 - [ ] **BMW-340 — แก้ set point / ตั้งค่าระหว่างที่ Mark complete กำลังตรวจ: โมเดลไม่เป็น Complete และบอกเหตุผล; ปิดหน้าต่างรอให้ตรวจเสร็จ (แทน BMW-81, BMW-321)** 🆕
   - Relation model (ตรวจนาน): กด ✓ Mark complete แล้ว**ระหว่าง "Checking…"** แก้ set point อีกช่อง
@@ -3892,6 +3929,112 @@ _ดินสอที่แถวในแท็บ Manage เปิดช่�
   - เปิดหน้าต่าง Train all แล้วกด Esc · เปิด popup Running condition → เปิดตัวเลือก sensor ในแถวเงื่อนไข → Esc → Esc
   - ระหว่าง run กด X ของหน้าต่างให้กล่องถามขึ้น แล้วกด Esc
   - **คาดหวัง:** Esc แต่ละครั้งปิดเฉพาะชั้นบนสุด: กราฟขยาย / Compare predictors / เมนู ▾ / ตัวเลือก sensor ปิดตัวเอง โดยหน้าต่าง Build Model และ pane ด้านหลังไม่เปลี่ยน · ช่องเส้นแบ่ง cluster กลับเป็นค่าเดิม (BMW-117) · Train all ปิด (ระหว่าง run = ซ่อน, run เดินต่อ) · popup Running condition: Esc แรกปิดตัวเลือก sensor, Esc ถัดไปเป็นของ popup (ถามก่อนถ้าแก้ค้าง — BMW-55) · กล่องถามตอนปิด: Esc = "Keep training" · ไม่มี Esc ครั้งไหนปิดหน้าต่าง Build Model ทั้งบาน
+
+- [ ] **BMW-355 — แถบ Export results: ข้อความเมื่อกดไม่ได้แต่ละแบบ** 🆕
+  - โปรเจกต์ไม่มีโมเดล · โปรเจกต์ที่มี 3 โมเดล Complete 1 ตัว · โปรเจกต์ที่ทุกโมเดล Complete แต่ Machine tag ว่าง · ระหว่างที่ export กำลังเขียน — ชี้เมาส์ที่ปุ่ม Export results ทุกกรณี
+  - **คาดหวัง:** ไม่มีโมเดล = แถบเขียน "No models yet" และ tooltip "No models to export yet" · ยังไม่ครบ = "Every model must be Complete first · 2 left" · ขาดข้อมูลอื่น = "Fill in the items in “Show which” first" + ลิงก์ "Show which" · ระหว่าง export = "An export is running" · พร้อม = tooltip "Write every model of this project to a folder you pick" · ข้อความตรงกับสถานะจริงทุกครั้ง (เปลี่ยนตามทันทีเมื่อ Mark complete ตัวสุดท้าย)
+
+- [ ] **BMW-356 — Running status ใน checklist: มาจากไหนในแต่ละแบบของ running condition** 🆕
+  - ตั้ง running condition 5 แบบ (Apply ทีละแบบ แล้วเปิด Export results ดูแถว Running status): (ก) `KW > 50` ข้อเดียว (ข) `KW > 50` AND `SPEED > 100` ไม่กรอกบรรทัด "Machine is running when…" (ค) แบบ (ข) แต่กรอกบรรทัดนั้นเป็น SPEED / 1000 (ง) มีแต่ `<` หรือ `between` (จ) "Use all rows"
+  - **คาดหวัง:** (ก) "Machine is running when Motor power (KW) is above 50 kW" ใต้บรรทัด "From the running condition — its one “above” condition." · (ข) ใช้ KW / 50 พร้อมโน้ต "Taken from the first “above” condition — check it in the running condition." · (ค) ใช้ SPEED / 1000 พร้อม "Set in the running condition (“Machine is running when … is above …”) — used by the export only." · (ง)(จ) "not set — say which sensor tells that the machine is running" และ Export กดไม่ได้ · ลิงก์ "Open running condition" ปิด dialog แล้วเปิด editor ทุกกรณี · sensor แสดงเป็น description + tag ไม่ใช่ tag ล้วน
+
+- [ ] **BMW-357 — Running status ไม่ทำให้โมเดลหลุด Complete และ sensor ของมันถูกใส่ใน export แม้ไม่มีโมเดลใช้** 🆕
+  - ทุกโมเดล Complete → running condition: เพิ่มบรรทัด "Machine is running when SPEED is above 1000" (SPEED ไม่มีโมเดลไหนใช้ และไม่มี component) → Apply
+  - ดูสถานะโมเดล → Export results → ขั้นยืนยัน sensor ที่ไม่มี component → Export anyway → เปิด `machine_info.json`
+  - **คาดหวัง:** โมเดลยัง Complete ทุกตัว (บรรทัดนี้ใช้กับ export เท่านั้น) · ขั้นยืนยันแสดง SPEED พร้อมคำว่า "Used as the running-status sensor" · ใน JSON: `running_status` = `{"sensor": "SPEED", "stop_if_lower_than": 1000}` และ SPEED อยู่ใน `sensors[]` (component "Uncategorized")
+
+- [ ] **BMW-358 — Export check แต่ละข้อ: ทำให้เกิดแล้วดูข้อความและลิงก์แก้** 🆕
+  - ทำทีละข้อ (แก้กลับก่อนทำข้อถัดไป) แล้วเปิด Export results:
+  - (1) ชื่อโมเดลซ้ำกับโมเดลอื่น (ถ้า Save changes กันไว้ = ผ่านส่วนนี้ ให้ลองกับโปรเจกต์เก่าที่มีชื่อซ้ำอยู่แล้ว) (2) sensor ที่ยังไม่มี Performance / Condition (โปรเจกต์เก่า) (3) Failure group ที่โมเดลอยู่ แต่ไม่มี Description หรือ Recommendation (4) Clustering 3 cluster ที่ช่วงกลางเว้นช่องว่าง (เช่น 0–30, 40–70, 70–100) (5) Clustering ที่ช่วงซ้อนกัน (0–50, 40–100) (6) ช่วง Train ของโมเดลอยู่นอกข้อมูลที่โหลดอยู่ (เปิดโปรเจกต์ด้วย CSV ที่สั้นกว่า)
+  - **คาดหวัง:** แต่ละข้อขึ้นเป็นบรรทัดภาษาคนพร้อมชื่อโมเดล / กลุ่ม / sensor (description + tag): (1) "Model name is already used by another model in this project" (2) "No category — pick Performance or Condition on the sensor" (3) แถว Failure groups "1 of 2 without a description or a recommendation" + ที่แก้ "Dashboard › Failure Groups › Edit details" (4)(5) "Cluster ranges must meet end to end" (6) "No training rows in the loaded data" · Export กดไม่ได้จนแก้ครบ · **ไม่มีข้อความดิบ** (โค้ด เช่น `regimes_not_contiguous`, `BAD_REQUEST`) และไม่ขึ้น "Export failed"
+
+- [ ] **BMW-359 — Export check: กรณีที่ UI ควรกันไว้ตั้งแต่แรก** 👀
+  - ลองทำให้เกิดจากหน้าจอ: Relation model ที่ predictor เป็น sensor เดียวกับ target · Clustering ที่ X และ Y เป็น sensor เดียวกัน · Failure group สองกลุ่มชื่อเดียวกัน (ต่างแค่ตัวพิมพ์เล็ก-ใหญ่ "Bearing" / "bearing")
+  - **คาดหวัง:** หน้าจอกันไว้ตั้งแต่ตอนเลือก / ตั้งชื่อ (เลือกไม่ได้ หรือมีเหตุผลแจ้ง) = ผ่าน · ถ้าหน้าจอยอมให้ทำได้ ต้องไปเจอที่ Export check เป็น "A predictor is the same sensor as the target" / "X and Y are the same sensor" / "Another failure group has the same name" — **จดว่าเจอที่ขั้นไหน** (ถ้าผ่านไปถึงไฟล์ได้ = บั๊ก)
+
+- [ ] **BMW-360 — ชื่อไฟล์ model key: tag ที่มีช่องว่าง, `/`, ชื่อต้องห้ามของ Windows, ภาษาไทย (ข้อมูลทดสอบ EXP)** 🆕
+  - เตรียม: `python scripts/make-export-testdata.py C:\EXPdata` → โปรเจกต์ใหม่ Import `EXP-data.csv` + Tag names `EXP-tags.csv`
+  - สร้างโมเดล: `FLOW A` = Relation model (predictor `KW`), `TEMP/1` = Individual และ Relation model, `CON` = Individual, `VIB.X` = Individual, `อุณหภูมิ1` = Individual, `KW` = Clustering (Y = `TEMP/1`) → Train → Mark complete ทั้งหมด → Export
+  - **คาดหวัง:** ไฟล์ใน `models\` ตรงกับ `C:\EXPdata\EXPECTED.txt`: `FLOW_A-R1`, `TEMP_1-I1`, `TEMP_1-R1`, `_CON-I1`, `VIB.X-I1`, `________1-I1` (ไทยกลายเป็น `_`), `KW-C1` · ทุกชื่อเปิดได้ใน Windows (ไม่มีไฟล์ที่ชื่อ `CON.json` ซึ่ง Windows ไม่ยอม) · ข้างในไฟล์ (`output`, `sensor`, `x_sensor`, `inputs`) และหัวคอลัมน์ CSV ยังเป็น **tag จริง** (`FLOW A`, `TEMP/1`, `CON`, `อุณหภูมิ1`) — แก้เฉพาะชื่อไฟล์ · `failure_groups[].models` ใช้ key ที่แก้แล้วตรงกับชื่อไฟล์
+
+- [ ] **BMW-361 — machine_info.json: ชื่อ sensor, อักขระพิเศษ, ภาษาไทย, component ที่ไม่มี (ข้อมูลทดสอบ EXP)** 🆕
+  - ต่อจาก BMW-360 เปิด `machine_info.json` ด้วย Notepad (ดูว่าเป็น UTF-8) และเปิดด้วยเบราว์เซอร์ / ตัวตรวจ JSON
+  - **คาดหวัง:** เป็น JSON ที่ถูกต้อง (ตัวตรวจ JSON ไม่ error) · `sensors[].name` = ช่อง DESCRIPTION: `FLOW A` = `Pump flow, \"main\" line` (คำพูดถูก escape), `อุณหภูมิ1` = `อุณหภูมิห้อง` อ่านออก, unit `°C` ถูก · `CON` อยู่ใน component **"Uncategorized"** และ "Uncategorized" อยู่ใน `components` ด้วย · `components` ไม่ซ้ำ เรียงตัวอักษร · แต่ละ tag อยู่ใน `sensors` ครั้งเดียว · `machine.notes` เป็น `""` เมื่อไม่ได้กรอก (ไม่ใช่ null)
+
+- [ ] **BMW-362 — CSV ของแต่ละโมเดล: แถวเวลาซ้ำ, แถวไม่มีเวลา, ช่วงเครื่องหยุด, ลำดับคอลัมน์ (ข้อมูลทดสอบ EXP)** 🆕
+  - ต่อจาก BMW-360 (running condition `KW > 50`, ช่วง Train ครอบ 15 ม.ค.) · ก่อนกด Export ดูบรรทัดโน้ตใน dialog · หลัง export เปิด `VIB.X-I1.csv`, `FLOW_A-R1.csv`, `KW-C1.csv` ใน Notepad
+  - **คาดหวัง:** dialog มีโน้ต "N repeated timestamps — the last row of each is kept." (N = 3 × จำนวนโมเดลที่ใช้วันที่ 15 ม.ค. 10:00–10:20) · แถว `2026-01-15T10:00:00+07:00` / `10:10` / `10:20` มี**แถวเดียว** และใน `VIB.X-I1.csv` ค่า = **9.99** (สำเนาหลัง) · ไม่มีแถวช่วง 10–11 ม.ค. (เครื่องหยุด) · แถวที่ไม่มีเวลาไม่อยู่ในไฟล์ (ถ้า dialog มีโน้ต "… without a timestamp are left out." จดจำนวน) · คอลัมน์: `FLOW_A-R1` = `TimeStamp,KW,FLOW A` (inputs ก่อน output) · `KW-C1` = `TimeStamp,KW,TEMP/1` (+ criteria ถ้าเป็น sensor อื่น) · เวลาเรียงจากเก่าไปใหม่ ไม่มีบรรทัดว่าง · ตัวเลขใช้จุดทศนิยม ไม่มีคอมมาหลักพัน
+
+- [ ] **BMW-363 — เปิด CSV ที่ export ใน Excel: ภาษาไทย, tag ที่มีอักขระพิเศษ, เวลาพร้อม offset** 👀
+  - ต่อจาก BMW-360 ดับเบิลคลิกเปิด `________1-I1.csv` และ `FLOW_A-R1.csv` ใน Excel (เปิดตรง ๆ ไม่ผ่าน Import wizard)
+  - **คาดหวัง:** หัวคอลัมน์ `อุณหภูมิ1` อ่านออกใน Excel — **ถ้าเป็นภาษาต่างดาว (เช่น `à¸­à¸¸...`) ให้จดไว้**: ไฟล์เป็น UTF-8 ไม่มี BOM ตามสเปก ซึ่ง Excel บางเวอร์ชันเดาเป็น ANSI (ไม่ใช่ปัญหาของระบบปลายทาง แต่ผู้ใช้อาจเข้าใจผิด) · `FLOW A` อยู่คอลัมน์เดียว (ไม่แตกเป็นสองคอลัมน์) · คอลัมน์ TimeStamp แสดงเป็นข้อความ `2026-01-01T00:00:00+07:00` (Excel ไม่แปลงเพี้ยนเป็นวันที่ผิด) · จำนวนแถวเท่ากับที่ Peek / dialog บอก
+
+- [ ] **BMW-364 — derived_sensors: how_to_build ของ special sensor แต่ละแบบ** 🆕
+  - สร้าง special sensor 5 ตัวและใช้ทุกตัวในโมเดลที่ Complete: (1) สูตร `$TEMP_A - $TEMP_B` (2) สูตรที่ปัดทศนิยม (Quick build → ปัด 2 ตำแหน่ง) (3) Average ของ 3 sensor (4) Sum ของ 2 sensor ปัด 1 ตำแหน่ง (5) special sensor ที่สร้างจาก special sensor ข้อ (1) อีกที
+  - Export → เปิด `machine_info.json` ดู `derived_sensors` และ `sensors`
+  - **คาดหวัง:** how_to_build เป็นภาษาคน อ้าง tag จริง: (1) "Calculated as TEMP_A - TEMP_B" (ไม่มี `$`) (2) "Calculated as …, rounded to 2 decimal places" (3) "Average of A, B, C (rows where a source is missing use the others)" (4) "Sum of A, B, rounded to 1 decimal place" (5) อ้างชื่อ special sensor ข้อ (1) · **sensor ดิบทุกตัวที่ special sensor ใช้ (รวมของข้อ 5 ที่ซ้อนสองชั้น) อยู่ใน `sensors[]`** แม้ไม่มีโมเดลใช้โดยตรง · tag ของ special sensor ไม่อยู่ใน `sensors[]` และไม่ชนกับ tag ดิบ · ใน CSV คอลัมน์ special sensor มีค่าที่คำนวณแล้ว (ตรงกับกราฟ Dashboard ที่เวลาเดียวกัน)
+
+- [ ] **BMW-365 — model JSON: ค่าที่ตั้งบนจอตรงกับไฟล์ทุกช่อง (ทั้ง 3 ชนิด)** 🆕
+  - จดค่าจากหน้าจอก่อน export: Relation model (predictors ตามลำดับที่เลือก, Stiffness, จุด 80 / 0 ทั้ง 4 ช่อง), Individual (L / H), Clustering (X, Y, criteria, จำนวน cluster, ช่วง, N× SD), ชื่อโมเดล, Performance / Condition, component ของ sensor
+  - Export → เปิด `<key>.json` ทีละไฟล์เทียบ
+  - **คาดหวัง:** `display_name` = ชื่อโมเดล · `category` = `"PERFORMANCE"` / `"CONDITION"` · `component` = component ของ sensor ของโมเดล · Relation: `inputs` ลำดับเดียวกับที่เลือก, `fit_profile` = Very loose → `very_loose`, Loose → `loose`, Standard → `standard`, Strict → `strict` (ลองครบ 4 ค่า), `health.warning.low/high` = จุด 80, `failure.low/high` = จุด 0 (ค่าลบ/บวกตามที่พิมพ์ ไม่ถูกปัด) · Individual: `health.limits.low/high` = L / H · Clustering: `failure_distance` = N, cluster เดียว = `criteria_sensor: null` + `regimes: [{"from": null, "to": null}]`, หลาย cluster = `from` ตัวแรก `null`, `to` ตัวสุดท้าย `null`, เส้นแบ่งตรงกับที่ตั้ง · `training_data.file` = `<key>.csv` · `training_data.note` อ่านแล้วตรงกับ running condition / ช่วง Train ของโมเดลนั้น (เช่น "Running only: KW > 50; train periods …; rows with a missing value removed") และโมเดล Custom มี "own condition of this model"
+
+- [ ] **BMW-366 — Clustering: ค่า criteria นอกช่วงที่ตั้ง และช่วงที่ซ้อนกัน (ขอบนอกเปิด)** 🆕
+  - Clustering 2 cluster ที่ตั้งช่วง 20–50 และ 50–80 แต่ข้อมูล criteria มีค่า 0–100 → Train → ดูจำนวนแถวต่อ cluster และหน้า Health score ช่วงที่ criteria < 20 และ > 80
+  - Export → ดู regimes
+  - **คาดหวัง:** แถวที่ criteria < 20 เข้า cluster แรก, > 80 เข้า cluster สุดท้าย (ขอบนอกเปิด) และ**มีคะแนน** (เวอร์ชันก่อนไม่มีคะแนน) · regimes = `[{"from": null, "to": 50}, {"from": 50, "to": null}]` (ขอบนอกเป็น null ไม่ใช่ 20 / 80) · ช่วงที่ซ้อนกัน (BMW-358 ข้อ 5) export ไม่ได้ และตอน Train แถวในส่วนที่ซ้อนไปอยู่ cluster แรกเท่านั้น
+
+- [ ] **BMW-367 — ชื่อโฟลเดอร์ export: ไทยล้วน, ตัวอักษรมีเครื่องหมาย, ยาวมาก** 🆕
+  - โปรเจกต์ A: Plant "โรงงาน", Machine "ปั๊ม", tag "P-1" · B: Plant + Machine ไทย และ tag ไทย "ปั๊ม1" · C: Plant "Café Nord", Machine "Pompe à eau" · D: Plant + Machine ยาวรวม ~120 ตัวอักษร (อังกฤษ) — export แต่ละโปรเจกต์
+  - **คาดหวัง:** A = `P-1_YYYY-MM-DD_HHMM` (ใช้ tag แทนชื่อไทย) · B = `Workspace_YYYY-MM-DD_HHMM` · C = `Cafe_Nord_Pompe_a_eau_…` (ตัดเครื่องหมายบนตัวอักษร ไม่มีช่องว่าง) · D = ชื่อถูกตัดให้สั้นลงแต่ยังจบด้วย `_YYYY-MM-DD_HHMM` และไม่จบด้วย `_` / `.` ซ้อน · ชื่อใน dialog (ก่อนกด) ตรงกับโฟลเดอร์ที่ได้จริง · เวลาในชื่อเป็นเวลาเครื่องตอนกด Export
+
+- [ ] **BMW-368 — โฟลเดอร์ปลายทางที่เขียนไม่ได้ / หายระหว่างเขียน** 👀
+  - (ก) เลือกโฟลเดอร์ที่ไม่มีสิทธิ์เขียน (เช่น `C:\Windows` หรือโฟลเดอร์ที่ตั้ง Read-only / แชร์แบบอ่านอย่างเดียว) → Export (ข) เลือกไดรฟ์ USB → กด Export แล้วถอด USB ระหว่าง "Writing model …" (ค) โฟลเดอร์ที่ path มีภาษาไทยและช่องว่าง (เช่น `D:\งาน ส่งลูกค้า\`) (ง) path ยาวมาก (ซ้อนโฟลเดอร์จนใกล้ 250 ตัวอักษร)
+  - **คาดหวัง:** (ก)(ข) "Export failed · nothing was written" + เหตุผลที่อ่านเข้าใจ + "Choose another folder…" / "Try again" · ไม่มีโฟลเดอร์ครึ่ง ๆ เหลือ (ถ้า USB ถอดแล้วเสียบกลับ ดูว่ามีโฟลเดอร์ staging ค้างไหม — จดไว้) · โปรแกรมไม่ค้าง, โมเดลยัง Complete · (ค) export สำเร็จ · (ง) สำเร็จ หรือ failed พร้อมเหตุผล — ไม่ค้างและไม่เขียนครึ่งเดียว · Choose another folder… แล้ว Export สำเร็จได้ทันทีโดยไม่ต้องปิด dialog
+
+- [ ] **BMW-369 — ปิดโปรแกรมด้วย Task Manager ระหว่าง export** 👀
+  - โปรเจกต์ที่ export ใช้เวลาหลายวินาที (ข้อมูลใหญ่ / หลายโมเดล) → Export → ระหว่าง "Writing model N of M" → Task Manager → End task → เปิดโฟลเดอร์ปลายทาง
+  - เปิดโปรแกรม → เปิดโปรเจกต์ → Export อีกครั้งไปที่เดิม
+  - **คาดหวัง:** ไม่มีโฟลเดอร์ชื่อ `<ชื่อ>_YYYY-MM-DD_HHMM` ที่ข้อมูลไม่ครบ (โฟลเดอร์จริงเกิดตอนเขียนครบแล้วเท่านั้น) — ถ้าเหลือโฟลเดอร์ staging ซ่อน / ชั่วคราว จดชื่อไว้ (ลบเองได้) · โปรเจกต์เปิดได้ ทุกโมเดลยัง Complete · export รอบใหม่สำเร็จและไม่ชนกับของค้าง
+
+- [ ] **BMW-370 — Peek และรายการไฟล์ใน dialog** 🆕
+  - dialog ที่พร้อม export → "What is written" → Show the files → กด Peek ที่ `machine_info.json`, ที่ `.json` ของโมเดล และที่ `.csv` ของโมเดล → Close preview · Hide the files
+  - **คาดหวัง:** รายการไฟล์ตรงกับที่จะได้จริง (`machine_info.json` + `models\` คู่ .json / .csv ต่อโมเดล ชื่อ key เดียวกับ BMW-360) พร้อมขนาด · Peek ของ CSV แสดงหัวคอลัมน์ + ไม่กี่แถวแรก (ไม่โหลดทั้งไฟล์) และตรงกับไฟล์จริงหลัง export · Peek ของ JSON ตรงกับไฟล์จริง (ยกเว้น `exported_at`) · คำอธิบายใต้ machine_info บอกว่าแต่ละส่วนมาจากไหน · Close preview กลับรายการเดิม
+
+- [ ] **BMW-371 — คีย์บอร์ดและโฟกัสใน Export dialog** 🆕
+  - เปิด Export results ด้วยคีย์บอร์ด (Tab ไปที่ปุ่ม → Enter) ในสองกรณี: ยังไม่เคยเลือกโฟลเดอร์ · เคยเลือกแล้ว
+  - Tab วนใน dialog · กด Esc ในขั้นยืนยัน sensor ที่ไม่มี component · กด Esc ตอน Project details ซ้อนอยู่ · กด Esc ที่ dialog หลัก
+  - **คาดหวัง:** โฟกัสแรก = "Choose folder…" (ยังไม่มีโฟลเดอร์) หรือ "Export N models" (มีแล้ว) หรือช่องที่ต้องแก้ช่องแรก · Tab ไม่หลุดไปข้างหลัง dialog · Esc ในขั้นยืนยัน = Back (กลับ dialog ไม่ export) · Esc ตอน Project details ซ้อน = ปิดแค่ Project details · Esc ที่ dialog หลัก = ปิด dialog และโฟกัสกลับที่ปุ่ม Export results · ระหว่างเขียน Esc ไม่ยกเลิก export โดยไม่ตั้งใจ
+
+- [ ] **BMW-372 — โฟลเดอร์ล่าสุดที่เลือกถูกจำข้ามโปรเจกต์และข้ามการปิดโปรแกรม** 🆕
+  - export โปรเจกต์ A ไป `D:\Export` → ปิดโปรแกรม → เปิดโปรเจกต์ B → Export results
+  - **คาดหวัง:** "Save to" แสดง `D:\Export` ไว้แล้ว (ไม่ต้องเลือกใหม่) และ Choose folder… เปิดที่ `D:\Export` · ถ้าโฟลเดอร์นั้นถูกลบไปแล้ว: เลือกใหม่ได้ หรือ export failed พร้อมเหตุผล — ไม่ค้าง
+
+- [ ] **BMW-373 — บรรทัด "exported" และ Open folder หลัง export** 🆕
+  - export สำเร็จ → ปิด dialog → ดูแถบล่าง → กด Open folder · เปิด / ปิด dialog อีกครั้ง · ปิดหน้าต่าง Build Model แล้วเปิดใหม่ · Mark incomplete โมเดลหนึ่ง
+  - **คาดหวัง:** แถบเขียน "N models exported …" พร้อม Open folder ที่เปิด Explorer ไปที่โฟลเดอร์ที่เพิ่งเขียน (ไม่ใช่โฟลเดอร์แม่) · ปิด-เปิด dialog บรรทัดยังอยู่ · ปิดหน้าต่าง Build Model แล้วเปิดใหม่ = บรรทัดหาย (อยู่ตลอดอายุหน้าต่าง) · Mark incomplete = บรรทัดหาย แถบกลับเป็นยังไม่พร้อม
+
+- [ ] **BMW-374 — แก้สิ่งที่ไม่อยู่ในโมเดลหลัง export: โมเดลยัง Complete แต่ export ถัดไปได้ค่าใหม่** 🆕
+  - export แล้ว → แก้: Description / Recommendation ของ Failure group, Notes ใน Project details, unit / description ของ special sensor (ถ้าแก้ได้), เขตเวลา, บรรทัด running status
+  - ดูสถานะโมเดล → Export อีกครั้ง → เทียบสองโฟลเดอร์
+  - **คาดหวัง:** โมเดลยัง Complete ทุกตัว (ไม่ต้อง Mark complete ใหม่) · โฟลเดอร์ใหม่มีค่าใหม่ทุกจุดที่แก้ · โฟลเดอร์เก่าไม่ถูกแตะ · CSV ของโมเดลเหมือนเดิมทุกแถว (ยกเว้น offset ถ้าเปลี่ยนเขตเวลา)
+
+- [ ] **BMW-375 — export ซ้ำโดยไม่แก้อะไร: ผลเหมือนเดิมทุกไบต์ยกเว้นเวลา export** 🆕
+  - export โปรเจกต์เดิมสองครั้ง (ห่างกันเกิน 1 นาที) → เทียบไฟล์ทุกไฟล์ (เช่น `fc /b` หรือ WinMerge)
+  - **คาดหวัง:** ทุก `.csv` และ `models\*.json` เหมือนกันทุกไบต์ · `machine_info.json` ต่างแค่ `exported_at` · ลำดับ sensors / components / failure_groups เหมือนเดิม (ไม่สลับลำดับทุกครั้งที่ export)
+
+- [ ] **BMW-376 — Mark complete ถูกกันด้วยกติกาใหม่: ชื่อซ้ำ / ไม่มี category — เหตุผลบอกชัด** 🆕
+  - โมเดลที่ Trained และ set point ผ่าน แต่ (ก) ชื่อซ้ำกับโมเดลอื่นในโปรเจกต์ (โปรเจกต์เก่า) (ข) sensor ไม่มี Performance / Condition (โปรเจกต์เก่า) → ชี้ / กด ✓ Mark complete
+  - **คาดหวัง:** ปุ่มกดไม่ได้หรือกดแล้วไม่ Complete พร้อมเหตุผลที่บอกว่าชื่อซ้ำกับโมเดลไหน (แสดง sensor เป็น description + tag) / ให้เลือก Performance หรือ Condition · แก้แล้ว Mark complete ผ่านโดยไม่ต้อง Train ใหม่ (เปลี่ยนชื่อ / category ไม่ทำให้ต้อง Train)
+
+- [ ] **BMW-377 — Category บังคับก่อน Train** 🆕
+  - sensor ใหม่ที่ยังไม่เลือก Performance / Condition → สร้างโมเดล → ตั้งค่าครบ → ชี้ / กด Train sensor และ Train all
+  - **คาดหวัง:** Train ไม่ได้ เหตุผลบอกให้เลือก Performance หรือ Condition ที่หัว sensor · Train all ข้าม sensor นี้พร้อมเหตุผลในหน้าตรวจก่อนเริ่ม (และลิงก์ Fix →) · เลือกแล้ว Train ได้ทันที
+
+- [ ] **BMW-378 — export โปรเจกต์ที่สร้างจากเวอร์ชันก่อน 0.12** 👀
+  - เปิดโปรเจกต์เก่าที่มีโมเดล Complete (สร้างใน 0.10 / 0.11) → Build Model
+  - กรอก Machine name / tag ผ่าน Fill in → (ถ้าขาด) → Export
+  - **คาดหวัง:** โมเดลที่เคย Complete ยัง Complete (ไม่ต้อง Train ใหม่) — ยกเว้นข้อที่ติดกติกาใหม่ (ชื่อซ้ำ / ไม่มี category / ช่วง cluster) ซึ่งขึ้นใน checklist · ไม่มีข้อความเก่าเรื่อง "files out of date" / "Mark complete again" ที่เกี่ยวกับไฟล์ · โฟลเดอร์ `ws_<id>\output\` เก่าใน app data ไม่ถูกลบและไม่ถูกเขียนเพิ่ม · export ได้ครบ
 
 ---
 
@@ -4013,6 +4156,10 @@ _เพิ่ม 2026-10-14 จากการไล่โค้ดเส้น�
   - อีกรอบ: ทั้งสองตัวเปิด **โปรเจกต์เดียวกัน** (A) — ตัวที่ 1 สร้าง special sensor `S9`, ตัวที่ 2 เปลี่ยนสีเส้นสักเส้น — ปิดทั้งคู่แล้วเปิด A ใหม่
   - **คาดหวัง:** ไม่มีงานหายเพราะอีกตัวบันทึกทับ — โปรเจกต์ C ยังอยู่ในหน้าแรก และ `S9` ยังอยู่ใน A หลังเปิดใหม่ (หรือโปรแกรมกันไม่ให้เปิดตัวที่สอง/ดึงหน้าต่างเดิมขึ้นมาแทน) · **โค้ดตอนนี้ไม่กันการเปิดซ้อน และแต่ละตัวถือรายการโปรเจกต์/สถานะของตัวเองแล้วบันทึกทับกัน — ถ้า C หายจากหน้าแรก (ไฟล์ `ws_….json` ยังอยู่ในโฟลเดอร์) หรือ `S9` หาย ให้จดว่าเป็นบั๊กข้อนี้**
 
+- [ ] **MULTI-23 — export โปรเจกต์ A แล้วสลับไป B: บรรทัด exported / ค่าใน dialog ไม่ข้ามโปรเจกต์** 🆕
+  - โปรเจกต์ A export สำเร็จ (บรรทัด "N models exported" ขึ้น) → กลับหน้า Import → เปิดโปรเจกต์ B → Build Model → Export results
+  - **คาดหวัง:** หน้าต่าง Build Model ของ A ปิดไปตอนสลับ · ของ B ไม่มีบรรทัด exported ของ A · checklist / Machine / running status / ชื่อโฟลเดอร์ใน dialog เป็นของ B ทั้งหมด · (โฟลเดอร์ล่าสุดที่เลือกจำร่วมกันได้ — ตาม BMW-372)
+
 ---
 
 ---
@@ -4127,6 +4274,11 @@ _หมวดที่สำคัญที่สุด — ทุกอย่�
   - เปิดโปรแกรม เปิดโปรเจกต์นั้น
   - **คาดหวัง:** Dashboard เห็นข้อมูลวันที่เพิ่มต่อท้าย (ช่วงเวลาทั้งหมดยาวขึ้น) และชื่อ sensor ตามที่แก้ใหม่ — ตั้งใจ: โปรเจกต์เก็บแค่ที่อยู่ไฟล์ ไม่ได้เก็บสำเนาข้อมูล (จึงต้องไม่ย้าย/ลบไฟล์ต้นทาง ดู IMP-58, IMP-82)
 
+- [ ] **PER-23 — บรรทัด running status, เขตเวลา, Project details อยู่ครบหลังปิดเปิดและหลังทำงานใน Dashboard** 🆕
+  - ตั้งบรรทัด "Machine is running when … is above …" → Apply · เปลี่ยนเขตเวลา · แก้ Notes ใน Project details
+  - ทำงานต่อใน Dashboard 2 นาที (เปลี่ยน sensor, ซูม, สร้าง tag) → ปิดโปรแกรมแบบปกติ → เปิด → ดูทั้งสามจุด · ทำซ้ำแต่ปิดด้วย Task Manager ~5 วินาทีหลังแก้
+  - **คาดหวัง:** ทั้งสามค่ายังอยู่ (ไม่ถูก autosave ของ Dashboard เขียนทับ) · ปิดด้วย Task Manager: ค่าที่กด Apply / Save ไปแล้วต้องอยู่
+
 ---
 
 ---
@@ -4177,6 +4329,10 @@ _หมวดที่สำคัญที่สุด — ทุกอย่�
 - [ ] **ERR-6 — ไม่ได้เลือก sensor เลย**
   - แท็บ Selected Sensor กด "Clear all" แล้วสลับชนิดกราฟไปมา
   - **คาดหวัง:** กราฟว่างพร้อมข้อความ ไม่มี error · ปุ่ม Scatter และ Pair Plot กดไม่ได้ (ชี้แล้วขึ้น "Select at least 2 sensors") · ไม่มีกล่อง error โผล่
+
+- [ ] **ERR-10 — export ล้มเหลว / ยกเลิก ถูกบันทึกใน log** 🆕
+  - ทำให้ export ล้ม (BMW-368 ก) และยกเลิก export (BMW-347) → เปิด `%LOCALAPPDATA%\com.prompt-solution.tauri-app\logs\frontend-errors.log`
+  - **คาดหวัง:** การล้มมีบรรทัดพร้อมเวลาและเหตุผล (path, สิทธิ์) ช่วยให้ตามปัญหาได้ · การยกเลิกโดยผู้ใช้ไม่ถูกบันทึกเป็น error (หรือบันทึกเป็นข้อมูลเฉย ๆ) · ไม่มีข้อมูลลับ (เช่น ค่าใน CSV ทั้งแถว) ใน log
 
 ---
 
@@ -4231,6 +4387,10 @@ _ทำกับไฟล์ใหญ่จริงเท่านั้น —
   - ย่อหน้าต่าง (minimize) แล้วดู CPU อีก 30 วินาที · เปิดหน้าต่างคืน
   - เข้า Dashboard แล้วดู CPU ตอนไม่ได้ทำอะไร
   - **คาดหวัง:** ตอนย่อหน้าต่าง CPU ลดลงใกล้ศูนย์ (ภาพหยุดเล่นเมื่อมองไม่เห็น) และกลับมาเล่นต่อเมื่อเปิดหน้าต่างคืน · ใน Dashboard CPU นิ่ง (ภาพเครื่องจักรไม่ทำงานเบื้องหลัง) — จดตัวเลข ถ้า CPU ไม่ลดตอนย่อให้จดไว้
+
+- [ ] **PERF-10 — export ข้อมูลใหญ่: เวลา, หน่วยความจำ, หน้าจอไม่ค้าง** 🆕
+  - โปรเจกต์ข้อมูล ~1 ล้านแถว 20 โมเดล (ช่วง Train ยาว) → Export → จับเวลา · เปิด Task Manager ดูหน่วยความจำของ Wizard ก่อน / ระหว่าง / หลัง · ระหว่างเขียน: ลากหน้าต่าง, เปิด Dashboard, กด Hide
+  - **คาดหวัง:** แถบความคืบหน้าเดิน "Writing model N of M" · หน้าต่างอื่นยังใช้ได้ ไม่ขึ้น "Not responding" · หน่วยความจำขึ้นชั่วคราวแล้วลงกลับ (จดตัวเลข) · จดเวลาที่ใช้และขนาดโฟลเดอร์ (ข้อมูลประกอบ ไม่มีเกณฑ์ตายตัว) · Cancel ระหว่างนี้หยุดได้ภายในไม่กี่วินาที
 
 ---
 
@@ -4675,18 +4835,18 @@ _วิศวกรเปิด Dashboard ไว้จอหนึ่งแล�
   - เปิดโปรเจกต์ใหม่ → Build Model
   - **คาดหวัง:** Build Model และ Add Special Sensor ปิดเองโดยไม่ถาม · หน้าแรกไม่ค้าง · เปิดใหม่: โมเดลที่กำลัง train อยู่ในสถานะใดสถานะหนึ่งชัดเจน (train เสร็จ หรือเหมือนก่อน train) ไม่มี "Training…" ค้าง และไม่มีโมเดลไหนถูกเปลี่ยนเป็น Complete เอง · Dashboard ตรงกับ Build Model
 
-- [ ] **WFD-14 — ปิด Build Model ระหว่าง Mark complete ของ Relation model** 🐍
+- [ ] **WFD-17 — ปิด Build Model ระหว่าง Mark complete ของ Relation model (แทน WFD-14)** 🐍
   - Relation model ที่ Trained + set point ผ่าน → ✓ Mark complete → ทันทีกด X ที่หัวหน้าต่าง
-  - **คาดหวัง:** หน้าต่างไม่ปิดจนบันทึกเสร็จ (ถ้านานเกิน ~90 วินาทีจะขึ้น "Still saving the model files — the window stays open so nothing is lost…") แล้วปิดเอง · เปิดใหม่: โมเดล Complete และไฟล์ REL_* เวลาใหม่ตรงกัน ไม่มีโฟลเดอร์ `.staging-…` ค้าง
+  - **คาดหวัง:** หน้าต่างรอให้การตรวจ ("Checking…") จบก่อนแล้วปิดเอง (ไม่เกิน ~90 วินาที) · เปิดใหม่: โมเดลเป็น Complete ถ้าตรวจผ่านก่อนปิด (หรือยัง Incomplete ถ้ายังไม่ทันผ่าน — ไม่มีสถานะครึ่ง ๆ) · **ไม่มีไฟล์ใดถูกเขียน** (ไฟล์มีแค่ตอน Export results)
 
 - [ ] **WFD-15 — ปิดหน้าต่างหลัก (Dashboard) ขณะหน้าต่างลูกยังเปิด**
   - เปิด Build Model และ Add Special Sensor ค้างไว้ → กด X ที่หน้าต่างหลัก
   - ถ้าหน้าต่างลูกยังอยู่: ใน Add Special Sensor สร้าง `ORPHAN_TEST` (สูตร `$AMB_TEMP * 2`) และใน Build Model แก้ชื่อโมเดลหนึ่งแล้ว Save changes → ปิดทุกหน้าต่าง → เปิดโปรแกรมและโปรเจกต์ใหม่
   - **คาดหวัง:** (ที่ถูก) ปิดหน้าต่างหลักแล้วโปรแกรมปิดหน้าต่างลูกด้วย หรือถามก่อน · จดสิ่งที่เกิดจริง: ตามโค้ดหน้าต่างลูกค้างอยู่โดยไม่มี Dashboard — ORPHAN_TEST ขึ้นว่าสร้างสำเร็จแต่หลังเปิดใหม่หายไป (ไม่มีใครบันทึก) ขณะที่ชื่อโมเดลที่แก้ใน Build Model ยังอยู่ → รายงานบั๊ก (ข้อมูลหายแบบไม่บอก)
 
-- [ ] **WFD-16 — ตรวจความสอดคล้องสุดท้าย**
-  - เปิดโปรเจกต์ → แท็บ Failure Groups → Build Model → เปิดโฟลเดอร์ output
-  - **คาดหวัง:** จำนวนกลุ่ม/sensor/โมเดล และสถานะตรงกันทั้ง Dashboard, ลิสต์ซ้าย Build Model และการ์ดหน้าแรก (2 failure groups) · ไม่มีโมเดลผี (โมเดลที่ลบแล้วกลับมา) ไม่มีกลุ่มซ้ำ · ไม่มี special sensor ORPHAN_TEST · ทุกโมเดล Complete มีไฟล์ใน output
+- [ ] **WFD-18 — ตรวจความสอดคล้องสุดท้าย (แทน WFD-16)**
+  - เปิดโปรเจกต์ → แท็บ Failure Groups → Build Model → Export results
+  - **คาดหวัง:** จำนวนกลุ่ม/sensor/โมเดล และสถานะตรงกันทั้ง Dashboard, ลิสต์ซ้าย Build Model และการ์ดหน้าแรก (2 failure groups) · ไม่มีโมเดลผี (โมเดลที่ลบแล้วกลับมา) ไม่มีกลุ่มซ้ำ · ไม่มี special sensor ORPHAN_TEST · ถ้าทุกโมเดล Complete: Export dialog พร้อม export และรายการไฟล์ตรงกับโมเดลที่เหลือจริง
 
 ---
 
@@ -4859,11 +5019,11 @@ _ผู้ใช้: วิศวกรใหม่ที่ยังไม่�
   - ย้ายโฟลเดอร์กลับ**ที่เดิมทุกตัวอักษร** (หรือต่อ network) → กดการ์ดอีกครั้ง
   - **คาดหวัง:** ข้อความแดงบนหน้าแรกบอกว่าหาไฟล์ไม่เจอ ไม่จอขาว การ์ดกดซ้ำได้ (โค้ดตอนนี้ใช้ข้อความของ Windows เช่น "The system cannot find the file specified. (os error 2)" ซึ่ง**ไม่บอกว่าไฟล์ไหน** — จดข้อความ และถ้าโปรเจกต์มีหลายไฟล์ให้ดูว่ารู้ได้ไหมว่าไฟล์ไหนหาย) · ไม่มีทางเลือกไฟล์ใหม่จากในโปรแกรม ต้องย้ายกลับที่เดิม · ย้ายกลับแล้วเปิดได้ครบทุกอย่าง (โมเดล, สถานะ, special sensor มีค่า)
 
-- [ ] **WFF-15 — ลบโปรเจกต์ผิดตัว แล้วพยายามกู้จากไฟล์สำรอง** 👀
+- [ ] **WFF-16 — ลบโปรเจกต์ผิดตัว แล้วพยายามกู้จากไฟล์สำรอง (แทน WFF-15)** 👀
   - (มีสำรองจากต้น workflow) ที่หน้าแรกชี้การ์ด "Trial-F3" → ถังขยะ → Delete (สมมติว่าลบผิด)
-  - ปิดโปรแกรม → copy เฉพาะ `ws_<id>.json` และโฟลเดอร์ `ws_<id>\` ของ Trial-F3 จากสำรองกลับเข้า `workspaces\` → เปิดโปรแกรม
+  - ปิดโปรแกรม → copy เฉพาะ `ws_<id>.json` (และโฟลเดอร์ `ws_<id>\` ถ้ามี) ของ Trial-F3 จากสำรองกลับเข้า `workspaces\` → เปิดโปรแกรม
   - ปิดโปรแกรม → คืน `settings.json` จากสำรองด้วย → เปิดโปรแกรม
-  - **คาดหวัง:** หลังลบ: การ์ดหายทันที ไฟล์ JSON + โฟลเดอร์ output หายจริง ไฟล์ CSV / Tag names ต้นทางไม่ถูกแตะ · คืนแค่ไฟล์โปรเจกต์ = **การ์ดยังไม่กลับมา** (รายการหน้าแรกอ่านจาก `settings.json` เท่านั้น) · คืน `settings.json` ด้วย = การ์ดกลับมาและเปิดได้ครบ แต่รายการและเวลาของโปรเจกต์อื่นย้อนกลับไปเป็นตอนสำรอง (จดว่ายอมรับได้ไหม — ข้อมูลประกอบการทำปุ่มกู้คืน/ถังขยะ)
+  - **คาดหวัง:** หลังลบ: การ์ดหายทันที ไฟล์ JSON ของโปรเจกต์หายจริง · ไฟล์ CSV / Tag names ต้นทาง และโฟลเดอร์ที่เคย Export results ไว้**ไม่ถูกแตะ** · คืนแค่ไฟล์โปรเจกต์ = **การ์ดยังไม่กลับมา** (รายการหน้าแรกอ่านจาก `settings.json` เท่านั้น) · คืน `settings.json` ด้วย = การ์ดกลับมาและเปิดได้ครบ แต่รายการและเวลาของโปรเจกต์อื่นย้อนกลับไปเป็นตอนสำรอง (จดว่ายอมรับได้ไหม — ข้อมูลประกอบการทำปุ่มกู้คืน/ถังขยะ)
 
 ---
 
@@ -5017,10 +5177,10 @@ _ผู้ใช้: หัวหน้าทีมที่ทำโปรเ�
   - (มีสำรองจากก่อนอัปเกรด) หลังข้อ WFH-11 เปิดโปรเจกต์ในเวอร์ชันใหม่และแก้อะไรเล็กน้อย → ติดตั้งเวอร์ชันเก่ากลับ → เปิดโปรเจกต์เดิม ดูแต่ไม่แก้ → ติดตั้งเวอร์ชันใหม่อีกครั้ง → เปิดโปรเจกต์เดิม
   - **คาดหวัง:** เวอร์ชันเก่าเปิดได้ไม่ crash (สิ่งที่มีเฉพาะเวอร์ชันใหม่อาจไม่แสดง — ทราบแล้ว ดู PER-10) · กลับมาเวอร์ชันใหม่แล้วข้อมูลครบเหมือนก่อนถอย · ถ้ามีอะไรหาย ให้จดว่าหายหลังขั้นไหน (คำแนะนำให้ผู้ใช้: ถ้าต้องถอยเวอร์ชันให้คืนโฟลเดอร์สำรองแทน)
 
-- [ ] **WFH-14 — ดูแลไฟล์ log และไฟล์ค้าง**
-  - ดูขนาด `%LOCALAPPDATA%\com.prompt-solution.tauri-app\logs\frontend-errors.log` · ค้นไฟล์ `*.tmp` ใน `workspaces\` และโฟลเดอร์ `.staging-*` ใน `workspaces\ws_*\`
+- [ ] **WFH-19 — ดูแลไฟล์ log และไฟล์ค้าง (แทน WFH-14)**
+  - ดูขนาด `%LOCALAPPDATA%\com.prompt-solution.tauri-app\logs\frontend-errors.log` · ค้นไฟล์ `*.tmp` ใน `workspaces\` · ดูโฟลเดอร์ที่เคย Export results ว่ามีโฟลเดอร์ชั่วคราว / staging ค้างไหม
   - ปิดโปรแกรม → ลบ `frontend-errors.log` → เปิดโปรแกรมแล้วทำให้เกิด toast error (เช่น ทำ special sensor ให้กู้คืนไม่ได้ตาม WFF-6)
-  - **คาดหวัง:** log อ่านได้ ทุกบรรทัดมีเวลา + [แหล่ง] (ไฟล์ไม่มีการตัดรอบ — จดขนาด) · ลบได้ตอนปิดโปรแกรมและถูกสร้างใหม่เมื่อมี error ครั้งถัดไป · ไม่มี `*.tmp` / `.staging-*` ค้าง (ถ้ามี จดวันที่ของไฟล์ — มาจากการปิดโปรแกรมกลางการบันทึก ลบทิ้งได้ตอนโปรแกรมปิดอยู่)
+  - **คาดหวัง:** log อ่านได้ ทุกบรรทัดมีเวลา + [แหล่ง] (ไฟล์ไม่มีการตัดรอบ — จดขนาด) · ลบได้ตอนปิดโปรแกรมและถูกสร้างใหม่เมื่อมี error ครั้งถัดไป · ไม่มี `*.tmp` ค้างใน `workspaces\` และไม่มีโฟลเดอร์ชั่วคราวค้างในโฟลเดอร์ปลายทางของ export (ถ้ามี จดวันที่ — มาจากการปิดโปรแกรมกลางการบันทึก / export ลบทิ้งได้ตอนโปรแกรมปิดอยู่) · โฟลเดอร์ `ws_<id>\output\` เก่า (ถ้ามีจากเวอร์ชันก่อน 0.12) ไม่ถูกเขียนเพิ่ม
 
 ---
 
@@ -5028,7 +5188,7 @@ _ผู้ใช้: หัวหน้าทีมที่ทำโปรเ�
 
 ### Workflow I — ข้อมูลหลายแหล่งหลายรูปแบบวันเวลา → โมเดล Complete → Export results → แก้แล้ว Export ซ้ำ
 
-_ผู้ใช้: วิศวกรที่ได้ข้อมูลเครื่องเดียวกัน 6 เดือนจาก 3 แหล่ง (historian, Excel ที่ save แบบ US, ระบบที่เขียน ISO) · เป้าหมาย: รวมไฟล์ให้วันเวลาถูก, สร้างโมเดล, แก้แล้ว Mark complete ซ้ำ, ลบกลุ่ม / โมเดลที่เลิกใช้ — โดยโฟลเดอร์ output ตรงกับโมเดลจริงทุกขั้น · เตรียม: รัน `python scripts/make-ts-testdata.py C:\TSdata` (IMP-89) → ใช้โฟลเดอร์ `C:\TSdata\scenario` · เปิด Explorer ที่ `%APPDATA%\com.prompt-solution.tauri-app\workspaces\` ไว้ข้าง ๆ_
+_ผู้ใช้: วิศวกรที่ได้ข้อมูลเครื่องเดียวกัน 6 เดือนจาก 3 แหล่ง (historian, Excel ที่ save แบบ US, ระบบที่เขียน ISO) · เป้าหมาย: รวมไฟล์ให้วันเวลาถูก, สร้างโมเดล, แก้แล้ว Mark complete ซ้ำ, ลบกลุ่ม / โมเดลที่เลิกใช้ — โดยไฟล์ที่ Export results ตรงกับโมเดลจริงทุกขั้น · เตรียม: รัน `python scripts/make-ts-testdata.py C:\TSdata` (IMP-89) → ใช้โฟลเดอร์ `C:\TSdata\scenario` · เปิด Explorer ที่ `%APPDATA%\com.prompt-solution.tauri-app\workspaces\` ไว้ข้าง ๆ_
 
 - [ ] **WFI-1 — รวม 3 ไฟล์ 3 รูปแบบเป็นข้อมูลชุดเดียว**
   - New project "WFI pump" → เลือก `I-1_jan-feb_historian.csv`, `I-2_mar-apr_excel.csv`, `I-3_may-jun_iso.csv` → อ่านกล่องสีฟ้า "Every file must write the date/time the same way" → Parse files
@@ -5047,6 +5207,67 @@ _ผู้ใช้: วิศวกรที่ได้ข้อมูลเ�
   - เพิ่ม `P1_FLOW` (Individual) ในกลุ่ม Motor และใส่ Individual ของ `BRG_TEMP` ในกลุ่ม Motor ด้วย → Mark complete → Export
   - ลบกลุ่ม Bearing (อ่านข้อความ) → Export อีกครั้ง → เปิด `machine_info.json` ของทั้งสองโฟลเดอร์
   - **คาดหวัง:** export แรก: failure_groups มี Bearing (BRG_TEMP-I1, BRG_TEMP-R1) และ Motor (BRG_TEMP-I1, P1_FLOW-I1) — โมเดลที่ใช้ร่วมมีไฟล์ชุดเดียว · ข้อความลบ "Delete Bearing? 1 model used only by this group is deleted · 1 model stays in its other groups." · export ที่สองไม่มีกลุ่ม Bearing และไม่มี `BRG_TEMP-R1` · ไม่มีไฟล์ใดถูกลบจากโฟลเดอร์ export แรก
+
+---
+
+## WFJ
+
+### Workflow J — ทำโมเดลส่งให้ระบบของลูกค้า: ตั้งข้อมูลเครื่อง → โมเดลครบ 3 ชนิด → Export → ลูกค้าขอแก้ → Export รอบสอง
+
+_ผู้ใช้: วิศวกรที่ต้องส่งผลไปให้ระบบ monitoring ของลูกค้า (ระบบปลายทางอ่านไฟล์ export ไป train ใหม่เอง) · เป้าหมาย: ไฟล์ที่ส่งไปตรงกับที่ตั้งบนจอทุกค่า อ่านได้โดยไม่ต้องถาม และแก้ตามที่ลูกค้าขอได้โดยของเดิมไม่หาย · เตรียม: รัน `python scripts/make-export-testdata.py C:\EXPdata` · เปิด `C:\EXPdata\EXPECTED.txt` ไว้ข้าง ๆ · โฟลเดอร์ปลายทาง `D:\ToCustomer` (มีไฟล์อื่นอยู่แล้ว 1 ไฟล์)_
+
+- [ ] **WFJ-1 — สร้างโปรเจกต์พร้อมข้อมูลเครื่อง**
+  - New project → Plant "Map Ta Phut", Machine "Pump Set P-1", Machine tag "P-1", Notes "Centrifugal pump, 250 kW motor, commissioned 2015" → Continue
+  - ขั้น 2: เขตเวลา = UTC+07:00 (this PC) → Import `EXP-data.csv` → Parse files · Tag names = `EXP-tags.csv`
+  - **คาดหวัง:** การ์ดตัวอย่าง "Map Ta Phut · Pump Set P-1" / "P-1 · Centrifugal pump…" · Rows **4,325** ช่วง 2026/01/01 00:00:00 → 2026/01/30 23:50:00 · tag names จับคู่ครบ 7 ตัว (ชื่อ sensor ขึ้นเป็น description รวม "อุณหภูมิห้อง") · ไม่มีคำเตือน Duplicate column
+
+- [ ] **WFJ-2 — Failure groups และโมเดล**
+  - ขั้น 3 / Dashboard: กลุ่ม "Pump health" (Description + Recommendation ครบ) และ "Valve" (ยังไม่กรอก Description)
+  - Pump health: `TEMP/1` = Individual, `FLOW A` = Relation model (predictor `KW`, `SPEED`), `KW` = Clustering (Y = `TEMP/1`, 2 cluster, criteria `CON`) · Valve: `CON` = Individual · ตั้ง Performance / Condition ให้ทุก sensor
+  - ลองตั้งชื่อโมเดล `FLOW A` ให้ซ้ำกับชื่อโมเดลของ `TEMP/1`
+  - **คาดหวัง:** ชื่อเริ่มต้นของโมเดลใหม่ไม่ซ้ำกัน · ตั้งชื่อซ้ำแล้ว Save changes ถูกกันพร้อมเหตุผล · sensor ทุกตัวแสดง description ก่อน tag (รวม `TEMP/1`, `FLOW A`, `อุณหภูมิ1`)
+
+- [ ] **WFJ-3 — Running condition + Train ทั้งหมด**
+  - Build Model → Running condition `KW > 50`, ช่วง Train 2026/01/01 → 2026/01/20, ช่วง Scoring 2026/01/21 → 2026/01/30 → Apply → Train all
+  - **คาดหวัง:** Train ครบ 4 โมเดล (Relation model ~15 วินาที บนแอปที่ติดตั้งแล้ว) · ช่วงเครื่องหยุด 10–11 ม.ค. ไม่อยู่ในการ Train · ไม่มีโมเดลไหนติดเรื่อง category
+
+- [ ] **WFJ-4 — Set point + Mark complete ทุกตัว แล้วดู checklist**
+  - กรอก set point ทุกโมเดล → Mark complete ทีละตัว (สังเกตปุ่ม "Checking…") → แถบ Export results → Show which (ถ้ามี) → Export results
+  - **คาดหวัง:** Mark complete ไม่เขียนไฟล์ ใช้เวลาสั้น · checklist: Machine "Map Ta Phut · Pump Set P-1 · P-1" ✓ · Time zone "UTC+07:00 (this PC)" · Running status "Machine is running when Motor power (KW) is above 50 kW" (มาจากเงื่อนไข > ข้อเดียว) · Sensors บอกว่ามี 1 ตัวไม่มี component (`CON`) · Failure groups "1 of 2 without a description or a recommendation" (Valve) → Export กดไม่ได้
+
+- [ ] **WFJ-5 — แก้ Failure group ตามที่ checklist บอก**
+  - กดลิงก์ / ไปที่ "Dashboard › Failure Groups › Edit details" ของ Valve → กรอก Description + Recommendation → กลับไปที่ Export dialog
+  - **คาดหวัง:** checklist อัปเดตเองเป็นครบ (ไม่ต้องปิดเปิดหน้าต่าง Build Model) · โมเดลยัง Complete ทุกตัว · dry run เริ่มเอง ส่วน "What is written" แสดงไฟล์ 4 คู่ + `machine_info.json` พร้อมโน้ตเรื่องเวลาซ้ำ ("… repeated timestamps — the last row of each is kept.")
+
+- [ ] **WFJ-6 — Export ครั้งแรก (มี sensor ที่ไม่มี component)**
+  - Choose folder… → `D:\ToCustomer` → ดูชื่อโฟลเดอร์ที่จะสร้าง → Export → ขั้นยืนยันแสดง `CON` → Back → Export อีกครั้ง → Export anyway → Open folder
+  - **คาดหวัง:** ชื่อโฟลเดอร์ `Map_Ta_Phut_Pump_Set_P-1_YYYY-MM-DD_HHMM` (ไม่มีจุดกลาง `·` และช่องว่าง) · Back ไม่เขียนอะไร · เขียนเสร็จ แถบเขียน "4 models exported …" · ใน `D:\ToCustomer` มีโฟลเดอร์ใหม่ 1 โฟลเดอร์ ไฟล์เดิมไม่ถูกแตะ · ข้างในมี `machine_info.json` + `models\` 8 ไฟล์ ชื่อตาม `EXPECTED.txt` (`TEMP_1-I1`, `FLOW_A-R1`, `KW-C1`, `_CON-I1`)
+
+- [ ] **WFJ-7 — ตรวจไฟล์ก่อนส่ง (มุมของระบบปลายทาง)**
+  - เปิดทุกไฟล์ใน Notepad / ตัวตรวจ JSON · เทียบ set point กับหน้าจอ Health score · เปิด `TEMP_1-I1.csv` ดูแถว 2026-01-15 10:00–10:20 และช่วง 10–11 ม.ค.
+  - **คาดหวัง:** JSON ทุกไฟล์ถูกต้อง · `running_status` = KW / 50 · `CON` อยู่ component "Uncategorized" · failure_groups สองกลุ่มมี key ตรงกับชื่อไฟล์ · ค่าใน `health` ตรงกับที่ตั้งทุกช่อง · `fit_profile` เป็นชื่อ (เช่น `standard`) ไม่ใช่ตัวเลข · CSV ไม่มีแถวช่วงเครื่องหยุด, เวลาซ้ำเหลือแถวเดียว, คอลัมน์แรก `TimeStamp` ลงท้าย `+07:00` · **ไม่มีคำว่า LinearGAM, ค่า mean / sd / RMSE / R², คะแนน หรือ .pkl ที่ไหนเลย** (ลองค้นด้วย Windows search ในโฟลเดอร์)
+
+- [ ] **WFJ-8 — ลูกค้าขอแก้: ขอบ set point แคบเกิน และชื่อเครื่องสะกดผิด**
+  - เปลี่ยน H ของ `TEMP/1` (Individual) จาก 70 เป็น 75 · Project details → Machine name "Pump Set P-1A" → Save
+  - ดูสถานะโมเดล, แท็บ Failure Groups ใน Dashboard, title bar และแถบ Export
+  - **คาดหวัง:** `TEMP/1` Individual กลายเป็น Incomplete **ทันที** (ยัง Trained ไม่ต้อง Train ใหม่) · ตัวอื่นยัง Complete · บรรทัด "4 models exported" หาย แถบเขียน "Every model must be Complete first · 1 left" · ชื่อใหม่ขึ้นที่ title bar และการ์ดหน้าแรก
+
+- [ ] **WFJ-9 — Export รอบสอง**
+  - Mark complete `TEMP/1` → Export results (โฟลเดอร์ `D:\ToCustomer` ถูกจำไว้) → Export → Export anyway
+  - เทียบโฟลเดอร์รอบหนึ่งกับรอบสอง
+  - **คาดหวัง:** ได้โฟลเดอร์ใหม่ชื่อ `Map_Ta_Phut_Pump_Set_P-1A_…` (ตามชื่อใหม่) · โฟลเดอร์รอบหนึ่งยังอยู่ครบไม่ถูกแก้ · ต่างกันแค่: `machine.name`, `exported_at`, และ `health.limits.high` ของ `TEMP_1-I1.json` = 75 · CSV ทุกไฟล์เหมือนเดิมทุกแถว
+
+- [ ] **WFJ-10 — เปลี่ยนเขตเวลาเพราะข้อมูลมาจากไซต์ต่างประเทศ**
+  - ลูกค้าแจ้งว่าเวลาใน CSV เป็นเวลาท้องถิ่นของไซต์ UTC+08:00 → Project details → เขตเวลา UTC+08:00 → Save → Export
+  - **คาดหวัง:** โมเดลไม่หลุด Complete · CSV รอบใหม่: วัน-เวลาเท่าเดิมแต่ลงท้าย `+08:00` · `exported_at` ยังเป็นเวลาเครื่อง `+07:00` · กราฟใน Dashboard ไม่เลื่อน
+
+- [ ] **WFJ-11 — ปิดโปรแกรม เปิดใหม่ แล้ว export โดยไม่แก้อะไร**
+  - ปิดโปรแกรม → เปิด → เปิดโปรเจกต์ → Build Model → Export results → Export
+  - **คาดหวัง:** ทุกโมเดลยัง Complete, Project details / เขตเวลา / running status เหมือนก่อนปิด · ไม่มีบรรทัด exported ค้างจากก่อนปิด · ไฟล์รอบนี้เหมือนรอบก่อน (WFJ-10) ทุกไบต์ยกเว้น `exported_at`
+
+- [ ] **WFJ-12 — จบงาน: ลบโปรเจกต์ แต่ไฟล์ที่ส่งลูกค้ายังอยู่**
+  - หน้าแรก → การ์ด "Map Ta Phut · Pump Set P-1A" → ถังขยะ → อ่านข้อความ → Delete → เปิด `D:\ToCustomer`
+  - **คาดหวัง:** ข้อความยืนยันบอก "Its saved data is removed. Folders you exported are kept." · การ์ดหาย · โฟลเดอร์ export ทั้งหมดใน `D:\ToCustomer` ยังอยู่ครบ · `EXP-data.csv` / `EXP-tags.csv` ต้นทางไม่ถูกแตะ
 
 ---
 
