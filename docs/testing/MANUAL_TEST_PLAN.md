@@ -1,6 +1,6 @@
 # Wizard — Manual Test Plan
 
-> 874 ข้อ · **อัปเดต 2026-10-21 — เพิ่มทดสอบเชิงลึกของ Export results (กฎการตรวจทุกข้อ, ชื่อไฟล์จาก tag แปลก ๆ, เนื้อหาไฟล์ทีละช่อง, เขตเวลา, โฟลเดอร์ปลายทางที่เขียนไม่ได้, ปิดโปรแกรมกลางคัน — ข้อมูลทดสอบจาก `scripts/make-export-testdata.py`) + workflow WFJ, แก้ข้อที่ยังพูดถึงโฟลเดอร์ output เก่า · ก่อนหน้า 2026-10-20 — Export results + ข้อมูลเครื่อง Plant · Machine · tag: ขั้น 1 ใหม่, Project details, เขตเวลาของข้อมูล, ชื่อโมเดลไม่ซ้ำทั้งโปรเจกต์, Mark complete ตรวจอย่างเดียว, แก้ set point = Incomplete, แถบและหน้าต่าง Export results, เนื้อหาไฟล์ตาม WIZARD_OUTPUT_SPEC (APP-12, IMP-100 – IMP-106, SEN-36, FG-29, BMW-335 – BMW-354, MULTI-22, PER-21, PER-22, WFA-20 – WFA-22, WFB-19, WFG-15, WFH-15 – WFH-18, WFI-9, WFI-10) · ก่อนหน้า 2026-10-19 — เพิ่มทดสอบการอ่านวันเวลาทุกรูปแบบ (IMP-89..99 + ไฟล์ทดสอบจาก `scripts/make-ts-testdata.py`), ไฟล์โมเดลใน output (BMW-328..334) และ workflow WFI · ก่อนหน้า 2026-10-14 — ตรวจทั้งแผนเทียบกับโค้ดปัจจุบันทุกหมวด + เพิ่มทดสอบตาม workflow ผู้ใช้จริง** — แบ่งเป็น 2 ส่วน: **ส่วนที่ 1 ทดสอบทีละฟังก์ชัน** (737 ข้อ, หมวด PREP–VIS) และ **ส่วนที่ 2 ทดสอบตาม workflow ผู้ใช้** (137 จุดตรวจ, หมวด WFA–WFJ — แต่ละหมวดเป็นสถานการณ์ใช้งานจริง 1 เรื่องเล่าต่อเนื่อง ทำตามลำดับจุดตรวจ ไม่รีเซ็ตระหว่างจุด) · ข้อที่มีคำว่า "สงสัยว่าเป็นบั๊ก" / "⚠ สงสัยว่ายังไม่ผ่าน" เขียนตามพฤติกรรมที่ถูกต้อง — โค้ดตอนนี้น่าจะยังไม่ผ่าน ให้บันทึกผลตามจริง · รายละเอียดว่าข้อไหนเปลี่ยน/ลบ/เพิ่ม และบั๊กที่สงสัยจากการอ่านโค้ด: `docs/testing/AUDIT_2026-10-14.md`
+> 881 ข้อ · **อัปเดต 2026-10-21 — เพิ่มทดสอบเชิงลึกของ Export results (กฎการตรวจทุกข้อรวม sensor หายจากข้อมูล / ชื่อไฟล์ชนกัน / ค่าเก่าที่ไม่ผ่านกติกาใหม่, ชื่อไฟล์จาก tag แปลก ๆ, เนื้อหาไฟล์ทีละช่อง, เขตเวลา, โฟลเดอร์ปลายทางที่เขียนไม่ได้, ปิดโปรแกรมกลางคัน — ข้อมูลทดสอบจาก `scripts/make-export-testdata.py`) + workflow WFJ, แก้ข้อที่ยังพูดถึงโฟลเดอร์ output เก่า · ก่อนหน้า 2026-10-20 — Export results + ข้อมูลเครื่อง Plant · Machine · tag: ขั้น 1 ใหม่, Project details, เขตเวลาของข้อมูล, ชื่อโมเดลไม่ซ้ำทั้งโปรเจกต์, Mark complete ตรวจอย่างเดียว, แก้ set point = Incomplete, แถบและหน้าต่าง Export results, เนื้อหาไฟล์ตาม WIZARD_OUTPUT_SPEC (APP-12, IMP-100 – IMP-106, SEN-36, FG-29, BMW-335 – BMW-354, MULTI-22, PER-21, PER-22, WFA-20 – WFA-22, WFB-19, WFG-15, WFH-15 – WFH-18, WFI-9, WFI-10) · ก่อนหน้า 2026-10-19 — เพิ่มทดสอบการอ่านวันเวลาทุกรูปแบบ (IMP-89..99 + ไฟล์ทดสอบจาก `scripts/make-ts-testdata.py`), ไฟล์โมเดลใน output (BMW-328..334) และ workflow WFI · ก่อนหน้า 2026-10-14 — ตรวจทั้งแผนเทียบกับโค้ดปัจจุบันทุกหมวด + เพิ่มทดสอบตาม workflow ผู้ใช้จริง** — แบ่งเป็น 2 ส่วน: **ส่วนที่ 1 ทดสอบทีละฟังก์ชัน** (744 ข้อ, หมวด PREP–VIS) และ **ส่วนที่ 2 ทดสอบตาม workflow ผู้ใช้** (137 จุดตรวจ, หมวด WFA–WFJ — แต่ละหมวดเป็นสถานการณ์ใช้งานจริง 1 เรื่องเล่าต่อเนื่อง ทำตามลำดับจุดตรวจ ไม่รีเซ็ตระหว่างจุด) · ข้อที่มีคำว่า "สงสัยว่าเป็นบั๊ก" / "⚠ สงสัยว่ายังไม่ผ่าน" เขียนตามพฤติกรรมที่ถูกต้อง — โค้ดตอนนี้น่าจะยังไม่ผ่าน ให้บันทึกผลตามจริง · รายละเอียดว่าข้อไหนเปลี่ยน/ลบ/เพิ่ม และบั๊กที่สงสัยจากการอ่านโค้ด: `docs/testing/AUDIT_2026-10-14.md`
 >
 > **ต้องทดสอบบน installer ที่ติดตั้งแล้ว ไม่ใช่ `npm run tauri dev`** — CSP และ path ของ Python sidecar เป็นคนละกลไกกันระหว่าง dev กับ build จริง บั๊กหลายตัวที่เจอมาเห็นเฉพาะในตัวติดตั้ง
 >
@@ -28,12 +28,12 @@
 - [MNG — Manage — ดูรายการและลบ special sensor](#mng) (36 ข้อ)
 - [EDT — Manage — แก้ไข special sensor (ดินสอ)](#edt) (61 ข้อ)
 - [FG — แท็บ Failure Groups](#fg) (21 ข้อ)
-- [BMW — หน้าต่าง Build Model — Workbench (Model fit + Health score)](#bmw) (207 ข้อ)
+- [BMW — หน้าต่าง Build Model — Workbench (Model fit + Health score)](#bmw) (213 ข้อ)
 - [MULTI — เปิดมากกว่า 1 โปรเจกต์ (ข้อมูลต้องไม่ปนกัน)](#multi) (20 ข้อ)
 - [PER — ปิดเปิดโปรแกรม & การบันทึก](#per) (19 ข้อ)
 - [ERR — ความผิดพลาด & ขอบ](#err) (9 ข้อ)
 - [PERF — ประสิทธิภาพ](#perf) (10 ข้อ)
-- [VIS — กวาดหน้าตา (หลังล้าง CSS ที่ไม่ได้ใช้ และลบโค้ดตาย)](#vis) (16 ข้อ)
+- [VIS — กวาดหน้าตา (หลังล้าง CSS ที่ไม่ได้ใช้ และลบโค้ดตาย)](#vis) (17 ข้อ)
 
 **ส่วนที่ 2 — ทดสอบตาม workflow ผู้ใช้จริง**
 
@@ -4036,6 +4036,30 @@ _ดินสอที่แถวในแท็บ Manage เปิดช่�
   - กรอก Machine name / tag ผ่าน Fill in → (ถ้าขาด) → Export
   - **คาดหวัง:** โมเดลที่เคย Complete ยัง Complete (ไม่ต้อง Train ใหม่) — ยกเว้นข้อที่ติดกติกาใหม่ (ชื่อซ้ำ / ไม่มี category / ช่วง cluster) ซึ่งขึ้นใน checklist · ไม่มีข้อความเก่าเรื่อง "files out of date" / "Mark complete again" ที่เกี่ยวกับไฟล์ · โฟลเดอร์ `ws_<id>\output\` เก่าใน app data ไม่ถูกลบและไม่ถูกเขียนเพิ่ม · export ได้ครบ
 
+- [ ] **BMW-380 — sensor ของโมเดล / ของ running status ไม่มีในไฟล์ข้อมูลที่โหลดอยู่** 👀
+  - โปรเจกต์ที่ทุกโมเดล Complete และ running status = `KW` → ปิดโปรแกรม → แก้ไฟล์ CSV ต้นทาง: ลบคอลัมน์ของ sensor ที่โมเดลหนึ่งใช้ และอีกรอบลบคอลัมน์ `KW` (เก็บสำเนาไว้) → เปิดโปรเจกต์ → Build Model → Export results
+  - **คาดหวัง:** โปรเจกต์เปิดได้ ไม่ crash · Export check บอก "Sensor not found in the loaded data" ที่โมเดลนั้น (sensor แสดงเป็น description + tag) และ "The running-status sensor is not in the loaded data" สำหรับ `KW` · Export กดไม่ได้ · คืนไฟล์เดิมแล้วเปิดใหม่ = กลับมา export ได้
+
+- [ ] **BMW-381 — tag สองตัวที่แปลงชื่อไฟล์แล้วชนกัน (`A B` กับ `A/B`)** 🆕
+  - ข้อมูลที่มีคอลัมน์ `A B` และ `A/B` (เพิ่มสองคอลัมน์นี้ลงในสำเนาของ `EXP-data.csv`) → Individual ของทั้งสองตัว → Complete → Export
+  - **คาดหวัง:** ได้ไฟล์ `A_B-I1` และ `A_B-I2` (นับต่อกัน ไม่เขียนทับกัน) · ข้างใน JSON `sensor` เป็น `A B` และ `A/B` ตามจริง ทั้งสองไฟล์ · `failure_groups[].models` ชี้ key ถูกตัว
+
+- [ ] **BMW-382 — running status / predictor ที่เป็น special sensor** 🆕
+  - สร้าง special sensor `RUN_FLAG` = สูตรจาก `KW` และ `SPEED` → ตั้งบรรทัด "Machine is running when RUN_FLAG is above 0.5" · Relation model ที่ predictor เป็น special sensor อีกตัว → Complete → Export
+  - **คาดหวัง:** `running_status.sensor` = `RUN_FLAG` และ `RUN_FLAG` อยู่ใน `derived_sensors` (มี how_to_build) **ไม่อยู่ใน** `sensors` · `KW` และ `SPEED` (sensor ดิบของมัน) อยู่ใน `sensors` · predictor ที่เป็น special sensor อยู่ใน `inputs` ด้วย tag ของมัน และ CSV มีคอลัมน์ค่าที่คำนวณแล้ว
+
+- [ ] **BMW-383 — "Couldn't check the export" (การตรวจล้มเอง ไม่ใช่เพราะข้อมูลขาด)** 👀
+  - dialog ที่ checklist ครบ → ระหว่างที่ "Checking what the export writes…" ทำให้การตรวจล้ม: เช่น เปิดหน้าต่าง Add Special Sensor แล้วแก้สูตรของ special sensor ที่โมเดลใช้ (ถ้าถูกล็อก ข้ามข้อนี้), หรือกลับหน้าต่างหลักแล้วเปิดอีกโปรเจกต์
+  - **คาดหวัง:** ถ้าการตรวจล้ม: ขึ้น "Couldn’t check the export: …" พร้อม Try again — **ไม่ขึ้น "Export failed"** และไม่มีอะไรถูกเขียน · Try again ตรวจใหม่ได้ · ถ้าหน้าต่างถูกปิด/เปลี่ยนโปรเจกต์ dialog หายไปพร้อมหน้าต่างโดยไม่ค้าง (จดว่าเห็นอะไร)
+
+- [ ] **BMW-384 — โปรเจกต์เก่าที่มีค่าที่ไม่ผ่านกติกาใหม่: set point ผิดลำดับ, stiffness ที่ไม่รู้จัก, special sensor ไม่มีสูตร** 👀
+  - (ใช้โปรเจกต์เก่าจริงจากเครื่องผู้ใช้ ถ้ามี) เปิดโปรเจกต์ที่สร้างก่อน 0.12 ซึ่งมีโมเดล Complete จำนวนมาก → Build Model → Export results → ไล่ดูทุกบรรทัดใน Export check
+  - **คาดหวัง:** ปัญหาที่เป็นไปได้ขึ้นเป็นภาษาคนรายโมเดล: "The health set points need fixing" / "The stiffness setting is not known" / "The formula of this special sensor was not found" พร้อมลิงก์ไปที่โมเดล · ไม่มีข้อความดิบ · ถ้าไม่มีปัญหาเลย = ผ่าน (จดว่าโปรเจกต์ไหน มีกี่โมเดล)
+
+- [ ] **BMW-385 — export โปรเจกต์ที่ไม่มี Failure group เลย / มีแต่ "Not in Group"** 🆕
+  - โปรเจกต์ที่โมเดลทุกตัวอยู่ "Not in Group" → Complete → Export
+  - **คาดหวัง:** checklist ไม่บังคับเรื่อง Failure group · export สำเร็จ · `failure_groups` เป็น `[]` (array ว่าง ไม่ใช่ไม่มี field) · ไฟล์โมเดลครบทุกตัว
+
 ---
 
 ## MULTI
@@ -4493,6 +4517,10 @@ _รอบนี้ปรับหน้าตาทั้งแอปตาม 
   - ใช้ sensor ที่มี description ยาว 1 ตัว และตัวที่ไม่มี description 1 ตัว แล้วไล่ดูทุกที่: แถวแท็บ Sensor, หัวแผง 📁, แถบ Undo, แท็บ Failure Groups (แถว sensor), แท็บ Selected Sensor, หัวตัวเลือกสี, แถว Filter + ข้อความ "is not on the chart", ช่อง "Colour by…", ตาราง Tagged points (Line และ Scatter), tooltip ของ Line / Scatter / Pair Plot, ตัวเลือกแกน X/Y และชื่อแกนของ Scatter, หัวช่องตาราง Pair Plot, หัว/แกนของ enlarged view
   - ตอนอยู่ Pair Plot ที่มี 4 sensor ให้สร้าง special sensor ใหม่จากหน้าต่าง Add Special Sensor แล้วอ่าน dialog "Not plotted"
   - **คาดหวัง:** ทุกที่เป็น description แล้วตามด้วย tag (หรือ 2 บรรทัด description / tag) — tag เปล่าได้เฉพาะ sensor ที่ไม่มี description และหัวช่องในตาราง Pair Plot (ชี้แล้วขึ้นการ์ดชื่อเต็ม) · แถบ Undo และหัวตัวเลือกสีอย่างน้อยต้องเป็น description (ไม่ใช่ tag) · ถ้าพบที่ใดเป็น tag เปล่าให้จดชื่อที่และแนบภาพ — จากโค้ดที่น่าจะยังเป็น tag เปล่า: หัว/แกนของ enlarged view (PAIR-26) และรายชื่อ sensor ใน dialog "Not plotted"
+
+- [ ] **VIS-20 — จุดที่ทีม design สังเกตใน 0.12.0 (ตรวจว่ายังเป็นอยู่ไหม)** 👀
+  - หน้า Import ทุกขั้น · Step 1 · กล่องโน้ตเรื่องรูปแบบวันที่ (ข้อมูล ISO) · Export dialog ที่ชื่อโฟลเดอร์ยาว + running status ค่า "1000 KW" · ระหว่าง Writing · toast แดงของ special sensor ตอน Project details เปิดอยู่ · ตัวเลือกเขตเวลาใน Project details · ตัวกรองรายการ sensor ใน Build Model
+  - **คาดหวัง (ถ้าไม่ตรง จดเป็น issue การออกแบบ):** (1) หัวหน้า Import ไม่เขียน "STEP x OF 3" ขณะที่แถบซ้ายมี 4 ขั้น (2) placeholder ทุกช่องใน Step 1 ขนาดเท่ากัน และ "e.g. Gas Engine Generator 4" ไม่ถูกตัด (3) โน้ตไม่อ้าง "the box above" ถ้าไม่มีกล่องนั้น (4) ชื่อโฟลเดอร์ไม่ตัดบรรทัดกลางวันที่ และ "1000 KW" ไม่แยกบรรทัดระหว่างเลขกับหน่วย (5) แถวโมเดลขึ้น "Writing…" ตามลำดับที่เห็นบนจอ (6) toast ไม่บังปุ่ม Save ของ Project details (7) ตัวเลือกเขตเวลาใช้งานง่ายพอ (ค้น/เลื่อนหาได้) (8) ตัวเลขบนตัวกรอง (นับ sensor) กับ progress (นับโมเดล) ไม่ทำให้สับสน
 
 ---
 
