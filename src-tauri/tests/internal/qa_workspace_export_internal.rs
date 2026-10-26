@@ -288,9 +288,9 @@ fn qa_workspace_export_contract_fixture_exports_a_spec_compliant_folder() {
     assert_eq!((res.files, res.models), (9, 4));
     assert_eq!(res.rows, plan.total_rows);
 
-    // Model keys: Workbench order, `{safe model name}_{type}` (user decision 2026-10-26).
+    // Model keys: Workbench order, R/I = target, C = x_sensor, counter per tag+kind.
     let keys: Vec<String> = progress.lock().unwrap().iter().map(|(_, _, k)| k.clone()).collect();
-    assert_eq!(keys, ["Bearing_band_individual", "Bearing_vs_load_relationship", "Pump_pattern_clustering", "Power_band_individual"]);
+    assert_eq!(keys, ["T1-I1", "T1-R1", "X-C1", "POWER-I1"]);
 
     // ── §7.1 machine_info.json exists, every required field filled, spec order ──
     let (mi_text, mi) = read_json(&root.join("machine_info.json"));
@@ -352,7 +352,7 @@ fn qa_workspace_export_contract_fixture_exports_a_spec_compliant_folder() {
     }
 
     // Per kind: fields and their order (spec §4).
-    let (r_text, r) = &model_json["Bearing_vs_load_relationship"];
+    let (r_text, r) = &model_json["T1-R1"];
     assert_eq!(
         top_keys(r_text),
         ["schema_version", "model_key", "kind", "display_name", "category", "component", "output", "inputs", "fit_profile", "health", "training_data"]
@@ -366,16 +366,16 @@ fn qa_workspace_export_contract_fixture_exports_a_spec_compliant_folder() {
     assert_eq!(strs(&r["inputs"]), ["P1", "POWER"]);
     assert_eq!(r["fit_profile"], "standard", "the profile NAME, never the number");
 
-    let (i_text, i) = &model_json["Bearing_band_individual"];
+    let (i_text, i) = &model_json["T1-I1"];
     assert_eq!(top_keys(i_text), ["schema_version", "model_key", "kind", "display_name", "category", "component", "sensor", "health", "training_data"]);
     assert_eq!(keys_of(i_text, "health"), ["limits"]);
     assert_eq!(i["kind"], "individual");
     assert_eq!(i["sensor"], "T1");
     assert_eq!(i["health"]["limits"], serde_json::json!({ "low": 20.0, "high": 35.0 }));
-    assert_eq!(model_json["Power_band_individual"].1["component"], "Electrical");
-    assert_eq!(model_json["Power_band_individual"].1["category"], "PERFORMANCE");
+    assert_eq!(model_json["POWER-I1"].1["component"], "Electrical");
+    assert_eq!(model_json["POWER-I1"].1["category"], "PERFORMANCE");
 
-    let (c_text, c) = &model_json["Pump_pattern_clustering"];
+    let (c_text, c) = &model_json["X-C1"];
     assert_eq!(
         top_keys(c_text),
         ["schema_version", "model_key", "kind", "display_name", "category", "component", "x_sensor", "y_sensor", "criteria_sensor", "regimes", "health", "training_data"]
@@ -412,8 +412,8 @@ fn qa_workspace_export_contract_fixture_exports_a_spec_compliant_folder() {
     let fgs = mi["failure_groups"].as_array().unwrap();
     let fg_names: Vec<&str> = fgs.iter().map(|g| g["name"].as_str().unwrap()).collect();
     assert_eq!(fg_names, ["Overheat", "Pump wear"], "the unused group is left out");
-    assert_eq!(strs(&fgs[0]["models"]), ["Bearing_band_individual", "Bearing_vs_load_relationship"]);
-    assert_eq!(strs(&fgs[1]["models"]), ["Bearing_vs_load_relationship", "Pump_pattern_clustering"]);
+    assert_eq!(strs(&fgs[0]["models"]), ["T1-I1", "T1-R1"]);
+    assert_eq!(strs(&fgs[1]["models"]), ["T1-R1", "X-C1"]);
     assert_eq!(first_item_keys(&mi_text, "failure_groups"), ["name", "description", "recommendation", "models"]);
     assert_eq!(first_item_keys(&mi_text, "sensors"), ["tag", "name", "description", "unit", "component"]);
     assert_eq!(first_item_keys(&mi_text, "derived_sensors"), ["tag", "name", "unit", "component", "how_to_build"]);
@@ -430,7 +430,7 @@ fn qa_workspace_export_contract_fixture_exports_a_spec_compliant_folder() {
     let n = |v: &serde_json::Value| v.as_f64().unwrap();
     assert!(n(&f["low"]) < n(&w["low"]) && n(&w["low"]) < 0.0 && 0.0 < n(&w["high"]) && n(&w["high"]) < n(&f["high"]));
     assert_eq!((n(&w["low"]), n(&w["high"]), n(&f["low"]), n(&f["high"])), (-4.0, 4.0, -8.0, 8.0));
-    for k in ["Bearing_band_individual", "Power_band_individual"] {
+    for k in ["T1-I1", "POWER-I1"] {
         let l = &model_json[k].1["health"]["limits"];
         assert!(n(&l["low"]) < n(&l["high"]));
     }
@@ -447,10 +447,10 @@ fn qa_workspace_export_contract_fixture_exports_a_spec_compliant_folder() {
     let clu_rows = spec_rows(&d, |r| ws_scope(r) && (d.c[r] <= 2.0 || 2.0 < d.c[r]));
     let pow_rows = spec_rows(&d, ws_scope);
     let expected = [
-        ("Bearing_band_individual", expected_csv(&d, "TimeStamp,T1", &ind_rows, &[&d.t1])),
-        ("Bearing_vs_load_relationship", expected_csv(&d, "TimeStamp,P1,POWER,T1", &rel_rows, &[&d.p1, &d.power, &d.t1])),
-        ("Pump_pattern_clustering", expected_csv(&d, "TimeStamp,X,Y,C", &clu_rows, &[&d.x, &d.y, &d.c])),
-        ("Power_band_individual", expected_csv(&d, "TimeStamp,POWER", &pow_rows, &[&d.power])),
+        ("T1-I1", expected_csv(&d, "TimeStamp,T1", &ind_rows, &[&d.t1])),
+        ("T1-R1", expected_csv(&d, "TimeStamp,P1,POWER,T1", &rel_rows, &[&d.p1, &d.power, &d.t1])),
+        ("X-C1", expected_csv(&d, "TimeStamp,X,Y,C", &clu_rows, &[&d.x, &d.y, &d.c])),
+        ("POWER-I1", expected_csv(&d, "TimeStamp,POWER", &pow_rows, &[&d.power])),
     ];
     for (k, want) in &expected {
         let got = std::fs::read_to_string(models_dir.join(format!("{k}.csv"))).unwrap().replace("\r\n", "\n");

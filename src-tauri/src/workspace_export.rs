@@ -507,88 +507,19 @@ fn order_by_time(data: &ColumnarData, rows: Vec<u32>) -> (Vec<u32>, usize, usize
 // Small rules
 // ---------------------------------------------------------------------------
 
-/// Longest safe model-name part of a key, before the `_<n>` / `_<type>` suffix.
-const KEY_BASE_MAX: usize = 120;
-
-/// Kind labels the app appends to a default model name ("PUMP (Individual)",
-/// "PUMP (Relation model) 2"); stripped before the type suffix is added.
-const KIND_NAME_SUFFIXES: [&str; 4] = ["(individual)", "(relation model)", "(relationship)", "(clustering)"];
-
-/// File-name-safe text (user decision 2026-10-26): letters, digits, `-`, `_`
-/// and `.` are kept; every run of any other character (spaces, brackets,
-/// quotes, slashes, non-ASCII) becomes ONE `_`; repeated `_` collapse; `_` and
-/// `.` are trimmed from both ends; at most [`KEY_BASE_MAX`] characters.
-pub(crate) fn safe_key_part(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for c in s.chars() {
-        let c = if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') { c } else { '_' };
-        if c == '_' && out.ends_with('_') {
-            continue;
-        }
-        out.push(c);
-    }
-    let trim = |s: &str| s.trim_matches(|c| c == '_' || c == '.').to_string();
-    let mut out = trim(&out);
-    if out.len() > KEY_BASE_MAX {
-        // ASCII only at this point, so a byte cut is a char cut.
-        out = trim(&out[..KEY_BASE_MAX]);
-    }
-    out
-}
-
-/// "PUMP TEMP (Individual)" → "PUMP TEMP", "PUMP TEMP (Relation model) 2" →
-/// "PUMP TEMP 2" (case-insensitive label match; anything else unchanged).
-pub(crate) fn strip_kind_suffix(name: &str) -> String {
-    let s = name.trim();
-    // Optional trailing " <n>" after the label.
-    let digits = s.len() - s.trim_end_matches(|c: char| c.is_ascii_digit()).len();
-    let (head, num) = if digits > 0 && s[..s.len() - digits].ends_with(|c: char| c.is_whitespace()) {
-        (s[..s.len() - digits].trim_end(), Some(&s[s.len() - digits..]))
+/// `[^A-Za-z0-9._-]` → `_` (spec §2.1).
+/// A Windows reserved device name before the first dot (`CON`, `NUL.X`, ...)
+/// gets a leading `_` so the key is always a usable file name.
+pub(crate) fn sanitize_key_tag(tag: &str) -> String {
+    let out: String = tag
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') { c } else { '_' })
+        .collect();
+    if is_windows_device_name(out.split('.').next().unwrap_or("")) {
+        format!("_{out}")
     } else {
-        (s, None)
-    };
-    let lower = head.to_ascii_lowercase();
-    for suffix in KIND_NAME_SUFFIXES {
-        if lower.ends_with(suffix) {
-            let base = head[..head.len() - suffix.len()].trim_end();
-            return match num {
-                Some(n) => format!("{base} {n}"),
-                None => base.to_string(),
-            };
-        }
+        out
     }
-    s.to_string()
-}
-
-/// The export key of one model: `safe(name without kind label)` + `_<type>`
-/// (`individual` | `relationship` | `clustering`). An empty safe name falls
-/// back to the safe key tag (then `model`). A key whose part before the first
-/// dot is a Windows device name gets a leading `_`. `used` holds the
-/// lower-cased keys taken so far in this export (Windows is case-insensitive);
-/// a taken key gets `_2`, `_3`, … before the type suffix.
-fn model_key(display_name: &str, key_tag: &str, kind_name: &str, used: &mut HashSet<String>) -> String {
-    let mut base = safe_key_part(&strip_kind_suffix(display_name));
-    if base.is_empty() {
-        base = safe_key_part(key_tag);
-    }
-    if base.is_empty() {
-        base = "model".to_string();
-    }
-    let guard = |k: String| {
-        if is_windows_device_name(k.split('.').next().unwrap_or("")) {
-            format!("_{k}")
-        } else {
-            k
-        }
-    };
-    let mut key = guard(format!("{base}_{kind_name}"));
-    let mut n = 2u32;
-    while used.contains(&key.to_ascii_lowercase()) {
-        key = guard(format!("{base}_{n}_{kind_name}"));
-        n += 1;
-    }
-    used.insert(key.to_ascii_lowercase());
-    key
 }
 
 fn is_windows_device_name(stem: &str) -> bool {
@@ -710,6 +641,13 @@ impl Kind {
             "individual" => Some(Kind::Individual),
             "clustering" => Some(Kind::Clustering),
             _ => None,
+        }
+    }
+    fn letter(self) -> char {
+        match self {
+            Kind::Relationship => 'R',
+            Kind::Individual => 'I',
+            Kind::Clustering => 'C',
         }
     }
     fn name(self) -> &'static str {
@@ -943,7 +881,7 @@ pub fn build_plan(
         issues.push(ExportIssue::error("no_models", "There are no models to export"));
     }
     let mut seen_ids: HashSet<&str> = HashSet::new();
-    let mut used_keys: HashSet<String> = HashSet::new();
+    let mut key_counters: HashMap<String, u32> = HashMap::new();
     let mut planned: Vec<PlannedModel> = Vec::new();
     let mut work: Vec<ModelWork> = Vec::new();
     let mut included: Vec<&ExportModelSpec> = Vec::new();
@@ -988,10 +926,11 @@ pub fn build_plan(
             );
         }
 
-        // Key: `{safe model name}_{type}` (user decision 2026-10-26). The ONE
-        // source of the json `model_key`, `training_data.file`, the file
-        // names and `failure_groups[].models`.
-        let key = model_key(&m.display_name, &key_tag, kind.name(), &mut used_keys);
+        // Key.
+        let stem = format!("{}-{}", sanitize_key_tag(&key_tag), kind.letter());
+        let counter = key_counters.entry(stem.clone()).or_insert(0);
+        *counter += 1;
+        let key = format!("{stem}{counter}");
 
         // Per-model issues.
         let mut unknown = false;
@@ -1958,7 +1897,7 @@ mod tests {
     // ---- keys ----
 
     #[test]
-    fn keys_are_the_safe_model_name_plus_the_type() {
+    fn keys_use_the_kind_letter_a_per_tag_counter_and_x_for_clustering() {
         let p = plan(&request(vec![
             rel("r1", "Y", &["A"]),
             ind("i1", "Y"),
@@ -1967,106 +1906,23 @@ mod tests {
             ind("i2", "Odd tag/1"),
         ]));
         let keys: Vec<&str> = p.models.iter().map(|m| m.key.as_str()).collect();
-        assert_eq!(
-            keys,
-            ["Model_r1_relationship", "Model_i1_individual", "Model_r2_relationship", "Model_c1_clustering", "Model_i2_individual"]
+        assert_eq!(keys, ["Y-R1", "Y-I1", "Y-R2", "A-C1", "Odd_tag_1-I1"]);
+    }
+
+    #[test]
+    fn sanitized_tags_that_collide_share_one_counter() {
+        assert_eq!(sanitize_key_tag("A B(1)ก"), "A_B_1__");
+        assert_eq!(sanitize_key_tag("ok.Tag_-1"), "ok.Tag_-1");
+        let data = ColumnarData::from_parts(
+            vec!["t".into(), "A B".into(), "A_B".into()],
+            minute_ts(3),
+            vec![vec![f64::NAN; 3], vec![1.0, 2.0, 3.0], vec![1.0, 2.0, 3.0]],
         );
-    }
-
-    #[test]
-    fn default_names_lose_their_kind_label_and_keep_the_twin_number() {
-        let mut i = ind("i1", "Y");
-        i.display_name = "PUMP TEMP (Individual)".into();
-        let mut r = rel("r1", "Y", &["A"]);
-        r.display_name = "PUMP TEMP (Relation model)".into();
-        let mut r2 = rel("r2", "Y", &["B"]);
-        r2.display_name = "PUMP TEMP (Relation model) 2".into();
-        let mut c = clus("c1", "A", "Y", None, None);
-        c.display_name = "PUMP TEMP (Clustering)".into();
-        let p = plan(&request(vec![i, r, r2, c]));
+        let mut req = request(vec![ind("1", "A B"), ind("2", "A_B")]);
+        req.running_status = Some(RunningStatusArg { sensor: "A_B".into(), stop_if_lower_than: 0.0 });
+        let p = build_plan(&data, &HashSet::new(), &req).unwrap().plan;
         let keys: Vec<&str> = p.models.iter().map(|m| m.key.as_str()).collect();
-        assert_eq!(keys, ["PUMP_TEMP_individual", "PUMP_TEMP_relationship", "PUMP_TEMP_2_relationship", "PUMP_TEMP_clustering"]);
-        assert!(p.ok, "{:?}", p.issues);
-    }
-
-    #[test]
-    fn strip_kind_suffix_per_kind() {
-        assert_eq!(strip_kind_suffix("PUMP TEMP (Individual)"), "PUMP TEMP");
-        assert_eq!(strip_kind_suffix("PUMP TEMP (Relation model)"), "PUMP TEMP");
-        assert_eq!(strip_kind_suffix("PUMP TEMP (Relationship)"), "PUMP TEMP");
-        assert_eq!(strip_kind_suffix("PUMP TEMP (Clustering)"), "PUMP TEMP");
-        assert_eq!(strip_kind_suffix("  PUMP (relation MODEL) 12 "), "PUMP 12");
-        assert_eq!(strip_kind_suffix("PUMP (Individual)3"), "PUMP (Individual)3", "number needs a space");
-        assert_eq!(strip_kind_suffix("PUMP 2"), "PUMP 2");
-        assert_eq!(strip_kind_suffix("(Individual) PUMP"), "(Individual) PUMP", "only a trailing label");
-        assert_eq!(strip_kind_suffix("PUMP (Other)"), "PUMP (Other)");
-        assert_eq!(strip_kind_suffix("(Clustering)"), "");
-    }
-
-    #[test]
-    fn safe_key_part_rules() {
-        assert_eq!(safe_key_part("A B(1)ก"), "A_B_1");
-        assert_eq!(safe_key_part("ok.Tag_-1"), "ok.Tag_-1");
-        assert_eq!(safe_key_part("ปั๊ม น้ำ Pump"), "Pump");
-        assert_eq!(safe_key_part("a  //  \"b\" c"), "a_b_c");
-        assert_eq!(safe_key_part("a__b"), "a_b", "repeats collapse");
-        assert_eq!(safe_key_part("._x._"), "x", "trim _ and . from both ends");
-        assert_eq!(safe_key_part("ปั๊ม"), "");
-        let long = "x".repeat(300);
-        assert_eq!(safe_key_part(&long).len(), KEY_BASE_MAX);
-        let cut = format!("{}_y", "x".repeat(KEY_BASE_MAX - 1));
-        assert_eq!(safe_key_part(&cut), "x".repeat(KEY_BASE_MAX - 1), "no trailing _ after the cut");
-    }
-
-    #[test]
-    fn colliding_keys_get_a_counter_case_insensitively() {
-        let mut a = ind("1", "Y");
-        a.display_name = "Pump A".into();
-        let mut b = ind("2", "Y");
-        b.display_name = "pump/a".into();
-        let mut c = ind("3", "Y");
-        c.display_name = "PUMP (A)".into();
-        let mut r = rel("4", "Y", &["A"]);
-        r.display_name = "Pump B".into();
-        let mut r2 = rel("5", "Y", &["B"]);
-        r2.display_name = "Pump  B".into();
-        let p = plan(&request(vec![a, b, c, r, r2]));
-        let keys: Vec<&str> = p.models.iter().map(|m| m.key.as_str()).collect();
-        assert_eq!(
-            keys,
-            ["Pump_A_individual", "pump_a_2_individual", "PUMP_A_3_individual", "Pump_B_relationship", "Pump_B_2_relationship"]
-        );
-        // Every file name differs case-insensitively.
-        let lower: HashSet<String> = keys.iter().map(|k| k.to_ascii_lowercase()).collect();
-        assert_eq!(lower.len(), keys.len());
-    }
-
-    #[test]
-    fn empty_name_falls_back_to_the_safe_tag_then_model() {
-        let mut used = HashSet::new();
-        assert_eq!(model_key("", "Odd tag/1", "individual", &mut used), "Odd_tag_1_individual");
-        assert_eq!(model_key("ปั๊ม (Individual)", "Odd tag/1", "individual", &mut used), "Odd_tag_1_2_individual");
-        assert_eq!(model_key("  ", "ก", "clustering", &mut used), "model_clustering");
-        let mut i = ind("i1", "Odd tag/1");
-        i.display_name = "".into();
-        let p = plan(&request(vec![i]));
-        assert_eq!(p.models[0].key, "Odd_tag_1_individual");
-        assert_eq!(json_of(&p.models[0])["model_key"], "Odd_tag_1_individual");
-        assert_eq!(json_of(&p.models[0])["training_data"]["file"], "Odd_tag_1_individual.csv");
-    }
-
-    #[test]
-    fn model_key_guards_windows_device_names() {
-        let mut used = HashSet::new();
-        assert_eq!(model_key("NUL.X", "Y", "individual", &mut used), "_NUL.X_individual");
-        assert_eq!(model_key("con.a b", "Y", "individual", &mut used), "_con.a_b_individual");
-        assert_eq!(model_key("NUL", "Y", "individual", &mut used), "NUL_individual", "the suffix makes it safe");
-        assert_eq!(model_key("COM1 (Clustering)", "Y", "clustering", &mut used), "COM1_clustering");
-        assert_eq!(model_key("lpt9.v", "Y", "relationship", &mut used), "_lpt9.v_relationship");
-        assert_eq!(model_key("", "PRN.a", "relationship", &mut used), "_PRN.a_relationship");
-        for ok in ["COM0.x", "CONSOLE.x", "A.NUL"] {
-            assert!(!model_key(ok, "Y", "individual", &mut used).starts_with('_'), "{ok}");
-        }
+        assert_eq!(keys, ["A_B-I1", "A_B-I2"]);
     }
 
     // ---- JSON per kind ----
@@ -2081,7 +1937,7 @@ mod tests {
         );
         let j = json_of(m);
         assert_eq!(j["schema_version"], "1.0");
-        assert_eq!(j["model_key"], "Model_r1_relationship");
+        assert_eq!(j["model_key"], "Y-R1");
         assert_eq!(j["kind"], "relationship");
         assert_eq!(j["display_name"], "Model r1");
         assert_eq!(j["category"], "PERFORMANCE");
@@ -2090,7 +1946,7 @@ mod tests {
         assert_eq!(j["inputs"], serde_json::json!(["A", "B"]));
         assert_eq!(j["fit_profile"], "standard");
         assert_eq!(j["health"], serde_json::json!({"warning": {"low": -4.0, "high": 4.0}, "failure": {"low": -8.0, "high": 8.0}}));
-        assert_eq!(j["training_data"], serde_json::json!({"file": "Model_r1_relationship.csv", "note": "running only"}));
+        assert_eq!(j["training_data"], serde_json::json!({"file": "Y-R1.csv", "note": "running only"}));
         assert!(p.ok, "{:?}", p.issues);
     }
 
@@ -2107,7 +1963,7 @@ mod tests {
         assert_eq!(j["category"], "CONDITION");
         assert_eq!(j["sensor"], "Y");
         assert_eq!(j["health"], serde_json::json!({"limits": {"low": 20.0, "high": 35.0}}));
-        assert_eq!(j["training_data"], serde_json::json!({"file": "Model_i1_individual.csv", "note": ""}));
+        assert_eq!(j["training_data"], serde_json::json!({"file": "Y-I1.csv", "note": ""}));
     }
 
     #[test]
@@ -2474,7 +2330,7 @@ mod tests {
         let fgs = &p.machine_info.failure_groups;
         assert_eq!(fgs.len(), 1);
         assert_eq!(fgs[0].name, "FG one");
-        assert_eq!(fgs[0].models, ["Model_r1_relationship", "Model_i1_individual"]);
+        assert_eq!(fgs[0].models, ["Y-R1", "Y-I1"]);
         let mut req = request(vec![rel("r1", "Y", &["A"])]);
         req.failure_groups[0].recommendation = "  ".into();
         let p = plan(&req);
@@ -2612,6 +2468,19 @@ mod tests {
         assert!(plan(&req).issues.iter().all(|i| i.code != "fg_name_duplicate"));
     }
 
+    #[test]
+    fn sanitize_key_tag_guards_windows_device_names() {
+        assert_eq!(sanitize_key_tag("NUL.X"), "_NUL.X");
+        assert_eq!(sanitize_key_tag("con"), "_con");
+        assert_eq!(sanitize_key_tag("Aux"), "_Aux");
+        assert_eq!(sanitize_key_tag("PRN.a.b"), "_PRN.a.b");
+        assert_eq!(sanitize_key_tag("COM1"), "_COM1");
+        assert_eq!(sanitize_key_tag("lpt9.v"), "_lpt9.v");
+        for ok in ["COM0", "COM10", "CONSOLE", "LPT", "NULL", "A.NUL", "X-CON"] {
+            assert_eq!(sanitize_key_tag(ok), ok, "{ok}");
+        }
+    }
+
     // ---- spec §6 guard ----
 
     fn json_keys(v: &serde_json::Value, out: &mut Vec<String>) {
@@ -2689,11 +2558,7 @@ mod tests {
             calls.lock().unwrap().push((w, t, k.to_string()))
         })
         .unwrap();
-        assert_eq!(*calls.lock().unwrap(), vec![
-                (1, 3, "Model_r1_relationship".into()),
-                (2, 3, "Model_i1_individual".into()),
-                (3, 3, "Model_c1_clustering".into())
-            ]);
+        assert_eq!(*calls.lock().unwrap(), vec![(1, 3, "Y-R1".into()), (2, 3, "D-I1".into()), (3, 3, "A-C1".into())]);
         let root = PathBuf::from(&res.folder);
         assert!(root.is_absolute());
         assert_eq!(root.file_name().unwrap(), "Plant_2026-10-20_1000");
