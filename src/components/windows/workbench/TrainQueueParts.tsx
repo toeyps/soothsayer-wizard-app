@@ -21,6 +21,7 @@ import {
     roughTrainSeconds,
     TRAIN_STALE_MESSAGE,
 } from '../../../utils/trainQueue';
+import { fgLabel } from '../../../utils/fgLabel';
 
 /*
  * Train sensor / Train all with a queue (DESIGN_SYSTEM §4.1 "Train sensor /
@@ -505,7 +506,7 @@ function ByGroup({ rows, groups, render }: { rows: TrainRowModel[]; groups: Trai
                 for (const m of ms) seen.add(m.id);
                 return (
                     <div key={g.no} className="tq-grp" data-testid={`train-group-${g.no}`}>
-                        <div className="tq-grpt"><i style={{ background: g.color }} />{g.no === 0 ? 'Not in Group' : `FG-${g.no} · ${g.name}`}</div>
+                        <div className="tq-grpt"><i style={{ background: g.color }} />{fgLabel(g.no, g.name)}</div>
                         {ms.map(m => <div key={m.id}>{render(m)}</div>)}
                     </div>
                 );

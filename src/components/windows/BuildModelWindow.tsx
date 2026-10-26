@@ -57,6 +57,7 @@ import { CloseRunDialog, LockedSettingsHeader, QueuedCard, RunSetPointsBanner, R
 import { useTrainQueue } from "../../hooks/useTrainQueue";
 import type { TrainCandidate, TrainFixTarget, TrainOutcome } from "../../types/trainQueue";
 import { classifyTrainPlan, countTrainPlans, formatTrainSeconds, isStaleTrainError, missingSettingsText, noRowsTrainError, preflightReason, REQUIRED_FIELDS_BLOCK_REASON, ROUGH_TRAIN_SECONDS, roughTrainSeconds, trainButtonsBlockedReason, TRAIN_NEEDS_RUNNING_CONDITION, TRAIN_STALE_MESSAGE } from "../../utils/trainQueue";
+import { fgLabel } from '../../utils/fgLabel';
 
 /** How long a Relation-model preview that scores scoring periods must have been loading before
  *  the "this can take up to ~15 s" hint shows (cached re-scores finish sooner). */
@@ -3303,7 +3304,7 @@ export default function BuildModelWindow() {
                 const visible = rows.filter(sg => matchesSearch(sg) && matchesSidebarFilter(sg));
                 return (
                     <div key={no}>
-                        <div className="bmw-list-grp"><i style={{ background: FG_ACCENT[getFgGroupColor(no)] }} />{no === 0 ? 'Not in Group' : `FG-${no} · ${name}`}</div>
+                        <div className="bmw-list-grp"><i style={{ background: FG_ACCENT[getFgGroupColor(no)] }} />{fgLabel(no, name)}</div>
                         {rows.length === 0 ? (
                             <div className="bmw-srow-empty">No models yet</div>
                         ) : visible.length === 0 ? (
@@ -4723,7 +4724,7 @@ export default function BuildModelWindow() {
                                 return (
                                     <span key={no} className="f4-fgchip">
                                         <i style={{ background: FG_ACCENT[getFgGroupColor(no)] }} />
-                                        <span>{no === 0 ? 'Not in Group' : `FG-${no} · ${g?.name ?? ''}`}</span>
+                                        <span>{fgLabel(no, g?.name)}</span>
                                     </span>
                                 );
                             })}

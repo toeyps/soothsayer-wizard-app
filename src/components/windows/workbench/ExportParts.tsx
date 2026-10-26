@@ -11,6 +11,7 @@ import { fmtOffset } from '../../../utils/projectDetails';
 import { MODEL_KIND_LABEL } from '../../../utils/modelNames';
 import { isPickerSurfaceOpen } from '../../sensor/SensorPicker';
 import { focusableIn } from '../useModalFocus';
+import { fgLabel } from '../../../utils/fgLabel';
 
 /*
  * Export results (design 2026-10-20, DESIGN_SYSTEM §4.2): the Build Model
@@ -170,7 +171,7 @@ function ByGroup({ rows, groups, render }: { rows: ExportReadinessRow[]; groups:
                 for (const r of rs) seen.add(r.id);
                 return (
                     <div key={g.no} className="tq-grp">
-                        <div className="tq-grpt"><i style={{ background: g.color }} />{g.no === 0 ? 'Not in Group' : `FG-${g.no} · ${g.name}`}</div>
+                        <div className="tq-grpt"><i style={{ background: g.color }} />{fgLabel(g.no, g.name)}</div>
                         {rs.map(r => <div key={r.id}>{render(r, r.groupNos.filter(n => n !== g.no && n !== 0).map(n => `FG-${n}`).join(', '))}</div>)}
                     </div>
                 );

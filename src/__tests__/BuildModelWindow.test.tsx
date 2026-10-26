@@ -440,6 +440,13 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             expect(screen.getAllByText('FG-1 · Group A').length).toBeGreaterThan(0);
         });
 
+        it('a group still on its default name "FG-1" is labelled "FG-1" once, not "FG-1 · FG-1"', async () => {
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: { groups: [makeGroup({ no: 1, name: 'FG-1' })], models: [makeModel()] } });
+            expect(screen.queryAllByText('FG-1 · FG-1')).toHaveLength(0);
+            expect(screen.getAllByText('FG-1').length).toBeGreaterThan(0);
+        });
+
         it('switches to Component grouping, and a sensor with no target sensor is grouped under Uncategorized', async () => {
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: { groups: [makeGroup()], models: [makeModel({ targetSensor: '' })] } });
