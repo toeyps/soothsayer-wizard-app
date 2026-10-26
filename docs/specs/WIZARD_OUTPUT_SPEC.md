@@ -1,6 +1,6 @@
 # Wizard Output Specification — v1.0
 
-**Audience:** Wizard developers. **Status:** agreed 2026-10-20 · amended 2026-10-20: the clustering model key uses `x_sensor`, not `y_sensor`.
+**Audience:** Wizard developers. **Status:** agreed 2026-10-20 · amended 2026-10-26: the model key is `<model_name>_<type>` (section 2.1), no longer `<tag>-<R|I|C><n>`.
 
 This document defines **what the Wizard must export**. It does not prescribe how the Wizard's UI or internals work.
 
@@ -30,9 +30,9 @@ One export = **one machine, one Wizard session**.
 
 ### 2.1 Model key
 
-- Format: `<target_tag>-<R|I|C><n>`, where `R` = relationship, `I` = individual, `C` = clustering, and `n` is a counter starting at 1 that is unique per target tag and kind. Examples: `CITempA-R1`, `CITempA-I1`, `FQI72144-C1`.
-- `target_tag` is `output` for relationship, `sensor` for individual and `x_sensor` for clustering (the sensor the clustering model belongs to in the Wizard).
-- Allowed characters: letters, digits, `-`, `_`, `.`. No spaces, brackets or quotes. If a tag contains other characters, replace them with `_`.
+- Format: `<model_name>_<type>` (amended 2026-10-26, user decision), where `<type>` is `relationship`, `individual` or `clustering` and `<model_name>` is the model's display name with a trailing Wizard kind label (" (Individual)", " (Relation model)", " (Relationship)", " (Clustering)") removed — a number after the label is kept. Examples: `CITempA_relationship`, `CITempA_individual`, `Feed_flow_2_clustering`.
+- Allowed characters: letters, digits, `-`, `_`, `.`. Every run of other characters (spaces, brackets, quotes, slashes, non-ASCII) becomes one `_`; `_` and `.` are trimmed from both ends; the name part is capped at 120 characters. An empty name part falls back to the model's sensor tag (`output` / `sensor` / `x_sensor`). A key whose part before the first dot is a Windows device name (`CON`, `NUL`, `COM1` …) gets a leading `_`.
+- Keys are unique in one export, compared case-insensitively: when two names give the same key, the later model (in export order) gets `_2`, `_3` … before `_<type>`.
 - The model key is only a reference inside the export. It is **not** the platform model ID; IDs are assigned downstream.
 
 ## 3. `machine_info.json`
@@ -76,7 +76,7 @@ One export = **one machine, one Wizard session**.
       "name": "GG Mechanical Condition",
       "description": "Mechanical degradation of the gas generator thrust bearing area.",
       "recommendation": "Inspect thrust bearing and lube oil supply.",
-      "models": ["CITempA-R1", "CITempA-I1"]
+      "models": ["CITempA_relationship", "CITempA_individual"]
     }
   ]
 }
@@ -136,7 +136,7 @@ The output sensor is modeled from one or more input sensors. Health is judged on
 ```json
 {
   "schema_version": "1.0",
-  "model_key": "CITempA-R1",
+  "model_key": "CITempA_relationship",
   "kind": "relationship",
   "display_name": "",
   "category": "PERFORMANCE",
@@ -149,7 +149,7 @@ The output sensor is modeled from one or more input sensors. Health is judged on
     "failure": { "low": -8.0, "high": 8.0 }
   },
   "training_data": {
-    "file": "CITempA-R1.csv",
+    "file": "CITempA_relationship.csv",
     "note": "running only"
   }
 }
@@ -170,7 +170,7 @@ A single sensor is judged against its own normal range.
 ```json
 {
   "schema_version": "1.0",
-  "model_key": "CITempA-I1",
+  "model_key": "CITempA_individual",
   "kind": "individual",
   "display_name": "",
   "category": "PERFORMANCE",
@@ -180,7 +180,7 @@ A single sensor is judged against its own normal range.
     "limits": { "low": 20.0, "high": 35.0 }
   },
   "training_data": {
-    "file": "CITempA-I1.csv",
+    "file": "CITempA_individual.csv",
     "note": ""
   }
 }
@@ -198,7 +198,7 @@ Two sensors are judged together against their normal operating pattern. The patt
 ```json
 {
   "schema_version": "1.0",
-  "model_key": "FQI72144-C1",
+  "model_key": "FQI72144_clustering",
   "kind": "clustering",
   "display_name": "",
   "category": "CONDITION",
@@ -214,7 +214,7 @@ Two sensors are judged together against their normal operating pattern. The patt
     "failure_distance": 5
   },
   "training_data": {
-    "file": "FQI72144-C1.csv",
+    "file": "FQI72144_clustering.csv",
     "note": ""
   }
 }
