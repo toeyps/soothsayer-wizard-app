@@ -73,7 +73,7 @@ interface RunningConditionCardProps {
 export const CARD_NO_ROWS_TEXT = 'Nothing to train on';
 /** What the card says (amber) while there is no train period at all. */
 export const CARD_NO_TRAIN_TEXT = 'Add a train period';
-/** The tooltip of that state. With no condition ("Use all rows") there is nothing to relax. */
+/** The tooltip of that state. With no complete running condition yet there is nothing to relax. */
 function noRowsTitle(allOutside: boolean, hasCondition: boolean, bounds: DataBounds | null | undefined): string {
     if (allOutside) return `No train period is inside the data (${dataRangeText(bounds)}) — move a train period inside the data`;
     return hasCondition

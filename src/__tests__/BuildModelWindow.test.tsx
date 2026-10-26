@@ -10484,6 +10484,47 @@ describe('The ONE running-condition line ("Machine is running when … is above 
             expect(screen.getByTestId('rc-conversion-notice')).toBeTruthy();
         });
 
+        it('a workspace Apply keeps the Custom models that still need their own condition (only the "Own condition" row stays)', async () => {
+            const own = makeModel({ id: 'c1', name: 'Own model', targetSensor: 'TAG2', runningConditionMode: 'custom', customRunningConditionFilters: [] });
+            const done = makeModel({ id: 'c2', name: 'Own done', targetSensor: 'TAG2', kind: 'relationship', runningConditionMode: 'custom', customRunningConditionFilters: [ABOVE1] });
+            const c = converted({ customModels: [{ id: 'c1', result: 'needs-set' }, { id: 'c2', result: 'needs-set' }, { id: 'm1', result: 'converted' }] });
+            await mount({ models: [makeModel(), own, done], runningConditionFilters: [ABOVE1], runningConditionConversion: c });
+            setRcLine(null, '6');
+            await apply();
+            expect(mockUpdateWorkspaceData).toHaveBeenCalledTimes(1);
+            const rec = disk.failureGroupState.runningConditionConversion;
+            expect(rec).toEqual({
+                result: 'needs-set', source: null,
+                before: { filters: [], combine: 'and', allRows: false, savedStatus: null },
+                after: null, incompleteModelIds: [],
+                customModels: [{ id: 'c1', result: 'needs-set' }],
+            });
+            const n = screen.getByTestId('rc-conversion-notice');
+            expect(n.textContent).toMatch(/Own condition/);
+            expect(n.textContent).toMatch(/Set again in Model settings → Training data: Own model/);
+            expect(n.textContent).not.toMatch(/Before|Now|Incomplete again|Own done/);
+            expect(screen.queryByTestId('rc-conversion-check')).toBeNull();
+            expect(screen.queryByTestId('rc-card-why')).toBeNull();
+        });
+
+        it('a workspace Apply writes null when no listed Custom model still needs attention', async () => {
+            const done = makeModel({ id: 'c1', name: 'Own done', targetSensor: 'TAG2', runningConditionMode: 'custom', customRunningConditionFilters: [ABOVE1] });
+            const c = converted({ customModels: [{ id: 'c1', result: 'needs-set' }, { id: 'gone', result: 'needs-set' }] });
+            await mount({ models: [makeModel(), done], runningConditionFilters: [ABOVE1], runningConditionConversion: c });
+            setRcLine(null, '6');
+            await apply();
+            expect(disk.failureGroupState.runningConditionConversion).toBeNull();
+            expect(screen.queryByTestId('rc-conversion-notice')).toBeNull();
+        });
+
+        it('"Before" skips incomplete old rows (no blank sensor, no dangling AND/OR)', async () => {
+            const c = converted({ before: { filters: [{ id: 'fx', sensor: '', operation: 'greater_than', value1: '', value2: '' }, ABOVE1], combine: 'or', allRows: false, savedStatus: null } });
+            await mount({ runningConditionFilters: [ABOVE1], runningConditionConversion: c }, false);
+            const n = screen.getByTestId('rc-conversion-notice');
+            expect(n.querySelectorAll('.rc1-join')).toHaveLength(0);
+            expect(n.textContent).not.toMatch(/Before\s*OR/);
+        });
+
         it('needs-set (an old condition with nothing to keep): the card says "Set it again" and why — the modal does NOT open by itself', async () => {
             const c = converted({ result: 'needs-set', source: null, after: null, before: { filters: [], combine: 'and', allRows: true, savedStatus: null } });
             await mount({ runningConditionFilters: [], runningConditionConversion: c }, false);

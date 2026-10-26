@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import type { FailureGroupStateSlice, FailureModel, WorkspaceState } from '../types';
-import { migratePeriods, normalizeCategories, flagLegacyGate, migrateHealthSetPoints, migrateSingleRunningCondition } from '../utils/workspaceMigrations';
+import { migratePeriods, normalizeCategories, migrateHealthSetPoints, migrateSingleRunningCondition } from '../utils/workspaceMigrations';
+import { computeTrainFingerprint } from '../utils/trainFingerprint';
+import { isModelComplete, modelDotState } from '../utils/modelStatus';
 import { mk as baseMk } from './helpers/failureModelFixture';
 
 /** A PRE-periods model: like the shared fixture, but with no `filterTimePeriods`
@@ -124,37 +126,6 @@ describe('normalizeCategories', () => {
         expect(normalizeCategories(once)).toBe(once);
         expect(once.failureGroupState!.runningConditionNoneConfirmed).toBe(true);
         expect((once.failureGroupState as unknown as Record<string, unknown>).futureField).toBe(1);
-    });
-});
-
-describe('flagLegacyGate', () => {
-    const f = { id: 'f', sensor: 'S', operation: 'greater_than' as const, value1: '1', value2: '' };
-    it('pending when there are models and no configured condition', () => {
-        expect(flagLegacyGate(ws({ models: [mk({ id: 'a' })] })).failureGroupState!.rcLegacyNotice).toBe('pending');
-    });
-    it('a time range alone does not stop it being pending', () => {
-        const out = flagLegacyGate(ws({ models: [mk({ id: 'a' })], runningConditionTimeStart: '2025-01-01T00:00' }));
-        expect(out.failureGroupState!.rcLegacyNotice).toBe('pending');
-    });
-    it('null when configured (its "sensor > value" row) or when there are no models; an old "Use all rows" no longer counts', () => {
-        expect(flagLegacyGate(ws({ models: [mk({ id: 'a' })], runningConditionFilters: [f] })).failureGroupState!.rcLegacyNotice).toBeNull();
-        expect(flagLegacyGate(ws({ models: [mk({ id: 'a' })], runningConditionNoneConfirmed: true })).failureGroupState!.rcLegacyNotice).toBe('pending');
-        expect(flagLegacyGate(ws({ models: [] })).failureGroupState!.rcLegacyNotice).toBeNull();
-    });
-    it('an incomplete row does not count as configured', () => {
-        expect(flagLegacyGate(ws({ models: [mk({ id: 'a' })], runningConditionFilters: [{ ...f, value1: '' }] })).failureGroupState!.rcLegacyNotice).toBe('pending');
-    });
-    it('null and pending are both "already handled" (undefined is the only trigger)', () => {
-        const a = ws({ models: [mk({ id: 'a' })], rcLegacyNotice: null });
-        expect(flagLegacyGate(a)).toBe(a);
-        const b = ws({ models: [mk({ id: 'a' })], runningConditionFilters: [f], rcLegacyNotice: 'pending' });
-        expect(flagLegacyGate(b)).toBe(b); // does not clear a pending notice
-    });
-    it('no failureGroupState -> same state; idempotent', () => {
-        const s = ws();
-        expect(flagLegacyGate(s)).toBe(s);
-        const once = flagLegacyGate(ws({ models: [mk({ id: 'a' })] }));
-        expect(flagLegacyGate(once)).toBe(once);
     });
 });
 
@@ -301,16 +272,79 @@ describe('migrateSingleRunningCondition (ONE running condition, 2026-10-26)', ()
         });
     });
 
-    it('dropping only blank / half-filled rows next to the one ">" keeps the rows the same: no model goes Incomplete, AND/OR kept', () => {
+    it('dropping only blank / half-filled rows next to the one ">" keeps the rows the same: no model goes Incomplete, AND/OR kept, no notice', () => {
         const s = ws({
             runningConditionFilters: [above('SPEED', '1200'), { id: 'x', sensor: '', operation: 'less_than', value1: '', value2: '' }],
             runningConditionCombine: 'or', models: [done('a')],
         });
         const fg = migrateSingleRunningCondition(s).failureGroupState!;
-        expect(fg.runningConditionFilters).toHaveLength(1);
+        expect(fg.runningConditionFilters).toEqual([s.failureGroupState!.runningConditionFilters![0]]);
         expect(fg.runningConditionCombine).toBe('or');
         expect(fg.models[0]).toBe(s.failureGroupState!.models[0]);
-        expect(fg.runningConditionConversion).toMatchObject({ result: 'converted', incompleteModelIds: [] });
+        expect(fg.runningConditionConversion).toBeNull(); // pure cleanup: nothing to tell the user
+    });
+
+    it('pure cleanup keeps the kept row byte-for-byte (untrimmed value1, stray value2), so trained models stay fresh + Complete (workspace and Custom)', () => {
+        const odd = { id: 'k', sensor: 'SPEED', operation: 'greater_than' as const, value1: '1200 ', value2: '20' };
+        const blank = { id: 'b', sensor: '', operation: 'less_than' as const, value1: '', value2: '' };
+        const fgBefore = { runningConditionFilters: [odd, blank], runningConditionCombine: 'or' as const };
+        const wsModel = done('w');
+        const customBase = done('c', { runningConditionMode: 'custom', customRunningConditionFilters: [odd, { ...blank, id: 'b2' }], customRunningConditionCombine: 'or' });
+        const trained = (m: FailureModel) => ({ ...m, trainedFingerprint: computeTrainFingerprint(m, fgBefore) });
+        const s = ws({ ...fgBefore, models: [trained(wsModel), trained(customBase)] });
+        const fg = migrateSingleRunningCondition(s).failureGroupState!;
+        expect(fg.runningConditionFilters).toEqual([odd]);
+        expect(fg.runningConditionFilters![0]).toBe(odd);
+        const [w, c] = fg.models;
+        expect(c.customRunningConditionFilters).toEqual([odd]);
+        for (const m of [w, c]) {
+            expect(m.status).toBe(true);
+            expect(isModelComplete(m, fg)).toBe(true);
+            expect(modelDotState(m, fg)).toBe('complete');
+        }
+        expect(fg.runningConditionConversion).toBeNull();
+        expect(migrateSingleRunningCondition({ ...s, failureGroupState: fg }).failureGroupState).toBe(fg);
+    });
+
+    it('the notice lists only the old rows that applied (never a blank row)', () => {
+        const blank = { id: 'b', sensor: '', operation: 'less_than' as const, value1: '', value2: '' };
+        const s = ws({ runningConditionFilters: [below('TEMP', '90'), blank, above('SPEED', '1200')], models: [] });
+        const conv = migrateSingleRunningCondition(s).failureGroupState!.runningConditionConversion!;
+        expect(conv.before.filters).toEqual([below('TEMP', '90'), above('SPEED', '1200')]);
+    });
+
+    it('a single ">" row whose value is still blank (a saved draft) is already the one shape: left alone', () => {
+        const draft = [{ id: 'd', sensor: 'SPEED', operation: 'greater_than' as const, value1: '', value2: '' }];
+        const s = ws({ runningConditionFilters: draft, runningConditionConversion: null, models: [done('c', { runningConditionMode: 'custom', customRunningConditionFilters: draft })] });
+        expect(migrateSingleRunningCondition(s)).toBe(s);
+    });
+
+    it('the shape is data-driven: an old shape that came back after the marker was set (null) is normalised silently -- models demoted, no new notice', () => {
+        const s = ws({
+            runningConditionFilters: [below('T', '1'), above('SPEED', '1200')], runningConditionCombine: 'or',
+            runningConditionConversion: null,
+            models: [done('a'), done('c', { runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true })],
+        });
+        const once = migrateSingleRunningCondition(s);
+        const fg = once.failureGroupState!;
+        expect(fg.runningConditionFilters).toEqual([above('SPEED', '1200')]);
+        expect(fg.runningConditionCombine).toBe('and');
+        expect(fg.models.map(m => m.status)).toEqual([false, false]);
+        expect(fg.models[1]).toMatchObject({ customRunningConditionFilters: [], customRunningConditionNoneConfirmed: false });
+        expect(fg.runningConditionConversion).toBeNull();
+        expect(migrateSingleRunningCondition(once)).toBe(once);
+        // "Use all rows" written back by an older build is cleared too
+        const none = migrateSingleRunningCondition(ws({ runningConditionFilters: [above('SPEED', '1')], runningConditionNoneConfirmed: true, runningConditionConversion: null, models: [] }));
+        expect(none.failureGroupState).toMatchObject({ runningConditionFilters: [], runningConditionNoneConfirmed: false, runningConditionConversion: null });
+    });
+
+    it('an existing (not yet dismissed) notice record is kept as it is when the old shape is normalised again', () => {
+        const first = migrateSingleRunningCondition(ws({ runningConditionFilters: [below('T', '1'), above('SPEED', '1200')], models: [done('a')] }));
+        const record = first.failureGroupState!.runningConditionConversion!;
+        const back = { ...first, failureGroupState: { ...first.failureGroupState!, runningConditionFilters: [below('X', '2'), above('LOAD', '3')] } };
+        const fg = migrateSingleRunningCondition(back).failureGroupState!;
+        expect(fg.runningConditionFilters).toEqual([above('LOAD', '3')]);
+        expect(fg.runningConditionConversion).toBe(record);
     });
 
     it('already the one shape (or nothing set): only marks the step done (null), nothing else changes', () => {
@@ -326,14 +360,14 @@ describe('migrateSingleRunningCondition (ONE running condition, 2026-10-26)', ()
         expect(left.failureGroupState!.runningStatus).toBeNull();
     });
 
-    it('runs only while the marker is undefined; idempotent, deterministic and does not mutate its input', () => {
+    it('a handled marker with the one shape is a no-op; idempotent, deterministic and does not mutate its input', () => {
         const s = ws({ runningConditionFilters: [below('T', '1'), above('SPEED', '1200')], runningConditionNoneConfirmed: false, models: [done('a')] });
         const snap = JSON.stringify(s);
         const once = migrateSingleRunningCondition(s);
         expect(JSON.stringify(s)).toBe(snap);
         expect(migrateSingleRunningCondition(once)).toBe(once);
         expect(JSON.stringify(migrateSingleRunningCondition(s))).toBe(JSON.stringify(once));
-        const dismissed = ws({ runningConditionFilters: [below('T', '1')], runningConditionConversion: null, models: [done('a')] });
+        const dismissed = ws({ runningConditionFilters: [above('SPEED', '1200')], runningConditionConversion: null, models: [done('a')] });
         expect(migrateSingleRunningCondition(dismissed)).toBe(dismissed);
         const noFg = ws();
         expect(migrateSingleRunningCondition(noFg)).toBe(noFg);

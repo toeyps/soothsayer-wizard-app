@@ -1372,15 +1372,15 @@ describe('read path: the one-time conversion to ONE running condition (2026-10-2
         expect(written.runningConditionConversion).not.toBeUndefined();
     });
 
-    it('a dismissed conversion (null on disk) is not run again', async () => {
+    it('a dismissed conversion (null on disk) writes no new notice, but an old shape brought back by an older build is still normalised (data-driven)', async () => {
         mockStoreGet.mockResolvedValue([]);
         const file = JSON.parse(oldFile());
         file.failureGroupState.runningConditionConversion = null;
         mockReadTextFile.mockResolvedValue(JSON.stringify(file));
         const { loadWorkspaceData } = await freshModule();
         const fg = (await loadWorkspaceData('ws1'))!.failureGroupState!;
-        expect(fg.runningConditionFilters).toHaveLength(2);
+        expect(fg.runningConditionFilters).toEqual([{ id: 'b', sensor: 'SPEED', operation: 'greater_than', value1: '1200', value2: '' }]);
         expect(fg.runningConditionConversion).toBeNull();
-        expect(fg.models[0].status).toBe(true);
+        expect(fg.models[0].status).toBe(false); // its rows changed: Incomplete, silently
     });
 });

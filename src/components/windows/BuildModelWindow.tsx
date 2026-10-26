@@ -369,6 +369,33 @@ function conversionMustSetAgain(c: RunningConditionConversion | null | undefined
     return c.before.allRows || c.before.filters.length > 0 || !!c.before.savedStatus;
 }
 
+/** What is left of the conversion record once the WORKSPACE condition is Applied
+ *  again: the workspace part (before / after / result / incomplete models) is
+ *  settled, but a Custom model listed as `needs-set` that still has no complete
+ *  "sensor > value" of its own (and is still Custom) must keep its "Own
+ *  condition" line. `null` when nothing is left to explain. */
+function conversionAfterWorkspaceApply(
+    c: RunningConditionConversion | null | undefined,
+    models: FailureModel[],
+): RunningConditionConversion | null {
+    if (!c) return null;
+    const pending = c.customModels.filter(cm => {
+        if (cm.result !== 'needs-set') return false;
+        const m = models.find(x => x.id === cm.id);
+        if (!m || m.runningConditionMode !== 'custom') return false;
+        return !(m.customRunningConditionFilters ?? []).some(f => f.operation === 'greater_than' && isCompleteCondition(f));
+    });
+    if (pending.length === 0) return null;
+    return {
+        result: 'needs-set',
+        source: null,
+        before: { filters: [], combine: 'and', allRows: false, savedStatus: null },
+        after: null,
+        incompleteModelIds: [],
+        customModels: pending,
+    };
+}
+
 /** Draft vs. persisted comparison. JSON is enough: every draft object is built
  *  by spreading the persisted one (key order preserved) and the period editor
  *  hands back already-sorted lists. Scoring periods are compared as id / start /
@@ -1165,8 +1192,8 @@ export default function BuildModelWindow() {
                     // event time (an old workspace file) never goes back to disk.
                     ...(patch.testPeriods !== undefined ? { runningConditionTestPeriods: toScoringPeriods(patch.testPeriods) } : {}),
                 });
-                // Applying a different condition settles the one-time conversion notice
-                // (its "Now" would no longer be true) — in this same write.
+                // Applying a different condition settles the WORKSPACE part of the
+                // one-time conversion notice (its "Now" would no longer be true) — in this same write.
                 const conditionChanged = patch.filters !== undefined
                     && JSON.stringify(patch.filters) !== JSON.stringify(prev.failureGroupState?.runningConditionFilters ?? []);
                 // Applying a different workspace running condition changes what every
@@ -1175,7 +1202,14 @@ export default function BuildModelWindow() {
                 // A change of ONLY the scoring periods keeps them trained but still needs
                 // Mark complete again (`testsChangedAt`) — `applyIncompleteRule` does
                 // both, never this window by hand.
-                return applyIncompleteRule(prev, conditionChanged ? withFailureGroupState(applied, { runningConditionConversion: null }) : applied);
+                // Only the WORKSPACE part is settled: a Custom model that still has to
+                // set its own condition keeps its "Own condition" line.
+                return applyIncompleteRule(prev, conditionChanged
+                    ? withFailureGroupState(applied, {
+                        runningConditionConversion: conversionAfterWorkspaceApply(
+                            prev.failureGroupState?.runningConditionConversion, prev.failureGroupState?.models ?? []),
+                    })
+                    : applied);
             });
             // Re-pointed at another workspace meanwhile (same guard as `persist`): the
             // write landed in ITS workspace; this window now shows another one — never
@@ -4976,7 +5010,7 @@ export default function BuildModelWindow() {
         if (b.allRows) return <><b>Use all rows</b> (idle and shutdown time included)</>;
         return (
             <>
-                {b.filters.map((f, i) => (
+                {b.filters.filter(f => isCompleteCondition(f)).map((f, i) => (
                     <span key={f.id}>{i > 0 && <span className="rc1-join">{b.combine.toUpperCase()}</span>}{condText(f)} </span>
                 ))}
                 {b.savedStatus && <>and, for the export only, Machine is running when <span className="rc1-cond"><SensorInline tag={b.savedStatus.sensor} size="sm" /></span> is above {numUnit(b.savedStatus.sensor, b.savedStatus.stopAtOrBelow)}</>}

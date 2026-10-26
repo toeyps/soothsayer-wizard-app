@@ -415,8 +415,9 @@ export interface FailureGroupStateSlice {
     /** Category changes made by the one-time normalisation. `undefined` =
      *  step not run yet; `null` = nothing to show / dismissed. */
     categoryNormalisationNotice?: CategoryChange[] | null;
-    /** `'pending'` = legacy workspace with models but no configured running
-     *  condition, user hasn't answered yet. `undefined` = step not run; `null` = handled. */
+    /** OLD FILES ONLY: the pre-2026-10-26 "legacy running condition" notice
+     *  flag. Nothing sets it any more; `migrateSingleRunningCondition` clears a
+     *  leftover `'pending'` to `null`. */
     rcLegacyNotice?: 'pending' | null;
     /** OLD FILES ONLY: the export-only "Machine is running when … is above …"
      *  line of before 2026-10-26. Read once by `migrateSingleRunningCondition`
