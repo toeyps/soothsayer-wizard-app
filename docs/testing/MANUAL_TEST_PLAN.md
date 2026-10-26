@@ -1,8 +1,8 @@
 # Wizard — แผนทดสอบด้วยมือ (Manual Test Plan)
 
-> 880 ข้อ · อัปเดต 2026-10-22 — **เขียนใหม่ทั้งแผนให้ผู้ทดสอบที่ไม่ใช่ developer อ่านเข้าใจ** (ตัดศัพท์เทคนิค แยกขั้นตอนทีละการกระทำ บอกสิ่งที่ต้องเห็นให้ชัด) ข้อและ id เหมือนเดิมทุกข้อ ผลที่เคยกรอกไว้ยังใช้ได้
+> 895 ข้อ · อัปเดต 2026-10-26 — เพิ่ม workflow WFK (ตรวจไฟล์ Export results แบบที่ลูกค้าจะตรวจ) · 2026-10-22 — **เขียนใหม่ทั้งแผนให้ผู้ทดสอบที่ไม่ใช่ developer อ่านเข้าใจ** (ตัดศัพท์เทคนิค แยกขั้นตอนทีละการกระทำ บอกสิ่งที่ต้องเห็นให้ชัด) ข้อและ id เหมือนเดิมทุกข้อ ผลที่เคยกรอกไว้ยังใช้ได้
 >
-> แผนนี้มี 2 ส่วน: **ส่วนที่ 1 ทดสอบทีละฟังก์ชัน** (743 ข้อ) — ลองทีละปุ่ม ทีละหน้าจอ และ **ส่วนที่ 2 ทดสอบตามการใช้งานจริง** (137 จุดตรวจ, หมวด WFA–WFJ) — แต่ละหมวดคือเรื่องเล่า 1 เรื่องของผู้ใช้ ทำต่อเนื่องตามลำดับ ห้ามล้างข้อมูลระหว่างทาง
+> แผนนี้มี 2 ส่วน: **ส่วนที่ 1 ทดสอบทีละฟังก์ชัน** (742 ข้อ) — ลองทีละปุ่ม ทีละหน้าจอ และ **ส่วนที่ 2 ทดสอบตามการใช้งานจริง** (153 จุดตรวจ, หมวด WFA–WFK) — แต่ละหมวดคือเรื่องเล่า 1 เรื่องของผู้ใช้ ทำต่อเนื่องตามลำดับ ห้ามล้างข้อมูลระหว่างทาง
 
 ## วิธีใช้แผนนี้
 
@@ -21,7 +21,7 @@
 |---|---|---|
 | workflow WFA–WFH | `python scripts/make-wf-testdata.py C:\WFdata` | ข้อมูลเครื่องสูบน้ำ 6 เดือน + ไฟล์ Tag names |
 | IMP-89 – IMP-99, workflow WFI | `python scripts/make-ts-testdata.py C:\TSdata` | ไฟล์ที่เขียนวันเวลาหลายรูปแบบ + `EXPECTED.txt` บอกผลที่ต้องได้ |
-| การ Export (BMW-355 ขึ้นไป), workflow WFJ | `python scripts/make-export-testdata.py C:\EXPdata` | ข้อมูล 30 วันที่มีชื่อ sensor แปลก ๆ + `EXPECTED.txt` บอกชื่อไฟล์ที่ต้องได้ |
+| การ Export (BMW-355 ขึ้นไป), workflow WFJ และ WFK | `python scripts/make-export-testdata.py C:\EXPdata` | ข้อมูล 30 วันที่มีชื่อ sensor แปลก ๆ, ข้อมูลตัวเลขยาก ๆ (`EXP-numbers.csv`), เครื่องใหญ่ 37 sensor (`EXP-fleet.csv`) + `EXPECTED.txt` บอกชื่อไฟล์ จำนวนแถว และค่าที่ต้องได้ |
 
 ประวัติการเปลี่ยนเลขข้อ (ข้อไหนถูกแทนด้วยข้อไหน) อยู่ที่ `docs/testing/ID_HISTORY.md` — ผู้ทดสอบไม่ต้องอ่าน
 
@@ -87,6 +87,7 @@
 - [WFH — Workflow H — จัดระเบียบโปรเจกต์ ส่งต่อผล Export results และอัปเกรดโปรแกรม](#wfh) (14 ข้อ)
 - [WFI — Workflow I — ข้อมูลหลายแหล่งที่เขียนวันเวลาต่างรูปแบบ → โมเดล Complete → Export results → แก้แล้ว Export ซ้ำ](#wfi) (4 ข้อ)
 - [WFJ — Workflow J — ทำโมเดลส่งให้ระบบของลูกค้า: กรอกข้อมูลเครื่อง → ทำโมเดลครบ 3 ชนิด → Export → ลูกค้าขอแก้ → Export รอบสอง](#wfj) (12 ข้อ)
+- [WFK — Workflow K — ตรวจไฟล์ Export results แบบที่ลูกค้าจะตรวจ: ไฟล์สร้างโมเดลซ้ำได้ แถวถูกกติกา เครื่องใหญ่ ส่งต่อไฟล์ ตัวเลขไม่ถูกปัด และข้ามเวอร์ชัน](#wfk) (16 ข้อ)
 
 ---
 
@@ -3704,7 +3705,7 @@ _ปุ่มดินสอที่แต่ละแถวในแท็บ 
   - กด Mark complete → Export results
   - เปิดไฟล์ `<Y>-C1.json` ด้วย Notepad (Y = Y sensor ของโมเดล Clustering)
   - ทำซ้ำกับโมเดลที่ใช้ช่วงที่แอปแบ่งให้อัตโนมัติ
-  - **คาดหวัง:** แถวที่ criteria = 50 พอดีอยู่ cluster ล่าง (เวอร์ชันก่อนอยู่ cluster บน — จำนวนแถวต่อ cluster อาจต่างจากเดิมเล็กน้อย) · Export ได้ และใน `<Y>-C1.json` ส่วน regimes เป็น `[{from: null, to: 50}, {from: 50, to: null}]` (null = ไม่มีขอบด้านนั้น) · ช่วงที่แอปแบ่งให้อัตโนมัติ Export ได้ (ขอบนอกสุดไม่มีขอบ) และแถวที่ค่า criteria = ค่าต่ำสุดของข้อมูลยังถูกใช้ Train
+  - **คาดหวัง:** แถวที่ criteria = 50 พอดีอยู่ cluster ล่าง (เวอร์ชันก่อนอยู่ cluster บน — จำนวนแถวต่อ cluster อาจต่างจากเดิมเล็กน้อย) · Export ได้ และใน `<Y>-C1.json` ส่วน regimes เป็น `[{from: null, to: 50.0}, {from: 50.0, to: null}]` (เลขจำนวนเต็มในไฟล์ JSON เขียนมี .0 ต่อท้าย เช่น 50.0 — ถือว่าเป็นเลขเดียวกัน ผ่าน) (null = ไม่มีขอบด้านนั้น) · ช่วงที่แอปแบ่งให้อัตโนมัติ Export ได้ (ขอบนอกสุดไม่มีขอบ) และแถวที่ค่า criteria = ค่าต่ำสุดของข้อมูลยังถูกใช้ Train
 
 - [ ] **BMW-289 — ปิดหน้าต่างตอนมีค่าใน Model settings หรือ popup Running condition ที่ยังไม่ Save / Apply: ค่าที่แก้ค้างถูกทิ้งโดยไม่ถาม** 🆕
   - แก้ชื่อโมเดล / Stiffness ค้างไว้ (ยังไม่กด Save changes) แล้วกดปุ่ม X ของหน้าต่าง
@@ -4705,7 +4706,7 @@ _ปุ่มดินสอที่แต่ละแถวในแท็บ 
   - แก้ค่าหลัง "is above" เป็น `60` → กด Apply → ดูสถานะโมเดล และแถบ Export results
   - Train ใหม่ + Mark complete ทุกโมเดล → กด Export results → Export
   - เปิดโฟลเดอร์ที่ export → คลิกขวาที่ `machine_info.json` → Open with → Notepad → กด Ctrl+F ค้นหาคำว่า `running_status`
-  - **คาดหวัง:** แถว Running status เขียน "Machine is running when Motor power (KW) is above 50 kW" ใต้แถวมีบรรทัด "From the running condition — the same line used for training." · "Open running condition" ปิดหน้าต่าง Export แล้วเปิด popup Running condition · ใน popup **ไม่มี**บรรทัดหรือกล่องแยกสำหรับ export (มีแค่บรรทัดเดียวในหัวข้อ "When the machine is running") · แก้ค่าแล้ว Apply = โมเดลแบบ Workspace กลับเป็น Incomplete ("Re-train needed") และแถบ Export results บอกว่ายังไม่ Complete (การแก้นี้เปลี่ยนแถวที่ใช้ Train ด้วย) · ในไฟล์: ส่วน `running_status` (บอกว่า sensor ไหนใช้ดูว่าเครื่องเดิน และหยุดเมื่อค่าต่ำกว่าหรือเท่ากับเท่าไร) เขียนเป็น `{"sensor": "KW", "stop_if_lower_than": 60}` — ค่าเดียวกับที่ตั้งบนจอ · sensor แสดงเป็น description + tag ไม่ใช่ tag ล้วน
+  - **คาดหวัง:** แถว Running status เขียน "Machine is running when Motor power (KW) is above 50 kW" ใต้แถวมีบรรทัด "From the running condition — the same line used for training." · "Open running condition" ปิดหน้าต่าง Export แล้วเปิด popup Running condition · ใน popup **ไม่มี**บรรทัดหรือกล่องแยกสำหรับ export (มีแค่บรรทัดเดียวในหัวข้อ "When the machine is running") · แก้ค่าแล้ว Apply = โมเดลแบบ Workspace กลับเป็น Incomplete ("Re-train needed") และแถบ Export results บอกว่ายังไม่ Complete (การแก้นี้เปลี่ยนแถวที่ใช้ Train ด้วย) · ในไฟล์: ส่วน `running_status` (บอกว่า sensor ไหนใช้ดูว่าเครื่องเดิน และหยุดเมื่อค่าต่ำกว่าหรือเท่ากับเท่าไร) เขียนเป็น `{"sensor": "KW", "stop_if_lower_than": 60.0}` (เลขจำนวนเต็มในไฟล์ JSON เขียนมี .0 ต่อท้าย เช่น 50.0 — ถือว่าเป็นเลขเดียวกัน ผ่าน) — ค่าเดียวกับที่ตั้งบนจอ · sensor แสดงเป็น description + tag ไม่ใช่ tag ล้วน
 
 - [ ] **BMW-358 — รายการตรวจก่อน Export: ทำให้เกิดปัญหาทีละข้อ แล้วดูข้อความและลิงก์ที่พาไปแก้** 🆕
   - ทำทีละข้อ (แก้กลับก่อนทำข้อถัดไป) แล้วกด Export results ดูรายการตรวจ:
@@ -4765,7 +4766,7 @@ _ปุ่มดินสอที่แต่ละแถวในแท็บ 
   - สร้าง Clustering 2 cluster ตั้งช่วง 20–50 และ 50–80 แต่ข้อมูล criteria มีค่า 0–100 → Train
   - ดูจำนวนแถวต่อ cluster และหน้า Health score ในช่วงเวลาที่ criteria < 20 และ > 80
   - Export results → เปิดไฟล์ JSON ของโมเดลด้วย Notepad → Ctrl+F หา `regimes` (ช่วงของแต่ละ cluster)
-  - **คาดหวัง:** แถวที่ criteria < 20 เข้า cluster แรก, > 80 เข้า cluster สุดท้าย (ขอบนอกสุดเปิด) และมีคะแนน (เวอร์ชันก่อนไม่มีคะแนน) · `regimes` = `[{"from": null, "to": 50}, {"from": 50, "to": null}]` (ขอบนอกเป็น null คือไม่มีขอบ ไม่ใช่ 20 / 80) · ช่วงที่ซ้อนกัน (BMW-358 ข้อ 5) export ไม่ได้ และตอน Train แถวที่อยู่ในส่วนที่ซ้อนไปอยู่ cluster แรกเท่านั้น
+  - **คาดหวัง:** แถวที่ criteria < 20 เข้า cluster แรก, > 80 เข้า cluster สุดท้าย (ขอบนอกสุดเปิด) และมีคะแนน (เวอร์ชันก่อนไม่มีคะแนน) · `regimes` = `[{"from": null, "to": 50.0}, {"from": 50.0, "to": null}]` (เลขจำนวนเต็มในไฟล์ JSON เขียนมี .0 ต่อท้าย เช่น 50.0 — ถือว่าเป็นเลขเดียวกัน ผ่าน) (ขอบนอกเป็น null คือไม่มีขอบ ไม่ใช่ 20 / 80) · ช่วงที่ซ้อนกัน (BMW-358 ข้อ 5) export ไม่ได้ และตอน Train แถวที่อยู่ในส่วนที่ซ้อนไปอยู่ cluster แรกเท่านั้น
 
 - [ ] **BMW-367 — ชื่อโฟลเดอร์ที่ export: ชื่อไทยล้วน, ตัวอักษรที่มีเครื่องหมาย, ชื่อยาวมาก** 🆕
   - เตรียม 4 โปรเจกต์ (ตั้งใน Project details): A = Plant "โรงงาน", Machine "ปั๊ม", tag "P-1" · B = Plant + Machine ภาษาไทย และ tag ไทย "ปั๊ม1" · C = Plant "Café Nord", Machine "Pompe à eau" · D = Plant + Machine ภาษาอังกฤษ ยาวรวมประมาณ 120 ตัวอักษร
@@ -6292,6 +6293,146 @@ _ผู้ใช้: วิศวกรที่ต้องส่งผลใ�
   - อ่านข้อความยืนยัน → กด Delete
   - เปิดโฟลเดอร์ `D:\ToCustomer`
   - **คาดหวัง:** ข้อความยืนยันเขียนว่า "Its saved data is removed. Folders you exported are kept." · การ์ดหายไป · โฟลเดอร์ export ทั้งหมดใน `D:\ToCustomer` ยังอยู่ครบ · ไฟล์ต้นทาง `EXP-data.csv` / `EXP-tags.csv` ไม่ถูกแตะ
+
+---
+
+## WFK
+
+### Workflow K — ตรวจไฟล์ Export results แบบที่ลูกค้าจะตรวจ: ไฟล์สร้างโมเดลซ้ำได้ แถวถูกกติกา เครื่องใหญ่ ส่งต่อไฟล์ ตัวเลขไม่ถูกปัด และข้ามเวอร์ชัน
+
+_ผู้ใช้: วิศวกรที่ต้องรับรองว่าไฟล์ที่ส่งให้ลูกค้า "เอาไปสร้างโมเดลซ้ำได้ผลเหมือนในโปรแกรม" · เป้าหมาย: เปิดไฟล์ที่ export ด้วย Excel / Notepad / เบราว์เซอร์ แล้วพิสูจน์ด้วยตัวเลขว่าตรงกับหน้าจอและตรงกติกา · เตรียม: รันคำสั่ง `python scripts/make-export-testdata.py C:\EXPdata` (ได้ไฟล์ `EXP-numbers.csv`, `EXP-numbers-tags.csv`, `EXP-fleet.csv`, `EXP-fleet-tags.csv` เพิ่มจากเดิม) · เปิด `C:\EXPdata\EXPECTED.txt` ด้วย Notepad ไว้ข้าง ๆ แล้วเลื่อนไปที่ส่วน "WFK" · มี Excel และ Edge หรือ Chrome · โฟลเดอร์ที่เขียนไม่ได้ / ดิสก์เต็ม ทดสอบแล้วใน BMW-349 และ BMW-368 ไม่ต้องทำซ้ำ_
+
+- [ ] **WFK-1 — สร้างโปรเจกต์ตัวเลข: นำเข้าข้อมูล สร้าง special sensor และโมเดล 11 ตัว แล้ว Train** 🆕
+  - กด New project → กรอก Plant "Test Lab", Machine "Numbers Rig", Machine tag "NR-1" → กด Continue
+  - ขั้นที่ 2: เลือกเขตเวลา "UTC+07:00" → Import ไฟล์ `EXP-numbers.csv` → กด Parse files → ช่อง Tag names เลือก `EXP-numbers-tags.csv`
+  - เปิดหน้าต่าง Add Special Sensor → สร้างแบบสูตร `$INT * 2 + $NEG` ตั้งชื่อ `SPX` component "Test rig"
+  - ใน Dashboard แท็บ Failure Groups สร้างกลุ่ม "Numbers check" (กรอก Description และ Recommendation)
+  - ใส่โมเดลในกลุ่มนี้: Individual ของ `LONGDEC`, `NEG`, `TINY`, `MICRO`, `BIG`, `TRAILZ`, `SCI`, `SPX`, `INT` · Relation model ของ `LONGDEC` (predictor `RUN`, `GAPPY`) · Clustering ของ `RUN` (Y = `NEG`, criteria `INT`, 2 cluster, เส้นแบ่ง 1000)
+  - เลือก Performance ให้ทุก sensor
+  - เปิด Build Model → Running condition: "Machine is running when" `RUN` "is above" `50` · ช่วง Train 2026/02/01 00:00 → 2026/02/06 23:50 · ช่วง Scoring 2026/02/07 00:00 → 2026/02/10 23:50 → กด Apply
+  - เปิดโมเดล Individual ของ `INT` → Training data เลือก Custom → เงื่อนไขของตัวเอง `RUN` is above `90` · ช่วง Train ของตัวเอง 2026/02/02 00:00 → 2026/02/03 23:50 → กด Save changes
+  - กด Train all
+  - **คาดหวัง:** หน้า Import บอก Rows = 1,440 ช่วงเวลา 2026/02/01 00:00:00 → 2026/02/10 23:50:00 · ไม่มีคำเตือนเรื่องค่าที่ไม่ใช่ตัวเลข (ค่าแบบ `1.5E-05` ในคอลัมน์ `SCI` ถูกอ่านเป็นตัวเลข) · กราฟของ `TINY` และ `MICRO` ใน Dashboard ไม่เป็นเส้นศูนย์ · Train ครบ 11 โมเดล · ค่า L / H ของโมเดล Individual ถูกเติมให้ตรงกับบรรทัด "set points L … H …" ใน `EXPECTED.txt` (เช่น `NEG` = -285 / -265, `TINY` = -0.000023 / 0.00005)
+
+- [ ] **WFK-2 — ตั้ง set point, Mark complete ทุกตัว แล้ว Export ครั้งแรก** 🆕
+  - Relation model ของ `LONGDEC`: ตั้งจุด 80 ที่ -6 และ 6, จุด 0 ที่ -12 และ 12
+  - Clustering ของ `RUN`: ตั้ง N = 5 · Individual: ใช้ค่า L / H ที่ถูกเติมไว้
+  - กด Mark complete ทีละโมเดลจนครบ 11 ตัว
+  - กด Export results → "Choose folder…" → เลือก `C:\EXPout` → กด "Show the files" แล้วอ่านจำนวนแถวของแต่ละไฟล์
+  - กด Export → กด Open folder
+  - **คาดหวัง:** ทุกโมเดล Complete · แถบล่างขึ้น "11 models exported …" · ใน `models\` มี 22 ไฟล์ ชื่อตาม `EXPECTED.txt`: `LONGDEC-I1`, `NEG-I1`, `TINY-I1`, `MICRO-I1`, `BIG-I1`, `TRAILZ-I1`, `SCI-I1`, `SPX-I1`, `INT-I1`, `LONGDEC-R1`, `NEG-C1` (Clustering ใช้ชื่อ Y sensor `NEG`) · จำนวน "training rows" ของแต่ละไฟล์ในหน้าต่าง Export ตรงกับ `EXPECTED.txt`: 804 สำหรับ Individual ทุกตัวยกเว้น `INT-I1` = 94, `LONGDEC-R1` = 792, `NEG-C1` = 804
+
+<!-- ── 1. ไฟล์ CSV สร้างโมเดลซ้ำได้ ── -->
+
+- [ ] **WFK-3 — Individual: ค่าเฉลี่ยและ SD ที่คำนวณจาก CSV ใน Excel ตรงกับการ์ด Mean / SD ในหน้า Model fit** 🆕
+  - ใน Build Model เปิดโมเดล Individual ของ `NEG` → หน้า Model fit → จดค่าการ์ด "Mean" และ "SD" (รวมบรรทัด ±1SD ใต้การ์ด SD)
+  - ทำซ้ำกับ `LONGDEC`, `BIG`, `TINY`, `INT`
+  - ดับเบิลคลิกเปิด `C:\EXPout\<โฟลเดอร์ที่ได้>\models\NEG-I1.csv` ใน Excel
+  - ในช่องว่างพิมพ์ `=COUNT(B:B)`, `=AVERAGE(B:B)`, `=STDEV.S(B:B)` และ `=STDEV.P(B:B)`
+  - ทำซ้ำกับไฟล์ CSV ของ `LONGDEC-I1`, `BIG-I1`, `TINY-I1`, `INT-I1`
+  - **คาดหวัง:** `COUNT` = จำนวน "training rows" ในหน้าต่าง Export (804 / `INT-I1` = 94) · `AVERAGE` = การ์ด Mean และ `STDEV.S` = การ์ด SD ตามจำนวนหลักที่จอแสดง (จอแสดงไม่เกิน 3 ตำแหน่งทศนิยม และค่าเล็กมากแสดง 3 หลักแรก) และตรงกับ `EXPECTED.txt` (เช่น `NEG` = -275.150 / 1.150, `BIG` = 12,345,675.204 / 43.580) · **โปรแกรมใช้ SD แบบ `STDEV.S`** (หารด้วยจำนวนแถว − 1) — `STDEV.P` จะได้ค่าเล็กกว่าเล็กน้อย (เช่น `BIG` = 43.553) ถ้าการ์ดตรงกับ `STDEV.P` แทน = ไม่ผ่าน · ±1SD บนจอ = AVERAGE ± STDEV.S · `INT` ใช้เฉพาะแถวของเงื่อนไขของตัวเอง ค่าจึงตรงกับบรรทัด `INT-I1` ใน `EXPECTED.txt` ไม่ใช่ค่าจากทั้งช่วง Train ของโปรเจกต์
+
+- [ ] **WFK-4 — Relation model และ Clustering: จำนวนแถวและคอลัมน์ใน CSV พอให้สร้างโมเดลซ้ำได้** 🆕
+  - เปิด `LONGDEC-R1.csv` และ `NEG-C1.csv` ใน Excel → ดูหัวคอลัมน์แถวแรก
+  - ใน `LONGDEC-R1.csv` พิมพ์ `=COUNT(D:D)` · ใน `NEG-C1.csv` พิมพ์ `=COUNT(C:C)`, `=COUNTIF(D:D,"<=1000")` และ `=COUNTIF(D:D,">1000")`
+  - ใน Build Model เปิด Clustering ของ `RUN` → หน้า Model fit → ดูการ์ด "In a cluster"
+  - **คาดหวัง:** `LONGDEC-R1.csv` หัวคอลัมน์ `TimeStamp,RUN,GAPPY,LONGDEC` (predictor ตามลำดับที่เลือก แล้วตามด้วย sensor ที่ทำนาย) และมี 792 แถว · `NEG-C1.csv` หัวคอลัมน์ `TimeStamp,RUN,NEG,INT` (X, Y, criteria) และมี 804 แถว แบ่งเป็น 415 แถวที่ `INT` ≤ 1000 กับ 389 แถวที่มากกว่า (ตาม `EXPECTED.txt` — ค่าที่เท่ากับ 1000 พอดีอยู่กลุ่มล่าง) · การ์ด "In a cluster" = 100% · จำนวนแถวตรงกับหน้าต่าง Export · ไม่มีคอลัมน์อื่น (ไม่มีค่าที่ทำนาย, ค่าคลาดเคลื่อน, เลข cluster หรือคะแนน)
+
+- [ ] **WFK-5 — ข้อมูลที่มีเวลาซ้ำ: แถวที่ export เทียบกับแถวที่ใช้ Train (ข้อมูลทดสอบ EXP)** 👀
+  - ใช้โปรเจกต์จาก WFJ (หรือสร้างใหม่ด้วย `EXP-data.csv` + `EXP-tags.csv`, Running condition `KW` is above `50`, ช่วง Train 2026/01/01 00:00 → 2026/01/20 23:50)
+  - สร้าง Individual ของ `VIB.X` → Train → จดการ์ด Mean และ SD → Mark complete → Export
+  - เปิด `VIB.X-I1.csv` ใน Excel → พิมพ์ `=COUNT(B:B)`, `=AVERAGE(B:B)`, `=STDEV.S(B:B)`
+  - เทียบกับบรรทัด "EXP-data.csv, VIB.X Individual" ใน `EXPECTED.txt`
+  - **คาดหวัง:** ⚠ ข้อนี้อาจยังไม่ผ่าน — ให้บันทึกผลตามที่เห็นจริง · ที่ควรเป็น: CSV มีเวลาละ 1 แถว (2,592 แถว, เวลาที่ซ้ำเก็บแถวหลัง) และค่า SD ที่คำนวณจาก CSV ตรงกับการ์ด SD · ที่อาจเห็น: การ์ด SD = 0.333 แต่ Excel ได้ 0.334 เพราะตอน Train โปรแกรมนับแถวเวลาซ้ำทั้งสองแถว (2,595 แถว) แต่ไฟล์เก็บแค่แถวหลัง — จดทั้งสองค่าไว้ (ข้อมูลจริงที่ไม่มีเวลาซ้ำไม่เจอเรื่องนี้)
+
+<!-- ── 2. แถวใน CSV ถูกทุกกติกา ── -->
+
+- [ ] **WFK-6 — ไม่มีแถวที่เครื่องไม่ได้เดิน: ค่าเท่ากับ 50 พอดี ต่ำกว่า หรือว่าง ไม่อยู่ในไฟล์** 🆕
+  - เปิด `LONGDEC-R1.csv` ใน Excel → พิมพ์ `=MIN(B:B)` (คอลัมน์ `RUN`)
+  - คลิกขวา `NEG-I1.csv` → Open with → Notepad → กด Ctrl+F ค้นหาทีละคำ: `2026-02-03T12:00`, `2026-02-03T13:50`, `2026-02-03T14:00`, `2026-02-04T03:00`, `2026-02-05T08:00`, `2026-02-05T12:00`
+  - ทำซ้ำการค้นหาใน `SPX-I1.csv` (โมเดลที่ใช้ special sensor)
+  - **คาดหวัง:** `MIN` = 50.001 (ไม่มีค่า 50 หรือต่ำกว่า) · ไม่พบ `2026-02-03T12:00` และ `13:50` (`RUN` = 50 พอดี — "is above 50" ไม่รวม 50) · พบ `2026-02-03T14:00` (`RUN` = 50.001) · ไม่พบ `2026-02-04T03:00` (เครื่องหยุด `RUN` = 0) · ไม่พบ `2026-02-05T08:00` (`RUN` = 49.999) · ไม่พบ `2026-02-05T12:00` (ไม่มีค่า `RUN`) · ผลเหมือนกันทุกไฟล์ แม้ไฟล์นั้นไม่มีคอลัมน์ `RUN` · ใน `machine_info.json` ส่วน `running_status` เป็น `RUN` และ `stop_if_lower_than` = `50.0` (หมายถึง "หยุดเมื่อค่าต่ำกว่าหรือเท่ากับ 50" ตรงกับแถวที่หายไป)
+
+- [ ] **WFK-7 — ใช้เฉพาะช่วง Train ไม่มีช่วง Scoring และโมเดลแบบ Custom ใช้เงื่อนไขกับช่วงของตัวเอง** 🆕
+  - เปิด `NEG-I1.csv` ด้วย Notepad → ดูแถวแรกและแถวสุดท้าย → กด Ctrl+F หา `2026-02-07`, `2026-02-10`
+  - เปิด `INT-I1.csv` ด้วย Notepad → ดูแถวแรกและแถวสุดท้าย → กด Ctrl+F หา `2026-02-01`, `2026-02-04`
+  - เปิด `NEG-I1.json` และ `INT-I1.json` ด้วย Notepad → อ่านบรรทัด `note` ในส่วน `training_data`
+  - **คาดหวัง:** `NEG-I1.csv` แถวแรก `2026-02-01T00:00:00+07:00` แถวสุดท้าย `2026-02-06T23:50:00+07:00` และไม่พบวันที่ 7–10 ก.พ. (ช่วง Scoring ไม่ถูก export) · `INT-I1.csv` มี 94 แถว แถวแรก `2026-02-02T02:10:00+07:00` แถวสุดท้าย `2026-02-03T09:50:00+07:00` (ตาม `EXPECTED.txt`) ไม่พบวันที่ 1 และ 4 ก.พ. · `note` ของ `NEG-I1` = "Running only: RUN > 50; train periods 2026-02-01 00:00 to 2026-02-06 23:50; rows with a missing value removed" · `note` ของ `INT-I1` เขียน `RUN > 90`, ช่วง 2026-02-02 00:00 to 2026-02-03 23:50 และมีคำว่า "own condition of this model" · `running_status` ใน `machine_info.json` ยังเป็น 50 (ของโปรเจกต์) ไม่ใช่ 90
+
+- [ ] **WFK-8 — แถวที่มีค่าว่างถูกตัดเฉพาะโมเดลที่ใช้คอลัมน์นั้น และค่า special sensor ตรงกับสูตร** 🆕
+  - เปิด `LONGDEC-R1.csv` และ `LONGDEC-I1.csv` ด้วย Notepad → กด Ctrl+F หา `2026-02-02T06:00` และ `2026-02-02T07:50`
+  - เปิด `SPX-I1.csv` ด้วย Notepad → ค้นหาเวลา 3 แถวที่อยู่ในส่วน "Special sensor SPX" ของ `EXPECTED.txt` แล้วเทียบค่า
+  - เปิด `C:\EXPdata\EXP-numbers.csv` ใน Excel → ที่แถวเวลาเดียวกัน พิมพ์ `=H2*2+D2` (เปลี่ยนเลขแถวให้ตรง: คอลัมน์ H = `INT`, D = `NEG`)
+  - เปิด `machine_info.json` ด้วย Notepad → กด Ctrl+F หา `derived_sensors`
+  - **คาดหวัง:** `LONGDEC-R1.csv` ไม่มีแถว 2026-02-02 06:00–07:50 (`GAPPY` ว่าง 12 แถว จึงเหลือ 792) แต่ `LONGDEC-I1.csv` ยังมีแถวเหล่านั้น (โมเดลนี้ไม่ได้ใช้ `GAPPY` จึงมี 804) · ค่า `SPX` ในไฟล์ตรงกับ `EXPECTED.txt` ทุกหลัก (เช่น 1600.72) และตรงกับที่ Excel คำนวณ · บางแถวอาจเห็นหลักยาวใน Notepad เช่น `1582.6399999999999` — เป็นเลขเดียวกับ 1582.64 (Excel แสดงได้แค่ 15 หลัก) ไม่ถือว่าผิด · `derived_sensors` มี `SPX` และ `how_to_build` = "Calculated as INT * 2 + NEG" · `INT` และ `NEG` อยู่ในรายการ `sensors`
+
+<!-- ── 5. ตัวเลขไม่ถูกปัด ── -->
+
+- [ ] **WFK-9 — ตัวเลขใน CSV: ทศนิยมยาว ค่าติดลบ ค่าเล็กมาก ค่าใหญ่มาก และจำนวนเต็ม ไม่ถูกปัดและไม่เป็นรูปแบบ 1E-05** 🆕
+  - เปิดไฟล์ CSV ของ `LONGDEC-I1`, `NEG-I1`, `TINY-I1`, `MICRO-I1`, `BIG-I1`, `INT-I1`, `TRAILZ-I1`, `SCI-I1` และ `LONGDEC-R1` ด้วย Notepad
+  - เทียบแถวที่อยู่ในส่วน "Number text" ของ `EXPECTED.txt` (ค่าเดิมในไฟล์ข้อมูล → ค่าที่ต้องเห็นในไฟล์ export)
+  - ในแต่ละไฟล์ กด Ctrl+F หา `E-`, `e-`, `E+` และเครื่องหมาย `"`
+  - ดับเบิลคลิกเปิด `TINY-I1.csv` ใน Excel → คลิกช่องที่มีค่า 0.0000001 แล้วดูค่าในแถบสูตร (formula bar)
+  - **คาดหวัง:** ค่าตรงกับ `EXPECTED.txt` ทุกแถว: `10.0034567890121` ครบ 15 หลัก, `-273.15`, `0.0000001`, `0.0000017`, `12345607.3`, `937` · ค่าเดิมที่มีศูนย์ท้ายถูกเขียนสั้นลงแต่เป็นเลขเดียวกัน (`1.50` → `1.5`, `2.00` → `2`, `-273.80` → `-273.8`, `12345600.0` → `12345600`, `80.0` → `80`) · ค่าที่ไฟล์ข้อมูลเขียนแบบ `1.5E-05` / `3E+02` ถูกเขียนเป็น `0.000015` / `300` · ค้นหา `E-` `e-` `E+` และ `"` ไม่พบในไฟล์ใด · ไม่มีจุลภาคคั่นหลักพัน (แต่ละบรรทัดมีจุลภาคเท่าจำนวนคอลัมน์ − 1) · ใน Excel ช่องอาจแสดงเป็น `1.00E-07` ตามรูปแบบของ Excel แต่แถบสูตรแสดง 0.0000001 — ไม่ใช่ปัญหาของไฟล์
+
+- [ ] **WFK-10 — ตัวเลขในไฟล์ JSON: set point ค่าเล็กมาก ค่าใหญ่มาก ค่าติดลบ เส้นแบ่ง cluster และ running status** 🆕
+  - เปิด `TINY-I1.json`, `MICRO-I1.json`, `BIG-I1.json`, `NEG-I1.json`, `LONGDEC-R1.json`, `NEG-C1.json` และ `machine_info.json` ด้วย Notepad
+  - ดูส่วน `health` ของทุกไฟล์, ส่วน `regimes` ของ `NEG-C1.json` และ `running_status` ของ `machine_info.json`
+  - เทียบกับค่าบนหน้า Health score ของแต่ละโมเดล
+  - **คาดหวัง:** เลขจำนวนเต็มในไฟล์ JSON มี `.0` ต่อท้าย (เช่น `-285.0`, `1000.0`) — เป็นเลขเดียวกัน ถือว่าผ่าน · `TINY` low / high = `-0.000023` / `0.00005` · `BIG` = `12345320.0` / `12346030.0` (ไม่มีจุลภาคคั่นหลักพัน) · `NEG` = `-285.0` / `-265.0` · `LONGDEC-R1` warning = `-6.0` / `6.0` และ failure = `-12.0` / `12.0` · `NEG-C1` regimes = `[{"from": null, "to": 1000.0}, {"from": 1000.0, "to": null}]` และ `failure_distance` = `5.0` · `stop_if_lower_than` = `50.0` · ⚠ ข้อนี้อาจยังไม่ผ่าน — ให้บันทึกผลตามที่เห็นจริง: `MICRO` ควรเป็น `-0.0000009` / `0.0000038` แต่ไฟล์อาจเขียนเป็น `-9e-7` / `3.8e-6` (เลขเดียวกันในรูปแบบวิทยาศาสตร์ — ระบบที่อ่านไฟล์ JSON อ่านได้ แต่คนอ่านแล้วอาจสับสน) · หน้าจอ Health score แสดงค่า L / H ของ `MICRO` ตามที่ตั้ง ไม่ใช่ 0
+
+<!-- ── 3. เครื่องใหญ่ ── -->
+
+- [ ] **WFK-11 — เครื่องใหญ่: สร้างโปรเจกต์ 37 โมเดลใน 6 Failure group (ข้อมูลทดสอบ EXP-fleet)** 🆕
+  - กด New project → Plant "Test Lab", Machine "Fleet Rig", Machine tag "FR-1" → Import `EXP-fleet.csv` + Tag names `EXP-fleet-tags.csv`
+  - สร้าง Failure group 6 กลุ่ม (กรอก Description และ Recommendation ทุกกลุ่ม): Motor, Pump, Gearbox, Bearings, Cooling, Overall health
+  - ใส่โมเดลตามส่วน "WFK — EXP-fleet.csv" ของ `EXPECTED.txt`: Individual 33 ตัว · Relation model ของ `MTR_03` (predictor `MAIN_KW`) และ `PMP_02` (predictor `MAIN_KW`, `MTR_01`) · Clustering ของ `MAIN_KW` (Y = `GBX_02`, 1 cluster) และของ `BDE_01` (Y = `BND_01`, criteria `MAIN_KW`, 2 cluster เส้นแบ่ง 300)
+  - ใส่ `MTR_01`, `PMP_01`, `BDE_01` (Individual) ในกลุ่ม Overall health ด้วย
+  - เลือก Performance / Condition ให้ทุก sensor → Running condition `MAIN_KW` is above `50` · ช่วง Train 2026/03/01 00:00 → 2026/03/14 23:50 → กด Apply → กด Train all
+  - ตั้ง set point ตาม `EXPECTED.txt` → Mark complete ทุกโมเดล
+  - **คาดหวัง:** หน้า Import บอก Rows = 2,016 และจับคู่ tag ครบ 37 ตัว · การใส่ `MTR_01` ในกลุ่มที่สองไม่ได้สร้างโมเดลใหม่ (ยังเป็นโมเดลเดิม แต่แสดงอยู่ทั้งสองกลุ่ม) · รายการ sensor ใน Build Model แสดงครบตามกลุ่ม และความคืบหน้าขึ้น "37 of 37 complete" · ระหว่างทำไม่มีหน้าต่างค้างหรือช้าจนใช้งานไม่ได้ (จดเวลา Train all)
+
+- [ ] **WFK-12 — เครื่องใหญ่: ไฟล์ machine_info.json ไม่มี sensor หรือ component ซ้ำ และทุกชื่อโมเดลในกลุ่มมีไฟล์จริง** 🆕
+  - กด Export results → Export → อ่านบรรทัดที่แถบล่าง
+  - เปิดโฟลเดอร์ `models\` ใน File Explorer → ดูจำนวนรายการที่มุมซ้ายล่าง
+  - ลาก `machine_info.json` ไปวางใน Edge หรือ Chrome → กด Ctrl+F หา `"tag":`, `MAIN_KW`, `CLG_04`, `Pump P-1`, `-I1"` แล้วดูตัวเลขจำนวนที่พบในช่องค้นหา
+  - อ่านส่วน `components` และ `failure_groups` → สุ่มชื่อโมเดล 5 ชื่อจาก `failure_groups` แล้วหาไฟล์ชื่อเดียวกันใน `models\`
+  - เปิด `BND_01-C1.json` ด้วย Notepad → ดู `component`, `x_sensor`, `y_sensor`, `criteria_sensor`
+  - **คาดหวัง:** แถบล่างขึ้น "37 models exported …" · `models\` มี 74 รายการ · `"tag":` พบ 34 ครั้ง (sensor แต่ละตัวมีครั้งเดียว) · `"tag": "MAIN_KW"` มีครั้งเดียว แม้ 4 โมเดลและ running status ใช้ · ไม่พบ `CLG_04` (ไม่มีโมเดลใช้) · `components` มี 6 ชื่อไม่ซ้ำเรียงตามตัวอักษร: Bearing DE, Bearing NDE, Cooling, Gearbox G-1, Motor M-1, Pump P-1 (`PMP_06` ในไฟล์ Tag names มีช่องว่างต่อท้าย แต่ต้องไม่เกิดชื่อ "Pump P-1 " แยกอีกชื่อ) · `failure_groups` มี 6 กลุ่ม ชื่อโมเดลรวม 40 ชื่อ — Overall health มี `MTR_01-I1`, `PMP_01-I1`, `BDE_01-I1` ซึ่งเป็นไฟล์เดียวกับในกลุ่ม Motor / Pump / Bearings · ทุกชื่อที่สุ่มมีไฟล์ `.json` และ `.csv` จริง · `BND_01-C1.json`: component "Bearing DE" (ของ X sensor `BDE_01`), x `BDE_01`, y `BND_01`, criteria `MAIN_KW`
+
+<!-- ── 4. ส่งต่อไฟล์ ── -->
+
+- [ ] **WFK-13 — Export ลงโฟลเดอร์ OneDrive ทั้งตอน sync ปกติ และตอน sync หยุด / มีปัญหา** 👀
+  - (ก) กด Export results → "Choose folder…" → เลือกโฟลเดอร์ใน OneDrive เช่น `C:\Users\<ชื่อ>\OneDrive\WizardExport` → กด Export
+  - รอจนไอคอน OneDrive บอกว่า sync เสร็จ → เปิด OneDrive บนเว็บ ดูโฟลเดอร์เดียวกัน
+  - (ข) คลิกไอคอน OneDrive ที่มุมขวาล่าง → Pause syncing → 2 hours (หรือถอดสายแลน / ปิด Wi-Fi จนไอคอน OneDrive ขึ้นเครื่องหมายเตือน) → Export อีกครั้ง
+  - กด Resume syncing (หรือต่อเน็ตกลับ) → รอ sync เสร็จ → ดูบนเว็บอีกครั้ง
+  - **คาดหวัง:** ทั้ง (ก) และ (ข) export สำเร็จ ขึ้น "N models exported …" และในเครื่องมีไฟล์ครบ (`machine_info.json` + `models\` 22 ไฟล์สำหรับโปรเจกต์ตัวเลข) · ตอน sync หยุด การ export ไม่ช้าลงและไม่ขึ้น error · หลัง sync บนเว็บมีโฟลเดอร์และไฟล์ครบเท่าในเครื่อง ไม่มีโฟลเดอร์ชื่อขึ้นต้นด้วยจุดและมีคำว่า `partial` ค้างอยู่ (ทั้งบนเว็บและในถังขยะของ OneDrive) · ถ้า export ล้มเหลวเพราะ OneDrive ล็อกไฟล์ ต้องขึ้น "Export failed · nothing was written" พร้อมเหตุผล และกด "Try again" แล้วสำเร็จ — จดไว้ถ้าเจอ
+
+- [ ] **WFK-14 — ที่อยู่โฟลเดอร์ยาวเกิน 260 ตัวอักษร, โฟลเดอร์ในเครือข่าย (`\\server\share`) และไดรฟ์เครือข่ายที่ map เป็นตัวอักษร (`Z:`)** 👀
+  - (ก) สร้างโฟลเดอร์ซ้อนกันจนที่อยู่ยาวประมาณ 200 ตัวอักษร (เช่น `C:\EXPout\aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\bbbb…`) → Export ไปที่นั่น (ที่อยู่ของไฟล์ CSV ข้างในจะยาวเกิน 260 ตัวอักษร)
+  - เปิดโฟลเดอร์ที่ได้ใน File Explorer → ดับเบิลคลิกเปิดไฟล์ CSV หนึ่งไฟล์ใน Excel และอีกไฟล์ด้วย Notepad
+  - (ข) "Choose folder…" → ในช่องที่อยู่ของตัวเลือกโฟลเดอร์พิมพ์ `\\<ชื่อเครื่อง>\<ชื่อแชร์>\WizardExport` → Export → อ่านบรรทัดที่แถบล่าง → กด Open folder
+  - (ค) map แชร์เดียวกันเป็นไดรฟ์ `Z:` (File Explorer → This PC → Map network drive) → เลือก `Z:\WizardExport` → Export → อ่านบรรทัดที่แถบล่าง → กด Open folder → ปิดหน้าต่าง Export แล้วกด "Choose folder…" อีกครั้ง
+  - **คาดหวัง:** (ก) export สำเร็จ หรือขึ้น "Export failed · nothing was written" พร้อมเหตุผลที่อ่านเข้าใจ — ไม่ค้างและไม่มีโฟลเดอร์เขียนครึ่ง ๆ · ถ้าสำเร็จ จดว่า File Explorer / Notepad / Excel เปิดได้หรือไม่ (Excel เปิดไฟล์ที่ที่อยู่ยาวมากไม่ได้ — เป็นข้อจำกัดของ Excel ไม่ใช่ของโปรแกรม) · (ข)(ค) export สำเร็จ ไฟล์ครบ และ Open folder เปิด File Explorer ที่โฟลเดอร์ที่เพิ่งเขียน · ⚠ ข้อนี้อาจยังไม่ผ่าน — ให้บันทึกผลตามที่เห็นจริง: บรรทัด "N models exported … · <โฟลเดอร์>" ควรแสดง `Z:\WizardExport\…` หรือ `\\<ชื่อเครื่อง>\<ชื่อแชร์>\…` ตามที่เลือก แต่อาจแสดงเป็น `\\?\UNC\<ชื่อเครื่อง>\<ชื่อแชร์>\…` และ Open folder อาจเปิดไม่ได้ — จดข้อความที่เห็นจริง · "Choose folder…" ครั้งถัดไปเปิดที่ `Z:\WizardExport`
+
+- [ ] **WFK-15 — บีบเป็นไฟล์ zip แล้วส่งไปเปิดที่เครื่องอื่น** 🆕
+  - คลิกขวาที่โฟลเดอร์ที่ export (ของโปรเจกต์ตัวเลข และของ WFJ ถ้ามี) → Compress to ZIP file (Windows 10: Send to → Compressed (zipped) folder)
+  - คัดลอกไฟล์ zip ไปอีกเครื่องหนึ่ง (แฟลชไดรฟ์ / อีเมล / Teams)
+  - ที่เครื่องนั้น คลิกขวาไฟล์ zip → Extract All → เปิดโฟลเดอร์ที่แตกออกมา
+  - เปิด `machine_info.json` ใน Edge / Chrome, เปิดไฟล์ CSV ใน Excel และ Notepad
+  - คลิกขวาโฟลเดอร์ที่แตกออกมา → Properties → เทียบจำนวนไฟล์และขนาดกับโฟลเดอร์ต้นฉบับ
+  - **คาดหวัง:** zip และแตกไฟล์ได้โดยไม่มีคำเตือนเรื่องชื่อไฟล์ (ชื่อไฟล์ทุกตัวเป็นตัวอักษรอังกฤษ ตัวเลข `-` `_` `.`) · จำนวนไฟล์และขนาดเท่าต้นฉบับ · `machine_info.json` เปิดในเบราว์เซอร์ได้ไม่มี error · ภาษาไทยในไฟล์ของ WFJ (เช่น `อุณหภูมิห้อง`) อ่านออกใน Notepad · CSV เปิดได้และจำนวนแถวเท่าเดิม
+
+<!-- ── 6. ข้ามเวอร์ชัน ── -->
+
+- [ ] **WFK-16 — Export โปรเจกต์เดียวกันด้วยเวอร์ชัน 0.12.0, 0.13.1 และ 0.13.2 แล้วเทียบไฟล์** 👀
+  - ใช้เครื่องทดสอบ ติดตั้ง `Wizard_0.12.0_x64-setup.exe` → สร้างโปรเจกต์ตัวเลขตาม WFK-1 และ WFK-2 (ใน 0.12.0 ตั้ง Running condition เป็นเงื่อนไขเดียว `RUN` `>` `50` และช่อง running status ตอน Export เป็น `RUN` above `50`) → Export ไปที่ `C:\VerTest\v0120`
+  - (ข) สร้างอีกโปรเจกต์ใน 0.12.0 ชื่อ Machine "Numbers Rig B" แบบเดียวกัน แต่ Running condition มี 2 เงื่อนไข `RUN > 50` AND `GAPPY > 21` → Train → Mark complete → Export ไปที่ `C:\VerTest\v0120-B`
+  - ติดตั้ง `Wizard_0.13.1_x64-setup.exe` ทับ (ไม่ถอนก่อน) → เปิดโปรเจกต์แรก → ดูสถานะโมเดล → Export ไปที่ `C:\VerTest\v0131`
+  - ติดตั้ง `Wizard_0.13.2_x64-setup.exe` ทับ → เปิดโปรเจกต์แรก → Export ไปที่ `C:\VerTest\v0132` → เปิดโปรเจกต์ B → อ่านกล่องแจ้ง → Train ใหม่ + Mark complete → Export ไปที่ `C:\VerTest\v0132-B`
+  - เทียบไฟล์ทีละคู่ด้วย WinMerge หรือ Command Prompt: `fc /b <ไฟล์เวอร์ชันหนึ่ง> <ไฟล์อีกเวอร์ชัน>`
+  - **คาดหวัง:** 0.12.0 → 0.13.1: โมเดลยัง Complete ไม่มีการ์ด "Set it again" · ทุกไฟล์เหมือนกันทุกตัวอักษร ยกเว้น `exported_at` ใน `machine_info.json` (ถ้าต่างที่อื่น ให้จดว่าไฟล์ไหน ตรงไหน) · 0.13.1 → 0.13.2: ต่างกันแค่ Clustering — 0.13.1 ชื่อ `RUN-C1.json` / `RUN-C1.csv` (ใช้ X sensor) ส่วน 0.13.2 ชื่อ `NEG-C1` (ใช้ Y sensor) · เนื้อหา CSV ของสองไฟล์นี้เหมือนกัน และ JSON ต่างกันแค่ `model_key` และ `training_data.file` · `machine_info.json` ต่างแค่ `exported_at` และชื่อ `RUN-C1` → `NEG-C1` ใน `failure_groups` · ไฟล์อื่นเหมือนกันทุกตัวอักษร · (ข) โปรเจกต์ B: กล่อง "Running condition is now one condition" บอกว่าเหลือ `RUN` is above `50` และโมเดลกลับเป็น Incomplete (set point ยังอยู่) · หลัง export ใหม่ `NEG-I1.csv` มี 804 แถว แทน 685 แถวของ 0.12.0 (ตาม `EXPECTED.txt` — แถวที่ `GAPPY` ≤ 21 หรือว่างกลับเข้ามา) และ `note` ไม่พูดถึง `GAPPY` แล้ว — เป็นการเปลี่ยนที่ตั้งใจของ 0.13.0 ไม่ใช่บั๊ก
 
 ---
 

@@ -11,3 +11,5 @@
 **2026-10-26 — ชื่อไฟล์ Export ของ Clustering ใช้ Y sensor ตาม WIZARD_OUTPUT_SPEC v1.0 (เดิม X sensor):** BMW-351 → BMW-400, BMW-352 → BMW-401, BMW-360 → BMW-402, BMW-362 → BMW-403, WFA-22 → WFA-24, WFJ-6 → WFJ-13
 
 **2026-10-26 — ชื่อเริ่มต้นของโมเดลใหม่มีวงเล็บบอกชนิดเสมอ:** BMW-336 → BMW-404 · ข้อใหม่: BMW-405 (ชื่อ Failure Group ไม่ซ้ำ "FG-1 · FG-1"), BMW-406 (tooltip กราฟ Clusters)
+
+**2026-10-26 — ตรวจไฟล์ Export results แบบที่ลูกค้าจะตรวจ (workflow ใหม่ WFK):** ข้อใหม่ WFK-1 – WFK-16 (ข้อมูลทดสอบ `EXP-numbers.csv` / `EXP-fleet.csv` จาก `scripts/make-export-testdata.py`; ไฟล์ `EXP-data.csv` / `EXP-tags.csv` เดิมไม่เปลี่ยน)
