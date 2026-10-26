@@ -9,3 +9,5 @@
 **2026-10-26 — Running condition เหลือเงื่อนไขเดียว "Machine is running when … is above …":** ตัด BMW-24, BMW-26, BMW-291 (แถบเตือนเก่า / "Keep using all data"), BMW-170, BMW-292, BMW-293, BMW-294 (สองตัวเลือก, เครื่องหมาย, AND/OR, Use all rows), BMW-299 (Custom แบบ Use all rows), BMW-342 (บรรทัด running status แยกสำหรับ export), BMW-356, BMW-357 · id ใหม่: BMW-341 → BMW-386, BMW-262 → BMW-387, BMW-101 → BMW-388, BMW-194 → BMW-398, BMW-380 → BMW-396, WFA-9 → WFA-23 · ข้อใหม่: BMW-389 – BMW-395, BMW-399
 
 **2026-10-26 — ชื่อไฟล์ Export ของ Clustering ใช้ Y sensor ตาม WIZARD_OUTPUT_SPEC v1.0 (เดิม X sensor):** BMW-351 → BMW-400, BMW-352 → BMW-401, BMW-360 → BMW-402, BMW-362 → BMW-403, WFA-22 → WFA-24, WFJ-6 → WFJ-13
+
+**2026-10-26 — ชื่อเริ่มต้นของโมเดลใหม่มีวงเล็บบอกชนิดเสมอ:** BMW-336 → BMW-404 · ข้อใหม่: BMW-405 (ชื่อ Failure Group ไม่ซ้ำ "FG-1 · FG-1"), BMW-406 (tooltip กราฟ Clusters)
