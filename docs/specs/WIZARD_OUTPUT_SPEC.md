@@ -1,6 +1,6 @@
 # Wizard Output Specification — v1.0
 
-**Audience:** Wizard developers. **Status:** agreed 2026-10-20 · amended 2026-10-20: the clustering model key uses `x_sensor`, not `y_sensor`.
+**Audience:** Wizard developers. **Status:** agreed 2026-10-20.
 
 This document defines **what the Wizard must export**. It does not prescribe how the Wizard's UI or internals work.
 
@@ -30,8 +30,8 @@ One export = **one machine, one Wizard session**.
 
 ### 2.1 Model key
 
-- Format: `<target_tag>-<R|I|C><n>`, where `R` = relationship, `I` = individual, `C` = clustering, and `n` is a counter starting at 1 that is unique per target tag and kind. Examples: `CITempA-R1`, `CITempA-I1`, `FQI72144-C1`.
-- `target_tag` is `output` for relationship, `sensor` for individual and `x_sensor` for clustering (the sensor the clustering model belongs to in the Wizard).
+- Format: `<target_tag>-<R|I|C><n>`, where `R` = relationship, `I` = individual, `C` = clustering, and `n` is a counter starting at 1 that is unique per target tag and kind. Examples: `CITempA-R1`, `CITempA-I1`, `ZI72144A-C1`.
+- `target_tag` is `output` for relationship, `sensor` for individual and `y_sensor` for clustering.
 - Allowed characters: letters, digits, `-`, `_`, `.`. No spaces, brackets or quotes. If a tag contains other characters, replace them with `_`.
 - The model key is only a reference inside the export. It is **not** the platform model ID; IDs are assigned downstream.
 
@@ -198,7 +198,7 @@ Two sensors are judged together against their normal operating pattern. The patt
 ```json
 {
   "schema_version": "1.0",
-  "model_key": "FQI72144-C1",
+  "model_key": "ZI72144A-C1",
   "kind": "clustering",
   "display_name": "",
   "category": "CONDITION",
@@ -214,7 +214,7 @@ Two sensors are judged together against their normal operating pattern. The patt
     "failure_distance": 5
   },
   "training_data": {
-    "file": "FQI72144-C1.csv",
+    "file": "ZI72144A-C1.csv",
     "note": ""
   }
 }

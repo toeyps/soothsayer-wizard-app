@@ -3673,20 +3673,20 @@ _ปุ่มดินสอที่แต่ละแถวในแท็บ 
   - เปิดโฟลเดอร์ปลายทางใน File Explorer
   - **คาดหวัง:** หน้าต่างไม่ปิดทันที ขึ้น "Finishing the export first…" แล้วปิดเองเมื่อเสร็จ · โฟลเดอร์ปลายทางมีไฟล์ครบ (ไม่ใช่ครึ่ง ๆ) · ถ้า Export นานเกินเวลาที่กำหนด จะถูกยกเลิกแล้วหน้าต่างปิด — กรณีนั้นไม่มีอะไรค้างในโฟลเดอร์
 
-- [ ] **BMW-351 — เนื้อหาไฟล์ที่ Export ตรงตาม WIZARD_OUTPUT_SPEC v1.0 (เปิดไฟล์ JSON / CSV ดูเอง)** 🆕
+- [ ] **BMW-400 — เนื้อหาไฟล์ที่ Export ตรงตาม WIZARD_OUTPUT_SPEC v1.0 (เปิดไฟล์ JSON / CSV ดูเอง)** 🆕
   - Export โปรเจกต์ที่มีโมเดลครบ 3 ชนิด + Special sensor + 2 Failure group แล้วเปิดโฟลเดอร์ผลลัพธ์
   - เปิด `machine_info.json` และ `models\<key>.json` ของแต่ละชนิดด้วย Notepad (คลิกขวา → Open with → Notepad)
   - เปิด `models\<key>.csv` ด้วย Excel หรือ Notepad
   - เทียบกับหน้าจอ: Plant / Machine / tag / notes, running status, set point ของแต่ละโมเดล และจำนวนแถว (หน้าต่าง Export บอก training rows)
-  - **คาดหวัง:** ในโฟลเดอร์มีแค่ `machine_info.json` และโฟลเดอร์ `models\` ที่มีไฟล์ `.json` + `.csv` คู่ละโมเดล ชื่อ `<tag>-R1` / `<tag>-I1` / `<X sensor>-C1` (Clustering ใช้ชื่อ X sensor) · ใน machine_info: `schema_version` เป็น "1.0", `exported_at` เป็นเวลาของเครื่องและท้ายเวลามีเขตเวลา เช่น +07:00 (หมายถึงเวลาไทย), มี plant, machine (tag/name/notes), running_status (sensor + stop_if_lower_than), components เรียงตามตัวอักษร, sensors (ชื่อ = description, หน่วย, component), derived_sensors มี how_to_build ที่อ้าง tag ตามข้อมูลดิบ, failure_groups มีเฉพาะกลุ่มที่มีโมเดล พร้อมชื่อไฟล์โมเดล · ในไฟล์ JSON ของโมเดล: category เป็นตัวพิมพ์ใหญ่, Relation model มี inputs ตามลำดับที่เลือก + `fit_profile` เป็นชื่อ (very_loose / loose / standard / strict) ไม่ใช่ตัวเลข, health เป็น set point ที่ตั้งไว้ · CSV: คอลัมน์แรก `TimeStamp` รูปแบบ `2025-01-15T00:00:00+07:00` (ท้ายเวลาเป็นเขตเวลาของโปรเจกต์), ตามด้วย inputs…, output / sensor / x, y, criteria · แถว = แถวที่ใช้ Train (ช่วงเครื่องหยุดไม่มี) เรียงตามเวลา ไม่มีเวลาซ้ำ · ไม่มีไฟล์ .pkl ไม่มี mean/sd/RMSE/R², คะแนน, predicted/residual และไม่มีคำว่า LinearGAM ที่ไหนเลย
+  - **คาดหวัง:** ในโฟลเดอร์มีแค่ `machine_info.json` และโฟลเดอร์ `models\` ที่มีไฟล์ `.json` + `.csv` คู่ละโมเดล ชื่อ `<tag>-R1` / `<tag>-I1` / `<Y sensor>-C1` (Clustering ใช้ชื่อ Y sensor) · ใน machine_info: `schema_version` เป็น "1.0", `exported_at` เป็นเวลาของเครื่องและท้ายเวลามีเขตเวลา เช่น +07:00 (หมายถึงเวลาไทย), มี plant, machine (tag/name/notes), running_status (sensor + stop_if_lower_than), components เรียงตามตัวอักษร, sensors (ชื่อ = description, หน่วย, component), derived_sensors มี how_to_build ที่อ้าง tag ตามข้อมูลดิบ, failure_groups มีเฉพาะกลุ่มที่มีโมเดล พร้อมชื่อไฟล์โมเดล · ในไฟล์ JSON ของโมเดล: category เป็นตัวพิมพ์ใหญ่, Relation model มี inputs ตามลำดับที่เลือก + `fit_profile` เป็นชื่อ (very_loose / loose / standard / strict) ไม่ใช่ตัวเลข, health เป็น set point ที่ตั้งไว้ · CSV: คอลัมน์แรก `TimeStamp` รูปแบบ `2025-01-15T00:00:00+07:00` (ท้ายเวลาเป็นเขตเวลาของโปรเจกต์), ตามด้วย inputs…, output / sensor / x, y, criteria · แถว = แถวที่ใช้ Train (ช่วงเครื่องหยุดไม่มี) เรียงตามเวลา ไม่มีเวลาซ้ำ · ไม่มีไฟล์ .pkl ไม่มี mean/sd/RMSE/R², คะแนน, predicted/residual และไม่มีคำว่า LinearGAM ที่ไหนเลย
 
-- [ ] **BMW-352 — Clustering: ค่า criteria ที่ตรงเส้นแบ่งพอดีอยู่ช่วงล่าง (`from < value <= to`) และ Export ช่วงได้** 🆕
+- [ ] **BMW-401 — Clustering: ค่า criteria ที่ตรงเส้นแบ่งพอดีอยู่ช่วงล่าง (`from < value <= to`) และ Export ช่วงได้** 🆕
   - ใช้โมเดล Clustering 2 cluster ที่ criteria มีค่าตรงเส้นแบ่งพอดี (พิมพ์เส้นแบ่งเป็นค่าที่มีอยู่ในข้อมูล เช่น 50)
   - กด Train แล้วดูจำนวนแถวต่อ cluster
   - กด Mark complete → Export results
-  - เปิดไฟล์ `<X>-C1.json` ด้วย Notepad
+  - เปิดไฟล์ `<Y>-C1.json` ด้วย Notepad (Y = Y sensor ของโมเดล Clustering)
   - ทำซ้ำกับโมเดลที่ใช้ช่วงที่แอปแบ่งให้อัตโนมัติ
-  - **คาดหวัง:** แถวที่ criteria = 50 พอดีอยู่ cluster ล่าง (เวอร์ชันก่อนอยู่ cluster บน — จำนวนแถวต่อ cluster อาจต่างจากเดิมเล็กน้อย) · Export ได้ และใน `<X>-C1.json` ส่วน regimes เป็น `[{from: null, to: 50}, {from: 50, to: null}]` (null = ไม่มีขอบด้านนั้น) · ช่วงที่แอปแบ่งให้อัตโนมัติ Export ได้ (ขอบนอกสุดไม่มีขอบ) และแถวที่ค่า criteria = ค่าต่ำสุดของข้อมูลยังถูกใช้ Train
+  - **คาดหวัง:** แถวที่ criteria = 50 พอดีอยู่ cluster ล่าง (เวอร์ชันก่อนอยู่ cluster บน — จำนวนแถวต่อ cluster อาจต่างจากเดิมเล็กน้อย) · Export ได้ และใน `<Y>-C1.json` ส่วน regimes เป็น `[{from: null, to: 50}, {from: 50, to: null}]` (null = ไม่มีขอบด้านนั้น) · ช่วงที่แอปแบ่งให้อัตโนมัติ Export ได้ (ขอบนอกสุดไม่มีขอบ) และแถวที่ค่า criteria = ค่าต่ำสุดของข้อมูลยังถูกใช้ Train
 
 - [ ] **BMW-289 — ปิดหน้าต่างตอนมีค่าใน Model settings หรือ popup Running condition ที่ยังไม่ Save / Apply: ค่าที่แก้ค้างถูกทิ้งโดยไม่ถาม** 🆕
   - แก้ชื่อโมเดล / Stiffness ค้างไว้ (ยังไม่กด Save changes) แล้วกดปุ่ม X ของหน้าต่าง
@@ -4704,30 +4704,30 @@ _ปุ่มดินสอที่แต่ละแถวในแท็บ 
   - ถ้าหน้าจอยอมให้ทำ ให้กด Export results ดูรายการตรวจ
   - **คาดหวัง:** หน้าจอกันไว้ตั้งแต่ตอนเลือก / ตั้งชื่อ (เลือกไม่ได้ หรือมีข้อความบอกเหตุผล) = ผ่าน · ถ้าหน้าจอยอมให้ทำได้ ต้องไปเจอในรายการตรวจก่อน Export เป็น "A predictor is the same sensor as the target" / "X and Y are the same sensor" / "Another failure group has the same name" — จดว่าเจอที่ขั้นไหน (ถ้าหลุดไปจนถึงไฟล์ที่ export ได้ = บั๊ก)
 
-- [ ] **BMW-360 — ชื่อไฟล์ของแต่ละโมเดล: tag ที่มีช่องว่าง, `/`, ชื่อที่ Windows ห้ามใช้, ภาษาไทย (ข้อมูลทดสอบ EXP)** 🆕
+- [ ] **BMW-402 — ชื่อไฟล์ของแต่ละโมเดล: tag ที่มีช่องว่าง, `/`, ชื่อที่ Windows ห้ามใช้, ภาษาไทย (ข้อมูลทดสอบ EXP)** 🆕
   - เตรียมข้อมูล: รันคำสั่ง `python scripts/make-export-testdata.py C:\EXPdata`
   - สร้างโปรเจกต์ใหม่ → Import `EXP-data.csv` + ไฟล์ Tag names `EXP-tags.csv`
   - สร้างโมเดล: `FLOW A` = Relation model (predictor `KW`), `TEMP/1` = Individual และ Relation model, `CON` = Individual, `VIB.X` = Individual, `อุณหภูมิ1` = Individual, `KW` = Clustering (Y = `TEMP/1`)
   - Train → Mark complete ทุกโมเดล → Export results
   - เปิดโฟลเดอร์ `models\` ใน export ด้วย File Explorer และเปิด `C:\EXPdata\EXPECTED.txt` ด้วย Notepad เพื่อเทียบ
   - เปิดไฟล์ .json ของแต่ละโมเดลด้วย Notepad (คลิกขวา → Open with → Notepad) และไฟล์ `machine_info.json` → กด Ctrl+F หา `output`, `sensor`, `x_sensor`, `inputs`, `failure_groups`
-  - **คาดหวัง:** ชื่อไฟล์ใน `models\` ตรงกับ `C:\EXPdata\EXPECTED.txt`: `FLOW_A-R1`, `TEMP_1-I1`, `TEMP_1-R1`, `_CON-I1`, `VIB.X-I1`, `________1-I1` (ภาษาไทยกลายเป็น `_`), `KW-C1` · ทุกไฟล์เปิดได้ใน Windows (ไม่มีไฟล์ชื่อ `CON.json` ซึ่ง Windows ไม่ยอมให้ตั้ง) · ข้างในไฟล์ ช่อง `output` (sensor ที่โมเดลทำนาย), `sensor`, `x_sensor` และ `inputs` (predictor) รวมถึงหัวคอลัมน์ในไฟล์ CSV ยังเป็น tag จริง (`FLOW A`, `TEMP/1`, `CON`, `อุณหภูมิ1`) — แก้เฉพาะชื่อไฟล์ · ใน `machine_info.json` ส่วน `failure_groups` (รายการ Failure group) ช่อง `models` ใช้ชื่อแบบที่แก้แล้ว ตรงกับชื่อไฟล์
+  - **คาดหวัง:** ชื่อไฟล์ใน `models\` ตรงกับ `C:\EXPdata\EXPECTED.txt`: `FLOW_A-R1`, `TEMP_1-I1`, `TEMP_1-R1`, `_CON-I1`, `VIB.X-I1`, `________1-I1` (ภาษาไทยกลายเป็น `_`), `TEMP_1-C1` (Clustering ใช้ชื่อ Y sensor `TEMP/1`) · ทุกไฟล์เปิดได้ใน Windows (ไม่มีไฟล์ชื่อ `CON.json` ซึ่ง Windows ไม่ยอมให้ตั้ง) · ข้างในไฟล์ ช่อง `output` (sensor ที่โมเดลทำนาย), `sensor`, `x_sensor` และ `inputs` (predictor) รวมถึงหัวคอลัมน์ในไฟล์ CSV ยังเป็น tag จริง (`FLOW A`, `TEMP/1`, `CON`, `อุณหภูมิ1`) — แก้เฉพาะชื่อไฟล์ · ใน `machine_info.json` ส่วน `failure_groups` (รายการ Failure group) ช่อง `models` ใช้ชื่อแบบที่แก้แล้ว ตรงกับชื่อไฟล์
 
 - [ ] **BMW-361 — ไฟล์ machine_info.json: ชื่อ sensor, อักขระพิเศษ, ภาษาไทย, sensor ที่ไม่มี component (ข้อมูลทดสอบ EXP)** 🆕
-  - ต่อจาก BMW-360: คลิกขวาที่ `machine_info.json` → Open with → Notepad → ดูมุมขวาล่างของ Notepad ว่าเขียน UTF-8 และภาษาไทยอ่านออก
+  - ต่อจาก BMW-402: คลิกขวาที่ `machine_info.json` → Open with → Notepad → ดูมุมขวาล่างของ Notepad ว่าเขียน UTF-8 และภาษาไทยอ่านออก
   - ตรวจว่าไฟล์รูปแบบถูกต้อง: ลากไฟล์ไปวางในเบราว์เซอร์ (Edge / Chrome) — ถ้าไฟล์ถูกต้องจะเห็นข้อมูลเป็นโครงสร้าง ถ้าผิดจะมีข้อความ error (หรือวางเนื้อหาในเว็บตรวจ JSON)
   - ใน Notepad กด Ctrl+F หา `sensors`, `components`, `FLOW A`, `CON`, `อุณหภูมิ1`, `notes`
   - **คาดหวัง:** ไฟล์รูปแบบถูกต้อง (เบราว์เซอร์ / ตัวตรวจไม่แจ้ง error) · ใน `sensors` (รายการ sensor) ช่อง `name` = ค่าจากคอลัมน์ DESCRIPTION: `FLOW A` = `Pump flow, \"main\" line` (เครื่องหมายคำพูดในชื่อมี \ นำหน้า ซึ่งถูกต้อง), `อุณหภูมิ1` = `อุณหภูมิห้อง` อ่านออก, หน่วย `°C` ถูกต้อง · `CON` อยู่ใน component "Uncategorized" และ "Uncategorized" อยู่ในรายการ `components` ด้วย · `components` ไม่มีชื่อซ้ำ และเรียงตามตัวอักษร · แต่ละ tag อยู่ใน `sensors` ครั้งเดียว · ถ้าไม่ได้กรอก Notes ของเครื่อง ช่อง `notes` ใต้ `machine` เป็น `""` (ข้อความว่าง) ไม่ใช่ค่าว่างที่เขียนว่า null
 
-- [ ] **BMW-362 — ไฟล์ CSV ของแต่ละโมเดล: แถวเวลาซ้ำ, แถวไม่มีเวลา, ช่วงเครื่องหยุด, ลำดับคอลัมน์ (ข้อมูลทดสอบ EXP)** 🆕
-  - ต่อจาก BMW-360 (running condition `KW > 50`, ช่วง Train ครอบวันที่ 15 ม.ค.)
+- [ ] **BMW-403 — ไฟล์ CSV ของแต่ละโมเดล: แถวเวลาซ้ำ, แถวไม่มีเวลา, ช่วงเครื่องหยุด, ลำดับคอลัมน์ (ข้อมูลทดสอบ EXP)** 🆕
+  - ต่อจาก BMW-402 (running condition `KW > 50`, ช่วง Train ครอบวันที่ 15 ม.ค.)
   - ก่อนกด Export อ่านบรรทัดหมายเหตุในหน้าต่าง Export
-  - หลัง export คลิกขวา → Open with → Notepad เปิด `VIB.X-I1.csv`, `FLOW_A-R1.csv`, `KW-C1.csv`
+  - หลัง export คลิกขวา → Open with → Notepad เปิด `VIB.X-I1.csv`, `FLOW_A-R1.csv`, `TEMP_1-C1.csv`
   - กด Ctrl+F หา `2026-01-15T10:00`, `10:10`, `10:20` และหาแถววันที่ 10–11 ม.ค. · ดูบรรทัดแรก (หัวคอลัมน์)
-  - **คาดหวัง:** หน้าต่าง Export มีหมายเหตุ "N repeated timestamps — the last row of each is kept." (N = 3 × จำนวนโมเดลที่ใช้วันที่ 15 ม.ค. 10:00–10:20) · แถว `2026-01-15T10:00:00+07:00` / `10:10` / `10:20` มีแถวเดียว และใน `VIB.X-I1.csv` ค่า = 9.99 (ค่าของแถวหลัง) · ไม่มีแถวของวันที่ 10–11 ม.ค. (เครื่องหยุด) · แถวที่ไม่มีเวลาไม่อยู่ในไฟล์ (ถ้าหน้าต่าง Export มีหมายเหตุ "… without a timestamp are left out." ให้จดจำนวน) · หัวคอลัมน์: `FLOW_A-R1` = `TimeStamp,KW,FLOW A` (predictor มาก่อน sensor ที่ทำนาย) · `KW-C1` = `TimeStamp,KW,TEMP/1` (+ คอลัมน์ criteria ถ้าเป็น sensor อื่น) · เวลาเรียงจากเก่าไปใหม่ ไม่มีบรรทัดว่าง · ตัวเลขใช้จุดทศนิยม ไม่มีจุลภาคคั่นหลักพัน
+  - **คาดหวัง:** หน้าต่าง Export มีหมายเหตุ "N repeated timestamps — the last row of each is kept." (N = 3 × จำนวนโมเดลที่ใช้วันที่ 15 ม.ค. 10:00–10:20) · แถว `2026-01-15T10:00:00+07:00` / `10:10` / `10:20` มีแถวเดียว และใน `VIB.X-I1.csv` ค่า = 9.99 (ค่าของแถวหลัง) · ไม่มีแถวของวันที่ 10–11 ม.ค. (เครื่องหยุด) · แถวที่ไม่มีเวลาไม่อยู่ในไฟล์ (ถ้าหน้าต่าง Export มีหมายเหตุ "… without a timestamp are left out." ให้จดจำนวน) · หัวคอลัมน์: `FLOW_A-R1` = `TimeStamp,KW,FLOW A` (predictor มาก่อน sensor ที่ทำนาย) · `TEMP_1-C1` = `TimeStamp,KW,TEMP/1` (+ คอลัมน์ criteria ถ้าเป็น sensor อื่น) · เวลาเรียงจากเก่าไปใหม่ ไม่มีบรรทัดว่าง · ตัวเลขใช้จุดทศนิยม ไม่มีจุลภาคคั่นหลักพัน
 
 - [ ] **BMW-363 — เปิด CSV ที่ export ด้วย Excel: ภาษาไทย, tag ที่มีอักขระพิเศษ, เวลาที่มีเขตเวลาต่อท้าย** 👀
-  - ต่อจาก BMW-360: ดับเบิลคลิกเปิด `________1-I1.csv` และ `FLOW_A-R1.csv` ใน Excel (เปิดตรง ๆ ไม่ใช้เมนู Import)
+  - ต่อจาก BMW-402: ดับเบิลคลิกเปิด `________1-I1.csv` และ `FLOW_A-R1.csv` ใน Excel (เปิดตรง ๆ ไม่ใช้เมนู Import)
   - ดูหัวคอลัมน์, คอลัมน์ TimeStamp และจำนวนแถว
   - **คาดหวัง:** หัวคอลัมน์ `อุณหภูมิ1` อ่านออกใน Excel — ถ้าเห็นเป็นตัวอักษรแปลก ๆ (เช่น `à¸­à¸¸...`) ให้จดไว้: ไฟล์ถูกเขียนแบบที่ Excel บางเวอร์ชันเปิดภาษาไทยแล้วเพี้ยน (ตามข้อกำหนด ไม่ใช่ปัญหาของระบบที่นำไฟล์ไปใช้ต่อ แต่ผู้ใช้อาจเข้าใจผิด) · `FLOW A` อยู่ในคอลัมน์เดียว (ไม่แตกเป็นสองคอลัมน์) · คอลัมน์ TimeStamp แสดงเป็นข้อความ `2026-01-01T00:00:00+07:00` (+07:00 หมายถึงเวลาไทย; Excel ไม่แปลงเป็นวันที่ผิด) · จำนวนแถวเท่ากับที่ Peek / หน้าต่าง Export บอก
 
@@ -4775,7 +4775,7 @@ _ปุ่มดินสอที่แต่ละแถวในแท็บ 
   - กด Peek ที่ `machine_info.json`, ที่ไฟล์ `.json` ของโมเดล และที่ไฟล์ `.csv` ของโมเดล → กด "Close preview" ทุกครั้ง
   - กด "Hide the files"
   - export จริง แล้วเปิดไฟล์จริงด้วย Notepad (คลิกขวา → Open with → Notepad) เทียบกับที่ Peek แสดง
-  - **คาดหวัง:** รายการไฟล์ตรงกับที่ได้จริง (`machine_info.json` + ในโฟลเดอร์ `models\` มีไฟล์ .json และ .csv คู่กันต่อหนึ่งโมเดล ชื่อเดียวกับ BMW-360) พร้อมขนาดไฟล์ · Peek ของ CSV แสดงหัวคอลัมน์ + ไม่กี่แถวแรก (ไม่ใช่ทั้งไฟล์) และตรงกับไฟล์จริงหลัง export · Peek ของ JSON ตรงกับไฟล์จริง (ยกเว้นช่อง `exported_at` ซึ่งเป็นเวลาที่ export) · คำอธิบายใต้ machine_info บอกว่าแต่ละส่วนมาจากไหน · "Close preview" กลับไปที่รายการเดิม
+  - **คาดหวัง:** รายการไฟล์ตรงกับที่ได้จริง (`machine_info.json` + ในโฟลเดอร์ `models\` มีไฟล์ .json และ .csv คู่กันต่อหนึ่งโมเดล ชื่อเดียวกับ BMW-402) พร้อมขนาดไฟล์ · Peek ของ CSV แสดงหัวคอลัมน์ + ไม่กี่แถวแรก (ไม่ใช่ทั้งไฟล์) และตรงกับไฟล์จริงหลัง export · Peek ของ JSON ตรงกับไฟล์จริง (ยกเว้นช่อง `exported_at` ซึ่งเป็นเวลาที่ export) · คำอธิบายใต้ machine_info บอกว่าแต่ละส่วนมาจากไหน · "Close preview" กลับไปที่รายการเดิม
 
 - [ ] **BMW-371 — ใช้คีย์บอร์ดในหน้าต่าง Export** 🆕
   - กด Tab ไปที่ปุ่ม Export results แล้วกด Enter — ทำสองกรณี: ยังไม่เคยเลือกโฟลเดอร์ และเคยเลือกแล้ว → ดูว่าโฟกัส (กรอบเน้น) อยู่ที่ไหนก่อน
@@ -5495,11 +5495,11 @@ _คุณเล่นเป็นวิศวกรดูแลปั๊ม P-1
   - Motor M-101 current → Clustering: Y sensor = Motor M-101 power → กด "Save changes" → กด Train sensor → หน้า Health score ตั้ง N = 5× → กด Mark complete
   - **คาดหวัง:** ruler ของ CW_DT ไม่มีค่าจากไฟล์ tag (ช่องว่างทั้งสอง) และหน่วย °C ของ special sensor ขึ้นในช่อง · มีแถบ "✓ Trained in the run HH:MM · N need set points · this is k of N" และลิงก์ Next พาไปตัวถัดไปถูกต้อง · ทุกตัว Mark complete สำเร็จ · รายการซ้าย "8 of 8 complete" · Dashboard แท็บ Failure Groups ทุกป้ายจุดเขียว บรรทัดสรุป "3 groups · 5 sensors assigned · 8 of 8 models complete"
 
-- [ ] **WFA-22 — Export results แล้วเปิดไฟล์เทียบค่ากับหน้าจอ** 🆕
+- [ ] **WFA-24 — Export results แล้วเปิดไฟล์เทียบค่ากับหน้าจอ** 🆕
   - เมื่อทุกโมเดล Complete แถบด้านล่างเป็นสีเขียว → กด "Export results"
   - อ่านรายการตรวจ (Machine / Time zone / Running status / Special sensors) → กด "Choose folder…" เลือก `C:\WFexport` → กด "Export"
   - กด "Open folder" → เปิด `machine_info.json` และ `models\BRG_DE_TEMP-I1.json` / `.csv` ใน Notepad (คลิกขวา → Open with → Notepad)
-  - **คาดหวัง:** มีโฟลเดอร์ใหม่ชื่อ `Rayong_P-101_Pump_<วันที่>_<เวลา>` ข้างในมี `machine_info.json` + โฟลเดอร์ `models\` ที่มีไฟล์คู่ (.json + .csv) ของแต่ละโมเดล (`BRG_DE_TEMP-I1`, `BRG_DE_TEMP-R1`, ส่วน Clustering ตั้งชื่อตาม **X sensor**) · machine_info มี plant Rayong, machine tag P-101, running status ตามที่ตั้ง และรายชื่อ sensors ที่มี CW_DT อยู่ในส่วน derived_sensors พร้อม how_to_build ที่มาจากสูตร · `BRG_DE_TEMP-I1.json` มีค่า health limits low 20 / high 80 · CSV มีคอลัมน์ `TimeStamp,BRG_DE_TEMP` เวลาอยู่ในรูปแบบ `2025-01-15T00:00:00+07:00` (ท้ายเวลามี +07:00 หมายถึงเวลาไทย) ไม่มีช่วงเครื่องหยุด และจำนวนแถวตรงกับ "training rows" ในหน้าต่าง Export · ไม่มีไฟล์ .pkl และไม่มีตัวเลขสถิติในไฟล์
+  - **คาดหวัง:** มีโฟลเดอร์ใหม่ชื่อ `Rayong_P-101_Pump_<วันที่>_<เวลา>` ข้างในมี `machine_info.json` + โฟลเดอร์ `models\` ที่มีไฟล์คู่ (.json + .csv) ของแต่ละโมเดล (`BRG_DE_TEMP-I1`, `BRG_DE_TEMP-R1`, ส่วน Clustering ตั้งชื่อตาม **Y sensor**) · machine_info มี plant Rayong, machine tag P-101, running status ตามที่ตั้ง และรายชื่อ sensors ที่มี CW_DT อยู่ในส่วน derived_sensors พร้อม how_to_build ที่มาจากสูตร · `BRG_DE_TEMP-I1.json` มีค่า health limits low 20 / high 80 · CSV มีคอลัมน์ `TimeStamp,BRG_DE_TEMP` เวลาอยู่ในรูปแบบ `2025-01-15T00:00:00+07:00` (ท้ายเวลามี +07:00 หมายถึงเวลาไทย) ไม่มีช่วงเครื่องหยุด และจำนวนแถวตรงกับ "training rows" ในหน้าต่าง Export · ไม่มีไฟล์ .pkl และไม่มีตัวเลขสถิติในไฟล์
 
 - [ ] **WFA-19 — ปิดหน้าต่างและกลับหน้าแรก: ทุกอย่างตรงกัน**
   - ปิดหน้าต่าง Build Model (ปุ่ม X ที่หัวหน้าต่าง)
@@ -6116,7 +6116,7 @@ _คุณเล่นเป็นหัวหน้าทีมที่ทำ�
 
 - [ ] **WFH-17 — Export results เพื่อส่งให้ระบบ / ทีมอื่น** 🆕
   - Build Model → แถบด้านล่าง → กด "Export results" → เลือกโฟลเดอร์ที่จะส่ง → กด Export → กด Open folder
-  - zip โฟลเดอร์ที่ได้ แล้วเปิดดูไฟล์ใน Notepad ตามวิธีใน BMW-351
+  - zip โฟลเดอร์ที่ได้ แล้วเปิดดูไฟล์ใน Notepad ตามวิธีใน BMW-400
   - **คาดหวัง:** ได้โฟลเดอร์เดียวที่มีทุกอย่างที่ปลายทางต้องใช้ (machine_info.json + models\) · ชื่อโฟลเดอร์บอกโปรเจกต์และเวลา · set point ในไฟล์ตรงกับหน้า Health score · ไม่มีชื่ออัลกอริทึม ไม่มีไฟล์ .pkl · ไม่ต้องไปหาไฟล์ใน %APPDATA% อีกแล้ว
 
 - [ ] **WFH-18 — แก้หลังส่งไปแล้ว: โมเดลกลับเป็น Incomplete และ export ใหม่ได้โฟลเดอร์ใหม่** 🆕
@@ -6232,12 +6232,12 @@ _ผู้ใช้: วิศวกรที่ต้องส่งผลใ�
   - กลับไปที่หน้าต่าง Export
   - **คาดหวัง:** checklist เปลี่ยนเป็นครบเอง (ไม่ต้องปิดเปิดหน้าต่าง Build Model) · โมเดลยังเป็น Complete ทุกตัว · แอปลองตรวจก่อนเองว่าจะเขียนไฟล์อะไรบ้าง: ส่วน "What is written" แสดงไฟล์ 4 คู่ + `machine_info.json` พร้อมโน้ตเรื่องเวลาซ้ำ ("… repeated timestamps — the last row of each is kept.")
 
-- [ ] **WFJ-6 — Export ครั้งแรก (มี sensor ที่ไม่มี component)**
+- [ ] **WFJ-13 — Export ครั้งแรก (มี sensor ที่ไม่มี component)**
   - กด Choose folder… → เลือก `D:\ToCustomer` → ดูชื่อโฟลเดอร์ที่จะถูกสร้าง
   - กด Export → หน้ายืนยันแสดง `CON` → กด Back
   - กด Export อีกครั้ง → กด Export anyway
   - กด Open folder
-  - **คาดหวัง:** ชื่อโฟลเดอร์เป็น `Map_Ta_Phut_Pump_Set_P-1_YYYY-MM-DD_HHMM` (ไม่มีจุดกลาง `·` และไม่มีช่องว่าง) · กด Back แล้วไม่มีไฟล์ถูกเขียน · เขียนเสร็จแล้วแถบขึ้นข้อความ "4 models exported …" · ใน `D:\ToCustomer` มีโฟลเดอร์ใหม่ 1 โฟลเดอร์ และไฟล์เดิมที่มีอยู่ไม่ถูกแตะ · ข้างในมี `machine_info.json` + โฟลเดอร์ `models\` ที่มี 8 ไฟล์ ชื่อตรงตาม `EXPECTED.txt` (`TEMP_1-I1`, `FLOW_A-R1`, `KW-C1`, `_CON-I1`)
+  - **คาดหวัง:** ชื่อโฟลเดอร์เป็น `Map_Ta_Phut_Pump_Set_P-1_YYYY-MM-DD_HHMM` (ไม่มีจุดกลาง `·` และไม่มีช่องว่าง) · กด Back แล้วไม่มีไฟล์ถูกเขียน · เขียนเสร็จแล้วแถบขึ้นข้อความ "4 models exported …" · ใน `D:\ToCustomer` มีโฟลเดอร์ใหม่ 1 โฟลเดอร์ และไฟล์เดิมที่มีอยู่ไม่ถูกแตะ · ข้างในมี `machine_info.json` + โฟลเดอร์ `models\` ที่มี 8 ไฟล์ ชื่อตรงตาม `EXPECTED.txt` (`TEMP_1-I1`, `FLOW_A-R1`, `TEMP_1-C1`, `_CON-I1`)
 
 - [ ] **WFJ-7 — ตรวจไฟล์ก่อนส่ง (มองแบบระบบของลูกค้าที่จะรับไฟล์ไป)**
   - เปิดทุกไฟล์ด้วย Notepad (คลิกขวา → Open with → Notepad) หรือวางในเว็บตรวจไฟล์ JSON

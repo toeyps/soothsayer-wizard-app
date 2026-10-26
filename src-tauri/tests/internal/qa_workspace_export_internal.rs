@@ -288,9 +288,9 @@ fn qa_workspace_export_contract_fixture_exports_a_spec_compliant_folder() {
     assert_eq!((res.files, res.models), (9, 4));
     assert_eq!(res.rows, plan.total_rows);
 
-    // Model keys: Workbench order, R/I = target, C = x_sensor, counter per tag+kind.
+    // Model keys: Workbench order, R/I = target, C = y_sensor (spec §2.1), counter per tag+kind.
     let keys: Vec<String> = progress.lock().unwrap().iter().map(|(_, _, k)| k.clone()).collect();
-    assert_eq!(keys, ["T1-I1", "T1-R1", "X-C1", "POWER-I1"]);
+    assert_eq!(keys, ["T1-I1", "T1-R1", "Y-C1", "POWER-I1"]);
 
     // ── §7.1 machine_info.json exists, every required field filled, spec order ──
     let (mi_text, mi) = read_json(&root.join("machine_info.json"));
@@ -375,7 +375,7 @@ fn qa_workspace_export_contract_fixture_exports_a_spec_compliant_folder() {
     assert_eq!(model_json["POWER-I1"].1["component"], "Electrical");
     assert_eq!(model_json["POWER-I1"].1["category"], "PERFORMANCE");
 
-    let (c_text, c) = &model_json["X-C1"];
+    let (c_text, c) = &model_json["Y-C1"];
     assert_eq!(
         top_keys(c_text),
         ["schema_version", "model_key", "kind", "display_name", "category", "component", "x_sensor", "y_sensor", "criteria_sensor", "regimes", "health", "training_data"]
@@ -413,7 +413,7 @@ fn qa_workspace_export_contract_fixture_exports_a_spec_compliant_folder() {
     let fg_names: Vec<&str> = fgs.iter().map(|g| g["name"].as_str().unwrap()).collect();
     assert_eq!(fg_names, ["Overheat", "Pump wear"], "the unused group is left out");
     assert_eq!(strs(&fgs[0]["models"]), ["T1-I1", "T1-R1"]);
-    assert_eq!(strs(&fgs[1]["models"]), ["T1-R1", "X-C1"]);
+    assert_eq!(strs(&fgs[1]["models"]), ["T1-R1", "Y-C1"]);
     assert_eq!(first_item_keys(&mi_text, "failure_groups"), ["name", "description", "recommendation", "models"]);
     assert_eq!(first_item_keys(&mi_text, "sensors"), ["tag", "name", "description", "unit", "component"]);
     assert_eq!(first_item_keys(&mi_text, "derived_sensors"), ["tag", "name", "unit", "component", "how_to_build"]);
@@ -449,7 +449,7 @@ fn qa_workspace_export_contract_fixture_exports_a_spec_compliant_folder() {
     let expected = [
         ("T1-I1", expected_csv(&d, "TimeStamp,T1", &ind_rows, &[&d.t1])),
         ("T1-R1", expected_csv(&d, "TimeStamp,P1,POWER,T1", &rel_rows, &[&d.p1, &d.power, &d.t1])),
-        ("X-C1", expected_csv(&d, "TimeStamp,X,Y,C", &clu_rows, &[&d.x, &d.y, &d.c])),
+        ("Y-C1", expected_csv(&d, "TimeStamp,X,Y,C", &clu_rows, &[&d.x, &d.y, &d.c])),
         ("POWER-I1", expected_csv(&d, "TimeStamp,POWER", &pow_rows, &[&d.power])),
     ];
     for (k, want) in &expected {

@@ -71,7 +71,8 @@ exp = [
     'Repeated instants 2026-01-15 10:00 / 10:10 / 10:20: the export keeps the LAST copy → VIB.X = 9.99 on those rows in every CSV that has VIB.X.',
     '', 'Model keys (file names in models/):',
 ]
-for tag, kind in [('FLOW A', 'R'), ('TEMP/1', 'I'), ('CON', 'I'), ('VIB.X', 'I'), ('อุณหภูมิ1', 'I'), ('KW', 'C'), ('TEMP/1', 'R')]:
+# Clustering KW × TEMP/1 is keyed by its Y sensor (spec §2.1), so 'TEMP/1' C.
+for tag, kind in [('FLOW A', 'R'), ('TEMP/1', 'I'), ('CON', 'I'), ('VIB.X', 'I'), ('อุณหภูมิ1', 'I'), ('TEMP/1', 'C'), ('TEMP/1', 'R')]:
     exp.append(f'  {tag!r:14} {kind} → {key_tag(tag)}-{kind}1   (a 2nd model of the same tag and kind gets …-{kind}2)')
 exp += ['', 'Sensor names in machine_info.json: name = the DESCRIPTION column; "FLOW A" name = Pump flow, "main" line (JSON escapes the quotes).',
         'CON has no component → the confirm step lists it; it is written under component "Uncategorized".']

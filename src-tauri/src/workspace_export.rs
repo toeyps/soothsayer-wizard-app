@@ -926,8 +926,11 @@ pub fn build_plan(
             );
         }
 
-        // Key.
-        let stem = format!("{}-{}", sanitize_key_tag(&key_tag), kind.letter());
+        // Key (spec §2.1): `<target_tag>-<R|I|C><n>`, target_tag = `output` /
+        // `sensor` / `y_sensor` — for clustering the Y sensor, even though the
+        // model belongs to (and takes its component from) the X sensor.
+        let stem_tag = if kind == Kind::Clustering { &columns[1] } else { &key_tag };
+        let stem = format!("{}-{}", sanitize_key_tag(stem_tag), kind.letter());
         let counter = key_counters.entry(stem.clone()).or_insert(0);
         *counter += 1;
         let key = format!("{stem}{counter}");
@@ -1897,7 +1900,7 @@ mod tests {
     // ---- keys ----
 
     #[test]
-    fn keys_use_the_kind_letter_a_per_tag_counter_and_x_for_clustering() {
+    fn keys_use_the_kind_letter_a_per_tag_counter_and_y_for_clustering() {
         let p = plan(&request(vec![
             rel("r1", "Y", &["A"]),
             ind("i1", "Y"),
@@ -1906,7 +1909,7 @@ mod tests {
             ind("i2", "Odd tag/1"),
         ]));
         let keys: Vec<&str> = p.models.iter().map(|m| m.key.as_str()).collect();
-        assert_eq!(keys, ["Y-R1", "Y-I1", "Y-R2", "A-C1", "Odd_tag_1-I1"]);
+        assert_eq!(keys, ["Y-R1", "Y-I1", "Y-R2", "Y-C1", "Odd_tag_1-I1"]);
     }
 
     #[test]
@@ -2558,7 +2561,7 @@ mod tests {
             calls.lock().unwrap().push((w, t, k.to_string()))
         })
         .unwrap();
-        assert_eq!(*calls.lock().unwrap(), vec![(1, 3, "Y-R1".into()), (2, 3, "D-I1".into()), (3, 3, "A-C1".into())]);
+        assert_eq!(*calls.lock().unwrap(), vec![(1, 3, "Y-R1".into()), (2, 3, "D-I1".into()), (3, 3, "Y-C1".into())]);
         let root = PathBuf::from(&res.folder);
         assert!(root.is_absolute());
         assert_eq!(root.file_name().unwrap(), "Plant_2026-10-20_1000");
