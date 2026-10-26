@@ -82,7 +82,7 @@ function completeWorkspace(fgOver: Record<string, unknown> = {}, extra: Record<s
         }),
         model({
             id: 'u1', kind: 'individual', targetSensor: 'TAG5', groupNos: [2], status: true, healthSetPoints: { kind: 'individual', lower: 0, upper: 99, masterLower: null, masterUpper: null },
-            runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true,
+            runningConditionMode: 'custom', customRunningConditionFilters: [COND],
         }),
         ...extra,
     ]);
@@ -114,14 +114,11 @@ function expectStaleUi() {
 
 describe('workspace Running condition triggers (Apply in the modal)', () => {
     const cases: { name: string; fg?: Record<string, unknown>; edit: (m: ReturnType<typeof within>) => void }[] = [
-        { name: 'condition value edit', edit: m => { fireEvent.change(m.getByPlaceholderText('value'), { target: { value: '20' } }); } },
-        { name: 'switch to "Use all rows" (no-condition choice)', edit: m => { fireEvent.click(m.getByTestId('rc-mode-none')); } },
-        {
-            name: 'AND -> OR',
-            fg: { runningConditionFilters: [COND, { id: 'rc2', sensor: 'TAG3', operation: 'greater_than', value1: '45', value2: '' }] },
-            edit: m => { fireEvent.click(m.getByTestId('rc-combine')); },
-        },
-        { name: 'condition removed', edit: m => { fireEvent.click(m.getByRole('button', { name: 'Remove condition' })); } },
+        { name: 'condition value edit', edit: m => { fireEvent.change(m.getByLabelText('Running above this value'), { target: { value: '20' } }); } },
+        // The one line's sensor (since 2026-10-26 there is no operator, second
+        // condition, AND / OR or "Use all rows" to change, and a set condition
+        // cannot be removed).
+        { name: 'condition sensor changed', edit: m => { pickSingle(m.getByTestId('rc-one').querySelector('.rs-pick button') as HTMLElement, 'TAG3'); } },
         {
             // Train/Test validation: at least one train period is required, so
             // removing the ONLY one cannot be applied any more — remove one of two instead.
@@ -250,7 +247,7 @@ describe('model-setting triggers (Save changes)', () => {
         await settle(400);
         expect(pill()).toBe('Complete');
         openSettings();
-        fireEvent.change(bmwEl().querySelector('[data-testid="custom-condition"] input[aria-label="Value"]') as HTMLElement, { target: { value: '7' } });
+        fireEvent.change(bmwEl().querySelector('[data-testid="custom-condition"] input[aria-label="Running above this value"]') as HTMLElement, { target: { value: '7' } });
         await saveChanges();
         await expectDemoted('u2', before, { group: 2, key: 'tag4', kind: 'individual' });
         expect(['i1', 'r1', 'c1', 'u1'].map(id => diskModel(id).status)).toEqual([true, true, true, true]);
@@ -342,7 +339,7 @@ describe('NOT triggers: the model stays Complete', () => {
         writeDisk(completeWorkspace());
         await mountWindows();
         selectSensor('tag1');
-        await applyWorkspaceRc(m => { fireEvent.change(m.getByPlaceholderText('value'), { target: { value: '10' } }); });
+        await applyWorkspaceRc(m => { fireEvent.change(m.getByLabelText('Running above this value'), { target: { value: '10' } }); });
         expect(['i1', 'r1', 'c1', 'u1'].map(id => diskModel(id).status)).toEqual([true, true, true, true]);
     });
 });
@@ -419,7 +416,7 @@ describe('ONE truth: Dashboard dot, Build Model dot, kind-tab words, page tabs',
         expect(diskModel('i1').status).toBe(false);
 
         // stale
-        await applyWorkspaceRc(m => { fireEvent.change(m.getByPlaceholderText('value'), { target: { value: '30' } }); });
+        await applyWorkspaceRc(m => { fireEvent.change(m.getByLabelText('Running above this value'), { target: { value: '30' } }); });
         expect(bmwDot('i1').state).toBe('stale');
         await waitFor(() => expect(dashDot(1, 'tag1', 'individual')).toBe('none'));
         expect(bmwEl().querySelector('[data-testid="page-model-done"]')).toBeNull();
@@ -462,7 +459,7 @@ describe('the saved validation verdict (healthVerdict) end to end - 2026-10-04',
         await waitFor(() => expect(dashDot(1, 'tag1', 'individual')).toBe('trained'));
 
         // a training input changes: the model is stale and the verdict is gone from disk (same write)
-        await applyWorkspaceRc(m => { fireEvent.change(m.getByPlaceholderText('value'), { target: { value: '30' } }); });
+        await applyWorkspaceRc(m => { fireEvent.change(m.getByLabelText('Running above this value'), { target: { value: '30' } }); });
         expect(diskModel('i1')).not.toHaveProperty('healthVerdict');
         await waitFor(() => expect(dashDot(1, 'tag1', 'individual')).toBe('none'));
 

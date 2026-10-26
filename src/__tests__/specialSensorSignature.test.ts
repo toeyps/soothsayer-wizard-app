@@ -16,8 +16,8 @@ const AVG = (tag: string, sources: string[], decimals?: number): SpecialSensorRe
 });
 
 const fgOf = (models: FailureModel[], over: Partial<FailureGroupStateSlice> = {}): FailureGroupStateSlice => ({
-    groups: [], models, runningConditionFilters: [], runningConditionCombine: 'and',
-    runningConditionTimePeriods: [{ id: 'w', start: '2025-01-01T00:00', end: '2025-12-31T23:59' }], runningConditionNoneConfirmed: true,
+    groups: [], models, runningConditionFilters: [{ id: 'rc', sensor: 'SPEED', operation: 'greater_than', value1: '1200', value2: '' }], runningConditionCombine: 'and',
+    runningConditionTimePeriods: [{ id: 'w', start: '2025-01-01T00:00', end: '2025-12-31T23:59' }],
     rcLegacyNotice: null, ...over,
 });
 const ws = (models: FailureModel[], recipes: SpecialSensorRecipe[], over: Partial<FailureGroupStateSlice> = {}): WorkspaceState =>

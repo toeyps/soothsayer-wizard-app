@@ -14,7 +14,6 @@ import { ExportBar, ExportIssueLine, ExportModal, EXPORT_ISSUE_WORDS, fmtBytes, 
 import type { UseWorkspaceExport } from '../hooks/useWorkspaceExport';
 import type { ExportReadiness, ExportReadinessItem, ExportReadinessRow, NoComponentSensor } from '../utils/exportReadiness';
 import type { ExportIssue, WorkspaceExportPlan, WorkspaceExportRequest } from '../types/export';
-import { FIRST_ABOVE_NOTE } from '../utils/runningStatus';
 import { SensorMetaContext } from '../components/sensor/sensorInfo';
 
 const META: Record<string, { description?: string; unit?: string }> = {
@@ -37,7 +36,7 @@ function items(o: { machineMissing?: string[]; running?: ExportReadinessItem | n
     return [
         { id: 'machine', ...base(missing.length === 0), machine: { plant: 'Plant A', name: 'GT-1', tag: 'GT01', notes: '' }, missing, legacy: missing.length > 0 },
         { id: 'tz', ...base(true), offsetMin: 420, isPcOffset: true, saved: true },
-        o.running ?? { id: 'running', ...base(true), status: { sensor: 'RUN', value: 1000, source: 'single-above' } },
+        o.running ?? { id: 'running', ...base(true), status: { sensor: 'RUN', value: 1000 } },
         { id: 'sensors', ...base(true, (o.noComponent ?? 0) > 0), rawCount: 2, specialCount: 0, noComponentCount: o.noComponent ?? 0 },
         { id: 'fg', ...base(true), usedCount: 1, missing: [] },
     ];
@@ -231,20 +230,18 @@ describe('ExportModal — the checklist', () => {
         expect(t).toContain('Machine is running when');
         expect(t).toContain('Generator power');
         expect(t).toContain('is above 1000 kW');
-        expect(t).toContain('From the running condition — its one “above” condition.');
-    });
-
-    it('a running status taken from the first "above" condition says to check it', () => {
-        const running: ExportReadinessItem = { id: 'running', ok: true, info: false, blocking: false, status: { sensor: 'RUN', value: 5, source: 'first-above' } };
-        renderModal({ readiness: readiness({ rows: [row({ ready: false, words: 'Not trained yet', tone: 'none' })], items: items({ running }) }) });
-        expect(screen.getByTestId('ready-running').textContent).toContain(FIRST_ABOVE_NOTE);
+        // ONE sub-line: it is always the running condition itself (2026-10-26) — no
+        // "first above" / "export only" variants any more.
+        expect(t).toContain('From the running condition — the same line used for training.');
+        expect(t).not.toMatch(/its one “above” condition|used by the export only|check it/);
     });
 
     it('a missing running status is a fact to fill in, not an error', () => {
         const running: ExportReadinessItem = { id: 'running', ok: false, info: false, blocking: true, status: null };
         renderModal({ readiness: readiness({ items: items({ running }) }) });
         const r = screen.getByTestId('ready-running');
-        expect(r.textContent).toContain('not set — say which sensor tells that the machine is running');
+        expect(r.textContent).toContain('not set — pick the sensor that shows the machine is running');
+        expect(r.textContent).toContain('The customer\'s monitoring system needs one sensor and the value at or below which the machine counts as stopped.');
         expect(r.getAttribute('data-state')).toBe('bad');
     });
 

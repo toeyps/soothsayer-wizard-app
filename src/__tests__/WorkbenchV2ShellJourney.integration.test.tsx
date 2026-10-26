@@ -426,7 +426,7 @@ describe('Workbench detail v2 — the Health score page is never shown for a mod
         expect(noticeEl(bmwEl())).toBeNull();
 
         // another setting of the training scope: every model of the workspace must train again
-        await applyWorkspaceRc(m => { fireEvent.change(m.getByPlaceholderText('value'), { target: { value: '30' } }); });
+        await applyWorkspaceRc(m => { fireEvent.change(m.getByLabelText('Running above this value'), { target: { value: '30' } }); });
         await settle(100);
 
         // the page under the user is Model fit now — tab 1 is the open one, tab 2 is closed with its reason

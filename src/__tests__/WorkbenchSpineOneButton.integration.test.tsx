@@ -54,8 +54,9 @@ vi.mock('../components/charts/LineChart', () => ({ default: () => <div /> }));
 
 import { env, resetEnv } from './helpers/healthEnv';
 import { ALL_TIME_TRAIN, ONE_TEST } from './helpers/trainTestFixture';
+import { pickSingle } from './helpers/sensorPicker';
 import {
-    bmw, bmwDot, bmwEl, dashDot, diskModel, enterSp, markBtn, markComplete, model, mountWindows, newBackend,
+    COND, bmw, bmwDot, bmwEl, dashDot, diskModel, enterSp, markBtn, markComplete, model, mountWindows, newBackend,
     openDashFgTab, openHealth, openSettings, readDisk, selectSensor, settle, waitForCharts, writeDisk, wsState,
 } from './helpers/healthWorkbench';
 
@@ -163,7 +164,7 @@ async function trainSensor() {
 
 describe('ONE filled button + status said once, through a whole Individual journey (Dashboard + Build Model, one workspace file)', () => {
     it('condition unset → set → needs training → training → trained → empty set points → valid → Complete → set points changed (Incomplete) → Mark complete → a settings draft → saved', async () => {
-        // The workspace running condition is NOT set (no condition, "use all rows" not chosen).
+        // The workspace running condition is NOT set (its one line is empty).
         writeDisk(wsState({
             runningConditionFilters: [],
             models: [model({ id: 'i1', kind: 'individual', healthSetPoints: EMPTY_IND })],
@@ -183,13 +184,16 @@ describe('ONE filled button + status said once, through a whole Individual journ
         });
         expect((bmw().getByTestId('train-sensor') as HTMLButtonElement).disabled).toBe(true);
 
-        // 2) set it ("Use all rows" + Apply): the card becomes ONE line, Train sensor is the button
+        // 2) set it ("Machine is running when TAG2 is above 10" + Apply): the card becomes ONE line, Train sensor is the button
         fireEvent.click(bmw().getByTestId('rc-card-open'));
         const modal = within(bmw().getByRole('dialog', { name: 'Running condition' }));
-        fireEvent.click(modal.getByTestId('rc-mode-none'));
+        pickSingle(modal.getByTestId('rc-one').querySelector<HTMLElement>('.rs-pick button')!, 'TAG2');
+        fireEvent.change(modal.getByLabelText('Running above this value'), { target: { value: '10' } });
         await act(async () => { fireEvent.click(modal.getByTestId('rc-apply')); });
         await settle(100);
-        expect(readDisk().failureGroupState.runningConditionNoneConfirmed).toBe(true);
+        expect(readDisk().failureGroupState.runningConditionFilters).toEqual([
+            expect.objectContaining({ sensor: 'TAG2', operation: 'greater_than', value1: '10' }),
+        ]);
         const card = bmw().getByTestId('rc-card');
         expect(card.getAttribute('data-state')).toBe('set');
         expect(card.getAttribute('data-details')).toBe('closed');
@@ -332,7 +336,7 @@ describe('ONE filled button + status said once, through a whole Individual journ
 
 describe('a Custom-mode model while the WORKSPACE running condition is not set', () => {
     const CUSTOM = {
-        runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true,
+        runningConditionMode: 'custom', customRunningConditionFilters: [COND],
         filterTimePeriods: ALL_TIME_TRAIN, customTestPeriods: ONE_TEST,
     };
 
@@ -372,8 +376,12 @@ describe('a Custom-mode model while the WORKSPACE running condition is not set',
         await waitForCharts();
         expect(diskModel('u1').lastTrainedAt).toBeTruthy();
         expect(diskModel('i1').lastTrainedAt).toBeUndefined(); // the blocked one was not trained
-        // its training scope is its OWN (all rows), never the workspace's
-        expect(env.backend!.cmds('compute_sensor_stats').filter(c => c.args.sensor === 'TAG5').pop()!.args.filter ?? null).toBeNull();
+        // its training scope is its OWN one line (TAG2 above 10, all time), never the workspace's
+        expect(env.backend!.cmds('compute_sensor_stats').filter(c => c.args.sensor === 'TAG5').pop()!.args.filter).toEqual({
+            timestamp_ranges: [],
+            value_filters: [{ sensor: 'TAG2', operation: 'greater_than', value1: 10, value2: null }],
+            combine: 'and',
+        });
         await expectSpine('custom model, trained', 'u1', 'tag5', 'individual', {
             primary: 'none', filled: ['rc-card-open'], pill: 'Trained',
             sentence: null,

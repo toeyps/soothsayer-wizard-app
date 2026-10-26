@@ -191,14 +191,23 @@ describe('exportReadiness: items', () => {
         expect(itemOf(exportReadiness({ workspace: w2, metadata: META, headers: HEADERS }).items, 'tz')).toMatchObject({ offsetMin: 0, isPcOffset: false });
     });
 
-    it('running status: found, or blocking when none', () => {
+    it('running status: the one running condition, or blocking when it is not set', () => {
         expect(itemOf(exportReadiness({ workspace: readyWorkspace(), metadata: META, headers: HEADERS }).items, 'running'))
-            .toMatchObject({ ok: true, status: { sensor: 'SPEED', value: 1200, source: 'single-above' } });
+            .toMatchObject({ ok: true, status: { sensor: 'SPEED', value: 1200 } });
         const w = readyWorkspace();
         w.failureGroupState!.runningConditionFilters = [];
-        w.failureGroupState!.runningConditionNoneConfirmed = true;
+        // An old export-only line no longer stands in for it.
+        w.failureGroupState!.runningStatus = { sensor: 'SPEED', stopAtOrBelow: '5' };
         const r = exportReadiness({ workspace: w, metadata: META, headers: HEADERS });
         expect(itemOf(r.items, 'running')).toMatchObject({ ok: false, blocking: true, status: null });
+    });
+
+    it('machine_info.running_status is the one condition: sensor + stop_if_lower_than = its value', () => {
+        const w = readyWorkspace();
+        w.failureGroupState!.runningConditionFilters = [{ id: 'one', sensor: 'SPEED', operation: 'greater_than', value1: ' 850.5 ', value2: '' }];
+        w.failureGroupState!.runningStatus = { sensor: 'P1', stopAtOrBelow: '3' };
+        const req = buildWorkspaceExportRequest({ workspace: w, metadata: META, headers: HEADERS });
+        expect(req.running_status).toEqual({ sensor: 'SPEED', stop_if_lower_than: 850.5 });
     });
 
     it('sensors: counts raw/special and the ones without a component (info only); the running sensor is flagged', () => {

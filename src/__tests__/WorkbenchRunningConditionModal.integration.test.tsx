@@ -112,7 +112,7 @@ function fiveModels(fg: Record<string, unknown> = {}) {
         model({ id: 'i3', name: 'Flow band', targetSensor: 'TAG3', status: true, healthSetPoints: SP_WIDE, healthVerdict: 'valid', healthExport: record(SP_WIDE) }),
         model({
             id: 'i5', name: 'Temp band', targetSensor: 'TAG5', groupNos: [2], status: true,
-            runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true, filterTimePeriods: OWN_TRAIN, customTestPeriods: OWN_TEST,
+            runningConditionMode: 'custom', customRunningConditionFilters: [COND], filterTimePeriods: OWN_TRAIN, customTestPeriods: OWN_TEST,
             healthSetPoints: SP_WIDE, healthVerdict: 'valid', healthExport: record(SP_WIDE),
         }),
         // (the empty set points are what the load-time migration gives a model that has none)
@@ -345,7 +345,7 @@ describe('2. count_period_rows: how often it is asked, and that the card counts 
         expect(dlg.getByTestId('period-running-1').textContent).toMatch(/1\.5 d running/);
 
         // ── a settled draft: two more, however many keystrokes it took ──────
-        const value = dlg.getByPlaceholderText('value');
+        const value = dlg.getByLabelText('Running above this value');
         type(value, '2');
         type(value, '20');
         type(value, '200');
@@ -421,7 +421,7 @@ describe('2. count_period_rows: how often it is asked, and that the card counts 
         expect(bmw().queryByTestId('rc-apply-block')).toBeNull();
 
         // an edit: its count is refused too — no red line, Apply enabled, and it writes
-        type(dlg.getByPlaceholderText('value'), '20');
+        type(dlg.getByLabelText('Running above this value'), '20');
         await settle(700);
         expect(dlg.queryByTestId('rc-no-rows')).toBeNull();
         expect(bmw().queryByTestId('rc-apply-block')).toBeNull();
@@ -449,7 +449,7 @@ describe('2. count_period_rows: how often it is asked, and that the card counts 
         await waitForCharts();
 
         const dlg = openRc();
-        type(dlg.getByPlaceholderText('value'), '20');
+        type(dlg.getByLabelText('Running above this value'), '20');
         // the disk is slow: the write of ws1 is held at its rename
         let release!: () => void;
         fsHold.gate = { path: wsFile('ws1'), wait: new Promise<void>(r => { release = r; }), entered: false };
@@ -544,7 +544,7 @@ describe('3. typing a date in a period row', () => {
         const start = again.getByLabelText('P1 start') as HTMLInputElement;
         start.focus();
         type(start, '');
-        type(again.getByPlaceholderText('value'), '12');
+        type(again.getByLabelText('Running above this value'), '12');
         const writes2 = wsWrites();
         await act(async () => { fireEvent.click(apply()); });
         await waitFor(() => expect(wsWrites()).toBeGreaterThan(writes2));

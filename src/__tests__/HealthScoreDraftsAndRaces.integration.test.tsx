@@ -509,7 +509,7 @@ describe('Mark complete: races and failures (it only CHECKS the set points — E
         const g = env.backend!.gate('compute_health_preview', isCheck);
         await act(async () => { fireEvent.click(markBtn()); });
         await settle(30);
-        await applyWorkspaceRc(m => { fireEvent.change(m.getByPlaceholderText('value'), { target: { value: '25' } }); });
+        await applyWorkspaceRc(m => { fireEvent.change(m.getByLabelText('Running above this value'), { target: { value: '25' } }); });
         await act(async () => { g.release(); });
         await settle(150);
         expect(diskModel('i1').status).toBe(false);

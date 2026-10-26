@@ -28,6 +28,7 @@ import SensorSelection from '../components/dashboard/SensorSelection';
 import HighlightsPanel from '../components/dashboard/HighlightsPanel';
 import AnchoredPopover from '../components/AnchoredPopover';
 import { computeTrainFingerprint } from '../utils/trainFingerprint';
+import { rcOn } from './helpers/trainTestFixture';
 import type { FailureGroup, FailureModel, FailureGroupStateSlice, SensorMetadata, TimeHighlight, ValueHighlight } from '../types';
 
 // ── tiny App.css parser (jsdom does not load the stylesheet) ─────────────
@@ -111,8 +112,8 @@ const sensorMetadata: SensorMetadata[] = [
 
 /** FG panel props with one sensor per dot state: TAG1 untrained (I), TAG2 trained (R), TAG3 complete (C). */
 function fgPanelProps(overrides: Partial<React.ComponentProps<typeof FailureGroupsPanel>> = {}) {
-    // A train period is required for a trained (not blocked) dot.
-    const runningConditionFg: Partial<FailureGroupStateSlice> = { runningConditionNoneConfirmed: true, runningConditionTimePeriods: [{ id: 'all-time', start: '', end: '' }] };
+    // A train period and a set running condition (its one line) are required for a trained (not blocked) dot.
+    const runningConditionFg: Partial<FailureGroupStateSlice> = { runningConditionFilters: [rcOn('TAG1')], runningConditionTimePeriods: [{ id: 'all-time', start: '', end: '' }] };
     const untrained = makeModel({ id: 'u', targetSensor: 'TAG1' });
     const toTrain = makeModel({ id: 't', kind: 'relationship', targetSensor: 'TAG2', predictorSensors: ['TAG1'] });
     const fg = { ...runningConditionFg, models: [untrained, toTrain] };

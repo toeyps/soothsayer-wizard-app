@@ -60,6 +60,7 @@ import {
     WS, blurSp, bmw, bmwDot, bmwEl, chartsWithSeries, dashDot, diskModel, enterSp, markBtn, markComplete, model, mountWindows, newBackend,
     openDashFgTab, openHealth, openSettings, readDisk, saveChanges, selectKindTab, selectSensor, settle, typeSp, waitForCharts, writeDisk, wsFile, wsTrained,
 } from './helpers/healthWorkbench';
+import { rcOn } from './helpers/trainTestFixture';
 import { makeTestResult, makeValidation } from './helpers/validationFixture';
 import { CHART, CLUSTER_COLORS, fmtNum } from '../components/windows/workbench/chartTheme';
 
@@ -496,7 +497,8 @@ describe('a CSV stamp with "Z" / an offset shows its OWN wall clock everywhere (
         env.backend!.override('compute_health_preview', () => true, async (_a, real) => ({ ...(await real() as object), test_validation: validation }), false);
         const band = env.backend!.individualBand('TAG1');
         const sp = { kind: 'individual', lower: Math.floor(band.l3 * 10 - 5) / 10, upper: Math.ceil(band.u3 * 10 + 5) / 10, masterLower: 20, masterUpper: 80 };
-        writeDisk(wsTrained({ runningConditionFilters: [], runningConditionNoneConfirmed: true }, [
+        // A running condition every row of this dataset passes (no row filtered out).
+        writeDisk(wsTrained({ runningConditionFilters: [rcOn('TAG1', '-1000000000')] }, [
             model({ id: 'i1', kind: 'individual', healthVerdict: 'valid', healthSetPoints: sp }),
         ]));
         await mountWindows();

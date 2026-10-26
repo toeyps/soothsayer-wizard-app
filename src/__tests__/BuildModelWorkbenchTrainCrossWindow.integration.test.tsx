@@ -116,14 +116,14 @@ import BuildModelWindow from '../components/windows/BuildModelWindow';
 import { computeTrainFingerprint } from '../utils/trainFingerprint';
 import type { WorkspaceState } from '../types';
 // Train/Test validation: train period required to Train, test period to Mark complete.
-import { ALL_TIME_TRAIN, ONE_TEST } from './helpers/trainTestFixture';
+import { ALL_TIME_TRAIN, ONE_TEST, rcOn } from './helpers/trainTestFixture';
 
 const WS_FILE = 'workspaces/ws1.json';
 const sensorMetadata = [
     { tag: 'TAG1', description: 'Pump Pressure', unit: 'bar', component: 'Pump' },
     { tag: 'TAG2', description: 'Pump Temp', unit: 'C', component: 'Pump' },
 ];
-const COND = { id: 'rc1', sensor: 'TAG2', operation: 'greater_than', value1: '10', value2: '' };
+const COND = { ...rcOn('TAG2', '10'), id: 'rc1' };
 
 /** Dashboard's `makeDefaultModelForKind` shape (individual). */
 function dashModel(o: Record<string, unknown>) {
@@ -216,7 +216,7 @@ afterEach(() => {
 describe('Workbench training metadata vs. a stale Dashboard mirror', () => {
     const start = () => wsState({
         models: [dashModel({ id: 'i1' })],
-        runningConditionFilters: [], runningConditionNoneConfirmed: true,
+        runningConditionFilters: [rcOn('TAG1')],
     });
 
     for (const lost of [false, true]) {
@@ -256,7 +256,7 @@ describe('Workbench training metadata vs. a stale Dashboard mirror', () => {
     it('a workspace running-condition edit made in Build Model after training is not reverted by Dashboard\'s stale mirror, so the model stays stale (never falsely fresh again)', async () => {
         writeDisk(wsState({
             models: [dashModel({ id: 'i1' })],
-            runningConditionFilters: [COND], runningConditionNoneConfirmed: false,
+            runningConditionFilters: [COND],
         }));
         await mountBoth();
         dropBuildModelBroadcasts(); // Dashboard's mirror keeps COND value '10'
@@ -265,7 +265,7 @@ describe('Workbench training metadata vs. a stale Dashboard mirror', () => {
         // Build Model edits the workspace condition through the Edit… modal.
         fireEvent.click(bmw().getByTestId('rc-card-open'));
         const modal = within(bmw().getByRole('dialog', { name: 'Running condition' }));
-        await act(async () => { fireEvent.change(modal.getByPlaceholderText('value'), { target: { value: '20' } }); });
+        await act(async () => { fireEvent.change(modal.getByLabelText('Running above this value'), { target: { value: '20' } }); });
         await settle(30);
         await act(async () => { fireEvent.click(modal.getByTestId('rc-apply')); }); // Edits land only on Apply
         await settle(30);
@@ -294,12 +294,12 @@ describe('Workbench training metadata vs. a stale Dashboard mirror', () => {
         await mountBoth();
         await trainTag1();
         // Another window switches
-        // the workspace to a real condition and broadcasts it with origin dashboard.
+        // the workspace condition to another sensor and value and broadcasts it with origin dashboard.
         const { updateWorkspaceData } = await import('../workspaceManager');
         const { withFailureGroupState } = await import('../utils/failureGroupState');
         const { emit } = await import('@tauri-apps/api/event');
         await act(async () => {
-            const next = await updateWorkspaceData('ws1', prev => withFailureGroupState(prev, { runningConditionNoneConfirmed: false, runningConditionFilters: [COND as any] }));
+            const next = await updateWorkspaceData('ws1', prev => withFailureGroupState(prev, { runningConditionFilters: [COND as any] }));
             await emit('failure-group-state-changed', { ...next!.failureGroupState, workspaceId: 'ws1', origin: 'dashboard' });
         });
         await settle(20);

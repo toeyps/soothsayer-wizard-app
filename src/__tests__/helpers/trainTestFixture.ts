@@ -38,3 +38,15 @@ export const LEGACY_TESTS: TestPeriod[] = [
     { id: 'old-1', start: '2024-01-01T00:00', end: '2024-01-31T23:59', label: 'normal' },
     { id: 'old-2', start: '2024-03-01T00:00', end: '2024-03-31T23:59', label: 'problem', eventTime: '2024-03-20T08:00', fromHighlight: 'Bearing failure' },
 ];
+
+/**
+ * A SET running condition — the one "sensor > value" line ("Machine is
+ * running when TAG1 is above 0"). Since 2026-10-26 that is the only way a
+ * running condition counts as configured ("Use all rows" /
+ * `runningConditionNoneConfirmed: true` no longer does), so fixtures that are
+ * about something else use this. Pass the sensor when the suite's dataset has
+ * no `TAG1`.
+ */
+export const rcOn = (sensor = 'TAG1', value = '0') =>
+    ({ id: 'rc-on', sensor, operation: 'greater_than' as const, value1: value, value2: '' });
+export const RC_ON = rcOn();

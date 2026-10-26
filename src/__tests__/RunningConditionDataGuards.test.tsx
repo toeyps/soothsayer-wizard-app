@@ -12,6 +12,7 @@ import { SensorMetaProvider } from '../components/sensor/SensorLabel';
 import { PERIOD_COUNTS_IDLE, type PeriodCountsState } from '../utils/periodCounts';
 import type { PeriodCount, PeriodCounts } from '../types/periodCounts';
 import type { TestPeriod, TimePeriod } from '../types';
+import { rcOn } from './helpers/trainTestFixture';
 
 afterEach(cleanup);
 
@@ -227,11 +228,6 @@ describe('The timeline hero', () => {
         expect(parseFloat(p1.style.width)).toBeLessThan(2);
     });
 
-    it('"Use all rows" has no condition to relax: the no-rows line only says "Widen a train period"', () => {
-        render(<RunningConditionTimeline periods={[INSIDE]} tests={[]} bounds={DATA} counts={st('ok', counts([pc(INSIDE, 800, 0)]))} usesAllRows />);
-        expect(screen.getByTestId('rc-no-rows').textContent).toBe('No rows match — nothing to train on. Widen a train period.');
-    });
-
     it('a SETTLED count of zero rows: one red line under the caption; never while loading, failed, or without a condition', () => {
         const zero = counts([pc(INSIDE, 800, 0)]);
         const { rerender } = show([INSIDE], [], st('ok', zero));
@@ -260,7 +256,7 @@ describe('The one-line running-condition card (the PERSISTED condition)', () => 
     const card = (over: Partial<React.ComponentProps<typeof RunningConditionCard>> = {}) => render(
         <SensorMetaProvider metadata={[]}>
             <RunningConditionCard
-                state="set" periods={[INSIDE]} filters={[]} combine="and" noneConfirmed headers={null}
+                state="set" periods={[INSIDE]} filters={[rcOn()]} headers={null}
                 getDesc={() => ''} getUnit={() => ''} bounds={DATA} onOpen={() => {}}
                 {...over}
             />
@@ -328,8 +324,8 @@ describe('The one-line running-condition card (the PERSISTED condition)', () => 
         expect(screen.queryByTestId('rc-card-rows')).toBeNull();
         expect(screen.queryByTestId('rc-card-pct')).toBeNull();
         expect(screen.getByTestId('rc-card-open').textContent).toBe('Edit');
-        // "Use all rows" (this fixture): there is no condition to relax
-        expect(screen.getByTestId('rc-card-no-rows').title).toBe('No rows inside the train periods — widen a train period');
+        // the one condition (this fixture) can be relaxed too
+        expect(screen.getByTestId('rc-card-no-rows').title).toBe('No rows match the running condition inside the train periods — widen a train period or relax the condition');
         // the same state in the unfolded card — and never a green "Set" pill on the red card
         fireEvent.click(screen.getByTestId('rc-card-details'));
         expect(screen.getByTestId('rc-card').className).toContain('rcc-card--bad');
@@ -343,12 +339,9 @@ describe('The one-line running-condition card (the PERSISTED condition)', () => 
         expect(pill.className).not.toContain('f4-pill--ok');
     });
 
-    it('with a condition the no-rows tooltip also offers relaxing it', () => {
-        card({
-            noRows: true, noneConfirmed: false,
-            filters: [{ id: 'f', sensor: 'TAG1', operation: 'greater_than', value1: '5', value2: '' }],
-        });
-        expect(screen.getByTestId('rc-card-no-rows').title).toBe('No rows match the running condition inside the train periods — widen a train period or relax the condition');
+    it('without a complete condition there is nothing to relax: the no-rows tooltip only says widen a train period', () => {
+        card({ noRows: true, filters: [] });
+        expect(screen.getByTestId('rc-card-no-rows').title).toBe('No rows inside the train periods — widen a train period');
     });
 
     it('with rows the card is the usual green line', () => {

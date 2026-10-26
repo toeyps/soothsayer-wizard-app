@@ -27,7 +27,8 @@ export interface UsePeriodCountsOptions {
     scoringPeriods: TestPeriod[];
     /** The DRAFT's running condition: what `buildPreviewFilterPayload(draft,
      *  headers)` returns (its time ranges are ignored — only `value_filters`
-     *  and `combine` are used). `null` = no condition / "Use all rows". */
+     *  and `combine` are used). Since 2026-10-26 that is the ONE "sensor > value"
+     *  condition; `null` = the running condition is not set (nothing filters). */
     filter: CountFilterInput | null;
     /** The Rust dataset generation this window was opened on — a window left
      *  over from another dataset gets `STALE_SESSION` instead of its numbers. */

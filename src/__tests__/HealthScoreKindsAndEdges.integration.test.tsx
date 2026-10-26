@@ -237,7 +237,7 @@ describe('Relationship specifics', () => {
         keys.push(lastKey());
         expect(lastPreviewKey()).toBe(keys[2]);
 
-        await applyWorkspaceRc(m => { fireEvent.change(m.getByPlaceholderText('value'), { target: { value: '20' } }); });
+        await applyWorkspaceRc(m => { fireEvent.change(m.getByLabelText('Running above this value'), { target: { value: '20' } }); });
         await train();
         keys.push(lastKey());
         expect(lastPreviewKey()).toBe(keys[3]);

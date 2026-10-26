@@ -33,6 +33,8 @@ export const BASE_FG = {
     runningConditionFilters: [COND],
     runningConditionNoneConfirmed: false,
     rcLegacyNotice: null,
+    // Already in the one-condition shape: the read-path conversion has nothing to do.
+    runningConditionConversion: null,
     categoryNormalisationNotice: null,
 };
 
@@ -226,7 +228,9 @@ export const openDashSensorTab = () => fireEvent.click(dash().getByRole('button'
 export async function applyWorkspaceRc(edit: (modal: ReturnType<typeof within>) => void | Promise<void>) {
     fireEvent.click(bmw().getByTestId('rc-card-open'));
     const modal = within(bmw().getByRole('dialog', { name: 'Running condition' }));
-    await act(async () => { await edit(modal); });
+    // Not wrapped in one act(): `fireEvent` acts per event, so a step that opens
+    // the sensor picker renders it before the next step looks for its rows.
+    await edit(modal);
     await settle(30);
     await act(async () => { fireEvent.click(modal.getByTestId('rc-apply')); });
     await settle(50);

@@ -6,7 +6,6 @@ import type { ModelKind } from '../../../types';
 import type { ExportIssue, ExportModelSpec, ExportPlanModel } from '../../../types/export';
 import type { UseWorkspaceExport, WorkspaceExportPhase, WorkspaceExportProgressState } from '../../../hooks/useWorkspaceExport';
 import type { ExportReadiness, ExportReadinessItem, ExportReadinessRow, NoComponentSensor } from '../../../utils/exportReadiness';
-import { FIRST_ABOVE_NOTE } from '../../../utils/runningStatus';
 import { exportFolderName, revealExportFolder } from '../../../utils/workspaceExport';
 import { fmtOffset } from '../../../utils/projectDetails';
 import { MODEL_KIND_LABEL } from '../../../utils/modelNames';
@@ -791,11 +790,9 @@ function ItemLine({ it, noComponent, unitOf, onOpenProjectDetails, onOpenRunning
                     ok={it.ok}
                     text={s
                         ? <><b>Running status</b> · Machine is running when <SensorInline tag={s.sensor} /> is above <span className="ex-mono">{String(s.value)}{unit ? ` ${unit}` : ''}</span></>
-                        : <><b>Running status</b> · not set — say which sensor tells that the machine is running</>}
+                        : <><b>Running status</b> · not set — pick the sensor that shows the machine is running</>}
                     sub={!s ? 'The customer\'s monitoring system needs one sensor and the value at or below which the machine counts as stopped.'
-                        : s.source === 'first-above' ? FIRST_ABOVE_NOTE
-                        : s.source === 'saved' ? 'Set in the running condition (“Machine is running when … is above …”) — used by the export only.'
-                        : 'From the running condition — its one “above” condition.'}
+                        : 'From the running condition — the same line used for training.'}
                     fix={{ label: 'Open running condition', run: onOpenRunningCondition }}
                 />
             );

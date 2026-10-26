@@ -223,7 +223,7 @@ describe('R2 / R3 — a period outside the data: SAVED = a warning, NEW or CHANG
         model({ id: 'i1', name: 'Pressure band', targetSensor: 'TAG1', healthSetPoints: SP1, healthVerdict: 'valid' }),
         model({
             id: 'c5', name: 'Temp band', targetSensor: 'TAG5', groupNos: [2], runningConditionMode: 'custom',
-            customRunningConditionNoneConfirmed: true, filterTimePeriods: [OWN_IN, OWN_OUT], customTestPeriods: [S_OUT],
+            customRunningConditionFilters: [COND], filterTimePeriods: [OWN_IN, OWN_OUT], customTestPeriods: [S_OUT],
             healthSetPoints: SP_WIDE, healthVerdict: 'valid',
         }),
     ]);
@@ -266,7 +266,7 @@ describe('R2 / R3 — a period outside the data: SAVED = a warning, NEW or CHANG
         expect(apply().disabled).toBe(true); // clean, not blocked
 
         // an UNRELATED edit applies, and both saved periods are still there afterwards
-        type(dlg.getByPlaceholderText('value'), '12');
+        type(dlg.getByLabelText('Running above this value'), '12');
         expect(bmw().queryByTestId('rc-apply-block')).toBeNull();
         expect(apply().disabled).toBe(false);
         const writes = wsWrites();
@@ -368,7 +368,7 @@ describe('R4 — "nothing to train on" blocks Train, with the named reason', () 
         model({ id: 'i1', name: 'Pressure band', targetSensor: 'TAG1', healthSetPoints: EMPTY_SP }),
         model({
             id: 'r1', name: 'Pressure from flow', kind: 'relationship', targetSensor: 'TAG1', predictorSensors: ['TAG3'],
-            runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true, filterTimePeriods: [P_IN], customTestPeriods: [S_IN], ...r1,
+            runningConditionMode: 'custom', customRunningConditionFilters: [COND], filterTimePeriods: [P_IN], customTestPeriods: [S_IN], ...r1,
         }),
         model({ id: 'i4', name: 'Mode band', targetSensor: 'TAG4', groupNos: [2], healthSetPoints: EMPTY_SP }),
     ]), ['i1', 'r1', 'i4']);
@@ -457,7 +457,7 @@ describe('R4 — "nothing to train on" blocks Train, with the named reason', () 
         // Fix → is the Running-condition settings; relaxing the condition there lifts the block
         const dlg = within(bmw().getByRole('dialog', { name: 'Running condition' }));
         await waitFor(() => expect(dlg.getByTestId('rc-no-rows').textContent).toBe('No rows match — nothing to train on. Widen a train period or relax the condition.'));
-        type(dlg.getByPlaceholderText('value'), '10');
+        type(dlg.getByLabelText('Running above this value'), '10');
         await waitFor(() => expect(dlg.queryByTestId('rc-no-rows')).toBeNull(), { timeout: 4000 });
         await act(async () => { fireEvent.click(apply()); });
         await waitFor(() => expect(readDisk().failureGroupState.runningConditionFilters[0].value1).toBe('10'));

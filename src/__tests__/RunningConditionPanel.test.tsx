@@ -27,8 +27,9 @@ afterEach(() => { cleanup(); pickerProps.length = 0; });
 
 /*
  * The Running-condition settings body (workbench redesign SPEC §5): ONE column —
- * timeline hero, then Train periods · Scoring periods · When the plant is
- * running, each with one eyebrow line. No right-hand preview column, no callout
+ * timeline hero, then Train periods · Scoring periods · When the machine is
+ * running (ONE line, "Machine is running when [sensor] is above [value]" —
+ * 2026-10-26), each with one eyebrow line. No right-hand preview column, no callout
  * boxes. The same panel is a Custom model's own running condition
  * (`scope="custom"`). The rows are tested in TimePeriodsEditor / TestPeriodsEditor,
  * the hero in RunningConditionTimeline.
@@ -41,7 +42,7 @@ const P2 = p('b', '2026-03-02T00:00', '2026-04-01T00:00');
 const S1: TestPeriod = { id: 's', start: '2026-04-01T00:00', end: '2026-04-16T00:00' };
 const f = (id: string, sensor: string, operation: WorkspaceSensorFilter['operation'], value1: string, value2 = ''): WorkspaceSensorFilter =>
     ({ id, sensor, operation, value1, value2 });
-const COND = [f('f1', 'I_MOT_A', 'greater_than', '12'), f('f2', 'PT_2041', 'greater_than', '2.4')];
+const COND = f('f1', 'I_MOT_A', 'greater_than', '12');
 const UNIT: Record<string, string> = { I_MOT_A: 'A', PT_2041: 'bar' };
 
 const one = (q: { start: string; end: string }, i: number, running_days: number) =>
@@ -59,18 +60,14 @@ const COUNTED: PeriodCountsState = { status: 'ok', train: TRAIN_COUNTS, scoring:
 
 function setup(over: Partial<React.ComponentProps<typeof RunningConditionPanel>> = {}) {
     const handlers = {
-        onPeriodsChange: vi.fn(), onNoneChange: vi.fn(), onCombineChange: vi.fn(),
-        onAddFilter: vi.fn(), onUpdateFilter: vi.fn(), onRemoveFilter: vi.fn(),
-        onTestPeriodsChange: vi.fn(),
+        onPeriodsChange: vi.fn(), onConditionChange: vi.fn(), onTestPeriodsChange: vi.fn(),
     };
     render(
         <RunningConditionPanel
             configured
             periods={[P1, P2]}
             bounds={bounds}
-            filters={COND}
-            combine="and"
-            noneConfirmed={false}
+            condition={COND}
             sensors={['I_MOT_A', 'PT_2041']}
             getComponent={() => 'Pump'}
             getUnit={t => UNIT[t] ?? ''}
@@ -102,7 +99,7 @@ describe('RunningConditionPanel — one column (workbench redesign §5)', () => 
     it('each section has ONE eyebrow line: its name and one sentence — no numbered steps, no callout boxes', () => {
         setup();
         const heads = [...screen.getByTestId('rc-panel').querySelectorAll('.rcx-sec-h')];
-        expect(heads.map(h => h.querySelector('b')!.textContent)).toEqual(['Train periods', 'Scoring periods', 'When the plant is running']);
+        expect(heads.map(h => h.querySelector('b')!.textContent)).toEqual(['Train periods', 'Scoring periods', 'When the machine is running']);
         for (const h of heads) expect(h.querySelectorAll('span')).toHaveLength(1);
         expect(screen.getByTestId('rc-train-head').textContent).toBe('Train periodsonly healthy, normal running time — the model learns what normal looks like from it. At least one.');
         expect(screen.getByTestId('rc-test-head').textContent).toBe('Scoring periodsthe trained model gives a health score for this time — you read it on the score chart. Needed before Mark complete; may include train time.');
@@ -134,8 +131,8 @@ describe('RunningConditionPanel — one column (workbench redesign §5)', () => 
     });
 
     // The count of an unset condition is a count of every row.
-    it('not configured ("Only when running", no complete condition): the caption claims no running time and no row claims running days', () => {
-        setup({ configured: false, filters: [], counts: COUNTED });
+    it('not configured (its one line not complete): the caption claims no running time and no row claims running days', () => {
+        setup({ configured: false, condition: undefined, counts: COUNTED });
         expect(screen.getByTestId('rc-caption').getAttribute('data-rows')).toBe('no-condition');
         expect(screen.queryByTestId('rc-caption-rows')).toBeNull();
         expect(screen.getByTestId('rc-caption').textContent).toBe('60 d train15 d scoring≥ 30 d recommended');
@@ -206,138 +203,87 @@ describe('RunningConditionPanel — one column (workbench redesign §5)', () => 
     });
 });
 
-describe('RunningConditionPanel — running mode (one radio row)', () => {
-    it('two radios in one row: "Only when running · keep rows that meet a condition" | "Use all rows · idle and shutdown time included"', () => {
+describe('RunningConditionPanel — the ONE running condition line (2026-10-26)', () => {
+    it('the section heading and its one sentence; no radios, no AND / OR, no operator buttons, no Add condition', () => {
         setup();
-        const group = screen.getByRole('radiogroup', { name: 'Condition mode' });
-        expect(group.className).toBe('rcx-mode');
-        const radios = within(group).getAllByRole('radio');
-        expect(radios.map(r => r.textContent)).toEqual([
-            'Only when running· keep rows that meet a condition',
-            'Use all rows· idle and shutdown time included',
-        ]);
-        expect(radios.map(r => r.getAttribute('aria-checked'))).toEqual(['true', 'false']);
-        // one tab stop for the row (the checked one)
-        expect(radios.map(r => r.tabIndex)).toEqual([0, -1]);
-        expect(document.querySelector('.rcm-mcard')).toBeNull();
-    });
-
-    it('clicking the other radio reports it; clicking the active one does nothing', () => {
-        const h = setup();
-        fireEvent.click(screen.getByTestId('rc-mode-condition'));
-        expect(h.onNoneChange).not.toHaveBeenCalled();
-        fireEvent.click(screen.getByTestId('rc-mode-none'));
-        expect(h.onNoneChange).toHaveBeenCalledWith(true);
-    });
-
-    it('arrow keys move the choice, like a native radio group', () => {
-        const h = setup();
-        fireEvent.keyDown(screen.getByTestId('rc-mode-condition'), { key: 'ArrowRight' });
-        expect(h.onNoneChange).toHaveBeenCalledWith(true);
-        cleanup();
-        const h2 = setup({ noneConfirmed: true });
-        fireEvent.keyDown(screen.getByTestId('rc-mode-none'), { key: 'ArrowLeft' });
-        expect(h2.onNoneChange).toHaveBeenCalledWith(false);
-        fireEvent.keyDown(screen.getByTestId('rc-mode-none'), { key: 'a' });
-        expect(h2.onNoneChange).toHaveBeenCalledTimes(1);
-    });
-
-    it('"Use all rows": one quiet line (the periods still limit the time), no condition rows, no Add condition', () => {
-        setup({ noneConfirmed: true });
-        expect(screen.getByTestId('rc-mode-none').getAttribute('aria-checked')).toBe('true');
-        const note = screen.getByTestId('rc-none-note');
-        expect(note.className).toBe('rcx-line');
-        expect(note.textContent).toBe('Every row inside the train periods is used, idle time included. The 2 train periods above still limit the time. Your saved conditions are kept but not applied.');
-        expect(screen.queryByTestId('rc-cond-1')).toBeNull();
+        const sec = screen.getByTestId('rc-condition');
+        expect(sec.querySelector('.rcx-sec-h b')!.textContent).toBe('When the machine is running');
+        expect(sec.querySelector('.rcx-sec-h span')!.textContent).toBe('only rows where the machine is running are used to train and score — and the export tells the monitoring system the same. Required.');
+        expect(within(sec).queryByRole('radiogroup')).toBeNull();
+        expect(screen.queryByTestId('rc-mode-none')).toBeNull();
+        expect(screen.queryByTestId('rc-combine')).toBeNull();
         expect(screen.queryByTestId('rc-add-condition')).toBeNull();
-        cleanup();
-        setup({ noneConfirmed: true, periods: [], filters: [] });
-        expect(screen.getByTestId('rc-none-note').textContent).toBe('Every row inside the train periods is used, idle time included. There is no train period yet — add one above.');
+        expect(screen.queryByTestId('rc-cond-1')).toBeNull();
+        expect(within(sec).queryByLabelText('Less than')).toBeNull();
+        expect(sec.textContent).not.toMatch(/Use all rows|between/i);
     });
 
-    it('not configured: one amber line asks for a condition or "Use all rows"; configured: none', () => {
-        setup({ configured: false, filters: [] });
-        const warn = screen.getByTestId('rc-unset-warning');
-        expect(warn.className).toBe('rcx-line rcx-line--warn');
-        expect(warn.textContent).toBe('Choose “Only when running” with a condition, or “Use all rows”, before training a model.');
-        expect(screen.getByTestId('rc-no-conditions').textContent).toContain('Add a condition that tells running from idle');
-        cleanup();
+    it('reads "Machine is running when [sensor] is above [value unit]": the shared single picker, NO component chip', () => {
         setup();
-        expect(screen.queryByTestId('rc-unset-warning')).toBeNull();
-    });
-});
-
-describe('RunningConditionPanel — condition rows (ONE line each)', () => {
-    it('a row is [sensor] [> < ↔ =] [value unit] [x]: the shared single picker, NO component chip', () => {
-        setup();
-        const row = screen.getByTestId('rc-cond-1');
-        expect([...row.children].map(c => c.className.split(' ')[0])).toEqual(['rcm-cond-s', 'rcm-ops', 'rcm-vals', 'rcm-ib']);
-        const picker = within(row).getByTestId('picker');
+        const line = screen.getByTestId('rc-one');
+        expect(line.textContent).toBe('Machine is running whenI_MOT_Ais aboveA');
+        const picker = within(line).getByTestId('picker');
         expect(picker.getAttribute('data-single')).toBe('true');
         expect(picker.textContent).toBe('I_MOT_A');
-        expect(row.querySelector('.comp-chip')).toBeNull();
-        expect(row.textContent).not.toContain('Pump');
-        // the picker still groups by component inside its own list
+        expect(line.querySelector('.comp-chip')).toBeNull();
         expect(pickerProps[0].getComponent('I_MOT_A')).toBe('Pump');
         expect(pickerProps[0].noun).toBe('sensor');
-        expect(within(row).getAllByRole('button', { pressed: true }).map(b => b.textContent)).toEqual(['>']);
-        expect((within(row).getByLabelText('Value') as HTMLInputElement).value).toBe('12');
-        expect(row.querySelector('.rcm-val span')!.textContent).toBe('A');
+        const input = within(line).getByLabelText('Running above this value') as HTMLInputElement;
+        expect(input.value).toBe('12');
+        expect(input.placeholder).toBe('e.g. 1000');
+        expect(line.querySelector('.rs-val span')!.textContent).toBe('A');
+        expect(line.querySelector('.rc1-pick--empty')).toBeNull();
+        expect(line.className).not.toContain('rc1-row--unset');
     });
 
-    it('picking a sensor, an operator, typing a value and removing each report to the host', () => {
+    it('picking a sensor or typing a value hands the host the whole line {sensor, value}', () => {
         const h = setup();
-        const row = within(screen.getByTestId('rc-cond-1'));
-        fireEvent.click(row.getByTestId('picker'));
-        expect(h.onUpdateFilter).toHaveBeenLastCalledWith('f1', { sensor: 'PICKED' });
-        fireEvent.click(row.getByLabelText('Less than'));
-        expect(h.onUpdateFilter).toHaveBeenLastCalledWith('f1', { operation: 'less_than' });
-        fireEvent.click(row.getByLabelText('Greater than')); // already active: nothing
-        expect(h.onUpdateFilter).toHaveBeenCalledTimes(2);
-        fireEvent.change(row.getByLabelText('Value'), { target: { value: '15' } });
-        expect(h.onUpdateFilter).toHaveBeenLastCalledWith('f1', { value1: '15' });
-        fireEvent.click(row.getByLabelText('Remove condition'));
-        expect(h.onRemoveFilter).toHaveBeenCalledWith('f1');
-    });
-
-    it('"between" has min – max (the unit after max) and a wider value column', () => {
-        const h = setup({ filters: [f('f1', 'I_MOT_A', 'between', '10', '20')] });
-        const row = screen.getByTestId('rc-cond-1');
-        expect(row.className).toContain('rcm-cond--between');
-        expect((within(row).getByLabelText('Minimum value') as HTMLInputElement).value).toBe('10');
-        expect((within(row).getByLabelText('Maximum value') as HTMLInputElement).value).toBe('20');
-        expect([...row.querySelectorAll('.rcm-val span')].map(s => s.textContent)).toEqual(['A']);
-        fireEvent.change(within(row).getByLabelText('Maximum value'), { target: { value: '25' } });
-        expect(h.onUpdateFilter).toHaveBeenLastCalledWith('f1', { value2: '25' });
-    });
-
-    it('an empty value is marked (amber field) and the row is flagged incomplete', () => {
-        setup({ filters: [f('f1', 'I_MOT_A', 'greater_than', '')] });
-        const row = screen.getByTestId('rc-cond-1');
-        expect(row.getAttribute('data-incomplete')).toBe('true');
-        expect(row.querySelector('.rcm-val')!.className).toContain('rcm-val--empty');
-    });
-
-    it('the AND / OR pill sits between rows and switches the mode', () => {
-        const h = setup();
-        const pill = screen.getByTestId('rc-combine');
-        expect(pill.textContent).toBe('AND');
-        expect(screen.getByTestId('rc-combine-caption').textContent).toBe('both must be true');
-        fireEvent.click(pill);
-        expect(h.onCombineChange).toHaveBeenCalledWith('or');
+        const line = within(screen.getByTestId('rc-one'));
+        fireEvent.click(line.getByTestId('picker'));
+        expect(h.onConditionChange).toHaveBeenLastCalledWith({ sensor: 'PICKED', value: '12' });
+        fireEvent.change(line.getByLabelText('Running above this value'), { target: { value: '15' } });
+        expect(h.onConditionChange).toHaveBeenLastCalledWith({ sensor: 'I_MOT_A', value: '15' });
         cleanup();
-        setup({ combine: 'or' });
-        expect(screen.getByTestId('rc-combine').textContent).toBe('OR');
-        expect(screen.getByTestId('rc-combine-caption').textContent).toBe('either one is enough');
+        const h2 = setup({ configured: false, condition: undefined });
+        fireEvent.change(screen.getByLabelText('Running above this value'), { target: { value: '7' } });
+        expect(h2.onConditionChange).toHaveBeenLastCalledWith({ sensor: '', value: '7' });
     });
 
-    it('Add condition reports to the host; it is disabled without sensors', () => {
-        const h = setup();
-        fireEvent.click(screen.getByTestId('rc-add-condition'));
-        expect(h.onAddFilter).toHaveBeenCalledTimes(1);
+    it('set: one quiet note with the value and unit — the export writes the same line', () => {
+        setup();
+        const note = screen.getByTestId('rc-one-note');
+        expect(note.className).toBe('rcx-line');
+        expect(note.textContent).toBe('At or below 12 A the machine counts as stopped — those rows are left out, and the export writes the same line as the machine’s running status.');
+        expect(note.querySelector('.rc1-num')!.textContent).toBe('12 A');
+        expect(screen.queryByTestId('rc-unset-warning')).toBeNull();
+    });
+
+    it('not set: an empty sensor field is dashed amber, the value field is marked, and the amber line says what is missing', () => {
+        setup({ configured: false, condition: undefined });
+        const line = screen.getByTestId('rc-one');
+        expect(line.className).toContain('rc1-row--unset');
+        expect(line.querySelector('.rs-pick')!.className).toContain('rc1-pick--empty');
+        expect(line.querySelector('.rs-val')!.className).toContain('rs-val--empty');
+        const warn = screen.getByTestId('rc-unset-warning');
+        expect(warn.className).toBe('rcx-line rcx-line--warn');
+        expect(warn.textContent).toBe('Pick the sensor that shows the machine is running, and the value above which it runs — for example generator active power above 1,000 kW. No model can be trained until it is set.');
+        expect(screen.queryByTestId('rc-one-note')).toBeNull();
         cleanup();
-        setup({ sensors: [] });
-        expect((screen.getByTestId('rc-add-condition') as HTMLButtonElement).disabled).toBe(true);
+        setup({ configured: false, condition: f('f1', '', 'greater_than', '5') });
+        expect(screen.getByTestId('rc-unset-warning').textContent).toBe('Pick the sensor that shows the machine is running. No model can be trained until it is set.');
+        cleanup();
+        setup({ configured: false, condition: f('f1', 'I_MOT_A', 'greater_than', '') });
+        expect(screen.getByTestId('rc-unset-warning').textContent).toBe('Type the value above which the machine is running. No model can be trained until it is set.');
+        expect(screen.getByTestId('rc-one').querySelector('.rc1-pick--empty')).toBeNull();
+    });
+
+    it('a sensor that is not in the loaded data: a red line naming it (instead of the note)', () => {
+        setup({ configured: false, condition: f('f1', 'GONE_TAG', 'greater_than', '5') });
+        const warn = screen.getByTestId('rc-unset-warning');
+        expect(warn.className).toBe('rcx-line rcx-line--bad');
+        expect(warn.textContent).toContain('GONE_TAG');
+        expect(warn.textContent).toContain('is not in the loaded data — pick another sensor.');
+        expect(screen.queryByTestId('rc-one-note')).toBeNull();
     });
 });
 
@@ -355,7 +301,18 @@ describe('RunningConditionPanel — scope="custom" (a model\'s own running condi
         expect(screen.getByTestId('rc-caption').textContent).toBe('60 d train (about 50 d running time)15 d scoring≥ 30 d recommended');
         expect(screen.queryByTestId('rc-caption-rows')).toBeNull();
         expect(panel.textContent).not.toMatch(/14,391|25,880|56%|\d rows|rows \(/);
-        expect(within(screen.getByTestId('custom-condition')).getByRole('radiogroup')).toBeTruthy();
+        expect(within(screen.getByTestId('custom-condition')).getByTestId('custom-rc-one')).toBeTruthy();
+        expect(screen.queryByTestId('rc-one')).toBeNull();
+    });
+
+    it('its own sentences say "this model": heading, set note and the not-set line', () => {
+        setup({ scope: 'custom' });
+        expect(screen.getByTestId('custom-condition').querySelector('.rcx-sec-h span')!.textContent).toBe('only rows where the machine is running are used to train and score this model. Required.');
+        expect(screen.getByTestId('rc-one-note').textContent).toBe('At or below 12 A the machine counts as stopped — those rows are left out for this model.');
+        cleanup();
+        setup({ scope: 'custom', configured: false, condition: undefined });
+        expect(screen.getByTestId('rc-unset-warning').textContent).toMatch(/ This model can’t be trained until it is set\.$/);
+        expect(screen.getByTestId('custom-rc-one').querySelector('.rc1-pick--empty')).toBeTruthy();
     });
 
     it('its empty scoring note says "save" (it is saved with Save changes, not applied)', () => {
@@ -371,17 +328,13 @@ describe('RunningConditionPanel — scope="custom" (a model\'s own running condi
 
 describe('RunningConditionPills (modal header)', () => {
     const pills = (over: Partial<React.ComponentProps<typeof RunningConditionPills>> = {}) =>
-        render(<RunningConditionPills configured noneConfirmed={false} conditionCount={2} periodInvalid={false} {...over} />);
+        render(<RunningConditionPills configured periodInvalid={false} {...over} />);
 
-    it('"N conditions" when configured with conditions; "No condition" for use-all-rows; "Required" when unset', () => {
+    it('"Required" only while the condition is not set; no count / "No condition" pill any more', () => {
         pills();
-        expect(screen.getByTestId('rc-count-pill').textContent).toBe('2 conditions');
-        cleanup();
-        pills({ conditionCount: 1 });
-        expect(screen.getByTestId('rc-count-pill').textContent).toBe('1 condition');
-        cleanup();
-        pills({ noneConfirmed: true });
-        expect(screen.getByTestId('rc-none-pill').textContent).toBe('No condition');
+        expect(screen.queryByTestId('rc-required-pill')).toBeNull();
+        expect(screen.queryByTestId('rc-count-pill')).toBeNull();
+        expect(screen.queryByTestId('rc-none-pill')).toBeNull();
         cleanup();
         pills({ configured: false });
         expect(screen.getByTestId('rc-required-pill').textContent).toBe('Required');
@@ -390,20 +343,5 @@ describe('RunningConditionPills (modal header)', () => {
     it('"Fix period" is added while a period is invalid', () => {
         pills({ periodInvalid: true });
         expect(screen.getByTestId('rc-fix-period-pill').textContent).toBe('Fix period');
-        expect(screen.getByTestId('rc-count-pill')).toBeTruthy();
-    });
-});
-
-describe('RunningConditionPanel — runningStatusSlot (the export running-status line)', () => {
-    it('workspace scope: the slot is rendered at the end of the condition section', () => {
-        setup({ runningStatusSlot: <div data-testid="rs-slot">slot</div> });
-        const section = screen.getByTestId('rc-condition');
-        expect(within(section).getByTestId('rs-slot')).toBeTruthy();
-        expect(section.lastElementChild?.getAttribute('data-testid')).toBe('rs-slot');
-    });
-
-    it('custom scope: never rendered (a model\'s own condition has no running status)', () => {
-        setup({ scope: 'custom', runningStatusSlot: <div data-testid="rs-slot">slot</div> });
-        expect(screen.queryByTestId('rs-slot')).toBeNull();
     });
 });

@@ -98,7 +98,7 @@ function oldWorkspace() {
         // Custom mode, Complete: its own train period and its own (old-shape) scoring period.
         model({
             id: 'c3', kind: 'individual', targetSensor: 'TAG3', groupNos: [2], status: true,
-            runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true,
+            runningConditionMode: 'custom', customRunningConditionFilters: [COND],
             filterTimePeriods: CUSTOM_TRAIN, customTestPeriods: OLD_CUSTOM_TESTS,
             healthSetPoints: SP_TAG3, healthVerdict: 'valid', healthExport: exportRecord(SP_TAG3),
         }),

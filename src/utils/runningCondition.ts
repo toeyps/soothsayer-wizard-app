@@ -14,7 +14,8 @@ export interface EffectiveRunningCondition {
     mode: 'workspace' | 'custom';
     filters: WorkspaceSensorFilter[];
     combine: 'and' | 'or';
-    /** User explicitly chose "No condition — use all rows". */
+    /** OLD FILES ONLY: the removed "Use all rows" choice (2026-10-26). It no
+     *  longer counts as configured; the read-path conversion sets it to false. */
     noneConfirmed: boolean;
     /** TRAIN periods (required to train). */
     periods: TimePeriod[];
@@ -68,11 +69,13 @@ export function isCompleteCondition(f: WorkspaceSensorFilter, headers?: string[]
     return true;
 }
 
-function isConfigured(filters: WorkspaceSensorFilter[], noneConfirmed: boolean, headers?: string[] | null): boolean {
-    return noneConfirmed || filters.some((f) => isCompleteCondition(f, headers));
+/** ONE "sensor > value" condition, required (2026-10-26): "Use all rows" is gone,
+ *  and an old `noneConfirmed: true` no longer counts. */
+function isConfigured(filters: WorkspaceSensorFilter[], _noneConfirmed: boolean, headers?: string[] | null): boolean {
+    return filters.some((f) => f.operation === 'greater_than' && isCompleteCondition(f, headers));
 }
 
-/** Workspace-level: >=1 complete row OR "No condition" confirmed. Time periods never count. */
+/** Workspace-level: its one complete "sensor > value" row is set. Time periods never count. */
 export function isWorkspaceRunningConditionConfigured(fg: RunningConditionFg, headers?: string[] | null): boolean {
     return isConfigured(fg?.runningConditionFilters ?? [], fg?.runningConditionNoneConfirmed ?? false, headers);
 }
@@ -86,10 +89,9 @@ export function isRunningConditionConfigured(model: FailureModel, fg: RunningCon
 /** Single source for the missing-category reason (Overview footer, pill, Finish). */
 export const CATEGORY_BLOCK_REASON = 'Pick a category on the sensor header.';
 
-/** The effective running condition is not configured (no condition and no
- *  explicit "Use all rows"). The copy names the two ways out and never says
- *  "Step 1". */
-export const NO_RUNNING_CONDITION_REASON = 'Set the running condition first — a condition, or Use all rows';
+/** The effective running condition (its one "sensor > value" line) is not set.
+ *  The copy never says "Step 1". */
+export const NO_RUNNING_CONDITION_REASON = 'Set the running condition first — the sensor that shows the machine is running, and the value above which it runs';
 
 /** No train period, Workspace-mode model. */
 export const NO_TRAIN_PERIOD_REASON =
@@ -128,8 +130,9 @@ export interface GateOptions {
 }
 
 /** The red line of the Running-condition settings (workspace modal and a Custom
- *  model's own panel) when the counted train periods hold no running row. With
- *  "Use all rows" there is no condition to relax (`hasCondition: false`). */
+ *  model's own panel) when the counted train periods hold no running row.
+ *  `hasCondition: false` (no condition to relax) is only reachable by an old,
+ *  unconverted "Use all rows" state. */
 export function noTrainRowsText(hasCondition = true): string {
     return `No rows match — nothing to train on. Widen a train period${hasCondition ? ' or relax the condition' : ''}.`;
 }
@@ -213,7 +216,7 @@ export type BuildBlock =
      *  ACTION): `outside-data` = no train period is inside the loaded data
      *  (`periodNumber` names it when there is just one), `zero-rows` = the
      *  settled count of the training scope holds no running row
-     *  (`hasCondition: false` = "Use all rows" — there is no condition to relax). */
+     *  (`hasCondition` is always true from `getBuildBlock` since 2026-10-26: past the gate there is one condition). */
     | { kind: 'no-rows'; mode: 'workspace' | 'custom'; reason: string; cause: 'outside-data' | 'zero-rows'; periodNumber?: number; hasCondition: boolean };
 
 /**
@@ -259,7 +262,10 @@ export function getBuildBlock(model: FailureModel, fg: RunningConditionFg, heade
     if (eff.periods.length === 0) {
         return { kind: 'no-train', mode, reason: mode === 'custom' ? NO_TRAIN_PERIOD_REASON_CUSTOM : NO_TRAIN_PERIOD_REASON };
     }
-    const hasCondition = !eff.noneConfirmed;
+    // Past the gate above there IS one "sensor > value" condition (an old
+    // "Use all rows" flag no longer configures anything), so there is always a
+    // condition to relax.
+    const hasCondition = true;
     if (opts?.bounds && allPeriodsOutsideData(eff.periods, opts.bounds)) {
         return {
             kind: 'no-rows', mode, cause: 'outside-data', hasCondition,
@@ -287,8 +293,8 @@ export function getBuildBlockReason(model: FailureModel, fg: RunningConditionFg,
  *   - open:   "Fix P1's end above"
  * The other two blockers follow the same pattern ("Own running condition: no
  * train period. Fix it in Model settings" / "Add a train period above"; "Own
- * running condition: not set. Fix it in Model settings" / "Set a condition
- * above, or choose Use all rows"; "Own running condition: no rows to train on.
+ * running condition: not set. Fix it in Model settings" / "Pick the sensor and
+ * the value under “When the machine is running” above"; "Own running condition: no rows to train on.
  * Fix it in Model settings" / "Above: widen a train period or relax the
  * condition"; "Own running condition: no train period is inside the data. Fix
  * it in Model settings" / "Above: move P1 inside the data range"). A `category`
@@ -309,7 +315,7 @@ export function customBlockText(block: BuildBlock, opts: { settingsOpen: boolean
             if (block.cause === 'outside-data') return `Above: move ${block.periodNumber ? `P${block.periodNumber}` : 'a train period'} inside the data range`;
             return `Above: widen a train period${block.hasCondition ? ' or relax the condition' : ''}`;
         }
-        return 'Set a condition above, or choose Use all rows';
+        return 'Pick the sensor and the value under “When the machine is running” above';
     }
     const what = block.kind === 'invalid-train' ? block.reason
         : block.kind === 'no-train' ? 'no train period.'
@@ -319,10 +325,11 @@ export function customBlockText(block: BuildBlock, opts: { settingsOpen: boolean
 }
 
 /** Collapsed Model-settings summary of a Custom-mode model's own running
- *  condition: "Custom · 1 condition · 1 train · 0 scoring" ("Custom · all rows
- *  · …" when it uses all rows). */
+ *  condition: "Custom · own running condition · 1 train · 0 scoring"
+ *  ("Custom · running condition not set · …" while its one line is empty).
+ *  `noneConfirmed` is ignored (old files only). */
 export function customSummaryText(own: { noneConfirmed: boolean; conditions: number; trainPeriods: number; scoringPeriods: number }): string {
-    const cond = own.noneConfirmed ? 'all rows' : `${own.conditions} condition${own.conditions === 1 ? '' : 's'}`;
+    const cond = own.conditions > 0 ? 'own running condition' : 'running condition not set';
     return `Custom · ${cond} · ${own.trainPeriods} train · ${own.scoringPeriods} scoring`;
 }
 
@@ -402,8 +409,8 @@ export const ADD_TRAIN_PERIOD_HINT = 'Add a train period';
  * hold no running row — the last block is `no-rows` ("No rows to train on"; the
  * caller passes it only when the draft changed what is trained on). A count
  * that is loading, stale or failed never blocks.
- * `hasCondition: false` = "Use all rows": the no-rows line does not say "relax
- * the condition".
+ * `hasCondition: false` (only an old "Use all rows" leftover): the no-rows line
+ * does not say "relax the condition".
  */
 export function runningConditionApplyBlock(
     periods: TimePeriod[],

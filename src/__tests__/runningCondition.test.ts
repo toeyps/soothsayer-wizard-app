@@ -77,8 +77,12 @@ describe('configured rules', () => {
         expect(isWorkspaceRunningConditionConfigured(fg({ runningConditionFilters: [f({ value1: '' })] }))).toBe(false);
         expect(isWorkspaceRunningConditionConfigured(fg({ runningConditionFilters: [f()] }))).toBe(true);
     });
-    it('NoneConfirmed configures', () => {
-        expect(isWorkspaceRunningConditionConfigured(fg({ runningConditionNoneConfirmed: true }))).toBe(true);
+    it('ONE "sensor > value" row is required (2026-10-26): an old "Use all rows" (noneConfirmed) no longer configures, nor does a non-"above" row', () => {
+        expect(isWorkspaceRunningConditionConfigured(fg({ runningConditionNoneConfirmed: true }))).toBe(false);
+        expect(isWorkspaceRunningConditionConfigured(fg({ runningConditionFilters: [f({ operation: 'less_than' })] }))).toBe(false);
+        expect(isWorkspaceRunningConditionConfigured(fg({ runningConditionFilters: [f({ operation: 'between', value2: '20' })] }))).toBe(false);
+        expect(isWorkspaceRunningConditionConfigured(fg({ runningConditionFilters: [f({ operation: 'equals' })] }))).toBe(false);
+        expect(isWorkspaceRunningConditionConfigured(fg({ runningConditionNoneConfirmed: true, runningConditionFilters: [f()] }))).toBe(true);
     });
     it('time periods alone never count', () => {
         const s = fg({ runningConditionTimePeriods: [{ id: 'p', start: '2025-01-01T00:00', end: '2025-02-01T00:00' }] });
@@ -93,10 +97,9 @@ describe('configured rules', () => {
     it('Custom is judged by its own condition, independent of the workspace', () => {
         const custom = mk({ id: 'a', runningConditionMode: 'custom' });
         expect(isRunningConditionConfigured(custom, fg({ runningConditionFilters: [f()] }))).toBe(false);
-        expect(isRunningConditionConfigured({ ...custom, customRunningConditionNoneConfirmed: true }, fg())).toBe(true);
+        expect(isRunningConditionConfigured({ ...custom, customRunningConditionNoneConfirmed: true }, fg())).toBe(false);
         expect(isRunningConditionConfigured({ ...custom, customRunningConditionFilters: [f()] }, fg())).toBe(true);
-        // workspace unset does not block a configured Custom model, and workspace NoneConfirmed does not help a Custom one
-        expect(isRunningConditionConfigured(custom, fg({ runningConditionNoneConfirmed: true }))).toBe(false);
+        expect(isRunningConditionConfigured({ ...custom, customRunningConditionFilters: [f({ operation: 'less_than' })] }, fg())).toBe(false);
     });
 });
 
@@ -112,14 +115,14 @@ describe('getBuildBlockReason', () => {
         expect(NO_TRAIN_PERIOD_REASON).toMatch(/Running condition/);
     });
     it('Custom mode: its OWN train periods count, and the reason points to Model settings', () => {
-        const custom = mk({ id: 'a', targetSensor: 'T', category: 'condition', runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true });
+        const custom = mk({ id: 'a', targetSensor: 'T', category: 'condition', runningConditionMode: 'custom', customRunningConditionFilters: [f()] });
         // Workspace train periods do not rescue a Custom model.
         expect(getBuildBlockReason(custom, okFg)).toBe(NO_TRAIN_PERIOD_REASON_CUSTOM);
         expect(NO_TRAIN_PERIOD_REASON_CUSTOM).toMatch(/Model settings/);
         expect(getBuildBlockReason({ ...custom, filterTimePeriods: TRAIN }, fg())).toBeNull();
     });
     it('a period open at both ends is an explicit train period (counts)', () => {
-        const open = fg({ runningConditionNoneConfirmed: true, runningConditionTimePeriods: [{ id: 'o', start: '', end: '' }] });
+        const open = fg({ runningConditionFilters: [f()], runningConditionTimePeriods: [{ id: 'o', start: '', end: '' }] });
         expect(getBuildBlockReason(mk({ id: 'a', category: 'condition' }), open)).toBeNull();
     });
     it('Train does NOT need a scoring period', () => {
@@ -139,11 +142,12 @@ describe('getBuildBlockReason', () => {
         expect(getBuildBlockReason(mk({ id: 'a', targetSensor: 'T', category: 'condition' }), badPeriods)).toMatch(/running condition/i);
     });
     it('invalid period last, reporting its own reason', () => {
-        const s = fg({ runningConditionNoneConfirmed: true, runningConditionTimePeriods: [{ id: 'p', start: '2025-02-01T00:00', end: '2025-01-01T00:00' }] });
+        const s = fg({ runningConditionFilters: [f()], runningConditionTimePeriods: [{ id: 'p', start: '2025-02-01T00:00', end: '2025-01-01T00:00' }] });
         expect(getBuildBlockReason(mk({ id: 'a', targetSensor: 'T', category: 'condition' }), s)).toBe('P1 ends before it starts.');
     });
-    it('gate copy (workbench redesign): the running-condition reason names both ways out and never says "Step 1"', () => {
-        expect(NO_RUNNING_CONDITION_REASON).toBe('Set the running condition first — a condition, or Use all rows');
+    it('gate copy: the running-condition reason names the one sensor + value and never says "Step 1"', () => {
+        expect(NO_RUNNING_CONDITION_REASON).toBe('Set the running condition first — the sensor that shows the machine is running, and the value above which it runs');
+        expect(NO_RUNNING_CONDITION_REASON).not.toMatch(/Use all rows/);
         expect(getBuildBlockReason(mk({ id: 'a', category: 'condition' }), fg())).toBe(NO_RUNNING_CONDITION_REASON);
         for (const t of [NO_RUNNING_CONDITION_REASON, NO_TRAIN_PERIOD_REASON, NO_TRAIN_PERIOD_REASON_CUSTOM, CATEGORY_BLOCK_REASON]) expect(t).not.toMatch(/Step\s*1/i);
     });
@@ -157,23 +161,23 @@ describe('getBuildBlock - the gate as data (which blocker, which period)', () =>
     const TR = { id: 'ok', start: '2025-01-01T00:00', end: '2025-01-31T23:59' };
     const BAD = { id: 'bad', start: '2025-05-11T00:00', end: '2025-05-01T00:00' };
     const ws = mk({ id: 'a', targetSensor: 'T', category: 'condition' });
-    const custom = mk({ id: 'c', targetSensor: 'T', category: 'condition', runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true });
+    const custom = mk({ id: 'c', targetSensor: 'T', category: 'condition', runningConditionMode: 'custom', customRunningConditionFilters: [f()] });
 
     it('null when nothing blocks; its reason is always what getBuildBlockReason returns', () => {
         const ok = fg({ runningConditionFilters: [f()], runningConditionTimePeriods: TRAIN });
         expect(getBuildBlock(ws, ok)).toBeNull();
-        for (const [m, s] of [[mk({ id: 'x' }), fg()], [ws, fg()], [ws, fg({ runningConditionNoneConfirmed: true })], [custom, fg()]] as const) {
+        for (const [m, s] of [[mk({ id: 'x' }), fg()], [ws, fg()], [ws, fg({ runningConditionFilters: [f()] })], [custom, fg()]] as const) {
             expect(getBuildBlock(m, s)?.reason ?? null).toBe(getBuildBlockReason(m, s));
         }
     });
     it('each blocker has its own kind, in gate order, with the model mode', () => {
         expect(getBuildBlock(mk({ id: 'x' }), fg())).toEqual({ kind: 'category', mode: 'workspace', reason: CATEGORY_BLOCK_REASON });
         expect(getBuildBlock(ws, fg())).toEqual({ kind: 'no-condition', mode: 'workspace', reason: NO_RUNNING_CONDITION_REASON });
-        expect(getBuildBlock(ws, fg({ runningConditionNoneConfirmed: true }))).toEqual({ kind: 'no-train', mode: 'workspace', reason: NO_TRAIN_PERIOD_REASON });
+        expect(getBuildBlock(ws, fg({ runningConditionFilters: [f()] }))).toEqual({ kind: 'no-train', mode: 'workspace', reason: NO_TRAIN_PERIOD_REASON });
         expect(getBuildBlock(custom, fg())).toEqual({ kind: 'no-train', mode: 'custom', reason: NO_TRAIN_PERIOD_REASON_CUSTOM });
     });
     it('an invalid train period says WHICH one (its P-number), what is wrong and the row line', () => {
-        expect(getBuildBlock(ws, fg({ runningConditionNoneConfirmed: true, runningConditionTimePeriods: [TR, BAD] }))).toEqual({
+        expect(getBuildBlock(ws, fg({ runningConditionFilters: [f()], runningConditionTimePeriods: [TR, BAD] }))).toEqual({
             kind: 'invalid-train', mode: 'workspace', reason: 'P2 ends before it starts.', periodNumber: 2, fault: 'ends-before-start',
             rowReason: 'P2 ends before it starts — pick an end after 2025/05/11 00:00',
         });
@@ -182,7 +186,7 @@ describe('getBuildBlock - the gate as data (which blocker, which period)', () =>
 });
 
 describe('customBlockText - a model blocked by its OWN running condition (workbench redesign §5)', () => {
-    const custom = mk({ id: 'c', targetSensor: 'T', category: 'condition', runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true });
+    const custom = mk({ id: 'c', targetSensor: 'T', category: 'condition', runningConditionMode: 'custom', customRunningConditionFilters: [f()] });
     const block = (over: Partial<Parameters<typeof mk>[0]> = {}, s = fg()) => getBuildBlock({ ...custom, ...over }, s)!;
     const REV = { id: 'p', start: '2025-05-11T00:00', end: '2025-05-01T00:00' };
 
@@ -198,27 +202,26 @@ describe('customBlockText - a model blocked by its OWN running condition (workbe
     it('no train period / no condition of its own follow the same pattern', () => {
         expect(customBlockText(block(), { settingsOpen: false })).toBe('Own running condition: no train period. Fix it in Model settings');
         expect(customBlockText(block(), { settingsOpen: true })).toBe('Add a train period above');
-        const unset = block({ customRunningConditionNoneConfirmed: false });
+        const unset = block({ customRunningConditionFilters: [] });
         expect(unset.kind).toBe('no-condition');
         expect(customBlockText(unset, { settingsOpen: false })).toBe('Own running condition: not set. Fix it in Model settings');
-        expect(customBlockText(unset, { settingsOpen: true })).toBe('Set a condition above, or choose Use all rows');
+        expect(customBlockText(unset, { settingsOpen: true })).toBe('Pick the sensor and the value under “When the machine is running” above');
     });
     it('not about the model own condition -> the plain reason: a missing category, and every block of a Workspace-mode model', () => {
         const noCat = getBuildBlock({ ...custom, category: null }, fg())!;
         expect(customBlockText(noCat, { settingsOpen: true })).toBe(CATEGORY_BLOCK_REASON);
-        const wsBlock = getBuildBlock(mk({ id: 'w', category: 'condition' }), fg({ runningConditionNoneConfirmed: true, runningConditionTimePeriods: [REV] }))!;
+        const wsBlock = getBuildBlock(mk({ id: 'w', category: 'condition' }), fg({ runningConditionFilters: [f()], runningConditionTimePeriods: [REV] }))!;
         expect(customBlockText(wsBlock, { settingsOpen: false })).toBe('P1 ends before it starts.');
         expect(customBlockText(wsBlock, { settingsOpen: true })).toBe('P1 ends before it starts.');
     });
 });
 
 describe('Custom panel copy (workbench redesign §5)', () => {
-    it('summary line: "Custom · 1 condition · 1 train · 0 scoring"', () => {
-        expect(customSummaryText({ noneConfirmed: false, conditions: 1, trainPeriods: 1, scoringPeriods: 0 })).toBe('Custom · 1 condition · 1 train · 0 scoring');
-        expect(customSummaryText({ noneConfirmed: false, conditions: 2, trainPeriods: 3, scoringPeriods: 2 })).toBe('Custom · 2 conditions · 3 train · 2 scoring');
-        expect(customSummaryText({ noneConfirmed: false, conditions: 0, trainPeriods: 0, scoringPeriods: 0 })).toBe('Custom · 0 conditions · 0 train · 0 scoring');
-        // "Use all rows": the saved conditions are not applied, so they are not counted
-        expect(customSummaryText({ noneConfirmed: true, conditions: 2, trainPeriods: 1, scoringPeriods: 1 })).toBe('Custom · all rows · 1 train · 1 scoring');
+    it('summary line: "Custom · own running condition · 1 train · 0 scoring"', () => {
+        expect(customSummaryText({ noneConfirmed: false, conditions: 1, trainPeriods: 1, scoringPeriods: 0 })).toBe('Custom · own running condition · 1 train · 0 scoring');
+        expect(customSummaryText({ noneConfirmed: false, conditions: 0, trainPeriods: 0, scoringPeriods: 0 })).toBe('Custom · running condition not set · 0 train · 0 scoring');
+        // An old "Use all rows" flag is ignored: it no longer counts as a condition.
+        expect(customSummaryText({ noneConfirmed: true, conditions: 0, trainPeriods: 1, scoringPeriods: 1 })).toBe('Custom · running condition not set · 1 train · 1 scoring');
     });
     it('empty states and the panel footnote', () => {
         expect(NO_TRAIN_PERIOD_EMPTY_TEXT).toBe('No train period yet — add at least one');

@@ -123,7 +123,7 @@ import { computeTrainFingerprint, isModelTrainedFresh } from '../utils/trainFing
 import { getBuildBlockReason } from '../utils/runningCondition';
 import type { WorkspaceState } from '../types';
 // Train/Test validation: train period required to Train, test period to Mark complete.
-import { ALL_TIME_TRAIN, ONE_TEST } from './helpers/trainTestFixture';
+import { ALL_TIME_TRAIN, ONE_TEST, rcOn } from './helpers/trainTestFixture';
 
 const WS_FILE = 'workspaces/ws1.json';
 const HEADERS = ['timestamp', 'TAG1', 'TAG2'];
@@ -131,7 +131,7 @@ const sensorMetadata = [
     { tag: 'TAG1', description: 'Pump Pressure', unit: 'bar', component: 'Pump' },
     { tag: 'TAG2', description: 'Pump Temp', unit: 'C', component: 'Pump' },
 ];
-const COND = { id: 'rc1', sensor: 'TAG2', operation: 'greater_than', value1: '10', value2: '' };
+const COND = { ...rcOn('TAG2', '10'), id: 'rc1' };
 
 /** Dashboard's `makeDefaultModelForKind` shape (individual). */
 function dashModel(o: Record<string, unknown>) {
@@ -268,7 +268,7 @@ async function dashSelectTag1Saved() {
 
 /** Apply in the Running condition modal, waited on until the value is on disk. */
 async function applyRcValueSaved(modal: ReturnType<typeof within>, value: string) {
-    await act(async () => { fireEvent.change(modal.getByPlaceholderText('value'), { target: { value } }); });
+    await act(async () => { fireEvent.change(modal.getByLabelText('Running above this value'), { target: { value } }); });
     await act(async () => { fireEvent.click(modal.getByTestId('rc-apply')); }); // Edits land only on Apply
     await waitFor(() => expect(readDisk().failureGroupState.runningConditionFilters[0].value1).toBe(value), { timeout: 3000 });
 }
@@ -301,7 +301,7 @@ describe('Train in Build Model -> Dashboard Failure Groups status dot (broadcast
     it('never-trained -> Trained (blue) -> Complete (green) -> back to Trained -> stale after a workspace RC edit (no dot), matching Build Model at every step', async () => {
         writeDisk(wsState({
             models: [dashModel({ id: 'i1' })],
-            runningConditionFilters: [COND], runningConditionNoneConfirmed: false,
+            runningConditionFilters: [COND],
         }));
         await mountBoth();
         selectTag1();
@@ -345,7 +345,7 @@ describe('Train in Build Model -> Dashboard Failure Groups status dot (broadcast
     it('a model in TWO failure groups shows the same dot in both Dashboard cards and both Build Model buckets after training', async () => {
         writeDisk(wsState({
             models: [dashModel({ id: 'i1', groupNos: [1, 2] })],
-            runningConditionFilters: [], runningConditionNoneConfirmed: true,
+            runningConditionFilters: [rcOn('TAG1')],
         }));
         await mountBoth();
         expect(dashDot(1)).toBe('none');
@@ -360,7 +360,7 @@ describe('Train in Build Model -> Dashboard Failure Groups status dot (broadcast
 describe('Train in Build Model with the broadcast LOST (stale Dashboard mirror)', () => {
     const start = () => wsState({
         models: [dashModel({ id: 'i1' })],
-        runningConditionFilters: [COND], runningConditionNoneConfirmed: false,
+        runningConditionFilters: [COND],
     });
 
     it('the file stays correct through a Dashboard autosave, and the dot recovers on the next Dashboard FG write and on reopen', async () => {
@@ -451,26 +451,26 @@ describe('gate-blocked but fingerprint-fresh: Build Model status words, Build Mo
     const cases: Case[] = [
         {
             name: 'control — RC sensor present, gate passes',
-            fg: { runningConditionFilters: [COND], runningConditionNoneConfirmed: false },
+            fg: { runningConditionFilters: [COND] },
             model: {},
             blocked: false,
         },
         {
             name: 'workspace RC sensor missing from the dataset headers',
-            fg: { runningConditionFilters: [{ ...COND, sensor: 'TAG9' }], runningConditionNoneConfirmed: false },
+            fg: { runningConditionFilters: [{ ...COND, sensor: 'TAG9' }] },
             model: {},
             blocked: true,
         },
         {
             name: 'sensor has no category (category is not fingerprinted)',
-            fg: { runningConditionFilters: [COND], runningConditionNoneConfirmed: false },
+            fg: { runningConditionFilters: [COND] },
             model: { category: null },
             blocked: true,
         },
         {
             name: 'workspace training period ends before it starts',
             fg: {
-                runningConditionFilters: [COND], runningConditionNoneConfirmed: false,
+                runningConditionFilters: [COND],
                 runningConditionTimePeriods: [{ id: 'p1', start: '2024-02-01T00:00', end: '2024-01-01T00:00' }],
             },
             model: {},
@@ -478,7 +478,7 @@ describe('gate-blocked but fingerprint-fresh: Build Model status words, Build Mo
         },
         {
             name: 'Custom-mode model whose own RC sensor is missing from the dataset',
-            fg: { runningConditionFilters: [], runningConditionNoneConfirmed: true },
+            fg: { runningConditionFilters: [rcOn('TAG1')] },
             model: { runningConditionMode: 'custom', customRunningConditionFilters: [{ ...COND, sensor: 'TAG9' }] },
             blocked: true,
         },
@@ -514,7 +514,7 @@ describe('gate-blocked but fingerprint-fresh: Build Model status words, Build Mo
     it('a gate-blocked model that becomes unblocked by a Build Model edit (broadcast delivered) turns Trained in both windows at the same time', async () => {
         // Fingerprint-fresh, blocked only by the missing category.
         writeDisk(wsWithTrained(
-            { runningConditionFilters: [COND], runningConditionNoneConfirmed: false },
+            { runningConditionFilters: [COND] },
             [dashModel({ id: 'i1', category: null })],
         ));
         await mountBoth();
@@ -538,14 +538,14 @@ describe('gate-blocked but fingerprint-fresh: Build Model status words, Build Mo
 // and the Dashboard's Failure Groups dot follows via the normal broadcast.
 describe('Complete -> Incomplete immediately (health score SPEC FINAL), seen from both windows', () => {
     const SP = { kind: 'individual', lower: 1.5, upper: 99, masterLower: 2, masterUpper: 90 };
-    const completeFg = () => ({ runningConditionFilters: [COND], runningConditionNoneConfirmed: false });
+    const completeFg = () => ({ runningConditionFilters: [COND] });
     const completeModels = () => [
         // Follows the WORKSPACE running condition.
         dashModel({ id: 'i1', status: true, healthSetPoints: SP }),
         // Has its OWN (Custom) running condition: unaffected by workspace edits.
         dashModel({
             id: 'i2', status: true, targetSensor: 'TAG2', groupNos: [2], healthSetPoints: SP,
-            runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true,
+            runningConditionMode: 'custom', customRunningConditionFilters: [rcOn('TAG2')],
         }),
     ];
 

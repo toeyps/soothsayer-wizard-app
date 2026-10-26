@@ -808,19 +808,19 @@ describe('updateWorkspaceData applies the Incomplete-immediately rule to every w
     });
     const disk = (models: unknown[]) => JSON.stringify({
         id: 'ws1', name: 'A',
-        failureGroupState: { groups: [], models, runningConditionFilters: [], runningConditionCombine: 'and', runningConditionNoneConfirmed: true },
+        failureGroupState: { groups: [], models, runningConditionFilters: [{ id: 'rc', sensor: 'SPEED', operation: 'greater_than', value1: '1200', value2: '' }], runningConditionCombine: 'and' },
     });
 
     it('a write that changes the workspace running condition sets a Complete Workspace-mode model back to Incomplete, and keeps a Custom-mode one', async () => {
         mockStoreGet.mockResolvedValue([]);
         mockReadTextFile.mockResolvedValue(disk([
             model({ id: 'ws-mode' }),
-            model({ id: 'custom-mode', runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true }),
+            model({ id: 'custom-mode', runningConditionMode: 'custom', customRunningConditionFilters: [{ id: 'rc', sensor: 'SPEED', operation: 'greater_than', value1: '1200', value2: '' }] }),
         ]));
         const { updateWorkspaceData } = await freshModule();
         const next = await updateWorkspaceData('ws1', prev => ({
             ...prev,
-            failureGroupState: { ...prev.failureGroupState!, runningConditionNoneConfirmed: false, runningConditionCombine: 'or' },
+            failureGroupState: { ...prev.failureGroupState!, runningConditionFilters: [{ id: 'rc', sensor: 'SPEED', operation: 'greater_than' as const, value1: '900', value2: '' }] },
         }));
         const byId = Object.fromEntries(next!.failureGroupState!.models.map(m => [m.id, m]));
         expect(byId['ws-mode'].status).toBe(false);
@@ -899,7 +899,7 @@ describe('updateWorkspaceData applies the Incomplete-immediately rule to every w
         const oldDisk = (models: unknown[]) => JSON.stringify({
             id: 'ws1', name: 'A',
             failureGroupState: {
-                groups: [], models, runningConditionFilters: [], runningConditionCombine: 'and', runningConditionNoneConfirmed: true,
+                groups: [], models, runningConditionFilters: [{ id: 'rc', sensor: 'SPEED', operation: 'greater_than', value1: '1200', value2: '' }], runningConditionCombine: 'and',
                 runningConditionTimePeriods: [{ id: 'tr', start: '2023-01-01T00:00', end: '2023-12-31T23:59' }],
                 runningConditionTestPeriods: OLD_TESTS,
             },
@@ -935,7 +935,7 @@ describe('updateWorkspaceData applies the Incomplete-immediately rule to every w
             mockStoreGet.mockResolvedValue([]);
             mockReadTextFile.mockResolvedValue(oldDisk([
                 complete({ id: 'ws-mode' }),
-                complete({ id: 'custom-mode', runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true, customTestPeriods: OLD_TESTS }),
+                complete({ id: 'custom-mode', runningConditionMode: 'custom', customRunningConditionFilters: [{ id: 'rc', sensor: 'SPEED', operation: 'greater_than', value1: '1200', value2: '' }], customTestPeriods: OLD_TESTS }),
             ]));
             const { updateWorkspaceData } = await freshModule();
             const { toScoringPeriods } = await import('../utils/timePeriods');
@@ -1108,7 +1108,7 @@ describe('duplicateWorkspace', () => {
         };
         const never = { id: 'm3', kind: 'clustering', status: false };
         mockReadTextFile.mockResolvedValue(JSON.stringify({
-            id: 'ws1', name: 'A', failureGroupState: { groups: [], models: [done, never], runningConditionNoneConfirmed: true },
+            id: 'ws1', name: 'A', failureGroupState: { groups: [], models: [done, never], runningConditionFilters: [{ id: 'rc', sensor: 'SPEED', operation: 'greater_than', value1: '1200', value2: '' }] },
         }));
         const { duplicateWorkspace } = await freshModule();
 
@@ -1119,7 +1119,7 @@ describe('duplicateWorkspace', () => {
         expect(m1).toMatchObject(doneWithoutRecord);
         expect(m1).not.toHaveProperty('healthExport');
         expect(m3).toMatchObject(never);
-        expect((result!.failureGroupState as any).runningConditionNoneConfirmed).toBe(true);
+        expect(result!.failureGroupState!.runningConditionFilters).toEqual([{ id: 'rc', sensor: 'SPEED', operation: 'greater_than', value1: '1200', value2: '' }]);
         const saved = JSON.parse(mockWriteTextFile.mock.calls.pop()![1] as string);
         expect(saved.failureGroupState.models[0].status).toBe(true);
         // the ORIGINAL file is never written
@@ -1313,5 +1313,74 @@ describe('last export folder (app-wide, settings.json key lastExportDir)', () =>
         await setLastExportDir('D:/x');
         expect(mockStoreSet).toHaveBeenCalledWith('lastExportDir', 'D:/x');
         expect(mockStoreSave).toHaveBeenCalled();
+    });
+});
+
+describe('read path: the one-time conversion to ONE running condition (2026-10-26)', () => {
+    const oldFile = () => JSON.stringify({
+        id: 'ws1', name: 'A',
+        failureGroupState: {
+            groups: [],
+            models: [{
+                id: 'm1', groupNos: [1], name: 'M', kind: 'individual', category: 'condition', notes: '', status: true,
+                targetSensor: 'T1', predictorSensors: [], xSensor: '', ySensor: '', individualChecked: true, rcMode: null,
+                scatterXSensor: '', relModelName: '', relStiffness: 100000, clusterModelName: '', numClusters: 3, criteriaSensor: '',
+                clusterRanges: [], filterTimePeriods: [], runningConditionMode: 'workspace',
+                customRunningConditionFilters: [], customRunningConditionCombine: 'and',
+                healthSetPoints: { kind: 'individual', lower: 1, upper: 9 }, trainedFingerprint: 'fp',
+            }],
+            runningConditionFilters: [
+                { id: 'a', sensor: 'TEMP', operation: 'less_than', value1: '90', value2: '' },
+                { id: 'b', sensor: 'SPEED', operation: 'greater_than', value1: '1200', value2: '' },
+            ],
+            runningConditionCombine: 'or',
+            runningStatus: { sensor: 'LOAD', stopAtOrBelow: '3' },
+        },
+    });
+    const ONE = [{ id: 'b', sensor: 'SPEED', operation: 'greater_than', value1: '1200', value2: '' }];
+
+    it('every read returns the converted shape (no write on read); the first write persists it', async () => {
+        mockStoreGet.mockResolvedValue([]);
+        mockReadTextFile.mockResolvedValue(oldFile());
+        const { loadWorkspaceData, updateWorkspaceData } = await freshModule();
+        const state = await loadWorkspaceData('ws1');
+        const fg = state!.failureGroupState!;
+        expect(fg.runningConditionFilters).toEqual(ONE);
+        expect(fg.runningConditionCombine).toBe('and');
+        expect(fg.runningStatus).toBeNull();
+        expect(fg.models[0]).toMatchObject({ status: false, trainedFingerprint: 'fp', healthSetPoints: { kind: 'individual', lower: 1, upper: 9 } });
+        expect(fg.runningConditionConversion).toMatchObject({ result: 'converted', source: 'first-above', after: { sensor: 'SPEED', value: '1200' }, incompleteModelIds: ['m1'] });
+        expect(mockWriteTextFile).not.toHaveBeenCalled();
+
+        // An unrelated write (e.g. a rename) writes the converted shape, never the old set.
+        await updateWorkspaceData('ws1', prev => ({ ...prev, name: 'Renamed' }));
+        const written = JSON.parse(mockWriteTextFile.mock.calls[0][1] as string).failureGroupState;
+        expect(written.runningConditionFilters).toEqual(ONE);
+        expect(written.runningStatus).toBeNull();
+        expect(written.models[0].status).toBe(false);
+        expect(written.runningConditionConversion).toMatchObject({ result: 'converted' });
+    });
+
+    it("a full-overwrite save of what was read (the Dashboard's autosave) cannot put the old multi-condition set back", async () => {
+        mockStoreGet.mockResolvedValue([]);
+        mockReadTextFile.mockResolvedValue(oldFile());
+        const { loadWorkspaceData, saveWorkspaceData } = await freshModule();
+        const state = await loadWorkspaceData('ws1');
+        await saveWorkspaceData({ ...state!, name: 'Autosaved' });
+        const written = savedFiles().map(([, body]) => JSON.parse(body)).find((w: any) => w.failureGroupState)!.failureGroupState;
+        expect(written.runningConditionFilters).toEqual(ONE);
+        expect(written.runningConditionConversion).not.toBeUndefined();
+    });
+
+    it('a dismissed conversion (null on disk) is not run again', async () => {
+        mockStoreGet.mockResolvedValue([]);
+        const file = JSON.parse(oldFile());
+        file.failureGroupState.runningConditionConversion = null;
+        mockReadTextFile.mockResolvedValue(JSON.stringify(file));
+        const { loadWorkspaceData } = await freshModule();
+        const fg = (await loadWorkspaceData('ws1'))!.failureGroupState!;
+        expect(fg.runningConditionFilters).toHaveLength(2);
+        expect(fg.runningConditionConversion).toBeNull();
+        expect(fg.models[0].status).toBe(true);
     });
 });

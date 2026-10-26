@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Check, ChevronDown, ChevronUp } from 'lucide-react';
 import type { TestPeriod, TimePeriod, WorkspaceSensorFilter } from '../../types';
 import { isCompleteCondition } from '../../utils/runningCondition';
@@ -50,8 +50,6 @@ interface RunningConditionCardProps {
     state: RcStepState;
     periods: TimePeriod[];
     filters: WorkspaceSensorFilter[];
-    combine: 'and' | 'or';
-    noneConfirmed: boolean;
     /** Dataset headers — a condition on a sensor that isn't in them is not applied. */
     headers: string[] | null;
     getDesc: (tag: string) => string;
@@ -66,6 +64,9 @@ interface RunningConditionCardProps {
      *  no running row (`countedNoTrainRows`): the red "nothing to train on" state.
      *  (The card adds the other case itself: no train period inside the data.) */
     noRows?: boolean;
+    /** Why an OLD project must set the running condition again (the one-time
+     *  conversion found nothing to keep): replaces the Not-set card's text. */
+    why?: ReactNode;
 }
 
 /** What the card says (red, an alert) when nothing can be trained on. */
@@ -162,7 +163,7 @@ function trainSpan(periods: TimePeriod[]): string {
 
 const plural = (n: number, word: string) => `${word}${n === 1 ? '' : 's'}`;
 
-export function RunningConditionCard({ state, periods, filters, combine, noneConfirmed, headers, getDesc, getUnit, bounds, onOpen, testPeriods = [], noRows: noRowsCounted = false }: RunningConditionCardProps) {
+export function RunningConditionCard({ state, periods, filters, headers, getDesc, getUnit, bounds, onOpen, testPeriods = [], noRows: noRowsCounted = false, why }: RunningConditionCardProps) {
     const lookup = useSensorLookup();
     // Set = one line; "Details" unfolds the full grid (toggling re-renders this card only).
     const [detailsOpen, setDetailsOpen] = useState(false);
@@ -183,10 +184,12 @@ export function RunningConditionCard({ state, periods, filters, combine, noneCon
                 <div className="rcc-num" aria-hidden="true">!</div>
                 <div className="rcc-main">
                     <div className="rcc-kicker">
-                        Running condition · required before training <span className="f4-pill f4-pill--warn" data-testid="rc-card-pill">Not set</span>
+                        Running condition · required before training <span className="f4-pill f4-pill--warn" data-testid="rc-card-pill">{why ? 'Set it again' : 'Not set'}</span>
                     </div>
                     <h3>Set the running condition</h3>
-                    <p>Tell Wizard which healthy time to learn from (train periods) and when the plant is running, so models learn from normal operation — not from problems, shutdowns or idle time. It applies to every model.</p>
+                    {why
+                        ? <p data-testid="rc-card-why">{why}</p>
+                        : <p>Tell Wizard which healthy time to learn from (train periods) and the sensor that shows the machine is running — <b>Machine is running when … is above …</b> — so models learn from normal operation, not from shutdowns or idle time. It applies to every model and is written to the export.</p>}
                 </div>
                 <button type="button" className="rcx-btn rcx-btn--pri rcx-btn--lg" data-testid="rc-card-open" onClick={onOpen}>Set running condition →</button>
             </section>
@@ -212,7 +215,8 @@ export function RunningConditionCard({ state, periods, filters, combine, noneCon
         );
     }
 
-    const complete = noneConfirmed ? [] : filters.filter(f => isCompleteCondition(f, headers));
+    // THE one condition (a "sensor > value" row).
+    const complete = filters.filter(f => f.operation === 'greater_than' && isCompleteCondition(f, headers)).slice(0, 1);
     const noTrain = periods.length === 0;
     // Saved periods that lie entirely outside the loaded data: amber, never a block.
     const outsideNotes = savedOutsideDataNotes(periods, testPeriods, bounds);
@@ -253,7 +257,7 @@ export function RunningConditionCard({ state, periods, filters, combine, noneCon
                             : <>Scoring <b>{nScore}</b> {plural(nScore, 'period')}{badScoring > 0 && <span className="rcc-line-bad" data-testid="rc-card-test-bad"> · ⚠ {badScoring} to fix</span>}</>}
                     </span>
                     <span className="rcc-line-item" data-testid="rc-card-cond">
-                        {noneConfirmed || nCond === 0 ? 'All rows — no condition' : <>When running: <b>{nCond}</b> {plural(nCond, 'condition')}</>}
+                        {nCond === 0 ? <span className="rcc-line-warn">Machine running: not set</span> : <>Running when <SensorInline tag={complete[0].sensor} size="sm" /> is above <span className="rcc-rest">{conditionChipParts(complete[0], getDesc, getUnit).rest.replace(/^> /, '')}</span></>}
                     </span>
                     {/* Only the two warnings — never a count of rows. Empty (hidden by
                         `.rcc-line-item:empty`) when there is nothing to warn about. */}
@@ -295,21 +299,17 @@ export function RunningConditionCard({ state, periods, filters, combine, noneCon
                     <div className="rcc-rows" data-testid="rc-card-time"><span className="rcc-lbl">Train</span><PeriodChips periods={periods} bounds={bounds} /></div>
                     <div className="rcc-rows" data-testid="rc-card-test"><span className="rcc-lbl">Scoring</span><ScoringChips tests={testPeriods} train={periods} bounds={bounds} /></div>
                     <div className="rcc-rows" data-testid="rc-card-cond">
-                        <span className="rcc-lbl">When running</span>
-                        {noneConfirmed || complete.length === 0
-                            ? <span className="rcc-chip">All rows — no condition</span>
-                            : complete.map((f, i) => {
-                                const c = conditionChipParts(f, getDesc, getUnit);
-                                return (
-                                    <Fragment key={f.id}>
-                                        {i > 0 && <span className="rcc-andor">{combine.toUpperCase()}</span>}
-                                        <span className="rcc-chip rcc-chip--sl" data-testid="rc-card-cond-chip" title={`${sensorTitle(lookup(f.sensor))} ${c.rest}`}>
-                                            {/* Inline label + the condition in mono. */}
-                                            <SensorInline tag={f.sensor} size="sm" /> <span className="rcc-rest">{c.rest}</span>
-                                        </span>
-                                    </Fragment>
-                                );
-                            })}
+                        <span className="rcc-lbl">Running when</span>
+                        {complete.map(f => {
+                            const c = conditionChipParts(f, getDesc, getUnit);
+                            const above = c.rest.replace(/^> /, '');
+                            return (
+                                <span key={f.id} className="rcc-chip rcc-chip--sl" data-testid="rc-card-cond-chip" title={`Machine is running when ${sensorTitle(lookup(f.sensor))} is above ${above}`}>
+                                    <SensorInline tag={f.sensor} size="sm" /> <span className="rcc-above">is above</span> <span className="rcc-rest">{above}</span>
+                                </span>
+                            );
+                        })}
+                        <span className="rcc-applies">also the export’s running status</span>
                     </div>
                     {outsideNotes.length > 0 && (
                         <div className="rcc-rows rcc-line-warn" role="status" data-testid="rc-card-outside">⚠ {outsideNotes.join(' · ')}</div>

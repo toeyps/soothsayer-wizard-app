@@ -460,13 +460,11 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                 runningConditionFilters: before?.runningConditionFilters ?? [],
             });
             // The FIRST model of a workspace is created here (Dashboard), i.e.
-            // by a workspace that was never pre-gate: mark it as handled so
-            // `flagLegacyGate` (Build Model window) doesn't flag it as a legacy
-            // workspace. A workspace that already had models is left untouched
-            // (an unset marker there means "genuinely pre-gate").
+            // by a workspace that never had a category mix-up: mark the
+            // category clean-up as handled. A workspace that already had models
+            // is left untouched.
             const seed = (before?.models ?? []).length === 0 && result.models.length > 0
                 ? {
-                    ...(before?.rcLegacyNotice === undefined ? { rcLegacyNotice: null } : {}),
                     ...(before?.categoryNormalisationNotice === undefined ? { categoryNormalisationNotice: null } : {}),
                 }
                 : {};

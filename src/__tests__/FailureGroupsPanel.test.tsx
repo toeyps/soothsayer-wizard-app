@@ -11,7 +11,7 @@ vi.mock('../utils/failureGroupSummary', async (importOriginal) => {
 import type { FailureGroup, FailureModel, FailureGroupStateSlice, SensorMetadata } from '../types';
 import { computeTrainFingerprint } from '../utils/trainFingerprint';
 import { snapshotTrainedFormulas } from '../utils/specialSensorSignature';
-import { ALL_TIME_TRAIN } from './helpers/trainTestFixture';
+import { ALL_TIME_TRAIN, RC_ON, rcOn } from './helpers/trainTestFixture';
 
 function makeModel(overrides: Partial<FailureModel> = {}): FailureModel {
     return {
@@ -199,7 +199,7 @@ describe('FailureGroupsPanel', () => {
         });
 
         it('shows a blue "trained" dot when the model has a fresh trained fingerprint, is not Complete, and is not gate-blocked', () => {
-            const runningConditionFg: Partial<FailureGroupStateSlice> = { runningConditionNoneConfirmed: true, runningConditionTimePeriods: ALL_TIME_TRAIN };
+            const runningConditionFg: Partial<FailureGroupStateSlice> = { runningConditionFilters: [RC_ON], runningConditionTimePeriods: ALL_TIME_TRAIN };
             const model = makeModel({ status: false, category: 'performance', runningConditionMode: 'workspace' });
             const fg = { ...runningConditionFg, models: [model] };
             const trained = {
@@ -214,7 +214,7 @@ describe('FailureGroupsPanel', () => {
         });
 
         it('Train/Test (2026-10-07): the same fresh model with NO train period is gate-blocked -> no blue dot', () => {
-            const runningConditionFg: Partial<FailureGroupStateSlice> = { runningConditionNoneConfirmed: true, runningConditionTimePeriods: [] };
+            const runningConditionFg: Partial<FailureGroupStateSlice> = { runningConditionFilters: [RC_ON], runningConditionTimePeriods: [] };
             const model = makeModel({ status: false, category: 'performance', runningConditionMode: 'workspace' });
             const trained = { ...model, lastTrainedAt: '2026-09-30T00:00:00.000Z', trainedFingerprint: computeTrainFingerprint(model, { ...runningConditionFg, models: [model] }) };
             render(<FailureGroupsPanel {...makeProps({ fgModels: [trained], runningConditionFg, datasetHeaders: null })} />);
@@ -232,7 +232,7 @@ describe('FailureGroupsPanel', () => {
         // (`utils/modelStatus.ts`) the Build Model window reads — a Complete
         // model whose inputs no longer match its train record is NOT complete.
         describe('Complete but out of date (inputs changed since it was trained)', () => {
-            const rc: Partial<FailureGroupStateSlice> = { runningConditionNoneConfirmed: true, runningConditionTimePeriods: ALL_TIME_TRAIN };
+            const rc: Partial<FailureGroupStateSlice> = { runningConditionFilters: [RC_ON], runningConditionTimePeriods: ALL_TIME_TRAIN };
             const complete = (over: Partial<FailureModel> = {}) => {
                 const model = makeModel({ status: true, category: 'performance', ...over });
                 return { ...model, lastTrainedAt: '2026-09-30T00:00:00.000Z', trainedFingerprint: computeTrainFingerprint(model, { ...rc, models: [model] }) };
@@ -269,8 +269,8 @@ describe('FailureGroupsPanel', () => {
 
             it('the WORKSPACE running condition changing makes a Workspace-mode Complete model stale, but not a Custom-mode one', () => {
                 const wsMode = complete({ id: 'a', targetSensor: 'TAG1' });
-                const customMode = complete({ id: 'b', targetSensor: 'TAG2', runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true });
-                const changedRc: Partial<FailureGroupStateSlice> = { runningConditionNoneConfirmed: true, runningConditionTimePeriods: ALL_TIME_TRAIN, runningConditionCombine: 'or' };
+                const customMode = complete({ id: 'b', targetSensor: 'TAG2', runningConditionMode: 'custom', customRunningConditionFilters: [RC_ON] });
+                const changedRc: Partial<FailureGroupStateSlice> = { runningConditionFilters: [rcOn('TAG1', '5')], runningConditionTimePeriods: ALL_TIME_TRAIN };
                 const { container } = render(<FailureGroupsPanel {...makeProps({ fgModels: [wsMode, customMode], runningConditionFg: changedRc })} />);
                 expect(container.querySelector('.fg-summary-chip')!.textContent?.replace(/\s+/g, ' ').trim()).toMatch(/· 1 of 2 models complete$/);
             });
@@ -279,7 +279,7 @@ describe('FailureGroupsPanel', () => {
         // The Dashboard dot reads the verdict PERSISTED on the model
         // (`healthVerdict`), the same value the Build Model list dot / tab pill read.
         describe('a trained model whose saved set points were judged (persisted healthVerdict)', () => {
-            const rc: Partial<FailureGroupStateSlice> = { runningConditionNoneConfirmed: true, runningConditionTimePeriods: ALL_TIME_TRAIN };
+            const rc: Partial<FailureGroupStateSlice> = { runningConditionFilters: [RC_ON], runningConditionTimePeriods: ALL_TIME_TRAIN };
             const trainedWith = (over: Partial<FailureModel> = {}) => {
                 const model = makeModel({ status: false, category: 'performance', ...over });
                 return { ...model, lastTrainedAt: '2026-09-30T00:00:00.000Z', trainedFingerprint: computeTrainFingerprint(model, { ...rc, models: [model] }) };

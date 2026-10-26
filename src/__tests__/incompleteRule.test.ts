@@ -13,9 +13,9 @@ import { LEGACY_TESTS } from './helpers/trainTestFixture';
 
 const slice = (models: FailureModel[], over: Partial<FailureGroupStateSlice> = {}): FailureGroupStateSlice => ({
     groups: [], models,
-    runningConditionFilters: [], runningConditionCombine: 'and',
+    runningConditionFilters: [cond('1000')], runningConditionCombine: 'and',
     // A train period is required to train.
-    runningConditionTimePeriods: [{ id: 'w-train', start: '2025-01-01T00:00', end: '2025-12-31T23:59' }], runningConditionNoneConfirmed: true,
+    runningConditionTimePeriods: [{ id: 'w-train', start: '2025-01-01T00:00', end: '2025-12-31T23:59' }],
     rcLegacyNotice: null,
     ...over,
 });
@@ -52,7 +52,7 @@ describe('applyIncompleteRule - a Complete model goes back to Incomplete the mom
         ['Clustering: number of clusters', clustering, { numClusters: 3, clusterRanges: [{ min: 0, max: 3 }, { min: 3, max: 6 }, { min: 6, max: 10 }] }],
         ['Clustering: criteria range', clustering, { clusterRanges: [{ min: 0, max: 6 }, { min: 6, max: 10 }] }],
         ['training period added (custom mode)', individual, { runningConditionMode: 'custom', filterTimePeriods: [period('2026-01-01T00:00', '2026-02-01T00:00')] }],
-        ['switch Workspace -> Custom', individual, { runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true }],
+        ['switch Workspace -> Custom', individual, { runningConditionMode: 'custom', customRunningConditionFilters: [cond('1000')] }],
     ];
     for (const [label, make, patch] of table) {
         it(label, () => {
@@ -145,7 +145,7 @@ describe('applyIncompleteRule - what must NOT trigger it', () => {
     });
 
     it('the one-time legacy time-range -> period migration is not a user edit', () => {
-        const legacy = { ...individual(), runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true,
+        const legacy = { ...individual(), runningConditionMode: 'custom', customRunningConditionFilters: [cond('1000')],
             filterTimePeriods: undefined, filterTimeStart: '2026-01-01T00:00', filterTimeEnd: '2026-02-01T00:00' } as unknown as FailureModel;
         const migrated = { ...legacy, filterTimePeriods: [period('2026-01-01T00:00', '2026-02-01T00:00', 'legacy-1')] } as FailureModel;
         const out = applyIncompleteRule(ws(slice([legacy])), ws(slice([migrated])));
@@ -171,7 +171,7 @@ describe('applyIncompleteRule - what must NOT trigger it', () => {
 
 describe('applyIncompleteRule - the WORKSPACE running condition Apply', () => {
     const wsModel = (id: string) => ({ ...individual(), id });
-    const customModel = (id: string): FailureModel => ({ ...individual(), id, runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true });
+    const customModel = (id: string): FailureModel => ({ ...individual(), id, runningConditionMode: 'custom', customRunningConditionFilters: [cond('1000')] });
 
     function apply(fgOver: Partial<FailureGroupStateSlice>) {
         const models = [wsModel('ws-a'), wsModel('ws-b'), customModel('custom')];
@@ -188,7 +188,7 @@ describe('applyIncompleteRule - the WORKSPACE running condition Apply', () => {
 
     it('AND/OR, "No condition" and workspace periods each do it too', () => {
         expect(apply({ runningConditionCombine: 'or' })).toEqual({ 'ws-a': false, 'ws-b': false, custom: true });
-        expect(apply({ runningConditionNoneConfirmed: false })).toEqual({ 'ws-a': false, 'ws-b': false, custom: true });
+        expect(apply({ runningConditionNoneConfirmed: true })).toEqual({ 'ws-a': false, 'ws-b': false, custom: true });
         expect(apply({ runningConditionTimePeriods: [period('2026-01-01T00:00', '2026-02-01T00:00')] }))
             .toEqual({ 'ws-a': false, 'ws-b': false, custom: true });
     });
@@ -210,7 +210,7 @@ describe('applyIncompleteRule - the WORKSPACE running condition Apply', () => {
 describe('changedTrainInputIds / changedScoringPeriodIds - the comparisons behind the rule, on two slices', () => {
     const wsModel = (id: string) => ({ ...individual(), id });
     const customModel = (id: string): FailureModel => ({
-        ...individual(), id, runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true,
+        ...individual(), id, runningConditionMode: 'custom', customRunningConditionFilters: [cond('1000')],
         customTestPeriods: [{ id: 'own', start: '2025-03-01T00:00', end: '2025-03-31T23:59' }],
     });
     const models = [wsModel('ws-a'), wsModel('ws-b'), customModel('custom')];
@@ -270,7 +270,7 @@ describe('read side: a Complete model whose inputs no longer match its train rec
 
     it('the workspace condition changing makes a Workspace-mode Complete model stale, not a Custom-mode one', () => {
         const wsM = trained(individual());
-        const customM = trained({ ...individual(), runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true });
+        const customM = trained({ ...individual(), runningConditionMode: 'custom', customRunningConditionFilters: [cond('1000')] });
         const changed = slice([], { runningConditionCombine: 'or' });
         expect(isModelComplete(wsM, changed)).toBe(false);
         expect(isModelComplete(customM, changed)).toBe(true);
@@ -332,7 +332,7 @@ describe('the saved verdict (healthVerdict) follows the same inputs rule (QA 202
 
     it('a workspace Running condition change drops the verdict of a model that follows it, not of one with its own', () => {
         const follows = mk({ id: 'a', kind: 'individual', targetSensor: 'T', category: 'condition', healthVerdict: 'valid' });
-        const own = mk({ id: 'b', kind: 'individual', targetSensor: 'U', category: 'condition', healthVerdict: 'valid', runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true });
+        const own = mk({ id: 'b', kind: 'individual', targetSensor: 'U', category: 'condition', healthVerdict: 'valid', runningConditionMode: 'custom', customRunningConditionFilters: [cond('1000')] });
         const prev = ws(slice([follows, own], { runningConditionFilters: [cond('1')] }));
         const next = ws(slice([follows, own], { runningConditionFilters: [cond('2')] }));
         const out = applyIncompleteRule(prev, next).failureGroupState!.models;
@@ -379,7 +379,7 @@ describe('applyIncompleteRule - changing ONLY scoring periods (SPEC rules 8 & 9)
     it('scoring periods are NOT part of the train fingerprint (workspace list and a Custom model own list)', () => {
         const m = individual();
         expect(computeTrainFingerprint(m, slice([], { runningConditionTestPeriods: [t1, t2] }))).toBe(computeTrainFingerprint(m, fgBase));
-        const c = { ...m, runningConditionMode: 'custom' as const, customRunningConditionNoneConfirmed: true };
+        const c = { ...m, runningConditionMode: 'custom' as const, customRunningConditionFilters: [cond('1000')] };
         expect(computeTrainFingerprint({ ...c, customTestPeriods: [t1] }, fgBase)).toBe(computeTrainFingerprint(c, fgBase));
     });
 
@@ -410,7 +410,7 @@ describe('applyIncompleteRule - changing ONLY scoring periods (SPEC rules 8 & 9)
     });
 
     it('a Custom model: its OWN customTestPeriods count, the workspace list does not', () => {
-        const c = trainedComplete({ runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true, filterTimePeriods: [period('2025-01-01T00:00', '2025-06-30T23:59')] });
+        const c = trainedComplete({ runningConditionMode: 'custom', customRunningConditionFilters: [cond('1000')], filterTimePeriods: [period('2025-01-01T00:00', '2025-06-30T23:59')] });
         const fixed = { ...c, trainedFingerprint: computeTrainFingerprint(c, fgBase) };
         // Workspace tests changed: the Custom model is untouched.
         const a = applyIncompleteRule(ws(slice([fixed])), ws(slice([fixed], { runningConditionTestPeriods: [t1] })), { now: NOW });
@@ -486,7 +486,7 @@ describe('applyIncompleteRule - changing ONLY scoring periods (SPEC rules 8 & 9)
         });
 
         it('the same for a Custom model whose OWN list is old-shaped', () => {
-            const c = trainedComplete({ runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true, filterTimePeriods: [period('2025-01-01T00:00', '2025-06-30T23:59')], customTestPeriods: LEGACY_TESTS });
+            const c = trainedComplete({ runningConditionMode: 'custom', customRunningConditionFilters: [cond('1000')], filterTimePeriods: [period('2025-01-01T00:00', '2025-06-30T23:59')], customTestPeriods: LEGACY_TESTS });
             const fixed = { ...c, trainedFingerprint: computeTrainFingerprint(c, fgBase) };
             const prev = ws(slice([fixed]));
             expect(isModelComplete(fixed, prev.failureGroupState!)).toBe(true);

@@ -113,7 +113,7 @@ import { updateWorkspaceData, saveWorkspaceData, loadWorkspaceData, duplicateWor
 import { withFailureGroupState } from '../utils/failureGroupState';
 import { computeTrainFingerprint } from '../utils/trainFingerprint';
 // A train period is required to Train, a scoring period to Mark complete.
-import { ALL_TIME_TRAIN, ONE_TEST } from './helpers/trainTestFixture';
+import { ALL_TIME_TRAIN, ONE_TEST, rcOn } from './helpers/trainTestFixture';
 
 // ── fixtures ────────────────────────────────────────────────────────────
 
@@ -130,7 +130,7 @@ const BUILD_DATA = {
     ],
     metadata: { headers: ['timestamp', ...HEADERS], total_rows: 100 },
 };
-const COND = { id: 'rc1', sensor: 'TAG2', operation: 'greater_than', value1: '10', value2: '' };
+const COND = { ...rcOn('TAG2', '10'), id: 'rc1' };
 
 /** A model exactly as Dashboard.tsx's `makeDefaultModelForKind` creates it
  *  (3 default cluster ranges, `targetSensor: ''` + X = tag for clustering),
@@ -158,12 +158,12 @@ function wsState(fg: Record<string, unknown>, id = 'ws1') {
     };
 }
 
-/** A current-shape, CONFIGURED workspace ("No condition" confirmed) that
+/** A current-shape, CONFIGURED workspace (the one condition "TAG1 > 0") that
  *  raises no migration write-back. */
 function currentFg(models: unknown[], extra: Record<string, unknown> = {}) {
     return {
-        models, runningConditionFilters: [], runningConditionCombine: 'and', runningConditionTimePeriods: ALL_TIME_TRAIN, runningConditionTestPeriods: ONE_TEST,
-        runningConditionNoneConfirmed: true, rcLegacyNotice: null, categoryNormalisationNotice: null, ...extra,
+        models, runningConditionFilters: [rcOn('TAG1')], runningConditionCombine: 'and', runningConditionTimePeriods: ALL_TIME_TRAIN, runningConditionTestPeriods: ONE_TEST,
+        rcLegacyNotice: null, categoryNormalisationNotice: null, ...extra,
     };
 }
 
@@ -365,7 +365,6 @@ describe('(3) lastTrainedAt / trainedFingerprint survive a save + reload', () =>
         cleanup();
 
         const s = readDisk();
-        s.failureGroupState.runningConditionNoneConfirmed = false;
         s.failureGroupState.runningConditionFilters = [COND];
         writeDisk(s);
         h.invokes.length = 0;
@@ -553,7 +552,7 @@ describe('(5) status words / notice line / Mark complete agree with the results 
     // directly, instead of relying only on the fingerprint, so they no
     // longer still say Trained while the results area disagrees.
     it('when the gate blocks a previously trained model, its status does not still say "Trained"', async () => {
-        writeDisk(wsState(currentFg([dashModel({ id: 'i1' })], { runningConditionNoneConfirmed: false, runningConditionFilters: [COND] })));
+        writeDisk(wsState(currentFg([dashModel({ id: 'i1' })], { runningConditionFilters: [COND] })));
         await mountBuildModel();
         await clickTrain();
         expect(pill()).toBe('Trained');
@@ -607,25 +606,26 @@ describe('(5) status words / notice line / Mark complete agree with the results 
 // ─────────────────────────────────────────────────────────────────────────
 
 describe('(6) a Custom running-condition edited live in the Workbench (not pre-set) actually feeds Train', () => {
-    it('switching to Custom, adding a condition and typing a value, then Train commits the draft and trains against the typed condition', async () => {
+    it('switching to Custom, typing a new value on its one line, then Train commits the draft and trains against the typed condition', async () => {
         // Starts out in Workspace mode with the workspace gate already
-        // satisfied (currentFg's default `runningConditionNoneConfirmed:
-        // true`) — so the Train button is enabled from the start, same as
-        // every other model in this file; nothing about Custom mode is
-        // persisted yet.
+        // satisfied (currentFg's default condition "TAG1 > 0") — so the Train
+        // button is enabled from the start, same as every other model in this
+        // file; nothing about Custom mode is persisted yet.
         writeDisk(wsState(currentFg([dashModel({ id: 'i1' })])));
         await mountBuildModel();
         fireEvent.click(screen.getByText('Model settings', { selector: 'b' }));
         fireEvent.click(screen.getByRole('button', { name: 'Custom' }));
         expect(screen.getByTestId('custom-rc-editor')).toBeTruthy();
-        // The workspace has no conditions of its own (only "No condition"
-        // confirmed), so the condition list starts empty — but its train
-        // period is copied, so the seed note says so.
+        // The workspace's train period and its one condition are copied, and
+        // the seed note says so.
         expect(screen.getByTestId('pm-seed-note').textContent).toMatch(/1 train period/);
-        expect(screen.getByTestId('pm-seed-note').textContent).toMatch(/0 conditions/);
+        expect(screen.getByTestId('pm-seed-note').textContent).toMatch(/the running condition from Workspace/);
 
-        fireEvent.click(screen.getByTestId('rc-add-condition'));
-        fireEvent.change(screen.getByPlaceholderText('value'), { target: { value: '42' } });
+        const line = within(screen.getByTestId('custom-rc-one'));
+        expect((line.getByLabelText('Running above this value') as HTMLInputElement).value).toBe('0');
+        fireEvent.change(line.getByLabelText('Running above this value'), { target: { value: '42' } });
+        fireEvent.click(screen.getByText('Model settings', { selector: 'b' })); // collapse: the summary names its own condition
+        expect(screen.getByText(/Custom · own running condition · 1 train · \d+ scoring$/)).toBeTruthy();
 
         await clickTrain();
 
@@ -650,15 +650,16 @@ describe('(6) a Custom running-condition edited live in the Workbench (not pre-s
     });
 
     it('the collapsed "Model settings" summary reflects the live-edited Custom condition/period counts, not a stale "Custom data" label', async () => {
-        writeDisk(wsState(currentFg([dashModel({ id: 'i1' })])));
+        // A workspace whose condition was never set: the Custom line starts empty.
+        writeDisk(wsState(currentFg([dashModel({ id: 'i1' })], { runningConditionFilters: [] })));
         await mountBuildModel();
+        const modal = screen.queryByRole('dialog', { name: 'Running condition' });
+        if (modal) fireEvent.click(within(modal).getByLabelText('Close')); // auto-opened (workspace not set)
         fireEvent.click(screen.getByText('Model settings', { selector: 'b' }));
         fireEvent.click(screen.getByRole('button', { name: 'Custom' }));
-        fireEvent.click(screen.getByTestId('rc-add-condition'));
-        fireEvent.click(screen.getByTestId('rc-mode-none'));
         fireEvent.click(screen.getByText('Model settings', { selector: 'b' })); // collapse
         // 1 train period: the workspace train period was copied on the switch,
         // and the workspace scoring periods with it.
-        expect(screen.getByText(/Custom · all rows · 1 train · \d+ scoring$/)).toBeTruthy();
+        expect(screen.getByText(/Custom · running condition not set · 1 train · \d+ scoring$/)).toBeTruthy();
     });
 });

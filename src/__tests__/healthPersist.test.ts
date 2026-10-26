@@ -34,10 +34,9 @@ const TEST: TestPeriod = { id: 't1', start: '2026-01-01T00:00', end: '2026-01-31
 // A train period is required to train and a scoring period to Mark complete.
 const baseFg = (models: FailureModel[]): FailureGroupStateSlice => ({
     groups: [], models,
-    runningConditionFilters: [], runningConditionCombine: 'and',
+    runningConditionFilters: [{ id: 'rc', sensor: 'SPEED', operation: 'greater_than', value1: '1200', value2: '' }], runningConditionCombine: 'and',
     runningConditionTimePeriods: [{ id: 'tr', start: '2025-01-01T00:00', end: '2025-12-31T23:59' }],
     runningConditionTestPeriods: [TEST],
-    runningConditionNoneConfirmed: true,
     rcLegacyNotice: null,
 });
 const setDisk = (models: FailureModel[]) => {
@@ -181,7 +180,7 @@ describe('persistModelComplete', () => {
 // ---------------------------------------------------------------------------
 
 describe('Mark complete = checkModelForComplete + persistModelComplete (no files)', () => {
-    const HEADERS = ['T'];
+    const HEADERS = ['T', 'SPEED'];
     beforeEach(() => { mockInvoke.mockReset(); });
 
     it('validates with compute_health_preview only, then marks Complete in one write with one broadcast', async () => {

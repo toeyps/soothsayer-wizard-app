@@ -115,6 +115,7 @@ vi.mock('../components/charts/ResponsiveECharts', () => ({ default: () => <div /
 import Dashboard from '../components/dashboard/Dashboard';
 import BuildModelWindow from '../components/windows/BuildModelWindow';
 import type { WorkspaceState } from '../types';
+import { rcOn } from './helpers/trainTestFixture';
 
 // ── fixtures ────────────────────────────────────────────────────────────
 
@@ -213,8 +214,8 @@ afterEach(() => {
 describe('(5) a sensor category set in Build Model survives Dashboard edits', () => {
     const start = () => wsState({
         models: [model({ id: 'i1' }), model({ id: 'r1', kind: 'relationship', predictorSensors: ['TAG2'] })],
-        runningConditionFilters: [], runningConditionCombine: 'and', runningConditionTimePeriods: [],
-        runningConditionNoneConfirmed: true, rcLegacyNotice: null, categoryNormalisationNotice: null,
+        runningConditionFilters: [rcOn()], runningConditionCombine: 'and', runningConditionTimePeriods: [],
+        rcLegacyNotice: null, categoryNormalisationNotice: null,
     });
 
     async function setTag1ToCondition() {
@@ -305,7 +306,10 @@ describe('(4) Dashboard opened on the v1 file, Build Model migrates it underneat
             const fg = JSON.parse(raw).failureGroupState;
             expect(fg.runningConditionTimePeriods).toEqual(WS_PERIOD);
             expect(fg.models.find((m: any) => m.id === 'i2').filterTimePeriods).toEqual(I2_PERIOD);
-            expect(fg.rcLegacyNotice).toBe('pending');
+            // The running condition was never set: nothing to convert, and the
+            // autosave keeps the read path's "handled" marker (no old flag).
+            expect(fg.runningConditionConversion).toBeNull();
+            expect(fg.rcLegacyNotice).toBeUndefined();
         });
     }
 
@@ -327,15 +331,16 @@ describe('(4) Dashboard opened on the v1 file, Build Model migrates it underneat
 });
 
 describe('a brand-new workspace: the first model is created on the Dashboard', () => {
-    it('Dashboard seeds the legacy markers, so the Build Model window never shows the legacy banner', async () => {
+    it('Dashboard seeds the category marker, and the Build Model window shows no running-condition notice', async () => {
         writeDisk(wsState({ models: [] }));
         await mountBoth();
         await act(async () => { fireEvent.click(screen.getByText('dash-toggle-tag1-individual-fg2')); });
         await settle(350);
         const fg = readDisk().failureGroupState;
         expect(fg.models).toHaveLength(1);
-        expect(fg.rcLegacyNotice).toBeNull();
+        expect(fg.rcLegacyNotice).toBeUndefined(); // the old legacy-gate flag is no longer seeded
         expect(fg.categoryNormalisationNotice).toBeNull();
-        expect(screen.queryByTestId('rc-legacy-banner')).toBeNull();
+        expect(fg.runningConditionConversion).toBeNull();
+        expect(screen.queryByTestId('rc-conversion-notice')).toBeNull();
     });
 });

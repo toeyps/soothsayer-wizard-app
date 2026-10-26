@@ -13,7 +13,7 @@ import { sameHealthSetPoints } from './healthSetPoints';
  *
  * Changing ANY input that decides what a model is trained on —
  *   training period(s), the running condition in every part (Workspace/Custom
- *   switch, conditions, AND/OR, the "no condition" choice, periods — and for a
+ *   switch, its one "sensor > value" condition, periods — and for a
  *   Workspace-mode model that includes the WORKSPACE running condition),
  *   predictor sensors, the Y / X / criteria sensors, the number of clusters /
  *   criteria ranges, stiffness —
@@ -25,7 +25,7 @@ import { sameHealthSetPoints } from './healthSetPoints';
  * The same change also drops a saved `healthVerdict` (it described the old fit).
  *
  * What does NOT trigger it: name, notes, category, status, group membership,
- * `scatterXSensor`, the workspace's export `runningStatus` — none of them is in
+ * `scatterXSensor`, the old export-only `runningStatus` (old files only) — none of them is in
  * `computeTrainFingerprint`. SET POINTS are not either, but changing them takes
  * the third road described on `applyIncompleteRule` (Complete -> Incomplete,
  * still trained, everything else kept).

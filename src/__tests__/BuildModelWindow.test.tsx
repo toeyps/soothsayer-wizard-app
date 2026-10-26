@@ -109,7 +109,7 @@ import { makeHealthPreview, makeSetPointAwarePreview } from './helpers/healthPre
 import { makeTestResult, makeValidation } from './helpers/validationFixture';
 import { computeTrainFingerprint } from '../utils/trainFingerprint';
 import { snapshotTrainedFormulas } from '../utils/specialSensorSignature';
-import { ALL_TIME_TRAIN, LEGACY_TESTS, ONE_TEST } from './helpers/trainTestFixture';
+import { ALL_TIME_TRAIN, LEGACY_TESTS, ONE_TEST, RC_ON, rcOn } from './helpers/trainTestFixture';
 import { MARK_COMPLETE_CLOSE_WAIT } from '../utils/healthPersist';
 import { applyIncompleteRule } from '../utils/incompleteRule';
 import { ADD_TRAIN_PERIOD_HINT, NO_TEST_PERIOD_REASON } from '../utils/runningCondition';
@@ -164,10 +164,10 @@ function makeModel(overrides: Record<string, any> = {}) {
  *  actually delivers, since the fingerprint folds those in too — tests that
  *  don't override the running-condition defaults can rely on the default
  *  shown here (matches `deliverData`'s own fixture normalization: `and`
- *  combine, no filters/periods, "No condition" confirmed). */
+ *  combine, the one "TAG1 > 0" condition — `RC_ON`). */
 function withTrained(model: Record<string, any>, fg: Record<string, any> = {
-    models: [model], runningConditionFilters: [], runningConditionCombine: 'and',
-    runningConditionTimePeriods: ALL_TIME_TRAIN, runningConditionNoneConfirmed: true,
+    models: [model], runningConditionCombine: 'and',
+    runningConditionTimePeriods: ALL_TIME_TRAIN, runningConditionFilters: [RC_ON],
 }) {
     return {
         ...model,
@@ -192,7 +192,9 @@ function statefulUpdateMock(models: any[], extra: Record<string, any> = {}) {
         id: 'ws1',
         failureGroupState: {
             groups: [makeGroup()], models,
-            runningConditionNoneConfirmed: true, rcLegacyNotice: null, runningConditionTimePeriods: ALL_TIME_TRAIN,
+            // Same default as `deliverData`: set (RC_ON) unless the test says otherwise.
+            ...(!('runningConditionNoneConfirmed' in extra) && !('runningConditionFilters' in extra) ? { runningConditionFilters: [RC_ON] } : {}),
+            rcLegacyNotice: null, runningConditionTimePeriods: ALL_TIME_TRAIN,
             runningConditionTestPeriods: ONE_TEST,
             ...extra,
         },
@@ -219,15 +221,15 @@ async function deliverData(overrides: Record<string, any> = {}, payloadOver: Rec
         failureGroupState: { groups: [makeGroup()], models: [makeModel()] },
         ...overrides,
     };
-    // Fixtures read as a CONFIGURED workspace (No
-    // condition confirmed) with the legacy notice already handled, so tests that
+    // Fixtures read as a CONFIGURED workspace (the one
+    // "TAG1 > 0" condition, `RC_ON`) with the legacy notice already handled, so tests that
     // are about something else don't trip the running-condition gate or the
     // hydration write-back. A test about the gate passes the key explicitly
     // (even as `undefined`), which is respected.
     if (ws.failureGroupState) {
         const fg = ws.failureGroupState;
         ws.failureGroupState = {
-            ...(!('runningConditionNoneConfirmed' in fg) ? { runningConditionNoneConfirmed: true } : {}),
+            ...(!('runningConditionNoneConfirmed' in fg) ? { runningConditionFilters: [RC_ON] } : {}),
             ...(!('rcLegacyNotice' in fg) ? { rcLegacyNotice: null } : {}),
             // Already-migrated periods, so the periods migration's
             // write-back doesn't fire in tests about something else.
@@ -251,6 +253,15 @@ async function deliverData(overrides: Record<string, any> = {}, payloadOver: Rec
  *  active) so the detail pane renders for it — the Workbench's replacement
  *  for the old accordion's "click to open a row". */
 const flush = () => act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+/** Fills the running-condition modal's one line ("Machine is running when
+ *  <sensor> is above <value>"); `null` leaves that half as it is. The sensor
+ *  goes through the stubbed single picker (an input). */
+const setRcLine = (sensor: string | null, value: string | null, root: HTMLElement = screen.getByTestId('rc-one')) => {
+    if (sensor !== null) fireEvent.change(root.querySelector('.rs-pick input')!, { target: { value: sensor } });
+    if (value !== null) fireEvent.change(within(root).getByLabelText('Running above this value'), { target: { value } });
+};
+/** The modal line's value input. */
+const rcValueInput = (root: HTMLElement = screen.getByTestId('rc-one')) => within(root).getByLabelText('Running above this value') as HTMLInputElement;
 /** The "Model settings" section auto-collapses once a model is fully
  *  configured — open it first when a test needs to reach a
  *  field inside it. A no-op if it's already open (incomplete model). */
@@ -365,7 +376,7 @@ beforeEach(() => {
     mockEmit.mockClear().mockResolvedValue(undefined);
     mockClose.mockClear().mockResolvedValue(undefined);
     mockUpdateWorkspaceData.mockReset().mockImplementation(async (id: string, patch: (s: any) => any) => {
-        const prev = { id, failureGroupState: { groups: [makeGroup()], models: [makeModel()], runningConditionNoneConfirmed: true, rcLegacyNotice: null, runningConditionTimePeriods: ALL_TIME_TRAIN, runningConditionTestPeriods: ONE_TEST } };
+        const prev = { id, failureGroupState: { groups: [makeGroup()], models: [makeModel()], runningConditionFilters: [RC_ON], rcLegacyNotice: null, runningConditionTimePeriods: ALL_TIME_TRAIN, runningConditionTestPeriods: ONE_TEST } };
         return patch(prev);
     });
     mockLoadWorkspaceData.mockReset();
@@ -936,7 +947,7 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             expect(screen.queryByTestId('results-placeholder')).toBeNull();
 
             fireEvent.click(screen.getByTestId('rc-card-open'));
-            fireEvent.click(screen.getByTestId('rc-mode-none'));
+            setRcLine('TAG1', '0');
             // Edits only change the modal's draft until Apply.
             expect(screen.getByTestId('results-rc-locked')).toBeTruthy();
             fireEvent.click(screen.getByTestId('rc-apply'));
@@ -1036,7 +1047,7 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
         it('an invalid workspace period locks with "Fix the running condition first" and the same "Running condition ↑" link', async () => {
             const periods = [{ id: 'x', start: '2026-02-01T00:00', end: '2026-01-05T00:00' }];
             render(<BuildModelWindow />);
-            await deliverData({ failureGroupState: { groups: [makeGroup()], models: [makeModel()], runningConditionNoneConfirmed: true, runningConditionTimePeriods: periods } });
+            await deliverData({ failureGroupState: { groups: [makeGroup()], models: [makeModel()], runningConditionFilters: [RC_ON], runningConditionTimePeriods: periods } });
             expect(screen.getByTestId('results-rc-locked').textContent).toMatch(/Fix the running condition first/);
             expect(document.querySelector('.wb3-kpis'), 'no KPI strip without a preview').toBeNull();
             expect(screen.getByTestId('results-rc-locked').textContent).toMatch(/can train until it is fixed — open Running condition ↑$/);
@@ -1044,7 +1055,7 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
         });
 
         it('a Custom-mode model is NOT locked by an unset workspace condition (it has its own)', async () => {
-            const custom = makeModel({ runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true });
+            const custom = makeModel({ runningConditionMode: 'custom', customRunningConditionFilters: [RC_ON] });
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: { groups: [makeGroup()], models: [custom], runningConditionNoneConfirmed: false, rcLegacyNotice: null } });
             expect(screen.queryByTestId('results-rc-locked')).toBeNull();
@@ -1057,7 +1068,11 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
                 fireEvent.click(trainSensorBtn());
                 await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
             });
-            expect(mockInvoke).toHaveBeenCalledWith('compute_sensor_stats', expect.objectContaining({ sensor: 'TAG1', filter: null }));
+            // the workspace's one condition (TAG1 > 0) filters the rows
+            expect(mockInvoke).toHaveBeenCalledWith('compute_sensor_stats', expect.objectContaining({
+                sensor: 'TAG1',
+                filter: expect.objectContaining({ value_filters: [{ sensor: 'TAG1', operation: 'greater_than', value1: 0, value2: null }] }),
+            }));
             const written = (await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value).failureGroupState;
             expect(written.models[0].lastTrainedAt).toBeTruthy();
             expect(written.models[0].trainedFingerprint).toBeTruthy();
@@ -1431,7 +1446,7 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
     });
 
     describe('running-condition gate (Feature 4-B, unchanged logic)', () => {
-        const REASON = 'Set the running condition first — a condition, or Use all rows';
+        const REASON = 'Set the running condition first — the sensor that shows the machine is running, and the value above which it runs';
         const cond = [{ id: 'rcf1', sensor: 'TAG1', operation: 'greater_than', value1: '1200', value2: '' }];
         async function deliverGate(models: any[], extra: Record<string, any> = {}) {
             let disk: any = { id: 'ws1', failureGroupState: { groups: [makeGroup()], models, runningConditionNoneConfirmed: false, rcLegacyNotice: null, ...extra } };
@@ -1466,11 +1481,11 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             expect(trainButton().disabled).toBe(false);
         });
 
-        it('confirming "No condition — use all rows" from the Edit… modal enables Train', async () => {
+        it('setting "Machine is running when … is above …" from the Edit… modal enables Train', async () => {
             render(<BuildModelWindow />);
             await deliverGate([makeModel()]);
             fireEvent.click(screen.getByTestId('rc-card-open'));
-            fireEvent.click(screen.getByTestId('rc-mode-none'));
+            setRcLine('TAG1', '5');
             // Still gated until Apply: a draft never leaks into the gate.
             expect(trainButton().disabled).toBe(true);
             fireEvent.click(screen.getByTestId('rc-apply'));
@@ -1517,39 +1532,30 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
 
             cleanup();
             render(<BuildModelWindow />);
-            await deliverData({ failureGroupState: { groups: [makeGroup()], models: [makeModel()], runningConditionNoneConfirmed: true } });
+            await deliverData({ failureGroupState: { groups: [makeGroup()], models: [makeModel()], runningConditionFilters: [RC_ON] } });
             expect(screen.getByTestId('rc-card').getAttribute('data-state')).toBe('set');
         });
 
         it('"Edit…" opens the modal wrapping the existing RunningConditionPanel', async () => {
             render(<BuildModelWindow />);
-            // Configured via a real condition (not "No condition") so the modal
-            // does not auto-open AND the panel's condition-editing UI (not its
-            // "No condition" summary) is what's shown once opened.
-            await deliverData({ failureGroupState: { groups: [makeGroup()], models: [makeModel()], runningConditionNoneConfirmed: false, runningConditionFilters: [{ id: 'f1', sensor: 'TAG1', operation: 'greater_than', value1: '5', value2: '' }] } });
-            expect(screen.queryByText('Add condition')).toBeNull();
+            // Configured, so the modal does not auto-open.
+            await deliverData({ failureGroupState: { groups: [makeGroup()], models: [makeModel()], runningConditionFilters: [{ id: 'f1', sensor: 'TAG1', operation: 'greater_than', value1: '5', value2: '' }] } });
+            expect(screen.queryByTestId('rc-one')).toBeNull();
             fireEvent.click(screen.getByTestId('rc-card-open'));
-            expect(screen.getByText('Add condition')).toBeTruthy();
+            expect(rcValueInput().value).toBe('5');
             fireEvent.click(screen.getByLabelText('Close'));
-            expect(screen.queryByText('Add condition')).toBeNull();
+            expect(screen.queryByTestId('rc-one')).toBeNull();
         });
 
-        it('auto-opens the modal for a legacy workspace that is still unconfigured, and shows the legacy banner', async () => {
+        it('auto-opens the modal for a workspace that was never set; there is no legacy banner and no "Use all rows" way out', async () => {
             render(<BuildModelWindow />);
-            await deliverTracked({ groups: [makeGroup()], models: [makeModel()], runningConditionNoneConfirmed: false, runningConditionFilters: [], rcLegacyNotice: 'pending' });
-            expect(screen.getByTestId('rc-legacy-banner')).toBeTruthy();
-            expect(screen.getByText('Add condition')).toBeTruthy(); // modal auto-opened
-        });
-
-        it('"Keep using all data" confirms No condition and clears the legacy notice', async () => {
-            render(<BuildModelWindow />);
-            await deliverTracked({ groups: [makeGroup()], models: [makeModel()], runningConditionNoneConfirmed: false, runningConditionFilters: [], rcLegacyNotice: 'pending' });
-            fireEvent.click(screen.getByText('Keep using all data'));
-            await flush();
-            const fg = (await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value).failureGroupState;
-            expect(fg.runningConditionNoneConfirmed).toBe(true);
-            expect(fg.rcLegacyNotice).toBeNull();
+            await deliverTracked({ groups: [makeGroup()], models: [makeModel()], runningConditionFilters: [], rcLegacyNotice: 'pending' });
+            expect(screen.getByTestId('rc-one')).toBeTruthy(); // modal auto-opened
             expect(screen.queryByTestId('rc-legacy-banner')).toBeNull();
+            expect(screen.queryByText('Keep using all data')).toBeNull();
+            expect(screen.queryByTestId('rc-conversion-notice')).toBeNull();
+            // nothing to write back on hydration
+            expect(mockUpdateWorkspaceData).not.toHaveBeenCalled();
         });
 
         it('has no "N models can\'t be built yet" line any more — the Not-set card and each model\'s notice line say it', async () => {
@@ -1561,7 +1567,7 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             expect(screen.getByTestId('build-block-reason').textContent).toMatch(/Set the running condition first/);
             cleanup();
             render(<BuildModelWindow />);
-            await deliverData({ failureGroupState: { groups: [makeGroup()], models: [makeModel()], runningConditionNoneConfirmed: true } });
+            await deliverData({ failureGroupState: { groups: [makeGroup()], models: [makeModel()], runningConditionFilters: [RC_ON] } });
             expect(screen.queryByTestId('rc-blocked-summary')).toBeNull();
         });
     });
@@ -1665,7 +1671,7 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
 
             mockLoadWorkspaceData.mockResolvedValue({
                 id: 'ws2',
-                failureGroupState: { groups: [makeGroup({ no: 1, name: 'Other Group' })], models: [makeModel({ id: 'other', name: 'Other Project Model', targetSensor: 'OTHER1' })], runningConditionNoneConfirmed: true, rcLegacyNotice: null, runningConditionTimePeriods: ALL_TIME_TRAIN, runningConditionTestPeriods: ONE_TEST },
+                failureGroupState: { groups: [makeGroup({ no: 1, name: 'Other Group' })], models: [makeModel({ id: 'other', name: 'Other Project Model', targetSensor: 'OTHER1' })], runningConditionFilters: [RC_ON], rcLegacyNotice: null, runningConditionTimePeriods: ALL_TIME_TRAIN, runningConditionTestPeriods: ONE_TEST },
             });
             await fire('build-model-data', {
                 workspaceId: 'ws2',
@@ -1684,7 +1690,7 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             mockLoadWorkspaceData.mockReturnValueOnce(new Promise(res => { resolveFirst = res; }));
             mockLoadWorkspaceData.mockResolvedValueOnce({
                 id: 'ws1',
-                failureGroupState: { groups: [makeGroup()], models: [makeModel({ id: 'new', name: 'Fresh Model', targetSensor: 'TAG2' })], runningConditionNoneConfirmed: true, rcLegacyNotice: null, runningConditionTimePeriods: ALL_TIME_TRAIN, runningConditionTestPeriods: ONE_TEST },
+                failureGroupState: { groups: [makeGroup()], models: [makeModel({ id: 'new', name: 'Fresh Model', targetSensor: 'TAG2' })], runningConditionFilters: [RC_ON], rcLegacyNotice: null, runningConditionTimePeriods: ALL_TIME_TRAIN, runningConditionTestPeriods: ONE_TEST },
             });
             const payload = {
                 workspaceId: 'ws1', sensorHeaders: ['TAG1'], sensorMetadata: [],
@@ -1695,7 +1701,7 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             expect(screen.getAllByText('TAG2').length).toBeGreaterThan(0);
 
             await act(async () => {
-                resolveFirst({ id: 'ws1', failureGroupState: { groups: [makeGroup()], models: [makeModel({ id: 'old', name: 'Stale Model', targetSensor: 'TAG3' })], runningConditionNoneConfirmed: true, rcLegacyNotice: null, runningConditionTimePeriods: ALL_TIME_TRAIN, runningConditionTestPeriods: ONE_TEST } });
+                resolveFirst({ id: 'ws1', failureGroupState: { groups: [makeGroup()], models: [makeModel({ id: 'old', name: 'Stale Model', targetSensor: 'TAG3' })], runningConditionFilters: [RC_ON], rcLegacyNotice: null, runningConditionTimePeriods: ALL_TIME_TRAIN, runningConditionTestPeriods: ONE_TEST } });
                 await Promise.resolve();
                 await Promise.resolve();
             });
@@ -1738,7 +1744,7 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
                     id: 'ws1',
                     failureGroupState: {
                         groups: [makeGroup()], models: [makeModel({ name: 'Renamed Model' })],
-                        runningConditionNoneConfirmed: true, rcLegacyNotice: null, runningConditionTimePeriods: ALL_TIME_TRAIN, runningConditionTestPeriods: ONE_TEST,
+                        runningConditionFilters: [RC_ON], rcLegacyNotice: null, runningConditionTimePeriods: ALL_TIME_TRAIN, runningConditionTestPeriods: ONE_TEST,
                     },
                 });
                 await closePromise;
@@ -1765,7 +1771,7 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             let resolveUpdate!: (v: unknown) => void;
             mockUpdateWorkspaceData.mockImplementationOnce(() => new Promise((res) => { resolveUpdate = res; }));
             // The write only starts at Apply (draft edits never write).
-            fireEvent.click(screen.getByText('Add condition'));
+            setRcLine('TAG1', '1');
             fireEvent.click(screen.getByTestId('rc-apply'));
 
             const preventDefault = vi.fn();
@@ -1901,7 +1907,7 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
                     id: 'ws1',
                     failureGroupState: {
                         groups: [makeGroup()], models: [makeModel({ status: true })],
-                        runningConditionNoneConfirmed: true, rcLegacyNotice: null, runningConditionTimePeriods: ALL_TIME_TRAIN, runningConditionTestPeriods: ONE_TEST,
+                        runningConditionFilters: [RC_ON], rcLegacyNotice: null, runningConditionTimePeriods: ALL_TIME_TRAIN, runningConditionTestPeriods: ONE_TEST,
                     },
                 });
             });
@@ -1962,8 +1968,8 @@ describe('Custom running-condition editor (2026-09-30 port)', () => {
         fireEvent.click(screen.getByRole('button', { name: 'Custom' }));
         expect(screen.getByTestId('custom-rc-editor')).toBeTruthy();
         // The workspace SCORING periods are copied too (seedCustomFromWorkspace).
-        expect(screen.getByTestId('pm-seed-note').textContent).toMatch(/Copied 1 train period, 1 scoring period and 1 condition from Workspace/);
-        const ownValue = () => within(screen.getByTestId('custom-condition')).getByLabelText('Value') as HTMLInputElement;
+        expect(screen.getByTestId('pm-seed-note').textContent).toMatch(/Copied 1 train period, 1 scoring period and the running condition from Workspace/);
+        const ownValue = () => within(screen.getByTestId('custom-condition')).getByLabelText('Running above this value') as HTMLInputElement;
         expect(ownValue().value).toBe('5');
         expect(within(screen.getByTestId('custom-test-periods')).getByTestId('test-row-1')).toBeTruthy();
 
@@ -1996,42 +2002,46 @@ describe('Custom running-condition editor (2026-09-30 port)', () => {
         // Workspace never discarded it) and, because the draft's own custom
         // list is no longer empty, this second switch does not re-seed (no
         // note this time).
-        expect((within(screen.getByTestId('custom-condition')).getByLabelText('Value') as HTMLInputElement).value).toBe('5');
+        expect((within(screen.getByTestId('custom-condition')).getByLabelText('Running above this value') as HTMLInputElement).value).toBe('5');
         expect(screen.queryByTestId('pm-seed-note')).toBeNull();
     });
 
-    it('"Use all rows", the AND/OR pill, and the collapsed summary line ("Custom · 2 conditions · 0 train · 0 scoring")', async () => {
+    it('the own line: the Custom hint while it is not set, and the collapsed summary counts only a COMPLETE line ("Custom · running condition not set" / "Custom · own running condition")', async () => {
         render(<BuildModelWindow />);
-        // no workspace conditions/periods (train or scoring) set — nothing to seed
-        await deliverData({ failureGroupState: { groups: [makeGroup()], models: [makeModel()], runningConditionTimePeriods: [], runningConditionTestPeriods: [] } });
+        // no workspace condition / periods (train or scoring) set — nothing to seed
+        await deliverData({ failureGroupState: { groups: [makeGroup()], models: [makeModel()], runningConditionFilters: [], runningConditionTimePeriods: [], runningConditionTestPeriods: [] } });
+        fireEvent.click(screen.getByLabelText('Close')); // the auto-opened workspace modal
         openSettings();
         fireEvent.click(screen.getByRole('button', { name: 'Custom' }));
         expect(screen.queryByTestId('pm-seed-note')).toBeNull();
         const own = () => within(screen.getByTestId('custom-condition'));
+        const line = () => screen.getByTestId('custom-rc-one');
+        const toggle = () => fireEvent.click(screen.getByText('Model settings', { selector: 'b' }));
+        // one line, no operator / AND-OR / Use all rows
+        for (const id of ['rc-add-condition', 'rc-combine', 'rc-mode-none']) expect(own().queryByTestId(id), id).toBeNull();
+        expect(own().getByTestId('rc-unset-warning').textContent).toMatch(/This model can’t be trained until it is set\.$/);
 
-        fireEvent.click(own().getByTestId('rc-add-condition'));
-        fireEvent.click(own().getByTestId('rc-add-condition'));
-        expect(own().getByTestId('rc-combine').textContent).toBe('AND');
-        fireEvent.click(own().getByTestId('rc-combine'));
-        expect(own().getByTestId('rc-combine').textContent).toBe('OR');
-
-        // Collapse "Model settings" and check the summary line, then open it again.
-        fireEvent.click(screen.getByText('Model settings', { selector: 'b' }));
-        expect(screen.getByText(/Custom · 2 conditions · 0 train · 0 scoring/)).toBeTruthy();
-        fireEvent.click(screen.getByText('Model settings', { selector: 'b' }));
-
-        fireEvent.click(own().getByTestId('rc-mode-none'));
-        expect(own().getByTestId('rc-mode-none').getAttribute('aria-checked')).toBe('true');
-        expect(own().getByTestId('rc-none-note').textContent).toContain('Your saved conditions are kept but not applied.');
-        fireEvent.click(screen.getByText('Model settings', { selector: 'b' }));
-        expect(screen.getByText(/Custom · all rows · 0 train · 0 scoring/)).toBeTruthy();
+        toggle();
+        expect(screen.getByText(/Custom · running condition not set · 0 train · 0 scoring/)).toBeTruthy();
+        toggle();
+        // a value without a sensor is not a running condition yet
+        setRcLine(null, '42', line());
+        expect(own().getByTestId('rc-unset-warning').textContent).toBe('Pick the sensor that shows the machine is running. This model can’t be trained until it is set.');
+        toggle();
+        expect(screen.getByText(/Custom · running condition not set · 0 train · 0 scoring/)).toBeTruthy();
+        toggle();
+        setRcLine('TAG2', null, line());
+        expect(own().queryByTestId('rc-unset-warning')).toBeNull();
+        expect(own().getByTestId('rc-one-note').textContent).toMatch(/for this model\.$/);
+        toggle();
+        expect(screen.getByText(/Custom · own running condition · 0 train · 0 scoring/)).toBeTruthy();
     });
 
     // Workbench redesign §5 "Custom running condition": a reason about the model's OWN running
     // condition says where to fix it — and, once Model settings is open, points at the field.
     it('own invalid train period: "Fix P1\'s end above" while Model settings is open, "Own running condition: P1 ends before it starts. Fix it in Model settings" once it is closed', async () => {
         const own = makeModel({
-            runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true,
+            runningConditionMode: 'custom', customRunningConditionFilters: [RC_ON],
             filterTimePeriods: [{ id: 'o1', start: '2026-03-01T00:00', end: '2026-02-01T00:00' }],
         });
         render(<BuildModelWindow />);
@@ -2051,8 +2061,8 @@ describe('Custom running-condition editor (2026-09-30 port)', () => {
         expect(document.body.textContent).not.toMatch(/Period 1/);
     });
 
-    it('own list without a train period / without a condition: "Add a train period above" and "Set a condition above, or choose Use all rows"', async () => {
-        const noTrain = makeModel({ runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true, filterTimePeriods: [] });
+    it('own list without a train period / without a condition: "Add a train period above" and "Pick the sensor and the value under …"', async () => {
+        const noTrain = makeModel({ runningConditionMode: 'custom', customRunningConditionFilters: [RC_ON], filterTimePeriods: [] });
         render(<BuildModelWindow />);
         await deliverData({ failureGroupState: { groups: [makeGroup()], models: [noTrain] } });
         const reason = () => screen.getByTestId('build-block-reason').textContent;
@@ -2064,8 +2074,8 @@ describe('Custom running-condition editor (2026-09-30 port)', () => {
 
         // add a train period -> the next thing missing is the condition
         fireEvent.click(within(screen.getByTestId('custom-periods')).getByTestId('period-add'));
-        fireEvent.click(within(screen.getByTestId('custom-condition')).getByTestId('rc-mode-condition'));
-        expect(reason()).toBe('Set a condition above, or choose Use all rows');
+        setRcLine(null, '', screen.getByTestId('custom-rc-one')); // the value cleared: no condition
+        expect(reason()).toBe('Pick the sensor and the value under “When the machine is running” above');
         expect(within(screen.getByTestId('custom-condition')).getByTestId('rc-unset-warning')).toBeTruthy();
         fireEvent.click(screen.getByText('Model settings', { selector: 'b' }));
         expect(reason()).toBe('Own running condition: not set. Fix it in Model settings');
@@ -2101,8 +2111,10 @@ describe('Custom running-condition editor (2026-09-30 port)', () => {
         await waitFor(() => expect(periodCountCalls()).toHaveLength(2));
         await act(async () => { await new Promise(r => setTimeout(r, 400)); });
         expect(periodCountCalls()).toHaveLength(2);
-        const cardCall = periodCountCalls().find(c => c.filter === null)!;
-        const trainCall = periodCountCalls().find(c => c.filter !== null)!;
+        // the card counts the workspace's condition (TAG1 > 0), this model its own (TAG2 > 7)
+        const sensorOf = (c: { filter: unknown }) => (c.filter as { value_filters?: { sensor: string }[] } | null)?.value_filters?.[0]?.sensor;
+        const cardCall = periodCountCalls().find(c => sensorOf(c) === 'TAG1')!;
+        const trainCall = periodCountCalls().find(c => sensorOf(c) === 'TAG2')!;
         expect(cardCall.periods).toEqual(ALL_TIME_TRAIN.map(p => ({ start: p.start || null, end: p.end || null })));
         const loads = mockLoadWorkspaceData.mock.calls.length;
 
@@ -2145,7 +2157,7 @@ describe('Custom running-condition editor (2026-09-30 port)', () => {
     it('on the Health score page nothing is counted or re-read for the Custom panel, even with Model settings left open', async () => {
         mockInvoke.mockImplementation(defaultInvoke);
         const own = withTrained(makeModel({
-            runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true,
+            runningConditionMode: 'custom', customRunningConditionFilters: [RC_ON],
             filterTimePeriods: [{ id: 'o1', start: '2026-02-01T00:00', end: '2026-02-28T23:59' }],
             customTestPeriods: [{ id: 'o2', start: '2026-03-01T00:00', end: '2026-03-10T00:00' }],
         }));
@@ -2989,8 +3001,7 @@ describe('Running Condition Filter modal — open/close with ZERO edits must not
     // persist resolves, using the SAME real `withFailureGroupState` used in
     // production, against a shared fake "disk".
     it('(d) a stale-mirror Dashboard-style autosave racing in right after a real RC edit does NOT clobber it, when the autosave re-reads disk fresh first (current Dashboard.tsx behavior)', async () => {
-        // Two conditions: the AND/OR pill only exists BETWEEN condition rows.
-        const fg = { ...seedConfiguredWs(), runningConditionFilters: [seededFilter, { id: 'f2', sensor: 'TAG2', operation: 'less_than' as const, value1: '3', value2: '' }] };
+        const fg = seedConfiguredWs();
         render(<BuildModelWindow />);
         await deliverData({ failureGroupState: fg });
 
@@ -3004,9 +3015,9 @@ describe('Running Condition Filter modal — open/close with ZERO edits must not
         });
 
         fireEvent.click(screen.getByTestId('rc-card-open'));
-        // Real user edit this time: flip combine AND -> stays, but change a
-        // filter value to prove a genuine write happens and must survive.
-        fireEvent.click(screen.getByTestId('rc-combine')); // OR -> AND
+        // Real user edit this time: change the value to prove a genuine
+        // write happens and must survive.
+        setRcLine(null, '9');
         fireEvent.click(screen.getByTestId('rc-apply')); // Edits only land on Apply
         await flush();
 
@@ -3014,9 +3025,9 @@ describe('Running Condition Filter modal — open/close with ZERO edits must not
         // its autosave, re-reading disk fresh first — current production
         // behavior in Dashboard.tsx's autosave effect (loadWorkspaceData
         // right before the write). This must see the fresh combine, not the
-        // stale 'or'.
+        // stale '5'.
         const freshFromDisk = disk.failureGroupState;
-        expect(freshFromDisk.runningConditionCombine).toBe('and'); // the real edit landed
+        expect(freshFromDisk.runningConditionFilters[0].value1).toBe('9'); // the real edit landed
         expect(freshFromDisk.runningConditionTimePeriods).toEqual([seededPeriod]); // untouched field survived
     });
 
@@ -3081,9 +3092,6 @@ describe('Running Condition Filter modal — draft + explicit Apply (2026-10-03)
     const writes = () => mockUpdateWorkspaceData.mock.calls.length;
     const fgChangedEmits = () => mockEmit.mock.calls.filter(c => c[0] === 'failure-group-state-changed');
 
-    /** Two conditions: the AND/OR pill only exists BETWEEN condition rows. */
-    const secondFilter = { id: 'f2', sensor: 'TAG2', operation: 'less_than' as const, value1: '3', value2: '' };
-    const twoConds = () => ({ ...fgSeed(), runningConditionFilters: [seededFilter, secondFilter] });
 
     async function openModal(fg: Record<string, any> = fgSeed()) {
         render(<BuildModelWindow />);
@@ -3095,17 +3103,17 @@ describe('Running Condition Filter modal — draft + explicit Apply (2026-10-03)
         fireEvent.click(screen.getByTestId('rc-card-open'));
     }
 
-    it('editing a value / combine only changes the draft — nothing is written or broadcast, and the Step-1 card keeps the persisted text', async () => {
-        await openModal(twoConds());
+    it('editing the value / sensor only changes the draft — nothing is written or broadcast, and the Step-1 card keeps the persisted text', async () => {
+        await openModal();
         const barBefore = screen.getByTestId('rc-card').textContent;
         fireEvent.change(screen.getByDisplayValue('5'), { target: { value: '9' } });
-        fireEvent.click(screen.getByTestId('rc-combine')); // OR -> AND
+        setRcLine('TAG2', null);
         await flush();
         expect(writes()).toBe(0);
         expect(fgChangedEmits()).toHaveLength(0);
         expect((screen.getByDisplayValue('9') as HTMLInputElement).value).toBe('9'); // the modal shows the draft
         expect(screen.getByTestId('rc-card').textContent).toBe(barBefore); // ...the card does not
-        expect(barBefore).toMatch(/> 5/);
+        expect(barBefore).toMatch(/Pump PressureTAG1 is above 5 bar/);
     });
 
     it('Apply is disabled while clean; while dirty it is enabled with the impact line next to it (which replaces "Changes not applied yet"); reverting the edit removes both', async () => {
@@ -3144,7 +3152,7 @@ describe('Running Condition Filter modal — draft + explicit Apply (2026-10-03)
         expect(writes()).toBe(1);
 
         // the main window moved on: this window is re-pointed at ws2, which has its OWN condition
-        const ws2Filter = { id: 'g1', sensor: 'TAG2', operation: 'less_than' as const, value1: '2', value2: '' };
+        const ws2Filter = { id: 'g1', sensor: 'TAG2', operation: 'greater_than' as const, value1: '2', value2: '' };
         await deliverData({
             id: 'ws2',
             failureGroupState: {
@@ -3155,7 +3163,7 @@ describe('Running Condition Filter modal — draft + explicit Apply (2026-10-03)
         await flush();
         fireEvent.click(screen.getByTestId('rc-card-details'));
         const chip = () => screen.getByTestId('rc-card-cond-chip').textContent;
-        expect(chip()).toContain('< 2');
+        expect(chip()).toContain('is above 2');
         mockEmit.mockClear();
 
         // ...and only now ws1's write resolves, with ws1's slice
@@ -3165,7 +3173,7 @@ describe('Running Condition Filter modal — draft + explicit Apply (2026-10-03)
             await Promise.resolve();
             await Promise.resolve();
         });
-        expect(chip()).toContain('< 2'); // still ws2's condition — not ws1's "> 9"
+        expect(chip()).toContain('is above 2'); // still ws2's condition — not ws1's "above 9"
         expect(screen.getAllByTestId('rc-card-cond-chip')).toHaveLength(1);
         expect(fgChangedEmits()).toHaveLength(0);
     });
@@ -3173,7 +3181,7 @@ describe('Running Condition Filter modal — draft + explicit Apply (2026-10-03)
     // With "Only when running" and no complete condition the count
     // is of EVERY row (an incomplete condition is not sent): that answer is not the
     // condition's, so it is not read — no running time, while the header pill says "Required".
-    it('"Only when running" without a complete condition: the caption claims no running time — no "100%", no running days on the rows, nothing about rows', async () => {
+    it('a half-filled line (no value yet): the caption claims no running time — no "100%", no running days on the rows, nothing about rows', async () => {
         // the condition row has no value yet: the workspace is "not set", so the modal opens by itself
         render(<BuildModelWindow />);
         await deliverData({ failureGroupState: { ...fgSeed(), runningConditionFilters: [{ ...seededFilter, value1: '' }] } });
@@ -3187,14 +3195,10 @@ describe('Running Condition Filter modal — draft + explicit Apply (2026-10-03)
         expect(screen.queryByTestId('period-running-1')).toBeNull();
         expect(screen.getByTestId('rc-caption').textContent).not.toMatch(/100%/);
         // completing the condition brings the running time (days — never a number of rows)
-        fireEvent.change(within(screen.getByTestId('rc-cond-1')).getByLabelText('Value'), { target: { value: '5' } });
+        fireEvent.change(rcValueInput(), { target: { value: '5' } });
         await waitFor(() => expect(screen.getByTestId('rc-caption-train').textContent).toBe('31 d train (about 20 d running time)'), { timeout: 3000 });
         expect(screen.getByTestId('rc-caption').getAttribute('data-rows')).toBe('counted');
         expect(screen.getByTestId('period-running-1').textContent).toBe(' · 20 d running');
-        expectCaptionHasNoRowCount();
-        // "Use all rows" is a configured choice: every row in the periods IS what is trained on
-        fireEvent.click(screen.getByTestId('rc-mode-none'));
-        await waitFor(() => expect(screen.getByTestId('rc-caption-train').textContent).toBe('31 d train (about 25 d running time)'), { timeout: 3000 });
         expectCaptionHasNoRowCount();
         expect(screen.getByRole('dialog', { name: 'Running condition' }).textContent).not.toMatch(/800 of|1,000 of|5,000|16%|20%/);
     });
@@ -3216,7 +3220,7 @@ describe('Running Condition Filter modal — draft + explicit Apply (2026-10-03)
                 makeModel({ id: 'm2', name: 'Complete', targetSensor: 'TAG2', status: true }),
                 makeModel({
                     id: 'm3', name: 'Own', targetSensor: 'TAG3', status: true, runningConditionMode: 'custom',
-                    customRunningConditionNoneConfirmed: true, filterTimePeriods: [seededPeriod], customTestPeriods: ONE_TEST,
+                    customRunningConditionFilters: [RC_ON], filterTimePeriods: [seededPeriod], customTestPeriods: ONE_TEST,
                 }),
                 makeModel({ id: 'm4', name: 'Untrained', kind: 'relationship', targetSensor: 'TAG1', predictorSensors: ['TAG2'] }),
             ];
@@ -3469,21 +3473,20 @@ describe('Running Condition Filter modal — draft + explicit Apply (2026-10-03)
     });
 
     it('Apply writes ONCE with all four fields, broadcasts once, closes the modal, and a reopen shows the applied values', async () => {
-        await openModal(twoConds());
+        await openModal();
         fireEvent.change(screen.getByDisplayValue('5'), { target: { value: '9' } });
-        fireEvent.click(screen.getByTestId('rc-combine')); // OR -> AND
         fireEvent.click(apply());
         await flush();
 
         expect(writes()).toBe(1);
         const written = (await mockUpdateWorkspaceData.mock.results[0].value).failureGroupState;
-        expect(written.runningConditionFilters).toEqual([{ ...seededFilter, value1: '9' }, secondFilter]);
-        expect(written.runningConditionCombine).toBe('and');
+        expect(written.runningConditionFilters).toEqual([{ ...seededFilter, value1: '9' }]);
+        expect(written.runningConditionCombine).toBe('or'); // an old file's value is left alone (one condition: it no longer matters)
         expect(written.runningConditionTimePeriods).toEqual([seededPeriod]);
         expect(written.runningConditionNoneConfirmed).toBe(false);
         expect(fgChangedEmits()).toHaveLength(1);
         expect(screen.queryByRole('dialog', { name: 'Running condition' })).toBeNull();
-        expect(screen.getByTestId('rc-card').textContent).toMatch(/> 9/); // persisted text updated
+        expect(screen.getByTestId('rc-card').textContent).toMatch(/is above 9/); // persisted text updated
 
         fireEvent.click(screen.getByTestId('rc-card-open'));
         expect(screen.getByDisplayValue('9')).toBeTruthy();
@@ -3583,7 +3586,7 @@ describe('Running Condition Filter modal — draft + explicit Apply (2026-10-03)
         await deliverData({ failureGroupState: fg });
         statefulUpdateMock(fg.models, fg);
         fireEvent.click(screen.getByTestId('rc-card-open'));
-        fireEvent.click(screen.getByTestId('rc-mode-none'));
+        setRcLine('TAG1', '5');
         expect(screen.getByTestId('rc-card').getAttribute('data-state')).toBe('unset');
         fireEvent.click(apply());
         await flush();
@@ -3635,7 +3638,7 @@ describe('Running condition Step 1 — header, card, settings modal preview (202
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: fg });
             statefulUpdateMock(fg.models, fg);
-            fireEvent.click(screen.getByTestId('rc-mode-none')); // the unset workspace auto-opened the modal
+            setRcLine('TAG1', '5'); // the unset workspace auto-opened the modal
             expect(state()).toBe('unset');
             fireEvent.click(screen.getByTestId('rc-apply'));
             await flush();
@@ -3653,7 +3656,7 @@ describe('Running condition Step 1 — header, card, settings modal preview (202
             expect(screen.getByTestId('rc-card').className).toContain('rcc-line');
             expect(screen.getByTestId('rc-card-time').textContent).toBe('Train 2 periods 2026/01/01 00:00 → End');
             expect(screen.getByTestId('rc-card-test').textContent).toBe('Scoring 1 period');
-            expect(screen.getByTestId('rc-card-cond').textContent).toBe('When running: 1 condition');
+            expect(screen.getByTestId('rc-card-cond').textContent).toBe('Running when Pump PressureTAG1 is above 5 bar');
             expect(screen.getByTestId('rc-card').textContent).not.toMatch(/Step\s*1/i);
             // Rust's `count_period_rows` of the persisted condition is asked (2 periods x 800 running
             // rows of 5,000) and settles — the line prints none of it ("1,600 rows · 32%" is gone).
@@ -3667,7 +3670,7 @@ describe('Running condition Step 1 — header, card, settings modal preview (202
             // the persisted scoring periods sit on their own "Scoring" row: S# · start → end
             expect(within(screen.getByTestId('rc-card-test')).getByText('Scoring')).toBeTruthy();
             expect(screen.getAllByTestId('rc-card-test-chip').map(c => c.textContent)).toEqual(['S1 · 2024/01/01 00:00 → 2024/01/31 23:59']);
-            expect(screen.getByTestId('rc-card-cond-chip').textContent).toBe('Pump PressureTAG1 > 5 bar'); // Inline label (description then tag) + condition; description + unit come from the sensor metadata
+            expect(screen.getByTestId('rc-card-cond-chip').textContent).toBe('Pump PressureTAG1 is above 5 bar'); // Inline label (description then tag) + condition; description + unit come from the sensor metadata
             // …and the Details view prints none of it either: no number, no percentage, no share bar
             expectCardHasNoRowCount();
             expect(screen.getByTestId('rc-card').textContent).not.toMatch(/1,600|5,000|32%/);
@@ -3752,24 +3755,25 @@ describe('Running condition Step 1 — header, card, settings modal preview (202
             expect(screen.getByTestId('rc-card-use').childNodes).toHaveLength(0);
         });
 
-        it('Set with "Use all rows": "All rows — no condition" and ONE count call without a condition', async () => {
+        it('Set over the whole time range: the card names the one condition and asks ONE count call with it', async () => {
             render(<BuildModelWindow />);
             // one train period open at both ends = the whole time range, chosen explicitly
-            await deliverData({ failureGroupState: setFg({ runningConditionNoneConfirmed: true, runningConditionTimePeriods: ALL_TIME_TRAIN }) });
-            expect(within(screen.getByTestId('rc-card-cond')).getByText('All rows — no condition')).toBeTruthy();
+            await deliverData({ failureGroupState: setFg({ runningConditionFilters: [RC_ON], runningConditionTimePeriods: ALL_TIME_TRAIN }) });
+            expect(screen.getByTestId('rc-card-cond').textContent).toBe('Running when Pump PressureTAG1 is above 0 bar');
             await waitFor(() => expect(periodCountCalls()).toHaveLength(1));
             await flush();
-            expectCardHasNoRowCount(); // "All rows — no condition" names the condition; "1,000 rows · 20%" is gone
+            expectCardHasNoRowCount();
             expect(periodCountCalls()).toEqual([{
                 periods: ALL_TIME_TRAIN.map(p => ({ start: p.start || null, end: p.end || null })),
-                filter: null, expected_generation: null,
+                filter: { value_filters: [{ sensor: 'TAG1', operation: 'greater_than', value1: 0, value2: null }], combine: 'and' },
+                expected_generation: null,
             }]);
             expect(statsCalls()).toEqual([]);
         });
 
         it('Train/Test validation: NO train period = "Add a train period" on the card (no "0 rows") and no count query at all (never a whole-dataset count)', async () => {
             render(<BuildModelWindow />);
-            await deliverData({ failureGroupState: setFg({ runningConditionNoneConfirmed: true, runningConditionTimePeriods: [] }) });
+            await deliverData({ failureGroupState: setFg({ runningConditionFilters: [RC_ON], runningConditionTimePeriods: [] }) });
             await flush();
             expect(screen.getByTestId('rc-card-time').textContent).toBe('No train period');
             expect(screen.getByTestId('rc-card-no-train').textContent).toBe('Add a train period');
@@ -3857,14 +3861,23 @@ describe('Running condition Step 1 — header, card, settings modal preview (202
             expect(screen.getByTestId('rc-fix-period-pill')).toBeTruthy();
         });
 
-        it('the legacy banner sits UNDER the card (DOM order), not above it', async () => {
-            const fg = unsetFg({ rcLegacyNotice: 'pending' });
-            let disk: any = { id: 'ws1', failureGroupState: fg };
-            mockUpdateWorkspaceData.mockImplementation(async (_id: string, patch: (s: any) => any) => { disk = patch(disk); return disk; });
+        it('the conversion notice sits UNDER the card (DOM order), not above it; there is no legacy banner', async () => {
+            const fg = setFg({
+                runningConditionConversion: {
+                    result: 'converted', source: 'saved-status',
+                    before: { filters: [], combine: 'and', allRows: true, savedStatus: { sensor: 'TAG1', stopAtOrBelow: '5' } },
+                    after: { sensor: 'TAG1', value: '5' }, incompleteModelIds: [], customModels: [],
+                },
+            });
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: fg });
             const card = screen.getByTestId('rc-card');
-            expect(card.compareDocumentPosition(screen.getByTestId('rc-legacy-banner')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+            const notice = screen.getByTestId('rc-conversion-notice');
+            expect(card.compareDocumentPosition(notice) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+            expect(notice.textContent).toMatch(/Use all rows/);
+            expect(notice.textContent).toMatch(/taken from the export’s running status line/);
+            expect(notice.textContent).not.toMatch(/Models/); // nothing was set back to Incomplete
+            expect(screen.queryByTestId('rc-legacy-banner')).toBeNull();
             expect(screen.queryByTestId('rc-blocked-summary')).toBeNull(); // the blocked-models line is gone (workbench redesign)
             // ...and the old one-line bar is gone
             expect(document.querySelector('.bmw-rcbar')).toBeNull();
@@ -3879,7 +3892,7 @@ describe('Running condition Step 1 — header, card, settings modal preview (202
             expect(screen.getByTestId('results-rc-locked').textContent).toContain('Set the running condition first');
             expect(screen.getByTestId('results-rc-locked').textContent).toContain('can train until it is set — open Running condition ↑');
             expect(document.body.textContent).not.toMatch(/Step\s*1/i); // no text in the window says "Step 1"
-            const REASON = 'Set the running condition first — a condition, or Use all rows';
+            const REASON = 'Set the running condition first — the sensor that shows the machine is running, and the value above which it runs';
             const train = trainSensorBtn();
             expect(train.disabled).toBe(true);
             expect(train.title).toBe('Set the running condition first.');
@@ -3941,9 +3954,12 @@ describe('Running condition Step 1 — header, card, settings modal preview (202
             expect(dialog.className).toContain('bmw-modal--rc');
             expect(dlg.getByRole('heading', { name: 'Running condition' })).toBeTruthy();
             expect(dlg.getByText('Default for every model · a model can use its own on its settings (Custom)')).toBeTruthy();
-            expect([...dialog.querySelectorAll('.rcx-sec-h b')].map(b => b.textContent)).toEqual(['Train periods', 'Scoring periods', 'When the plant is running']);
+            expect([...dialog.querySelectorAll('.rcx-sec-h b')].map(b => b.textContent)).toEqual(['Train periods', 'Scoring periods', 'When the machine is running']);
             expect(dlg.getByTestId('rc-timeline')).toBeTruthy();
-            expect(dlg.getByTestId('rc-count-pill').textContent).toBe('1 condition');
+            // set: no "N conditions" / "No condition" pill any more (only Required while it is not set)
+            expect(dlg.queryByTestId('rc-count-pill')).toBeNull();
+            expect(dlg.queryByTestId('rc-required-pill')).toBeNull();
+            expect(dlg.getByTestId('rc-one-note').textContent).toBe('At or below 5 bar the machine counts as stopped — those rows are left out, and the export writes the same line as the machine’s running status.');
             expect(dlg.getAllByTestId(/^period-row-/)).toHaveLength(2);
             // gone with the redesign: the right-hand column, the numbered steps, the callouts
             expect(dlg.queryByTestId('rc-preview')).toBeNull();
@@ -3993,7 +4009,7 @@ describe('Running condition Step 1 — header, card, settings modal preview (202
             expect(periodCountCalls()).toHaveLength(CARD + 4); // one settled draft = two calls, no more (and the card asks nothing: nothing was applied)
             for (const c of periodCountCalls().slice(CARD + 2)) expect((c.filter as any).value_filters[0].value1).toBe(123);
             expect(screen.getByTestId('rc-card').textContent).toBe(cardBefore);
-            expect(screen.getByTestId('rc-card-cond-chip').textContent).toContain('> 5');
+            expect(screen.getByTestId('rc-card-cond-chip').textContent).toContain('is above 5');
         });
 
         it('moving a scoring date re-counts the scoring periods only (the train side is remembered)', async () => {
@@ -4110,7 +4126,7 @@ describe('Running condition Step 1 — header, card, settings modal preview (202
             fireEvent.click(screen.getByTestId('rc-apply'));
             await flush();
             fireEvent.click(screen.getByTestId('rc-card-details'));
-            expect(screen.getByTestId('rc-card-cond-chip').textContent).toContain('> 9');
+            expect(screen.getByTestId('rc-card-cond-chip').textContent).toContain('is above 9');
             // ONE new count for the newly persisted condition (the modal never counted "> 9": Apply
             // came before its debounce), and the optimistic mirror + the write's confirmation are
             // one settled state — not two calls
@@ -4120,44 +4136,19 @@ describe('Running condition Step 1 — header, card, settings modal preview (202
             expect(statsCalls()).toEqual([]);
         });
 
-        it('add / remove a condition and the AND/OR pill: all draft-only (nothing written) until Apply', async () => {
+        it('picking another sensor is draft-only (nothing written) until Apply; the line keeps its value', async () => {
             await open();
             mockUpdateWorkspaceData.mockClear();
-            fireEvent.click(screen.getByTestId('rc-add-condition'));
-            expect(screen.getByTestId('rc-cond-2')).toBeTruthy();
-            expect(screen.getByTestId('rc-combine').textContent).toBe('AND');
-            fireEvent.click(screen.getByTestId('rc-combine'));
-            expect(screen.getByTestId('rc-combine').textContent).toBe('OR');
-            fireEvent.click(within(screen.getByTestId('rc-cond-2')).getByLabelText('Remove condition'));
-            expect(screen.queryByTestId('rc-cond-2')).toBeNull();
-            expect(mockUpdateWorkspaceData).not.toHaveBeenCalled();
-        });
-
-        it('the two choice cards map to noneConfirmed: "Use all rows" -> Apply writes noneConfirmed: true and the card says so', async () => {
-            await open();
-            mockUpdateWorkspaceData.mockClear();
-            fireEvent.click(screen.getByTestId('rc-mode-none'));
-            fireEvent.click(screen.getByTestId('rc-apply'));
-            await flush();
-            const written = (await mockUpdateWorkspaceData.mock.results[0].value).failureGroupState;
-            expect(written.runningConditionNoneConfirmed).toBe(true);
-            expect(within(screen.getByTestId('rc-card-cond')).getByText('All rows — no condition')).toBeTruthy();
-        });
-
-        it('operator buttons: picking "between" in the draft shows min / max fields; nothing is written yet', async () => {
-            await open();
-            mockUpdateWorkspaceData.mockClear();
-            const ops = within(within(screen.getByTestId('rc-cond-1')).getByRole('group', { name: 'Condition operator' }));
-            fireEvent.click(ops.getByRole('button', { name: 'Between' }));
-            expect(within(screen.getByTestId('rc-cond-1')).getByPlaceholderText('min')).toBeTruthy();
-            expect(within(screen.getByTestId('rc-cond-1')).getByPlaceholderText('max')).toBeTruthy();
+            setRcLine('TAG2', null);
+            expect(rcValueInput().value).toBe('5');
+            expect((screen.getByTestId('rc-apply') as HTMLButtonElement).disabled).toBe(false);
             expect(mockUpdateWorkspaceData).not.toHaveBeenCalled();
         });
 
         it('the sensor field is the real single-select picker component (not a native <select>)', async () => {
             await open();
             sensorPickerModalProps.length = 0;
-            fireEvent.click(screen.getByTestId('rc-add-condition'));
+            setRcLine(null, '6'); // any re-render of the line
             const rcPickers = sensorPickerModalProps.filter(pr => pr.single && pr.noun === 'sensor');
             expect(rcPickers.length).toBeGreaterThan(0);
             expect(rcPickers[0]).toMatchObject({ noun: 'sensor' });
@@ -4233,8 +4224,9 @@ describe('Running condition Step 1 — header, card, settings modal preview (202
     });
 
     it('App.css defines the new blocks (and the old rcbar / collapsible-header rules are gone)', () => {
-        for (const sel of ['.rcc-card', '.rcc-card--req', '.rcc-card--bad', '.rcc-card--ok', '.rcm-body', '.rcm-scroll', '.rcm-per', '.rcm-per--bad', '.rcm-cond', '.rcm-joinbtn', '.bmw-modal--rc',
-            '.rct', '.rct-lane', '.rct-blk', '.rct-cap', '.rcx-sec', '.rcx-sec-h', '.rcx-line', '.rcx-radio', '.rcx-footnote', '.rc-impact', '.rc-notice']) {
+        for (const sel of ['.rcc-card', '.rcc-card--req', '.rcc-card--bad', '.rcc-card--ok', '.rcm-body', '.rcm-scroll', '.rcm-per', '.rcm-per--bad', '.bmw-modal--rc',
+            '.rct', '.rct-lane', '.rct-blk', '.rct-cap', '.rcx-sec', '.rcx-sec-h', '.rcx-line', '.rcx-footnote', '.rc-impact', '.rc-notice',
+            '.rs-row', '.rc1-row', '.rc1-row--unset', '.rc1-notice', '.rc1-grid']) {
             expect(() => cssBlock(sel), sel).not.toThrow();
         }
         expect(cssBlock('.bmw-modal--rc')).toMatch(/display:\s*flex/);
@@ -4242,13 +4234,15 @@ describe('Running condition Step 1 — header, card, settings modal preview (202
         expect(cssBlock('.bmw-modal--rc')).toMatch(/width:\s*min\(980px, 100%\)/);
         expect(cssBlock('.rcm-scroll')).toMatch(/overflow-y:\s*auto/);
         expect(cssBlock('.rcm-body')).not.toMatch(/grid-template-columns/);
-        // the sensor trigger of a condition row is capped (never the full row)
-        expect(cssBlock('.rcm-cond')).toMatch(/grid-template-columns:\s*minmax\(0, 360px\) auto 150px 28px/);
+        // the one line's sensor trigger is capped (never the full row)
+        expect(cssBlock('.rs-pick')).toMatch(/max-width:\s*360px/);
         // an invalid period: a thin red left edge, not a filled box
         expect(cssBlock('.rcm-per')).toMatch(/border-left:\s*2px solid transparent/);
         expect(cssBlock('.rcm-per--bad')).toMatch(/border-left-color:\s*var\(--danger\)/);
         expect(cssBlock('.rcm-per--bad')).not.toMatch(/background/);
-        for (const gone of ['.bmw-rcbar', '.f4-rc', '.f4-rc-h', '.f4-prow', '.wb2-steps', '.wb2-stp', '.wb2-sn', '.wb2-sline', '.rcm-preview', '.rcm-mcard', '.rcm-step', '.tpe-callout', '.rcm-sentence']) {
+        for (const gone of ['.bmw-rcbar', '.f4-rc', '.f4-rc-h', '.f4-prow', '.wb2-steps', '.wb2-stp', '.wb2-sn', '.wb2-sline', '.rcm-preview', '.rcm-mcard', '.rcm-step', '.tpe-callout', '.rcm-sentence',
+            // the multi-condition editor and the separate running-status line (2026-10-26)
+            '.rcm-cond', '.rcm-joinbtn', '.rcm-ops', '.rcx-radio', '.rcx-mode', '.rs-line', '.rs-note', '.rcc-andor']) {
             expect(() => cssBlock(gone), gone).toThrow();
         }
     });
@@ -4310,7 +4304,7 @@ describe('Incomplete immediately + Relationship fit cache key (health score phas
         const fgForStamp = { models: [], ...fgOver };
         const wsMode = withTrained(makeModel({ id: 'ws-mode', status: true }), fgForStamp);
         const customMode = withTrained(makeModel({
-            id: 'custom-mode', status: true, targetSensor: 'TAG2', runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true,
+            id: 'custom-mode', status: true, targetSensor: 'TAG2', runningConditionMode: 'custom', customRunningConditionFilters: [RC_ON],
         }), fgForStamp);
         const models = [wsMode, customMode];
         render(<BuildModelWindow />);
@@ -4364,7 +4358,7 @@ describe('Incomplete immediately + Relationship fit cache key (health score phas
     it('READ side: the same model with its snapshot still matching the recipes stays Complete', async () => {
         const recipes = [{ kind: 'formula' as const, tag: 'TAG1', formula: '$RAW * 3' }];
         const model = withTrained(makeModel({ id: 'sp', status: true, targetSensor: 'TAG1' }));
-        const trainedFormulas = snapshotTrainedFormulas(model as any, recipes, { models: [model as any], runningConditionTimePeriods: ALL_TIME_TRAIN, runningConditionNoneConfirmed: true } as any);
+        const trainedFormulas = snapshotTrainedFormulas(model as any, recipes, { models: [model as any], runningConditionTimePeriods: ALL_TIME_TRAIN, runningConditionFilters: [RC_ON] } as any);
         render(<BuildModelWindow />);
         await deliverData({ specialSensorRecipes: recipes, failureGroupState: { groups: [makeGroup()], models: [{ ...model, trainedFormulas }] } });
         await flush();
@@ -4396,7 +4390,7 @@ describe('Incomplete immediately + Relationship fit cache key (health score phas
         const fgBase = (models: any[]) => ({
             groups: [makeGroup()], models,
             runningConditionTimePeriods: ALL_TIME_TRAIN, runningConditionTestPeriods: ONE_TEST,
-            runningConditionNoneConfirmed: true, rcLegacyNotice: null,
+            runningConditionFilters: [RC_ON], rcLegacyNotice: null,
         });
         const trainedOn = (recipes: typeof R1) => {
             const model = withTrained(makeModel({ id: 'sp', status: true, targetSensor: 'TAG1' }));
@@ -4488,7 +4482,7 @@ describe('Incomplete immediately + Relationship fit cache key (health score phas
                 {},
                 { predictorSensors: ['TAG2', 'TAG3'] },
                 { relStiffness: 1_000_000 },
-                { runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true, filterTimePeriods: [{ id: 'p', start: '2026-01-01T00:00', end: '2026-02-01T00:00' }] },
+                { runningConditionMode: 'custom', customRunningConditionFilters: [RC_ON], filterTimePeriods: [{ id: 'p', start: '2026-01-01T00:00', end: '2026-02-01T00:00' }] },
             ]) {
                 cleanup();
                 mockInvoke.mockClear();
@@ -4820,7 +4814,7 @@ describe('Workbench two pages — shell + Model fit page (health score 3b-1)', (
                 for (const cb of listenCallbacks['failure-group-state-changed'] ?? []) {
                     cb({ payload: {
                         groups: [makeGroup()], models: [ind, { ...rel, relStiffness: 1_000_000 }],
-                        runningConditionNoneConfirmed: true, runningConditionFilters: [], runningConditionCombine: 'and', runningConditionTimePeriods: ALL_TIME_TRAIN, runningConditionTestPeriods: ONE_TEST,
+                        runningConditionFilters: [RC_ON], runningConditionCombine: 'and', runningConditionTimePeriods: ALL_TIME_TRAIN, runningConditionTestPeriods: ONE_TEST,
                         workspaceId: 'ws1', origin: 'dashboard',
                     } });
                 }
@@ -5387,7 +5381,7 @@ const hsSetPointWrites = async (before: unknown) => {
 const hsMarkBtn = () => screen.getByTestId('mark-complete') as HTMLButtonElement;
 const hsClickMark = async () => { await act(async () => { fireEvent.click(hsMarkBtn()); await Promise.resolve(); }); };
 const hsBlur = async (id: string) => { await act(async () => { fireEvent.blur(hsInput(id)); await Promise.resolve(); await Promise.resolve(); }); await flush(); };
-const EMPTY_WS_FG = { runningConditionNoneConfirmed: true, rcLegacyNotice: null, runningConditionTimePeriods: ALL_TIME_TRAIN, runningConditionTestPeriods: ONE_TEST };
+const EMPTY_WS_FG = { runningConditionFilters: [RC_ON], rcLegacyNotice: null, runningConditionTimePeriods: ALL_TIME_TRAIN, runningConditionTestPeriods: ONE_TEST };
 
 describe('Health score page - draft set points and when they are persisted (health score 3b-2)', () => {
     describe('draft: charts, score and Checks react to typing; nothing is written until the user is done', () => {
@@ -5427,7 +5421,7 @@ describe('Health score page - draft set points and when they are persisted (heal
                 for (const cb of listenCallbacks['failure-group-state-changed'] ?? []) {
                     cb({ payload: {
                         groups: [makeGroup()], models: [{ ...model, name: 'Renamed elsewhere' }],
-                        runningConditionNoneConfirmed: true, runningConditionFilters: [], runningConditionCombine: 'and', runningConditionTimePeriods: ALL_TIME_TRAIN, runningConditionTestPeriods: ONE_TEST,
+                        runningConditionFilters: [RC_ON], runningConditionCombine: 'and', runningConditionTimePeriods: ALL_TIME_TRAIN, runningConditionTestPeriods: ONE_TEST,
                         workspaceId: 'ws1', origin: 'dashboard',
                     } });
                 }
@@ -5895,7 +5889,7 @@ describe('Health score page - Mark complete (the ONLY way a model becomes Comple
         await waitFor(() => expect(hsMarkBtn().disabled).toBe(false));
         // another window changed a training input on disk after the preview was validated
         mockUpdateWorkspaceData.mockImplementation(async (_id: string, patch: (s: any) => any) =>
-            patch({ id: 'ws1', failureGroupState: { groups: [makeGroup()], models: [{ ...model, runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true, filterTimePeriods: [{ id: 'p', start: '2026-01-01T00:00', end: '2026-02-01T00:00' }] }], ...EMPTY_WS_FG } }));
+            patch({ id: 'ws1', failureGroupState: { groups: [makeGroup()], models: [{ ...model, runningConditionMode: 'custom', customRunningConditionFilters: [RC_ON], filterTimePeriods: [{ id: 'p', start: '2026-01-01T00:00', end: '2026-02-01T00:00' }] }], ...EMPTY_WS_FG } }));
         await hsClickMark();
         await flush();
         // Not Complete: the disk copy is what counts, and it is no longer fresh. This window follows it
@@ -6741,8 +6735,8 @@ describe('Train periods and scoring periods in the Build Model window', () => {
     describe('Custom mode: the model\'s own scoring periods live in Model settings', () => {
         it('switching to Custom shows the scoring periods editor next to the train periods; edits stay in the draft until Save', async () => {
             render(<BuildModelWindow />);
-            await deliverData({ failureGroupState: fgBase({ runningConditionNoneConfirmed: true }) });
-            statefulUpdateMock([makeModel()], fgBase({ runningConditionNoneConfirmed: true }));
+            await deliverData({ failureGroupState: fgBase({ runningConditionFilters: [RC_ON] }) });
+            statefulUpdateMock([makeModel()], fgBase({ runningConditionFilters: [RC_ON] }));
             openSettings();
             fireEvent.click(screen.getByRole('button', { name: 'Custom' }));
             const tests = within(screen.getByTestId('custom-test-periods'));
@@ -6770,7 +6764,7 @@ describe('Train periods and scoring periods — review fixes (2026-10-07)', () =
     const CUSTOM_TRAIN = [{ id: 'ct', start: '2024-01-01T00:00', end: '2024-01-11T00:00' }];
     const customInd = (over: Record<string, any> = {}) => withTrained(makeModel({
         healthSetPoints: HS_SNAP,
-        runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true,
+        runningConditionMode: 'custom', customRunningConditionFilters: [RC_ON],
         filterTimePeriods: CUSTOM_TRAIN, customTestPeriods: ONE_TEST,
         ...over,
     }));
@@ -6970,7 +6964,7 @@ describe('Train periods and scoring periods — review fixes (2026-10-07)', () =
 
             // the model's own list still carries a legacy label / event time: never sent
             const own = [{ id: 'o1', start: '2024-03-01T00:00', end: '2024-03-10T00:00', label: 'problem', eventTime: '2024-03-05T12:00' }];
-            const custom = await trainArgs(relModel({ runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true, filterTimePeriods: CUSTOM_TRAIN, customTestPeriods: own }));
+            const custom = await trainArgs(relModel({ runningConditionMode: 'custom', customRunningConditionFilters: [RC_ON], filterTimePeriods: CUSTOM_TRAIN, customTestPeriods: own }));
             expect(custom.test_periods).toEqual([{ start: '2024-03-01T00:00', end: '2024-03-10T00:00' }]);
 
             const none = await trainArgs(relModel(), { runningConditionTestPeriods: [] });
@@ -7384,7 +7378,7 @@ describe('train queue wiring (customer items 8 + 9)', () => {
         await mountModels([IND2()]);
         await clickTrainSensor();
         expect(strip()).toBeTruthy();
-        mockLoadWorkspaceData.mockResolvedValue({ id: 'ws2', failureGroupState: { groups: [makeGroup()], models: [makeModel({ id: 'w2', targetSensor: 'TAG1' })], runningConditionNoneConfirmed: true, rcLegacyNotice: null, runningConditionTimePeriods: ALL_TIME_TRAIN, runningConditionTestPeriods: ONE_TEST } });
+        mockLoadWorkspaceData.mockResolvedValue({ id: 'ws2', failureGroupState: { groups: [makeGroup()], models: [makeModel({ id: 'w2', targetSensor: 'TAG1' })], runningConditionFilters: [RC_ON], rcLegacyNotice: null, runningConditionTimePeriods: ALL_TIME_TRAIN, runningConditionTestPeriods: ONE_TEST } });
         await act(async () => {
             for (const cb of listenCallbacks['build-model-data'] ?? []) cb({ payload: { workspaceId: 'ws2', sensorHeaders: ['TAG1', 'TAG2'], sensorMetadata: [], metadata: { headers: ['timestamp', 'TAG1', 'TAG2'], total_rows: 1 } } });
             await Promise.resolve(); await Promise.resolve();
@@ -7424,7 +7418,7 @@ describe('train queue wiring — review fixes (phase 4)', () => {
         await Promise.resolve(); await Promise.resolve();
     });
     const repoint = async () => {
-        mockLoadWorkspaceData.mockResolvedValue({ id: 'ws2', failureGroupState: { groups: [makeGroup()], models: [makeModel({ id: 'w2', targetSensor: 'TAG1' })], runningConditionNoneConfirmed: true, rcLegacyNotice: null, runningConditionTimePeriods: ALL_TIME_TRAIN, runningConditionTestPeriods: ONE_TEST } });
+        mockLoadWorkspaceData.mockResolvedValue({ id: 'ws2', failureGroupState: { groups: [makeGroup()], models: [makeModel({ id: 'w2', targetSensor: 'TAG1' })], runningConditionFilters: [RC_ON], rcLegacyNotice: null, runningConditionTimePeriods: ALL_TIME_TRAIN, runningConditionTestPeriods: ONE_TEST } });
         await emitEvent('build-model-data', { workspaceId: 'ws2', sensorHeaders: ['TAG1', 'TAG2'], sensorMetadata: [], metadata: { headers: ['timestamp', 'TAG1', 'TAG2'], total_rows: 1 } });
         await flush();
     };
@@ -7796,7 +7790,7 @@ describe('Workbench redesign §1 — the page spine', () => {
             cleanup();
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: {
-                groups: [makeGroup()], models: [makeModel()], runningConditionNoneConfirmed: true,
+                groups: [makeGroup()], models: [makeModel()], runningConditionFilters: [RC_ON],
                 runningConditionTimePeriods: [{ id: 'x', start: '2026-02-01T00:00', end: '2026-01-05T00:00' }],
             } });
             expect(screen.getByTestId('rc-card').getAttribute('data-state')).toBe('invalid');
@@ -8712,7 +8706,7 @@ describe('Workbench redesign §7 — page states of every kind (phase D)', () =>
     each('%s — blocked by its own invalid Custom running condition: the reason is on the board and in the notice line; no filled button; Train sensor only points down', async (_n, k) => {
         mockInvoke.mockImplementation(healthInvoke);
         await mountK([k.make({
-            runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true,
+            runningConditionMode: 'custom', customRunningConditionFilters: [RC_ON],
             filterTimePeriods: [{ id: 'o1', start: '2026-03-01T00:00', end: '2026-02-01T00:00' }],
         })]);
         expect(within(screen.getByTestId('results-incomplete')).getByText("Fix P1's end above")).toBeTruthy();
@@ -8849,7 +8843,7 @@ describe('Workbench redesign §7 — page states of every kind (phase D)', () =>
     // Train sensor is a ghost that works, and the line under it must say so.
     each('%s — a Custom-mode model while the workspace running condition is unset: Train sensor is a working ghost and its line says nothing is blocked', async (_n, k) => {
         mockInvoke.mockImplementation(healthInvoke);
-        const custom = k.make({ runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true, filterTimePeriods: ALL_TIME_TRAIN });
+        const custom = k.make({ runningConditionMode: 'custom', customRunningConditionFilters: [RC_ON], filterTimePeriods: ALL_TIME_TRAIN });
         await mountK([custom], { runningConditionNoneConfirmed: false, rcLegacyNotice: null });
         fireEvent.click(screen.getByLabelText('Close')); // the auto-opened settings modal
         expect(screen.queryByTestId('results-rc-locked')).toBeNull();
@@ -8874,7 +8868,7 @@ describe('Workbench redesign §7 — page states of every kind (phase D)', () =>
 
     it('a workspace-mode sibling of that Custom model IS blocked: the line names both — what trains, and what can\'t', async () => {
         mockInvoke.mockImplementation(healthInvoke);
-        const custom = makeModel({ id: 'i1', targetSensor: 'TAG2', runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true, filterTimePeriods: ALL_TIME_TRAIN });
+        const custom = makeModel({ id: 'i1', targetSensor: 'TAG2', runningConditionMode: 'custom', customRunningConditionFilters: [RC_ON], filterTimePeriods: ALL_TIME_TRAIN });
         const ws = makeModel({ id: 'r1', kind: 'relationship', targetSensor: 'TAG2', predictorSensors: ['TAG1'] });
         await mountK([custom, ws], { runningConditionNoneConfirmed: false, rcLegacyNotice: null });
         fireEvent.click(screen.getByLabelText('Close'));
@@ -9367,7 +9361,7 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
             rust({ running: () => 800 });
             // a Workspace-mode model that would otherwise be ready, and a Custom one that IS ready
             const ws = makeModel({ id: 'm1', targetSensor: 'TAG1' });
-            const own = makeModel({ id: 'm2', name: 'Own', targetSensor: 'TAG2', runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true, filterTimePeriods: [P_IN], customTestPeriods: S_IN });
+            const own = makeModel({ id: 'm2', name: 'Own', targetSensor: 'TAG2', runningConditionMode: 'custom', customRunningConditionFilters: [RC_ON], filterTimePeriods: [P_IN], customTestPeriods: S_IN });
             await mountB([ws, own], { runningConditionTimePeriods: [P_OUT] });
             await waitFor(() => expect(screen.getByTestId('rc-card').getAttribute('data-norows')).toBe('true'));
             // the condition IS set — the user did not just pick this period: no "needs fixing" card
@@ -9415,7 +9409,7 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
         // cause and the one place to fix it. Never "Couldn't load… Load it again" / "Training failed".
         it('a COMPLETE model with NO train period inside the data stays Complete (tab words, dots, filter counts): ONE "No data for this model in the loaded file" board with the cause and a working "Running condition ↑" link — no "Load it again", no dead Train link — on BOTH pages; Mark incomplete works, nothing else is written', async () => {
             rust({ running: () => 800, noRows: true });
-            const fgShape = { runningConditionFilters: [], runningConditionCombine: 'and', runningConditionTimePeriods: [P_OUT], runningConditionNoneConfirmed: true };
+            const fgShape = { runningConditionFilters: [RC_ON], runningConditionCombine: 'and', runningConditionTimePeriods: [P_OUT] };
             const base = makeModel({ id: 'm1', targetSensor: 'TAG1', healthSetPoints: HS_SNAP });
             const done: Record<string, any> = { ...withTrained(base, { models: [base], ...fgShape }), status: true };
             await mountB([done], { runningConditionTimePeriods: [P_OUT] });
@@ -9503,7 +9497,7 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
         // A load that failed for ANOTHER reason before the data's range was known keeps its own board —
         // but once the guard holds, the menu row / Train sensor it pointed at cannot train the model.
         it('a load that failed for another reason, then "no train period inside the data" becomes known: the "Couldn\'t load…" board drops its Train sensor ▾ menu link and the "Training failed" board says "Train sensor ↑" as plain text — never a link to a disabled control', async () => {
-            const fgShape = { runningConditionFilters: [], runningConditionCombine: 'and', runningConditionTimePeriods: [P_OUT], runningConditionNoneConfirmed: true };
+            const fgShape = { runningConditionFilters: [RC_ON], runningConditionCombine: 'and', runningConditionTimePeriods: [P_OUT] };
             const base = makeModel({ id: 'm1', targetSensor: 'TAG1', healthSetPoints: HS_SNAP });
             const trained: Record<string, any> = withTrained(base, { models: [base], ...fgShape });
             for (const model of [{ ...trained, status: true }, trained]) {
@@ -9549,7 +9543,7 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
         it('[inside, outside]: ONE train period inside the data next to one outside it changes nothing — a COMPLETE model keeps its charts, its Health score page and Mark incomplete', async () => {
             rust({ running: () => 800 });
             const periods = [P_IN, { ...P_OUT, id: 'p2' }];
-            const fgShape = { runningConditionFilters: [], runningConditionCombine: 'and', runningConditionTimePeriods: periods, runningConditionNoneConfirmed: true };
+            const fgShape = { runningConditionFilters: [RC_ON], runningConditionCombine: 'and', runningConditionTimePeriods: periods };
             const base = makeModel({ id: 'm1', targetSensor: 'TAG1', healthSetPoints: HS_SNAP });
             const done: Record<string, any> = { ...withTrained(base, { models: [base], ...fgShape }), status: true };
             await mountB([done], { runningConditionTimePeriods: periods });
@@ -9590,7 +9584,7 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
             expect(periodCountCalls()).toHaveLength(CARD + 2); // the card, then train + scoring of the open modal
             expect(dlg.queryByTestId('rc-no-rows')).toBeNull();
 
-            type(dlg.getByPlaceholderText('value'), '500');
+            type(dlg.getByLabelText('Running above this value'), '500');
             // the draft changed: its count is not in yet — nothing is blocked on the OLD answer
             expect(dlg.queryByTestId('rc-no-rows')).toBeNull();
             expect(apply().disabled).toBe(false);
@@ -9616,7 +9610,7 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
             expect(screen.getByRole('dialog', { name: 'Running condition' })).toBeTruthy();
 
             // relaxing the condition: rows again, Apply allowed
-            type(dlg.getByPlaceholderText('value'), '6');
+            type(dlg.getByLabelText('Running above this value'), '6');
             await waitFor(() => expect(dlg.queryByTestId('rc-no-rows')).toBeNull(), { timeout: 3000 });
             await waitFor(() => expect(runningTime()).toBe('2.8'), { timeout: 3000 });
             expect(dlg.getByTestId('rc-caption').getAttribute('data-rows')).toBe('counted');
@@ -9635,9 +9629,8 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
             expect(dlg.queryByTestId('period-no-rows-1')).toBeNull();
             expect(dlg.queryByTestId('rc-no-rows')).toBeNull();
             expect(dlg.getByTestId('period-row-2').getAttribute('data-invalid')).toBeNull();
-            fireEvent.click(dlg.getByTestId('rc-mode-none')); // any edit
-            fireEvent.click(dlg.getByTestId('rc-mode-condition'));
-            fireEvent.click(dlg.getByTestId('rc-mode-none'));
+            fireEvent.change(dlg.getByLabelText('Running above this value'), { target: { value: '3' } }); // any edit
+            expect(apply().disabled).toBe(false);
             expect(screen.queryByTestId('rc-apply-block')).toBeNull();
         });
 
@@ -9648,7 +9641,7 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
             const dlg = openRc();
             await waitFor(() => expect(dlg.getByTestId('test-no-rows-1').textContent).toBe('no running rows in S1'));
             expect(dlg.queryByTestId('rc-no-rows')).toBeNull();
-            type(dlg.getByPlaceholderText('value'), '7');
+            type(dlg.getByLabelText('Running above this value'), '7');
             await waitFor(() => expect(dlg.getByTestId('test-no-rows-1')).toBeTruthy(), { timeout: 3000 });
             expect(screen.queryByTestId('rc-apply-block')).toBeNull();
             expect(apply().disabled).toBe(false);
@@ -9662,7 +9655,7 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
             await waitFor(() => expect(dlg.getByTestId('rc-caption').getAttribute('data-rows')).toBe('error'));
             expect(dlg.queryByTestId('rc-caption-rows')).toBeNull(); // no "Couldn't count the rows right now" either
             expect(dlg.getByTestId('rc-caption').textContent).not.toMatch(/rows/);
-            type(dlg.getByPlaceholderText('value'), '500');
+            type(dlg.getByLabelText('Running above this value'), '500');
             await act(async () => { await new Promise(r => setTimeout(r, 500)); });
             expect(dlg.queryByTestId('rc-no-rows')).toBeNull();
             expect(screen.queryByTestId('rc-apply-block')).toBeNull();
@@ -9675,7 +9668,7 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
         it('the one-line card turns red ("Nothing to train on" — no "0 rows") and Train is blocked with that reason — nothing is written, and no second count is asked', async () => {
             rust({ running: () => 0 });
             const ws = makeModel({ id: 'm1', targetSensor: 'TAG1' });
-            const own = makeModel({ id: 'm2', name: 'Own', targetSensor: 'TAG2', runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true, filterTimePeriods: [P_IN], customTestPeriods: S_IN });
+            const own = makeModel({ id: 'm2', name: 'Own', targetSensor: 'TAG2', runningConditionMode: 'custom', customRunningConditionFilters: [RC_ON], filterTimePeriods: [P_IN], customTestPeriods: S_IN });
             await mountB([ws, own], { runningConditionNoneConfirmed: false, runningConditionFilters: [COND] });
             await waitFor(() => expect(screen.getByTestId('rc-card').getAttribute('data-norows')).toBe('true'));
             expect(screen.getByTestId('rc-card').getAttribute('data-state')).toBe('set');
@@ -9859,7 +9852,7 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
 
     describe('A Custom model\'s own lists: Save changes is blocked by exactly what blocks Apply (decision 2026-10-10)', () => {
         const customModel = (over: Record<string, any> = {}) => makeModel({
-            id: 'm1', targetSensor: 'TAG1', runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true,
+            id: 'm1', targetSensor: 'TAG1', runningConditionMode: 'custom', customRunningConditionFilters: [RC_ON],
             filterTimePeriods: [P_IN], customTestPeriods: S_IN, ...over,
         });
         const save = () => screen.getByTestId('save-changes') as HTMLButtonElement;
@@ -9917,11 +9910,11 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
             type(own().getByLabelText('P1 end'), EMPTY_END);
             expect(save().disabled).toBe(false); // the new count is not in yet
             await waitFor(() => expect(own().getByTestId('rc-no-rows')).toBeTruthy(), { timeout: 3000 });
-            // this model uses all rows: there is no condition to relax
-            expect(own().getByTestId('rc-no-rows').textContent).toBe('No rows match — nothing to train on. Widen a train period.');
+            // its one condition can be relaxed too
+            expect(own().getByTestId('rc-no-rows').textContent).toBe('No rows match — nothing to train on. Widen a train period or relax the condition.');
             expect(save().disabled).toBe(true);
             expect(footReason()).toBe('No rows to train on');
-            expect(save().title).toBe('No rows match — nothing to train on. Widen a train period in Model settings → Training data (Custom).');
+            expect(save().title).toBe('No rows match — nothing to train on. Widen a train period or relax the condition in Model settings → Training data (Custom).');
             expect(trainSensorBtn().disabled).toBe(true);
             expect(trainSensorBtn().title).toBe("Can't train: Individual — No rows to train on in its own training data");
             mockUpdateWorkspaceData.mockClear();
@@ -9952,11 +9945,11 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
 
         it('S3 — one order for the badge and the sentence: a Custom model with neither a condition nor a train period is told about the condition first', async () => {
             rust({ running: () => 800 });
-            await mountB([customModel({ customRunningConditionNoneConfirmed: false, filterTimePeriods: [] })]);
+            await mountB([customModel({ customRunningConditionFilters: [], filterTimePeriods: [] })]);
             expect(screen.getByTestId('tab-status-m1').getAttribute('title')).toBe('Needs condition');
-            expect(footReason()).toBe('Set a condition above, or choose Use all rows');
-            // the condition chosen: now the train period is what is missing — badge and sentence together
-            fireEvent.click(own().getByTestId('rc-mode-none'));
+            expect(footReason()).toBe('Pick the sensor and the value under “When the machine is running” above');
+            // the condition set: now the train period is what is missing — badge and sentence together
+            setRcLine('TAG1', '0', own().getByTestId('custom-rc-one'));
             expect(screen.getByTestId('tab-status-m1').getAttribute('title')).toMatch(/^Needs train period/);
             expect(footReason()).toBe('Add a train period');
         });
@@ -9968,7 +9961,7 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
     describe('R3 / R5 — a SAVED train period outside the data next to one inside it: an amber warning, nothing else changes', () => {
         const P_OUT2 = { ...P_OUT, id: 'p2' };
         const WARN = '⚠ P2 is outside the data (2025/01/01 00:00 – 2025/12/31 23:59) — it is not used';
-        const fgShape = { runningConditionFilters: [], runningConditionCombine: 'and', runningConditionTimePeriods: [P_IN, P_OUT2], runningConditionNoneConfirmed: true };
+        const fgShape = { runningConditionFilters: [RC_ON], runningConditionCombine: 'and', runningConditionTimePeriods: [P_IN, P_OUT2] };
         const record = { at: '2026-10-04T01:00:00.000Z', outputDir: 'C:/data/workspaces/ws1/output', setPoints: HS_SNAP, scoringIntervalSecs: 3600 };
         const trainedModel = (over: Record<string, any> = {}) => {
             const base = makeModel({ id: 'm1', targetSensor: 'TAG1', healthSetPoints: HS_SNAP });
@@ -10090,7 +10083,7 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
         it('a Custom model: renaming it keeps the "Trained" status and the charts, Save changes works — and its own row warns', async () => {
             rust({ running: () => 800 });
             const base = makeModel({
-                id: 'm1', targetSensor: 'TAG1', runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true,
+                id: 'm1', targetSensor: 'TAG1', runningConditionMode: 'custom', customRunningConditionFilters: [RC_ON],
                 filterTimePeriods: [P_IN], customTestPeriods: S_OUT, healthSetPoints: HS_SNAP,
             });
             await mountB([withTrained(base, { models: [base] })]);
@@ -10145,14 +10138,14 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
         it('a Custom TRAINED model whose own scope holds no rows any more: it stays "Trained", the "No data…" board points at its Model settings (a working link) — and renaming it still saves (the scope did not change)', async () => {
             rust({ running: () => 0, noRows: true });
             const base = makeModel({
-                id: 'm1', targetSensor: 'TAG1', runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true,
+                id: 'm1', targetSensor: 'TAG1', runningConditionMode: 'custom', customRunningConditionFilters: [RC_ON],
                 filterTimePeriods: [P_IN], customTestPeriods: S_IN, healthSetPoints: HS_SNAP,
             });
             await mountB([withTrained(base, { models: [base] })]);
             await waitFor(() => expect(trainSensorWhy()).toBe("Can't train · No rows to train on in its own training data"));
             const board = await waitFor(() => screen.getByTestId('results-no-data'));
-            // "Use all rows": there is no condition to name
-            expect(board.querySelector('.wbx-msg-s')!.textContent).toBe('Its train periods hold no row of the data. Fix it in Model settings to see its charts.');
+            // its own one condition is named
+            expect(board.querySelector('.wbx-msg-s')!.textContent).toBe('No row passes the running condition in its train periods. Fix it in Model settings to see its charts.');
             expect(within(board).queryByTestId('board-open-rc')).toBeNull();
             expect(screen.queryByTestId('results-error')).toBeNull();
             expect(screen.queryByTestId('board-train-sensor')).toBeNull();
@@ -10181,7 +10174,7 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
     // models of one sensor on the same empty condition the story flipped with the open tab and the sibling
     // went to the engine.
     describe('S2 — a Custom model that is NOT the open one', () => {
-        const ownLists = { runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true, customTestPeriods: S_IN };
+        const ownLists = { runningConditionMode: 'custom', customRunningConditionFilters: [RC_ON], customTestPeriods: S_IN };
 
         it('(a) two Custom models of one sensor on the SAME own scope: the settled count of the open one answers for both, whichever tab is open — no second count', async () => {
             rust({ running: () => 0 });
@@ -10296,7 +10289,7 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
             expect(trainSensorBtn().disabled).toBe(false);
 
             // the main window moves on to another project (another dataset generation)
-            const ws2 = { id: 'ws2', failureGroupState: { groups: [makeGroup()], models: [makeModel({ id: 'w2', targetSensor: 'TAG1' })], runningConditionNoneConfirmed: true, rcLegacyNotice: null, runningConditionTimePeriods: [P_2027], runningConditionTestPeriods: [] } };
+            const ws2 = { id: 'ws2', failureGroupState: { groups: [makeGroup()], models: [makeModel({ id: 'w2', targetSensor: 'TAG1' })], runningConditionFilters: [RC_ON], rcLegacyNotice: null, runningConditionTimePeriods: [P_2027], runningConditionTestPeriods: [] } };
             mockLoadWorkspaceData.mockResolvedValue(ws2);
             answer = DATA_2027;
             held = true;
@@ -10346,100 +10339,178 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
 // condition editor, workspace-wide unique model names, and Project details
 // following a save made in another window.
 // ─────────────────────────────────────────────────────────────────────────
-describe('Running status line ("Machine is running when … is above …")', () => {
+describe('The ONE running-condition line ("Machine is running when … is above …", 2026-10-26)', () => {
     const ABOVE1 = { id: 'f1', sensor: 'TAG1', operation: 'greater_than', value1: '5', value2: '' };
-    const ABOVE2 = { id: 'f2', sensor: 'TAG2', operation: 'greater_than', value1: '40', value2: '' };
-    const BELOW = { id: 'f3', sensor: 'TAG2', operation: 'less_than', value1: '90', value2: '' };
-    const WHY = 'Enter the value for “Machine is running when … is above …”';
+    const WHY = 'Set “Machine is running when … is above …” before applying';
+    const STILL_UNSET = 'The running condition is still not set — models can’t train yet';
     let disk: any;
-    const mount = async (fg: Record<string, any>) => {
-        const full = { groups: [makeGroup()], models: [makeModel()], runningConditionNoneConfirmed: false, rcLegacyNotice: null, runningConditionTimePeriods: ALL_TIME_TRAIN, runningConditionTestPeriods: ONE_TEST, ...fg };
+    const mount = async (fg: Record<string, any>, open = true) => {
+        const full = { groups: [makeGroup()], models: [makeModel()], rcLegacyNotice: null, runningConditionTimePeriods: ALL_TIME_TRAIN, runningConditionTestPeriods: ONE_TEST, ...fg };
         disk = { id: 'ws1', failureGroupState: full };
         render(<BuildModelWindow />);
         await deliverData({ failureGroupState: full });
         mockUpdateWorkspaceData.mockImplementation(async (_id: string, patch: (s: any) => any) => { disk = patch(disk); return disk; });
         mockUpdateWorkspaceData.mockClear();
-        fireEvent.click(screen.getByTestId('rc-card-open'));
+        if (open && !screen.queryByTestId('rc-one')) fireEvent.click(screen.getByTestId('rc-card-open'));
     };
-    const line = () => screen.queryByTestId('rc-running-status');
     const applyBtn = () => screen.getByTestId('rc-apply') as HTMLButtonElement;
-    const sensorTrigger = () => within(line()!).getByLabelText('Sensor that tells the machine is running');
-    const valueInput = () => within(line()!).getByLabelText('Running above this value') as HTMLInputElement;
-
-    it('exactly ONE "above" condition: the line is not shown (that condition IS the running status)', async () => {
-        await mount({ runningConditionFilters: [ABOVE1, BELOW] });
-        expect(line()).toBeNull();
-    });
-
-    it('two "above" conditions: shown, prefilled from the first one — the prefill is NOT an edit (Apply stays off); the note says why it is shown', async () => {
-        await mount({ runningConditionFilters: [ABOVE1, ABOVE2] });
-        expect(line()).toBeTruthy();
-        expect(sensorTrigger().textContent).toMatch(/Pump Pressure/);
-        expect(valueInput().value).toBe('5');
-        expect(applyBtn().disabled).toBe(true);
-        const note = screen.getByTestId('rc-running-status-note').textContent!;
-        expect(note).toMatch(/^Used by the export only — /);
-        expect(note).toMatch(/Training still uses the conditions above\./);
-        expect(note).toMatch(/There are 2 “above” conditions, so say which one it is\./);
-    });
-
-    it('"Use all rows" (no condition): shown empty, with its own reason; a sensor without a value blocks Apply with the reason', async () => {
-        await mount({ runningConditionNoneConfirmed: true, runningConditionFilters: [] });
-        expect(line()).toBeTruthy();
-        expect(valueInput().value).toBe('');
-        expect(screen.getByTestId('rc-running-status-note').textContent).toMatch(/“Use all rows” has no condition to take it from\./);
-        pickSingle(sensorTrigger(), 'TAG2');
-        expect(applyBtn().disabled).toBe(true);
-        expect(screen.getByTestId('rc-running-status-why').textContent).toBe(WHY);
-        expect(applyBtn().title).toBe(WHY);
-        fireEvent.change(valueInput(), { target: { value: '3' } });
-        expect(screen.queryByTestId('rc-running-status-why')).toBeNull();
-        expect(applyBtn().disabled).toBe(false);
-    });
-
-    it('Apply writes the running status in ONE write (with withFailureGroupState: the running condition stays as it was)', async () => {
-        await mount({ runningConditionNoneConfirmed: true, runningConditionFilters: [] });
-        pickSingle(sensorTrigger(), 'TAG2');
-        fireEvent.change(valueInput(), { target: { value: '3' } });
+    const why = () => screen.queryByTestId('rc-condition-why')?.textContent ?? null;
+    const apply = async () => {
         await act(async () => { fireEvent.click(applyBtn()); await Promise.resolve(); await Promise.resolve(); });
         await flush();
+    };
+
+    it('there is no second line, no operator, no AND / OR, no "Use all rows" — one sensor and one value', async () => {
+        await mount({ runningConditionFilters: [ABOVE1] });
+        const one = screen.getByTestId('rc-one');
+        expect(one.textContent).toMatch(/^Machine is running when.*is above/);
+        expect(rcValueInput().value).toBe('5');
+        for (const id of ['rc-mode-none', 'rc-mode-condition', 'rc-combine', 'rc-add-condition', 'rc-running-status', 'rc-cond-1']) {
+            expect(screen.queryByTestId(id), id).toBeNull();
+        }
+        expect(screen.queryByText('Use all rows')).toBeNull();
+    });
+
+    it('Apply writes the ONE "sensor > value" row (combine and, no "Use all rows") in one write', async () => {
+        await mount({ runningConditionFilters: [ABOVE1] });
+        setRcLine('TAG2', '40');
+        expect(why()).toBeNull();
+        await apply();
         expect(mockUpdateWorkspaceData).toHaveBeenCalledTimes(1);
         const fg = disk.failureGroupState;
-        expect(fg.runningStatus).toEqual({ sensor: 'TAG2', stopAtOrBelow: '3' });
-        expect(fg.runningConditionNoneConfirmed).toBe(true);
-        expect(fg.models).toHaveLength(1);
+        expect(fg.runningConditionFilters).toEqual([{ id: 'f1', sensor: 'TAG2', operation: 'greater_than', value1: '40', value2: '' }]);
+        expect(fg.runningConditionCombine).toBe('and');
+        expect(fg.runningConditionNoneConfirmed).toBe(false);
         expect(screen.queryByRole('dialog', { name: 'Running condition' })).toBeNull();
     });
 
-    it('a condition edit AND a running-status edit go out in the SAME write; reopening shows the saved value', async () => {
-        await mount({ runningConditionFilters: [ABOVE1, ABOVE2] });
-        // edit the running status: the second "above" sensor, its own value
-        pickSingle(sensorTrigger(), 'TAG2');
-        fireEvent.change(valueInput(), { target: { value: '41' } });
-        // and a condition edit
-        fireEvent.click(screen.getByText('Add condition'));
-        await act(async () => { fireEvent.click(applyBtn()); await Promise.resolve(); await Promise.resolve(); });
-        await flush();
-        expect(mockUpdateWorkspaceData).toHaveBeenCalledTimes(1);
-        expect(disk.failureGroupState.runningStatus).toEqual({ sensor: 'TAG2', stopAtOrBelow: '41' });
-        expect(disk.failureGroupState.runningConditionFilters).toHaveLength(3);
-        // reopen: the saved value is what the line shows (still not an edit)
-        fireEvent.click(screen.getByTestId('rc-card-open'));
-        await flush();
-        expect(line()).toBeTruthy();
-        expect(sensorTrigger().textContent).toMatch(/Pump Temp/);
-        expect(valueInput().value).toBe('41');
+    it('a half-filled line blocks Apply with the reason (sensor without a value, and value without a sensor) — nothing is written', async () => {
+        await mount({ runningConditionFilters: [] });
+        setRcLine('TAG2', null);
         expect(applyBtn().disabled).toBe(true);
+        expect(why()).toBe(WHY);
+        expect(applyBtn().title).toBe(WHY);
+        fireEvent.click(applyBtn());
+        await flush();
+        expect(mockUpdateWorkspaceData).not.toHaveBeenCalled();
+        setRcLine('', '7');
+        expect(applyBtn().disabled).toBe(true);
+        expect(why()).toBe(WHY);
+        setRcLine('TAG2', null);
+        expect(why()).toBeNull();
+        expect(applyBtn().disabled).toBe(false);
     });
 
-    it('Cancel discards a running-status edit (nothing is written)', async () => {
-        await mount({ runningConditionFilters: [ABOVE1, ABOVE2] });
-        fireEvent.change(valueInput(), { target: { value: '7' } });
+    it('clearing a condition that was set blocks Apply (it is required — never removed)', async () => {
+        await mount({ runningConditionFilters: [ABOVE1] });
+        setRcLine(null, '');
+        expect(applyBtn().disabled).toBe(true);
+        expect(why()).toBe(WHY);
+        setRcLine('', '');
+        expect(applyBtn().disabled).toBe(true);
+        expect(why()).toBe(WHY);
+    });
+
+    it('never set: applying only a period change is allowed, and the footer says the running condition is still not set', async () => {
+        await mount({ runningConditionFilters: [], runningConditionTimePeriods: [] });
+        fireEvent.click(screen.getByTestId('period-add'));
+        expect(applyBtn().disabled).toBe(false);
+        expect(why()).toBe(STILL_UNSET);
+        await apply();
+        expect(mockUpdateWorkspaceData).toHaveBeenCalledTimes(1);
+        expect(disk.failureGroupState.runningConditionFilters).toEqual([]);
+        expect(disk.failureGroupState.runningConditionTimePeriods).toHaveLength(1);
+    });
+
+    it('Cancel discards an edit of the line (nothing is written)', async () => {
+        await mount({ runningConditionFilters: [ABOVE1] });
+        setRcLine(null, '7');
         expect(applyBtn().disabled).toBe(false);
         fireEvent.click(screen.getByTestId('rc-cancel'));
         await flush();
         expect(mockUpdateWorkspaceData).not.toHaveBeenCalled();
-        expect(disk.failureGroupState.runningStatus).toBeUndefined();
+        expect(disk.failureGroupState.runningConditionFilters).toEqual([ABOVE1]);
+    });
+
+    describe('the one-time conversion notice (computed by the workspace read path; this window only shows it)', () => {
+        const converted = (over: Record<string, any> = {}) => ({
+            result: 'converted', source: 'first-above',
+            before: { filters: [ABOVE1, { id: 'f2', sensor: 'TAG2', operation: 'less_than', value1: '90', value2: '' }], combine: 'or', allRows: false, savedStatus: null },
+            after: { sensor: 'TAG1', value: '5' },
+            incompleteModelIds: ['m1'],
+            customModels: [],
+            ...over,
+        });
+
+        it('converted: Before / Now / Models with Check it + Got it; no auto-open; nothing written on load', async () => {
+            await mount({ runningConditionFilters: [ABOVE1], runningConditionConversion: converted() }, false);
+            const n = screen.getByTestId('rc-conversion-notice');
+            expect(n.textContent).toMatch(/Running condition is now one condition/);
+            expect(n.textContent).toMatch(/Before.*OR/);
+            expect(n.textContent).toMatch(/Now\s*Machine is running when/);
+            expect(n.textContent).toMatch(/the first “above” condition was kept/);
+            expect(n.textContent).toMatch(/1 Complete model is Incomplete again/);
+            expect(screen.queryByTestId('rc-one')).toBeNull(); // the modal did not open
+            expect(mockUpdateWorkspaceData).not.toHaveBeenCalled();
+            fireEvent.click(screen.getByTestId('rc-conversion-check'));
+            expect(screen.getByTestId('rc-one')).toBeTruthy();
+        });
+
+        it('"Got it" writes runningConditionConversion: null (withFailureGroupState: the rest of the slice stays) and hides the notice', async () => {
+            await mount({ runningConditionFilters: [ABOVE1], runningConditionConversion: converted() }, false);
+            await act(async () => { fireEvent.click(screen.getByTestId('rc-conversion-dismiss')); await Promise.resolve(); });
+            await flush();
+            expect(mockUpdateWorkspaceData).toHaveBeenCalledTimes(1);
+            expect(disk.failureGroupState.runningConditionConversion).toBeNull();
+            expect(disk.failureGroupState.runningConditionFilters).toEqual([ABOVE1]);
+            expect(disk.failureGroupState.models).toHaveLength(1);
+            expect(screen.queryByTestId('rc-conversion-notice')).toBeNull();
+        });
+
+        it('an Apply that CHANGES the condition dismisses the notice in the SAME write; an Apply of periods only keeps it', async () => {
+            await mount({ runningConditionFilters: [ABOVE1], runningConditionConversion: converted() });
+            setRcLine(null, '6');
+            await apply();
+            expect(mockUpdateWorkspaceData).toHaveBeenCalledTimes(1);
+            expect(disk.failureGroupState.runningConditionFilters[0].value1).toBe('6');
+            expect(disk.failureGroupState.runningConditionConversion).toBeNull();
+            expect(screen.queryByTestId('rc-conversion-notice')).toBeNull();
+
+            cleanup();
+            await mount({ runningConditionFilters: [ABOVE1], runningConditionTimePeriods: [], runningConditionConversion: converted() });
+            fireEvent.click(screen.getByTestId('period-add'));
+            await apply();
+            expect(disk.failureGroupState.runningConditionConversion).toEqual(converted());
+            expect(screen.getByTestId('rc-conversion-notice')).toBeTruthy();
+        });
+
+        it('needs-set (an old condition with nothing to keep): the card says "Set it again" and why — the modal does NOT open by itself', async () => {
+            const c = converted({ result: 'needs-set', source: null, after: null, before: { filters: [], combine: 'and', allRows: true, savedStatus: null } });
+            await mount({ runningConditionFilters: [], runningConditionConversion: c }, false);
+            expect(screen.queryByTestId('rc-one')).toBeNull();
+            expect(screen.getByTestId('rc-card-pill').textContent).toBe('Set it again');
+            expect(screen.getByTestId('rc-card-why').textContent).toMatch(/This project used Use all rows/);
+            expect(screen.getByTestId('rc-card-why').textContent).toMatch(/Its 1 Complete model is Incomplete until it is trained again with it\./);
+            // nothing to show in the notice (no "Now", no Custom models)
+            expect(screen.queryByTestId('rc-conversion-notice')).toBeNull();
+        });
+
+        it('needs-set only because Custom models changed (the workspace was simply never set): today’s Not-set card, the modal auto-opens; the notice lists the Custom models', async () => {
+            const own = makeModel({ id: 'c1', name: 'Own model', targetSensor: 'TAG2', runningConditionMode: 'custom', customRunningConditionFilters: [] });
+            const c = converted({
+                result: 'needs-set', source: null, after: null, incompleteModelIds: [],
+                before: { filters: [], combine: 'and', allRows: false, savedStatus: null },
+                customModels: [{ id: 'c1', result: 'needs-set' }],
+            });
+            await mount({ models: [makeModel(), own], runningConditionFilters: [], runningConditionConversion: c }, false);
+            expect(screen.getByTestId('rc-one')).toBeTruthy(); // auto-opened, as for any never-set workspace
+            expect(screen.getByTestId('rc-card-pill').textContent).toBe('Not set');
+            expect(screen.queryByTestId('rc-card-why')).toBeNull();
+            const n = screen.getByTestId('rc-conversion-notice');
+            expect(n.textContent).toMatch(/Own condition/);
+            expect(n.textContent).toMatch(/Set again in Model settings → Training data: Own model/);
+            expect(screen.queryByTestId('rc-conversion-check')).toBeNull(); // nothing "Now" to check
+        });
     });
 });
 
@@ -10499,14 +10570,18 @@ describe('Project details saved in another window', () => {
 });
 
 describe('Export results (bottom bar + dialog, DESIGN_SYSTEM §4.2)', () => {
-    const READY_WS = (fg: Record<string, any> = {}) => ({
+    /** A ready workspace; its running condition (`cond`, also the export's
+     *  running status) is the one the model was trained with. */
+    const READY_WS = (fg: Record<string, any> = {}, cond: any[] = [rcOn('TAG1', '5')]) => ({
         name: 'Plant A · GT-1',
         machine: { plant: 'Plant A', name: 'GT-1', tag: 'GT01', notes: '' },
         dataUtcOffsetMin: 420,
         failureGroupState: {
             groups: [makeGroup({ description: 'Bearing wear', recommendation: 'Check the bearing' })],
-            models: [withTrained(makeModel({ status: true, healthSetPoints: VALID_IND }))],
-            runningStatus: { sensor: 'TAG1', stopAtOrBelow: '5' },
+            models: [withTrained(makeModel({ status: true, healthSetPoints: VALID_IND }), {
+                models: [], runningConditionCombine: 'and', runningConditionTimePeriods: ALL_TIME_TRAIN, runningConditionFilters: cond,
+            })],
+            runningConditionFilters: cond,
             ...fg,
         },
     });
@@ -10642,8 +10717,7 @@ describe('Export results (bottom bar + dialog, DESIGN_SYSTEM §4.2)', () => {
             workspaceId: 'ws1', origin: 'dashboard',
             groups: [makeGroup({ description: 'Bearing wear', recommendation: 'Check the bearing' })],
             models: [withTrained(makeModel({ status: false, healthSetPoints: VALID_IND }))],
-            runningConditionNoneConfirmed: true, runningConditionTimePeriods: ALL_TIME_TRAIN, runningConditionTestPeriods: ONE_TEST,
-            runningStatus: { sensor: 'TAG1', stopAtOrBelow: '5' },
+            runningConditionFilters: [rcOn('TAG1', '5')], runningConditionTimePeriods: ALL_TIME_TRAIN, runningConditionTestPeriods: ONE_TEST,
         });
         expect(screen.queryByTestId('export-bar-exported')).toBeNull();
         expect(barText()).toContain('1 model not Complete yet');
@@ -10754,7 +10828,8 @@ describe('Export results (bottom bar + dialog, DESIGN_SYSTEM §4.2)', () => {
 
     it('"Open running condition" closes the dialog and opens the running-condition editor', async () => {
         render(<BuildModelWindow />);
-        await deliverData(READY_WS({ runningStatus: null }));
+        // A Complete model whose workspace condition was cleared (another window).
+        await deliverData(READY_WS({ runningConditionFilters: [] }));
         await flush();
         fireEvent.click(screen.getByText('Show which'));
         await flush();
@@ -10766,7 +10841,7 @@ describe('Export results (bottom bar + dialog, DESIGN_SYSTEM §4.2)', () => {
 
     it('confirm step: a running-status sensor with no component is listed as "Used as the running-status sensor"; Back / Esc / Export anyway', async () => {
         render(<BuildModelWindow />);
-        await deliverData(READY_WS({ runningStatus: { sensor: 'TAG3', stopAtOrBelow: '1' } }));
+        await deliverData(READY_WS({}, [rcOn('TAG3', '1')]));
         await flush();
         fireEvent.click(screen.getByTestId('export-results'));
         await flush();

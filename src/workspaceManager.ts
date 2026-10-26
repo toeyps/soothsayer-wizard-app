@@ -2,7 +2,7 @@ import { load } from '@tauri-apps/plugin-store';
 import { readTextFile, writeTextFile, exists, mkdir, remove as removeFile, rename, BaseDirectory } from '@tauri-apps/plugin-fs';
 import { WorkspaceState, WorkspaceMetadata, FailureModel, FailureSensorRow, FailureGroup, FailureGroupStateSlice, ModelKind, WorkspaceSensorFilter, TimePeriod } from './types';
 import { debugLog } from './utils/debugLog';
-import { migrateHealthSetPoints } from './utils/workspaceMigrations';
+import { migrateHealthSetPoints, migrateSingleRunningCondition } from './utils/workspaceMigrations';
 import { emptyHealthSetPoints } from './utils/healthSetPoints';
 import { applyIncompleteRule } from './utils/incompleteRule';
 import { withFailureGroupState } from './utils/failureGroupState';
@@ -340,7 +340,11 @@ function migrateFailureGroupState(state: WorkspaceState): WorkspaceState {
     // Every read also gives each model the empty `healthSetPoints`
     // shape for its kind if it has none (idempotent; same object when nothing
     // to do). Runs AFTER the structural migration so legacy `rows` models count.
-    return migrateHealthSetPoints(migrateFailureGroupStateStructure(state));
+    // Then the one-time conversion to the ONE running condition (2026-10-26):
+    // here, on the read path, so every window -- incl. the Dashboard's autosave,
+    // which adopts the on-disk slice -- sees the converted shape and no writer
+    // can put the old multi-condition set back; the first write persists it.
+    return migrateSingleRunningCondition(migrateHealthSetPoints(migrateFailureGroupStateStructure(state)));
 }
 
 function migrateFailureGroupStateStructure(state: WorkspaceState): WorkspaceState {

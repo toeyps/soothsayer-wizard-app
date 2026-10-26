@@ -735,13 +735,11 @@ async function setRunningCondition() {
         await act(async () => { fireEvent.click(bmw().getByTestId('rc-card-open')); });
     }
     const dlg = within(screen.getByRole('dialog', { name: 'Running condition' }));
-    if (dlg.getByTestId('rc-mode-condition').getAttribute('aria-pressed') !== 'true') fireEvent.click(dlg.getByTestId('rc-mode-condition'));
-    await act(async () => { fireEvent.click(dlg.getByTestId('rc-add-condition')); });
-    const cond = within(dlg.getByTestId('rc-cond-1'));
-    fireEvent.click(dlg.getByTestId('rc-cond-1').querySelector('button.pk-trigger') as HTMLElement);
+    // The ONE line: "Machine is running when [TAG2] is above [10]".
+    const cond = within(dlg.getByTestId('rc-one'));
+    fireEvent.click(dlg.getByTestId('rc-one').querySelector('button.pk-trigger') as HTMLElement);
     await pickInModal('sensor', ['TAG2'], true);
-    fireEvent.click(cond.getByRole('button', { name: 'Greater than' }));
-    fireEvent.change(cond.getByLabelText('Value'), { target: { value: '10' } });
+    fireEvent.change(cond.getByLabelText('Running above this value'), { target: { value: '10' } });
     if (dlg.queryByTestId('periods-empty')) await act(async () => { fireEvent.click(dlg.getByTestId('period-add')); });
     if (dlg.queryByTestId('tests-empty')) {
         await act(async () => { fireEvent.click(dlg.getByTestId('test-add')); });

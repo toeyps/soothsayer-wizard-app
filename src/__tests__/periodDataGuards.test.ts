@@ -241,14 +241,15 @@ describe('runningConditionApplyBlock with the data guards', () => {
 });
 
 describe('getBuildBlock with the data guards (the PERSISTED state)', () => {
-    const fg = (periods: TimePeriod[]) => ({ models: [], runningConditionFilters: [], runningConditionCombine: 'and' as const, runningConditionNoneConfirmed: true, runningConditionTimePeriods: periods });
+    const COND = { id: 'f', sensor: 'A', operation: 'greater_than' as const, value1: '1', value2: '' };
+    const fg = (periods: TimePeriod[]) => ({ models: [], runningConditionFilters: [COND], runningConditionCombine: 'and' as const, runningConditionTimePeriods: periods });
     const model = (over: Partial<FailureModel> = {}) => mk({ id: 'm1', category: 'performance', ...over });
 
     const WS_NO_DATA = 'No train period is inside the data (2025/01/01 00:00 – 2025/12/31 23:59) — nothing to train on. Move a train period inside the data (Running condition → Edit).';
 
     it('R4: NO train period inside the loaded data blocks Train (`no-rows` / outside-data) with the named reason', () => {
         const block = getBuildBlock(model(), fg([AFTER]), null, { bounds: DATA });
-        expect(block).toEqual({ kind: 'no-rows', mode: 'workspace', cause: 'outside-data', hasCondition: false, periodNumber: 1, reason: WS_NO_DATA });
+        expect(block).toEqual({ kind: 'no-rows', mode: 'workspace', cause: 'outside-data', hasCondition: true, periodNumber: 1, reason: WS_NO_DATA });
         expect(noTrainDataReason('workspace', DATA)).toBe(WS_NO_DATA);
         // several periods, none inside: no single period to name
         const both = getBuildBlock(model(), fg([BEFORE, AFTER]), null, { bounds: DATA })!;
@@ -267,13 +268,13 @@ describe('getBuildBlock with the data guards (the PERSISTED state)', () => {
     });
 
     it('a settled count of zero rows is the last block (`no-rows` / zero-rows), worded for where the fix is and for whether there is a condition', () => {
-        // "Use all rows" (this fixture): nothing to relax
+        // There is always the one condition to relax (an old "Use all rows" flag no longer configures).
         expect(getBuildBlock(model(), fg([INSIDE]), null, { bounds: DATA, noTrainRows: true })).toEqual({
-            kind: 'no-rows', mode: 'workspace', cause: 'zero-rows', hasCondition: false,
-            reason: 'No rows match — nothing to train on. Widen a train period (Running condition → Edit).',
+            kind: 'no-rows', mode: 'workspace', cause: 'zero-rows', hasCondition: true,
+            reason: 'No rows match — nothing to train on. Widen a train period or relax the condition (Running condition → Edit).',
         });
-        const COND = { id: 'f', sensor: 'A', operation: 'greater_than' as const, value1: '1', value2: '' };
-        const withCond = { ...fg([INSIDE]), runningConditionNoneConfirmed: false, runningConditionFilters: [COND] };
+        expect(getBuildBlock(model(), { ...fg([INSIDE]), runningConditionNoneConfirmed: true }, null, { noTrainRows: true })).toMatchObject({ hasCondition: true });
+        const withCond = fg([INSIDE]);
         expect(getBuildBlock(model(), withCond, null, { noTrainRows: true })).toMatchObject({ cause: 'zero-rows', hasCondition: true, reason: NO_TRAIN_ROWS_REASON });
         const custom = model({ runningConditionMode: 'custom', customRunningConditionFilters: [COND], filterTimePeriods: [INSIDE] });
         expect(getBuildBlock(custom, fg([]), null, { noTrainRows: true })).toMatchObject({ kind: 'no-rows', mode: 'custom', cause: 'zero-rows', reason: NO_TRAIN_ROWS_REASON_CUSTOM });
@@ -284,15 +285,16 @@ describe('getBuildBlock with the data guards (the PERSISTED state)', () => {
     });
 
     it('customBlockText words both for a Custom model, open and closed', () => {
-        const custom = model({ runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true, filterTimePeriods: [AFTER] });
+        const custom = model({ runningConditionMode: 'custom', customRunningConditionFilters: [COND], filterTimePeriods: [AFTER] });
         const outside = getBuildBlock(custom, fg([]), null, { bounds: DATA })!;
         expect(customBlockText(outside, { settingsOpen: true })).toBe('Above: move P1 inside the data range');
         expect(customBlockText(outside, { settingsOpen: false })).toBe('Own running condition: no train period is inside the data. Fix it in Model settings');
         const two = getBuildBlock({ ...custom, filterTimePeriods: [BEFORE, AFTER] }, fg([]), null, { bounds: DATA })!;
         expect(customBlockText(two, { settingsOpen: true })).toBe('Above: move a train period inside the data range');
-        // "Use all rows": no condition to relax
         const noRows = getBuildBlock({ ...custom, filterTimePeriods: [INSIDE] }, fg([]), null, { bounds: DATA, noTrainRows: true })!;
-        expect(customBlockText(noRows, { settingsOpen: true })).toBe('Above: widen a train period');
+        expect(customBlockText(noRows, { settingsOpen: true })).toBe('Above: widen a train period or relax the condition');
+        // the old "no condition to relax" wording is still there for a block that says so
+        expect(customBlockText({ ...noRows, hasCondition: false } as typeof noRows, { settingsOpen: true })).toBe('Above: widen a train period');
         expect(customBlockText(noRows, { settingsOpen: false })).toBe('Own running condition: no rows to train on. Fix it in Model settings');
         const cond = { ...custom, filterTimePeriods: [INSIDE], customRunningConditionNoneConfirmed: false, customRunningConditionFilters: [{ id: 'f', sensor: 'A', operation: 'greater_than' as const, value1: '1', value2: '' }] };
         expect(customBlockText(getBuildBlock(cond, fg([]), null, { noTrainRows: true })!, { settingsOpen: true })).toBe('Above: widen a train period or relax the condition');

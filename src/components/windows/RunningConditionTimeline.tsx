@@ -2,7 +2,7 @@ import { memo } from 'react';
 import type { TestPeriod, TimePeriod } from '../../types';
 import type { PeriodCountsState } from '../../utils/periodCounts';
 import { runningConditionCaption } from '../../utils/periodCounts';
-import { noTrainRowsText } from '../../utils/runningCondition';
+import { NO_TRAIN_ROWS_TEXT } from '../../utils/runningCondition';
 import { periodDataFit, validatePeriods, validateTestPeriods, type PeriodBaseline } from '../../utils/timePeriods';
 import { formatYearMonth } from '../../utils/dateFormat';
 import { parseLocal } from '../../utils/workbenchDate';
@@ -177,16 +177,13 @@ export interface RunningConditionTimelineProps {
      *  running" without a complete condition: the count (of every row) is not
      *  read — no running time, no "nothing to train on". Default `true`. */
     configured?: boolean;
-    /** "Use all rows" is chosen: there is no condition to relax, so the no-rows
-     *  line only says "Widen a train period". Default `false`. */
-    usesAllRows?: boolean;
     /** The lists as they are SAVED: a period unchanged from them that lies
      *  outside the data only warns (amber sliver). Omitted = every period is new. */
     savedPeriods?: PeriodBaseline;
     savedTests?: PeriodBaseline;
 }
 
-function RunningConditionTimeline({ periods, tests, bounds, counts, configured = true, usesAllRows = false, savedPeriods, savedTests }: RunningConditionTimelineProps) {
+function RunningConditionTimeline({ periods, tests, bounds, counts, configured = true, savedPeriods, savedTests }: RunningConditionTimelineProps) {
     const b = boundsMs(bounds);
     const cap = runningConditionCaption({ trainPeriods: periods, scoringPeriods: tests, bounds, counts, configured, savedTrain: savedPeriods, savedScoring: savedTests });
     const trainBlocks = timelineBlocks(periods, validatePeriods(periods, bounds, savedPeriods).map(s => s.invalid), bounds, 'P');
@@ -239,7 +236,7 @@ function RunningConditionTimeline({ periods, tests, bounds, counts, configured =
                 // The settled count of what is on screen: no running row in the train
                 // periods — nothing to train on (Train is blocked; Apply / Save
                 // changes too when this draft changed what is trained on).
-                <div className="rct-norows" role="alert" data-testid="rc-no-rows">{noTrainRowsText(!usesAllRows)}</div>
+                <div className="rct-norows" role="alert" data-testid="rc-no-rows">{NO_TRAIN_ROWS_TEXT}</div>
             )}
         </section>
     );

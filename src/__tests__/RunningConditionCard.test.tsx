@@ -22,8 +22,6 @@ function card(over: Partial<React.ComponentProps<typeof RunningConditionCard>> =
             state="set"
             periods={[p('a', '2026-01-01T00:00', '2026-03-31T23:59'), p('b', '2026-04-15T00:00', '')]}
             filters={[f('f1', 'POWER', 'greater_than', '4000')]}
-            combine="and"
-            noneConfirmed={false}
             headers={['POWER', 'SPEED']}
             getDesc={t => DESC[t] ?? ''}
             getUnit={t => UNIT[t] ?? ''}
@@ -54,7 +52,6 @@ function expectNoRowCount() {
     }
     expect(c.querySelector('.rcc-meter')).toBeNull();
     expect(within(c).queryByRole('img', { name: 'Share of rows used' })).toBeNull();
-    // "All rows — no condition" is the condition's name, not a count: only numbers of rows are gone.
     expect(c.textContent).not.toMatch(/\d[\d,]*\s*rows?\b/i);
     expect(c.textContent).not.toMatch(/Counting rows|— rows|rows ·|%/);
 }
@@ -75,12 +72,23 @@ describe('RunningConditionCard — Not set', () => {
         expect(screen.getByTestId('rc-card-pill').textContent).toBe('Not set');
         expect(screen.getByTestId('rc-card-pill').className).toContain('f4-pill--warn');
         expect(within(c).getByRole('heading', { name: 'Set the running condition' })).toBeTruthy();
-        expect(c.textContent).toContain('Tell Wizard which healthy time to learn from (train periods) and when the plant is running');
+        expect(c.textContent).toContain('Tell Wizard which healthy time to learn from (train periods) and the sensor that shows the machine is running — Machine is running when … is above … — so models learn from normal operation');
+        expect(screen.queryByTestId('rc-card-why')).toBeNull();
         const btn = screen.getByTestId('rc-card-open');
         expect(btn.textContent).toBe('Set running condition →');
         expect(btn.className).toContain('rcx-btn--pri');
         fireEvent.click(btn);
         expect(onOpen).toHaveBeenCalledTimes(1);
+    });
+
+    it('an old project that must set it again: the pill says "Set it again" and the card says why (the `why` text replaces the usual sentence)', () => {
+        card({ state: 'unset', periods: [], filters: [], why: <>This project used <b>Use all rows</b>, which is gone.</> });
+        const c = screen.getByTestId('rc-card');
+        expect(screen.getByTestId('rc-card-pill').textContent).toBe('Set it again');
+        expect(screen.getByTestId('rc-card-pill').className).toContain('f4-pill--warn');
+        expect(screen.getByTestId('rc-card-why').textContent).toBe('This project used Use all rows, which is gone.');
+        expect(c.textContent).not.toContain('Tell Wizard which healthy time');
+        expect(screen.getByTestId('rc-card-open').textContent).toBe('Set running condition →');
     });
 
     it('shows neither the chips nor the warning slot', () => {
@@ -128,7 +136,7 @@ describe('RunningConditionCard — Set: ONE line (workbench redesign §1)', () =
     const B = { min: '2025-01-01 00:00:00', max: '2026-07-31 23:50:00' };
     const S = (id: string, start: string, end: string): TestPeriod => ({ id, start, end });
 
-    it('✓ · Train n periods + span · Scoring n periods · When running: n conditions · Details · Edit — no row count, no period strip on the line', () => {
+    it('✓ · Train n periods + span · Scoring n periods · Running when <sensor> is above <value> · Details · Edit — no row count, no period strip on the line', () => {
         const onOpen = card({
             bounds: B,
             periods: [p('a', '2026-01-01T00:00', '2026-03-31T23:59'), p('b', '2026-04-15T00:00', '2026-06-30T23:59')],
@@ -145,14 +153,15 @@ describe('RunningConditionCard — Set: ONE line (workbench redesign §1)', () =
         // the span is first start → last end, in the app's one date format (date + time on both sides), mono
         expect(screen.getByTestId('rc-card-span').className).toContain('wbx-dt');
         expect(screen.getByTestId('rc-card-test').textContent).toBe('Scoring 2 periods');
-        expect(screen.getByTestId('rc-card-cond').textContent).toBe('When running: 1 condition');
+        expect(screen.getByTestId('rc-card-cond').textContent).toBe('Running when GENERATOR ACTIVE POWERPOWER is above 4,000 kW');
+        expect(screen.getByTestId('rc-card-cond').querySelector('.sl-desc')!.textContent).toBe('GENERATOR ACTIVE POWER');
         // No count of rows (2026-10-14): the slot that holds the two warnings is empty, so the
         // line ends with the conditions (an empty `.rcc-line-item` is hidden by the stylesheet).
         expectNoRowCount();
         expect(screen.getByTestId('rc-card-use').textContent).toBe('');
         expect(screen.getByTestId('rc-card-use').childNodes).toHaveLength(0);
         expect(screen.getByTestId('rc-card-use').className).toBe('rcc-line-item');
-        expect(c.querySelector('.rcc-line-main')!.textContent).toBe('Running conditionTrain 2 periods 2026/01/01 00:00 → 2026/06/30 23:59Scoring 2 periodsWhen running: 1 condition');
+        expect(c.querySelector('.rcc-line-main')!.textContent).toBe('Running conditionTrain 2 periods 2026/01/01 00:00 → 2026/06/30 23:59Scoring 2 periodsRunning when GENERATOR ACTIVE POWERPOWER is above 4,000 kW');
         // No period strip on the line (user decision 2026-10-11) — it is in the Details view.
         expect(within(c).queryByTestId('period-coverage')).toBeNull();
         expect(c.querySelector('.rcc-line-strip')).toBeNull();
@@ -174,10 +183,9 @@ describe('RunningConditionCard — Set: ONE line (workbench redesign §1)', () =
 
     it('singular / plural and the span of one period; an open end reads "End"', () => {
         card({ periods: [p('a', '2026-01-01T00:00', '2026-03-31T23:59')], testPeriods: [S('s1', '2026-07-01T00:00', '2026-07-10T23:59')],
-            filters: [f('f1', 'POWER', 'greater_than', '4000'), f('f2', 'SPEED', 'between', '2900', '3100')] });
+            filters: [f('f1', 'POWER', 'greater_than', '4000')] });
         expect(screen.getByTestId('rc-card-time').textContent).toBe('Train 1 period 2026/01/01 00:00 → 2026/03/31 23:59');
         expect(screen.getByTestId('rc-card-test').textContent).toBe('Scoring 1 period');
-        expect(screen.getByTestId('rc-card-cond').textContent).toBe('When running: 2 conditions');
         cleanup();
         card(); // P1 2026/01/01 – 03/31, P2 2026/04/15 → open end
         expect(screen.getByTestId('rc-card-time').textContent).toBe('Train 2 periods 2026/01/01 00:00 → End');
@@ -187,12 +195,13 @@ describe('RunningConditionCard — Set: ONE line (workbench redesign §1)', () =
         expect(screen.getByTestId('rc-card-span').textContent).toBe('2026/02/09 06:30 → 2026/02/09 23:50');
     });
 
-    it('counts only the conditions the build applies; "Use all rows" reads "All rows — no condition"', () => {
-        card({ filters: [f('f1', 'POWER', 'greater_than', '4000'), f('f2', 'SPEED', 'greater_than', ''), f('f3', 'GONE', 'greater_than', '1')] });
-        expect(screen.getByTestId('rc-card-cond').textContent).toBe('When running: 1 condition');
+    it('shows only the line the build applies (a complete "sensor > value"); none = amber "Machine running: not set"', () => {
+        card({ filters: [f('f2', 'SPEED', 'greater_than', ''), f('f3', 'GONE', 'greater_than', '1'), f('f1', 'POWER', 'greater_than', '4000')] });
+        expect(screen.getByTestId('rc-card-cond').textContent).toBe('Running when GENERATOR ACTIVE POWERPOWER is above 4,000 kW');
         cleanup();
-        card({ noneConfirmed: true, filters: [f('f1', 'POWER', 'greater_than', '4000')] });
-        expect(screen.getByTestId('rc-card-cond').textContent).toBe('All rows — no condition');
+        card({ filters: [] });
+        expect(screen.getByTestId('rc-card-cond').textContent).toBe('Machine running: not set');
+        expect(screen.getByTestId('rc-card-cond').querySelector('.rcc-line-warn')).not.toBeNull();
     });
 
     it('nothing to train on / to score on is said in amber on the line; a broken scoring period in red', () => {
@@ -317,44 +326,38 @@ describe('RunningConditionCard — Set', () => {
         expect(screen.getByTestId('rc-card').textContent).not.toContain('Whole dataset');
     });
 
-    it('"When running": condition chips with sensor name + operator + value + unit, joined by AND / OR', () => {
-        detailsCard({
-            filters: [f('f1', 'POWER', 'greater_than', '4000'), f('f2', 'SPEED', 'between', '2900', '3100')],
-        });
+    it('"Running when": ONE chip "<sensor> is above <value unit>" and the note that it is also the export\'s running status', () => {
+        detailsCard();
         const chips = screen.getAllByTestId('rc-card-cond-chip');
-        // Inline label (description then tag) + the condition in mono, with
-        // thousands separators; the full name + condition in the title.
-        expect(chips.map(x => x.textContent)).toEqual(['GENERATOR ACTIVE POWERPOWER > 4,000 kW', 'TURBINE SPEEDSPEED between 2,900–3,100 RPM']);
+        // Inline label (description then tag) + "is above" + the value in mono, with
+        // thousands separators; the whole sentence in the title.
+        expect(chips.map(x => x.textContent)).toEqual(['GENERATOR ACTIVE POWERPOWER is above 4,000 kW']);
         expect(chips[0].querySelector('.sl-desc')!.textContent).toBe('GENERATOR ACTIVE POWER');
         expect(chips[0].querySelector('.sl-tag')!.textContent).toBe('POWER');
-        expect(chips[0].querySelector('.rcc-rest')!.textContent).toBe('> 4,000 kW');
-        expect(chips[0].getAttribute('title')).toBe('GENERATOR ACTIVE POWER · POWER · kW · Generator > 4,000 kW');
-        expect(within(screen.getByTestId('rc-card-cond')).getByText('AND')).toBeTruthy();
-        cleanup();
-        detailsCard({ filters: [f('f1', 'POWER', 'greater_than', '4000'), f('f2', 'SPEED', 'less_than', '3')], combine: 'or' });
-        expect(within(screen.getByTestId('rc-card-cond')).getByText('OR')).toBeTruthy();
+        expect(chips[0].querySelector('.rcc-above')!.textContent).toBe('is above');
+        expect(chips[0].querySelector('.rcc-rest')!.textContent).toBe('4,000 kW');
+        expect(chips[0].getAttribute('title')).toBe('Machine is running when GENERATOR ACTIVE POWER · POWER · kW · Generator is above 4,000 kW');
+        const cond = screen.getByTestId('rc-card-cond');
+        expect(within(cond).getByText('Running when')).toBeTruthy();
+        expect(within(cond).getByText('also the export’s running status')).toBeTruthy();
+        expect(within(cond).queryByText('AND')).toBeNull();
+        expect(within(cond).queryByText('OR')).toBeNull();
     });
 
     it('a small typed threshold keeps its decimals on the chip (never rounded to 0)', () => {
-        detailsCard({ filters: [f('f1', 'POWER', 'greater_than', '0.0005'), f('f2', 'SPEED', 'between', '0.0001', '0.0004')] });
+        detailsCard({ filters: [f('f1', 'POWER', 'greater_than', '0.0005')] });
         const rests = screen.getAllByTestId('rc-card-cond-chip').map(x => x.querySelector('.rcc-rest')!.textContent);
-        expect(rests).toEqual(['> 0.0005 kW', 'between 0.0001–0.0004 RPM']);
+        expect(rests).toEqual(['0.0005 kW']);
     });
 
     it('a sensor without a description shows its tag; one without a unit shows no unit', () => {
         detailsCard({ filters: [f('f1', 'MYSTERY', 'greater_than', '7')], headers: ['MYSTERY'] });
-        expect(screen.getByTestId('rc-card-cond-chip').textContent).toBe('MYSTERY > 7');
+        expect(screen.getByTestId('rc-card-cond-chip').textContent).toBe('MYSTERY is above 7');
     });
 
-    it('"Use all rows" reads "All rows — no condition"', () => {
-        detailsCard({ noneConfirmed: true, filters: [f('f1', 'POWER', 'greater_than', '4000')] });
-        expect(within(screen.getByTestId('rc-card-cond')).getByText('All rows — no condition')).toBeTruthy();
-        expect(screen.queryByTestId('rc-card-cond-chip')).toBeNull();
-    });
-
-    it('conditions the build would not apply (incomplete, or sensor not in the dataset) are not shown as chips', () => {
-        detailsCard({ filters: [f('f1', 'POWER', 'greater_than', '4000'), f('f2', 'SPEED', 'greater_than', ''), f('f3', 'GONE', 'greater_than', '1')] });
-        expect(screen.getAllByTestId('rc-card-cond-chip')).toHaveLength(1);
+    it('conditions the build would not apply (incomplete, sensor not in the dataset, not "above") are not shown; only the first one is', () => {
+        detailsCard({ filters: [f('f2', 'SPEED', 'greater_than', ''), f('f3', 'GONE', 'greater_than', '1'), f('f4', 'SPEED', 'less_than', '3'), f('f1', 'POWER', 'greater_than', '4000'), f('f5', 'SPEED', 'greater_than', '9')] });
+        expect(screen.getAllByTestId('rc-card-cond-chip').map(x => x.textContent)).toEqual(['GENERATOR ACTIVE POWERPOWER is above 4,000 kW']);
     });
 
     it('right side: NO rows used, no "rows · %", no share bar — only the period strip; the Edit button opens the settings', () => {
@@ -394,14 +397,14 @@ describe('RunningConditionCard — Set', () => {
 
         it('reads the periods prop only: re-rendering with the same persisted periods does not change it', () => {
             const { rerender } = render(
-                <RunningConditionCard state="set" periods={[p('a', '2025-01-01T00:00', '2025-01-31T23:59')]} filters={[]} combine="and" noneConfirmed headers={[]}
+                <RunningConditionCard state="set" periods={[p('a', '2025-01-01T00:00', '2025-01-31T23:59')]} filters={[]} headers={[]}
                     getDesc={() => ''} getUnit={() => ''} bounds={B} onOpen={vi.fn()} />,
             );
             openDetails(); // the strip lives in the Details view only
             const first = within(cov()).getByTestId('period-coverage-days').textContent;
             expect(first).toBe('31 d train · 0 d scoring');
             rerender(
-                <RunningConditionCard state="set" periods={[p('a', '2025-01-01T00:00', '2025-01-31T23:59')]} filters={[]} combine="and" noneConfirmed headers={[]}
+                <RunningConditionCard state="set" periods={[p('a', '2025-01-01T00:00', '2025-01-31T23:59')]} filters={[]} headers={[]}
                     getDesc={() => ''} getUnit={() => ''} noRows={false} bounds={B} onOpen={vi.fn()} />,
             );
             expect(within(cov()).getByTestId('period-coverage-days').textContent).toBe(first);

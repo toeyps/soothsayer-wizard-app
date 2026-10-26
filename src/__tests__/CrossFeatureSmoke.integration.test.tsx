@@ -372,14 +372,11 @@ async function setRunningCondition() {
         await act(async () => { fireEvent.click(bmw().getByTestId('rc-card-open')); });
     }
     const dlg = within(screen.getByRole('dialog', { name: 'Running condition' }));
-    if (dlg.getByTestId('rc-mode-condition').getAttribute('aria-pressed') !== 'true') fireEvent.click(dlg.getByTestId('rc-mode-condition'));
-    await act(async () => { fireEvent.click(dlg.getByTestId('rc-add-condition')); });
-    const cond = within(dlg.getByTestId('rc-cond-1'));
-    // pick TAG2 in the single-sensor picker
-    fireEvent.click(dlg.getByTestId('rc-cond-1').querySelector('button.pk-trigger') as HTMLElement);
+    // The ONE line: "Machine is running when [TAG2] is above [10]".
+    const cond = within(dlg.getByTestId('rc-one'));
+    fireEvent.click(dlg.getByTestId('rc-one').querySelector('button.pk-trigger') as HTMLElement);
     await pickInModal('sensor', ['TAG2'], true);
-    fireEvent.click(cond.getByRole('button', { name: 'Greater than' }));
-    fireEvent.change(cond.getByLabelText('Value'), { target: { value: '10' } });
+    fireEvent.change(cond.getByLabelText('Running above this value'), { target: { value: '10' } });
     // Train/Test validation: a train period is required to Train.
     if (dlg.queryByTestId('periods-empty')) {
         await act(async () => { fireEvent.click(dlg.getByTestId('period-add')); });
@@ -519,7 +516,7 @@ describe.each(['individual', 'relationship', 'clustering'] as Kind[])('cross-fea
         // saved as id / start / end and NOTHING else
         expect(fg.runningConditionTestPeriods).toEqual([{ id: expect.any(String), start: '2026-01-01T00:00', end: '2026-01-03T00:00' }]);
         // the card is ONE line once set; the chips are under "Details"
-        await waitFor(() => expect(bmw().getByTestId('rc-card-cond').textContent).toBe('When running: 1 condition'));
+        await waitFor(() => expect(bmw().getByTestId('rc-card-cond').textContent).toBe('Running when TAG2 is above 10'));
         expect(bmw().getByTestId('rc-card-test').textContent).toBe('Scoring 1 period');
         fireEvent.click(bmw().getByTestId('rc-card-details'));
         expect(bmw().getByTestId('rc-card-cond').textContent).toMatch(/TAG2/);

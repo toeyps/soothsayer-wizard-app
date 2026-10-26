@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { FailureGroupStateSlice, FailureModel, WorkspaceState } from '../types';
-import { migratePeriods, normalizeCategories, flagLegacyGate, migrateHealthSetPoints } from '../utils/workspaceMigrations';
+import { migratePeriods, normalizeCategories, flagLegacyGate, migrateHealthSetPoints, migrateSingleRunningCondition } from '../utils/workspaceMigrations';
 import { mk as baseMk } from './helpers/failureModelFixture';
 
 /** A PRE-periods model: like the shared fixture, but with no `filterTimePeriods`
@@ -136,9 +136,9 @@ describe('flagLegacyGate', () => {
         const out = flagLegacyGate(ws({ models: [mk({ id: 'a' })], runningConditionTimeStart: '2025-01-01T00:00' }));
         expect(out.failureGroupState!.rcLegacyNotice).toBe('pending');
     });
-    it('null when configured (row or none-confirmed) or when there are no models', () => {
+    it('null when configured (its "sensor > value" row) or when there are no models; an old "Use all rows" no longer counts', () => {
         expect(flagLegacyGate(ws({ models: [mk({ id: 'a' })], runningConditionFilters: [f] })).failureGroupState!.rcLegacyNotice).toBeNull();
-        expect(flagLegacyGate(ws({ models: [mk({ id: 'a' })], runningConditionNoneConfirmed: true })).failureGroupState!.rcLegacyNotice).toBeNull();
+        expect(flagLegacyGate(ws({ models: [mk({ id: 'a' })], runningConditionNoneConfirmed: true })).failureGroupState!.rcLegacyNotice).toBe('pending');
         expect(flagLegacyGate(ws({ models: [] })).failureGroupState!.rcLegacyNotice).toBeNull();
     });
     it('an incomplete row does not count as configured', () => {
@@ -199,5 +199,143 @@ describe('migrateHealthSetPoints', () => {
         const once = migrateHealthSetPoints(s);
         expect(JSON.stringify(s)).toBe(snap);
         expect(migrateHealthSetPoints(once)).toBe(once);
+    });
+});
+
+describe('migrateSingleRunningCondition (ONE running condition, 2026-10-26)', () => {
+    const above = (sensor: string, value1: string, id = sensor) => ({ id, sensor, operation: 'greater_than' as const, value1, value2: '' });
+    const below = (sensor: string, value1: string, id = sensor + '<') => ({ id, sensor, operation: 'less_than' as const, value1, value2: '' });
+    const SP = { kind: 'individual' as const, lower: 1, upper: 9 };
+    /** A Complete, trained Workspace-mode model. */
+    const done = (id: string, over: Partial<FailureModel> = {}) => mk({
+        id, targetSensor: 'T', category: 'condition', status: true, filterTimePeriods: [],
+        lastTrainedAt: '2026-10-01T00:00:00Z', trainedFingerprint: 'fp', healthSetPoints: SP, healthVerdict: 'valid', ...over,
+    });
+
+    it('(1) keeps the FIRST complete ">" of several (AND / OR); Complete Workspace-mode models go Incomplete in the same result, set points kept', () => {
+        const s = ws({
+            runningConditionFilters: [below('TEMP', '90'), above('SPEED', ' 1200 '), above('LOAD', '10')],
+            runningConditionCombine: 'or', rcLegacyNotice: 'pending', futureField: 1,
+            models: [done('a'), mk({ id: 'b', status: false })],
+        });
+        const fg = migrateSingleRunningCondition(s).failureGroupState!;
+        expect(fg.runningConditionFilters).toEqual([{ id: 'SPEED', sensor: 'SPEED', operation: 'greater_than', value1: '1200', value2: '' }]);
+        expect(fg.runningConditionCombine).toBe('and');
+        expect(fg.runningConditionNoneConfirmed).toBe(false);
+        expect(fg.runningStatus).toBeNull();
+        expect(fg.rcLegacyNotice).toBeNull();
+        expect((fg as unknown as Old).futureField).toBe(1);
+        const a = fg.models.find(m => m.id === 'a')!;
+        expect(a).toMatchObject({ status: false, healthSetPoints: SP, lastTrainedAt: '2026-10-01T00:00:00Z', trainedFingerprint: 'fp' });
+        expect(a).not.toHaveProperty('healthVerdict');
+        expect(fg.runningConditionConversion).toEqual({
+            result: 'converted', source: 'first-above',
+            before: { filters: s.failureGroupState!.runningConditionFilters, combine: 'or', allRows: false, savedStatus: null },
+            after: { sensor: 'SPEED', value: '1200' },
+            incompleteModelIds: ['a'],
+            customModels: [],
+        });
+    });
+
+    it('(2) no ">" condition: takes the saved export running status, and clears it', () => {
+        const s = ws({
+            runningConditionFilters: [below('TEMP', '90')],
+            runningStatus: { sensor: 'POWER', stopAtOrBelow: ' 5 ' },
+            models: [done('a')],
+        });
+        const fg = migrateSingleRunningCondition(s).failureGroupState!;
+        expect(fg.runningConditionFilters).toEqual([{ id: 'rc-converted', sensor: 'POWER', operation: 'greater_than', value1: '5', value2: '' }]);
+        expect(fg.runningStatus).toBeNull();
+        expect(fg.runningConditionConversion).toMatchObject({
+            result: 'converted', source: 'saved-status', after: { sensor: 'POWER', value: '5' }, incompleteModelIds: ['a'],
+            before: { savedStatus: { sensor: 'POWER', stopAtOrBelow: ' 5 ' } },
+        });
+        // also when the old list was empty and only the export line existed
+        const only = migrateSingleRunningCondition(ws({ runningStatus: { sensor: 'POWER', stopAtOrBelow: '5' }, models: [] })).failureGroupState!;
+        expect(only.runningConditionConversion).toMatchObject({ result: 'converted', source: 'saved-status' });
+    });
+
+    it('(3) "Use all rows" -> needs-set: the condition is emptied (Train blocked) and Complete models go Incomplete', () => {
+        const s = ws({
+            runningConditionFilters: [above('SPEED', '1200')], runningConditionNoneConfirmed: true,
+            models: [done('a'), mk({ id: 'b', status: false })],
+        });
+        const fg = migrateSingleRunningCondition(s).failureGroupState!;
+        expect(fg.runningConditionFilters).toEqual([]);
+        expect(fg.runningConditionNoneConfirmed).toBe(false);
+        expect(fg.models.map(m => m.status)).toEqual([false, false]);
+        expect(fg.models[0]).toMatchObject({ healthSetPoints: SP, trainedFingerprint: 'fp' });
+        expect(fg.runningConditionConversion).toMatchObject({
+            result: 'needs-set', source: null, after: null, incompleteModelIds: ['a'],
+            before: { allRows: true },
+        });
+        // A saved export line (a sensor + value) is still a source with Use all rows.
+        const withSaved = migrateSingleRunningCondition(ws({ runningConditionNoneConfirmed: true, runningStatus: { sensor: 'S', stopAtOrBelow: '1' }, models: [] }));
+        expect(withSaved.failureGroupState!.runningConditionConversion).toMatchObject({ result: 'converted', source: 'saved-status' });
+        // Only "<" / between / = conditions and no saved line -> needs-set too.
+        const none = migrateSingleRunningCondition(ws({ runningConditionFilters: [below('TEMP', '90')], models: [] }));
+        expect(none.failureGroupState!.runningConditionConversion).toMatchObject({ result: 'needs-set', after: null });
+    });
+
+    it('(4) Custom models: their own condition converts the same way (no saved-status fallback); a Complete one whose rows change goes Incomplete', () => {
+        const s = ws({
+            runningConditionFilters: [above('SPEED', '1200')],
+            models: [
+                done('c1', { runningConditionMode: 'custom', customRunningConditionFilters: [below('T', '3'), above('LOAD', '7')], customRunningConditionCombine: 'or' }),
+                done('c2', { runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true }),
+                done('c3', { runningConditionMode: 'custom', customRunningConditionFilters: [above('LOAD', '7')] }),
+                done('w'),
+            ],
+        });
+        const fg = migrateSingleRunningCondition(s).failureGroupState!;
+        const by = Object.fromEntries(fg.models.map(m => [m.id, m]));
+        expect(by.c1).toMatchObject({ status: false, customRunningConditionFilters: [above('LOAD', '7')], customRunningConditionCombine: 'and', customRunningConditionNoneConfirmed: false, healthSetPoints: SP });
+        expect(by.c2).toMatchObject({ status: false, customRunningConditionFilters: [], customRunningConditionNoneConfirmed: false });
+        expect(by.c3).toBe(s.failureGroupState!.models[2]); // already one ">" -> untouched
+        expect(by.w).toBe(s.failureGroupState!.models[3]); // the workspace condition did not change
+        expect(fg.runningConditionFilters).toBe(s.failureGroupState!.runningConditionFilters);
+        expect(fg.runningConditionConversion).toMatchObject({
+            result: 'converted', source: null, after: { sensor: 'SPEED', value: '1200' },
+            incompleteModelIds: ['c1', 'c2'],
+            customModels: [{ id: 'c1', result: 'converted' }, { id: 'c2', result: 'needs-set' }],
+        });
+    });
+
+    it('dropping only blank / half-filled rows next to the one ">" keeps the rows the same: no model goes Incomplete, AND/OR kept', () => {
+        const s = ws({
+            runningConditionFilters: [above('SPEED', '1200'), { id: 'x', sensor: '', operation: 'less_than', value1: '', value2: '' }],
+            runningConditionCombine: 'or', models: [done('a')],
+        });
+        const fg = migrateSingleRunningCondition(s).failureGroupState!;
+        expect(fg.runningConditionFilters).toHaveLength(1);
+        expect(fg.runningConditionCombine).toBe('or');
+        expect(fg.models[0]).toBe(s.failureGroupState!.models[0]);
+        expect(fg.runningConditionConversion).toMatchObject({ result: 'converted', incompleteModelIds: [] });
+    });
+
+    it('already the one shape (or nothing set): only marks the step done (null), nothing else changes', () => {
+        const one = ws({ runningConditionFilters: [above('SPEED', '1200')], runningConditionCombine: 'or', models: [done('a')] });
+        const fg = migrateSingleRunningCondition(one).failureGroupState!;
+        expect(fg.runningConditionConversion).toBeNull();
+        expect(fg.models[0]).toBe(one.failureGroupState!.models[0]);
+        expect(fg.runningConditionFilters).toBe(one.failureGroupState!.runningConditionFilters);
+        expect(fg.runningConditionCombine).toBe('or');
+        expect(migrateSingleRunningCondition(ws({ models: [done('a')] })).failureGroupState!.runningConditionConversion).toBeNull();
+        // a leftover export line is cleared even then
+        const left = migrateSingleRunningCondition(ws({ runningConditionFilters: [above('SPEED', '1')], runningStatus: { sensor: 'X', stopAtOrBelow: '2' } }));
+        expect(left.failureGroupState!.runningStatus).toBeNull();
+    });
+
+    it('runs only while the marker is undefined; idempotent, deterministic and does not mutate its input', () => {
+        const s = ws({ runningConditionFilters: [below('T', '1'), above('SPEED', '1200')], runningConditionNoneConfirmed: false, models: [done('a')] });
+        const snap = JSON.stringify(s);
+        const once = migrateSingleRunningCondition(s);
+        expect(JSON.stringify(s)).toBe(snap);
+        expect(migrateSingleRunningCondition(once)).toBe(once);
+        expect(JSON.stringify(migrateSingleRunningCondition(s))).toBe(JSON.stringify(once));
+        const dismissed = ws({ runningConditionFilters: [below('T', '1')], runningConditionConversion: null, models: [done('a')] });
+        expect(migrateSingleRunningCondition(dismissed)).toBe(dismissed);
+        const noFg = ws();
+        expect(migrateSingleRunningCondition(noFg)).toBe(noFg);
     });
 });

@@ -1198,24 +1198,26 @@ describe('Dashboard', () => {
             expect(mockUpdateWorkspaceData).not.toHaveBeenCalled();
         });
 
-        it('creating the FIRST model seeds rcLegacyNotice/categoryNormalisationNotice = null (a new workspace is never "legacy"); a workspace that already had models is left untouched', async () => {
+        it('creating the FIRST model seeds categoryNormalisationNotice = null (a new workspace needs no category clean-up) and no longer touches the retired rcLegacyNotice; a workspace that already had models is left untouched', async () => {
             const fresh = makeInitialState({ failureGroupState: { groups: [{ no: 1, name: 'Group A' }], models: [] } });
             seedDisk(fresh);
             renderDashboard({ initialState: fresh });
             fireEvent.click(screen.getByText('toggle-group'));
             let state = await last(mockUpdateWorkspaceData.mock.results)!.value;
             expect(state.failureGroupState.models).toHaveLength(1);
-            expect(state.failureGroupState.rcLegacyNotice).toBeNull();
+            // The legacy running-condition banner is gone (2026-10-26): nothing seeds its marker.
+            expect(state.failureGroupState.rcLegacyNotice).toBeUndefined();
             expect(state.failureGroupState.categoryNormalisationNotice).toBeNull();
             cleanup();
 
-            // Pre-existing models (genuinely pre-gate): markers stay unset so flagLegacyGate can still flag it.
+            // Pre-existing models: the category marker stays unset so the clean-up can still run.
             const model = { id: 'm1', groupNos: [1], name: '', kind: 'individual' as const, category: null, notes: '', status: false, targetSensor: 'TAG2', predictorSensors: [], xSensor: '', ySensor: '', individualChecked: true, rcMode: null, scatterXSensor: '', relModelName: '', relStiffness: 100_000, clusterModelName: '', numClusters: 3, criteriaSensor: '', clusterRanges: [], filterTimePeriods: [], runningConditionMode: 'workspace' as const, customRunningConditionFilters: [], customRunningConditionCombine: 'and' as const };
             const old = makeInitialState({ failureGroupState: { groups: [{ no: 1, name: 'Group A' }], models: [model] } });
             seedDisk(old);
             renderDashboard({ initialState: old });
             fireEvent.click(screen.getByText('toggle-group'));
             state = await last(mockUpdateWorkspaceData.mock.results)!.value;
+            expect(state.failureGroupState.categoryNormalisationNotice).toBeUndefined();
             expect(state.failureGroupState.rcLegacyNotice).toBeUndefined();
         });
 

@@ -12,9 +12,11 @@ import { getRecentWorkspaces, loadWorkspaceData, updateWorkspaceData } from "../
 import { ProjectDetailsModal } from "./ProjectDetailsModal";
 import { withFailureGroupState } from "../../utils/failureGroupState";
 import { modelSensorKey, groupModelsBySensor, sensorCategory, setSensorCategory, type SensorModelGroup } from "../../utils/modelGrouping";
-import { normalizeCategories, flagLegacyGate, migratePeriods } from "../../utils/workspaceMigrations";
+import { normalizeCategories, migratePeriods } from "../../utils/workspaceMigrations";
+import { conditionChipParts } from "./periodDisplay";
+import type { RunningConditionConversion } from "../../types";
 import { findWorkspaceNameTwin, kindModelName, markCompleteProjectBlock, MODEL_KIND_LABEL, suggestDistinctModelName, WORKSPACE_DUPLICATE_NAME_REASON } from "../../utils/modelNames";
-import { CATEGORY_BLOCK_REASON, customBlockText, customSummaryText, getBuildBlock, getBuildBlockReason, isRunningConditionConfigured, isWorkspaceRunningConditionConfigured, effectiveRunningCondition, markCompleteBlockReason, NO_MODEL_DATA_TITLE, NO_MODEL_DATA_WORDS, NO_TRAIN_DATA_SHORT, NO_TRAIN_PERIOD_REASON_CUSTOM, NO_TRAIN_ROWS_FOOTER, noModelDataCauseText, noModelDataFooter, noModelDataMarkReason, noTrainRowsReason, runningConditionApplyBlock, seedCustomFromWorkspace, type BuildBlock, type GateOptions, type NoModelDataCause, type RunningConditionApplyBlock, type RunningConditionFg } from "../../utils/runningCondition";
+import { CATEGORY_BLOCK_REASON, customBlockText, customSummaryText, getBuildBlock, getBuildBlockReason, isCompleteCondition, isRunningConditionConfigured, isWorkspaceRunningConditionConfigured, effectiveRunningCondition, markCompleteBlockReason, NO_MODEL_DATA_TITLE, NO_MODEL_DATA_WORDS, NO_TRAIN_DATA_SHORT, NO_TRAIN_PERIOD_REASON_CUSTOM, NO_TRAIN_ROWS_FOOTER, noModelDataCauseText, noModelDataFooter, noModelDataMarkReason, noTrainRowsReason, runningConditionApplyBlock, seedCustomFromWorkspace, type BuildBlock, type GateOptions, type NoModelDataCause, type RunningConditionApplyBlock, type RunningConditionFg } from "../../utils/runningCondition";
 import { modelsStillNeedingTraining, retrainNoticeParts, runningConditionImpact } from "../../utils/runningConditionImpact";
 import { usePeriodCounts } from "../../hooks/usePeriodCounts";
 import { countedNoTrainRows, countedTrainRunningDays, trainCountKey } from "../../utils/periodCounts";
@@ -46,8 +48,7 @@ import HealthScorePage from "./workbench/HealthScorePage";
 import { FIT_GONE_WORDS, FitGoneBoard, LoadFailedBoard, SaveErrorNotice, StaleBanner, StateBoard, TrainSensorLink, WorkbenchScroll, type FitGoneActions, type StaleCantTrain } from "./workbench/WorkbenchShellParts";
 import { buildCheckLines, healthVerdict, isBlockingIssue, sameSetPoints, verdictOfIssues, type HealthVerdict } from "./workbench/healthChecks";
 import type { SaveInfo, WorkbenchPage } from "./workbench/workbenchTypes";
-import { isPickerSurfaceOpen, SensorPickerSingle } from "../sensor/SensorPicker";
-import { aboveConditions } from "../../utils/runningStatus";
+import { isPickerSurfaceOpen } from "../sensor/SensorPicker";
 import { ExportBar, ExportModal, type ExportedLine } from "./workbench/ExportParts";
 import { useWorkspaceExport, type UseWorkspaceExport } from "../../hooks/useWorkspaceExport";
 import { exportReadiness } from "../../utils/exportReadiness";
@@ -354,17 +355,19 @@ interface RcDraft {
     testPeriods: TestPeriod[];
 }
 
-/** The export's running status as the settings modal edits it
- *  ("Machine is running when <sensor> is above <value>"). */
-type RunningStatusDraft = { sensor: string; stopAtOrBelow: string };
-const sameRunningStatus = (a: RunningStatusDraft | null, b: RunningStatusDraft | null): boolean =>
-    (a?.sensor ?? '') === (b?.sensor ?? '') && (a?.stopAtOrBelow ?? '').trim() === (b?.stopAtOrBelow ?? '').trim();
 /** What Build Model keeps of the project's details. */
 type ProjectInfo = Pick<WorkspaceState, 'id' | 'name' | 'machine' | 'dataUtcOffsetMin'>;
 const projectInfoOf = (ws: WorkspaceState): ProjectInfo =>
     ({ id: ws.id, name: ws.name, machine: ws.machine, dataUtcOffsetMin: ws.dataUtcOffsetMin });
-/** Why Apply waits when the running-status line has a sensor but no value. */
-const RUNNING_STATUS_VALUE_REASON = 'Enter the value for “Machine is running when … is above …”';
+
+/** The one-time conversion left the WORKSPACE condition unset although there was
+ *  an old one to explain (conditions, "Use all rows" or the export's own line).
+ *  `needs-set` alone is not enough: it is also the result when the workspace was
+ *  simply never set and only Custom models were converted. */
+function conversionMustSetAgain(c: RunningConditionConversion | null | undefined): boolean {
+    if (!c || c.result !== 'needs-set') return false;
+    return c.before.allRows || c.before.filters.length > 0 || !!c.before.savedStatus;
+}
 
 /** Draft vs. persisted comparison. JSON is enough: every draft object is built
  *  by spreading the persisted one (key order preserved) and the period editor
@@ -472,12 +475,10 @@ export default function BuildModelWindow() {
     const specialRecipesRef = useRef<SpecialSensorRecipe[] | null>(null);
     // The Running-condition dialog element (focus on open, Tab kept inside).
     const rcDialogRef = useRef<HTMLDivElement>(null);
-    // "No condition - use all rows" was explicitly confirmed for the workspace.
-    // Mirrors failureGroupState.runningConditionNoneConfirmed.
+    // Mirrors failureGroupState.runningConditionNoneConfirmed — OLD FILES ONLY (the
+    // removed "Use all rows", 2026-10-26): it no longer configures anything and the
+    // read-path conversion sets it to false; kept so a draft round-trips unchanged.
     const [runningConditionNoneConfirmed, setRunningConditionNoneConfirmed] = useState(false);
-    // The export's running status the user said ("Machine is running when … is above …",
-    // `failureGroupState.runningStatus`). Used by the export only, never by training.
-    const [runningStatusSaved, setRunningStatusSaved] = useState<RunningStatusDraft | null>(null);
     // The project's details as they are on disk (name "Plant · Machine", machine, the
     // data's time zone) — re-read whenever any window saves Project details.
     const [projectInfo, setProjectInfo] = useState<ProjectInfo | null>(null);
@@ -485,19 +486,8 @@ export default function BuildModelWindow() {
     // Project details dialog: the project read fresh from disk and the other projects
     // (loaded BEFORE it opens, so Save never runs without the duplicate check).
     const [projectDetails, setProjectDetails] = useState<{ ws: ProjectInfo; others: WorkspaceMetadata[] } | null>(null);
-    // The modal's edit of it: `null` = not touched (the line shows the saved value, or
-    // the first "above" condition — a prefill is never an edit). Mirrored in a ref for
-    // the Apply click (same reason as `rcDraftRef`).
-    const [rsDraft, setRsDraftState] = useState<RunningStatusDraft | null>(null);
-    const rsDraftRef = useRef<RunningStatusDraft | null>(null);
-    const setRsDraft = useCallback((next: RunningStatusDraft | null) => {
-        rsDraftRef.current = next;
-        setRsDraftState(next);
-    }, []);
-    // Legacy-workspace banner: the STORED flag (failureGroupState.rcLegacyNotice,
-    // written at hydration) plus a session-only "Remind me later" (never persisted).
-    const [rcLegacyNotice, setRcLegacyNotice] = useState<'pending' | null>(null);
-    const [legacyRemindLater, setLegacyRemindLater] = useState(false);
+    // The one-time running-condition conversion (`failureGroupState.runningConditionConversion`).
+    const [rcConversion, setRcConversion] = useState<RunningConditionConversion | null>(null);
     // Workspace id the panel was last auto-opened for, so "auto-open when the
     // running condition is unconfigured" happens once per hydration, not on
     // every broadcast.
@@ -748,8 +738,7 @@ export default function BuildModelWindow() {
         setRunningConditionTimePeriods(fg?.runningConditionTimePeriods ?? []);
         setRunningConditionTestPeriods(fg?.runningConditionTestPeriods ?? []);
         setRunningConditionNoneConfirmed(fg?.runningConditionNoneConfirmed ?? false);
-        setRunningStatusSaved(fg?.runningStatus ?? null);
-        setRcLegacyNotice(fg?.rcLegacyNotice ?? null);
+        setRcConversion(fg?.runningConditionConversion ?? null);
         setCategoryNotice(fg?.categoryNormalisationNotice ?? null);
     }, []);
 
@@ -967,10 +956,7 @@ export default function BuildModelWindow() {
                 setRunningConditionTestPeriods([]);
                 setDashHighlights([]);
                 setRunningConditionNoneConfirmed(false);
-                setRunningStatusSaved(null);
-                setRsDraft(null);
-                setRcLegacyNotice(null);
-                setLegacyRemindLater(false);
+                setRcConversion(null);
                 setRcFilterOpen(false);
                 // The unapplied draft belonged to the old workspace.
                 rcDraftRef.current = null;
@@ -1030,24 +1016,27 @@ export default function BuildModelWindow() {
                 // made consistent. When that changed something, the result + notice are
                 // WRITTEN BACK here so the notice is stored data (Dashboard's autosave
                 // can't lose it, and it never re-fires once dismissed).
-                // Same for the running-condition gate: a workspace that already has
-                // models but nothing configured is flagged `rcLegacyNotice: 'pending'`
-                // and written back, so the banner is stored data rather than something
-                // recomputed per render.
+                // The running condition's one-time conversion to the ONE "sensor >
+                // value" line already ran in the workspace READ path
+                // (`migrateSingleRunningCondition`); this window only shows its notice.
                 // Old single time ranges become periods and the old keys are dropped;
                 // written back only when that changed something.
                 const periodsMigrated = ws ? migratePeriods(ws, { dropLegacyKeys: true }) : ws;
                 const periodsChanged = periodsMigrated !== ws;
-                const migrated = periodsMigrated ? flagLegacyGate(normalizeCategories(periodsMigrated)) : periodsMigrated;
+                const migrated = periodsMigrated ? normalizeCategories(periodsMigrated) : periodsMigrated;
                 applyFg(migrated?.failureGroupState);
                 if (migrated && rcAutoOpenedFor.current !== d.workspaceId) {
                     rcAutoOpenedFor.current = d.workspaceId;
                     const headers = d.sensorHeaders.length ? d.sensorHeaders : null;
-                    if (!isWorkspaceRunningConditionConfigured(migrated.failureGroupState, headers)) setRcFilterOpen(true);
+                    // An old project that must set it again: the "Set it again" card says
+                    // why, so the modal does not open over it. A workspace that was simply
+                    // never set keeps opening it.
+                    const mustSetAgain = conversionMustSetAgain(migrated.failureGroupState?.runningConditionConversion);
+                    if (!mustSetAgain && !isWorkspaceRunningConditionConfigured(migrated.failureGroupState, headers)) setRcFilterOpen(true);
                 }
-                if (periodsChanged || (migrated !== ws && (migrated?.failureGroupState?.categoryNormalisationNotice?.length || migrated?.failureGroupState?.rcLegacyNotice === 'pending'))) {
+                if (periodsChanged || (migrated !== ws && migrated?.failureGroupState?.categoryNormalisationNotice?.length)) {
                     await trackPending((async () => {
-                        const written = await updateWorkspaceData(d.workspaceId, prev => flagLegacyGate(normalizeCategories(migratePeriods(prev, { dropLegacyKeys: true }))));
+                        const written = await updateWorkspaceData(d.workspaceId, prev => normalizeCategories(migratePeriods(prev, { dropLegacyKeys: true })));
                         if (seq !== loadSeq.current || workspaceIdRef.current !== d.workspaceId) return;
                         if (written?.failureGroupState) {
                             applyWritten(written);
@@ -1163,8 +1152,6 @@ export default function BuildModelWindow() {
         periods?: TimePeriod[];
         noneConfirmed?: boolean;
         testPeriods?: TestPeriod[];
-        /** The export's running status — written in the SAME write as the rest. */
-        runningStatus?: RunningStatusDraft | null;
     }): Promise<void> => {
         if (!workspaceId) return Promise.resolve();
         return trackPending((async () => {
@@ -1177,18 +1164,18 @@ export default function BuildModelWindow() {
                     // Scoring periods are WRITTEN as id / start / end only: a legacy label /
                     // event time (an old workspace file) never goes back to disk.
                     ...(patch.testPeriods !== undefined ? { runningConditionTestPeriods: toScoringPeriods(patch.testPeriods) } : {}),
-                    ...(patch.runningStatus !== undefined ? { runningStatus: patch.runningStatus } : {}),
                 });
-                // Any edit made through this panel settles the legacy notice.
-                const fg = applied.failureGroupState;
-                const stillPending = fg?.rcLegacyNotice === 'pending' && !isWorkspaceRunningConditionConfigured(fg);
+                // Applying a different condition settles the one-time conversion notice
+                // (its "Now" would no longer be true) — in this same write.
+                const conditionChanged = patch.filters !== undefined
+                    && JSON.stringify(patch.filters) !== JSON.stringify(prev.failureGroupState?.runningConditionFilters ?? []);
                 // Applying a different workspace running condition changes what every
                 // Workspace-mode model trains on: those that were Complete go back to
                 // Incomplete in this same write (Custom-mode models are unaffected).
                 // A change of ONLY the scoring periods keeps them trained but still needs
                 // Mark complete again (`testsChangedAt`) — `applyIncompleteRule` does
                 // both, never this window by hand.
-                return applyIncompleteRule(prev, withFailureGroupState(applied, { rcLegacyNotice: stillPending ? 'pending' : null }));
+                return applyIncompleteRule(prev, conditionChanged ? withFailureGroupState(applied, { runningConditionConversion: null }) : applied);
             });
             // Re-pointed at another workspace meanwhile (same guard as `persist`): the
             // write landed in ITS workspace; this window now shows another one — never
@@ -1226,12 +1213,8 @@ export default function BuildModelWindow() {
      *  is zero AND the draft changed what is trained on. `applyRcDraft` re-checks
      *  the gate with it. */
     const rcGateRef = useRef<{ draft: RcDraft | null; bounds: PeriodDataBounds | null; noTrainRows: boolean }>({ draft: null, bounds: null, noTrainRows: false });
-    /** What Apply does with the running-status line, worked out on the last render:
-     *  `undefined` = nothing to write (not touched, unchanged, or the line is hidden),
-     *  the value to write (`null` clears it), or `RUNNING_STATUS_VALUE_REASON` when a
-     *  sensor was picked without a value (Apply waits). */
-    const rsChangeRef = useRef<() => RunningStatusDraft | null | undefined | typeof RUNNING_STATUS_VALUE_REASON>(() => undefined);
-
+    /** The condition line blocks Apply (half-filled, or a set condition removed), as of the last render. */
+    const rcCondBlockRef = useRef(false);
     /** Applies a patch (or a function of the current draft) to the draft,
      *  updating the ref synchronously so a blur-commit followed immediately by
      *  the Apply click is never missed. */
@@ -1244,26 +1227,14 @@ export default function BuildModelWindow() {
         setRcDiscardPrompt(false);
     }, []);
 
-    const addRunningConditionFilter = useCallback(() => {
+    /** Sets THE condition ("Machine is running when <sensor> is above <value>"). */
+    const setRunningConditionLine = useCallback(({ sensor, value }: { sensor: string; value: string }) => {
         patchRcDraft(base => ({
-            filters: [...base.filters, {
-                id: `rcf-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-                sensor: allSensors[0] ?? '',
-                operation: 'greater_than' as const,
-                value1: '',
-                value2: '',
-            }],
-            // A condition and "No condition" are mutually exclusive.
+            filters: [{ id: base.filters[0]?.id ?? `rcf-${Date.now()}`, sensor, operation: 'greater_than' as const, value1: value, value2: '' }],
+            // With one condition AND / OR no longer matters: `combine` is left as it
+            // was, so typing a value back to the saved one is not an edit.
             noneConfirmed: false,
         }));
-    }, [allSensors, patchRcDraft]);
-
-    const updateRunningConditionFilter = useCallback((id: string, patch: Partial<WorkspaceSensorFilter>) => {
-        patchRcDraft(base => ({ filters: base.filters.map(f => f.id === id ? { ...f, ...patch } : f) }));
-    }, [patchRcDraft]);
-
-    const removeRunningConditionFilter = useCallback((id: string) => {
-        patchRcDraft(base => ({ filters: base.filters.filter(f => f.id !== id) }));
     }, [patchRcDraft]);
 
     // The editor hands up a typed date as soon as it is complete (in the order on
@@ -1281,8 +1252,6 @@ export default function BuildModelWindow() {
     const closeRc = useCallback(() => {
         rcDraftRef.current = null;
         setRcDraftState(null);
-        rsDraftRef.current = null;
-        setRsDraftState(null);
         setRcPendingDate(prev => (prev.train === null && prev.scoring === null ? prev : { train: null, scoring: null }));
         setRcDiscardPrompt(false);
         setRcFilterOpen(false);
@@ -1295,7 +1264,7 @@ export default function BuildModelWindow() {
         // sorted), so it counts as "dirty".
         flushFocusedInput();
         const d = rcDraftRef.current;
-        if ((d && !rcDraftEqual(d, rcPersistedRef.current)) || rsChangeRef.current() !== undefined) {
+        if (d && !rcDraftEqual(d, rcPersistedRef.current)) {
             setRcDiscardPrompt(true);
             return;
         }
@@ -1307,20 +1276,14 @@ export default function BuildModelWindow() {
         // commit of a date still pending) has re-rendered; this forces it, and the
         // ref picks it up at once.
         flushFocusedInput();
-        const rs = rsChangeRef.current();
-        // A running-status line with a sensor but no value keeps the modal open.
-        if (rs === RUNNING_STATUS_VALUE_REASON) return;
-        const rsPatch = rs === undefined ? {} : { runningStatus: rs };
         const d = rcDraftRef.current;
         if (!d || rcDraftEqual(d, rcPersistedRef.current)) {
-            // Only the running status changed: it is written alone (nothing about training).
-            if (rs !== undefined) {
-                setRunningStatusSaved(rs);
-                void persistRunningCondition(rsPatch);
-            }
             closeRc();
             return;
         }
+        // A half-filled condition line, or removing a condition that was set, keeps
+        // the modal open (the footer says why).
+        if (rcCondBlockRef.current) return;
         // Invalid train period, NO train period (rule 1), an invalid scoring period (a
         // missing date, or an end before its start), a period that was added / changed
         // in this draft and lies entirely outside the loaded data, or a settled count
@@ -1349,8 +1312,7 @@ export default function BuildModelWindow() {
         setRunningConditionTimePeriods(d.periods);
         setRunningConditionNoneConfirmed(d.noneConfirmed);
         setRunningConditionTestPeriods(d.testPeriods);
-        if (rs !== undefined) setRunningStatusSaved(rs);
-        void persistRunningCondition({ filters: d.filters, combine: d.combine, periods: d.periods, noneConfirmed: d.noneConfirmed, testPeriods: d.testPeriods, ...rsPatch });
+        void persistRunningCondition({ filters: d.filters, combine: d.combine, periods: d.periods, noneConfirmed: d.noneConfirmed, testPeriods: d.testPeriods });
         closeRc();
     }, [closeRc, persistRunningCondition]);
 
@@ -1548,7 +1510,6 @@ export default function BuildModelWindow() {
     // The DRAFT-merged model, like the gate itself: the badge and the sentence then
     // name the same thing while a Custom model's own condition is being edited.
     const needsCondition = (m: FailureModel): boolean => !isRunningConditionConfigured(effectiveModelFor(m), gateFg, gateHeaders);
-    const legacyCompleteCount = allModels.filter(m => m.status).length;
     /** Badge text for a model the gate blocks, for ANY reason (missing condition,
      *  missing category, invalid period — and, for a model that still has to train,
      *  nothing to train on), else null. Hover text is the reason. */
@@ -1715,7 +1676,8 @@ export default function BuildModelWindow() {
         if (d.runningConditionMode === 'custom') {
             parts.push(customSummaryText({
                 noneConfirmed: d.customNoneConfirmed,
-                conditions: d.customFilters.length,
+                // Only a complete "sensor > value" line counts (a half-filled one is not set).
+                conditions: d.customFilters.filter(f => f.operation === 'greater_than' && isCompleteCondition(f, gateHeaders)).length,
                 trainPeriods: d.customPeriods.length,
                 scoringPeriods: d.customTestPeriods.length,
             }));
@@ -3742,7 +3704,7 @@ export default function BuildModelWindow() {
                     {seedNoteFor[m.id] && (
                         <div data-testid="pm-seed-note" className="rcx-line rc-seed">
                             <span>
-                                Copied <b>{seedNoteFor[m.id]!.periods} train period{seedNoteFor[m.id]!.periods === 1 ? '' : 's'}</b>, <b>{seedNoteFor[m.id]!.tests} scoring period{seedNoteFor[m.id]!.tests === 1 ? '' : 's'}</b> and {seedNoteFor[m.id]!.conditions} condition{seedNoteFor[m.id]!.conditions === 1 ? '' : 's'} from Workspace. Edits here affect only this model.
+                                Copied <b>{seedNoteFor[m.id]!.periods} train period{seedNoteFor[m.id]!.periods === 1 ? '' : 's'}</b>, <b>{seedNoteFor[m.id]!.tests} scoring period{seedNoteFor[m.id]!.tests === 1 ? '' : 's'}</b> and the running condition from Workspace. Edits here affect only this model.
                             </span>
                             <button type="button" className="f4-x" aria-label="Dismiss" onClick={() => setSeedNoteFor(prev => ({ ...prev, [m.id]: null }))}><X size={12} /></button>
                         </div>
@@ -3753,20 +3715,11 @@ export default function BuildModelWindow() {
                         periods={d.customPeriods}
                         onPeriodsChange={periods => patchDraft(m, { customPeriods: periods })}
                         bounds={datasetBounds}
-                        filters={d.customFilters}
-                        combine={d.customCombine}
-                        noneConfirmed={d.customNoneConfirmed}
-                        onNoneChange={none => patchDraft(m, { customNoneConfirmed: none })}
-                        onCombineChange={mode => patchDraft(m, { customCombine: mode })}
-                        onAddFilter={() => patchDraft(m, {
+                        condition={d.customFilters[0]}
+                        onConditionChange={({ sensor, value }) => patchDraft(m, {
                             customNoneConfirmed: false,
-                            customFilters: [...d.customFilters, {
-                                id: `rcf-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-                                sensor: allSensors[0] ?? '', operation: 'greater_than', value1: '', value2: '',
-                            }],
+                            customFilters: [{ id: d.customFilters[0]?.id ?? `rcf-${m.id}`, sensor, operation: 'greater_than', value1: value, value2: '' }],
                         })}
-                        onUpdateFilter={(id, patch) => patchDraft(m, { customFilters: d.customFilters.map(x => (x.id === id ? { ...x, ...patch } : x)) })}
-                        onRemoveFilter={id => patchDraft(m, { customFilters: d.customFilters.filter(x => x.id !== id) })}
                         sensors={allSensors}
                         getComponent={getComponent}
                         getUnit={getUnit}
@@ -4927,22 +4880,7 @@ export default function BuildModelWindow() {
     // values. Only the modal reads these — everything above (Step-1 card, gate,
     // models) stays on the persisted state.
     const rcView = rcDraft ?? rcPersisted;
-    // ---- "Machine is running when … is above …" (the export's running status) ----
-    // Shown only when the conditions (as drafted) are not exactly ONE "above": with one,
-    // that condition IS the running status.
-    const rsAbove = aboveConditions({ runningConditionFilters: rcView.filters, runningConditionNoneConfirmed: rcView.noneConfirmed }, gateHeaders);
-    const rsShown = rsAbove.length !== 1;
-    // What the line shows untouched: the saved value, else the first "above" condition.
-    const rsBase: RunningStatusDraft = runningStatusSaved
-        ?? (rsAbove[0] ? { sensor: rsAbove[0].sensor, stopAtOrBelow: rsAbove[0].value1 } : { sensor: '', stopAtOrBelow: '' });
-    const rsView = rsDraft ?? rsBase;
-    const rsWhy = rsShown && rsView.sensor !== '' && rsView.stopAtOrBelow.trim() === '' ? RUNNING_STATUS_VALUE_REASON : null;
-    const rsChange: RunningStatusDraft | null | undefined | typeof RUNNING_STATUS_VALUE_REASON =
-        !rsShown || rsDraft === null || sameRunningStatus(rsDraft, rsBase) ? undefined
-            : rsWhy ?? (rsDraft.sensor ? { sensor: rsDraft.sensor, stopAtOrBelow: rsDraft.stopAtOrBelow.trim() } : null);
-    rsChangeRef.current = () => rsChange;
-    const rsDirty = rsChange !== undefined;
-    const rcDirty = (rcDraft !== null && !rcDraftEqual(rcDraft, rcPersisted)) || rsDirty;
+    const rcDirty = rcDraft !== null && !rcDraftEqual(rcDraft, rcPersisted);
     const rcViewInvalid = validatePeriods(rcView.periods, datasetBounds, rcPersisted.periods).some(s => s.invalid);
     // Apply gate: an invalid train period, NO train period, an invalid scoring
     // period (a missing date, an end before its start), a train or scoring period
@@ -4962,7 +4900,18 @@ export default function BuildModelWindow() {
     // complete — so "dirty" is the whole condition, and the impact line below is on
     // screen whenever Apply is enabled. A half-typed date changes nothing (it
     // never reaches the draft): it only shows the neutral line.
-    const rcApplyEnabled = rcApplyBlock === null && rcDirty && rsWhy === null;
+    // The one condition is required: Apply waits for a half-filled line and never
+    // removes a condition that was set. Applying periods while it was never set is
+    // allowed (the footer says the models still can't train).
+    const rcDraftCond = rcView.filters[0];
+    const rcDraftSet = isWorkspaceRunningConditionConfigured({ runningConditionFilters: rcView.filters, runningConditionNoneConfirmed: false }, gateHeaders);
+    const rcWasSet = isWorkspaceRunningConditionConfigured({ runningConditionFilters: rcPersisted.filters, runningConditionNoneConfirmed: false }, gateHeaders);
+    const rcCondWhy = rcDraftSet ? null
+        : (rcWasSet || (rcDraftCond && (rcDraftCond.sensor || (rcDraftCond.value1 ?? '').trim())))
+            ? 'Set “Machine is running when … is above …” before applying' : null;
+    rcCondBlockRef.current = rcCondWhy !== null;
+    const rcApplyEnabled = rcApplyBlock === null && rcDirty && rcCondWhy === null;
+    const rcStillUnset = rcApplyEnabled && !rcDraftSet ? 'The running condition is still not set — models can’t train yet' : null;
     const rcPendingName = rcPendingDate.train ?? rcPendingDate.scoring;
     const rcTestsNotice = testsChangedNotice(allModels, gateFg);
     const rcRetrainLeft = rcRetrainIds.length > 0
@@ -4973,38 +4922,6 @@ export default function BuildModelWindow() {
     const rcImpact = rcFilterOpen && rcDraft && !rcDraftEqual(rcDraft, rcPersisted)
         ? runningConditionImpact(gateFg, rcDraft, { recipes: specialRecipes ?? undefined })
         : null;
-    const rsUnit = rsView.sensor ? getUnit(rsView.sensor) : '';
-    const rsSlot = !rsShown ? null : (
-        <div className="rs-line" data-testid="rc-running-status">
-            <div className="rs-row">
-                <span className="rs-l">Machine is running when</span>
-                <span className="rs-pick">
-                    <SensorPickerSingle
-                        sensors={allSensors}
-                        value={rsView.sensor}
-                        onSelect={t => setRsDraft({ ...rsView, sensor: t })}
-                        getComponent={getComponent}
-                        ariaLabel="Sensor that tells the machine is running"
-                    />
-                </span>
-                <span className="rs-l">is above</span>
-                <label className={`rcm-val rs-val${rsWhy ? ' rs-val--empty' : ''}`}>
-                    <input
-                        type="number"
-                        value={rsView.stopAtOrBelow}
-                        aria-label="Running above this value"
-                        placeholder="value"
-                        onChange={e => setRsDraft({ ...rsView, stopAtOrBelow: e.target.value })}
-                    />
-                    {rsUnit && <span>{rsUnit}</span>}
-                </label>
-            </div>
-            <div className="rs-note" data-testid="rc-running-status-note">
-                Used by the export only — the customer's monitoring system needs one sensor that tells the machine is running. Training still uses the conditions above.
-                {rsAbove.length > 1 ? ` There are ${rsAbove.length} “above” conditions, so say which one it is.` : rcView.noneConfirmed ? ' “Use all rows” has no condition to take it from.' : ' No “above” condition to take it from.'}
-            </div>
-        </div>
-    );
     const rcViewConfigured = isWorkspaceRunningConditionConfigured(
         { runningConditionFilters: rcView.filters, runningConditionNoneConfirmed: rcView.noneConfirmed },
         gateHeaders,
@@ -5023,7 +4940,6 @@ export default function BuildModelWindow() {
         failureGroupState: {
             ...gateFg,
             groups: allGroups,
-            runningStatus: runningStatusSaved,
         },
     } as WorkspaceState;
     const readiness = exportReadiness({
@@ -5048,6 +4964,93 @@ export default function BuildModelWindow() {
         setExportOpen(true);
         if (plan && !exporting && readiness.counts.allReady) void planExport();
     };
+
+    // ---- The one-time conversion of an old running condition ----
+    // Sensor names in sans (SensorInline), numbers + units in mono.
+    const condText = (f: WorkspaceSensorFilter) => (
+        <span className="rc1-cond"><SensorInline tag={f.sensor} size="sm" /> <span className="rc1-mono">{conditionChipParts(f, getDesc, getUnit).rest}</span></span>
+    );
+    const numUnit = (tag: string, value: string) => <span className="rc1-mono">{fmtNumText(value)}{getUnit(tag) ? ` ${getUnit(tag)}` : ''}</span>;
+    const rcBefore = (c: RunningConditionConversion) => {
+        const b = c.before;
+        if (b.allRows) return <><b>Use all rows</b> (idle and shutdown time included)</>;
+        return (
+            <>
+                {b.filters.map((f, i) => (
+                    <span key={f.id}>{i > 0 && <span className="rc1-join">{b.combine.toUpperCase()}</span>}{condText(f)} </span>
+                ))}
+                {b.savedStatus && <>and, for the export only, Machine is running when <span className="rc1-cond"><SensorInline tag={b.savedStatus.sensor} size="sm" /></span> is above {numUnit(b.savedStatus.sensor, b.savedStatus.stopAtOrBelow)}</>}
+            </>
+        );
+    };
+    const modelNames = (ids: string[]) => ids.map(id => allModels.find(m => m.id === id)?.name).filter(Boolean).join(' · ');
+    const dismissConversion = () => {
+        if (!workspaceId) return;
+        setRcConversion(null);
+        void trackPending((async () => {
+            const next = await updateWorkspaceData(workspaceId, prev => withFailureGroupState(prev, { runningConditionConversion: null }));
+            if (workspaceIdRef.current !== workspaceId) return;
+            if (next?.failureGroupState) {
+                applyWritten(next);
+                await emit('failure-group-state-changed', { ...next.failureGroupState, workspaceId, origin: 'build-model' });
+            }
+        })());
+    };
+    const nIncomplete = rcConversion?.incompleteModelIds.length ?? 0;
+    // Nothing to keep: the Not-set card says why ("Set it again"), in two sentences.
+    const rcNeedsSetWhy = conversionMustSetAgain(rcConversion) && rcConversion && (
+        <>
+            This project used {rcBefore(rcConversion)}, which is gone — pick the sensor that shows the machine is running, and the value above which it runs.
+            {nIncomplete > 0 && <> Its {nIncomplete} Complete model{nIncomplete === 1 ? ' is' : 's are'} Incomplete until {nIncomplete === 1 ? 'it is' : 'they are'} trained again with it.</>}
+        </>
+    );
+    const ownConverted = rcConversion?.customModels.filter(c => c.result === 'converted') ?? [];
+    const ownNeedsSet = rcConversion?.customModels.filter(c => c.result === 'needs-set') ?? [];
+    const after = rcConversion?.after ?? null;
+    const showNow = rcConversion?.result === 'converted' && after !== null;
+    const showConversion = !!rcConversion && (showNow || rcConversion.customModels.length > 0);
+    const rcConversionNotice = showConversion && rcConversion && (
+        <div role="status" data-testid="rc-conversion-notice" className="f4-notice rc1-notice">
+            <span className="f4-notice-ico"><TriangleAlert size={16} aria-hidden="true" /></span>
+            <div className="rc1-notice-body">
+                <div className="f4-notice-title">Running condition is now one condition</div>
+                <div className="rc1-grid">
+                    {showNow && after && (
+                        <>
+                            <span className="rc1-k">Before</span>
+                            <span>{rcBefore(rcConversion)}</span>
+                            <span className="rc1-k">Now</span>
+                            <span>
+                                Machine is running when <span className="rc1-cond"><SensorInline tag={after.sensor} size="sm" /></span> is above {numUnit(after.sensor, after.value)}
+                                <span className="rc1-src"> — {rcConversion.source === 'saved-status' ? 'taken from the export’s running status line' : 'the first “above” condition was kept'}.</span>
+                            </span>
+                        </>
+                    )}
+                    {showNow && nIncomplete > 0 && (
+                        <>
+                            <span className="rc1-k">Models</span>
+                            <span>
+                                <b>{nIncomplete} Complete model{nIncomplete === 1 ? ' is' : 's are'} Incomplete again</b> — {nIncomplete === 1 ? 'it trains' : 'they train'} on different rows now: {modelNames(rcConversion.incompleteModelIds)}. Train again, then Mark complete. Set points are kept.
+                            </span>
+                        </>
+                    )}
+                    {rcConversion.customModels.length > 0 && (
+                        <>
+                            <span className="rc1-k">Own condition</span>
+                            <span>
+                                {ownConverted.length > 0 && <>Converted the same way: {modelNames(ownConverted.map(c => c.id))}. </>}
+                                {ownNeedsSet.length > 0 && <span className="rcx-line--warn">Set again in Model settings → Training data: <b>{modelNames(ownNeedsSet.map(c => c.id))}</b> — it had no “above” condition.</span>}
+                            </span>
+                        </>
+                    )}
+                </div>
+            </div>
+            <div className="rc1-acts">
+                {showNow && <button type="button" className="rc1-link" data-testid="rc-conversion-check" onClick={() => setRcFilterOpen(true)}>Check it</button>}
+                <button type="button" className="rc1-dismiss" data-testid="rc-conversion-dismiss" onClick={dismissConversion}>Got it</button>
+            </div>
+        </div>
+    );
 
     return (
         <SensorMetaContext.Provider value={sensorLookup}>
@@ -5074,8 +5077,6 @@ export default function BuildModelWindow() {
                     state={rcStepState}
                     periods={runningConditionTimePeriods}
                     filters={runningConditionFilters}
-                    combine={runningConditionCombine}
-                    noneConfirmed={runningConditionNoneConfirmed}
                     headers={gateHeaders}
                     getDesc={getDesc}
                     getUnit={getUnit}
@@ -5083,7 +5084,9 @@ export default function BuildModelWindow() {
                     onOpen={() => setRcFilterOpen(true)}
                     testPeriods={runningConditionTestPeriods}
                     noRows={cardNoRows}
+                    why={rcNeedsSetWhy && !rcConfigured ? rcNeedsSetWhy : undefined}
                 />
+                {rcConversionNotice}
                 {/* Train queue run strip (its own memoised component): progress never
                     re-renders the Model fit charts. */}
                 {queue.run && queue.summary && (
@@ -5117,37 +5120,6 @@ export default function BuildModelWindow() {
                         </div>
                     );
                 })()}
-
-                {rcLegacyNotice === 'pending' && !rcConfigured && !legacyRemindLater && (
-                    <div
-                        role="status"
-                        data-testid="rc-legacy-banner"
-                        className="f4-callout f4-callout--info"
-                        style={{ margin: '12px 20px 0' }}
-                    >
-                        <div>
-                            <b>New: running condition is now required for every model.</b>{' '}
-                            {legacyCompleteCount > 0
-                                ? `${legacyCompleteCount} model${legacyCompleteCount === 1 ? '' : 's'} in this workspace ${legacyCompleteCount === 1 ? 'was' : 'were'} trained on the full dataset. They stay `
-                                : 'Models in this workspace were set up without one. They stay '}
-                            <b>Complete</b> and nothing is changed. Set a condition before you build or re-train a model.
-                        </div>
-                        <div className="f4-acts">
-                            <button type="button" className="f4-btn f4-btn--small" onClick={() => setRcFilterOpen(true)}>Set a condition</button>
-                            <button
-                                type="button"
-                                className="f4-btn f4-btn--plain f4-btn--small"
-                                onClick={() => {
-                                    setRunningConditionNoneConfirmed(true);
-                                    persistRunningCondition({ noneConfirmed: true });
-                                }}
-                            >
-                                Keep using all data
-                            </button>
-                            <button type="button" className="f4-btn f4-btn--plain f4-btn--small" onClick={() => setLegacyRemindLater(true)}>Remind me later</button>
-                        </div>
-                    </div>
-                )}
 
                 {categoryNotice && categoryNotice.length > 0 && (() => {
                     // One entry per sensor (the change list is per model). The
@@ -5282,8 +5254,6 @@ export default function BuildModelWindow() {
                             </div>
                             <RunningConditionPills
                                 configured={rcViewConfigured}
-                                noneConfirmed={rcView.noneConfirmed}
-                                conditionCount={rcView.filters.length}
                                 periodInvalid={rcViewInvalid}
                             />
                             <button type="button" className="bmw-modal-x" onClick={requestCloseRc} aria-label="Close">
@@ -5298,14 +5268,8 @@ export default function BuildModelWindow() {
                                 savedPeriods={runningConditionTimePeriods}
                                 savedTestPeriods={runningConditionTestPeriods}
                                 bounds={datasetBounds}
-                                filters={rcView.filters}
-                                combine={rcView.combine}
-                                noneConfirmed={rcView.noneConfirmed}
-                                onNoneChange={none => patchRcDraft({ noneConfirmed: none })}
-                                onCombineChange={mode => patchRcDraft({ combine: mode })}
-                                onAddFilter={addRunningConditionFilter}
-                                onUpdateFilter={updateRunningConditionFilter}
-                                onRemoveFilter={removeRunningConditionFilter}
+                                condition={rcView.filters[0]}
+                                onConditionChange={setRunningConditionLine}
                                 sensors={allSensors}
                                 getComponent={getComponent}
                                 getUnit={getUnit}
@@ -5314,7 +5278,6 @@ export default function BuildModelWindow() {
                                 onTestPeriodsChange={updateRunningConditionTestPeriods}
                                 highlights={dashHighlights}
                                 onPendingDate={onRcPendingDate}
-                                runningStatusSlot={rsSlot}
                             />
                         </div>
                         <div className="bmw-modal-foot" data-testid="rc-modal-foot">
@@ -5334,16 +5297,16 @@ export default function BuildModelWindow() {
                                         data-testid="rc-apply"
                                         className="filter-apply-btn"
                                         disabled={!rcApplyEnabled}
-                                        title={rcApplyBlock?.footer ?? rsWhy ?? undefined}
+                                        title={rcApplyBlock?.footer ?? rcCondWhy ?? undefined}
                                         onClick={applyRcDraft}
                                     >
                                         <Check size={12} /> Apply
                                     </button>
                                     <button type="button" data-testid="rc-cancel" className="f4-btn f4-btn--plain" onClick={closeRc}>Cancel</button>
                                     <span className="filter-panel-spacer" />
-                                    {!rcApplyBlock && rsWhy ? (
-                                        <span data-testid="rc-running-status-why" role="alert" className="rc-impact rc-impact--amber">
-                                            <span>{rsWhy}</span>
+                                    {!rcApplyBlock && (rcCondWhy ?? rcStillUnset) ? (
+                                        <span data-testid="rc-condition-why" role="alert" className="rc-impact rc-impact--amber">
+                                            <span>{rcCondWhy ?? rcStillUnset}</span>
                                         </span>
                                     ) : rcApplyBlock ? (
                                         // Why Apply is disabled: "Fix P2 before applying" (red),

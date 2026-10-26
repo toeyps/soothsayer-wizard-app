@@ -167,7 +167,9 @@ export interface PredictiveModelStateSlice {
      *  workspace's single `filterTimeStart`/`filterTimeEnd` pair is migrated by
      *  `migratePeriods`. */
     filterTimePeriods: TimePeriod[];
-    /** Custom mode: user explicitly chose "No condition — use all rows". */
+    /** OLD FILES ONLY: Custom mode's "No condition — use all rows" (removed
+     *  2026-10-26). No longer counts as configured; `migrateSingleRunningCondition`
+     *  sets it back to `false`. */
     customRunningConditionNoneConfirmed?: boolean;
     /** 'workspace' (default): this model's training window AND running
      *  condition are the workspace's
@@ -178,12 +180,14 @@ export interface PredictiveModelStateSlice {
      *  `customRunningConditionCombine` instead — set in this model's own
      *  Model settings. */
     runningConditionMode: 'workspace' | 'custom';
-    /** Only read when `runningConditionMode === 'custom'`. Seeded from the
-     *  workspace's conditions at the moment the user switches to Custom (a
-     *  sensible starting point to edit from), then fully independent —
-     *  editing the workspace default afterward does not change this. */
+    /** Only read when `runningConditionMode === 'custom'`. Since 2026-10-26
+     *  it holds ONE "sensor > value" row (the same single line as the
+     *  workspace's; empty = not set, Train blocked). Seeded from the
+     *  workspace's condition at the moment the user switches to Custom, then
+     *  fully independent. */
     customRunningConditionFilters: WorkspaceSensorFilter[];
-    /** Only read when `runningConditionMode === 'custom'`. */
+    /** Only read when `runningConditionMode === 'custom'`. With one condition
+     *  it no longer matters; kept `'and'` (old files may say 'or'). */
     customRunningConditionCombine: 'and' | 'or';
     /** This model's own SCORING periods (the field says "test periods" so
      *  older workspaces load unchanged) — only read when
@@ -375,8 +379,10 @@ export interface FailureGroupStateSlice {
     groups: FailureGroup[];
     models: FailureModel[];
     /**
-     * Workspace-wide "is the machine actually running" filter (e.g.
-     * `GEN_SPEED > 1200`) — set once here rather than per model, since
+     * Workspace-wide "is the machine actually running" filter: since
+     * 2026-10-26 exactly ONE `greater_than` row ("Machine is running when
+     * GEN_SPEED is above 1200"), also the export's `machine_info.running_status`
+     * (`utils/runningStatus.ts`) — set once here rather than per model, since
      * every Workspace-mode model needs training data restricted to
      * the same operating condition. Combined with the training periods
      * client-side in `utils/trainingScope.ts` before every train / preview
@@ -384,9 +390,9 @@ export interface FailureGroupStateSlice {
      * just read as "no filter" (`?? []`).
      */
     runningConditionFilters?: WorkspaceSensorFilter[];
-    /** How `runningConditionFilters` combine: 'and' (default) requires every
-     *  condition to pass; 'or' keeps a row if any one does. Optional so an
-     *  older workspace without it reads as 'and' (`?? 'and'`). */
+    /** How `runningConditionFilters` combine. Since 2026-10-26 there is ONE
+     *  "sensor > value" condition, so this no longer matters and is written
+     *  `'and'`; old files may say 'or' (harmless with one row). */
     runningConditionCombine?: 'and' | 'or';
     /** Workspace-default TRAIN periods (sibling to `runningConditionFilters`;
      *  the field keeps its old name so older workspaces load unchanged).
@@ -402,7 +408,9 @@ export interface FailureGroupStateSlice {
      *  `customTestPeriods`. At least one is required before Mark complete
      *  (`markCompleteBlockReason`). Optional — undefined reads as `[]`. */
     runningConditionTestPeriods?: TestPeriod[];
-    /** Workspace: user explicitly chose "No condition — use all rows". */
+    /** OLD FILES ONLY: "No condition — use all rows" (removed 2026-10-26). No
+     *  longer counts as a configured running condition; read once by
+     *  `migrateSingleRunningCondition`, which sets it back to `false`. */
     runningConditionNoneConfirmed?: boolean;
     /** Category changes made by the one-time normalisation. `undefined` =
      *  step not run yet; `null` = nothing to show / dismissed. */
@@ -410,13 +418,33 @@ export interface FailureGroupStateSlice {
     /** `'pending'` = legacy workspace with models but no configured running
      *  condition, user hasn't answered yet. `undefined` = step not run; `null` = handled. */
     rcLegacyNotice?: 'pending' | null;
-    /** "Machine is running when <sensor> is above <stopAtOrBelow>" — the
-     *  export's running status, kept only when the running condition does not
-     *  hold exactly one "sensor > value" condition to take it from.
-     *  `stopAtOrBelow` is the text the user typed (never rounded). Not a
-     *  training input: it is NOT in `computeTrainFingerprint` and never makes a
-     *  model Incomplete. Optional; `undefined`/`null` = not set. */
+    /** OLD FILES ONLY: the export-only "Machine is running when … is above …"
+     *  line of before 2026-10-26. Read once by `migrateSingleRunningCondition`
+     *  (a source for the one condition) and cleared there; nothing else reads
+     *  or writes it. */
     runningStatus?: { sensor: string; stopAtOrBelow: string } | null;
+    /** The one-time conversion of an old running condition (several conditions,
+     *  AND / OR, Use all rows, the export's own line) into the ONE "Machine is
+     *  running when <sensor> is above <value>" (2026-10-26). `undefined` = step
+     *  not run; `null` = nothing to show, dismissed, or the condition was Applied
+     *  again since. */
+    runningConditionConversion?: RunningConditionConversion | null;
+}
+
+/** What the one-time running-condition conversion did (shown until dismissed). */
+export interface RunningConditionConversion {
+    /** `converted`: one condition was kept; `needs-set`: nothing to keep — set it again. */
+    result: 'converted' | 'needs-set';
+    /** Where the kept condition came from. */
+    source: 'first-above' | 'saved-status' | null;
+    /** The old condition, as it was. */
+    before: { filters: WorkspaceSensorFilter[]; combine: 'and' | 'or'; allRows: boolean; savedStatus: { sensor: string; stopAtOrBelow: string } | null };
+    /** The condition it kept (`null` with `needs-set`). */
+    after: { sensor: string; value: string } | null;
+    /** Models that were Complete and are Incomplete now. */
+    incompleteModelIds: string[];
+    /** Custom models whose own condition was converted (or must be set again). */
+    customModels: { id: string; result: 'converted' | 'needs-set' }[];
 }
 
 /** One training period. `''` = open end (only valid on the first period's

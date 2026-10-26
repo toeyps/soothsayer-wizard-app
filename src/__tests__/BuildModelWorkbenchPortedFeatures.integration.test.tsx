@@ -148,7 +148,7 @@ import { withFailureGroupState } from '../utils/failureGroupState';
 import { computeTrainFingerprint } from '../utils/trainFingerprint';
 import type { WorkspaceState } from '../types';
 // Train/Test validation: train period required to Train, test period to Mark complete.
-import { ALL_TIME_TRAIN, ONE_TEST } from './helpers/trainTestFixture';
+import { ALL_TIME_TRAIN, ONE_TEST, rcOn } from './helpers/trainTestFixture';
 import { findPickerRow, pickSingle, pickerSearch, rowTag } from './helpers/sensorPicker';
 
 // ── fixtures ────────────────────────────────────────────────────────────
@@ -184,16 +184,19 @@ function dashModel(o: Record<string, unknown> & { kind?: string; tag?: string })
     };
 }
 
-/** Current-shape, CONFIGURED workspace ("No condition" confirmed) — raises no
- *  migration write-back and never auto-opens the Running Condition modal. */
+/** The value input of a Custom model's one running-condition line (Model settings). */
+const customValue = () => within(bmw().getByTestId('custom-rc-one')).getByLabelText('Running above this value') as HTMLInputElement;
+
+/** Current-shape, CONFIGURED workspace (the one condition "TAG1 > 0") — raises
+ *  no migration write-back and never auto-opens the Running Condition modal. */
 function wsState(models: unknown[], extra: Record<string, unknown> = {}): WorkspaceState {
     return {
         id: 'ws1', name: 'QA WS', lastRoute: 'dashboard', dataFilePaths: [], metadataFilePath: null,
         selectedSensors: [], visibleSensors: [], operationConfig: null,
         failureGroupState: {
             groups: [{ no: 0, name: 'Not in Group' }, { no: 1, name: 'FG-A' }],
-            models, runningConditionFilters: [], runningConditionCombine: 'and', runningConditionTimePeriods: ALL_TIME_TRAIN, runningConditionTestPeriods: ONE_TEST,
-            runningConditionNoneConfirmed: true, rcLegacyNotice: null, categoryNormalisationNotice: null,
+            models, runningConditionFilters: [rcOn('TAG1')], runningConditionCombine: 'and', runningConditionTimePeriods: ALL_TIME_TRAIN, runningConditionTestPeriods: ONE_TEST,
+            rcLegacyNotice: null, categoryNormalisationNotice: null,
             ...extra,
         } as any,
     } as WorkspaceState;
@@ -386,14 +389,14 @@ describe('(1) a Custom running condition saved from the Workbench vs. Dashboard\
 
             openSettings();
             fireEvent.click(bmw().getByRole('button', { name: 'Custom' }));
-            fireEvent.click(bmw().getByTestId('rc-add-condition'));
-            fireEvent.change(bmw().getByPlaceholderText('value'), { target: { value: '42' } });
+            // Seeded from the workspace's "TAG1 > 0"; the value is edited.
+            fireEvent.change(customValue(), { target: { value: '42' } });
 
             // Dashboard writes (and broadcasts, origin 'dashboard') while the
             // Custom editor has unsaved edits — `applyFg` must not wipe drafts.
             await act(async () => { fireEvent.click(screen.getByText('dash-rename-fg1')); });
             await settle(30);
-            expect((bmw().getByPlaceholderText('value') as HTMLInputElement).value).toBe('42');
+            expect(customValue().value).toBe('42');
             expect(bmw().getByTestId('footer-status').textContent).toMatch(/Unsaved changes/);
             expect(diskModel('i1').runningConditionMode).toBe('workspace'); // not committed by the broadcast
 
@@ -424,8 +427,7 @@ describe('(2) Custom condition/period: Save changes -> close -> reopen -> Train 
         writeDisk(wsState([dashModel({ id: 'i1' })], {
             // A workspace condition exists, so switching to Custom seeds from it —
             // the reopened model must NOT re-seed on top of its own saved list.
-            runningConditionNoneConfirmed: false,
-            runningConditionFilters: [{ id: 'ws-c', sensor: 'TAG3', operation: 'less_than', value1: '7', value2: '' }],
+            runningConditionFilters: [{ ...rcOn('TAG3', '7'), id: 'ws-c' }],
             // No workspace train period: the Custom model gets its own below.
             runningConditionTimePeriods: [],
         }));
@@ -433,9 +435,9 @@ describe('(2) Custom condition/period: Save changes -> close -> reopen -> Train 
         openSettings();
         fireEvent.click(bmw().getByRole('button', { name: 'Custom' }));
         expect(bmw().getByTestId('pm-seed-note')).toBeTruthy();
-        // Edit the seeded row instead of keeping the workspace copy.
-        fireEvent.change(bmw().getByPlaceholderText('value'), { target: { value: '42' } });
-        fireEvent.click(bmw().getByLabelText('Greater than'));
+        // Edit the seeded line ("TAG3 > 7") instead of keeping the workspace copy.
+        expect(customValue().value).toBe('7');
+        fireEvent.change(customValue(), { target: { value: '42' } });
 
         // A period typed live: Add (defaults from the dataset bounds, row
         // auto-expands in compact mode), then type a new end and blur.
@@ -462,7 +464,7 @@ describe('(2) Custom condition/period: Save changes -> close -> reopen -> Train 
         openSettings();
         // Custom already has its own rows — no re-seed, no seed note, the saved value.
         expect(bmw().queryByTestId('pm-seed-note')).toBeNull();
-        expect((bmw().getByPlaceholderText('value') as HTMLInputElement).value).toBe('42');
+        expect(customValue().value).toBe('42');
 
         await clickTrain();
         // Train's query is the last FILTERED one: the row counts (Step-1 card, and since
@@ -633,7 +635,7 @@ describe('(4) criteria-stats fetch races between Clustering models', () => {
         await mountBuildModel();
         openSettings();
         await waitFor(() => expect(bmw().getByTestId('cluster-slider')).toBeTruthy());
-        expect(statsCalls('TAG2').slice(-1)[0]?.args?.filter).toBeNull(); // workspace "No condition"
+        expect(statsCalls('TAG2').slice(-1)[0]?.args?.filter?.value_filters).toEqual([{ sensor: 'TAG1', operation: 'greater_than', value1: 0, value2: null }]); // the workspace's "TAG1 > 0"
 
         await act(async () => {
             const next = await updateWorkspaceData('ws1', prev => withFailureGroupState(prev, {
@@ -719,16 +721,17 @@ describe('(5a) cluster-range slider: ranges are never re-divided to the criteria
 });
 
 describe('(5b) the running-condition gate judges the PERSISTED model, not the pending Custom draft', () => {
-    it('FIXED (2026-09-30): with the Custom editor showing "Required" (no condition, not confirmed), Train is blocked — nothing runs', async () => {
+    it('FIXED (2026-09-30): with the Custom editor showing "Required" (its one line half-filled), Train is blocked — nothing runs', async () => {
         // The gate reads the DRAFT-merged model (`effectiveModelFor`): a pending
-        // draft that switched to Custom with nothing set must block Train —
-        // otherwise Train would commit it and train with `filter: null` (every
-        // row, idle periods included).
+        // draft that switched to Custom and left its one line unset must block
+        // Train — otherwise Train would commit it and train without the
+        // condition (every row, idle periods included).
         writeDisk(wsState([dashModel({ id: 'i1' })]));
         await mountBuildModel();
         openSettings();
         fireEvent.click(bmw().getByRole('button', { name: 'Custom' }));
-        expect(bmw().getByTestId('rc-unset-warning')).toBeTruthy();
+        fireEvent.change(customValue(), { target: { value: '' } }); // seeded "TAG1 > 0", value cleared
+        expect(bmw().getByTestId('rc-unset-warning').textContent).toContain('Type the value above which the machine is running.');
 
         const before = statsCalls('TAG1').length; // the Step-1 card's own row count is already in here
         await act(async () => { fireEvent.click(bmw().getByTestId('train-sensor')); });
@@ -741,8 +744,9 @@ describe('(5b) the running-condition gate judges the PERSISTED model, not the pe
         writeDisk(wsState([dashModel({ id: 'i1', runningConditionMode: 'custom', filterTimePeriods: ALL_TIME_TRAIN })]));
         await mountBuildModel();
         openSettings();
-        fireEvent.click(bmw().getByTestId('rc-add-condition'));
-        fireEvent.change(bmw().getByPlaceholderText('value'), { target: { value: '42' } });
+        expect(bmw().getByTestId('rc-unset-warning')).toBeTruthy(); // its one line is empty
+        pickSingle(within(bmw().getByTestId('custom-rc-one')).getByRole('button', { name: 'sensor' }), 'TAG1');
+        fireEvent.change(customValue(), { target: { value: '42' } });
         expect(bmw().queryByTestId('rc-unset-warning')).toBeNull();
         expect((bmw().getByTestId('train-sensor') as HTMLButtonElement).disabled).toBe(false);
     });
@@ -754,7 +758,7 @@ describe('(5b) the running-condition gate judges the PERSISTED model, not the pe
         writeDisk(wsState([dashModel({ id: 'i1', runningConditionMode: 'custom' })]));
         await mountBuildModel();
         const results = within(bmw().getByTestId('results-incomplete'));
-        fireEvent.click(results.getByText('Set a condition above, or choose Use all rows'));
+        fireEvent.click(results.getByText('Pick the sensor and the value under “When the machine is running” above'));
         expect(screen.queryByRole('dialog', { name: 'Running condition' })).toBeNull();
         expect(bmw().getByTestId('custom-rc-editor')).toBeTruthy();
     });
@@ -766,15 +770,15 @@ describe('(5b) the running-condition gate judges the PERSISTED model, not the pe
 //     picker, so Esc ownership and a real pick are only provable here).
 // ─────────────────────────────────────────────────────────────────────────
 describe('(6) Running condition modal + the real nested sensor picker (2026-10-03)', () => {
-    const COND5 = { id: 'f1', sensor: 'TAG1', operation: 'greater_than', value1: '5', value2: '' };
+    const COND5 = { ...rcOn('TAG1', '5'), id: 'f1' };
     const esc = () => act(async () => { fireEvent.keyDown(document.body, { key: 'Escape' }); await Promise.resolve(); });
     const rcDialog = () => screen.queryByRole('dialog', { name: 'Running condition' });
     // The shared single picker's anchored popover is named after its field ("sensor").
     const pickerDialog = () => screen.queryByRole('dialog', { name: 'sensor' });
-    const condTrigger = () => within(within(rcDialog()!).getByTestId('rc-cond-1')).getByRole('button', { name: 'sensor' });
+    const condTrigger = () => within(within(rcDialog()!).getByTestId('rc-one')).getByRole('button', { name: 'sensor' });
 
     async function openModalWithPicker() {
-        writeDisk(wsState([dashModel({ id: 'i1' })], { runningConditionNoneConfirmed: false, runningConditionFilters: [COND5] }));
+        writeDisk(wsState([dashModel({ id: 'i1' })], { runningConditionFilters: [COND5] }));
         await mountBuildModel();
         fireEvent.click(bmw().getByTestId('rc-card-open'));
         expect(rowTag(condTrigger())).toBe('TAG1');
@@ -827,8 +831,8 @@ describe('(6) Running condition modal + the real nested sensor picker (2026-10-0
         await act(async () => { fireEvent.click(screen.getByTestId('rc-apply')); });
         await settle(30);
         expect(readDisk().failureGroupState.runningConditionFilters[0]).toMatchObject({ sensor: 'TAG3', value1: '5' });
-        expect(bmw().getByTestId('rc-card-cond').textContent).toBe('When running: 1 condition'); // the one line
+        expect(bmw().getByTestId('rc-card-cond').textContent).toBe('Running when Motor CurrentTAG3 is above 5 A'); // the one line
         fireEvent.click(bmw().getByTestId('rc-card-details'));
-        expect(bmw().getByTestId('rc-card-cond-chip').textContent).toBe('Motor CurrentTAG3 > 5 A');
+        expect(bmw().getByTestId('rc-card-cond-chip').textContent).toBe('Motor CurrentTAG3 is above 5 A');
     });
 });

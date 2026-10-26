@@ -93,10 +93,10 @@ import { markCompleteFromHealthPage } from './helpers/healthPage';
 import { emit } from '@tauri-apps/api/event';
 import { updateWorkspaceData } from '../workspaceManager';
 import { withFailureGroupState } from '../utils/failureGroupState';
-import { getBuildBlockReason } from '../utils/runningCondition';
+import { getBuildBlockReason, NO_RUNNING_CONDITION_REASON } from '../utils/runningCondition';
 import { preflightReason, TRAIN_NEEDS_RUNNING_CONDITION } from '../utils/trainQueue';
 // A train period is required to Train, a scoring period to Mark complete.
-import { ALL_TIME_TRAIN, ONE_TEST } from './helpers/trainTestFixture';
+import { ALL_TIME_TRAIN, ONE_TEST, rcOn } from './helpers/trainTestFixture';
 
 // ── fixtures ────────────────────────────────────────────────────────────
 
@@ -113,8 +113,8 @@ const BUILD_DATA = {
     metadata: { headers: ['timestamp', ...HEADERS], total_rows: 100 },
 };
 const LEGACY_KEYS = ['runningConditionTimeStart', 'runningConditionTimeEnd', 'filterTimeStart', 'filterTimeEnd'];
-const GATE_REASON = 'Set the running condition first — a condition, or Use all rows';
-const COND = { id: 'rc1', sensor: 'TAG2', operation: 'greater_than', value1: '10', value2: '' };
+const GATE_REASON = NO_RUNNING_CONDITION_REASON;
+const COND = { ...rcOn('TAG2', '10'), id: 'rc1' };
 
 /** A model exactly as a v0.6.0 (pre-Feature-4) workspace stored it. */
 function v1Model(o: Record<string, unknown>) {
@@ -283,7 +283,7 @@ describe('(1) opening a v1 (pre-Feature-4) workspace', () => {
         runningConditionTimeEnd: '2026-06-30T23:59',
     });
 
-    it('is normalised, flagged and migrated to one period, written back ONCE with no legacy keys, and reopening changes nothing', async () => {
+    it('is normalised and migrated to one period, written back ONCE with no legacy keys, and reopening changes nothing', async () => {
         writeDisk(V1);
         await mountBuildModel();
 
@@ -299,8 +299,10 @@ describe('(1) opening a v1 (pre-Feature-4) workspace', () => {
             ['r1', 'condition', 'performance'],
             ['c1', null, 'performance'],
         ]);
-        // Gate: models exist, nothing configured -> flagged, not silently confirmed.
-        expect(fg.rcLegacyNotice).toBe('pending');
+        // Running condition: never set -> nothing to convert (no notice), not
+        // silently confirmed; the old legacy-gate flag is no longer written.
+        expect(fg.runningConditionConversion).toBeNull();
+        expect(fg.rcLegacyNotice).toBeUndefined();
         expect(fg.runningConditionNoneConfirmed).toBeUndefined();
         // Periods: the single workspace range -> one period; per-model too; empty pairs -> [].
         expect(fg.runningConditionTimePeriods).toEqual([{ id: 'legacy-1', start: '2026-01-01T00:00', end: '2026-06-30T23:59' }]);
@@ -318,8 +320,9 @@ describe('(1) opening a v1 (pre-Feature-4) workspace', () => {
         expect(broadcasts[0].payload.origin).toBe('build-model');
         expect(broadcasts[0].payload.workspaceId).toBe('ws1');
 
-        // What the user sees is the stored result.
-        expect(screen.getByTestId('rc-legacy-banner')).toBeTruthy();
+        // What the user sees is the stored result (no running-condition notice:
+        // there was no old condition to convert).
+        expect(screen.queryByTestId('rc-conversion-notice')).toBeNull();
         expect(screen.getByTestId('category-normalisation-notice')).toBeTruthy();
         // Workbench: the always-visible Running Condition bar says
         // Required, and the unset workspace auto-opened the Edit… modal, which
@@ -336,18 +339,16 @@ describe('(1) opening a v1 (pre-Feature-4) workspace', () => {
         await mountBuildModel();
         expect(wsWrites()).toBe(1);
         expect(h.files.get(WS_FILE)).toBe(raw);
-        expect(screen.getByTestId('rc-legacy-banner')).toBeTruthy(); // still pending: the stored flag, not recomputed
+        expect(screen.getByTestId('rc-card').getAttribute('data-state')).toBe('unset'); // still Not set, and still auto-opened
+        expect(rcModal()).toBeTruthy();
     });
 
     it('the migrated legacy period is exactly what Train sends to Rust once the gate is satisfied', async () => {
         writeDisk(V1);
         await mountBuildModel();
-        closeRcModal(); // auto-opened (unset workspace); the banner sits behind it
-        fireEvent.click(screen.getByText('Keep using all data'));
-        await settle(30);
-        expect(readDisk().failureGroupState.rcLegacyNotice).toBeNull();
-        expect(screen.queryByTestId('rc-legacy-banner')).toBeNull();
-
+        closeRcModal(); // auto-opened (unset workspace)
+        // The one condition is set ("Machine is running when TAG2 is above 10").
+        await otherWindowWrites({ runningConditionFilters: [COND] });
         closeRcModal();
         selectSensorRow(0); // TAG1 row, Individual tab
         expect(trainBtn().disabled).toBe(false);
@@ -355,7 +356,7 @@ describe('(1) opening a v1 (pre-Feature-4) workspace', () => {
         // gate became satisfied - before this mark; the first TAG1 stats call after it is Train's.
         const mark = await clickTrain();
         const ranges = [{ start: '2026-01-01T00:00', end: '2026-06-30T23:59' }];
-        expect((await trainCall(mark, 'compute_sensor_stats', a => a.sensor === 'TAG1')).args.filter).toEqual({ timestamp_ranges: ranges, value_filters: [], combine: 'and' });
+        expect((await trainCall(mark, 'compute_sensor_stats', a => a.sensor === 'TAG1')).args.filter).toEqual({ timestamp_ranges: ranges, value_filters: [{ sensor: 'TAG2', operation: 'greater_than', value1: 10, value2: null }], combine: 'and' });
         await trained('i1');
     });
 });
@@ -365,12 +366,12 @@ describe('(1) opening a v1 (pre-Feature-4) workspace', () => {
 // ─────────────────────────────────────────────────────────────────────────
 
 describe('(2) the Workbench notice-line reason and the Train button agree with the shared gate helper', () => {
-    const configured = () => wsState(currentFg([model({ id: 'i1' })], { runningConditionNoneConfirmed: true }));
+    const configured = () => wsState(currentFg([model({ id: 'i1' })], { runningConditionFilters: [COND] }));
 
     const cases: [string, Record<string, unknown>][] = [
-        ['the workspace condition is cleared', { runningConditionNoneConfirmed: false }],
-        ['the only condition is incomplete (no value)', { runningConditionNoneConfirmed: false, runningConditionFilters: [{ ...COND, value1: '' }] }],
-        ['the only condition names a sensor not in the dataset', { runningConditionNoneConfirmed: false, runningConditionFilters: [{ ...COND, sensor: 'GONE' }] }],
+        ['the workspace condition is cleared', { runningConditionFilters: [] }],
+        ['the only condition is incomplete (no value)', { runningConditionFilters: [{ ...COND, value1: '' }] }],
+        ['the only condition names a sensor not in the dataset', { runningConditionFilters: [{ ...COND, sensor: 'GONE' }] }],
         ['a workspace period ends before it starts', { runningConditionTimePeriods: [{ id: 'bad', start: '2026-02-01T00:00', end: '2026-01-01T00:00' }] }],
     ];
 
@@ -414,14 +415,14 @@ describe('(2) the Workbench notice-line reason and the Train button agree with t
         expect(readDisk().failureGroupState.models[0].status).toBe(true);
     });
 
-    it('a broadcast that empties a Custom model\'s own list re-blocks Train (workspace None does not rescue Custom)', async () => {
-        writeDisk(wsState(currentFg([model({ id: 'i1', runningConditionMode: 'custom', customRunningConditionFilters: [COND], filterTimePeriods: ALL_TIME_TRAIN })], { runningConditionNoneConfirmed: true })));
+    it('a broadcast that empties a Custom model\'s own list re-blocks Train (a set workspace condition does not rescue Custom)', async () => {
+        writeDisk(wsState(currentFg([model({ id: 'i1', runningConditionMode: 'custom', customRunningConditionFilters: [COND], filterTimePeriods: ALL_TIME_TRAIN })], { runningConditionFilters: [COND] })));
         await mountBuildModel();
         closeRcModal();
         selectSensorRow(0);
         expect(trainBtn().disabled).toBe(false);
         await otherWindowWrites({ models: [model({ id: 'i1', runningConditionMode: 'custom', customRunningConditionFilters: [], filterTimePeriods: ALL_TIME_TRAIN })] });
-        expect(screen.getByTestId('build-block-reason').textContent).toBe('Set a condition above, or choose Use all rows'); // its OWN condition, and Model settings opened by itself: the reason says where to fix it
+        expect(screen.getByTestId('build-block-reason').textContent).toBe('Pick the sensor and the value under “When the machine is running” above'); // its OWN condition, and Model settings opened by itself: the reason says where to fix it
         expect(trainBtn().disabled).toBe(true);
     });
 });
@@ -431,14 +432,15 @@ describe('(2) the Workbench notice-line reason and the Train button agree with t
 // ─────────────────────────────────────────────────────────────────────────
 
 describe('(3) Train sends one filter to stats and every fit path - and it matches the Rust contract fixture', () => {
-    const customOr = contract.pm_payloads[0].json!;
+    // The contract fixture's Custom payload, with the ONE condition a model can
+    // have since 2026-10-26 (its first value filter, "TAG2 > 10"); the time
+    // ranges and the field shapes are the fixture's own.
+    const fixture = contract.pm_payloads[0].json!;
+    const customOne = { ...fixture, value_filters: [fixture.value_filters[0]], combine: 'and' };
     const customModel = (o: Record<string, unknown>) => model({
         runningConditionMode: 'custom',
-        customRunningConditionCombine: 'or',
-        customRunningConditionFilters: [
-            { id: 'c1', sensor: 'TAG2', operation: 'greater_than', value1: '10', value2: '' },
-            { id: 'c2', sensor: 'TAG3', operation: 'between', value1: '1', value2: '5' },
-        ],
+        customRunningConditionCombine: 'and',
+        customRunningConditionFilters: [{ ...COND, id: 'c1' }],
         filterTimePeriods: [
             { id: 'p1', start: '', end: '2026-01-31T23:59' },
             { id: 'p2', start: '2026-03-01T00:00', end: '' },
@@ -454,13 +456,13 @@ describe('(3) Train sends one filter to stats and every fit path - and it matche
         const mark = await trainRow(0);
 
         const fit = (await trainCall(mark, 'preview_relationship_model')).args.filter;
-        expect(fit).toEqual(customOr);
+        expect(fit).toEqual(customOne);
         keysOk(fit, contract.preview_filter_fields);
         for (const r of fit.timestamp_ranges) keysOk(r, contract.time_range_fields);
         for (const v of fit.value_filters) keysOk(v, contract.value_filter_fields);
 
         await waitFor(() => expect(lastInvoke('compute_health_preview')).toBeTruthy());
-        expect(lastInvoke('compute_health_preview')!.args.request.filter).toEqual(customOr);
+        expect(lastInvoke('compute_health_preview')!.args.request.filter).toEqual(customOne);
         await trained('r1');
     });
 
@@ -471,7 +473,7 @@ describe('(3) Train sends one filter to stats and every fit path - and it matche
         await mountBuildModel();
         const markI = await trainRow(0);
         const stats = (await trainCall(markI, 'compute_sensor_stats', a => a.sensor === 'TAG2')).args.filter;
-        expect(stats).toEqual(customOr);
+        expect(stats).toEqual(customOne);
         keysOk(stats, contract.preview_filter_fields);
         await trained('i1');
         // Train asked for the target's stats exactly once (the row count never asks for TAG2).
@@ -485,35 +487,28 @@ describe('(3) Train sends one filter to stats and every fit path - and it matche
         })])));
         await mountBuildModel();
         const markC = await trainRow(0);
-        expect((await trainCall(markC, 'compute_clustering_preview')).args.filter).toEqual(customOr);
+        expect((await trainCall(markC, 'compute_clustering_preview')).args.filter).toEqual(customOne);
         await trained('c1');
         // The criteria sensor (TAG2, not the row count's TAG1) is only ever asked with the model's own scope.
         const criteria = h.invokes.filter(c => c.cmd === 'compute_sensor_stats' && c.args.sensor === 'TAG2');
         expect(criteria.length).toBeGreaterThan(0);
-        for (const c of criteria) expect(c.args.filter).toEqual(customOr);
+        for (const c of criteria) expect(c.args.filter).toEqual(customOne);
     });
 
-    it('Workspace mode with "No condition" and no periods sends filter: null (fixture)', async () => {
-        // Target TAG2: the Step-1 row count asks TAG1 with `filter: null` on its own, which would
-        // satisfy this even if Train never ran - so read Train's own call, and check it finished.
-        writeDisk(wsState(currentFg([model({ id: 'i1', targetSensor: 'TAG2' })], { runningConditionNoneConfirmed: true, runningConditionFilters: [COND] })));
-        await mountBuildModel();
-        const mark = await trainRow(0);
-        const call = await trainCall(mark, 'compute_sensor_stats', a => a.sensor === 'TAG2');
-        expect(call.args).toHaveProperty('filter');
-        expect(call.args.filter).toBe(contract.pm_payloads[1].json);
-        await trained('i1');
-    });
-
-    it('"No condition" drops value conditions but NOT periods, and combine still rides along (periods are AND-ed on the Rust side)', async () => {
+    it('Workspace mode: the one condition and the train period both reach Rust ("Use all rows" is gone, so the filter is never null)', async () => {
         writeDisk(wsState(currentFg([model({ id: 'i1' })], {
-            runningConditionNoneConfirmed: true, runningConditionFilters: [COND], runningConditionCombine: 'or',
+            runningConditionFilters: [COND],
             runningConditionTimePeriods: [{ id: 'w1', start: '2026-05-01T00:00', end: '2026-05-31T23:59' }],
         })));
         await mountBuildModel();
         const mark = await trainRow(0);
         const f = (await trainCall(mark, 'compute_sensor_stats', a => a.sensor === 'TAG1')).args.filter;
-        expect(f).toEqual({ timestamp_ranges: [{ start: '2026-05-01T00:00', end: '2026-05-31T23:59' }], value_filters: [], combine: 'or' });
+        expect(f).toEqual({
+            timestamp_ranges: [{ start: '2026-05-01T00:00', end: '2026-05-31T23:59' }],
+            value_filters: [{ sensor: 'TAG2', operation: 'greater_than', value1: 10, value2: null }],
+            combine: 'and',
+        });
+        keysOk(f, contract.preview_filter_fields);
         await trained('i1');
     });
 
@@ -549,9 +544,9 @@ describe('(4) old time keys re-added by a stale writer', () => {
         const Q = { id: 'q1', start: '2026-08-01T00:00', end: '2026-08-31T23:59' };
         const state = wsState(currentFg([
             { ...model({ id: 'i1' }), filterTimeStart: '2020-01-01T00:00', filterTimeEnd: '2020-12-31T23:59' },
-            { ...model({ id: 'i2', targetSensor: 'TAG2', runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true, filterTimePeriods: [Q] }), filterTimeStart: '2019-01-01T00:00', filterTimeEnd: '' },
+            { ...model({ id: 'i2', targetSensor: 'TAG2', runningConditionMode: 'custom', customRunningConditionFilters: [COND], filterTimePeriods: [Q] }), filterTimeStart: '2019-01-01T00:00', filterTimeEnd: '' },
         ], {
-            runningConditionNoneConfirmed: true,
+            runningConditionFilters: [COND],
             runningConditionTimePeriods: [P],
             runningConditionTimeStart: '2020-01-01T00:00', runningConditionTimeEnd: '2020-12-31T23:59',
         }));
@@ -595,21 +590,19 @@ describe('(4) old time keys re-added by a stale writer', () => {
 // ─────────────────────────────────────────────────────────────────────────
 
 describe('a brand-new workspace (never opened before Feature 4)', () => {
-    // Models are only ever created on the Dashboard, so the
-    // Build Model window is always opened for the first time with models
-    // present. Dashboard's first-model creation now seeds `rcLegacyNotice: null`
-    // (see Feature4CrossWindow's end-to-end test), so `flagLegacyGate` leaves it
-    // alone. A workspace WITHOUT the marker is still flagged (real legacy).
-    it('does not show the legacy banner once Dashboard has seeded the markers', async () => {
-        writeDisk(wsState({ models: [model({ id: 'i1', category: null }), model({ id: 'i2', targetSensor: 'TAG2', category: null })], rcLegacyNotice: null, categoryNormalisationNotice: null, runningConditionTimePeriods: [] }));
+    // Models are only ever created on the Dashboard, so the Build Model window
+    // is always opened for the first time with models present. A running
+    // condition that was simply never set is not an "old project to convert":
+    // no conversion notice, the card says Not set and the settings modal opens
+    // by itself (the old legacy banner is gone since 2026-10-26).
+    it('a workspace with models and nothing set: Not set + the modal auto-opens, no conversion notice, nothing written', async () => {
+        writeDisk(wsState({ models: [model({ id: 'i1', category: null }), model({ id: 'i2', targetSensor: 'TAG2', category: null })], categoryNormalisationNotice: null, runningConditionTimePeriods: [] }));
         await mountBuildModel();
-        expect(screen.queryByTestId('rc-legacy-banner')).toBeNull();
-    });
-
-    it('a workspace with models and NO marker (genuinely pre-gate) is still flagged', async () => {
-        writeDisk(wsState({ models: [model({ id: 'i1', category: null })], runningConditionTimePeriods: [] }));
-        await mountBuildModel();
-        expect(screen.getByTestId('rc-legacy-banner')).toBeTruthy();
+        expect(screen.getByTestId('rc-card').getAttribute('data-state')).toBe('unset');
+        expect(screen.getByTestId('rc-card-pill').textContent).toBe('Not set');
+        expect(rcModal()).toBeTruthy();
+        expect(screen.queryByTestId('rc-conversion-notice')).toBeNull();
+        expect(wsWrites()).toBe(0);
     });
 });
 
@@ -623,7 +616,7 @@ describe('reason text consistency', () => {
     // the gate reason as its tooltip was replaced by the separate
     // "✓ Mark complete" button, which carries the same `gateReasonOf` title.
     it('Overview Build reason and the shared gate reason are the same string for a model without a category', async () => {
-        writeDisk(wsState(currentFg([model({ id: 'i1', category: null })], { runningConditionNoneConfirmed: true })));
+        writeDisk(wsState(currentFg([model({ id: 'i1', category: null })], { runningConditionFilters: [COND] })));
         await mountBuildModel();
         openFirstRow();
         const footer = screen.getByTestId('build-block-reason').textContent;

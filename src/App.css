@@ -5138,7 +5138,6 @@ body {
 .rcc-chip { display: inline-flex; align-items: center; gap: 5px; background: var(--bg-primary); border: 1px solid var(--border-strong); border-radius: 8px; padding: 3px 9px; font: 12px var(--mono); color: var(--text-secondary); max-width: 100%; }
 .rcc-chip b { font: 500 12px Inter, system-ui, sans-serif; color: var(--text-primary); }
 .rcc-chip--bad { border-color: var(--danger-line); color: var(--danger); }
-.rcc-andor { font: 700 10px var(--mono); color: var(--text-faint); padding: 0 2px; }
 .rcc-use { width: 230px; flex-shrink: 0; display: flex; flex-direction: column; gap: 6px; }
 /* Holds the small period strip and, above it, the card's one warning. Never a count of
    rows. "Add a train period" is amber (`.rcc-line-warn`: a step still to do, like the
@@ -5237,41 +5236,11 @@ body {
 .tpe-hlwarn { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; padding: 4px 0 0 46px; font-size: 11.5px; color: var(--warn); }
 .tpe-hlwarn b { color: var(--text-primary); font-weight: 600; }
 
-/* running mode: one radio row; condition rows: [sensor] [> < ↔ =] [value unit] [x] on ONE line */
-.rcx-mode { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-bottom: 8px; }
-.rcx-radio { display: inline-flex; align-items: center; gap: 7px; padding: 5px 10px 5px 8px; border: 0; border-radius: 8px; background: none; color: var(--text-primary); font-size: 12px; cursor: pointer; }
-.rcx-radio b { font-weight: 600; }
-.rcx-radio small { font-size: 11px; color: var(--text-secondary); }
-.rcx-radio:hover { background: var(--hover-bg); }
-.rcx-radio--on, .rcx-radio--on:hover { background: var(--blue-bg); }
-.rcx-radio:focus-visible { outline: 2px solid var(--accent-color); outline-offset: 1px; }
-.rcm-rd { width: 16px; height: 16px; border-radius: 50%; border: 1.5px solid var(--text-faint); flex-shrink: 0; display: grid; place-items: center; }
-.rcx-radio--on .rcm-rd { border-color: var(--accent-color); }
-.rcx-radio--on .rcm-rd::after { content: ''; width: 8px; height: 8px; border-radius: 50%; background: var(--accent-color); }
-.rcm-conds { display: flex; flex-direction: column; gap: 2px; margin-bottom: 6px; }
-/* The sensor trigger is capped at 360 px (never the full row), so the value
-   input never clips. */
-.rcm-cond { display: grid; grid-template-columns: minmax(0, 360px) auto 150px 28px; justify-content: start; gap: 8px; align-items: center; padding: 3px 0; }
-.rcm-cond--between { grid-template-columns: minmax(0, 360px) auto 236px 28px; }
-.rcm-cond-s { display: flex; min-width: 0; }
-.rcm-cond-s > .pk-trigger { flex: 1; min-width: 140px; height: 30px; background: var(--bg-primary); font-size: 12px; }
-.rcm-ops { display: inline-flex; background: var(--bg-primary); border: 1px solid var(--border-strong); border-radius: 8px; padding: 2px; gap: 2px; height: 30px; }
-.rcm-ops button { border: 0; background: none; color: var(--text-secondary); border-radius: 6px; font: 600 12px var(--mono); padding: 0 9px; cursor: pointer; }
-.rcm-ops button:hover:not(.on) { color: var(--text-primary); }
-.rcm-ops button.on { background: var(--blue-bg); color: var(--accent-hi); }
-.rcm-ops button:focus-visible { outline: 2px solid var(--accent-color); outline-offset: 1px; }
-.rcm-vals { display: flex; align-items: center; gap: 6px; min-width: 0; }
+/* the running condition's value field ("is above [value unit]") */
 .rcm-val { display: flex; align-items: center; background: var(--bg-primary); border: 1px solid var(--border-strong); border-radius: 8px; height: 30px; padding: 0 8px; gap: 4px; flex: 1 1 0; min-width: 0; }
 .rcm-val:focus-within { border-color: var(--accent-color); }
-.rcm-val--empty { border-color: var(--warn-line); }
 .rcm-val input { background: none; border: 0; outline: none; font: 500 12px var(--mono); width: 100%; min-width: 0; color: var(--text-primary); }
 .rcm-val span { font-size: 10.5px; color: var(--text-faint); white-space: nowrap; }
-.rcm-dash { font-family: var(--mono); color: var(--text-faint); }
-.rcm-join { display: flex; align-items: center; gap: 10px; padding: 2px 0 2px 8px; }
-.rcm-joinbtn { border: 1px solid var(--border-strong); background: var(--input-bg); border-radius: 99px; font: 700 10.5px var(--mono); padding: 3px 10px; cursor: pointer; color: var(--text-primary); }
-.rcm-joinbtn:hover { border-color: var(--accent-color); }
-.rcm-joinbtn:focus-visible { outline: 2px solid var(--accent-color); outline-offset: 1px; }
-.rcm-join small { font-size: 11px; color: var(--text-faint); }
 
 /* modal footer, next to Apply: why it is disabled (red / amber), or what applying
    does to the models (amber, grey when none is affected) with an optional quiet line */
@@ -5294,9 +5263,6 @@ body {
     .rcm-per > .rcm-ib { grid-column: 3; grid-row: 1; }
     .rcm-per .rcm-arrow { display: none; }
     .rcm-per .f4-dt-end, .rcm-per .rcm-dur, .rcm-permsg { grid-column: 2; }
-    .rcm-cond, .rcm-cond--between { grid-template-columns: minmax(0, 1fr) 28px; }
-    .rcm-cond .rcm-ops, .rcm-cond .rcm-vals { grid-column: 1; }
-    .rcm-cond > .rcm-ib { grid-column: 2; grid-row: 1; }
 }
 
 /* =====================================================================
@@ -6862,16 +6828,14 @@ body {
 .tb-menu button:hover, .tb-menu button:focus-visible { background: var(--hover-bg); outline: none; }
 .tb-menu button:focus-visible { box-shadow: inset 0 0 0 2px var(--accent-color); }
 
-/* ===== Running status (2026-10-20): "Machine is running when … is above …" in the
-   workspace running-condition editor — the export's running status ===== */
-.rs-line { margin-top: 12px; padding: 10px 12px; border: 1px dashed var(--border-strong); border-radius: 9px; display: grid; gap: 6px; }
+/* ===== The running condition's ONE line (2026-10-26): "Machine is running when
+   [sensor] is above [value unit]" — also the export's running status ===== */
 .rs-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12.5px; color: var(--text-secondary); }
 .rs-l { white-space: nowrap; }
 .rs-pick { flex: 0 1 320px; min-width: 200px; max-width: 360px; }
 .rs-val { flex: 0 0 140px; }
 .rs-val input { width: 100%; min-width: 0; background: none; border: 0; outline: none; color: var(--text-primary); font: inherit; font-family: var(--mono); font-size: 12px; }
 .rs-val--empty { border-style: dashed; border-color: var(--warn); }
-.rs-note { font-size: 11.5px; line-height: 1.45; color: var(--text-faint); }
 
 /* ===== Export results (2026-10-20, DESIGN_SYSTEM §4.2): the Build Model window's
    bottom bar (variant C) and the Export dialog — readiness checklist, Save to,
@@ -6995,3 +6959,26 @@ fieldset.bmw-sets-body { margin: 0; border: 0; min-width: 0; }
 .rd-sum b { color: var(--text-primary); }
 .rd-sum .rd-n { color: var(--warn); font-weight: 600; }
 .rd-notes { display: grid; gap: 2px; }
+
+/* Running condition: ONE line "Machine is running when [sensor] is above [value]" (2026-10-26). */
+.rc1-row { padding: 8px 10px; border: 1px solid var(--border); border-radius: 9px; background: var(--bg-primary); }
+.rc1-row--unset { border-color: var(--warn-line); }
+.rc1-pick--empty button { border-style: dashed; border-color: var(--warn); }
+.rs-val input::placeholder { color: var(--text-faint); font-family: var(--mono); }
+.rc1-num { font-family: var(--mono); }
+.rcx-line--bad { color: var(--danger); }
+.rcc-above { color: var(--text-secondary); }
+.rc1-notice { margin: 12px 20px 0; }
+.rc1-notice-body { min-width: 0; }
+.rc1-grid { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 14px; margin-top: 6px; line-height: 1.6; }
+.rc1-k { color: var(--text-faint); font-size: 0.7rem; text-transform: uppercase; letter-spacing: .04em; padding-top: 2px; }
+.rc1-cond .sl-inline-wrap { max-width: none; }
+.rc1-mono { font-family: var(--mono); font-weight: 500; color: var(--text-primary); }
+.rc1-join { font-size: 0.68rem; font-weight: 600; color: var(--text-faint); margin: 0 6px; }
+.rc1-src { color: var(--text-faint); }
+.rc1-acts { align-self: start; display: flex; gap: 10px; align-items: center; }
+.rc1-link { background: none; border: 0; padding: 2px 0; color: var(--accent-color); font: 600 0.74rem var(--sans, inherit); cursor: pointer; }
+.rc1-link:hover { text-decoration: underline; }
+.rc1-dismiss { background: none; border: 0; padding: 2px 0; color: var(--text-faint); font: 500 0.74rem var(--sans, inherit); cursor: pointer; }
+.rc1-dismiss:hover { color: var(--text-secondary); }
+.rc1-link:focus-visible, .rc1-dismiss:focus-visible { outline: 2px solid var(--accent-color); outline-offset: 2px; border-radius: 4px; }
