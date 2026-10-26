@@ -5,6 +5,7 @@ import {
     REF_LABEL_GUTTER,
     REF_LABEL_MIN_GAP,
     buildClusterOption,
+    clusterTooltipFormatter,
     buildDistributionOption,
     buildFitScatterOption,
     buildResidualOption,
@@ -547,6 +548,29 @@ describe('Individual charts', () => {
         expect(cl.yAxis.axisLabel.formatter(noisy)).toBe('0.3');
         expect(cl.xAxis.axisLabel.color).toBe(CHART.textSecondary); // the look of the labels is kept
         expect(cl.yAxis.axisLabel.fontSize).toBe(10);
+    });
+
+    it('Clusters: hovering a point shows its cluster and both X and Y values with the axis names (not one bare number)', () => {
+        const c = clu();
+        const o: any = buildClusterOption(c.cluster_scatter!, (c.stats as ClusteringStats).clusters, { x: 'BEARING TEMP · DEGC', y: 'MAIN TEMP · DEGC' });
+        const html: string = o.tooltip.formatter({ seriesType: 'scatter', seriesName: 'Cluster 1', value: [70.5, 88.25] });
+        expect(html).toContain('Cluster 1');
+        expect(html).toContain('X · BEARING TEMP · DEGC');
+        expect(html).toContain('70.5');
+        expect(html).toContain('Y · MAIN TEMP · DEGC');
+        expect(html).toContain('88.25');
+        expect(o.tooltip.formatter({ seriesType: 'line', seriesName: 'Cluster 1 3× SD', value: [1, 2] })).toBe('Cluster 1 · 3× SD');
+    });
+
+    it('Clusters (Health score page): the hover also shows the cluster from the data and the health score', () => {
+        const f = clusterTooltipFormatter({ x: 'X<s>', y: 'Y' }, { scoreIndex: 2, clusterIndex: 3 });
+        const html = f({ seriesType: 'scatter', seriesName: 'Points', value: [1, 2, 87.5, 2] });
+        expect(html).toContain('Cluster 2');
+        expect(html).toContain('Health score');
+        expect(html).toContain('87.5');
+        expect(html).toContain('X · X&lt;s&gt;'); // axis names are escaped
+        expect(f({ seriesType: 'scatter', seriesName: 'Points', value: [1, 2, null, null] })).toContain('no score');
+        expect(f({ seriesType: 'scatter', seriesName: 'Points', value: [1, 2, null, null] })).toContain('No cluster');
     });
 
     it('Distribution: the custom bar series draws a rect spanning its bin edges', () => {

@@ -1207,6 +1207,32 @@ export function clusterAxes(names: ClusterChartNames, ex: { x: NiceRange; y: Nic
     };
 }
 
+const escHtml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+/** Hover text of a Clusters chart point: a heading (the point's cluster, or the
+ *  series name) and one row per axis — the axis title (description · unit) and
+ *  the X / Y value — plus the health score when the point has one. A ring shows
+ *  its own name ("Cluster 1 · 3× SD"). Left to ECharts, a scatter point showed a
+ *  single bare number nobody could read as X or Y. */
+export function clusterTooltipFormatter(names: ClusterChartNames, opts: { scoreIndex?: number; clusterIndex?: number } = {}) {
+    return (p: { seriesType?: string; seriesName?: string; value?: unknown }): string => {
+        const v = p.value;
+        if (p.seriesType !== 'scatter' || !Array.isArray(v) || !Number.isFinite(v[0]) || !Number.isFinite(v[1])) {
+            return escHtml((p.seriesName ?? '').replace(/ (\d+(?:\.\d+)?)× SD$/, ' · $1× SD'));
+        }
+        const cid = opts.clusterIndex !== undefined ? v[opts.clusterIndex] : undefined;
+        const heading = opts.clusterIndex !== undefined
+            ? (Number.isFinite(cid) ? `Cluster ${cid}` : 'No cluster')
+            : (p.seriesName ?? '');
+        const row = (label: string, value: string) =>
+            `<div style="display:flex;justify-content:space-between;gap:16px"><span style="color:${CHART.textSecondary}">${escHtml(label)}</span><b>${escHtml(value)}</b></div>`;
+        const rows = [row(`X · ${names.x}`, fmtNum(v[0] as number)), row(`Y · ${names.y}`, fmtNum(v[1] as number))];
+        const score = opts.scoreIndex !== undefined ? v[opts.scoreIndex] : undefined;
+        if (opts.scoreIndex !== undefined) rows.push(row('Health score', Number.isFinite(score) ? fmtNum(score as number) : 'no score'));
+        return `<div style="font-weight:600;margin-bottom:4px">${escHtml(heading)}</div>${rows.join('')}`;
+    };
+}
+
 /** Cluster scatter (points coloured by cluster) with the 1× (green, solid) and
  *  3× (amber, dashed) SD ellipse of every cluster, a "Cluster N" label at each
  *  centre and each ring level named once at the right edge. `names` are the
@@ -1248,7 +1274,7 @@ export function buildClusterOption(scatter: HealthClusterScatter, clusters: Clus
         backgroundColor: 'transparent',
         textStyle: { fontFamily: FONT },
         animation: false,
-        tooltip: { ...tooltipBase, trigger: 'item' },
+        tooltip: { ...tooltipBase, trigger: 'item', formatter: clusterTooltipFormatter(names) },
         legend: { show: false },
         grid: { left: 58, right: 18, top: 14, bottom: 40, containLabel: false },
         dataZoom: [{ type: 'inside', xAxisIndex: 0, filterMode: 'none' }, { type: 'inside', yAxisIndex: 0, filterMode: 'none' }],
