@@ -1,5 +1,5 @@
 # Generates the timestamp-format test files used by IMP-89..IMP-99 and workflow WFI in docs/testing/MANUAL_TEST_PLAN.md.
-# Usage: python scripts/make-ts-testdata.py C:\TSdata   (standard library only)
+# Usage: python scripts/make-ts-testdata.py C:\WizardTestData\TS   (standard library only; scripts/make-all-testdata.py runs it for you)
 #
 # formats/  one file per timestamp shape, each covering its OWN day (288 rows, every 5 minutes) so all of
 #           them can be imported into ONE project together; EXPECTED.txt lists what each file must give.

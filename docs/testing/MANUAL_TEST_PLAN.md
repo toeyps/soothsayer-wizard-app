@@ -17,11 +17,14 @@
 
 บางหมวดใช้ไฟล์ข้อมูลทดสอบที่สร้างจากสคริปต์ในโปรเจกต์ (ต้องมี Python ในเครื่อง — ถ้าไม่มี ขอชุดไฟล์ที่สร้างไว้แล้วจากทีม dev):
 
+**ทางลัด: รัน `python scripts/make-all-testdata.py` ครั้งเดียว ได้ไฟล์ทดสอบทุกชุดใน `C:\WizardTestData` (โฟลเดอร์ย่อย `EXP`, `WF`, `TS`, `IMP`) — ข้อไหนใช้ไฟล์ไหน ดูตารางใน `docs/testing/TEST_DATA_GUIDE.md`**
+
 | ใช้กับ | คำสั่ง (รันในโฟลเดอร์โปรเจกต์) | ได้อะไร |
 |---|---|---|
-| workflow WFA–WFH | `python scripts/make-wf-testdata.py C:\WFdata` | ข้อมูลเครื่องสูบน้ำ 6 เดือน + ไฟล์ Tag names |
-| IMP-89 – IMP-99, workflow WFI | `python scripts/make-ts-testdata.py C:\TSdata` | ไฟล์ที่เขียนวันเวลาหลายรูปแบบ + `EXPECTED.txt` บอกผลที่ต้องได้ |
-| การ Export (BMW-355 ขึ้นไป), workflow WFJ และ WFK | `python scripts/make-export-testdata.py C:\EXPdata` | ข้อมูล 30 วันที่มีชื่อ sensor แปลก ๆ, ข้อมูลตัวเลขยาก ๆ (`EXP-numbers.csv`), เครื่องใหญ่ 37 sensor (`EXP-fleet.csv`) + `EXPECTED.txt` บอกชื่อไฟล์ จำนวนแถว และค่าที่ต้องได้ |
+| workflow WFA–WFH | `python scripts/make-wf-testdata.py C:\WizardTestData\WF` | ข้อมูลเครื่องสูบน้ำ 6 เดือน + ไฟล์ Tag names |
+| IMP-89 – IMP-99, workflow WFI | `python scripts/make-ts-testdata.py C:\WizardTestData\TS` | ไฟล์ที่เขียนวันเวลาหลายรูปแบบ + `EXPECTED.txt` บอกผลที่ต้องได้ |
+| การ Export (BMW-355 ขึ้นไป), workflow WFJ และ WFK | `python scripts/make-export-testdata.py C:\WizardTestData\EXP` | ข้อมูล 30 วันที่มีชื่อ sensor แปลก ๆ, ข้อมูลตัวเลขยาก ๆ (`EXP-numbers.csv`), เครื่องใหญ่ 37 sensor (`EXP-fleet.csv`) + `EXPECTED.txt` บอกชื่อไฟล์ จำนวนแถว และค่าที่ต้องได้ |
+| PREP-5, PREP-6 และหมวด IMP, MULTI, WFE, WFF, WFG, PERF | `python scripts/make-prep-testdata.py C:\WizardTestData\IMP` (ไฟล์ใหญ่หลาย GB: เติม `--big`) | ไฟล์ปกติ, หลายไฟล์, Tag names หลายแบบ, ปี พ.ศ., ข้อมูลแปลก, ไฟล์เสีย, รูปแบบเวลา, เครื่อง GEG-3 / GEG-4 / CMP-1 + `EXPECTED.txt` บอกตัวเลขจริงของทุกไฟล์ |
 
 ประวัติการเปลี่ยนเลขข้อ (ข้อไหนถูกแทนด้วยข้อไหน) อยู่ที่ `docs/testing/ID_HISTORY.md` — ผู้ทดสอบไม่ต้องอ่าน
 
@@ -132,6 +135,7 @@ _ทำข้อในหมวดนี้ให้ครบก่อน ไม
   - **ปี พ.ศ.:** CSV ที่เวลาเป็น `2567-02-28 …` ถึง `2567-03-01 …` (ต้องมีวันที่ 29 ก.พ. 2567)
   - **ข้อมูลแปลก:** ช่องตัวเลขที่เป็นข้อความ (`abc`, `#N/A`), ช่องว่าง, แถวที่ช่องเวลาว่าง, เวลาซ้ำกันในไฟล์เดียว, ชื่อคอลัมน์ซ้ำในไฟล์เดียว, คอลัมน์เวลาชื่อ `Timestamp`/`TIME` หรือคอลัมน์เวลาอยู่คอลัมน์ที่ 3
   - **ไฟล์เสีย:** คอลัมน์เวลาชื่อ `Date` (ไม่ใช่ timestamp/time), ไฟล์ 0 byte, ไฟล์ที่มีแต่หัวคอลัมน์, แถวที่มีลูกน้ำเกินมา 1 ตัว, ไฟล์ Excel .xlsx ที่เปลี่ยนนามสกุลเป็น .csv, เวลาเขียนแบบอื่น (`2025/01/01 00:05:00`, `13/05/2023 01:00`, `2026-02-09T23:50:00Z`, `2024-01-01 00:05:00+07:00`)
+  - ไฟล์ทั้งหมดสร้างได้ด้วย `python scripts/make-all-testdata.py` (ไฟล์ใหญ่: เติม `--big`) ได้ที่ `C:\WizardTestData\IMP` — ดูตาราง `docs/testing/TEST_DATA_GUIDE.md` ว่าข้อไหนใช้ไฟล์ไหน
   - **คาดหวัง:** มีไฟล์ครบทุกแบบในโฟลเดอร์เดียว พร้อมโน้ตตัวเลขจริงของแต่ละไฟล์ (จำนวนแถว, ช่วงเวลา, ระยะห่างระหว่างแถว, จำนวนช่องที่เป็นข้อความ) — ใช้กับหมวด IMP
 
 - [ ] **PREP-5 — เตรียมโปรเจกต์ 2 ตัวที่ข้อมูลต่างกันชัดเจน (ใช้กับหมวด MULTI)** 🆕
@@ -690,8 +694,8 @@ _ขั้น 0 = หน้าแรก "Get started" (สร้างโปร�
   - **คาดหวัง:** 2025.csv + 2026.csv = ข้อมูลต่อเนื่อง 2025/01/01 00:00:00 → 2026/10/16 14:10:00 (187,947 แถว) · 12:00 AM = 00:00, 11:55 PM = 23:55 · คอลัมน์เวลาชื่อ `TimeStamp` ไม่มีตัวอักษรแปลกนำหน้า · กล่องเหลืองมี "Dates in 2025.csv read as day-month-year with month names (01-Jan-25 12:00 AM → 2025-01-01 00:00:00, 2-digit year read as 20YY)" และบรรทัดของ 2026.csv · ไม่มี "Duplicate column … found in file 1, file 2" · รูปแบบอื่นอ่านได้ และกล่องเหลืองบอกว่าอ่านแบบไหน (เลขวันที่ของ Excel: "read as Excel serial dates") · แถวที่อ่านไม่ได้มีบอกเป็นจำนวน
 
 - [ ] **IMP-89 — เตรียมไฟล์ทดสอบรูปแบบวันเวลา (ใช้กับ IMP-90..IMP-99)** 🆕
-  - เปิดหน้าต่างคำสั่ง (Command Prompt) ที่โฟลเดอร์ของโปรเจกต์โปรแกรม แล้วรัน `python scripts/make-ts-testdata.py C:\TSdata`
-  - เปิดไฟล์ `C:\TSdata\EXPECTED.txt` ไว้ข้าง ๆ — ไฟล์นี้บอกแถวแรก / แถวสุดท้าย / จำนวนแถว / ข้อความในกล่องเหลืองของทุกไฟล์
+  - เปิดหน้าต่างคำสั่ง (Command Prompt) ที่โฟลเดอร์ของโปรเจกต์โปรแกรม แล้วรัน `python scripts/make-ts-testdata.py C:\WizardTestData\TS`
+  - เปิดไฟล์ `C:\WizardTestData\TS\EXPECTED.txt` ไว้ข้าง ๆ — ไฟล์นี้บอกแถวแรก / แถวสุดท้าย / จำนวนแถว / ข้อความในกล่องเหลืองของทุกไฟล์
   - เปิดไฟล์ F14 และ F15 ด้วย Notepad (คลิกขวา → Open with → Notepad)
   - **คาดหวัง:** มีโฟลเดอร์ `formats` (ไฟล์ F01..F22 + `TS-tags.csv`) และ `merge` (M1..M3) และไฟล์ `EXPECTED.txt` · F14 / F15 ใน Notepad เห็นภาษาไทยอ่านออก
 
@@ -744,7 +748,7 @@ _ขั้น 0 = หน้าแรก "Get started" (สร้างโปร�
   - **คาดหวัง:** โปรเจกต์ 1: 288 แถว (ไม่ใช่ 576) ทุกแถวมีทั้ง `FLOW_A` และ `FLOW_B` (เวลาเดียวกันถูกรวมเป็นแถวเดียวแม้เขียนคนละแบบ) · กล่องเหลืองมี "Dates in M1_us_ampm.csv read as month/day/year (6/1/2026 → 2026-06-01) — … check the dates" และ "288 duplicate timestamp(s) found across files (values were merged/overwritten)" · โปรเจกต์ 2: 576 แถว ไม่มี "Duplicate column" · ข้อมูลต้องอยู่ช่วง 2026/06/02 → 2026/06/03 23:55 — ⚠ ข้อนี้อาจยังไม่ผ่าน — ให้บันทึกผลตามที่เห็นจริง: `M2_part2.csv` ทุกแถวเป็นวันเดียว `03/06/2026` (3 มิ.ย.) แอปเดาไม่ออกจึงอาจอ่านเป็น 6 มี.ค. พร้อมคำว่า "check the dates" — จดว่าเห็นวันไหน · โปรเจกต์ 3: ต้องมีบรรทัด "Duplicate column 'flow_a' found in file 1" — ⚠ ข้อนี้อาจยังไม่ผ่าน — ให้บันทึกผลตามที่เห็นจริง: เมื่อเป็นไฟล์เดียวแอปอาจไม่เตือน และเก็บคอลัมน์ `FLOW_A` ไว้ 2 คอลัมน์ — จดว่า Dashboard แสดง `FLOW_A` กี่ตัว และค่าเป็นของคอลัมน์ไหน
 
 - [ ] **IMP-99 — ไฟล์ tag names ที่มีอักขระซ่อนอยู่หน้าสุดของไฟล์ (`TS-tags.csv`)** 🆕
-  - ต่อจาก IMP-90 (หรือโปรเจกต์ใดที่มี `TS_TEMP` / `TS_PRESS`) ที่การ์ด Tag names เลือกไฟล์ `C:\TSdata\formats\TS-tags.csv`
+  - ต่อจาก IMP-90 (หรือโปรเจกต์ใดที่มี `TS_TEMP` / `TS_PRESS`) ที่การ์ด Tag names เลือกไฟล์ `C:\WizardTestData\TS\formats\TS-tags.csv`
   - กด Open Dashboard
   - **คาดหวัง:** Tag names จับคู่ได้ทั้ง 2 ตัว (อักขระซ่อนหน้าหัวคอลัมน์ `TAG` ไม่ทำให้หาคอลัมน์ไม่เจอ) · Dashboard แสดง "Test temperature" / "Test pressure" พร้อมหน่วย °C / bar, component "Test rig" และเส้น alarm L/H
 
@@ -4724,13 +4728,13 @@ _ปุ่มดินสอที่แต่ละแถวในแท็บ 
   - **คาดหวัง:** หน้าจอกันไว้ตั้งแต่ตอนเลือก / ตั้งชื่อ (เลือกไม่ได้ หรือมีข้อความบอกเหตุผล) = ผ่าน · ถ้าหน้าจอยอมให้ทำได้ ต้องไปเจอในรายการตรวจก่อน Export เป็น "A predictor is the same sensor as the target" / "X and Y are the same sensor" / "Another failure group has the same name" — จดว่าเจอที่ขั้นไหน (ถ้าหลุดไปจนถึงไฟล์ที่ export ได้ = บั๊ก)
 
 - [ ] **BMW-402 — ชื่อไฟล์ของแต่ละโมเดล: tag ที่มีช่องว่าง, `/`, ชื่อที่ Windows ห้ามใช้, ภาษาไทย (ข้อมูลทดสอบ EXP)** 🆕
-  - เตรียมข้อมูล: รันคำสั่ง `python scripts/make-export-testdata.py C:\EXPdata`
+  - เตรียมข้อมูล: รันคำสั่ง `python scripts/make-export-testdata.py C:\WizardTestData\EXP`
   - สร้างโปรเจกต์ใหม่ → Import `EXP-data.csv` + ไฟล์ Tag names `EXP-tags.csv`
   - สร้างโมเดล: `FLOW A` = Relation model (predictor `KW`), `TEMP/1` = Individual และ Relation model, `CON` = Individual, `VIB.X` = Individual, `อุณหภูมิ1` = Individual, `KW` = Clustering (Y = `TEMP/1`)
   - Train → Mark complete ทุกโมเดล → Export results
-  - เปิดโฟลเดอร์ `models\` ใน export ด้วย File Explorer และเปิด `C:\EXPdata\EXPECTED.txt` ด้วย Notepad เพื่อเทียบ
+  - เปิดโฟลเดอร์ `models\` ใน export ด้วย File Explorer และเปิด `C:\WizardTestData\EXP\EXPECTED.txt` ด้วย Notepad เพื่อเทียบ
   - เปิดไฟล์ .json ของแต่ละโมเดลด้วย Notepad (คลิกขวา → Open with → Notepad) และไฟล์ `machine_info.json` → กด Ctrl+F หา `output`, `sensor`, `x_sensor`, `inputs`, `failure_groups`
-  - **คาดหวัง:** ชื่อไฟล์ใน `models\` ตรงกับ `C:\EXPdata\EXPECTED.txt`: `FLOW_A-R1`, `TEMP_1-I1`, `TEMP_1-R1`, `_CON-I1`, `VIB.X-I1`, `________1-I1` (ภาษาไทยกลายเป็น `_`), `TEMP_1-C1` (Clustering ใช้ชื่อ Y sensor `TEMP/1`) · ทุกไฟล์เปิดได้ใน Windows (ไม่มีไฟล์ชื่อ `CON.json` ซึ่ง Windows ไม่ยอมให้ตั้ง) · ข้างในไฟล์ ช่อง `output` (sensor ที่โมเดลทำนาย), `sensor`, `x_sensor` และ `inputs` (predictor) รวมถึงหัวคอลัมน์ในไฟล์ CSV ยังเป็น tag จริง (`FLOW A`, `TEMP/1`, `CON`, `อุณหภูมิ1`) — แก้เฉพาะชื่อไฟล์ · ใน `machine_info.json` ส่วน `failure_groups` (รายการ Failure group) ช่อง `models` ใช้ชื่อแบบที่แก้แล้ว ตรงกับชื่อไฟล์
+  - **คาดหวัง:** ชื่อไฟล์ใน `models\` ตรงกับ `C:\WizardTestData\EXP\EXPECTED.txt`: `FLOW_A-R1`, `TEMP_1-I1`, `TEMP_1-R1`, `_CON-I1`, `VIB.X-I1`, `________1-I1` (ภาษาไทยกลายเป็น `_`), `TEMP_1-C1` (Clustering ใช้ชื่อ Y sensor `TEMP/1`) · ทุกไฟล์เปิดได้ใน Windows (ไม่มีไฟล์ชื่อ `CON.json` ซึ่ง Windows ไม่ยอมให้ตั้ง) · ข้างในไฟล์ ช่อง `output` (sensor ที่โมเดลทำนาย), `sensor`, `x_sensor` และ `inputs` (predictor) รวมถึงหัวคอลัมน์ในไฟล์ CSV ยังเป็น tag จริง (`FLOW A`, `TEMP/1`, `CON`, `อุณหภูมิ1`) — แก้เฉพาะชื่อไฟล์ · ใน `machine_info.json` ส่วน `failure_groups` (รายการ Failure group) ช่อง `models` ใช้ชื่อแบบที่แก้แล้ว ตรงกับชื่อไฟล์
 
 - [ ] **BMW-361 — ไฟล์ machine_info.json: ชื่อ sensor, อักขระพิเศษ, ภาษาไทย, sensor ที่ไม่มี component (ข้อมูลทดสอบ EXP)** 🆕
   - ต่อจาก BMW-402: คลิกขวาที่ `machine_info.json` → Open with → Notepad → ดูมุมขวาล่างของ Notepad ว่าเขียน UTF-8 และภาษาไทยอ่านออก
@@ -5397,10 +5401,10 @@ _รอบนี้ปรับหน้าตาทั้งโปรแกร�
 
 ### Workflow A — โปรเจกต์แรกตั้งแต่ศูนย์ จนได้โมเดลที่ Mark complete และ Export results
 
-_คุณเล่นเป็นวิศวกรดูแลปั๊ม P-101 ที่ได้ไฟล์ข้อมูล 3 ไฟล์ (process, bearing, cooling water — ไฟล์ cooling water มาจากระบบที่ใช้ปี พ.ศ.) กับไฟล์รายชื่อ tag (Tag names) 1 ไฟล์ เป้าหมายคือได้โมเดลตรวจ "bearing ร้อนผิดปกติ" ที่ Mark complete แล้วและ Export ออกมาได้ · สิ่งที่ต้องเตรียม: ชุดข้อมูล WF (สร้างด้วยคำสั่ง `python scripts/make-wf-testdata.py C:\WFdata` ได้ 4 CSV + 1 ไฟล์ tag) ใช้ชุดนี้แทนชุดของ PREP-4 เพราะรู้ค่าที่ถูกต้องล่วงหน้า · ทดสอบบนโปรแกรมที่ติดตั้งจากตัวติดตั้งแล้ว (PREP-2) ไม่ใช่โหมดนักพัฒนา (tauri dev)_
+_คุณเล่นเป็นวิศวกรดูแลปั๊ม P-101 ที่ได้ไฟล์ข้อมูล 3 ไฟล์ (process, bearing, cooling water — ไฟล์ cooling water มาจากระบบที่ใช้ปี พ.ศ.) กับไฟล์รายชื่อ tag (Tag names) 1 ไฟล์ เป้าหมายคือได้โมเดลตรวจ "bearing ร้อนผิดปกติ" ที่ Mark complete แล้วและ Export ออกมาได้ · สิ่งที่ต้องเตรียม: ชุดข้อมูล WF (สร้างด้วยคำสั่ง `python scripts/make-wf-testdata.py C:\WizardTestData\WF` ได้ 4 CSV + 1 ไฟล์ tag) ใช้ชุดนี้แทนชุดของ PREP-4 เพราะรู้ค่าที่ถูกต้องล่วงหน้า · ทดสอบบนโปรแกรมที่ติดตั้งจากตัวติดตั้งแล้ว (PREP-2) ไม่ใช่โหมดนักพัฒนา (tauri dev)_
 
 - [ ] **WFA-1 — เตรียมชุดข้อมูล WF และจดค่าที่ต้องได้**
-  - เปิด Command Prompt ที่โฟลเดอร์โปรเจกต์ แล้วรัน `python scripts/make-wf-testdata.py C:\WFdata` เพื่อสร้างไฟล์ทั้งหมดไว้ในโฟลเดอร์เดียว เช่น `C:\WFdata\`
+  - เปิด Command Prompt ที่โฟลเดอร์โปรเจกต์ แล้วรัน `python scripts/make-wf-testdata.py C:\WizardTestData\WF` เพื่อสร้างไฟล์ทั้งหมดไว้ในโฟลเดอร์เดียว เช่น `C:\WizardTestData\WF\`
   - เปิดแต่ละไฟล์ใน Notepad (คลิกขวา → Open with → Notepad) ดูบรรทัดแรกและบรรทัดสุดท้าย
   - จดช่วงเวลาสำคัญในข้อมูลไว้ใช้ตรวจภายหลัง (ดูในบรรทัดคาดหวัง)
   - **คาดหวัง:** มีครบ 5 ไฟล์: `WF-A-process.csv` (คอลัมน์ timestamp, P101_FLOW, P101_DP, M101_KW, M101_AMP, CW_IN_TEMP), `WF-B-bearing.csv` (timestamp, BRG_DE_TEMP, BRG_NDE_TEMP, VIB_DE, VIB_NDE), `WF-C-cooling-BE.csv` (เวลาเป็นปี พ.ศ. ตั้งแต่ `2568-01-01 00:00:00` ถึง `2568-06-30 23:55:00`, CW_OUT_TEMP, AMB_TEMP), `WF-C-cooling-CE.csv` (ข้อมูลเดียวกันแต่เป็นปี 2025 — ไฟล์สำรอง) และ `WF-tags.csv` (TAG, DESCRIPTION, UNIT, COMPONENT, ALARM_LL, ALARM_L, ALARM_H, ALARM_HH) · ทุก CSV มีข้อมูล 52,128 แถว (ทุก 5 นาที ตั้งแต่ 1 ม.ค.–30 มิ.ย. 2025) · ค่าที่ต้องจด: เครื่องหยุด 2025-03-10 00:00 ถึง 2025-03-12 23:55 และ 2025-05-20 18:00 ถึง 2025-05-21 11:55 · ค่า BRG_DE_TEMP กระโดดผิดปกติ (glitch) +12 °C วันที่ 2025-02-20 08:00–20:00 · อาการ bearing DE ร้อนขึ้นต่อเนื่อง 2025-05-18 06:00 ถึง 2025-05-20 18:00
@@ -6184,7 +6188,7 @@ _คุณเล่นเป็นหัวหน้าทีมที่ทำ�
 
 ### Workflow I — ข้อมูลหลายแหล่งที่เขียนวันเวลาต่างรูปแบบ → โมเดล Complete → Export results → แก้แล้ว Export ซ้ำ
 
-_คุณเล่นเป็นวิศวกรที่ได้ข้อมูลเครื่องเดียวกัน 6 เดือนจาก 3 แหล่ง (ระบบเก็บข้อมูล historian, ไฟล์ Excel ที่บันทึกแบบวันที่ของอเมริกา (เดือน/วัน/ปี) และระบบที่เขียนวันเวลาแบบ 2025-01-31T13:05:00) · เป้าหมาย: รวมไฟล์ให้วันเวลาถูกต้อง, สร้างโมเดล, แก้แล้ว Mark complete ซ้ำ, ลบกลุ่ม / โมเดลที่เลิกใช้ — โดยไฟล์ที่ Export results ต้องตรงกับโมเดลจริงทุกขั้น · สิ่งที่ต้องเตรียม: รันคำสั่ง `python scripts/make-ts-testdata.py C:\TSdata` (IMP-89) แล้วใช้โฟลเดอร์ `C:\TSdata\scenario` · เปิด File Explorer ที่ `%APPDATA%\com.prompt-solution.tauri-app\workspaces\` ไว้ข้าง ๆ_
+_คุณเล่นเป็นวิศวกรที่ได้ข้อมูลเครื่องเดียวกัน 6 เดือนจาก 3 แหล่ง (ระบบเก็บข้อมูล historian, ไฟล์ Excel ที่บันทึกแบบวันที่ของอเมริกา (เดือน/วัน/ปี) และระบบที่เขียนวันเวลาแบบ 2025-01-31T13:05:00) · เป้าหมาย: รวมไฟล์ให้วันเวลาถูกต้อง, สร้างโมเดล, แก้แล้ว Mark complete ซ้ำ, ลบกลุ่ม / โมเดลที่เลิกใช้ — โดยไฟล์ที่ Export results ต้องตรงกับโมเดลจริงทุกขั้น · สิ่งที่ต้องเตรียม: รันคำสั่ง `python scripts/make-ts-testdata.py C:\WizardTestData\TS` (IMP-89) แล้วใช้โฟลเดอร์ `C:\WizardTestData\TS\scenario` · เปิด File Explorer ที่ `%APPDATA%\com.prompt-solution.tauri-app\workspaces\` ไว้ข้าง ๆ_
 
 - [ ] **WFI-1 — รวม 3 ไฟล์ที่เขียนวันเวลาต่างกัน 3 แบบให้เป็นข้อมูลชุดเดียว**
   - New project "WFI pump" → เลือกไฟล์ `I-1_jan-feb_historian.csv`, `I-2_mar-apr_excel.csv`, `I-3_may-jun_iso.csv`
@@ -6216,7 +6220,7 @@ _คุณเล่นเป็นวิศวกรที่ได้ข้อ�
 
 ### Workflow J — ทำโมเดลส่งให้ระบบของลูกค้า: กรอกข้อมูลเครื่อง → ทำโมเดลครบ 3 ชนิด → Export → ลูกค้าขอแก้ → Export รอบสอง
 
-_ผู้ใช้: วิศวกรที่ต้องส่งผลให้ระบบเฝ้าดูเครื่องจักร (monitoring) ของลูกค้า ซึ่งจะอ่านไฟล์ที่ export ไปแล้ว train ใหม่เอง · เป้าหมาย: ไฟล์ที่ส่งไปตรงกับค่าที่ตั้งบนจอทุกค่า ลูกค้าอ่านเข้าใจได้โดยไม่ต้องถาม และแก้ตามที่ลูกค้าขอได้โดยของเดิมไม่หาย · เตรียม: รันคำสั่ง `python scripts/make-export-testdata.py C:\EXPdata` · เปิดไฟล์ `C:\EXPdata\EXPECTED.txt` ด้วย Notepad ไว้ข้าง ๆ · เตรียมโฟลเดอร์ปลายทาง `D:\ToCustomer` ที่มีไฟล์อื่นอยู่แล้ว 1 ไฟล์_
+_ผู้ใช้: วิศวกรที่ต้องส่งผลให้ระบบเฝ้าดูเครื่องจักร (monitoring) ของลูกค้า ซึ่งจะอ่านไฟล์ที่ export ไปแล้ว train ใหม่เอง · เป้าหมาย: ไฟล์ที่ส่งไปตรงกับค่าที่ตั้งบนจอทุกค่า ลูกค้าอ่านเข้าใจได้โดยไม่ต้องถาม และแก้ตามที่ลูกค้าขอได้โดยของเดิมไม่หาย · เตรียม: รันคำสั่ง `python scripts/make-export-testdata.py C:\WizardTestData\EXP` · เปิดไฟล์ `C:\WizardTestData\EXP\EXPECTED.txt` ด้วย Notepad ไว้ข้าง ๆ · เตรียมโฟลเดอร์ปลายทาง `D:\ToCustomer` ที่มีไฟล์อื่นอยู่แล้ว 1 ไฟล์_
 
 - [ ] **WFJ-1 — สร้างโปรเจกต์พร้อมข้อมูลเครื่อง**
   - กด New project → กรอก Plant "Map Ta Phut", Machine "Pump Set P-1", Machine tag "P-1", Notes "Centrifugal pump, 250 kW motor, commissioned 2015" → กด Continue
@@ -6300,7 +6304,7 @@ _ผู้ใช้: วิศวกรที่ต้องส่งผลใ�
 
 ### Workflow K — ตรวจไฟล์ Export results แบบที่ลูกค้าจะตรวจ: ไฟล์สร้างโมเดลซ้ำได้ แถวถูกกติกา เครื่องใหญ่ ส่งต่อไฟล์ ตัวเลขไม่ถูกปัด และข้ามเวอร์ชัน
 
-_ผู้ใช้: วิศวกรที่ต้องรับรองว่าไฟล์ที่ส่งให้ลูกค้า "เอาไปสร้างโมเดลซ้ำได้ผลเหมือนในโปรแกรม" · เป้าหมาย: เปิดไฟล์ที่ export ด้วย Excel / Notepad / เบราว์เซอร์ แล้วพิสูจน์ด้วยตัวเลขว่าตรงกับหน้าจอและตรงกติกา · เตรียม: รันคำสั่ง `python scripts/make-export-testdata.py C:\EXPdata` (ได้ไฟล์ `EXP-numbers.csv`, `EXP-numbers-tags.csv`, `EXP-fleet.csv`, `EXP-fleet-tags.csv` เพิ่มจากเดิม) · เปิด `C:\EXPdata\EXPECTED.txt` ด้วย Notepad ไว้ข้าง ๆ แล้วเลื่อนไปที่ส่วน "WFK" · มี Excel และ Edge หรือ Chrome · โฟลเดอร์ที่เขียนไม่ได้ / ดิสก์เต็ม ทดสอบแล้วใน BMW-349 และ BMW-368 ไม่ต้องทำซ้ำ_
+_ผู้ใช้: วิศวกรที่ต้องรับรองว่าไฟล์ที่ส่งให้ลูกค้า "เอาไปสร้างโมเดลซ้ำได้ผลเหมือนในโปรแกรม" · เป้าหมาย: เปิดไฟล์ที่ export ด้วย Excel / Notepad / เบราว์เซอร์ แล้วพิสูจน์ด้วยตัวเลขว่าตรงกับหน้าจอและตรงกติกา · เตรียม: รันคำสั่ง `python scripts/make-export-testdata.py C:\WizardTestData\EXP` (ได้ไฟล์ `EXP-numbers.csv`, `EXP-numbers-tags.csv`, `EXP-fleet.csv`, `EXP-fleet-tags.csv` เพิ่มจากเดิม) · เปิด `C:\WizardTestData\EXP\EXPECTED.txt` ด้วย Notepad ไว้ข้าง ๆ แล้วเลื่อนไปที่ส่วน "WFK" · มี Excel และ Edge หรือ Chrome · โฟลเดอร์ที่เขียนไม่ได้ / ดิสก์เต็ม ทดสอบแล้วใน BMW-349 และ BMW-368 ไม่ต้องทำซ้ำ_
 
 - [ ] **WFK-1 — สร้างโปรเจกต์ตัวเลข: นำเข้าข้อมูล สร้าง special sensor และโมเดล 11 ตัว แล้ว Train** 🆕
   - กด New project → กรอก Plant "Test Lab", Machine "Numbers Rig", Machine tag "NR-1" → กด Continue
@@ -6362,7 +6366,7 @@ _ผู้ใช้: วิศวกรที่ต้องรับรอง�
 - [ ] **WFK-8 — แถวที่มีค่าว่างถูกตัดเฉพาะโมเดลที่ใช้คอลัมน์นั้น และค่า special sensor ตรงกับสูตร** 🆕
   - เปิด `LONGDEC-R1.csv` และ `LONGDEC-I1.csv` ด้วย Notepad → กด Ctrl+F หา `2026-02-02T06:00` และ `2026-02-02T07:50`
   - เปิด `SPX-I1.csv` ด้วย Notepad → ค้นหาเวลา 3 แถวที่อยู่ในส่วน "Special sensor SPX" ของ `EXPECTED.txt` แล้วเทียบค่า
-  - เปิด `C:\EXPdata\EXP-numbers.csv` ใน Excel → ที่แถวเวลาเดียวกัน พิมพ์ `=H2*2+D2` (เปลี่ยนเลขแถวให้ตรง: คอลัมน์ H = `INT`, D = `NEG`)
+  - เปิด `C:\WizardTestData\EXP\EXP-numbers.csv` ใน Excel → ที่แถวเวลาเดียวกัน พิมพ์ `=H2*2+D2` (เปลี่ยนเลขแถวให้ตรง: คอลัมน์ H = `INT`, D = `NEG`)
   - เปิด `machine_info.json` ด้วย Notepad → กด Ctrl+F หา `derived_sensors`
   - **คาดหวัง:** `LONGDEC-R1.csv` ไม่มีแถว 2026-02-02 06:00–07:50 (`GAPPY` ว่าง 12 แถว จึงเหลือ 792) แต่ `LONGDEC-I1.csv` ยังมีแถวเหล่านั้น (โมเดลนี้ไม่ได้ใช้ `GAPPY` จึงมี 804) · ค่า `SPX` ในไฟล์ตรงกับ `EXPECTED.txt` ทุกหลัก (เช่น 1600.72) และตรงกับที่ Excel คำนวณ · บางแถวอาจเห็นหลักยาวใน Notepad เช่น `1582.6399999999999` — เป็นเลขเดียวกับ 1582.64 (Excel แสดงได้แค่ 15 หลัก) ไม่ถือว่าผิด · `derived_sensors` มี `SPX` และ `how_to_build` = "Calculated as INT * 2 + NEG" · `INT` และ `NEG` อยู่ในรายการ `sensors`
 

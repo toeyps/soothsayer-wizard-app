@@ -1,5 +1,5 @@
 # Generates the Export results test data used by BMW-355.. and workflow WFJ in docs/testing/MANUAL_TEST_PLAN.md.
-# Usage: python scripts/make-export-testdata.py C:\EXPdata   (standard library only)
+# Usage: python scripts/make-export-testdata.py C:\WizardTestData\EXP   (standard library only; scripts/make-all-testdata.py runs it for you)
 #
 # EXP-data.csv  30 days of one pump set, every 10 minutes (2026-01-01 00:00 -> 2026-01-30 23:50), with
 #               - tags that a file name cannot hold as is: "FLOW A" (space), "TEMP/1" (slash), "CON" (Windows
