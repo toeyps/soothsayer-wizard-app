@@ -1300,8 +1300,8 @@ describe('Dashboard', () => {
                         return state.failureGroupState.models.find((m: any) => m.kind === kind && (m.targetSensor === tag || m.xSensor === tag)).name;
                     };
 
-                    it('the first model of a sensor keeps the plain description / tag', async () => {
-                        expect(await createdName(stateWith([]), 'TAG1', 'individual')).toBe('Pump Pressure'); // TAG1's description
+                    it('the first model of a sensor also says its kind: "<description> (Individual)"', async () => {
+                        expect(await createdName(stateWith([]), 'TAG1', 'individual')).toBe('Pump Pressure (Individual)'); // TAG1's description + kind
                     });
 
                     it('a second kind of the same sensor gets "<name> (Relation model)" / "(Clustering)" — never the algorithm name', async () => {
