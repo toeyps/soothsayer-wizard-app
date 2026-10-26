@@ -148,19 +148,13 @@
         ],
         "value_filters": [
           {
-            "sensor": "P1",
-            "operation": "less_than",
-            "value1": 50,
-            "value2": null
-          },
-          {
             "sensor": "SPEED",
             "operation": "greater_than",
             "value1": 1000,
             "value2": null
           }
         ],
-        "combine": "or"
+        "combine": "and"
       },
       "set_points": {
         "residual_at_80_lower": -4,
@@ -168,7 +162,7 @@
         "residual_at_0_lower": -8,
         "residual_at_0_upper": 8
       },
-      "training_note": "Running only: P1 < 50 OR SPEED > 1000; train periods 2024-01-09 22:30 to end of data; own condition of this model; rows with a missing value removed",
+      "training_note": "Running only: SPEED > 1000; train periods 2024-01-09 22:30 to end of data; own condition of this model; rows with a missing value removed",
       "target": "T1",
       "predictors": [
         "P1",

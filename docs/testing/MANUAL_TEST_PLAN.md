@@ -3342,9 +3342,9 @@ _ปุ่มดินสอที่แต่ละแถวในแท็บ 
 - [ ] **BMW-99 — ชื่อ sensor ใน Build Model แสดงแบบมาตรฐาน: รายการซ้าย, หัวแผงขวา, บรรทัด Running condition, แถวเงื่อนไข Running condition** 🆕
   - ดูแถวในรายการซ้าย และหัวแผงขวาของ sensor ที่เลือก
   - ค้นหาในรายการซ้ายด้วยหน่วยหรือชื่อ component
-  - กด Details ที่บรรทัด Running condition แล้วดูป้ายเงื่อนไข (ลองตั้งค่า 4000)
-  - เปิด popup Running condition ดูแถวเงื่อนไข แล้วย่อหน้าต่างให้แคบ
-  - **คาดหวัง:** แถวในรายการซ้ายมี 2 บรรทัด (description + หน่วย / tag) · หัวแผงขวาเป็นตัวใหญ่ มี tag และป้าย component ต่อท้าย (ป้ายกลุ่ม FG อยู่บรรทัดถัดไป) · ป้ายเงื่อนไขเป็น description + tag แล้วตามด้วยเงื่อนไขแบบตัวพิมพ์ดีด เช่น `> 4,000 kW` · แถวเงื่อนไขใน popup มีช่องเลือก sensor ที่กดแล้วมีกล่องรายการเด้งขึ้น (ไม่มีป้าย component ในแถวแล้ว — component เห็นในรายการตัวเลือก; ดู BMW-170) · ค้นหาเจอด้วยหน่วย / component
+  - กด Details ที่บรรทัด Running condition แล้วดูป้ายในแถว Running when (ลองตั้งค่า 4000)
+  - เปิด popup Running condition ดูบรรทัด "Machine is running when … is above …" แล้วย่อหน้าต่างให้แคบ
+  - **คาดหวัง:** แถวในรายการซ้ายมี 2 บรรทัด (description + หน่วย / tag) · หัวแผงขวาเป็นตัวใหญ่ มี tag และป้าย component ต่อท้าย (ป้ายกลุ่ม FG อยู่บรรทัดถัดไป) · ป้ายเป็น description + tag ตามด้วย "is above" และค่าแบบตัวพิมพ์ดีด เช่น `4,000 kW` · บรรทัดใน popup มีช่องเลือก sensor ที่กดแล้วมีกล่องรายการเด้งขึ้น (ไม่มีป้าย component ในบรรทัด — component เห็นในรายการตัวเลือก; ดู BMW-393) · ค้นหาเจอด้วยหน่วย / component
 
 <!-- ── หัว detail pane, Category, แท็บชนิด, แท็บหน้า, ปุ่มสถานะ, บรรทัดแจ้ง ── -->
 
@@ -3452,7 +3452,7 @@ _ปุ่มดินสอที่แต่ละแถวในแท็บ 
   - กาง Model settings ของโมเดล Individual — ดูป้ายนิ่ง "1σ + 3σ · automatic" (ไม่มีปุ่มปรับ)
   - ทุกชนิด: ดูสวิตช์ "Training data: Workspace | Custom" ท้ายฟอร์ม สลับแล้วกด "Save changes"
   - ใส่ชื่อ sensor ยาว ๆ ในช่อง "Model name" แล้วชี้เมาส์ที่ช่อง
-  - **คาดหวัง:** เลือก Stiffness / จำนวน cluster ได้ และค่ายังอยู่หลัง Save · สวิตช์ Workspace/Custom เปลี่ยนแบบได้ และเมื่อเลือก Custom จะแก้เงื่อนไข/ช่วงเวลาของ Custom ได้ตรงนี้เลย ไม่ต้องไปหน้าอื่น (รายละเอียดดู BMW-194) · ช่อง "Model name" กว้างพอ ไม่ตัดชื่อยาว ๆ จนล้นจอ และชี้เมาส์แล้วเห็นชื่อเต็ม · "Training data" อยู่ท้ายแถวเสมอ และกว้างเท่ากันทั้ง 3 ชนิด · ช่องเฉพาะชนิด (เช่น Clustering ที่มีถึง 5 ช่อง) ขึ้นบรรทัดแยกเป็นกลุ่มของตัวเอง ไม่อัดรวมแถวเดียวกับ Model name · ช่อง "Cluster ranges" ของ Clustering เป็นแถบเลื่อน (ดู BMW-117) และตัวเลือกแกน X ของกราฟ Fit ของ Relation model ดู BMW-240
+  - **คาดหวัง:** เลือก Stiffness / จำนวน cluster ได้ และค่ายังอยู่หลัง Save · สวิตช์ Workspace/Custom เปลี่ยนแบบได้ และเมื่อเลือก Custom จะแก้เงื่อนไข/ช่วงเวลาของ Custom ได้ตรงนี้เลย ไม่ต้องไปหน้าอื่น (รายละเอียดดู BMW-398) · ช่อง "Model name" กว้างพอ ไม่ตัดชื่อยาว ๆ จนล้นจอ และชี้เมาส์แล้วเห็นชื่อเต็ม · "Training data" อยู่ท้ายแถวเสมอ และกว้างเท่ากันทั้ง 3 ชนิด · ช่องเฉพาะชนิด (เช่น Clustering ที่มีถึง 5 ช่อง) ขึ้นบรรทัดแยกเป็นกลุ่มของตัวเอง ไม่อัดรวมแถวเดียวกับ Model name · ช่อง "Cluster ranges" ของ Clustering เป็นแถบเลื่อน (ดู BMW-117) และตัวเลือกแกน X ของกราฟ Fit ของ Relation model ดู BMW-240
 
 - [ ] **BMW-280 — Model name ว่าง: กรอบเหลือง, "1 to fix", Save changes / Train กดไม่ได้ และบอกชื่อสิ่งที่ขาด** 🆕
   - กาง Model settings แล้วลบชื่อในช่อง "Model name" จนว่าง (ดูข้อความจาง ๆ ในช่อง)
@@ -3483,9 +3483,9 @@ _ปุ่มดินสอที่แต่ละแถวในแท็บ 
 
 - [ ] **BMW-282 — สรุปบรรทัดเดียวของ Model settings ตอนพับ บอกค่าจริงของแต่ละชนิด** 🆕
   - พับ "Model settings" ของ Individual, Relation model (predictor 2 ตัว Stiffness Strict) และ Clustering (ตั้ง Y sensor แล้ว 3 clusters)
-  - ทำทั้งแบบ Training data = Workspace และ Custom (Custom ที่มีเงื่อนไข 1 ข้อ / Use all rows)
+  - ทำทั้งแบบ Training data = Workspace และ Custom (Custom ที่กรอกบรรทัด "Machine is running when … is above …" ครบแล้ว และที่ยังว่าง)
   - แก้ค่า (ยังไม่ Save) แล้วพับดูอีกครั้ง
-  - **คาดหวัง:** Individual "<ชื่อ> · 1σ + 3σ · Workspace data" · Relation model "<ชื่อ> · 2 predictors · Strict · Workspace data" (1 ตัว = "1 predictor", ไม่มี = "no predictors") · Clustering "<ชื่อ> · Y: <description (tag)> · 3 clusters · …" (ยังไม่เลือก Y = "Y: —") · แบบ Custom ใช้ "Custom · 1 condition · 1 train · 0 scoring" หรือ "Custom · all rows · …" แทน "Workspace data" · สรุปเปลี่ยนตามค่าที่แก้ค้างไว้ทันที (ก่อน Save) · ชื่อ sensor ในสรุปเป็น description แล้วตามด้วย tag
+  - **คาดหวัง:** Individual "<ชื่อ> · 1σ + 3σ · Workspace data" · Relation model "<ชื่อ> · 2 predictors · Strict · Workspace data" (1 ตัว = "1 predictor", ไม่มี = "no predictors") · Clustering "<ชื่อ> · Y: <description (tag)> · 3 clusters · …" (ยังไม่เลือก Y = "Y: —") · แบบ Custom ใช้ "Custom · own running condition · 1 train · 0 scoring" (บรรทัดยังว่าง = "Custom · running condition not set · …") แทน "Workspace data" · สรุปเปลี่ยนตามค่าที่แก้ค้างไว้ทันที (ก่อน Save) · ชื่อ sensor ในสรุปเป็น description แล้วตามด้วย tag
 
 - [ ] **BMW-96 — Predictor sensors: ป้ายชื่อ + ปุ่มเส้นประ "Add…" เปิดหน้าต่างเลือกได้หลายตัว** 🆕
   - เลือก sensor ที่มีโมเดล Relation model แล้วกาง Model settings
@@ -3595,19 +3595,19 @@ _ปุ่มดินสอที่แต่ละแถวในแท็บ 
   - Relation model: เพิ่ม / ลบ predictor · เปลี่ยน Stiffness
   - Individual: สลับ Training data จาก Workspace เป็น Custom
   - Clustering: เปลี่ยน Y sensor · เปลี่ยน / ล้าง criteria sensor · กด + / − จำนวน cluster · ลากหรือพิมพ์เส้นแบ่ง cluster (มี criteria sensor)
-  - Custom ของโมเดล: เพิ่ม / แก้ / ลบเงื่อนไข · สลับ AND/OR (มี 2 เงื่อนไข) · สลับ Only when running ⇄ Use all rows · เพิ่ม / แก้ / ลบ Train period
-  - popup Running condition ของโปรเจกต์ (กับโมเดลที่ใช้แบบ Workspace): แก้ค่าเงื่อนไข · เปลี่ยนเครื่องหมายเปรียบเทียบ · AND/OR · Use all rows · แก้ Train period — แล้วดูโมเดลแบบ Custom ด้วย
+  - Custom ของโมเดล: เปลี่ยน sensor ในบรรทัด "Machine is running when … is above …" · แก้ค่าในช่องหลัง "is above" · เพิ่ม / แก้ / ลบ Train period
+  - popup Running condition ของโปรเจกต์ (กับโมเดลที่ใช้แบบ Workspace): เปลี่ยน sensor ในบรรทัด "Machine is running when … is above …" · แก้ค่าหลัง "is above" · แก้ Train period — แล้วดูโมเดลแบบ Custom ด้วย
   - **คาดหวัง:** ทุกข้อ: ทันทีที่แก้ (ก่อน Save) ขึ้นแถบเหลือง "Settings or running condition changed — this model is Incomplete again. …" และแท็บ "Re-train needed" · หลัง Save / Apply สถานะเป็น Incomplete ทันที (จุดเหลืองทั้งในรายการซ้ายและที่ Dashboard, "N of M complete" ลดลง) — set point เดิมยังอยู่ครบ · แถบ Export results กลับเป็น "… not Complete yet" · การแก้ใน popup ของโปรเจกต์ไม่มีผลกับโมเดลแบบ Custom · Train ใหม่ + Mark complete แล้วกลับเป็น Complete
 
-- [ ] **BMW-341 — การแก้ที่ต้องไม่ทำให้โมเดล Complete กลายเป็น Incomplete หรือ "Re-train needed"** 🆕
+- [ ] **BMW-386 — การแก้ที่ต้องไม่ทำให้โมเดล Complete กลายเป็น Incomplete หรือ "Re-train needed"** 🆕
   - กับโมเดล Complete ทำทีละข้อด้านล่าง แล้วดูคำบนแท็บและจุดทุกครั้ง
   - แก้ชื่อโมเดลแล้ว Save · สลับ Performance / Condition · เปลี่ยนแกน X ของกราฟ Fit (Relation model)
   - ที่ Dashboard ใส่ sensor เข้า/ออกอีก Failure Group หนึ่ง (ไม่ลบโมเดล)
   - กดเปิด / ปิด "Compare predictors" · เปิด popup Running condition แล้วกด Cancel
-  - (โปรเจกต์ที่ใช้ "Only when running" อยู่แล้ว) กด "Add condition" ใน popup แล้วกด Apply ทั้งที่แถวใหม่ยังไม่กรอกค่า
-  - แก้บรรทัด "Machine is running when … is above …" แล้ว Apply · แก้ Project details
+  - เปิด popup Running condition → พิมพ์ค่าหลัง "is above" ใหม่ แล้วพิมพ์กลับเป็นค่าเดิม → อ่านบรรทัดข้างปุ่ม Apply → กด Cancel
+  - แก้ Project details
   - สลับแท็บ / sensor / หน้าไปมา · ปิดหน้าต่างแล้วเปิดใหม่
-  - **คาดหวัง:** ทุกข้อ: โมเดลยังเป็น Complete จุดเขียว ไม่มีแถบเหลือง ไม่มี "Re-train needed" · ตอน Apply ที่มีแถวเงื่อนไขยังไม่กรอก บรรทัดข้างปุ่ม Apply เป็นสีเทา "No trained or complete model is affected by this change" · (การแก้ set point ทำให้เป็น Incomplete — ดู BMW-339)
+  - **คาดหวัง:** ทุกข้อ: โมเดลยังเป็น Complete จุดเขียว ไม่มีแถบเหลือง ไม่มี "Re-train needed" · พิมพ์กลับเป็นค่าเดิมแล้ว ปุ่ม Apply กดไม่ได้ และไม่มีข้อความว่าโมเดลต้อง Train ใหม่ · (การแก้ set point ทำให้เป็น Incomplete — ดู BMW-339; การแก้บรรทัด "Machine is running when … is above …" ทำให้เป็น Incomplete — ดู BMW-287)
 
 - [ ] **BMW-337 — Category: โมเดลเก่าที่ Complete แต่ยังไม่มี Performance / Condition — Export ยังไม่พร้อม, Mark complete ของโมเดลอื่นที่ไม่มี Category ถูกกัน** 🆕
   - เปิดโปรเจกต์เก่าที่มีโมเดล Complete แต่ sensor นั้นยังไม่ได้เลือก Performance / Condition
@@ -3615,14 +3615,6 @@ _ปุ่มดินสอที่แต่ละแถวในแท็บ 
   - ดูโมเดลที่ยังไม่ Complete และไม่มี Category: ลองกด Mark complete
   - เลือก Performance ที่หัว sensor
   - **คาดหวัง:** โมเดลยังเป็น Complete แต่แถวในรายการตรวจเขียน "Complete · category not set (Performance or Condition, in the sensor header)" และ Export ไม่ได้ · โมเดลที่ยังไม่ Complete และไม่มี Category: Mark complete กดไม่ได้พร้อมบอกเหตุผล · เลือก Category แล้วแถวนั้นกลายเป็น Complete ทันที (ไม่ต้อง Train / Mark complete ใหม่)
-
-- [ ] **BMW-342 — บรรทัด "Machine is running when [sensor] is above [value]" ใน Running condition (ใช้กับการ Export เท่านั้น)** 🆕
-  - เปิด popup Running condition (กด Edit) ที่มีเงื่อนไข "above" (>) ข้อเดียว ดูว่ามีบรรทัดนี้หรือไม่
-  - เพิ่มเงื่อนไข > ข้อที่สอง ดูบรรทัดนี้ (ค่าถูกเติมให้จากข้อแรก) และปุ่ม Apply
-  - เลือก "Use all rows" แล้วดูบรรทัดนี้
-  - กลับมาใช้เงื่อนไข เลือก sensor ในบรรทัดนี้แต่ไม่ใส่ค่า แล้วดูปุ่ม Apply
-  - ใส่ค่า กด Apply แล้วเปิด popup อีกครั้ง · ดูโมเดล Complete
-  - **คาดหวัง:** เงื่อนไข > ข้อเดียว = ไม่มีบรรทัดนี้ (ข้อนั้นคือสถานะเครื่องเดินอยู่แล้ว) · > สองข้อ = บรรทัดขึ้น เติม sensor/ค่าจากข้อแรกให้ แต่ Apply ยังกดไม่ได้ (ค่าที่เติมให้ไม่นับเป็นการแก้) และมีโน้ต "Used by the export only — … Training still uses the conditions above." · Use all rows = บรรทัดว่าง พร้อมเหตุผลของตัวเอง · ค่าว่าง = Apply กดไม่ได้ เหตุผล "Enter the value for “Machine is running when … is above …”" · Apply บันทึกครั้งเดียวพร้อมเงื่อนไข เปิดใหม่ค่ายังอยู่ · โมเดล Complete ไม่หลุดจาก Complete (BMW-341)
 
 - [ ] **BMW-343 — แถบ Export results ด้านล่างหน้าต่าง Build Model: ทุกสถานะ** 🆕
   - ดูแถบนี้ในแต่ละสถานะ: (1) ไม่มีโมเดล (2) มีโมเดลที่ยังไม่ Complete (3) ทุกโมเดล Complete แต่ Plant / Machine / tag หรือสถานะเครื่องเดิน (running status) ยังไม่ครบ (4) พร้อม
@@ -3706,16 +3698,16 @@ _ปุ่มดินสอที่แต่ละแถวในแท็บ 
 
 <!-- ── Running condition: บรรทัด / การ์ด และ popup ── -->
 
-- [ ] **BMW-262 — Running condition เป็น "บรรทัดเดียว" เมื่อตั้งแล้ว (ไม่มีจำนวนแถว / % / แถบสัดส่วน และไม่มีแถบเวลาเล็กบนบรรทัด) + ปุ่ม Details กางการ์ดเต็ม; ถ้ายังไม่ตั้ง / ช่วงผิด เป็นการ์ดใหญ่มีเครื่องหมาย "!" และปุ่มของตัวเอง** 🆕
+- [ ] **BMW-387 — Running condition เป็น "บรรทัดเดียว" เมื่อตั้งแล้ว (ไม่มีจำนวนแถว / % / แถบสัดส่วน และไม่มีแถบเวลาเล็กบนบรรทัด) + ปุ่ม Details กางการ์ดเต็ม; ถ้ายังไม่ตั้ง / ช่วงผิด เป็นการ์ดใหญ่มีเครื่องหมาย "!" และปุ่มของตัวเอง** 🆕
   - เปิดโปรเจกต์ที่ยังไม่เคยตั้ง Running condition ดูการ์ดสีเหลือง
-  - ตั้งเงื่อนไข 1 ข้อ + Train period 2 ช่วง + Scoring period 2 ช่วง แล้วกด Apply
+  - กรอกบรรทัด "Machine is running when … is above …" (เช่น Motor power is above 50) + Train period 2 ช่วง + Scoring period 2 ช่วง แล้วกด Apply
   - ดูบรรทัดใต้หัวหน้าต่าง แล้วกด "Details" และ "Hide details"
   - ย่อหน้าต่างให้แคบ (ต่ำกว่าประมาณ 1100 px) แล้วดูบรรทัดเดิม
   - มองหาตัวเลขจำนวนแถวข้อมูลบนบรรทัดและในการ์ดเต็ม (Details) — ตอนเพิ่งเปิดหน้าต่าง, หลังกด Apply และกับไฟล์ใหญ่ (หลายแสนแถว) ที่ใช้เวลานับนาน
   - เปิดโปรเจกต์เก่าที่ไม่มี Train period / ไม่มี Scoring period
   - ทำให้ Scoring period หนึ่งช่วงผิด (วันสิ้นสุดก่อนวันเริ่ม — ต้องแก้ในไฟล์โปรเจกต์โดยตรง) · ทำให้ Train period ผิด
   - กด Mark complete ที่โมเดลหนึ่ง แล้วแก้เฉพาะ Scoring periods ใน popup แล้วกด Apply
-  - **คาดหวัง:** ตั้งแล้ว = บรรทัดเดียว: ✓ · "Running condition" · "Train 2 periods" + ช่วงวันที่ตั้งแต่ต้นช่วงแรกถึงปลายช่วงสุดท้าย (ตัวอักษรแบบพิมพ์ดีด เช่น "2026/01/01 00:00 → 2026/06/30 23:59"; ถ้าไม่มีวันสิ้นสุด = "End") · "Scoring 2 periods" · "When running: 1 condition" (หรือ "All rows — no condition" ซึ่งเป็นชื่อเงื่อนไข ไม่ใช่จำนวน) · ไม่มีตัวเลขจำนวนแถวข้อมูล: ไม่มี "N rows · NN%" ไม่มี "Counting rows…" ไม่มี "— rows" — บรรทัดจบที่เงื่อนไข ไม่มี "·" หรือช่องว่างค้างตรงที่เคยมี ทั้งตอนเพิ่งเปิด ระหว่างรอ และหลัง Apply · ไม่มีแถบเวลาเล็กบนบรรทัด (แถบเวลาอยู่ในการ์ดเต็มหลังกด Details) · มีปุ่ม "Details ▾" และปุ่ม "Edit" · เปิดหน้าต่าง / กด Apply ไม่ช้าลง · ไม่มีปุ่มสีทึบในบรรทัดนี้ · หน้าต่างแคบ: ช่วงวันที่ถูกซ่อน บรรทัดไม่ล้น · กด Details = การ์ดเต็มกางตรงนั้น (แถว Train มีป้าย "P1 · …", แถว Scoring มีป้าย "S1 · …" หน้าตาเดียวกันทุกป้าย, แถว When running มีป้ายเงื่อนไข, ป้าย "Set", ทางขวามีแถบเวลา "N d train · M d scoring" อย่างเดียว — ไม่มีจำนวนแถว และไม่มีแถบสัดส่วน % เหนือแถบเวลา) และมี "Hide details" สำหรับพับกลับ · ไม่มี Train period = บรรทัดเขียนสีเหลือง "No train period" + "Add a train period" (ไม่มี "0 rows" นำหน้า; ใน Details: ป้ายเหลือง "No train period — add one" + "Add a train period" เหนือแถบเวลา) · ไม่มีข้อมูลให้ Train = คำเตือนแดง "Nothing to train on" (ดู BMW-201) · ไม่มี Scoring period = สีเหลือง "No scoring period" (ใน Details: ป้าย "No scoring period — needed before Mark complete") · Scoring period ผิด = ต่อท้ายด้วย "· ⚠ 1 to fix" สีแดง · ยังไม่ตั้ง = การ์ดเหลืองใหญ่ วงกลมเขียน "!" (ไม่ใช่เลข 1) หัวเล็ก "Running condition · required before training" ป้าย "Not set" และปุ่มทึบของตัวเอง "Set running condition →" · ช่วง Train ผิด = การ์ดแดง วงกลม "!" หัวข้อ "P1 needs fixing" (เรียกด้วยหมายเลขช่วง P1, P2 … ไม่ใช่ "Period 1") + เหตุผล เช่น "P1 ends before it starts. Models can't be trained until it's fixed." + ป้าย Train ของช่วงนั้นเป็นสีแดง + ปุ่มแดง "Fix period" · หลังแก้เฉพาะ Scoring periods: ใต้บรรทัดขึ้นแถบเหลือง "Scoring periods changed — 1 complete model needs Mark complete again. It was re-scored with the same trained model, not re-trained." โมเดลนั้นกลับเป็นไม่ Complete แต่ยังเป็น Trained ไม่ต้อง Train ใหม่
+  - **คาดหวัง:** ตั้งแล้ว = บรรทัดเดียว: ✓ · "Running condition" · "Train 2 periods" + ช่วงวันที่ตั้งแต่ต้นช่วงแรกถึงปลายช่วงสุดท้าย (ตัวอักษรแบบพิมพ์ดีด เช่น "2026/01/01 00:00 → 2026/06/30 23:59"; ถ้าไม่มีวันสิ้นสุด = "End") · "Scoring 2 periods" · "Running when <ชื่อ sensor> is above <ค่า หน่วย>" (เช่น "Running when Motor power (KW) is above 50 kW") · ไม่มีตัวเลขจำนวนแถวข้อมูล: ไม่มี "N rows · NN%" ไม่มี "Counting rows…" ไม่มี "— rows" — บรรทัดจบที่เงื่อนไข ไม่มี "·" หรือช่องว่างค้างตรงที่เคยมี ทั้งตอนเพิ่งเปิด ระหว่างรอ และหลัง Apply · ไม่มีแถบเวลาเล็กบนบรรทัด (แถบเวลาอยู่ในการ์ดเต็มหลังกด Details) · มีปุ่ม "Details ▾" และปุ่ม "Edit" · เปิดหน้าต่าง / กด Apply ไม่ช้าลง · ไม่มีปุ่มสีทึบในบรรทัดนี้ · หน้าต่างแคบ: ช่วงวันที่ถูกซ่อน บรรทัดไม่ล้น · กด Details = การ์ดเต็มกางตรงนั้น (แถว Train มีป้าย "P1 · …", แถว Scoring มีป้าย "S1 · …" หน้าตาเดียวกันทุกป้าย, แถว Running when มีป้ายเดียว "<ชื่อ sensor> is above <ค่า หน่วย>", ป้าย "Set", ทางขวามีแถบเวลา "N d train · M d scoring" อย่างเดียว — ไม่มีจำนวนแถว และไม่มีแถบสัดส่วน % เหนือแถบเวลา) และมี "Hide details" สำหรับพับกลับ · ไม่มี Train period = บรรทัดเขียนสีเหลือง "No train period" + "Add a train period" (ไม่มี "0 rows" นำหน้า; ใน Details: ป้ายเหลือง "No train period — add one" + "Add a train period" เหนือแถบเวลา) · ไม่มีข้อมูลให้ Train = คำเตือนแดง "Nothing to train on" (ดู BMW-201) · ไม่มี Scoring period = สีเหลือง "No scoring period" (ใน Details: ป้าย "No scoring period — needed before Mark complete") · Scoring period ผิด = ต่อท้ายด้วย "· ⚠ 1 to fix" สีแดง · ยังไม่ตั้ง = การ์ดเหลืองใหญ่ วงกลมเขียน "!" (ไม่ใช่เลข 1) หัวเล็ก "Running condition · required before training" ป้าย "Not set" และปุ่มทึบของตัวเอง "Set running condition →" · ช่วง Train ผิด = การ์ดแดง วงกลม "!" หัวข้อ "P1 needs fixing" (เรียกด้วยหมายเลขช่วง P1, P2 … ไม่ใช่ "Period 1") + เหตุผล เช่น "P1 ends before it starts. Models can't be trained until it's fixed." + ป้าย Train ของช่วงนั้นเป็นสีแดง + ปุ่มแดง "Fix period" · หลังแก้เฉพาะ Scoring periods: ใต้บรรทัดขึ้นแถบเหลือง "Scoring periods changed — 1 complete model needs Mark complete again. It was re-scored with the same trained model, not re-trained." โมเดลนั้นกลับเป็นไม่ Complete แต่ยังเป็น Trained ไม่ต้อง Train ใหม่
 
 - [ ] **BMW-207 — ปุ่ม "Details" / "Hide details" ของ Running condition หน้าตาเหมือนกัน และอยู่ที่เดียวกัน** 🆕
   - ที่บรรทัด Running condition กด "Details" แล้วกด "Hide details" สลับไปมาหลายครั้งโดยไม่ขยับเมาส์
@@ -3723,88 +3715,91 @@ _ปุ่มดินสอที่แต่ละแถวในแท็บ 
   - กด Tab ไปที่ปุ่ม แล้วกด Enter / Space สลับไปมา
   - **คาดหวัง:** "Hide details" เป็นปุ่มหน้าตาเดียวกับ "Details" (ไม่ใช่ตัวหนังสือเปล่า) อยู่ทางซ้ายของปุ่ม "Edit" ทั้งสองแบบ · ปุ่มทั้งคู่อยู่ตำแหน่งเดิมบนจอ (มุมขวาบนของการ์ด) จึงกดสลับได้โดยไม่ต้องขยับเมาส์ · ปุ่ม "Edit" ขนาดเท่ากันทั้งสองแบบ และกดได้จากทั้งสองแบบ · ในการ์ดเต็มไม่มีลิงก์ "Hide details" ที่หัวการ์ดแล้ว · หลังสลับด้วยคีย์บอร์ด ตำแหน่งที่เลือกอยู่ยังอยู่ที่ปุ่ม
 
-- [ ] **BMW-101 — ค่าเงื่อนไข Running condition ที่เป็นทศนิยมเล็ก ๆ แสดงครบตามที่พิมพ์ + Esc ในช่องค้นหา sensor ปิดแค่ตัวเลือก** 🆕
-  - ในหน้าต่าง Running condition ตั้งเงื่อนไข `> 0.0005` และอีกแถวแบบ between `0.0001` – `0.0004` แล้วกด Apply
-  - กด Details ที่บรรทัด Running condition แล้วดูป้ายเงื่อนไข
-  - เปิดหน้าต่าง Running condition อีกครั้ง กดช่อง sensor ของแถว (เคอร์เซอร์อยู่ในช่องค้นหา) แล้วกด Esc
-  - **คาดหวัง:** ป้ายเขียน `> 0.0005` และ `between 0.0001–0.0004` (ไม่ถูกปัดเป็น 0; ค่าหลักพันยังมีจุลภาค เช่น `4,000`) · กด Esc ครั้งแรกปิดแค่ตัวเลือก sensor หน้าต่าง Running condition ยังเปิดอยู่ และไม่ขึ้นคำถาม Discard
+- [ ] **BMW-388 — ค่าหลัง "is above" ที่เป็นทศนิยมเล็ก ๆ แสดงครบตามที่พิมพ์ + Esc ในช่องค้นหา sensor ปิดแค่ตัวเลือก** 🆕
+  - ในหน้าต่าง Running condition พิมพ์ `0.0005` ในช่องหลัง "is above" แล้วกด Apply
+  - กด Details ที่บรรทัด Running condition แล้วดูป้ายในแถว Running when
+  - เปิดหน้าต่าง Running condition อีกครั้ง พิมพ์ `4000` แล้วกด Apply แล้วดูป้ายอีกครั้ง
+  - เปิดหน้าต่าง Running condition อีกครั้ง กดช่อง sensor หลัง "Machine is running when" (เคอร์เซอร์อยู่ในช่องค้นหา) แล้วกด Esc
+  - **คาดหวัง:** ป้ายเขียน "is above 0.0005" (ไม่ถูกปัดเป็น 0) · ค่าหลักพันมีจุลภาค เช่น "is above 4,000" · กด Esc ครั้งแรกปิดแค่ตัวเลือก sensor หน้าต่าง Running condition ยังเปิดอยู่ และไม่ขึ้นคำถาม Discard
 
-- [ ] **BMW-24 — โปรเจกต์เก่าที่มีโมเดลแล้วแต่ไม่เคยตั้ง Running Condition: แบนเนอร์ 3 ปุ่ม**
-  - เปิดโปรเจกต์เก่า (สร้างก่อนมีเรื่อง Running condition) ที่มีโมเดลแล้วและไม่เคยตั้ง Running Condition
-  - ดูแบนเนอร์สีน้ำเงิน "New: running condition is now required for every model." ใต้บรรทัด Running condition (บอกจำนวนโมเดลที่ Complete แล้วว่า Train ด้วยข้อมูลทั้งหมด)
-  - กด "Remind me later" แล้วปิดโปรแกรม เปิดใหม่
-  - กด "Set a condition" (เปิด popup Running condition) ตั้งเงื่อนไขให้ครบ แล้วกด Apply · ปิดเปิดโปรแกรมอีกครั้ง
-  - เปิดโปรเจกต์เก่าอีกอันแล้วกด "Keep using all data"
-  - เปิดโปรเจกต์ใหม่ที่ยังไม่มีโมเดล
-  - **คาดหวัง:** แบนเนอร์มี 3 ปุ่ม · "Remind me later" ซ่อนแค่รอบที่เปิดอยู่ (เปิดโปรแกรมใหม่แล้วแบนเนอร์กลับมา) · "Set a condition" เปิด popup Running Condition และแบนเนอร์หายเมื่อตั้งเงื่อนไขครบ และไม่กลับมาอีก · "Keep using all data" = ยืนยันว่าไม่ใช้เงื่อนไข แบนเนอร์หายถาวร · โปรเจกต์ใหม่ที่ยังไม่มีโมเดลไม่เห็นแบนเนอร์นี้
+- [ ] **BMW-389 — โปรเจกต์เก่าที่มีหลายเงื่อนไข (AND / OR, `<`, ช่วง min–max): เปิดแล้วเหลือบรรทัดเดียว พร้อมกล่องแจ้ง "Running condition is now one condition"** 🆕
+  - *(วิธีเตรียม: ใช้โปรเจกต์ที่สร้างด้วยเวอร์ชันก่อน 26 ต.ค. 2026 ซึ่ง Running condition มีหลายเงื่อนไข เช่น `TEMP < 90` OR `KW > 50` และมีโมเดลที่ Complete แล้วอย่างน้อย 1 ตัว — ให้สำรองโปรเจกต์ไว้ก่อน)*
+  - เปิดโปรเจกต์ → เปิด Build Model
+  - อ่านกล่องแจ้งสีเหลืองใต้การ์ด Running condition ทุกบรรทัด
+  - ดูคำบนแท็บ จุดในรายการซ้าย และจุดที่ Dashboard ของโมเดลที่เคย Complete
+  - เปิดหน้า Health score ของโมเดลนั้น ดูช่อง set point
+  - กด "Check it" ในกล่องแจ้ง
+  - **คาดหวัง:** popup Running condition **ไม่เปิดเอง** ตอนเปิดหน้าต่าง · กล่องแจ้งหัวข้อ "Running condition is now one condition" มีแถว "Before" (เงื่อนไขเดิมทั้งชุด พร้อม AND / OR เดิม), แถว "Now" = "Machine is running when <ชื่อ sensor> is above <ค่า หน่วย> — the first “above” condition was kept." (ในตัวอย่างคือ KW is above 50) และแถว "Models" = "N Complete model(s) is/are Incomplete again — … Train again, then Mark complete. Set points are kept." พร้อมชื่อโมเดล · มีปุ่ม "Check it" และ "Got it" · โมเดลที่เคย Complete: แท็บเขียน "Re-train needed" จุดเหลือง ทั้งใน Build Model และ Dashboard · set point เดิมยังอยู่ครบ · "Check it" เปิด popup Running condition ที่มีบรรทัดเดียว "Machine is running when KW is above 50"
 
-- [ ] **BMW-291 — แบนเนอร์ของโปรเจกต์เก่า: กด "Keep using all data" แล้วยังไม่ได้แปลว่า Train ได้ทันที — ยังต้องมี Train period** 🆕
-  - เปิดโปรเจกต์เก่าที่มีโมเดล (บางตัว Complete) และไม่เคยตั้ง Running condition
-  - อ่านข้อความในแบนเนอร์ แล้วกด "Keep using all data"
-  - ดูบรรทัด Running condition, คำบนแท็บของโมเดล Complete เก่า และของโมเดลที่ยังไม่ Train, ปุ่ม Train sensor / Train all
-  - เปิด popup เพิ่ม Train period แล้วกด Apply แล้วลอง Train
-  - (ถ้ามี) เปิดโปรเจกต์เก่าที่ไม่มีโมเดล Complete เลย แล้วอ่านแบนเนอร์
-  - **คาดหวัง:** ข้อความแบนเนอร์: "New: running condition is now required for every model." + "N model(s) in this workspace was/were trained on the full dataset. They stay Complete and nothing is changed. Set a condition before you build or re-train a model." · กดแล้วแบนเนอร์หายถาวร การ์ดกลายเป็นบรรทัดเดียว "All rows — no condition" แต่มีคำสีเหลือง "No train period" / "Add a train period" · โมเดลที่ยังไม่ Train: ขึ้น "Needs train period" และปุ่ม Train กดไม่ได้ · โมเดล Complete เก่ายังเป็น Complete (จุดเขียว) แต่คำบนแท็บเปลี่ยนจาก "Legacy · all data" เป็นเหตุผลว่ายังขาดอะไร (สังเกตสีของคำ) · เพิ่ม Train period แล้ว Train ได้ · (ข้อสังเกต) โปรเจกต์เก่าที่ไม่มีโมเดล Complete เลย แบนเนอร์ยังเขียน "They stay Complete and nothing is changed." — ถ้าดูแปลกให้บันทึกไว้
+- [ ] **BMW-390 — กด "Got it" แล้วกล่องแจ้งการแปลงไม่กลับมาอีก แม้ทำงานใน Dashboard ต่อและปิดเปิดโปรแกรม** 🆕
+  - ใช้โปรเจกต์จาก BMW-389 (ยังเห็นกล่องแจ้งอยู่) → กด "Got it"
+  - สลับไปหน้าต่าง Dashboard ทำงานต่อ 1 นาที: ติ๊ก/เอาติ๊ก sensor, เลื่อนกราฟ, เปลี่ยนชื่อ Failure group
+  - กลับไปที่ Build Model ดูใต้การ์ด Running condition
+  - ปิดโปรแกรม เปิดใหม่ → เปิดโปรเจกต์เดิม → เปิด Build Model
+  - กด Edit ที่บรรทัด Running condition
+  - **คาดหวัง:** กด Got it แล้วกล่องแจ้งหายทันที · หลังทำงานใน Dashboard และหลังปิดเปิดโปรแกรม กล่องแจ้งไม่กลับมา · บรรทัด Running condition ยังเป็นเงื่อนไขเดียวที่แปลงไว้ (KW is above 50) ไม่ย้อนกลับเป็นหลายเงื่อนไข · โมเดลที่ต้อง Train ใหม่ยังเป็น "Re-train needed" (Got it ไม่ได้ทำให้กลับเป็น Complete)
 
-- [ ] **BMW-26 — โปรเจกต์ที่สร้างใหม่ต้องไม่ขึ้นแบนเนอร์ของโปรเจกต์เก่า**
-  - สร้างโปรเจกต์ใหม่ นำเข้าข้อมูล สร้าง Failure Group และสร้างโมเดลจาก Dashboard
-  - เปิด Build Model
-  - **คาดหวัง:** ไม่มีแบนเนอร์สีน้ำเงินของโปรเจกต์เก่า ("New: running condition is now required…") · เห็นการ์ดเหลือง "Set the running condition" ตามปกติ
+- [ ] **BMW-391 — โปรเจกต์เก่าที่ไม่มีเงื่อนไขแบบ "above" (มีแต่ `<` / `=` / ช่วง min–max หรือเลือก "Use all rows" ไว้): การ์ด "Set it again" และ popup ไม่เปิดเอง** 🆕
+  - *(วิธีเตรียม: โปรเจกต์ที่สร้างด้วยเวอร์ชันก่อน 26 ต.ค. 2026 ที่ Running condition มีแต่ `TEMP < 90` หรือเลือก "Use all rows" และมีโมเดล Complete — สำรองไว้ก่อน)*
+  - เปิดโปรเจกต์ → เปิด Build Model
+  - อ่านการ์ด Running condition และดูปุ่ม Train sensor / Train all
+  - กด "Set running condition →" → เลือก sensor หลัง "Machine is running when" → พิมพ์ค่าหลัง "is above" → กด Apply
+  - **คาดหวัง:** popup **ไม่เปิดเอง** · การ์ดเหลืองมีป้าย "Set it again" (ไม่ใช่ "Not set") และอธิบาย 2 ประโยค: "This project used … , which is gone — pick the sensor that shows the machine is running, and the value above which it runs." (ถ้าเคยเลือก Use all rows จะเขียน "Use all rows (idle and shutdown time included)") + "Its N Complete model(s) is/are Incomplete until … trained again with it." · ไม่มีกล่องแจ้ง Before / Now · ปุ่ม Train กดไม่ได้จนกว่าจะตั้ง · หลัง Apply การ์ดกลายเป็นบรรทัดเดียว "Running when … is above …" และ Train ได้
+
+- [ ] **BMW-392 — โปรเจกต์เก่าที่มีโมเดล Custom ซึ่งเงื่อนไขของตัวเองไม่มี "above": แถว "Own condition" ในกล่องแจ้ง และยังอยู่หลังกด Apply ของโปรเจกต์** 🆕
+  - *(วิธีเตรียม: โปรเจกต์เก่าที่ Running condition ของโปรเจกต์มี `KW > 50` และมีโมเดล Custom ชื่อหนึ่ง (เช่น "Speed own") ที่เงื่อนไขของตัวเองเป็น `SPEED` ช่วง min–max เท่านั้น)*
+  - เปิด Build Model อ่านกล่องแจ้งใต้การ์ด Running condition
+  - กด Edit → แก้ค่าหลัง "is above" เป็นค่าอื่น → กด Apply
+  - อ่านกล่องแจ้งอีกครั้ง
+  - ไปที่โมเดล "Speed own" → กาง Model settings → Training data (Custom) ดูบรรทัด "Machine is running when … is above …" และบรรทัดเตือนใต้บรรทัดนั้น
+  - ตั้ง sensor และค่าในบรรทัดของโมเดลนั้น → กด "Save changes"
+  - กด "Got it" ในกล่องแจ้ง
+  - **คาดหวัง:** กล่องแจ้งมีแถว "Own condition" เขียน "Set again in Model settings → Training data: Speed own — it had no “above” condition." · หลัง Apply ของโปรเจกต์ แถว Before / Now / Models หายไป แต่แถว "Own condition" ของ Speed own **ยังอยู่** (ไม่มีปุ่ม Check it เหลือแค่ Got it) · ในแผง Custom ช่อง sensor และช่องค่าว่าง ขอบเส้นประสีเหลือง พร้อมบรรทัดเหลือง "Pick the sensor that shows the machine is running, and the value above which it runs — … This model can’t be trained until it is set." และ Train ของโมเดลนั้นกดไม่ได้ · ตั้งค่าแล้ว Save changes โมเดลนั้น Train ได้ · กด Got it แล้วกล่องแจ้งหายทั้งกล่อง
 
 - [ ] **BMW-290 — โปรเจกต์ที่ยังไม่ตั้ง Running condition: popup เปิดเองครั้งเดียวตอนเปิดหน้าต่าง** 🆕
-  - เปิด Build Model ของโปรเจกต์ที่ยังไม่ตั้งเงื่อนไข (และไม่ได้เลือก Use all rows)
+  - เปิด Build Model ของโปรเจกต์ที่ยังไม่เคยตั้ง Running condition
   - กด Cancel ใน popup แล้วทำงานอื่นในหน้าต่างต่อ (สลับ sensor, ไปแก้ที่ Dashboard ให้หน้าต่างนี้เปลี่ยนตาม)
   - ปิดหน้าต่างแล้วเปิดใหม่
   - ทำกับโปรเจกต์ที่ตั้งเงื่อนไขแล้วแต่ยังไม่มี Train period
   - **คาดหวัง:** เปิดหน้าต่างแล้ว popup "Running condition" ขึ้นเองทันที (ด้านหลังเป็นการ์ดเหลือง "Set the running condition") · กด Cancel แล้ว popup ไม่เด้งขึ้นเองอีกระหว่างที่หน้าต่างยังเปิดอยู่ แม้มีการเปลี่ยนจาก Dashboard · ปิดเปิดหน้าต่างใหม่ = เด้งอีกครั้ง (ถ้ายังไม่ตั้ง) · โปรเจกต์ที่มีเงื่อนไขแล้วแต่ไม่มี Train period ไม่เด้งเอง (บรรทัด Running condition บอก "No train period" / "Add a train period" แทน)
 
-- [ ] **BMW-170 — popup Running condition: คอลัมน์เดียว กว้างประมาณ 980 px — เส้นเวลาบนสุด แล้ว 3 หัวข้อ (Train periods · Scoring periods · When the plant is running); แถวเงื่อนไขบรรทัดเดียว** 🆕
-  - เปิด popup ด้วยปุ่ม "Edit" (หรือ "Set running condition →") ดูโครงทั้งหน้า: หัว popup, แถบเส้นเวลา (timeline), หัวข้อทั้ง 3
-  - ที่หัวข้อ "When the plant is running" ดูตัวเลือก 2 อันในแถวเดียว "Only when running · keep rows that meet a condition" | "Use all rows · idle and shutdown time included"
-  - คลิก "Use all rows" แล้วคลิกกลับ · ลองกดลูกศรซ้าย/ขวาบนคีย์บอร์ดตอนที่ตัวเลือกถูกเลือกอยู่
-  - กด "Add condition" 2 ครั้ง ดูแถวเงื่อนไข: ช่อง sensor, ปุ่ม `>` `<` `↔` `=`, ช่องค่าพร้อมหน่วย, ปุ่ม ✕
-  - กดช่อง sensor แล้วเลือก sensor ที่ชื่อยาวมาก · กด `↔` ดูช่อง min / max
-  - ดูระหว่างแถวที่ 1 กับ 2: ปุ่มทรงแคปซูล "AND" — กดแล้วเป็น "OR" ดูคำอธิบาย · ลบแถวที่ 2
-  - ย่อหน้าต่าง Build Model ให้แคบลง แล้วดูแถวช่วงเวลาและแถวเงื่อนไข
-  - **คาดหวัง:** หัว popup "Running condition" + "Default for every model · a model can use its own on its settings (Custom)" + ป้ายสถานะมุมขวาบน (Required สีเหลือง / "N conditions" สีฟ้า / "No condition" สีเทา / "Fix period" สีแดง) · ไม่มีคอลัมน์ขวา "Data used for training" ไม่มีเลขขั้น 1/2 ไม่มีกล่องคำอธิบายสีฟ้า/เหลือง — แต่ละหัวข้อมีแค่ชื่อ + ประโยคเดียวในบรรทัดเดียว · ตัวเลือก 2 อันอยู่แถวเดียว (อันที่เลือกมีพื้นฟ้า + จุดกลม) · "Use all rows" ซ่อนแถวเงื่อนไข ขึ้นบรรทัดสีเทาบอกว่าทุกแถวในช่วง Train ถูกใช้ และเงื่อนไขที่ตั้งไว้ไม่หาย · แถวเงื่อนไขเป็นบรรทัดเดียว `[sensor] [> < ↔ =] [ค่า หน่วย] [✕]` ไม่มีป้าย component ในแถว ช่อง sensor กว้างไม่เกินประมาณ 360 px (ชื่อยาวถูกตัดด้วย …) และช่องค่าไม่ถูกบีบจนอ่านไม่ได้ · ปุ่ม AND/OR มีคำอธิบาย "both must be true" / "either one is enough" และมีเฉพาะเมื่อมี 2 แถวขึ้นไป (ลบแถวที่ 2 แล้วปุ่มหาย) · ยังไม่ตั้งเงื่อนไข = บรรทัดเหลือง "Choose “Only when running” with a condition, or “Use all rows”, before training a model." · หน้าต่างแคบ: ไม่มีอะไรล้นกรอบหรือทับกัน · ทุกการแก้เป็นแบบร่าง ยังไม่มีผลจนกด Apply (ดู BMW-172)
+- [ ] **BMW-393 — popup Running condition: หัวข้อ "When the machine is running" เป็นบรรทัดเดียว "Machine is running when [sensor] is above [ค่า]" — ไม่มีตัวเลือกเครื่องหมาย ไม่มี AND / OR ไม่มี "Use all rows" ไม่มีปุ่ม Add condition** 🆕
+  - เปิด popup ด้วยปุ่ม "Edit" (หรือ "Set running condition →") ดูโครงทั้งหน้า: หัว popup, แถบเส้นเวลา, หัวข้อทั้ง 3
+  - ที่หัวข้อ "When the machine is running" อ่านประโยคท้ายหัวข้อ แล้วดูบรรทัดข้างใต้
+  - กดช่อง sensor หลัง "Machine is running when" แล้วเลือก sensor ที่ชื่อยาวมาก
+  - ดูหน่วยท้ายช่องค่า และอ่านบรรทัดเล็กใต้บรรทัดนี้
+  - ย่อหน้าต่าง Build Model ให้แคบลง แล้วดูบรรทัดนี้
+  - **คาดหวัง:** หัวข้อทั้ง 3 คือ "Train periods" · "Scoring periods" · "When the machine is running" (ไม่ใช่ "plant") · ประโยคท้ายหัวข้อ: "only rows where the machine is running are used to train and score — and the export tells the monitoring system the same. Required." · มีบรรทัดเดียว "Machine is running when [ช่อง sensor] is above [ช่องค่า หน่วย]" — **ไม่มี** ตัวเลือก "Only when running" / "Use all rows", ปุ่ม `>` `<` `↔` `=`, ปุ่ม AND / OR, ปุ่ม "Add condition" และปุ่ม ✕ · ช่องค่าว่างมีข้อความจาง ๆ "e.g. 1000" · ตั้งครบแล้วบรรทัดเล็กใต้บรรทัดเขียน "At or below <ค่า หน่วย> the machine counts as stopped — those rows are left out, and the export writes the same line as the machine’s running status." · ชื่อ sensor แสดง description ก่อน tag ชื่อยาวถูกตัดด้วย … · หน้าต่างแคบ: ไม่มีอะไรล้นหรือทับกัน · ทุกการแก้เป็นแบบร่างจนกด Apply
 
-- [ ] **BMW-292 — แถวเงื่อนไขใน popup: ค่าเริ่มต้น, ปุ่มเปรียบเทียบ `>` `<` `↔` `=`, ช่อง min / max, หน่วย, แถวที่ยังกรอกไม่ครบ, ป้าย "Required" / "N conditions", ปุ่ม ✕** 🆕
-  - เปิด popup เลือก "Only when running" แล้วกด "Add condition"
-  - ดู sensor ที่ถูกใส่ให้, ปุ่มเปรียบเทียบที่ถูกเลือกอยู่, ช่องค่า และป้ายมุมขวาบน
-  - ชี้เมาส์ที่ปุ่มเปรียบเทียบทั้ง 4
-  - กด `↔` ดูช่อง min / max แล้วกรอกแค่ min · กรอก max · กด `=`
-  - กรอกค่าแถวแรกให้ครบ แล้วเพิ่มแถวที่ 2 โดยยังไม่กรอก ดูป้ายมุมขวาบน
-  - กด Apply แล้วดูบรรทัด Running condition และป้ายใน Details
-  - เปิด popup อีกครั้ง กด ✕ ทีละแถวจนหมด
-  - **คาดหวัง:** แถวใหม่ใส่ sensor ตัวแรกของข้อมูลให้, เลือก `>` ไว้, ช่องค่าว่าง (มีข้อความจาง ๆ "value") และแถวดูเป็นสถานะยังกรอกไม่ครบ · ข้อความเมื่อชี้ปุ่ม: "Greater than", "Less than", "Between", "Equals" · `↔` มีสองช่อง "min" – "max" ต้องกรอกทั้งคู่จึงครบ หน่วยอยู่หลังช่อง max · ป้ายมุมขวาบนเป็น "Required" จนกว่าจะมีแถวที่ครบอย่างน้อย 1 แถว แล้วเป็น "1 condition" / "2 conditions" (นับทุกแถวที่มี) · บรรทัด Running condition และป้ายใน Details นับเฉพาะแถวที่ครบ ("When running: 1 condition") · ✕ (ชี้แล้วขึ้น "Remove condition") ลบทีละแถว · ไม่เหลือแถว = "Add a condition that tells running from idle — for example active power > a level." และป้าย "Required" · ทั้งหมดเป็นแบบร่างจนกด Apply
+- [ ] **BMW-394 — popup Running condition: ปุ่ม Apply และบรรทัดข้างปุ่ม เมื่อบรรทัด "Machine is running when … is above …" ยังไม่ครบ** 🆕
+  - เปิดโปรเจกต์ที่ยังไม่เคยตั้ง Running condition (popup เปิดเอง) ดูป้ายมุมขวาบน ช่องที่ว่าง และบรรทัดเหลืองใต้บรรทัด
+  - เลือกแค่ sensor (ยังไม่พิมพ์ค่า) → ดูปุ่ม Apply และบรรทัดข้างปุ่ม · ชี้เมาส์ที่ปุ่ม Apply
+  - ลบ sensor ออก แล้วพิมพ์แค่ค่า → ดูอีกครั้ง
+  - ล้างทั้งสองช่อง แล้วเพิ่ม Train period 1 ช่วง → ดูปุ่ม Apply และบรรทัดข้างปุ่ม → กด Apply → ดูการ์ด
+  - เปิด popup อีกครั้ง ตั้ง sensor + ค่าให้ครบ → กด Apply
+  - เปิด popup อีกครั้ง ลบค่าหลัง "is above" ออก → ดูปุ่ม Apply
+  - (กับโปรเจกต์ที่มีโมเดล Complete) เปิด popup แก้ค่าหลัง "is above" เป็นค่าอื่น → อ่านบรรทัดข้างปุ่ม Apply
+  - **คาดหวัง:** ยังไม่ตั้ง = ป้าย "Required" สีเหลือง, ช่อง sensor และช่องค่าเป็นขอบเส้นประสีเหลือง, บรรทัดเหลือง "Pick the sensor that shows the machine is running, and the value above which it runs — for example generator active power above 1,000 kW. No model can be trained until it is set." · กรอกแค่ช่องเดียว = Apply กดไม่ได้ บรรทัดข้างปุ่มสีเหลือง "Set “Machine is running when … is above …” before applying" (ชี้ปุ่มเห็นประโยคเดียวกัน) และบรรทัดใต้บรรทัดเปลี่ยนเป็น "Type the value above which the machine is running." / "Pick the sensor that shows the machine is running." · ทั้งสองช่องว่างแต่เพิ่ม Train period = Apply กดได้ บรรทัดข้างปุ่มเขียน "The running condition is still not set — models can’t train yet" และหลัง Apply การ์ดยังเป็นการ์ดเหลือง "Not set" · ตั้งครบแล้ว Apply = การ์ดเป็นบรรทัดเดียว "Running when … is above …" · ลบค่าของเงื่อนไขที่เคยตั้งไว้ = Apply กดไม่ได้ (ลบเงื่อนไขทิ้งไม่ได้ ต้องมีเสมอ) · มีโมเดล Complete แล้วแก้ค่า = บรรทัดเหลือง "Applying sets N models back to Incomplete — they need training again" (ไม่นับโมเดล Custom) และ Apply ยังกดได้
 
-- [ ] **BMW-293 — เงื่อนไขกรองข้อมูลจริง: `<`, `=`, AND / OR ทำให้ "d running" ของแต่ละช่วงเปลี่ยนไปในทิศที่ถูก** 🆕
-  - ตั้ง Train period 1 ช่วง + เงื่อนไข A `>` ค่าหนึ่ง แล้วจดตัวเลข "d running" ท้ายแถว P1
-  - เพิ่มเงื่อนไข B `<` ค่าหนึ่ง (AND) แล้วจดตัวเลข
-  - กดปุ่ม AND ให้เป็น OR แล้วจดตัวเลข
-  - เปลี่ยนเงื่อนไข B เป็น `=` กับค่าที่ sensor มีจริงบ่อย ๆ (เช่น สถานะ 1) แล้วดูตัวเลข · เปลี่ยนเป็นค่าที่ไม่มีจริง แล้วดูตัวเลข
-  - กด Apply แล้ว Train โมเดล Individual ตัวหนึ่ง ดูกราฟ "Sensor value over time" เทียบกับเงื่อนไข
-  - **คาดหวัง:** เพิ่มเงื่อนไขแบบ AND = "d running" เท่าเดิมหรือลดลง · เปลี่ยนเป็น OR = เท่าเดิมหรือเพิ่มขึ้น (ไม่น้อยกว่าตอนมีเงื่อนไขเดียว) · `=` กับค่าที่มีจริงยังมีวันที่เครื่องเดิน · ค่าที่ไม่มีจริงเหลือ 0 / มีคำเตือน "no running rows in P1" หรือเส้นแดง "No rows match — nothing to train on. …" (BMW-197) · กราฟของโมเดลที่ Train มีจุดเฉพาะเวลาที่ผ่านเงื่อนไข (ช่วงที่ไม่ผ่านเป็นช่องว่าง) · ไม่มีจำนวนแถวแสดงที่ใด
-
-- [ ] **BMW-294 — "Use all rows": บรรทัดอธิบายบอกจำนวน Train period และบอกว่าเงื่อนไขที่ตั้งไว้ถูกเก็บไว้แต่ไม่ใช้** 🆕
-  - ใน popup ที่มีเงื่อนไข 2 แถว และ Train period 2 ช่วง กด "Use all rows" แล้วอ่านบรรทัดอธิบาย
-  - ลบ Train period ให้เหลือ 1 ช่วง แล้ว 0 ช่วง อ่านบรรทัดอธิบายทุกครั้ง
-  - กด "Only when running" กลับ แล้วดูเงื่อนไข
-  - เพิ่ม Train period กลับ เลือก "Use all rows" แล้วกด Apply ดูบรรทัด Running condition และ Details
-  - **คาดหวัง:** "Every row inside the train periods is used, idle time included. The 2 train periods above still limit the time. Your saved conditions are kept but not applied." · 1 ช่วง = "The 1 train period above still limits the time." · ไม่มีช่วง = "There is no train period yet — add one above." · ป้ายมุมขวาบน "No condition" (สีเทา) · กลับเป็น "Only when running" แล้วเงื่อนไข 2 แถวเดิมกลับมาครบ · หลัง Apply บรรทัด Running condition เขียน "All rows — no condition" และใน Details เป็นป้าย "All rows — no condition" · เส้นแดง "No rows match …" (ถ้ามี) เขียนแค่ "Widen a train period." ไม่มี "or relax the condition"
+- [ ] **BMW-399 — ค่าหลัง "is above" กรองข้อมูลจริง: ยิ่งค่าสูง "d running" ยิ่งน้อย** 🆕
+  - ตั้ง Train period 1 ช่วง + บรรทัด "Machine is running when <sensor กำลังไฟ> is above <ค่าต่ำ ๆ เช่น 10>" แล้วจดตัวเลข "d running" ท้ายแถว P1
+  - เปลี่ยนค่าเป็นค่าที่สูงขึ้น (เช่น 150) แล้วจดตัวเลขอีกครั้ง
+  - เปลี่ยนเป็นค่าที่สูงเกินกว่าค่าสูงสุดของ sensor แล้วดูตัวเลขและบรรทัดใต้เส้นเวลา
+  - กลับเป็นค่าที่มีแถว → กด Apply → Train โมเดล Individual ตัวหนึ่ง → ดูกราฟ "Sensor value over time"
+  - **คาดหวัง:** ค่าสูงขึ้น = "d running" เท่าเดิมหรือลดลง · ค่าที่สูงเกินจริง = เหลือ 0 / มีเส้นแดง "No rows match — nothing to train on. …" (BMW-197) · กราฟของโมเดลที่ Train มีจุดเฉพาะเวลาที่ sensor นั้นสูงกว่าค่าที่ตั้ง (ช่วงที่ต่ำกว่าหรือเท่ากับเป็นช่องว่าง) · ไม่มีจำนวนแถวแสดงที่ใด
 
 - [ ] **BMW-263 — เส้นเวลา + บรรทัดสรุปใต้เส้นเวลา (บอกเป็นจำนวนวันเท่านั้น — ไม่มีจำนวนแถว / %) + "N d running" ของแต่ละช่วง — เปลี่ยนตามค่าที่กำลังแก้ทันที รวมถึงวันที่ที่เพิ่งพิมพ์** 🆕
-  - เปิด popup ในโปรเจกต์ที่มี Train period 2 ช่วง + Scoring period 1–2 ช่วง + เงื่อนไข 1 แถว
+  - เปิด popup ในโปรเจกต์ที่มี Train period 2 ช่วง + Scoring period 1–2 ช่วง + บรรทัด "Machine is running when … is above …" ที่ตั้งแล้ว
   - ดูแถบเส้นเวลา: แกนเดือน, แถว Train (บล็อกสีฟ้า P1 P2), แถว Score (บล็อกสีชมพูเส้นประ S1 S2) และบรรทัดสรุปข้างใต้
   - ดูท้ายแต่ละแถวช่วงเวลา (เช่น "81 d · 69 d running")
-  - แก้ค่าเงื่อนไขทีละตัวอักษร (เช่น 5 → 9) ดูตัวเลข "d running" ระหว่างพิมพ์และหลังหยุดพิมพ์ครู่หนึ่ง และดูบรรทัด Running condition ด้านหลัง popup
+  - แก้ค่าหลัง "is above" ทีละตัวอักษร (เช่น 5 → 9) ดูตัวเลข "d running" ระหว่างพิมพ์และหลังหยุดพิมพ์ครู่หนึ่ง และดูบรรทัด Running condition ด้านหลัง popup
   - คลิกในช่องวันสิ้นสุดของ P1 แล้วพิมพ์วันใหม่ทีละตัวเลข โดยยังไม่คลิกออกจากช่อง ดูเส้นเวลา จำนวนวันท้ายแถว และบรรทัดสรุป
   - ทำซ้ำโดยเลือกวันจากปฏิทิน (ปุ่มรูปปฏิทินในช่อง)
   - เลื่อนวันของ Train period ให้เหลือไม่กี่วัน · ตั้งช่วงหนึ่งให้วันสิ้นสุดก่อนวันเริ่ม · ทำ P1 ให้ไม่มีวันเริ่ม ("Start of data")
-  - ลบ Train period จนหมด · เลือก "Use all rows"
-  - เลือก "Only when running" แล้วเพิ่มเงื่อนไข 1 แถวโดยยังไม่กรอกค่า (ป้ายมุมขวาบนเป็น "Required") อ่านบรรทัดสรุปและท้ายแถวช่วงเวลา แล้วกรอกค่าให้ครบ
+  - ลบ Train period จนหมด
+  - ลบค่าหลัง "is above" ออก (ป้ายมุมขวาบนเป็น "Required") อ่านบรรทัดสรุปและท้ายแถวช่วงเวลา แล้วพิมพ์ค่ากลับให้ครบ
   - ปิด popup แล้วเปิดใหม่ · ลองเปิด popup ในโปรเจกต์ที่มีข้อมูลหลายแสนแถว
-  - **คาดหวัง:** บล็อกในเส้นเวลาตรงกับวันที่ของแต่ละแถว (ช่วงที่ไม่มีวันเริ่ม/วันสิ้นสุดยาวถึงขอบข้อมูล) — ช่วงที่ผิดเป็นสีแดง · บรรทัดสรุปบรรทัดเดียว เช่น `117 d train (about 100 d running time) · 59 d scoring · ≥ 30 d recommended` — ไม่มีส่วน "N of M rows (NN%) used for training" ไม่มี "Counting rows…" และไม่มีช่องว่าง / "·" ค้างตรงที่เคยมี · ไม่มี Train period = `no train period · no scoring time` (ไม่มี "add a train period to count the rows") · มีช่วงผิด = บรรทัดสรุปนับเฉพาะวันของช่วงที่ถูก และไม่มี "(about N d running time)" จนกว่าจะแก้ (ไม่มี "fix the period to count the rows") · เวลาเครื่องเดินน้อยกว่า 30 วัน = "≥ 30 d recommended" เป็นสีเหลือง (ชี้เมาส์เห็นประโยคเต็ม) แต่ไม่ห้ามกด Apply · "N d running" ของแต่ละแถวคือเวลาที่เครื่องเดินจริงในช่วงนั้น (ไม่เกินจำนวนวันตามปฏิทิน; "Use all rows" = เท่ากับจำนวนวันที่มีข้อมูล) · ตัวเลขทั้งหมดเป็นของค่าที่กำลังแก้ ส่วนบรรทัด Running condition ด้านหลังยังเป็นค่าที่บันทึกไว้จนกด Apply · ถ้านับไม่ได้ บรรทัดสรุปเหลือแค่จำนวนวันตามปฏิทิน (ไม่มี "about N d running time" และไม่มีข้อความ "Couldn't count the rows right now") และยังแก้ / กด Apply ได้ — เฉพาะกรณีหน้าต่างค้างมาจากชุดข้อมูลเก่าเท่านั้นที่มีบรรทัดสีเทา "The data changed — close this window and open Build Model again" · วันที่ที่พิมพ์หรือเลือกจากปฏิทิน: ทันทีที่วันที่ครบ บล็อกในเส้นเวลาและจำนวนวันท้ายแถวเปลี่ยนตาม โดยไม่ต้องคลิกออกจากช่อง ("d running" ตามมาหลังหยุดพิมพ์ครู่หนึ่ง ระหว่างรอ ตัวเลข "d running" เดิมยังอยู่แต่จางลง ไม่กระพริบเป็นว่าง — ไม่นับใหม่ทุกตัวอักษร) · ระหว่างพิมพ์ปี (เช่น 2026 ทีละหลัก) แถวไม่กระพริบเป็นสีแดง · "Only when running" ที่ยังไม่มีเงื่อนไขครบสักแถว: บรรทัดสรุปไม่มี "about N d running time" (และไม่มีข้อความเรื่องจำนวนแถว เช่น "set the condition to count the rows" / "N of N rows (100%)") และท้ายแถวช่วงเวลาเหลือแค่จำนวนวันตามปฏิทิน — กรอกค่าครบแล้วตัวเลขจึงขึ้น · พิมพ์วันที่หรือค่าเงื่อนไขได้ลื่นเหมือนเดิม ไม่หน่วง · popup ของโปรเจกต์ข้อมูลหลายแสนแถวเปิดทันที ไม่ค้าง
+  - **คาดหวัง:** บล็อกในเส้นเวลาตรงกับวันที่ของแต่ละแถว (ช่วงที่ไม่มีวันเริ่ม/วันสิ้นสุดยาวถึงขอบข้อมูล) — ช่วงที่ผิดเป็นสีแดง · บรรทัดสรุปบรรทัดเดียว เช่น `117 d train (about 100 d running time) · 59 d scoring · ≥ 30 d recommended` — ไม่มีส่วน "N of M rows (NN%) used for training" ไม่มี "Counting rows…" และไม่มีช่องว่าง / "·" ค้างตรงที่เคยมี · ไม่มี Train period = `no train period · no scoring time` (ไม่มี "add a train period to count the rows") · มีช่วงผิด = บรรทัดสรุปนับเฉพาะวันของช่วงที่ถูก และไม่มี "(about N d running time)" จนกว่าจะแก้ (ไม่มี "fix the period to count the rows") · เวลาเครื่องเดินน้อยกว่า 30 วัน = "≥ 30 d recommended" เป็นสีเหลือง (ชี้เมาส์เห็นประโยคเต็ม) แต่ไม่ห้ามกด Apply · "N d running" ของแต่ละแถวคือเวลาที่เครื่องเดินจริงในช่วงนั้น (ไม่เกินจำนวนวันตามปฏิทิน) · ตัวเลขทั้งหมดเป็นของค่าที่กำลังแก้ ส่วนบรรทัด Running condition ด้านหลังยังเป็นค่าที่บันทึกไว้จนกด Apply · ถ้านับไม่ได้ บรรทัดสรุปเหลือแค่จำนวนวันตามปฏิทิน (ไม่มี "about N d running time" และไม่มีข้อความ "Couldn't count the rows right now") และยังแก้ / กด Apply ได้ — เฉพาะกรณีหน้าต่างค้างมาจากชุดข้อมูลเก่าเท่านั้นที่มีบรรทัดสีเทา "The data changed — close this window and open Build Model again" · วันที่ที่พิมพ์หรือเลือกจากปฏิทิน: ทันทีที่วันที่ครบ บล็อกในเส้นเวลาและจำนวนวันท้ายแถวเปลี่ยนตาม โดยไม่ต้องคลิกออกจากช่อง ("d running" ตามมาหลังหยุดพิมพ์ครู่หนึ่ง ระหว่างรอ ตัวเลข "d running" เดิมยังอยู่แต่จางลง ไม่กระพริบเป็นว่าง — ไม่นับใหม่ทุกตัวอักษร) · ระหว่างพิมพ์ปี (เช่น 2026 ทีละหลัก) แถวไม่กระพริบเป็นสีแดง · บรรทัด "Machine is running when … is above …" ที่ยังไม่ครบ: บรรทัดสรุปไม่มี "about N d running time" (และไม่มีข้อความเรื่องจำนวนแถว เช่น "set the condition to count the rows" / "N of N rows (100%)") และท้ายแถวช่วงเวลาเหลือแค่จำนวนวันตามปฏิทิน — กรอกค่าครบแล้วตัวเลขจึงขึ้น · พิมพ์วันที่หรือค่าเงื่อนไขได้ลื่นเหมือนเดิม ไม่หน่วง · popup ของโปรเจกต์ข้อมูลหลายแสนแถวเปิดทันที ไม่ค้าง
 
 - [ ] **BMW-295 — เส้นเวลาใน popup: ข้อความเมื่อชี้บล็อก, ชื่อบนบล็อกที่แคบ, ช่วงที่ไม่มีวันเริ่ม/สิ้นสุด, ช่วงที่ผิด / อยู่นอกข้อมูล, "d running" ต่ำกว่า 10 วันมีทศนิยม** 🆕
   - เปิด popup ที่มี P1 (ช่วงยาว), P2 (สั้นมาก 1–2 วัน), S1 แล้วชี้เมาส์ที่บล็อกแต่ละอัน
@@ -3924,14 +3919,13 @@ _ปุ่มดินสอที่แต่ละแถวในแท็บ 
   - **คาดหวัง:** (1) ช่วงที่**เพิ่งเพิ่มหรือเพิ่งแก้ในรอบนี้**และ**อยู่นอกข้อมูลทั้งช่วง**: แถวมีขอบซ้ายสีแดง, ช่องวันที่**ทั้งสองช่อง**เป็นสีแดง, มีเหตุผลบรรทัดเดียว "P1 is outside the data (2025/01/01 00:00 – 2025/12/31 23:59)" (Scoring = "S1 is outside the data (…)"; วันที่รูปแบบเดียวกับทั้ง Workbench — ช่วงในวงเล็บแสดง**ทั้งวันที่และเวลาทั้งสองด้านเสมอ** เช่น "(2025/01/01 00:00 – 2025/12/31 23:50)") — ขึ้น**ทันทีที่พิมพ์วันที่ครบ** ไม่ต้องคลิกออก และไม่มีการโหลด (2) บน timeline ช่วงนั้นเป็น**ขีดแดงเล็ก ๆ ที่ขอบ**ด้านที่มันเลยออกไป (ช่วงปลายเปิดที่อยู่นอกข้อมูลก็เป็นขีดแบบเดียวกัน ชี้เมาส์ค้างแล้วเขียน "… — outside the data" ไม่ใช่ "not valid") (3) หัว popup มีป้าย "Fix period" (4) **Apply กดไม่ได้** ท้าย popup เขียนสีแดง "Fix P1 before applying" (Scoring = "Fix S1 before applying") (5) ในแผง Custom: **"Save changes" กดไม่ได้** และบรรทัดแจ้งด้านล่างของแผงขวาเขียน "Fix P1 before saving" / "Fix S1 before saving" (6) ช่วงที่**เลยขอบข้อมูลแค่บางส่วน**: ไม่มีอะไรแดง มีหมายเหตุสีเหลืองเล็ก ๆ ใต้แถว "Only the part inside the data is used (data ends 2025/12/31)" (เริ่มก่อนข้อมูล = "(data starts 2025/01/01)"; เลยทั้งสองด้าน = "(data runs 2025/01/01 – 2025/12/31)") และ **Apply / Save changes ยังกดได้** (7) วันสิ้นสุดที่ยังอยู่ในวันสุดท้ายของข้อมูล (เช่น 23:59 ทั้งที่ข้อมูลจบ 23:50) **ไม่มี**หมายเหตุ (8) ช่วงปลายเปิดทั้งสองด้าน (Start of data → End of data) นับถึงขอบข้อมูลพอดี จึงไม่มีคำเตือน (9) แก้วันที่กลับเข้ามาในช่วงข้อมูลแล้ว สีแดง/หมายเหตุหายทันที (10) ช่วงที่**บันทึกไว้อยู่แล้ว**และไม่ได้แตะในรอบนี้ จะเป็นแค่คำเตือนสีเหลือง ไม่ห้ามอะไร — ดู BMW-201
 
 - [ ] **BMW-197 — นับแล้วไม่มีแถวให้ train เลย: บรรทัดแดงใต้ timeline และกด Apply / Save changes ไม่ได้ ("No rows to train on") เมื่อรอบนี้แก้ช่วง Train หรือเงื่อนไข; ถ้าแค่ช่วงเดียวไม่มีแถว = หมายเหตุสีเหลือง** 🆕
-  - เปิด popup Running condition ที่มี Train period อยู่ในช่วงข้อมูล แล้วตั้งเงื่อนไขที่**ไม่มีแถวไหนผ่านเลย** (เช่น Active power > ค่าที่สูงเกินจริงมาก)
+  - เปิด popup Running condition ที่มี Train period อยู่ในช่วงข้อมูล แล้วตั้งบรรทัด "Machine is running when … is above …" ให้**ไม่มีแถวไหนผ่านเลย** (เช่น Active power is above ค่าที่สูงเกินจริงมาก)
   - ดูใต้ timeline ระหว่างที่แอปกำลังนับ และหลังนับเสร็จ แล้วลองกด Apply
   - ผ่อนเงื่อนไขกลับ (หรือขยาย Train period) ให้มีแถว แล้วดูอีกครั้ง
-  - เลือก **"Use all rows"** แล้วตั้ง Train period ในช่วงที่ไฟล์ไม่มีแถวเลย (ช่วงที่ข้อมูลขาดหาย) — อ่านบรรทัดแดง
   - ตั้ง Train period 2 ช่วง ให้ช่วงหนึ่งอยู่ในเวลาที่เครื่องหยุด (ไม่มีแถวผ่านเงื่อนไข) อีกช่วงมีแถวปกติ — ดูใต้แถวของแต่ละช่วง
   - ตั้ง Scoring period ในเวลาที่ไม่มีแถวผ่านเงื่อนไข — ดูใต้แถว
   - ทำแบบเดียวกันในแผง **Custom** ของโมเดล แล้วดูบรรทัดแจ้งด้านล่างของแผงขวา และปุ่ม "Save changes"
-  - **คาดหวัง:** (1) เมื่อ**นับเสร็จแล้ว**และ Train period ทุกช่วงรวมกันไม่มีแถวให้ train: มี**บรรทัดสีแดง**ใต้บรรทัดสรุป "No rows match — nothing to train on. Widen a train period or relax the condition." (บรรทัดสรุปเองบอกแค่จำนวนวัน — **ไม่มี "0 of N rows (0%) used for training"**) — ถ้าเลือก **Use all rows** (ไม่มีเงื่อนไขให้ผ่อน) เขียนแค่ "No rows match — nothing to train on. Widen a train period." (2) **Apply กดไม่ได้** ท้าย popup เขียนสีแดง "No rows to train on" (ในแผง Custom: "Save changes" กดไม่ได้ และบรรทัดแจ้งด้านล่างของแผงขวาเขียน "No rows to train on") — ห้ามกดเฉพาะเมื่อ**รอบนี้แก้ช่วง Train หรือเงื่อนไข**; ถ้าค่าที่บันทึกไว้ได้ 0 แถวอยู่แล้ว และรอบนี้แก้อย่างอื่น (เช่น Scoring period, ชื่อโมเดล) บรรทัดแดงยังขึ้น แต่ **Apply / Save changes กดได้** (ดู BMW-201) (3) **ระหว่างที่กำลังนับ (ตัวเลข "d running" ท้ายแถวเป็นสีจาง) หรือนับไม่สำเร็จ ไม่มีการห้ามกด** — บรรทัดแดงขึ้นเมื่อนับเสร็จเท่านั้น (4) ผ่อนเงื่อนไขแล้วบรรทัดแดงหาย และ Apply กดได้อีก (5) **ช่วงเดียว**ที่ไม่มีแถวขณะที่ช่วงอื่นมี: หมายเหตุสีเหลืองใต้แถวนั้น "no running rows in P2" — ไม่ห้ามกด Apply (6) Scoring period ที่ไม่มีแถว: มีแค่หมายเหตุสีเหลือง "no running rows in S1" ไม่ห้ามกด (กติกาของ Mark complete เหมือนเดิม) (7) popup ไม่ช้าลง: ตัวเลขนับใหม่ครั้งเดียวต่อการแก้หนึ่งครั้งเหมือนเดิม
+  - **คาดหวัง:** (1) เมื่อ**นับเสร็จแล้ว**และ Train period ทุกช่วงรวมกันไม่มีแถวให้ train: มี**บรรทัดสีแดง**ใต้บรรทัดสรุป "No rows match — nothing to train on. Widen a train period or relax the condition." (บรรทัดสรุปเองบอกแค่จำนวนวัน — **ไม่มี "0 of N rows (0%) used for training"**) (2) **Apply กดไม่ได้** ท้าย popup เขียนสีแดง "No rows to train on" (ในแผง Custom: "Save changes" กดไม่ได้ และบรรทัดแจ้งด้านล่างของแผงขวาเขียน "No rows to train on") — ห้ามกดเฉพาะเมื่อ**รอบนี้แก้ช่วง Train หรือเงื่อนไข**; ถ้าค่าที่บันทึกไว้ได้ 0 แถวอยู่แล้ว และรอบนี้แก้อย่างอื่น (เช่น Scoring period, ชื่อโมเดล) บรรทัดแดงยังขึ้น แต่ **Apply / Save changes กดได้** (ดู BMW-201) (3) **ระหว่างที่กำลังนับ (ตัวเลข "d running" ท้ายแถวเป็นสีจาง) หรือนับไม่สำเร็จ ไม่มีการห้ามกด** — บรรทัดแดงขึ้นเมื่อนับเสร็จเท่านั้น (4) ผ่อนเงื่อนไขแล้วบรรทัดแดงหาย และ Apply กดได้อีก (5) **ช่วงเดียว**ที่ไม่มีแถวขณะที่ช่วงอื่นมี: หมายเหตุสีเหลืองใต้แถวนั้น "no running rows in P2" — ไม่ห้ามกด Apply (6) Scoring period ที่ไม่มีแถว: มีแค่หมายเหตุสีเหลือง "no running rows in S1" ไม่ห้ามกด (กติกาของ Mark complete เหมือนเดิม) (7) popup ไม่ช้าลง: ตัวเลขนับใหม่ครั้งเดียวต่อการแก้หนึ่งครั้งเหมือนเดิม
 
 - [ ] **BMW-201 — ค่าที่บันทึกไว้ไม่เข้ากับไฟล์ข้อมูลที่เปิดอยู่: ช่วงที่อยู่นอกข้อมูลเป็นแค่คำเตือนสีเหลือง (ไม่ห้าม Apply / Save / Mark complete และผลเดิมไม่หาย); ถ้าไม่มีข้อมูลให้ train จริง ๆ จะห้ามแค่ปุ่ม Train พร้อมเหตุผล สถานะเดิมไม่เปลี่ยน และโมเดลที่มีผลอยู่แล้วบอกตรง ๆ ว่าไม่มีข้อมูลของโมเดลนี้ในไฟล์ที่เปิด** 🆕
   - *(วิธีเตรียม: ตั้ง Running condition กับไฟล์ข้อมูลช่วงหนึ่ง บันทึก แล้วเปิดโปรเจกต์เดิมด้วยไฟล์ข้อมูลอีกช่วงเวลาหนึ่ง — หรือใช้โปรเจกต์เก่าที่ Train / Scoring period ชี้ไปนอกช่วงข้อมูล)*
@@ -3960,30 +3954,24 @@ _ปุ่มดินสอที่แต่ละแถวในแท็บ 
 
 <!-- ── Training data: Custom ── -->
 
-- [ ] **BMW-194 — Custom (Training data): Running condition ของโมเดลเองหน้าตาเหมือน popup (timeline + แถว + สถานะ), วันที่ที่พิมพ์มีผลทันที, ข้อความ Copied, สรุปบรรทัดเดียว และถ้าช่วงของโมเดลผิดจะกด "Save changes" ไม่ได้พร้อมบอกเหตุผล** 🆕
+- [ ] **BMW-398 — Custom (Training data): Running condition ของโมเดลเองหน้าตาเหมือน popup (timeline + แถว + บรรทัด "Machine is running when … is above …"), วันที่ที่พิมพ์มีผลทันที, ข้อความ Copied, สรุปบรรทัดเดียว และถ้าช่วงของโมเดลผิดจะกด "Save changes" ไม่ได้พร้อมบอกเหตุผล** 🆕
   - เลือกโมเดลที่เป็น Workspace mode กาง "Model settings" แล้วกด "Custom" ที่ "Training data"
   - ดูข้อความ "Copied …" แล้วกดปิด (X)
   - สลับกลับเป็น Workspace แล้วกด Custom อีกครั้ง — ดูว่าข้อความ "Copied …" ขึ้นอีกหรือไม่
-  - ดูแผง Custom: timeline + บรรทัดสรุป, หัวข้อ Train periods / Scoring periods / When the plant is running และบรรทัดสุดท้ายของแผง
-  - ลองแก้วันที่, เพิ่ม/ลบช่วง, เพิ่มเงื่อนไข, สลับ "Use all rows" — เทียบตัวเลข "d running" กับของ popup ของโปรเจกต์ (ต้องเป็นตัวเลขของโมเดลนี้เอง)
+  - ดูแผง Custom: timeline + บรรทัดสรุป, หัวข้อ Train periods / Scoring periods / When the machine is running และบรรทัดสุดท้ายของแผง
+  - ลองแก้วันที่, เพิ่ม/ลบช่วง, เปลี่ยน sensor หรือค่าในบรรทัด "Machine is running when … is above …" — เทียบตัวเลข "d running" กับของ popup ของโปรเจกต์ (ต้องเป็นตัวเลขของโมเดลนี้เอง)
   - ตอนแผง Custom เปิดอยู่ ให้เปิด popup Running condition ของโปรเจกต์ขึ้นมา แล้วปิด — ค่าในแผง Custom ต้องไม่เปลี่ยน
   - พิมพ์วันที่ใหม่ในแถว P1 ของแผง Custom โดยยังไม่คลิกออก — ดู timeline ของแผง, บรรทัดแจ้งด้านล่างของแผงขวา และปุ่ม "Save changes"
   - ลบวันที่ไปบางส่วน แล้วคลิกออก
   - ตั้ง Train period ของโมเดลให้วันสิ้นสุดอยู่ก่อนวันเริ่ม — อ่านเหตุผลที่บรรทัดแจ้งด้านล่างของแผงขวา และที่กล่องรายการที่ต้องแก้
   - พับ "Model settings" แล้วอ่านเหตุผลอีกครั้ง
-  - ลองลบ Train period ของโมเดลจนหมด และลองไม่ตั้งเงื่อนไข — อ่านบรรทัดแจ้ง
+  - ลองลบ Train period ของโมเดลจนหมด และลองล้างบรรทัด "Machine is running when … is above …" ให้ว่าง — อ่านบรรทัดแจ้ง
   - ตั้ง **Scoring period** ของโมเดลให้วันสิ้นสุดอยู่ก่อนวันเริ่ม — อ่านบรรทัดแจ้งด้านล่างของแผงขวา และชี้เมาส์ที่ปุ่ม "Save changes"
   - โมเดล Custom ที่ Train แล้ว: กาง "Model settings" ค้างไว้ แล้วไปหน้า **Health score** แก้ set point สักช่อง แล้วกลับมาหน้า Model fit — หน้าต้องลื่นเหมือนโมเดล Workspace mode
   - ที่ Dashboard สร้าง highlight ทับ Train period ของโมเดลนี้ แล้วกลับมากาง "Model settings" (ไม่ต้องเปิด popup ของโปรเจกต์)
   - พับ "Model settings" ดูสรุปบรรทัดเดียว
   - กด "Save changes" แล้ว Train แล้วไปหน้า Health score ตอนที่โมเดลนี้ไม่มี Scoring period
-  - **คาดหวัง:** (1) "Copied N train period(s), M scoring period(s) and K condition(s) from Workspace" ขึ้น**ครั้งเดียว** (คัดลอกเฉพาะรายการที่ยังว่าง) (2) แผง Custom **หน้าตาเหมือน popup**: timeline, แถวบรรทัดเดียว P1/S1 พร้อม "d running" ของโมเดลเอง, ตัวเลือก 2 อัน, แถวเงื่อนไขบรรทัดเดียว — ไม่มีรายการแบบพับได้ ไม่มีกล่อง "Required" ไม่มีเมนูเครื่องหมายเปรียบเทียบแบบเลื่อนลง (3) บรรทัดสุดท้าย: "Only this model · the workspace default is untouched · saved with Save changes" (4) ไม่มี Scoring period = บรรทัดเทา "No scoring period yet — you can train and save now; Mark complete needs at least one." (5) ค่าที่แก้ยังไม่ถูกบันทึกจนกว่าจะกด Save changes และ Running condition ของโปรเจกต์ไม่ถูกแก้ (6) **วันที่ที่พิมพ์ครบแล้วมีผลกับโมเดลทันที** (timeline ของแผงเปลี่ยน, บรรทัดแจ้งด้านล่างของแผงขวาเป็น "Unsaved changes…" และปุ่ม "Save changes" ขึ้น โดยไม่ต้องคลิกออก) (7) ลบวันที่ไปบางส่วนแล้วคลิกออก = วันเดิมกลับมา (ไม่กลายเป็นปลายเปิด) (8) **ช่วงของโมเดลผิด — ไม่ว่า Train หรือ Scoring (กติกาเดียวกับปุ่ม Apply ของ popup):** "Save changes" กดไม่ได้ (ชี้แล้วบอกเหตุผล เช่น "P1 ends before it starts." / "S1 ends before it starts.") และบรรทัดแจ้งด้านล่างของแผงขวาเขียน "Fix P1 before saving" / "Fix S1 before saving" (9) ลบ Train period ของโมเดลจนหมดตอนมีการแก้ค้างอยู่ = "Save changes" กดไม่ได้ และบรรทัดแจ้งเขียน "Add a train period" (10) ถ้าโมเดล**ยังไม่ตั้งเงื่อนไขด้วย** (ไม่มีทั้งเงื่อนไขและ Train period): บรรทัดแจ้งบอกเรื่องเงื่อนไขก่อน — "Set a condition above, or choose Use all rows" — ตรงกับข้อความเมื่อชี้จุด ("Needs condition"); ตั้งเงื่อนไขแล้วทั้งสองที่เปลี่ยนเป็นเรื่อง Train period พร้อมกัน (11) ตอนอยู่หน้า Health score หน้าไม่หน่วง (แผง Custom อยู่เฉพาะหน้า Model fit) — กลับมาหน้า Model fit แล้วตัวเลข "d running" ในแผงนับใหม่ครั้งเดียว (12) สรุปบรรทัดเดียวเป็น "Custom · 1 condition · 1 train · 0 scoring" ("Custom · all rows · …" เมื่อเลือก Use all rows) (13) เหตุผลของโมเดลที่**บันทึกไว้แล้ว** (ไม่มีการแก้ค้าง) ตอนแผงเปิดอยู่: "Fix P1's end above" / "Add a train period above" / "Set a condition above, or choose Use all rows" — ตอนพับ Model settings: "Own running condition: P1 ends before it starts. Fix it in Model settings" (ไม่มี Train period = "Own running condition: no train period. Fix it in Model settings"; ยังไม่ตั้งเงื่อนไข = "Own running condition: not set. Fix it in Model settings") (14) ไม่มี Scoring period = เหตุผลที่ Mark complete ไม่ได้คือ "Add a scoring period in Model settings → Training data (Custom) before marking complete." (15) highlight ที่เพิ่งสร้างขึ้นคำเตือน "Train P1 overlaps the highlight …" ในแผง Custom ทันทีที่กาง (ไม่ต้องเปิด popup ของโปรเจกต์ก่อน) และ "Remove the overlap" ยังทำงาน
-
-- [ ] **BMW-299 — กด Custom ตอนโปรเจกต์ใช้ "Use all rows": โมเดลไม่ได้คัดลอกตัวเลือก Use all rows มาด้วย** 🆕
-  - ตั้ง Running condition ของโปรเจกต์เป็น "Use all rows" + Train period 1 ช่วง + Scoring period 1 ช่วง แล้วกด Apply
-  - กาง Model settings ของโมเดลหนึ่ง แล้วกด "Custom"
-  - อ่านข้อความ "Copied …", ตัวเลือกในส่วน "When the plant is running", คำบนแท็บ และบรรทัดแจ้งด้านล่างของแผงขวา
-  - **คาดหวัง:** (พฤติกรรมของแอปตอนนี้) ขึ้น "Copied 1 train period, 1 scoring period and 0 conditions from Workspace. Edits here affect only this model." · แผง Custom เลือก "Only when running" ไว้แต่ไม่มีเงื่อนไข (ไม่ได้รับ "Use all rows" มา) — แท็บขึ้นเหตุผล "Needs condition", บรรทัดแจ้งเขียน "Set a condition above, or choose Use all rows" และ Train ไม่ได้ จนกว่าจะกด "Use all rows" ในแผงเอง · ⚠ ข้อสังเกต: ผู้ใช้อาจคาดว่า "คัดลอกจาก Workspace" รวม Use all rows มาด้วย — ถ้าสับสนให้บันทึกไว้
+  - **คาดหวัง:** (1) "Copied N train period(s), M scoring period(s) and the running condition from Workspace. Edits here affect only this model." ขึ้น**ครั้งเดียว** (คัดลอกเฉพาะรายการที่ยังว่าง) (2) แผง Custom **หน้าตาเหมือน popup**: timeline, แถวบรรทัดเดียว P1/S1 พร้อม "d running" ของโมเดลเอง, บรรทัดเดียว "Machine is running when [sensor] is above [ค่า]" — ไม่มีตัวเลือกเครื่องหมาย ไม่มี AND / OR ไม่มี "Use all rows" ไม่มีรายการแบบพับได้; บรรทัดเล็กใต้บรรทัดเขียน "… those rows are left out for this model." (3) บรรทัดสุดท้าย: "Only this model · the workspace default is untouched · saved with Save changes" (4) ไม่มี Scoring period = บรรทัดเทา "No scoring period yet — you can train and save now; Mark complete needs at least one." (5) ค่าที่แก้ยังไม่ถูกบันทึกจนกว่าจะกด Save changes และ Running condition ของโปรเจกต์ไม่ถูกแก้ (6) **วันที่ที่พิมพ์ครบแล้วมีผลกับโมเดลทันที** (timeline ของแผงเปลี่ยน, บรรทัดแจ้งด้านล่างของแผงขวาเป็น "Unsaved changes…" และปุ่ม "Save changes" ขึ้น โดยไม่ต้องคลิกออก) (7) ลบวันที่ไปบางส่วนแล้วคลิกออก = วันเดิมกลับมา (ไม่กลายเป็นปลายเปิด) (8) **ช่วงของโมเดลผิด — ไม่ว่า Train หรือ Scoring (กติกาเดียวกับปุ่ม Apply ของ popup):** "Save changes" กดไม่ได้ (ชี้แล้วบอกเหตุผล เช่น "P1 ends before it starts." / "S1 ends before it starts.") และบรรทัดแจ้งด้านล่างของแผงขวาเขียน "Fix P1 before saving" / "Fix S1 before saving" (9) ลบ Train period ของโมเดลจนหมดตอนมีการแก้ค้างอยู่ = "Save changes" กดไม่ได้ และบรรทัดแจ้งเขียน "Add a train period" (10) ถ้าบรรทัด "Machine is running when … is above …" ของโมเดล**ว่างด้วย** (ไม่มีทั้งเงื่อนไขและ Train period): บรรทัดแจ้งบอกเรื่องเงื่อนไขก่อน — "Pick the sensor and the value under “When the machine is running” above" — ตรงกับคำบนแท็บ ("Needs condition"); บรรทัดเหลืองในแผงลงท้าย "This model can’t be trained until it is set."; ตั้งเงื่อนไขแล้วทั้งสองที่เปลี่ยนเป็นเรื่อง Train period พร้อมกัน (11) ตอนอยู่หน้า Health score หน้าไม่หน่วง (แผง Custom อยู่เฉพาะหน้า Model fit) — กลับมาหน้า Model fit แล้วตัวเลข "d running" ในแผงนับใหม่ครั้งเดียว (12) สรุปบรรทัดเดียวเป็น "Custom · own running condition · 1 train · 0 scoring" (บรรทัดว่าง = "Custom · running condition not set · …") (13) เหตุผลของโมเดลที่**บันทึกไว้แล้ว** (ไม่มีการแก้ค้าง) ตอนแผงเปิดอยู่: "Fix P1's end above" / "Add a train period above" / "Pick the sensor and the value under “When the machine is running” above" — ตอนพับ Model settings: "Own running condition: P1 ends before it starts. Fix it in Model settings" (ไม่มี Train period = "Own running condition: no train period. Fix it in Model settings"; ยังไม่ตั้งเงื่อนไข = "Own running condition: not set. Fix it in Model settings") (14) ไม่มี Scoring period = เหตุผลที่ Mark complete ไม่ได้คือ "Add a scoring period in Model settings → Training data (Custom) before marking complete." (15) highlight ที่เพิ่งสร้างขึ้นคำเตือน "Train P1 overlaps the highlight …" ในแผง Custom ทันทีที่กาง (ไม่ต้องเปิด popup ของโปรเจกต์ก่อน) และ "Remove the overlap" ยังทำงาน
 
 - [ ] **BMW-127 — Custom: Scoring period ที่ผิดทำให้กด Save changes ไม่ได้, กด Mark complete ตอนมีค่าที่ยังไม่ Save แล้วแอปบันทึกให้และสำเร็จในครั้งเดียว, เตือนเมื่อ Train ของ Custom สั้นกว่า 30 วัน** 🆕
   - เลือกโมเดลที่เป็น Custom และ Train แล้ว (มี set point ที่ถูกต้อง): กาง "Model settings" ไปที่ส่วน Scoring periods
@@ -4000,9 +3988,9 @@ _ปุ่มดินสอที่แต่ละแถวในแท็บ 
   - เลือก sensor นั้นจากลิสต์ซ้าย อ่านคำบนแท็บของแต่ละโมเดล
   - ดูการ์ด Running condition, ปุ่ม "▶ Train sensor" ที่หัวแผงรายละเอียดด้านขวา, ปุ่ม "▶ Train all" เหนือลิสต์, บรรทัดแจ้งด้านล่างของแผงขวา
   - ลองกดแท็บหน้า "2 Health score"
-  - กดปุ่มบนการ์ดเพื่อเปิด popup แล้วตั้งเงื่อนไขที่กรอกครบ 1 แถว (หรือเลือก "Use all rows") แล้วกด Apply
+  - กดปุ่มบนการ์ดเพื่อเปิด popup แล้วกรอกบรรทัด "Machine is running when … is above …" ให้ครบ (sensor + ค่า) แล้วกด Apply
   - กลับมาดูทุกจุดข้างบนซ้ำ
-  - **คาดหวัง:** **ไม่มี**บรรทัดเตือน "⚠ N of M models can't be built yet …" · การ์ด Running condition เป็นสีเหลือง มีวงกลม "!" ป้าย "Not set" และปุ่มทึบของตัวเอง "Set running condition →" (เป็นปุ่มทึบปุ่มเดียวบนจอ) · แท็บ: จุดแดง + คำสีแดง "Needs condition" (โมเดล Complete เก่า: สีเขียว "Legacy · all data"; สาเหตุอื่น: "Needs category" / "Needs train period" / "Fix periods") · "▶ Train sensor" และ "▶ Train all" กดไม่ได้ทั้งคู่ มีข้อความเหลืองใต้ปุ่ม "Set the running condition first." (ไม่มีคำว่า "(Step 1)") · บรรทัดแจ้งด้านล่างของแผงขวาเป็นสีเหลือง บอกเหตุผลของโมเดล · พื้นที่กราฟขึ้น "Set the running condition first" + ลิงก์ "Running condition ↑" · แท็บหน้า "2 Health score" **กดไม่ได้** พร้อมเหตุผล (โมเดลที่ยังไม่ Train: "Train the model first") และไม่มีปุ่ม "Next: Health score →" · พอตั้งเงื่อนไขแล้วทุกอย่างปลดล็อก คำแดงบนแท็บหายไป · โมเดลที่ตั้งเป็น Custom ต้องมีเงื่อนไขของตัวเอง (หรือกด No condition ในส่วน Training data: Custom ของโมเดล) ถึงจะผ่าน แม้โปรเจกต์จะตั้งแล้ว — Model settings ของโมเดลนั้นจะกางออกเองให้แก้
+  - **คาดหวัง:** **ไม่มี**บรรทัดเตือน "⚠ N of M models can't be built yet …" · การ์ด Running condition เป็นสีเหลือง มีวงกลม "!" ป้าย "Not set" และปุ่มทึบของตัวเอง "Set running condition →" (เป็นปุ่มทึบปุ่มเดียวบนจอ) · แท็บ: จุดแดง + คำสีแดง "Needs condition" (โมเดล Complete เก่า: สีเขียว "Legacy · all data"; สาเหตุอื่น: "Needs category" / "Needs train period" / "Fix periods") · "▶ Train sensor" และ "▶ Train all" กดไม่ได้ทั้งคู่ มีข้อความเหลืองใต้ปุ่ม "Set the running condition first." (ไม่มีคำว่า "(Step 1)") · บรรทัดแจ้งด้านล่างของแผงขวาเป็นสีเหลือง บอกเหตุผลของโมเดล · พื้นที่กราฟขึ้น "Set the running condition first" + ลิงก์ "Running condition ↑" · แท็บหน้า "2 Health score" **กดไม่ได้** พร้อมเหตุผล (โมเดลที่ยังไม่ Train: "Train the model first") และไม่มีปุ่ม "Next: Health score →" · พอตั้งเงื่อนไขแล้วทุกอย่างปลดล็อก คำแดงบนแท็บหายไป · โมเดลที่ตั้งเป็น Custom ต้องกรอกบรรทัด "Machine is running when … is above …" ของตัวเองให้ครบถึงจะผ่าน แม้โปรเจกต์จะตั้งแล้ว — Model settings ของโมเดลนั้นจะกางออกเองให้แก้
 
 - [ ] **BMW-179 — ปุ่ม "▶ Train sensor" ที่หัวแผงด้านขวา: train ทุกโมเดลของ sensor ที่ต้อง train (ลำดับ I → R → C), เมนู ▾ ที่ทุกแถวมีบรรทัดสถานะ, ปุ่มทึบ "· n of m" เฉพาะตอนมีโมเดลต้อง train และบรรทัดสั้นใต้ปุ่ม** 🆕
   - เลือก sensor ที่มีโมเดล 2–3 ชนิด และ**ยังไม่เคย Train เลยสักตัว**
@@ -4683,7 +4671,7 @@ _ปุ่มดินสอที่แต่ละแถวในแท็บ 
   - เปิดกราฟขยายแล้วกด Esc · เปิด "Compare predictors" แล้วกด Esc · เปิดเมนู ▾ ของ Train sensor แล้วกด Esc · เปิดตัวเลือก X ของกราฟ Fit แล้วกด Esc
   - ใน Model settings เปิดตัวเลือก Y / Criteria sensor แล้วกด Esc · ในช่องเส้นแบ่ง cluster พิมพ์ค่าแล้วกด Esc
   - เปิดหน้าต่าง Train all แล้วกด Esc (ลองทั้งตอนไม่ได้ Train และระหว่าง Train)
-  - เปิดหน้าต่าง Running condition → เปิดตัวเลือก sensor ในแถวเงื่อนไข → กด Esc → กด Esc อีกครั้ง
+  - เปิดหน้าต่าง Running condition → เปิดตัวเลือก sensor หลัง "Machine is running when" → กด Esc → กด Esc อีกครั้ง
   - ระหว่างที่กำลัง Train กด X ของหน้าต่างให้กล่องถามขึ้น แล้วกด Esc
   - **คาดหวัง:** กด Esc แต่ละครั้งปิดเฉพาะชั้นบนสุด: กราฟขยาย / Compare predictors / เมนู ▾ / ตัวเลือก sensor ปิดตัวเอง โดยหน้าต่าง Build Model และพื้นที่ด้านหลังไม่เปลี่ยน · ช่องเส้นแบ่ง cluster กลับเป็นค่าเดิม (BMW-117) · หน้าต่าง Train all ปิด (ระหว่าง Train = แค่ซ่อน การ Train ยังเดินต่อ) · หน้าต่าง Running condition: Esc ครั้งแรกปิดตัวเลือก sensor, Esc ครั้งถัดไปปิดหน้าต่างนี้ (ถ้ามีที่แก้ค้างไว้จะถามก่อน — BMW-55) · กล่องถามตอนปิด: Esc = "Keep training" · ไม่มี Esc ครั้งไหนปิดหน้าต่าง Build Model ทั้งบาน
 
@@ -4692,22 +4680,14 @@ _ปุ่มดินสอที่แต่ละแถวในแท็บ 
   - Mark complete โมเดลตัวสุดท้าย แล้วดูแถบทันที
   - **คาดหวัง:** ไม่มีโมเดล = แถบเขียน "No models yet" และชี้แล้วขึ้น "No models to export yet" · ยังไม่ครบ = "Every model must be Complete first · 2 left" · ขาดข้อมูลอื่น = "Fill in the items in “Show which” first" + ลิงก์ "Show which" · ระหว่าง export = "An export is running" · พร้อม = ชี้แล้วขึ้น "Write every model of this project to a folder you pick" · ข้อความตรงกับสถานะจริงทุกครั้ง (เปลี่ยนตามทันทีเมื่อ Mark complete ตัวสุดท้าย)
 
-- [ ] **BMW-356 — แถว Running status ในรายการตรวจก่อน Export: ค่ามาจากไหนในแต่ละแบบของ running condition** 🆕
-  - ตั้ง running condition ทีละแบบ (Apply ทีละแบบ แล้วกด Export results ดูแถว Running status):
-  - (ก) `KW > 50` ข้อเดียว
-  - (ข) `KW > 50` AND `SPEED > 100` โดยไม่กรอกบรรทัด "Machine is running when…"
-  - (ค) แบบ (ข) แต่กรอกบรรทัด "Machine is running when…" เป็น SPEED / 1000
-  - (ง) มีแต่เงื่อนไข `<` หรือ `between`
-  - (จ) "Use all rows"
-  - ในแต่ละแบบ กดลิงก์ "Open running condition"
-  - **คาดหวัง:** (ก) "Machine is running when Motor power (KW) is above 50 kW" ใต้บรรทัด "From the running condition — its one “above” condition." · (ข) ใช้ KW / 50 พร้อมหมายเหตุ "Taken from the first “above” condition — check it in the running condition." · (ค) ใช้ SPEED / 1000 พร้อม "Set in the running condition (“Machine is running when … is above …”) — used by the export only." · (ง)(จ) "not set — say which sensor tells that the machine is running" และปุ่ม Export กดไม่ได้ · ลิงก์ "Open running condition" ปิดหน้าต่าง Export แล้วเปิดหน้าตั้ง Running condition ทุกกรณี · sensor แสดงเป็น description + tag ไม่ใช่ tag ล้วน
-
-- [ ] **BMW-357 — Running status ไม่ทำให้โมเดลหลุดจาก Complete และ sensor ที่ใช้ถูกใส่ในไฟล์ export แม้ไม่มีโมเดลใช้** 🆕
-  - ให้ทุกโมเดล Complete → เปิด running condition → เพิ่มบรรทัด "Machine is running when SPEED is above 1000" (SPEED เป็น sensor ที่ไม่มีโมเดลใช้ และไม่มี component) → Apply
-  - ดูสถานะโมเดล
-  - กด Export results → ไปถึงขั้นยืนยัน sensor ที่ไม่มี component → กด "Export anyway"
-  - เปิดโฟลเดอร์ที่ export → คลิกขวาที่ไฟล์ `machine_info.json` → Open with → Notepad → กด Ctrl+F ค้นหาคำว่า `running_status` และ `SPEED`
-  - **คาดหวัง:** โมเดลยัง Complete ทุกตัว (บรรทัดนี้ใช้เฉพาะตอน export) · ขั้นยืนยันแสดง SPEED พร้อมคำว่า "Used as the running-status sensor" · ในไฟล์: ส่วน `running_status` (บอกว่า sensor ไหนใช้ดูว่าเครื่องเดิน และหยุดเมื่อค่าต่ำกว่าเท่าไร) เขียนเป็น `{"sensor": "SPEED", "stop_if_lower_than": 1000}` และ SPEED อยู่ในรายการ `sensors[]` (รายการ sensor ทั้งหมดของไฟล์) โดยมี component เป็น "Uncategorized"
+- [ ] **BMW-395 — Running status ในรายการตรวจก่อน Export และในไฟล์ `machine_info.json` = บรรทัด "Machine is running when … is above …" ของ Running condition เสมอ (ไม่มีช่องตั้งแยกแล้ว)** 🆕
+  - ให้ทุกโมเดล Complete โดย Running condition เป็น "Machine is running when Motor power (KW) is above 50"
+  - กด Export results → อ่านแถว Running status ในรายการตรวจ → กดลิงก์ "Open running condition" ดูว่าไปที่ไหน
+  - ใน popup Running condition มองหาช่องหรือบรรทัดแยกสำหรับ export
+  - แก้ค่าหลัง "is above" เป็น `60` → กด Apply → ดูสถานะโมเดล และแถบ Export results
+  - Train ใหม่ + Mark complete ทุกโมเดล → กด Export results → Export
+  - เปิดโฟลเดอร์ที่ export → คลิกขวาที่ `machine_info.json` → Open with → Notepad → กด Ctrl+F ค้นหาคำว่า `running_status`
+  - **คาดหวัง:** แถว Running status เขียน "Machine is running when Motor power (KW) is above 50 kW" ใต้แถวมีบรรทัด "From the running condition — the same line used for training." · "Open running condition" ปิดหน้าต่าง Export แล้วเปิด popup Running condition · ใน popup **ไม่มี**บรรทัดหรือกล่องแยกสำหรับ export (มีแค่บรรทัดเดียวในหัวข้อ "When the machine is running") · แก้ค่าแล้ว Apply = โมเดลแบบ Workspace กลับเป็น Incomplete ("Re-train needed") และแถบ Export results บอกว่ายังไม่ Complete (การแก้นี้เปลี่ยนแถวที่ใช้ Train ด้วย) · ในไฟล์: ส่วน `running_status` (บอกว่า sensor ไหนใช้ดูว่าเครื่องเดิน และหยุดเมื่อค่าต่ำกว่าหรือเท่ากับเท่าไร) เขียนเป็น `{"sensor": "KW", "stop_if_lower_than": 60}` — ค่าเดียวกับที่ตั้งบนจอ · sensor แสดงเป็น description + tag ไม่ใช่ tag ล้วน
 
 - [ ] **BMW-358 — รายการตรวจก่อน Export: ทำให้เกิดปัญหาทีละข้อ แล้วดูข้อความและลิงก์ที่พาไปแก้** 🆕
   - ทำทีละข้อ (แก้กลับก่อนทำข้อถัดไป) แล้วกด Export results ดูรายการตรวจ:
@@ -4821,7 +4801,7 @@ _ปุ่มดินสอที่แต่ละแถวในแท็บ 
   - **คาดหวัง:** แถบเขียน "N models exported …" พร้อม "Open folder" ที่เปิด File Explorer ไปที่โฟลเดอร์ที่เพิ่งเขียน (ไม่ใช่โฟลเดอร์แม่) · ปิดเปิดหน้าต่าง Export แล้วบรรทัดยังอยู่ · ปิดหน้าต่าง Build Model แล้วเปิดใหม่ = บรรทัดหาย (บรรทัดอยู่ตลอดที่หน้าต่างยังเปิดอยู่เท่านั้น) · Mark incomplete = บรรทัดหาย และแถบกลับเป็นยังไม่พร้อม
 
 - [ ] **BMW-374 — หลัง export แก้ข้อมูลที่ไม่ใช่ของโมเดล: โมเดลยัง Complete แต่ export ครั้งถัดไปได้ค่าใหม่** 🆕
-  - export แล้ว แก้: Description / Recommendation ของ Failure group, Notes ใน Project details, unit / description ของ special sensor (ถ้าแก้ได้), เขตเวลา, บรรทัด running status
+  - export แล้ว แก้: Description / Recommendation ของ Failure group, Notes ใน Project details, unit / description ของ special sensor (ถ้าแก้ได้), เขตเวลา
   - ดูสถานะโมเดล → Export อีกครั้ง
   - เปิดไฟล์ในโฟลเดอร์เก่าและโฟลเดอร์ใหม่ด้วย Notepad เทียบกัน
   - **คาดหวัง:** โมเดลยัง Complete ทุกตัว (ไม่ต้อง Mark complete ใหม่) · โฟลเดอร์ใหม่มีค่าใหม่ทุกจุดที่แก้ · โฟลเดอร์เก่าไม่ถูกแตะ · ไฟล์ CSV ของโมเดลเหมือนเดิมทุกแถว (ยกเว้นส่วนเขตเวลาท้ายเวลา เช่น +07:00 ถ้าเปลี่ยนเขตเวลา)
@@ -4849,13 +4829,13 @@ _ปุ่มดินสอที่แต่ละแถวในแท็บ 
   - กด Win+R พิมพ์ `%APPDATA%\com.prompt-solution.tauri-app\workspaces\` แล้ว Enter → ดูโฟลเดอร์ `ws_<id>\output\` เก่า (id คือรหัสของโปรเจกต์)
   - **คาดหวัง:** โมเดลที่เคย Complete ยัง Complete (ไม่ต้อง Train ใหม่) — ยกเว้นข้อที่ติดกติกาใหม่ (ชื่อซ้ำ / ไม่มี category / ช่วง cluster) ซึ่งจะขึ้นในรายการตรวจก่อน Export · ไม่มีข้อความเก่าเรื่อง "files out of date" / "Mark complete again" ที่เกี่ยวกับไฟล์ · โฟลเดอร์ `ws_<id>\output\` เก่าไม่ถูกลบ และไม่มีไฟล์ถูกเขียนเพิ่มลงไป · export ได้ครบ
 
-- [ ] **BMW-380 — sensor ที่โมเดลหรือ running status ใช้ ไม่มีอยู่ในไฟล์ข้อมูลที่โหลด** 👀
-  - ใช้โปรเจกต์ที่ทุกโมเดล Complete และ running status = `KW` → ปิดโปรแกรม
+- [ ] **BMW-396 — sensor ที่โมเดลหรือ Running condition ใช้ ไม่มีอยู่ในไฟล์ข้อมูลที่โหลด** 👀
+  - ใช้โปรเจกต์ที่ทุกโมเดล Complete และ Running condition = "Machine is running when KW is above 50" → ปิดโปรแกรม
   - เก็บสำเนาไฟล์ CSV ต้นทางไว้ก่อน → เปิดไฟล์ต้นทางใน Excel → ลบคอลัมน์ของ sensor ที่โมเดลหนึ่งใช้ → บันทึกเป็น CSV
   - เปิดโปรเจกต์ → Build Model → Export results → อ่านรายการตรวจ
-  - อีกรอบ: ลบคอลัมน์ `KW` แทน แล้วทำซ้ำ
+  - อีกรอบ: ลบคอลัมน์ `KW` แทน แล้วทำซ้ำ → ดูการ์ด Running condition ด้วย และกด Edit ดูบรรทัดใต้ "Machine is running when"
   - คืนไฟล์เดิมจากสำเนา แล้วเปิดโปรเจกต์ใหม่
-  - **คาดหวัง:** โปรเจกต์เปิดได้ โปรแกรมไม่ปิดตัวเอง · รายการตรวจขึ้น "Sensor not found in the loaded data" ที่โมเดลนั้น (sensor แสดงเป็น description + tag) และ "The running-status sensor is not in the loaded data" สำหรับ `KW` · ปุ่ม Export กดไม่ได้ · คืนไฟล์เดิมแล้วเปิดใหม่ = กลับมา export ได้
+  - **คาดหวัง:** โปรเจกต์เปิดได้ โปรแกรมไม่ปิดตัวเอง · รายการตรวจขึ้น "Sensor not found in the loaded data" ที่โมเดลนั้น (sensor แสดงเป็น description + tag) · รอบที่ลบ `KW`: แถว Running status เขียน "not set — pick the sensor that shows the machine is running" · การ์ด Running condition กลับเป็นการ์ดเหลือง "Set the running condition" ปุ่ม Train กดไม่ได้ และใน popup มีบรรทัดแดง "… is not in the loaded data — pick another sensor." · ปุ่ม Export กดไม่ได้ · คืนไฟล์เดิมแล้วเปิดใหม่ = กลับมา export ได้ และไม่มีโมเดลไหนเปลี่ยนสถานะ
 
 - [ ] **BMW-381 — tag สองตัวที่แปลงเป็นชื่อไฟล์แล้วชื่อชนกัน (`A B` กับ `A/B`)** 🆕
   - ทำสำเนาไฟล์ `EXP-data.csv` → เปิดใน Excel → เพิ่มคอลัมน์ชื่อ `A B` และ `A/B` (ใส่ตัวเลขทุกแถว) → บันทึกเป็น CSV
@@ -4865,7 +4845,7 @@ _ปุ่มดินสอที่แต่ละแถวในแท็บ 
 
 - [ ] **BMW-382 — running status หรือ predictor ที่เป็น special sensor** 🆕
   - สร้าง special sensor `RUN_FLAG` = สูตรจาก `KW` และ `SPEED`
-  - ตั้งบรรทัด "Machine is running when RUN_FLAG is above 0.5" ใน running condition
+  - ตั้ง Running condition เป็น "Machine is running when RUN_FLAG is above 0.5" แล้วกด Apply (ถ้ามีโมเดล Complete อยู่ จะต้อง Train ใหม่)
   - สร้าง Relation model ที่ predictor เป็น special sensor อีกตัว → Complete → Export
   - คลิกขวา `machine_info.json` → Open with → Notepad → Ctrl+F หา `running_status`, `derived_sensors`, `sensors` · เปิดไฟล์ .json และ .csv ของ Relation model
   - **คาดหวัง:** ใน `running_status` (sensor ที่ใช้ดูว่าเครื่องเดิน) ช่อง `sensor` = `RUN_FLAG` · `RUN_FLAG` อยู่ใน `derived_sensors` (รายการ special sensor มีคำอธิบาย how_to_build) และไม่อยู่ใน `sensors` · `KW` และ `SPEED` (sensor ดิบที่ใช้สร้าง) อยู่ใน `sensors` · predictor ที่เป็น special sensor อยู่ใน `inputs` ด้วย tag ของมัน และไฟล์ CSV มีคอลัมน์ค่าที่คำนวณแล้ว
@@ -4979,7 +4959,7 @@ _ตอนออกจากโปรเจกต์ หน้าต่าง Bu
   - เตรียม: จาก CSV เดียวกัน สร้างโปรเจกต์ C และ D โดย D ใช้ไฟล์ Tag names อีกไฟล์ที่ tag เดียวกันมีค่าต่างกัน เช่น `TT_BRG_DE` — C: description "Bearing DE temp" · Component "Generator" · ALARM_H 95 / D: "ลูกปืนหน้าเครื่อง" · Component "Engine" · ALARM_H 90
   - เปิด C: ดูหัว component ในแท็บ Sensor → เปิดเส้น alarm ของ `TT_BRG_DE` บนกราฟ → ชี้เมาส์บนกราฟดูกล่องข้อมูล
   - กด Add Special Sensor ดูตัวเลือกในช่อง Component
-  - เปิด Build Model สลับรายการซ้ายเป็นแบบ "Component" และเปิดตัวเลือก sensor ในแถวเงื่อนไขของ Running condition
+  - เปิด Build Model สลับรายการซ้ายเป็นแบบ "Component" และเปิดตัวเลือก sensor หลัง "Machine is running when" ใน popup Running condition
   - ใน C ติ๊กโมเดล I ของ `TT_BRG_DE` (ปุ่ม 📁) → Build Model → "▶ Train sensor" → แท็บ "2 Health score" ดูค่า H ที่ใส่ไว้ให้
   - Back → เปิด D แล้วทำแบบเดียวกันทั้งหมด → สลับ C ⇄ D อีก 2 รอบ
   - **คาดหวัง:** ทุกหน้าจอของ C ใช้ชื่อ/Component ตามไฟล์ของ C และ D ใช้ของ D (แท็บ Sensor, กล่องข้อมูลบนกราฟ, ช่อง Component ใน Add Special Sensor, กลุ่ม Component ใน Build Model, ตัวเลือก sensor ใน Running condition) · เส้น alarm H อยู่ที่ 95 ใน C และ 90 ใน D · ค่า H ที่ใส่ไว้ให้โมเดล Individual ใหม่ = 95 ใน C / 90 ใน D · สลับไปมาแล้วค่าไม่สลับข้างกัน
@@ -5374,7 +5354,7 @@ _รอบนี้ปรับหน้าตาทั้งโปรแกร�
 
 - [ ] **VIS-15 — ชื่อ sensor / ตัวเลือก sensor / ตัวเลือกสี ในหน้าต่างแคบ และกับฟอนต์ของโปรแกรมที่ติดตั้ง (Segoe UI / Consolas)** 🆕
   - ในโปรแกรมที่ติดตั้งจริง ย่อหน้าต่าง Dashboard และ Build Model ให้แคบ (ประมาณ 900 px)
-  - เปิดตัวเลือก sensor ในแท็บ Filter, Highlights, Scatter และในแถวเงื่อนไข Running condition
+  - เปิดตัวเลือก sensor ในแท็บ Filter, Highlights, Scatter และหลัง "Machine is running when" ใน popup Running condition
   - เปิดตัวเลือกสีในแท็บ Selected Sensor ที่อยู่ใกล้ขอบล่างของจอ
   - กด Tab ให้กรอบโฟกัสไปอยู่ที่ช่องสี
   - **คาดหวัง:** ช่องเลือกที่แคบมาก (น้อยกว่าประมาณ 150 px) ซ่อน tag เหลือแค่ description (ชี้เมาส์แล้วเห็นชื่อเต็ม) · ในรายการที่แคบ (น้อยกว่าประมาณ 320 px) ป้ายหน่วยหายไป แต่ยังค้นด้วยหน่วยได้ · กล่องตัวเลือกกว้างไม่เกิน 420 px หรือ 92% ของจอ และเปิดขึ้นด้านบนเมื่ออยู่ใกล้ขอบล่าง · ไม่มีข้อความทับกันหรือล้นกรอบ · กรอบโฟกัสสีฟ้าบนช่องสีเห็นชัด (ไม่ถูกวงของสีปัจจุบันบัง)
@@ -5456,13 +5436,14 @@ _คุณเล่นเป็นวิศวกรดูแลปั๊ม P-1
   - เปิดหน้าต่าง Add Special Sensor → แท็บ Manage ดูแถว CW_DT
   - **คาดหวัง:** ระหว่างจัดกลุ่มมีแถบฟ้า "Assigning to FG-1 · Bearing overheating (DE)" · แถว sensor ในแท็บ Sensor มีชิป I/R/C + ชื่อกลุ่ม · บรรทัดสรุป "3 groups · 5 sensors assigned · 0 of 8 models complete" · แถว sensor ในการ์ดกลุ่มแสดงชื่อแบบมาตรฐาน (description + หน่วย / tag) — CW_DT แสดง "Cooling water ΔT" · ป้าย I/R/C ยังไม่มีจุดสี (Not trained) · กล่องฟ้าหายไปเมื่อทุกกลุ่มมี sensor · ปุ่ม "Build Model →" กดได้ · แท็บ Manage แถว CW_DT มีป้าย "Used by 1 model" (ถูกล็อก)
 
-- [ ] **WFA-9 — เปิด Build Model และตั้ง Running condition ครั้งแรก**
+- [ ] **WFA-23 — เปิด Build Model และตั้ง Running condition ครั้งแรก (บรรทัดเดียว "Machine is running when … is above …")** 🆕
   - กด "Build Model →" → หน้าต่างย่อย (popup) Running condition เปิดขึ้นเอง
   - Train periods: แก้ P1 เป็น `2025-01-15 00:00` → `2025-04-30 23:55`
   - Scoring periods: กด "Add scoring period" แล้วแก้เป็น `2025-06-01 00:00` → `2025-06-30 23:55`
-  - ส่วน When the plant is running: เลือก "Only when running" → กด "Add condition" → sensor เลือก Motor M-101 power, กดปุ่ม `>`, ใส่ค่า `50`
+  - ส่วน When the machine is running: กดช่อง sensor หลัง "Machine is running when" → เลือก Motor M-101 power
+  - พิมพ์ `50` ในช่องหลัง "is above"
   - อ่านบรรทัดข้างปุ่ม Apply → กด "Apply"
-  - **คาดหวัง:** ไม่มีแบนเนอร์ "New: running condition is now required…" · ก่อนตั้งค่า popup มีป้าย "Required" · ตัวเลือก sensor ของเงื่อนไขมี description และมี CW_DT (special sensor ที่เพิ่งสร้าง) · แถว P1 แสดงประมาณ "106 d · 103 d running" (หักวันเครื่องหยุด 10–12 มี.ค.) · S1 ประมาณ "30 d · 30 d running" · มีหน่วย "kW" ต่อท้ายช่องค่า · บรรทัดข้าง Apply เป็นสีเทา "No trained or complete model is affected by this change" · หลัง Apply การ์ดเหลือบรรทัดเดียว "Running condition · Train 1 period 2025/01/15 00:00 → 2025/04/30 23:55 · Scoring 1 period · When running: 1 condition" พร้อมปุ่ม Details / Edit
+  - **คาดหวัง:** ไม่มีกล่องแจ้ง "Running condition is now one condition" (เป็นโปรเจกต์ใหม่) · ก่อนตั้งค่า popup มีป้าย "Required" · ไม่มีตัวเลือกเครื่องหมาย `>` `<` และไม่มีปุ่ม Add condition · ตัวเลือก sensor มี description และมี CW_DT (special sensor ที่เพิ่งสร้าง) · แถว P1 แสดงประมาณ "106 d · 103 d running" (หักวันเครื่องหยุด 10–12 มี.ค.) · S1 ประมาณ "30 d · 30 d running" · มีหน่วย "kW" ต่อท้ายช่องค่า · บรรทัดข้าง Apply เป็นสีเทา "No trained or complete model is affected by this change" · หลัง Apply การ์ดเหลือบรรทัดเดียว "Running condition · Train 1 period 2025/01/15 00:00 → 2025/04/30 23:55 · Scoring 1 period · Running when Motor M-101 power … is above 50 kW" พร้อมปุ่ม Details / Edit
 
 - [ ] **WFA-10 — รายการ sensor ด้านซ้าย หัวข้อ sensor และการตั้ง Category**
   - ดูรายการด้านซ้าย (Group by: Failure group) แล้วเลือก Bearing DE temperature
@@ -5578,7 +5559,7 @@ _คุณเล่นเป็นวิศวกรคนเดิมที่�
 
 - [ ] **WFB-10 — ให้ Vibration DE ใช้เงื่อนไขของตัวเอง (Custom)**
   - Vibration DE → Individual → Model settings → ที่ Training data กด "Custom" → อ่านบรรทัดที่ขึ้นมา → กด "Save changes"
-  - **คาดหวัง:** ขึ้นข้อความ "Copied 1 train period, 1 scoring period and 1 condition from Workspace. Edits here affect only this model." และแผง Running condition ของโมเดลนี้แสดงค่าที่คัดลอกมา (S1 สิ้นสุด 2025-06-15) · หลัง Save โมเดลนี้เป็น "Re-train needed" (การสลับ Workspace/Custom นับเป็นการเปลี่ยนข้อมูลที่ใช้ train ตามที่ออกแบบไว้) · บรรทัด Running condition ของทั้งโปรเจกต์ไม่เปลี่ยน
+  - **คาดหวัง:** ขึ้นข้อความ "Copied 1 train period, 1 scoring period and the running condition from Workspace. Edits here affect only this model." และแผง Running condition ของโมเดลนี้แสดงค่าที่คัดลอกมา (S1 สิ้นสุด 2025-06-15) · หลัง Save โมเดลนี้เป็น "Re-train needed" (การสลับ Workspace/Custom นับเป็นการเปลี่ยนข้อมูลที่ใช้ train ตามที่ออกแบบไว้) · บรรทัด Running condition ของทั้งโปรเจกต์ไม่เปลี่ยน
 
 - [ ] **WFB-11 — บีบเงื่อนไขเครื่องเดินของทั้งโปรเจกต์: เห็นผลกระทบก่อนกด Apply**
   - Running condition → Edit → แก้ค่า Motor M-101 power `>` จาก 50 เป็น `185`
@@ -5749,7 +5730,7 @@ _คุณเล่นเป็นวิศวกรที่เปิด Dashbo
   - กรอก Name `BRG_DIFF`, Description `Bearing DE − NDE temperature`, Unit `°C`, Component `Pump P-101` → กด "Add sensor"
   - Dashboard: ติ๊ก Individual ของ BRG_DIFF ใน FG-1 → ดูแถวในรายการซ้ายของ Build Model
   - Build Model: Relation model ของ Bearing NDE → Model settings → Predictor กด "Add…" ค้นหา `Bearing DE − NDE`
-  - Build Model: Running condition → Edit → Add condition → เปิดตัวเลือก sensor ค้นหาเหมือนกัน (แล้วกด Cancel)
+  - Build Model: Running condition → Edit → กดช่อง sensor หลัง "Machine is running when" → ค้นหาเหมือนกัน (แล้วกด Cancel)
   - กด "Build Model →" ที่ Dashboard อีกครั้ง แล้วทำซ้ำสองขั้นก่อนหน้า
   - **คาดหวัง:** (สิ่งที่ถูกต้อง) แถวใหม่ใน Build Model แสดง "Bearing DE − NDE temperature" + tag (ไม่ใช่ tag อย่างเดียว) และ BRG_DIFF อยู่ในตัวเลือก predictor / เงื่อนไขทันที · ให้จดสิ่งที่เห็นจริง: คาดว่าหน้าต่าง Build Model รับรายชื่อ sensor เฉพาะตอนเปิดหรือตอนกด Build Model → จึงน่าจะเห็นแค่ tag และหา BRG_DIFF ไม่เจอจนกว่าจะกด Build Model → ซ้ำ (ให้รายงานบั๊ก) · หลังกด Build Model → ซ้ำ ทุกอย่างต้องถูกต้อง และค่าที่แก้ค้างไว้ใน Build Model ไม่หาย
 
@@ -6159,7 +6140,7 @@ _คุณเล่นเป็นหัวหน้าทีมที่ทำ�
   - (สำรองตามข้อ WFH-1 แล้ว) เปิดเวอร์ชันเก่า จดจำนวนการ์ด + สถานะโมเดลของ 2 โปรเจกต์ → ปิด → รันตัวติดตั้งเวอร์ชันใหม่ทับ
   - เมนู Help → About Wizard ดูเลขเวอร์ชัน · ดูการ์ดทั้งหมดที่หน้าแรก
   - เปิดทุกโปรเจกต์ทีละอัน → Dashboard → Build Model
-  - **คาดหวัง:** เห็นเวอร์ชันใหม่ใน About และที่มุมล่างของหน้าแรก ("v…") · การ์ดครบเท่าเดิม · ทุกโปรเจกต์เปิดได้ไม่ปิดตัวเอง · โมเดลครบ ชื่อ / กลุ่ม / สถานะเดิม · ข้อความเฉพาะกรณีขึ้นถูกที่: กล่อง "Rounding updated" (เมื่อมีสูตร `round(x, n)` แบบเก่า — โมเดลที่ใช้สูตรนั้นกลับเป็น Incomplete), แถบ "New: running condition is now required for every model." พร้อมปุ่ม "Set a condition" / "Keep using all data" (เมื่อมีโมเดลแต่ยังไม่ตั้ง Running condition)
+  - **คาดหวัง:** เห็นเวอร์ชันใหม่ใน About และที่มุมล่างของหน้าแรก ("v…") · การ์ดครบเท่าเดิม · ทุกโปรเจกต์เปิดได้ไม่ปิดตัวเอง · โมเดลครบ ชื่อ / กลุ่ม / สถานะเดิม · ข้อความเฉพาะกรณีขึ้นถูกที่: กล่อง "Rounding updated" (เมื่อมีสูตร `round(x, n)` แบบเก่า — โมเดลที่ใช้สูตรนั้นกลับเป็น Incomplete), กล่องแจ้ง "Running condition is now one condition" พร้อม "Check it" / "Got it" (เมื่อ Running condition เดิมมีหลายเงื่อนไข) หรือการ์ดเหลือง "Set it again" (เมื่อเดิมไม่มีเงื่อนไขแบบ above หรือใช้ Use all rows) — ดู BMW-389, BMW-391
 
 - [ ] **WFH-12 — ถอนการติดตั้งแล้วติดตั้งใหม่ (ช่อง "Delete the application data")**
   - Settings → Apps → Wizard → Uninstall → ดูหน้าจอยืนยันของตัวถอนการติดตั้ง **อย่าติ๊ก** "Delete the application data" (ถ้ามีช่องนี้) → ติดตั้งใหม่ → เปิดโปรแกรม

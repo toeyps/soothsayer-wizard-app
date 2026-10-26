@@ -64,9 +64,8 @@ function project(): WorkspaceState {
             healthSetPoints: { kind: 'individual', lower: 20, upper: 35 } as FailureModel['healthSetPoints'] }),
         mk({ id: 'r1', name: 'Bearing vs load', kind: 'relationship', targetSensor: 'T1', predictorSensors: ['P1', 'POWER'],
             relStiffness: 100000, category: 'condition', groupNos: [1, 2],
-            runningConditionMode: 'custom', customRunningConditionCombine: 'or', customRunningConditionNoneConfirmed: false,
+            runningConditionMode: 'custom', customRunningConditionCombine: 'and', customRunningConditionNoneConfirmed: false,
             customRunningConditionFilters: [
-                { id: 'q1', sensor: 'P1', operation: 'less_than', value1: '50', value2: '' },
                 { id: 'q2', sensor: 'SPEED', operation: 'greater_than', value1: '1000', value2: '' },
             ],
             filterTimePeriods: [{ id: 'cp', start: '2024-01-09T22:30', end: '' }],
@@ -138,9 +137,9 @@ describe('Export request: TS builder <-> Rust contract fixture', () => {
                 expect([spec.x_sensor, spec.y_sensor]).toEqual([m.xSensor, m.ySensor]);
             }
         }
-        // The Custom model really has its own scope (OR + its own period).
+        // The Custom model really has its own scope (its own one condition + its own period).
         const r1 = req.models.find(m => m.id === 'r1')!;
-        expect(r1.filter).toMatchObject({ combine: 'or', timestamp_ranges: [{ start: '2024-01-09T22:30', end: null }] });
+        expect(r1.filter).toMatchObject({ value_filters: [{ sensor: 'SPEED', operation: 'greater_than', value1: 1000 }], timestamp_ranges: [{ start: '2024-01-09T22:30', end: null }] });
         expect(req.models.find(m => m.id === 'i1')!.filter).toMatchObject({ combine: 'and', value_filters: [{ sensor: 'SPEED', operation: 'greater_than', value1: 100 }] });
     });
 });
