@@ -6,6 +6,20 @@
 
 ---
 
+## [0.13.1] — 2026-10-26
+
+Patch release — แก้ tooltip ของกราฟ Clusters ให้อ่านรู้เรื่อง
+
+### 🐛 Bug fixes
+
+- **กราฟ Clusters: เอาเมาส์ชี้จุดแล้วบอกชัดว่าเป็นค่า X และ Y ของ sensor ไหน** — เดิม tooltip แสดงแค่ชื่อ cluster กับตัวเลขตัวเดียว ไม่รู้ว่าเป็น X หรือ Y ตอนนี้แสดง cluster ของจุดนั้น พร้อมแถว "X · ชื่อ sensor" และ "Y · ชื่อ sensor" พร้อมค่า; ในหน้า Health score แสดง Health score ของจุดนั้นด้วย (หรือ "no score" ถ้าจุดนั้นไม่มีคะแนน); ชี้ที่วงรีแสดง "Cluster N · 3× SD"
+
+### 🧪 Tests
+
+- เพิ่มเทสต์ของ tooltip กราฟ Clusters
+
+---
+
 ## [0.13.0] — 2026-10-26
 
 Minor release — **เงื่อนไขว่าเครื่องกำลังทำงาน (running condition) เหลืออันเดียว**: "Machine is running when … is above …" ใช้ทั้งตอน Train, คำนวณ Health score และเป็น running status ในไฟล์ Export results
