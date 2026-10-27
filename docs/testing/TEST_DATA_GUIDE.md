@@ -9,7 +9,7 @@
 - **ไฟล์ใหญ่** (หลายร้อย MB ถึงเกิน 2 GB และข้อมูล 2 ปีของ WFG) ไม่ได้สร้างให้ตอนแรก เพราะกินที่มาก — ถ้าจะทดสอบหมวดที่ต้องใช้ ให้รัน `python scripts/make-all-testdata.py --big` (ต้องมีที่ว่างในไดรฟ์ C ประมาณ **8.5 GB** ใช้เวลาประมาณ **3–10 นาที** บน SSD)
 - ทุกโฟลเดอร์มีไฟล์ `EXPECTED.txt` (เปิดด้วย Notepad) บอก **ตัวเลขจริงของแต่ละไฟล์**: จำนวนแถว, ช่วงเวลาแรก → สุดท้าย, ระยะห่างระหว่างแถว, จำนวนช่องว่าง / ช่องที่เป็นข้อความ และผลที่ต้องเห็น — ใช้เทียบกับหน้าจอได้เลย ไม่ต้องนับเอง
 - รันคำสั่งซ้ำได้ทุกเมื่อ ได้ไฟล์เหมือนเดิมทุกตัวอักษร (เช่น หลังเผลอแก้หรือลบไฟล์)
-- แบบฟอร์ม `manual-test-plan.html` ไม่ได้แสดงหน้านี้ — เปิดไฟล์นี้ (`docs/testing/TEST_DATA_GUIDE.md`) แยกไว้ข้าง ๆ
+- แบบฟอร์ม `manual-test-plan.html` แสดงบรรทัด "ไฟล์ที่ใช้" ในแต่ละข้อ (อ่านจากกล่องในข้อ 6 ของหน้านี้) — หน้านี้คือฉบับเต็ม
 
 ---
 
@@ -228,3 +228,97 @@
 - **อย่าย้ายหรือลบไฟล์ใน `C:\WizardTestData` หลังสร้างโปรเจกต์แล้ว** — โปรเจกต์จำแค่ที่อยู่ของไฟล์ ไม่ได้เก็บสำเนาข้อมูล (ยกเว้นข้อที่ตั้งใจให้ย้าย เช่น IMP-58, IMP-82)
 - รัน `make-all-testdata.py` ซ้ำ = ไฟล์ทุกตัวถูกเขียนทับด้วยข้อมูลเดิม — ถ้าเคยทับไฟล์ด้วย `variants\` แล้วลืมคืน รันซ้ำก็ได้ของเดิมกลับมา
 - ตัวเลขที่ต้องเห็นบนหน้าจอของแต่ละไฟล์ อยู่ใน `EXPECTED.txt` ของโฟลเดอร์นั้น — ถ้าตัวเลขบนจอไม่ตรง ให้จดทั้งสองค่าในช่องหมายเหตุของข้อนั้น
+
+---
+
+## 6. บรรทัด "ไฟล์ที่ใช้" ในแบบฟอร์ม HTML (แบบฟอร์มอ่านจากกล่องนี้ — อย่าลบ)
+
+`scripts/build-manual-test-html.py` อ่านกล่องข้างล่าง แล้วใส่บรรทัด "ไฟล์ที่ใช้: …" ให้แต่ละข้อในแบบฟอร์ม — **เมื่อแก้ตารางในข้อ 2–3 ให้แก้กล่องนี้ด้วย** (`--check` ไม่ผ่านถ้ากล่องอ้างถึงข้อหรือหมวดที่ไม่มีอยู่จริง)
+**เขียนแค่ชื่อไฟล์ ห้ามใส่ที่อยู่หรือไดรฟ์** (`C:\…`, `IMP\…`) — ทีมทดสอบได้ไฟล์ไปเก็บไว้คนละที่ (`--check` ไม่ผ่านถ้าเจอ `\` หรือ `/`) · ชื่อชุดข้อมูล (WF, IMP, TS, EXP) ใช้เป็นคำเรียกได้
+กติกา: `รายการ => ข้อความ` · รายการเป็น id (`IMP-36`), ช่วง (`IMP-89..97` = ทุกข้อที่มีอยู่ในช่วง), ชื่อหมวด (`SPC`) หรือหมวดเฉพาะรอบ (`BMW@5` = ข้อของ BMW ที่อยู่รอบ 5 ใน `TEST_ROUNDS.md`) · ข้อหนึ่งได้ข้อความจากบรรทัดรายข้อทุกบรรทัดที่ระบุมัน (ต่อกันด้วย ·) ถ้าไม่มี ใช้ของ "หมวด@รอบ" ถ้าไม่มีอีก ใช้ของหมวด · บรรทัดที่ขึ้นต้นด้วย `+ ` = ข้อความเสริม ต่อท้ายสิ่งที่ข้อนั้นได้อยู่แล้วเสมอ · ข้อที่ไม่อยู่ในกล่องเลย = ไม่มีบรรทัดไฟล์ (ไม่ต้องใช้ไฟล์เฉพาะ)
+
+```files
+# ---- ค่าเริ่มต้นของหมวด (จากตารางข้อ 3)
+APP => ไฟล์อะไรก็ได้ เช่น IMP-normal.csv
+LAY SEN SEL FIL HL TIME LINE SCAT PAIR FG => โปรเจกต์จากชุด WF (ทำตาม WFA-1 ถึง WFA-4) หรือ IMP-normal.csv, IMP-normal-tags.csv
+SPC MNG EDT => IMP-normal.csv, IMP-normal-tags.csv (TAG1 / TAG2 / TAG3 = TI-101 / TI-102 / PI-201)
+BMW => โปรเจกต์จากชุด WF
+BMW@5 => EXP-data.csv, EXP-tags.csv
+MULTI => โปรเจกต์ A = GEG-3.csv, GEG-tags.csv · โปรเจกต์ B = CMP-1.csv, CMP-1-tags.csv (จาก PREP-5)
+PERF => ไฟล์ใหญ่ในชุด IMP (BIG-…)
+WFA WFB WFC WFD => ทุกไฟล์ในชุด WF (WFB–WFD ใช้โปรเจกต์ที่ได้จาก WFA ต่อ)
+WFE => GEG-3.csv, GEG-4.csv, GEG-tags.csv
+WFF => โปรเจกต์ "Trial-F" = GEG-3.csv, GEG-tags.csv
+WFG => GEG5_2024.csv, GEG5_2025.csv, GEG5-tags.csv (ไฟล์ใหญ่)
+WFI => I-1_…, I-2_…, I-3_…, I-tags.csv
+WFJ => EXP-data.csv, EXP-tags.csv
+# ---- รายข้อ (จากตารางข้อ 2–3)
+PREP-6 => ทุกไฟล์ทุกชุด (WF, IMP, TS, EXP)
+PREP-5 => โปรเจกต์ A = GEG-3.csv, GEG-tags.csv · โปรเจกต์ B = CMP-1.csv, CMP-1-tags.csv
+IMP-2 IMP-27..29 IMP-56..59 IMP-100..105 IMP-107..113 => โปรเจกต์อะไรก็ได้ (สร้างจาก IMP-normal.csv หรือชุด WF)
+IMP-34 IMP-36 IMP-38 IMP-46 IMP-60 IMP-61 IMP-62 IMP-70 IMP-81 IMP-14 => IMP-normal.csv
+IMP-38 IMP-76 IMP-14 IMP-81 IMP-82 SEN-1 SEN-2 SEN-4 SEL-9 FG-26 VIS-3 => IMP-normal-tags.csv
+FG-26 VIS-3 => IMP-normal.csv
+IMP-45 => IMP-normal_this_is_a_very_long_file_name_…csv
+IMP-35 IMP-36 IMP-86 PERF-8 => MF-overlap-1.csv, MF-overlap-2.csv, MF-overlap-3.csv
+IMP-36 IMP-86 => MF-adjacent-1.csv, MF-adjacent-2.csv
+IMP-36 => MF-samecol-1.csv, MF-samecol-2.csv
+IMP-81 => MF-extra-columns-B.csv
+IMP-73 => MF-set-1.csv, MF-set-2-BROKEN.csv, MF-set-3.csv
+IMP-77 => T01-other-header-names.csv, T02-description-and-name.csv
+IMP-80 => T03-duplicate-tag-TI-101.csv
+IMP-79 => T04-broken-short-row.csv, T05-empty-0-byte.csv
+IMP-20 IMP-74 => BE-2567-leap-day.csv
+IMP-63 IMP-74 => ODD-text-and-empty-cells.csv
+IMP-67 => ODD-empty-and-repeated-time.csv
+IMP-68 => ODD-same-column-twice.csv, ODD-same-column-twice-case.csv
+IMP-64 => ODD-time-header-Timestamp.csv, ODD-time-header-TIME.csv, ODD-time-in-column-3.csv
+IMP-65 => BRK-date-header.csv, BRK-datetime-header.csv
+IMP-69 => BRK-empty-0-byte.csv, BRK-header-only.csv
+IMP-70 IMP-74 => BRK-extra-comma-line-50.csv
+IMP-71 IMP-73 => BRK-excel-file-renamed.csv
+IMP-62 => BRK-not-a-csv.xlsx
+IMP-66 => IMP66-1 … IMP66-8
+IMP-87 => IMP87-A … IMP87-D
+IMP-88 => 2025.csv, 2026.csv (ชุด IMP — ถ้ามีไฟล์จริงจากระบบ historian ใช้ตัวจริง)
+IMP-88 => F09, F10, F14, F16 (ชุด TS — บรรทัด "รูปแบบอื่น")
+IMP-36 => INT-10s.csv, INT-90s.csv, INT-90min.csv, INT-1h.csv, INT-1d.csv
+IMP-78 => IMP-wide-220-sensors.csv, IMP-wide-tags.csv
+IMP-16 IMP-35 IMP-75 => BIG-300MB.csv (ไฟล์ใหญ่)
+IMP-16 => BIG-tags.csv
+IMP-72 => BIG-2_1GB-over-limit.csv (ไฟล์ใหญ่)
+IMP-89..97 => F01 … F22 (ชุด TS)
+IMP-98 => M1_iso.csv, M1_us_ampm.csv (โปรเจกต์ 1) · M2_part1.csv, M2_part2.csv (โปรเจกต์ 2) · M3_column_twice.csv (โปรเจกต์ 3)
+IMP-99 => TS-tags.csv
++ IMP-89..99 => ตัวเลขที่ต้องได้: EXPECTED.txt ของชุด TS
+SPC-92 EDT-66 => BIG-300MB.csv หรือ BIG-1_9GB.csv (ไฟล์ใหญ่)
+BMW-201 => IMP-normal_first-10-days.csv
+BMW-212 => INT-10s.csv, INT-1h.csv, IMP66-5…, IMP66-5b_offset-minus0500.csv
+BMW-358 => EXP-data.csv, EXP-tags.csv · ข้อ 6: IMP-normal_first-10-days.csv
+BMW-381 => EXP-data_with-A-B-columns.csv
+BMW-396 => EXP-data_without-FLOW-A.csv (รอบแรก) แล้ว EXP-data_without-KW.csv (รอบที่สอง) · หรือ IMP-normal_without-TI-101.csv / IMP-normal_without-KW-401.csv
+BMW-402 BMW-403 => EXP-data.csv, EXP-tags.csv · ตัวเลขที่ต้องได้: EXPECTED.txt ของชุด EXP
+MULTI-8 => B สร้างจาก GEG-3.csv อีกครั้ง
+MULTI-10 => BIG-300MB.csv (ไฟล์ใหญ่)
+MULTI-15 => C = GEG-3.csv, GEG-tags.csv · D = GEG-3.csv, GEG-tags-D-thai.csv
+PER-15 => IMP-normal_without-TI-101.csv
+PER-19 => IMP-normal_plus-1-day.csv, IMP-normal-tags_changed.csv
+PERF-1 => BIG-1_9GB.csv
+PERF-2..7 => BIG-300MB.csv, BIG-tags.csv
+PERF-8 => BIG-overlap-1.csv, BIG-overlap-2.csv, BIG-overlap-3.csv
+PERF-10 => GEG5_2024.csv, GEG5_2025.csv, GEG5-tags.csv (ประมาณ 1 ล้านแถว)
+WFA-1 WFA-3 => WF-A-process.csv, WF-B-bearing.csv, WF-C-cooling-BE.csv
+WFA-3 => ถ้าไม่ผ่าน ใช้ WF-C-cooling-CE.csv แทน
+WFA-4 => WF-tags.csv
+WFF-1 => BRK-semicolon.csv, BRK-datetime-header.csv, IMP-normal_saved-as-CSV-UTF-8.csv
+WFF-2 => BIG-2_1GB-over-limit.csv · BIG-2_1GB-part1.csv, BIG-2_1GB-part2.csv (ไฟล์ใหญ่)
+WFF-4 => GEG-tags-thai-saved-as-plain-CSV.csv แล้ว GEG-tags-D-thai.csv
+WFF-5 => GEG-tags_changed.csv
+WFG-13 => BIG-1_9GB.csv และ BIG-2_1GB-over-limit.csv
+WFH-3 => CSV + Tag names ชุดเดิมของโปรเจกต์ต้นฉบับ (เช่น GEG-3.csv, GEG-tags.csv)
++ WFJ-1..13 => ตัวเลขที่ต้องได้: EXPECTED.txt ของชุด EXP
+WFK-1..10 => EXP-numbers.csv, EXP-numbers-tags.csv
+WFK-11 WFK-12 => EXP-fleet.csv, EXP-fleet-tags.csv
+WFK-5 => โปรเจกต์จาก WFJ (EXP-data.csv, EXP-tags.csv)
++ WFK-1..15 => ตัวเลขที่ต้องได้: EXPECTED.txt ของชุด EXP
+```
