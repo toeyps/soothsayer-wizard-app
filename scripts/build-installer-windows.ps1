@@ -193,8 +193,20 @@ if (Test-Path $sidecar) {
 Step "4/5  Building Tauri app + NSIS/MSI installers"
 # Use npx directly to bypass npm's CLI config parsing, which swallows --target
 # (npm 10+ treats --target as an unknown npm config and drops it).
-npx tauri build --target $Target
-if ($LASTEXITCODE -ne 0) { Fail "tauri build failed (exit $LASTEXITCODE)" }
+#
+# --remap-path-prefix keeps this machine's paths (user name, repo folder,
+# cargo registry) out of the shipped .exe — panic/error messages embed source
+# paths otherwise. Computed here, not in a checked-in .cargo/config.toml,
+# because the paths differ per build machine.
+$prevRustFlags = $env:RUSTFLAGS
+$remap = "--remap-path-prefix=$RepoRoot=wizard --remap-path-prefix=$env:USERPROFILE=~"
+$env:RUSTFLAGS = (@($prevRustFlags, $remap) | Where-Object { $_ }) -join " "
+try {
+    npx tauri build --target $Target
+    if ($LASTEXITCODE -ne 0) { Fail "tauri build failed (exit $LASTEXITCODE)" }
+} finally {
+    $env:RUSTFLAGS = $prevRustFlags
+}
 
 # ─── 5. Locate + report installers ────────────────────────────────────────
 Step "5/5  Locating installers"

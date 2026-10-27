@@ -45,3 +45,14 @@ opt-level = 1
 [profile.dev.package."*"]
 opt-level = 2
 
+# Installer builds: make the shipped .exe harder to reverse-engineer.
+# strip removes symbol names; lto + one codegen unit merge and inline the
+# whole program so its structure is harder to follow. Developer paths are
+# hidden by --remap-path-prefix in scripts/build-installer-windows.ps1.
+# panic stays "unwind" on purpose: "abort" would close the whole app on a
+# panic inside a single command.
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1
+
