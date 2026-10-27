@@ -129,7 +129,11 @@ fi
 
 # ─── 4. Tauri build ───────────────────────────────────────────────────────
 step "4/5  Building Tauri app + DMG installer"
-npm run tauri -- build --target "${TARGET}"
+# --remap-path-prefix keeps this machine's paths (user name, repo folder,
+# cargo registry) out of the shipped binary; computed here because the
+# paths differ per build machine. Scoped to this one command.
+REMAP_FLAGS="--remap-path-prefix=${REPO_ROOT}=wizard --remap-path-prefix=${HOME}=~"
+RUSTFLAGS="${RUSTFLAGS:+${RUSTFLAGS} }${REMAP_FLAGS}" npm run tauri -- build --target "${TARGET}"
 
 # ─── 5. Locate + report installer ─────────────────────────────────────────
 step "5/5  Locating installer"
