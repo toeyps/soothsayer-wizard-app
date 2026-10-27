@@ -228,8 +228,8 @@ if (-not $nsisInstaller -and -not $msiInstaller) {
 }
 
 $elapsed = (Get-Date) - $StartTs
-$mm = [int]$elapsed.TotalMinutes
-$ss = [int]($elapsed.TotalSeconds - $mm * 60)
+$mm = [int][math]::Floor($elapsed.TotalMinutes)
+$ss = $elapsed.Seconds
 
 Write-Host "`n============================================================" -ForegroundColor Green
 Write-Host "  Build complete in ${mm}m ${ss}s" -ForegroundColor Green

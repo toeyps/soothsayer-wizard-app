@@ -28,12 +28,53 @@ import sys
 import os
 import math
 import json
+import hmac
+import hashlib
 import pickle
+import time
 import traceback
 from datetime import datetime, timezone
 
 import numpy as np
 import pygam
+
+
+# ── signed requests ─────────────────────────────────────────────────────
+# Only the app may drive this engine: each stdin line is
+# `<unix seconds> <hex HMAC-SHA256> <request JSON>`, signed by Rust
+# (`lib.rs::signed_sidecar_line`) over `<unix seconds>\n<request JSON>`.
+# `_KEY` must match `SIDECAR_KEY` in lib.rs (a Rust test checks it).
+_KEY = bytes.fromhex("284e88bf1b87ea1628f1cd3c0d6da3fa10d9b04e883ea389911ab87704bab7b7")
+# Rust stamps the line just before launching us; the first launch on a slow
+# machine (unpacking + imports, antivirus scan) can take a while, so allow
+# minutes, not seconds. Older lines are refused so a captured line cannot be
+# replayed later.
+_MAX_AGE_S = 300
+
+
+class _Refused(Exception):
+    pass
+
+
+def _signature(ts_text, body):
+    return hmac.new(_KEY, ts_text + b"\n" + body, hashlib.sha256).hexdigest().encode()
+
+
+def _verified_body(line):
+    """The request JSON (bytes) of a correctly signed, fresh line, else _Refused."""
+    parts = line.rstrip(b"\r\n").split(b" ", 2)
+    if len(parts) != 3:
+        raise _Refused()
+    ts_text, sig, body = parts
+    try:
+        ts = int(ts_text)
+    except ValueError:
+        raise _Refused()
+    if abs(time.time() - ts) > _MAX_AGE_S:
+        raise _Refused()
+    if not hmac.compare_digest(_signature(ts_text, body), sig):
+        raise _Refused()
+    return body
 
 
 # ── numpy-only metric helpers ───────────────────────────────────────────
@@ -134,7 +175,7 @@ def preview_relationship(payload):
         target            : str         target name (informational only)
         X                 : list[list]  n_rows × n_predictors, no NaN
         y                 : list[float] n_rows, no NaN
-        linearGAM_lambda  : float       optional, default 10000
+        smoothing         : float       optional, default 10000
         X_extra           : optional    rows to PREDICT with the final (full-feature)
                                         train-only model - the Train/Test validation's
                                         test periods, so no second fit is needed
@@ -145,7 +186,7 @@ def preview_relationship(payload):
         (+ predicted_extra when X_extra was given)
     """
     features = payload["predictors"]
-    lamb = payload.get("linearGAM_lambda", 10000)
+    lamb = payload.get("smoothing", 10000)
 
     X = np.asarray(payload["X"], dtype=float)
     y = np.asarray(payload["y"], dtype=float)
@@ -219,12 +260,12 @@ def predict_relationship(payload):
     Expected payload keys:
         X, y              : the train rows (n_rows x n_predictors, n_rows)
         X_extra           : rows to predict (n_extra x n_predictors)
-        linearGAM_lambda  : float       optional, default 10000
+        smoothing         : float       optional, default 10000
 
     Returns:
         request, predicted_extra  (raw predictions, None where non-finite)
     """
-    lamb = payload.get("linearGAM_lambda", 10000)
+    lamb = payload.get("smoothing", 10000)
     X = np.asarray(payload["X"], dtype=float)
     y = np.asarray(payload["y"], dtype=float)
     if X.ndim == 1:
@@ -250,7 +291,7 @@ def train_relationship(payload):
         target            : str
         X                 : list[list]  n_rows × n_predictors, no NaN
         y                 : list[float] n_rows, no NaN
-        linearGAM_lambda  : float       optional, default 10000
+        smoothing         : float       optional, default 10000
         saved_path        : str         workspace root (mkdir -p saved_path/output/{target})
 
     Returns:
@@ -258,7 +299,7 @@ def train_relationship(payload):
     """
     features = payload["predictors"]
     target = payload["target"]
-    lamb = payload.get("linearGAM_lambda", 10000)
+    lamb = payload.get("smoothing", 10000)
     saved_path = payload["saved_path"]
 
     X = np.asarray(payload["X"], dtype=float)
@@ -608,11 +649,11 @@ DISPATCH = {
 # ── entry point ─────────────────────────────────────────────────────────
 def main():
     try:
-        line = sys.stdin.readline()
+        line = sys.stdin.buffer.readline()
         if not line:
             return
 
-        msg = json.loads(line)
+        msg = json.loads(_verified_body(line))
         action = msg.get("action")
         payload = msg.get("payload", {})
 
@@ -624,6 +665,11 @@ def main():
 
         result = handler(payload)
         print(json.dumps(result))
+        sys.stdout.flush()
+
+    except _Refused:
+        # No trace: it would only tell a caller where the check lives.
+        print(json.dumps({"error": "Request refused."}))
         sys.stdout.flush()
 
     except Exception as e:

@@ -39,8 +39,11 @@
 # form matters under Git Bash: MSYS path conversion mangles values that
 # start with `/` (`/Od` → `C:/Program Files/Git/Od`).
 #
-# Verify with a smoke test:
-#   echo '{"action":"preview_relationship","payload":{"predictors":["P1"],"target":"T","X":[[1],[2],[3],[4]],"y":[2,4,6,8],"linearGAM_lambda":1}}' \
+# Verify with a smoke test. The engine only runs SIGNED lines
+# (`<unix seconds> <hex HMAC-SHA256> <request JSON>`, see backend.py's
+# "signed requests" block), so a bare JSON line answers "Request refused.".
+# Sign one with the venv python, reusing backend.py's own key:
+#   python -c 'import sys,time,backend as b; body=b"{\"action\":\"preview_relationship\",\"payload\":{\"predictors\":[\"P1\"],\"target\":\"T\",\"X\":[[1],[2],[3],[4]],\"y\":[2,4,6,8],\"smoothing\":1}}"; ts=str(int(time.time())).encode(); sys.stdout.buffer.write(ts+b" "+b._signature(ts,body)+b" "+body+b"\n")' \
 #     | ../bin/backend-$(rustc -vV | sed -n 's/host: //p')
 
 set -euo pipefail

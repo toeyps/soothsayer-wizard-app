@@ -790,6 +790,55 @@ fn spawn_sidecar(
     })
 }
 
+// ── Signed sidecar requests ───────────────────────────────────────────────
+// The sidecar runs only requests this app signed, so a copy of the engine
+// binary taken off a customer machine cannot be driven by hand. Each stdin
+// line is `<unix seconds> <hex HMAC-SHA256> <request JSON>`; the HMAC covers
+// `<unix seconds>\n<request JSON>` and `backend.py::_verified_body` refuses a
+// bad signature or a stale line (no replay of a captured line). The key must
+// match `_KEY` in `python/backend.py` (a test checks it); change both
+// together and rebuild the sidecar.
+const SIDECAR_KEY: [u8; 32] = [
+    0x28, 0x4e, 0x88, 0xbf, 0x1b, 0x87, 0xea, 0x16, 0x28, 0xf1, 0xcd, 0x3c, 0x0d, 0x6d, 0xa3, 0xfa,
+    0x10, 0xd9, 0xb0, 0x4e, 0x88, 0x3e, 0xa3, 0x89, 0x91, 0x1a, 0xb8, 0x77, 0x04, 0xba, 0xb7, 0xb7,
+];
+
+/// HMAC-SHA256 (RFC 2104) on `sha2`, which the dependency tree already has.
+fn hmac_sha256(key: &[u8], msg: &[u8]) -> [u8; 32] {
+    use sha2::{Digest, Sha256};
+    let mut block = [0u8; 64];
+    if key.len() > 64 {
+        block[..32].copy_from_slice(&Sha256::digest(key));
+    } else {
+        block[..key.len()].copy_from_slice(key);
+    }
+    let ipad: Vec<u8> = block.iter().map(|b| b ^ 0x36).collect();
+    let opad: Vec<u8> = block.iter().map(|b| b ^ 0x5c).collect();
+    let inner = Sha256::new().chain_update(&ipad).chain_update(msg).finalize();
+    Sha256::new().chain_update(&opad).chain_update(inner).finalize().into()
+}
+
+fn to_hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// The signed stdin line for `request` stamped `unix_secs` (newline included).
+fn signed_sidecar_line_at(request: &serde_json::Value, unix_secs: u64) -> Result<String, String> {
+    let body = serde_json::to_string(request).map_err(|e| e.to_string())?;
+    let ts = unix_secs.to_string();
+    let sig = hmac_sha256(&SIDECAR_KEY, format!("{ts}\n{body}").as_bytes());
+    Ok(format!("{ts} {} {body}\n", to_hex(&sig)))
+}
+
+/// The signed stdin line for `request`, stamped now.
+fn signed_sidecar_line(request: &serde_json::Value) -> Result<String, String> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| e.to_string())?
+        .as_secs();
+    signed_sidecar_line_at(request, now)
+}
+
 /// Developer-only hint for a missing / stub sidecar binary. Goes to the error
 /// log and the dev console - NEVER into an error the UI shows
 /// (user-readable text says "Relation model engine", never
@@ -2103,15 +2152,14 @@ async fn preview_relationship_model(
             "target": target,
             "X": x_matrix,
             "y": y_vector,
-            "linearGAM_lambda": lambda,
+            "smoothing": lambda,
         }
     });
     if !extra_points.is_empty() {
         payload["payload"]["X_extra"] = serde_json::json!(extra_points.x_rows());
     }
 
-    let mut payload_line = serde_json::to_string(&payload).map_err(|e| e.to_string())?;
-    payload_line.push('\n');
+    let payload_line = signed_sidecar_line(&payload)?;
 
     // ── Spawn sidecar and pipe payload over stdin. ──
     let (mut rx, mut child) = spawn_sidecar(&app)?;
@@ -3459,7 +3507,7 @@ async fn write_relationship_files(
             "target": target,
             "X": x_matrix,
             "y": y_vector,
-            "linearGAM_lambda": lambda,
+            "smoothing": lambda,
             "saved_path": save_path,
         }
     });
@@ -3467,8 +3515,7 @@ async fn write_relationship_files(
         payload["payload"]["X_extra"] = serde_json::json!(extra_points.x_rows());
     }
 
-    let mut payload_line = serde_json::to_string(&payload).map_err(|e| e.to_string())?;
-    payload_line.push('\n');
+    let payload_line = signed_sidecar_line(&payload)?;
 
     let (mut rx, mut child) = spawn_sidecar(app)?;
     child
@@ -7830,8 +7877,7 @@ async fn run_sidecar_json(
     payload: &serde_json::Value,
     limit: std::time::Duration,
 ) -> Result<serde_json::Value, String> {
-    let mut line = serde_json::to_string(payload).map_err(|e| e.to_string())?;
-    line.push('\n');
+    let line = signed_sidecar_line(payload)?;
     let (mut rx, mut child) = spawn_sidecar(app)?;
     if let Err(e) = child.write(line.as_bytes()) {
         // Do not leave a process waiting on its stdin forever.
@@ -7912,7 +7958,7 @@ async fn run_predict_relationship(
             "X": job.x,
             "y": job.y,
             "X_extra": job.x_extra,
-            "linearGAM_lambda": job.lambda,
+            "smoothing": job.lambda,
         }
     });
     let resp = run_sidecar_json(app, &payload, PREDICT_SIDECAR_TIMEOUT).await?;
@@ -9877,5 +9923,89 @@ mod relationship_response_tests {
         assert!(resp.get("health_preview").is_none());
         assert!(arr(&resp, "predicted").len() <= 50);
         assert!(state.0.read().unwrap().as_ref().unwrap().rel_cache.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod signed_sidecar_tests {
+    use super::*;
+
+    #[test]
+    fn hmac_matches_rfc_4231() {
+        // Test case 2 (short key) and test case 6 (key longer than a block).
+        assert_eq!(
+            to_hex(&hmac_sha256(b"Jefe", b"what do ya want for nothing?")),
+            "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"
+        );
+        assert_eq!(
+            to_hex(&hmac_sha256(&[0xaa; 131], b"Test Using Larger Than Block-Size Key - Hash Key First")),
+            "60e431591ee0b67f0d8a26aacbf5b77f8e0bc6213728c5140546040f0ee37f54"
+        );
+    }
+
+    #[test]
+    fn a_signed_line_is_timestamp_signature_and_the_request() {
+        let request = serde_json::json!({"action": "train_clustering", "payload": {"name": "ถังน้ำ \"A\"\nB"}});
+        let line = signed_sidecar_line_at(&request, 1_700_000_000).unwrap();
+        // One line: the sidecar reads exactly one line from stdin.
+        assert!(line.ends_with('\n'));
+        assert_eq!(line.matches('\n').count(), 1);
+        let mut parts = line.trim_end_matches('\n').splitn(3, ' ');
+        let (ts, sig, body) = (parts.next().unwrap(), parts.next().unwrap(), parts.next().unwrap());
+        assert_eq!(ts, "1700000000");
+        assert_eq!(sig.len(), 64);
+        assert_eq!(sig, to_hex(&hmac_sha256(&SIDECAR_KEY, format!("{ts}\n{body}").as_bytes())));
+        assert_eq!(serde_json::from_str::<serde_json::Value>(body).unwrap(), request);
+        // Another moment signs differently (a captured line cannot be re-stamped).
+        assert_ne!(line, signed_sidecar_line_at(&request, 1_700_000_001).unwrap());
+    }
+
+    #[test]
+    fn the_sidecar_source_carries_the_same_key_and_checks_it() {
+        let py = include_str!("../python/backend.py");
+        let key_line = format!("_KEY = bytes.fromhex(\"{}\")", to_hex(&SIDECAR_KEY));
+        assert!(py.contains(&key_line), "backend.py must hold {key_line}");
+        assert!(py.contains("msg = json.loads(_verified_body(line))"), "backend.py must verify before parsing");
+    }
+
+    /// End to end against the BUILT engine (`bin/backend-<triple>`): a line this
+    /// module signs is answered, the same request unsigned is refused. Needs the
+    /// real binary, so it is ignored by default:
+    /// `cargo test --lib built_engine -- --ignored`.
+    #[test]
+    #[ignore]
+    fn built_engine_answers_a_signed_line_and_refuses_an_unsigned_one() {
+        use std::io::Write;
+        let exe = std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/bin"))
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .find(|p| p.file_name().unwrap().to_string_lossy().starts_with("backend-"))
+            .expect("build the engine first");
+        let run = |line: String| -> serde_json::Value {
+            let mut child = std::process::Command::new(&exe)
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::piped())
+                .spawn()
+                .unwrap();
+            child.stdin.take().unwrap().write_all(line.as_bytes()).unwrap();
+            let out = child.wait_with_output().unwrap();
+            serde_json::from_slice(&out.stdout).unwrap()
+        };
+        let request = serde_json::json!({"action": "preview_relationship", "payload": {
+            "predictors": ["P1"], "target": "T",
+            "X": [[1.0], [2.0], [3.0], [4.0], [5.0], [6.0]], "y": [2.0, 4.0, 6.0, 8.0, 10.0, 12.0],
+            "smoothing": 1.0}});
+        let answered = run(signed_sidecar_line(&request).unwrap());
+        assert!(answered.get("error").is_none(), "{answered}");
+        assert!(answered["r2_per_step"].is_array());
+        let refused = run(format!("{request}\n"));
+        assert_eq!(refused["error"], "Request refused.");
+    }
+
+    #[test]
+    fn the_smoothing_key_has_a_neutral_name_on_both_sides() {
+        let py = include_str!("../python/backend.py");
+        assert!(py.contains("payload.get(\"smoothing\", 10000)"));
+        assert!(!py.contains("linearGAM_lambda"), "the algorithm name must not travel over stdin");
     }
 }
