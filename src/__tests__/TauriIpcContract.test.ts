@@ -43,9 +43,6 @@ const INTENTIONALLY_UNCALLED = new Set([
     'train_individual_model', 'train_clustering_model', 'train_relationship_model',
     // Diagnostic; no caller since the upload page stopped re-checking loaded paths.
     'get_loaded_paths',
-    // Writes bytes to a user-picked path outside the $APPDATA fs scope. It has no
-    // caller; kept for future user-picked exports — user decision pending.
-    'write_user_file',
 ]);
 
 // ── Rust side ────────────────────────────────────────────────────────────
@@ -224,5 +221,17 @@ describe('Tauri IPC contract (static: lib.rs <-> TS call sites)', () => {
         expect([...created].filter(l => l !== 'main' && !mainTsx.includes(`"${l}"`) && !mainTsx.includes(`'${l}'`)), 'created without a main.tsx route').toEqual([]);
         expect([...capLabels].filter(l => !created.has(l)), 'capability for a window nothing creates').toEqual([]);
         expect(created).toEqual(new Set(['main', 'build-model', 'add-sensor']));
+    });
+
+    // Security review 2026-10-28: the sidecar is spawned and folders are opened from Rust,
+    // so no window may hold a shell/opener permission (a compromised page could run or open things).
+    it('no capability grants a shell or opener permission, and the frontend imports neither plugin', () => {
+        const capDir = joinPath(ROOT, 'src-tauri', 'capabilities');
+        const perms = listNames(capDir).filter(f => f.endsWith('.json'))
+            .flatMap(f => (JSON.parse(readText(joinPath(capDir, f))).permissions ?? []) as (string | { identifier: string })[])
+            .map(p => typeof p === 'string' ? p : p.identifier);
+        expect(perms.filter(p => /^(shell|opener):/.test(p))).toEqual([]);
+        const all = FILES.map(f => f.code).join('\n');
+        expect(all).not.toMatch(/@tauri-apps\/plugin-(shell|opener)/);
     });
 });

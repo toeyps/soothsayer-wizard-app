@@ -58,6 +58,16 @@ describe('buildSubModelOption', () => {
         expect(plain.xAxis.name).toBe('A');
     });
 
+    it('tooltip heading escapes the series name and drops a colour that is not a plain CSS colour', () => {
+        const o: any = buildSubModelOption(fit, 'B', 'TARGET');
+        const html: string = o.tooltip.formatter({ value: [2, 1.1], color: 'red;background:url(x)"', seriesName: '<img src=x>' });
+        expect(html).toContain('&lt;img src=x&gt;');
+        expect(html).not.toContain('<img');
+        expect(html).not.toContain('url(x)');
+        const ok: string = o.tooltip.formatter({ value: [2, 1.1], color: '#3b82f6', seriesName: 'Raw' });
+        expect(ok).toContain('color:#3b82f6">Raw</div>');
+    });
+
     it('null when the predictor is not part of the fit or the arrays are missing', () => {
         expect(buildSubModelOption(fit, 'Z', 'T')).toBeNull();
         expect(buildSubModelOption({ predictors: ['A'], result: { ...result(3), predictor_raw: undefined } }, 'A', 'T')).toBeNull();

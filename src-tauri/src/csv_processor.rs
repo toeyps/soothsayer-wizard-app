@@ -8,6 +8,24 @@ use std::time::Instant;
 /// dominate; anything larger should be pre-processed externally.
 const MAX_CSV_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 
+/// Hard cap on the small side files (sensor information / tag-name mapping
+/// CSVs). They hold one row per sensor, so a real one is a few hundred KB at
+/// most; these readers keep every cell as a `String`, so an oversized file is
+/// refused before reading instead of eating RAM.
+pub const MAX_SIDE_CSV_BYTES: u64 = 10 * 1024 * 1024;
+
+/// Refuse a sensor-information / mapping CSV over [`MAX_SIDE_CSV_BYTES`].
+fn check_side_csv_size(path: &str) -> Result<(), String> {
+    let size = std::fs::metadata(path).map_err(|e| e.to_string())?.len();
+    if size > MAX_SIDE_CSV_BYTES {
+        return Err(format!(
+            "File too large: {:.1} MB (max 10 MB). This file should list one row per sensor.",
+            size as f64 / (1024.0 * 1024.0)
+        ));
+    }
+    Ok(())
+}
+
 /// Sentinel in [`ColumnarData::ts_parsed`] for a row whose timestamp is
 /// missing or failed to parse. Any timestamp filter excludes such rows,
 /// matching the legacy per-query parse behavior.
@@ -2320,6 +2338,7 @@ pub fn build_load_report(merge_result: &MergeResult) -> CsvLoadReport {
 
 /// Load a mapping CSV: returns all data as strings (no numeric parsing).
 pub fn load_mapping_csv_data(path: &str) -> Result<MappingData, String> {
+    check_side_csv_size(path)?;
     let file = File::open(path).map_err(|e| e.to_string())?;
     let mut rdr = csv::Reader::from_reader(BufReader::new(file));
 
@@ -2395,6 +2414,7 @@ pub fn apply_mapping(
 }
 
 pub fn load_metadata(path: &str) -> Result<Vec<SensorMetadata>, String> {
+    check_side_csv_size(path)?;
     let file = File::open(path).map_err(|e| e.to_string())?;
     let mut rdr = csv::Reader::from_reader(BufReader::new(file));
     let headers = rdr.headers().map_err(|e| e.to_string())?.clone();
@@ -2454,6 +2474,25 @@ pub fn load_metadata(path: &str) -> Result<Vec<SensorMetadata>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn side_csvs_over_10_mb_are_refused_and_small_ones_load() {
+        let dir = std::env::temp_dir().join(format!("wizard-sidecsv-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let small = dir.join("meta.csv");
+        std::fs::write(&small, "tag,description\nT1,Pump\n").unwrap();
+        assert_eq!(load_metadata(small.to_str().unwrap()).unwrap().len(), 1);
+        assert_eq!(load_mapping_csv_data(small.to_str().unwrap()).unwrap().rows.len(), 1);
+
+        let big = dir.join("big.csv");
+        let f = std::fs::File::create(&big).unwrap();
+        f.set_len(MAX_SIDE_CSV_BYTES + 1).unwrap(); // sparse: no 10 MB written
+        drop(f);
+        let e = load_metadata(big.to_str().unwrap()).unwrap_err();
+        assert!(e.contains("max 10 MB"), "{e}");
+        assert!(load_mapping_csv_data(big.to_str().unwrap()).unwrap_err().contains("max 10 MB"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     /// What one file's timestamp column reads as: the per-file rewrite, then
     /// the same parse `from_parts` runs (Buddhist-Era year corrected first).

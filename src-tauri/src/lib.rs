@@ -149,86 +149,6 @@ fn validate_save_dir(p: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Shared validation for frontend-supplied write destinations picked via
-/// the OS-native save dialog (`write_user_file`).
-///
-/// The user picks the destination via the OS-native save dialog, so the
-/// path itself is trusted to the extent the OS dialog vetted it. These
-/// commands exist because the `tauri-plugin-fs` scope (`$APPDATA/**`)
-/// would otherwise reject writes outside the
-/// scoped directories. Validation here defends against frontend bugs that
-/// might pass through a malicious string without dialog confirmation.
-///
-/// Validation:
-///   - reject empty path or paths containing NUL byte
-///   - reject any `..` component (traversal)
-///   - canonicalize the *parent* directory (which must already exist —
-///     the dialog selected a path under it) and assert it starts with
-///     the lexical parent. This guards against a TOCTOU symlink-swap
-///     where the parent dir is replaced with a symlink between dialog
-///     and write. We don't canonicalize the file path itself because the
-///     file may not exist yet.
-///   - if parent doesn't exist, error out — we don't auto-mkdir because
-///     the user selected a path via dialog, so its parent should exist.
-fn validate_user_write_path(path: &str) -> Result<(), String> {
-    if path.is_empty() {
-        return Err("path is empty".into());
-    }
-    if path.contains('\0') {
-        return Err("path contains NUL byte".into());
-    }
-    let p = std::path::Path::new(path);
-    for component in p.components() {
-        if matches!(component, std::path::Component::ParentDir) {
-            return Err("path contains '..' component".into());
-        }
-    }
-    let parent = p
-        .parent()
-        .ok_or_else(|| format!("path has no parent directory: {}", path))?;
-    if parent.as_os_str().is_empty() {
-        return Err(format!("path has no parent directory: {}", path));
-    }
-    // Canonicalize the parent (resolves symlinks, normalizes `.` / `..`).
-    // If the parent doesn't exist, this errors — we don't auto-mkdir because
-    // the user picked the path via a native save dialog, so its parent
-    // directory must already exist.
-    let parent_canonical = parent
-        .canonicalize()
-        .map_err(|e| format!("parent dir not accessible ({}): {}", parent.display(), e))?;
-    // Defense against TOCTOU dir tricks: ensure the canonical parent path
-    // still ends with (i.e. starts at the suffix matching) the literal
-    // parent the caller passed in. If a symlink resolved to a totally
-    // different prefix (e.g. parent was `/tmp/safe` and it's actually a
-    // symlink to `/etc`), the canonical parent will not contain `safe`,
-    // so the starts_with check catches the divergence.
-    //
-    // We can't directly compare equality because Windows / macOS may
-    // legitimately rewrite drive letters / case / `/private` prefixes
-    // during canonicalize, so we use suffix containment of the literal
-    // parent's components against the canonical components.
-    let lex_components: Vec<_> = parent
-        .components()
-        .filter(|c| matches!(c, std::path::Component::Normal(_)))
-        .collect();
-    let canon_components: Vec<_> = parent_canonical
-        .components()
-        .filter(|c| matches!(c, std::path::Component::Normal(_)))
-        .collect();
-    if !lex_components.is_empty() {
-        let lex_len = lex_components.len();
-        if canon_components.len() < lex_len
-            || canon_components[canon_components.len() - lex_len..] != lex_components[..]
-        {
-            return Err(format!(
-                "parent dir canonicalization diverged (possible symlink): {}",
-                parent.display()
-            ));
-        }
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod path_validation_tests {
     use super::*;
@@ -385,67 +305,6 @@ mod path_validation_tests {
         assert!(validate_save_dir(dir.to_str().unwrap()).is_ok());
         let _ = std::fs::remove_dir_all(&dir);
     }
-
-    // ── validate_user_write_path ─────────────────────────────────────
-
-    #[test]
-    fn validate_user_write_path_rejects_empty_and_nul() {
-        assert!(validate_user_write_path("").is_err());
-        assert!(validate_user_write_path("a\0b").is_err());
-    }
-
-    #[test]
-    fn validate_user_write_path_rejects_traversal_components() {
-        let dir = std::env::temp_dir().join(format!("wizard-writepath-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let traversal = dir.join("..").join("evil.csv");
-        assert!(validate_user_write_path(traversal.to_str().unwrap()).is_err());
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn validate_user_write_path_rejects_a_parent_dir_with_no_existing_directory() {
-        let path = std::env::temp_dir()
-            .join(format!("wizard-missing-parent-{}", std::process::id()))
-            .join("out.csv");
-        assert!(validate_user_write_path(path.to_str().unwrap()).is_err());
-    }
-
-    #[test]
-    fn validate_user_write_path_accepts_a_file_under_an_existing_directory() {
-        let dir = std::env::temp_dir().join(format!("wizard-writepath-ok-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let file = dir.join("out.csv");
-        assert!(validate_user_write_path(file.to_str().unwrap()).is_ok());
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    // ── write_user_file (thin wrapper over validate_user_write_path) ──
-
-    #[test]
-    fn write_user_file_rejects_an_invalid_path_without_touching_disk() {
-        let result = write_user_file("".into(), vec![1, 2, 3]);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn write_user_file_writes_the_given_bytes() {
-        let dir = std::env::temp_dir().join(format!("wizard-writefile-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let file = dir.join("out.bin");
-        write_user_file(file.to_str().unwrap().to_string(), vec![1, 2, 3]).unwrap();
-        assert_eq!(std::fs::read(&file).unwrap(), vec![1, 2, 3]);
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-}
-
-/// Bridge command for frontend `save()` dialog → arbitrary-path file write.
-/// See [`validate_user_write_path`] for the trust model.
-#[tauri::command]
-fn write_user_file(path: String, contents: Vec<u8>) -> Result<(), String> {
-    validate_user_write_path(&path)?;
-    std::fs::write(&path, &contents)
-        .map_err(|e| format!("Failed to write {}: {}", path, e))
 }
 
 struct SessionData {
@@ -9336,6 +9195,33 @@ mod scatter_sample_tests {
 
         let _ = std::fs::remove_dir_all(&dir);
     }
+    #[test]
+    fn a_full_error_log_moves_aside_and_long_entries_are_cut() {
+        let dir = std::env::temp_dir().join(format!("wizard-errlog-rotate-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("frontend-errors.log");
+        let old = dir.join("frontend-errors.old.log");
+        std::fs::write(&old, "older than old").unwrap();
+        let f = std::fs::File::create(&path).unwrap();
+        f.set_len(ERROR_LOG_MAX_BYTES).unwrap();
+        drop(f);
+
+        let huge = "é".repeat(ERROR_LOG_MAX_DETAIL); // 2 bytes per char: cut mid-way
+        append_error_line(&path, "frontend", &"m".repeat(ERROR_LOG_MAX_MESSAGE + 10), Some(&huge));
+
+        // The full file became .old (replacing the previous one); the new log is small.
+        assert_eq!(std::fs::metadata(&old).unwrap().len(), ERROR_LOG_MAX_BYTES);
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.len() < ERROR_LOG_MAX_MESSAGE + ERROR_LOG_MAX_DETAIL + 200);
+        assert_eq!(content.matches("[cut,").count(), 2);
+        assert!(content.contains(&format!("[cut, {} bytes total]", huge.len())));
+
+        // Under the limit: plain append, no rotation.
+        append_error_line(&path, "frontend", "next", None);
+        assert!(std::fs::read_to_string(&path).unwrap().contains("[frontend] next"));
+        assert_eq!(std::fs::metadata(&old).unwrap().len(), ERROR_LOG_MAX_BYTES);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
 
 /// Resolve (and create) the persistent error-log location:
@@ -9352,16 +9238,47 @@ fn error_log_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> 
     Ok(dir.join("frontend-errors.log"))
 }
 
+/// Once the log reaches this size it is moved to `<name>.old.log` (replacing
+/// the previous one) and a fresh file starts, so the log holds at most ~2× this.
+const ERROR_LOG_MAX_BYTES: u64 = 5 * 1024 * 1024;
+/// Longest message / detail kept per entry; anything past it is cut.
+const ERROR_LOG_MAX_MESSAGE: usize = 4 * 1024;
+const ERROR_LOG_MAX_DETAIL: usize = 32 * 1024;
+
+/// `text` cut to at most `max` bytes on a char boundary, marked when cut.
+fn clip_log_text(text: &str, max: usize) -> std::borrow::Cow<'_, str> {
+    if text.len() <= max {
+        return std::borrow::Cow::Borrowed(text);
+    }
+    let mut end = max;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    std::borrow::Cow::Owned(format!("{}… [cut, {} bytes total]", &text[..end], text.len()))
+}
+
+/// Move a full log aside (`frontend-errors.log` → `frontend-errors.old.log`).
+fn rotate_error_log(path: &std::path::Path) {
+    let full = std::fs::metadata(path).map(|m| m.len() >= ERROR_LOG_MAX_BYTES).unwrap_or(false);
+    if full {
+        let old = path.with_extension("old.log");
+        let _ = std::fs::remove_file(&old);
+        let _ = std::fs::rename(path, &old);
+    }
+}
+
 /// Best-effort append — the error logger must never become an error source
 /// itself, so every failure here is deliberately swallowed.
 fn append_error_line(path: &std::path::Path, source: &str, message: &str, detail: Option<&str>) {
     use std::io::Write;
+    rotate_error_log(path);
     if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
         let ts = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
+        let message = clip_log_text(message, ERROR_LOG_MAX_MESSAGE);
         let _ = writeln!(f, "[{ts}] [{source}] {message}");
         if let Some(d) = detail {
             if !d.trim().is_empty() {
-                let _ = writeln!(f, "{d}");
+                let _ = writeln!(f, "{}", clip_log_text(d, ERROR_LOG_MAX_DETAIL));
             }
         }
     }
@@ -9463,7 +9380,6 @@ pub fn run() {
             export_workspace_results,
             cancel_workspace_export,
             reveal_export_folder,
-            write_user_file,
             get_scatter_sample,
             log_frontend_error,
             get_error_log_path

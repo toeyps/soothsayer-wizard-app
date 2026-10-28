@@ -3,7 +3,7 @@ import { Activity, Loader2, X } from 'lucide-react';
 import ResponsiveECharts from '../charts/ResponsiveECharts';
 import { isPickerSurfaceOpen } from '../sensor/SensorPicker';
 import { SensorInline } from '../sensor/SensorLabel';
-import { sensorInlineHtml, useSensorLookup, type SensorInfo } from '../sensor/sensorInfo';
+import { escapeHtml, safeColour, sensorInlineHtml, useSensorLookup, type SensorInfo } from '../sensor/sensorInfo';
 import { sensorAxisTitle } from './workbench/healthCharts';
 import type { SubModelFit, SubModelFitsState } from './useSubModelFits';
 
@@ -85,7 +85,8 @@ export function buildSubModelOption(fit: SubModelFit, xSensor: string, targetSen
             textStyle: { color: txtPrimary },
             formatter: (p: any) => {
                 const v = p.value as [number, number];
-                return `<div style="font-weight:bold;margin-bottom:4px;color:${p.color}">${p.seriesName}</div>`
+                const c = safeColour(typeof p.color === 'string' ? p.color : undefined);
+                return `<div style="font-weight:bold;margin-bottom:4px${c ? `;color:${c}` : ''}">${escapeHtml(String(p.seriesName ?? ''))}</div>`
                     + sensorInlineHtml(xInfo, undefined, typeof v?.[0] === 'number' ? v[0].toFixed(4) : '—')
                     + sensorInlineHtml(yInfo, undefined, typeof v?.[1] === 'number' ? v[1].toFixed(4) : '—');
             },

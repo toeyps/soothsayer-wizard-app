@@ -192,10 +192,11 @@ export function fmtNumExact(v: number | null | undefined): string {
     return groupExact(v, typedDecimals(s) ?? 0) ?? s;
 }
 
-const escapeHtml = (s: string): string =>
+/** Escape text for ECharts HTML tooltips (they are rendered as HTML, not text). */
+export const escapeHtml = (s: string): string =>
     s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 /** A CSS colour safe to drop into a style attribute (hex / rgb[a] / hsl[a] / oklch / a name). */
-const safeColour = (c: string | undefined): string | undefined =>
+export const safeColour = (c: string | undefined): string | undefined =>
     c && /^[#a-zA-Z0-9(),.%\s/-]+$/.test(c) ? c : undefined;
 
 /**

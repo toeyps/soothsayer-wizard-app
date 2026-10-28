@@ -82,7 +82,6 @@ export function createCrossFeatureBackend(opts: {
                 case 'load_metadata_command':
                 case 'load_mapping_csv':
                 case 'apply_sensor_mapping':
-                case 'write_user_file':
                 case 'log_frontend_error':
                 case 'get_error_log_path':
                     return null;
