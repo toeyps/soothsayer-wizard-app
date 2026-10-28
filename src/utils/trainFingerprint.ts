@@ -65,8 +65,11 @@ export function computeTrainFingerprint(model: FailureModel, fg: RunningConditio
         relStiffness: model.relStiffness,
         runningConditionMode: eff.mode,
         combine: eff.combine,
-        noneConfirmed: eff.noneConfirmed,
-        filters: eff.filters.filter(f => isCompleteCondition(f)).map(filterFingerprint),
+        // Key kept as `noneConfirmed` so every fingerprint saved before "Use all
+        // data" came back (2026-10-28) still matches; with all data the
+        // condition picks no rows, so it is not an input.
+        noneConfirmed: eff.allData,
+        filters: eff.allData ? [] : eff.filters.filter(f => isCompleteCondition(f)).map(filterFingerprint),
         periods: eff.periods.map(periodFingerprint),
     };
     return JSON.stringify(payload);

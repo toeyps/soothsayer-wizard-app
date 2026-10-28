@@ -3356,7 +3356,7 @@ _ปุ่มดินสอที่แต่ละแถวในแท็บ 
   - ค้นหาในรายการซ้ายด้วยหน่วยหรือชื่อ component
   - กด Details ที่บรรทัด Running condition แล้วดูป้ายในแถว Running when (ลองตั้งค่า 4000)
   - เปิด popup Running condition ดูบรรทัด "Machine is running when … is above …" แล้วย่อหน้าต่างให้แคบ
-  - **คาดหวัง:** แถวในรายการซ้ายมี 2 บรรทัด (description + หน่วย / tag) · หัวแผงขวาเป็นตัวใหญ่ มี tag และป้าย component ต่อท้าย (ป้ายกลุ่ม FG อยู่บรรทัดถัดไป) · ป้ายเป็น description + tag ตามด้วย "is above" และค่าแบบตัวพิมพ์ดีด เช่น `4,000 kW` · บรรทัดใน popup มีช่องเลือก sensor ที่กดแล้วมีกล่องรายการเด้งขึ้น (ไม่มีป้าย component ในบรรทัด — component เห็นในรายการตัวเลือก; ดู BMW-393) · ค้นหาเจอด้วยหน่วย / component
+  - **คาดหวัง:** แถวในรายการซ้ายมี 2 บรรทัด (description + หน่วย / tag) · หัวแผงขวาเป็นตัวใหญ่ มี tag และป้าย component ต่อท้าย (ป้ายกลุ่ม FG อยู่บรรทัดถัดไป) · ป้ายเป็น description + tag ตามด้วย "is above" และค่าแบบตัวพิมพ์ดีด เช่น `4,000 kW` · บรรทัดใน popup มีช่องเลือก sensor ที่กดแล้วมีกล่องรายการเด้งขึ้น (ไม่มีป้าย component ในบรรทัด — component เห็นในรายการตัวเลือก; ดู BMW-407) · ค้นหาเจอด้วยหน่วย / component
 
 <!-- ── หัว detail pane, Category, แท็บชนิด, แท็บหน้า, ปุ่มสถานะ, บรรทัดแจ้ง ── -->
 
@@ -3793,13 +3793,31 @@ _ปุ่มดินสอที่แต่ละแถวในแท็บ 
   - ทำกับโปรเจกต์ที่ตั้งเงื่อนไขแล้วแต่ยังไม่มี Train period
   - **คาดหวัง:** เปิดหน้าต่างแล้ว popup "Running condition" ขึ้นเองทันที (ด้านหลังเป็นการ์ดเหลือง "Set the running condition") · กด Cancel แล้ว popup ไม่เด้งขึ้นเองอีกระหว่างที่หน้าต่างยังเปิดอยู่ แม้มีการเปลี่ยนจาก Dashboard · ปิดเปิดหน้าต่างใหม่ = เด้งอีกครั้ง (ถ้ายังไม่ตั้ง) · โปรเจกต์ที่มีเงื่อนไขแล้วแต่ไม่มี Train period ไม่เด้งเอง (บรรทัด Running condition บอก "No train period" / "Add a train period" แทน)
 
-- [ ] **BMW-393 — popup Running condition: หัวข้อ "When the machine is running" เป็นบรรทัดเดียว "Machine is running when [sensor] is above [ค่า]" — ไม่มีตัวเลือกเครื่องหมาย ไม่มี AND / OR ไม่มี "Use all rows" ไม่มีปุ่ม Add condition** 🆕
+- [ ] **BMW-407 — popup Running condition: หัวข้อ "When the machine is running" มีตัวเลือก "Only when running" / "Use all data" และบรรทัดเดียว "Machine is running when [sensor] is above [ค่า]" — ไม่มีตัวเลือกเครื่องหมาย ไม่มี AND / OR ไม่มีปุ่ม Add condition** 🆕
   - เปิด popup ด้วยปุ่ม "Edit" (หรือ "Set running condition →") ดูโครงทั้งหน้า: หัว popup, แถบเส้นเวลา, หัวข้อทั้ง 3
-  - ที่หัวข้อ "When the machine is running" อ่านประโยคท้ายหัวข้อ แล้วดูบรรทัดข้างใต้
+  - ที่หัวข้อ "When the machine is running" อ่านประโยคท้ายหัวข้อ แล้วดูการ์ดสองใบและบรรทัดข้างใต้
   - กดช่อง sensor หลัง "Machine is running when" แล้วเลือก sensor ที่ชื่อยาวมาก
   - ดูหน่วยท้ายช่องค่า และอ่านบรรทัดเล็กใต้บรรทัดนี้
-  - ย่อหน้าต่าง Build Model ให้แคบลง แล้วดูบรรทัดนี้
-  - **คาดหวัง:** หัวข้อทั้ง 3 คือ "Train periods" · "Scoring periods" · "When the machine is running" (ไม่ใช่ "plant") · ประโยคท้ายหัวข้อ: "only rows where the machine is running are used to train and score — and the export tells the monitoring system the same. Required." · มีบรรทัดเดียว "Machine is running when [ช่อง sensor] is above [ช่องค่า หน่วย]" — **ไม่มี** ตัวเลือก "Only when running" / "Use all rows", ปุ่ม `>` `<` `↔` `=`, ปุ่ม AND / OR, ปุ่ม "Add condition" และปุ่ม ✕ · ช่องค่าว่างมีข้อความจาง ๆ "e.g. 1000" · ตั้งครบแล้วบรรทัดเล็กใต้บรรทัดเขียน "At or below <ค่า หน่วย> the machine counts as stopped — those rows are left out, and the export writes the same line as the machine’s running status." · ชื่อ sensor แสดง description ก่อน tag ชื่อยาวถูกตัดด้วย … · หน้าต่างแคบ: ไม่มีอะไรล้นหรือทับกัน · ทุกการแก้เป็นแบบร่างจนกด Apply
+  - ย่อหน้าต่าง Build Model ให้แคบลง แล้วดูส่วนนี้
+  - **คาดหวัง:** หัวข้อทั้ง 3 คือ "Train periods" · "Scoring periods" · "When the machine is running" · มีการ์ดสองใบ "Only when running" (เลือกอยู่) และ "Use all data" · ประโยคท้ายหัวข้อ: "only rows where the machine is running are used to train and score — and the export tells the monitoring system the same. Required." · มีบรรทัดเดียว "Machine is running when [ช่อง sensor] is above [ช่องค่า หน่วย]" — **ไม่มี** ปุ่ม `>` `<` `↔` `=`, ปุ่ม AND / OR, ปุ่ม "Add condition" และปุ่ม ✕ · ช่องค่าว่างมีข้อความจาง ๆ "e.g. 1000" · ตั้งครบแล้วบรรทัดเล็กเขียน "At or below <ค่า หน่วย> the machine counts as stopped — those rows are left out, and the export writes the same line as the machine’s running status." · ชื่อ sensor แสดง description ก่อน tag ชื่อยาวถูกตัดด้วย … · หน้าต่างแคบ: การ์ดสองใบเรียงลงมาได้ ไม่มีอะไรล้นหรือทับกัน · ทุกการแก้เป็นแบบร่างจนกด Apply
+
+- [ ] **BMW-408 — "Use all data": Train และ Health score ใช้ข้อมูลทุกแถวในช่วงเวลา แต่บรรทัด "Machine is running when … is above …" ยังต้องกรอก (ใช้ใน Export)** 🆕
+  - *(วิธีเตรียม: โปรเจกต์ที่ตั้ง Running condition แล้ว และมีโมเดลที่ Train แล้วอย่างน้อย 1 ตัว · ข้อมูลมีช่วงที่เครื่องหยุด)*
+  - เปิด popup Running condition กด "Use all data" อ่านประโยคท้ายหัวข้อและบรรทัดเล็กใต้บรรทัด
+  - ลบค่าในช่อง "is above" ให้ว่าง แล้วดูปุ่ม Apply
+  - ใส่ค่ากลับ กด Apply ดูการ์ด Running condition ด้านบนและสถานะโมเดล
+  - Train โมเดลใหม่ แล้วดูกราฟผล (ควรเห็นช่วงที่เครื่องหยุดด้วย)
+  - ปิดหน้าต่าง Build Model แล้วเปิดใหม่ เปิด popup อีกครั้ง
+  - Export results แล้วเปิด `machine_info.json`
+  - **คาดหวัง:** ประโยคท้ายหัวข้อเปลี่ยนเป็น "train and score use every row of the periods. The line below is still required — the export tells the monitoring system when the machine runs." · บรรทัดเล็กเขียน "Train and score keep every row. The export writes this line as the machine’s running status (stopped at or below <ค่า หน่วย>)." · ช่องค่าว่าง = ปุ่ม Apply กดไม่ได้และมีป้าย "Required" · หลัง Apply การ์ดด้านบนมีแถว "Rows used" เขียน "Use all data — idle and shutdown time included" · โมเดลที่ Train ไว้แล้วต้อง Train ใหม่ (ไม่ขึ้นว่าเป็นปัจจุบัน) · กราฟหลัง Train มีจุดของช่วงที่เครื่องหยุดด้วย · เปิดใหม่แล้ว "Use all data" ยังถูกเลือกอยู่ · `running_status` ในไฟล์ยังมี sensor และค่าที่กรอก · กดกลับ "Only when running" แล้ว Apply = โมเดลต้อง Train ใหม่อีกครั้ง
+
+- [ ] **BMW-409 — โมเดลแบบ Custom: "Use all data" ของโมเดลเอง ไม่ต้องกรอกบรรทัด sensor** 🆕
+  - เลือกโมเดลหนึ่ง เปิด Model settings → Training data เลือก "Custom"
+  - ในส่วน "When the machine is running" ของโมเดล กด "Use all data"
+  - ดูว่าบรรทัด "Machine is running when …" ยังอยู่ไหม แล้วกด Save changes และ Train
+  - ดูบรรทัดสรุปของ Model settings ตอนพับ
+  - ลองกับ workspace ที่ตั้ง "Use all data" ไว้ แล้วสลับโมเดลอีกตัวที่ยังไม่เคยเป็น Custom ไปเป็น Custom
+  - **คาดหวัง:** เลือก "Use all data" แล้วบรรทัด sensor ของโมเดลหายไป ประโยคหัวข้อเขียน "this model trains and scores on every row of its periods." · Save changes และ Train ได้โดยไม่ต้องเลือก sensor · บรรทัดสรุปเขียน "Custom · all data · … train · … scoring" · โมเดลที่สลับเป็น Custom ครั้งแรกตอน workspace เป็น "Use all data" จะได้ "Use all data" ติดมาด้วย · workspace ไม่เปลี่ยนตาม
 
 - [ ] **BMW-394 — popup Running condition: ปุ่ม Apply และบรรทัดข้างปุ่ม เมื่อบรรทัด "Machine is running when … is above …" ยังไม่ครบ** 🆕
   - เปิดโปรเจกต์ที่ยังไม่เคยตั้ง Running condition (popup เปิดเอง) ดูป้ายมุมขวาบน ช่องที่ว่าง และบรรทัดเหลืองใต้บรรทัด

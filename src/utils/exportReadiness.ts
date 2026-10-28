@@ -104,7 +104,7 @@ const stamp = (s: string, open: string): string => (s.trim() === '' ? open : s.r
  */
 export function trainingNote(model: FailureModel, fg: RunningConditionFg, headers: string[] | null = null): string {
     const eff = effectiveRunningCondition(model, fg);
-    const conds = eff.noneConfirmed ? [] : eff.filters.filter(f => isCompleteCondition(f, headers));
+    const conds = eff.allData ? [] : eff.filters.filter(f => isCompleteCondition(f, headers));
     const parts = [
         conds.length
             ? `Running only: ${conds.map(conditionText).join(eff.combine === 'or' ? ' OR ' : ' AND ')}`

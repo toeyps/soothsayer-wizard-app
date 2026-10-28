@@ -17,10 +17,10 @@ import { toFilterRanges } from './timePeriods';
  * open-both-ends period means "no time limit", and invalid periods are dropped.
  */
 export function buildPreviewFilterPayload(
-    eff: { filters: WorkspaceSensorFilter[]; combine: 'and' | 'or'; noneConfirmed: boolean; periods: TimePeriod[] },
+    eff: { filters: WorkspaceSensorFilter[]; combine: 'and' | 'or'; allData: boolean; periods: TimePeriod[] },
     headers: string[] | null,
 ): TrainingScopeFilter | null {
-    const rawFilters = eff.noneConfirmed ? [] : eff.filters;
+    const rawFilters = eff.allData ? [] : eff.filters;
     const valueFilters = rawFilters
         .filter(sf => isCompleteCondition(sf, headers))
         .map(sf => ({

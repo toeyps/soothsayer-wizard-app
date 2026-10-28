@@ -41,15 +41,15 @@ describe('isCompleteCondition', () => {
 describe('effectiveRunningCondition', () => {
     it('workspace mode reads the workspace slice with defaults', () => {
         const e = effectiveRunningCondition(mk({ id: 'a' }), fg());
-        expect(e).toEqual({ mode: 'workspace', filters: [], combine: 'and', noneConfirmed: false, periods: [], testPeriods: [] });
+        expect(e).toEqual({ mode: 'workspace', filters: [], combine: 'and', allData: false, periods: [], testPeriods: [] });
         expect(effectiveRunningCondition(mk({ id: 'a' }), null).mode).toBe('workspace');
     });
     it('custom mode ignores the workspace entirely', () => {
-        const m = mk({ id: 'a', runningConditionMode: 'custom', customRunningConditionFilters: [f({ id: 'c' })], customRunningConditionCombine: 'or', customRunningConditionNoneConfirmed: true, filterTimePeriods: [{ id: 'p', start: '', end: '' }] });
+        const m = mk({ id: 'a', runningConditionMode: 'custom', customRunningConditionFilters: [f({ id: 'c' })], customRunningConditionCombine: 'or', customRunningConditionAllData: true, filterTimePeriods: [{ id: 'p', start: '', end: '' }] });
         const e = effectiveRunningCondition(m, fg({ runningConditionFilters: [f({ id: 'w' })], runningConditionCombine: 'and', runningConditionTimePeriods: [] }));
         expect(e.filters[0].id).toBe('c');
         expect(e.combine).toBe('or');
-        expect(e.noneConfirmed).toBe(true);
+        expect(e.allData).toBe(true);
         expect(e.periods).toHaveLength(1);
     });
     it('scoring periods: workspace list in workspace mode, the model own customTestPeriods in custom mode; missing lists read as []', () => {
@@ -77,12 +77,17 @@ describe('configured rules', () => {
         expect(isWorkspaceRunningConditionConfigured(fg({ runningConditionFilters: [f({ value1: '' })] }))).toBe(false);
         expect(isWorkspaceRunningConditionConfigured(fg({ runningConditionFilters: [f()] }))).toBe(true);
     });
-    it('ONE "sensor > value" row is required (2026-10-26): an old "Use all rows" (noneConfirmed) no longer configures, nor does a non-"above" row', () => {
+    it('ONE "sensor > value" row is required (2026-10-26): an old "Use all rows" (allData) no longer configures, nor does a non-"above" row', () => {
         expect(isWorkspaceRunningConditionConfigured(fg({ runningConditionNoneConfirmed: true }))).toBe(false);
         expect(isWorkspaceRunningConditionConfigured(fg({ runningConditionFilters: [f({ operation: 'less_than' })] }))).toBe(false);
         expect(isWorkspaceRunningConditionConfigured(fg({ runningConditionFilters: [f({ operation: 'between', value2: '20' })] }))).toBe(false);
         expect(isWorkspaceRunningConditionConfigured(fg({ runningConditionFilters: [f({ operation: 'equals' })] }))).toBe(false);
         expect(isWorkspaceRunningConditionConfigured(fg({ runningConditionNoneConfirmed: true, runningConditionFilters: [f()] }))).toBe(true);
+    });
+    it('"Use all data" (2026-10-28): the workspace condition is still required (the export’s running status)', () => {
+        expect(isWorkspaceRunningConditionConfigured(fg({ runningConditionAllData: true }))).toBe(false);
+        expect(isRunningConditionConfigured(mk({ id: 'a' }), fg({ runningConditionAllData: true }))).toBe(false);
+        expect(isWorkspaceRunningConditionConfigured(fg({ runningConditionAllData: true, runningConditionFilters: [f()] }))).toBe(true);
     });
     it('time periods alone never count', () => {
         const s = fg({ runningConditionTimePeriods: [{ id: 'p', start: '2025-01-01T00:00', end: '2025-02-01T00:00' }] });
@@ -98,6 +103,8 @@ describe('configured rules', () => {
         const custom = mk({ id: 'a', runningConditionMode: 'custom' });
         expect(isRunningConditionConfigured(custom, fg({ runningConditionFilters: [f()] }))).toBe(false);
         expect(isRunningConditionConfigured({ ...custom, customRunningConditionNoneConfirmed: true }, fg())).toBe(false);
+        // A Custom model on "Use all data" needs no condition of its own.
+        expect(isRunningConditionConfigured({ ...custom, customRunningConditionAllData: true }, fg())).toBe(true);
         expect(isRunningConditionConfigured({ ...custom, customRunningConditionFilters: [f()] }, fg())).toBe(true);
         expect(isRunningConditionConfigured({ ...custom, customRunningConditionFilters: [f({ operation: 'less_than' })] }, fg())).toBe(false);
     });
@@ -183,6 +190,13 @@ describe('getBuildBlock - the gate as data (which blocker, which period)', () =>
         });
         expect(getBuildBlock({ ...custom, filterTimePeriods: [BAD] }, fg())).toMatchObject({ kind: 'invalid-train', mode: 'custom', periodNumber: 1 });
     });
+    it('"Use all data": no rows to train on never says "relax the condition"', () => {
+        const all = fg({ runningConditionFilters: [f()], runningConditionTimePeriods: TRAIN, runningConditionAllData: true });
+        expect(getBuildBlock(ws, all, null, { noTrainRows: true })).toMatchObject({ kind: 'no-rows', cause: 'zero-rows', hasCondition: false });
+        expect(getBuildBlockReason(ws, all, null, { noTrainRows: true })).not.toMatch(/relax the condition/);
+        const ownAll = { ...custom, customRunningConditionFilters: [], customRunningConditionAllData: true, filterTimePeriods: TRAIN };
+        expect(getBuildBlock(ownAll, fg())).toBeNull();
+    });
 });
 
 describe('customBlockText - a model blocked by its OWN running condition (workbench redesign §5)', () => {
@@ -218,10 +232,10 @@ describe('customBlockText - a model blocked by its OWN running condition (workbe
 
 describe('Custom panel copy (workbench redesign §5)', () => {
     it('summary line: "Custom · own running condition · 1 train · 0 scoring"', () => {
-        expect(customSummaryText({ noneConfirmed: false, conditions: 1, trainPeriods: 1, scoringPeriods: 0 })).toBe('Custom · own running condition · 1 train · 0 scoring');
-        expect(customSummaryText({ noneConfirmed: false, conditions: 0, trainPeriods: 0, scoringPeriods: 0 })).toBe('Custom · running condition not set · 0 train · 0 scoring');
+        expect(customSummaryText({ allData: false, conditions: 1, trainPeriods: 1, scoringPeriods: 0 })).toBe('Custom · own running condition · 1 train · 0 scoring');
+        expect(customSummaryText({ allData: false, conditions: 0, trainPeriods: 0, scoringPeriods: 0 })).toBe('Custom · running condition not set · 0 train · 0 scoring');
         // An old "Use all rows" flag is ignored: it no longer counts as a condition.
-        expect(customSummaryText({ noneConfirmed: true, conditions: 0, trainPeriods: 1, scoringPeriods: 1 })).toBe('Custom · running condition not set · 1 train · 1 scoring');
+        expect(customSummaryText({ allData: true, conditions: 0, trainPeriods: 1, scoringPeriods: 1 })).toBe('Custom · all data · 1 train · 1 scoring');
     });
     it('empty states and the panel footnote', () => {
         expect(NO_TRAIN_PERIOD_EMPTY_TEXT).toBe('No train period yet — add at least one');
@@ -313,6 +327,11 @@ describe('seedCustomFromWorkspace (switch to Custom, SPEC rule 7)', () => {
         const r2 = seedCustomFromWorkspace({ customFilters: [f({ id: 'mf' })], customPeriods: TRAIN, customTestPeriods: [] }, ws, ids);
         expect(Object.keys(r2.patch)).toEqual(['customTestPeriods']);
         expect(r2.copied.tests).toBe(1);
+    });
+    it('the workspace "Use all data" is copied along with the condition (only then)', () => {
+        expect(seedCustomFromWorkspace({ customFilters: [], customPeriods: [], customTestPeriods: [] }, { ...ws, allData: true }, ids).patch.customAllData).toBe(true);
+        expect(seedCustomFromWorkspace({ customFilters: [], customPeriods: [], customTestPeriods: [] }, ws, ids).patch).not.toHaveProperty('customAllData');
+        expect(seedCustomFromWorkspace({ customFilters: [f({ id: 'mf' })], customPeriods: TRAIN, customTestPeriods: [] }, { ...ws, allData: true }, ids).patch).not.toHaveProperty('customAllData');
     });
     it('nothing in the workspace -> nothing copied', () => {
         const r = seedCustomFromWorkspace({ customFilters: [], customPeriods: [], customTestPeriods: [] }, { filters: [], combine: 'and', periods: [], testPeriods: [] });

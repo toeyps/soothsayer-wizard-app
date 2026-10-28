@@ -180,4 +180,14 @@ describe('computeTrainFingerprint', () => {
         const halfBetween = fg({ runningConditionFilters: [condition({ operation: 'between', value2: '' })] });
         expect(computeTrainFingerprint(model, halfBetween)).toBe(computeTrainFingerprint(model, noCondition));
     });
+
+    it('"Use all data" (2026-10-28): off keeps every saved fingerprint (key "noneConfirmed": false); on, the condition is no input', () => {
+        const model = mk({ id: 'm1', kind: 'relationship', targetSensor: 'Y1', predictorSensors: ['A'] });
+        const off = computeTrainFingerprint(model, fg({ runningConditionFilters: [condition()] }));
+        expect(JSON.parse(off).noneConfirmed).toBe(false);
+        expect(JSON.parse(off)).not.toHaveProperty('allData');
+        const on = (value1: string) => computeTrainFingerprint(model, fg({ runningConditionAllData: true, runningConditionFilters: [condition({ value1 })] }));
+        expect(on('10')).not.toBe(off);
+        expect(on('10')).toBe(on('99'));
+    });
 });

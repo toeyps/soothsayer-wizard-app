@@ -14,9 +14,11 @@ export interface EffectiveRunningCondition {
     mode: 'workspace' | 'custom';
     filters: WorkspaceSensorFilter[];
     combine: 'and' | 'or';
-    /** OLD FILES ONLY: the removed "Use all rows" choice (2026-10-26). It no
-     *  longer counts as configured; the read-path conversion sets it to false. */
-    noneConfirmed: boolean;
+    /** "Use all data" (2026-10-28): Train and the Health score use every row of
+     *  the periods — the condition picks no rows. The workspace condition is
+     *  still required (it is the export's running status); a Custom model on
+     *  all data needs no condition of its own. */
+    allData: boolean;
     /** TRAIN periods (required to train). */
     periods: TimePeriod[];
     /** SCORING periods — the time the trained
@@ -38,7 +40,7 @@ export function effectiveRunningCondition(model: FailureModel, fg: RunningCondit
             mode: 'custom',
             filters: model.customRunningConditionFilters ?? [],
             combine: model.customRunningConditionCombine ?? 'and',
-            noneConfirmed: model.customRunningConditionNoneConfirmed ?? false,
+            allData: model.customRunningConditionAllData ?? false,
             periods: model.filterTimePeriods ?? [],
             testPeriods: model.customTestPeriods ?? [],
         };
@@ -47,7 +49,7 @@ export function effectiveRunningCondition(model: FailureModel, fg: RunningCondit
         mode: 'workspace',
         filters: fg?.runningConditionFilters ?? [],
         combine: fg?.runningConditionCombine ?? 'and',
-        noneConfirmed: fg?.runningConditionNoneConfirmed ?? false,
+        allData: fg?.runningConditionAllData ?? false,
         periods: fg?.runningConditionTimePeriods ?? [],
         testPeriods: fg?.runningConditionTestPeriods ?? [],
     };
@@ -69,21 +71,25 @@ export function isCompleteCondition(f: WorkspaceSensorFilter, headers?: string[]
     return true;
 }
 
-/** ONE "sensor > value" condition, required (2026-10-26): "Use all rows" is gone,
- *  and an old `noneConfirmed: true` no longer counts. */
-function isConfigured(filters: WorkspaceSensorFilter[], _noneConfirmed: boolean, headers?: string[] | null): boolean {
+/** ONE "sensor > value" condition (2026-10-26). */
+function hasAboveCondition(filters: WorkspaceSensorFilter[], headers?: string[] | null): boolean {
     return filters.some((f) => f.operation === 'greater_than' && isCompleteCondition(f, headers));
 }
 
-/** Workspace-level: its one complete "sensor > value" row is set. Time periods never count. */
+/** Workspace-level: its one complete "sensor > value" row is set — required even
+ *  on "Use all data", because it is the export's running status. Time periods
+ *  never count. */
 export function isWorkspaceRunningConditionConfigured(fg: RunningConditionFg, headers?: string[] | null): boolean {
-    return isConfigured(fg?.runningConditionFilters ?? [], fg?.runningConditionNoneConfirmed ?? false, headers);
+    return hasAboveCondition(fg?.runningConditionFilters ?? [], headers);
 }
 
 /** Is this model's EFFECTIVE running condition (workspace or Custom) configured? */
 export function isRunningConditionConfigured(model: FailureModel, fg: RunningConditionFg, headers?: string[] | null): boolean {
     const eff = effectiveRunningCondition(model, fg);
-    return isConfigured(eff.filters, eff.noneConfirmed, headers);
+    // A Custom model on all data uses no condition of its own (the export reads
+    // the workspace's).
+    if (eff.mode === 'custom' && eff.allData) return true;
+    return hasAboveCondition(eff.filters, headers);
 }
 
 /** Single source for the missing-category reason (Overview footer, pill, Finish). */
@@ -131,8 +137,7 @@ export interface GateOptions {
 
 /** The red line of the Running-condition settings (workspace modal and a Custom
  *  model's own panel) when the counted train periods hold no running row.
- *  `hasCondition: false` (no condition to relax) is only reachable by an old,
- *  unconverted "Use all rows" state. */
+ *  `hasCondition: false` (no condition to relax) = "Use all data". */
 export function noTrainRowsText(hasCondition = true): string {
     return `No rows match — nothing to train on. Widen a train period${hasCondition ? ' or relax the condition' : ''}.`;
 }
@@ -216,7 +221,7 @@ export type BuildBlock =
      *  ACTION): `outside-data` = no train period is inside the loaded data
      *  (`periodNumber` names it when there is just one), `zero-rows` = the
      *  settled count of the training scope holds no running row
-     *  (`hasCondition` is always true from `getBuildBlock` since 2026-10-26: past the gate there is one condition). */
+     *  (`hasCondition` is false on "Use all data"). */
     | { kind: 'no-rows'; mode: 'workspace' | 'custom'; reason: string; cause: 'outside-data' | 'zero-rows'; periodNumber?: number; hasCondition: boolean };
 
 /**
@@ -262,10 +267,8 @@ export function getBuildBlock(model: FailureModel, fg: RunningConditionFg, heade
     if (eff.periods.length === 0) {
         return { kind: 'no-train', mode, reason: mode === 'custom' ? NO_TRAIN_PERIOD_REASON_CUSTOM : NO_TRAIN_PERIOD_REASON };
     }
-    // Past the gate above there IS one "sensor > value" condition (an old
-    // "Use all rows" flag no longer configures anything), so there is always a
-    // condition to relax.
-    const hasCondition = true;
+    // On "Use all data" no condition picks the rows: nothing to relax.
+    const hasCondition = !eff.allData;
     if (opts?.bounds && allPeriodsOutsideData(eff.periods, opts.bounds)) {
         return {
             kind: 'no-rows', mode, cause: 'outside-data', hasCondition,
@@ -327,9 +330,9 @@ export function customBlockText(block: BuildBlock, opts: { settingsOpen: boolean
 /** Collapsed Model-settings summary of a Custom-mode model's own running
  *  condition: "Custom · own running condition · 1 train · 0 scoring"
  *  ("Custom · running condition not set · …" while its one line is empty).
- *  `noneConfirmed` is ignored (old files only). */
-export function customSummaryText(own: { noneConfirmed: boolean; conditions: number; trainPeriods: number; scoringPeriods: number }): string {
-    const cond = own.conditions > 0 ? 'own running condition' : 'running condition not set';
+ *  ("Custom · all data · …" on "Use all data"). */
+export function customSummaryText(own: { allData: boolean; conditions: number; trainPeriods: number; scoringPeriods: number }): string {
+    const cond = own.allData ? 'all data' : own.conditions > 0 ? 'own running condition' : 'running condition not set';
     return `Custom · ${cond} · ${own.trainPeriods} train · ${own.scoringPeriods} scoring`;
 }
 
@@ -409,7 +412,7 @@ export const ADD_TRAIN_PERIOD_HINT = 'Add a train period';
  * hold no running row — the last block is `no-rows` ("No rows to train on"; the
  * caller passes it only when the draft changed what is trained on). A count
  * that is loading, stale or failed never blocks.
- * `hasCondition: false` (only an old "Use all rows" leftover): the no-rows line
+ * `hasCondition: false` ("Use all data"): the no-rows line
  * does not say "relax the condition".
  */
 export function runningConditionApplyBlock(
@@ -454,6 +457,8 @@ export interface CustomSeedCurrent {
 export interface CustomSeedWorkspace {
     filters: WorkspaceSensorFilter[];
     combine: 'and' | 'or';
+    /** The workspace's "Use all data" — copied along with the condition. */
+    allData?: boolean;
     periods: TimePeriod[];
     testPeriods: TestPeriod[];
 }
@@ -463,6 +468,7 @@ export interface CustomSeedResult {
     patch: {
         customFilters?: WorkspaceSensorFilter[];
         customCombine?: 'and' | 'or';
+        customAllData?: boolean;
         customPeriods?: TimePeriod[];
         customTestPeriods?: TestPeriod[];
     };
@@ -495,6 +501,7 @@ export function seedCustomFromWorkspace(
         copied.conditions = workspace.filters.length;
         patch.customFilters = workspace.filters.map(f => ({ ...f, id: filterId() }));
         patch.customCombine = workspace.combine;
+        if (workspace.allData) patch.customAllData = true;
     }
     if (current.customPeriods.length === 0 && workspace.periods.length > 0) {
         copied.periods = workspace.periods.length;

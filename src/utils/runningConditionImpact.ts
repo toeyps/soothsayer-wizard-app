@@ -30,7 +30,7 @@ export interface RunningConditionDraft {
     combine: 'and' | 'or';
     /** TRAIN periods. */
     periods: TimePeriod[];
-    noneConfirmed: boolean;
+    allData: boolean;
     /** SCORING periods. */
     testPeriods: TestPeriod[];
 }
@@ -42,7 +42,7 @@ export function runningConditionDraftOf(fg: RunningConditionFg): RunningConditio
         filters: fg?.runningConditionFilters ?? [],
         combine: fg?.runningConditionCombine ?? 'and',
         periods: fg?.runningConditionTimePeriods ?? [],
-        noneConfirmed: fg?.runningConditionNoneConfirmed ?? false,
+        allData: fg?.runningConditionAllData ?? false,
         testPeriods: fg?.runningConditionTestPeriods ?? [],
     };
 }
@@ -56,7 +56,7 @@ function withDraft(fg: NonNullable<RunningConditionFg>, draft: RunningConditionD
         runningConditionFilters: draft.filters,
         runningConditionCombine: draft.combine,
         runningConditionTimePeriods: draft.periods,
-        runningConditionNoneConfirmed: draft.noneConfirmed,
+        runningConditionAllData: draft.allData,
         runningConditionTestPeriods: draft.testPeriods,
     };
 }

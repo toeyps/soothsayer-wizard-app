@@ -132,6 +132,19 @@ describe('RunningConditionCard — Invalid period', () => {
     });
 });
 
+describe('RunningConditionCard — "Use all data" (2026-10-28)', () => {
+    it('the one line says "Use all data" only when chosen; Details names the rows used', () => {
+        card();
+        expect(screen.queryByTestId('rc-card-all-data')).toBeNull();
+        cleanup();
+        detailsCard({ allData: true });
+        expect(screen.getByTestId('rc-card-rows-mode').textContent).toBe('Rows usedUse all data — idle and shutdown time included');
+        cleanup();
+        card({ allData: true });
+        expect(screen.getByTestId('rc-card-all-data').textContent).toBe('Use all data');
+    });
+});
+
 describe('RunningConditionCard — Set: ONE line (workbench redesign §1)', () => {
     const B = { min: '2025-01-01 00:00:00', max: '2026-07-31 23:50:00' };
     const S = (id: string, start: string, end: string): TestPeriod => ({ id, start, end });

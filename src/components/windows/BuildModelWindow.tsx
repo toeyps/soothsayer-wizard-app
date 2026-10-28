@@ -178,7 +178,7 @@ interface ModelDraft {
      *  the same Save-changes flow as every other field here. */
     customFilters: WorkspaceSensorFilter[];
     customCombine: 'and' | 'or';
-    customNoneConfirmed: boolean;
+    customAllData: boolean;
     customPeriods: TimePeriod[];
     /** This model's own SCORING periods (Custom mode) — staged in the draft like the
      *  other Custom lists. */
@@ -196,7 +196,7 @@ const draftFromModel = (m: FailureModel): ModelDraft => ({
     runningConditionMode: m.runningConditionMode ?? 'workspace',
     customFilters: m.customRunningConditionFilters ?? [],
     customCombine: m.customRunningConditionCombine ?? 'and',
-    customNoneConfirmed: m.customRunningConditionNoneConfirmed ?? false,
+    customAllData: m.customRunningConditionAllData ?? false,
     customPeriods: m.filterTimePeriods ?? [],
     customTestPeriods: m.customTestPeriods ?? [],
 });
@@ -351,7 +351,7 @@ interface RcDraft {
     filters: WorkspaceSensorFilter[];
     combine: 'and' | 'or';
     periods: TimePeriod[];
-    noneConfirmed: boolean;
+    allData: boolean;
     /** The workspace SCORING periods (start → end only). */
     testPeriods: TestPeriod[];
 }
@@ -405,7 +405,7 @@ function conversionAfterWorkspaceApply(
  *  edit (editing a date and typing it back must not read as "not applied"). */
 function rcDraftEqual(a: RcDraft, b: RcDraft): boolean {
     return a.combine === b.combine
-        && a.noneConfirmed === b.noneConfirmed
+        && a.allData === b.allData
         && JSON.stringify(a.filters) === JSON.stringify(b.filters)
         && JSON.stringify(a.periods) === JSON.stringify(b.periods)
         && JSON.stringify(toScoringPeriods(a.testPeriods)) === JSON.stringify(toScoringPeriods(b.testPeriods));
@@ -503,10 +503,10 @@ export default function BuildModelWindow() {
     const specialRecipesRef = useRef<SpecialSensorRecipe[] | null>(null);
     // The Running-condition dialog element (focus on open, Tab kept inside).
     const rcDialogRef = useRef<HTMLDivElement>(null);
-    // Mirrors failureGroupState.runningConditionNoneConfirmed — OLD FILES ONLY (the
-    // removed "Use all rows", 2026-10-26): it no longer configures anything and the
-    // read-path conversion sets it to false; kept so a draft round-trips unchanged.
-    const [runningConditionNoneConfirmed, setRunningConditionNoneConfirmed] = useState(false);
+    // Mirrors failureGroupState.runningConditionAllData — "Use all data" (2026-10-28):
+    // Train and the Health score use every row of the periods; the condition is
+    // still required (it is the export's running status).
+    const [runningConditionAllData, setRunningConditionAllData] = useState(false);
     // The project's details as they are on disk (name "Plant · Machine", machine, the
     // data's time zone) — re-read whenever any window saves Project details.
     const [projectInfo, setProjectInfo] = useState<ProjectInfo | null>(null);
@@ -765,7 +765,7 @@ export default function BuildModelWindow() {
         setRunningConditionCombine(fg?.runningConditionCombine ?? 'and');
         setRunningConditionTimePeriods(fg?.runningConditionTimePeriods ?? []);
         setRunningConditionTestPeriods(fg?.runningConditionTestPeriods ?? []);
-        setRunningConditionNoneConfirmed(fg?.runningConditionNoneConfirmed ?? false);
+        setRunningConditionAllData(fg?.runningConditionAllData ?? false);
         setRcConversion(fg?.runningConditionConversion ?? null);
         setCategoryNotice(fg?.categoryNormalisationNotice ?? null);
     }, []);
@@ -983,7 +983,7 @@ export default function BuildModelWindow() {
                 setRunningConditionTimePeriods([]);
                 setRunningConditionTestPeriods([]);
                 setDashHighlights([]);
-                setRunningConditionNoneConfirmed(false);
+                setRunningConditionAllData(false);
                 setRcConversion(null);
                 setRcFilterOpen(false);
                 // The unapplied draft belonged to the old workspace.
@@ -1178,7 +1178,7 @@ export default function BuildModelWindow() {
         filters?: WorkspaceSensorFilter[];
         combine?: 'and' | 'or';
         periods?: TimePeriod[];
-        noneConfirmed?: boolean;
+        allData?: boolean;
         testPeriods?: TestPeriod[];
     }): Promise<void> => {
         if (!workspaceId) return Promise.resolve();
@@ -1188,7 +1188,7 @@ export default function BuildModelWindow() {
                     ...(patch.filters !== undefined ? { runningConditionFilters: patch.filters } : {}),
                     ...(patch.combine !== undefined ? { runningConditionCombine: patch.combine } : {}),
                     ...(patch.periods !== undefined ? { runningConditionTimePeriods: patch.periods } : {}),
-                    ...(patch.noneConfirmed !== undefined ? { runningConditionNoneConfirmed: patch.noneConfirmed } : {}),
+                    ...(patch.allData !== undefined ? { runningConditionAllData: patch.allData } : {}),
                     // Scoring periods are WRITTEN as id / start / end only: a legacy label /
                     // event time (an old workspace file) never goes back to disk.
                     ...(patch.testPeriods !== undefined ? { runningConditionTestPeriods: toScoringPeriods(patch.testPeriods) } : {}),
@@ -1238,7 +1238,7 @@ export default function BuildModelWindow() {
         filters: runningConditionFilters,
         combine: runningConditionCombine,
         periods: runningConditionTimePeriods,
-        noneConfirmed: runningConditionNoneConfirmed,
+        allData: runningConditionAllData,
         testPeriods: runningConditionTestPeriods,
     };
     const rcPersistedRef = useRef<RcDraft>(rcPersisted);
@@ -1267,9 +1267,13 @@ export default function BuildModelWindow() {
         patchRcDraft(base => ({
             filters: [{ id: base.filters[0]?.id ?? `rcf-${Date.now()}`, sensor, operation: 'greater_than' as const, value1: value, value2: '' }],
             // With one condition AND / OR no longer matters: `combine` is left as it
-            // was, so typing a value back to the saved one is not an edit.
-            noneConfirmed: false,
+            // was, so typing a value back to the saved one is not an edit. "Use all
+            // data" is its own choice: editing the line keeps it.
         }));
+    }, [patchRcDraft]);
+    /** "Only when running" / "Use all data" — which rows Train and the Health score use. */
+    const setRunningConditionUseAllData = useCallback((allData: boolean) => {
+        patchRcDraft({ allData });
     }, [patchRcDraft]);
 
     // The editor hands up a typed date as soon as it is complete (in the order on
@@ -1332,7 +1336,7 @@ export default function BuildModelWindow() {
             savedPeriods: rcPersistedRef.current.periods,
             savedTestPeriods: rcPersistedRef.current.testPeriods,
             noTrainRows: gate.draft === d && gate.noTrainRows,
-            hasCondition: !d.noneConfirmed,
+            hasCondition: !d.allData,
         }) !== null) return;
         // The models this Apply sends back to training (the same answer the impact
         // line next to Apply showed): kept for the notice under the running-condition
@@ -1345,9 +1349,9 @@ export default function BuildModelWindow() {
         setRunningConditionFilters(d.filters);
         setRunningConditionCombine(d.combine);
         setRunningConditionTimePeriods(d.periods);
-        setRunningConditionNoneConfirmed(d.noneConfirmed);
+        setRunningConditionAllData(d.allData);
         setRunningConditionTestPeriods(d.testPeriods);
-        void persistRunningCondition({ filters: d.filters, combine: d.combine, periods: d.periods, noneConfirmed: d.noneConfirmed, testPeriods: d.testPeriods });
+        void persistRunningCondition({ filters: d.filters, combine: d.combine, periods: d.periods, allData: d.allData, testPeriods: d.testPeriods });
         closeRc();
     }, [closeRc, persistRunningCondition]);
 
@@ -1379,7 +1383,7 @@ export default function BuildModelWindow() {
     //      deliberately NOT gated by it. ----
     const gateFg: RunningConditionFg = {
         models: allModels, runningConditionFilters, runningConditionCombine,
-        runningConditionTimePeriods, runningConditionNoneConfirmed, runningConditionTestPeriods,
+        runningConditionTimePeriods, runningConditionAllData, runningConditionTestPeriods,
     };
     gateFgRef.current = gateFg;
     specialRecipesRef.current = specialRecipes;
@@ -1423,11 +1427,11 @@ export default function BuildModelWindow() {
     //    screen (see `customCountsWanted`).
     const persistedCountFilter = useMemo(
         () => buildPreviewFilterPayload(
-            { filters: runningConditionFilters, combine: runningConditionCombine, noneConfirmed: runningConditionNoneConfirmed, periods: runningConditionTimePeriods },
+            { filters: runningConditionFilters, combine: runningConditionCombine, allData: runningConditionAllData, periods: runningConditionTimePeriods },
             gateHeaders,
         ),
         // eslint-disable-next-line react-hooks/exhaustive-deps
-        [runningConditionFilters, runningConditionCombine, runningConditionNoneConfirmed, runningConditionTimePeriods, allSensors],
+        [runningConditionFilters, runningConditionCombine, runningConditionAllData, runningConditionTimePeriods, allSensors],
     );
     // A persisted train period that is broken (the plain date rules: a saved period
     // outside the data is a warning on the card, never "invalid").
@@ -1452,7 +1456,7 @@ export default function BuildModelWindow() {
      *  (`trainCountKey`): its train periods + its condition. */
     const customCountKeyOf = (d: ModelDraft): string => trainCountKey(
         d.customPeriods,
-        buildPreviewFilterPayload({ filters: d.customFilters, combine: d.customCombine, noneConfirmed: d.customNoneConfirmed, periods: d.customPeriods }, gateHeaders),
+        buildPreviewFilterPayload({ filters: d.customFilters, combine: d.customCombine, allData: d.customAllData, periods: d.customPeriods }, gateHeaders),
     );
     /** The training scope (`customCountKeyOf`) the ACTIVE Custom model's settled
      *  count found NO running row for, else null. Assigned further down, right
@@ -1617,7 +1621,7 @@ export default function BuildModelWindow() {
             savedPeriods: saved.periods,
             savedTestPeriods: saved.tests,
             noTrainRows: scopeChanged && customNoRowsOf(m),
-            hasCondition: !d.customNoneConfirmed,
+            hasCondition: !d.customAllData,
         });
     };
     /** That block as the reason Save / Train show. The two train-side blocks use the
@@ -1625,7 +1629,7 @@ export default function BuildModelWindow() {
      *  the preflight list) reads them the same whichever rule found them first. */
     const customSaveReason = (m: FailureModel, block: RunningConditionApplyBlock): string =>
         block.kind === 'no-train' ? NO_TRAIN_PERIOD_REASON_CUSTOM
-            : block.kind === 'no-rows' ? noTrainRowsReason('custom', !draftOf(m).customNoneConfirmed)
+            : block.kind === 'no-rows' ? noTrainRowsReason('custom', !draftOf(m).customAllData)
             : block.reason;
 
     /** Why Save is disabled (category / required fields / the model's own lists), or
@@ -1710,7 +1714,7 @@ export default function BuildModelWindow() {
         // collapsed summary shows what is actually configured.
         if (d.runningConditionMode === 'custom') {
             parts.push(customSummaryText({
-                noneConfirmed: d.customNoneConfirmed,
+                allData: d.customAllData,
                 // Only a complete "sensor > value" line counts (a half-filled one is not set).
                 conditions: d.customFilters.filter(f => f.operation === 'greater_than' && isCompleteCondition(f, gateHeaders)).length,
                 trainPeriods: d.customPeriods.length,
@@ -1735,7 +1739,9 @@ export default function BuildModelWindow() {
             runningConditionMode: d.runningConditionMode,
             customRunningConditionFilters: d.customFilters,
             customRunningConditionCombine: d.customCombine,
-            customRunningConditionNoneConfirmed: d.customNoneConfirmed,
+            // Written only once it means something, so saving an untouched model
+            // does not add the key (its bytes stay the same).
+            ...(d.customAllData || m.customRunningConditionAllData !== undefined ? { customRunningConditionAllData: d.customAllData } : {}),
             filterTimePeriods: d.customPeriods,
             // WRITTEN as id / start / end only (never a legacy label / event time).
             customTestPeriods: toScoringPeriods(d.customTestPeriods),
@@ -1780,7 +1786,7 @@ export default function BuildModelWindow() {
         // copied from the workspace ONCE — only while it is still empty.
         const { patch: seed, copied } = seedCustomFromWorkspace(
             { customFilters: d.customFilters, customPeriods: d.customPeriods, customTestPeriods: d.customTestPeriods },
-            { filters: runningConditionFilters, combine: runningConditionCombine, periods: runningConditionTimePeriods, testPeriods: runningConditionTestPeriods },
+            { filters: runningConditionFilters, combine: runningConditionCombine, allData: runningConditionAllData, periods: runningConditionTimePeriods, testPeriods: runningConditionTestPeriods },
         );
         patchDraft(m, { runningConditionMode: 'custom', ...seed });
         if (copied.conditions > 0 || copied.periods > 0 || copied.tests > 0) {
@@ -2557,7 +2563,7 @@ export default function BuildModelWindow() {
     const customCountFilter = useMemo(
         () => (activeCustomDraft && activeCustomDraft.runningConditionMode === 'custom'
             ? buildPreviewFilterPayload(
-                { filters: activeCustomDraft.customFilters, combine: activeCustomDraft.customCombine, noneConfirmed: activeCustomDraft.customNoneConfirmed, periods: activeCustomDraft.customPeriods },
+                { filters: activeCustomDraft.customFilters, combine: activeCustomDraft.customCombine, allData: activeCustomDraft.customAllData, periods: activeCustomDraft.customPeriods },
                 gateHeaders,
             )
             : null),
@@ -2609,7 +2615,7 @@ export default function BuildModelWindow() {
         autoRecomputeRef.current = p;
         void p.finally(() => { if (autoRecomputeRef.current === p) autoRecomputeRef.current = null; });
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [activeModel?.id, activeModel?.trainedFingerprint, activeModel?.lastTrainedAt, activeModel?.status, activeModel?.category, runningConditionFilters, runningConditionCombine, runningConditionTimePeriods, runningConditionNoneConfirmed, queue.isRunning, activeModel ? trainResults[activeModel.id]?.fingerprint : undefined, activeGuardHolds, activeNoData !== null]);
+    }, [activeModel?.id, activeModel?.trainedFingerprint, activeModel?.lastTrainedAt, activeModel?.status, activeModel?.category, runningConditionFilters, runningConditionCombine, runningConditionTimePeriods, runningConditionAllData, queue.isRunning, activeModel ? trainResults[activeModel.id]?.fingerprint : undefined, activeGuardHolds, activeNoData !== null]);
 
     const activeFingerprint = activeEffective ? computeTrainFingerprint(activeEffective, gateFg) : null;
     const activeStale = activeEffective ? isModelStaleFor(activeEffective, gateFg, specialRecipes) : false;
@@ -2772,7 +2778,7 @@ export default function BuildModelWindow() {
         const eff = effectiveRunningCondition(merged, gateFg);
         return JSON.stringify(buildPreviewFilterPayload(eff, gateHeaders));
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [activeModel?.id, criteriaSensorForActive, drafts, runningConditionFilters, runningConditionCombine, runningConditionTimePeriods, runningConditionNoneConfirmed, gateHeaders]);
+    }, [activeModel?.id, criteriaSensorForActive, drafts, runningConditionFilters, runningConditionCombine, runningConditionTimePeriods, runningConditionAllData, gateHeaders]);
     // The stats only count for the model + criteria sensor + filter they were fetched for.
     // The reset below runs in an effect, i.e. AFTER the render that switched the criteria
     // sensor A -> B, so in that render the state still holds A's stats. Deriving per render
@@ -2881,11 +2887,11 @@ export default function BuildModelWindow() {
     // own count are asked further up — the gate reads them.)
     const draftCountFilter = useMemo(
         () => buildPreviewFilterPayload(
-            rcDraft ?? { filters: runningConditionFilters, combine: runningConditionCombine, noneConfirmed: runningConditionNoneConfirmed, periods: runningConditionTimePeriods },
+            rcDraft ?? { filters: runningConditionFilters, combine: runningConditionCombine, allData: runningConditionAllData, periods: runningConditionTimePeriods },
             gateHeaders,
         ),
         // eslint-disable-next-line react-hooks/exhaustive-deps
-        [rcDraft, runningConditionFilters, runningConditionCombine, runningConditionNoneConfirmed, runningConditionTimePeriods, allSensors],
+        [rcDraft, runningConditionFilters, runningConditionCombine, runningConditionAllData, runningConditionTimePeriods, allSensors],
     );
     // The modal's DRAFT (what Apply would commit). The lists are the draft's own
     // arrays (stable until the draft changes), the filter is memoised above.
@@ -2909,7 +2915,7 @@ export default function BuildModelWindow() {
     const rcCountView = rcDraft ?? rcPersisted;
     const rcNoRows = rcFilterOpen
         && isWorkspaceRunningConditionConfigured(
-            { runningConditionFilters: rcCountView.filters, runningConditionNoneConfirmed: rcCountView.noneConfirmed },
+            { runningConditionFilters: rcCountView.filters, runningConditionAllData: rcCountView.allData },
             gateHeaders,
         )
         && countedNoTrainRows(rcCounts)
@@ -3751,8 +3757,9 @@ export default function BuildModelWindow() {
                         onPeriodsChange={periods => patchDraft(m, { customPeriods: periods })}
                         bounds={datasetBounds}
                         condition={d.customFilters[0]}
+                        allData={d.customAllData}
+                        onAllDataChange={allData => patchDraft(m, { customAllData: allData })}
                         onConditionChange={({ sensor, value }) => patchDraft(m, {
-                            customNoneConfirmed: false,
                             customFilters: [{ id: d.customFilters[0]?.id ?? `rcf-${m.id}`, sensor, operation: 'greater_than', value1: value, value2: '' }],
                         })}
                         sensors={allSensors}
@@ -4929,7 +4936,7 @@ export default function BuildModelWindow() {
         savedPeriods: rcPersisted.periods,
         savedTestPeriods: rcPersisted.testPeriods,
         noTrainRows: rcNoRows,
-        hasCondition: !rcView.noneConfirmed,
+        hasCondition: !rcView.allData,
     });
     // Apply writes the DRAFT, and a typed date is in the draft as soon as it is
     // complete — so "dirty" is the whole condition, and the impact line below is on
@@ -4939,8 +4946,8 @@ export default function BuildModelWindow() {
     // removes a condition that was set. Applying periods while it was never set is
     // allowed (the footer says the models still can't train).
     const rcDraftCond = rcView.filters[0];
-    const rcDraftSet = isWorkspaceRunningConditionConfigured({ runningConditionFilters: rcView.filters, runningConditionNoneConfirmed: false }, gateHeaders);
-    const rcWasSet = isWorkspaceRunningConditionConfigured({ runningConditionFilters: rcPersisted.filters, runningConditionNoneConfirmed: false }, gateHeaders);
+    const rcDraftSet = isWorkspaceRunningConditionConfigured({ runningConditionFilters: rcView.filters, runningConditionAllData: false }, gateHeaders);
+    const rcWasSet = isWorkspaceRunningConditionConfigured({ runningConditionFilters: rcPersisted.filters, runningConditionAllData: false }, gateHeaders);
     const rcCondWhy = rcDraftSet ? null
         : (rcWasSet || (rcDraftCond && (rcDraftCond.sensor || (rcDraftCond.value1 ?? '').trim())))
             ? 'Set “Machine is running when … is above …” before applying' : null;
@@ -4958,7 +4965,7 @@ export default function BuildModelWindow() {
         ? runningConditionImpact(gateFg, rcDraft, { recipes: specialRecipes ?? undefined })
         : null;
     const rcViewConfigured = isWorkspaceRunningConditionConfigured(
-        { runningConditionFilters: rcView.filters, runningConditionNoneConfirmed: rcView.noneConfirmed },
+        { runningConditionFilters: rcView.filters, runningConditionAllData: rcView.allData },
         gateHeaders,
     );
 
@@ -5120,6 +5127,7 @@ export default function BuildModelWindow() {
                     testPeriods={runningConditionTestPeriods}
                     noRows={cardNoRows}
                     why={rcNeedsSetWhy && !rcConfigured ? rcNeedsSetWhy : undefined}
+                    allData={runningConditionAllData}
                 />
                 {rcConversionNotice}
                 {/* Train queue run strip (its own memoised component): progress never
@@ -5305,6 +5313,8 @@ export default function BuildModelWindow() {
                                 bounds={datasetBounds}
                                 condition={rcView.filters[0]}
                                 onConditionChange={setRunningConditionLine}
+                                allData={rcView.allData}
+                                onAllDataChange={setRunningConditionUseAllData}
                                 sensors={allSensors}
                                 getComponent={getComponent}
                                 getUnit={getUnit}

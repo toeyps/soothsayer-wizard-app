@@ -4233,7 +4233,7 @@ describe('Running condition Step 1 — header, card, settings modal preview (202
     it('App.css defines the new blocks (and the old rcbar / collapsible-header rules are gone)', () => {
         for (const sel of ['.rcc-card', '.rcc-card--req', '.rcc-card--bad', '.rcc-card--ok', '.rcm-body', '.rcm-scroll', '.rcm-per', '.rcm-per--bad', '.bmw-modal--rc',
             '.rct', '.rct-lane', '.rct-blk', '.rct-cap', '.rcx-sec', '.rcx-sec-h', '.rcx-line', '.rcx-footnote', '.rc-impact', '.rc-notice',
-            '.rs-row', '.rc1-row', '.rc1-row--unset', '.rc1-notice', '.rc1-grid']) {
+            '.rs-row', '.rc1-row', '.rc1-row--unset', '.rc1-notice', '.rc1-grid', '.rcx-rows-mode', '.rcx-mode', '.rcx-mode--on']) {
             expect(() => cssBlock(sel), sel).not.toThrow();
         }
         expect(cssBlock('.bmw-modal--rc')).toMatch(/display:\s*flex/);
@@ -4249,7 +4249,7 @@ describe('Running condition Step 1 — header, card, settings modal preview (202
         expect(cssBlock('.rcm-per--bad')).not.toMatch(/background/);
         for (const gone of ['.bmw-rcbar', '.f4-rc', '.f4-rc-h', '.f4-prow', '.wb2-steps', '.wb2-stp', '.wb2-sn', '.wb2-sline', '.rcm-preview', '.rcm-mcard', '.rcm-step', '.tpe-callout', '.rcm-sentence',
             // the multi-condition editor and the separate running-status line (2026-10-26)
-            '.rcm-cond', '.rcm-joinbtn', '.rcm-ops', '.rcx-radio', '.rcx-mode', '.rs-line', '.rs-note', '.rcc-andor']) {
+            '.rcm-cond', '.rcm-joinbtn', '.rcm-ops', '.rcx-radio', '.rs-line', '.rs-note', '.rcc-andor']) {
             expect(() => cssBlock(gone), gone).toThrow();
         }
     });
@@ -10378,7 +10378,7 @@ describe('The ONE running-condition line ("Machine is running when … is above 
         expect(screen.queryByText('Use all rows')).toBeNull();
     });
 
-    it('Apply writes the ONE "sensor > value" row (combine and, no "Use all rows") in one write', async () => {
+    it('Apply writes the ONE "sensor > value" row (combine and, "Only when running") in one write', async () => {
         await mount({ runningConditionFilters: [ABOVE1] });
         setRcLine('TAG2', '40');
         expect(why()).toBeNull();
@@ -10387,8 +10387,28 @@ describe('The ONE running-condition line ("Machine is running when … is above 
         const fg = disk.failureGroupState;
         expect(fg.runningConditionFilters).toEqual([{ id: 'f1', sensor: 'TAG2', operation: 'greater_than', value1: '40', value2: '' }]);
         expect(fg.runningConditionCombine).toBe('and');
-        expect(fg.runningConditionNoneConfirmed).toBe(false);
+        expect(fg.runningConditionAllData).toBe(false);
         expect(screen.queryByRole('dialog', { name: 'Running condition' })).toBeNull();
+    });
+
+    it('"Use all data" (2026-10-28): Apply writes the choice and KEEPS the line (the export needs it); editing the line keeps the choice', async () => {
+        await mount({ runningConditionFilters: [ABOVE1] });
+        fireEvent.click(screen.getByTestId('rc-mode-all'));
+        setRcLine('TAG2', '40');
+        expect(screen.getByTestId('rc-mode-all').getAttribute('aria-checked')).toBe('true');
+        expect(why()).toBeNull();
+        await apply();
+        const fg = disk.failureGroupState;
+        expect(fg.runningConditionAllData).toBe(true);
+        expect(fg.runningConditionFilters).toEqual([{ id: 'f1', sensor: 'TAG2', operation: 'greater_than', value1: '40', value2: '' }]);
+    });
+
+    it('"Use all data" does not excuse a half-filled line (the line is required for the export)', async () => {
+        await mount({ runningConditionFilters: [] });
+        fireEvent.click(screen.getByTestId('rc-mode-all'));
+        setRcLine('TAG2', null);
+        expect(applyBtn().disabled).toBe(true);
+        expect(why()).toBe(WHY);
     });
 
     it('a half-filled line blocks Apply with the reason (sensor without a value, and value without a sensor) — nothing is written', async () => {

@@ -102,9 +102,9 @@ describe('trainingNote', () => {
         });
         expect(trainingNote(m, baseFg([m]))).toBe('Running only: SPEED between 1 and 5 OR P1 < 3; train periods start of data to end of data; own condition of this model; rows with a missing value removed');
     });
-    it('Use all rows', () => {
+    it('Use all data', () => {
         const m = mk({ id: 'i', targetSensor: 'T1' });
-        expect(trainingNote(m, baseFg([m], { runningConditionNoneConfirmed: true, runningConditionTimePeriods: [] })))
+        expect(trainingNote(m, baseFg([m], { runningConditionAllData: true, runningConditionTimePeriods: [] })))
             .toBe('All rows (no running condition); rows with a missing value removed');
     });
 });
@@ -257,7 +257,7 @@ describe('buildWorkspaceExportRequest', () => {
             id: 'c1', kind: 'clustering', name: 'Pump', xSensor: 'X', ySensor: 'Y', numClusters: 2, criteriaSensor: 'C', category: 'condition',
             clusterRanges: [{ min: null, max: 5 }, { min: 5, max: null }, { min: 9, max: 10 }],
             runningConditionMode: 'custom', customRunningConditionFilters: [{ id: 'q', sensor: 'P1', operation: 'less_than', value1: '50', value2: '' }],
-            customRunningConditionNoneConfirmed: false, filterTimePeriods: [{ id: 'cp', start: '2025-02-01T00:00', end: '' }],
+            customRunningConditionAllData: false, filterTimePeriods: [{ id: 'cp', start: '2025-02-01T00:00', end: '' }],
             healthSetPoints: { kind: 'clustering', outerSd: 4 },
         });
         const rel = mk({ id: 'r1', kind: 'relationship', name: 'Rel', targetSensor: 'T1', predictorSensors: ['P1', 'P2'], relStiffness: 1000, category: null, groupNos: [0, 1] });

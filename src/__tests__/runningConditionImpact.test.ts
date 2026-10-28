@@ -20,7 +20,7 @@ const SCORE: TestPeriod[] = [{ id: 'sc', start: '2025-07-01T00:00', end: '2025-0
 const slice = (models: FailureModel[], over: Partial<FailureGroupStateSlice> = {}): FailureGroupStateSlice => ({
     groups: [], models,
     runningConditionFilters: [cond('10')], runningConditionCombine: 'and',
-    runningConditionTimePeriods: TRAIN, runningConditionNoneConfirmed: false,
+    runningConditionTimePeriods: TRAIN, runningConditionAllData: false,
     runningConditionTestPeriods: SCORE, rcLegacyNotice: null,
     ...over,
 });
@@ -39,7 +39,7 @@ const draft = (fg: FailureGroupStateSlice, over: Partial<RunningConditionDraft> 
 
 const ind = (id: string, over: Partial<FailureModel> = {}) => mk({ id, kind: 'individual', targetSensor: `T-${id}`, category: 'condition', ...over });
 const customOf = (id: string, over: Partial<FailureModel> = {}) => ind(id, {
-    runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true,
+    runningConditionMode: 'custom', customRunningConditionAllData: true,
     filterTimePeriods: [{ id: 'own', start: '2025-01-01T00:00', end: '2025-03-31T23:59' }],
     customTestPeriods: [{ id: 'own-s', start: '2025-04-01T00:00', end: '2025-04-30T23:59' }],
     ...over,
@@ -50,7 +50,7 @@ function applyForReal(fg: FailureGroupStateSlice, d: RunningConditionDraft): Fai
     const prev = { id: 'ws', name: 'W', failureGroupState: fg } as unknown as WorkspaceState;
     const next = withFailureGroupState(prev, {
         runningConditionFilters: d.filters, runningConditionCombine: d.combine, runningConditionTimePeriods: d.periods,
-        runningConditionNoneConfirmed: d.noneConfirmed, runningConditionTestPeriods: d.testPeriods,
+        runningConditionAllData: d.allData, runningConditionTestPeriods: d.testPeriods,
     });
     return applyIncompleteRule(prev, next, { now: '2026-10-10T00:00:00Z' }).failureGroupState!;
 }
@@ -58,9 +58,9 @@ function applyForReal(fg: FailureGroupStateSlice, d: RunningConditionDraft): Fai
 describe('runningConditionDraftOf', () => {
     it('the persisted workspace running condition in draft shape; missing fields read as their defaults', () => {
         const fg = slice([]);
-        expect(runningConditionDraftOf(fg)).toEqual({ filters: fg.runningConditionFilters, combine: 'and', periods: TRAIN, noneConfirmed: false, testPeriods: SCORE });
-        expect(runningConditionDraftOf({ groups: [], models: [] })).toEqual({ filters: [], combine: 'and', periods: [], noneConfirmed: false, testPeriods: [] });
-        expect(runningConditionDraftOf(null)).toEqual({ filters: [], combine: 'and', periods: [], noneConfirmed: false, testPeriods: [] });
+        expect(runningConditionDraftOf(fg)).toEqual({ filters: fg.runningConditionFilters, combine: 'and', periods: TRAIN, allData: false, testPeriods: SCORE });
+        expect(runningConditionDraftOf({ groups: [], models: [] })).toEqual({ filters: [], combine: 'and', periods: [], allData: false, testPeriods: [] });
+        expect(runningConditionDraftOf(null)).toEqual({ filters: [], combine: 'and', periods: [], allData: false, testPeriods: [] });
     });
 });
 
@@ -80,7 +80,7 @@ describe('runningConditionImpact — the line next to Apply (SPEC §5 "Before Ap
             { filters: [cond('11'), cond('20', 'f2')] },
             { filters: [cond('10')] },
             { combine: 'or' },
-            { noneConfirmed: true },
+            { allData: true },
             { periods: [...TRAIN, { id: 'tr2', start: '2025-08-01T00:00', end: '2025-08-31T23:59' }] },
         ];
         for (const over of changes) {
@@ -111,7 +111,7 @@ describe('runningConditionImpact — the line next to Apply (SPEC §5 "Before Ap
         const legacy = ind('legacy', { status: true }); // status true, never "trained" on record
         const fg = slice([legacy]);
         expect(isModelComplete(legacy, fg)).toBe(true);
-        const d = draft(fg, { noneConfirmed: true });
+        const d = draft(fg, { allData: true });
         expect(runningConditionImpact(fg, d).retrainIds).toEqual(['legacy']);
         expect(applyForReal(fg, d).models[0].status).toBe(false); // ... which is what the write does
     });
@@ -240,7 +240,7 @@ describe('runningConditionImpact agrees with what Apply really does', () => {
 
     it('both: the train rule wins in the write (no testsChangedAt) — and in the line (no "Mark complete again" count)', () => {
         const fg = fresh();
-        const d = draft(fg, { noneConfirmed: true, testPeriods: [] });
+        const d = draft(fg, { allData: true, testPeriods: [] });
         const impact = runningConditionImpact(fg, d);
         const after = applyForReal(fg, d);
         expect(after.models.some(m => m.testsChangedAt)).toBe(false);

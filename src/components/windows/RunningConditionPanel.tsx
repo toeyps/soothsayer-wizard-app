@@ -28,9 +28,14 @@ import TimePeriodsEditor, { type PeriodBounds } from './TimePeriodsEditor';
  *                                  "Machine is running when [sensor] is above [value unit]"
  *
  * The running condition is that one line (user decision 2026-10-26): no
- * operator choice, no second condition, no AND / OR, no "Use all rows". It
- * filters the rows for Train and the Health score, and (workspace scope) it is
- * the export's `machine_info.running_status`. It is required.
+ * operator choice, no second condition, no AND / OR. It filters the rows for
+ * Train and the Health score, and (workspace scope) it is the export's
+ * `machine_info.running_status`. It is required.
+ *
+ * Above the line, "Only when running | Use all data" (back 2026-10-28, user
+ * decision): on all data Train and the Health score use every row of the
+ * periods. The workspace line stays required (the export still needs it); a
+ * Custom model on all data has no line of its own (hidden).
  *
  * No right-hand preview column and no callout boxes. No number of data rows
  * either (user decision 2026-10-14): the counts are shown as running DAYS — in
@@ -67,6 +72,9 @@ export interface RunningConditionPanelProps {
     condition: WorkspaceSensorFilter | undefined;
     /** Sets the condition from the line's sensor and value. */
     onConditionChange: (next: { sensor: string; value: string }) => void;
+    /** "Use all data": Train and the Health score use every row of the periods. */
+    allData?: boolean;
+    onAllDataChange?: (next: boolean) => void;
     sensors: string[];
     getComponent: (tag: string) => string;
     getUnit: (tag: string) => string;
@@ -94,7 +102,7 @@ export interface RunningConditionPanelProps {
 
 export default function RunningConditionPanel({
     scope = 'workspace', configured, periods, onPeriodsChange, bounds, condition,
-    onConditionChange, sensors, getComponent, getUnit,
+    onConditionChange, allData = false, onAllDataChange, sensors, getComponent, getUnit,
     counts = PERIOD_COUNTS_IDLE, testPeriods, onTestPeriodsChange, highlights, onPendingDate, savedPeriods, savedTestPeriods,
 }: RunningConditionPanelProps) {
     const custom = scope === 'custom';
@@ -110,6 +118,8 @@ export default function RunningConditionPanel({
     // workspace modal over a Custom model's open settings).
     const id = (workspace: string, own: string) => (custom ? own : workspace);
     const notTrainable = custom ? 'This model can’t be trained until it is set.' : 'No model can be trained until it is set.';
+    // A Custom model on all data has no line of its own (the export reads the workspace's).
+    const showLine = !(custom && allData);
 
     return (
         <div data-testid={id('rc-panel', 'custom-rc-panel')} className={`rcm-body${custom ? ' rcm-body--own' : ''}`}>
@@ -154,9 +164,30 @@ export default function RunningConditionPanel({
                 <div className="rcx-sec-h">
                     <b>When the machine is running</b>
                     <span>{custom
-                        ? 'only rows where the machine is running are used to train and score this model. Required.'
-                        : 'only rows where the machine is running are used to train and score — and the export tells the monitoring system the same. Required.'}</span>
+                        ? (allData ? 'this model trains and scores on every row of its periods.' : 'only rows where the machine is running are used to train and score this model. Required.')
+                        : allData
+                            ? 'train and score use every row of the periods. The line below is still required — the export tells the monitoring system when the machine runs.'
+                            : 'only rows where the machine is running are used to train and score — and the export tells the monitoring system the same. Required.'}</span>
                 </div>
+                <div className="rcx-rows-mode" role="radiogroup" aria-label="Rows used to train and score" data-testid={id('rc-rows-mode', 'custom-rc-rows-mode')}>
+                    {([
+                        [false, 'Only when running', 'rows at or below the value are left out'],
+                        [true, 'Use all data', 'idle and shutdown time included'],
+                    ] as const).map(([v, label, hint]) => (
+                        <button
+                            key={label}
+                            type="button"
+                            role="radio"
+                            aria-checked={allData === v}
+                            data-testid={id(v ? 'rc-mode-all' : 'rc-mode-running', v ? 'custom-rc-mode-all' : 'custom-rc-mode-running')}
+                            className={`rcx-mode${allData === v ? ' rcx-mode--on' : ''}`}
+                            onClick={() => { if (allData !== v) onAllDataChange?.(v); }}
+                        >
+                            <b>{label}</b><span>{hint}</span>
+                        </button>
+                    ))}
+                </div>
+                {showLine && <>
                 <div className={`rs-row rc1-row${!configured ? ' rc1-row--unset' : ''}`} data-testid={id('rc-one', 'custom-rc-one')}>
                     <span className="rs-l">Machine is running when</span>
                     <span className={`rs-pick${!sensor ? ' rc1-pick--empty' : ''}`}>
@@ -192,11 +223,16 @@ export default function RunningConditionPanel({
                             : !sensor ? 'Pick the sensor that shows the machine is running.' : 'Type the value above which the machine is running.'}
                         {' '}{notTrainable}
                     </div>
+                ) : allData ? (
+                    <div className="rcx-line" data-testid="rc-one-note">
+                        Train and score keep every row. The export writes this line as the machine’s running status (stopped at or below <span className="rc1-num">{fmtNumText(value.trim())}{unit ? ` ${unit}` : ''}</span>).
+                    </div>
                 ) : (
                     <div className="rcx-line" data-testid="rc-one-note">
                         At or below <span className="rc1-num">{fmtNumText(value.trim())}{unit ? ` ${unit}` : ''}</span> the machine counts as stopped — those rows are left out{custom ? ' for this model' : ', and the export writes the same line as the machine’s running status'}.
                     </div>
                 )}
+                </>}
             </section>
 
             {custom && <div className="rcx-footnote" data-testid="custom-rc-footnote">{CUSTOM_PANEL_FOOTNOTE}</div>}

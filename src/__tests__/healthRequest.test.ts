@@ -22,7 +22,7 @@ import { computeTrainFingerprint } from '../utils/trainFingerprint';
 const fg = (over: Partial<FailureGroupStateSlice> = {}): FailureGroupStateSlice => ({
     groups: [], models: [],
     runningConditionFilters: [], runningConditionCombine: 'and',
-    runningConditionTimePeriods: [], runningConditionNoneConfirmed: true,
+    runningConditionTimePeriods: [], runningConditionAllData: true,
     ...over,
 });
 const HEADERS = ['T', 'P1', 'P2', 'X', 'Y', 'C', 'SPEED'];
@@ -55,12 +55,12 @@ describe('healthSetPointsToWire (camelCase model fields -> snake_case wire)', ()
 
 describe('buildPreviewFilterPayload / trainingScopeFilter (extracted from BuildModelWindow, behaviour unchanged)', () => {
     it('is null with no condition and no period', () => {
-        expect(buildPreviewFilterPayload({ filters: [], combine: 'and', noneConfirmed: true, periods: [] }, HEADERS)).toBeNull();
+        expect(buildPreviewFilterPayload({ filters: [], combine: 'and', allData: true, periods: [] }, HEADERS)).toBeNull();
     });
 
     it('sends complete conditions with parsed numbers, the combine mode and the periods', () => {
         const out = buildPreviewFilterPayload({
-            filters: [speedOver('1200')], combine: 'or', noneConfirmed: false,
+            filters: [speedOver('1200')], combine: 'or', allData: false,
             periods: [{ id: 'p', start: '2026-01-01T00:00', end: '2026-02-01T00:00' }],
         }, HEADERS);
         expect(out).toEqual({
@@ -72,21 +72,21 @@ describe('buildPreviewFilterPayload / trainingScopeFilter (extracted from BuildM
 
     it('drops incomplete rows and rows on sensors that are not in the dataset', () => {
         const out = buildPreviewFilterPayload({
-            filters: [speedOver(''), { ...speedOver('5'), id: 'g', sensor: 'NOPE' }], combine: 'and', noneConfirmed: false, periods: [],
+            filters: [speedOver(''), { ...speedOver('5'), id: 'g', sensor: 'NOPE' }], combine: 'and', allData: false, periods: [],
         }, HEADERS);
         expect(out).toBeNull();
     });
 
     it('"No condition" sends no value filters even when rows exist', () => {
-        expect(buildPreviewFilterPayload({ filters: [speedOver('5')], combine: 'and', noneConfirmed: true, periods: [] }, HEADERS)).toBeNull();
+        expect(buildPreviewFilterPayload({ filters: [speedOver('5')], combine: 'and', allData: true, periods: [] }, HEADERS)).toBeNull();
     });
 
     it('a fully open period means "no time limit"', () => {
-        expect(buildPreviewFilterPayload({ filters: [], combine: 'and', noneConfirmed: true, periods: [{ id: 'p', start: '', end: '' }] }, HEADERS)).toBeNull();
+        expect(buildPreviewFilterPayload({ filters: [], combine: 'and', allData: true, periods: [{ id: 'p', start: '', end: '' }] }, HEADERS)).toBeNull();
     });
 
     it('trainingScopeFilter follows the Workspace condition in workspace mode and the model\'s own in custom mode', () => {
-        const slice = fg({ runningConditionNoneConfirmed: false, runningConditionFilters: [speedOver('100')] });
+        const slice = fg({ runningConditionAllData: false, runningConditionFilters: [speedOver('100')] });
         const wsModel = mk({ id: 'a', targetSensor: 'T' });
         const customModel = mk({
             id: 'b', targetSensor: 'T', runningConditionMode: 'custom',
@@ -103,7 +103,7 @@ describe('buildHealthPreviewRequest', () => {
     it('Individual: target, snake_case set points, default max_points, the training scope, no optional keys', () => {
         const model = mk({ id: 'i1', kind: 'individual', targetSensor: 'T' });
         const req = buildHealthPreviewRequest({
-            model, fg: fg({ runningConditionNoneConfirmed: false, runningConditionFilters: [speedOver('1200')] }),
+            model, fg: fg({ runningConditionAllData: false, runningConditionFilters: [speedOver('1200')] }),
             headers: HEADERS, setPoints: indSp,
         });
         expect(req).toEqual({
@@ -148,7 +148,7 @@ describe('buildHealthPreviewRequest', () => {
             buildHealthPreviewRequest({ model: m, fg: slice, headers: HEADERS, setPoints: relSp })!.cache_key;
 
         it('changes with the workspace running condition (workspace-mode model)', () => {
-            expect(key(base(), fg({ runningConditionNoneConfirmed: false, runningConditionFilters: [speedOver('1')] })))
+            expect(key(base(), fg({ runningConditionAllData: false, runningConditionFilters: [speedOver('1')] })))
                 .not.toBe(key());
             expect(key(base(), fg({ runningConditionTimePeriods: [{ id: 'p', start: '2026-01-01T00:00', end: '' }] })))
                 .not.toBe(key());
@@ -156,10 +156,10 @@ describe('buildHealthPreviewRequest', () => {
         });
 
         it('changes with the model\'s own scope in custom mode, but NOT with the workspace one', () => {
-            const custom = { ...base(), runningConditionMode: 'custom' as const, customRunningConditionNoneConfirmed: true };
+            const custom = { ...base(), runningConditionMode: 'custom' as const, customRunningConditionAllData: true };
             const k0 = key(custom);
             expect(key({ ...custom, filterTimePeriods: [{ id: 'p', start: '2026-03-01T00:00', end: '2026-04-01T00:00' }] })).not.toBe(k0);
-            expect(key(custom, fg({ runningConditionNoneConfirmed: false, runningConditionFilters: [speedOver('1')] }))).toBe(k0);
+            expect(key(custom, fg({ runningConditionAllData: false, runningConditionFilters: [speedOver('1')] }))).toBe(k0);
         });
 
         it('changes with predictors, target and stiffness; not with predictor order, name, notes, category, status or set points', () => {

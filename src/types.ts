@@ -171,6 +171,10 @@ export interface PredictiveModelStateSlice {
      *  2026-10-26). No longer counts as configured; `migrateSingleRunningCondition`
      *  sets it back to `false`. */
     customRunningConditionNoneConfirmed?: boolean;
+    /** Custom mode's "Use all data" (2026-10-28): this model trains and scores on
+     *  every row of its own periods — it needs no condition of its own.
+     *  `undefined` = false. */
+    customRunningConditionAllData?: boolean;
     /** 'workspace' (default): this model's training window AND running
      *  condition are the workspace's
      *  (`FailureGroupStateSlice.runningConditionTimePeriods`/
@@ -411,6 +415,12 @@ export interface FailureGroupStateSlice {
      *  longer counts as a configured running condition; read once by
      *  `migrateSingleRunningCondition`, which sets it back to `false`. */
     runningConditionNoneConfirmed?: boolean;
+    /** "Use all data" (2026-10-28, user decision): Train and the Health score use
+     *  every row of the periods instead of only the running ones. The condition
+     *  stays required — it is still the export's `machine_info.running_status`.
+     *  A new key on purpose: the old `runningConditionNoneConfirmed` is reset by
+     *  the read-path conversion. `undefined` = false. */
+    runningConditionAllData?: boolean;
     /** Category changes made by the one-time normalisation. `undefined` =
      *  step not run yet; `null` = nothing to show / dismissed. */
     categoryNormalisationNotice?: CategoryChange[] | null;

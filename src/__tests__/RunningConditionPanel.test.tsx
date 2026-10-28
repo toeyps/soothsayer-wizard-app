@@ -204,12 +204,11 @@ describe('RunningConditionPanel — one column (workbench redesign §5)', () => 
 });
 
 describe('RunningConditionPanel — the ONE running condition line (2026-10-26)', () => {
-    it('the section heading and its one sentence; no radios, no AND / OR, no operator buttons, no Add condition', () => {
+    it('the section heading and its one sentence; no AND / OR, no operator buttons, no Add condition', () => {
         setup();
         const sec = screen.getByTestId('rc-condition');
         expect(sec.querySelector('.rcx-sec-h b')!.textContent).toBe('When the machine is running');
         expect(sec.querySelector('.rcx-sec-h span')!.textContent).toBe('only rows where the machine is running are used to train and score — and the export tells the monitoring system the same. Required.');
-        expect(within(sec).queryByRole('radiogroup')).toBeNull();
         expect(screen.queryByTestId('rc-mode-none')).toBeNull();
         expect(screen.queryByTestId('rc-combine')).toBeNull();
         expect(screen.queryByTestId('rc-add-condition')).toBeNull();
@@ -284,6 +283,43 @@ describe('RunningConditionPanel — the ONE running condition line (2026-10-26)'
         expect(warn.textContent).toContain('GONE_TAG');
         expect(warn.textContent).toContain('is not in the loaded data — pick another sensor.');
         expect(screen.queryByTestId('rc-one-note')).toBeNull();
+    });
+});
+
+describe('RunningConditionPanel — "Only when running | Use all data" (2026-10-28)', () => {
+    it('two radios above the line; "Only when running" is on by default', () => {
+        setup();
+        const group = within(screen.getByTestId('rc-condition')).getByRole('radiogroup');
+        const radios = within(group).getAllByRole('radio');
+        expect(radios.map(r => r.querySelector('b')!.textContent)).toEqual(['Only when running', 'Use all data']);
+        expect(screen.getByTestId('rc-mode-running').getAttribute('aria-checked')).toBe('true');
+        expect(screen.getByTestId('rc-mode-all').getAttribute('aria-checked')).toBe('false');
+    });
+    it('clicking the other choice hands it to the host; clicking the current one does nothing', () => {
+        const onAllDataChange = vi.fn();
+        setup({ onAllDataChange });
+        fireEvent.click(screen.getByTestId('rc-mode-running'));
+        expect(onAllDataChange).not.toHaveBeenCalled();
+        fireEvent.click(screen.getByTestId('rc-mode-all'));
+        expect(onAllDataChange).toHaveBeenCalledWith(true);
+    });
+    it('workspace on all data: the line stays (the export needs it) and the note says every row is kept', () => {
+        setup({ allData: true });
+        expect(screen.getByTestId('rc-mode-all').getAttribute('aria-checked')).toBe('true');
+        expect(screen.getByTestId('rc-one')).toBeTruthy();
+        expect(screen.getByTestId('rc-one-note').textContent).toMatch(/^Train and score keep every row\. The export writes this line as the machine’s running status/);
+        expect(screen.getByTestId('rc-condition').querySelector('.rcx-sec-h span')!.textContent).toMatch(/every row of the periods.*still required/);
+    });
+    it('workspace on all data without a line: still the amber "not set" line', () => {
+        setup({ allData: true, configured: false, condition: undefined });
+        expect(screen.getByTestId('rc-unset-warning').textContent).toMatch(/No model can be trained until it is set\./);
+    });
+    it('a Custom model on all data has no line of its own', () => {
+        setup({ scope: 'custom', allData: true, condition: undefined });
+        expect(screen.getByTestId('custom-rc-mode-all').getAttribute('aria-checked')).toBe('true');
+        expect(screen.queryByTestId('custom-rc-one')).toBeNull();
+        expect(screen.queryByTestId('rc-unset-warning')).toBeNull();
+        expect(screen.getByTestId('custom-condition').querySelector('.rcx-sec-h span')!.textContent).toBe('this model trains and scores on every row of its periods.');
     });
 });
 

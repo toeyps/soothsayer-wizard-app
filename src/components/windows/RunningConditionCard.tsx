@@ -67,6 +67,8 @@ interface RunningConditionCardProps {
     /** Why an OLD project must set the running condition again (the one-time
      *  conversion found nothing to keep): replaces the Not-set card's text. */
     why?: ReactNode;
+    /** "Use all data": Train and the Health score use every row of the periods. */
+    allData?: boolean;
 }
 
 /** What the card says (red, an alert) when nothing can be trained on. */
@@ -163,7 +165,7 @@ function trainSpan(periods: TimePeriod[]): string {
 
 const plural = (n: number, word: string) => `${word}${n === 1 ? '' : 's'}`;
 
-export function RunningConditionCard({ state, periods, filters, headers, getDesc, getUnit, bounds, onOpen, testPeriods = [], noRows: noRowsCounted = false, why }: RunningConditionCardProps) {
+export function RunningConditionCard({ state, periods, filters, headers, getDesc, getUnit, bounds, onOpen, testPeriods = [], noRows: noRowsCounted = false, why, allData = false }: RunningConditionCardProps) {
     const lookup = useSensorLookup();
     // Set = one line; "Details" unfolds the full grid (toggling re-renders this card only).
     const [detailsOpen, setDetailsOpen] = useState(false);
@@ -259,6 +261,7 @@ export function RunningConditionCard({ state, periods, filters, headers, getDesc
                     <span className="rcc-line-item" data-testid="rc-card-cond">
                         {nCond === 0 ? <span className="rcc-line-warn">Machine running: not set</span> : <>Running when <SensorInline tag={complete[0].sensor} size="sm" /> is above <span className="rcc-rest">{conditionChipParts(complete[0], getDesc, getUnit).rest.replace(/^> /, '')}</span></>}
                     </span>
+                    {allData && <span className="rcc-line-item" data-testid="rc-card-all-data" title="Train and the Health score use every row of the periods; the line above is the export’s running status">Use all data</span>}
                     {/* Only the two warnings — never a count of rows. Empty (hidden by
                         `.rcc-line-item:empty`) when there is nothing to warn about. */}
                     <span className="rcc-line-item" data-testid="rc-card-use" aria-live="polite">
@@ -309,7 +312,11 @@ export function RunningConditionCard({ state, periods, filters, headers, getDesc
                                 </span>
                             );
                         })}
-                        <span className="rcc-applies">also the export’s running status</span>
+                        <span className="rcc-applies">{allData ? 'export’s running status only' : 'also the export’s running status'}</span>
+                    </div>
+                    <div className="rcc-rows" data-testid="rc-card-rows-mode">
+                        <span className="rcc-lbl">Rows used</span>
+                        <span className="rcc-applies">{allData ? 'Use all data — idle and shutdown time included' : 'Only when running'}</span>
                     </div>
                     {outsideNotes.length > 0 && (
                         <div className="rcc-rows rcc-line-warn" role="status" data-testid="rc-card-outside">⚠ {outsideNotes.join(' · ')}</div>

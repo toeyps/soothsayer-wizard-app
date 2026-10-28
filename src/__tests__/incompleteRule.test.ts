@@ -66,14 +66,14 @@ describe('applyIncompleteRule - a Complete model goes back to Incomplete the mom
 
     it('Custom conditions / AND-OR / "no condition" / periods of a Custom-mode model', () => {
         const custom = (): FailureModel => ({
-            ...individual(), runningConditionMode: 'custom', customRunningConditionNoneConfirmed: false,
+            ...individual(), runningConditionMode: 'custom', customRunningConditionAllData: false,
             customRunningConditionFilters: [cond('100')], customRunningConditionCombine: 'and',
             filterTimePeriods: [period('2026-01-01T00:00', '2026-02-01T00:00')],
         });
         expect(editModel(custom(), { customRunningConditionFilters: [cond('200')] }).status).toBe(false);
         expect(editModel(custom(), { customRunningConditionFilters: [cond('100'), cond('5', 'f2')] }).status).toBe(false);
         expect(editModel(custom(), { customRunningConditionCombine: 'or' }).status).toBe(false);
-        expect(editModel(custom(), { customRunningConditionNoneConfirmed: true }).status).toBe(false);
+        expect(editModel(custom(), { customRunningConditionAllData: true }).status).toBe(false);
         expect(editModel(custom(), { filterTimePeriods: [period('2026-01-01T00:00', '2026-03-01T00:00')] }).status).toBe(false);
         expect(editModel(custom(), { filterTimePeriods: [] }).status).toBe(false);
     });
@@ -131,7 +131,7 @@ describe('applyIncompleteRule - what must NOT trigger it', () => {
 
     it('an incomplete condition row (no value yet) is not sent to Rust, so adding one is not a change', () => {
         const withRow = editModel(
-            { ...individual(), runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true },
+            { ...individual(), runningConditionMode: 'custom', customRunningConditionAllData: true },
             { customRunningConditionFilters: [cond('')] },
         );
         expect(withRow.status).toBe(true);
@@ -182,13 +182,13 @@ describe('applyIncompleteRule - the WORKSPACE running condition Apply', () => {
     }
 
     it('a new condition demotes every Workspace-mode model and leaves the Custom-mode one', () => {
-        expect(apply({ runningConditionNoneConfirmed: false, runningConditionFilters: [cond('1200')] }))
+        expect(apply({ runningConditionAllData: false, runningConditionFilters: [cond('1200')] }))
             .toEqual({ 'ws-a': false, 'ws-b': false, custom: true });
     });
 
     it('AND/OR, "No condition" and workspace periods each do it too', () => {
         expect(apply({ runningConditionCombine: 'or' })).toEqual({ 'ws-a': false, 'ws-b': false, custom: true });
-        expect(apply({ runningConditionNoneConfirmed: true })).toEqual({ 'ws-a': false, 'ws-b': false, custom: true });
+        expect(apply({ runningConditionAllData: true })).toEqual({ 'ws-a': false, 'ws-b': false, custom: true });
         expect(apply({ runningConditionTimePeriods: [period('2026-01-01T00:00', '2026-02-01T00:00')] }))
             .toEqual({ 'ws-a': false, 'ws-b': false, custom: true });
     });
@@ -221,7 +221,7 @@ describe('changedTrainInputIds / changedScoringPeriodIds - the comparisons behin
         const cases: Partial<FailureGroupStateSlice>[] = [
             { runningConditionCombine: 'or' },
             { runningConditionTestPeriods: [] },
-            { runningConditionNoneConfirmed: false, runningConditionFilters: [cond('1200')], runningConditionTestPeriods: [{ ...SCORE[0], end: '2025-07-15T23:59' }] },
+            { runningConditionAllData: false, runningConditionFilters: [cond('1200')], runningConditionTestPeriods: [{ ...SCORE[0], end: '2025-07-15T23:59' }] },
             {},
         ];
         for (const over of cases) {
@@ -242,7 +242,7 @@ describe('changedTrainInputIds / changedScoringPeriodIds - the comparisons behin
     it('a slice without the running-condition fields reads as their defaults (no throw)', () => {
         const bare = { models: [wsModel('ws-a')] };
         expect(changedTrainInputIds(bare, bare)).toEqual([]);
-        expect(changedTrainInputIds(bare, { ...bare, runningConditionNoneConfirmed: true })).toEqual(['ws-a']);
+        expect(changedTrainInputIds(bare, { ...bare, runningConditionAllData: true })).toEqual(['ws-a']);
         expect(changedScoringPeriodIds(bare, { ...bare, runningConditionTestPeriods: SCORE })).toEqual(['ws-a']);
     });
 });
