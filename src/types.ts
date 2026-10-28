@@ -295,8 +295,7 @@ export interface FailureModel extends PredictiveModelStateSlice {
     /** @deprecated Since 2026-10-20 Mark complete writes no files and nothing
      *  writes or reads this record (Export results is the only writer of the
      *  model files). Old values stay in saved workspaces untouched -- kept in the
-     *  type only so those files still type-check; `duplicateWorkspace` drops it
-     *  from the copy. Never read it for a status or a hint. */
+     *  type only so those files still type-check. Never read it for a status or a hint. */
     healthExport?: HealthExportRecord;
     /** The last validation verdict Rust gave on this model's SAVED set points:
      *  `'valid'` = the score can be calculated,

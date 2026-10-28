@@ -2674,11 +2674,11 @@ describe('Cluster-range slider (2026-09-30 port)', () => {
         expect(screen.queryByTestId('save-changes')).toBeNull();
     });
 
-    // `duplicateWorkspace` keeps model ids. The auto-divide memory
-    // and the criteria stats are keyed by model id, so a window re-pointed from W to its copy W′
+    // Two workspaces can hold the same model id. The auto-divide memory
+    // and the criteria stats are keyed by model id, so a window re-pointed from W to another workspace W′
     // used to read W's last division ("TAG3::3") as c1's own, see W′'s saved "TAG3::2" as a
     // change, and re-divide W′'s saved uneven ranges into an unprompted "edited" draft.
-    it('re-pointed at a duplicated workspace (same model id): its saved uneven ranges are kept, its own stats are fetched, and no "edited" draft appears', async () => {
+    it('re-pointed at another workspace with the same model id: its saved uneven ranges are kept, its own stats are fetched, and no "edited" draft appears', async () => {
         let current = 'ws1';
         mockInvoke.mockImplementation((cmd: string, args?: any) => (cmd === 'compute_sensor_stats' && args?.sensor === 'TAG3'
             ? Promise.resolve(current === 'ws1'
@@ -5249,7 +5249,7 @@ describe('Workbench two pages — shell + Model fit page (health score 3b-1)', (
             expect(tabStatus()).toBe('Incomplete');
             expect(screen.getByTestId('footer-status').textContent).toBe('Fit no longer in memory · load it again, or re-train with Train sensor ↑');
             await fitGoneSettled();
-            // a duplicated workspace: same model ids, another project — its models are not fit-gone
+            // another workspace with the same model ids — its models are not fit-gone
             gone = false;
             await deliverData({ id: 'ws2', failureGroupState: { groups: [makeGroup()], models: [ind, rel] } }, { workspaceId: 'ws2' });
             fireEvent.click(relTab());

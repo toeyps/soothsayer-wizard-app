@@ -1073,89 +1073,6 @@ describe('deleteWorkspace', () => {
     });
 });
 
-describe('duplicateWorkspace', () => {
-    it('returns null when the source workspace does not exist', async () => {
-        mockStoreGet.mockResolvedValue([]);
-        mockExists.mockResolvedValue(false);
-        const { duplicateWorkspace } = await freshModule();
-        expect(await duplicateWorkspace('missing')).toBeNull();
-    });
-
-    it('clones with a new id and a "(Copy)" suffixed name, then saves it', async () => {
-        mockStoreGet.mockResolvedValue([
-            { id: 'ws1', name: 'A', description: '', lastModified: 1, filePath: 'workspaces/ws1.json' },
-        ]);
-        mockExists.mockResolvedValue(true);
-        mockReadTextFile.mockResolvedValue(JSON.stringify({ id: 'ws1', name: 'A' }));
-        const { duplicateWorkspace } = await freshModule();
-
-        const result = await duplicateWorkspace('ws1');
-        expect(result?.name).toBe('A (Copy)');
-        expect(result?.id).toMatch(/^ws_\d+$/);
-        expect(result?.id).not.toBe('ws1');
-        expect(mockWriteTextFile).toHaveBeenCalled();
-    });
-    it('(2026-10-20, user decision) the copy keeps every model status, set points, train record and verdict; only the export record (files of the ORIGINAL) is dropped', async () => {
-        mockStoreGet.mockResolvedValue([
-            { id: 'ws1', name: 'A', description: '', lastModified: 1, filePath: 'workspaces/ws1.json' },
-        ]);
-        mockExists.mockResolvedValue(true);
-        const sp = { kind: 'individual', lower: 20, upper: 80 };
-        const done = {
-            id: 'm1', kind: 'individual', status: true, healthSetPoints: sp, healthVerdict: 'valid',
-            lastTrainedAt: '2026-10-01T00:00:00Z', trainedFingerprint: 'fp', name: 'keep me',
-            healthExport: { at: 'x', outputDir: 'C:/data/workspaces/ws1/output', setPoints: sp },
-        };
-        const never = { id: 'm3', kind: 'clustering', status: false };
-        mockReadTextFile.mockResolvedValue(JSON.stringify({
-            id: 'ws1', name: 'A', failureGroupState: { groups: [], models: [done, never], runningConditionFilters: [{ id: 'rc', sensor: 'SPEED', operation: 'greater_than', value1: '1200', value2: '' }] },
-        }));
-        const { duplicateWorkspace } = await freshModule();
-
-        const result = await duplicateWorkspace('ws1');
-        const [m1, m3] = result!.failureGroupState!.models as any[];
-        const { healthExport: _record, ...doneWithoutRecord } = done;
-        void _record;
-        expect(m1).toMatchObject(doneWithoutRecord);
-        expect(m1).not.toHaveProperty('healthExport');
-        expect(m3).toMatchObject(never);
-        expect(result!.failureGroupState!.runningConditionFilters).toEqual([{ id: 'rc', sensor: 'SPEED', operation: 'greater_than', value1: '1200', value2: '' }]);
-        const saved = JSON.parse(mockWriteTextFile.mock.calls.pop()![1] as string);
-        expect(saved.failureGroupState.models[0].status).toBe(true);
-        // the ORIGINAL file is never written
-        expect(savedFiles().every(([path]) => path !== 'workspaces/ws1.json')).toBe(true);
-    });
-
-    it('a project with machine details: the machine name gains " (Copy)" and the name is derived ("Plant · Machine (Copy)"); description, tag and time zone kept', async () => {
-        mockStoreGet.mockResolvedValue([{ id: 'ws1', name: 'Bang Pakong · GEG 4', description: 'U-2010', lastModified: 1, filePath: 'workspaces/ws1.json' }]);
-        mockExists.mockResolvedValue(true);
-        const machine = { plant: 'Bang Pakong', name: 'GEG 4', tag: 'U-2010', notes: '' };
-        mockReadTextFile.mockResolvedValue(JSON.stringify({ id: 'ws1', name: 'Bang Pakong · GEG 4', description: 'U-2010', machine, dataUtcOffsetMin: 420 }));
-        const { duplicateWorkspace } = await freshModule();
-        const result = await duplicateWorkspace('ws1');
-        expect(result!.name).toBe('Bang Pakong · GEG 4 (Copy)');
-        expect(result!.machine).toEqual({ ...machine, name: 'GEG 4 (Copy)' });
-        expect(result!.description).toBe('U-2010');
-        expect(result!.dataUtcOffsetMin).toBe(420);
-    });
-
-    it('duplicateNaming: legacy project without machine keeps "<name> (Copy)"', async () => {
-        const { duplicateNaming } = await freshModule();
-        expect(duplicateNaming({ name: 'Old project' })).toEqual({ name: 'Old project (Copy)' });
-        expect(duplicateNaming({ name: 'x', machine: { plant: 'P', name: ' M ', tag: 't', notes: '' } }))
-            .toEqual({ name: 'P · M (Copy)', machine: { plant: 'P', name: 'M (Copy)', tag: 't', notes: '' } });
-    });
-
-    it('(QA 2026-10-04) a workspace with no failure-group slice is copied as before', async () => {
-        mockStoreGet.mockResolvedValue([{ id: 'ws1', name: 'A', description: '', lastModified: 1, filePath: 'workspaces/ws1.json' }]);
-        mockExists.mockResolvedValue(true);
-        mockReadTextFile.mockResolvedValue(JSON.stringify({ id: 'ws1', name: 'A' }));
-        const { duplicateWorkspace } = await freshModule();
-        const result = await duplicateWorkspace('ws1');
-        expect(result).not.toHaveProperty('failureGroupState');
-    });
-});
-
 describe('recent-project Failure Group fields (customer batch 2026-10, item 5)', () => {
     /** A store whose `recent_workspaces` actually persists between calls. */
     function liveStore(initial: any[]) {
@@ -1237,13 +1154,6 @@ describe('recent-project Failure Group fields (customer batch 2026-10, item 5)',
         expect(mockStoreSave).toHaveBeenCalledTimes(1);
     });
 
-    it('duplicateWorkspace carries the count from the workspace on disk', async () => {
-        const recent = liveStore([entry()]);
-        liveDisk({ id: 'ws1', name: 'A', failureGroupState: { groups: groups(0, 1, 2), models: [] } });
-        const { duplicateWorkspace } = await freshModule();
-        const copy = await duplicateWorkspace('ws1');
-        expect(recent().find(w => w.id === copy!.id)).toMatchObject({ failureGroupCount: 2, failureGroupNos: [1, 2] });
-    });
 });
 
 // The legacy `round($A, 2)` auto-conversion

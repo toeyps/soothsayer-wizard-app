@@ -109,7 +109,7 @@ import BuildModelWindow from '../components/windows/BuildModelWindow';
 import { makeSetPointAwarePreview } from './helpers/healthPreviewFixture';
 import { healthPageClosed, markCompleteFromHealthPage, markIncompleteFromHealthPage } from './helpers/healthPage';
 import { emit } from '@tauri-apps/api/event';
-import { updateWorkspaceData, saveWorkspaceData, loadWorkspaceData, duplicateWorkspace } from '../workspaceManager';
+import { updateWorkspaceData, saveWorkspaceData, loadWorkspaceData } from '../workspaceManager';
 import { withFailureGroupState } from '../utils/failureGroupState';
 import { computeTrainFingerprint } from '../utils/trainFingerprint';
 // A train period is required to Train, a scoring period to Mark complete.
@@ -400,7 +400,7 @@ describe('(3) lastTrainedAt / trainedFingerprint survive a save + reload', () =>
         expect(pill()).toBe('Trained');
     });
 
-    it('workspaceManager save/load/duplicate and the legacy groupNo migration all keep both fields byte-for-byte', async () => {
+    it('workspaceManager save/load and the legacy groupNo migration all keep both fields byte-for-byte', async () => {
         const trained = {
             ...dashModel({ id: 'i1' }),
             lastTrainedAt: '2026-09-29T03:00:00.000Z',
@@ -416,10 +416,6 @@ describe('(3) lastTrainedAt / trainedFingerprint survive a save + reload', () =>
         // normalizeModelGroups rebuilds this record (groupNo -> groupNos) — spread must keep the fields.
         expect(byId(loaded, 'i2').groupNos).toEqual([1]);
         expect(byId(loaded, 'i2').trainedFingerprint).toBe('fp-sentinel');
-
-        const dup = await duplicateWorkspace('ws1');
-        const dupLoaded = await loadWorkspaceData(dup!.id);
-        expect(byId(dupLoaded, 'i1').trainedFingerprint).toBe('fp-sentinel');
     });
 });
 

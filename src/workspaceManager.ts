@@ -5,10 +5,8 @@ import { debugLog } from './utils/debugLog';
 import { migrateHealthSetPoints, migrateSingleRunningCondition } from './utils/workspaceMigrations';
 import { emptyHealthSetPoints } from './utils/healthSetPoints';
 import { applyIncompleteRule } from './utils/incompleteRule';
-import { withFailureGroupState } from './utils/failureGroupState';
 import { failureGroupMetaFields } from './utils/failureGroupSummary';
 import { logToFile } from './errorReporter';
-import { projectDisplayName } from './utils/projectDetails';
 import { applyLegacyConversion, legacyConversionMessage } from './utils/legacyFormulaConversion';
 import type { LegacyFormulaConversion } from './types/formula';
 
@@ -563,46 +561,3 @@ export async function deleteWorkspace(id: string) {
     await removeWorkspaceFolder(id);
 }
 
-/** The name / machine a duplicate gets: the machine name gains " (Copy)" and
- *  the project name is derived from it ("Plant · Machine (Copy)"). A project
- *  made before machine details existed has no machine: its name gains
- *  " (Copy)" directly. Pure. */
-export function duplicateNaming(state: Pick<WorkspaceState, 'name' | 'machine'>): Pick<WorkspaceState, 'name' | 'machine'> {
-    if (!state.machine) return { name: `${state.name} (Copy)` };
-    const machine = { ...state.machine, name: `${state.machine.name.trim()} (Copy)` };
-    return { name: projectDisplayName(machine), machine };
-}
-
-/** A copy of the project under a new id, with the name from `duplicateNaming`.
- *  Models keep their status, set points, train record and verdict (user
- *  decision 2026-10-20: a copy is the same work). Only the deprecated
- *  `healthExport` record is dropped: it points at files in the ORIGINAL
- *  project's folder, which is not copied. */
-export async function duplicateWorkspace(id: string) {
-    try {
-        const state = await loadWorkspaceData(id);
-        if (state) {
-            const copy: WorkspaceState = {
-                ...state,
-                id: `ws_${Date.now()}`,
-                ...duplicateNaming(state),
-            };
-            const models = state.failureGroupState?.models;
-            const newState: WorkspaceState = Array.isArray(models) && models.some(m => m.healthExport !== undefined)
-                ? withFailureGroupState(copy, {
-                    models: models.map(m => {
-                        if (m.healthExport === undefined) return m;
-                        const { healthExport: dropped, ...rest } = m;
-                        void dropped;
-                        return rest;
-                    }),
-                })
-                : copy;
-            await saveWorkspaceData(newState);
-            return newState;
-        }
-    } catch (e) {
-        console.error("Failed to duplicate workspace:", e);
-    }
-    return null;
-}

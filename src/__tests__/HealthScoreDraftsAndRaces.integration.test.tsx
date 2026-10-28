@@ -50,7 +50,7 @@ import {
     newBackend, openDashSensorTab, openHealth, openSettings, pill, readDisk, saveChanges, selectKindTab, selectSensor,
     sendBuildModelData, settle, train, typeSp, waitForCharts, writeDisk, wsTrained,
 } from './helpers/healthWorkbench';
-import { deleteWorkspace, duplicateWorkspace, updateWorkspaceData } from '../workspaceManager';
+import { deleteWorkspace, updateWorkspaceData } from '../workspaceManager';
 import { withFailureGroupState } from '../utils/failureGroupState';
 import { emit } from '@tauri-apps/api/event';
 
@@ -542,7 +542,7 @@ describe('Mark complete: races and failures (it only CHECKS the set points — E
 // ---------------------------------------------------------------------------
 
 describe('multi-workspace isolation of the health state', () => {
-    it('A -> B re-point: A\'s set points / export state never show in B (same model ids, e.g. a duplicated workspace)', async () => {
+    it('A -> B re-point: A\'s set points / export state never show in B (same model ids)', async () => {
         writeDisk(trainedWs({ i1: { healthSetPoints: { ...EMPTY_I, lower: 20, upper: 80 } } }));
         writeDisk(trainedWs({ i1: { healthSetPoints: { ...EMPTY_I, lower: 1, upper: 99 } } }, 'ws2'), 'ws2');
         await mountWindows({ dashboard: false });
@@ -646,32 +646,6 @@ describe('multi-workspace isolation of the health state', () => {
         expect([...env.files.keys()].filter(k => k.startsWith(`workspaces/${WS}/`))).toEqual([]);
         expect(env.files.has('workspaces/ws10/output/TAG1/INDV_INFO_TAG1.json')).toBe(true);
         expect(env.files.has(`workspaces/${WS}.json`)).toBe(false);
-    });
-
-    // A duplicated workspace's models become Incomplete and drop `healthExport`.
-    // Guards against: `duplicateWorkspace` copies the models
-    // with `status: true` and a `healthExport` whose `outputDir` is the ORIGINAL
-    // workspace's folder, but does not copy that folder (deliberately).
-    // The copy therefore shows "Complete · files saved to <original's folder>"; once the
-    // original is deleted those files are gone and the copy still claims them.
-    it('a duplicated workspace keeps the model Complete (user decision 2026-10-20) but does not claim files in the ORIGINAL workspace output folder', async () => {
-        writeDisk(trainedWs({ i1: { healthSetPoints: { ...EMPTY_I, lower: 20, upper: 80 } } }));
-        await mountWindows({ dashboard: false });
-        await openI1Health();
-        await markComplete();
-        await waitFor(() => expect(bmw().getByTestId('mark-incomplete')).toBeTruthy());
-        cleanup();
-        const copy = await duplicateWorkspace(WS);
-        await deleteWorkspace(WS);
-        const m = copy!.failureGroupState!.models.find(x => x.id === 'i1')!;
-        const claimsOriginal = !!(m.status && m.healthExport?.outputDir?.includes(`/workspaces/${WS}/`));
-        expect(claimsOriginal).toBe(false);
-        // ... the copy keeps its status and everything else, without the original's export record
-        expect(m.status).toBe(true);
-        expect(m.healthExport).toBeUndefined();
-        expect(m.healthSetPoints).toMatchObject({ lower: 20, upper: 80 });
-        expect(m.lastTrainedAt).toBeTruthy();
-        expect(m.trainedFingerprint).toBeTruthy();
     });
 });
 

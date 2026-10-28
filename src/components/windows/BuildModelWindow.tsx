@@ -963,9 +963,9 @@ export default function BuildModelWindow() {
                 // A half-typed cluster boundary (or its error) belongs to the old workspace.
                 setBoundaryEdit(null);
                 setTypedBoundaryText({});
-                // The auto-divide memory and the criteria stats are keyed by MODEL id, and
-                // `duplicateWorkspace` keeps model ids: left behind, a copy's model would read
-                // the other workspace's last division key as its own, re-divide its saved
+                // The auto-divide memory and the criteria stats are keyed by MODEL id, and two
+                // workspaces can hold the same model id: left behind, the new workspace's model
+                // would read the old one's last division key as its own, re-divide its saved
                 // (uneven) cluster ranges and show an unprompted "edited" draft.
                 prevClusterDivisionKeyRef.current = {};
                 setCriteriaStatsEntry(null);
@@ -2778,8 +2778,8 @@ export default function BuildModelWindow() {
     // sensor A -> B, so in that render the state still holds A's stats. Deriving per render
     // means stats for another key read as "not arrived yet", so the auto-divide waits for
     // B's own stats instead of dividing B's ranges over A's [min, max].
-    // The workspace id is part of the key: a duplicated workspace has the SAME model ids (and
-    // often the same criteria sensor + filter), so without it a window re-pointed at the copy
+    // The workspace id is part of the key: another workspace can hold the SAME model ids (and
+    // often the same criteria sensor + filter), so without it a window re-pointed at it
     // would keep reading the other workspace's stats as its own and never fetch again.
     const criteriaStatsKey = (activeModel && activeModel.kind === 'clustering' && criteriaSensorForActive)
         ? `${workspaceId ?? ''}::${activeModel.id}::${criteriaSensorForActive}::${criteriaFilterKey}`
