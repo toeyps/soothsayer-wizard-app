@@ -871,8 +871,8 @@ name/metadata survives (it's in the workspace JSON), which is what makes it
    should be written into when a workspace merges multiple CSVs by
    timestamp, and it cuts against this app's existing design rule that
    user-selected source files are never mutated (`CLAUDE.md`: writes only
-   ever go through `write_user_file`, to `$APPDATA`-scoped or
-   explicitly-user-chosen export paths — never back onto an input file).
+   ever go to `$APPDATA`-scoped or explicitly-user-chosen export paths
+   through purpose-built Rust export commands (`write_user_file` deleted 2026-10-28) — never back onto an input file).
 
 2. **Persist the calculation "recipe" (formula/config), replay it after
    every `load_csv`.** Store, per created sensor, enough to recreate it —
