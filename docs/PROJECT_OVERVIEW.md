@@ -3,7 +3,7 @@
 > **อ่านไฟล์นี้ก่อน.** ไฟล์นี้ **เขียนทับให้เป็นปัจจุบันเสมอ** (ไม่ต่อท้าย) — ประวัติละเอียดว่าแต่ละงานทำอย่างไรและทำไม
 > อยู่ที่ [`handover/`](handover/README.md) (ไฟล์รายเดือน) · สิ่งที่เปลี่ยนในแต่ละเวอร์ชันแบบอ่านง่ายอยู่ที่ [`release/CHANGELOG.md`](release/CHANGELOG.md)
 >
-> อัปเดตล่าสุด: **2026-10-28**
+> อัปเดตล่าสุด: **2026-10-29**
 
 ---
 
@@ -34,10 +34,10 @@
 
 | เรื่อง | สถานะ |
 |---|---|
-| เวอร์ชันล่าสุดที่ build เป็น installer | **0.13.2** (2026-10-26) ก่อนหน้านั้นคือ 0.13.1, 0.13.0 (2026-10-26) และ 0.12.0 ดูรายละเอียดที่ [`release/CHANGELOG.md`](release/CHANGELOG.md) และ [`release/Wizard_Release_Versions.txt`](release/Wizard_Release_Versions.txt) |
-| git tag | tag ทุกตัวถึง `v0.13.2` push ขึ้น `personal` แล้ว (2026-10-28) ส่วน 0.6.0/0.7.0 ไม่เคย build จึงไม่มี tag |
-| push ล่าสุด | 2026-10-28: push `main` ขึ้น `personal` ทั้งหมด working tree สะอาด ผู้ใช้สั่งเพื่อเตรียมใช้ cloud session |
-| งานที่รอผู้ใช้ทดสอบในแอปจริง | **ไม่มี** ผู้ใช้ให้เปลี่ยน Notion ที่ค้าง In progress เป็น Done ทั้งหมดแล้ว (2026-10-28) งานล่าสุดคือ security follow-ups (`1dee26f`) และ sidecar lock (`78db1e4`) ซึ่งผ่านการทดสอบบนแอปจริงแล้ว |
+| เวอร์ชันล่าสุดที่ build เป็น installer | **0.14.0** (2026-10-29) ก่อนหน้านั้นคือ 0.13.2, 0.13.1, 0.13.0 (2026-10-26) ดูรายละเอียดที่ [`release/CHANGELOG.md`](release/CHANGELOG.md) และ [`release/Wizard_Release_Versions.txt`](release/Wizard_Release_Versions.txt) |
+| git tag | tag ถึง `v0.13.2` push ขึ้น `personal` แล้ว (2026-10-28); `v0.14.0` (2026-10-29) อยู่ในเครื่องเท่านั้น ส่วน 0.6.0/0.7.0 ไม่เคย build จึงไม่มี tag |
+| push ล่าสุด | 2026-10-28: push `main` ขึ้น `personal` หลังจากนั้นมี commit ในเครื่องที่ยังไม่ push: `ba9a922` (ลบ duplicateWorkspace), `e3579b9` ("Use all data"), release 0.14.0 + tag `v0.14.0` |
+| งานที่รอผู้ใช้ทดสอบในแอปจริง | "Use all data" ใน Running condition (BMW-407 ถึง 409) ทดสอบได้บน installer 0.14.0 ผ่านแล้วค่อย push ไป `personal` และถามเปลี่ยน Notion เป็น Done |
 | เรื่องที่รอผู้ใช้ตัดสินใจ | ลดสิทธิ์ `dialog:default` เหลือ open + message · การแสดงไฟล์/โฟลเดอร์ output หลัง Mark complete (ผู้ใช้เลื่อนไว้จนกว่า UI จะใช้ได้ครบ) · แยก `BuildModelWindow.tsx` เป็นไฟล์ย่อย (เสนอไว้) |
 | งานค้างที่รู้อยู่ | [`BACKLOG.md`](BACKLOG.md) |
 
