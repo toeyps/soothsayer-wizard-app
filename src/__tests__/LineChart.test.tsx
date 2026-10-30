@@ -398,7 +398,9 @@ describe('LineChart option building', () => {
             expect(option.series[0].lineStyle.width).toBe(0.8);
             expect(option.series[0].silent).toBe(true);
             expect(option.series[0].emphasis).toEqual({ disabled: true });
-            expect(option.series[0].sampling).toBe('lttb');
+            // 'minmax', never 'lttb': ECharts' lttb drew zoomed lines jumping back months
+            // when a series held a null (bug report 2026-10-30).
+            expect(option.series[0].sampling).toBe('minmax');
         });
     });
 

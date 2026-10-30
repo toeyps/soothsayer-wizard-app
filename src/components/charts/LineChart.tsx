@@ -703,9 +703,13 @@ function LineChart({
                 legendHoverLink: false,
                 // Belt-and-suspenders for the row-based path: when a
                 // caller still feeds raw points past the threshold, let
-                // ECharts LTTB-downsample instead of rasterizing every
-                // vertex.
-                ...(isLargeData ? { sampling: 'lttb' as const } : {}),
+                // ECharts downsample instead of rasterizing every vertex.
+                // 'minmax', NOT 'lttb' (2026-10-30 bug report): ECharts 6.1's
+                // lttbDownSample mixes up zoom-window and full-series indexes
+                // once a null is in the series, so a zoomed chart drew lines
+                // jumping back months. 'minmax' keeps time order and spikes
+                // (same idea as Rust's own min/max decimation).
+                ...(isLargeData ? { sampling: 'minmax' as const } : {}),
                 ...(markLine ? { markLine } : {}),
                 // Only the first series carries markArea — see
                 // highlightAreas' own comment above for why attaching it
@@ -736,7 +740,7 @@ function LineChart({
 
         // What the tooltip reads: every shown sensor's own values, looked up at the hovered
         // time. ECharts' `params` only lists the series that still have a point at exactly
-        // that time, and `sampling: 'lttb'` keeps a different subset of points per series —
+        // that time, and ECharts' `sampling` keeps a different subset of points per series —
         // so with several sensors the tooltip used to show one or two rows and drop the rest.
         const xMs = xData.map(toMs);
         const xSorted = xMs.every((t, i) => t != null && (i === 0 || t >= (xMs[i - 1] as number)));

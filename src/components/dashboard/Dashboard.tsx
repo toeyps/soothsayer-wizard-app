@@ -2325,7 +2325,9 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                     </button>
                     <h3>Sensor Readings</h3>
                     {chartType === 'line' && (
-                        <span className="section-badge">{samplingMethod.toUpperCase()} (1h)</span>
+                        <span className="section-badge" data-testid="sampling-badge">
+                            {samplingMethod === 'raw' ? 'RAW' : `${samplingMethod.toUpperCase()} (1h)`}
+                        </span>
                     )}
                     <span className="section-badge">
                         {chartType === 'line'

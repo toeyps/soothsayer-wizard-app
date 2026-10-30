@@ -592,6 +592,15 @@ describe('Dashboard', () => {
         });
     });
 
+    describe('chart header sampling badge', () => {
+        it('Raw shows "RAW" without "(1h)"; an hourly aggregation shows "(1h)" (bug report 2026-10-30)', () => {
+            renderDashboard();
+            expect(screen.getByTestId('sampling-badge').textContent?.trim()).toBe('RAW');
+            fireEvent.change(screen.getByDisplayValue('Raw'), { target: { value: 'avg' } });
+            expect(screen.getByTestId('sampling-badge').textContent?.trim()).toBe('AVG (1h)');
+        });
+    });
+
     describe('panel collapse / expand', () => {
         it('hiding the chart panel removes it and adds a sidebar tab; clicking the tab restores it', () => {
             renderDashboard();
