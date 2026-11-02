@@ -43,7 +43,7 @@ function AlarmDots({ T, sensor }: { T: Tokens; sensor: SensorMetadata }) {
   );
 }
 
-/** Step 2, right column: "Tag names" (the optional tag -> name / unit / component / alarm-limit lookup). */
+/** Step 2, right column: "Tag names" (the required tag -> name / unit / component / alarm-limit lookup). */
 export default function TagNamesPanel({ T, locked, mapping }: TagNamesPanelProps) {
   const [tab, setTab] = useState<Tab>('matched');
   const [query, setQuery] = useState('');
@@ -88,7 +88,7 @@ export default function TagNamesPanel({ T, locked, mapping }: TagNamesPanelProps
         iconBg="oklch(0.7 0.15 310 / 0.18)"
         iconColor={T.s4}
         title="Tag names"
-        subtitle="optional · tag → name, unit, component, alarms"
+        subtitle="required · tag → name, unit, component, alarms"
       />
 
       <div style={{ padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -167,7 +167,7 @@ export default function TagNamesPanel({ T, locked, mapping }: TagNamesPanelProps
                   </span>
                 </button>
                 <div style={{ fontSize: 11.5, color: T.textFaint }}>
-                  Optional — you can open the Dashboard without it.
+                  Required — it must list the same sensors as your CSV files.
                 </div>
               </>
             )}
@@ -213,7 +213,7 @@ export default function TagNamesPanel({ T, locked, mapping }: TagNamesPanelProps
                       background: 'oklch(0.68 0.2 25 / 0.1)', border: '1px solid oklch(0.68 0.2 25 / 0.3)',
                     }}
                   >
-                    <b style={{ fontWeight: 600 }}>{block}.</b> Fix the file and select it again, or remove it to continue without tag names.
+                    <b style={{ fontWeight: 600 }}>{block}.</b> Fix the file and select it again.
                   </div>
                 )}
 

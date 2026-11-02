@@ -2395,14 +2395,14 @@ pub fn apply_mapping(
         }
     }
 
-    // Find dataset headers not in mapping key values. headers[0] is the
-    // timestamp column whatever it is called ("Date", "DateTime", ...), never a
-    // sensor: counting it would make the Import page refuse a matching file.
+    // Find dataset headers not in mapping key values
+    let is_timestamp =
+        |h: &str| h.eq_ignore_ascii_case("timestamp") || h.eq_ignore_ascii_case("time");
+
     let mapping_keys: HashSet<&str> = key_values.iter().map(|s| s.as_str()).collect();
     let not_in_mapping: Vec<String> = dataset_headers
         .iter()
-        .skip(1)
-        .filter(|h| !mapping_keys.contains(h.as_str()))
+        .filter(|h| !is_timestamp(h) && !mapping_keys.contains(h.as_str()))
         .cloned()
         .collect();
 

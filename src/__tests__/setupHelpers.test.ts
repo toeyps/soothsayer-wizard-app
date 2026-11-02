@@ -431,8 +431,8 @@ describe('tagFileBlockReason', () => {
     not_in_mapping: Array.from({ length: dataOnly }, (_, i) => `d${i}`),
   });
 
-  it('no file: nothing to check', () => {
-    expect(tagFileBlockReason(null, null, null)).toBeNull();
+  it('no file: a new project needs one', () => {
+    expect(tagFileBlockReason(null, null, null)).toBe('Add the tag-name file to continue');
   });
   it('a chosen file with no tag column or no result yet blocks', () => {
     expect(tagFileBlockReason('/t.csv', null, null)).toMatch(/Pick the tag column/);

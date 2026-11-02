@@ -277,7 +277,13 @@ function renderAtStep2({
 /** Render and advance to step 3 ("Which failures should Wizard look for?").
  *  The data hook must already report a ready dataset (step 2's Continue is
  *  gated on it). */
+const matchingMapping = () => makeMapping({
+  mappingFilePath: '/lookup/tags.csv', keyColumn: 'tag', mappingData: FAKE_MAPPING_DATA,
+  mappingResult: { matched: ['sensor_a'], not_in_dataset: [], not_in_mapping: [] },
+});
+
 function renderAtStep3(opts: MachineInput = {}) {
+  if (!useMappingDataMock().mappingFilePath) useMappingDataMock.mockReturnValue(matchingMapping());
   const utils = renderAtStep2(opts);
   fireEvent.click(continueButton());
   return utils;
@@ -538,7 +544,7 @@ describe('C. Dataset parse', () => {
 
     renderAtStep2();
 
-    expect(screen.getByText('Ready · 1,234 rows · no tag names')).toBeTruthy();
+    expect(screen.getByText('Add the tag-name file to continue')).toBeTruthy();
   });
 
   it('C17. non-fatal load-report warnings (e.g. a Buddhist-Era year correction) render inside the dataset card', () => {
@@ -766,7 +772,7 @@ describe('E. Open Dashboard button', () => {
     useDataUploadMock.mockReturnValue(
       makeDataUpload({ selectedFiles: ['/a.csv'], loadReport: FAKE_REPORT })
     );
-    useMappingDataMock.mockReturnValue(makeMapping({ sensorMetadata: sm }));
+    useMappingDataMock.mockReturnValue({ ...matchingMapping(), sensorMetadata: sm });
     mockSaveWorkspace.mockResolvedValue(undefined);
 
     renderAtStep3();
@@ -1039,6 +1045,7 @@ describe('S. Step 3 "Failure groups"', () => {
       // eslint-disable-next-line no-bitwise
       (control.compareDocumentPosition(screen.getByTestId('setup-rail')) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
 
+    useMappingDataMock.mockReturnValue(matchingMapping());
     renderAtStep1();
     expect(railFollows(plantInput())).toBe(true);
     fillMachine({ plant: 'P', machine: 'M', tag: 'T' });
@@ -1570,7 +1577,7 @@ describe('G. Empty-state hint + status bar', () => {
 
     expect(screen.queryByText('Add at least one CSV file to continue.')).toBeNull();
     expect(screen.queryByText('Click Parse files to validate and continue.')).toBeNull();
-    expect(screen.getByText('Ready · 1,234 rows · no tag names')).toBeTruthy();
+    expect(screen.getByText('Add the tag-name file to continue')).toBeTruthy();
   });
 });
 
@@ -2772,6 +2779,7 @@ describe('O. Step 2 "Sensor data" panel', () => {
     const other = pc === 0 ? 60 : 0;
     const fmt = (m: number) => `${m < 0 ? '-' : '+'}${String(Math.floor(Math.abs(m) / 60)).padStart(2, '0')}:${String(Math.abs(m) % 60).padStart(2, '0')}`;
     useDataUploadMock.mockReturnValue(makeDataUpload({ selectedFiles: ['/a.csv'], loadReport: FAKE_REPORT }));
+    useMappingDataMock.mockReturnValue(matchingMapping());
     mockSaveWorkspace.mockResolvedValue(undefined);
     renderAtStep2();
 
@@ -2913,10 +2921,10 @@ describe('O. Step 2 "Sensor data" panel', () => {
     expect(screen.getByText(/2 files ready/)).toBeTruthy();
   });
 
-  it('O12. footer: "Ready · rows · no tag names" with no mapping; "N names mapped" with one', () => {
+  it('O12. footer: asks for the tag-name file with none; "N names mapped" with a matching one', () => {
     useDataUploadMock.mockReturnValue(readyTwoFiles());
     const { unmount } = renderAtStep2();
-    expect(screen.getByText(`Ready · ${(159264).toLocaleString()} rows · no tag names`)).toBeTruthy();
+    expect(screen.getByText('Add the tag-name file to continue')).toBeTruthy();
     unmount();
     cleanup();
 
@@ -3188,7 +3196,9 @@ describe('R. Tag names panel (step 2, right)', () => {
     expect(screen.getByText(/human-readable sensor names/)).toBeTruthy();
     expect(screen.getByText(/alarm_ll \/ alarm_l \/ alarm_h \/ alarm_hh/)).toBeTruthy();
     expect(screen.getByText('Select tag-name CSV')).toBeTruthy();
-    expect(screen.getByText(/Optional/)).toBeTruthy();
+    expect(screen.getByText(/Required — it must list the same sensors/)).toBeTruthy();
+    expect(screen.getByText(/^required · /)).toBeTruthy();
+    expect(screen.queryByText(/Optional/)).toBeNull();
   });
 
   it('R3. no result yet: no ring, chips or table', () => {
@@ -3298,7 +3308,8 @@ describe('R. Tag names panel (step 2, right)', () => {
     renderAtStep2();
     expect(continueButton().disabled).toBe(true);
     expect(screen.getByTestId('tag-file-mismatch').textContent).toMatch(/the data has 5, the tag-name file has 4/);
-    expect(screen.getByTestId('tag-file-mismatch').textContent).toMatch(/remove it to continue without tag names/);
+    expect(screen.getByTestId('tag-file-mismatch').textContent).toMatch(/Fix the file and select it again/);
+    expect(screen.getByTestId('tag-file-mismatch').textContent).not.toMatch(/without tag names/);
     expect(screen.getByTestId('step2-status').textContent).toBe("Sensors don't match: the data has 5, the tag-name file has 4");
     // Refused means staying on this step.
     fireEvent.click(continueButton());
@@ -3341,11 +3352,11 @@ describe('R. Tag names panel (step 2, right)', () => {
     expect(screen.getByTestId('step2-status').textContent).toMatch(/Checking the tag-name file/);
   });
 
-  it('R10e. no tag-name file: nothing to check, Continue stays open (the file is optional)', () => {
+  it('R10e. no tag-name file: a new project cannot continue without one', () => {
     useDataUploadMock.mockReturnValue(readyUpload());
     renderAtStep2();
-    expect(continueButton().disabled).toBe(false);
-    expect(screen.queryByTestId('tag-file-mismatch')).toBeNull();
+    expect(continueButton().disabled).toBe(true);
+    expect(screen.getByTestId('step2-status').textContent).toBe('Add the tag-name file to continue');
   });
 
   it('R10f. a newly read dataset is checked again even when an older result exists', async () => {
@@ -3383,9 +3394,9 @@ describe('R. Tag names panel (step 2, right)', () => {
     expect(screen.getByText(/Showing the first 200 of 250/)).toBeTruthy();
   });
 
-  it('R13. step 2 Continue stays enabled when no tag names were added (the panel is optional)', () => {
-    useDataUploadMock.mockReturnValue(readyUpload());
+  it('R13. before the data is read the footer talks about the data, not the tag-name file', () => {
     renderAtStep2();
-    expect(continueButton().disabled).toBe(false);
+    expect(continueButton().disabled).toBe(true);
+    expect(screen.getByTestId('step2-status').textContent).toBe('Awaiting data');
   });
 });

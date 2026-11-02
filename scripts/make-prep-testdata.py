@@ -12,16 +12,19 @@
 # Folders written (every file is listed with its real numbers in <out>\EXPECTED.txt):
 #   normal/      a normal 30-day file + its tag names, a long-file-name copy, an Excel "CSV UTF-8" copy
 #   multi-file/  overlapping / adjacent / same-column pairs, a file B with extra columns, a 3-file set with a bad file
-#   tags/        tag-name files: other header names, description+name, a tag twice, a broken row, 0 byte, wide
+#   tags/        tag-name files: other header names, description+name, a tag twice, a broken row, 0 byte,
+#                fewer tags than the data, same count with 1 or 2 different tags
 #   buddhist/    Buddhist-year file 2567-02-28 -> 2567-03-01 (has 29 Feb 2567)
 #   odd/         text in number cells, empty cells, empty / repeated time, a column twice, Timestamp / TIME / column 3
 #   broken/      Date / DateTime header, 0 byte, header only, extra comma on line 50, semicolons, a real .xlsx renamed
 #   time-shapes/ one file per time shape (IMP-66), Excel-style dates (IMP-87), historian look-alike 2025/2026 (IMP-88)
 #   intervals/   10 s / 90 s / 90 min / 1 h / 1 d files (IMP-36 Interval card)
-#   wide/        220 sensors + tag names with 215 names (IMP-78)
+#   wide/        220 sensors + tag names with 215 names (IMP-117)
 #   variants/    copies of the normal file with a column removed / a day added / 10 days only, and changed tag names
 #   projects/    GEG-3 / GEG-4 gas engines + tag names (English, Thai UTF-8, Thai saved as plain "CSV"), CMP-1 compressor
 #   exp-variants/  (only with --expdata) EXP-data.csv with columns "A B" + "A/B", without KW, without FLOW A
+#   matching-tags/ one tag-name file for each data file above that had none: a tag-name file is REQUIRED on step 2
+#                and must list exactly the sensors of the data, so every flow that creates a project needs one
 #   big/         (only with --big) 300 MB, 1.9 GB, 2.1 GB (over the 2 GB cap), the 2.1 GB file split in two, 3 overlapping
 #   wfg/         (only with --big) GEG5_2024.csv + GEG5_2025.csv (2 years, every minute, 120 sensors) + tag names
 import csv, io, math, os, random, statistics, sys, time, zipfile
@@ -188,11 +191,12 @@ def make_normal(days=30, start=datetime(2024, 1, 1), seed=1, drop=None):
 
 times, head, rows = make_normal()
 write('normal/IMP-normal.csv', head, rows)
-note('normal/IMP-normal.csv', ['PREP-6', 'IMP-34', 'IMP-36', 'IMP-38', 'IMP-14', 'IMP-46', 'IMP-60', 'IMP-61', 'IMP-62',
-                               'IMP-70', 'IMP-81', 'SEN', 'SPC', 'FIL', 'HL', 'TIME', 'LINE', 'SCAT', 'PAIR', 'PER-15', 'PER-19'],
+note('normal/IMP-normal.csv', ['PREP-6', 'IMP-34', 'IMP-36', 'IMP-38', 'IMP-14', 'IMP-127', 'IMP-60', 'IMP-61', 'IMP-62',
+                               'IMP-70', 'IMP-121', 'SEN', 'SPC', 'FIL', 'HL', 'TIME', 'LINE', 'SCAT', 'PAIR', 'PER-15', 'PER-19'],
      stats_lines(times, head, rows) + [
          'เครื่องหยุด: 2024/01/10 08:00 → 2024/01/11 07:55 (KW-401 = 0, FI-301 = 0) — ใช้ตั้ง Running condition "KW-401 is above 50"',
-         'VI-501 ไม่มีในไฟล์ Tag names → อยู่ในแท็บ "No name" · TT-601 มีชื่อแต่ไม่มี component → "Uncategorized"'])
+         'ไฟล์ Tag names ที่ใช้ทำต่อจนเข้า Dashboard ได้: normal/IMP-normal-tags-exact.csv · VI-501 มีแค่ tag (ไม่มีชื่อ หน่วย component) · '
+         'TT-601 มีชื่อแต่ไม่มี component → "Uncategorized"'])
 write('normal/IMP-normal_saved-as-CSV-UTF-8.csv', head, rows, bom=True, crlf=True)
 note('normal/IMP-normal_saved-as-CSV-UTF-8.csv', ['WFF-1'],
      ['ข้อมูลเหมือน IMP-normal.csv ทุกแถว แต่บันทึกแบบที่ Excel ทำเมื่อเลือก "CSV UTF-8 (Comma delimited)" '
@@ -214,11 +218,23 @@ NORM_TAGS = [
     ['XX-999', 'Spare tag not in the data', '-', 'Spare', '', '', '', ''],
 ]
 write('normal/IMP-normal-tags.csv', NORM_TAGS_HEAD, NORM_TAGS)
-note('normal/IMP-normal-tags.csv', ['IMP-38', 'IMP-76', 'IMP-14', 'IMP-81', 'IMP-82', 'SEN-2', 'SEN-4', 'SEL-9', 'FG-26'],
-     ['9 แถว · กับ IMP-normal.csv อย่างเดียว: จับคู่ได้ 6 / 7 คอลัมน์ (VI-501 ไม่มีชื่อ)',
-      'tag ที่ไม่มีในข้อมูล 3 ตัว (TI-103, PI-202, XX-999) → บรรทัดเหลือง "3 tags in the tag-name file are not in the dataset"',
+note('normal/IMP-normal-tags.csv', ['IMP-115', 'IMP-123', 'IMP-124'],
+     ['ไฟล์นี้ตั้งใจให้ไม่ตรงกับข้อมูล ใช้ทดสอบการถูกปฏิเสธเท่านั้น ทำต่อจนเข้า Dashboard ไม่ได้',
+      'กับ IMP-normal.csv: "Sensors don\'t match: the data has 7, the tag-name file has 9." ปุ่ม Continue กดไม่ได้',
+      '9 แถว · วงแหวน 6 / 7 · แท็บ "No name" มี VI-501',
+      'tag ที่ไม่มีในข้อมูล 3 ตัว (TI-103, PI-202, XX-999) → บรรทัดแดง "3 tags in the tag-name file are not in the dataset."',
       'alarm: TI-101 LL 10 / L 20 / H 80 / HH 90 · TI-102 H 120 อย่างเดียว · PI-201 L 2 และ H เป็น "-" (ไม่มีค่า) · '
       'FI-301 H 600 · KW-401 H 250 / HH 280 · TT-601 ไม่มี alarm และไม่มี component'])
+# Exactly the sensors of IMP-normal.csv. VI-501 has a tag and nothing else: it is the sensor with no description,
+# no unit and no component that the Dashboard items look at (a file that leaves it out is refused now).
+VI501_ROW = ['VI-501', '', '', '', '', '', '', '']
+NORM_TAGS_EXACT = NORM_TAGS[:6] + [VI501_ROW]
+write('normal/IMP-normal-tags-exact.csv', NORM_TAGS_HEAD, NORM_TAGS_EXACT)
+note('normal/IMP-normal-tags-exact.csv', ['IMP-38', 'IMP-14', 'IMP-60', 'IMP-82', 'SEN-1', 'SEN-2', 'SEN-4', 'SEL-9', 'FG-26', 'VIS-3', 'SPC', 'MNG', 'EDT'],
+     ['7 แถว ตรงกับ 7 sensor ของ IMP-normal.csv ทุกตัว → วงแหวน 7 / 7 · "every column has a name" · ไม่มีแท็บ "No name" · กด Continue ได้',
+      'แถบล่าง: "Ready · 8,640 rows · 7 names mapped"',
+      'VI-501 มีแค่ tag: ไม่มีชื่อ หน่วย component และ alarm → ใน Dashboard แสดง tag อย่างเดียว อยู่ใต้ "Uncategorized"',
+      'TT-601 มีชื่อแต่ไม่มี component → "Uncategorized" · alarm ของตัวอื่นเหมือน IMP-normal-tags.csv'])
 
 # ─────────────────────────────── multi-file/ ───────────────────────────────
 def two_col(t):
@@ -270,11 +286,18 @@ times_b = series(datetime(2024, 1, 1), 30 * 288)
 rnd = random.Random(7)
 rows_b = [[ts(t), round(55 + rnd.gauss(0, 1), 2), round(0.8 + rnd.gauss(0, 0.03), 3), round(40 + rnd.gauss(0, 5), 1)] for t in times_b]
 write('multi-file/MF-extra-columns-B.csv', ['timestamp', 'TI-103', 'PI-202', 'XV-701'], rows_b)
-note('multi-file/MF-extra-columns-B.csv', ['IMP-81'],
+note('multi-file/MF-extra-columns-B.csv', ['IMP-121'],
      stats_lines(times_b, ['timestamp', 'TI-103', 'PI-202', 'XV-701'], rows_b) + [
-         'ใช้คู่กับ normal/IMP-normal.csv (ช่วงเวลาเดียวกัน) + normal/IMP-normal-tags.csv',
-         'ก่อนเพิ่มไฟล์ B: วงแหวน 6 / 7 · หลังเพิ่ม B แล้ว Parse files ใหม่: วงแหวน 8 / 10 (TI-103, PI-202 มีชื่อ · XV-701 ไม่มีชื่อ) '
-         'และบรรทัดเหลืองเหลือ "1 tag … not in the dataset" (XX-999)'])
+         'ใช้คู่กับ normal/IMP-normal.csv (ช่วงเวลาเดียวกัน) + multi-file/MF-extra-columns-tags.csv หรือ normal/IMP-normal-tags-exact.csv'])
+write('multi-file/MF-extra-columns-tags.csv', NORM_TAGS_HEAD, NORM_TAGS_EXACT + [
+    ['TI-103', 'Pump casing temperature', '°C', 'Pump P-1', '', '', '85', ''],
+    ['PI-202', 'Pump suction pressure', 'bar', 'Pump P-1', '', '0.5', '', ''],
+    ['XV-701', 'Discharge valve position', '%', 'Pump P-1', '', '', '', '']])
+note('multi-file/MF-extra-columns-tags.csv', ['IMP-121'],
+     ['10 แถว ตรงกับ IMP-normal.csv + MF-extra-columns-B.csv รวมกันพอดี',
+      'IMP-normal.csv อย่างเดียว: "Sensors don\'t match: the data has 7, the tag-name file has 10." · วงแหวน 7 / 7',
+      'เพิ่มไฟล์ B แล้ว Parse files: วงแหวน 10 / 10 · Continue กดได้ · "Ready · 8,640 rows · 10 names mapped"',
+      'ใช้ normal/IMP-normal-tags-exact.csv กับข้อมูล 2 ไฟล์นี้: "Sensors don\'t match: the data has 10, the tag-name file has 7."'])
 
 tt = series(datetime(2024, 4, 1), 288)
 for k in (1, 2, 3):
@@ -295,22 +318,30 @@ write('tags/T01-other-header-names.csv', ['Name', 'UOM', 'System', 'LoLo', 'Low'
        ['Motor winding temperature', 'degC', 'Motor M-1', '', '', '120', '', 'TI-102'],
        ['Pump discharge pressure', 'bar', 'Pump P-1', '', 'low', '5', '', 'PI-201'],
        ['Pump flow', 'm3/h', 'Pump P-1', '', '300', '-', '', 'FI-301'],
-       ['Motor power', 'kW', 'Motor M-1', '', '', '250', '280', 'KW-401']])
+       ['Motor power', 'kW', 'Motor M-1', '', '', '250', '280', 'KW-401'],
+       ['Ambient temperature', 'degC', '', '', '', '', '', 'TT-601'],
+       ['Pump vibration', 'mm/s', 'Pump P-1', '', '', '', '', 'VI-501']])
 note('tags/T01-other-header-names.csv', ['IMP-77'],
      ['หัวคอลัมน์ Name / UOM / System / LoLo / Low / High / HiHi และคอลัมน์ tag อยู่ท้ายสุดชื่อ TAG — ใช้กับ normal/IMP-normal.csv',
-      'ต้องจับคู่ได้ 5 ตัว · ชื่อจาก Name, หน่วยจาก UOM, component จาก System',
+      'ต้องจับคู่ได้ 7 / 7 และกด Continue ได้ · ชื่อจาก Name, หน่วยจาก UOM, component จาก System',
       'alarm ที่ไม่ใช่ตัวเลข ("-", "n/a", "low") = ไม่มีค่า: TI-101 มีแค่ L 20 / H 80 · PI-201 มีแค่ H 5 · FI-301 มีแค่ L 300'])
 write('tags/T02-description-and-name.csv', ['tag', 'name', 'description', 'units', 'group'],
       [['TI-101', 'NAME COLUMN - must not be used', 'Pump bearing temperature (from description)', '°C', 'Pump P-1'],
-       ['KW-401', 'NAME COLUMN - must not be used', 'Motor power (from description)', 'kW', 'Motor M-1']])
+       ['TI-102', 'NAME COLUMN - must not be used', 'Motor winding temperature (from description)', '°C', 'Motor M-1'],
+       ['PI-201', 'NAME COLUMN - must not be used', 'Pump discharge pressure (from description)', 'bar', 'Pump P-1'],
+       ['FI-301', 'NAME COLUMN - must not be used', 'Pump flow (from description)', 'm3/h', 'Pump P-1'],
+       ['KW-401', 'NAME COLUMN - must not be used', 'Motor power (from description)', 'kW', 'Motor M-1'],
+       ['VI-501', 'NAME COLUMN - must not be used', 'Pump vibration (from description)', 'mm/s', 'Pump P-1'],
+       ['TT-601', 'NAME COLUMN - must not be used', 'Ambient temperature (from description)', '°C', 'Site']])
 note('tags/T02-description-and-name.csv', ['IMP-77'],
-     ['มีทั้งคอลัมน์ name และ description → ชื่อที่แสดงต้องเป็นของ description ("… (from description)")',
+     ['7 แถว ตรงกับ IMP-normal.csv → วงแหวน 7 / 7 กด Continue ได้',
+      'มีทั้งคอลัมน์ name และ description → ชื่อที่แสดงต้องเป็นของ description ("… (from description)")',
       'หน่วยจาก units, component จาก group'])
 write('tags/T03-duplicate-tag-TI-101.csv', NORM_TAGS_HEAD,
-      [NORM_TAGS[0], ['TI-101', 'Bearing temp (second row)', '°C', 'Motor M-1', '', '', '75', '']] + NORM_TAGS[1:6])
+      [NORM_TAGS[0], ['TI-101', 'Bearing temp (second row)', '°C', 'Motor M-1', '', '', '75', '']] + NORM_TAGS[1:6] + [VI501_ROW])
 note('tags/T03-duplicate-tag-TI-101.csv', ['IMP-80', 'PREP-6'],
      ['TI-101 มี 2 แถว: "Pump bearing temperature" / Pump P-1 / H 80 และ "Bearing temp (second row)" / Motor M-1 / H 75',
-      'แถวทั้งหมด 7 แถว แต่เป็น tag ไม่ซ้ำ 6 ตัว → วงแหวน / ตาราง / ป้าย component ควรนับ TI-101 ครั้งเดียว (6 / 7)'])
+      'แถวทั้งหมด 8 แถว แต่เป็น tag ไม่ซ้ำ 7 ตัว → ตรงกับ IMP-normal.csv กด Continue ได้ · วงแหวน / ตาราง / ป้าย component ควรนับ TI-101 ครั้งเดียว (7 / 7)'])
 path = p('tags', 'T04-broken-short-row.csv')
 with open(path, 'w', newline='', encoding='utf-8') as f:
     f.write(','.join(NORM_TAGS_HEAD) + '\n')
@@ -318,9 +349,21 @@ with open(path, 'w', newline='', encoding='utf-8') as f:
     f.write('TI-102,Motor winding temperature,°C\n')
     for r in NORM_TAGS[2:6]:
         f.write(','.join(r) + '\n')
-note('tags/T04-broken-short-row.csv', ['IMP-79'], ['บรรทัดที่ 3 (TI-102) มี 3 ช่อง แต่หัวคอลัมน์มี 8 ช่อง → ข้อความแดงในการ์ด Tag names'])
+note('tags/T04-broken-short-row.csv', ['IMP-125'], ['บรรทัดที่ 3 (TI-102) มี 3 ช่อง แต่หัวคอลัมน์มี 8 ช่อง → ข้อความแดงในการ์ด Tag names'])
 open(p('tags', 'T05-empty-0-byte.csv'), 'wb').close()
-note('tags/T05-empty-0-byte.csv', ['IMP-79'], ['ขนาด 0 byte'])
+note('tags/T05-empty-0-byte.csv', ['IMP-125'], ['ขนาด 0 byte'])
+write('tags/T06-fewer-tags.csv', NORM_TAGS_HEAD, NORM_TAGS[:5])
+note('tags/T06-fewer-tags.csv', ['IMP-115'],
+     ['5 แถว (ไม่มี VI-501, TT-601) กับ IMP-normal.csv: "Sensors don\'t match: the data has 7, the tag-name file has 5." · วงแหวน 5 / 7 · Continue กดไม่ได้'])
+write('tags/T07-same-count-1-tag-differs.csv', NORM_TAGS_HEAD,
+      NORM_TAGS[:6] + [['VI-599', 'Pump vibration (wrong tag)', 'mm/s', 'Pump P-1', '', '', '', '']])
+note('tags/T07-same-count-1-tag-differs.csv', ['IMP-116'],
+     ['7 แถวเท่าข้อมูล แต่มี VI-599 แทน VI-501 → "Sensors don\'t match: both have 7, but 1 tag differs." · บรรทัดแดง "1 tag in the tag-name file is not in the dataset." · Continue กดไม่ได้'])
+write('tags/T08-same-count-2-tags-differ.csv', NORM_TAGS_HEAD,
+      NORM_TAGS[:5] + [['VI-599', 'Pump vibration (wrong tag)', 'mm/s', 'Pump P-1', '', '', '', ''],
+                       ['TT-699', 'Ambient temperature (wrong tag)', '°C', '', '', '', '', '']])
+note('tags/T08-same-count-2-tags-differ.csv', ['IMP-116'],
+     ['7 แถวเท่าข้อมูล แต่มี VI-599, TT-699 แทน VI-501, TT-601 → "Sensors don\'t match: both have 7, but 2 tags differ." · บรรทัดแดง "2 tags in the tag-name file are not in the dataset."'])
 
 # ─────────────────────────────── buddhist/ ───────────────────────────────
 tt = series(datetime(2024, 2, 28), 3 * 288)
@@ -544,10 +587,11 @@ for i in range(1, 216):
 for i in range(1, 26):
     wt.append([f'GONE{i:02d}', f'Tag that is not in the data {i}', '', 'Spare', '', '', '', ''])
 write('wide/IMP-wide-tags.csv', NORM_TAGS_HEAD, wt)
-note('wide/IMP-wide-220-sensors.csv + IMP-wide-tags.csv', ['IMP-78'],
+note('wide/IMP-wide-220-sensors.csv + IMP-wide-tags.csv', ['IMP-117'],
      ['288 แถว 220 sensors (W001–W220) · ไฟล์ tag 240 แถว: W001–W215 มีชื่อ (W206–W215 ไม่มี component) + GONE01–GONE25 ไม่มีในข้อมูล',
       'ต้องได้: จับคู่ 215 / 220 · "Showing the first 200 of 215 — use search to find the rest." · แท็บ No name 5 ตัว (W216–W220)',
-      'บรรทัดเหลือง "25 tags … not in the dataset" · ชี้เมาส์แล้วเห็นรายชื่อสูงสุด 20 ตัว · ป้าย component มี "Uncategorized" (10 ตัว)'])
+      'ไฟล์นี้ตั้งใจให้ไม่ตรงกับข้อมูล: "Sensors don\'t match: the data has 220, the tag-name file has 240." · Continue กดไม่ได้',
+      'บรรทัดแดง "25 tags … not in the dataset." · ชี้เมาส์แล้วเห็นรายชื่อสูงสุด 20 ตัว · ป้าย component มี "Uncategorized" (10 ตัว)'])
 
 # ─────────────────────────────── variants/ ───────────────────────────────
 t_, h_, r_ = make_normal(drop='TI-101')
@@ -565,14 +609,14 @@ t_, h_, r_ = make_normal(days=10)
 write('variants/IMP-normal_first-10-days.csv', h_, r_)
 note('variants/IMP-normal_first-10-days.csv', ['BMW-201', 'BMW-358'], stats_lines(t_, h_, r_) + [
     'ช่วงสั้นกว่าเดิม (สิ้นสุด 2024/01/10 23:55) — ตั้ง Train / Scoring period หลังวันที่ 11 ม.ค. ด้วยไฟล์เต็มก่อน แล้วค่อยเปลี่ยนเป็นไฟล์นี้'])
-chg = [list(r) for r in NORM_TAGS]
+chg = [list(r) for r in NORM_TAGS_EXACT]
 chg[0][1] = 'Pump bearing temperature (CHANGED)'
 chg[3][3] = 'Pump P-2'
 chg[0][6] = '75'
 write('variants/IMP-normal-tags_changed.csv', NORM_TAGS_HEAD, chg)
 note('variants/IMP-normal-tags_changed.csv', ['PER-19', 'WFF-5'],
-     ['เหมือน IMP-normal-tags.csv แต่: TI-101 description "Pump bearing temperature (CHANGED)" และ alarm H 75 (เดิม 80) · '
-      'FI-301 component "Pump P-2" (เดิม Pump P-1) · วิธีใช้: คัดลอกไปทับ IMP-normal-tags.csv แล้วเปลี่ยนชื่อเป็นชื่อเดิม'])
+     ['เหมือน IMP-normal-tags-exact.csv แต่: TI-101 description "Pump bearing temperature (CHANGED)" และ alarm H 75 (เดิม 80) · '
+      'FI-301 component "Pump P-2" (เดิม Pump P-1) · วิธีใช้: คัดลอกไปทับ IMP-normal-tags-exact.csv แล้วเปลี่ยนชื่อเป็นชื่อเดิม'])
 
 # ─────────────────────────────── projects/ ───────────────────────────────
 GEG_HEAD = ['timestamp', 'PWR_KW', 'SPEED_RPM', 'TT_BRG_DE', 'TT_BRG_NDE', 'TT_LO_IN', 'TT_EXH_A', 'VIB_GEN']
@@ -685,14 +729,60 @@ if EXP:
         write('exp-variants/EXP-data_with-A-B-columns.csv', h0 + ['A B', 'A/B'],
               [r + [round(10 + rnd.gauss(0, 1), 2), round(20 + rnd.gauss(0, 1), 2)] for r in body])
         note('exp-variants/EXP-data_with-A-B-columns.csv', ['BMW-381'],
-             [f'EXP-data.csv ({len(body):,} แถว) + คอลัมน์ "A B" (ประมาณ 10) และ "A/B" (ประมาณ 20) ครบทุกแถว — ใช้คู่กับ EXP-tags.csv',
+             [f'EXP-data.csv ({len(body):,} แถว) + คอลัมน์ "A B" (ประมาณ 10) และ "A/B" (ประมาณ 20) ครบทุกแถว — ใช้คู่กับ EXP-tags_with-A-B-columns.csv',
               'Export แล้วต้องได้ A_B-I1 และ A_B-I2 (ไม่เขียนทับกัน)'])
+        with open(os.path.join(EXP, 'EXP-tags.csv'), newline='', encoding='utf-8-sig') as f:
+            tdata = list(csv.reader(f))
+        blank = [''] * (len(tdata[0]) - 2)
+        write('exp-variants/EXP-tags_with-A-B-columns.csv', tdata[0],
+              tdata[1:] + [['A B', 'Test sensor A B'] + blank, ['A/B', 'Test sensor A/B'] + blank])
+        note('exp-variants/EXP-tags_with-A-B-columns.csv', ['BMW-381'],
+             [f'EXP-tags.csv + แถว "A B" และ "A/B" → ตรงกับ EXP-data_with-A-B-columns.csv ({len(h0) + 1} sensor) กด Continue ได้'])
         for col, rel, why in [('KW', 'exp-variants/EXP-data_without-KW.csv', 'sensor ของ Running condition "KW is above 50" (รอบที่ 2)'),
                               ('FLOW A', 'exp-variants/EXP-data_without-FLOW-A.csv', 'sensor ของโมเดล FLOW_A-R1 (รอบที่ 1)')]:
             j = h0.index(col)
             write(rel, h0[:j] + h0[j + 1:], [r[:j] + r[j + 1:] for r in body])
             note(rel, ['BMW-396'], [f'EXP-data.csv ที่ไม่มีคอลัมน์ {col} — {why}',
                                     'วิธีใช้: ปิดโปรแกรม → เก็บสำเนา EXP-data.csv → คัดลอกไฟล์นี้ไปทับ แล้วเปลี่ยนชื่อเป็น EXP-data.csv → คืนไฟล์เดิมเมื่อจบ'])
+
+# ─────────────────────────────── matching-tags/ ───────────────────────────────
+# A tag-name file is required on step 2 and must list exactly the sensors of the data, so each data file that had
+# none gets one, written from its real header row. The column called timestamp / time (else the first column) is the
+# time column, never a sensor. Files that share the same columns share one tag file.
+def data_sensors(rel):
+    with open(p(*rel.split('/')), newline='', encoding='utf-8-sig') as f:
+        hdr = next(csv.reader(f))
+    times = [i for i, h in enumerate(hdr) if h.strip().lower() in ('timestamp', 'time')]
+    skip = times[0] if times else 0
+    return list(dict.fromkeys(h.strip() for i, h in enumerate(hdr) if i != skip))
+
+
+def matching_tags(name, sensors, uses, about):
+    write('matching-tags/' + name, ['tag', 'description', 'unit', 'component'],
+          [[t, f'{t} test sensor', '', 'Test'] for t in sensors])
+    note('matching-tags/' + name, uses, [f'{len(sensors)} แถว ตรงกับ {about} พอดี → กด Continue ได้'])
+
+
+MATCHING = [
+    ('BE-2567-leap-day-tags.csv', 'buddhist/BE-2567-leap-day.csv', ['IMP-20'], 'BE-2567-leap-day.csv'),
+    ('ODD-text-and-empty-cells-tags.csv', 'odd/ODD-text-and-empty-cells.csv', ['IMP-63'], 'ODD-text-and-empty-cells.csv'),
+    ('ODD-empty-and-repeated-time-tags.csv', 'odd/ODD-empty-and-repeated-time.csv', ['IMP-67'], 'ODD-empty-and-repeated-time.csv'),
+    ('ODD-same-column-twice-tags.csv', 'odd/ODD-same-column-twice.csv', ['IMP-68'], 'ODD-same-column-twice.csv'),
+    ('ODD-same-column-twice-case-tags.csv', 'odd/ODD-same-column-twice-case.csv', ['IMP-68'], 'ODD-same-column-twice-case.csv'),
+    ('ODD-time-header-tags.csv', 'odd/ODD-time-header-Timestamp.csv', ['IMP-64'], 'ODD-time-header-Timestamp.csv และ ODD-time-header-TIME.csv'),
+    ('ODD-time-in-column-3-tags.csv', 'odd/ODD-time-in-column-3.csv', ['IMP-64'], 'ODD-time-in-column-3.csv'),
+    ('IMP87-tags.csv', 'time-shapes/IMP87-A_month-day-year.csv', ['IMP-87'], 'ไฟล์ IMP87-A ถึง IMP87-D ทุกไฟล์'),
+    ('IMP88-tags.csv', 'time-shapes/IMP88/2025.csv', ['IMP-88'], '2025.csv และ 2026.csv'),
+    ('INT-tags.csv', 'intervals/INT-1d.csv', ['IMP-56', 'WFH-4'], 'ไฟล์ INT-… ทุกไฟล์'),
+    ('MF-tags.csv', 'multi-file/MF-overlap-1.csv', ['IMP-37'], 'MF-overlap-… และ MF-adjacent-… ทุกไฟล์'),
+    ('MF-samecol-tags.csv', None, ['IMP-19'], 'MF-samecol-1.csv + MF-samecol-2.csv รวมกัน'),
+]
+for name, rel, uses, about in MATCHING:
+    sensors = data_sensors(rel) if rel else ['TI-101', 'PI-201', 'FI-301']
+    matching_tags(name, sensors, uses, about)
+# The TS set's merge files have no tag file (make-ts-testdata.py writes TS-tags.csv and I-tags.csv only).
+matching_tags('M1-M2-tags.csv', ['FLOW_A', 'FLOW_B'], ['IMP-98'], 'M1_iso.csv + M1_us_ampm.csv และ M2_part1.csv + M2_part2.csv ในชุด TS')
+matching_tags('M3-tags.csv', ['FLOW_A'], ['IMP-98'], 'M3_column_twice.csv ในชุด TS')
 
 # ─────────────────────────────── big/ and wfg/ (--big) ───────────────────────────────
 HM = [f'{m // 60:02d}:{m % 60:02d}:00' for m in range(1440)]

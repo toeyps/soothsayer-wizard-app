@@ -126,6 +126,12 @@ const h = vi.hoisted(() => {
     return state;
 });
 
+vi.mock('../hooks/useMappingData', async (original) => ({
+  ...(await original<typeof import('../hooks/useMappingData')>()),
+  useMappingData: (await import('./helpers/matchingTagFile')).useMatchingTagFile,
+  buildSensorMetadataFromMapping: () => null,
+}));
+
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (cmd: string, args?: any) => h.rust.invoke(cmd, args) }));
 vi.mock('@tauri-apps/api/event', () => ({
     listen: (event: string, cb: any) => h.listen(event, cb),

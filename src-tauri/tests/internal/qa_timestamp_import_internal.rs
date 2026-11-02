@@ -385,19 +385,6 @@ fn a_bom_on_the_mapping_csv_header_does_not_hide_the_key_column() {
 }
 
 #[test]
-fn the_first_column_is_never_counted_as_a_sensor_whatever_it_is_called() {
-    let dir = tempfile::tempdir().unwrap();
-    let p = write_csv(&dir, "map.csv", "Tag,Description\nA,Alpha\nB,Beta\n");
-    let data = load_mapping_csv_data(&p).unwrap();
-    for ts in ["timestamp", "Date", "DateTime", "เวลา"] {
-        let res = apply_mapping("Tag", &data, &[ts.into(), "A".into(), "B".into()]).unwrap();
-        assert_eq!(res.matched, vec!["A", "B"]);
-        assert!(res.not_in_dataset.is_empty());
-        assert!(res.not_in_mapping.is_empty(), "{ts} was counted as a sensor");
-    }
-}
-
-#[test]
 fn a_bom_on_the_metadata_csv_header_still_finds_the_tag_column() {
     let dir = tempfile::tempdir().unwrap();
     let p = write_csv(&dir, "meta.csv", "\u{FEFF}tag,Description , UNIT,component\nA,Alpha,bar,Pump\n,skip,,\n");

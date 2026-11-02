@@ -20,6 +20,12 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
  * FailureGroupsPanel, RecentProjectCard and workspaceManager are all real.
  */
 
+vi.mock('../hooks/useMappingData', async (original) => ({
+  ...(await original<typeof import('../hooks/useMappingData')>()),
+  useMappingData: (await import('./helpers/matchingTagFile')).useMatchingTagFile,
+  buildSensorMetadataFromMapping: () => null,
+}));
+
 vi.mock('@tauri-apps/api/event', async () => (await import('./helpers/healthEnv')).eventModule());
 vi.mock('@tauri-apps/plugin-fs', async () => (await import('./helpers/healthEnv')).fsModule());
 vi.mock('@tauri-apps/plugin-store', async () => (await import('./helpers/healthEnv')).storeModule());

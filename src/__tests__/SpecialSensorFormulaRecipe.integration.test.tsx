@@ -44,6 +44,12 @@ const probe = vi.hoisted(() => ({
     messages: [] as { text: string; opts: any; dashboardUp: boolean; dashboardUpNextTask?: boolean; convertedOnDisk: boolean }[],
 }));
 
+vi.mock('../hooks/useMappingData', async (original) => ({
+  ...(await original<typeof import('../hooks/useMappingData')>()),
+  useMappingData: (await import('./helpers/matchingTagFile')).useMatchingTagFile,
+  buildSensorMetadataFromMapping: () => null,
+}));
+
 vi.mock('@tauri-apps/api/event', async () => (await import('./helpers/healthEnv')).eventModule());
 vi.mock('@tauri-apps/plugin-fs', async () => {
     const base = (await import('./helpers/healthEnv')).fsModule();

@@ -342,17 +342,17 @@ export function matchedFraction(matched: number, total: number): number | null {
 
 /* ------------------------------ tag-name file check ------------------------------ */
 
-/** Why a chosen tag-name file blocks Continue, or `null` when it does not.
- *  The file stays optional (no file = no check), but a chosen one must list
- *  exactly the sensors in the data: the same number AND the same tags, so two
- *  files of equal size with different tags are refused too. */
+/** Why the tag-name file (master data) blocks Continue, or `null` when it does
+ *  not. A new project needs one, and it must list exactly the sensors in the
+ *  data: the same number AND the same tags, so two files of equal size with
+ *  different tags are refused too. */
 export function tagFileBlockReason(
   filePath: string | null,
   keyColumn: string | null,
   result: MappingResult | null,
 ): string | null {
-  if (!filePath) return null;
-  if (!keyColumn) return 'Pick the tag column of the tag-name file, or remove the file';
+  if (!filePath) return 'Add the tag-name file to continue';
+  if (!keyColumn) return 'Pick the tag column of the tag-name file';
   if (!result) return 'Checking the tag-name file…';
   const dataOnly = result.not_in_mapping.length;
   const fileOnly = result.not_in_dataset.length;

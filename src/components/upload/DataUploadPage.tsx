@@ -737,7 +737,7 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
                   Add your sensor data
                 </h2>
                 <p style={{ margin: "8px 0 0", maxWidth: "70ch", fontSize: 13.5, lineHeight: 1.5, color: T.textMuted }}>
-                  Drop one or more CSV exports. Files are merged on their timestamps. Add a tag-name file to show readable names instead of tag codes.
+                  Drop one or more CSV exports. Files are merged on their timestamps. Then add the tag-name file, which must list the same sensors as the data.
                 </p>
                 <div style={{
                   marginTop: 22, display: "grid", gap: 16, alignItems: "start",
@@ -806,7 +806,7 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
                   {tagFileBlock
                     ? tagFileBlock
                     : isReady
-                    ? `Ready · ${rowsText ?? "0"} rows · ${mappedCount > 0 ? `${mappedCount} names mapped` : "no tag names"}`
+                    ? `Ready · ${rowsText ?? "0"} rows · ${mappedCount} names mapped`
                     : isStale
                       ? "Selection changed · re-parse required"
                       : dataUpload.isLoading
