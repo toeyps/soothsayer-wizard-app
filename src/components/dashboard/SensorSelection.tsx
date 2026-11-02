@@ -399,7 +399,7 @@ export default function SensorSelection({
                         {/* The stacked SensorLabel — description + unit chip,
                             tag on line 2, full name in the title when it truncates. */}
                         <label htmlFor={`sensor-${sensor}`} onClick={(e) => e.stopPropagation()} className="sensor-row-label">
-                            <SensorLabel tag={sensor} info={sensorLookup(sensor)} wrap />
+                            <SensorLabel tag={sensor} info={sensorLookup(sensor)} wrap="always" />
                         </label>
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '2px', flexShrink: 0 }}>

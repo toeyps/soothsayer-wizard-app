@@ -832,6 +832,17 @@ describe('SensorSelection: long sensor names', () => {
         expect(screen.getByText(names[0])).toBeTruthy();
     });
 
+    it('a row with a tag line that would be cut wraps whole and keeps its tag line ("pump B" stays)', () => {
+        stubCut();
+        const pump = 'Condensate extraction pump B - Motor bearing NDE temperature';
+        const { container } = render(<SensorSelection {...makeProps({ sensors: ['U8-TE202'], sensorMetadata: metaOf([pump]).map(m => ({ ...m, tag: 'U8-TE202' })) })} />);
+        openList('Crosshead');
+        const desc = container.querySelector('.sl-wrapname') as HTMLElement;
+        expect(desc.textContent).toContain('pump B');
+        expect(desc.querySelector('[data-name-part]')).toBeNull();
+        expect(container.querySelector('.sl-tag')?.textContent).toBe('U8-TE202');
+    });
+
     it('a tag-only sensor joins its run like any other: its tag is its name', () => {
         stubCut();
         const tags = [LONG('11A', 1), LONG('11A', 2)];
