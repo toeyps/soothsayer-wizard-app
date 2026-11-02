@@ -4552,6 +4552,30 @@ body {
     background: var(--surface-hi);
 }
 .special-sensor-window { position: relative; flex: none; }
+/* The start a run of rows shares, once, while a row of the run is cut. */
+.special-sensor-run-prefix { display: flex; gap: 4px; padding: 7px 8px 1px 24px; font-size: 10.5px; color: var(--text-faint); white-space: nowrap; overflow: hidden; }
+/* A long start keeps its end ("… slide 11A"): that is the part that tells two runs apart. */
+.special-sensor-run-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* Windowed: the top row's component and run stay named on an opaque line (as the Sensor panel and the picker). */
+.special-sensor-stick { position: sticky; top: 0; height: 0; z-index: 3; margin: 0 -6px; }
+.special-sensor-sticky {
+    height: 30px;
+    line-height: 29px;
+    box-sizing: border-box;
+    padding: 0 14px;
+    display: flex;
+    gap: 4px;
+    font-size: 10.5px;
+    color: var(--text-secondary);
+    background: var(--card-bg);
+    border-bottom: 1px solid var(--border);
+    box-shadow: 0 4px 10px rgba(0, 0, 0, .25);
+    white-space: nowrap;
+    overflow: hidden;
+}
+.special-sensor-sticky b { flex: none; font-size: 10px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
+.special-sensor-sticky > span { flex: none; }
+.special-sensor-sticky > .special-sensor-run-name { flex: 0 1 auto; }
 .special-sensor-line { position: absolute; left: 0; right: 0; }
 .special-sensor-explorer-empty {
     font-size: 0.72rem;
@@ -5733,6 +5757,9 @@ body {
 .sl-split[data-short] > [data-name-part="head"] { order: 1; visibility: hidden; }
 .sl-split[data-short] > [data-name-part="tail"]::before { content: '…'; }
 .sl-split--pre[data-short] > [data-name-part="tail"]::before { content: ' …'; }
+/* The kept start is under ~8 characters too: it goes as well, with the same "… tail". */
+.sl-split[data-short-pre] > [data-name-part="pre"] { display: none; }
+.sl-split--pre[data-short-pre] > [data-name-part="tail"]::before { content: '…'; }
 /* Two lines: start + head on line 1, the end on line 2. */
 [data-name-form="two-line"] { display: flex; flex-direction: column; min-width: 0; white-space: nowrap; }
 [data-name-part="line1"] { display: flex; min-width: 0; }
@@ -6466,6 +6493,7 @@ body {
 .f4-readout--sl .sl-fit { min-width: 0; }
 .wb2-xpk { display: inline-flex; width: clamp(160px, 18vw, 260px); min-width: 0; vertical-align: middle; }
 .wb2-sub-sl { display: inline-flex; align-items: baseline; gap: 5px; min-width: 0; max-width: 100%; }
+.wb2-sub-lead { flex: none; white-space: nowrap; }
 /* A short note after the sensor labels of a chart subtitle ("· 1 h averages · coloured by score"):
    it keeps its width, the labels before it ellipsise. */
 .wb2-sub-sl > .wb2-sub-note { flex-shrink: 0; white-space: nowrap; }

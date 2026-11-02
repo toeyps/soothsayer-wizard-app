@@ -1,6 +1,7 @@
-import { Fragment, type ReactNode } from 'react';
+import { useCallback, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { useLineCut } from '../../hooks/useNameFit';
 import { afterPrefix, commonPrefix } from '../../utils/sensorNames';
+import { fontOf, textWidth } from '../../utils/textMeasure';
 import type { SpecialSensorRecipe } from '../../types';
 import type { SpecialSensorDescription } from '../../utils/specialSensorDescribe';
 import { NameText } from '../sensor/SensorLabel';
@@ -23,8 +24,14 @@ const Ref = ({ name, open = '', close = '' }: { name: string; open?: string; clo
 /** Every sensor name of a recipe at most this long: its text stays as it always was, end-cut if it must be. */
 const SHORT_NAME_MAX = 36;
 
-/** The summary as parts, or null when it has no long sensor name, or none can be found in its text. */
-function summaryParts(recipe: SpecialSensorRecipe, desc: SpecialSensorDescription, describe: (tag: string) => string): ReactNode | null {
+/** Room kept for the end of the summary ("· missing…") when deciding whether the sources can be read. */
+const END_MIN_PX = 48;
+/** A shared start with less room than this says nothing ("Cr…"): it is not printed. */
+const PREFIX_MIN_PX = 56;
+
+/** The summary as parts, or null when it has no long sensor name, or none can be found in its text.
+ *  `roomPx`: the width of the line. */
+function summaryParts(recipe: SpecialSensorRecipe, desc: SpecialSensorDescription, describe: (tag: string) => string, roomPx: number, font: string): ReactNode | null {
     const text = desc.summary;
     const named = recipe.kind === 'formula' ? [...text.matchAll(REF)].map(m => m[1] ?? m[2]) : desc.sources.map(describe);
     if (named.every(n => n.length <= SHORT_NAME_MAX)) return null;
@@ -48,19 +55,27 @@ function summaryParts(recipe: SpecialSensorRecipe, desc: SpecialSensorDescriptio
         const joined = names.join(', ');
         const i = text.indexOf(joined);
         if (i < 0) return null;
-        // Several sources: the start they share once, then each one's end.
+        const lead = text.slice(0, i);
+        const end = text.slice(i + joined.length);
+        // Several sources: the start they share once, then each one's end, whole. Ends cut to "Segm…" say nothing:
+        // when they cannot all be read the line counts them instead, and `title` lists them.
         const prefix = commonPrefix(names);
+        const list = (prefix ? names.map(n => afterPrefix(n, prefix)) : names).join(', ');
+        const left = roomPx - textWidth(`${lead}${list}`, font) - (end ? END_MIN_PX : 0);
+        if (left < 0) {
+            return (
+                <>
+                    <Text>{lead}{names.length} sensors</Text>
+                    <Text end>{end}</Text>
+                </>
+            );
+        }
         return (
             <>
-                <Text>{text.slice(0, i)}</Text>
-                {prefix && <span className="rsum-pre" data-testid="recipe-summary-prefix">{prefix} ·&nbsp;</span>}
-                {names.map((n, j) => (
-                    <Fragment key={j}>
-                        {j > 0 && <Text>, </Text>}
-                        <Ref name={prefix ? afterPrefix(n, prefix) : n} />
-                    </Fragment>
-                ))}
-                <Text end>{text.slice(i + joined.length)}</Text>
+                <Text>{lead}</Text>
+                {prefix && left >= PREFIX_MIN_PX && <span className="rsum-pre" data-testid="recipe-summary-prefix">{prefix} ·&nbsp;</span>}
+                <Text>{list}</Text>
+                <Text end>{end}</Text>
             </>
         );
     }
@@ -87,13 +102,32 @@ export function RecipeSummary({ recipe, desc, describe }: {
     describe: (tag: string) => string;
 }) {
     const text = desc?.summary ?? '';
-    const [ref, cut] = useLineCut(text);
-    const parts = cut && desc ? summaryParts(recipe, desc, describe) : null;
+    const [lineRef, cut] = useLineCut(text);
+    const el = useRef<HTMLElement | null>(null);
+    const ref = useCallback((node: HTMLElement | null) => { el.current = node; lineRef(node); }, [lineRef]);
+    // The line's width comes from the row, never from what it prints, so the form picked here cannot change its room.
+    const [room, setRoom] = useState({ px: 0, font: '' });
+    useLayoutEffect(() => {
+        const node = el.current;
+        if (!cut || !node) return;
+        const read = () => {
+            const px = node.clientWidth;
+            setRoom(r => (r.px === px ? r : { px, font: fontOf(node) }));
+        };
+        read();
+        if (typeof ResizeObserver === 'undefined') return;
+        const ro = new ResizeObserver(read);
+        ro.observe(node);
+        return () => ro.disconnect();
+    }, [cut]);
+    const parts = cut && desc ? summaryParts(recipe, desc, describe, room.px, room.font) : null;
+    // A cut line of several sources may only count them: `title` lists them.
+    const listed = !!parts && recipe.kind !== 'formula' && !!desc && desc.sources.length > 1;
     return (
         <div
             ref={ref}
             className={parts ? 'hidden md:flex rsum' : 'hidden md:block truncate'}
-            title={desc?.expression}
+            title={listed && desc ? desc.sources.map(describe).join('\n') : desc?.expression}
             data-testid={`recipe-summary-${recipe.tag}`}
             data-name-summary={parts ? '' : undefined}
             style={{ flex: '0 1 260px', fontFamily: recipe.kind === 'formula' ? 'var(--mono)' : undefined, fontSize: '11px', color: 'var(--text-secondary)' }}

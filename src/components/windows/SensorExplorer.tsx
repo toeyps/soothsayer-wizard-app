@@ -1,11 +1,11 @@
-import { Fragment, memo, useCallback, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Fragment, memo, useCallback, useMemo, useRef, useState } from 'react';
 import { ChevronRight, ChevronDown, Search, Plus, Check } from 'lucide-react';
 import { SensorMetadata } from '../../types';
-import { SensorLabel, SensorNamesContext, SensorSetContext } from '../sensor/SensorLabel';
-import { SensorMetaContext, useLayeredSensorLookup, type SensorNamesValue } from '../sensor/sensorInfo';
+import { NameText, SensorLabel, SensorNamesContext, SensorSetContext, SensorSetDropContext } from '../sensor/SensorLabel';
+import { SensorMetaContext, nameRuns, useLayeredSensorLookup, type SensorNamesValue } from '../sensor/sensorInfo';
 import { useCutRuns } from '../../hooks/useNameFit';
 import { useWindowedLines } from '../../hooks/useWindowedLines';
-import { commonPrefix, displayedName } from '../../utils/sensorNames';
+import { displayedName } from '../../utils/sensorNames';
 
 interface SensorExplorerProps {
     sensors: string[];
@@ -23,23 +23,22 @@ interface SensorExplorerProps {
 const WINDOW_ABOVE = 150;
 const WINDOW_OVERSCAN_PX = 400;
 const HEADER_EST_PX = 30;
+const PREFIX_EST_PX = 22;
 const ROW_EST_PX = 46;
 const VIEW_FALLBACK_PX = 600;
+/** The sticky line's height: the row just below it decides what it names. */
+const STICKY_PX = 30;
 
-/** One component's names, worked out once: every row of the group shares this set and its one run id. */
-interface GroupSet {
-    prefix: string;
-    value: SensorNamesValue;
-}
 /** The group of the sensors with no component (not a component name: the list groups by real names). */
 const NO_COMPONENT = '\u0000none';
 
 type ListLine =
     | { k: 'header'; component: string }
-    | { k: 'row'; sensor: string; group: string };
+    | { k: 'prefix'; id: string; prefix: string; component: string }
+    | { k: 'row'; sensor: string; prefix: string; set: SensorNamesValue; component: string };
 
-const lineKey = (l: ListLine) => (l.k === 'header' ? `h:${l.component}` : `r:${l.sensor}`);
-const estimateLine = (l: ListLine) => (l.k === 'header' ? HEADER_EST_PX : ROW_EST_PX);
+const lineKey = (l: ListLine) => (l.k === 'header' ? `h:${l.component}` : l.k === 'prefix' ? `p:${l.id}` : `r:${l.sensor}`);
+const estimateLine = (l: ListLine) => (l.k === 'header' ? HEADER_EST_PX : l.k === 'prefix' ? PREFIX_EST_PX : ROW_EST_PX);
 
 /**
  * Left column of the Create tab — search + a per-component list of every
@@ -103,37 +102,36 @@ function SensorExplorer({
     const listRef = useRef<HTMLDivElement>(null);
     const getList = useCallback(() => listRef.current, []);
 
-    // Each group is one set, measured together on the list: one row's cut marks its whole group, and a list over
-    // 150 lines reads the same as one under 150.
-    const { groupSets, setsKey, hasRuns } = useMemo(() => {
-        const sets = new Map<string, GroupSet>();
-        const keyParts: string[] = [];
-        let runs = false;
-        const add = (group: string, tags: string[]) => {
-            const names = tags.map(t => displayedName(sensorLookup(t)));
-            const prefix = commonPrefix(names);
-            if (prefix) runs = true;
-            keyParts.push(group, ...names);
-            sets.set(group, { prefix, value: { names, run: prefix ? group : '' } });
-        };
-        for (const component of groupedSensors.sortedKeys) add(component, groupedSensors.groups[component]);
-        add(NO_COMPONENT, groupedSensors.noComponent);
-        return { groupSets: sets, setsKey: keyParts.join('|'), hasRuns: runs };
-    }, [groupedSensors, sensorLookup]);
-    const cutRuns = useCutRuns(getList, setsKey, hasRuns);
-
-    const lines = useMemo<ListLine[]>(() => {
+    // Rule 2: consecutive rows whose names share a start are one set, measured together on the list. A group holds
+    // several families, so the run is what shares a start, not the group. While a row of a run is cut, its start
+    // prints once on a line of its own and the rows print the rest; a list over 150 lines reads the same as one under.
+    const allLines = useMemo<ListLine[]>(() => {
+        const nameOf = (t: string) => displayedName(sensorLookup(t));
         const out: ListLine[] = [];
+        const addRows = (component: string, tags: string[]) => {
+            for (const run of nameRuns(tags, nameOf)) {
+                const id = `${component}:${run.tags[0]}`;
+                if (run.prefix) out.push({ k: 'prefix', id, prefix: run.prefix, component });
+                const set: SensorNamesValue = { names: run.names, run: run.prefix ? id : '' };
+                for (const sensor of run.tags) out.push({ k: 'row', sensor, prefix: run.prefix, set, component });
+            }
+        };
         for (const component of groupedSensors.sortedKeys) {
             out.push({ k: 'header', component });
-            if (isExpanded(component)) for (const sensor of groupedSensors.groups[component]) out.push({ k: 'row', sensor, group: component });
+            if (isExpanded(component)) addRows(component, groupedSensors.groups[component]);
         }
-        for (const sensor of groupedSensors.noComponent) out.push({ k: 'row', sensor, group: NO_COMPONENT });
+        addRows(NO_COMPONENT, groupedSensors.noComponent);
         return out;
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [groupedSensors, expandedComponents, searchTerm]);
+    }, [groupedSensors, expandedComponents, searchTerm, sensorLookup]);
+    const hasRuns = useMemo(() => allLines.some(l => l.k === 'prefix'), [allLines]);
+    const cutRuns = useCutRuns(getList, `${allLines.length}|${searchTerm}|${[...expandedComponents].join('|')}`, hasRuns);
+    const lines = useMemo<ListLine[]>(() => (!hasRuns ? allLines : allLines
+        .filter(l => l.k !== 'prefix' || cutRuns.has(l.id))
+        .map(l => (l.k === 'row' && l.prefix && !cutRuns.has(l.set.run) ? { ...l, prefix: '' } : l))
+    ), [allLines, hasRuns, cutRuns]);
     const windowed = lines.length > WINDOW_ABOVE;
-    const { offsets, windowStart, windowEnd, readView, lineRef } = useWindowedLines({
+    const { view, offsets, windowStart, windowEnd, lineAt, readView, lineRef } = useWindowedLines({
         listRef,
         lines,
         keyOf: lineKey,
@@ -141,19 +139,9 @@ function SensorExplorer({
         windowed,
         overscanPx: WINDOW_OVERSCAN_PX,
         fallbackHeightPx: VIEW_FALLBACK_PX,
-        anchorList: lines,
+        // A new search or an opened group starts over; a run's line appearing does not.
+        anchorList: allLines,
     });
-
-    /** A row's group: its shared start (only while the group is cut) and the names it must read differently from. */
-    const inGroup = (group: string, row: ReactNode) => {
-        const set = groupSets.get(group);
-        if (!set) return row;
-        return (
-            <SensorSetContext.Provider value={cutRuns.has(set.value.run) ? set.prefix : ''}>
-                <SensorNamesContext.Provider value={set.value}>{row}</SensorNamesContext.Provider>
-            </SensorSetContext.Provider>
-        );
-    };
 
     const renderSensorItem = (sensor: string) => {
         const isSelected = selectedSensors.includes(sensor);
@@ -166,7 +154,7 @@ function SensorExplorer({
                 title={isSelected ? 'Picked for Quick build — click to un-pick' : 'Click to pick for Quick build'}
             >
                 <div className="special-sensor-row-main">
-                    <SensorLabel tag={sensor} wrap />
+                    <SensorLabel tag={sensor} wrap="always" />
                 </div>
                 {onInsertSensor && (
                     <button
@@ -207,6 +195,36 @@ function SensorExplorer({
         );
     };
 
+    const renderLine = (l: ListLine) => {
+        if (l.k === 'header') return renderHeader(l.component);
+        if (l.k === 'prefix') {
+            return (
+                <div className="special-sensor-run-prefix" data-testid="explorer-run-prefix" title={`Every sensor below starts with: ${l.prefix}`}>
+                    <NameText text={l.prefix} prefix="" className="special-sensor-run-name" /> <span aria-hidden="true">…</span>
+                </div>
+            );
+        }
+        return (
+            <SensorSetContext.Provider value={l.prefix}>
+                <SensorNamesContext.Provider value={l.set}>
+                    <SensorSetDropContext.Provider value={!!l.prefix}>
+                        {renderSensorItem(l.sensor)}
+                    </SensorSetDropContext.Provider>
+                </SensorNamesContext.Provider>
+            </SensorSetContext.Provider>
+        );
+    };
+
+    // Windowed: what the row under the line belongs to stays named while its own header is scrolled away.
+    let sticky: { component: string; prefix: string } | null = null;
+    if (windowed && view.top >= 4) {
+        const top = lines[lineAt(view.top + STICKY_PX + 2)];
+        if (top && top.k !== 'header') {
+            const component = top.component === NO_COMPONENT ? '' : top.component;
+            if (component || top.prefix) sticky = { component, prefix: top.prefix };
+        }
+    }
+
     return (
         <SensorMetaContext.Provider value={sensorLookup}>
         <div className="special-sensor-explorer">
@@ -221,6 +239,17 @@ function SensorExplorer({
             </div>
 
             <div className="special-sensor-explorer-list custom-scrollbar" ref={listRef} onScroll={readView}>
+                {windowed && (
+                    <div className="special-sensor-stick" aria-hidden="true">
+                        {sticky && (
+                            <div className="special-sensor-sticky" data-testid="explorer-sticky">
+                                {sticky.component && <b>{sticky.component}</b>}
+                                {sticky.component && sticky.prefix && <span>·</span>}
+                                {sticky.prefix && <><NameText text={sticky.prefix} prefix="" className="special-sensor-run-name" /> <span>…</span></>}
+                            </div>
+                        )}
+                    </div>
+                )}
                 {windowed ? (
                     <div className="special-sensor-window" style={{ height: offsets[lines.length] }} data-testid="explorer-window">
                         {lines.slice(windowStart, windowEnd).map((l, n) => {
@@ -232,28 +261,13 @@ function SensorExplorer({
                                     style={{ top: offsets[windowStart + n] }}
                                     ref={lineRef(key)}
                                 >
-                                    {l.k === 'header'
-                                        ? renderHeader(l.component)
-                                        : inGroup(l.group, renderSensorItem(l.sensor))}
+                                    {renderLine(l)}
                                 </div>
                             );
                         })}
                     </div>
                 ) : (
-                    <>
-                        {groupedSensors.sortedKeys.map(comp => (
-                            <div key={comp}>
-                                {renderHeader(comp)}
-                                {isExpanded(comp) && groupedSensors.groups[comp].map(sensor => (
-                                    <Fragment key={sensor}>{inGroup(comp, renderSensorItem(sensor))}</Fragment>
-                                ))}
-                            </div>
-                        ))}
-
-                        {groupedSensors.noComponent.map(sensor => (
-                            <Fragment key={sensor}>{inGroup(NO_COMPONENT, renderSensorItem(sensor))}</Fragment>
-                        ))}
-                    </>
+                    lines.map(l => <Fragment key={lineKey(l)}>{renderLine(l)}</Fragment>)
                 )}
 
                 {sensors.length === 0 && (

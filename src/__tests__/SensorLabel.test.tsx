@@ -380,6 +380,83 @@ describe('long names on labels (measured; a name that fits is untouched)', () =>
         expect(container.querySelector('.sl-l2')?.innerHTML).toBe('<span class="sl-tag">T</span>');
     });
 
+    describe('a list row (`wrap="always"`)', () => {
+        const pump = 'Condensate extraction pump B - Motor bearing NDE temperature';
+        const info = { tag: 'U8-CEPB-TE202', description: pump, unit: 'DEGC' };
+
+        it('a name that fits keeps the old markup, with its tag line', () => {
+            geometry = () => ({ clientWidth: 900, scrollWidth: 400 });
+            const { container } = render(<SensorLabel tag="T" info={info} wrap="always" />);
+            expect(container.querySelector('.sl-desc')?.outerHTML).toBe(`<span class="sl-desc">${pump}</span>`);
+            expect(container.querySelector('.sl-tag')?.textContent).toBe('U8-CEPB-TE202');
+        });
+
+        it('a short name stays one plain line however narrow the row', () => {
+            narrow(40);
+            const { container } = render(<SensorLabel tag="T" info={{ tag: 'T1', description: 'Boiler drum level' }} wrap="always" />);
+            expect(container.querySelector('.sl-desc')?.className).toBe('sl-desc');
+        });
+
+        it('a name that would be cut wraps whole, so nothing that tells it apart goes ("pump B"); the tag line stays', () => {
+            narrow(200);
+            const { container } = render(<SensorLabel tag="T" info={info} wrap="always" />);
+            const desc = container.querySelector('.sl-desc') as HTMLElement;
+            expect(desc.className).toContain('sl-wrapname');
+            expect(desc.textContent).toContain('pump B');
+            expect(desc.querySelector('[data-name-part]')).toBeNull();
+            expect(container.querySelector('.sl-tag')?.textContent).toBe('U8-CEPB-TE202');
+        });
+
+        it('a name with no spaces has no word break: it end-cuts on one line', () => {
+            narrow(200);
+            const { container } = render(<SensorLabel tag="T" info={{ tag: 'GC12_COM_Crosshead_PPTrend_Vibration_CrossheadSlide11A_SegmentNo1_avg' }} wrap="always" />);
+            expect(container.querySelector('.sl-desc')?.className).not.toContain('sl-wrapname');
+        });
+
+        it('a plain `wrap` under a tag line does not wrap (the Sensor panel)', () => {
+            narrow(200);
+            const { container } = render(<SensorLabel tag="T" info={info} wrap />);
+            expect(container.querySelector('.sl-desc')?.className).not.toContain('sl-wrapname');
+        });
+
+        it('stays wrapped through later measurements of the same room: no flip-flop', () => {
+            narrow(200);
+            const { container, rerender } = render(<SensorLabel tag="T" info={info} wrap="always" />);
+            for (let i = 0; i < 3; i++) {
+                rerender(<SensorLabel tag="T" info={info} wrap="always" />);
+                expect(container.querySelector('.sl-desc')?.className).toContain('sl-wrapname');
+            }
+        });
+    });
+
+    describe('a wrapped name keeps its separator at the end of line 1', () => {
+        const NBSP = '\u00a0';
+        it('ties each separator to the word before it, once wrapped', () => {
+            narrow(200);
+            const { container } = render(<SensorLabel tag="T" info={{ tag: 'T', description: name('11B', '14') }} wrap="always" />);
+            const text = container.querySelector('.sl-desc')!.textContent!;
+            expect(text).toContain(`11B${NBSP}- Segment`);
+            expect(text).toContain(`14${NBSP}- avg`);
+            expect(text).not.toMatch(/ [-–—·|/] /);
+        });
+
+        it('a name that fits keeps its plain spaces', () => {
+            geometry = () => ({ clientWidth: 900, scrollWidth: 400 });
+            const { container } = render(<SensorLabel tag="T" info={{ tag: 'T', description: name('11B', '14') }} wrap />);
+            expect(container.querySelector('.sl-desc')!.textContent).toBe(name('11B', '14'));
+        });
+
+        it('a search typed with a space still finds a match across the separator', () => {
+            narrow(200);
+            const { container } = render(
+                <SensorSearchContext.Provider value="11b - segment">
+                    <SensorLabel tag="T" info={{ tag: 'T', description: name('11B') }} wrap="always" />
+                </SensorSearchContext.Provider>,
+            );
+            expect(container.querySelector('.sl-hit')?.textContent).toBe(`11B${NBSP}- Segment`);
+        });
+    });
+
     it('a name that does not fit is cut in the middle: the tail stays, the name reads the same', () => {
         narrow(200);
         const { container } = render(<SensorInline tag="T" info={{ tag: 'T', description: name('11A') }} />);

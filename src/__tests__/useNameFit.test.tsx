@@ -586,6 +586,53 @@ describe('applyNameFit / watchNameFit / useNameFit', () => {
         applyNameFit(split, measure);
         expect(split.hasAttribute('data-short')).toBe(false);
     });
+    it('a head that passes the check and is then squeezed by the row is dropped too: the rendered width decides', () => {
+        const { split, head } = makeSplit('Vibration crosshead slide');
+        geometry = el => (el === head ? { clientWidth: head.style.maxWidth ? 25 : 110, scrollWidth: 125 } : {});
+        applyNameFit(split, measure);
+        expect(split.hasAttribute('data-short')).toBe(true);
+    });
+    it('a kept start cut under 8 characters goes as well, and comes back with room', () => {
+        const { split, head } = makeSplit('crosshead slide');
+        const pre = document.createElement('span');
+        pre.dataset.namePart = 'pre';
+        pre.style.fontSize = '10px';
+        pre.textContent = 'Crosshead ';
+        split.prepend(pre);
+        geometry = el => (el === pre ? { clientWidth: 15, scrollWidth: 50 } : el === head ? { clientWidth: 0, scrollWidth: 75 } : {});
+        applyNameFit(split, measure);
+        expect(split.hasAttribute('data-short')).toBe(true);
+        expect(split.hasAttribute('data-short-pre')).toBe(true);
+        geometry = () => ({ clientWidth: 200, scrollWidth: 100 });
+        applyNameFit(split, measure);
+        expect(split.hasAttribute('data-short')).toBe(false);
+        expect(split.hasAttribute('data-short-pre')).toBe(false);
+    });
+    it('a kept start that is whole stays when only the head is dropped', () => {
+        const { split, head } = makeSplit('crosshead slide');
+        const pre = document.createElement('span');
+        pre.dataset.namePart = 'pre';
+        pre.style.fontSize = '10px';
+        pre.textContent = 'Crosshead ';
+        split.prepend(pre);
+        geometry = el => (el === pre ? { clientWidth: 50, scrollWidth: 50 } : el === head ? { clientWidth: 20, scrollWidth: 75 } : {});
+        applyNameFit(split, measure);
+        expect(split.hasAttribute('data-short')).toBe(true);
+        expect(split.hasAttribute('data-short-pre')).toBe(false);
+    });
+    it('watches the head as well as the row, and stops watching both', () => {
+        const row = document.createElement('div');
+        const { split, head } = makeSplit('Vibration crosshead slide');
+        row.append(split);
+        document.body.append(row);
+        geometry = () => ({ clientWidth: 200, scrollWidth: 100 });
+        const stop = watchNameFit(split);
+        const watching = () => observers.filter(o => !o.disconnected).flatMap(o => [...o.targets]);
+        expect(watching()).toEqual(expect.arrayContaining([row, head]));
+        stop();
+        expect(watching()).not.toContain(head);
+        expect(watching()).not.toContain(row);
+    });
     describe('chips', () => {
         function inChip(chipClass: string, withRef = false) {
             const { split } = makeSplit('Vibration crosshead slide');

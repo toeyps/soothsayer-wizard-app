@@ -7,10 +7,10 @@ import { ALARM_LEVELS, ALARM_LABELS, isCriticalAlarmLevel, alarmLevelColor, hasA
 import AnchoredPopover, { type PopoverAnchorRect } from '../AnchoredPopover';
 import FailureGroupAssignSheet, { KIND_LETTER, KIND_LABEL, ALL_KINDS } from './FailureGroupAssignSheet';
 import { SensorLabel, SensorNamesContext, SensorSearchContext, SensorSetContext, SensorSetDropContext } from '../sensor/SensorLabel';
-import { SensorMetaContext, useLayeredSensorLookup, type SensorNamesValue } from '../sensor/sensorInfo';
+import { SensorMetaContext, nameRuns, useLayeredSensorLookup, type SensorNamesValue } from '../sensor/sensorInfo';
 import { useCutRuns } from '../../hooks/useNameFit';
 import { useWindowedLines } from '../../hooks/useWindowedLines';
-import { NAME_TAIL_MAX, commonPrefix, displayedName, splitName } from '../../utils/sensorNames';
+import { NAME_TAIL_MAX, displayedName } from '../../utils/sensorNames';
 
 
 
@@ -79,17 +79,6 @@ const CHIPS_EST_PX = 26;
 const VIEW_FALLBACK_PX = 900;
 
 const itemKey = (it: ListItem): string => (it.k === 'header' ? `h:${it.component}` : it.k === 'prefix' ? `p:${it.id}` : `r:${it.sensor}`);
-
-/** The start a row's run shares: its name without the distinguishing end. A name whose end is too long to split
- *  still joins its run (its start = all but its last segment). */
-function runKeyOf(name: string): string {
-    let head = splitName(name).head;
-    if (!head) {
-        const seps = [...name.matchAll(/\s[-–—·|/]\s/g)];
-        head = seps.length ? name.slice(0, seps[seps.length - 1].index) : '';
-    }
-    return head.replace(/\s*[-–—·|/]\s*$/, '');
-}
 
 export default function SensorSelection({
     sensors,
@@ -536,28 +525,15 @@ export default function SensorSelection({
     // Every name is the DISPLAYED name, so a tag-only sensor joins its run like any other.
     const allItems = useMemo<ListItem[]>(() => {
         const nameOf = (t: string) => displayedName(sensorLookup(t));
-        const keys = new Map<string, string>();
-        const runKey = (t: string) => {
-            let key = keys.get(t);
-            if (key === undefined) { key = runKeyOf(nameOf(t)); keys.set(t, key); }
-            return key;
-        };
         const out: ListItem[] = [];
         for (const [component, list] of groupedSensors) {
             out.push({ k: 'header', component, list });
             if (!isComponentExpanded(component)) continue;
-            let i = 0;
-            while (i < list.length) {
-                const key = runKey(list[i]);
-                let j = i + 1;
-                while (key && j < list.length && runKey(list[j]) === key) j++;
-                const names = list.slice(i, j).map(nameOf);
-                const prefix = names.length >= 2 ? commonPrefix(names) : '';
-                const id = `${component}:${list[i]}`;
-                if (prefix) out.push({ k: 'prefix', id, prefix });
-                const set: SensorNamesValue = { names, run: prefix ? id : '' };
-                for (let r = i; r < j; r++) out.push({ k: 'row', sensor: list[r], prefix, set });
-                i = j;
+            for (const run of nameRuns(list, nameOf)) {
+                const id = `${component}:${run.tags[0]}`;
+                if (run.prefix) out.push({ k: 'prefix', id, prefix: run.prefix });
+                const set: SensorNamesValue = { names: run.names, run: run.prefix ? id : '' };
+                for (const sensor of run.tags) out.push({ k: 'row', sensor, prefix: run.prefix, set });
             }
         }
         return out;

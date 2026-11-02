@@ -708,7 +708,8 @@ describe('FailureGroupAssignSheet: a long sensor name in the header', () => {
         renderSheet({ tag: longName(1), info: { tag: longName(1) } });
         const name = document.querySelector('.fg-sheet-sl .sl-desc')!;
         expect(name.className).toContain('sl-wrapname');
-        expect(name.textContent).toBe(longName(1));
+        // A separator never starts line 2: a no-break space ties it to the word before it.
+        expect(name.textContent).toBe(longName(1).replace(/ - /g, '\u00a0- '));
     });
 
     it('a short name stays one plain line', () => {

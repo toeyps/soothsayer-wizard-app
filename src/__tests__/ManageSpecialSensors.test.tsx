@@ -286,23 +286,47 @@ describe('ManageSpecialSensors: the recipe summary with long names', () => {
         expect(summary('Boiler total flow').querySelector('[data-name-ref]')).toBeNull();
     });
 
-    it('cut, several sources: the start they share once, then each one\'s end', () => {
-        stubNamesCut();
+    /** A line that is cut, wide enough for the ends of the sources but not for the whole names. */
+    const stubLine = (room: number) => {
+        Object.defineProperty(HTMLElement.prototype, 'clientWidth', { configurable: true, value: room });
+        Object.defineProperty(HTMLElement.prototype, 'scrollWidth', { configurable: true, value: 2000 });
+    };
+
+    it('cut, several sources, room for their ends: the start they share once, then each end whole', () => {
+        stubLine(600);
         renderList({ recipes: [avg], sensorMetadata: meta });
         const s = summary('avg1');
-        expect(s.hasAttribute('data-name-summary')).toBe(true);
-        expect(s.querySelectorAll('[data-name-ref]')).toHaveLength(2);
         expect(screen.getByTestId('recipe-summary-prefix').textContent).toContain('Crosshead (P-P Trend)');
         expect(s.textContent!.match(/Crosshead/g)).toHaveLength(1);
-        expect(s.textContent).toContain('SegmentNo 2 - avg');
+        expect(s.textContent).toContain('SegmentNo 1 - avg, SegmentNo 2 - avg');
+        expect(s.querySelector('[data-name-part]')).toBeNull();
     });
 
-    it('cut, the same source twice: both print, with no duplicate-key warning', () => {
+    it('cut, several sources, room for the ends only: the start goes, the ends stay', () => {
+        stubLine(280);
+        renderList({ recipes: [avg], sensorMetadata: meta });
+        expect(screen.queryByTestId('recipe-summary-prefix')).toBeNull();
+        expect(summary('avg1').textContent).toBe('Sum of SegmentNo 1 - avg, SegmentNo 2 - avg');
+    });
+
+    it('cut, several sources, the ends cannot be read: it counts them, and the hover lists them', () => {
         stubNamesCut();
+        const three: SpecialSensorRecipe = {
+            kind: 'operation', tag: 'avg3', sourceSensors: ['S1', 'S2', 'S3'],
+            operationConfig: { mode: 'multi', multiOp: { type: 'mean' }, customName: 'avg3' },
+        };
+        renderList({ recipes: [three], sensorMetadata: [...meta, { tag: 'S3', description: long(3), unit: '', component: '' }] });
+        const s = summary('avg3');
+        expect(s.textContent).toBe('Average of 3 sensors · missing values skipped');
+        expect(s.getAttribute('title')).toBe([long(1), long(2), long(3)].join('\n'));
+    });
+
+    it('cut, the same source twice: both count, with no duplicate-key warning', () => {
+        stubLine(600);
         const error = vi.spyOn(console, 'error').mockImplementation(() => {});
         const twice: SpecialSensorRecipe = { ...avg, tag: 'twice', sourceSensors: ['S1', 'S1'] };
         renderList({ recipes: [twice], sensorMetadata: meta });
-        expect(summary('twice').querySelectorAll('[data-name-ref]')).toHaveLength(2);
+        expect(summary('twice').textContent!.match(/SegmentNo 1 - avg/g)).toHaveLength(2);
         expect(error.mock.calls.filter(c => String(c[0]).includes('same key'))).toEqual([]);
         error.mockRestore();
     });

@@ -12,6 +12,7 @@
  *  - `data-name-part="pre" | "head" | "tail"`: direct children of a split name.
  *  - `data-name-part="line1"` + `data-name-form="two-line"`: the two-line form (`pre`/`head` inside `line1`).
  *  - `data-short`: set here on a split whose visible head is under ~8 characters; the CSS then hides the head.
+ *  - `data-short-pre`: the same for a kept start (`pre`) that is cut under ~8 characters.
  *  - `data-name-summary` / `data-name-ref`: a recipe summary and one sensor reference in it (never shrinks below
  *    "…" + its tail).
  */
@@ -160,6 +161,10 @@ function wholeWordCut(el: HTMLElement, measure: MeasureText) {
     if (best > 0) el.style.maxWidth = `${Math.ceil(best + 1)}px`;
 }
 
+const isCut = (el: HTMLElement) => el.scrollWidth > el.clientWidth + 0.5;
+/** Cut, and what is left of it is under ~8 characters. Read from the rendered width. */
+const underMinHead = (el: HTMLElement) => isCut(el) && el.clientWidth < parseFloat(getComputedStyle(el).fontSize) * 0.55 * MIN_HEAD_CH;
+
 const part = (split: HTMLElement, name: string) => split.querySelector<HTMLElement>(`:scope > [data-name-part="${name}"]`);
 
 /** The minimums a split has set outside itself. The chip and its wrappers outlive the split (a name back to plain
@@ -217,19 +222,19 @@ export function applyNameFit(split: HTMLElement, measure: MeasureText = textWidt
     const head = part(split, 'head');
     if (!head) return;
     split.removeAttribute('data-short');
+    split.removeAttribute('data-short-pre');
     head.style.maxWidth = '';
     const tail = part(split, 'tail');
     const chip = split.closest<HTMLElement>('.pk-chip, .fx-chip');
     if (tail && chip) holdChipOpen(split, chip, tail);
     if (tail && split.closest('[data-name-summary]')) holdSummaryRef(split, tail);
-    const cutNow = head.scrollWidth > head.clientWidth + 0.5;
-    if (cutNow && head.clientWidth < parseFloat(getComputedStyle(head).fontSize) * 0.55 * MIN_HEAD_CH) {
-        split.setAttribute('data-short', '');
-    } else if (cutNow) {
-        wholeWordCut(head, measure);
-    }
     const pre = part(split, 'pre');
     if (pre) wholeWordCut(pre, measure);
+    if (underMinHead(head)) split.setAttribute('data-short', '');
+    else if (isCut(head)) wholeWordCut(head, measure);
+    // What the flex row left after the cuts above is what shows: a head cut to a whole word can still be squeezed.
+    if (!split.hasAttribute('data-short') && underMinHead(head)) split.setAttribute('data-short', '');
+    if (pre && underMinHead(pre)) split.setAttribute('data-short-pre', '');
 }
 
 let sharedObserver: ResizeObserver | null = null;
@@ -249,21 +254,29 @@ export function watchNameFit(split: HTMLElement | null): () => void {
             for (const e of entries) splitsByTarget.get(e.target)?.forEach(s => applyNameFit(s));
         }));
     }
-    let set = splitsByTarget.get(target);
-    if (!set) {
-        set = new Set();
-        splitsByTarget.set(target, set);
-        sharedObserver.observe(target);
+    // The row, and the head itself: the flex row can squeeze a head with the row's own size unchanged (the tail
+    // growing back, a sibling chip). `applyNameFit` measures from the reset state, so its own change cannot loop.
+    const head = part(split, 'head');
+    const targets = head ? [target, head] : [target];
+    for (const t of targets) {
+        let set = splitsByTarget.get(t);
+        if (!set) {
+            set = new Set();
+            splitsByTarget.set(t, set);
+            sharedObserver.observe(t);
+        }
+        set.add(split);
     }
-    set.add(split);
     return () => {
         stopFrame();
-        const s = splitsByTarget.get(target);
-        if (!s) return;
-        s.delete(split);
-        if (!s.size) {
-            splitsByTarget.delete(target);
-            sharedObserver?.unobserve(target);
+        for (const t of targets) {
+            const s = splitsByTarget.get(t);
+            if (!s) continue;
+            s.delete(split);
+            if (!s.size) {
+                splitsByTarget.delete(t);
+                sharedObserver?.unobserve(t);
+            }
         }
     };
 }

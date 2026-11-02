@@ -781,6 +781,10 @@ function LineChart({
                 // does on every move near the box.
                 enterable: false,
                 hideDelay: 0,
+                // A long box must not lose its top to the card: `confine` keeps it inside the chart, and from `body`
+                // the card cannot clip one taller than the chart. Only a box that ran past the chart moves.
+                confine: true,
+                appendTo: () => document.body,
                 formatter: (params: any) => {
                     if (!params || (Array.isArray(params) && params.length === 0)) return '';
                     const pList = Array.isArray(params) ? params : [params];

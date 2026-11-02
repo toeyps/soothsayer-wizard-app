@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { useEffect } from 'react';
 import { render, fireEvent, act, screen, within } from '@testing-library/react';
+import * as echarts from 'echarts';
 import { formatDateTime } from '../utils/dateFormat';
 
 const capturedOptions: any[] = [];
@@ -443,6 +444,64 @@ describe('LineChart option building', () => {
             rerender(<LineChart data={[]} columnar={wider} sensors={['A']} headers={['A']} hideYSplitLine />);
             const { dataZoom } = capturedOptions[capturedOptions.length - 1];
             expect(dataZoom[0].start).toBeUndefined();
+        });
+    });
+
+    describe('tooltip box stays readable', () => {
+        const HEADS = 20;
+        function hoverAllHeights(boxH: number, chartH: number) {
+            const spy = vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockImplementation(function (this: HTMLElement) {
+                return this.querySelector?.('.tt-head') ? boxH : chartH;
+            });
+            const spyW = vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockImplementation(function (this: HTMLElement) {
+                return this.querySelector?.('.tt-head') ? 300 : 800;
+            });
+            const columnar = columnarOf(['A'], 30);
+            render(<LineChart data={[]} columnar={columnar} sensors={['A']} headers={['A']} />);
+            const option = capturedOptions[capturedOptions.length - 1];
+            const host = document.createElement('div');
+            document.body.append(host);
+            const chart = echarts.init(host, undefined, { renderer: 'svg', width: 800, height: chartH });
+            chart.setOption(option);
+            const tops: number[] = [];
+            for (let i = 0; i <= HEADS; i++) {
+                const y = 20 + ((chartH - 40) * i) / HEADS;
+                chart.dispatchAction({ type: 'showTip', x: 300, y });
+                const box = document.querySelector<HTMLElement>('body > div > .tt-head')?.parentElement;
+                if (box) tops.push(parseFloat(box.style.top));
+            }
+            chart.dispose();
+            host.remove();
+            spy.mockRestore();
+            spyW.mockRestore();
+            return tops;
+        }
+
+        it('is confined to the chart and lives outside the card that would clip it', () => {
+            render(<LineChart data={[]} columnar={columnarOf(['A'], 3)} sensors={['A']} headers={['A']} />);
+            const { tooltip } = capturedOptions[capturedOptions.length - 1];
+            expect(tooltip.confine).toBe(true);
+            expect(tooltip.appendTo()).toBe(document.body);
+        });
+
+        it('real ECharts: the timestamp line stays in the chart at every hover height, for a box that only just fits', () => {
+            const tops = hoverAllHeights(250, 290);
+            expect(tops.length).toBeGreaterThan(HEADS / 2);
+            for (const top of tops) {
+                expect(top).toBeGreaterThanOrEqual(0);
+                expect(top + 250).toBeLessThanOrEqual(290);
+            }
+        });
+
+        it('real ECharts: a box taller than the chart keeps its top at the chart top, and nothing is removed from it', () => {
+            const tops = hoverAllHeights(400, 290);
+            expect(tops.length).toBeGreaterThan(HEADS / 2);
+            for (const top of tops) expect(top).toBe(0);
+        });
+
+        it('real ECharts: the box leaves the body with the chart', () => {
+            hoverAllHeights(100, 290);
+            expect(document.querySelector('body > div .tt-head')).toBeNull();
         });
     });
 

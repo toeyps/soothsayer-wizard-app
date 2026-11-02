@@ -92,10 +92,16 @@ export function SetPrefixLine({ className, testid = 'set-prefix' }: { className:
     );
 }
 
+const NBSP = '\u00a0';
+
+/** A wrapping row: a separator stays at the end of line 1, never starts line 2 ("… SegmentNo 14 -" / "max"). Same
+ *  length as the name, so a search hit still lands on the right characters. */
+const keepSeparatorOnLine = (text: string) => text.replace(/ (?=[-–—·|/] )/g, NBSP);
+
 function marked(text: string, q: string): ReactNode {
     if (!q) return text;
     const out: ReactNode[] = [];
-    const low = text.toLowerCase();
+    const low = text.toLowerCase().split(NBSP).join(' ');
     let i = 0;
     let k = 0;
     for (let j = low.indexOf(q); j >= 0; j = low.indexOf(q, i)) {
@@ -150,7 +156,10 @@ function LongName({ text, names, prefix, className, wrap, stack, q, measure }: L
     const [wideRef, wideK] = useWideTail(forms, active && !wrap && !two && forms.length > 1);
     const shown = withWiderTail(sp, starts, wideK);
     const pre = shown.pre ?? '';
-    const form = !shown.head ? 'plain' : two ? 'two-line' : wrap ? 'wrap' : 'split';
+    // A wrapping row wraps a cut name even with no head to split off (its end is over 28 characters); one with no
+    // spaces has no word break to wrap at and end-cuts.
+    const wrapsWhole = !!wrap && active && !shown.head && /\s/.test(text);
+    const form = wrapsWhole ? 'wrap' : !shown.head ? 'plain' : two ? 'two-line' : wrap ? 'wrap' : 'split';
     const fitRef = useNameFit(
         `${form}\0${pre}\0${shown.head}\0${shown.tail}`,
         form === 'two-line' || (form === 'split' && !shown.shared),
@@ -179,8 +188,8 @@ function LongName({ text, names, prefix, className, wrap, stack, q, measure }: L
         return (
             <span key="wrap" ref={ref} className={`${className} sl-wrapname`} {...measure}>
                 {shown.shared
-                    ? <><span className="sl-head--shared" data-name-part="head">{shown.head}</span>{marked(shown.tail, q)}</>
-                    : marked(text, q)}
+                    ? <><span className="sl-head--shared" data-name-part="head">{shown.head}</span>{marked(keepSeparatorOnLine(shown.tail), q)}</>
+                    : marked(keepSeparatorOnLine(text), q)}
             </span>
         );
     }
@@ -260,8 +269,9 @@ interface LabelProps {
     /** An explicit shared start (overrides the surrounding set). */
     prefix?: string;
     /** Stacked only: when no tag line prints (no description, or rule 3b), a name that does not fit may use
-     *  two lines, its distinguishing end on line 2. A name that fits stays on one line. */
-    wrap?: boolean;
+     *  two lines, its distinguishing end on line 2. A name that fits stays on one line. `'always'`: a list row, the
+     *  same with a tag line under it (rule 3: up to 3 lines) rather than dropping or cutting part of the name. */
+    wrap?: boolean | 'always';
 }
 
 /** 'md' is the base look (no modifier class). */
@@ -281,7 +291,7 @@ export function SensorLabel({ tag, info, unit = true, size = 'md', muted, classN
         >
             <span className="sl-l1">
                 <FxBadge special={i.special} />
-                <NameText text={i.description || i.tag} prefix={prefix} wrap={wrap && !after && !showTag} stack />
+                <NameText text={i.description || i.tag} prefix={prefix} wrap={!after && (wrap === 'always' || (!!wrap && !showTag))} stack />
                 {unit && i.unit && <span className="unit-badge sl-unit">{i.unit}</span>}
             </span>
             {(showTag || after) && (

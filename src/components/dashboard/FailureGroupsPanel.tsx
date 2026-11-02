@@ -264,7 +264,7 @@ export default function FailureGroupsPanel({
                         <ChevronRight size={11} style={{ flexShrink: 0, transform: open ? 'rotate(90deg)' : undefined, transition: 'transform .12s' }} />
                         {/* The stacked label, row metrics matching the Sensor tab rows exactly. */}
                         {info && keyTag
-                            ? <SensorLabel tag={keyTag} info={info} wrap />
+                            ? <SensorLabel tag={keyTag} info={info} wrap="always" />
                             : <span className="fg-srow-plain">{label}</span>}
                     </button>
                     {kinds.map(k => {

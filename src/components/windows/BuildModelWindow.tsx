@@ -3293,7 +3293,7 @@ export default function BuildModelWindow() {
             >
                 <div style={{ minWidth: 0 }} data-testid="sensor-row-label" title={label}>
                     {/* The stacked SensorLabel (unit chip, tag on line 2). */}
-                    {keyTag ? <SensorLabel tag={keyTag} wrap /> : <div className="f4-sr-title">{title}</div>}
+                    {keyTag ? <SensorLabel tag={keyTag} wrap="always" /> : <div className="f4-sr-title">{title}</div>}
                 </div>
                 <div className="f4-kinds">
                     {ordered.map(m => {

@@ -1,7 +1,7 @@
 import { createContext, useContext, useMemo } from 'react';
 import type { SensorMetadata, SpecialSensorRecipe } from '../../types';
 import { normalizeSensorTag } from '../../hooks/useSensorMetaMap';
-import { sameNameLoosely } from '../../utils/sensorNames';
+import { commonPrefix, sameNameLoosely, splitName } from '../../utils/sensorNames';
 import { layoutTooltipRow } from '../../utils/tooltipLayout';
 
 export { sameNameLoosely };
@@ -107,6 +107,40 @@ export const SensorSetContext = createContext<string>('');
 /** Rule 3: the names of the surrounding set, and its id for the cut measurement ('' = not measured). */
 export interface SensorNamesValue { names: readonly string[]; run: string }
 export const SensorNamesContext = createContext<SensorNamesValue>({ names: [], run: '' });
+/** The start a row's run shares: its name without the distinguishing end. A name whose end is too long to split
+ *  still joins its run (its start = all but its last segment). */
+export function runKeyOf(name: string): string {
+    let head = splitName(name).head;
+    if (!head) {
+        const seps = [...name.matchAll(/\s[-–—·|/]\s/g)];
+        head = seps.length ? name.slice(0, seps[seps.length - 1].index) : '';
+    }
+    return head.replace(/\s*[-–—·|/]\s*$/, '');
+}
+
+export interface NameRun {
+    tags: readonly string[];
+    names: readonly string[];
+    /** The start the run's names share ('' = none worth printing). */
+    prefix: string;
+}
+
+/** Rule 2 for a long list: consecutive rows with the same start are one run. A list group holds several families
+ *  ("… (P-P Trend) …", "Frame …"), so the group as a whole usually shares nothing while each run shares a lot. */
+export function nameRuns(tags: readonly string[], nameOf: (tag: string) => string): NameRun[] {
+    const out: NameRun[] = [];
+    let i = 0;
+    while (i < tags.length) {
+        const key = runKeyOf(nameOf(tags[i]));
+        let j = i + 1;
+        while (key && j < tags.length && runKeyOf(nameOf(tags[j])) === key) j++;
+        const names = tags.slice(i, j).map(nameOf);
+        out.push({ tags: tags.slice(i, j), names, prefix: names.length >= 2 ? commonPrefix(names) : '' });
+        i = j;
+    }
+    return out;
+}
+
 /** Rule 2: the shared start is printed elsewhere (`SetPrefixLine`), so the rows drop it. */
 export const SensorSetDropContext = createContext<boolean>(false);
 /** The list's search text: matches are marked, and a match in the cut-off head moves next to the tail. */

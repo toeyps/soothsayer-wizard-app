@@ -292,7 +292,7 @@ function ModelFitPage(props: ModelFitPageProps) {
                         label="Clusters"
                         value={stats.cluster_count}
                         sub={stats.criteria_sensor
-                            ? <span className="wb2-sub-sl">split by <SensorInline tag={stats.criteria_sensor} size="sm" muted /></span>
+                            ? <span className="wb2-sub-sl"><span className="wb2-sub-lead">split by </span><SensorInline tag={stats.criteria_sensor} size="sm" muted /></span>
                             : 'one cluster · no criteria sensor'}
                         testId="stat-clusters"
                     />
