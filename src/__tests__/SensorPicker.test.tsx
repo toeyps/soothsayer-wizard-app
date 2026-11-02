@@ -5,6 +5,13 @@ import { SensorPickerMulti, SensorPickerSingle, PICKER_SEARCH_PLACEHOLDER } from
 import { SensorMetaProvider } from '../components/sensor/SensorLabel';
 import type { SensorMetadata } from '../types';
 import { findPickerRow, openPickerSurface, pickerRows, pickerSearch, rowTag } from './helpers/sensorPicker';
+import { longName, restoreNames, stubNamesCut } from './helpers/nameGeometry';
+import { splitInSet } from '../utils/sensorNames';
+
+vi.mock('../utils/sensorNames', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('../utils/sensorNames')>();
+    return { ...actual, splitInSet: vi.fn(actual.splitInSet) };
+});
 
 afterEach(() => {
     cleanup();
@@ -37,6 +44,47 @@ function Single(props: Partial<React.ComponentProps<typeof SensorPickerSingle>> 
 
 const trigger = () => screen.getByRole('button', { name: 'Y sensor' });
 const groupHeaders = () => [...openPickerSurface().querySelectorAll('.pk-g')].map(g => g.querySelector('.pk-gname')?.textContent);
+
+describe('a group\'s set while typing', () => {
+    afterEach(() => { restoreNames(); vi.mocked(splitInSet).mockClear(); });
+    const meta: SensorMetadata[] = [
+        ...[1, 2, 3].map(n => m(`A${n}`, longName(n), '', 'Crosshead')),
+        m('B1', 'Discharge pressure of the second stage header', '', 'Compressor'),
+        m('B2', 'Discharge temperature of the second stage header', '', 'Compressor'),
+    ];
+    const tags = meta.map(x => x.tag);
+    const namesArgs = (name: string) => new Set(vi.mocked(splitInSet).mock.calls.filter(c => c[0] === name).map(c => c[1]));
+
+    function open() {
+        stubNamesCut();
+        render(
+            <SensorMetaProvider metadata={meta}>
+                <SensorPickerSingle sensors={tags} value="" ariaLabel="Y sensor" onSelect={() => {}} />
+            </SensorMetaProvider>,
+        );
+        fireEvent.click(trigger());
+    }
+
+    it('a keystroke that leaves a group alone keeps its names array, so its rows are not worked out again', () => {
+        open();
+        fireEvent.change(pickerSearch(), { target: { value: 'a' } });
+        expect(namesArgs(longName(1)).size).toBe(1);
+        const calls = vi.mocked(splitInSet).mock.calls.filter(c => c[0] === longName(1)).length;
+        // Still every Crosshead row; the Compressor rows go.
+        fireEvent.change(pickerSearch(), { target: { value: 'av' } });
+        fireEvent.change(pickerSearch(), { target: { value: 'avg' } });
+        expect(namesArgs(longName(1)).size).toBe(1);
+        expect(vi.mocked(splitInSet).mock.calls.filter(c => c[0] === longName(1)).length).toBe(calls);
+    });
+
+    it('a keystroke that changes a group gives it a new set: its rows read against the names still listed', () => {
+        open();
+        fireEvent.change(pickerSearch(), { target: { value: 'avg' } });
+        expect(namesArgs(longName(1)).size).toBe(1);
+        fireEvent.change(pickerSearch(), { target: { value: 'SegmentNo 1' } });
+        expect(namesArgs(longName(1)).size).toBe(2);
+    });
+});
 
 describe('SensorPickerSingle', () => {
     it('the trigger shows the placeholder when empty, then the Inline label (description then tag) when set', () => {

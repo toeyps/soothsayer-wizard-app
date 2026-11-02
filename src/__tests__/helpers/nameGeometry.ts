@@ -10,6 +10,22 @@ export function stubNamesCut() {
     Object.defineProperty(HTMLElement.prototype, 'scrollWidth', { configurable: true, value: 500 });
 }
 
+/** Measured and fits: every element has room to spare. Unlike no stub at all (`clientWidth` 0 = not rendered), this
+ *  takes a name through the fit branch of the measuring hooks. */
+export function stubNamesFit() {
+    Object.defineProperty(HTMLElement.prototype, 'clientWidth', { configurable: true, value: 500 });
+    Object.defineProperty(HTMLElement.prototype, 'scrollWidth', { configurable: true, value: 400 });
+}
+
+/** Measures one rule per element: `cut(el)` says whether this element's text is cut. */
+export function stubNamesCutWhere(cut: (el: HTMLElement) => boolean) {
+    Object.defineProperty(HTMLElement.prototype, 'clientWidth', { configurable: true, value: 100 });
+    Object.defineProperty(HTMLElement.prototype, 'scrollWidth', {
+        configurable: true,
+        get(this: HTMLElement) { return cut(this) ? 500 : 50; },
+    });
+}
+
 export function restoreNames() {
     if (origClient) Object.defineProperty(HTMLElement.prototype, 'clientWidth', origClient);
     else delete (HTMLElement.prototype as unknown as Record<string, unknown>).clientWidth;

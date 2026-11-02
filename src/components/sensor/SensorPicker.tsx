@@ -43,6 +43,21 @@ type Row =
     | { type: 'item'; tag: string; set?: SensorNamesValue }
     | { type: 'none' };
 
+/** The groups' sets of one open list. A group whose tags did not change keeps its set, and with it its names array:
+ *  a keystroke that leaves a group alone costs its rendered rows nothing (`splitInSet` caches per array). */
+interface GroupSets {
+    lookup: unknown;
+    byGroup: Map<string, { tags: string[]; set: SensorNamesValue }>;
+}
+
+function groupSet(sets: GroupSets, comp: string, tags: string[], nameOf: (t: string) => string): SensorNamesValue {
+    const had = sets.byGroup.get(comp);
+    if (had && had.tags.length === tags.length && had.tags.every((t, i) => t === tags[i])) return had.set;
+    const set: SensorNamesValue = { names: tags.map(nameOf), run: '' };
+    sets.byGroup.set(comp, { tags, set });
+    return set;
+}
+
 function initials(c: string): string {
     const w = c.split(/[\s_-]+/).filter(Boolean);
     return ((w[0]?.[0] ?? '') + (w[1]?.[0] ?? w[0]?.[1] ?? '')).toUpperCase();
@@ -102,7 +117,9 @@ export function PickerList({ sensors, query, setQuery, isOn, onPick, noneRow, no
     });
 
     const q = query.trim().toLowerCase();
+    const groupSets = useRef<GroupSets>({ lookup, byGroup: new Map() });
     const rows = useMemo<Row[]>(() => {
+        if (groupSets.current.lookup !== lookup) groupSets.current = { lookup, byGroup: new Map() };
         const list = q ? sensors.filter(s => haystacks.get(s)?.includes(q)) : sensors;
         const map = new Map<string, string[]>();
         for (const s of list) {
@@ -121,7 +138,7 @@ export function PickerList({ sensors, query, setQuery, isOn, onPick, noneRow, no
             const open = flat || !!q || expanded.has(comp);
             if (!flat) out.push({ type: 'group', comp, count: tags.length, on: tags.filter(isOn).length, open });
             if (open) {
-                const set: SensorNamesValue = { names: tags.map(t => displayedName(lookup(t))), run: '' };
+                const set = groupSet(groupSets.current, comp, tags, t => displayedName(lookup(t)));
                 for (const t of tags) out.push({ type: 'item', tag: t, set });
             }
         }

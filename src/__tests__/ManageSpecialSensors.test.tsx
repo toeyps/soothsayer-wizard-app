@@ -297,6 +297,16 @@ describe('ManageSpecialSensors: the recipe summary with long names', () => {
         expect(s.textContent).toContain('SegmentNo 2 - avg');
     });
 
+    it('cut, the same source twice: both print, with no duplicate-key warning', () => {
+        stubNamesCut();
+        const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+        const twice: SpecialSensorRecipe = { ...avg, tag: 'twice', sourceSensors: ['S1', 'S1'] };
+        renderList({ recipes: [twice], sensorMetadata: meta });
+        expect(summary('twice').querySelectorAll('[data-name-ref]')).toHaveLength(2);
+        expect(error.mock.calls.filter(c => String(c[0]).includes('same key'))).toEqual([]);
+        error.mockRestore();
+    });
+
     it('cut, one source: the operation after the name never goes', () => {
         stubNamesCut();
         renderList({ recipes: [times], sensorMetadata: meta });

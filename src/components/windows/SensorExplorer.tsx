@@ -1,8 +1,11 @@
-import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useRef, useState, useMemo } from 'react';
+import { Fragment, memo, useCallback, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ChevronRight, ChevronDown, Search, Plus, Check } from 'lucide-react';
 import { SensorMetadata } from '../../types';
-import { SensorLabel, SensorSetProvider } from '../sensor/SensorLabel';
-import { SensorMetaContext, useLayeredSensorLookup } from '../sensor/sensorInfo';
+import { SensorLabel, SensorNamesContext, SensorSetContext } from '../sensor/SensorLabel';
+import { SensorMetaContext, useLayeredSensorLookup, type SensorNamesValue } from '../sensor/sensorInfo';
+import { useCutRuns } from '../../hooks/useNameFit';
+import { useWindowedLines } from '../../hooks/useWindowedLines';
+import { commonPrefix, displayedName } from '../../utils/sensorNames';
 
 interface SensorExplorerProps {
     sensors: string[];
@@ -23,11 +26,20 @@ const HEADER_EST_PX = 30;
 const ROW_EST_PX = 46;
 const VIEW_FALLBACK_PX = 600;
 
+/** One component's names, worked out once: every row of the group shares this set and its one run id. */
+interface GroupSet {
+    prefix: string;
+    value: SensorNamesValue;
+}
+/** The group of the sensors with no component (not a component name: the list groups by real names). */
+const NO_COMPONENT = '\u0000none';
+
 type ListLine =
     | { k: 'header'; component: string }
-    | { k: 'row'; sensor: string; set: string[] };
+    | { k: 'row'; sensor: string; group: string };
 
 const lineKey = (l: ListLine) => (l.k === 'header' ? `h:${l.component}` : `r:${l.sensor}`);
+const estimateLine = (l: ListLine) => (l.k === 'header' ? HEADER_EST_PX : ROW_EST_PX);
 
 /**
  * Left column of the Create tab — search + a per-component list of every
@@ -89,71 +101,59 @@ function SensorExplorer({
     const isExpanded = (comp: string) => searchTerm.trim() !== '' || expandedComponents.has(comp);
 
     const listRef = useRef<HTMLDivElement>(null);
-    const [view, setView] = useState({ top: 0, height: VIEW_FALLBACK_PX });
-    const heights = useRef(new Map<string, number>());
-    const [heightTick, setHeightTick] = useState(0);
-    const lineEls = useRef(new Map<string, HTMLElement>());
+    const getList = useCallback(() => listRef.current, []);
+
+    // Each group is one set, measured together on the list: one row's cut marks its whole group, and a list over
+    // 150 lines reads the same as one under 150.
+    const { groupSets, setsKey, hasRuns } = useMemo(() => {
+        const sets = new Map<string, GroupSet>();
+        const keyParts: string[] = [];
+        let runs = false;
+        const add = (group: string, tags: string[]) => {
+            const names = tags.map(t => displayedName(sensorLookup(t)));
+            const prefix = commonPrefix(names);
+            if (prefix) runs = true;
+            keyParts.push(group, ...names);
+            sets.set(group, { prefix, value: { names, run: prefix ? group : '' } });
+        };
+        for (const component of groupedSensors.sortedKeys) add(component, groupedSensors.groups[component]);
+        add(NO_COMPONENT, groupedSensors.noComponent);
+        return { groupSets: sets, setsKey: keyParts.join('|'), hasRuns: runs };
+    }, [groupedSensors, sensorLookup]);
+    const cutRuns = useCutRuns(getList, setsKey, hasRuns);
 
     const lines = useMemo<ListLine[]>(() => {
         const out: ListLine[] = [];
         for (const component of groupedSensors.sortedKeys) {
             out.push({ k: 'header', component });
-            if (isExpanded(component)) for (const sensor of groupedSensors.groups[component]) out.push({ k: 'row', sensor, set: groupedSensors.groups[component] });
+            if (isExpanded(component)) for (const sensor of groupedSensors.groups[component]) out.push({ k: 'row', sensor, group: component });
         }
-        for (const sensor of groupedSensors.noComponent) out.push({ k: 'row', sensor, set: groupedSensors.noComponent });
+        for (const sensor of groupedSensors.noComponent) out.push({ k: 'row', sensor, group: NO_COMPONENT });
         return out;
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [groupedSensors, expandedComponents, searchTerm]);
     const windowed = lines.length > WINDOW_ABOVE;
-    const offsets = useMemo(() => {
-        const off = new Array<number>(lines.length + 1);
-        off[0] = 0;
-        lines.forEach((l, i) => { off[i + 1] = off[i] + (heights.current.get(lineKey(l)) ?? (l.k === 'header' ? HEADER_EST_PX : ROW_EST_PX)); });
-        return off;
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [lines, heightTick]);
-    let windowStart = 0;
-    let windowEnd = lines.length;
-    if (windowed) {
-        const from = view.top - WINDOW_OVERSCAN_PX;
-        let a = 0;
-        let b = lines.length;
-        while (a < b) {
-            const m = (a + b) >> 1;
-            if (offsets[m + 1] <= from) a = m + 1; else b = m;
-        }
-        windowStart = a;
-        windowEnd = a;
-        while (windowEnd < lines.length && offsets[windowEnd] < view.top + view.height + WINDOW_OVERSCAN_PX) windowEnd++;
-    }
-    const readView = useCallback(() => {
-        const el = listRef.current;
-        if (!el) return;
-        const next = { top: el.scrollTop, height: el.clientHeight || VIEW_FALLBACK_PX };
-        setView(v => (Math.abs(v.top - next.top) < 6 && v.height === next.height ? v : next));
-    }, []);
-    // A list that starts hidden has no height yet, and growing it fires no scroll event.
-    useEffect(() => {
-        readView();
-        const el = listRef.current;
-        if (!el || typeof ResizeObserver === 'undefined') return;
-        const ro = new ResizeObserver(readView);
-        ro.observe(el);
-        return () => ro.disconnect();
-    }, [readView]);
-    // Heights are estimated until a line has been rendered (a row with a long name can take more lines).
-    useLayoutEffect(() => {
-        if (!windowed) return;
-        let changed = false;
-        for (const [key, el] of lineEls.current) {
-            const h = parseFloat(getComputedStyle(el).height);
-            if (h > 0 && Math.abs((heights.current.get(key) ?? -1) - h) > 0.1) {
-                heights.current.set(key, h);
-                changed = true;
-            }
-        }
-        if (changed) setHeightTick(t => t + 1);
+    const { offsets, windowStart, windowEnd, readView, lineRef } = useWindowedLines({
+        listRef,
+        lines,
+        keyOf: lineKey,
+        estimate: estimateLine,
+        windowed,
+        overscanPx: WINDOW_OVERSCAN_PX,
+        fallbackHeightPx: VIEW_FALLBACK_PX,
+        anchorList: lines,
     });
+
+    /** A row's group: its shared start (only while the group is cut) and the names it must read differently from. */
+    const inGroup = (group: string, row: ReactNode) => {
+        const set = groupSets.get(group);
+        if (!set) return row;
+        return (
+            <SensorSetContext.Provider value={cutRuns.has(set.value.run) ? set.prefix : ''}>
+                <SensorNamesContext.Provider value={set.value}>{row}</SensorNamesContext.Provider>
+            </SensorSetContext.Provider>
+        );
+    };
 
     const renderSensorItem = (sensor: string) => {
         const isSelected = selectedSensors.includes(sensor);
@@ -230,11 +230,11 @@ function SensorExplorer({
                                     key={key}
                                     className="special-sensor-line"
                                     style={{ top: offsets[windowStart + n] }}
-                                    ref={el => { if (el) lineEls.current.set(key, el); else lineEls.current.delete(key); }}
+                                    ref={lineRef(key)}
                                 >
                                     {l.k === 'header'
                                         ? renderHeader(l.component)
-                                        : <SensorSetProvider tags={l.set}>{renderSensorItem(l.sensor)}</SensorSetProvider>}
+                                        : inGroup(l.group, renderSensorItem(l.sensor))}
                                 </div>
                             );
                         })}
@@ -244,19 +244,15 @@ function SensorExplorer({
                         {groupedSensors.sortedKeys.map(comp => (
                             <div key={comp}>
                                 {renderHeader(comp)}
-                                {isExpanded(comp) && (
-                                    <SensorSetProvider tags={groupedSensors.groups[comp]}>
-                                        {groupedSensors.groups[comp].map(sensor => <Fragment key={sensor}>{renderSensorItem(sensor)}</Fragment>)}
-                                    </SensorSetProvider>
-                                )}
+                                {isExpanded(comp) && groupedSensors.groups[comp].map(sensor => (
+                                    <Fragment key={sensor}>{inGroup(comp, renderSensorItem(sensor))}</Fragment>
+                                ))}
                             </div>
                         ))}
 
-                        {groupedSensors.noComponent.length > 0 && (
-                            <SensorSetProvider tags={groupedSensors.noComponent}>
-                                {groupedSensors.noComponent.map(sensor => <Fragment key={sensor}>{renderSensorItem(sensor)}</Fragment>)}
-                            </SensorSetProvider>
-                        )}
+                        {groupedSensors.noComponent.map(sensor => (
+                            <Fragment key={sensor}>{inGroup(NO_COMPONENT, renderSensorItem(sensor))}</Fragment>
+                        ))}
                     </>
                 )}
 

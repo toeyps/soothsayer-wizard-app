@@ -838,15 +838,27 @@ function ScatterChart({
         const wraps = [scatterX, scatterY].some(t => ttRowClass(sensorLookup(t)) !== 'tt-row');
         const W = wraps ? 440 : 200;
         const H = wraps ? 112 : 76;
+        // Flipped, the box hangs from its RIGHT edge: W is only an estimate of its width, and whatever the real box
+        // measures it must end 12 px from the point.
         let tx = pos[0] + 12;
+        let tr: number | undefined;
         let ty = pos[1] + 12;
-        if (tx + W > innerDims.width) tx = pos[0] - W - 12;
+        if (tx + W > innerDims.width) {
+            const roomLeft = pos[0] - 12;
+            if (roomLeft >= W || (wraps && roomLeft >= innerDims.width - tx)) tr = innerDims.width - roomLeft;
+            // Fits on neither side: a box that wraps stays on the roomier side and wraps in what is there.
+            else if (!wraps) tx = 4;
+        }
         if (ty + H > innerDims.height) ty = pos[1] - H - 12;
         if (tx < 0) tx = 4;
         if (ty < 0) ty = 4;
 
         return {
-            x: tx,
+            x: tr === undefined ? tx : undefined,
+            right: tr,
+            // Hanging from the right, the box's room is what lies left of the point: a name that fits must not get
+            // cut by that. Only a box that wraps gives way to it.
+            hug: tr !== undefined && !wraps,
             y: ty,
             xVal,
             yVal,
@@ -1115,7 +1127,7 @@ function ScatterChart({
                     tracks the highlighted point. pointerEvents:none prevents it
                     from stealing hover from neighbouring points. */}
                 {tooltip && (
-                    <div className="scatter-regl-tooltip" style={{ left: tooltip.x, top: tooltip.y }}>
+                    <div className="scatter-regl-tooltip" style={{ left: tooltip.x, right: tooltip.right, top: tooltip.y, width: tooltip.hug ? 'max-content' : undefined }}>
                         {/* Inline label + value + unit. */}
                         {tooltipPrefix && <div className="tt-prefix">{tooltipPrefix} …</div>}
                         <ValueRow info={sensorLookup(scatterX)} value={tooltip.xVal} prefix={tooltipPrefix || undefined} />

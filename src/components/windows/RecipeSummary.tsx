@@ -55,7 +55,7 @@ function summaryParts(recipe: SpecialSensorRecipe, desc: SpecialSensorDescriptio
                 <Text>{text.slice(0, i)}</Text>
                 {prefix && <span className="rsum-pre" data-testid="recipe-summary-prefix">{prefix} ·&nbsp;</span>}
                 {names.map((n, j) => (
-                    <Fragment key={n}>
+                    <Fragment key={j}>
                         {j > 0 && <Text>, </Text>}
                         <Ref name={prefix ? afterPrefix(n, prefix) : n} />
                     </Fragment>

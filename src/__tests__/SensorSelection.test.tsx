@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
-import { render, screen, fireEvent, cleanup, within } from '@testing-library/react';
+import { act, render, screen, fireEvent, cleanup, within } from '@testing-library/react';
 import SensorSelection from '../components/dashboard/SensorSelection';
 import type { FailureGroup, FailureModel, SensorMetadata } from '../types';
+import { captureResizeObservers, setLineHeight } from './helpers/windowedLines';
 
 afterEach(() => {
     cleanup();
@@ -786,9 +787,15 @@ describe('SensorSelection: long sensor names', () => {
         Object.defineProperty(HTMLElement.prototype, 'clientWidth', { configurable: true, value: 100 });
         Object.defineProperty(HTMLElement.prototype, 'scrollWidth', { configurable: true, value: 500 });
     }
+    /** Every name measures with room to spare. */
+    function stubFits() {
+        Object.defineProperty(HTMLElement.prototype, 'clientWidth', { configurable: true, value: 500 });
+        Object.defineProperty(HTMLElement.prototype, 'scrollWidth', { configurable: true, value: 400 });
+    }
     afterEach(() => {
         if (orig.client) Object.defineProperty(HTMLElement.prototype, 'clientWidth', orig.client);
         delete (HTMLElement.prototype as unknown as Record<string, unknown>).scrollWidth;
+        vi.unstubAllGlobals();
     });
 
     it('rule 2: a run of rows that is cut prints its shared start once and the rows print the rest', () => {
@@ -810,6 +817,18 @@ describe('SensorSelection: long sensor names', () => {
         render(<SensorSelection {...makeProps({ sensors: ['T0', 'T1'], sensorMetadata: metaOf(names) })} />);
         openList('Crosshead');
         expect(screen.queryByTestId('sensor-run-prefix')).toBeNull();
+        expect(screen.getByText(names[0])).toBeTruthy();
+    });
+
+    it('rule 2 is a no-op for rows measured as fitting: rendered, measured, and printed whole', () => {
+        stubFits();
+        const names = [LONG('11A', 1), LONG('11A', 2)];
+        const { container } = render(<SensorSelection {...makeProps({ sensors: ['T0', 'T1'], sensorMetadata: metaOf(names) })} />);
+        openList('Crosshead');
+        // The rows carry the measuring attribute, so this is the fit branch and not "not rendered".
+        expect(container.querySelectorAll('[data-name-run]')).toHaveLength(2);
+        expect(screen.queryByTestId('sensor-run-prefix')).toBeNull();
+        expect(container.querySelector('[data-name-part]')).toBeNull();
         expect(screen.getByText(names[0])).toBeTruthy();
     });
 
@@ -866,6 +885,42 @@ describe('SensorSelection: long sensor names', () => {
         list.scrollTop = 2000;
         fireEvent.scroll(list);
         expect(screen.getByTestId('sensor-run-sticky').textContent).toBe(`Crosshead · ${SHARED} …`);
+    });
+
+    it('rule 6: a line above the view that gets its real height (scrolled to, a late font or width change) does not move what is in view', () => {
+        const observers = captureResizeObservers();
+        const names = Array.from({ length: 4748 }, (_, i) => `Sensor ${i}`);
+        const { container } = render(<SensorSelection {...makeProps({ sensors: names.map((_, i) => `T${i}`), sensorMetadata: metaOf(names) })} />);
+        openList('Crosshead');
+        const list = container.querySelector('.sensor-list-widget') as HTMLElement;
+        list.scrollTop = 4000 * 52;
+        fireEvent.scroll(list);
+        const top = list.scrollTop;
+        const lines = [...container.querySelectorAll<HTMLElement>('.sensor-list-line')];
+        const above = lines.find(l => parseFloat(l.style.top) < top - 100)!;
+        const next = lines[lines.indexOf(above) + 1];
+        const nextTop = parseFloat(next.style.top);
+        setLineHeight(above, nextTop - parseFloat(above.style.top) + 40);
+        // Nothing re-rendered: the browser noticed.
+        act(() => observers.fire());
+        expect(list.scrollTop).toBe(top + 40);
+        expect(parseFloat(next.style.top)).toBe(nextTop + 40);
+    });
+
+    it('rule 6: a line below the view that gets its real height leaves the scroll position alone, and the offsets after it move', () => {
+        const observers = captureResizeObservers();
+        const names = Array.from({ length: 400 }, (_, i) => `Sensor ${i}`);
+        const { container } = render(<SensorSelection {...makeProps({ sensors: names.map((_, i) => `T${i}`), sensorMetadata: metaOf(names) })} />);
+        openList('Crosshead');
+        const list = container.querySelector('.sensor-list-widget') as HTMLElement;
+        const lines = [...container.querySelectorAll<HTMLElement>('.sensor-list-line')];
+        const later = lines[lines.length - 5];
+        const after = lines[lines.length - 4];
+        const afterTop = parseFloat(after.style.top);
+        setLineHeight(later, afterTop - parseFloat(later.style.top) + 25);
+        act(() => observers.fire());
+        expect(list.scrollTop).toBe(0);
+        expect(parseFloat(after.style.top)).toBe(afterTop + 25);
     });
 
     it('a search in a list of 4,748 still renders only a window, and marks the match', () => {

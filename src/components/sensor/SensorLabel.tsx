@@ -1,7 +1,7 @@
 import { useCallback, useContext, useId, useMemo, useRef, type CSSProperties, type ReactNode } from 'react';
 import { useCutRuns, useLineCut, useNameFit, useTwoLine, useWideTail } from '../../hooks/useNameFit';
 import {
-    NAME_TAIL_MAX, afterPrefix, commonPrefix, compactName, displayedName, splitInSet, widerTailForms, withWiderTail,
+    NAME_TAIL_MAX, afterPrefix, commonPrefix, compactName, displayedName, namesAfterPrefix, splitInSet, widerTailForms, withWiderTail,
     type NameSplit,
 } from '../../utils/sensorNames';
 import type { SensorMetadata, SpecialSensorRecipe } from '../../types';
@@ -45,12 +45,15 @@ export function SensorMetaProvider({ metadata, special, children }: {
  *  - `tags`: the set, resolved through the provider to displayed names. Tags from `SensorSetExtraContext` count too.
  *  - `names`: the displayed names directly, instead of `tags`.
  *  - `candidate`: overrides the shared start (a family inside the set).
+ *  - `roomOf`: when the set sits in something that shrinks to its content, the ancestor whose width decides that a
+ *    shortened set has room again (`useCutRuns`).
  */
-export function SensorSetProvider({ tags, names: givenNames, candidate, drop, children }: {
+export function SensorSetProvider({ tags, names: givenNames, candidate, drop, roomOf, children }: {
     tags?: readonly string[];
     names?: readonly string[];
     candidate?: string;
     drop?: boolean;
+    roomOf?: (root: HTMLElement) => HTMLElement | null | undefined;
     children: ReactNode;
 }) {
     const lookup = useSensorLookup();
@@ -63,7 +66,8 @@ export function SensorSetProvider({ tags, names: givenNames, candidate, drop, ch
     const cand = useMemo(() => candidate ?? commonPrefix(names), [names, candidate]);
     const run = useId();
     const sentinel = useRef<HTMLElement>(null);
-    const cut = useCutRuns(() => sentinel.current?.parentElement ?? null, `${cand}|${names.join('|')}`, !!cand);
+    const setKey = useMemo(() => `${cand}|${names.join('|')}`, [cand, names]);
+    const cut = useCutRuns(() => sentinel.current?.parentElement ?? null, setKey, !!cand, { roomOf });
     // No shared start to decide: nothing to measure, so the labels carry no measuring attributes.
     const namesValue = useMemo(() => ({ names, run: cand ? run : '' }), [names, run, cand]);
     const body = (
@@ -217,7 +221,7 @@ export function NameText({ text, prefix, className = 'sl-desc', wrap, stack }: {
     const printed = dropped ? afterPrefix(text, pfx) : text;
     const names = useMemo(() => {
         if (!inSet) return [];
-        return dropped ? setNames.map(n => afterPrefix(n, pfx)) : setNames;
+        return dropped ? namesAfterPrefix(setNames, pfx) : setNames;
     }, [inSet, dropped, setNames, pfx]);
     const measure = inSet && run ? { 'data-name-run': run, 'data-name-full': text } : {};
     const splitPrefix = dropped ? undefined : pfx;

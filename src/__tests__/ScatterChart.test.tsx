@@ -988,6 +988,68 @@ describe('ScatterChart: long sensor names', () => {
         expect([...tip.querySelectorAll('.tt-row')].map(r => r.className)).toEqual(['tt-row', 'tt-row']);
     });
 
+    describe('the tooltip near the right edge', () => {
+        const shortMeta = [
+            { tag: 'A', description: 'GENERATOR POWER', unit: 'MW', component: '' },
+            { tag: 'B', description: 'BEARING TEMP', unit: 'DEGC', component: '' },
+        ];
+        /** A negative `x` is measured from the right edge. */
+        function hoverAt(x: number, meta: typeof shortMeta) {
+            const { container } = render(<ScatterChart data={data} sensors={['A', 'B']} headers={headers} sensorMetadata={meta} />);
+            const inner = parseFloat((screen.getByTestId('scatter-main-canvas') as HTMLElement).style.width);
+            const at = x < 0 ? inner + x : x;
+            lastInstance!.getScreenPosition.mockReturnValue([at, 50]);
+            act(() => { lastInstance!.__subs['pointover'](0); });
+            return { tip: container.querySelector('.scatter-regl-tooltip') as HTMLElement, inner, at };
+        }
+
+        it('short names, room on the right: exactly where they always were', () => {
+            const { tip } = hoverAt(100, shortMeta);
+            expect(tip.style.left).toBe('112px');
+            expect(tip.style.right).toBe('');
+            expect(tip.style.width).toBe('');
+        });
+
+        it('short names, flipped: the box ends 12 px from the point whatever its real width, at its full width', () => {
+            const { tip, inner, at } = hoverAt(-20, shortMeta);
+            expect(tip.style.left).toBe('');
+            expect(tip.style.right).toBe(`${inner - (at - 12)}px`);
+            expect(tip.style.width).toBe('max-content');
+        });
+
+        it('long names, flipped: it hangs from its right edge too, so a box narrower than the estimate stays next to the point', () => {
+            const { tip, inner, at } = hoverAt(-20, longMeta);
+            expect(tip.style.left).toBe('');
+            expect(tip.style.right).toBe(`${inner - (at - 12)}px`);
+            // It may wrap in what is there.
+            expect(tip.style.width).toBe('');
+        });
+
+        it('long names, room on the right by the estimate: not flipped', () => {
+            const { tip } = hoverAt(20, longMeta);
+            expect(tip.style.left).toBe('32px');
+            expect(tip.style.right).toBe('');
+        });
+
+        it('long names that fit neither side by the estimate take the roomier one, never covering the point', () => {
+            const { container } = render(<ScatterChart data={data} sensors={['A', 'B']} headers={headers} sensorMetadata={longMeta} />);
+            const inner = parseFloat((screen.getByTestId('scatter-main-canvas') as HTMLElement).style.width);
+            // Short of 440 px on both sides needs a chart under 904 px: this one is.
+            expect(inner).toBeLessThan(904);
+            lastInstance!.getScreenPosition.mockReturnValue([inner / 2 - 20, 50]);
+            act(() => { lastInstance!.__subs['pointover'](0); });
+            let tip = container.querySelector('.scatter-regl-tooltip') as HTMLElement;
+            expect(tip.style.left).toBe(`${inner / 2 - 20 + 12}px`);
+            expect(tip.style.right).toBe('');
+            act(() => { lastInstance!.__subs['pointout'](); });
+            lastInstance!.getScreenPosition.mockReturnValue([inner / 2 + 20, 50]);
+            act(() => { lastInstance!.__subs['pointover'](0); });
+            tip = container.querySelector('.scatter-regl-tooltip') as HTMLElement;
+            expect(tip.style.left).toBe('');
+            expect(tip.style.right).toBe(`${inner - (inner / 2 + 20 - 12)}px`);
+        });
+    });
+
     it('the picker row leaves room for the Clear all button once a point is tagged', () => {
         const { container } = render(<ScatterChart data={data} sensors={['A', 'B']} headers={headers} />);
         const controls = container.querySelector('.scatter-regl-controls') as HTMLElement;

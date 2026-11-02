@@ -74,12 +74,25 @@ export function PaneResizeHandle({ width, defaultWidth, onChange, storageKey, la
     const clamp = (w: number) => Math.round(Math.max(min, Math.min(max, w)));
     const now = clamp(width);
 
-    // The window got narrower (or a saved width no longer fits): the pane follows. The saved width stays.
+    // The window got narrower (or a saved width no longer fits): the pane follows. The saved width stays, and the
+    // pane grows back toward the width it was pulled in from as the window widens, until the user picks a new one.
+    const pulledFrom = useRef<number | null>(null);
     useEffect(() => {
-        if (host > 0 && width !== now) onChange(now);
-    }, [host, width, now, onChange]);
+        if (host <= 0) return;
+        if (width !== now) {
+            if (width > now) pulledFrom.current ??= width;
+            onChange(now);
+            return;
+        }
+        const from = pulledFrom.current;
+        if (from === null) return;
+        const back = Math.min(from, max);
+        if (back !== now) onChange(back);
+        if (from <= max) pulledFrom.current = null;
+    }, [host, width, now, max, onChange]);
 
     const commit = (w: number) => {
+        pulledFrom.current = null;
         const v = clamp(w);
         onChange(v);
         saveWidth(storageKey, v);
@@ -115,6 +128,7 @@ export function PaneResizeHandle({ width, defaultWidth, onChange, storageKey, la
                 if (e.button !== 0) return;
                 e.currentTarget.setPointerCapture?.(e.pointerId);
                 const left = e.currentTarget.parentElement?.getBoundingClientRect().left ?? 0;
+                pulledFrom.current = null;
                 // Where the handle was grabbed, so a click without a move does not shift the pane.
                 drag.current = { grab: e.clientX - left - now, last: now };
                 setDragging(true);

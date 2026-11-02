@@ -1,4 +1,4 @@
-import { Fragment, useState, useMemo, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
+import { Fragment, useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { ChevronRight, ChevronDown, FolderPlus, X, Bell } from 'lucide-react';
 import { SensorMetadata, FailureGroup, FailureModel, ModelKind, AlarmLevel } from '../../types';
 import { useSensorMetaMap, normalizeSensorTag } from '../../hooks/useSensorMetaMap';
@@ -9,6 +9,7 @@ import FailureGroupAssignSheet, { KIND_LETTER, KIND_LABEL, ALL_KINDS } from './F
 import { SensorLabel, SensorNamesContext, SensorSearchContext, SensorSetContext, SensorSetDropContext } from '../sensor/SensorLabel';
 import { SensorMetaContext, useLayeredSensorLookup, type SensorNamesValue } from '../sensor/sensorInfo';
 import { useCutRuns } from '../../hooks/useNameFit';
+import { useWindowedLines } from '../../hooks/useWindowedLines';
 import { NAME_TAIL_MAX, commonPrefix, displayedName, splitName } from '../../utils/sensorNames';
 
 
@@ -147,10 +148,6 @@ export default function SensorSelection({
     // A sensor the list should scroll to once its row has rendered (set by the
     // sheet's ‹ › buttons, which may have just expanded its component).
     const [scrollToSensor, setScrollToSensor] = useState<string | null>(null);
-    // Windowed list (rule 6, see `items` below): what is in view, and the heights measured so far.
-    const [view, setView] = useState({ top: 0, height: VIEW_FALLBACK_PX });
-    const measuredHeights = useRef(new Map<string, number>());
-    const [measureTick, setMeasureTick] = useState(0);
     const windowedOffsetOf = useRef<((sensor: string) => number) | null>(null);
 
     const atSelectionCap = maxSelectable !== undefined && selectedSensors.length >= maxSelectable;
@@ -264,23 +261,6 @@ export default function SensorSelection({
             setAlarmPanelAnchor(null);
         }
     }, [visibleSensorSet, fgSheetFor, alarmPanelFor]);
-
-    // After the sheet's ‹ › moves to a sensor whose component was collapsed (or
-    // that is scrolled out of the list), bring that row into view once it has
-    // rendered. The sheet re-measures its arrow on the resulting scroll event.
-    useEffect(() => {
-        if (!scrollToSensor) return;
-        const row = rowEls.current.get(scrollToSensor);
-        if (!row) {
-            // Not rendered yet: a windowed row is not in the DOM until it is in view, so scroll to its place.
-            // Runs again when visibleSensorSet or the window changes.
-            const at = windowedOffsetOf.current ? windowedOffsetOf.current(scrollToSensor) : -1;
-            if (at >= 0 && listRef.current) listRef.current.scrollTop = Math.max(0, at - 60);
-            return;
-        }
-        row.scrollIntoView?.({ block: 'nearest' });
-        setScrollToSensor(null);
-    }, [scrollToSensor, visibleSensorSet, view.top, measureTick]);
 
     // Membership index: sensor tag (lower-cased) -> set of "<groupNo>:<kind>".
     // Built once per `fgModels` change, so each row's lookups are O(1) instead
@@ -599,36 +579,20 @@ export default function SensorSelection({
 
     // Rule 6: over 150 lines only what is in view is rendered (heights measured once rendered, estimated before).
     const windowed = items.length > WINDOW_ABOVE;
-    const offsets = useMemo(() => {
-        const off = new Array<number>(items.length + 1);
-        off[0] = 0;
-        for (let i = 0; i < items.length; i++) {
-            const it = items[i];
-            const est = it.k === 'header' ? HEADER_EST_PX
-                : it.k === 'prefix' ? PREFIX_EST_PX
-                    : ROW_EST_PX + (membershipIndex.get(normalizeSensorTag(it.sensor))?.size ? CHIPS_EST_PX : 0);
-            off[i + 1] = off[i] + (measuredHeights.current.get(itemKey(it)) ?? est);
-        }
-        return off;
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [items, measureTick, membershipIndex]);
-    /** The first line reaching past `px`. */
-    const lineAt = (px: number): number => {
-        let a = 0;
-        let b = items.length;
-        while (a < b) {
-            const m = (a + b) >> 1;
-            if (offsets[m + 1] <= px) a = m + 1; else b = m;
-        }
-        return a;
-    };
-    let windowStart = 0;
-    let windowEnd = items.length;
-    if (windowed) {
-        windowStart = lineAt(view.top - WINDOW_OVERSCAN);
-        windowEnd = windowStart;
-        while (windowEnd < items.length && offsets[windowEnd] < view.top + view.height + WINDOW_OVERSCAN) windowEnd++;
-    }
+    const estimateLine = useCallback((it: ListItem) => (it.k === 'header' ? HEADER_EST_PX
+        : it.k === 'prefix' ? PREFIX_EST_PX
+            : ROW_EST_PX + (membershipIndex.get(normalizeSensorTag(it.sensor))?.size ? CHIPS_EST_PX : 0)), [membershipIndex]);
+    const { view, measureTick, offsets, windowStart, windowEnd, lineAt, readView, lineRef } = useWindowedLines({
+        listRef,
+        lines: items,
+        keyOf: itemKey,
+        estimate: estimateLine,
+        windowed,
+        overscanPx: WINDOW_OVERSCAN,
+        fallbackHeightPx: VIEW_FALLBACK_PX,
+        // A new search or an expanded group starts over; a run's line appearing does not.
+        anchorList: allItems,
+    });
     windowedOffsetOf.current = windowed
         ? (sensor: string) => {
             const i = items.findIndex(it => it.k === 'row' && it.sensor === sensor);
@@ -636,64 +600,22 @@ export default function SensorSelection({
         }
         : null;
 
-    const handleListScroll = () => {
-        const el = listRef.current;
-        if (!el) return;
-        const next = { top: el.scrollTop, height: el.clientHeight || VIEW_FALLBACK_PX };
-        setView(v => (Math.abs(v.top - next.top) < 6 && v.height === next.height ? v : next));
-    };
-    // A list that starts hidden has no height yet, and growing it fires no scroll event.
+    // After the sheet's ‹ › moves to a sensor whose component was collapsed (or
+    // that is scrolled out of the list), bring that row into view once it has
+    // rendered. The sheet re-measures its arrow on the resulting scroll event.
     useEffect(() => {
-        handleListScroll();
-        const el = listRef.current;
-        if (!el || typeof ResizeObserver === 'undefined') return;
-        const ro = new ResizeObserver(handleListScroll);
-        ro.observe(el);
-        return () => ro.disconnect();
-    }, []);
-    const lineEls = useRef(new Map<string, HTMLElement>());
-    const measureLines = useCallback(() => {
-        let changed = false;
-        for (const [key, el] of lineEls.current) {
-            // The used height in CSS px: a rect is scaled by the page's zoom, offsetHeight is rounded.
-            const h = parseFloat(getComputedStyle(el).height);
-            if (h > 0 && Math.abs((measuredHeights.current.get(key) ?? -1) - h) > 0.1) {
-                measuredHeights.current.set(key, h);
-                changed = true;
-            }
+        if (!scrollToSensor) return;
+        const row = rowEls.current.get(scrollToSensor);
+        if (!row) {
+            // Not rendered yet: a windowed row is not in the DOM until it is in view, so scroll to its place.
+            // Runs again when visibleSensorSet or the window changes.
+            const at = windowedOffsetOf.current ? windowedOffsetOf.current(scrollToSensor) : -1;
+            if (at >= 0 && listRef.current) listRef.current.scrollTop = Math.max(0, at - 60);
+            return;
         }
-        if (changed) setMeasureTick(t => t + 1);
-    }, []);
-    // After every commit, and when a line changes height with no commit at all (the web font arriving, a width change).
-    const lineObserver = useRef<{ ro: ResizeObserver; watched: Set<HTMLElement> } | null>(null);
-    useLayoutEffect(() => {
-        if (!windowed) return;
-        measureLines();
-        if (typeof ResizeObserver === 'undefined') return;
-        if (!lineObserver.current) lineObserver.current = { ro: new ResizeObserver(measureLines), watched: new Set() };
-        const { ro, watched } = lineObserver.current;
-        const now = new Set(lineEls.current.values());
-        for (const el of watched) if (!now.has(el)) { ro.unobserve(el); watched.delete(el); }
-        for (const el of now) if (!watched.has(el)) { ro.observe(el); watched.add(el); }
-    });
-    useEffect(() => () => {
-        lineObserver.current?.ro.disconnect();
-        lineObserver.current = null;
-    }, []);
-    // A line above the view that changes height (first measured, or a run's line appearing) must not move what
-    // the user is looking at: the first line in view keeps its place on screen. A new search starts over.
-    const anchor = useRef<{ list: ListItem[]; key: string; offset: number } | null>(null);
-    useLayoutEffect(() => {
-        const el = listRef.current;
-        if (!el || !windowed) { anchor.current = null; return; }
-        const a = anchor.current;
-        if (a && a.list === allItems && el.scrollTop > 0) {
-            const i = items.findIndex(it => itemKey(it) === a.key);
-            if (i >= 0 && Math.abs(offsets[i] - a.offset) >= 1) el.scrollTop += offsets[i] - a.offset;
-        }
-        const top = lineAt(el.scrollTop);
-        anchor.current = items[top] ? { list: allItems, key: itemKey(items[top]), offset: offsets[top] } : null;
-    });
+        row.scrollIntoView?.({ block: 'nearest' });
+        setScrollToSensor(null);
+    }, [scrollToSensor, visibleSensorSet, view.top, measureTick]);
 
     const renderHeader = (component: string, compSensors: string[]) => {
         const expanded = isComponentExpanded(component);
@@ -783,7 +705,7 @@ export default function SensorSelection({
                         <div
                             key={key}
                             className={`sensor-list-line${follows ? ' sensor-list-line--follow' : ''}`}
-                            ref={el => { if (el) lineEls.current.set(key, el); else lineEls.current.delete(key); }}
+                            ref={lineRef(key)}
                             style={{ top: offsets[i] }}
                         >
                             {renderItem(it)}
@@ -855,7 +777,7 @@ export default function SensorSelection({
                 )}
             </div>
 
-            <div className="sensor-list-widget flex-1 min-h-0 overflow-y-auto" ref={listRef} onScroll={handleListScroll}>
+            <div className="sensor-list-widget flex-1 min-h-0 overflow-y-auto" ref={listRef} onScroll={readView}>
                 <SensorSearchContext.Provider value={hasLongNames ? searchTerm : ''}>{listBody}</SensorSearchContext.Provider>
                 {groupedSensors.length === 0 && (
                     <div className="no-results">No sensors found</div>

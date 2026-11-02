@@ -2,6 +2,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { useState } from 'react';
 import { PaneResizeHandle, readSavedPaneWidth } from '../components/PaneResizeHandle';
+import { captureResizeObservers, type ResizeObservers } from './helpers/windowedLines';
+// @ts-expect-error - @types/node is not installed; vitest runs in Node so this resolves at runtime
+import { readFileSync } from 'node:fs';
 
 const KEY = 'test.pane';
 const HOST_PX = 1000; // 60 % = 600
@@ -137,6 +140,109 @@ describe('PaneResizeHandle mouse', () => {
         expect(saved()).toBe('350');
         fireEvent.pointerMove(h, { clientX: 500, pointerId: 1 });
         expect(now()).toBe(350);
+    });
+});
+
+describe('the window narrows and widens again', () => {
+    let observers: ResizeObservers;
+    let hostPx = HOST_PX;
+    const resizeHost = (px: number) => {
+        hostPx = px;
+        act(() => observers.fire());
+    };
+    beforeEach(() => {
+        hostPx = HOST_PX;
+        vi.mocked(HTMLElement.prototype.getBoundingClientRect).mockImplementation(
+            () => ({ left: 50, width: hostPx, right: 50 + hostPx, top: 0, bottom: 500, height: 500, x: 50, y: 0, toJSON: () => ({}) }),
+        );
+        observers = captureResizeObservers();
+    });
+    afterEach(() => { vi.unstubAllGlobals(); });
+
+    it('the pane follows the window in, and grows back toward its width as the window widens, without saving anything', () => {
+        localStorage.setItem(KEY, '500');
+        render(<Harness initial={readSavedPaneWidth(KEY, 300)} />);
+        expect(now()).toBe(500);
+        resizeHost(600);
+        expect(now()).toBe(360);
+        resizeHost(700);
+        expect(now()).toBe(420);
+        resizeHost(1000);
+        expect(now()).toBe(500);
+        // Past the width it had: it stays there.
+        resizeHost(2000);
+        expect(now()).toBe(500);
+        expect(saved()).toBe('500');
+    });
+
+    it('a pane with no saved width goes back to where it was too', () => {
+        render(<Harness initial={400} />);
+        resizeHost(500);
+        expect(now()).toBe(300);
+        resizeHost(1000);
+        expect(now()).toBe(400);
+        expect(saved()).toBeNull();
+    });
+
+    it('narrowing twice remembers the width from before the first time', () => {
+        render(<Harness initial={500} />);
+        resizeHost(700);
+        expect(now()).toBe(420);
+        resizeHost(500);
+        expect(now()).toBe(300);
+        resizeHost(1000);
+        expect(now()).toBe(500);
+    });
+
+    it('a width the user picks while the pane is pulled in wins: widening does not undo it', () => {
+        render(<Harness initial={500} />);
+        resizeHost(500);
+        expect(now()).toBe(300);
+        fireEvent.keyDown(handle(), { key: 'ArrowLeft' });
+        expect(now()).toBe(280);
+        resizeHost(1000);
+        expect(now()).toBe(280);
+        expect(saved()).toBe('280');
+    });
+
+    it('so does a drag', () => {
+        render(<Harness initial={500} />);
+        resizeHost(500);
+        const h = handle();
+        fireEvent.pointerDown(h, { button: 0, clientX: 350, pointerId: 1 });
+        fireEvent.pointerMove(h, { clientX: 320, pointerId: 1 });
+        fireEvent.pointerUp(h, { clientX: 320, pointerId: 1 });
+        expect(now()).toBe(270);
+        resizeHost(1000);
+        expect(now()).toBe(270);
+    });
+
+    it('a pane the window never pulled in is left alone when the window widens', () => {
+        const onChange = vi.fn();
+        render(<Harness initial={300} onChange={onChange} />);
+        resizeHost(2000);
+        expect(onChange).not.toHaveBeenCalled();
+        expect(now()).toBe(300);
+    });
+});
+
+describe('the handle\'s place', () => {
+    const css = () => (readFileSync('src/App.css', 'utf8') as string).replace(/\r\n/g, '\n');
+    const rule = (selector: string) => {
+        const at = css().indexOf(`\n${selector} {`);
+        return at < 0 ? '' : css().slice(at, css().indexOf('}', at));
+    };
+
+    it('the hit area starts at the line and reaches right, so it covers none of the list\'s scrollbar', () => {
+        const box = rule('.pane-resize');
+        expect(box).toContain('width: 9px');
+        expect(box).not.toContain('margin-left');
+    });
+
+    it('the line stays exactly on the pane\'s edge, and neither it nor the grip can be grabbed over the scrollbar', () => {
+        expect(rule('.pane-resize::after')).toMatch(/left: 0;/);
+        expect(rule('.pane-resize::after')).toContain('pointer-events: none');
+        expect(rule('.pane-resize::before')).toContain('pointer-events: none');
     });
 });
 

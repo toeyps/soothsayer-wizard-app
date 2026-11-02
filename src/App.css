@@ -5742,7 +5742,8 @@ body {
 .sl-wrapname { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; white-space: normal; text-wrap: pretty; }
 /* A long tag is cut like a name instead of running under the row's buttons. */
 .sl-tag--long { min-width: 0; flex-shrink: 8; overflow: hidden; text-overflow: ellipsis; }
-.sl-hit { background: color-mix(in srgb, var(--accent-color) 28%, transparent); color: inherit; border-radius: 2px; padding: 0 1px; }
+/* No padding: a mark must add no width, or a name that barely fits gets cut while searching. */
+.sl-hit { background: color-mix(in srgb, var(--accent-color) 28%, transparent); color: inherit; border-radius: 2px; }
 /* Component outside a grouped list: a small outlined chip after the tag. */
 .comp-chip {
     flex-shrink: 0;
@@ -7201,13 +7202,14 @@ fieldset.bmw-sets-body { margin: 0; border: 0; min-width: 0; }
 
 /* Resizable list pane (DESIGN_SYSTEM §4 rule 7, PaneResizeHandle). At rest it is only the column's own 1 px line,
    so a pane nobody drags looks as before; the grip shows on hover, drag and focus, keyboard focus adds the accent line. */
-.pane-resize { position: absolute; top: 0; bottom: 0; width: 9px; margin-left: -4px; cursor: col-resize; z-index: 5; outline: none; touch-action: none; }
-.pane-resize::after { content: ''; position: absolute; top: 0; bottom: 0; left: 4px; width: 1px; background: transparent; transition: background .15s; }
-.pane-resize::before { content: ''; position: absolute; top: 50%; left: 2px; width: 5px; height: 28px; margin-top: -14px; border-radius: 3px; background: var(--border-strong); opacity: 0; transition: opacity .15s; }
+/* The hit area starts at the line and reaches right: to its left is the list's scrollbar. */
+.pane-resize { position: absolute; top: 0; bottom: 0; width: 9px; cursor: col-resize; z-index: 5; outline: none; touch-action: none; }
+.pane-resize::after { content: ''; position: absolute; top: 0; bottom: 0; left: 0; width: 1px; pointer-events: none; background: transparent; transition: background .15s; }
+.pane-resize::before { content: ''; position: absolute; top: 50%; left: -2px; pointer-events: none; width: 5px; height: 28px; margin-top: -14px; border-radius: 3px; background: var(--border-strong); opacity: 0; transition: opacity .15s; }
 .pane-resize:hover::after,
 .pane-resize.is-drag::after,
 .pane-resize:focus-visible::after { background: var(--accent-color); }
 .pane-resize:hover::before,
 .pane-resize.is-drag::before { opacity: 1; }
-.pane-resize:focus-visible::after { width: 2px; left: 3.5px; }
+.pane-resize:focus-visible::after { width: 2px; left: -0.5px; }
 .pane-resize:focus-visible::before { opacity: 1; background: var(--accent-color); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-color) 35%, transparent); }
