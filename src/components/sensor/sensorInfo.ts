@@ -1,6 +1,10 @@
 import { createContext, useContext, useMemo } from 'react';
 import type { SensorMetadata, SpecialSensorRecipe } from '../../types';
 import { normalizeSensorTag } from '../../hooks/useSensorMetaMap';
+import { sameNameLoosely } from '../../utils/sensorNames';
+import { layoutTooltipRow } from '../../utils/tooltipLayout';
+
+export { sameNameLoosely };
 
 /**
  * The data every sensor label, picker row and tooltip needs, resolved from the tag
@@ -20,6 +24,9 @@ export interface SensorInfo {
     component?: string;
     /** Special sensor badge: 'f' = formula (ƒ), 's' = aggregate / operation (Σ). */
     special?: 'f' | 's';
+    /** Rule 3b: the tag only re-spells the description, so it is not printed beside it (it stays in
+     *  `title`, search and the hover card). Undefined when the tag is printed. */
+    tagHidden?: boolean;
 }
 
 export type SensorLookup = (tag: string) => SensorInfo;
@@ -68,15 +75,17 @@ export function buildSensorLookup(
         const m = metaMap.get(k);
         let info: SensorInfo;
         if (m) {
-            const description = clean(m.description);
+            const cleaned = clean(m.description);
+            // "Never show the tag twice": a description that only repeats the tag is no description.
+            const description = cleaned && normalizeSensorTag(cleaned) !== k ? cleaned : undefined;
             info = {
                 tag,
-                // "Never show the tag twice": a description that only repeats the tag is no description.
-                description: description && normalizeSensorTag(description) !== k ? description : undefined,
+                description,
                 unit: clean(m.unit),
                 component: clean(m.component),
                 special: inherited.special,
             };
+            if (sameNameLoosely(description, tag)) info.tagHidden = true;
         } else {
             info = inherited.tag === tag ? { ...inherited } : { ...inherited, tag };
         }
@@ -88,6 +97,20 @@ export function buildSensorLookup(
 }
 
 export const SensorMetaContext = createContext<SensorLookup>(plainSensorLookup);
+
+/** Rule 3 inside a set: the sensors printed next to it on the same card (a model's target / Y sensor).
+ *  They count in the set's distinct-rows rule, so a chip can never read like the target. */
+export const SensorSetExtraContext = createContext<readonly string[]>([]);
+/** Rule 2: the start shared by the surrounding set, active only while one of its names is really cut
+ *  at the current width; '' otherwise. */
+export const SensorSetContext = createContext<string>('');
+/** Rule 3: the names of the surrounding set, and its id for the cut measurement ('' = not measured). */
+export interface SensorNamesValue { names: readonly string[]; run: string }
+export const SensorNamesContext = createContext<SensorNamesValue>({ names: [], run: '' });
+/** Rule 2: the shared start is printed elsewhere (`SetPrefixLine`), so the rows drop it. */
+export const SensorSetDropContext = createContext<boolean>(false);
+/** The list's search text: matches are marked, and a match in the cut-off head moves next to the tail. */
+export const SensorSearchContext = createContext<string>('');
 
 /** A lookup over `metadata` / `special` layered on the nearest provider's — for a component that
  *  both provides it to its children (`<SensorMetaContext.Provider value={…}>`) and reads it itself. */
@@ -199,18 +222,44 @@ export const escapeHtml = (s: string): string =>
 export const safeColour = (c: string | undefined): string | undefined =>
     c && /^[#a-zA-Z0-9(),.%\s/-]+$/.test(c) ? c : undefined;
 
+/** The class of a tooltip row: a row that would pass the tooltip's limit wraps its name (rule 4). A row
+ *  that fits is plain `tt-row`, exactly as before. For a React row, pass what it prints. */
+export function ttRowClass(info: SensorInfo, valueText?: string, prefix?: string): string {
+    return layoutTooltipRow({ ...info, valueText, prefix }).wraps ? 'tt-row tt-row--wrap' : 'tt-row';
+}
+
 /**
  * HTML for one tooltip row (ECharts HTML formatter): swatch, inline label (description then tag,
  * no brackets), value + unit right-aligned in the series colour. Everything is escaped.
+ * `.tt-row` is a grid with the value in its own column, so a long name can never run under it. The
+ * description gets the room first: the tag takes what is left and is dropped when that is nothing.
+ * `prefix`: a start printed once above the rows (`sharedPrefixHtml`); the row prints the rest.
  */
-export function sensorInlineHtml(info: SensorInfo, colour?: string, valueText?: string): string {
+export function sensorInlineHtml(info: SensorInfo, colour?: string, valueText?: string, prefix?: string): string {
     const c = safeColour(colour);
+    const row = layoutTooltipRow({ ...info, valueText, prefix });
+    const name = escapeHtml(row.name);
     const label = info.description
-        ? `<span class="tt-desc">${escapeHtml(info.description)}</span><span class="tt-tag">${escapeHtml(info.tag)}</span>`
-        : `<span class="tt-desc tt-mono">${escapeHtml(info.tag)}</span>`;
+        ? `<span class="tt-desc">${name}</span>${row.tagShown ? `<span class="tt-tag">${escapeHtml(info.tag)}</span>` : ''}`
+        : `<span class="tt-desc tt-mono">${name}</span>`;
     const sw = c ? `<i class="tt-sw" style="background:${c}"></i>` : '';
     const val = valueText != null
         ? `<span class="tt-val"${c ? ` style="color:${c}"` : ''}>${escapeHtml(valueText)}</span>`
         : '';
-    return `<div class="tt-row" title="${escapeHtml(sensorTitle(info))}">${sw}<span class="tt-label">${label}</span>${val}</div>`;
+    return `<div class="${row.wraps ? 'tt-row tt-row--wrap' : 'tt-row'}" title="${escapeHtml(sensorTitle(info))}">${sw}<span class="tt-label">${label}</span>${val}</div>`;
 }
+
+/** A tooltip row with an axis key (X / Y) in the swatch column (Clusters, Compare). */
+export function axisRowHtml(key: string, info: SensorInfo, valueText: string, prefix?: string): string {
+    return sensorInlineHtml(info, undefined, valueText, prefix)
+        .replace('<span class="tt-label">', `<b class="tt-key">${escapeHtml(key)}</b><span class="tt-label">`);
+}
+
+/** A tooltip row that is not a sensor ("Health score"), lined up with `axisRowHtml` rows. */
+export function plainRowHtml(label: string, valueText: string): string {
+    return `<div class="tt-row"><b class="tt-key"></b><span class="tt-label"><span class="tt-desc">${escapeHtml(label)}</span></span><span class="tt-val">${escapeHtml(valueText)}</span></div>`;
+}
+
+/** The start the rows share, printed once above them (`tooltipSharedPrefix` decides it); '' prints nothing. */
+export const sharedPrefixHtml = (prefix: string): string =>
+    prefix ? `<div class="tt-prefix" title="Every sensor below starts with this">${escapeHtml(prefix)} …</div>` : '';

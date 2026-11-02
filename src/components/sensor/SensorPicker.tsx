@@ -2,8 +2,9 @@ import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useSta
 import { Check, ChevronDown, ChevronRight, Lock, Plus, Search, X } from 'lucide-react';
 import AnchoredPopover, { type PopoverAnchorRect } from '../AnchoredPopover';
 import Portal from '../Portal';
-import { SensorInline } from './SensorLabel';
-import { sensorHaystack, sensorTitle, useSensorLookup } from './sensorInfo';
+import { SensorInline, SensorSetProvider, SetPrefixLine } from './SensorLabel';
+import { SensorNamesContext, sensorHaystack, sensorTitle, useSensorLookup, type SensorNamesValue } from './sensorInfo';
+import { displayedName } from '../../utils/sensorNames';
 
 /**
  * The ONE sensor picker (DESIGN_SYSTEM §4 "Sensor picking — ONE picker").
@@ -17,15 +18,29 @@ import { sensorHaystack, sensorTitle, useSensorLookup } from './sensorInfo';
  *
  * Rendering cost: groups start collapsed (only the group of the current value opens), so opening
  * the picker on a ~130-tag workspace renders a handful of headers; the search text per sensor
- * is built once per open.
+ * is built once per open. Over `PICKER_WINDOW_ABOVE` visible rows (a search over thousands of
+ * sensors, a project with no components) the list renders only the rows in view, 30 px each, with
+ * the component of the top row on an opaque sticky line.
  */
 
 export const UNCATEGORIZED_GROUP = 'Uncategorized';
 export const PICKER_SEARCH_PLACEHOLDER = 'Search description, tag, unit or component…';
+/** A list with more rows than this is windowed. */
+export const PICKER_WINDOW_ABOVE = 150;
+/** The fixed row height of a windowed list (`.pk-list--windowed`). */
+export const PICKER_ROW_PX = 30;
+/** Rows rendered beyond each edge of the view, in px. */
+const WINDOW_OVERSCAN_PX = 300;
+/** Until the list has been measured (`.pk-pop`'s list is at most this high). */
+const WINDOW_INITIAL_PX = 360;
+
+const NO_SET: SensorNamesValue = { names: [], run: '' };
+const NO_CHIPS: string[] = [];
 
 type Row =
     | { type: 'group'; comp: string; count: number; on: number; open: boolean }
-    | { type: 'item'; tag: string }
+    /** `set`: the names of the row's group, one set for the distinct-rows rule. */
+    | { type: 'item'; tag: string; set?: SensorNamesValue }
     | { type: 'none' };
 
 function initials(c: string): string {
@@ -105,10 +120,13 @@ export function PickerList({ sensors, query, setQuery, isOn, onPick, noneRow, no
             // A search opens every matching group.
             const open = flat || !!q || expanded.has(comp);
             if (!flat) out.push({ type: 'group', comp, count: tags.length, on: tags.filter(isOn).length, open });
-            if (open) for (const t of tags) out.push({ type: 'item', tag: t });
+            if (open) {
+                const set: SensorNamesValue = { names: tags.map(t => displayedName(lookup(t))), run: '' };
+                for (const t of tags) out.push({ type: 'item', tag: t, set });
+            }
         }
         return out;
-    }, [sensors, q, haystacks, compOf, expanded, isOn, noneRow]);
+    }, [sensors, q, haystacks, compOf, expanded, isOn, noneRow, lookup]);
     const itemCount = useMemo(() => rows.filter(r => r.type === 'item').length, [rows]);
     const empty = q !== '' && itemCount === 0;
 
@@ -116,11 +134,32 @@ export function PickerList({ sensors, query, setQuery, isOn, onPick, noneRow, no
     const listRef = useRef<HTMLDivElement>(null);
     const baseId = useId();
     useEffect(() => { setActive(-1); }, [q]);
+
+    const windowed = rows.length > PICKER_WINDOW_ABOVE;
+    const [view, setView] = useState({ top: 0, height: WINDOW_INITIAL_PX });
+    const readView = useCallback(() => {
+        const el = listRef.current;
+        if (!el) return;
+        const next = { top: el.scrollTop, height: el.clientHeight || WINDOW_INITIAL_PX };
+        setView(v => (Math.abs(v.top - next.top) < 4 && v.height === next.height ? v : next));
+    }, []);
+    // The browser clamps the scroll position when the list gets shorter (typing a search).
+    useLayoutEffect(() => { if (windowed) readView(); }, [windowed, rows.length, readView]);
+
     useEffect(() => {
         if (active < 0) return;
-        const el = listRef.current?.querySelector(`[data-ix="${active}"]`);
+        const list = listRef.current;
+        if (windowed && list) {
+            // The row may not be rendered yet: scroll by its position. The sticky line covers the top row.
+            const y = active * PICKER_ROW_PX + (parseFloat(getComputedStyle(list).paddingTop) || 0);
+            if (y < list.scrollTop + PICKER_ROW_PX) list.scrollTop = Math.max(0, y - PICKER_ROW_PX);
+            else if (y + PICKER_ROW_PX > list.scrollTop + list.clientHeight) list.scrollTop = y + PICKER_ROW_PX - list.clientHeight;
+            readView();
+            return;
+        }
+        const el = list?.querySelector(`[data-ix="${active}"]`);
         if (el && 'scrollIntoView' in el) (el as HTMLElement).scrollIntoView({ block: 'nearest' });
-    }, [active]);
+    }, [active, windowed, readView]);
 
     const toggleGroup = (c: string, open?: boolean) => setExpanded(prev => {
         const n = new Set(prev);
@@ -151,6 +190,91 @@ export function PickerList({ sensors, query, setQuery, isOn, onPick, noneRow, no
         else if (e.key === 'Tab' && !multi) { e.preventDefault(); onEscape(); }
     };
 
+    const renderRow = (r: Row, ix: number) => {
+        const kb = ix === active ? ' kb' : '';
+        const id = `${baseId}-r${ix}`;
+        if (r.type === 'group') {
+            return (
+                // Inside role="listbox" only options / groups are allowed: the header is
+                // a group label row (still clickable; ← → / Enter toggle it from the search box).
+                <button
+                    key={`g-${r.comp}`} id={id} data-ix={ix} type="button" tabIndex={-1} role="group"
+                    aria-label={`${r.comp}, ${r.count} sensor${r.count === 1 ? '' : 's'}`}
+                    className={`pk-g${kb}`} aria-expanded={r.open}
+                    onMouseDown={e => e.preventDefault()}
+                    onClick={() => toggleGroup(r.comp)}
+                >
+                    <ChevronRight size={12} className="pk-car" aria-hidden="true" />
+                    <span className="pk-badge" aria-hidden="true">{initials(r.comp)}</span>
+                    <span className="pk-gname">{r.comp}</span>
+                    <span className={`pk-gcount${r.on ? ' on' : ''}`}>{r.on ? `${r.on} / ${r.count}` : r.count}</span>
+                </button>
+            );
+        }
+        if (r.type === 'none') {
+            return (
+                <button
+                    key="none" id={id} data-ix={ix} type="button" role="option" tabIndex={-1}
+                    aria-selected={!!noneOn} className={`pk-item pk-item--none${kb}${noneOn ? ' on' : ''}`}
+                    onMouseDown={e => e.preventDefault()}
+                    onClick={() => onPick('')}
+                >
+                    <span className="pk-mark">{noneOn && <Check size={12} />}</span>None
+                </button>
+            );
+        }
+        const on = isOn(r.tag);
+        const unit = lookup(r.tag).unit;
+        return (
+            <button
+                key={r.tag} id={id} data-ix={ix} type="button" role="option" tabIndex={-1}
+                aria-selected={on} className={`pk-item${kb}${on ? ' on' : ''}`}
+                title={sensorTitle(lookup(r.tag))}
+                onMouseDown={e => e.preventDefault()}
+                onClick={() => onPick(r.tag)}
+            >
+                {multi
+                    ? <span className="pk-cbx">{on && <Check size={10} strokeWidth={3} />}</span>
+                    : <span className="pk-mark">{on && <Check size={12} />}</span>}
+                <SensorNamesContext.Provider value={r.set ?? NO_SET}><SensorInline tag={r.tag} fit /></SensorNamesContext.Provider>
+                {unit && <span className="unit-badge pk-unit">{unit}</span>}
+            </button>
+        );
+    };
+
+    const renderWindow = () => {
+        const lo = Math.max(0, Math.floor((view.top - WINDOW_OVERSCAN_PX) / PICKER_ROW_PX));
+        const hi = Math.min(rows.length, Math.ceil((view.top + view.height + WINDOW_OVERSCAN_PX) / PICKER_ROW_PX));
+        // The component of the top row, once its header has scrolled away.
+        let sticky = '';
+        const topIx = Math.floor(view.top / PICKER_ROW_PX);
+        for (let i = topIx; i >= 0; i--) {
+            const r = rows[i];
+            if (r?.type !== 'group') continue;
+            if (i < topIx || view.top > i * PICKER_ROW_PX + 2) sticky = r.comp;
+            break;
+        }
+        return (
+            <>
+                <div className="pk-stick" aria-hidden="true">
+                    {sticky && <div className="pk-sticky" data-testid="picker-sticky">{sticky}</div>}
+                </div>
+                <div className="pk-win" role="presentation" style={{ height: rows.length * PICKER_ROW_PX }} data-testid="picker-window">
+                    {rows.slice(lo, hi).map((r, n) => (
+                        <div
+                            key={r.type === 'group' ? `g-${r.comp}` : r.type === 'item' ? r.tag : 'none'}
+                            className="pk-win-row"
+                            role="presentation"
+                            style={{ top: (lo + n) * PICKER_ROW_PX }}
+                        >
+                            {renderRow(r, lo + n)}
+                        </div>
+                    ))}
+                </div>
+            </>
+        );
+    };
+
     return (
         <>
             <div className="pk-search">
@@ -171,7 +295,14 @@ export function PickerList({ sensors, query, setQuery, isOn, onPick, noneRow, no
                 />
             </div>
             {scope && <div className="pk-scope">{scope}</div>}
-            <div className="pk-list" id={`${baseId}-list`} role="listbox" aria-multiselectable={multi || undefined} ref={listRef}>
+            <div
+                className={`pk-list${windowed ? ' pk-list--windowed' : ''}`}
+                id={`${baseId}-list`}
+                role="listbox"
+                aria-multiselectable={multi || undefined}
+                ref={listRef}
+                onScroll={windowed ? readView : undefined}
+            >
                 {empty && (
                     <div className="pk-empty">
                         No sensor matches “{query.trim()}”
@@ -179,57 +310,7 @@ export function PickerList({ sensors, query, setQuery, isOn, onPick, noneRow, no
                     </div>
                 )}
                 {!empty && sensors.length === 0 && <div className="pk-empty">No sensors to pick from.</div>}
-                {rows.map((r, ix) => {
-                    const kb = ix === active ? ' kb' : '';
-                    const id = `${baseId}-r${ix}`;
-                    if (r.type === 'group') {
-                        return (
-                            // Inside role="listbox" only options / groups are allowed: the header is
-                            // a group label row (still clickable; ← → / Enter toggle it from the search box).
-                            <button
-                                key={`g-${r.comp}`} id={id} data-ix={ix} type="button" tabIndex={-1} role="group"
-                                aria-label={`${r.comp}, ${r.count} sensor${r.count === 1 ? '' : 's'}`}
-                                className={`pk-g${kb}`} aria-expanded={r.open}
-                                onMouseDown={e => e.preventDefault()}
-                                onClick={() => toggleGroup(r.comp)}
-                            >
-                                <ChevronRight size={12} className="pk-car" aria-hidden="true" />
-                                <span className="pk-badge" aria-hidden="true">{initials(r.comp)}</span>
-                                <span className="pk-gname">{r.comp}</span>
-                                <span className={`pk-gcount${r.on ? ' on' : ''}`}>{r.on ? `${r.on} / ${r.count}` : r.count}</span>
-                            </button>
-                        );
-                    }
-                    if (r.type === 'none') {
-                        return (
-                            <button
-                                key="none" id={id} data-ix={ix} type="button" role="option" tabIndex={-1}
-                                aria-selected={!!noneOn} className={`pk-item pk-item--none${kb}${noneOn ? ' on' : ''}`}
-                                onMouseDown={e => e.preventDefault()}
-                                onClick={() => onPick('')}
-                            >
-                                <span className="pk-mark">{noneOn && <Check size={12} />}</span>None
-                            </button>
-                        );
-                    }
-                    const on = isOn(r.tag);
-                    const unit = lookup(r.tag).unit;
-                    return (
-                        <button
-                            key={r.tag} id={id} data-ix={ix} type="button" role="option" tabIndex={-1}
-                            aria-selected={on} className={`pk-item${kb}${on ? ' on' : ''}`}
-                            title={sensorTitle(lookup(r.tag))}
-                            onMouseDown={e => e.preventDefault()}
-                            onClick={() => onPick(r.tag)}
-                        >
-                            {multi
-                                ? <span className="pk-cbx">{on && <Check size={10} strokeWidth={3} />}</span>
-                                : <span className="pk-mark">{on && <Check size={12} />}</span>}
-                            <SensorInline tag={r.tag} fit />
-                            {unit && <span className="unit-badge pk-unit">{unit}</span>}
-                        </button>
-                    );
-                })}
+                {windowed ? renderWindow() : rows.map(renderRow)}
             </div>
         </>
     );
@@ -452,23 +533,28 @@ export function SensorPickerMulti({
     const isOn = useCallback((t: string) => pendingSet.has(t), [pendingSet]);
     return (
         <div className="pk-multi">
-            {!hideChips && selected.map(t => {
-                const i = lookup(t);
-                return (
-                    <span key={t} className={`pk-chip${lockedReason ? ' pk-chip--locked' : ''}`} title={sensorTitle(i)}>
-                        <SensorInline tag={t} size="sm" />
-                        {!blocked && (
-                            <button
-                                type="button" className="pk-chip-x"
-                                aria-label={`Remove ${i.description || t}`}
-                                onClick={() => onConfirm(selected.filter(s => s !== t))}
-                            >
-                                <X size={12} />
-                            </button>
-                        )}
-                    </span>
-                );
-            })}
+            {/* The chips are one set (with the card's own target, `SensorSetExtraContext`): each reads differently,
+                never below start + "…" + end (the row wraps), and a start they share prints once while a chip is cut. */}
+            <SensorSetProvider tags={hideChips ? NO_CHIPS : selected} drop>
+                <SetPrefixLine className="pk-chip-prefix" testid="chip-prefix" />
+                {!hideChips && selected.map(t => {
+                    const i = lookup(t);
+                    return (
+                        <span key={t} className={`pk-chip${lockedReason ? ' pk-chip--locked' : ''}`} title={sensorTitle(i)}>
+                            <SensorInline tag={t} size="sm" />
+                            {!blocked && (
+                                <button
+                                    type="button" className="pk-chip-x"
+                                    aria-label={`Remove ${i.description || t}`}
+                                    onClick={() => onConfirm(selected.filter(s => s !== t))}
+                                >
+                                    <X size={12} />
+                                </button>
+                            )}
+                        </span>
+                    );
+                })}
+            </SensorSetProvider>
             <button
                 ref={addRef}
                 type="button"

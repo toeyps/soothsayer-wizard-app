@@ -462,3 +462,161 @@ describe('performance guard: a ~130-tag list stays cheap to open', () => {
         expect(pickerRows().length).toBe(13); // only group H (S7, S17, … S127)
     });
 });
+
+describe('windowed list over 150 rows (long names, rule 6)', () => {
+    const GROUPS = ['Alpha', 'Beta'];
+    const TAGS = Array.from({ length: 400 }, (_, i) => `S${i}`);
+    const META = TAGS.map((t, i) => m(t, `Sensor ${i}`, 'U', GROUPS[i < 200 ? 0 : 1]));
+    const open = (props: { tags?: string[]; meta?: SensorMetadata[] } = {}) => {
+        render(
+            <SensorMetaProvider metadata={props.meta ?? META}>
+                <SensorPickerSingle sensors={props.tags ?? TAGS} value="" onSelect={() => {}} ariaLabel="Y sensor" />
+            </SensorMetaProvider>,
+        );
+        fireEvent.click(trigger());
+    };
+    const list = () => openPickerSurface().querySelector('.pk-list') as HTMLElement;
+    const scrollTo = (top: number) => {
+        list().scrollTop = top;
+        fireEvent.scroll(list());
+    };
+
+    it('a search over many rows renders only the rows in view, placed at their real position', () => {
+        open();
+        fireEvent.change(pickerSearch(), { target: { value: 'sensor' } });
+        expect(list().className).toContain('pk-list--windowed');
+        const win = screen.getByTestId('picker-window');
+        expect(win.style.height).toBe(`${402 * 30}px`); // 400 rows + 2 group headers
+        expect(pickerRows().length).toBeLessThan(40);
+        scrollTo(6000);
+        const rows = pickerRows();
+        expect(rows.length).toBeLessThan(40);
+        expect(rows.some(r => rowTag(r) === 'S199')).toBe(true);
+        expect(rows.some(r => rowTag(r) === 'S0')).toBe(false);
+        expect((rows[0].parentElement as HTMLElement).style.top).toBe(`${Number(rows[0].dataset.ix) * 30}px`);
+    });
+
+    it('at most 150 rows stays a plain list (fixed rows only when windowed)', () => {
+        open({ tags: TAGS.slice(0, 149), meta: TAGS.slice(0, 149).map((t, i) => m(t, `Sensor ${i}`, '', '')) });
+        fireEvent.change(pickerSearch(), { target: { value: 'sensor' } });
+        expect(list().className).not.toContain('pk-list--windowed');
+        expect(screen.queryByTestId('picker-window')).toBeNull();
+        expect(pickerRows().length).toBe(149);
+    });
+
+    it('a project with no master data (tag only, flat list) is windowed too, with no sticky line', () => {
+        open({ meta: [] });
+        expect(list().className).toContain('pk-list--windowed');
+        scrollTo(3000);
+        expect(rowTag(pickerRows()[0])).toMatch(/^S\d+$/);
+        expect(screen.queryByTestId('picker-sticky')).toBeNull();
+    });
+
+    it('the sticky line names the component of the top row, once its header has scrolled away', () => {
+        open();
+        fireEvent.change(pickerSearch(), { target: { value: 'sensor' } });
+        expect(screen.queryByTestId('picker-sticky')).toBeNull();
+        scrollTo(300);
+        expect(screen.getByTestId('picker-sticky').textContent).toBe('Alpha');
+        scrollTo(201 * 30 + 60);
+        expect(screen.getByTestId('picker-sticky').textContent).toBe('Beta');
+        expect(screen.getByTestId('picker-sticky').parentElement?.getAttribute('aria-hidden')).toBe('true');
+    });
+
+    it('arrow keys follow the selection past the rendered rows, and Enter picks it', () => {
+        const onSelect = vi.fn();
+        const clientHeight = vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(300);
+        try {
+            render(
+                <SensorMetaProvider metadata={META}>
+                    <SensorPickerSingle sensors={TAGS} value="" onSelect={onSelect} ariaLabel="Y sensor" />
+                </SensorMetaProvider>,
+            );
+            fireEvent.click(trigger());
+            fireEvent.change(pickerSearch(), { target: { value: 'sensor' } });
+            for (let i = 0; i < 60; i++) fireEvent.keyDown(pickerSearch(), { key: 'ArrowDown' });
+            // Index 59 = S58 under the Alpha header; it ends the 300 px view.
+            expect(list().scrollTop).toBe(60 * 30 - 300);
+            const activeId = pickerSearch().getAttribute('aria-activedescendant') as string;
+            const active = document.getElementById(activeId) as HTMLElement;
+            expect(rowTag(active)).toBe('S58');
+            expect(active.className).toContain('kb');
+            for (let i = 0; i < 10; i++) fireEvent.keyDown(pickerSearch(), { key: 'ArrowUp' });
+            expect(list().scrollTop).toBeLessThanOrEqual(49 * 30);
+            fireEvent.keyDown(pickerSearch(), { key: 'Enter' });
+            expect(onSelect).toHaveBeenCalledWith('S48');
+        } finally {
+            clientHeight.mockRestore();
+        }
+    });
+
+    it('the "Add…" modal is windowed too and keeps a pick made in a row that scrolled away', () => {
+        const onConfirm = vi.fn();
+        render(
+            <SensorMetaProvider metadata={META}>
+                <SensorPickerMulti sensors={TAGS} selected={[]} onConfirm={onConfirm} noun="predictors" />
+            </SensorMetaProvider>,
+        );
+        fireEvent.click(screen.getByRole('button', { name: /Add predictors/ }));
+        fireEvent.change(pickerSearch(), { target: { value: 'sensor' } });
+        expect(list().className).toContain('pk-list--windowed');
+        fireEvent.click(pickerRows().find(r => rowTag(r) === 'S3') as HTMLElement);
+        scrollTo(9000);
+        expect(pickerRows().some(r => rowTag(r) === 'S3')).toBe(false);
+        scrollTo(0);
+        expect(pickerRows().find(r => rowTag(r) === 'S3')?.getAttribute('aria-selected')).toBe('true');
+        fireEvent.click(screen.getByRole('button', { name: /OK/ }));
+        expect(onConfirm).toHaveBeenCalledWith(['S3']);
+    });
+});
+
+describe('long names in the picker', () => {
+    const LONG = (n: string) => `Crosshead (P-P Trend) - Vibration crosshead slide ${n} - Segment No 1 - avg`;
+    const meta = [m('A', LONG('11A'), '', 'C'), m('B', LONG('11B'), '', 'C')];
+
+    it('short chips print exactly as before: no prefix line, no split', () => {
+        const short = [m('T1', 'Bearing temperature', '', ''), m('T2', 'Lube oil pressure', '', '')];
+        render(
+            <SensorMetaProvider metadata={short}>
+                <SensorPickerMulti sensors={['T1', 'T2']} selected={['T1', 'T2']} onConfirm={() => {}} noun="predictors" />
+            </SensorMetaProvider>,
+        );
+        expect(screen.queryByTestId('chip-prefix')).toBeNull();
+        expect(document.querySelector('.sl-split')).toBeNull();
+        expect(document.querySelector('.pk-chip .sl-desc')?.outerHTML).toBe('<span class="sl-desc">Bearing temperature</span>');
+    });
+
+    it('long chips with nothing measured as cut print their whole name', () => {
+        render(
+            <SensorMetaProvider metadata={meta}>
+                <SensorPickerMulti sensors={['A', 'B']} selected={['A', 'B']} onConfirm={() => {}} noun="predictors" />
+            </SensorMetaProvider>,
+        );
+        expect(screen.queryByTestId('chip-prefix')).toBeNull();
+        const names = [...document.querySelectorAll('.pk-chip .sl-desc')].map(e => e.textContent);
+        expect(names).toEqual([LONG('11A'), LONG('11B')]);
+    });
+
+    it('a lone trigger keeps the full name in its title', () => {
+        render(
+            <SensorMetaProvider metadata={meta}>
+                <SensorPickerSingle sensors={['A', 'B']} value="A" onSelect={() => {}} ariaLabel="Y sensor" />
+            </SensorMetaProvider>,
+        );
+        expect(trigger().getAttribute('title')).toContain(LONG('11A'));
+    });
+
+    it('a tag only re-spelling the description is not printed in a row, and is still found by search', () => {
+        const respelt = [m('Segment_No_1', 'Segment No 1', '', 'C')];
+        render(
+            <SensorMetaProvider metadata={respelt}>
+                <SensorPickerSingle sensors={['Segment_No_1']} value="" onSelect={() => {}} ariaLabel="Y sensor" />
+            </SensorMetaProvider>,
+        );
+        fireEvent.click(trigger());
+        fireEvent.change(pickerSearch(), { target: { value: 'segment_no' } });
+        const [row] = pickerRows();
+        expect(row.querySelector('.sl-tag')).toBeNull();
+        expect(row.getAttribute('title')).toContain('Segment_No_1');
+    });
+});
