@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+    attachAxisNames,
     axisNamePatch,
     fitAxisName,
     getAxisNames,
@@ -146,6 +147,100 @@ describe('axisNamePatch', () => {
     it('the X title keeps one line', () => {
         const { patch } = axisNamePatch({ x: LONG }, option, 400, 300, false, measure);
         expect((patch.xAxis as { name: string }).name).not.toContain('\n');
+    });
+});
+
+describe('attachAxisNames', () => {
+    const option = {
+        grid: { left: 58, right: 18, top: 14, bottom: 40 },
+        xAxis: { name: 'Pump A · bar' },
+        yAxis: { name: LONG.description + ' · ' + LONG.unit },
+    };
+    const X = { tag: 'T', description: 'Pump A', unit: 'bar' };
+    let size: { w: number; h: number };
+    let resize: () => void;
+    function chart() {
+        return {
+            getWidth: () => size.w,
+            getHeight: () => size.h,
+            getDom: () => document.createElement('div'),
+            setOption: vi.fn(),
+        };
+    }
+    beforeEach(() => {
+        size = { w: 1200, h: 800 };
+        let frame: FrameRequestCallback | null = null;
+        vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => { frame = cb; return 1; });
+        vi.stubGlobal('cancelAnimationFrame', () => { frame = null; });
+        vi.stubGlobal('ResizeObserver', class {
+            constructor(cb: ResizeObserverCallback) {
+                resize = () => { cb([], this as unknown as ResizeObserver); frame?.(0); };
+            }
+            observe() {}
+            disconnect() {}
+        });
+    });
+    afterEach(() => { vi.unstubAllGlobals(); });
+
+    it('titles that fit: no setOption, on attach or on a resize that still fits', () => {
+        const inst = chart();
+        attachAxisNames(inst, { x: X, y: LONG }, option, measure)();
+        expect(inst.setOption).not.toHaveBeenCalled();
+        const stop = attachAxisNames(inst, { x: X, y: LONG }, option, measure);
+        size = { w: 1100, h: 780 };
+        resize();
+        expect(inst.setOption).not.toHaveBeenCalled();
+        stop();
+    });
+    it('reads the option\'s own name from an axis array too', () => {
+        const inst = chart();
+        const asArrays = { ...option, xAxis: [option.xAxis], yAxis: [option.yAxis] };
+        attachAxisNames(inst, { x: X, y: LONG }, asArrays, measure)();
+        expect(inst.setOption).not.toHaveBeenCalled();
+    });
+    it('a title the option does not carry as is: fitted on attach', () => {
+        const inst = chart();
+        attachAxisNames(inst, { y: X }, { ...option, yAxis: { name: 'something else' } }, measure)();
+        expect(inst.setOption).toHaveBeenCalledWith({ yAxis: { name: 'Pump A · bar' } });
+    });
+    it('a resize that wraps sets the title once; the next resize at the same result does not', () => {
+        const inst = chart();
+        const stop = attachAxisNames(inst, { y: LONG }, option, measure);
+        size = { w: 1200, h: 300 };
+        resize();
+        expect(inst.setOption).toHaveBeenCalledTimes(1);
+        const patch = inst.setOption.mock.calls[0][0];
+        expect(patch.yAxis.name).toContain('\n');
+        expect(patch.yAxis.nameTextStyle.lineHeight).toBe(13);
+        resize();
+        expect(inst.setOption).toHaveBeenCalledTimes(1);
+        stop();
+    });
+    it('wrapped back to one line: resets line height and the plot\'s left edge', () => {
+        const inst = chart();
+        const stop = attachAxisNames(inst, { y: LONG }, option, measure);
+        size = { w: 1200, h: 300 };
+        resize();
+        size = { w: 1200, h: 800 };
+        resize();
+        expect(inst.setOption).toHaveBeenLastCalledWith({
+            yAxis: { name: option.yAxis.name, nameTextStyle: { lineHeight: null } },
+            grid: { left: 58 },
+        });
+        stop();
+    });
+    it('a cut X title that fits again goes back to the whole title', () => {
+        const inst = chart();
+        const long = { ...option, xAxis: { name: option.yAxis.name } };
+        const stop = attachAxisNames(inst, { x: LONG }, long, measure);
+        expect(inst.setOption).not.toHaveBeenCalled();
+        size = { w: 300, h: 800 };
+        resize();
+        expect(inst.setOption.mock.calls[0][0].xAxis.name).toContain('…');
+        size = { w: 1200, h: 800 };
+        resize();
+        expect(inst.setOption).toHaveBeenLastCalledWith({ xAxis: { name: option.yAxis.name } });
+        stop();
     });
 });
 

@@ -97,28 +97,75 @@ export function splitName(name: string, prefix?: string): NameSplit {
 }
 
 /**
+ * What is worked out once per names array, because a group can hold thousands of names and every row reads all of
+ * them. Keyed by the array itself, so a names array must not be changed in place after its first use (every caller
+ * builds a new one in a `useMemo`).
+ */
+interface NameSetCache {
+    /** Every name split into words; built on first need. */
+    others: { name: string; words: string[] }[] | null;
+    /** prefix ('' = none) → name → split. Keyed by prefix because the prefix changes the result. */
+    splits: Map<string, Map<string, NameSplit>>;
+    /** prefix → the names with it removed (`namesAfterPrefix`). */
+    after: Map<string, readonly string[]>;
+}
+const nameSetCaches = new WeakMap<readonly string[], NameSetCache>();
+
+function nameSetCache(names: readonly string[]): NameSetCache {
+    let cache = nameSetCaches.get(names);
+    if (!cache) {
+        cache = { others: null, splits: new Map(), after: new Map() };
+        nameSetCaches.set(names, cache);
+    }
+    return cache;
+}
+
+/**
  * Rule 3 for a label inside a set (list, chips, picker group, tooltip, "X vs Y"): the visible text reads
  * differently from every other name in `names`. Keeps `pre` (up to the first word that differs from a row
  * sharing its end) and `tail` (from the last word that differs from a row sharing its start), taking the
  * shortest pair that tells it apart. Add sensors printed on the same card (a model target) to `names`.
+ * Results are cached per `names` array: keep the array stable across rows and renders.
  */
 export function splitInSet(name: string, names: readonly string[], prefix?: string): NameSplit {
     const sp = splitName(name, prefix);
     if (!names.length || sp.shared || name.length <= NAME_TAIL_MAX) return sp;
+    const cache = nameSetCache(names);
+    const key = prefix ?? '';
+    let byName = cache.splits.get(key);
+    if (!byName) {
+        byName = new Map();
+        cache.splits.set(key, byName);
+    }
+    let out = byName.get(name);
+    if (!out) {
+        cache.others ??= names.filter(Boolean).map(n => ({ name: n, words: n.split(/\s+/).filter(Boolean) }));
+        out = splitAgainst(name, sp, cache.others);
+        byName.set(name, out);
+    }
+    return out;
+}
+
+function splitAgainst(name: string, sp: NameSplit, others: NonNullable<NameSetCache['others']>): NameSplit {
     const W = [...name.matchAll(/\S+/g)].map(m => ({ s: m.index ?? 0, e: (m.index ?? 0) + m[0].length, w: m[0] }));
     const L = W.length;
     if (L < 3) return sp;
     const ws = W.map(x => x.w);
     const cons: { p: number; q: number }[] = [];
-    for (const o of names) {
-        if (!o || o === name) continue;
-        const ow = o.split(/\s+/).filter(Boolean);
+    const seen = new Set<number>();
+    for (const { name: o, words: ow } of others) {
+        if (o === name) continue;
         let p = 0;
         while (p < L && p < ow.length && ws[p] === ow[p]) p++;
         if (p >= L && ow.length === L) continue;
         let k = 0;
         while (k < L && k < ow.length && ws[L - 1 - k] === ow[ow.length - 1 - k]) k++;
-        cons.push({ p: Math.min(p, L - 1), q: Math.max(0, L - 1 - k) });
+        const con = { p: Math.min(p, L - 1), q: Math.max(0, L - 1 - k) };
+        const id = con.p * L + con.q;
+        if (!seen.has(id)) {
+            seen.add(id);
+            cons.push(con);
+        }
     }
     if (!cons.length) return sp;
     const isSep = (i: number) => SEP_WORD.test(ws[i]);
@@ -243,6 +290,18 @@ export function familyPrefix(names: readonly string[]): string {
 /** What a row prints under a shared `prefix`: the name without the prefix and its separator. */
 export function afterPrefix(name: string, prefix: string): string {
     return prefix && name.startsWith(prefix) ? name.slice(prefix.length).replace(SEP_START, '') : name;
+}
+
+/** `afterPrefix` over a whole set, one array per names + prefix: rows of a set share it, so `splitInSet`'s cache
+ *  works for them too. A new array per row would pay for every name, per row. */
+export function namesAfterPrefix(names: readonly string[], prefix: string): readonly string[] {
+    const { after } = nameSetCache(names);
+    let out = after.get(prefix);
+    if (!out) {
+        out = names.map(n => afterPrefix(n, prefix));
+        after.set(prefix, out);
+    }
+    return out;
 }
 
 /**

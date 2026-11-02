@@ -98,6 +98,25 @@ export function decideWideTail(prev: WideTailState, m: { room: string; best: num
 
 // ---- cut sets ----
 
+export interface CutRunState extends RoomPin {
+    /** The room at which the whole name fits again. */
+    need: number;
+}
+
+/** A set was just shortened in `room`, with `deficit` px missing from its worst name. */
+export function cutRunState(room: number, deficit: number): CutRunState {
+    return { need: room + deficit + 2, rooms: [String(room)], settling: true };
+}
+
+/** The set after a measurement of its room; null: it goes back to the whole names. A room not rendered (0) says
+ *  nothing. The room the cut itself produced (a scrollbar gone, say) never brings it back. */
+export function decideCutRun(prev: CutRunState, room: number): CutRunState | null {
+    if (!room) return prev;
+    const key = String(room);
+    const s = settled(prev, key);
+    return s.rooms.includes(key) || room < s.need ? s : null;
+}
+
 /** How many px a name label's full text is wider than its room (≤ 0: it fits). 0 when it is not rendered. */
 export function nameDeficit(el: HTMLElement, measure: MeasureText = textWidth): number {
     const w = el.clientWidth;
@@ -143,6 +162,28 @@ function wholeWordCut(el: HTMLElement, measure: MeasureText) {
 
 const part = (split: HTMLElement, name: string) => split.querySelector<HTMLElement>(`:scope > [data-name-part="${name}"]`);
 
+/** The minimums a split has set outside itself. The chip and its wrappers outlive the split (a name back to plain
+ *  text is a new element), and a minimum worked out for the cut form can be wider than the plain name. */
+const heldBySplit = new WeakMap<HTMLElement, Map<HTMLElement, string>>();
+
+function hold(split: HTMLElement, el: HTMLElement, minWidth: string) {
+    el.style.minWidth = minWidth;
+    let held = heldBySplit.get(split);
+    if (!held) {
+        held = new Map();
+        heldBySplit.set(split, held);
+    }
+    held.set(el, el.style.minWidth);
+}
+
+/** Takes back what `hold` set, unless another split in the same chip has written over it since. */
+function releaseHolds(split: HTMLElement) {
+    heldBySplit.get(split)?.forEach((minWidth, el) => {
+        if (el.style.minWidth === minWidth) el.style.minWidth = '';
+    });
+    heldBySplit.delete(split);
+}
+
 function holdChipOpen(split: HTMLElement, chip: HTMLElement, tail: HTMLElement) {
     // A chip never shrinks below start + "…" + end: the chip row wraps instead.
     const min = Math.ceil((part(split, 'pre')?.scrollWidth ?? 0) + tail.scrollWidth + parseFloat(getComputedStyle(tail).fontSize) * 0.9);
@@ -151,8 +192,8 @@ function holdChipOpen(split: HTMLElement, chip: HTMLElement, tail: HTMLElement) 
     const cs = getComputedStyle(chip);
     const chrome = (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.paddingRight) || 0)
         + (parseFloat(cs.columnGap) || 0) * (chip.children.length - 1) + 2;
-    chip.style.minWidth = `min(100%, ${min + others + chrome}px)`;
-    for (let a = split.parentElement; a && a !== chip; a = a.parentElement) a.style.minWidth = `${min}px`;
+    hold(split, chip, `min(100%, ${min + others + chrome}px)`);
+    for (let a = split.parentElement; a && a !== chip; a = a.parentElement) hold(split, a, `${min}px`);
 }
 
 function holdSummaryRef(split: HTMLElement, tail: HTMLElement) {
@@ -161,7 +202,7 @@ function holdSummaryRef(split: HTMLElement, tail: HTMLElement) {
     const ref = split.closest<HTMLElement>('[data-name-ref]');
     if (!ref) return;
     const extra = [...ref.children].filter(c => c !== split).reduce((w, c) => w + (c as HTMLElement).scrollWidth, 0);
-    ref.style.minWidth = `calc(${min} + ${extra}px)`;
+    hold(split, ref, `calc(${min} + ${extra}px)`);
 }
 
 /** Adjusts one rendered split name to its current room: a cut head ends at a whole word, a head under ~8
@@ -178,7 +219,7 @@ export function applyNameFit(split: HTMLElement, measure: MeasureText = textWidt
     split.removeAttribute('data-short');
     head.style.maxWidth = '';
     const tail = part(split, 'tail');
-    const chip = split.closest<HTMLElement>('.pk-chip');
+    const chip = split.closest<HTMLElement>('.pk-chip, .fx-chip');
     if (tail && chip) holdChipOpen(split, chip, tail);
     if (tail && split.closest('[data-name-summary]')) holdSummaryRef(split, tail);
     const cutNow = head.scrollWidth > head.clientWidth + 0.5;
@@ -195,13 +236,14 @@ let sharedObserver: ResizeObserver | null = null;
 const splitsByTarget = new Map<Element, Set<HTMLElement>>();
 
 /** Keeps `applyNameFit` current on a split as its row resizes. One shared observer serves every row of a long
- *  list. Returns the cleanup (usable as a React 19 ref cleanup). */
+ *  list. Returns the cleanup (usable as a React 19 ref cleanup), which also takes back the split's minimums. */
 export function watchNameFit(split: HTMLElement | null): () => void {
     if (!split) return () => {};
     const raf = requestAnimationFrame(() => applyNameFit(split));
-    if (typeof ResizeObserver === 'undefined') return () => cancelAnimationFrame(raf);
+    const stopFrame = () => { cancelAnimationFrame(raf); releaseHolds(split); };
+    if (typeof ResizeObserver === 'undefined') return stopFrame;
     const target = split.closest('.sl, .sl-inline-wrap, .tt-row')?.parentElement ?? split.parentElement;
-    if (!target) return () => cancelAnimationFrame(raf);
+    if (!target) return stopFrame;
     if (!sharedObserver) {
         sharedObserver = new ResizeObserver(entries => requestAnimationFrame(() => {
             for (const e of entries) splitsByTarget.get(e.target)?.forEach(s => applyNameFit(s));
@@ -215,7 +257,7 @@ export function watchNameFit(split: HTMLElement | null): () => void {
     }
     set.add(split);
     return () => {
-        cancelAnimationFrame(raf);
+        stopFrame();
         const s = splitsByTarget.get(target);
         if (!s) return;
         s.delete(split);

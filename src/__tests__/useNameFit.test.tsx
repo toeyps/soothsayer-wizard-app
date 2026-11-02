@@ -7,6 +7,8 @@ import {
     TWO_LINE_INITIAL,
     WIDE_TAIL_INITIAL,
     applyNameFit,
+    cutRunState,
+    decideCutRun,
     decideLineCut,
     decideTwoLine,
     decideWideTail,
@@ -107,6 +109,40 @@ describe('decideLineCut / decideWideTail', () => {
         s = decideWideTail(s, { room: 'a', best: 1 });
         expect(s.k).toBe(2);
         expect(decideWideTail(s, { room: 'c', best: 1 }).k).toBe(1);
+    });
+    it('wide tail: a room moved by its own change is pinned too (shrink-to-fit parent)', () => {
+        let s = decideWideTail(WIDE_TAIL_INITIAL, { room: 'a', best: 2 });
+        // More words narrow the parent: the words no longer "fit", at a room we caused.
+        s = decideWideTail(s, { room: 'b', best: 0 });
+        expect(s.k).toBe(2);
+        s = decideWideTail(s, { room: 'b', best: 0 });
+        expect(s.k).toBe(2);
+        s = decideWideTail(s, { room: 'a', best: 0 });
+        expect(s.k).toBe(2);
+        // A room we did not cause does take it back.
+        expect(decideWideTail(s, { room: 'c', best: 0 }).k).toBe(0);
+    });
+});
+
+describe('decideCutRun', () => {
+    it('holds below the room it needs, goes back at it', () => {
+        let s = decideCutRun(cutRunState(300, 60), 300)!;
+        expect(s.need).toBe(362);
+        s = decideCutRun(s, 361)!;
+        expect(s).not.toBeNull();
+        expect(decideCutRun(s, 362)).toBeNull();
+    });
+    it('the room the cut itself produced is pinned, however wide', () => {
+        let s = decideCutRun(cutRunState(300, 6), 308)!;
+        expect(s).not.toBeNull();
+        s = decideCutRun(s, 308)!;
+        expect(s).not.toBeNull();
+        expect(decideCutRun(s, 309)).toBeNull();
+    });
+    it('a room not rendered says nothing and leaves the pin for the real measurement', () => {
+        const start = cutRunState(300, 6);
+        expect(decideCutRun(start, 0)).toBe(start);
+        expect(decideCutRun(start, 308)).not.toBeNull();
     });
 });
 
@@ -296,6 +332,112 @@ describe('useCutRuns', () => {
         flushFrames();
         expect(cut.size).toBe(0);
     });
+
+    describe('a root that changes with the cut', () => {
+        let renders = 0;
+        function Tracked({ roomOf }: { roomOf?: (root: HTMLElement) => HTMLElement | null | undefined }) {
+            renders++;
+            const root = useRef<HTMLDivElement>(null);
+            const cut = useCutRuns(() => root.current, 'k', true, { roomOf });
+            return (
+                <div data-testid="room">
+                    <div ref={root} data-testid="root" data-cut={cut.size ? '1' : '0'}>
+                        <span data-name-run="set1" data-name-full="full" data-testid="row" style={{ whiteSpace: 'nowrap' }} />
+                    </div>
+                </div>
+            );
+        }
+        const id = (el: Element) => el.getAttribute('data-testid');
+        const isCut = (c: HTMLElement) => c.querySelector('[data-testid="root"]')!.getAttribute('data-cut') === '1';
+        const cutNow = (el: Element) => el.closest('[data-cut="1"]') !== null || el.querySelector('[data-cut="1"]') !== null;
+        const toRoom = (root: HTMLElement) => root.parentElement;
+        beforeEach(() => { renders = 0; });
+
+        it('shrink-to-fit root: goes back when the room grows, though the root itself never does', () => {
+            let room = 400;
+            geometry = el => {
+                if (id(el) === 'room') return { clientWidth: room };
+                if (id(el) === 'root') return { clientWidth: cutNow(el) ? 240 : Math.min(460, room) };
+                if (cutNow(el)) return { clientWidth: 180, scrollWidth: 180 };
+                // Uncut, the row takes what the room gives, up to the 260 px the whole name needs.
+                const own = Math.min(260, room - 200);
+                return { clientWidth: own, scrollWidth: 260 };
+            };
+            const { container } = render(<Tracked roomOf={toRoom} />);
+            expect(isCut(container)).toBe(true);
+            room = 461; // needs 400 + 60 + 2
+            fireResize();
+            expect(isCut(container)).toBe(true);
+            room = 462;
+            fireResize();
+            expect(isCut(container)).toBe(false);
+            flushFrames();
+            expect(isCut(container)).toBe(false);
+        });
+
+        it('shrink-to-fit root without a room getter stays cut: why the getter exists', () => {
+            let room = 400;
+            geometry = el => {
+                if (id(el) === 'room') return { clientWidth: room };
+                if (id(el) === 'root') return { clientWidth: cutNow(el) ? 240 : 400 };
+                return cutNow(el) ? { clientWidth: 180, scrollWidth: 180 } : { clientWidth: 200, scrollWidth: 260 };
+            };
+            const { container } = render(<Tracked />);
+            expect(isCut(container)).toBe(true);
+            room = 900;
+            fireResize();
+            expect(isCut(container)).toBe(true);
+        });
+
+        it('watches the room as well as the root, and only those', () => {
+            geometry = () => ({ clientWidth: 300 });
+            const { getByTestId } = render(<Tracked roomOf={toRoom} />);
+            const live = observers.filter(o => !o.disconnected);
+            expect(live).toHaveLength(1);
+            expect([...live[0].targets]).toEqual([getByTestId('root'), getByTestId('room')]);
+        });
+
+        it('a room getter that finds nothing falls back to the root', () => {
+            let rootW = 300;
+            geometry = el => {
+                if (id(el) === 'root') return { clientWidth: rootW };
+                return id(el) === 'row' && !cutNow(el) ? { clientWidth: 200, scrollWidth: 260 } : { clientWidth: 200, scrollWidth: 200 };
+            };
+            const { container } = render(<Tracked roomOf={() => null} />);
+            expect(isCut(container)).toBe(true);
+            rootW = 362;
+            geometry = el => {
+                if (id(el) === 'root') return { clientWidth: rootW };
+                return { clientWidth: 260, scrollWidth: 260 };
+            };
+            fireResize();
+            expect(isCut(container)).toBe(false);
+        });
+
+        it('cutting removes the scrollbar, which widens the root past "wide enough": settles instead of looping', () => {
+            // Whole names need a scrollbar (root 300), short ones do not (root 308). Without the pin: 308 >= 300 + 6 + 2,
+            // back to whole, the scrollbar returns, cut again, forever (React #185).
+            let extra = 0;
+            geometry = el => {
+                if (id(el) === 'root') return { clientWidth: (cutNow(el) ? 308 : 300) + extra };
+                if (cutNow(el)) return { clientWidth: 200, scrollWidth: 200 };
+                return { clientWidth: 200 + extra, scrollWidth: 206 };
+            };
+            const { container } = render(<StrictMode><Tracked /></StrictMode>);
+            expect(isCut(container)).toBe(true);
+            const settled = renders;
+            flushFrames();
+            fireResize();
+            expect(isCut(container)).toBe(true);
+            expect(renders).toBe(settled);
+            // The window really widens: whole names fit even with the scrollbar back.
+            extra = 12;
+            fireResize();
+            expect(isCut(container)).toBe(false);
+            flushFrames();
+            expect(isCut(container)).toBe(false);
+        });
+    });
 });
 
 describe('useLineCut', () => {
@@ -377,6 +519,27 @@ describe('useWideTail', () => {
         flushFrames();
         expect(kOf(container)).toBe(2);
     });
+    it('in a shrink-to-fit parent: more words move the room too, and it still settles', () => {
+        let renders = 0;
+        function Counted() {
+            renders++;
+            return <Label />;
+        }
+        geometry = el => {
+            const id = el.getAttribute('data-testid');
+            const k = Number((id === 'el' ? el : el.querySelector('[data-testid="el"]') ?? el.closest('[data-testid="el"]'))?.getAttribute('data-k') ?? 0);
+            if (id === 'el') return { clientWidth: k === 0 ? 120 : 40 };
+            if (id === 'head') return { clientWidth: 10, scrollWidth: 90 };
+            return { clientWidth: k === 0 ? 300 : 260 };
+        };
+        const { container } = render(<StrictMode><Counted /></StrictMode>);
+        expect(kOf(container)).toBe(2);
+        const settled = renders;
+        flushFrames();
+        fireResize();
+        expect(kOf(container)).toBe(2);
+        expect(renders).toBe(settled);
+    });
     it('disabled: always 0', () => {
         geometry = () => ({ clientWidth: 500, scrollWidth: 900 });
         const { container } = render(<Label enabled={false} />);
@@ -422,6 +585,94 @@ describe('applyNameFit / watchNameFit / useNameFit', () => {
         geometry = () => ({ clientWidth: 200, scrollWidth: 125 });
         applyNameFit(split, measure);
         expect(split.hasAttribute('data-short')).toBe(false);
+    });
+    describe('chips', () => {
+        function inChip(chipClass: string, withRef = false) {
+            const { split } = makeSplit('Vibration crosshead slide');
+            const tail = split.querySelector<HTMLElement>('[data-name-part="tail"]')!;
+            tail.style.fontSize = '10px';
+            const wrap = document.createElement('span');
+            const chip = document.createElement('span');
+            if (withRef) chip.setAttribute('data-name-ref', '');
+            else chip.className = chipClass;
+            wrap.append(split);
+            chip.append(wrap);
+            document.body.append(chip);
+            geometry = el => (el === tail ? { clientWidth: 60, scrollWidth: 60 } : {});
+            return { split, wrap, chip };
+        }
+        // tail 60 + 0.9 × 10 px font.
+        const MIN = '69px';
+
+        it.each(['pk-chip', 'fx-chip', 'fx-chip unk'])('%s never shrinks below start + "…" + end', cls => {
+            const { split, wrap, chip } = inChip(cls);
+            applyNameFit(split, measure);
+            expect(split.style.minWidth).toBe(MIN);
+            expect(wrap.style.minWidth).toBe(MIN);
+            expect(chip.style.minWidth).toBe('min(100%, 71px)');
+        });
+        it('a split outside any chip holds nothing', () => {
+            const { split, wrap, chip } = inChip('other');
+            applyNameFit(split, measure);
+            expect(split.style.minWidth).toBe('');
+            expect(wrap.style.minWidth).toBe('');
+            expect(chip.style.minWidth).toBe('');
+        });
+        it('the wrappers do not keep the cut form\'s minimum once the name has gone back to plain', () => {
+            const { split, wrap } = inChip('fx-chip');
+            const stop = watchNameFit(split);
+            applyNameFit(split, measure);
+            expect(wrap.style.minWidth).toBe(MIN);
+            stop();
+            expect(wrap.style.minWidth).toBe('');
+        });
+        it('the chip itself gives its minimum back too', () => {
+            const { split, chip } = inChip('pk-chip');
+            const stop = watchNameFit(split);
+            applyNameFit(split, measure);
+            expect(chip.style.minWidth).not.toBe('');
+            stop();
+            expect(chip.style.minWidth).toBe('');
+        });
+        it('a second split that wrote over a shared wrapper keeps its minimum when the first one stops', () => {
+            const { split, wrap } = inChip('pk-chip');
+            const stop = watchNameFit(split);
+            applyNameFit(split, measure);
+            wrap.style.minWidth = '99px';
+            stop();
+            expect(wrap.style.minWidth).toBe('99px');
+        });
+        it('a summary reference gives its minimum back', () => {
+            const { split, chip: ref } = inChip('', true);
+            const summary = document.createElement('span');
+            summary.setAttribute('data-name-summary', '');
+            summary.append(ref);
+            document.body.append(summary);
+            const stop = watchNameFit(split);
+            applyNameFit(split, measure);
+            expect(split.style.minWidth).toBe(MIN);
+            stop();
+            expect(ref.style.minWidth).toBe('');
+        });
+        it('useNameFit: a name going back to plain clears the chip wrappers before paint', () => {
+            function Name({ cut }: { cut: boolean }) {
+                const ref = useNameFit('text', cut);
+                return (
+                    <span className="fx-chip">
+                        <span data-testid="wrap">
+                            {cut
+                                ? <span key="split" ref={ref}><span data-name-part="head" style={{ fontSize: '10px' }}>head</span><span data-name-part="tail" data-testid="tail" style={{ fontSize: '10px' }} /></span>
+                                : <span key="plain" ref={ref}>the whole name</span>}
+                        </span>
+                    </span>
+                );
+            }
+            geometry = el => (el.getAttribute('data-testid') === 'tail' ? { clientWidth: 60, scrollWidth: 60 } : {});
+            const { getByTestId, rerender } = render(<Name cut />);
+            expect(getByTestId('wrap').style.minWidth).toBe(MIN);
+            rerender(<Name cut={false} />);
+            expect(getByTestId('wrap').style.minWidth).toBe('');
+        });
     });
     it('wholeWordWidth: -1 when not even the first word fits', () => {
         expect(wholeWordWidth('Supercalifragilistic word', 20, 'f', measure)).toBe(-1);

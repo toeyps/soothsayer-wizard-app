@@ -9,12 +9,15 @@ import {
     TWO_LINE_INITIAL,
     WIDE_TAIL_INITIAL,
     applyNameFit,
+    cutRunState,
+    decideCutRun,
     decideLineCut,
     decideTwoLine,
     decideWideTail,
     nameDeficit,
     roomKey,
     watchNameFit,
+    type CutRunState,
 } from '../utils/nameFitGate';
 import { fontOf, textWidth, type MeasureText } from '../utils/textMeasure';
 
@@ -63,31 +66,50 @@ function useResizeCheck(getTargets: () => Element[], check: () => void, enabled:
 
 const NONE: ReadonlySet<string> = new Set();
 
+export interface CutRunsOptions {
+    measure?: MeasureText;
+    /**
+     * The element whose width decides "wide enough to go back". Default: the root. Required when the root shrinks to
+     * its content (inline-flex, a flex item): it narrows with the cut, so its own width never grows back. Return the
+     * nearest ancestor that does not shrink with its content.
+     */
+    roomOf?: (root: HTMLElement) => HTMLElement | null | undefined;
+}
+
 /**
  * Rule 2 gate: the set ids (`data-name-run`) under the root with at least one name that does not fit. A set that was
- * shortened is judged by the root's width (it goes back once wide enough), not by its now-shorter text.
+ * shortened is judged by the width of its room (it goes back once wide enough), not by its now-shorter text.
  * `key`: names of the set(s); a change starts over.
  */
 export function useCutRuns(
     getRoot: () => HTMLElement | null,
     key: string,
     enabled: boolean,
-    measure: MeasureText = textWidth,
+    options: CutRunsOptions = {},
 ): ReadonlySet<string> {
+    const { measure = textWidth, roomOf } = options;
     const [state, setState] = useState<{ key: string; cut: ReadonlySet<string> }>({ key, cut: NONE });
     const cut = state.key === key ? state.cut : NONE;
-    const memo = useRef({ key, widths: new Map<string, { w: number; d: number }>() });
-    useResizeCheck(() => { const r = getRoot(); return r ? [r] : []; }, () => {
+    const memo = useRef({ key, runs: new Map<string, CutRunState>() });
+    useResizeCheck(() => {
+        const r = getRoot();
+        if (!r) return [];
+        const room = roomOf?.(r);
+        return room && room !== r ? [r, room] : [r];
+    }, () => {
         const root = getRoot();
         if (!root) return;
-        if (memo.current.key !== key) memo.current = { key, widths: new Map() };
-        const widths = memo.current.widths;
-        const w = root.clientWidth;
+        if (memo.current.key !== key) memo.current = { key, runs: new Map() };
+        const runs = memo.current.runs;
+        const w = (roomOf?.(root) ?? root).clientWidth;
         const next = new Set(cut);
         let changed = false;
         for (const id of cut) {
-            const m = widths.get(id);
-            if (m && w >= m.w + m.d + 2) { next.delete(id); widths.delete(id); changed = true; }
+            const run = runs.get(id);
+            if (!run) continue;
+            const s = decideCutRun(run, w);
+            if (s) runs.set(id, s);
+            else { next.delete(id); runs.delete(id); changed = true; }
         }
         const worst = new Map<string, number>();
         root.querySelectorAll<HTMLElement>('[data-name-run]').forEach(el => {
@@ -96,7 +118,7 @@ export function useCutRuns(
             const d = nameDeficit(el, measure);
             if (d > 0.5) worst.set(id, Math.max(worst.get(id) ?? 0, d));
         });
-        for (const [id, d] of worst) { next.add(id); widths.set(id, { w, d }); changed = true; }
+        for (const [id, d] of worst) { next.add(id); runs.set(id, cutRunState(w, d)); changed = true; }
         if (changed) setState({ key, cut: next });
     }, enabled);
     return enabled ? cut : NONE;

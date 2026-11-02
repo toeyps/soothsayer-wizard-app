@@ -240,14 +240,24 @@ export function axisNamePatch(
     return { patch, wrapped };
 }
 
-/** Fits the titles named by `spec` on an ECharts instance now and whenever it resizes. Returns the cleanup. */
-export function attachAxisNames(inst: any, spec: AxisNameSpec, option: any): () => void {
-    let last = '';
+/** The patch that would change nothing on a chart showing `option`: same shape as `axisNamePatch` for titles that fit. */
+function ownNamesPatch(spec: AxisNameSpec, option: any): Record<string, unknown> {
+    const nameOf = (ax: any) => ({ name: (Array.isArray(ax) ? ax[0] : ax)?.name });
+    return {
+        ...(spec.y ? { yAxis: nameOf(option.yAxis) } : {}),
+        ...(spec.x ? { xAxis: nameOf(option.xAxis) } : {}),
+    };
+}
+
+/** Fits the titles named by `spec` on an ECharts instance now and whenever it resizes. Touches the chart only when
+ *  the titles differ from what it shows (it starts out showing `option`'s own). Returns the cleanup. */
+export function attachAxisNames(inst: any, spec: AxisNameSpec, option: any, measure: MeasureText = textWidth): () => void {
+    let last = JSON.stringify(ownNamesPatch(spec, option));
     let wrappedBefore = false;
     let raf = 0;
     const apply = () => {
         if (!inst || inst.isDisposed?.()) return;
-        const { patch, wrapped } = axisNamePatch(spec, option, inst.getWidth(), inst.getHeight(), wrappedBefore);
+        const { patch, wrapped } = axisNamePatch(spec, option, inst.getWidth(), inst.getHeight(), wrappedBefore, measure);
         wrappedBefore = wrapped;
         const sig = JSON.stringify(patch);
         if (sig === last) return;

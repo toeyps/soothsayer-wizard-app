@@ -1,10 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
     afterPrefix,
     commonPrefix,
     compactName,
     displayedName,
     familyPrefix,
+    namesAfterPrefix,
     sameNameLoosely,
     splitInSet,
     splitKey,
@@ -128,6 +129,71 @@ describe('splitInSet (rule 3)', () => {
     it('a set with no other names behaves like rule 1', () => {
         expect(splitInSet(LONG[0], [])).toEqual(splitName(LONG[0]));
         expect(splitInSet(LONG[0], [LONG[0]])).toEqual(splitName(LONG[0]));
+    });
+});
+
+describe('splitInSet cache', () => {
+    afterEach(() => { vi.restoreAllMocks(); });
+    const SET = [...MEDIUM, ...LONG, `${CROSSHEAD} 11C - Segment No 3 - min`];
+
+    it('splits the other names into words once per names array', () => {
+        const names = [...SET];
+        const split = vi.spyOn(String.prototype, 'split');
+        splitInSet(names[0], names);
+        const first = split.mock.calls.length;
+        expect(first).toBe(names.length);
+        for (const n of names) splitInSet(n, names);
+        expect(split.mock.calls.length).toBe(first);
+    });
+    it('gives the same object back for the same name, array and prefix', () => {
+        const names = [...SET];
+        expect(splitInSet(names[0], names)).toBe(splitInSet(names[0], names));
+    });
+    it('a shared array gives exactly what a fresh array gives, in any order', () => {
+        const shared = [...SET];
+        const reversed = [...SET].reverse();
+        for (const n of reversed) {
+            expect(splitInSet(n, shared)).toEqual(splitInSet(n, [...SET]));
+            expect(splitInSet(n, reversed)).toEqual(splitInSet(n, [...SET]));
+        }
+    });
+    it('a different prefix on the same array cannot return the other prefix\'s result', () => {
+        const names = [...SET];
+        const prefix = `${CROSSHEAD} 11A`;
+        const name = `${prefix} - Segment No 1 - avg`;
+        const plain = splitInSet(name, names);
+        const shared = splitInSet(name, names, prefix);
+        expect(shared.shared).toBe(true);
+        expect(plain.shared).toBe(false);
+        expect(splitInSet(name, names)).toBe(plain);
+        // A prefix this name does not start with: not shared, but stored under its own key.
+        const other = splitInSet(name, names, 'Some other start');
+        expect(other).toEqual(splitInSet(name, [...names], 'Some other start'));
+    });
+    it('another array with the same names is computed for itself', () => {
+        const a = [LONG[0], LONG[1]];
+        const b = [LONG[0], LONG[2]];
+        expect(splitInSet(LONG[0], a)).toEqual(splitInSet(LONG[0], [...a]));
+        expect(compactName(splitInSet(LONG[0], b))).toContain('11A');
+    });
+    it('duplicates and empty names in the set change nothing', () => {
+        const name = LONG[0];
+        expect(splitInSet(name, [name, '', LONG[1], LONG[1], LONG[2], LONG[3], name]))
+            .toEqual(splitInSet(name, [LONG[1], LONG[2], LONG[3]]));
+    });
+});
+
+describe('namesAfterPrefix', () => {
+    const prefix = `${CROSSHEAD} 11A`;
+    const names = [`${prefix} - Segment No 1 - avg`, `${prefix} - Segment No 2 - avg`, 'Other'];
+    it('is afterPrefix over the set', () => {
+        expect(namesAfterPrefix(names, prefix)).toEqual(names.map(n => afterPrefix(n, prefix)));
+    });
+    it('rows of a set share one array, so the split cache works for them', () => {
+        const a = namesAfterPrefix(names, prefix);
+        expect(namesAfterPrefix(names, prefix)).toBe(a);
+        expect(namesAfterPrefix(names, 'Other')).not.toBe(a);
+        expect(namesAfterPrefix([...names], prefix)).not.toBe(a);
     });
 });
 
