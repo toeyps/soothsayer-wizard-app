@@ -3,7 +3,7 @@ import { render, screen, fireEvent, cleanup, within } from '@testing-library/rea
 import { CARD_NO_ROWS_TEXT, CARD_NO_TRAIN_TEXT, RunningConditionCard } from '../components/windows/RunningConditionCard';
 import { SensorMetaProvider } from '../components/sensor/SensorLabel';
 import type { TestPeriod, WorkspaceSensorFilter } from '../types';
-import { longName, restoreNames, stubNamesCut } from './helpers/nameGeometry';
+import { longName, restoreNames, stubNamesCut, stubNamesFit } from './helpers/nameGeometry';
 
 afterEach(cleanup);
 
@@ -596,6 +596,7 @@ describe('RunningConditionCard: long sensor names', () => {
     );
 
     it('fits: the whole name', () => {
+        stubNamesFit();
         show([{ tag: 'T', description: longName(1) }], 'T');
         expect(screen.getByTestId('rc-card-cond').querySelector('.sl-desc')!.textContent).toBe(longName(1));
         expect(screen.getByTestId('rc-card-cond').querySelector('.sl-split')).toBeNull();

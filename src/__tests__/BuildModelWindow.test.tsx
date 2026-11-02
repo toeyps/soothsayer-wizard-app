@@ -122,7 +122,7 @@ import { readFileSync } from 'node:fs';
 import { pickSingle, rowTag } from './helpers/sensorPicker';
 import { openTabStatus } from './helpers/workbenchStatus';
 import { TRAIN_NEEDS_RUNNING_CONDITION } from '../utils/trainQueue';
-import { longName, restoreNames, stubNamesCut } from './helpers/nameGeometry';
+import { longName, restoreNames, stubNamesCut, stubNamesFit } from './helpers/nameGeometry';
 
 // jsdom does not load App.css (vitest also stubs `?raw` CSS imports to ''; cwd is the repo root), so layout
 // rules that used to be inline styles are asserted against the stylesheet source itself.
@@ -11005,6 +11005,7 @@ describe('BuildModelWindow: long sensor names', () => {
         });
 
         it('long names that fit print whole with no shared line', async () => {
+            stubNamesFit();
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: { groups: [makeGroup()], models: listOf(['L1', 'L2']) } }, { sensorHeaders: ['L1', 'L2'], sensorMetadata: longMeta([1, 2]) });
             expect(screen.queryByTestId('list-group-prefix')).toBeNull();
@@ -11052,6 +11053,7 @@ describe('BuildModelWindow: long sensor names', () => {
         const summary = () => document.querySelector('.bmw-sets-sum') as HTMLElement;
 
         it('collapsed summary that fits: one plain text', async () => {
+            stubNamesFit();
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: { groups: [makeGroup()], models: [clu()] } }, { sensorHeaders: ['L1', 'L2', 'L3'], sensorMetadata: longMeta([1, 2, 3]) });
             if (!summary()) fireEvent.click(screen.getByText('Model settings'));

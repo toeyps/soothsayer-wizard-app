@@ -2,7 +2,7 @@
 # Which plan item uses which file: docs/testing/TEST_DATA_GUIDE.md.
 #
 # Usage (standard library only, run from the project folder):
-#   python scripts/make-all-testdata.py                      # -> C:\WizardTestData (a few seconds, ~45 MB)
+#   python scripts/make-all-testdata.py                      # -> C:\WizardTestData (a few seconds, ~50 MB)
 #   python scripts/make-all-testdata.py D:\SomeFolder        # another root folder
 #   python scripts/make-all-testdata.py --big                # + the big files in IMP\big and IMP\wfg
 #                                                            #   (about 8.5 GB of free disk, roughly 3-10 minutes)
@@ -11,6 +11,7 @@
 #   <root>\EXP  scripts/make-export-testdata.py   Export results data (BMW-355.., WFJ, WFK)
 #   <root>\WF   scripts/make-wf-testdata.py       pump P-101, 6 months (WFA-WFD, WFH)
 #   <root>\TS   scripts/make-ts-testdata.py       date/time shapes: formats\, merge\, scenario\ (IMP-89..99, WFI)
+#   <root>\LN   scripts/make-longname-testdata.py long / medium / short names + 4,748 sensors (the LN section)
 #   <root>\IMP  scripts/make-prep-testdata.py     the PREP-6 kit + PREP-5 / MULTI / WFE / WFF files (+ --big: big\, wfg\)
 #               (runs last, with --expdata <root>\EXP, so it can also write IMP\exp-variants\)
 import os, subprocess, sys
@@ -24,6 +25,7 @@ steps = [
     ('EXP', 'make-export-testdata.py', []),
     ('WF', 'make-wf-testdata.py', []),
     ('TS', 'make-ts-testdata.py', []),
+    ('LN', 'make-longname-testdata.py', []),
     ('IMP', 'make-prep-testdata.py', ['--expdata', os.path.join(root, 'EXP')] + (['--big'] if big else [])),
 ]
 for sub, script, extra in steps:

@@ -15,7 +15,7 @@ import type { UseWorkspaceExport } from '../hooks/useWorkspaceExport';
 import type { ExportReadiness, ExportReadinessItem, ExportReadinessRow, NoComponentSensor } from '../utils/exportReadiness';
 import type { ExportIssue, WorkspaceExportPlan, WorkspaceExportRequest } from '../types/export';
 import { SensorMetaContext } from '../components/sensor/sensorInfo';
-import { longName, restoreNames, stubNamesCut } from './helpers/nameGeometry';
+import { longName, restoreNames, stubNamesCut, stubNamesFit } from './helpers/nameGeometry';
 
 const META: Record<string, { description?: string; unit?: string }> = {
     TAG1: { description: 'Pump Pressure', unit: 'bar' },
@@ -623,6 +623,7 @@ describe('ExportModal: long sensor names and model keys', () => {
     };
 
     it('a key that fits is one plain text, whatever its length', () => {
+        stubNamesFit();
         const [json, csv] = showFiles(KEY);
         expect(json.textContent).toBe(`${KEY}.json`);
         expect(csv.textContent).toBe(`${KEY}.csv`);

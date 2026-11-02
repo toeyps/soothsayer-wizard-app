@@ -120,7 +120,7 @@ describe('machine shapes: moving parts', () => {
       // every declared part really has dots, and most of the machine stays fixed
       for (let k = 0; k <= sh.parts.length; k++) expect(used.has(k), `${sh.name} part ${k}`).toBe(true);
     }
-  });
+  }, 30_000); // an expect per dot of every machine: slow when the whole suite runs in parallel
 
   it('the turning parts of each machine are the approved ones (kind, axis, speed)', () => {
     const table = shapes.map(sh => [sh.name, sh.parts.map(p => `${p.name}:${p.kind} ${p.axis} ${p.rps.toFixed(2)}`)]);

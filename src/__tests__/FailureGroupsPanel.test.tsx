@@ -12,7 +12,7 @@ import type { FailureGroup, FailureModel, FailureGroupStateSlice, SensorMetadata
 import { computeTrainFingerprint } from '../utils/trainFingerprint';
 import { snapshotTrainedFormulas } from '../utils/specialSensorSignature';
 import { ALL_TIME_TRAIN, RC_ON, rcOn } from './helpers/trainTestFixture';
-import { longName, restoreNames, stubNamesCut } from './helpers/nameGeometry';
+import { longName, restoreNames, stubNamesCut, stubNamesFit } from './helpers/nameGeometry';
 
 function makeModel(overrides: Partial<FailureModel> = {}): FailureModel {
     return {
@@ -772,6 +772,7 @@ describe('FailureGroupsPanel: long sensor names', () => {
     });
 
     it('long names that fit: no shared line, whole names and today\'s model text', () => {
+        stubNamesFit();
         render(<FailureGroupsPanel {...longProps(true)} />);
         expandAll();
         expect(screen.queryByTestId('fg-card-prefix')).toBeNull();

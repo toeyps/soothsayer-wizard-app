@@ -5,7 +5,7 @@
 > **กติกาที่ต้องรู้:** ทุกครั้งที่สร้างโปรเจกต์ใหม่ ต้องเลือกไฟล์ Tag names ที่รายชื่อ sensor ตรงกับข้อมูลทุกตัว ไม่อย่างนั้นปุ่ม Continue กดไม่ได้ ข้อมูลทุกชุดจึงมีไฟล์คู่ของตัวเอง (ดู `matching-tags\` ข้างล่าง)
 
 
-**ก่อนเริ่มทดสอบ รันคำสั่งนี้ครั้งเดียว:** เปิด Command Prompt ที่โฟลเดอร์โปรเจกต์โปรแกรม แล้วพิมพ์ `python scripts/make-all-testdata.py` → ได้ไฟล์ทดสอบทุกชุดในโฟลเดอร์ `C:\WizardTestData` (ใช้เวลาไม่กี่วินาที ประมาณ 35 MB)
+**ก่อนเริ่มทดสอบ รันคำสั่งนี้ครั้งเดียว:** เปิด Command Prompt ที่โฟลเดอร์โปรเจกต์โปรแกรม แล้วพิมพ์ `python scripts/make-all-testdata.py` → ได้ไฟล์ทดสอบทุกชุดในโฟลเดอร์ `C:\WizardTestData` (ใช้เวลาไม่กี่วินาที ประมาณ 50 MB)
 
 - ต้องมี Python ในเครื่อง — ถ้าไม่มี ขอโฟลเดอร์ `C:\WizardTestData` ที่สร้างไว้แล้วจากทีม dev
 - **ไฟล์ใหญ่** (หลายร้อย MB ถึงเกิน 2 GB และข้อมูล 2 ปีของ WFG) ไม่ได้สร้างให้ตอนแรก เพราะกินที่มาก — ถ้าจะทดสอบหมวดที่ต้องใช้ ให้รัน `python scripts/make-all-testdata.py --big` (ต้องมีที่ว่างในไดรฟ์ C ประมาณ **8.5 GB** ใช้เวลาประมาณ **3–10 นาที** บน SSD)
@@ -22,6 +22,7 @@
 | `C:\WizardTestData\WF` | `python scripts/make-wf-testdata.py C:\WizardTestData\WF` | ข้อมูลเครื่องสูบน้ำ P-101 6 เดือน (3 ไฟล์ + ไฟล์ปี พ.ศ.) + Tag names — ใช้กับ workflow WFA–WFD, WFH และหมวดทดสอบทีละฟังก์ชันส่วนใหญ่ |
 | `C:\WizardTestData\TS` | `python scripts/make-ts-testdata.py C:\WizardTestData\TS` | ไฟล์ที่เขียนวันเวลาหลายรูปแบบ (`formats`), ไฟล์สำหรับรวม (`merge`), ข้อมูล 6 เดือน 3 แหล่ง (`scenario`) |
 | `C:\WizardTestData\EXP` | `python scripts/make-export-testdata.py C:\WizardTestData\EXP` | ข้อมูลสำหรับ Export results: ชื่อ sensor แปลก ๆ, ตัวเลขยาก ๆ, เครื่องใหญ่ 37 sensor |
+| `C:\WizardTestData\LN` | `python scripts/make-longname-testdata.py C:\WizardTestData\LN` | ชื่อ sensor ยาว / ปานกลาง / สั้น, โปรเจกต์ที่ไม่มี description, 4,748 sensor — ใช้กับหมวด LN |
 | `C:\WizardTestData\IMP` | `python scripts/make-prep-testdata.py C:\WizardTestData\IMP` (ไฟล์ใหญ่: เติม `--big`) | ชุดไฟล์ของ PREP-6 (ปกติ / หลายไฟล์ / Tag names / ปี พ.ศ. / ข้อมูลแปลก / ไฟล์เสีย / รูปแบบเวลา) + ไฟล์ Tag names ที่ตรงกับข้อมูลแต่ละไฟล์ (`matching-tags`) + เครื่อง GEG-3, GEG-4, CMP-1 สำหรับ PREP-5, MULTI, WFE, WFF + ไฟล์ใหญ่ (`--big`) |
 
 ---
@@ -58,6 +59,19 @@
 | `EXP-numbers.csv` + `EXP-numbers-tags.csv` | ตัวเลขที่ปัดพลาดง่าย (ทศนิยมยาว, ติดลบ, เล็กมาก, ใหญ่มาก, `1.5E-05`) + sensor เดินเครื่อง RUN | WFK-1 ถึง WFK-10 |
 | `EXP-fleet.csv` + `EXP-fleet-tags.csv` | เครื่องใหญ่ 37 sensor 6 component | WFK-11, WFK-12 |
 | `EXPECTED.txt` | ชื่อไฟล์ที่ต้องได้ จำนวนแถว ค่าเฉลี่ย / SD ของทุกโมเดล | BMW-402, BMW-403, WFJ, WFK |
+
+### `C:\WizardTestData\LN` — ชื่อ sensor ยาว (ม.ค. 2025 เครื่องหยุดวันที่ 10 ม.ค. ทั้งวัน · Running condition แนะนำ `KW-9001` is above 100)
+
+ทุกไฟล์ข้อมูลมีไฟล์ Tag names ที่ตรงกันพอดี (คอลัมน์ tag ชื่อ `tag`) เลือกคู่ตามตารางนี้แล้วกด Continue ได้เลย
+
+| ไฟล์ | คืออะไร | ใช้ในข้อ |
+|---|---|---|
+| `LN-long.csv` + `LN-long-tags.csv` | 42 sensor 30 วัน ทุก 5 นาที: Crosshead 24 ตัว ชื่อขึ้นต้นเหมือนกัน ต่างที่ท้าย เช่น `Crosshead (P-P Trend) - Vibration crosshead slide 11A - SegmentNo 1 - avg` (tag แค่สะกดต่างจากชื่อ), Cylinder 6 ตัว (tag ต่างจากชื่อจริง), Analyzer 4 ตัว (ชื่อยาวไม่มี " - "), ชื่อไม่มีช่องว่าง 2 ตัว, ชื่อสั้น + tag ยาวมาก 1 ตัว, ชื่อเกิน 150 ตัวอักษร 1 ตัว, ไม่มี description 2 ตัว | LN-4, LN-5, LN-7 ถึง LN-21, LN-23 ถึง LN-28, LN-30 |
+| `LN-long.csv` + `LN-long-tags-no-descriptions.csv` | ข้อมูลเดียวกัน ทุกแถวไม่มี description: sensor ทุกตัวแสดง tag อย่างเดียว (ไฟล์ Tag names ต้องมีเสมอ นี่คือวิธีเดียวที่จะได้โปรเจกต์แบบนี้) | LN-29 |
+| `LN-medium.csv` + `LN-medium-tags.csv` | 13 sensor: ชื่อเช่น `Boiler feed pump A - Motor bearing DE temperature` ต่างกันตรงกลาง (A / B, DE / NDE) | LN-3, LN-15, LN-17, LN-18, LN-23 |
+| `LN-short.csv` + `LN-short-tags.csv` | 8 sensor ชื่อสั้น ต้องหน้าตาเหมือนเดิม | LN-2, LN-11, LN-15 |
+| `LN-wide-4748.csv` + `LN-wide-4748-tags.csv` | 4,748 sensor 14 วัน ทุก 1 ชั่วโมง: รายการยาวมาก | LN-4, LN-6, LN-22, LN-26 |
+| `EXPECTED.txt` | จำนวน sensor และแถวของทุกไฟล์ | LN-1 |
 
 ### `C:\WizardTestData\IMP` — ชุดไฟล์ PREP-6 และเครื่องสำหรับ MULTI / WFE / WFF
 
@@ -226,6 +240,7 @@
 | **ERR** | โปรเจกต์อะไรก็ได้ (ข้อเหล่านี้แก้ไฟล์โปรเจกต์ `ws_….json` ด้วยมือ ดูข้อ 4) |
 | **PERF** | `IMP\big\` (`--big`) · PERF-8: `IMP\big\BIG-overlap-1..3.csv` · PERF-10: `IMP\wfg\` (ประมาณ 1 ล้านแถว) |
 | **VIS** | โปรเจกต์อะไรก็ได้ · VIS-3: `IMP\normal\IMP-normal.csv` + `IMP-normal-tags-exact.csv` |
+| **LN** | `LN\` ทั้งโฟลเดอร์ (LN-1 สร้างโปรเจกต์ 5 ตัวไว้ใช้ทั้งหมวด) |
 | **WFA, WFB, WFC, WFD** | `WF\` ทั้งโฟลเดอร์ (WFB–WFD ใช้โปรเจกต์ที่ได้จาก WFA ต่อ) |
 | **WFE** | `IMP\projects\GEG-3.csv`, `GEG-4.csv` + `GEG-tags.csv` (ตั้งชื่อโปรเจกต์ "GEG-3 Bearing" / "GEG-4 Bearing") |
 | **WFF** | "Trial-F" = `IMP\projects\GEG-3.csv` + `GEG-tags.csv` · WFF-18: `IMP\broken\BRK-semicolon.csv`, `BRK-datetime-header.csv`, `IMP\normal\IMP-normal_saved-as-CSV-UTF-8.csv` · WFF-2: `IMP\big\BIG-2_1GB-…` (`--big`) · WFF-4: `GEG-tags-thai-saved-as-plain-CSV.csv` แล้ว `GEG-tags-D-thai.csv` · WFF-5: `GEG-tags_changed.csv` |
@@ -272,6 +287,7 @@ BMW => โปรเจกต์จากชุด WF
 BMW@5 => EXP-data.csv, EXP-tags.csv
 MULTI => โปรเจกต์ A = GEG-3.csv, GEG-tags.csv · โปรเจกต์ B = CMP-1.csv, CMP-1-tags.csv (จาก PREP-5)
 PERF => ไฟล์ใหญ่ในชุด IMP (BIG-…)
+LN => โปรเจกต์จาก LN-1 (ชุด LN)
 WFA WFB WFC WFD => ทุกไฟล์ในชุด WF (WFB–WFD ใช้โปรเจกต์ที่ได้จาก WFA ต่อ)
 WFE => GEG-3.csv, GEG-4.csv, GEG-tags.csv
 WFF => โปรเจกต์ "Trial-F" = GEG-3.csv, GEG-tags.csv
@@ -279,7 +295,12 @@ WFG => GEG5_2024.csv, GEG5_2025.csv, GEG5-tags.csv (ไฟล์ใหญ่)
 WFI => I-1_…, I-2_…, I-3_…, I-tags.csv
 WFJ => EXP-data.csv, EXP-tags.csv
 # ---- รายข้อ (จากตารางข้อ 2–3)
-PREP-6 => ทุกไฟล์ทุกชุด (WF, IMP, TS, EXP)
+PREP-6 => ทุกไฟล์ทุกชุด (WF, IMP, TS, EXP, LN)
+LN-1 => LN-long.csv, LN-long-tags.csv, LN-long-tags-no-descriptions.csv, LN-medium.csv, LN-medium-tags.csv, LN-short.csv, LN-short-tags.csv, LN-wide-4748.csv, LN-wide-4748-tags.csv
+LN-2 => โปรเจกต์ LN · Short (LN-short.csv, LN-short-tags.csv)
+LN-3 => โปรเจกต์ LN · Medium (LN-medium.csv, LN-medium-tags.csv)
+LN-6 LN-22 => โปรเจกต์ LN · Wide (LN-wide-4748.csv, LN-wide-4748-tags.csv)
+LN-29 => โปรเจกต์ LN · Tag only (LN-long.csv, LN-long-tags-no-descriptions.csv)
 PREP-5 => โปรเจกต์ A = GEG-3.csv, GEG-tags.csv · โปรเจกต์ B = CMP-1.csv, CMP-1-tags.csv
 IMP-2 IMP-27..29 IMP-56..59 IMP-100..105 IMP-107..113 => โปรเจกต์อะไรก็ได้ (สร้างจาก IMP-normal.csv, IMP-normal-tags-exact.csv หรือชุด WF)
 IMP-56 => โปรเจกต์เล็กที่เพิ่ม: INT-1d.csv, INT-tags.csv

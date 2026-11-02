@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/react';
 import type { FailureModel, SensorMetadata, SpecialSensorRecipe } from '../types';
 import ManageSpecialSensors from '../components/windows/ManageSpecialSensors';
-import { longName, restoreNames, stubNamesCut } from './helpers/nameGeometry';
+import { longName, restoreNames, stubNamesCut, stubNamesFit } from './helpers/nameGeometry';
 
 function makeModel(overrides: Partial<FailureModel> = {}): FailureModel {
     return {
@@ -273,6 +273,7 @@ describe('ManageSpecialSensors: the recipe summary with long names', () => {
     const summary = (tag: string) => screen.getByTestId(`recipe-summary-${tag}`);
 
     it('fits: plain text, as it always was', () => {
+        stubNamesFit();
         renderList({ recipes: [avg], sensorMetadata: meta });
         expect(summary('avg1').textContent).toBe(`Sum of ${long(1)}, ${long(2)}`);
         expect(summary('avg1').className).toContain('truncate');

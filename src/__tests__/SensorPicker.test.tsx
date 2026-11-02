@@ -5,7 +5,7 @@ import { SensorPickerMulti, SensorPickerSingle, PICKER_SEARCH_PLACEHOLDER } from
 import { SensorMetaProvider } from '../components/sensor/SensorLabel';
 import type { SensorMetadata } from '../types';
 import { findPickerRow, openPickerSurface, pickerRows, pickerSearch, rowTag } from './helpers/sensorPicker';
-import { longName, restoreNames, stubNamesCut } from './helpers/nameGeometry';
+import { longName, restoreNames, stubNamesCut, stubNamesFit } from './helpers/nameGeometry';
 import { splitInSet } from '../utils/sensorNames';
 
 vi.mock('../utils/sensorNames', async (importOriginal) => {
@@ -619,6 +619,7 @@ describe('windowed list over 150 rows (long names, rule 6)', () => {
 });
 
 describe('long names in the picker', () => {
+    afterEach(() => restoreNames());
     const LONG = (n: string) => `Crosshead (P-P Trend) - Vibration crosshead slide ${n} - Segment No 1 - avg`;
     const meta = [m('A', LONG('11A'), '', 'C'), m('B', LONG('11B'), '', 'C')];
 
@@ -635,6 +636,7 @@ describe('long names in the picker', () => {
     });
 
     it('long chips with nothing measured as cut print their whole name', () => {
+        stubNamesFit();
         render(
             <SensorMetaProvider metadata={meta}>
                 <SensorPickerMulti sensors={['A', 'B']} selected={['A', 'B']} onConfirm={() => {}} noun="predictors" />

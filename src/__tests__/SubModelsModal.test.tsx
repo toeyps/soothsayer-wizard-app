@@ -13,7 +13,7 @@ import { useSubModelFits, type SubModelFit, type SubModelFitsState } from '../co
 import type { RelationshipPreviewResult } from '../types/commands';
 import { HEALTH_DEFAULT_MAX_POINTS } from '../utils/healthRequest';
 import { SensorMetaContext, type SensorInfo } from '../components/sensor/sensorInfo';
-import { longName, restoreNames, stubNamesCut } from './helpers/nameGeometry';
+import { longName, restoreNames, stubNamesCut, stubNamesFit } from './helpers/nameGeometry';
 import { SensorMetaProvider } from '../components/sensor/SensorLabel';
 
 // `total` = the real row count the fit used (`n_rows`); the arrays are the BOUNDED sample
@@ -344,6 +344,7 @@ describe('SubModelsModal: long sensor names on the cards', () => {
     };
 
     it('fit: whole names and no shared line', () => {
+        stubNamesFit();
         showLong(false);
         expect(screen.queryByTestId('compare-prefix')).toBeNull();
         expect(screen.getByTestId('sub-model-sensors').textContent).toContain(longName(1));

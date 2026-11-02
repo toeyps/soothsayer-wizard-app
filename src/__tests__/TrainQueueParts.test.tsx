@@ -20,7 +20,7 @@ import { SensorMetaContext, buildSensorLookup } from '../components/sensor/senso
 import { summarizeTrainRun, TRAIN_NEEDS_RUNNING_CONDITION, TRAIN_STALE_MESSAGE } from '../utils/trainQueue';
 import type { TrainQueueItem, TrainRun } from '../types/trainQueue';
 import { sameModelFitProps, type ModelFitPageProps } from '../components/windows/workbench/ModelFitPage';
-import { longName, restoreNames, stubNamesCut } from './helpers/nameGeometry';
+import { longName, restoreNames, stubNamesCut, stubNamesFit } from './helpers/nameGeometry';
 
 /*
  * Train sensor / Train all with a queue —
@@ -694,6 +694,7 @@ describe('TrainAllModal: long sensor names', () => {
     });
 
     it('long names that fit print whole', () => {
+        stubNamesFit();
         render(<SensorMetaContext.Provider value={info}><TrainAllModal view="preflight" run={null} summary={null} rows={rows(n => `L${n}`)} {...base()} /></SensorMetaContext.Provider>);
         expect(screen.queryByTestId('train-group-prefix')).toBeNull();
         expect(screen.getByTestId('train-row-m1').textContent).toContain(longName(1));

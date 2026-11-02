@@ -16,7 +16,7 @@ import { editorStateFormula, editorStateToRecipe } from '../utils/quickBuild';
 import type { SensorMetadata, SpecialSensorRecipe } from '../types';
 import type { FormulaPreviewResult } from '../types/formula';
 import { findPickerRow, pickMulti } from './helpers/sensorPicker';
-import { longName, restoreNames, stubNamesCut } from './helpers/nameGeometry';
+import { longName, restoreNames, stubNamesCut, stubNamesFit } from './helpers/nameGeometry';
 
 /**
  * The special-sensor Formula editor + Quick build against the
@@ -654,6 +654,7 @@ describe('SpecialSensorFormulaEditor: long sensor names on the Sensors row', () 
     );
 
     it('short names and long names that fit: no shared line; the formula keeps its $TAG text', () => {
+        stubNamesFit();
         longUi();
         type('$L1 + $L2 + 1');
         expect(screen.queryByTestId('formula-sensors-prefix')).toBeNull();
