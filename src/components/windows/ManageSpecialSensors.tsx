@@ -4,6 +4,7 @@ import { FailureModel, SensorMetadata, SpecialSensorRecipe } from "../../types";
 import { buildSpecialSensorUsage, describeEditLock, usageFor, SpecialSensorUsage } from "../../utils/specialSensorDeps";
 import { describeSpecialSensor } from "../../utils/specialSensorDescribe";
 import { SensorLabel } from '../sensor/SensorLabel';
+import { RecipeSummary } from './RecipeSummary';
 
 interface Props {
     /** Special sensors to list — already excluding anything in an open undo
@@ -85,12 +86,13 @@ export default function ManageSpecialSensors({
     );
 
     const metaFor = (tag: string) => sensorMetadata?.find(m => m.tag.toLowerCase() === tag.toLowerCase());
+    const descriptionOf = (tag: string) => metaFor(tag)?.description?.trim() || tag;
 
     // One human line per recipe: sources read by their description in a block /
     // operation; a formula keeps its own `$TAG` text.
     const descriptions = useMemo(() => {
-        const label = (tag: string) => sensorMetadata?.find(m => m.tag.toLowerCase() === tag.toLowerCase())?.description?.trim() || tag;
-        return new Map(recipes.map(r => [r.tag, describeSpecialSensor(r, { label })]));
+        return new Map(recipes.map(r => [r.tag, describeSpecialSensor(r, { label: descriptionOf })]));
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [recipes, sensorMetadata]);
 
     const visible = useMemo(() => {
@@ -196,14 +198,7 @@ export default function ManageSpecialSensors({
                                     />
                                 </div>
 
-                                <div
-                                    className="hidden md:block truncate"
-                                    title={desc?.expression}
-                                    data-testid={`recipe-summary-${recipe.tag}`}
-                                    style={{ flex: '0 1 260px', fontFamily: recipe.kind === 'formula' ? 'var(--mono)' : undefined, fontSize: '11px', color: 'var(--text-secondary)' }}
-                                >
-                                    {desc?.summary}
-                                </div>
+                                <RecipeSummary recipe={recipe} desc={desc} describe={descriptionOf} />
 
                                 <div className="flex items-center gap-1.5 shrink-0">
                                     {notRestored && (

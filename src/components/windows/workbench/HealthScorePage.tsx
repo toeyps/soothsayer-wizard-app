@@ -4,7 +4,7 @@ import { connect } from 'echarts';
 import { Loader2 } from 'lucide-react';
 import ResponsiveECharts from '../../charts/ResponsiveECharts';
 import type { HealthIssue, HealthPreview, ScoreSummary } from '../../../types/health';
-import { SensorInline } from '../../sensor/SensorLabel';
+import { PairSub } from './PairSub';
 import { useSensorLookup } from '../../sensor/sensorInfo';
 import ChartCard from './ChartCard';
 import ChecksCard from './ChecksCard';
@@ -606,10 +606,11 @@ function StackCharts({ data, props, hoverIdx, onHover, stale, unit, scopes, zoom
             {' '}· one time axis, one cursor for both
         </>
     ) : (
-        <span className="wb2-sub-sl">
-            <SensorInline tag={model.xSensor ?? ''} size="sm" muted /> vs <SensorInline tag={model.ySensor ?? ''} size="sm" muted />
-            {' '}<span className="wb2-sub-note">· <span data-testid="score-basis">1-hour averages of the running rows</span> · {scored ? 'coloured by score' : 'coloured by score once N is set'}</span>
-        </span>
+        <PairSub
+            x={model.xSensor ?? ''}
+            y={model.ySensor ?? ''}
+            note={<>· <span data-testid="score-basis">1-hour averages of the running rows</span> · {scored ? 'coloured by score' : 'coloured by score once N is set'}</>}
+        />
     );
 
     // No key row under these charts: the time charts only zoom in time, so the names of

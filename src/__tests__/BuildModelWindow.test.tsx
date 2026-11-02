@@ -80,6 +80,7 @@ vi.mock('../components/charts/ResponsiveECharts', () => ({
 // reacts to). The Fit chart's X selector is the REAL compact picker (ModelFitPage imports
 // it from components/sensor directly) and is driven with helpers/sensorPicker.
 const sensorPickerModalProps: any[] = [];
+const extraTagsSeenByPicker: (readonly string[])[] = [];
 vi.mock('../components/windows/SensorPickers', () => ({
     // Minimal stand-in for the popup picker — its own search/collapsible-
     // group/checkbox/single-vs-multi behavior is tested directly against the
@@ -88,6 +89,7 @@ vi.mock('../components/windows/SensorPickers', () => ({
     // branching on `single` the same way the real component's trigger does.
     SensorPickerModal: (props: any) => {
         sensorPickerModalProps.push(props);
+        extraTagsSeenByPicker.push(useContext(SensorSetExtraContext));
         return props.single ? (
             <input
                 placeholder={props.value ? undefined : (props.placeholder ?? `Pick ${props.noun}...`)}
@@ -104,6 +106,8 @@ vi.mock('../components/windows/SensorPickers', () => ({
     },
 }));
 
+import { useContext } from 'react';
+import { SensorSetExtraContext } from '../components/sensor/sensorInfo';
 import BuildModelWindow from '../components/windows/BuildModelWindow';
 import { makeHealthPreview, makeSetPointAwarePreview } from './helpers/healthPreviewFixture';
 import { makeTestResult, makeValidation } from './helpers/validationFixture';
@@ -118,6 +122,7 @@ import { readFileSync } from 'node:fs';
 import { pickSingle, rowTag } from './helpers/sensorPicker';
 import { openTabStatus } from './helpers/workbenchStatus';
 import { TRAIN_NEEDS_RUNNING_CONDITION } from '../utils/trainQueue';
+import { longName, restoreNames, stubNamesCut } from './helpers/nameGeometry';
 
 // jsdom does not load App.css (vitest also stubs `?raw` CSS imports to ''; cwd is the repo root), so layout
 // rules that used to be inline styles are asserted against the stylesheet source itself.
@@ -10938,5 +10943,152 @@ describe('Export results (bottom bar + dialog, DESIGN_SYSTEM §4.2)', () => {
         await flush();
         expect(screen.queryByTestId('export-bar-exported')).toBeNull();
         expect(screen.queryByTestId('export-dialog')).toBeNull();
+    });
+});
+
+describe('BuildModelWindow: long sensor names', () => {
+    const KEY = 'wizard.buildModelListWidth';
+    const grid = () => document.querySelector('.bmw-wb') as HTMLElement;
+    const longMeta = (n: number[]) => n.map(i => ({ tag: `L${i}`, description: longName(i), unit: 'mm/s', component: 'Crosshead' }));
+    const listOf = (tags: string[]) => tags.map((t, i) => makeModel({ id: `m${i}`, kind: 'individual', targetSensor: t }));
+    beforeEach(() => localStorage.removeItem(KEY));
+    afterEach(() => { localStorage.removeItem(KEY); restoreNames(); });
+
+    describe('the sensor list pane can be resized', () => {
+        it('starts at 300 px, 260 px to 60 %, tied to the list', async () => {
+            render(<BuildModelWindow />);
+            await deliverData();
+            expect(grid().style.gridTemplateColumns).toBe('300px minmax(0,1fr)');
+            const h = screen.getByTestId('list-resize');
+            expect(h.getAttribute('aria-valuenow')).toBe('300');
+            expect(h.getAttribute('aria-valuemin')).toBe('260');
+            expect(h.getAttribute('aria-controls')).toBe('build-model-sensor-list');
+            expect(document.getElementById('build-model-sensor-list')?.tagName).toBe('ASIDE');
+        });
+
+        it('a saved width comes back when the window opens', async () => {
+            localStorage.setItem(KEY, '420');
+            render(<BuildModelWindow />);
+            await deliverData();
+            expect(grid().style.gridTemplateColumns).toBe('420px minmax(0,1fr)');
+            expect(screen.getByTestId('list-resize').getAttribute('aria-valuenow')).toBe('420');
+        });
+
+        it('the keyboard reaches it: a step moves the list and is saved; a double-click resets', async () => {
+            render(<BuildModelWindow />);
+            await deliverData();
+            const h = screen.getByTestId('list-resize');
+            expect(h.tabIndex).toBe(0);
+            fireEvent.keyDown(h, { key: 'ArrowRight' });
+            expect(grid().style.gridTemplateColumns).toBe('320px minmax(0,1fr)');
+            expect(localStorage.getItem(KEY)).toBe('320');
+            fireEvent.doubleClick(h);
+            expect(grid().style.gridTemplateColumns).toBe('300px minmax(0,1fr)');
+            expect(localStorage.getItem(KEY)).toBe('300');
+        });
+
+        it('a hidden list has no handle', async () => {
+            render(<BuildModelWindow />);
+            await deliverData();
+            fireEvent.click(screen.getByTitle('Hide sensor list'));
+            expect(screen.queryByTestId('list-resize')).toBeNull();
+        });
+    });
+
+    describe('list rows', () => {
+        it('short names: plain rows, no shared line, even with no room', async () => {
+            stubNamesCut();
+            render(<BuildModelWindow />);
+            await deliverData();
+            expect(screen.queryByTestId('list-group-prefix')).toBeNull();
+            expect(screen.getByTestId('sensor-row-label').querySelector('.sl-desc')!.innerHTML).toBe('Pump Pressure');
+        });
+
+        it('long names that fit print whole with no shared line', async () => {
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: { groups: [makeGroup()], models: listOf(['L1', 'L2']) } }, { sensorHeaders: ['L1', 'L2'], sensorMetadata: longMeta([1, 2]) });
+            expect(screen.queryByTestId('list-group-prefix')).toBeNull();
+            expect(screen.getAllByTestId('sensor-row-label')[0].textContent).toContain(longName(1));
+        });
+
+        it('cut: the group prints the shared start once, each row its own part', async () => {
+            stubNamesCut();
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: { groups: [makeGroup()], models: listOf(['L1', 'L2']) } }, { sensorHeaders: ['L1', 'L2'], sensorMetadata: longMeta([1, 2]) });
+            expect(screen.getAllByTestId('list-group-prefix')).toHaveLength(1);
+            expect(screen.getByTestId('list-group-prefix').textContent).toContain('Crosshead (P-P Trend)');
+            const rows = screen.getAllByTestId('sensor-row-label').map(r => r.querySelector('.sl-l1')!.textContent);
+            expect(rows[0]).toContain('SegmentNo 1 - avg');
+            expect(rows[1]).toContain('SegmentNo 2 - avg');
+            expect(rows[0]).not.toContain('Crosshead (P-P Trend)');
+        });
+
+        it('a tag-only project follows the same rule', async () => {
+            stubNamesCut();
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: { groups: [makeGroup()], models: listOf([longName(1), longName(2)]) } }, { sensorHeaders: [longName(1), longName(2)], sensorMetadata: [] });
+            expect(screen.getByTestId('list-group-prefix')).toBeTruthy();
+            expect(screen.getAllByTestId('sensor-row-label')[1].textContent).toContain('SegmentNo 2 - avg');
+        });
+
+        it('search marks the match only in a project with long names', async () => {
+            const { unmount } = render(<BuildModelWindow />);
+            await deliverData();
+            fireEvent.change(screen.getByPlaceholderText(/Search/), { target: { value: 'Pump' } });
+            expect(document.querySelector('.bmw-list .sl-hit')).toBeNull();
+            unmount();
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: { groups: [makeGroup()], models: listOf(['L1', 'L2']) } }, { sensorHeaders: ['L1', 'L2'], sensorMetadata: longMeta([1, 2]) });
+            fireEvent.change(screen.getByPlaceholderText(/Search/), { target: { value: 'SegmentNo 2' } });
+            expect(document.querySelector('.bmw-list .sl-hit')?.textContent).toBe('SegmentNo 2');
+        });
+    });
+
+    describe('Model settings', () => {
+        const clu = () => makeModel({
+            id: 'c1', kind: 'clustering', name: 'Fan', targetSensor: '', xSensor: 'L1', ySensor: 'L2', criteriaSensor: 'L3',
+            numClusters: 2, clusterRanges: [{ min: 0, max: 5 }, { min: 5, max: 10 }],
+        });
+        const summary = () => document.querySelector('.bmw-sets-sum') as HTMLElement;
+
+        it('collapsed summary that fits: one plain text', async () => {
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: { groups: [makeGroup()], models: [clu()] } }, { sensorHeaders: ['L1', 'L2', 'L3'], sensorMetadata: longMeta([1, 2, 3]) });
+            if (!summary()) fireEvent.click(screen.getByText('Model settings'));
+            expect(summary().className).toBe('bmw-sets-sum');
+            expect(summary().textContent).toMatch(/^Fan · Y: .* · 2 clusters · Workspace data$/);
+            expect(screen.queryByTestId('settings-summary-parts')).toBeNull();
+        });
+
+        it('collapsed summary that is cut: parts, the name and Y sensor shrink, the counts stay whole', async () => {
+            stubNamesCut();
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: { groups: [makeGroup()], models: [clu()] } }, { sensorHeaders: ['L1', 'L2', 'L3'], sensorMetadata: longMeta([1, 2, 3]) });
+            if (!summary()) fireEvent.click(screen.getByText('Model settings'));
+            const parts = screen.getByTestId('settings-summary-parts');
+            expect(parts.querySelector('.bmw-sum-name')!.textContent).toBe('Fan');
+            expect(parts.querySelector('.bmw-sum-y')!.textContent).toContain('SegmentNo 2 - avg');
+            expect([...parts.querySelectorAll('.bmw-sum-fix')].map(e => e.textContent)).toEqual([' · 2 clusters', ' · Workspace data']);
+            expect(parts.getAttribute('title')).toContain('Y: ');
+        });
+
+        it('cluster ranges: the criteria sensor reads by its description first, not the tag alone', async () => {
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: { groups: [makeGroup()], models: [clu()] } }, { sensorHeaders: ['L1', 'L2', 'L3'], sensorMetadata: longMeta([1, 2, 3]) });
+            if (!screen.queryByTestId('cluster-slider')) fireEvent.click(screen.getByText('Model settings'));
+            await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+            const label = document.querySelector('.pm-cluster-slider-sensor')!;
+            expect(label.querySelector('.sl-desc')!.textContent).toBe(longName(3));
+            expect(label.textContent).toContain('L3');
+            expect(label.querySelector('[title]')!.getAttribute('title')).toContain('L3');
+        });
+
+        it('predictor chips count the card\'s target in their set', async () => {
+            sensorPickerModalProps.length = 0;
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: { groups: [makeGroup()], models: [makeModel({ id: 'r1', kind: 'relationship', targetSensor: 'TAG1', predictorSensors: [] })] } });
+            if (!screen.queryByPlaceholderText('Add predictors…')) fireEvent.click(screen.getByText('Model settings'));
+            expect(extraTagsSeenByPicker[extraTagsSeenByPicker.length - 1]).toEqual(['TAG1']);
+        });
     });
 });

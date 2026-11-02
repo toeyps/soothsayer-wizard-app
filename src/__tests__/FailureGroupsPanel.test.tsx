@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, act, within } from '@testing-library/react';
 import FailureGroupsPanel from '../components/dashboard/FailureGroupsPanel';
 import * as fgSummary from '../utils/failureGroupSummary';
@@ -12,6 +12,7 @@ import type { FailureGroup, FailureModel, FailureGroupStateSlice, SensorMetadata
 import { computeTrainFingerprint } from '../utils/trainFingerprint';
 import { snapshotTrainedFormulas } from '../utils/specialSensorSignature';
 import { ALL_TIME_TRAIN, RC_ON, rcOn } from './helpers/trainTestFixture';
+import { longName, restoreNames, stubNamesCut } from './helpers/nameGeometry';
 
 function makeModel(overrides: Partial<FailureModel> = {}): FailureModel {
     return {
@@ -751,5 +752,62 @@ describe('groupDeleteCounts / groupDeleteText', () => {
         expect(groupDeleteText('FG-1', 1, 0)).toBe('Delete FG-1? 1 model used only by this group is deleted.');
         expect(groupDeleteText('FG-1', 0, 2)).toBe('Delete FG-1? 2 models stay in their other groups.');
         expect(groupDeleteText('FG-1', 0, 0)).toBe('Delete FG-1? It has no models.');
+    });
+});
+
+describe('FailureGroupsPanel: long sensor names', () => {
+    afterEach(() => restoreNames());
+    const longProps = (described: boolean) => makeProps({
+        sensorMetadata: described ? [1, 2].map(n => ({ tag: `T${n}`, description: longName(n), unit: 'mm/s', component: 'Crosshead' })) : [],
+        fgModels: [1, 2].map(n => makeModel({ id: `m${n}`, name: `Model ${n}`, groupNos: [1], targetSensor: described ? `T${n}` : longName(n) })),
+    });
+
+    it('short names: a model row that is cut stays one end-cut text, exactly "name (tag)"', () => {
+        stubNamesCut();
+        render(<FailureGroupsPanel {...makeProps()} />);
+        expandAll();
+        expect(modelLabels()).toEqual(['Model 1 (TAG1)']);
+        expect(document.querySelector('.fg-model-text')).toBeNull();
+        expect(screen.queryByTestId('fg-card-prefix')).toBeNull();
+    });
+
+    it('long names that fit: no shared line, whole names and today\'s model text', () => {
+        render(<FailureGroupsPanel {...longProps(true)} />);
+        expandAll();
+        expect(screen.queryByTestId('fg-card-prefix')).toBeNull();
+        expect(document.querySelector('[data-testid^="fg-sensor-row-1:"]')!.textContent).toContain(longName(1));
+        expect(modelLabels()).toEqual(['Model 1 (T1)', 'Model 2 (T2)']);
+    });
+
+    it('cut: the card prints the shared start once, rows print the rest, a model row prints its own name', () => {
+        stubNamesCut();
+        render(<FailureGroupsPanel {...longProps(true)} />);
+        expandAll();
+        expect(screen.getAllByTestId('fg-card-prefix')).toHaveLength(1);
+        expect(screen.getByTestId('fg-card-prefix').textContent).toContain('Crosshead (P-P Trend)');
+        const row = document.querySelector('[data-testid^="fg-sensor-row-1:"]')!;
+        expect(row.textContent).not.toContain('Crosshead (P-P Trend)');
+        expect(row.textContent).toContain('SegmentNo 1 - avg');
+        expect(modelLabels()).toEqual(['Model 1', 'Model 2']);
+    });
+
+    it('cut: a clustering model names its Y sensor, the one the sensor line above does not show', () => {
+        stubNamesCut();
+        render(<FailureGroupsPanel {...makeProps({
+            sensorMetadata: [1, 2].map(n => ({ tag: `T${n}`, description: longName(n), unit: '', component: 'C' })),
+            fgModels: [makeModel({ kind: 'clustering', name: 'Fan', targetSensor: '', xSensor: 'T1', ySensor: 'T2' })],
+        })} />);
+        expandAll();
+        const y = screen.getByTestId('fg-model-y');
+        expect(y.textContent).toContain('Y');
+        expect(y.textContent).toContain('SegmentNo 2');
+    });
+
+    it('a tag-only project follows the same rules', () => {
+        stubNamesCut();
+        render(<FailureGroupsPanel {...longProps(false)} />);
+        expandAll();
+        expect(screen.getByTestId('fg-card-prefix')).toBeTruthy();
+        expect(modelLabels()).toEqual(['Model 1', 'Model 2']);
     });
 });

@@ -13,6 +13,8 @@ import { useSubModelFits, type SubModelFit, type SubModelFitsState } from '../co
 import type { RelationshipPreviewResult } from '../types/commands';
 import { HEALTH_DEFAULT_MAX_POINTS } from '../utils/healthRequest';
 import { SensorMetaContext, type SensorInfo } from '../components/sensor/sensorInfo';
+import { longName, restoreNames, stubNamesCut } from './helpers/nameGeometry';
+import { SensorMetaProvider } from '../components/sensor/SensorLabel';
 
 // `total` = the real row count the fit used (`n_rows`); the arrays are the BOUNDED sample
 // of `n` rows the Rust command sends when `max_points` is passed (total defaults to n).
@@ -324,5 +326,44 @@ describe('buildSubModelOption: long sensor names', () => {
         const html: string = o.tooltip.formatter({ value: [2, 1.1], color: '#3b82f6', seriesName: 'Raw' });
         expect(html).toContain('<span class="tt-desc tt-mono">B</span>');
         expect(html).not.toContain('tt-prefix');
+    });
+});
+
+describe('SubModelsModal: long sensor names on the cards', () => {
+    afterEach(() => { restoreNames(); cleanup(); });
+    const fitsOf = (predictors: string[]): SubModelFitsState => ({
+        subModels: [{ predictors, result: result(3) }], loading: false, error: null, progress: { current: 0, total: 0 }, stale: false, run: vi.fn().mockResolvedValue(undefined),
+    });
+    const showLong = (tagOnly: boolean) => {
+        const target = tagOnly ? longName(9) : 'T';
+        const predictors = tagOnly ? [longName(1), longName(2)] : ['A', 'B'];
+        const ui = <SubModelsModal fits={fitsOf(predictors)} targetSensor={target} predictorCount={2} stiffnessText="Medium" onClose={vi.fn()} />;
+        render(tagOnly ? ui : (
+            <SensorMetaProvider metadata={[['T', 9], ['A', 1], ['B', 2]].map(([tag, n]) => ({ tag: tag as string, description: longName(n as number), unit: '', component: '' }))}>{ui}</SensorMetaProvider>
+        ));
+    };
+
+    it('fit: whole names and no shared line', () => {
+        showLong(false);
+        expect(screen.queryByTestId('compare-prefix')).toBeNull();
+        expect(screen.getByTestId('sub-model-sensors').textContent).toContain(longName(1));
+    });
+
+    it('cut: the shared start once above the cards; the target and predictors print the rest', () => {
+        stubNamesCut();
+        showLong(false);
+        expect(screen.getAllByTestId('compare-prefix')).toHaveLength(1);
+        expect(screen.getByTestId('compare-prefix').textContent).toContain('Crosshead (P-P Trend)');
+        const sensors = screen.getByTestId('sub-model-sensors');
+        expect(sensors.textContent).not.toContain('Crosshead (P-P Trend)');
+        expect(sensors.textContent).toContain('SegmentNo 9 - avg');
+        expect(sensors.textContent).toContain('SegmentNo 2 - avg');
+    });
+
+    it('a tag-only project follows the same rule', () => {
+        stubNamesCut();
+        showLong(true);
+        expect(screen.getByTestId('compare-prefix')).toBeTruthy();
+        expect(screen.getByTestId('sub-model-sensors').textContent).toContain('SegmentNo 1 - avg');
     });
 });

@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Check, ChevronDown, ChevronRight, Download, FileJson, FileSpreadsheet, Folder, Info, Loader2, TriangleAlert, X } from 'lucide-react';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
-import { SensorInline } from '../../sensor/SensorLabel';
+import { SensorInline, SensorSetProvider, SetPrefixLine } from '../../sensor/SensorLabel';
+import { useLineCut } from '../../../hooks/useNameFit';
+import { splitKey } from '../../../utils/sensorNames';
 import type { ModelKind } from '../../../types';
 import type { ExportIssue, ExportModelSpec, ExportPlanModel } from '../../../types/export';
 import type { UseWorkspaceExport, WorkspaceExportPhase, WorkspaceExportProgressState } from '../../../hooks/useWorkspaceExport';
@@ -172,11 +174,29 @@ function ByGroup({ rows, groups, render }: { rows: ExportReadinessRow[]; groups:
                 return (
                     <div key={g.no} className="tq-grp">
                         <div className="tq-grpt"><i style={{ background: g.color }} />{fgLabel(g.no, g.name)}</div>
-                        {rs.map(r => <div key={r.id}>{render(r, r.groupNos.filter(n => n !== g.no && n !== 0).map(n => `FG-${n}`).join(', '))}</div>)}
+                        <SensorSetProvider tags={rs.map(r => r.tag)} drop>
+                            <SetPrefixLine className="tq-grp-prefix" testid="export-group-prefix" />
+                            {rs.map(r => <div key={r.id}>{render(r, r.groupNos.filter(n => n !== g.no && n !== 0).map(n => `FG-${n}`).join(', '))}</div>)}
+                        </SensorSetProvider>
                     </div>
                 );
             })}
         </>
+    );
+}
+
+/** A model key or file name. Plain text while it fits; once it is cut, the cut is in the middle (rule 1), so the
+ *  end that tells two files apart stays, with its "-R1" and extension. The full name is in `title`. */
+function KeyText({ k, ext = '', lead = '', className = 'ex-mono' }: { k: string; ext?: string; lead?: string; className?: string }) {
+    const full = `${lead}${k}${ext}`;
+    const [ref, cut] = useLineCut(full);
+    const sp = cut ? splitKey(k, ext) : null;
+    if (!sp?.head) return <span ref={ref} className={`${className} ex-key-text`} title={cut ? full : undefined}>{full}</span>;
+    return (
+        <span ref={ref} className={`${className} ex-key-text sl-split`} title={full}>
+            <span data-name-part="head">{lead}{sp.head}</span>
+            <span data-name-part="tail">{sp.tail}</span>
+        </span>
     );
 }
 
@@ -375,7 +395,7 @@ export function ExportModal({ readiness, groups, projectName, machineTag, exp, p
                 {cur && (
                     <div className="ex-line ex-line--now" data-testid="export-current">
                         <Loader2 size={12} className="pm-spin" aria-hidden="true" />
-                        <span className="ex-mono">{cur.key}</span>
+                        <KeyText k={cur.key} />
                         {curRow && <span className="ex-now-t"><SensorInline tag={curRow.tag} /></span>}
                     </div>
                 )}
@@ -493,12 +513,13 @@ export function ExportModal({ readiness, groups, projectName, machineTag, exp, p
         const peekPanel = plan && peek ? (() => {
             const m = peek.kind === 'machine' ? null : planById.get(peek.id);
             const title = peek.kind === 'machine' ? 'machine_info.json' : `models/${m?.key}.${peek.kind}`;
+            const peekName = peek.kind === 'machine' || !m ? <span className="ex-mono">{title}</span> : <KeyText k={m.key} ext={`.${peek.kind}`} lead="models/" />;
             const text = peek.kind === 'machine'
                 ? JSON.stringify(plan.machine_info, null, 2)
                 : !m ? '' : peek.kind === 'json' ? JSON.stringify(m.json, null, 2) : m.peek.slice(0, 7).map(csvLine).join('\n');
             return (
                 <div className="ex-peek" role="region" aria-label={`Preview of ${title}`} data-testid="export-peek">
-                    <div className="ex-peek-h"><span className="ex-mono">{title}</span><button type="button" className="tq-link" onClick={() => setPeek(null)}>Close preview</button></div>
+                    <div className="ex-peek-h">{peekName}<button type="button" className="tq-link" onClick={() => setPeek(null)}>Close preview</button></div>
                     <pre className="ex-manifest">{text}</pre>
                     {peek.kind === 'csv' && m && <div className="ex-cap">First {Math.min(6, Math.max(0, m.peek.length - 1))} of {fmtCount(m.rows)} rows</div>}
                     {peek.kind === 'machine' && <div className="ex-cap">Plant and machine from Project details; running status from the running condition; sensors, components and failure groups from this project. The export time is filled in when it runs.</div>}
@@ -635,10 +656,10 @@ export function ExportModal({ readiness, groups, projectName, machineTag, exp, p
                                                     {r && <span className="ex-t-sensor"><SensorInline tag={r.tag} /></span>}
                                                 </div>
                                                 <button type="button" className={`ex-t ex-t--l3 ex-t--btn${peek?.kind === 'json' && peek.id === m.id ? ' ex-t--on' : ''}`} onClick={() => setPeek(p => (p?.kind === 'json' && p.id === m.id ? null : { kind: 'json', id: m.id }))}>
-                                                    <FileJson size={12} aria-hidden="true" /><span className="ex-mono ex-file">{m.key}.json</span><span className="ex-t-note">settings · health values</span><span className="ex-t-peek">Peek</span>
+                                                    <FileJson size={12} aria-hidden="true" /><KeyText k={m.key} ext=".json" className="ex-mono ex-file" /><span className="ex-t-note">settings · health values</span><span className="ex-t-peek">Peek</span>
                                                 </button>
                                                 <button type="button" className={`ex-t ex-t--l3 ex-t--btn${peek?.kind === 'csv' && peek.id === m.id ? ' ex-t--on' : ''}`} onClick={() => setPeek(p => (p?.kind === 'csv' && p.id === m.id ? null : { kind: 'csv', id: m.id }))}>
-                                                    <FileSpreadsheet size={12} aria-hidden="true" /><span className="ex-mono ex-file">{m.key}.csv</span><span className="ex-t-note">{fmtCount(m.rows)} training rows · {fmtBytes(m.bytes)}</span><span className="ex-t-peek">Peek</span>
+                                                    <FileSpreadsheet size={12} aria-hidden="true" /><KeyText k={m.key} ext=".csv" className="ex-mono ex-file" /><span className="ex-t-note">{fmtCount(m.rows)} training rows · {fmtBytes(m.bytes)}</span><span className="ex-t-peek">Peek</span>
                                                 </button>
                                             </div>
                                         );
@@ -858,7 +879,7 @@ function NoComponentItem({ n, rowById, planById }: {
                             const key = planById.get(r.id)?.key;
                             return (
                                 <span key={r.id}>
-                                    {i > 0 ? '· ' : ''}<SensorInline tag={r.tag} /> · {MODEL_KIND_LABEL[r.kind]}{key && <span className="ex-mono ex-key">{key}</span>}
+                                    {i > 0 ? '· ' : ''}<SensorInline tag={r.tag} /> · {MODEL_KIND_LABEL[r.kind]}{key && <KeyText k={key} className="ex-mono ex-key" />}
                                 </span>
                             );
                         })}

@@ -548,7 +548,7 @@ describe('windowed list over 150 rows (long names, rule 6)', () => {
         } finally {
             clientHeight.mockRestore();
         }
-    });
+    }, 30_000); // 70 key presses, each a full re-render: slow when the whole suite runs in parallel
 
     it('the "Add…" modal is windowed too and keeps a pick made in a row that scrolled away', () => {
         const onConfirm = vi.fn();

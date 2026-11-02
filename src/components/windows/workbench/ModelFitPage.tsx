@@ -3,6 +3,7 @@ import { samePageProps } from './pageMemo';
 import { LayoutGrid } from 'lucide-react';
 import { SensorPickerSingle } from '../../sensor/SensorPicker';
 import { SensorInline } from '../../sensor/SensorLabel';
+import { PairSub } from './PairSub';
 import { useSensorLookup } from '../../sensor/sensorInfo';
 import type { HealthPreview } from '../../../types/health';
 import ChartCard, { LegendItem } from './ChartCard';
@@ -312,7 +313,7 @@ function ModelFitPage(props: ModelFitPageProps) {
                 <ChartCard
                     id="cl"
                     title="Clusters"
-                    sub={<span className="wb2-sub-sl"><SensorInline tag={xTag} size="sm" muted /> vs <SensorInline tag={yTag} size="sm" muted /></span>}
+                    sub={<PairSub x={xTag} y={yTag} />}
                     // The board's only card: it spans both columns (no side column).
                     full
                     size="xtall"

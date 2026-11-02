@@ -16,6 +16,7 @@ import { editorStateFormula, editorStateToRecipe } from '../utils/quickBuild';
 import type { SensorMetadata, SpecialSensorRecipe } from '../types';
 import type { FormulaPreviewResult } from '../types/formula';
 import { findPickerRow, pickMulti } from './helpers/sensorPicker';
+import { longName, restoreNames, stubNamesCut } from './helpers/nameGeometry';
 
 /**
  * The special-sensor Formula editor + Quick build against the
@@ -637,5 +638,38 @@ describe('SensorFieldsCard', () => {
         expect((screen.getByLabelText('Name') as HTMLInputElement).readOnly).toBe(true);
         const opts = [...(screen.getByLabelText('Component') as HTMLSelectElement).options].map(o => o.value);
         expect(opts).toEqual(['', 'Pump', 'Uncategorized']);
+    });
+});
+
+describe('SpecialSensorFormulaEditor: long sensor names on the Sensors row', () => {
+    afterEach(() => restoreNames());
+    const TAGS = ['L1', 'L2'];
+    const longUi = () => render(
+        <SensorMetaProvider metadata={TAGS.map((tag, i) => ({ tag, description: longName(i + 1), unit: '', component: '' }))}>
+            <SpecialSensorFormulaEditor
+                sensors={TAGS} knownSensors={TAGS} initialRecipe={null} locked={null} repair={null}
+                quickSelected={[]} onQuickClear={() => {}} unit="DEGC" onReport={() => {}}
+            />
+        </SensorMetaProvider>,
+    );
+
+    it('short names and long names that fit: no shared line; the formula keeps its $TAG text', () => {
+        longUi();
+        type('$L1 + $L2 + 1');
+        expect(screen.queryByTestId('formula-sensors-prefix')).toBeNull();
+        expect(screen.getByTestId('formula-sensors').textContent).toContain(longName(1));
+        expect(field().value).toBe('$L1 + $L2 + 1');
+    });
+
+    it('cut: the start the chips share once, each chip its own end; the formula text is untouched', () => {
+        stubNamesCut();
+        longUi();
+        type('$L1 + $L2 + 1');
+        expect(screen.getByTestId('formula-sensors-prefix').textContent).toContain('Crosshead (P-P Trend)');
+        const row = screen.getByTestId('formula-sensors');
+        const chips = within(row).getAllByRole('button');
+        expect(chips[0].textContent).toContain('SegmentNo 1 - avg');
+        expect(chips[0].textContent).not.toContain('Crosshead (P-P Trend)');
+        expect(field().value).toBe('$L1 + $L2 + 1');
     });
 });

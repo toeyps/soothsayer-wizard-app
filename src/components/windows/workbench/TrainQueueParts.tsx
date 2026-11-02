@@ -1,6 +1,6 @@
 import { memo, useEffect, useRef, useState, type ReactNode, type Ref } from 'react';
 import { ChevronDown, Loader2, Lock, X } from 'lucide-react';
-import { SensorInline } from '../../sensor/SensorLabel';
+import { SensorInline, SensorSetProvider, SetPrefixLine } from '../../sensor/SensorLabel';
 import { sensorPlainLabel, useSensorLookup } from '../../sensor/sensorInfo';
 import { useModalFocus } from '../useModalFocus';
 import type { ModelKind } from '../../../types';
@@ -507,7 +507,10 @@ function ByGroup({ rows, groups, render }: { rows: TrainRowModel[]; groups: Trai
                 return (
                     <div key={g.no} className="tq-grp" data-testid={`train-group-${g.no}`}>
                         <div className="tq-grpt"><i style={{ background: g.color }} />{fgLabel(g.no, g.name)}</div>
-                        {ms.map(m => <div key={m.id}>{render(m)}</div>)}
+                        <SensorSetProvider tags={ms.map(m => m.tag)} drop>
+                            <SetPrefixLine className="tq-grp-prefix" testid="train-group-prefix" />
+                            {ms.map(m => <div key={m.id}>{render(m)}</div>)}
+                        </SensorSetProvider>
                     </div>
                 );
             })}

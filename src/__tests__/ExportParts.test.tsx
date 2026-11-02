@@ -15,6 +15,7 @@ import type { UseWorkspaceExport } from '../hooks/useWorkspaceExport';
 import type { ExportReadiness, ExportReadinessItem, ExportReadinessRow, NoComponentSensor } from '../utils/exportReadiness';
 import type { ExportIssue, WorkspaceExportPlan, WorkspaceExportRequest } from '../types/export';
 import { SensorMetaContext } from '../components/sensor/sensorInfo';
+import { longName, restoreNames, stubNamesCut } from './helpers/nameGeometry';
 
 const META: Record<string, { description?: string; unit?: string }> = {
     TAG1: { description: 'Pump Pressure', unit: 'bar' },
@@ -606,5 +607,50 @@ describe('ExportModal — writing, done, failed, cancelled', () => {
     it('never names the algorithm', () => {
         const { container } = renderModal();
         expect(container.textContent ?? '').not.toMatch(/gam/i);
+    });
+});
+
+describe('ExportModal: long sensor names and model keys', () => {
+    afterEach(() => restoreNames());
+    const KEY = 'Crosshead__P-P_Trend__-_Vibration_crosshead_slide_11A_-_SegmentNo_1_-_avg-R1';
+    const modelsPlan = (key: string) => plan({
+        models: [{ id: 'm1', key, json: { model_key: key }, csv_columns: ['TimeStamp'], rows: 10, bytes: 100, peek: [['TimeStamp']] }] as never,
+    });
+    const showFiles = (key: string) => {
+        renderModal({ exp: fakeExp({ exportPlan: modelsPlan(key) }) });
+        fireEvent.click(document.querySelector('.ex-disc')!);
+        return [...document.querySelectorAll('.ex-file')] as HTMLElement[];
+    };
+
+    it('a key that fits is one plain text, whatever its length', () => {
+        const [json, csv] = showFiles(KEY);
+        expect(json.textContent).toBe(`${KEY}.json`);
+        expect(csv.textContent).toBe(`${KEY}.csv`);
+        expect(json.querySelector('[data-name-part]')).toBeNull();
+        expect(json.title).toBe('');
+    });
+
+    it('a short key stays whole even when it has no room (it has nothing to cut in the middle)', () => {
+        stubNamesCut();
+        const [json] = showFiles('TAG1-I1');
+        expect(json.textContent).toBe('TAG1-I1.json');
+        expect(json.querySelector('[data-name-part]')).toBeNull();
+    });
+
+    it('a key that is cut keeps its end: the segment, the -R1 and the extension', () => {
+        stubNamesCut();
+        const [json, csv] = showFiles(KEY);
+        expect(json.title).toBe(`${KEY}.json`);
+        expect(json.querySelector('[data-name-part="tail"]')!.textContent).toBe('SegmentNo_1_-_avg-R1.json');
+        expect(csv.querySelector('[data-name-part="tail"]')!.textContent).toBe('SegmentNo_1_-_avg-R1.csv');
+        expect(json.textContent).toBe(`${KEY}.json`); // nothing is rewritten, only cut
+    });
+
+    it('the rows of a group: the shared start once while cut; tag-only sensors alike', () => {
+        stubNamesCut();
+        const rows = [1, 2].map(n => row({ id: `m${n}`, tag: longName(n), ready: false, words: 'Not ready', tone: 'need' }));
+        renderModal({ readiness: readiness({ rows }), exp: fakeExp({ phase: 'idle', exportPlan: null }) });
+        expect(screen.getByTestId('export-group-prefix').textContent).toContain('Crosshead (P-P Trend)');
+        expect(screen.getByTestId('export-row-m2').querySelector('.sl-desc')!.textContent).toBe('SegmentNo 2 - avg');
     });
 });

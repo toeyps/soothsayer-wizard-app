@@ -1,8 +1,9 @@
-import { Fragment, useEffect } from 'react';
+import { Fragment, useEffect, useMemo } from 'react';
 import { Activity, Loader2, X } from 'lucide-react';
+import { displayedName, familyPrefix } from '../../utils/sensorNames';
 import ResponsiveECharts from '../charts/ResponsiveECharts';
 import { isPickerSurfaceOpen } from '../sensor/SensorPicker';
-import { SensorInline } from '../sensor/SensorLabel';
+import { SensorInline, SensorSetProvider, SetPrefixLine } from '../sensor/SensorLabel';
 import { escapeHtml, safeColour, sensorInlineHtml, sharedPrefixHtml, useSensorLookup, type SensorInfo } from '../sensor/sensorInfo';
 import { withAxisNames } from '../../utils/axisName';
 import { tooltipSharedPrefix } from '../../utils/tooltipLayout';
@@ -156,6 +157,10 @@ export interface SubModelsModalProps {
 export default function SubModelsModal({ fits, targetSensor, predictorCount, stiffnessText, onClose }: SubModelsModalProps) {
     const { subModels, loading, error, progress, stale, run } = fits;
     const lookup = useSensorLookup();
+    // The target and every predictor (the last step holds them all) are one set.
+    const lastStep = subModels?.[subModels.length - 1]?.predictors;
+    const compareTags = useMemo(() => [targetSensor, ...(lastStep ?? [])], [targetSensor, lastStep]);
+    const comparePrefix = useMemo(() => familyPrefix(compareTags.map(t => displayedName(lookup(t)))), [compareTags, lookup]);
 
     // Escape closes the modal (same convention as the chart-expand modals).
     useEffect(() => {
@@ -211,6 +216,9 @@ export default function SubModelsModal({ fits, targetSensor, predictorCount, sti
                                     </button>
                                 </div>
                             )}
+                            {/* One set (rules 2 + 3): the start most names here share prints once above the cards. */}
+                            <SensorSetProvider tags={compareTags} candidate={comparePrefix} drop>
+                            <SetPrefixLine className="pm-submodels-prefix" testid="compare-prefix" />
                             {subModels.map((fit, idx) => {
                                 // The last entry of `r2_per_step` is the score for the full
                                 // subset of THIS sub-fit (sidecar contract) — the card's headline R².
@@ -268,6 +276,7 @@ export default function SubModelsModal({ fits, targetSensor, predictorCount, sti
                                     </div>
                                 );
                             })}
+                            </SensorSetProvider>
                         </>
                     )}
                 </div>

@@ -10,6 +10,7 @@ import FailureGroupAssignSheet, { type FailureGroupAssignSheetProps } from '../c
 // @ts-expect-error - @types/node is not installed; vitest runs in Node so this resolves at runtime
 import { readFileSync } from 'node:fs';
 import type { FailureGroup, FailureModel } from '../types';
+import { longName, restoreNames, stubNamesCut } from './helpers/nameGeometry';
 
 afterEach(() => {
     cleanup();
@@ -696,5 +697,22 @@ describe('FailureGroupAssignSheet', () => {
                 expect(css).toMatch(new RegExp(`\\.${c}(?![\\w-])`));
             }
         });
+    });
+});
+
+describe('FailureGroupAssignSheet: a long sensor name in the header', () => {
+    afterEach(() => restoreNames());
+
+    it('a tag-only name that is cut wraps at word breaks instead of being cut off', () => {
+        stubNamesCut();
+        renderSheet({ tag: longName(1), info: { tag: longName(1) } });
+        const name = document.querySelector('.fg-sheet-sl .sl-desc')!;
+        expect(name.className).toContain('sl-wrapname');
+        expect(name.textContent).toBe(longName(1));
+    });
+
+    it('a short name stays one plain line', () => {
+        renderSheet();
+        expect(document.querySelector('.fg-sheet-sl .sl-desc')!.className).toBe('sl-desc');
     });
 });

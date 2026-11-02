@@ -3123,3 +3123,47 @@ describe('AddSensorWindow: fixing a special sensor that could not be restored', 
         expect(sent.metadata).toMatchObject({ tag: 'OP', unit: 'kPa' });
     });
 });
+
+describe('AddSensorWindow: the sensor list pane can be resized', () => {
+    const KEY = 'wizard.specialSensorPaneWidth';
+    const body = () => document.querySelector('.special-sensor-body') as HTMLElement;
+    const handle = () => screen.getByTestId('ss-list-resize');
+    beforeEach(() => localStorage.removeItem(KEY));
+    afterEach(() => localStorage.removeItem(KEY));
+
+    it('never moved: the stylesheet decides the width (320 px, 230 px under 860 px), nothing inline', async () => {
+        await openWindow();
+        expect(body().style.gridTemplateColumns).toBe('');
+        expect(handle().getAttribute('aria-valuenow')).toBe('320');
+        expect(handle().getAttribute('aria-controls')).toBe('add-sensor-list-pane');
+        expect(document.getElementById('add-sensor-list-pane')).toBeTruthy();
+    });
+
+    it('a saved width comes back when the window opens', async () => {
+        localStorage.setItem(KEY, '400');
+        await openWindow();
+        expect(body().style.gridTemplateColumns).toBe('400px minmax(0, 1fr)');
+        expect(handle().getAttribute('aria-valuenow')).toBe('400');
+    });
+
+    it('the keyboard reaches it: a step moves the pane and is saved', async () => {
+        await openWindow();
+        expect(handle().tabIndex).toBe(0);
+        fireEvent.keyDown(handle(), { key: 'ArrowRight' });
+        expect(body().style.gridTemplateColumns).toBe('340px minmax(0, 1fr)');
+        expect(localStorage.getItem(KEY)).toBe('340');
+    });
+
+    it('under 860 px the handle starts from 230 px and may go down to it', async () => {
+        const was = window.innerWidth;
+        Object.defineProperty(window, 'innerWidth', { configurable: true, value: 800 });
+        try {
+            await openWindow();
+            expect(handle().getAttribute('aria-valuenow')).toBe('230');
+            expect(handle().getAttribute('aria-valuemin')).toBe('230');
+            expect(body().style.gridTemplateColumns).toBe('');
+        } finally {
+            Object.defineProperty(window, 'innerWidth', { configurable: true, value: was });
+        }
+    });
+});

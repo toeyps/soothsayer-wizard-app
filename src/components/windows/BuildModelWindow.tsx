@@ -37,7 +37,10 @@ import { STIFFNESS_OPTIONS, STIFFNESS_DEFAULT, stiffnessLabel, snapStiffness } f
 import RunningConditionPanel, { RunningConditionPills } from "./RunningConditionPanel";
 import { RunningConditionCard, type RcStepState } from "./RunningConditionCard";
 import { SensorPickerModal } from "./SensorPickers";
-import { SensorInline, SensorLabel } from "../sensor/SensorLabel";
+import { SensorInline, SensorLabel, SensorSearchContext, SensorSetExtraContext, SensorSetProvider, SetPrefixLine } from "../sensor/SensorLabel";
+import { PaneResizeHandle, readSavedPaneWidth } from "../PaneResizeHandle";
+import { useLineCut } from "../../hooks/useNameFit";
+import { NAME_TAIL_MAX, displayedName } from "../../utils/sensorNames";
 import { SensorMetaContext, fmtNumText, sensorHaystack, sensorPlainLabel, sensorTitle, useLayeredSensorLookup } from "../sensor/sensorInfo";
 import { useModalFocus } from "./useModalFocus";
 import SubModelsModal from "./SubModelsModal";
@@ -150,6 +153,35 @@ type SidebarFilter = 'all' | 'attn' | 'done' | 'sp';
 const LEGACY_BADGE = 'Legacy · all data';
 
 /** The sensor a model belongs to (its Target, or X for Clustering). */
+/** The sensor list pane (DESIGN_SYSTEM §4 rule 7): where its width is saved, and where it starts. */
+const LIST_WIDTH_KEY = 'wizard.buildModelListWidth';
+const LIST_DEFAULT_WIDTH = 300;
+const NO_TAGS: string[] = [];
+
+interface SettingsSummaryParts {
+    name: string;
+    /** Clustering's Y sensor ('' = not picked yet); null for the other kinds. */
+    y: string | null;
+    /** What never gets cut: the counts and the data scope. */
+    fixed: string[];
+}
+
+/** Model settings, collapsed. Today's one line of text while it fits; only while it is really cut, the model's
+ *  name and the Y sensor shrink (the Y sensor keeps its distinguishing end) and the counts stay whole. */
+function SettingsSummary({ text, parts }: { text: string; parts: SettingsSummaryParts }) {
+    const [ref, cut] = useLineCut(text);
+    if (!cut) return <span ref={ref} className="bmw-sets-sum">{text}</span>;
+    return (
+        <span ref={ref} className="bmw-sets-sum bmw-sets-sum--parts" title={text} data-testid="settings-summary-parts">
+            <span className="bmw-sum-name">{parts.name}</span>
+            {parts.y !== null && (
+                <span className="bmw-sum-y"><span className="bmw-sum-sep"> · </span>Y: {parts.y ? <SensorInline tag={parts.y} size="sm" muted /> : '—'}</span>
+            )}
+            {parts.fixed.map(p => <span key={p} className="bmw-sum-fix"><span className="bmw-sum-sep"> · </span>{p}</span>)}
+        </span>
+    );
+}
+
 const modelTagOf = (m: FailureModel): string => (m.kind === 'clustering' ? m.xSensor : m.targetSensor) ?? '';
 /** Placeholder plan for rows the run strip / close dialog only label (they never read it). */
 const LABEL_ONLY_PLAN = { kind: 'ready' } as const;
@@ -527,6 +559,7 @@ export default function BuildModelWindow() {
     const [sidebarFilter, setSidebarFilter] = useState<SidebarFilter>('all');
     const [searchQuery, setSearchQuery] = useState('');
     const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+    const [listWidth, setListWidth] = useState(() => readSavedPaneWidth(LIST_WIDTH_KEY, LIST_DEFAULT_WIDTH));
     /** The sensor currently shown in the detail pane (a `modelSensorKey`), or
      *  null before anything is selected / when there are no models yet. */
     const [selectedSensorKey, setSelectedSensorKey] = useState<string | null>(null);
@@ -1702,10 +1735,9 @@ export default function BuildModelWindow() {
 
     /** Collapsed "Model settings" one-line summary: name · predictors/Y ·
      *  stiffness/clusters · data scope. */
-    const settingsSummaryLine = (m: FailureModel, d: ModelDraft): string => {
-        const parts = [d.name.trim() || 'Untitled'];
+    const settingsSummaryParts = (m: FailureModel, d: ModelDraft): SettingsSummaryParts => {
+        const parts: string[] = [];
         if (m.kind === 'relationship') parts.push(d.predictors.length ? `${d.predictors.length} predictor${d.predictors.length === 1 ? '' : 's'}` : 'no predictors');
-        else if (m.kind === 'clustering') parts.push(`Y: ${d.y ? sensorLabel(d.y) : '—'}`);
         if (m.kind === 'relationship') parts.push(stiffnessLabel(d.stiffness));
         else if (m.kind === 'clustering') parts.push(`${d.numClusters} clusters`);
         else parts.push('1σ + 3σ');
@@ -1723,7 +1755,11 @@ export default function BuildModelWindow() {
         } else {
             parts.push('Workspace data');
         }
-        return parts.join(' · ');
+        return { name: d.name.trim() || 'Untitled', y: m.kind === 'clustering' ? d.y : null, fixed: parts };
+    };
+    const settingsSummaryLine = (m: FailureModel, d: ModelDraft): string => {
+        const { name, y, fixed } = settingsSummaryParts(m, d);
+        return [name, ...(y === null ? [] : [`Y: ${y ? sensorLabel(y) : '—'}`]), ...fixed].join(' · ');
     };
 
     // `commitModel` returns the `persist()` promise (rather than firing it and
@@ -3257,7 +3293,7 @@ export default function BuildModelWindow() {
             >
                 <div style={{ minWidth: 0 }} data-testid="sensor-row-label" title={label}>
                     {/* The stacked SensorLabel (unit chip, tag on line 2). */}
-                    {keyTag ? <SensorLabel tag={keyTag} /> : <div className="f4-sr-title">{title}</div>}
+                    {keyTag ? <SensorLabel tag={keyTag} wrap /> : <div className="f4-sr-title">{title}</div>}
                 </div>
                 <div className="f4-kinds">
                     {ordered.map(m => {
@@ -3303,6 +3339,11 @@ export default function BuildModelWindow() {
         );
     };
 
+    /** The sensor a list row names ('' = a model with no sensor yet). */
+    const listRowTag = (sg: SensorModelGroup): string => (sg.models[0] ? modelTagOf(sg.models[0]) : '');
+    // Search hits are marked only in a project that has long names (a match may sit in a cut-off head); a
+    // project of short names keeps today's plain rows.
+    const listHasLongNames = sensorGroupsAll.some(sg => displayedName(sensorLookup(listRowTag(sg))).length > NAME_TAIL_MAX);
     const renderLeftList = () => {
         if (leftGroupBy === 'fg') {
             const fgSection = (no: number, name: string) => {
@@ -3315,7 +3356,12 @@ export default function BuildModelWindow() {
                             <div className="bmw-srow-empty">No models yet</div>
                         ) : visible.length === 0 ? (
                             <div className="bmw-srow-empty">No sensors match</div>
-                        ) : visible.map(sg => renderSensorListRow(sg, `fg:${no}`))}
+                        ) : (
+                            <SensorSetProvider tags={rows.map(listRowTag)} drop>
+                                <SetPrefixLine className="bmw-list-prefix" testid="list-group-prefix" />
+                                {visible.map(sg => renderSensorListRow(sg, `fg:${no}`))}
+                            </SensorSetProvider>
+                        )}
                     </div>
                 );
             };
@@ -3341,7 +3387,12 @@ export default function BuildModelWindow() {
                     <div className="bmw-list-grp"><i style={{ background: 'var(--text-faint)' }} />{comp}</div>
                     {visible.length === 0
                         ? <div className="bmw-srow-empty">No sensors match</div>
-                        : visible.map(sg => renderSensorListRow(sg, `component:${comp}`))}
+                        : (
+                            <SensorSetProvider tags={rows.map(listRowTag)} drop>
+                                <SetPrefixLine className="bmw-list-prefix" testid="list-group-prefix" />
+                                {visible.map(sg => renderSensorListRow(sg, `component:${comp}`))}
+                            </SensorSetProvider>
+                        )}
                 </div>
             );
         });
@@ -3474,7 +3525,7 @@ export default function BuildModelWindow() {
             <div className="pm-cluster-slider" data-testid="cluster-slider">
                 <div className="pm-cluster-slider-header">
                     <span className="pm-cluster-slider-bound">{fmt(lo)}</span>
-                    <span className="pm-cluster-slider-sensor">{d.criteria}</span>
+                    <span className="pm-cluster-slider-sensor"><SensorInline tag={d.criteria} size="sm" muted /></span>
                     <span className="pm-cluster-slider-bound">{fmt(hi)}</span>
                 </div>
                 <div className="pm-cluster-slider-track">
@@ -3665,16 +3716,19 @@ export default function BuildModelWindow() {
                     {/* Predictors as chips (× removes one) + a dashed
                         "Add…" that opens the multi modal; the target is excluded and the
                         scope line says so. */}
-                    <SensorPickerModal
-                        sensors={allSensors}
-                        getComponent={getComponent}
-                        selected={d.predictors}
-                        excluded={[m.targetSensor ?? '']}
-                        onConfirm={predictors => patchDraft(m, { predictors })}
-                        noun="predictors"
-                        invalid={d.predictors.length === 0}
-                        scope={<>All sensors except the target · {allSensors.filter(s => s !== m.targetSensor).length}</>}
-                    />
+                    {/* The card's target counts in the chips' set, so no chip reads like the sensor printed above it. */}
+                    <SensorSetExtraContext.Provider value={m.targetSensor ? [m.targetSensor] : NO_TAGS}>
+                        <SensorPickerModal
+                            sensors={allSensors}
+                            getComponent={getComponent}
+                            selected={d.predictors}
+                            excluded={[m.targetSensor ?? '']}
+                            onConfirm={predictors => patchDraft(m, { predictors })}
+                            noun="predictors"
+                            invalid={d.predictors.length === 0}
+                            scope={<>All sensors except the target · {allSensors.filter(s => s !== m.targetSensor).length}</>}
+                        />
+                    </SensorSetExtraContext.Provider>
                     {d.predictors.length === 0 && (
                         <div className="f4-req-note">No predictors yet. A Relation model needs at least one.</div>
                     )}
@@ -3797,7 +3851,7 @@ export default function BuildModelWindow() {
                 <button type="button" className="bmw-sets-h" aria-expanded={isOpen} onClick={toggle}>
                     <ChevronRight size={13} className="bmw-sets-chev" aria-hidden="true" />
                     <b>Model settings</b>
-                    {isOpen ? <span className="bmw-sets-sp" /> : <span className="bmw-sets-sum">{settingsSummaryLine(m, d)}</span>}
+                    {isOpen ? <span className="bmw-sets-sp" /> : <SettingsSummary text={settingsSummaryLine(m, d)} parts={settingsSummaryParts(m, d)} />}
                     {missing.length > 0 && <span data-testid="settings-to-fix" className="f4-pill f4-pill--warn">{missing.length} to fix</span>}
                 </button>
                 {isOpen && (
@@ -5211,9 +5265,20 @@ export default function BuildModelWindow() {
 
                 {/* Hidden list: the <aside> is not rendered at all, so the detail pane must be the
                     ONLY column (a leftover "0 1fr" template would put it in the 0px track). */}
-                <div className={`bmw-wb${sidebarCollapsed ? ' bmw-wb--nolist' : ''}`} style={{ gridTemplateColumns: sidebarCollapsed ? 'minmax(0,1fr)' : '300px minmax(0,1fr)' }}>
+                <div className={`bmw-wb${sidebarCollapsed ? ' bmw-wb--nolist' : ''}`} style={{ gridTemplateColumns: sidebarCollapsed ? 'minmax(0,1fr)' : `${listWidth}px minmax(0,1fr)` }}>
                     {!sidebarCollapsed && (
-                        <aside className="bmw-side">
+                        <PaneResizeHandle
+                            width={listWidth}
+                            defaultWidth={LIST_DEFAULT_WIDTH}
+                            onChange={setListWidth}
+                            storageKey={LIST_WIDTH_KEY}
+                            label="Resize the sensor list"
+                            controls="build-model-sensor-list"
+                            testid="list-resize"
+                        />
+                    )}
+                    {!sidebarCollapsed && (
+                        <aside className="bmw-side" id="build-model-sensor-list">
                             <div className="bmw-side-top">
                                 <TrainAllBar
                                     counts={allCounts}
@@ -5256,7 +5321,7 @@ export default function BuildModelWindow() {
                                     </div>
                                 </div>
                             </div>
-                            <div className="bmw-list">{renderLeftList()}</div>
+                            <div className="bmw-list"><SensorSearchContext.Provider value={listHasLongNames ? searchQuery : ''}>{renderLeftList()}</SensorSearchContext.Provider></div>
                             <div className="bmw-leg" data-testid="status-legend">
                                 <span><i style={{ background: 'var(--warn)' }} />Needs input / re-train</span>
                                 <span><i style={{ background: 'var(--danger)' }} />Fix</span>

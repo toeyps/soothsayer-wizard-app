@@ -1,7 +1,8 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/react';
 import type { FailureModel, SensorMetadata, SpecialSensorRecipe } from '../types';
 import ManageSpecialSensors from '../components/windows/ManageSpecialSensors';
+import { longName, restoreNames, stubNamesCut } from './helpers/nameGeometry';
 
 function makeModel(overrides: Partial<FailureModel> = {}): FailureModel {
     return {
@@ -254,5 +255,62 @@ describe('ManageSpecialSensors -- not restored', () => {
         renderList({ recipes: [specialC], formulaRefs: refs, models: [usesC], unrestored: null });
         expect(screen.queryByTestId('not-restored-special C')).toBeNull();
         expect(screen.queryByTestId('not-restored-note-special C')).toBeNull();
+    });
+});
+
+describe('ManageSpecialSensors: the recipe summary with long names', () => {
+    afterEach(() => restoreNames());
+    const long = (n: number) => longName(n);
+    const meta: SensorMetadata[] = [1, 2].map(n => ({ tag: `S${n}`, description: long(n), unit: '', component: '' }));
+    const avg: SpecialSensorRecipe = {
+        kind: 'operation', tag: 'avg1', sourceSensors: ['S1', 'S2'],
+        operationConfig: { mode: 'multi', multiOp: { type: 'sum' }, customName: 'avg1' },
+    };
+    const times: SpecialSensorRecipe = {
+        kind: 'operation', tag: 'x10', sourceSensors: ['S1'],
+        operationConfig: { mode: 'single', singleOp: { type: 'multiply', value: 10 }, customName: 'x10' },
+    };
+    const summary = (tag: string) => screen.getByTestId(`recipe-summary-${tag}`);
+
+    it('fits: plain text, as it always was', () => {
+        renderList({ recipes: [avg], sensorMetadata: meta });
+        expect(summary('avg1').textContent).toBe(`Sum of ${long(1)}, ${long(2)}`);
+        expect(summary('avg1').className).toContain('truncate');
+        expect(summary('avg1').querySelector('[data-name-ref]')).toBeNull();
+    });
+
+    it('short names stay plain, end-cut text even when the line is cut', () => {
+        stubNamesCut();
+        renderList({ recipes: [totalFlow], sensorMetadata: metadata });
+        expect(summary('Boiler total flow').className).toContain('truncate');
+        expect(summary('Boiler total flow').querySelector('[data-name-ref]')).toBeNull();
+    });
+
+    it('cut, several sources: the start they share once, then each one\'s end', () => {
+        stubNamesCut();
+        renderList({ recipes: [avg], sensorMetadata: meta });
+        const s = summary('avg1');
+        expect(s.hasAttribute('data-name-summary')).toBe(true);
+        expect(s.querySelectorAll('[data-name-ref]')).toHaveLength(2);
+        expect(screen.getByTestId('recipe-summary-prefix').textContent).toContain('Crosshead (P-P Trend)');
+        expect(s.textContent!.match(/Crosshead/g)).toHaveLength(1);
+        expect(s.textContent).toContain('SegmentNo 2 - avg');
+    });
+
+    it('cut, one source: the operation after the name never goes', () => {
+        stubNamesCut();
+        renderList({ recipes: [times], sensorMetadata: meta });
+        const s = summary('x10');
+        expect(s.querySelectorAll('[data-name-ref]')).toHaveLength(1);
+        expect(s.textContent).toMatch(/× 10$/);
+    });
+
+    it('cut, a formula keeps its own $TAG text (tag-only names included)', () => {
+        stubNamesCut();
+        const longTag = 'GC12_COM_Crosshead_PPTrend_Vibration_CrossheadSlide11A_SegmentNo1_avg';
+        renderList({ recipes: [{ kind: 'formula', tag: 'f1', formula: `$${longTag} * 2` }], sensorMetadata: [] });
+        const s = summary('f1');
+        expect(s.querySelectorAll('[data-name-ref]')).toHaveLength(1);
+        expect(s.textContent).toBe(`$${longTag} * 2`);
     });
 });

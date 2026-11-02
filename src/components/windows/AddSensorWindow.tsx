@@ -33,6 +33,7 @@ import {
 } from "../../utils/staleSession";
 import type { Invoker } from "../../utils/specialSensorRecompute";
 import { SensorMetaProvider } from '../sensor/SensorLabel';
+import { PaneResizeHandle, readSavedPaneWidth } from '../PaneResizeHandle';
 import {
     blockOperationConfig, editorStateFormula, editorStateToRecipe, type FormulaEditorState,
 } from "../../utils/quickBuild";
@@ -40,6 +41,9 @@ import {
 /** How long a deleted special sensor can still be brought back. Nothing has
  *  left this window yet during that time -- see `commitDeleteRaw`. */
 const UNDO_WINDOW_MS = 8000;
+/** The sensor list pane (DESIGN_SYSTEM §4 rule 7): where its width is saved; it starts as the stylesheet says. */
+const PANE_WIDTH_KEY = 'wizard.specialSensorPaneWidth';
+const paneDefaultFor = (windowWidth: number) => (windowWidth <= 860 ? 230 : 320);
 
 const tagKey = (tag: string) => tag.trim().toLowerCase();
 
@@ -241,6 +245,14 @@ export default function AddSensorWindow() {
     // only; nothing is built from them until the user commits Quick build's text into the
     // formula. Cleared on Add, on Edit and with "Clear picks".
     const [quickSel, setQuickSel] = useState<string[]>([]);
+    // 0 = never moved on this PC: the stylesheet's width.
+    const [paneWidth, setPaneWidth] = useState(() => readSavedPaneWidth(PANE_WIDTH_KEY, 0));
+    const [paneDefaultWidth, setPaneDefaultWidth] = useState(() => paneDefaultFor(window.innerWidth));
+    useEffect(() => {
+        const onResize = () => setPaneDefaultWidth(paneDefaultFor(window.innerWidth));
+        window.addEventListener('resize', onResize);
+        return () => window.removeEventListener('resize', onResize);
+    }, []);
     // What the dashboard chart is currently plotting. Distinct from
     // `quickSel` above, which is this window's own picks (deliberately
     // left empty on open -- see the sensors-data handler).
@@ -1735,10 +1747,24 @@ export default function AddSensorWindow() {
             <div
                 className="special-sensor-body"
                 aria-busy={adding || undefined}
-                style={{ display: activeTab === 'create' ? 'grid' : 'none', ...(adding ? { pointerEvents: 'none', opacity: 0.7 } : null) }}
+                style={{
+                    display: activeTab === 'create' ? 'grid' : 'none',
+                    // Never moved: the stylesheet's width (320 px, 230 px under 860 px).
+                    ...(paneWidth ? { gridTemplateColumns: `${paneWidth}px minmax(0, 1fr)` } : null),
+                    ...(adding ? { pointerEvents: 'none', opacity: 0.7 } : null),
+                }}
             >
+                <PaneResizeHandle
+                    width={paneWidth || paneDefaultWidth}
+                    defaultWidth={paneDefaultWidth}
+                    onChange={setPaneWidth}
+                    storageKey={PANE_WIDTH_KEY}
+                    label="Resize the sensor list"
+                    controls="add-sensor-list-pane"
+                    testid="ss-list-resize"
+                />
                 {/* Left: the sensor list -- a click PICKS a sensor for Quick build, `$` inserts it at the caret. */}
-                <div className={`special-sensor-left${editLocked ? ' is-off' : ''}`}>
+                <div id="add-sensor-list-pane" className={`special-sensor-left${editLocked ? ' is-off' : ''}`}>
                     {loading ? (
                         <div className="flex items-center justify-center h-full" style={{ color: 'var(--text-secondary)' }}>Loading...</div>
                     ) : (

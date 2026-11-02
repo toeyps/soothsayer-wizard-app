@@ -3,6 +3,7 @@ import { render, screen, fireEvent, cleanup, within } from '@testing-library/rea
 import { CARD_NO_ROWS_TEXT, CARD_NO_TRAIN_TEXT, RunningConditionCard } from '../components/windows/RunningConditionCard';
 import { SensorMetaProvider } from '../components/sensor/SensorLabel';
 import type { TestPeriod, WorkspaceSensorFilter } from '../types';
+import { longName, restoreNames, stubNamesCut } from './helpers/nameGeometry';
 
 afterEach(cleanup);
 
@@ -579,5 +580,39 @@ describe('RunningConditionCard — Scoring chips ("just score it", 2026-10-10)',
         const chip = screen.getByTestId('rc-card-test-chip');
         expect(chip.className).not.toContain('rcc-chip--bad');
         expect(chip.textContent).toBe('S1 · 2026/05/01 00:00 → 2026/05/31 23:59');
+    });
+});
+
+describe('RunningConditionCard: long sensor names', () => {
+    afterEach(() => restoreNames());
+    const show = (metadata: { tag: string; description: string }[], sensor: string) => render(
+        <SensorMetaProvider metadata={metadata.map(m => ({ unit: '', component: '', ...m }))}>
+            <RunningConditionCard
+                state="set" periods={[{ id: 'p', start: '2026-01-01T00:00', end: '2026-02-01T00:00' }]}
+                filters={[{ id: 'f', sensor, operation: 'greater_than', value1: '5', value2: '' } as WorkspaceSensorFilter]}
+                headers={[sensor]} getDesc={() => ''} getUnit={() => 'kW'} onOpen={() => {}}
+            />
+        </SensorMetaProvider>,
+    );
+
+    it('fits: the whole name', () => {
+        show([{ tag: 'T', description: longName(1) }], 'T');
+        expect(screen.getByTestId('rc-card-cond').querySelector('.sl-desc')!.textContent).toBe(longName(1));
+        expect(screen.getByTestId('rc-card-cond').querySelector('.sl-split')).toBeNull();
+    });
+
+    it('cut: the name keeps its end, the words and the value stay', () => {
+        stubNamesCut();
+        show([{ tag: 'T', description: longName(1) }], 'T');
+        const cond = screen.getByTestId('rc-card-cond');
+        expect(cond.querySelector('.sl-split [data-name-part="tail"]')!.textContent).toContain('SegmentNo 1 - avg');
+        expect(cond.textContent).toMatch(/^Running when /);
+        expect(cond.textContent).toMatch(/is above 5 kW$/);
+    });
+
+    it('a tag-only sensor follows the same rule', () => {
+        stubNamesCut();
+        show([], longName(2));
+        expect(screen.getByTestId('rc-card-cond').querySelector('.sl-split [data-name-part="tail"]')!.textContent).toContain('SegmentNo 2 - avg');
     });
 });

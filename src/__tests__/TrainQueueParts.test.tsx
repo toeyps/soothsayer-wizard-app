@@ -20,6 +20,7 @@ import { SensorMetaContext, buildSensorLookup } from '../components/sensor/senso
 import { summarizeTrainRun, TRAIN_NEEDS_RUNNING_CONDITION, TRAIN_STALE_MESSAGE } from '../utils/trainQueue';
 import type { TrainQueueItem, TrainRun } from '../types/trainQueue';
 import { sameModelFitProps, type ModelFitPageProps } from '../components/windows/workbench/ModelFitPage';
+import { longName, restoreNames, stubNamesCut } from './helpers/nameGeometry';
 
 /*
  * Train sensor / Train all with a queue —
@@ -673,5 +674,44 @@ describe('shortTrainError (run details show ONE line, never a raw multi-line dum
         const err = screen.getByTestId('train-row-i1').querySelector('.tq-err')!;
         expect(err.textContent).toBe('boom');
         expect(err.getAttribute('title')).toBe(full);
+    });
+});
+
+describe('TrainAllModal: long sensor names', () => {
+    afterEach(() => restoreNames());
+    const base = () => ({
+        groups: GROUPS, includeUpToDate: false,
+        onIncludeUpToDate: vi.fn(), onClose: vi.fn(), onStart: vi.fn(), onCancelRun: vi.fn(), onFix: vi.fn(),
+        onOpenModel: vi.fn(), onRetry: vi.fn(), onTrainNotStarted: vi.fn(), onRemoveFromRun: vi.fn(),
+    });
+    const rows = (tag: (n: number) => string): TrainRowModel[] => [1, 2].map(n => ({ id: `m${n}`, kind: 'individual', tag: tag(n), groupNos: [1], plan: { kind: 'ready' } }));
+    const info = buildSensorLookup(null, [1, 2].map(n => ({ tag: `L${n}`, description: longName(n), unit: '', component: '' })) as never);
+
+    it('short names: no shared line', () => {
+        stubNamesCut();
+        withMeta(<TrainAllModal view="preflight" run={null} summary={null} rows={ROWS} {...base()} />);
+        expect(screen.queryByTestId('train-group-prefix')).toBeNull();
+    });
+
+    it('long names that fit print whole', () => {
+        render(<SensorMetaContext.Provider value={info}><TrainAllModal view="preflight" run={null} summary={null} rows={rows(n => `L${n}`)} {...base()} /></SensorMetaContext.Provider>);
+        expect(screen.queryByTestId('train-group-prefix')).toBeNull();
+        expect(screen.getByTestId('train-row-m1').textContent).toContain(longName(1));
+    });
+
+    it('cut: the group prints the shared start once and each row its own end', () => {
+        stubNamesCut();
+        render(<SensorMetaContext.Provider value={info}><TrainAllModal view="preflight" run={null} summary={null} rows={rows(n => `L${n}`)} {...base()} /></SensorMetaContext.Provider>);
+        expect(screen.getAllByTestId('train-group-prefix')).toHaveLength(1);
+        expect(screen.getByTestId('train-group-prefix').textContent).toContain('Crosshead (P-P Trend)');
+        expect(screen.getByTestId('train-row-m1').textContent).toContain('SegmentNo 1 - avg');
+        expect(screen.getByTestId('train-row-m1').textContent).not.toContain('Crosshead (P-P Trend)');
+    });
+
+    it('a tag-only project follows the same rule', () => {
+        stubNamesCut();
+        render(<TrainAllModal view="preflight" run={null} summary={null} rows={rows(longName)} {...base()} />);
+        expect(screen.getByTestId('train-group-prefix')).toBeTruthy();
+        expect(screen.getByTestId('train-row-m2').querySelector('.sl-desc')!.textContent).toBe('SegmentNo 2 - avg');
     });
 });

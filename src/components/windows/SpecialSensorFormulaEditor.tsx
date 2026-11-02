@@ -5,7 +5,7 @@ import {
 import { AlertTriangle, ChevronDown, Lock } from 'lucide-react';
 import AnchoredPopover, { type PopoverAnchorRect } from '../AnchoredPopover';
 import { PickerList, SensorPickerMulti, pickerMaxHeight, usePopoverDismiss } from '../sensor/SensorPicker';
-import { SensorInline } from '../sensor/SensorLabel';
+import { SensorInline, SensorSetProvider, SetPrefixLine } from '../sensor/SensorLabel';
 import { fmtNum, sensorHaystack, sensorTitle, useSensorLookup } from '../sensor/sensorInfo';
 import type { SpecialSensorRecipe } from '../../types';
 import type { FormulaIssue } from '../../types/formula';
@@ -606,6 +606,8 @@ const SpecialSensorFormulaEditor = forwardRef<FormulaEditorHandle, Props>(functi
                 {!block && used.length > 0 && (
                     <div className="fx-used" data-testid="formula-sensors">
                         <span className="fx-cap">Sensors</span>
+                        <SensorSetProvider tags={used.filter(r => isKnown(r.name)).map(r => r.name)} drop>
+                        <SetPrefixLine className="pk-chip-prefix" testid="formula-sensors-prefix" />
                         {used.map(r => (isKnown(r.name) ? (
                             <button
                                 key={r.name}
@@ -628,6 +630,7 @@ const SpecialSensorFormulaEditor = forwardRef<FormulaEditorHandle, Props>(functi
                                 <AlertTriangle size={11} /> {r.name} · not in this dataset · Replace…
                             </button>
                         )))}
+                        </SensorSetProvider>
                     </div>
                 )}
 

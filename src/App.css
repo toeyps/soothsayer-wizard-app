@@ -1725,6 +1725,8 @@ body {
         grid-template-columns: minmax(0, 1fr);
     }
 }
+/* The start most names here share, once, above the cards, while a name is cut. */
+.pm-submodels-prefix { grid-column: 1 / -1; margin: -4px 2px -6px; font-size: 11px; color: var(--text-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pm-submodels-stale-banner {
     display: flex;
     align-items: center;
@@ -1927,10 +1929,13 @@ body {
     font-weight: 600;
     color: var(--text-primary, #e2e8f0);
 }
+/* The criteria sensor is a label (description first). */
 .pm-cluster-slider-sensor {
-    font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: 0.6px;
+    min-width: 0;
+    overflow: hidden;
+    display: inline-flex;
+    justify-content: center;
+    line-height: 15px;
     opacity: 0.65;
 }
 
@@ -3390,7 +3395,7 @@ body {
    class it can (pills, tabs, readouts, chips, the sticky footer) — these
    rules cover the two-pane grid, the left sensor list, the collapsible
    "Model settings" section and the Running Condition edit modal. */
-.bmw-wb { flex: 1; min-height: 0; display: grid; }
+.bmw-wb { flex: 1; min-height: 0; display: grid; position: relative; }
 /* Sensor list hidden: the detail pane is the only column (the component also sets it inline). */
 .bmw-wb--nolist { grid-template-columns: minmax(0, 1fr); }
 .bmw-side { border-right: 1px solid var(--border); display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
@@ -3414,6 +3419,8 @@ body {
 .bmw-srow--sel { background: var(--accent-muted); border-left-color: var(--accent-color); }
 .bmw-srow:focus-visible { outline: 2px solid var(--accent-hi); outline-offset: -2px; }
 .bmw-srow-empty { padding: 8px 14px 10px; font-size: 0.72rem; color: var(--text-faint); font-style: italic; }
+/* The name start every row of a list group shares, once under the group's header, while a row is cut. */
+.bmw-list-prefix { padding: 0 14px 5px 28px; margin-top: -2px; font-size: 10.5px; color: var(--text-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 .bmw-detail { display: flex; flex-direction: column; min-height: 0; container-type: inline-size; }
 .bmw-dhead { padding: 14px 20px 12px; border-bottom: 1px solid var(--border); display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 12px; align-items: center; }
@@ -3431,6 +3438,16 @@ body {
 .bmw-sets-chev { color: var(--text-faint); transition: transform 0.15s; display: inline-flex; flex-shrink: 0; }
 .bmw-sets--open .bmw-sets-chev { transform: rotate(90deg); }
 .bmw-sets-sum { color: var(--text-secondary); font-family: var(--mono); font-size: 0.7rem; flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Cut: the name and the Y sensor shrink, the counts and the data scope stay whole. */
+.bmw-sets-sum--parts { display: flex; align-items: baseline; }
+.bmw-sets-sum--parts > span { white-space: nowrap; }
+.bmw-sum-name { flex: 0 1 auto; min-width: 60px; overflow: hidden; text-overflow: ellipsis; }
+.bmw-sum-y { flex: 0 100 auto; min-width: 120px; display: inline-flex; align-items: baseline; gap: 4px; overflow: hidden; }
+.bmw-sum-y .sl-inline-wrap { min-width: 0; flex: 0 1 auto; }
+.bmw-sum-y .sl-desc { font-family: Inter, system-ui, sans-serif; }
+.bmw-sum-fix { flex: 0 0 auto; }
+.bmw-sum-sep { white-space: pre; }
+.bmw-sets-sum--parts ~ .f4-pill { flex-shrink: 0; }
 .bmw-sets-sp { flex: 1; }
 /* MODEL SETTINGS — ONE form for the three kinds (SPEC docs/design/handoff/model-settings-layout,
    2026-10-12). One grid of three equal columns (two on a narrow detail pane, one on a very
@@ -4398,6 +4415,7 @@ body {
 }
 
 .special-sensor-body {
+    position: relative;
     flex: 1;
     min-height: 0;
     grid-template-columns: 320px minmax(0, 1fr);
@@ -4533,6 +4551,8 @@ body {
     color: var(--text-primary);
     background: var(--surface-hi);
 }
+.special-sensor-window { position: relative; flex: none; }
+.special-sensor-line { position: absolute; left: 0; right: 0; }
 .special-sensor-explorer-empty {
     font-size: 0.72rem;
     color: var(--text-faint);
@@ -4602,7 +4622,7 @@ body {
 .fx-chip:hover { border-color: var(--accent-line); }
 .fx-chip.unk { color: var(--danger); border: 1px dashed var(--danger); background: var(--danger-muted); font-family: var(--mono); font-size: 11px; }
 .fx-chip:disabled { cursor: default; }
-.fx-chip .sl-inline-wrap { max-width: 240px; }
+.fx-chip .sl-inline-wrap { max-width: 240px; overflow: hidden; }
 /* check line */
 .fx-check { margin-top: 10px; padding: 8px 14px 10px; font-size: 12px; display: flex; gap: 8px; align-items: flex-start; border-top: 1px solid var(--border); flex-wrap: wrap; }
 .fx-check.ok { color: var(--ok); }
@@ -5708,7 +5728,9 @@ body {
 .sl--muted .sl-split--shared > [data-name-part="head"],
 .sl--muted .sl-head--shared { color: var(--text-faint); }
 /* A cut head that would show under ~8 characters is dropped: "… tail". */
-.sl-split[data-short] > [data-name-part="head"] { display: none; }
+/* It stays in the flow, invisible, after the tail: the name's own width never changes with its form, so a name in a
+   shrink-to-fit row cannot change its room by being shortened (which made it flip between forms for ever). */
+.sl-split[data-short] > [data-name-part="head"] { order: 1; visibility: hidden; }
 .sl-split[data-short] > [data-name-part="tail"]::before { content: '…'; }
 .sl-split--pre[data-short] > [data-name-part="tail"]::before { content: ' …'; }
 /* Two lines: start + head on line 1, the end on line 2. */
@@ -5975,7 +5997,10 @@ body {
     border: 1px solid var(--border);
     font-size: 11.5px;
 }
-.pk-chip .sl-inline-wrap { max-width: 240px; }
+/* A tag beside a name that is held open must never stick out over the next chip or "Add…": the name gets the room. */
+.pk-chip .sl-inline-wrap { max-width: 240px; overflow: hidden; }
+.pk-chip .sl-inline:has(.sl-split) > .sl-tag,
+.fx-chip .sl-inline:has(.sl-split) > .sl-tag { min-width: 0; flex-shrink: 1000; overflow: hidden; text-overflow: ellipsis; }
 .pk-chip--locked { padding-right: 8px; }
 .pk-chip-prefix { flex-basis: 100%; min-width: 0; font-size: 10.5px; color: var(--text-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pk-chip-x {
@@ -6276,6 +6301,14 @@ body {
     text-align: left;
     cursor: pointer;
 }
+/* A model row that is really cut: its own name, clustering's Y sensor; both shrink. */
+.fg-model-text { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 8px; overflow: hidden; color: var(--text-secondary); }
+.fg-model-text > .sl-inline-wrap { min-width: 0; }
+.fg-model-name { flex: 0 1 auto; min-width: 40px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fg-model-y { flex: 0 100 auto; min-width: 60px; display: inline-flex; align-items: baseline; gap: 4px; overflow: hidden; }
+.fg-model-y b { font: 600 10px var(--mono); color: var(--text-faint); }
+.fg-model-y .sl-inline-wrap { min-width: 0; }
+.fg-card-prefix { padding: 1px 0 1px 15px; font-size: 10.5px; color: var(--text-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .fg-srow-plain {
     flex: 1;
     min-width: 0;
@@ -6435,12 +6468,26 @@ body {
 /* A short note after the sensor labels of a chart subtitle ("· 1 h averages · coloured by score"):
    it keeps its width, the labels before it ellipsise. */
 .wb2-sub-sl > .wb2-sub-note { flex-shrink: 0; white-space: nowrap; }
+/* Chart subtitle with sensor names: it never runs off the card, its names shrink head-first (rule 1). */
+.wb2-card-h > .wb2-card-s:has(> .wb2-sub-sl) { min-width: 0; overflow: hidden; white-space: nowrap; }
+.wb2-pair-vs { flex: none; }
+/* "A vs B": the start both share, once, muted, only while a name is cut; the names and the note give way before it. */
+.wb2-pair-prefix { flex: 0 1000 auto; min-width: 40px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-faint); }
+.wb2-sub-sl:has(> .wb2-pair-prefix) > .sl-inline-wrap { flex: 0 0 auto; max-width: 48%; }
+.wb2-sub-sl:has(.sl-split) > .wb2-sub-note { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .rcc-chip--sl { display: inline-flex; align-items: baseline; gap: 5px; min-width: 0; max-width: 100%; }
 .rcc-chip--sl .sl-inline-wrap { max-width: 220px; }
 .rcc-rest { flex-shrink: 0; font-family: var(--mono); white-space: nowrap; }
 
 /* Special Sensors window: Manage rows. */
 .manage-ss-label { display: grid; }
+/* Manage, a recipe that is really cut: every sensor name keeps its end; words and operators never shrink. */
+.rsum { align-items: baseline; min-width: 0; overflow: hidden; white-space: nowrap; }
+.rsum-t { flex: none; white-space: pre; }
+.rsum-end { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.rsum-ref { display: inline-flex; min-width: 0; flex: 0 1 auto; }
+.rsum-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: pre; }
+.rsum-pre { flex: 0 1000 auto; min-width: 24px; overflow: hidden; text-overflow: ellipsis; color: var(--text-faint); }
 
 /* =====================================================================
    Failure groups as Import step 3
@@ -6684,6 +6731,8 @@ body {
 .tq-grp { display: grid; gap: 6px; }
 .tq-grpt { margin-top: 4px; display: flex; gap: 8px; align-items: center; font-size: 10.5px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-faint); }
 .tq-grpt i { width: 7px; height: 7px; border-radius: 2px; display: inline-block; }
+/* The start every row of a group shares, once under its header, while a row is cut. */
+.tq-grp-prefix { margin: 0 0 -2px 15px; font-size: 10.5px; color: var(--text-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tq-qrow { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; gap: 10px; align-items: center; padding: 7px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-primary); }
 .tq-qrow-name { min-width: 0; }
 .tq-nm { min-width: 0; display: flex; font-size: 12px; font-weight: 600; }
@@ -6737,6 +6786,10 @@ body {
 .rcc-line-item b { color: var(--text-primary); font-weight: 600; }
 .rcc-line-item .tpe-sw { flex-shrink: 0; }
 .rcc-line-item:empty { display: none; }
+/* A sensor name that is really cut: Train / Scoring stay whole, the condition's name gives way first. */
+.rcc-line-main:has(.sl-split) > [data-testid="rc-card-time"],
+.rcc-line-main:has(.sl-split) > [data-testid="rc-card-test"] { flex: 0 0 auto; }
+.rcc-line-main:has(.sl-split) > [data-testid="rc-card-cond"] { flex: 0 1000 auto; min-width: 140px; }
 .rcc-line-sep { width: 1px; height: 16px; background: var(--border-strong); flex-shrink: 0; }
 .rcc-line-dt { font-size: 11px; color: var(--text-faint); }
 .rcc-line-warn { color: var(--warn); }
@@ -7022,6 +7075,8 @@ fieldset.bmw-sets-body { margin: 0; border: 0; min-width: 0; }
 .ex-hint b { color: var(--text-primary); font-weight: 600; }
 .ex-hint--faint { color: var(--text-faint); }
 .ex-mono { font-family: var(--mono); font-size: 11.5px; color: var(--text-primary); }
+/* A model key or file name: shrinks when there is no room, then cut in the middle (KeyText). */
+.ex-key-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: pre; }
 .ex-key { margin-left: 5px; font-size: 10.5px; color: var(--text-faint); }
 .ex-dest { display: flex; align-items: center; gap: 10px; min-width: 0; min-height: 32px; color: var(--text-secondary); }
 .ex-dest--empty { color: var(--warn); }
@@ -7032,7 +7087,7 @@ fieldset.bmw-sets-body { margin: 0; border: 0; min-width: 0; }
 .ex-kind { display: inline-flex; align-items: center; gap: 6px; }
 .ex-kind b { color: var(--text-primary); }
 .ex-disc { justify-self: start; display: inline-flex; align-items: center; gap: 4px; padding: 0; border: 0; border-radius: 4px; background: none; font: inherit; font-size: 11.5px; font-weight: 600; color: var(--accent-hi); cursor: pointer; }
-.ex-tree { display: grid; gap: 2px; max-height: 260px; overflow: auto; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--card-bg); }
+.ex-tree { display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px; max-height: 260px; overflow: auto; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--card-bg); }
 .ex-t { display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 24px; font-size: 12px; color: var(--text-secondary); }
 .ex-t svg { flex: none; color: var(--text-faint); }
 .ex-t--root svg { color: var(--accent-hi); }
@@ -7041,11 +7096,13 @@ fieldset.bmw-sets-body { margin: 0; border: 0; min-width: 0; }
 .ex-t--l3 { padding-left: 54px; }
 .ex-t--btn { width: 100%; border: 0; border-radius: 6px; background: none; font: inherit; text-align: left; cursor: pointer; }
 .ex-t--btn:hover, .ex-t--on { background: var(--hover-bg); }
-.ex-t-note { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--text-faint); }
-.ex-t-peek { margin-left: auto; font-size: 11px; font-weight: 600; color: var(--text-faint); }
+/* The note gives way before the file name beside it. */
+.ex-t-note { flex: 0 100000 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--text-faint); }
+.ex-t-peek { flex: none; margin-left: auto; font-size: 11px; font-weight: 600; color: var(--text-faint); }
 .ex-t--on .ex-t-peek { color: var(--accent-hi); }
 .ex-t-sensor { min-width: 0; display: flex; }
-.ex-file { flex: none; color: var(--text-primary); }
+.ex-file { flex: 0 1 auto; color: var(--text-primary); }
+.ex-pair { min-width: 0; }
 .ex-kb-s { width: 18px; height: 18px; font-size: 0.56rem; }
 .ex-peek { display: grid; gap: 6px; }
 .ex-peek-h { display: flex; align-items: center; justify-content: space-between; gap: 8px; }

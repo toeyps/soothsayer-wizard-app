@@ -481,7 +481,7 @@ function SheetBody({
             <div className="fg-sheet-head">
                 <div className="fg-sheet-title">
                     <div className="fg-sheet-kicker">Failure groups</div>
-                    <SensorLabel tag={tag} info={info} className="fg-sheet-sl" />
+                    <SensorLabel tag={tag} info={info} className="fg-sheet-sl" wrap />
                 </div>
                 <div className="fg-sheet-step">
                     <button type="button" className="row-action-btn" title="Previous sensor" aria-label="Previous sensor" disabled={!canStepPrev} onClick={() => onStep(-1)}>‹</button>

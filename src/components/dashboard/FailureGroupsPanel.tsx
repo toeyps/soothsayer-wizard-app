@@ -2,8 +2,10 @@ import { useState, useEffect, useMemo } from 'react';
 import { groupDeleteText } from './groupDeleteText';
 import { Plus, Trash2, Play, ChevronRight, Check, FolderPlus } from 'lucide-react';
 import { FailureGroup, FailureModel, FailureGroupStateSlice, ModelKind, SensorMetadata, SpecialSensorRecipe } from '../../types';
-import { SensorLabel } from '../sensor/SensorLabel';
-import { SensorMetaContext, sensorHaystack, sensorTitle, useLayeredSensorLookup } from '../sensor/sensorInfo';
+import { SensorInline, SensorLabel, SensorSetProvider, SetPrefixLine } from '../sensor/SensorLabel';
+import { useLineCut } from '../../hooks/useNameFit';
+import { NAME_TAIL_MAX, displayedName } from '../../utils/sensorNames';
+import { SensorMetaContext, sensorHaystack, sensorTitle, useLayeredSensorLookup, useSensorLookup } from '../sensor/sensorInfo';
 import { groupDeleteCounts, groupModelsBySensor, type SensorModelGroup } from '../../utils/modelGrouping';
 import { MODEL_KIND_LABEL } from '../../utils/modelNames';
 import type { RunningConditionFg } from '../../utils/runningCondition';
@@ -56,6 +58,44 @@ interface FailureGroupsPanelProps {
 
 // The same duplicate rule as the Dashboard's own group writers and Import step 3.
 const isDuplicateName = isDuplicateFailureGroupName;
+
+/** A model row of a sensor line. Today's "name (tag)", end-cut as it always was, unless its sensor has a long name
+ *  AND the line is really cut: the sensor line above already names the sensor, so the row prints the model's own
+ *  name, clustering adds its Y sensor (the one sensor the line above does not show), and a model with no name of
+ *  its own prints its sensor, cut by rule 1. */
+function FgModelText({ model, text }: { model: FailureModel; text: string }) {
+    const [ref, cut] = useLineCut(text);
+    const lookup = useSensorLookup();
+    const named = (model.kind === 'clustering' ? (model.ySensor || model.xSensor) : model.targetSensor) ?? '';
+    const longName = named.length > NAME_TAIL_MAX || displayedName(lookup(named)).length > NAME_TAIL_MAX;
+    if (!cut || !longName) {
+        return (
+            <span ref={ref} style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--text-secondary)' }}>
+                {text}
+            </span>
+        );
+    }
+    const key = model.kind === 'clustering' ? model.xSensor : model.targetSensor;
+    const target = model.kind === 'clustering' ? (model.ySensor || model.xSensor) : model.targetSensor;
+    const name = model.name.trim();
+    const own = name && name !== target ? name : '';
+    return (
+        <span ref={ref} className="fg-model-text" title={text}>
+            {own
+                ? <span className="fg-model-name">{own}</span>
+                : target ? <SensorInline tag={target} size="sm" muted /> : <span className="fg-model-name">{text}</span>}
+            {own && model.kind === 'clustering' && model.ySensor && model.ySensor !== key && (
+                <span className="fg-model-y" data-testid="fg-model-y"><b>Y</b><SensorInline tag={model.ySensor} size="sm" muted /></span>
+            )}
+        </span>
+    );
+}
+
+/** The sensor a sensor line names ('' = a model with no sensor yet). */
+const sensorGroupTag = (sg: SensorModelGroup): string => {
+    const first = sg.models[0];
+    return (first && (first.kind === 'clustering' ? first.xSensor : first.targetSensor)) || '';
+};
 
 /**
  * Group-centric view for the Dashboard's Sensor panel — Failure Groups tab.
@@ -180,9 +220,7 @@ export default function FailureGroupsPanel({
             >
                 {model.kind.charAt(0).toUpperCase()}
             </div>
-            <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--text-secondary)' }}>
-                {modelDisplayLabel(model)}
-            </span>
+            <FgModelText model={model} text={modelDisplayLabel(model)} />
             <button
                 className="fg-icon-btn fg-icon-btn-danger"
                 title="Delete model"
@@ -226,7 +264,7 @@ export default function FailureGroupsPanel({
                         <ChevronRight size={11} style={{ flexShrink: 0, transform: open ? 'rotate(90deg)' : undefined, transition: 'transform .12s' }} />
                         {/* The stacked label, row metrics matching the Sensor tab rows exactly. */}
                         {info && keyTag
-                            ? <SensorLabel tag={keyTag} info={info} />
+                            ? <SensorLabel tag={keyTag} info={info} wrap />
                             : <span className="fg-srow-plain">{label}</span>}
                     </button>
                     {kinds.map(k => {
@@ -510,7 +548,10 @@ export default function FailureGroupsPanel({
                                     </div>
                                 ) : (
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
-                                        {sensorGroups.map(sg => renderSensorRow(group.no, sg))}
+                                        <SensorSetProvider tags={sensorGroups.map(sensorGroupTag)} drop>
+                                            <SetPrefixLine className="fg-card-prefix" testid="fg-card-prefix" />
+                                            {sensorGroups.map(sg => renderSensorRow(group.no, sg))}
+                                        </SensorSetProvider>
                                     </div>
                                 )}
                             </div>
@@ -538,7 +579,10 @@ export default function FailureGroupsPanel({
                                 <div style={{ color: 'var(--text-faint)', fontStyle: 'italic' }}>No models yet</div>
                             ) : (
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
-                                    {notInGroupVisible.sensorGroups.map(sg => renderSensorRow(0, sg))}
+                                    <SensorSetProvider tags={notInGroupVisible.sensorGroups.map(sensorGroupTag)} drop>
+                                        <SetPrefixLine className="fg-card-prefix" testid="fg-card-prefix" />
+                                        {notInGroupVisible.sensorGroups.map(sg => renderSensorRow(0, sg))}
+                                    </SensorSetProvider>
                                 </div>
                             )}
                             <div style={{ marginTop: '4px', fontSize: '0.65rem', color: 'var(--text-faint)', lineHeight: 1.4 }}>

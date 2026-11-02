@@ -1,7 +1,8 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import SensorExplorer from '../components/windows/SensorExplorer';
 import type { SensorMetadata } from '../types';
+import { longName, restoreNames, stubNamesCut } from './helpers/nameGeometry';
 
 const sensorMetadata: SensorMetadata[] = [
     { tag: 'TAG1', description: 'Pump Pressure', unit: 'bar', component: 'Pump' },
@@ -112,5 +113,51 @@ describe('SensorExplorer', () => {
     it('reflects the controlled searchTerm value in the input', () => {
         render(<SensorExplorer {...makeProps({ searchTerm: 'abc' })} />);
         expect((screen.getByPlaceholderText('Search description, tag, unit or component…') as HTMLInputElement).value).toBe('abc');
+    });
+});
+
+describe('SensorExplorer: long sensor names', () => {
+    afterEach(() => restoreNames());
+    const many = (n: number) => Array.from({ length: n }, (_, i) => `LONG_${i}`);
+
+    it('a short list renders every row in the normal flow, with no window', () => {
+        render(<SensorExplorer {...makeProps()} />);
+        fireEvent.click(screen.getByText('Pump'));
+        expect(screen.queryByTestId('explorer-window')).toBeNull();
+        expect(document.querySelectorAll('.special-sensor-row')).toHaveLength(3);
+    });
+
+    it('a group of long names is a set: while cut, the rows print the start they share muted and keep their end', () => {
+        stubNamesCut();
+        const meta: SensorMetadata[] = [1, 2].map(n => ({ tag: `T${n}`, description: longName(n), unit: '', component: 'Crosshead' }));
+        render(<SensorExplorer {...makeProps({ sensors: ['T1', 'T2'], sensorMetadata: meta })} />);
+        fireEvent.click(screen.getByText('Crosshead'));
+        const row = document.querySelector('.special-sensor-row')!;
+        expect(row.querySelector('.sl-split--shared [data-name-part="head"]')!.textContent).toContain('Crosshead (P-P Trend)');
+        expect(row.querySelector('[data-name-part="tail"]')!.textContent).toContain('SegmentNo 1 - avg');
+    });
+
+    it('tag-only sensors with no component are a set too', () => {
+        stubNamesCut();
+        render(<SensorExplorer {...makeProps({ sensors: [longName(1), longName(2)], sensorMetadata: null })} />);
+        const name = document.querySelector('.special-sensor-row .sl-desc')!;
+        expect(name.querySelector('.sl-head--shared')!.textContent).toContain('Crosshead (P-P Trend)');
+        expect(name.textContent).toBe(longName(1));
+    });
+
+    it('over 150 lines only the lines in view are rendered, and scrolling moves them', () => {
+        const sensors = many(4000);
+        render(<SensorExplorer {...makeProps({ sensors, sensorMetadata: null })} />);
+        expect(screen.getByTestId('explorer-window')).toBeTruthy();
+        const first = document.querySelectorAll('.special-sensor-row');
+        expect(first.length).toBeGreaterThan(0);
+        expect(first.length).toBeLessThan(100);
+        expect(screen.getByText('LONG_0')).toBeTruthy();
+        const list = document.querySelector('.special-sensor-explorer-list') as HTMLElement;
+        Object.defineProperty(list, 'scrollTop', { configurable: true, value: 46 * 2000 });
+        fireEvent.scroll(list);
+        expect(screen.queryByText('LONG_0')).toBeNull();
+        expect(screen.getByText('LONG_2000')).toBeTruthy();
+        expect(document.querySelectorAll('.special-sensor-row').length).toBeLessThan(100);
     });
 });
