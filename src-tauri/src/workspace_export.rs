@@ -930,8 +930,11 @@ pub fn build_plan(
         // `sensor` / `y_sensor` — for clustering the Y sensor, even though the
         // model belongs to (and takes its component from) the X sensor.
         let stem_tag = if kind == Kind::Clustering { &columns[1] } else { &key_tag };
+        // The counter is keyed case-insensitively: the key is a file name, and
+        // `ABC-I1` + `abc-I1` would be one file on Windows. The key itself keeps
+        // the tag's own casing (`ABC-I1`, `abc-I2`). The sanitized stem is ASCII.
         let stem = format!("{}-{}", sanitize_key_tag(stem_tag), kind.letter());
-        let counter = key_counters.entry(stem.clone()).or_insert(0);
+        let counter = key_counters.entry(stem.to_ascii_lowercase()).or_insert(0);
         *counter += 1;
         let key = format!("{stem}{counter}");
 
@@ -1928,6 +1931,58 @@ mod tests {
         assert_eq!(keys, ["A_B-I1", "A_B-I2"]);
     }
 
+    /// `data()`'s columns plus the given extra ones (value = i + 100 × column
+    /// position), and a request that knows them.
+    fn data_and_request_with_tags(tags: &[&str], models: Vec<ExportModelSpec>) -> (ColumnarData, WorkspaceExportRequest) {
+        let base = data();
+        let n = base.timestamps.len();
+        let mut headers = base.headers.clone();
+        let mut columns = base.columns.clone();
+        for (c, tag) in tags.iter().enumerate() {
+            headers.push((*tag).to_string());
+            columns.push((0..n).map(|i| 100.0 * (c + 1) as f64 + i as f64).collect());
+        }
+        let mut req = request(models);
+        req.sensor_meta.extend(tags.iter().map(|t| meta(t, "Gas Generator")));
+        (ColumnarData::from_parts(headers, base.timestamps.clone(), columns), req)
+    }
+
+    fn planned_keys(tags: &[&str], models: Vec<ExportModelSpec>) -> Vec<String> {
+        let (d, req) = data_and_request_with_tags(tags, models);
+        build_plan(&d, &derived(), &req).unwrap().plan.models.iter().map(|m| m.key.clone()).collect()
+    }
+
+    #[test]
+    fn tags_that_differ_only_by_case_get_keys_that_differ_on_a_case_insensitive_disk() {
+        let keys = planned_keys(&["ABC", "abc", "Abc"], vec![ind("1", "ABC"), ind("2", "abc"), ind("3", "Abc")]);
+        // Each key keeps its own tag's casing; only the number moves on.
+        assert_eq!(keys, ["ABC-I1", "abc-I2", "Abc-I3"]);
+        let folded: HashSet<String> = keys.iter().map(|k| k.to_lowercase()).collect();
+        assert_eq!(folded.len(), 3, "{keys:?}");
+    }
+
+    #[test]
+    fn tags_with_no_case_collision_keep_their_exact_keys() {
+        // Same letters but different kinds never share a file name, so these
+        // stay at 1 — the format must not change for them.
+        let keys = planned_keys(
+            &["CITempA", "ZI72144A", "citempb", "ABC", "abc"],
+            vec![
+                ind("1", "CITempA"),
+                rel("2", "CITempA", &["A"]),
+                ind("3", "CITempA"),
+                clus("4", "A", "ZI72144A", None, None),
+                ind("5", "citempb"),
+                rel("6", "abc", &["A"]),
+                ind("7", "ABC"),
+            ],
+        );
+        assert_eq!(
+            keys,
+            ["CITempA-I1", "CITempA-R1", "CITempA-I2", "ZI72144A-C1", "citempb-I1", "abc-R1", "ABC-I1"]
+        );
+    }
+
     // ---- JSON per kind ----
 
     #[test]
@@ -2601,6 +2656,27 @@ mod tests {
         assert!(r3.folder.ends_with("Out_3"));
         assert_eq!(listing(&dir.path().join("Out")), BTreeSet::from(["mine.txt".to_string()]));
     }
+
+    #[test]
+    fn tags_that_differ_only_by_case_each_get_their_own_files() {
+        let (d, req) = data_and_request_with_tags(&["ABC", "abc"], vec![ind("1", "ABC"), ind("2", "abc")]);
+        let st = state(d, 1);
+        let dir = tmp();
+        let res = write_export(&st, &req, dir.path().to_str().unwrap(), "Out", &AtomicBool::new(false), |_, _, _| {}).unwrap();
+        let models = PathBuf::from(&res.folder).join("models");
+        assert_eq!(
+            listing(&models),
+            ["ABC-I1.csv", "ABC-I1.json", "abc-I2.csv", "abc-I2.json"].iter().map(|s| s.to_string()).collect()
+        );
+        for (key, tag) in [("ABC-I1", "ABC"), ("abc-I2", "abc")] {
+            let json: serde_json::Value =
+                serde_json::from_str(&std::fs::read_to_string(models.join(format!("{key}.json"))).unwrap()).unwrap();
+            assert_eq!(json["model_key"], key);
+            let csv = std::fs::read_to_string(models.join(format!("{key}.csv"))).unwrap();
+            assert!(csv.lines().next().unwrap().ends_with(tag), "{key}: {}", csv.lines().next().unwrap());
+        }
+    }
+
 
     #[test]
     fn folder_name_validation() {
