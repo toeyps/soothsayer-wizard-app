@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import type { MappingData, MappingResult } from '../types/dataUpload';
@@ -85,6 +85,9 @@ export function useMappingData(): UseMappingDataReturn {
   const [mappingResult, setMappingResult] = useState<MappingResult | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Latest apply wins: the result decides whether the Import page may continue,
+  // so one computed for an older dataset or file must never land late.
+  const applySeqRef = useRef(0);
 
   const selectMappingFile = useCallback(async () => {
     try {
@@ -94,6 +97,7 @@ export function useMappingData(): UseMappingDataReturn {
       });
 
       if (result && typeof result === 'string') {
+        applySeqRef.current += 1;
         setMappingFilePath(result);
         setIsLoading(true);
         setError(null);
@@ -125,8 +129,10 @@ export function useMappingData(): UseMappingDataReturn {
         return;
       }
 
+      const seq = ++applySeqRef.current;
       setIsLoading(true);
       setError(null);
+      setMappingResult(null);
 
       try {
         const result = await invoke<MappingResult>('apply_sensor_mapping', {
@@ -134,18 +140,18 @@ export function useMappingData(): UseMappingDataReturn {
           mappingData: mappingData,
           datasetHeaders: datasetHeaders,
         });
-        setMappingResult(result);
+        if (seq === applySeqRef.current) setMappingResult(result);
       } catch (err) {
-        setError(err instanceof Error ? err.message : String(err));
-        setMappingResult(null);
+        if (seq === applySeqRef.current) setError(err instanceof Error ? err.message : String(err));
       } finally {
-        setIsLoading(false);
+        if (seq === applySeqRef.current) setIsLoading(false);
       }
     },
     [keyColumn, mappingData]
   );
 
   const clearMapping = useCallback(() => {
+    applySeqRef.current += 1;
     setMappingData(null);
     setMappingFilePath(null);
     setKeyColumn(null);

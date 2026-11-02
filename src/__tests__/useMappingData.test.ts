@@ -184,6 +184,31 @@ describe('useMappingData', () => {
     expect(result.current.error).toBeNull();
   });
 
+  it('applyMapping: only the latest call decides the result, and the old result is gone meanwhile', async () => {
+    const { result } = renderHook(() => useMappingData());
+    mockOpen.mockResolvedValue('/m.csv');
+    mockInvoke.mockResolvedValueOnce(sampleMappingData);
+    await act(async () => { await result.current.selectMappingFile(); });
+    act(() => { result.current.setKeyColumn('tag'); });
+
+    const older = { matched: ['OLD'], not_in_dataset: [], not_in_mapping: [] };
+    const newer = { matched: ['NEW'], not_in_dataset: [], not_in_mapping: [] };
+    let resolveOlder: (v: unknown) => void = () => {};
+    mockInvoke
+      .mockReturnValueOnce(new Promise((res) => { resolveOlder = res; }))
+      .mockResolvedValueOnce(newer);
+
+    let first: Promise<void> = Promise.resolve();
+    act(() => { first = result.current.applyMapping(['timestamp', 'OLD']); });
+    expect(result.current.mappingResult).toBeNull();
+    await act(async () => { await result.current.applyMapping(['timestamp', 'NEW']); });
+    expect(result.current.mappingResult).toEqual(newer);
+
+    await act(async () => { resolveOlder(older); await first; });
+    expect(result.current.mappingResult).toEqual(newer);
+    expect(result.current.isLoading).toBe(false);
+  });
+
   it('applyMapping sets error when key column is not selected', async () => {
     const { result } = renderHook(() => useMappingData());
 

@@ -706,7 +706,10 @@ describe('E. Open Dashboard button', () => {
       makeDataUpload({ selectedFiles: ['/a.csv', '/b.csv'], loadReport: FAKE_REPORT })
     );
     useMappingDataMock.mockReturnValue(
-      makeMapping({ mappingFilePath: '/lookup/sensors.csv', keyColumn: 'tag' })
+      makeMapping({
+        mappingFilePath: '/lookup/sensors.csv', keyColumn: 'tag',
+        mappingResult: { matched: ['sensor_a'], not_in_dataset: [], not_in_mapping: [] },
+      })
     );
     mockSaveWorkspace.mockResolvedValue(undefined);
 
@@ -2920,7 +2923,7 @@ describe('O. Step 2 "Sensor data" panel', () => {
     useMappingDataMock.mockReturnValue(
       makeMapping({
         mappingFilePath: '/lookup/sensors.csv', mappingData: FAKE_MAPPING_DATA, keyColumn: 'tag',
-        mappingResult: FAKE_MAPPING_RESULT,
+        mappingResult: { ...FAKE_MAPPING_RESULT, not_in_dataset: [] },
       }),
     );
     renderAtStep2();
@@ -3287,6 +3290,76 @@ describe('R. Tag names panel (step 2, right)', () => {
     useMappingDataMock.mockReturnValue(richMapping());
     renderAtStep2();
     expect(screen.getByTestId('not-in-dataset').textContent).toMatch(/1 tag in the tag-name file is not in the dataset/);
+  });
+
+  it('R10a. different sensor counts: Continue is refused, the reason is in the card and the footer', () => {
+    useDataUploadMock.mockReturnValue(readyUpload());
+    useMappingDataMock.mockReturnValue(richMapping());
+    renderAtStep2();
+    expect(continueButton().disabled).toBe(true);
+    expect(screen.getByTestId('tag-file-mismatch').textContent).toMatch(/the data has 5, the tag-name file has 4/);
+    expect(screen.getByTestId('tag-file-mismatch').textContent).toMatch(/remove it to continue without tag names/);
+    expect(screen.getByTestId('step2-status').textContent).toBe("Sensors don't match: the data has 5, the tag-name file has 4");
+    // Refused means staying on this step.
+    fireEvent.click(continueButton());
+    expect(screen.getByTestId('sensor-data-step')).toBeTruthy();
+  });
+
+  it('R10b. same count but different tags is refused too', () => {
+    useDataUploadMock.mockReturnValue(readyUpload());
+    useMappingDataMock.mockReturnValue(richMapping({
+      mappingResult: { matched: ['sensor_a'], not_in_dataset: ['sensor_z'], not_in_mapping: ['sensor_x'] },
+    }));
+    renderAtStep2();
+    expect(continueButton().disabled).toBe(true);
+    expect(screen.getByTestId('step2-status').textContent).toBe("Sensors don't match: both have 2, but 1 tag differs");
+  });
+
+  it('R10c. a matching file continues, with no refusal shown', () => {
+    useDataUploadMock.mockReturnValue(readyUpload());
+    useMappingDataMock.mockReturnValue(richMapping({
+      mappingResult: { matched: ['sensor_a'], not_in_dataset: [], not_in_mapping: [] },
+    }));
+    renderAtStep2();
+    expect(continueButton().disabled).toBe(false);
+    expect(screen.queryByTestId('tag-file-mismatch')).toBeNull();
+    expect(screen.getByTestId('step2-status').textContent).toMatch(/1 names mapped/);
+  });
+
+  it('R10d. the check cannot be skipped: no tag column picked, or the result not back yet, also refuses', () => {
+    useDataUploadMock.mockReturnValue(readyUpload());
+    useMappingDataMock.mockReturnValue(richMapping({ keyColumn: null, mappingResult: null }));
+    const { unmount } = renderAtStep2();
+    expect(continueButton().disabled).toBe(true);
+    expect(screen.getByTestId('step2-status').textContent).toMatch(/Pick the tag column/);
+    unmount();
+    cleanup();
+
+    useMappingDataMock.mockReturnValue(richMapping({ mappingResult: null }));
+    renderAtStep2();
+    expect(continueButton().disabled).toBe(true);
+    expect(screen.getByTestId('step2-status').textContent).toMatch(/Checking the tag-name file/);
+  });
+
+  it('R10e. no tag-name file: nothing to check, Continue stays open (the file is optional)', () => {
+    useDataUploadMock.mockReturnValue(readyUpload());
+    renderAtStep2();
+    expect(continueButton().disabled).toBe(false);
+    expect(screen.queryByTestId('tag-file-mismatch')).toBeNull();
+  });
+
+  it('R10f. a newly read dataset is checked again even when an older result exists', async () => {
+    const m = richMapping({ mappingResult: { matched: ['sensor_a'], not_in_dataset: [], not_in_mapping: [] } });
+    useDataUploadMock.mockReturnValue(readyUpload());
+    useMappingDataMock.mockReturnValue(m);
+    const { rerender } = renderAtStep2();
+    await waitFor(() => expect(m.applyMapping).toHaveBeenCalledWith(FAKE_REPORT.headers));
+    (m.applyMapping as ReturnType<typeof vi.fn>).mockClear();
+
+    const newer = { ...FAKE_REPORT, headers: [...FAKE_REPORT.headers, 'sensor_new'] };
+    useDataUploadMock.mockReturnValue({ ...readyUpload(), loadReport: newer });
+    rerender(<DataUploadPage onDataReady={onDataReady} />);
+    await waitFor(() => expect(m.applyMapping).toHaveBeenCalledWith(newer.headers));
   });
 
   it('R11. without sensor metadata the matched tab still lists the matched tags', () => {

@@ -30,7 +30,7 @@ import TagNamesPanel from "./TagNamesPanel";
 import FailureGroupsStep, { type DraftGroup } from "./FailureGroupsStep";
 import { BackButton, PrimaryButton } from "./SetupPrimitives";
 import { useCsvLoadProgress } from "./useCsvLoadProgress";
-import { PROJECT_NAME_MAX, formatCount } from "./setupHelpers";
+import { PROJECT_NAME_MAX, formatCount, tagFileBlockReason } from "./setupHelpers";
 import { DUPLICATE_PAIR_REASON, missingFieldsReason } from "./MachineFields";
 import { ProjectDetailsModal } from "../windows/ProjectDetailsModal";
 import {
@@ -287,9 +287,11 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
     await mapping.applyMapping(report.headers);
   };
 
-  // Auto-apply mapping once dataset report and key column are both available.
+  // Apply the mapping once dataset report and key column are both available, and
+  // again whenever the report changes: a result from the previous read must not
+  // decide whether THIS data may continue (see tagFileBlockReason).
   useEffect(() => {
-    if (report && mapping.mappingData && mapping.keyColumn && !mapping.mappingResult && !mapping.isLoading) {
+    if (report && mapping.mappingData && mapping.keyColumn) {
       void handleApplyMapping();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -674,6 +676,7 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
   }
 
   const mappedCount = mapping.mappingResult?.matched.length ?? 0;
+  const tagFileBlock = isReady ? tagFileBlockReason(mapping.mappingFilePath, mapping.keyColumn, mapping.mappingResult) : null;
   const rowsText = formatCount(report?.total_rows);
   // Sensor columns read (the first column is the timestamp).
   const tagCount = report?.headers?.length ? report.headers.length - 1 : 0;
@@ -798,9 +801,11 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
               </>
             ) : step === 2 ? (
               <>
-                <span style={{ ...statusStyle, color: isReady ? T.ok : T.textFaint }}>
-                  {isReady && <Check size={12} />}
-                  {isReady
+                <span style={{ ...statusStyle, color: tagFileBlock ? (mapping.mappingResult ? T.danger : T.textMuted) : isReady ? T.ok : T.textFaint }} data-testid="step2-status">
+                  {isReady && !tagFileBlock && <Check size={12} />}
+                  {tagFileBlock
+                    ? tagFileBlock
+                    : isReady
                     ? `Ready · ${rowsText ?? "0"} rows · ${mappedCount > 0 ? `${mappedCount} names mapped` : "no tag names"}`
                     : isStale
                       ? "Selection changed · re-parse required"
@@ -810,7 +815,7 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
                 </span>
                 <div style={{ flex: 1 }} />
                 <BackButton T={T} onClick={() => setStep(1)} />
-                <PrimaryButton T={T} enabled={isReady} onClick={() => setStep(3)}>Continue</PrimaryButton>
+                <PrimaryButton T={T} enabled={isReady && !tagFileBlock} onClick={() => setStep(3)}>Continue</PrimaryButton>
               </>
             ) : step === 3 ? (
               <>

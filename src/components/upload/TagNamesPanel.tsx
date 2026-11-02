@@ -4,7 +4,7 @@ import type { UseMappingDataReturn } from '../../hooks/useMappingData';
 import type { SensorMetadata } from '../../types';
 import { mono, type Tokens } from './uploadTheme';
 import { Card, Eyebrow, SectionHeader } from './SetupPrimitives';
-import { ALARM_KEYS, ALARM_LABELS, alarmLimits, baseName, countComponents, matchedFraction } from './setupHelpers';
+import { ALARM_KEYS, ALARM_LABELS, alarmLimits, baseName, countComponents, matchedFraction, tagFileBlockReason } from './setupHelpers';
 
 interface TagNamesPanelProps {
   T: Tokens;
@@ -48,6 +48,7 @@ export default function TagNamesPanel({ T, locked, mapping }: TagNamesPanelProps
   const [tab, setTab] = useState<Tab>('matched');
   const [query, setQuery] = useState('');
   const result = mapping.mappingResult;
+  const block = tagFileBlockReason(mapping.mappingFilePath, mapping.keyColumn, result);
 
   const matchedCount = result?.matched.length ?? 0;
   const noNameTags = result?.not_in_mapping ?? [];
@@ -203,6 +204,19 @@ export default function TagNamesPanel({ T, locked, mapping }: TagNamesPanelProps
 
             {result && (
               <>
+                {block && (
+                  <div
+                    data-testid="tag-file-mismatch"
+                    role="alert"
+                    style={{
+                      padding: '8px 10px', borderRadius: 7, fontSize: 11.5, lineHeight: 1.45, color: T.danger,
+                      background: 'oklch(0.68 0.2 25 / 0.1)', border: '1px solid oklch(0.68 0.2 25 / 0.3)',
+                    }}
+                  >
+                    <b style={{ fontWeight: 600 }}>{block}.</b> Fix the file and select it again, or remove it to continue without tag names.
+                  </div>
+                )}
+
                 <div
                   data-testid="match-summary"
                   style={{ display: 'flex', alignItems: 'center', gap: 14, padding: 12, background: T.bg, border: `1px solid ${T.border}`, borderRadius: 12 }}
@@ -328,7 +342,7 @@ export default function TagNamesPanel({ T, locked, mapping }: TagNamesPanelProps
                   <div
                     data-testid="not-in-dataset"
                     title={result.not_in_dataset.slice(0, 20).join(', ')}
-                    style={{ fontSize: 11.5, color: T.warn }}
+                    style={{ fontSize: 11.5, color: T.danger }}
                   >
                     {result.not_in_dataset.length} tag{result.not_in_dataset.length === 1 ? '' : 's'} in the tag-name file
                     {result.not_in_dataset.length === 1 ? ' is' : ' are'} not in the dataset.

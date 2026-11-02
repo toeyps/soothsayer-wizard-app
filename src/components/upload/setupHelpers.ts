@@ -8,7 +8,7 @@
  * "undefined" -- the view hides the matching card or segment instead.
  */
 
-import type { CsvFileInfo, CsvLoadProgress, CsvLoadReport } from '../../types/dataUpload';
+import type { CsvFileInfo, CsvLoadProgress, CsvLoadReport, MappingResult } from '../../types/dataUpload';
 import type { SensorMetadata, WorkspaceMetadata } from '../../types';
 import { formatRowTime, formatWallClock } from '../../utils/dateFormat';
 
@@ -338,4 +338,28 @@ export function alarmLimits(m: SensorMetadata): { label: string; value: number }
 export function matchedFraction(matched: number, total: number): number | null {
   if (!isNum(matched) || !isNum(total) || total <= 0) return null;
   return Math.min(1, Math.max(0, matched / total));
+}
+
+/* ------------------------------ tag-name file check ------------------------------ */
+
+/** Why a chosen tag-name file blocks Continue, or `null` when it does not.
+ *  The file stays optional (no file = no check), but a chosen one must list
+ *  exactly the sensors in the data: the same number AND the same tags, so two
+ *  files of equal size with different tags are refused too. */
+export function tagFileBlockReason(
+  filePath: string | null,
+  keyColumn: string | null,
+  result: MappingResult | null,
+): string | null {
+  if (!filePath) return null;
+  if (!keyColumn) return 'Pick the tag column of the tag-name file, or remove the file';
+  if (!result) return 'Checking the tag-name file…';
+  const dataOnly = result.not_in_mapping.length;
+  const fileOnly = result.not_in_dataset.length;
+  if (dataOnly === 0 && fileOnly === 0) return null;
+  const inData = result.matched.length + dataOnly;
+  const inFile = result.matched.length + fileOnly;
+  return inData === inFile
+    ? `Sensors don't match: both have ${inData}, but ${dataOnly} tag${dataOnly === 1 ? ' differs' : 's differ'}`
+    : `Sensors don't match: the data has ${inData}, the tag-name file has ${inFile}`;
 }

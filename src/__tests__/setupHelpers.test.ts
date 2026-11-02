@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import type { CsvFileInfo, CsvLoadProgress, CsvLoadReport } from '../types/dataUpload';
 import {
   PROJECT_NAME_MAX,
+  tagFileBlockReason,
   alarmLimits,
   baseName,
   computeCoverage,
@@ -420,5 +421,32 @@ describe('tag-name helpers', () => {
     expect(matchedFraction(5, 4)).toBe(1);
     expect(matchedFraction(0, 0)).toBeNull();
     expect(matchedFraction(Number.NaN, 4)).toBeNull();
+  });
+});
+
+describe('tagFileBlockReason', () => {
+  const r = (matched: number, fileOnly: number, dataOnly: number) => ({
+    matched: Array.from({ length: matched }, (_, i) => `m${i}`),
+    not_in_dataset: Array.from({ length: fileOnly }, (_, i) => `f${i}`),
+    not_in_mapping: Array.from({ length: dataOnly }, (_, i) => `d${i}`),
+  });
+
+  it('no file: nothing to check', () => {
+    expect(tagFileBlockReason(null, null, null)).toBeNull();
+  });
+  it('a chosen file with no tag column or no result yet blocks', () => {
+    expect(tagFileBlockReason('/t.csv', null, null)).toMatch(/Pick the tag column/);
+    expect(tagFileBlockReason('/t.csv', 'tag', null)).toMatch(/Checking/);
+  });
+  it('same tags: no block', () => {
+    expect(tagFileBlockReason('/t.csv', 'tag', r(3, 0, 0))).toBeNull();
+  });
+  it('different counts name both numbers, whichever side is bigger', () => {
+    expect(tagFileBlockReason('/t.csv', 'tag', r(3, 2, 0))).toBe("Sensors don't match: the data has 3, the tag-name file has 5");
+    expect(tagFileBlockReason('/t.csv', 'tag', r(3, 0, 2))).toBe("Sensors don't match: the data has 5, the tag-name file has 3");
+  });
+  it('same count with different tags still blocks', () => {
+    expect(tagFileBlockReason('/t.csv', 'tag', r(3, 1, 1))).toBe("Sensors don't match: both have 4, but 1 tag differs");
+    expect(tagFileBlockReason('/t.csv', 'tag', r(3, 2, 2))).toBe("Sensors don't match: both have 5, but 2 tags differ");
   });
 });
