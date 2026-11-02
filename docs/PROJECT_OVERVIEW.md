@@ -37,7 +37,7 @@
 | เวอร์ชันล่าสุดที่ build เป็น installer | **0.14.0** (2026-10-29) ก่อนหน้านั้นคือ 0.13.2, 0.13.1, 0.13.0 (2026-10-26) ดูรายละเอียดที่ [`release/CHANGELOG.md`](release/CHANGELOG.md) และ [`release/Wizard_Release_Versions.txt`](release/Wizard_Release_Versions.txt) |
 | git tag | tag ถึง `v0.13.2` push ขึ้น `personal` แล้ว (2026-10-28); `v0.14.0` (2026-10-29) อยู่ในเครื่องเท่านั้น ส่วน 0.6.0/0.7.0 ไม่เคย build จึงไม่มี tag |
 | push ล่าสุด | 2026-10-28: push `main` ขึ้น `personal` หลังจากนั้นมี commit ในเครื่องที่ยังไม่ push: `ba9a922` (ลบ duplicateWorkspace), `e3579b9` ("Use all data"), release 0.14.0 + tag `v0.14.0`, `4e8afd7` + `6525412` (Import เช็ค master data) |
-| งานที่รอผู้ใช้ทดสอบในแอปจริง | "Use all data" ใน Running condition (BMW-407 ถึง 409) ทดสอบได้บน installer 0.14.0 ผ่านแล้วค่อย push ไป `personal` และถามเปลี่ยน Notion เป็น Done · Import: บังคับใส่ไฟล์ Tag names และ sensor ต้องตรงกับข้อมูล (IMP-115 ถึง 121, 124) ต้องสร้าง `C:\WizardTestData` ใหม่ก่อนทดสอบ และยังไม่อยู่ใน installer 0.14.0 |
+| งานที่รอผู้ใช้ทดสอบในแอปจริง | "Use all data" ใน Running condition (BMW-407 ถึง 409) ทดสอบได้บน installer 0.14.0 ผ่านแล้วค่อย push ไป `personal` และถามเปลี่ยน Notion เป็น Done · Import: บังคับใส่ไฟล์ Tag names และ sensor ต้องตรงกับข้อมูล (IMP-115 ถึง 121, 124) ต้องสร้าง `C:\WizardTestData` ใหม่ก่อนทดสอบ และยังไม่อยู่ใน installer 0.14.0 · ชื่อ sensor ยาว (LN-1 ถึง LN-30) ต้องสร้างข้อมูลทดสอบใหม่เช่นกัน ยังไม่อยู่ใน installer 0.14.0 และยังไม่เคยรันใน WebView2 |
 | เรื่องที่รอผู้ใช้ตัดสินใจ | ลดสิทธิ์ `dialog:default` เหลือ open + message · การแสดงไฟล์/โฟลเดอร์ output หลัง Mark complete (ผู้ใช้เลื่อนไว้จนกว่า UI จะใช้ได้ครบ) · แยก `BuildModelWindow.tsx` เป็นไฟล์ย่อย (เสนอไว้) |
 | งานค้างที่รู้อยู่ | [`BACKLOG.md`](BACKLOG.md) |
 
