@@ -1,11 +1,14 @@
-import { useState, useEffect, useRef, useMemo, useCallback, memo } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback, memo } from 'react';
 import { Lasso, Move, RotateCcw, X, Search } from 'lucide-react';
 import PairPlotCell, { HoverInfo, Cluster } from './PairPlotCell';
 import AxisLabel from './AxisLabel';
 import ClusterLegend from './ClusterLegend';
 import { nextClusterColour, nextClusterName } from './pairPlotClusters';
 import { SensorInline } from '../sensor/SensorLabel';
-import { SensorMetaContext, fmtNum, useLayeredSensorLookup } from '../sensor/sensorInfo';
+import { SensorMetaContext, fmtNum, ttRowClass, useLayeredSensorLookup } from '../sensor/sensorInfo';
+import { commonPrefix, displayedName, splitInSet } from '../../utils/sensorNames';
+import { monoFontFamily, textWidth } from '../../utils/textMeasure';
+import { tooltipSharedPrefix } from '../../utils/tooltipLayout';
 import { ChartProps, MAX_PAIR_PLOT_SENSORS } from './ChartTypes';
 import { formatDateTime } from '../../utils/dateFormat';
 import { formatDataStamp } from '../../utils/workbenchDate';
@@ -145,10 +148,12 @@ const AXIS_LABEL_STYLE = {
 } as const;
 
 function CorrelationCell({
-    r, sensorY, showYLabel,
+    r, sensorY, showYLabel, keyNo,
 }: {
     r: number | null;
     sensorY: string;
+    /** Rule 5: the row's key, when the matrix prints keys. */
+    keyNo?: number;
     /** True only for the left-most correlation cell in its row (column 0) —
      *  that's the row's shared header, "outer frame only" like every other
      *  cell type. Correlation cells never sit in row 0, so they never carry
@@ -187,7 +192,7 @@ function CorrelationCell({
                 tooltip needs to escape that boundary to show a full
                 description without being cut off. */}
             {showYLabel && (
-                <AxisLabel tag={sensorY} rotate style={AXIS_LABEL_STYLE.left} />
+                <AxisLabel tag={sensorY} rotate style={AXIS_LABEL_STYLE.left} keyNo={keyNo} />
             )}
         </>
     );
@@ -330,6 +335,45 @@ function PairPlotChart({ data, sensors, headers, sensorMetadata }: ChartProps) {
     }, []);
 
     const toolboxRef = useRef<HTMLDivElement>(null);
+
+    // Rule 5: S1…Sn keys and a key line only when the set shares a start or a top header would be cut (its tag
+    // is wider than the cell, measured on the matrix's real width). Otherwise today's tag headers, untouched.
+    // Only the grid's WIDTH decides, and the key line changes its height alone, so this cannot flip-flop.
+    const gridRef = useRef<HTMLDivElement>(null);
+    const [gridWidth, setGridWidth] = useState(0);
+    const hasGrid = n >= 2 && n <= MAX_PAIR_PLOT_SENSORS;
+    useLayoutEffect(() => {
+        const el = gridRef.current;
+        if (!el) return;
+        const update = () => setGridWidth(el.clientWidth);
+        update();
+        if (typeof ResizeObserver === 'undefined') return;
+        const ro = new ResizeObserver(update);
+        ro.observe(el);
+        return () => ro.disconnect();
+    }, [hasGrid]);
+    const pairKey = useMemo(() => {
+        if (!hasGrid) return null;
+        const names = sensors.map(t => displayedName(sensorLookup(t)));
+        const prefix = commonPrefix(names);
+        let cut = false;
+        if (gridWidth > 0) {
+            const room = (gridWidth - n) / (n + 1) - CELL_PAD.left - CELL_PAD.right - 2;
+            const font = `10px ${monoFontFamily()}`;
+            cut = sensors.some(t => textWidth(t, font) > room);
+        }
+        if (!prefix && !cut) return null;
+        const tails = names.map(name => splitInSet(name, names, prefix || undefined).tail.trimStart());
+        return { prefix, names, tails };
+    }, [hasGrid, sensors, sensorLookup, gridWidth, n]);
+    const keyOf = (sensor: string) => (pairKey ? sensors.indexOf(sensor) + 1 : undefined);
+    const tailOf = (sensor: string) => pairKey?.tails[sensors.indexOf(sensor)];
+
+    // Rule 4: the start the two rows share, printed once, when a row would otherwise pass the box's limit.
+    const hoverPrefix = useMemo(() => (
+        hover && !hover.isTimeAxis ? tooltipSharedPrefix([sensorLookup(hover.sensorX), sensorLookup(hover.sensorY)]) : ''
+    ), [hover?.sensorX, hover?.sensorY, hover?.isTimeAxis, sensorLookup]); // eslint-disable-line react-hooks/exhaustive-deps
+
     const expandToolboxRef = useRef<HTMLDivElement>(null);
     const focusToolbox = useCallback(() => focusFirstTool(toolboxRef.current), []);
     const focusExpandToolbox = useCallback(() => focusFirstTool(expandToolboxRef.current), []);
@@ -424,7 +468,16 @@ function PairPlotChart({ data, sensors, headers, sensorMetadata }: ChartProps) {
                 className="pp-legend-top"
             />
 
-            <div className="pair-regl-grid" style={gridTemplate}>
+            {pairKey && (
+                <div className="pair-regl-key" aria-label="Pair plot sensor key" data-testid="pair-key">
+                    {pairKey.prefix ? (
+                        <span className="pair-regl-key-prefix" title={`Every sensor below starts with: ${pairKey.prefix}`}>{pairKey.prefix} …</span>
+                    ) : sensors.map((t, i) => (
+                        <span key={t} className="pair-regl-key-item" title={pairKey.names[i]}><b>S{i + 1}</b><span>{pairKey.names[i]}</span></span>
+                    ))}
+                </div>
+            )}
+            <div ref={gridRef} className={`pair-regl-grid${pairKey ? ' pair-regl-grid--key' : ''}`} style={gridTemplate}>
                 {Array.from({ length: n }, (_, i) => {
                     const sensorY = sensors[i];
                     const rowCells: React.ReactNode[] = [];
@@ -440,7 +493,7 @@ function PairPlotChart({ data, sensors, headers, sensorMetadata }: ChartProps) {
                                         isTopRow={false}
                                     />
                                     {i === 0 && (
-                                        <AxisLabel tag={sensorY} style={AXIS_LABEL_STYLE.top} />
+                                        <AxisLabel tag={sensorY} style={AXIS_LABEL_STYLE.top} keyNo={keyOf(sensorY)} keyTail={tailOf(sensorY)} />
                                     )}
                                     {inspectMode && (
                                         <div
@@ -475,7 +528,7 @@ function PairPlotChart({ data, sensors, headers, sensorMetadata }: ChartProps) {
                                         resetTick={resetTick}
                                     />
                                     {i === 0 && (
-                                        <AxisLabel tag={sensorX} style={AXIS_LABEL_STYLE.top} />
+                                        <AxisLabel tag={sensorX} style={AXIS_LABEL_STYLE.top} keyNo={keyOf(sensorX)} keyTail={tailOf(sensorX)} />
                                     )}
                                     {inspectMode && (
                                         <div
@@ -497,6 +550,7 @@ function PairPlotChart({ data, sensors, headers, sensorMetadata }: ChartProps) {
                                     <CorrelationCell
                                         r={correlations.get(`${i}-${k}`) ?? null}
                                         sensorY={sensorY}
+                                        keyNo={keyOf(sensorY)}
                                         showYLabel={k === 0}
                                     />
                                 </div>
@@ -564,21 +618,28 @@ function PairPlotChart({ data, sensors, headers, sensorMetadata }: ChartProps) {
                         zIndex: 200,
                     }}
                 >
+                    {hoverPrefix && <div className="tt-prefix">{hoverPrefix} …</div>}
                     {/* Inline label + value + unit. */}
-                    <div className="tt-row">
-                        <span className="tt-label">
-                            {hover.isTimeAxis ? <span className="tt-desc">Time</span> : <SensorInline tag={hover.sensorX} size="sm" />}
-                        </span>
-                        <span className="tt-val">
-                            {hover.isTimeAxis
-                                ? formatDateTime(new Date(hover.xVal))
-                                : `${fmtNum(hover.xVal)}${sensorLookup(hover.sensorX).unit ? ` ${sensorLookup(hover.sensorX).unit}` : ''}`}
-                        </span>
-                    </div>
-                    <div className="tt-row">
-                        <span className="tt-label"><SensorInline tag={hover.sensorY} size="sm" /></span>
-                        <span className="tt-val">{fmtNum(hover.yVal)}{sensorLookup(hover.sensorY).unit ? ` ${sensorLookup(hover.sensorY).unit}` : ''}</span>
-                    </div>
+                    {(() => {
+                        const xInfo = sensorLookup(hover.sensorX);
+                        const yInfo = sensorLookup(hover.sensorY);
+                        const xText = hover.isTimeAxis ? formatDateTime(new Date(hover.xVal)) : `${fmtNum(hover.xVal)}${xInfo.unit ? ` ${xInfo.unit}` : ''}`;
+                        const yText = `${fmtNum(hover.yVal)}${yInfo.unit ? ` ${yInfo.unit}` : ''}`;
+                        return (
+                            <>
+                                <div className={hover.isTimeAxis ? 'tt-row' : ttRowClass(xInfo, xText, hoverPrefix || undefined)}>
+                                    <span className="tt-label">
+                                        {hover.isTimeAxis ? <span className="tt-desc">Time</span> : <SensorInline tag={hover.sensorX} size="sm" prefix={hoverPrefix || undefined} />}
+                                    </span>
+                                    <span className="tt-val">{xText}</span>
+                                </div>
+                                <div className={ttRowClass(yInfo, yText, hoverPrefix || undefined)}>
+                                    <span className="tt-label"><SensorInline tag={hover.sensorY} size="sm" prefix={hoverPrefix || undefined} /></span>
+                                    <span className="tt-val">{yText}</span>
+                                </div>
+                            </>
+                        );
+                    })()}
                     {hover.timestamp && !hover.isTimeAxis && (
                         <div className="scatter-regl-tooltip-ts">{formatDataStamp(hover.timestamp)}</div>
                     )}

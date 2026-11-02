@@ -2,6 +2,7 @@ import { useRef, useEffect, useState, useCallback, CSSProperties } from 'react';
 import ReactECharts from 'echarts-for-react';
 import { attachEvenTimeTicks, hasTimeXAxis } from './evenTimeAxis';
 import { attachFollowY, getFollowY } from './followYAxis';
+import { attachAxisNames, getAxisNames } from '../../utils/axisName';
 
 interface ResponsiveEChartsProps {
     option: any;
@@ -72,6 +73,14 @@ export default function ResponsiveECharts({
         if (!instance || !followY) return;
         return attachFollowY(instance, followY);
     }, [instance, followY]);
+
+    // A chart whose builder said which sensor each axis names (`withAxisNames`): the titles are fitted to
+    // the plot's real size, now and on every resize (DESIGN_SYSTEM §4 rule 1b). A title that fits is unchanged.
+    const axisNames = getAxisNames(option);
+    useEffect(() => {
+        if (!instance || !axisNames) return;
+        return attachAxisNames(instance, axisNames, option);
+    }, [instance, axisNames, option]);
 
     useEffect(() => {
         if (!containerRef.current) return;

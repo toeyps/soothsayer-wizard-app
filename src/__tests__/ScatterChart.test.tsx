@@ -832,3 +832,169 @@ describe('ScatterChart', () => {
         });
     });
 });
+
+describe('ScatterChart: long sensor names', () => {
+    const LONG = (n: number) => `Crosshead (P-P Trend) - Vibration crosshead slide 11A - SegmentNo ${n} - avg`;
+    const longMeta = [
+        { tag: 'A', description: LONG(1), unit: 'mm/s', component: '' },
+        { tag: 'B', description: LONG(2), unit: 'mm/s', component: '' },
+    ];
+    const shortChart = (height: number) => Object.defineProperty(HTMLElement.prototype, 'clientHeight', { configurable: true, value: height });
+    const title = (axis: 'x' | 'y') => screen.getByTestId(`scatter-axis-title-${axis}`);
+
+    /** Instances that throw like regl-scatterplot does once destroyed. */
+    function strictInstances() {
+        const made: { inst: ReturnType<typeof makeMockInstance>; dead: boolean }[] = [];
+        mockCreateScatterplot.mockImplementation(() => {
+            const inst = makeMockInstance();
+            const entry = { inst, dead: false };
+            made.push(entry);
+            inst.destroy.mockImplementation(() => { entry.dead = true; });
+            inst.set.mockImplementation(() => { if (entry.dead) throw new Error('The instance was already destroyed'); });
+            inst.draw.mockImplementation(() => {
+                if (entry.dead) throw new Error('The instance was already destroyed');
+                return Promise.resolve();
+            });
+            lastInstance = inst;
+            instances.push(inst);
+            return inst;
+        });
+        return made;
+    }
+    afterEach(() => {
+        mockCreateScatterplot.mockImplementation(() => {
+            lastInstance = makeMockInstance();
+            instances.push(lastInstance);
+            return lastInstance;
+        });
+    });
+
+    it('a name that fits keeps today\'s markup: description, then tag + unit, and the plot at its usual place', () => {
+        const meta = [
+            { tag: 'A', description: 'GENERATOR POWER', unit: 'MW', component: '' },
+            { tag: 'B', description: 'BEARING TEMP', unit: 'DEGC', component: '' },
+        ];
+        const { container } = render(<ScatterChart data={data} sensors={['A', 'B']} headers={headers} sensorMetadata={meta} />);
+        expect(title('y').dataset.lines).toBeUndefined();
+        expect(title('y').querySelector('.sat-desc')!.textContent).toBe('BEARING TEMP');
+        expect(title('y').querySelector('.sat-tag')!.textContent).toBe('B');
+        expect(title('y').querySelector('.scatter-axis-unit')!.textContent).toBe('DEGC');
+        expect(title('y').querySelector('.sat-unit')).toBeNull();
+        expect((container.querySelector('.scatter-regl-canvas-wrap') as HTMLElement).style.left).toBe('88px');
+        expect(title('y').style.width).toBe('30px');
+    });
+
+    it('a Y title longer than the plot wraps to two lines with the unit on the last word; the plot gives up one line only because its tag line prints too', () => {
+        shortChart(300);
+        const { container } = render(<ScatterChart data={data} sensors={['A', 'B']} headers={headers} sensorMetadata={longMeta} />);
+        const y = title('y');
+        expect(y.dataset.lines).toBe('2');
+        expect(y.title).toContain(LONG(2)); // the full name stays on hover
+        const lines = [...y.querySelectorAll('.sat-l1')].map(l => l.textContent);
+        expect(lines.join(' ')).toContain('Crosshead');
+        expect(lines[1]).toMatch(/ · mm\/s$/);
+        expect(y.querySelector('.sat-unit')!.textContent).toBe(' · mm/s');
+        expect(y.querySelector('.sat-tag')!.textContent).toBe('B');
+        // It may use its whole free column, past the plot's length.
+        expect(y.style.top).toBe('4px');
+        expect((container.querySelector('.scatter-regl-canvas-wrap') as HTMLElement).style.left).toBe('102px');
+    });
+
+    it('a tag that only re-spells the description is not printed: the unit joins the title (rule 3b, loose compare)', () => {
+        const meta = [
+            { tag: 'SegmentNo_1', description: 'Segment No 1', unit: 'mm/s', component: '' },
+            { tag: 'B', description: 'BEARING TEMP', unit: 'DEGC', component: '' },
+        ];
+        render(<ScatterChart data={data} sensors={['SegmentNo_1', 'B']} headers={['SegmentNo_1', 'B']} sensorMetadata={meta} />);
+        expect(title('x').querySelector('.sat-tag')).toBeNull();
+        expect(title('x').querySelector('.sat-unit')!.textContent).toBe(' · mm/s');
+        expect(title('x').textContent).toBe('Segment No 1 · mm/s');
+    });
+
+    it('a tag-only sensor follows the same rules: a long tag wraps in mono, a short one keeps today\'s markup', () => {
+        shortChart(300);
+        const tagA = 'Crosshead_(P-P_Trend)_-_Vibration_crosshead_slide_11A_-_SegmentNo_1_-_avg';
+        render(<ScatterChart data={data} sensors={[tagA, 'B']} headers={[tagA, 'B']} scatterX="B" scatterY={tagA} />);
+        expect(title('y').dataset.lines).toBe('2');
+        expect(title('y').querySelector('.sat-desc--tag')).toBeTruthy();
+        expect(title('y').querySelector('.sat-tag')).toBeNull(); // never the tag twice
+        expect(title('x').dataset.lines).toBeUndefined();
+        expect(title('x').querySelector('.sat-tag')!.textContent).toBe('B');
+    });
+
+    it('regression (mock crash): picking a sensor whose title takes a line from the plot never hands the draw a destroyed instance', async () => {
+        shortChart(300);
+        const made = strictInstances();
+        const threeHeaders = ['A', 'B', 'C'];
+        const rows = data.map((d: any, i: number) => ({ ...d, values: [...d.values, i] }));
+        const meta = [
+            { tag: 'A', description: 'SHORT A', unit: '', component: '' },
+            { tag: 'B', description: 'SHORT B', unit: '', component: '' },
+            { tag: 'C', description: LONG(3), unit: 'mm/s', component: '' },
+        ];
+        const { container } = render(<ScatterChart data={rows} sensors={threeHeaders} headers={threeHeaders} sensorMetadata={meta} />);
+        expect((container.querySelector('.scatter-regl-canvas-wrap') as HTMLElement).style.left).toBe('88px');
+        const before = made.length;
+        pickSingle(axisTriggers()[1], 'C');
+        // The gutter changed in its own commit: the plot was re-created, and the draw went to the new instance.
+        expect((container.querySelector('.scatter-regl-canvas-wrap') as HTMLElement).style.left).toBe('102px');
+        expect(made.length).toBe(before + 1);
+        expect(made[made.length - 2].dead).toBe(true);
+        expect(made[made.length - 1].dead).toBe(false);
+        expect(made[made.length - 1].inst.set).toHaveBeenCalled();
+        await act(async () => { await Promise.resolve(); }); // the draw queue runs in a microtask
+        expect(made[made.length - 1].inst.draw).toHaveBeenCalled();
+        expect(mockReportError).not.toHaveBeenCalled();
+    });
+
+    it('regression (same trap): a resize and new data landing in ONE commit skip the destroyed instance and draw on the new one', async () => {
+        vi.useFakeTimers();
+        const made = strictInstances();
+        const { rerender } = render(<ScatterChart data={data} sensors={['A', 'B']} headers={headers} />);
+        Object.defineProperty(HTMLElement.prototype, 'clientWidth', { configurable: true, value: 900 });
+        act(() => { lastResizeCallback!(); });
+        const fresh = data.map((d: any) => ({ ...d, values: [d.values[0] + 1, d.values[1]] }));
+        expect(() => {
+            act(() => {
+                vi.advanceTimersByTime(150);
+                rerender(<ScatterChart data={fresh} sensors={['A', 'B']} headers={headers} />);
+            });
+        }).not.toThrow();
+        expect(made).toHaveLength(2);
+        expect(made[0].dead).toBe(true);
+        expect(made[1].inst.set).toHaveBeenCalled();
+        await act(async () => { await Promise.resolve(); });
+        expect(made[1].inst.draw).toHaveBeenCalled();
+    });
+
+    it('the tooltip prints the start both names share once and the rows the rest; a row that would pass the limit wraps', () => {
+        const { container } = render(<ScatterChart data={data} sensors={['A', 'B']} headers={headers} sensorMetadata={longMeta} />);
+        act(() => { lastInstance!.__subs['pointover'](0); });
+        const tip = container.querySelector('.scatter-regl-tooltip') as HTMLElement;
+        expect(tip.querySelector('.tt-prefix')!.textContent).toBe('Crosshead (P-P Trend) - Vibration crosshead slide 11A …');
+        const names = [...tip.querySelectorAll('.tt-row [data-name-part="tail"]')].map(n => n.textContent);
+        expect(names).toEqual([' SegmentNo 1 - avg', ' SegmentNo 2 - avg']);
+    });
+
+    it('short names keep the plain tooltip rows, no shared line', () => {
+        const meta = [
+            { tag: 'A', description: 'GENERATOR POWER', unit: 'MW', component: '' },
+            { tag: 'B', description: 'BEARING TEMP', unit: 'DEGC', component: '' },
+        ];
+        const { container } = render(<ScatterChart data={data} sensors={['A', 'B']} headers={headers} sensorMetadata={meta} />);
+        act(() => { lastInstance!.__subs['pointover'](0); });
+        const tip = container.querySelector('.scatter-regl-tooltip') as HTMLElement;
+        expect(tip.querySelector('.tt-prefix')).toBeNull();
+        expect([...tip.querySelectorAll('.tt-row')].map(r => r.className)).toEqual(['tt-row', 'tt-row']);
+    });
+
+    it('the picker row leaves room for the Clear all button once a point is tagged', () => {
+        const { container } = render(<ScatterChart data={data} sensors={['A', 'B']} headers={headers} />);
+        const controls = container.querySelector('.scatter-regl-controls') as HTMLElement;
+        expect(controls.className).toBe('scatter-regl-controls');
+        fireEvent.click(screen.getByTitle(/^Tag point/));
+        act(() => { lastInstance!.__subs['pointover'](0); });
+        fireEvent.click(screen.getByTestId('scatter-main-canvas'));
+        expect(controls.classList.contains('scatter-regl-controls--tags')).toBe(true);
+    });
+});

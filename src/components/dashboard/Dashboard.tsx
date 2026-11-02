@@ -32,7 +32,7 @@ import { getFgGroupColor } from '../../utils/failureGroupColor';
 import { realFailureGroups } from '../../utils/failureGroupSummary';
 import HighlightsPanel from './HighlightsPanel';
 import ColourPicker from '../sensor/ColourPicker';
-import { SensorLabel } from '../sensor/SensorLabel';
+import { SensorLabel, SensorSetProvider } from '../sensor/SensorLabel';
 import { SensorMetaContext, useLayeredSensorLookup } from '../sensor/sensorInfo';
 import AnchoredPopover, { type PopoverAnchorRect } from '../AnchoredPopover';
 import { useScatterSample, ScatterSampleFilter } from '../../hooks/useScatterSample';
@@ -2702,7 +2702,8 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                                     : 'Pair Plot: lasso-select points in any cell to brush a colored cluster — pick a cluster colour or remove a cluster from the chips above the matrix.'}
                             </div>
                         )}
-                        {selectedSensors.map((sensor) => {
+                        {/* One set (rules 2 + 3): the rows read differently; a name that fits changes nothing. */}
+                        <SensorSetProvider tags={selectedSensors}>{selectedSensors.map((sensor) => {
                             const visible = visibleSensors.includes(sensor);
                             const isPinned = !!sensorAxisRange[sensor];
                             const isLine = chartType === 'line';
@@ -2829,7 +2830,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                                     )}
                                 </div>
                             );
-                        })}
+                        })}</SensorSetProvider>
                     </div>
                 )}
             </div>

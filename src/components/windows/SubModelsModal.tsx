@@ -3,7 +3,9 @@ import { Activity, Loader2, X } from 'lucide-react';
 import ResponsiveECharts from '../charts/ResponsiveECharts';
 import { isPickerSurfaceOpen } from '../sensor/SensorPicker';
 import { SensorInline } from '../sensor/SensorLabel';
-import { escapeHtml, safeColour, sensorInlineHtml, useSensorLookup, type SensorInfo } from '../sensor/sensorInfo';
+import { escapeHtml, safeColour, sensorInlineHtml, sharedPrefixHtml, useSensorLookup, type SensorInfo } from '../sensor/sensorInfo';
+import { withAxisNames } from '../../utils/axisName';
+import { tooltipSharedPrefix } from '../../utils/tooltipLayout';
 import { sensorAxisTitle } from './workbench/healthCharts';
 import type { SubModelFit, SubModelFitsState } from './useSubModelFits';
 
@@ -22,8 +24,9 @@ import type { SubModelFit, SubModelFitsState } from './useSubModelFits';
  *
  *  A sensor is never shown by its tag alone (user rule 2026-10-14): the axis titles are
  *  the description + unit (the tag is in the card's title, right above the chart) and the
- *  tooltip rows are the shared inline label (description, then tag). `lookup` is the
- *  window's sensor lookup; without one a sensor reads as its tag. */
+ *  tooltip rows are the shared inline label (description, then tag). The chart wrapper fits
+ *  the titles to the card (`withAxisNames`, DESIGN_SYSTEM §4 rule 1b): the Y title wraps instead of
+ *  being cut at its end. `lookup` is the window's sensor lookup; without one a sensor reads as its tag. */
 export function buildSubModelOption(fit: SubModelFit, xSensor: string, targetSensor: string, lookup: (tag: string) => SensorInfo = tag => ({ tag })) {
     const xInfo = lookup(xSensor);
     const yInfo = lookup(targetSensor);
@@ -74,7 +77,7 @@ export function buildSubModelOption(fit: SubModelFit, xSensor: string, targetSen
         silent: isHugeData,
     };
 
-    return {
+    return withAxisNames({
         backgroundColor: 'transparent',
         textStyle: { fontFamily: 'Inter, system-ui, sans-serif' },
         animation: !isLargeData,
@@ -83,12 +86,18 @@ export function buildSubModelOption(fit: SubModelFit, xSensor: string, targetSen
             backgroundColor: tooltipBg,
             borderColor: tooltipBorder,
             textStyle: { color: txtPrimary },
+            // Never cut off at the chart's edge (it used to be, at the card's left).
+            confine: true,
             formatter: (p: any) => {
                 const v = p.value as [number, number];
                 const c = safeColour(typeof p.color === 'string' ? p.color : undefined);
-                return `<div style="font-weight:bold;margin-bottom:4px${c ? `;color:${c}` : ''}">${escapeHtml(String(p.seriesName ?? ''))}</div>`
-                    + sensorInlineHtml(xInfo, undefined, typeof v?.[0] === 'number' ? v[0].toFixed(4) : '—')
-                    + sensorInlineHtml(yInfo, undefined, typeof v?.[1] === 'number' ? v[1].toFixed(4) : '—');
+                // The start both names share once, then name · value rows of one grid (rule 4).
+                const prefix = tooltipSharedPrefix([xInfo, yInfo]);
+                return `<div class="tt-grid"><div class="tt-title"${c ? ` style="color:${c}"` : ''}>${escapeHtml(String(p.seriesName ?? ''))}</div>`
+                    + sharedPrefixHtml(prefix)
+                    + sensorInlineHtml(xInfo, undefined, typeof v?.[0] === 'number' ? v[0].toFixed(4) : '—', prefix)
+                    + sensorInlineHtml(yInfo, undefined, typeof v?.[1] === 'number' ? v[1].toFixed(4) : '—', prefix)
+                    + '</div>';
             },
         },
         legend: {
@@ -110,8 +119,6 @@ export function buildSubModelOption(fit: SubModelFit, xSensor: string, targetSen
             nameLocation: 'middle',
             nameGap: 26,
             nameTextStyle: { color: txtSecondary, fontSize: 11 },
-            // A long description is cut with "…" instead of running off the card.
-            nameTruncate: { maxWidth: 520, ellipsis: '…' },
             scale: true,
             axisLabel: { color: txtSecondary, fontSize: 10 },
             axisLine: { lineStyle: { color: gridLine } },
@@ -123,8 +130,6 @@ export function buildSubModelOption(fit: SubModelFit, xSensor: string, targetSen
             nameLocation: 'middle',
             nameGap: 40,
             nameTextStyle: { color: txtSecondary, fontSize: 11 },
-            // The chart can be as low as 220 px: a longer title would be clipped at both ends.
-            nameTruncate: { maxWidth: 150, ellipsis: '…' },
             scale: true,
             axisLabel: { color: txtSecondary, fontSize: 10 },
             axisLine: { lineStyle: { color: gridLine } },
@@ -134,7 +139,7 @@ export function buildSubModelOption(fit: SubModelFit, xSensor: string, targetSen
             { ...seriesCommon, name: 'Raw', data: rawPoints, itemStyle: { color: '#3b82f6', opacity: pointOpacity } },
             { ...seriesCommon, name: 'Model', data: modelPoints, itemStyle: { color: '#f43f5e', opacity: pointOpacity } },
         ],
-    };
+    }, { x: xInfo, y: yInfo });
 }
 
 export interface SubModelsModalProps {

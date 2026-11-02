@@ -1,9 +1,10 @@
-import { useState, type RefObject } from 'react';
+import { useMemo, useState, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import TaggedPointList, { type TaggedPointListItem } from './TaggedPointList';
-import { SensorInline } from '../sensor/SensorLabel';
+import { SensorInline, SensorSetProvider, SetPrefixLine } from '../sensor/SensorLabel';
 import { MAX_TAGGED_POINTS } from './pairPlotColors';
+import { displayedName } from '../../utils/sensorNames';
 import type { SensorInfo } from '../sensor/sensorInfo';
 
 export interface TagCompareRow {
@@ -53,11 +54,15 @@ interface TagCompareTableProps {
  */
 export default function TagCompareTable({ items, rows, onRemove, emptyFocusRef, variant = 'docked' }: TagCompareTableProps) {
     const [folded, setFolded] = useState(false);
+    const setNames = useMemo(() => rows.map(r => displayedName(r.info)), [rows]);
     if (items.length === 0) return null;
     const panel = variant === 'panel';
     const open = panel || !folded;
 
     return (
+        // Rule 2 + 3: the rows are one set. While a name is cut, the start they share is printed once in the
+        // corner and the rows print the rest. A name that fits changes nothing.
+        <SensorSetProvider names={setNames} drop>
         <section className={`tag-table${panel ? ' tag-table--panel' : ''}`} data-testid="tag-table" aria-label="Values at the tagged points">
             <div
                 className="tag-table-grid"
@@ -83,6 +88,7 @@ export default function TagCompareTable({ items, rows, onRemove, emptyFocusRef, 
                             <span className="tag-table-count">{items.length}</span>
                         </button>
                     )}
+                    {open && <SetPrefixLine className="tag-table-prefix" testid="tag-table-prefix" />}
                 </div>
                 <TaggedPointList items={items} onRemove={onRemove} emptyFocusRef={emptyFocusRef} />
                 <div className="tag-table-fill tag-table-fill--head" aria-hidden="true" />
@@ -121,6 +127,7 @@ export default function TagCompareTable({ items, rows, onRemove, emptyFocusRef, 
                 </p>
             )}
         </section>
+        </SensorSetProvider>
     );
 }
 

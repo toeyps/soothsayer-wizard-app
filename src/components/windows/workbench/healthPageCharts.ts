@@ -20,6 +20,7 @@ import {
     clusterAxes,
     clusterExtent,
     clusterTooltipFormatter,
+    withClusterAxisNames,
     ellipseSeries,
     ringLabelSeries,
     rmseReferenceLines,
@@ -270,7 +271,7 @@ export function buildClusterSetPointOption(
         { sigma: 3, text: '3× · 80', color: CHART.warn },
         ...(outer !== null ? [{ sigma: outer, text: `${typedText(outer)}× · 0`, color: CHART.danger }] : []),
     ]);
-    return {
+    return withClusterAxisNames({
         backgroundColor: 'transparent',
         textStyle: { fontFamily: FONT },
         animation: false,
@@ -306,7 +307,7 @@ export function buildClusterSetPointOption(
             ringLabels,
             ...hover,
         ],
-    };
+    }, names);
 }
 
 // ---------------------------------------------------------------------------

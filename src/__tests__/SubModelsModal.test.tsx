@@ -8,6 +8,7 @@ vi.mock('../components/charts/ResponsiveECharts', () => ({
 }));
 
 import SubModelsModal, { buildSubModelOption } from '../components/windows/SubModelsModal';
+import { getAxisNames } from '../utils/axisName';
 import { useSubModelFits, type SubModelFit, type SubModelFitsState } from '../components/windows/useSubModelFits';
 import type { RelationshipPreviewResult } from '../types/commands';
 import { HEALTH_DEFAULT_MAX_POINTS } from '../utils/healthRequest';
@@ -46,8 +47,11 @@ describe('buildSubModelOption', () => {
         const o: any = buildSubModelOption(fit, 'B', 'TARGET', tag => info[tag] ?? { tag });
         expect(o.xAxis.name).toBe('FUEL GAS <FLOW> · kg/s');
         expect(o.yAxis.name).toBe('VALVE POSITION · %');
-        expect(o.xAxis.nameTruncate.ellipsis).toBe('…');
-        expect(o.yAxis.nameTruncate.maxWidth).toBeLessThan(220); // the chart can be as low as 220 px
+        // The titles are fitted by the chart wrapper (rule 1b), never end-cut by ECharts.
+        expect(o.xAxis.nameTruncate).toBeUndefined();
+        expect(o.yAxis.nameTruncate).toBeUndefined();
+        expect(getAxisNames(o)).toEqual({ x: info.B, y: info.TARGET });
+        expect(o.tooltip.confine).toBe(true); // never clipped off the card
         const html: string = o.tooltip.formatter({ value: [2, 1.1], color: '#3b82f6', seriesName: 'Raw' });
         expect(html).toContain('<span class="tt-desc">FUEL GAS &lt;FLOW&gt;</span><span class="tt-tag">B</span>');
         expect(html).toContain('<span class="tt-desc">VALVE POSITION</span><span class="tt-tag">TARGET</span>');
@@ -292,5 +296,33 @@ describe('useSubModelFits', () => {
         await act(async () => { gates[0](); await first; }); // the older one lands late: ignored
         expect(hook.current.subModels).toBe(newer);
         expect(hook.current.loading).toBe(false);
+    });
+});
+
+describe('buildSubModelOption: long sensor names', () => {
+    const LONG = (n: number) => `Crosshead (P-P Trend) - Vibration crosshead slide 11A - SegmentNo ${n} - avg`;
+    const n = 3;
+    const fit: any = {
+        predictors: ['B'],
+        result: { predictor_raw: [[1], [2], [3]], target_raw: [1, 2, 3], predicted: [1, 2, 3], r2_per_step: Array(n).fill(0), rmse2_per_step: Array(n).fill(0) },
+    };
+
+    it('the tooltip is a grid, with the start both names share printed once', () => {
+        const info: Record<string, SensorInfo> = { B: { tag: 'B', description: LONG(1) }, T: { tag: 'T', description: LONG(2) } };
+        const o: any = buildSubModelOption(fit, 'B', 'T', tag => info[tag]);
+        const html: string = o.tooltip.formatter({ value: [2, 1.1], color: '#3b82f6', seriesName: 'Raw' });
+        expect(html.startsWith('<div class="tt-grid"><div class="tt-title"')).toBe(true);
+        expect(html).toContain('class="tt-prefix"');
+        expect(html).toContain('<span class="tt-desc">SegmentNo 1 - avg</span>');
+        expect(html).toContain('<span class="tt-desc">SegmentNo 2 - avg</span>');
+    });
+
+    it('a tag-only sensor reads as its tag, also on the axis marks', () => {
+        const o: any = buildSubModelOption(fit, 'B', 'T');
+        expect(o.xAxis.name).toBe('B');
+        expect(getAxisNames(o)).toEqual({ x: { tag: 'B' }, y: { tag: 'T' } });
+        const html: string = o.tooltip.formatter({ value: [2, 1.1], color: '#3b82f6', seriesName: 'Raw' });
+        expect(html).toContain('<span class="tt-desc tt-mono">B</span>');
+        expect(html).not.toContain('tt-prefix');
     });
 });

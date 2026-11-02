@@ -2053,6 +2053,10 @@ body {
        old 70 px the bar sat over the top Y tick label, which ends at 80 px. */
     left: 96px;
     z-index: 10;
+    /* Stops 8 px before the icon buttons (.scatter-regl-toolbox: 12 px from the edge, 90 px wide with
+       3 tools, 118 px with Clear all); the pickers shrink. */
+    box-sizing: border-box;
+    max-width: calc(100% - 96px - 12px - 90px - 8px);
     display: flex;
     align-items: center;
     gap: 6px;
@@ -2065,6 +2069,8 @@ body {
     font-size: 11px;
     border: 1px solid var(--border-strong);
 }
+
+.scatter-regl-controls--tags { max-width: calc(100% - 96px - 12px - 118px - 8px); }
 
 .scatter-regl-vs {
     color: var(--text-secondary);
@@ -2409,6 +2415,12 @@ body {
     color: var(--text-secondary);
     opacity: 0.8;
 }
+
+/* Rule 2: the start the rows share, once, under the corner's title (only while a row is cut). */
+.tag-table-corner:has(> .tag-table-prefix) { flex-direction: column; align-items: flex-start; justify-content: center; min-width: 0; }
+.tag-table-prefix { max-width: 100%; margin-top: 2px; font-size: 10.5px; color: var(--text-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* The description gets the room first: a tag that does not fit is clipped, never the description. */
+.tag-table-name .sl-tag { flex: 0 1000 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 
 .tag-table-title {
     padding: 0;
@@ -2779,6 +2791,29 @@ body {
     gap: 1px;
     background: transparent;
 }
+/* Rule 5: one line above the matrix, under the toolbox and the cluster chips. */
+.pair-regl-grid--key { top: 56px; }
+.pair-regl-key {
+    position: absolute;
+    top: 40px;
+    left: 44px;
+    right: 12px;
+    z-index: 3;
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    overflow: hidden;
+    font-size: 11px;
+    line-height: 16px;
+    color: var(--text-secondary);
+}
+.pair-regl-key-prefix { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); }
+.pair-regl-key-item { display: inline-flex; align-items: baseline; gap: 5px; flex: 0 1 auto; min-width: 0; white-space: nowrap; color: var(--text-primary); }
+.pair-regl-key-item > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.pair-regl-key-item b,
+.pair-regl-axis-tag--key b { flex: none; font-family: var(--mono); font-size: 10.5px; font-weight: 600; color: var(--accent-hi); }
+.pair-regl-axis-tag--key { display: inline-flex; align-items: baseline; gap: 5px; max-width: 100%; }
+.pair-regl-axis-tag--key span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .pair-regl-cell-slot {
     position: relative;
@@ -6218,6 +6253,14 @@ body {
 /* ── Per-screen rollout ── */
 /* Dashboard › Sensor tab rows: the label takes the room so ellipsis works. */
 .sensor-list-row .checkbox-wrapper { flex: 1; min-width: 0; }
+/* Rule 2: the start a run of rows shares. Rule 6: the windowed list and its sticky line. */
+.sensor-run-prefix { padding: 7px 14px 1px 38px; font-size: 10.5px; color: var(--text-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sensor-run-stick { position: sticky; top: 0; flex: none; height: 0; z-index: 4; }
+.sensor-run-sticky { padding: 4px 14px; border-bottom: 1px solid var(--border); background: var(--card-bg); font-size: 10.5px; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; box-shadow: 0 4px 10px rgba(0, 0, 0, 0.25); }
+.sensor-run-sticky b { font-size: 10px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
+.sensor-list-window { position: relative; flex: none; }
+.sensor-list-line { position: absolute; left: 0; right: 0; }
+.sensor-list-line--follow > .sensor-list-row { margin-top: 0; }
 .sensor-row-label { flex: 1; min-width: 0; display: grid; cursor: pointer; }
 /* Failure Groups tab rows match the Sensor-tab row metrics. */
 .fg-srow-btn {
@@ -6314,7 +6357,7 @@ body {
 .hl-unit { font-family: var(--mono); font-size: 10px; font-weight: 400; color: var(--text-secondary); }
 
 /* Scatter: compact X/Y pickers + inline axis titles. */
-.scatter-pk { display: inline-flex; width: clamp(150px, 22vw, 300px); min-width: 0; }
+.scatter-pk { display: inline-flex; flex: 0 1 auto; width: clamp(150px, 22vw, 300px); min-width: 0; }
 .scatter-axis-title {
     position: absolute;
     z-index: 4;
@@ -6356,6 +6399,9 @@ body {
     font-size: 10px;
     color: var(--text-secondary);
 }
+/* Rule 1b: a wrapped title carries its unit at title size; a tag printed as the name is mono. */
+.sat-unit { font-weight: 400; color: var(--text-secondary); }
+.sat-desc--tag { font-family: var(--mono); font-size: 10px; font-weight: 400; }
 .scatter-axis-unit { flex-shrink: 0; font-family: var(--mono); font-size: 9.5px; line-height: 12px; color: var(--text-secondary); }
 /* Vertical, reading bottom-to-top; the column direction puts the description on the OUTER
    line and tag + unit next to the tick labels. */
@@ -6376,6 +6422,9 @@ body {
     visibility: visible;
 }
 .pair-regl-axis-card { min-width: 180px; max-width: 300px; padding: 6px 8px; }
+/* A long name wraps in the card instead of being cut: the card is where it reads in full. */
+.pair-regl-axis-card--long { width: max-content; max-width: 340px; }
+.pair-regl-axis-card--long .sl-desc { white-space: normal; overflow: visible; }
 
 /* Build Model: list rows, detail header, readout, Fit X selector, subtitles, RC rows. */
 .bmw-srow .sl { min-width: 0; }

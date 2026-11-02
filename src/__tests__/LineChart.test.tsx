@@ -1221,3 +1221,48 @@ describe('Horizontal Zoom (drag across the chart to zoom into a range — replac
         expect((zoomButton(container) as HTMLButtonElement).disabled).toBeFalsy();
     });
 });
+
+describe('LineChart tooltip: long sensor names (rule 4)', () => {
+    const LONG = (n: number) => `Crosshead (P-P Trend) - Vibration crosshead slide 11A - SegmentNo ${n} - avg`;
+    const T0 = '2026-01-01T00:00:00';
+    const columnar = (n: number): ColumnarSeries => ({ timestamps: [T0], series: Array.from({ length: n }, (_, i) => [i + 0.5]) });
+    const hoverHtml = () => {
+        const { formatter } = capturedOptions[capturedOptions.length - 1].tooltip;
+        const ms = new Date(T0).getTime();
+        return formatter([{ axisValue: ms, seriesName: 'A', value: [ms, 1], color: '#fff' }]) as string;
+    };
+    const count = (html: string, needle: string) => html.split(needle).length - 1;
+
+    it('prints the shared start once and each row the rest, with its value in its own column', () => {
+        const tags = ['A', 'B', 'C'];
+        const meta = tags.map((tag, i) => ({ tag, description: LONG(i + 1), unit: 'mm/s', component: '' }));
+        render(<LineChart data={[]} columnar={columnar(3)} sensors={tags} headers={tags} sensorMetadata={meta} />);
+        const html = hoverHtml();
+        expect(count(html, 'class="tt-prefix"')).toBe(1);
+        expect(html).toContain('Crosshead (P-P Trend) - Vibration crosshead slide 11A …');
+        expect(html).toContain('<span class="tt-desc">SegmentNo 1 - avg</span>');
+        expect(html).toContain('<span class="tt-desc">SegmentNo 3 - avg</span>');
+        expect(count(html, 'class="tt-val"')).toBe(3);
+    });
+
+    it('a tag-only project follows the same rule, in mono', () => {
+        const tags = [LONG(1), LONG(2)];
+        render(<LineChart data={[]} columnar={columnar(2)} sensors={tags} headers={tags} />);
+        const html = hoverHtml();
+        expect(count(html, 'class="tt-prefix"')).toBe(1);
+        expect(html).toContain('<span class="tt-desc tt-mono">SegmentNo 2 - avg</span>');
+    });
+
+    it('short names keep plain rows and no shared line', () => {
+        const tags = ['A', 'B'];
+        const meta = [
+            { tag: 'A', description: 'GENERATOR POWER', unit: 'MW', component: '' },
+            { tag: 'B', description: 'BEARING TEMP', unit: 'DEGC', component: '' },
+        ];
+        render(<LineChart data={[]} columnar={columnar(2)} sensors={tags} headers={tags} sensorMetadata={meta} />);
+        const html = hoverHtml();
+        expect(html).not.toContain('tt-prefix');
+        expect(html).not.toContain('tt-row--wrap');
+        expect(html).toContain('<span class="tt-desc">GENERATOR POWER</span><span class="tt-tag">A</span>');
+    });
+});

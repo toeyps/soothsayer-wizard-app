@@ -254,6 +254,8 @@ describe('PairPlotChart', () => {
                 { timestamp: 't0', values: [1, 10] },
                 { timestamp: 't1', values: [2, 20] },
             ] as any;
+            // A matrix wide enough that the tag headers fit (otherwise rule 5 prints keys).
+            Object.defineProperty(HTMLElement.prototype, 'clientWidth', { configurable: true, value: 1000 });
             const { container } = render(<PairPlotChart data={longData} sensors={longHeaders} headers={longHeaders} />);
             // Two spans render this text: the (correctly-ellipsis-able) top/column
             // header on the row-0 scatter cell, and the rotated row-header span on
@@ -930,3 +932,77 @@ describe('PairPlotChart — toolbox ↺ (reset zoom and pan)', () => {
     });
 });
 
+describe('PairPlotChart: long sensor names (rule 5)', () => {
+    const LONG = (n: number) => `Crosshead (P-P Trend) - Vibration crosshead slide 11A - SegmentNo ${n} - avg`;
+    const rows = [
+        { timestamp: 't0', values: [1, 10] },
+        { timestamp: 't1', values: [2, 20] },
+    ] as any;
+    const wide = () => Object.defineProperty(HTMLElement.prototype, 'clientWidth', { configurable: true, value: 1000 });
+
+    it('tag headers that fit stay today\'s headers, no key line, the matrix where it was', () => {
+        wide();
+        const { container } = render(<PairPlotChart data={rows} sensors={['A', 'B']} headers={['A', 'B']} />);
+        expect(screen.queryByTestId('pair-key')).toBeNull();
+        expect(container.querySelector('.pair-regl-grid')!.className).toBe('pair-regl-grid');
+        expect([...container.querySelectorAll('.pair-regl-axis-tag')].map(e => e.textContent).slice(0, 2)).toEqual(['A', 'B']);
+    });
+
+    it('a set with a shared start gets S1…Sn keys and a prefix-only key line, even when the tags fit', () => {
+        wide();
+        const meta = [
+            { tag: 'A', description: LONG(1), unit: '', component: '' },
+            { tag: 'B', description: LONG(2), unit: '', component: '' },
+        ];
+        const { container } = render(<PairPlotChart data={rows} sensors={['A', 'B']} headers={['A', 'B']} sensorMetadata={meta} />);
+        expect(screen.getByTestId('pair-key').textContent).toBe('Crosshead (P-P Trend) - Vibration crosshead slide 11A …');
+        expect(container.querySelector('.pair-regl-grid')!.classList.contains('pair-regl-grid--key')).toBe(true);
+        const heads = [...container.querySelectorAll('.pair-regl-axis-tag--key')].map(e => e.textContent);
+        expect(heads).toContain('S1SegmentNo 1 - avg');
+        expect(heads).toContain('S2SegmentNo 2 - avg');
+        expect(heads).toContain('S2'); // the rotated row label: the key alone
+    });
+
+    it('a tag-only set follows the same rule (its tags are its names)', () => {
+        wide();
+        const tags = [LONG(1), LONG(2)];
+        const { container } = render(<PairPlotChart data={rows} sensors={tags} headers={tags} />);
+        expect(screen.getByTestId('pair-key').textContent).toBe('Crosshead (P-P Trend) - Vibration crosshead slide 11A …');
+        expect([...container.querySelectorAll('.pair-regl-axis-tag--key')].map(e => e.textContent)).toContain('S2SegmentNo 2 - avg');
+        // A key always has its hover card, also with nothing but the tag to show.
+        expect(container.querySelector('.pair-regl-axis-label.hoverable .pair-regl-axis-card--long')).toBeTruthy();
+    });
+
+    it('a header that would be cut with no shared start: keys, and the key line spells the names out', () => {
+        Object.defineProperty(HTMLElement.prototype, 'clientWidth', { configurable: true, value: 200 });
+        const tags = ['11MOV1603.PV', '11TE1602.PV'];
+        const { container } = render(<PairPlotChart data={rows} sensors={tags} headers={tags} />);
+        expect(screen.getByTestId('pair-key').textContent).toBe('S111MOV1603.PVS211TE1602.PV');
+        expect(container.querySelectorAll('.pair-regl-axis-tag--key').length).toBeGreaterThan(0);
+    });
+
+    it('a short name\'s hover card stays today\'s card', () => {
+        wide();
+        const meta = [
+            { tag: 'A', description: 'GENERATOR POWER', unit: 'MW', component: '' },
+            { tag: 'B', description: 'BEARING TEMP', unit: '', component: '' },
+        ];
+        const { container } = render(<PairPlotChart data={rows} sensors={['A', 'B']} headers={['A', 'B']} sensorMetadata={meta} />);
+        expect(container.querySelector('.pair-regl-axis-card')).toBeTruthy();
+        expect(container.querySelector('.pair-regl-axis-card--long')).toBeNull();
+    });
+
+    it('the hover tooltip prints the shared start once and the rows the rest', () => {
+        wide();
+        const meta = [
+            { tag: 'A', description: LONG(1), unit: '', component: '' },
+            { tag: 'B', description: LONG(2), unit: 'mm/s', component: '' },
+        ];
+        const { container } = render(<PairPlotChart data={rows} sensors={['A', 'B']} headers={['A', 'B']} sensorMetadata={meta} />);
+        fireEvent.click(screen.getByText('hover-A-B'));
+        const tip = container.querySelector('.scatter-regl-tooltip') as HTMLElement;
+        expect(tip.querySelector('.tt-prefix')!.textContent).toBe('Crosshead (P-P Trend) - Vibration crosshead slide 11A …');
+        expect([...tip.querySelectorAll('[data-name-part="tail"]')].map(n => n.textContent).sort()).toEqual([' SegmentNo 1 - avg', ' SegmentNo 2 - avg']);
+        expect(tip.querySelector('.tt-val')).toBeTruthy();
+    });
+});

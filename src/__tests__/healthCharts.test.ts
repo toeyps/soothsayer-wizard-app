@@ -1,10 +1,12 @@
 import { describe, it, expect, vi } from 'vitest';
+import { getAxisNames } from '../utils/axisName';
 import {
     HOVER_AXIS_POINTER,
     hourlyScopes,
     REF_LABEL_GUTTER,
     REF_LABEL_MIN_GAP,
     buildClusterOption,
+    clusterChartNames,
     clusterTooltipFormatter,
     buildDistributionOption,
     buildFitScatterOption,
@@ -539,7 +541,7 @@ describe('Individual charts', () => {
         expect(ts.xAxis.axisLabel.formatter(new Date(2026, 0, 1, 1, 0).getTime())).toBe('2026/01/01 01:00');
         const cat: any = buildTimeSeriesOption({ timestamps: ['a', 'b'], lines: [{ name: 'V', values: [1, 2], color: '#fff' }] });
         expect(cat.xAxis.axisLabel.formatter).toBeUndefined();
-        const fit: any = buildFitScatterOption(rel().fit_scatter!, '°C');
+        const fit: any = buildFitScatterOption(rel().fit_scatter!, '°C', { tag: 'A' });
         expect(fit.xAxis.axisLabel.formatter(noisy)).toBe('0.3');
         expect(fit.yAxis.axisLabel.formatter(noisy)).toBe('0.3');
         const c = clu();
@@ -555,9 +557,11 @@ describe('Individual charts', () => {
         const o: any = buildClusterOption(c.cluster_scatter!, (c.stats as ClusteringStats).clusters, { x: 'BEARING TEMP · DEGC', y: 'MAIN TEMP · DEGC' });
         const html: string = o.tooltip.formatter({ seriesType: 'scatter', seriesName: 'Cluster 1', value: [70.5, 88.25] });
         expect(html).toContain('Cluster 1');
-        expect(html).toContain('X · BEARING TEMP · DEGC');
+        expect(html).toContain('<b class="tt-key">X</b>');
+        expect(html).toContain('BEARING TEMP · DEGC');
         expect(html).toContain('70.5');
-        expect(html).toContain('Y · MAIN TEMP · DEGC');
+        expect(html).toContain('<b class="tt-key">Y</b>');
+        expect(html).toContain('MAIN TEMP · DEGC');
         expect(html).toContain('88.25');
         expect(o.tooltip.formatter({ seriesType: 'line', seriesName: 'Cluster 1 3× SD', value: [1, 2] })).toBe('Cluster 1 · 3× SD');
     });
@@ -568,7 +572,7 @@ describe('Individual charts', () => {
         expect(html).toContain('Cluster 2');
         expect(html).toContain('Health score');
         expect(html).toContain('87.5');
-        expect(html).toContain('X · X&lt;s&gt;'); // axis names are escaped
+        expect(html).toContain('X&lt;s&gt;'); // axis names are escaped
         expect(f({ seriesType: 'scatter', seriesName: 'Points', value: [1, 2, null, null] })).toContain('no score');
         expect(f({ seriesType: 'scatter', seriesName: 'Points', value: [1, 2, null, null] })).toContain('No cluster');
     });
@@ -601,11 +605,11 @@ describe('Relationship charts', () => {
     it('Fit: the Actual and Relation-model series against the chosen predictor, skipping missing predictions', () => {
         const p = rel();
         const fit = { ...p.fit_scatter!, predicted: [10, null, 12, 11, 10] as (number | null)[] };
-        const o: any = buildFitScatterOption(fit, '°C');
+        const o: any = buildFitScatterOption(fit, '°C', { tag: 'A', description: 'BEARING TEMP', unit: 'DEGC' });
         expect(o.series.map((s: any) => s.name)).toEqual(['Actual', 'Relation model']);
         expect(o.series[0].data).toHaveLength(5);
         expect(o.series[1].data).toHaveLength(4);
-        expect(o.xAxis.name).toBe('A'); // the fixture's first predictor
+        expect(o.xAxis.name).toBe('BEARING TEMP · DEGC'); // the predictor's description · unit, never the bare tag
         expect(o.yAxis.name).toBe('°C');
     });
 
@@ -632,7 +636,7 @@ describe('Relationship charts', () => {
     });
 
     it('Fit: the axis lines stay on the plot\'s edge (no stray line through zero when the data straddles it)', () => {
-        const o: any = buildFitScatterOption(rel().fit_scatter!, '°C');
+        const o: any = buildFitScatterOption(rel().fit_scatter!, '°C', { tag: 'A' });
         expect(o.xAxis.axisLine.onZero).toBe(false);
         expect(o.yAxis.axisLine.onZero).toBe(false);
         expect(o.xAxis.axisLine.lineStyle.color).toBe(CHART.gridLine);
@@ -926,5 +930,57 @@ describe('Clustering chart', () => {
         const pts2 = turned.renderItem(params, api).shape.points as number[][];
         expect(Math.max(...pts2.map(p => p[0]))).toBeCloseTo(3, 5);
         expect(Math.max(...pts2.map(p => p[1]))).toBeCloseTo(6, 5);
+    });
+});
+
+describe('long sensor names on the Workbench charts', () => {
+    const LONG = (n: number) => `Crosshead (P-P Trend) - Vibration crosshead slide 11A - SegmentNo ${n} - avg`;
+
+    it('Fit: the X title is description · unit; a target with a unit needs no fitting, one without names the Y axis', () => {
+        const x = { tag: 'A', description: 'GENERATOR POWER', unit: 'MW' };
+        const withUnit: any = buildFitScatterOption(rel().fit_scatter!, '°C', x);
+        expect(withUnit.xAxis.name).toBe('GENERATOR POWER · MW');
+        expect(withUnit.yAxis.name).toBe('°C');
+        expect(getAxisNames(withUnit)).toEqual({ x });
+        const y = { tag: 'T', description: 'BEARING TEMP' };
+        const noUnit: any = buildFitScatterOption(rel().fit_scatter!, sensorAxisTitle(y), x, y);
+        expect(noUnit.yAxis.name).toBe('BEARING TEMP');
+        expect(getAxisNames(noUnit)).toEqual({ x, y });
+    });
+
+    it('Fit: a tag-only predictor prints its tag (it has nothing else)', () => {
+        const o: any = buildFitScatterOption(rel().fit_scatter!, '°C', { tag: 'A' });
+        expect(o.xAxis.name).toBe('A');
+    });
+
+    it('Clusters: a grid with the key, the name and the value + unit; the sensors are marked for fitting', () => {
+        const c = clu();
+        const x = { tag: 'B1', description: 'BEARING TEMP', unit: 'DEGC' };
+        const y = { tag: 'M1', description: 'MAIN TEMP', unit: 'bar' };
+        const o: any = buildClusterOption(c.cluster_scatter!, (c.stats as ClusteringStats).clusters, clusterChartNames(x, y));
+        expect(o.xAxis.name).toBe('BEARING TEMP · DEGC');
+        expect(getAxisNames(o)).toEqual({ x, y });
+        const html: string = o.tooltip.formatter({ seriesType: 'scatter', seriesName: 'Cluster 1', value: [70.5, 88.25] });
+        expect(html.startsWith('<div class="tt-grid"><div class="tt-title">Cluster 1</div>')).toBe(true);
+        expect(html).toContain('<b class="tt-key">X</b><span class="tt-label"><span class="tt-desc">BEARING TEMP</span></span><span class="tt-val">70.5 DEGC</span>');
+        expect(html).toContain('<span class="tt-val">88.25 bar</span>');
+        expect(html).not.toContain('tt-tag'); // the tags are in the card's subtitle
+        expect(html).not.toContain('tt-prefix');
+    });
+
+    it('Clusters: names sharing a long start print it once, a tag-only sensor prints its tag in mono', () => {
+        const f = clusterTooltipFormatter(clusterChartNames({ tag: 'A', description: LONG(1) }, { tag: 'B', description: LONG(2) }));
+        const html = f({ seriesType: 'scatter', seriesName: 'Cluster 1', value: [1, 2] });
+        expect(html).toContain('class="tt-prefix"');
+        expect(html).toContain('<span class="tt-desc">SegmentNo 2 - avg</span>');
+        const tagOnly = clusterTooltipFormatter(clusterChartNames({ tag: 'T1' }, { tag: 'T2', unit: 'mm' }))({ seriesType: 'scatter', seriesName: 'Cluster 1', value: [1, 2] });
+        expect(tagOnly).toContain('<span class="tt-desc tt-mono">T1</span>');
+        expect(tagOnly).toContain('<span class="tt-val">2 mm</span>');
+    });
+
+    it('names without the sensors stay unfitted (no mark on the option)', () => {
+        const c = clu();
+        const o: any = buildClusterOption(c.cluster_scatter!, (c.stats as ClusteringStats).clusters, { x: 'X', y: 'Y' });
+        expect(getAxisNames(o)).toBeNull();
     });
 });

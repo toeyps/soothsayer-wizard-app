@@ -348,11 +348,11 @@ describe('(1) the X-axis switcher\'s IMMEDIATE scatterXSensor write vs. Dashboar
 
             await clickTrain();
             expect(diskFresh('r1')).toBe(true);
-            await waitFor(() => expect(echartsX()).toBe('TAG2')); // first fitted predictor by default
+            await waitFor(() => expect(echartsX()).toBe('Pump Temp · C')); // first fitted predictor by default
 
             await pickXAxis('TAG3');
             expect(diskModel('r1').scatterXSensor).toBe('TAG3');
-            await waitFor(() => expect(echartsX()).toBe('TAG3'));
+            await waitFor(() => expect(echartsX()).toBe('Motor Current · A'));
             // A view choice, not a fit input: no staleness, no draft created.
             expect(pill()).toBe('Trained');
             expect(bmw().queryByTestId('save-changes')).toBeNull();
@@ -368,14 +368,14 @@ describe('(1) the X-axis switcher\'s IMMEDIATE scatterXSensor write vs. Dashboar
             expect(diskFresh('r1')).toBe(true);
             // Dashboard's own broadcasts reached Build Model; the chart kept the axis.
             selectRow('TAG1');
-            await waitFor(() => expect(echartsX()).toBe('TAG3'));
+            await waitFor(() => expect(echartsX()).toBe('Motor Current · A'));
 
             // Reopen both windows from the file: auto-recompute lands on TAG3.
             cleanup();
             h.drop = null;
             await mountBoth();
             selectRow('TAG1');
-            await waitFor(() => expect(echartsX()).toBe('TAG3'));
+            await waitFor(() => expect(echartsX()).toBe('Motor Current · A'));
         });
     }
 });
@@ -507,7 +507,7 @@ describe('(3) immediate X-axis write and the pending draft do not cross-contamin
         expect(diskModel('r1').name).toBe('Renamed rel');
         expect(diskModel('r1').scatterXSensor).toBe('TAG3');
         expect(diskFresh('r1')).toBe(true);
-        await waitFor(() => expect(echartsX()).toBe('TAG3'));
+        await waitFor(() => expect(echartsX()).toBe('Motor Current · A'));
     });
 
     it('a fingerprinted draft edit made AFTER an X-axis change (stiffness) saves without reverting the axis, and re-training keeps it', async () => {
@@ -528,7 +528,7 @@ describe('(3) immediate X-axis write and the pending draft do not cross-contamin
         await settle(30);
         expect(diskFresh('r1')).toBe(true);
         expect(diskModel('r1').scatterXSensor).toBe('TAG3');
-        await waitFor(() => expect(echartsX()).toBe('TAG3'));
+        await waitFor(() => expect(echartsX()).toBe('Motor Current · A'));
     });
 });
 

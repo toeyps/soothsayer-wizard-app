@@ -14,6 +14,7 @@ import {
     buildResidualOption,
     buildTargetVsPredictedOption,
     buildValueOverTimeOption,
+    clusterChartNames,
     compactScopes,
     estimateRowsOutside3sd,
     individualVLines,
@@ -207,7 +208,13 @@ function ModelFitPage(props: ModelFitPageProps) {
                     title="Fit"
                     sub={<span className="wb2-sub-sl">predictor vs <SensorInline tag={model.targetSensor ?? ''} size="sm" muted /></span>}
                     stale={stale}
-                    option={fit ? buildFitScatterOption(fit, unit || model.targetSensor) : null}
+                    option={fit ? buildFitScatterOption(
+                        fit,
+                        // The Y title: the unit, or the target's name when it has none (never the bare tag).
+                        unit || sensorAxisTitle(lookup(model.targetSensor ?? '')),
+                        lookup(fit.x_sensor),
+                        unit ? undefined : lookup(model.targetSensor ?? ''),
+                    ) : null}
                     empty="No fit to draw"
                     extra={<>
                         {fit && fit.predictors.length > 0 && (
@@ -311,7 +318,7 @@ function ModelFitPage(props: ModelFitPageProps) {
                     size="xtall"
                     stale={stale}
                     // Axis titles: description + unit — the tags are in the subtitle above.
-                    option={scatter ? buildClusterOption(scatter, stats.clusters, { x: sensorAxisTitle(lookup(xTag)), y: sensorAxisTitle(lookup(yTag)) }) : null}
+                    option={scatter ? buildClusterOption(scatter, stats.clusters, clusterChartNames(lookup(xTag), lookup(yTag))) : null}
                     empty="No clusters to draw"
                     // A fixed key for the rings: this chart zooms and pans on both axes, and
                     // the name drawn at a ring's edge leaves the view with that edge.

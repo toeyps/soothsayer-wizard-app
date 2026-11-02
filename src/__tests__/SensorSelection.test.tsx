@@ -769,3 +769,136 @@ describe('SensorSelection', () => {
         });
     });
 });
+
+describe('SensorSelection: long sensor names', () => {
+    const LONG = (slide: string, n: number) => `Crosshead (P-P Trend) - Vibration crosshead slide ${slide} - SegmentNo ${n} - avg`;
+    const SHARED = 'Crosshead (P-P Trend) - Vibration crosshead slide 11A';
+    const metaOf = (names: string[], component = 'Crosshead'): SensorMetadata[] =>
+        names.map((description, i) => ({ tag: `T${i}`, description, unit: '', component }));
+    const openList = (component: string) => fireEvent.click(screen.getByText(component));
+
+    /** Every name measures as cut (jsdom has no layout). */
+    const orig = {
+        client: Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientWidth'),
+        scroll: Object.getOwnPropertyDescriptor(Element.prototype, 'scrollWidth'),
+    };
+    function stubCut() {
+        Object.defineProperty(HTMLElement.prototype, 'clientWidth', { configurable: true, value: 100 });
+        Object.defineProperty(HTMLElement.prototype, 'scrollWidth', { configurable: true, value: 500 });
+    }
+    afterEach(() => {
+        if (orig.client) Object.defineProperty(HTMLElement.prototype, 'clientWidth', orig.client);
+        delete (HTMLElement.prototype as unknown as Record<string, unknown>).scrollWidth;
+    });
+
+    it('rule 2: a run of rows that is cut prints its shared start once and the rows print the rest', () => {
+        stubCut();
+        const names = [LONG('11A', 1), LONG('11A', 2), LONG('11A', 3)];
+        render(<SensorSelection {...makeProps({ sensors: ['T0', 'T1', 'T2'], sensorMetadata: metaOf(names) })} />);
+        openList('Crosshead');
+        const lines = screen.getAllByTestId('sensor-run-prefix');
+        expect(lines).toHaveLength(1);
+        expect(lines[0].textContent).toBe(`${SHARED} …`);
+        const row = screen.getByLabelText(/SegmentNo 2/);
+        const text = row.closest('.sensor-list-row')!.textContent!;
+        expect(text).toContain('SegmentNo 2 - avg');
+        expect(text).not.toContain('Crosshead');
+    });
+
+    it('rule 2 is a no-op while nothing is cut, and rows print whole', () => {
+        const names = [LONG('11A', 1), LONG('11A', 2)];
+        render(<SensorSelection {...makeProps({ sensors: ['T0', 'T1'], sensorMetadata: metaOf(names) })} />);
+        openList('Crosshead');
+        expect(screen.queryByTestId('sensor-run-prefix')).toBeNull();
+        expect(screen.getByText(names[0])).toBeTruthy();
+    });
+
+    it('a tag-only sensor joins its run like any other: its tag is its name', () => {
+        stubCut();
+        const tags = [LONG('11A', 1), LONG('11A', 2)];
+        render(<SensorSelection {...makeProps({ sensors: tags, sensorMetadata: null })} />);
+        openList('Uncategorized');
+        expect(screen.getAllByTestId('sensor-run-prefix')[0].textContent).toBe(`${SHARED} …`);
+    });
+
+    it('short names carry no measuring attribute and never get a run line, even when measured as cut', () => {
+        stubCut();
+        const { container } = render(<SensorSelection {...makeProps()} />);
+        expandPump();
+        expect(screen.queryByTestId('sensor-run-prefix')).toBeNull();
+        expect(container.querySelector('[data-name-run]')).toBeNull();
+    });
+
+    it('rule 6: up to 150 lines the list is a plain list', () => {
+        const names = Array.from({ length: 140 }, (_, i) => `Sensor ${i}`);
+        const sensors = names.map((_, i) => `T${i}`);
+        const { container } = render(<SensorSelection {...makeProps({ sensors, sensorMetadata: metaOf(names) })} />);
+        openList('Crosshead');
+        expect(screen.queryByTestId('sensor-list-window')).toBeNull();
+        expect(container.querySelectorAll('.sensor-list-row')).toHaveLength(140);
+    });
+
+    it('rule 6: over 150 lines only what is in view is rendered, and scrolling brings the rest', () => {
+        const names = Array.from({ length: 4748 }, (_, i) => `Sensor ${i}`);
+        const sensors = names.map((_, i) => `T${i}`);
+        const { container } = render(<SensorSelection {...makeProps({ sensors, sensorMetadata: metaOf(names) })} />);
+        openList('Crosshead');
+        const win = screen.getByTestId('sensor-list-window');
+        expect(container.querySelectorAll('.sensor-list-row').length).toBeLessThan(60);
+        expect(parseFloat(win.style.height)).toBeGreaterThan(4748 * 30);
+        expect(screen.queryByText('Sensor 4000')).toBeNull();
+        const list = container.querySelector('.sensor-list-widget') as HTMLElement;
+        list.scrollTop = 4000 * 52;
+        fireEvent.scroll(list);
+        expect(screen.getByText('Sensor 4000')).toBeTruthy();
+        expect(container.querySelectorAll('.sensor-list-row').length).toBeLessThan(60);
+        // A short-name list has no run to name, so no sticky line.
+        expect(screen.queryByTestId('sensor-run-sticky')).toBeNull();
+    });
+
+    it('rule 6: the sticky line names the component and run of the top row once its own line is scrolled away', () => {
+        stubCut();
+        const names = Array.from({ length: 200 }, (_, i) => LONG('11A', i));
+        const sensors = names.map((_, i) => `T${i}`);
+        const { container } = render(<SensorSelection {...makeProps({ sensors, sensorMetadata: metaOf(names) })} />);
+        openList('Crosshead');
+        const list = container.querySelector('.sensor-list-widget') as HTMLElement;
+        list.scrollTop = 2000;
+        fireEvent.scroll(list);
+        expect(screen.getByTestId('sensor-run-sticky').textContent).toBe(`Crosshead · ${SHARED} …`);
+    });
+
+    it('a search in a list of 4,748 still renders only a window, and marks the match', () => {
+        const names = Array.from({ length: 4748 }, (_, i) => LONG('11A', i));
+        const sensors = names.map((_, i) => `T${i}`);
+        const { container } = render(<SensorSelection {...makeProps({ sensors, sensorMetadata: metaOf(names) })} />);
+        fireEvent.change(screen.getByPlaceholderText('Search description, tag, unit or component…'), { target: { value: 'SegmentNo 12 ' } });
+        expect(container.querySelectorAll('.sensor-list-row').length).toBeLessThan(60);
+        expect(container.querySelector('mark.sl-hit')!.textContent).toBe('SegmentNo 12');
+    });
+
+    it('a project of short names keeps today\'s plain rows while searching (no marks)', () => {
+        const { container } = render(<SensorSelection {...makeProps()} />);
+        fireEvent.change(screen.getByPlaceholderText('Search description, tag, unit or component…'), { target: { value: 'Pressure' } });
+        expect(screen.getByText('Pump Pressure')).toBeTruthy();
+        expect(container.querySelector('mark')).toBeNull();
+    });
+
+    it('the assignment sheet\'s › finds a row that is outside the window', () => {
+        const names = Array.from({ length: 300 }, (_, i) => `Sensor ${i}`);
+        const sensors = names.map((_, i) => `T${i}`);
+        const { container } = render(<SensorSelection {...makeProps({ sensors, sensorMetadata: metaOf(names) })} />);
+        openList('Crosshead');
+        fireEvent.click(within(screen.getByText('Sensor 0').closest('.sensor-list-row') as HTMLElement).getByTitle('Add to failure group'));
+        // Scroll far away: the row of the sheet's sensor and of the next one leave the DOM, the sheet stays.
+        const list = container.querySelector('.sensor-list-widget') as HTMLElement;
+        list.scrollTop = 200 * 52;
+        fireEvent.scroll(list);
+        expect(screen.queryByText('Sensor 1')).toBeNull();
+        fireEvent.click(screen.getByRole('button', { name: 'Next sensor' }));
+        // The list scrolls to where the row will be, and it renders there.
+        expect(list.scrollTop).toBeLessThan(200);
+        fireEvent.scroll(list);
+        expect(container.querySelector('.sensor-list-row--fg-target')!.textContent).toContain('Sensor 1');
+    });
+});

@@ -9,7 +9,10 @@ import { formatDataStamp } from '../../utils/workbenchDate';
 import { readWallClock } from '../../utils/dateFormat';
 import { SensorPickerSingle } from '../sensor/SensorPicker';
 import { FxBadge, SensorInline } from '../sensor/SensorLabel';
-import { SensorMetaContext, fmtNum, sensorTitle, useLayeredSensorLookup, type SensorInfo } from '../sensor/sensorInfo';
+import { SensorMetaContext, fmtNum, sensorTitle, ttRowClass, useLayeredSensorLookup, type SensorInfo } from '../sensor/sensorInfo';
+import { scatterAxisTitle, type ScatterAxisTitle } from '../../utils/axisName';
+import { monoFontFamily, uiFontFamily } from '../../utils/textMeasure';
+import { tooltipSharedPrefix } from '../../utils/tooltipLayout';
 import { hexToRgba, rgbaToHex, RANGE_PALETTE, TAG_BADGES, MAX_TAGGED_POINTS } from './pairPlotColors';
 import { reportError } from '../../errorReporter';
 import { useCoalescedDraw } from '../../hooks/useCoalescedDraw';
@@ -49,6 +52,10 @@ const AXIS_PADDING = { left: 88, right: 20, top: 50, bottom: 56 };
  *  gutter; the X title's 28 px sit under the tick labels inside the 56 px bottom band. */
 const Y_TITLE = { left: 2, width: 30 };
 const X_TITLE = { height: 28, bottom: 3 };
+/** The one line a title may add: its name's second line, when its tag line prints as well (rule 1b). */
+const TITLE_LINE = 14;
+/** A Y title longer than the plot uses its free column, this far from the chart's top and bottom. */
+const Y_TITLE_INSET = 4;
 const AXIS_TICKS = 5;
 
 function fmt(n: number): string {
@@ -64,8 +71,43 @@ function makeTicks(min: number, max: number, count: number = AXIS_TICKS): number
 
 /** A Scatter axis title on two lines: line 1 the description (with the special-sensor badge),
  *  line 2 the tag + unit. No description → the tag + unit line alone (never the tag twice).
- *  The full name stays in `title`. */
-function AxisTitle({ axis, info, style }: { axis: 'x' | 'y'; info: SensorInfo; style: CSSProperties }) {
+ *  The full name stays in `title`.
+ *  `fit` (rule 1b): a name that does not fit the plot is printed on one or two lines with the unit attached;
+ *  a tag that really differs keeps its line. A name that fits has the markup above. */
+function AxisTitle({ axis, info, style, fit }: { axis: 'x' | 'y'; info: SensorInfo; style: CSSProperties; fit?: ScatterAxisTitle }) {
+    if (fit?.wrapped) {
+        const unitTail = info.unit ? ` · ${info.unit}` : '';
+        return (
+            <div
+                className={`scatter-axis-title scatter-axis-title--${axis}`}
+                data-testid={`scatter-axis-title-${axis}`}
+                data-lines={fit.wrapped.length}
+                data-cut={fit.cut ? '1' : undefined}
+                title={sensorTitle(info)}
+                style={style}
+            >
+                {fit.wrapped.map((line, i) => {
+                    const last = i === fit.wrapped!.length - 1;
+                    const withUnit = last && !!unitTail && line.endsWith(unitTail);
+                    return (
+                        <span key={i} className="sat-l1">
+                            {i === 0 && <FxBadge special={info.special} />}
+                            <span className={info.description ? 'sat-desc' : 'sat-desc sat-desc--tag'}>
+                                {withUnit ? line.slice(0, -unitTail.length) : line}
+                                {withUnit && <span className="sat-unit">{unitTail}</span>}
+                            </span>
+                        </span>
+                    );
+                })}
+                {fit.tagLine && (
+                    <span className="sat-l2">
+                        <span className="sat-tag">{info.tag}</span>
+                        {fit.unitOnTagLine && info.unit && <span className="scatter-axis-unit">{info.unit}</span>}
+                    </span>
+                )}
+            </div>
+        );
+    }
     return (
         <div className={`scatter-axis-title scatter-axis-title--${axis}`} data-testid={`scatter-axis-title-${axis}`} title={sensorTitle(info)} style={style}>
             {info.description && (
@@ -85,11 +127,12 @@ function AxisTitle({ axis, info, style }: { axis: 'x' | 'y'; info: SensorInfo; s
 
 /** One value row of the hover tooltip: inline label left, value + unit right
  *  (DESIGN_SYSTEM §4 "Tooltips and value boxes"). */
-function ValueRow({ info, value }: { info: SensorInfo; value: unknown }) {
+function ValueRow({ info, value, prefix }: { info: SensorInfo; value: unknown; prefix?: string }) {
+    const valueText = `${typeof value === 'number' ? fmtNum(value) : '—'}${info.unit ? ` ${info.unit}` : ''}`;
     return (
-        <div className="tt-row">
-            <span className="tt-label"><SensorInline tag={info.tag} info={info} size="sm" /></span>
-            <span className="tt-val">{typeof value === 'number' ? fmtNum(value) : '—'}{info.unit ? ` ${info.unit}` : ''}</span>
+        <div className={ttRowClass(info, valueText, prefix)}>
+            <span className="tt-label"><SensorInline tag={info.tag} info={info} size="sm" prefix={prefix} /></span>
+            <span className="tt-val">{valueText}</span>
         </div>
     );
 }
@@ -117,6 +160,12 @@ function ScatterChart({
      *  resize-driven recreates — e.g. dragging the window across monitors
      *  with different DPI — can hit). */
     const prevScForResetRef = useRef<any>(null);
+    /** The instance that is alive right now; `sc` state is the one of the last commit. The size effect below
+     *  destroys and replaces the instance BEFORE the draw effect of the same commit runs, so a draw effect that
+     *  also re-runs in that commit (a new sensor or any other dep) would hand a destroyed instance to `sc.set()`,
+     *  and regl-scatterplot throws. The draw effect skips such a stale `sc`; the new one re-runs it. */
+    const liveScRef = useRef<any>(null);
+    const liveHaloScRef = useRef<any>(null);
     // Seeded from the persisted prop on mount — this component is fully
     // unmounted/remounted by Chart.tsx whenever chartType leaves 'scatter'
     // (LineChart/PairPlotChart/ScatterChart are mutually exclusive
@@ -124,7 +173,6 @@ function ScatterChart({
     // sensors every time the user switched chart type and back.
     const [scatterX, setScatterX] = useState<string>(() => persistedX ?? '');
     const [scatterY, setScatterY] = useState<string>(() => persistedY ?? '');
-    const [innerDims, setInnerDims] = useState<{ width: number; height: number }>({ width: 0, height: 0 });
     const [wrapperDims, setWrapperDims] = useState<{ width: number; height: number }>({ width: 0, height: 0 });
     /** Full data extent — never changes while the chart is on a given (x, y).
      *  Stored in a ref so the `view` event subscriber (registered once when the
@@ -338,7 +386,46 @@ function ScatterChart({
         onScatterAxisPinsChange?.({ x: xPin ?? undefined, y: yPin ?? undefined });
     }, [xPin, yPin, onScatterAxisPinsChange]);
 
-    // Track wrapper size + derive the inner plot area (canvas size).
+    // Rule 1b: the titles are fitted to the plot; a title that needs a third line (2 name lines + its tag) takes
+    // that one line from the plot, only then. A name that fits leaves everything at AXIS_PADDING.
+    const [fontsTick, setFontsTick] = useState(0);
+    useEffect(() => {
+        let gone = false;
+        document.fonts?.ready.then(() => { if (!gone) setFontsTick(t => t + 1); });
+        return () => { gone = true; };
+    }, []);
+    const titleFit = useMemo(() => {
+        const none = { pad: AXIS_PADDING, x: undefined as ScatterAxisTitle | undefined, y: undefined as ScatterAxisTitle | undefined };
+        if (!wrapperDims.width || !wrapperDims.height) return none;
+        const options = { fontFamily: uiFontFamily(), monoFamily: monoFontFamily() };
+        const xInfo = sensorLookup(scatterX);
+        const yInfo = sensorLookup(scatterY);
+        let { pad, x, y } = none;
+        for (let i = 0; i < 3; i++) {
+            y = scatterAxisTitle(yInfo, wrapperDims.height - pad.top - pad.bottom, { ...options, chartRoom: wrapperDims.height - 2 * Y_TITLE_INSET });
+            x = scatterAxisTitle(xInfo, wrapperDims.width - pad.left - pad.right, options);
+            pad = {
+                ...AXIS_PADDING,
+                left: AXIS_PADDING.left + (y.tagLine && (y.wrapped?.length ?? 0) > 1 ? TITLE_LINE : 0),
+                bottom: AXIS_PADDING.bottom + (x.tagLine && (x.wrapped?.length ?? 0) > 1 ? TITLE_LINE : 0),
+            };
+        }
+        return { pad, x, y };
+        // fontsTick: the widths change once the web fonts have loaded.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [wrapperDims.width, wrapperDims.height, scatterX, scatterY, sensorLookup, fontsTick]);
+    // The gutter is applied in its OWN commit, like a resize. The plot size re-creates the scatterplot, and a
+    // commit that also changed the picked sensor would hand the draw effect the instance just destroyed.
+    const [pad, setPad] = useState(AXIS_PADDING);
+    useEffect(() => {
+        setPad(p => (p.left === titleFit.pad.left && p.bottom === titleFit.pad.bottom ? p : titleFit.pad));
+    }, [titleFit.pad]);
+    const innerDims = useMemo(() => ({
+        width: Math.max(0, wrapperDims.width - pad.left - pad.right),
+        height: Math.max(0, wrapperDims.height - pad.top - pad.bottom),
+    }), [wrapperDims.width, wrapperDims.height, pad]);
+
+    // Track wrapper size (the inner plot area is derived from it above).
     useEffect(() => {
         const el = wrapperRef.current;
         if (!el) return;
@@ -346,10 +433,6 @@ function ScatterChart({
             const w = el.clientWidth;
             const h = el.clientHeight;
             setWrapperDims({ width: w, height: h });
-            setInnerDims({
-                width: Math.max(0, w - AXIS_PADDING.left - AXIS_PADDING.right),
-                height: Math.max(0, h - AXIS_PADDING.top - AXIS_PADDING.bottom),
-            });
         };
         update(); // immediate on mount — no debounce delay for the initial layout
         // Debounced for every resize AFTER that: a split-pane drag fires many
@@ -466,6 +549,7 @@ function ScatterChart({
         };
         canvas.addEventListener('click', onCanvasClick);
 
+        liveScRef.current = inst;
         setSc(inst);
 
         return () => {
@@ -475,6 +559,7 @@ function ScatterChart({
             // Clear the draw queue FIRST: a draw interrupted by destroy() may
             // never settle, which would leave the queue stuck busy.
             resetDraw();
+            liveScRef.current = null;
             inst.destroy();
             setSc(null);
         };
@@ -515,6 +600,7 @@ function ScatterChart({
             reportError('scatter-halo-init', err);
             return;
         }
+        liveHaloScRef.current = inst;
         setHaloSc(inst);
         const haloCanvas = haloCanvasRef.current;
 
@@ -530,6 +616,7 @@ function ScatterChart({
             // throwing "The instance was already destroyed" from
             // regl-scatterplot. Setting the ref here closes that gap.
             haloScRef.current = null;
+            liveHaloScRef.current = null;
             inst.destroy();
             setHaloSc(null);
             // `destroy()` tears down the WebGL context but does NOT clear
@@ -552,7 +639,8 @@ function ScatterChart({
     // Build points + normalise to [-1, 1] and push to the instance.
     // Runs whenever data / chosen sensors / the instance itself changes.
     useEffect(() => {
-        if (!sc) return;
+        // `sc` was replaced in this very commit (see `liveScRef`): the new instance runs this effect again.
+        if (!sc || liveScRef.current !== sc) return;
         const xIdx = headers.indexOf(scatterX);
         const yIdx = headers.indexOf(scatterY);
         if (xIdx < 0 || yIdx < 0) return;
@@ -625,7 +713,7 @@ function ScatterChart({
         // Halo layer's categorical colour channel (same one PairPlotCell
         // uses for lasso clusters) — 0 = not in any enabled highlight;
         // 1..N = the Nth enabled highlight, first-match-wins.
-        if (haloSc) {
+        if (haloSc && liveHaloScRef.current === haloSc) {
             const enabledHighlights: TimeHighlight[] = (timeHighlights ?? []).filter(h => h.enabled);
             if (enabledHighlights.length > 0) {
                 const idOrder = new Map(enabledHighlights.map((h, i) => [h.id, i]));
@@ -746,8 +834,10 @@ function ScatterChart({
 
         // Edge clamping — flip the tooltip to the other side of the cursor
         // when it would overflow the inner canvas area.
-        const W = 200;
-        const H = 76;
+        // (A row that wraps makes the box wider and taller than the usual one.)
+        const wraps = [scatterX, scatterY].some(t => ttRowClass(sensorLookup(t)) !== 'tt-row');
+        const W = wraps ? 440 : 200;
+        const H = wraps ? 112 : 76;
         let tx = pos[0] + 12;
         let ty = pos[1] + 12;
         if (tx + W > innerDims.width) tx = pos[0] - W - 12;
@@ -763,7 +853,12 @@ function ScatterChart({
             timestamp: row.timestamp,
             origIdx,
         };
-    }, [hoveredIdx, sc, data, scatterX, scatterY, headers, innerDims.width, innerDims.height]);
+    }, [hoveredIdx, sc, data, scatterX, scatterY, headers, innerDims.width, innerDims.height, sensorLookup]);
+    // Rule 4: the start the two rows share, printed once, when a row would otherwise pass the box's limit.
+    const hasTooltip = !!tooltip;
+    const tooltipPrefix = useMemo(() => (
+        hasTooltip ? tooltipSharedPrefix([sensorLookup(scatterX), sensorLookup(scatterY)]) : ''
+    ), [hasTooltip, scatterX, scatterY, sensorLookup]);
 
     // Screen positions of every tagged point's ring. Recomputes
     // on every pan/zoom (visibleBounds changes on each `view` event) so they
@@ -850,7 +945,7 @@ function ScatterChart({
         <div className="chart-with-tags">
         <div ref={wrapperRef} className="scatter-regl-wrap chart-with-tags-plot">
             {/* Sensor pickers — "X"/"Y" is its own small badge beside each picker. */}
-            <div className="scatter-regl-controls">
+            <div className={`scatter-regl-controls${scatterTags.length > 0 ? ' scatter-regl-controls--tags' : ''}`}>
                 <span className="scatter-regl-axis-badge">X</span>
                 {/* The shared single picker in its compact 24 px form. Y opens
                     right-aligned so it stays inside the chart. */}
@@ -985,8 +1080,8 @@ function ScatterChart({
             {/* WebGL canvas — only points, no axes. */}
             <div className="scatter-regl-canvas-wrap" style={{
                 position: 'absolute',
-                left: AXIS_PADDING.left,
-                top: AXIS_PADDING.top,
+                left: pad.left,
+                top: pad.top,
                 width: innerDims.width,
                 height: innerDims.height,
             }}>
@@ -1022,8 +1117,9 @@ function ScatterChart({
                 {tooltip && (
                     <div className="scatter-regl-tooltip" style={{ left: tooltip.x, top: tooltip.y }}>
                         {/* Inline label + value + unit. */}
-                        <ValueRow info={sensorLookup(scatterX)} value={tooltip.xVal} />
-                        <ValueRow info={sensorLookup(scatterY)} value={tooltip.yVal} />
+                        {tooltipPrefix && <div className="tt-prefix">{tooltipPrefix} …</div>}
+                        <ValueRow info={sensorLookup(scatterX)} value={tooltip.xVal} prefix={tooltipPrefix || undefined} />
+                        <ValueRow info={sensorLookup(scatterY)} value={tooltip.yVal} prefix={tooltipPrefix || undefined} />
                         {tooltip.timestamp && (
                             // The row's own time in the app's one date format ("2025/03/14 21:25:00").
                             <div className="scatter-regl-tooltip-ts">{formatDataStamp(tooltip.timestamp)}</div>
@@ -1098,31 +1194,31 @@ function ScatterChart({
                 pointerEvents: 'none',
             }}>
                 {/* Y axis line */}
-                <line x1={AXIS_PADDING.left} y1={AXIS_PADDING.top}
-                      x2={AXIS_PADDING.left} y2={AXIS_PADDING.top + innerDims.height}
+                <line x1={pad.left} y1={pad.top}
+                      x2={pad.left} y2={pad.top + innerDims.height}
                       stroke="var(--border-strong, #475569)" />
                 {yTicks.map((v, i, arr) => {
-                    const y = AXIS_PADDING.top + innerDims.height * (1 - i / (arr.length - 1));
+                    const y = pad.top + innerDims.height * (1 - i / (arr.length - 1));
                     return (
                         <g key={`y${i}`}>
-                            <line x1={AXIS_PADDING.left - 4} y1={y} x2={AXIS_PADDING.left} y2={y} stroke="var(--text-secondary)" />
-                            <text x={AXIS_PADDING.left - 8} y={y + 3} textAnchor="end"
+                            <line x1={pad.left - 4} y1={y} x2={pad.left} y2={y} stroke="var(--text-secondary)" />
+                            <text x={pad.left - 8} y={y + 3} textAnchor="end"
                                   fontSize="10" fill="var(--text-secondary)" fontFamily="Inter, system-ui">{fmt(v)}</text>
                         </g>
                     );
                 })}
 
                 {/* X axis line */}
-                <line x1={AXIS_PADDING.left} y1={AXIS_PADDING.top + innerDims.height}
-                      x2={AXIS_PADDING.left + innerDims.width} y2={AXIS_PADDING.top + innerDims.height}
+                <line x1={pad.left} y1={pad.top + innerDims.height}
+                      x2={pad.left + innerDims.width} y2={pad.top + innerDims.height}
                       stroke="var(--border-strong, #475569)" />
                 {xTicks.map((v, i, arr) => {
-                    const x = AXIS_PADDING.left + innerDims.width * (i / (arr.length - 1));
+                    const x = pad.left + innerDims.width * (i / (arr.length - 1));
                     return (
                         <g key={`x${i}`}>
-                            <line x1={x} y1={AXIS_PADDING.top + innerDims.height}
-                                  x2={x} y2={AXIS_PADDING.top + innerDims.height + 4} stroke="var(--text-secondary)" />
-                            <text x={x} y={AXIS_PADDING.top + innerDims.height + 16} textAnchor="middle"
+                            <line x1={x} y1={pad.top + innerDims.height}
+                                  x2={x} y2={pad.top + innerDims.height + 4} stroke="var(--text-secondary)" />
+                            <text x={x} y={pad.top + innerDims.height + 16} textAnchor="middle"
                                   fontSize="10" fill="var(--text-secondary)" fontFamily="Inter, system-ui">{fmt(v)}</text>
                         </g>
                     );
@@ -1132,10 +1228,31 @@ function ScatterChart({
 
             {/* Axis titles — HTML overlays, each on TWO lines (user decision 2026-10-11): the
                 description on its own line, tag + unit on the other, so a long name is no longer
-                cut by the tag sharing its line. The Y title is `writing-mode: vertical-rl`
-                capped at the plot height; only the description line can still ellipsise there. */}
-            <AxisTitle axis="x" info={sensorLookup(scatterX)} style={{ left: AXIS_PADDING.left, width: innerDims.width, top: wrapperDims.height - X_TITLE.height - X_TITLE.bottom, height: X_TITLE.height }} />
-            <AxisTitle axis="y" info={sensorLookup(scatterY)} style={{ ...Y_TITLE, top: AXIS_PADDING.top, height: innerDims.height, maxHeight: innerDims.height }} />
+                cut by the tag sharing its line. The Y title is `writing-mode: vertical-rl` capped at the plot
+                height; a name that does not fit it (rule 1b) may use the whole free column instead. */}
+            <AxisTitle
+                axis="x"
+                fit={titleFit.x}
+                info={sensorLookup(scatterX)}
+                style={{
+                    left: pad.left,
+                    width: innerDims.width,
+                    top: wrapperDims.height - X_TITLE.height - X_TITLE.bottom - (pad.bottom - AXIS_PADDING.bottom),
+                    height: X_TITLE.height + (pad.bottom - AXIS_PADDING.bottom),
+                }}
+            />
+            <AxisTitle
+                axis="y"
+                fit={titleFit.y}
+                info={sensorLookup(scatterY)}
+                style={{
+                    ...Y_TITLE,
+                    width: Y_TITLE.width + (pad.left - AXIS_PADDING.left),
+                    ...(titleFit.y?.wrapped
+                        ? { top: Y_TITLE_INSET, height: wrapperDims.height - 2 * Y_TITLE_INSET }
+                        : { top: pad.top, height: innerDims.height, maxHeight: innerDims.height }),
+                }}
+            />
         </div>
         <TagTableSlot host={tagTableHost} items={tagListItems} rows={tagTableRows} onRemove={removeScatterTag} emptyFocusRef={tagButtonRef} />
         </div>

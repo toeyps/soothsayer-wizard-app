@@ -1,5 +1,5 @@
-import { describe, it, expect, vi } from 'vitest';
-import { render, screen, within, fireEvent } from '@testing-library/react';
+import { afterEach, describe, it, expect, vi } from 'vitest';
+import { cleanup, render, screen, within, fireEvent } from '@testing-library/react';
 import TagCompareTable, { TagTableSlot, tagCell, type TagCompareRow } from '../components/charts/TagCompareTable';
 
 const info = (tag: string, description = '', unit = '') => ({ tag, description, unit, component: '' });
@@ -130,5 +130,43 @@ describe('TagCompareTable (the values of the tagged points, under the chart)', (
         expect(tagCell('1.927')).toBe('1.927');
         expect(tagCell('52.000')).toBe('52.000');
         expect(tagCell(null)).toBe('—');
+    });
+});
+
+describe('TagCompareTable: long sensor names', () => {
+    const LONG = (n: number) => `Crosshead (P-P Trend) - Vibration crosshead slide 11A - SegmentNo ${n} - avg`;
+    const longRows = (infoOf: (n: number) => ReturnType<typeof info>): TagCompareRow[] => [1, 2].map(n => ({ key: String(n), info: infoOf(n), cells: ['1', '2'] }));
+    const orig = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientWidth');
+    function stubCut() {
+        Object.defineProperty(HTMLElement.prototype, 'clientWidth', { configurable: true, value: 100 });
+        Object.defineProperty(HTMLElement.prototype, 'scrollWidth', { configurable: true, value: 500 });
+    }
+    afterEach(() => {
+        if (orig) Object.defineProperty(HTMLElement.prototype, 'clientWidth', orig);
+        delete (HTMLElement.prototype as unknown as Record<string, unknown>).scrollWidth;
+        cleanup();
+    });
+
+    it('a cut set prints its shared start once in the corner; the rows print the rest, never the tag alone', () => {
+        stubCut();
+        render(<TagCompareTable items={items} rows={longRows(n => info(`T${n}`, LONG(n)))} onRemove={vi.fn()} />);
+        expect(screen.getByTestId('tag-table-prefix').textContent).toBe('Crosshead (P-P Trend) - Vibration crosshead slide 11A …');
+        const names = screen.getAllByTestId('tag-table-name');
+        expect(names[0].textContent).toContain('SegmentNo 1 - avg');
+        expect(names[0].textContent).toContain('T1');
+        expect(names[1].textContent).toContain('SegmentNo 2 - avg');
+    });
+
+    it('a tag-only set follows the same rule', () => {
+        stubCut();
+        render(<TagCompareTable items={items} rows={longRows(n => info(LONG(n)))} onRemove={vi.fn()} />);
+        expect(screen.getByTestId('tag-table-prefix')).toBeTruthy();
+        expect(screen.getAllByTestId('tag-table-name')[1].textContent).toBe('SegmentNo 2 - avg');
+    });
+
+    it('nothing printed while no name is cut', () => {
+        render(<TagCompareTable items={items} rows={longRows(n => info(`T${n}`, LONG(n)))} onRemove={vi.fn()} />);
+        expect(screen.queryByTestId('tag-table-prefix')).toBeNull();
+        expect(screen.getAllByTestId('tag-table-name')[0].textContent).toBe(`${LONG(1)}T1`);
     });
 });

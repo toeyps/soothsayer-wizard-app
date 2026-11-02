@@ -10,7 +10,9 @@ import type {
 } from '../../../types/health';
 import { formatAxisTick, formatDateTime } from '../../../utils/dateFormat';
 import { testNumberFor } from '../../../utils/timePeriods';
-import type { SensorInfo } from '../../sensor/sensorInfo';
+import { axisRowHtml, plainRowHtml, sharedPrefixHtml, type SensorInfo } from '../../sensor/sensorInfo';
+import { withAxisNames } from '../../../utils/axisName';
+import { tooltipSharedPrefix } from '../../../utils/tooltipLayout';
 import { formatDataStamp, parseLocal } from '../periodDisplay';
 import { CHART, CHART_MONO, CLUSTER_COLORS, FONT, axisValueFormatter, fmtAxisValue, fmtNum } from './chartTheme';
 import { withFollowY } from '../../charts/followYAxis';
@@ -942,8 +944,9 @@ export function estimateRowsOutside3sd(h: HealthHistogram | null, stats: Individ
 // ---------------------------------------------------------------------------
 
 /** "Fit": predictor (X) against the target — actual (blue) vs the Relation
- *  model's prediction (red). */
-export function buildFitScatterOption(fit: HealthFitScatter, yName: string) {
+ *  model's prediction (red). `yName` is the Y title (the unit, or description · unit when the target has
+ *  none, then `yInfo` lets the title wrap); the X title is the predictor's description · unit, never its tag. */
+export function buildFitScatterOption(fit: HealthFitScatter, yName: string, xInfo: SensorInfo, yInfo?: SensorInfo) {
     const actual: [number, number][] = [];
     const predicted: [number, number][] = [];
     const n = Math.min(fit.x.length, fit.actual.length);
@@ -957,7 +960,7 @@ export function buildFitScatterOption(fit: HealthFitScatter, yName: string) {
     }
     const big = actual.length + predicted.length > 6000;
     const common = { type: 'scatter' as const, symbolSize: big ? 2.5 : 4, large: big, largeThreshold: 2000, silent: false };
-    return {
+    return withAxisNames({
         backgroundColor: 'transparent',
         textStyle: { fontFamily: FONT },
         animation: false,
@@ -965,13 +968,13 @@ export function buildFitScatterOption(fit: HealthFitScatter, yName: string) {
         legend: { show: false },
         grid: { left: 58, right: 18, top: 14, bottom: 40, containLabel: false },
         dataZoom: [{ type: 'inside', xAxisIndex: 0, filterMode: 'none' }, { type: 'inside', yAxisIndex: 0, filterMode: 'none' }],
-        xAxis: { type: 'value', name: fit.x_sensor, nameLocation: 'middle', nameGap: 24, nameTextStyle: { color: CHART.textSecondary, fontSize: 10 }, scale: true, ...valueAxisCommon, axisLine: EDGE_AXIS_LINE, splitLine: { show: false } },
+        xAxis: { type: 'value', name: sensorAxisTitle(xInfo), nameLocation: 'middle', nameGap: 24, nameTextStyle: { color: CHART.textSecondary, fontSize: 10 }, scale: true, ...valueAxisCommon, axisLine: EDGE_AXIS_LINE, splitLine: { show: false } },
         yAxis: { type: 'value', name: yName, nameLocation: 'middle', nameGap: 44, nameTextStyle: { color: CHART.textSecondary, fontSize: 10 }, scale: true, ...valueAxisCommon, axisLine: EDGE_AXIS_LINE, splitLine: { show: true, lineStyle: { color: CHART.splitLine } } },
         series: [
             { ...common, name: 'Actual', data: actual, itemStyle: { color: CHART.actual, opacity: 0.45 } },
             { ...common, name: 'Relation model', data: predicted, itemStyle: { color: CHART.predicted, opacity: 0.6 } },
         ],
-    };
+    }, yInfo ? { x: xInfo, y: yInfo } : { x: xInfo });
 }
 
 /** "Target vs predicted" over time: the Actual (blue) and Predicted (red) lines.
@@ -1046,7 +1049,19 @@ export function ellipseSeries(
     };
 }
 
-export interface ClusterChartNames { x: string; y: string }
+/** `x` / `y`: the axis titles. `xInfo` / `yInfo`: the sensors they name; with them the titles are fitted to
+ *  the chart (`withAxisNames`) and the tooltip prints each value with its unit. Use `clusterChartNames`. */
+export interface ClusterChartNames { x: string; y: string; xInfo?: SensorInfo; yInfo?: SensorInfo }
+
+/** The names of a Clusters chart from its two sensors. */
+export function clusterChartNames(xInfo: SensorInfo, yInfo: SensorInfo): ClusterChartNames {
+    return { x: sensorAxisTitle(xInfo), y: sensorAxisTitle(yInfo), xInfo, yInfo };
+}
+
+/** Marks a Clusters option with the sensors its axes name, when the names carry them. */
+export function withClusterAxisNames<T extends object>(option: T, names: ClusterChartNames): T {
+    return names.xInfo && names.yInfo ? withAxisNames(option, { x: names.xInfo, y: names.yInfo }) : option;
+}
 
 /** Title of a scatter axis: the sensor's description and unit ("GENERATOR ACTIVE
  *  POWER · MW"), or the tag when it has no description. The tag itself is in the
@@ -1224,12 +1239,22 @@ export function clusterTooltipFormatter(names: ClusterChartNames, opts: { scoreI
         const heading = opts.clusterIndex !== undefined
             ? (Number.isFinite(cid) ? `Cluster ${cid}` : 'No cluster')
             : (p.seriesName ?? '');
-        const row = (label: string, value: string) =>
-            `<div style="display:flex;justify-content:space-between;gap:16px"><span style="color:${CHART.textSecondary}">${escHtml(label)}</span><b>${escHtml(value)}</b></div>`;
-        const rows = [row(`X · ${names.x}`, fmtNum(v[0] as number)), row(`Y · ${names.y}`, fmtNum(v[1] as number))];
+        // One grid: key, name (the tags are in the card's subtitle), value + unit. A start both names share
+        // is printed once on top when a row would otherwise pass the box's limit (rule 4).
+        const axis = (info: SensorInfo | undefined, title: string): SensorInfo => {
+            if (!info) return { tag: title, description: title, tagHidden: true };
+            return info.description ? { ...info, tagHidden: true } : info;
+        };
+        const xi = axis(names.xInfo, names.x);
+        const yi = axis(names.yInfo, names.y);
+        const withUnit = (value: number, info: SensorInfo) => `${fmtNum(value)}${info.unit ? ` ${info.unit}` : ''}`;
+        const prefix = tooltipSharedPrefix([xi, yi]);
+        let rows = sharedPrefixHtml(prefix)
+            + axisRowHtml('X', xi, withUnit(v[0] as number, xi), prefix)
+            + axisRowHtml('Y', yi, withUnit(v[1] as number, yi), prefix);
         const score = opts.scoreIndex !== undefined ? v[opts.scoreIndex] : undefined;
-        if (opts.scoreIndex !== undefined) rows.push(row('Health score', Number.isFinite(score) ? fmtNum(score as number) : 'no score'));
-        return `<div style="font-weight:600;margin-bottom:4px">${escHtml(heading)}</div>${rows.join('')}`;
+        if (opts.scoreIndex !== undefined) rows += plainRowHtml('Health score', Number.isFinite(score) ? fmtNum(score as number) : 'no score');
+        return `<div class="tt-grid"><div class="tt-title">${escHtml(heading)}</div>${rows}</div>`;
     };
 }
 
@@ -1270,7 +1295,7 @@ export function buildClusterOption(scatter: HealthClusterScatter, clusters: Clus
         { sigma: 3, text: '3× SD', color: CHART.warn },
     ]);
     const axes = clusterAxes(names, clusterExtent(scatter.x, scatter.y, clusters, [1, 3]));
-    return {
+    return withClusterAxisNames({
         backgroundColor: 'transparent',
         textStyle: { fontFamily: FONT },
         animation: false,
@@ -1280,5 +1305,5 @@ export function buildClusterOption(scatter: HealthClusterScatter, clusters: Clus
         dataZoom: [{ type: 'inside', xAxisIndex: 0, filterMode: 'none' }, { type: 'inside', yAxisIndex: 0, filterMode: 'none' }],
         ...axes,
         series: [...pointSeries, ...rings, centres, ringLabels],
-    };
+    }, names);
 }

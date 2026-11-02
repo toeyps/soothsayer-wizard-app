@@ -2222,13 +2222,13 @@ describe('Relationship X-axis switcher (2026-09-30 port)', () => {
         const xTrigger = () => within(screen.getByTestId('fit-x-selector')).getByRole('button', { name: 'X sensor' });
         const fitAxis = () => within(screen.getByTestId('chart-card-fit')).getByTestId('echarts-mock').getAttribute('data-x-axis-name');
         expect(rowTag(xTrigger())).toBe('TAG2');
-        expect(fitAxis()).toBe('TAG2');
+        expect(fitAxis()).toBe('Pump Temp · C');
         expect(screen.queryByText(/Unsaved changes/)).toBeNull();
 
         pickSingle(xTrigger(), 'TAG3');
         await flush();
         // The write is immediate and the preview is re-requested with the new X predictor.
-        await waitFor(() => expect(fitAxis()).toBe('TAG3'));
+        await waitFor(() => expect(fitAxis()).toBe('TAG3')); // no description: its tag
         expect(healthCalls().pop()).toMatchObject({ x_predictor: 'TAG3' });
         const state = await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value;
         expect(state.failureGroupState.models[0].scatterXSensor).toBe('TAG3');
@@ -2259,7 +2259,7 @@ describe('Relationship X-axis switcher (2026-09-30 port)', () => {
         // The saved X predictor is not among the fitted ones: the request carries NO x_predictor,
         // so the Fit chart falls back to the first predictor.
         expect(healthCalls()[0].x_predictor).toBeUndefined();
-        expect(within(screen.getByTestId('chart-card-fit')).getByTestId('echarts-mock').getAttribute('data-x-axis-name')).toBe('TAG2');
+        expect(within(screen.getByTestId('chart-card-fit')).getByTestId('echarts-mock').getAttribute('data-x-axis-name')).toBe('Pump Temp · C');
     });
 });
 

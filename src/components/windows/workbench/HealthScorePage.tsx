@@ -28,7 +28,7 @@ import {
     buildRelationshipSetPointOption,
     buildScoreOption,
 } from './healthPageCharts';
-import { hourlyScopes, scopesOf, sensorAxisTitle, type TimeScopes } from './healthCharts';
+import { clusterChartNames, hourlyScopes, scopesOf, type TimeScopes } from './healthCharts';
 import { formatDataStamp } from '../periodDisplay';
 import { SlowScoringNotice, TestScoringFailedNotice, TestsChangedBanner } from './ValidationCards';
 import { testScoringFailure } from '../../../utils/trainTestValidation';
@@ -535,7 +535,7 @@ function StackCharts({ data, props, hoverIdx, onHover, stale, unit, scopes, zoom
                 // Axis titles: description + unit — the tags are in the subtitle.
                 option: buildClusterSetPointOption(
                     series, stats.clusters, setPoints.kind === 'clustering' ? setPoints : null,
-                    { x: sensorAxisTitle(lookup(model.xSensor ?? '')), y: sensorAxisTitle(lookup(model.ySensor ?? '')) }, hoverIdx,
+                    clusterChartNames(lookup(model.xSensor ?? ''), lookup(model.ySensor ?? '')), hoverIdx,
                 ),
                 time: false as const,
             };

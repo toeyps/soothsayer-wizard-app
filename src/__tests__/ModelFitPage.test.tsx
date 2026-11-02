@@ -258,7 +258,7 @@ describe('ModelFitPage — Relationship', () => {
         const trigger = within(screen.getByTestId('fit-x-selector')).getByRole('button', { name: 'X sensor' });
         expect(trigger.classList.contains('pk-trigger--sm')).toBe(true);
         expect(rowTag(trigger)).toBe('B');
-        expect(within(screen.getByTestId('chart-card-fit')).getByTestId('echarts-mock').getAttribute('data-x-axis-name')).toBe('B');
+        expect(within(screen.getByTestId('chart-card-fit')).getByTestId('echarts-mock').getAttribute('data-x-axis-name')).toBe('Label of B');
         fireEvent.click(trigger);
         expect(openPickerSurface().querySelector('.pk-scope')?.textContent).toBe('Predictors of this model · 2');
         expect(pickerRows().map(rowTag)).toEqual(['A', 'B']);

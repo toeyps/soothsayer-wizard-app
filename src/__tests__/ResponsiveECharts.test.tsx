@@ -25,6 +25,7 @@ class MockResizeObserver {
 }
 
 import ResponsiveECharts from '../components/charts/ResponsiveECharts';
+import { withAxisNames } from '../utils/axisName';
 
 beforeEach(() => {
     receivedProps.length = 0;
@@ -133,5 +134,43 @@ describe('ResponsiveECharts', () => {
 
     it('does not throw when onChartReady is omitted', () => {
         expect(() => render(<ResponsiveECharts option={{}} />)).not.toThrow();
+    });
+});
+
+describe('ResponsiveECharts: axis titles fitted to the plot (rule 1b)', () => {
+    const LONG = 'Crosshead (P-P Trend) - Vibration crosshead slide 11A - SegmentNo 1 - avg';
+    const inst = (w = 400, h = 200) => ({
+        getWidth: () => w, getHeight: () => h, getDom: () => document.createElement('div'),
+        isDisposed: () => false, setOption: vi.fn(),
+    });
+    const baseOption = () => ({ grid: { left: 58, right: 18, top: 14, bottom: 40 }, xAxis: { name: 'x' }, yAxis: { name: 'y' } });
+
+    it('a chart that says which sensors its axes name gets its titles fitted once it is ready; a long Y title wraps and the plot gives up that line', () => {
+        const option = withAxisNames(baseOption(), { x: { tag: 'X1' }, y: { tag: 'Y1', description: LONG, unit: 'mm/s' } });
+        render(<ResponsiveECharts option={option} />);
+        const i = inst();
+        act(() => { receivedProps[0].onChartReady(i); });
+        const patch = i.setOption.mock.calls[0][0];
+        expect(patch.yAxis.name).toContain('\n');
+        expect(patch.yAxis.nameTextStyle.lineHeight).toBe(13);
+        expect(patch.grid.left).toBe(71);
+        expect(patch.xAxis.name).toBe('X1');
+    });
+
+    it('a title that fits keeps its name and the plot its place', () => {
+        const option = withAxisNames(baseOption(), { y: { tag: 'Y1', description: 'SHORT', unit: 'mm' } });
+        render(<ResponsiveECharts option={option} />);
+        const i = inst();
+        act(() => { receivedProps[0].onChartReady(i); });
+        const patch = i.setOption.mock.calls[0][0];
+        expect(patch.yAxis).toEqual({ name: 'SHORT · mm' });
+        expect(patch.grid).toBeUndefined();
+    });
+
+    it('an option with no sensors marked is left alone', () => {
+        render(<ResponsiveECharts option={baseOption()} />);
+        const i = inst();
+        act(() => { receivedProps[0].onChartReady(i); });
+        expect(i.setOption).not.toHaveBeenCalled();
     });
 });
