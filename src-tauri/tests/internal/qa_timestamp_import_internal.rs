@@ -373,6 +373,59 @@ fn an_iso_file_without_seconds_and_a_rewritten_file_keep_the_same_moment_twice()
 // ── Header clean-up: mapping and metadata CSVs ─────────────────────────────
 
 #[test]
+fn a_first_column_with_another_name_is_read_as_the_time_column() {
+    for ts in ["Date", "DateTime", "เวลา", ""] {
+        let body = format!("{ts},TI-101,PI-201\n2024-06-01 00:00:00,1,2\n2024-06-01 00:05:00,3,4\n");
+        let (m, r) = load(&[("d.csv", &body)]);
+        assert_eq!(m.data.headers, vec!["timestamp", "TI-101", "PI-201"], "{ts}");
+        assert_eq!(r.total_rows, 2, "{ts}");
+        assert!(m.data.ts_parsed.iter().all(|&t| t != TS_MISSING), "{ts}");
+        assert!(
+            r.warnings.iter().any(|w| w.contains(&format!("column '{ts}' was read as the date/time column"))),
+            "{ts}: {:?}", r.warnings
+        );
+        assert!(!r.warnings.iter().any(|w| w.contains("non-numeric")), "{ts}: {:?}", r.warnings);
+    }
+}
+
+#[test]
+fn a_column_named_time_still_wins_over_the_first_column_and_gets_no_notice() {
+    let (m, r) = load(&[("d.csv", "A,time,B\n1,2024-06-01 00:00:00,2\n")]);
+    assert_eq!(m.data.headers, vec!["time", "A", "B"]);
+    assert_eq!(r.total_rows, 1);
+    assert!(!r.warnings.iter().any(|w| w.contains("was read as the date/time column")));
+}
+
+#[test]
+fn files_with_differently_named_time_columns_merge_on_time() {
+    let (m, r) = load(&[
+        ("a.csv", "Date,A\n2024-06-01 00:00:00,1\n"),
+        ("b.csv", "timestamp,B\n2024-06-01 00:00:00,2\n2024-06-01 00:05:00,3\n"),
+    ]);
+    assert_eq!(m.data.headers, vec!["timestamp", "A", "B"]);
+    assert_eq!(r.total_rows, 2);
+    assert_eq!(r.warnings.iter().filter(|w| w.contains("was read as the date/time column")).count(), 1);
+}
+
+#[test]
+fn a_date_named_first_column_is_not_counted_against_the_tag_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = write_csv(&dir, "map.csv", "tag\nA\nB\n");
+    let map = load_mapping_csv_data(&p).unwrap();
+    let (m, _) = load(&[("d.csv", "Date,A,B\n2024-06-01 00:00:00,1,2\n")]);
+    let res = apply_mapping("tag", &map, &m.data.headers).unwrap();
+    assert_eq!(res.matched, vec!["A", "B"]);
+    assert!(res.not_in_mapping.is_empty() && res.not_in_dataset.is_empty());
+}
+
+#[test]
+fn a_first_column_that_holds_no_dates_is_flagged_rather_than_silent() {
+    let (_, r) = load(&[("d.csv", "Temperature,B\nhot,1\ncold,2\n")]);
+    assert_eq!(r.total_rows, 2);
+    assert!(r.warnings.iter().any(|w| w.contains("column 'Temperature' was read as the date/time column")), "{:?}", r.warnings);
+}
+
+#[test]
 fn a_bom_on_the_mapping_csv_header_does_not_hide_the_key_column() {
     let dir = tempfile::tempdir().unwrap();
     let p = write_csv(&dir, "map.csv", "\u{FEFF}Tag , Description\nA,Alpha\nB,Beta\n");

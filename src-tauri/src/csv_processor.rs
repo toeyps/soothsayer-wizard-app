@@ -1507,6 +1507,9 @@ pub struct ReadCsvResult {
     pub parse_fail_counts: Vec<usize>,
     /// File size in bytes, as checked against [`MAX_CSV_BYTES`].
     pub size_bytes: u64,
+    /// The first column's own name, when it was read as the timestamp column
+    /// because no column is named `timestamp` / `time`.
+    pub ts_from_first_column: Option<String>,
 }
 
 /// A header name as the app uses it: surrounding whitespace and any UTF-8
@@ -1535,12 +1538,22 @@ pub fn read_csv_with_stats(path: &str) -> Result<ReadCsvResult, String> {
     let mut rdr = csv::Reader::from_reader(BufReader::new(file));
 
     let headers = rdr.headers().map_err(|e| e.to_string())?.clone();
-    let header_list: Vec<String> = headers.iter().map(clean_header).collect();
+    let mut header_list: Vec<String> = headers.iter().map(clean_header).collect();
     let num_cols = header_list.len();
 
-    let timestamp_idx = header_list
+    // A column named timestamp / time wins, wherever it is; otherwise the first
+    // column is the time column ("Date", "DateTime", ...). It takes the name
+    // `timestamp` here, so everything after this point (merge, report, sensor
+    // lists) keeps recognising it by name and it is never counted as a sensor.
+    let named_timestamp_idx = header_list
         .iter()
         .position(|h| h.eq_ignore_ascii_case("timestamp") || h.eq_ignore_ascii_case("time"));
+    let ts_from_first_column = if named_timestamp_idx.is_none() && num_cols > 0 {
+        Some(std::mem::replace(&mut header_list[0], "timestamp".to_string()))
+    } else {
+        None
+    };
+    let timestamp_idx = named_timestamp_idx.or(ts_from_first_column.as_ref().map(|_| 0));
 
     // Pre-size the column vecs from file size / approx bytes-per-row so
     // they don't repeatedly reallocate (and memcpy the whole spine) while
@@ -1662,6 +1675,7 @@ pub fn read_csv_with_stats(path: &str) -> Result<ReadCsvResult, String> {
         },
         parse_fail_counts,
         size_bytes: size,
+        ts_from_first_column,
     })
 }
 
@@ -1761,6 +1775,11 @@ pub fn read_merge_csvs_with_progress(
         let name = file_name_only(path);
         on_progress(CsvLoadProgress::reading(i, file_count, &name, false));
         let mut r = read_csv_with_stats(path)?;
+        if let Some(col) = &r.ts_from_first_column {
+            date_warnings.push(format!(
+                "{name}: column '{col}' was read as the date/time column (no column is named timestamp or time)."
+            ));
+        }
         // Non-ISO shapes (`1/2/2026 0:05`, `2026/01/02 …`) → ISO text, per
         // file and before the merge, which keys rows by timestamp TEXT.
         date_warnings.extend(normalize_file_timestamps(&name, &mut r.data.timestamps));
@@ -3131,6 +3150,7 @@ mod tests {
             data: columnar(headers, rows),
             parse_fail_counts: fails,
             size_bytes: 0,
+            ts_from_first_column: None,
         })
     }
 

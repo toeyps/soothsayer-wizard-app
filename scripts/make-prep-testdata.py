@@ -198,7 +198,7 @@ note('normal/IMP-normal.csv', ['PREP-6', 'IMP-34', 'IMP-36', 'IMP-38', 'IMP-14',
          'ไฟล์ Tag names ที่ใช้ทำต่อจนเข้า Dashboard ได้: normal/IMP-normal-tags-exact.csv · VI-501 มีแค่ tag (ไม่มีชื่อ หน่วย component) · '
          'TT-601 มีชื่อแต่ไม่มี component → "Uncategorized"'])
 write('normal/IMP-normal_saved-as-CSV-UTF-8.csv', head, rows, bom=True, crlf=True)
-note('normal/IMP-normal_saved-as-CSV-UTF-8.csv', ['WFF-1'],
+note('normal/IMP-normal_saved-as-CSV-UTF-8.csv', ['WFF-18'],
      ['ข้อมูลเหมือน IMP-normal.csv ทุกแถว แต่บันทึกแบบที่ Excel ทำเมื่อเลือก "CSV UTF-8 (Comma delimited)" '
       '(มีอักขระซ่อนต้นไฟล์ + ขึ้นบรรทัดแบบ Windows) — ต้องอ่านได้ผลเหมือน IMP-normal.csv'])
 LONG = 'IMP-normal_this_is_a_very_long_file_name_to_check_how_the_import_page_wraps_long_names_2024-01.csv'
@@ -439,13 +439,13 @@ note('odd/ODD-time-in-column-3.csv', ['PREP-6', 'IMP-64'],
 # ─────────────────────────────── broken/ ───────────────────────────────
 tt = series(datetime(2024, 6, 1), 288)
 write('broken/BRK-date-header.csv', ['Date', 'TI-101', 'PI-201'], [[ts(t)] + two_col(t) for t in tt])
-note('broken/BRK-date-header.csv', ['PREP-6', 'IMP-65'], [
+note('broken/BRK-date-header.csv', ['PREP-6', 'IMP-128'], [
     '288 แถว วันเวลาถูกต้อง (2024-06-01 00:00:00 → 23:55:00) แต่หัวคอลัมน์ชื่อ Date',
-    'ควรขึ้นข้อความแดงว่าหาคอลัมน์เวลาไม่เจอ (⚠ อาจได้ "Ready · 0 rows" + "Column \'Date\': 288 non-numeric …" แทน)'])
+    'ต้องอ่านคอลัมน์แรกเป็นเวลา: 288 แถว + กล่องเหลือง "column \'Date\' was read as the date/time column"'])
 write('broken/BRK-datetime-header.csv', ['DateTime', 'TI-101', 'PI-201'], [[ts(t)] + two_col(t) for t in tt])
-note('broken/BRK-datetime-header.csv', ['IMP-65', 'WFF-1'], ['เหมือนไฟล์บน แต่หัวคอลัมน์ชื่อ DateTime'])
+note('broken/BRK-datetime-header.csv', ['IMP-128', 'WFF-18'], ['เหมือนไฟล์บน แต่หัวคอลัมน์ชื่อ DateTime'])
 write('broken/BRK-semicolon.csv', ['timestamp', 'TI-101', 'PI-201'], [[ts(t)] + two_col(t) for t in tt], delim=';')
-note('broken/BRK-semicolon.csv', ['WFF-1'], ['288 แถว คั่นด้วย ; แทน , (แบบที่ Excel ภาษายุโรปบันทึก) — ทั้งบรรทัดจะกลายเป็นคอลัมน์เดียว'])
+note('broken/BRK-semicolon.csv', ['WFF-18'], ['288 แถว คั่นด้วย ; แทน , (แบบที่ Excel ภาษายุโรปบันทึก) — ทั้งบรรทัดจะกลายเป็นคอลัมน์เดียว'])
 open(p('broken', 'BRK-empty-0-byte.csv'), 'wb').close()
 note('broken/BRK-empty-0-byte.csv', ['PREP-6', 'IMP-69'], ['ขนาด 0 byte'])
 write('broken/BRK-header-only.csv', ['timestamp', 'TI-101', 'PI-201'], [])
@@ -771,6 +771,7 @@ MATCHING = [
     ('ODD-same-column-twice-case-tags.csv', 'odd/ODD-same-column-twice-case.csv', ['IMP-68'], 'ODD-same-column-twice-case.csv'),
     ('ODD-time-header-tags.csv', 'odd/ODD-time-header-Timestamp.csv', ['IMP-64'], 'ODD-time-header-Timestamp.csv และ ODD-time-header-TIME.csv'),
     ('ODD-time-in-column-3-tags.csv', 'odd/ODD-time-in-column-3.csv', ['IMP-64'], 'ODD-time-in-column-3.csv'),
+    ('BRK-date-header-tags.csv', 'broken/BRK-date-header.csv', ['IMP-128'], 'sensor ของ BRK-date-header.csv และ BRK-datetime-header.csv (ไม่นับคอลัมน์แรก)'),
     ('IMP87-tags.csv', 'time-shapes/IMP87-A_month-day-year.csv', ['IMP-87'], 'ไฟล์ IMP87-A ถึง IMP87-D ทุกไฟล์'),
     ('IMP88-tags.csv', 'time-shapes/IMP88/2025.csv', ['IMP-88'], '2025.csv และ 2026.csv'),
     ('INT-tags.csv', 'intervals/INT-1d.csv', ['IMP-56', 'WFH-4'], 'ไฟล์ INT-… ทุกไฟล์'),

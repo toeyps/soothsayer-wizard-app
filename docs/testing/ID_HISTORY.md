@@ -16,4 +16,6 @@
 
 **2026-10-26 — ตรวจไฟล์ Export results แบบที่ลูกค้าจะตรวจ (workflow ใหม่ WFK):** ข้อใหม่ WFK-1 – WFK-16 (ข้อมูลทดสอบ `EXP-numbers.csv` / `EXP-fleet.csv` จาก `scripts/make-export-testdata.py`; ไฟล์ `EXP-data.csv` / `EXP-tags.csv` เดิมไม่เปลี่ยน)
 
+**2026-11-02 — คอลัมน์แรกถูกอ่านเป็นเวลาเมื่อไม่มีคอลัมน์ชื่อ timestamp / time (เดิมอ่านได้ 0 แถว):** IMP-65 → IMP-128, WFF-1 → WFF-18
+
 **2026-11-02 — ไฟล์ Tag names ต้องมี และต้องมีรายชื่อ sensor ตรงกับข้อมูลทุกตัว ไม่อย่างนั้น Continue ที่ขั้น 2 กดไม่ได้ (เปิดโปรเจกต์เดิมไม่ตรวจ):** IMP-76 → IMP-123, IMP-78 → IMP-117, IMP-79 → IMP-125, IMP-81 → IMP-121, IMP-114 → IMP-126, IMP-46 → IMP-127, WFF-3 → WFF-17 · ข้อใหม่: IMP-115 (จำนวนไม่เท่ากัน ทั้งสองทาง), IMP-116 (จำนวนเท่ากันแต่ tag ต่าง), IMP-118 (ยังไม่เลือกคอลัมน์ tag), IMP-119 (กด ✕ แล้วก็ยังไปต่อไม่ได้), IMP-120 (ไม่เลือกไฟล์เลย), IMP-124 (เปิดโปรเจกต์เดิมที่ไฟล์ไม่ตรงหรือไม่มีไฟล์) · ไฟล์ใหม่ใน `make-prep-testdata.py`: `IMP-normal-tags-exact.csv`, `MF-extra-columns-tags.csv`, `T06`–`T08`, โฟลเดอร์ `matching-tags`, `EXP-tags_with-A-B-columns.csv` · `T01`–`T03` และ `IMP-normal-tags_changed.csv` เปลี่ยนเนื้อหาให้ตรงกับข้อมูล

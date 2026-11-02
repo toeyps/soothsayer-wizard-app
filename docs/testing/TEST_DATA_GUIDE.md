@@ -68,7 +68,7 @@
 | `IMP-normal.csv` | 30 วัน (1–30 ม.ค. 2024) ทุก 5 นาที 7 sensor 3 component · ช่องว่าง 24 ช่อง (% empty "<0.1%") · เครื่องหยุด 10–11 ม.ค. | PREP-6, IMP-34, IMP-36, IMP-38, IMP-127, IMP-60, IMP-61, IMP-62, IMP-70 (ไฟล์ที่ถูก), IMP-121 (ไฟล์ A), IMP-14, IMP-115 ถึง IMP-120, IMP-123 ถึง IMP-125 · ใช้เป็นโปรเจกต์ทั่วไปของ SEN / SEL / FIL / HL / TIME / LINE / SCAT / PAIR / SPC / MNG / EDT / FG ได้ |
 | `IMP-normal-tags-exact.csv` | Tag names ที่ตรงกับ `IMP-normal.csv` ทั้ง 7 ตัว: ช่อง alarm บางช่องว่าง บางช่องเป็น `-`, TT-601 ไม่มี component, VI-501 มีแค่ tag (ไม่มีชื่อ หน่วย component) — **ใช้ไฟล์นี้ทุกข้อที่ทำต่อจนเข้า Dashboard** | IMP-38, IMP-14, IMP-60, IMP-82, IMP-118, IMP-119, IMP-123, IMP-124, SEN-1, SEN-2, SEN-4, SEL-9, FG-26, VIS-3, SPC, MNG, EDT |
 | `IMP-normal-tags.csv` | **ตั้งใจให้ไม่ตรงกับข้อมูล** (9 tag: มี tag ที่ไม่มีในข้อมูล 3 ตัว, ไม่มี VI-501) — ถูกปฏิเสธ ทำต่อไม่ได้ | IMP-115, IMP-119, IMP-124 |
-| `IMP-normal_saved-as-CSV-UTF-8.csv` | ข้อมูลเดียวกัน บันทึกแบบที่ Excel ทำเมื่อเลือก "CSV UTF-8" | WFF-1 |
+| `IMP-normal_saved-as-CSV-UTF-8.csv` | ข้อมูลเดียวกัน บันทึกแบบที่ Excel ทำเมื่อเลือก "CSV UTF-8" | WFF-18 |
 | `IMP-normal_this_is_a_very_long_file_name_…csv` | ข้อมูลเดียวกัน ชื่อไฟล์ยาวมาก | IMP-45 |
 
 **`multi-file\` — หลายไฟล์**
@@ -105,6 +105,7 @@
 | `ODD-same-column-twice-tags.csv`, `ODD-same-column-twice-case-tags.csv` | `ODD-same-column-twice.csv`, `ODD-same-column-twice-case.csv` | IMP-68 |
 | `ODD-time-header-tags.csv` | `ODD-time-header-Timestamp.csv`, `ODD-time-header-TIME.csv` | IMP-64 |
 | `ODD-time-in-column-3-tags.csv` | `ODD-time-in-column-3.csv` | IMP-64 |
+| `BRK-date-header-tags.csv` | `BRK-date-header.csv`, `BRK-datetime-header.csv` | IMP-128 |
 | `IMP87-tags.csv` | `IMP87-A` … `IMP87-D` | IMP-87 |
 | `IMP88-tags.csv` | `2025.csv` + `2026.csv` | IMP-88 |
 | `INT-tags.csv` | `INT-…` ทุกไฟล์ และ `BRK-header-only.csv` — ไฟล์เล็กไว้สร้างโปรเจกต์เร็ว ๆ | IMP-36, IMP-56, IMP-69, MULTI-21, WFH-4 |
@@ -133,9 +134,9 @@
 
 | ไฟล์ | คืออะไร | ใช้ในข้อ |
 |---|---|---|
-| `BRK-date-header.csv` | คอลัมน์เวลาชื่อ `Date` | PREP-6, IMP-65 |
-| `BRK-datetime-header.csv` | คอลัมน์เวลาชื่อ `DateTime` | IMP-65, WFF-1 |
-| `BRK-semicolon.csv` | คั่นด้วย `;` | WFF-1 |
+| `BRK-date-header.csv` | คอลัมน์เวลาชื่อ `Date` | PREP-6, IMP-128 |
+| `BRK-datetime-header.csv` | คอลัมน์เวลาชื่อ `DateTime` | IMP-128, WFF-18 |
+| `BRK-semicolon.csv` | คั่นด้วย `;` | WFF-18 |
 | `BRK-empty-0-byte.csv` | ไฟล์ 0 byte | PREP-6, IMP-69 |
 | `BRK-header-only.csv` | มีแต่หัวคอลัมน์ | PREP-6, IMP-69 |
 | `BRK-extra-comma-line-50.csv` | บรรทัดที่ 50 มีลูกน้ำเกิน 1 ตัว | PREP-6, IMP-70, IMP-74 |
@@ -227,7 +228,7 @@
 | **VIS** | โปรเจกต์อะไรก็ได้ · VIS-3: `IMP\normal\IMP-normal.csv` + `IMP-normal-tags-exact.csv` |
 | **WFA, WFB, WFC, WFD** | `WF\` ทั้งโฟลเดอร์ (WFB–WFD ใช้โปรเจกต์ที่ได้จาก WFA ต่อ) |
 | **WFE** | `IMP\projects\GEG-3.csv`, `GEG-4.csv` + `GEG-tags.csv` (ตั้งชื่อโปรเจกต์ "GEG-3 Bearing" / "GEG-4 Bearing") |
-| **WFF** | "Trial-F" = `IMP\projects\GEG-3.csv` + `GEG-tags.csv` · WFF-1: `IMP\broken\BRK-semicolon.csv`, `BRK-datetime-header.csv`, `IMP\normal\IMP-normal_saved-as-CSV-UTF-8.csv` · WFF-2: `IMP\big\BIG-2_1GB-…` (`--big`) · WFF-4: `GEG-tags-thai-saved-as-plain-CSV.csv` แล้ว `GEG-tags-D-thai.csv` · WFF-5: `GEG-tags_changed.csv` |
+| **WFF** | "Trial-F" = `IMP\projects\GEG-3.csv` + `GEG-tags.csv` · WFF-18: `IMP\broken\BRK-semicolon.csv`, `BRK-datetime-header.csv`, `IMP\normal\IMP-normal_saved-as-CSV-UTF-8.csv` · WFF-2: `IMP\big\BIG-2_1GB-…` (`--big`) · WFF-4: `GEG-tags-thai-saved-as-plain-CSV.csv` แล้ว `GEG-tags-D-thai.csv` · WFF-5: `GEG-tags_changed.csv` |
 | **WFG** | `IMP\wfg\` (`--big`) · WFG-13: `IMP\big\BIG-1_9GB.csv` และ `BIG-2_1GB-over-limit.csv` |
 | **WFH** | โปรเจกต์ที่ทำไว้จาก WFA, WFE, WFJ (ต้องมี 6 โปรเจกต์ขึ้นไป) · WFH-3: ใช้ CSV + Tag names ชุดเดิมของโปรเจกต์ต้นฉบับ |
 | **WFI** | `TS\scenario\` |
@@ -242,7 +243,7 @@
 |---|---|---|
 | EDT-31, EDT-51, ERR-2, ERR-8, ERR-9 | แก้ไฟล์โปรเจกต์ `ws_….json` ด้วย Notepad (หรือขอไฟล์ที่เตรียมไว้จากทีม dev) | ไฟล์โปรเจกต์เกิดจากโปรแกรมในเครื่องของผู้ทดสอบ ชื่อและเนื้อหาไม่เหมือนกันทุกเครื่อง |
 | BMW-378, BMW-384, BMW-389 ถึง BMW-392, IMP-106, PER-18, WFH (อัปเกรด), WFK-16 | ใช้โปรเจกต์ที่สร้างด้วยโปรแกรมเวอร์ชันเก่า / ตัวติดตั้งเวอร์ชันเก่า | ต้องสร้างจากโปรแกรมเวอร์ชันเก่าจริง ไฟล์ CSV ทำแทนไม่ได้ |
-| WFF-1 (ไฟล์ที่เปิดค้างใน Excel), WFF-5, IMP-58, IMP-82, IMP-124, PER-19 | เปิดไฟล์ค้างใน Excel / ย้ายไฟล์ / ทับไฟล์ที่ตำแหน่งเดิม | เป็นการกระทำที่ข้อนั้นต้องการทดสอบเอง (ใช้ไฟล์ใน `variants\` ช่วยได้ ไม่ต้องพิมพ์แก้เอง) |
+| WFF-18 (ไฟล์ที่เปิดค้างใน Excel), WFF-5, IMP-58, IMP-82, IMP-124, PER-19 | เปิดไฟล์ค้างใน Excel / ย้ายไฟล์ / ทับไฟล์ที่ตำแหน่งเดิม | เป็นการกระทำที่ข้อนั้นต้องการทดสอบเอง (ใช้ไฟล์ใน `variants\` ช่วยได้ ไม่ต้องพิมพ์แก้เอง) |
 | IMP-88 (ไฟล์จริงของลูกค้า) | ถ้ามีไฟล์ `2025.csv` / `2026.csv` ตัวจริงจากระบบ historian ให้ใช้ตัวจริง | `IMP\time-shapes\IMP88\` เป็นไฟล์เลียนแบบที่ตัวเลขตรงกับข้อ แต่ไม่ใช่ข้อมูลจริง |
 | WFG (ถ้ามีข้อมูลจริง 2 ปี) | WFG-1 ให้ใช้ข้อมูลจริงก่อน ถ้ามี | ไฟล์ใน `IMP\wfg\` เป็นข้อมูลจำลอง — หมายเหตุ: 2024 เป็นปีอธิกสุรทิน จึงได้ 1,052,640 แถว (WFG-2 เขียนไว้ "≈ 1,051,200") |
 
@@ -308,7 +309,7 @@ IMP-63 => ODD-text-and-empty-cells-tags.csv
 IMP-67 => ODD-empty-and-repeated-time.csv, ODD-empty-and-repeated-time-tags.csv
 IMP-68 => ODD-same-column-twice.csv, ODD-same-column-twice-tags.csv · ODD-same-column-twice-case.csv, ODD-same-column-twice-case-tags.csv
 IMP-64 => ODD-time-header-Timestamp.csv, ODD-time-header-TIME.csv, ODD-time-header-tags.csv · ODD-time-in-column-3.csv, ODD-time-in-column-3-tags.csv
-IMP-65 => BRK-date-header.csv, BRK-datetime-header.csv
+IMP-128 => BRK-date-header.csv, BRK-datetime-header.csv, BRK-date-header-tags.csv
 IMP-69 => BRK-empty-0-byte.csv, BRK-header-only.csv, INT-tags.csv
 IMP-70 IMP-74 => BRK-extra-comma-line-50.csv
 IMP-71 IMP-73 => BRK-excel-file-renamed.csv
@@ -349,7 +350,7 @@ WFA-3 => ถ้าไม่ผ่าน ใช้ WF-C-cooling-CE.csv แทน
 WFA-4 => WF-tags.csv
 WFF-17 => GEG-3.csv, GEG-tags.csv
 WFH-4 => INT-1d.csv, INT-tags.csv
-WFF-1 => BRK-semicolon.csv, BRK-datetime-header.csv, IMP-normal_saved-as-CSV-UTF-8.csv
+WFF-18 => BRK-semicolon.csv, BRK-datetime-header.csv, IMP-normal_saved-as-CSV-UTF-8.csv
 WFF-2 => BIG-2_1GB-over-limit.csv · BIG-2_1GB-part1.csv, BIG-2_1GB-part2.csv (ไฟล์ใหญ่)
 WFF-4 => GEG-tags-thai-saved-as-plain-CSV.csv แล้ว GEG-tags-D-thai.csv
 WFF-5 => GEG-tags_changed.csv
