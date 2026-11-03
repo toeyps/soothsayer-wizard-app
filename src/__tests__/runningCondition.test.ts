@@ -85,8 +85,9 @@ describe('configured rules', () => {
         expect(isWorkspaceRunningConditionConfigured(fg({ runningConditionNoneConfirmed: true, runningConditionFilters: [f()] }))).toBe(true);
     });
     it('"Use all data" (2026-10-28): the workspace condition is still required (the export’s running status)', () => {
-        expect(isWorkspaceRunningConditionConfigured(fg({ runningConditionAllData: true }))).toBe(false);
-        expect(isRunningConditionConfigured(mk({ id: 'a' }), fg({ runningConditionAllData: true }))).toBe(false);
+        // "Use all data": nothing to fill in to train (the export asks for the line itself).
+        expect(isWorkspaceRunningConditionConfigured(fg({ runningConditionAllData: true }))).toBe(true);
+        expect(isRunningConditionConfigured(mk({ id: 'a' }), fg({ runningConditionAllData: true }))).toBe(true);
         expect(isWorkspaceRunningConditionConfigured(fg({ runningConditionAllData: true, runningConditionFilters: [f()] }))).toBe(true);
     });
     it('time periods alone never count', () => {

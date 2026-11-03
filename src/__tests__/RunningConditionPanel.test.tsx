@@ -303,16 +303,13 @@ describe('RunningConditionPanel — "Only when running | Use all data" (2026-10-
         fireEvent.click(screen.getByTestId('rc-mode-all'));
         expect(onAllDataChange).toHaveBeenCalledWith(true);
     });
-    it('workspace on all data: the line stays (the export needs it) and the note says every row is kept', () => {
+    it('workspace on all data: no line, no note, nothing asked (the export asks for the running status)', () => {
         setup({ allData: true });
         expect(screen.getByTestId('rc-mode-all').getAttribute('aria-checked')).toBe('true');
-        expect(screen.getByTestId('rc-one')).toBeTruthy();
-        expect(screen.getByTestId('rc-one-note').textContent).toMatch(/^Train and score keep every row\. The export writes this line as the machine’s running status/);
-        expect(screen.getByTestId('rc-condition').querySelector('.rcx-sec-h span')!.textContent).toMatch(/every row of the periods.*still required/);
-    });
-    it('workspace on all data without a line: still the amber "not set" line', () => {
-        setup({ allData: true, configured: false, condition: undefined });
-        expect(screen.getByTestId('rc-unset-warning').textContent).toMatch(/No model can be trained until it is set\./);
+        expect(screen.queryByTestId('rc-one')).toBeNull();
+        expect(screen.queryByTestId('rc-one-note')).toBeNull();
+        expect(screen.queryByTestId('rc-unset-warning')).toBeNull();
+        expect(screen.getByTestId('rc-condition').querySelector('.rcx-sec-h span')!.textContent).toBe('train and score use every row of the periods.');
     });
     it('a Custom model on all data has no line of its own', () => {
         setup({ scope: 'custom', allData: true, condition: undefined });

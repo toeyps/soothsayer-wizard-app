@@ -181,6 +181,13 @@ describe('applyIncompleteRule - the WORKSPACE running condition Apply', () => {
         return Object.fromEntries(out.map(m => [m.id, m.status]));
     }
 
+    it('on "Use all data" the running status typed in the export changes no model (it filters nothing)', () => {
+        const models = [wsModel('ws-a'), customModel('custom')];
+        const prev = ws(slice(models, { runningConditionAllData: true, runningConditionFilters: [] }));
+        const next = ws(slice(models, { runningConditionAllData: true, runningConditionFilters: [cond('1200')] }));
+        expect(applyIncompleteRule(prev, next).failureGroupState!.models.map(m => m.status)).toEqual([true, true]);
+    });
+
     it('a new condition demotes every Workspace-mode model and leaves the Custom-mode one', () => {
         expect(apply({ runningConditionAllData: false, runningConditionFilters: [cond('1200')] }))
             .toEqual({ 'ws-a': false, 'ws-b': false, custom: true });

@@ -3888,15 +3888,18 @@ _ปุ่มดินสอที่แต่ละแถวในแท็บ 
   - ย่อหน้าต่าง Build Model ให้แคบลง แล้วดูส่วนนี้
   - **คาดหวัง:** หัวข้อทั้ง 3 คือ "Train periods" · "Scoring periods" · "When the machine is running" · มีการ์ดสองใบ "Only when running" (เลือกอยู่) และ "Use all data" · ประโยคท้ายหัวข้อ: "only rows where the machine is running are used to train and score — and the export tells the monitoring system the same. Required." · มีบรรทัดเดียว "Machine is running when [ช่อง sensor] is above [ช่องค่า หน่วย]" — **ไม่มี** ปุ่ม `>` `<` `↔` `=`, ปุ่ม AND / OR, ปุ่ม "Add condition" และปุ่ม ✕ · ช่องค่าว่างมีข้อความจาง ๆ "e.g. 1000" · ตั้งครบแล้วบรรทัดเล็กเขียน "At or below <ค่า หน่วย> the machine counts as stopped — those rows are left out, and the export writes the same line as the machine’s running status." · ชื่อ sensor แสดง description ก่อน tag ชื่อยาวถูกตัดด้วย … · หน้าต่างแคบ: การ์ดสองใบเรียงลงมาได้ ไม่มีอะไรล้นหรือทับกัน · ทุกการแก้เป็นแบบร่างจนกด Apply
 
-- [ ] **BMW-408 — "Use all data": Train และ Health score ใช้ข้อมูลทุกแถวในช่วงเวลา แต่บรรทัด "Machine is running when … is above …" ยังต้องกรอก (ใช้ใน Export)** 🆕
-  - *(วิธีเตรียม: โปรเจกต์ที่ตั้ง Running condition แล้ว และมีโมเดลที่ Train แล้วอย่างน้อย 1 ตัว · ข้อมูลมีช่วงที่เครื่องหยุด)*
-  - เปิด popup Running condition กด "Use all data" อ่านประโยคท้ายหัวข้อและบรรทัดเล็กใต้บรรทัด
-  - ลบค่าในช่อง "is above" ให้ว่าง แล้วดูปุ่ม Apply
-  - ใส่ค่ากลับ กด Apply ดูการ์ด Running condition ด้านบนและสถานะโมเดล
-  - Train โมเดลใหม่ แล้วดูกราฟผล (ควรเห็นช่วงที่เครื่องหยุดด้วย)
-  - ปิดหน้าต่าง Build Model แล้วเปิดใหม่ เปิด popup อีกครั้ง
-  - Export results แล้วเปิด `machine_info.json`
-  - **คาดหวัง:** ประโยคท้ายหัวข้อเปลี่ยนเป็น "train and score use every row of the periods. The line below is still required — the export tells the monitoring system when the machine runs." · บรรทัดเล็กเขียน "Train and score keep every row. The export writes this line as the machine’s running status (stopped at or below <ค่า หน่วย>)." · ช่องค่าว่าง = ปุ่ม Apply กดไม่ได้และมีป้าย "Required" · หลัง Apply การ์ดด้านบนมีแถว "Rows used" เขียน "Use all data — idle and shutdown time included" · โมเดลที่ Train ไว้แล้วต้อง Train ใหม่ (ไม่ขึ้นว่าเป็นปัจจุบัน) · กราฟหลัง Train มีจุดของช่วงที่เครื่องหยุดด้วย · เปิดใหม่แล้ว "Use all data" ยังถูกเลือกอยู่ · `running_status` ในไฟล์ยังมี sensor และค่าที่กรอก · กดกลับ "Only when running" แล้ว Apply = โมเดลต้อง Train ใหม่อีกครั้ง
+- [ ] **BMW-415 — "Use all data": ช่อง "Machine is running when …" หายไป Train ได้โดยไม่ต้องกรอก และไปกรอกตอน Export แทน** 🆕
+  - *(วิธีเตรียม: โปรเจกต์ใหม่ที่ยังไม่เคยตั้ง Running condition · ข้อมูลมีช่วงที่เครื่องหยุด)*
+  - เปิด popup Running condition ใส่ Train period และ Scoring period
+  - กด "Use all data" แล้วดูหัวข้อ "When the machine is running"
+  - กด Apply แล้วดูการ์ด Running condition ด้านบน
+  - Train โมเดลหนึ่งตัว แล้วดูกราฟผล (ควรเห็นช่วงที่เครื่องหยุดด้วย)
+  - ทำโมเดลทุกตัวให้เป็น Complete แล้วกด Export results
+  - ดูแถว "Running status" ในหน้า Export เลือก sensor พิมพ์ค่า แล้วกด "Save"
+  - ดูสถานะโมเดล แล้ว Export และเปิด `machine_info.json`
+  - เปิด Export อีกครั้ง กด "Change" แก้ค่า แล้วกด "Save"
+  - เปิด popup Running condition กด "Only when running"
+  - **คาดหวัง:** พอกด "Use all data" ช่อง sensor กับช่องค่าหาย ป้าย "Required" หาย ประโยคท้ายหัวข้อเขียน "train and score use every row of the periods." และกด Apply ได้ · การ์ดด้านบนขึ้นเครื่องหมายถูก เขียน "Use all data" ไม่มีคำว่า "Machine running: not set" · Train ได้เลย และกราฟมีจุดของช่วงที่เครื่องหยุด · หน้า Export มีแถว "Running status" พร้อมช่องเลือก sensor ช่องค่า และปุ่ม "Save" ที่กดได้เมื่อกรอกครบ ไม่มีปุ่ม "Open running condition" · หลัง "Save" แถวเป็นเครื่องหมายถูก เขียน "For the monitoring system only — training uses all data." และ Export ได้ · โมเดลยังเป็น Complete ทั้งตอน Save และตอน Change · `running_status` ในไฟล์เป็น sensor และค่าล่าสุด · กลับมา "Only when running" แล้วช่องกลับมาพร้อมค่าที่กรอกในหน้า Export
 
 - [ ] **BMW-409 — โมเดลแบบ Custom: "Use all data" ของโมเดลเอง ไม่ต้องกรอกบรรทัด sensor** 🆕
   - เลือกโมเดลหนึ่ง เปิด Model settings → Training data เลือก "Custom"

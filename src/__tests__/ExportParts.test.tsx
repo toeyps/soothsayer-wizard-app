@@ -93,6 +93,9 @@ function renderModal(over: Partial<ExportModalProps> = {}) {
         onOpenModel: vi.fn(),
         onOpenProjectDetails: vi.fn(),
         onOpenRunningCondition: vi.fn(),
+        sensors: ['RUN', 'TAG1'],
+        getComponent: () => '',
+        onSaveRunningStatus: vi.fn(async () => {}),
         ...over,
     };
     const utils = render(
@@ -244,6 +247,46 @@ describe('ExportModal — the checklist', () => {
         expect(r.textContent).toContain('not set — pick the sensor that shows the machine is running');
         expect(r.textContent).toContain('The customer\'s monitoring system needs one sensor and the value at or below which the machine counts as stopped.');
         expect(r.getAttribute('data-state')).toBe('bad');
+    });
+
+    describe('running status on "Use all data" (the settings hide the line)', () => {
+        const running = (status: { sensor: string; value: number } | null): ExportReadinessItem =>
+            ({ id: 'running', ok: !!status, info: false, blocking: !status, status, allData: true });
+        const notAllReady = [row({ ready: false, reason: 'trained', words: 'Trained · Mark complete is next', tone: 'need' })];
+
+        it('not set: the fields are in the checklist, not a way to the settings; Save waits for both', async () => {
+            const onSaveRunningStatus = vi.fn(async () => {});
+            const { props } = renderModal({ onSaveRunningStatus, readiness: readiness({ items: items({ running: running(null) }) }) });
+            expect(screen.queryByTestId('ready-running-fix')).toBeNull();
+            const save = screen.getByTestId('ready-running-save') as HTMLButtonElement;
+            expect(save.disabled).toBe(true);
+            fireEvent.change(within(screen.getByTestId('ready-running-editor')).getByLabelText('Running above this value'), { target: { value: '12' } });
+            expect(save.disabled).toBe(true);
+            fireEvent.click(within(screen.getByTestId('ready-running-editor')).getByRole('button', { name: 'sensor' }));
+            fireEvent.click(await screen.findByRole('option', { name: /RUN/ }));
+            expect(save.disabled).toBe(false);
+            fireEvent.click(save);
+            expect(onSaveRunningStatus).toHaveBeenCalledWith('RUN', '12');
+            expect(props.onOpenRunningCondition).not.toHaveBeenCalled();
+        });
+
+        it('set: one line says it is for the monitoring system; Change opens the fields with the saved values', () => {
+            renderModal({ readiness: readiness({ rows: notAllReady, items: items({ running: running({ sensor: 'RUN', value: 1000 }) }) }) });
+            expect(screen.getByTestId('ready-running').textContent).toContain('For the monitoring system only — training uses all data.');
+            expect(screen.queryByTestId('ready-running-editor')).toBeNull();
+            fireEvent.click(screen.getByTestId('ready-running-fix'));
+            expect((within(screen.getByTestId('ready-running-editor')).getByLabelText('Running above this value') as HTMLInputElement).value).toBe('1000');
+        });
+
+        it('a change while everything is ready runs the dry run again', async () => {
+            const exp = fakeExp({ phase: 'ready' });
+            renderModal({ exp, readiness: readiness({ items: items({ running: running({ sensor: 'RUN', value: 1000 }) }) }) });
+            const before = vi.mocked(exp.plan).mock.calls.length;
+            fireEvent.click(screen.getByRole('button', { name: 'Show' }));
+            fireEvent.click(screen.getByTestId('ready-running-fix'));
+            await act(async () => { fireEvent.click(screen.getByTestId('ready-running-save')); });
+            expect(vi.mocked(exp.plan).mock.calls.length).toBe(before + 1);
+        });
     });
 
     it('lists the not-Complete models by failure group with their reason and Open →', () => {

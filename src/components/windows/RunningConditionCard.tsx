@@ -258,10 +258,13 @@ export function RunningConditionCard({ state, periods, filters, headers, getDesc
                             ? <span className="rcc-line-warn" title="Needed before Mark complete">No scoring period</span>
                             : <>Scoring <b>{nScore}</b> {plural(nScore, 'period')}{badScoring > 0 && <span className="rcc-line-bad" data-testid="rc-card-test-bad"> · ⚠ {badScoring} to fix</span>}</>}
                     </span>
-                    <span className="rcc-line-item" data-testid="rc-card-cond">
-                        {nCond === 0 ? <span className="rcc-line-warn">Machine running: not set</span> : <>Running when <SensorInline tag={complete[0].sensor} size="sm" /> is above <span className="rcc-rest">{conditionChipParts(complete[0], getDesc, getUnit).rest.replace(/^> /, '')}</span></>}
-                    </span>
-                    {allData && <span className="rcc-line-item" data-testid="rc-card-all-data" title="Train and the Health score use every row of the periods; the line above is the export’s running status">Use all data</span>}
+                    {allData
+                        ? <span className="rcc-line-item" data-testid="rc-card-all-data" title="Train and the Health score use every row of the periods">Use all data</span>
+                        : (
+                            <span className="rcc-line-item" data-testid="rc-card-cond">
+                                {nCond === 0 ? <span className="rcc-line-warn">Machine running: not set</span> : <>Running when <SensorInline tag={complete[0].sensor} size="sm" /> is above <span className="rcc-rest">{conditionChipParts(complete[0], getDesc, getUnit).rest.replace(/^> /, '')}</span></>}
+                            </span>
+                        )}
                     {/* Only the two warnings — never a count of rows. Empty (hidden by
                         `.rcc-line-item:empty`) when there is nothing to warn about. */}
                     <span className="rcc-line-item" data-testid="rc-card-use" aria-live="polite">
@@ -301,7 +304,7 @@ export function RunningConditionCard({ state, periods, filters, headers, getDesc
                 <div className="rcc-grid">
                     <div className="rcc-rows" data-testid="rc-card-time"><span className="rcc-lbl">Train</span><PeriodChips periods={periods} bounds={bounds} /></div>
                     <div className="rcc-rows" data-testid="rc-card-test"><span className="rcc-lbl">Scoring</span><ScoringChips tests={testPeriods} train={periods} bounds={bounds} /></div>
-                    <div className="rcc-rows" data-testid="rc-card-cond">
+                    {!allData && <div className="rcc-rows" data-testid="rc-card-cond">
                         <span className="rcc-lbl">Running when</span>
                         {complete.map(f => {
                             const c = conditionChipParts(f, getDesc, getUnit);
@@ -312,8 +315,8 @@ export function RunningConditionCard({ state, periods, filters, headers, getDesc
                                 </span>
                             );
                         })}
-                        <span className="rcc-applies">{allData ? 'export’s running status only' : 'also the export’s running status'}</span>
-                    </div>
+                        <span className="rcc-applies">also the export’s running status</span>
+                    </div>}
                     <div className="rcc-rows" data-testid="rc-card-rows-mode">
                         <span className="rcc-lbl">Rows used</span>
                         <span className="rcc-applies">{allData ? 'Use all data — idle and shutdown time included' : 'Only when running'}</span>

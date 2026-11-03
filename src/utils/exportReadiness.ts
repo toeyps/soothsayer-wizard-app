@@ -211,7 +211,7 @@ interface ItemBase {
 export type ExportReadinessItem =
     | (ItemBase & { id: 'machine'; machine: MachineDetails; missing: string[]; /** a project made before machine details existed */ legacy: boolean })
     | (ItemBase & { id: 'tz'; offsetMin: number; /** the offset is this PC's */ isPcOffset: boolean; /** saved on the project (else the PC's is assumed) */ saved: boolean })
-    | (ItemBase & { id: 'running'; status: ResolvedRunningStatus | null })
+    | (ItemBase & { id: 'running'; status: ResolvedRunningStatus | null; allData?: boolean })
     | (ItemBase & { id: 'sensors'; rawCount: number; specialCount: number; noComponentCount: number })
     | (ItemBase & { id: 'derived'; sensors: { tag: string; howToBuild: string; sourceTags: string[] }[] })
     | (ItemBase & { id: 'fg'; usedCount: number; missing: { no: number; name: string; description: boolean; recommendation: boolean }[] });
@@ -319,7 +319,7 @@ export function exportReadiness(input: ExportReadinessInput): ExportReadiness {
     const items: ExportReadinessItem[] = [
         item({ id: 'machine' as const, ok: missing.length === 0, machine, missing, legacy: !ws.machine }),
         item({ id: 'tz' as const, ok: true, offsetMin, isPcOffset: offsetMin === pcOffsetMin(), saved: offsetSaved }),
-        item({ id: 'running' as const, ok: running !== null, status: running }),
+        item({ id: 'running' as const, ok: running !== null, status: running, allData: !!fg.runningConditionAllData }),
         item({
             id: 'sensors' as const, ok: true, info: noComponent.length > 0,
             rawCount: sensors.raw.length, specialCount: sensors.special.length, noComponentCount: noComponent.length,

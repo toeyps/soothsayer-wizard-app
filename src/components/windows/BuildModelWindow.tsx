@@ -5000,8 +5000,8 @@ export default function BuildModelWindow() {
     // removes a condition that was set. Applying periods while it was never set is
     // allowed (the footer says the models still can't train).
     const rcDraftCond = rcView.filters[0];
-    const rcDraftSet = isWorkspaceRunningConditionConfigured({ runningConditionFilters: rcView.filters, runningConditionAllData: false }, gateHeaders);
-    const rcWasSet = isWorkspaceRunningConditionConfigured({ runningConditionFilters: rcPersisted.filters, runningConditionAllData: false }, gateHeaders);
+    const rcDraftSet = isWorkspaceRunningConditionConfigured({ runningConditionFilters: rcView.filters, runningConditionAllData: rcView.allData }, gateHeaders);
+    const rcWasSet = isWorkspaceRunningConditionConfigured({ runningConditionFilters: rcPersisted.filters, runningConditionAllData: rcPersisted.allData }, gateHeaders);
     const rcCondWhy = rcDraftSet ? null
         : (rcWasSet || (rcDraftCond && (rcDraftCond.sensor || (rcDraftCond.value1 ?? '').trim())))
             ? 'Set “Machine is running when … is above …” before applying' : null;
@@ -5472,6 +5472,11 @@ export default function BuildModelWindow() {
                     }}
                     onOpenProjectDetails={() => { void openProjectDetails(); }}
                     onOpenRunningCondition={() => { setExportOpen(false); setRcFilterOpen(true); }}
+                    sensors={allSensors}
+                    getComponent={getComponent}
+                    onSaveRunningStatus={(sensor, value) => persistRunningCondition({
+                        filters: [{ id: runningConditionFilters[0]?.id ?? `rcf-${Date.now()}`, sensor, operation: 'greater_than', value1: value, value2: '' }],
+                    })}
                 />
             )}
             {/* After the Export dialog, so it sits on top of it (Esc closes only this one). */}

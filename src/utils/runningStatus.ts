@@ -5,7 +5,9 @@ import { isCompleteCondition, type RunningConditionFg } from './runningCondition
  * The export's running status — "the machine is running when <sensor> is
  * above <value>". It is ALWAYS the workspace running condition itself: the one
  * "sensor > value" line that also filters the rows for training and the health
- * score (user decision 2026-10-26). The old export-only line
+ * score (user decision 2026-10-26). On "Use all data" the same line is hidden
+ * from the settings and filled in the export's checklist (2026-11-03), where it
+ * filters nothing. The old export-only line
  * (`failureGroupState.runningStatus`) is read only by the one-time conversion
  * (`migrateSingleRunningCondition`).
  */

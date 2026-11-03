@@ -34,8 +34,8 @@ import TimePeriodsEditor, { type PeriodBounds } from './TimePeriodsEditor';
  *
  * Above the line, "Only when running | Use all data" (back 2026-10-28, user
  * decision): on all data Train and the Health score use every row of the
- * periods. The workspace line stays required (the export still needs it); a
- * Custom model on all data has no line of its own (hidden).
+ * periods and the line is hidden (2026-11-03, user decision: nothing is
+ * filtered, so nothing is asked here). The export asks for it in its checklist.
  *
  * No right-hand preview column and no callout boxes. No number of data rows
  * either (user decision 2026-10-14): the counts are shown as running DAYS — in
@@ -118,8 +118,6 @@ export default function RunningConditionPanel({
     // workspace modal over a Custom model's open settings).
     const id = (workspace: string, own: string) => (custom ? own : workspace);
     const notTrainable = custom ? 'This model can’t be trained until it is set.' : 'No model can be trained until it is set.';
-    // A Custom model on all data has no line of its own (the export reads the workspace's).
-    const showLine = !(custom && allData);
 
     return (
         <div data-testid={id('rc-panel', 'custom-rc-panel')} className={`rcm-body${custom ? ' rcm-body--own' : ''}`}>
@@ -166,7 +164,7 @@ export default function RunningConditionPanel({
                     <span>{custom
                         ? (allData ? 'this model trains and scores on every row of its periods.' : 'only rows where the machine is running are used to train and score this model. Required.')
                         : allData
-                            ? 'train and score use every row of the periods. The line below is still required — the export tells the monitoring system when the machine runs.'
+                            ? 'train and score use every row of the periods.'
                             : 'only rows where the machine is running are used to train and score — and the export tells the monitoring system the same. Required.'}</span>
                 </div>
                 <div className="rcx-rows-mode" role="radiogroup" aria-label="Rows used to train and score" data-testid={id('rc-rows-mode', 'custom-rc-rows-mode')}>
@@ -187,7 +185,7 @@ export default function RunningConditionPanel({
                         </button>
                     ))}
                 </div>
-                {showLine && <>
+                {!allData && <>
                 <div className={`rs-row rc1-row${!configured ? ' rc1-row--unset' : ''}`} data-testid={id('rc-one', 'custom-rc-one')}>
                     <span className="rs-l">Machine is running when</span>
                     <span className={`rs-pick${!sensor ? ' rc1-pick--empty' : ''}`}>
@@ -222,10 +220,6 @@ export default function RunningConditionPanel({
                             ? <>Pick the sensor that shows the machine is running, and the value above which it runs — for example generator active power above <span className="rc1-num">1,000 kW</span>.</>
                             : !sensor ? 'Pick the sensor that shows the machine is running.' : 'Type the value above which the machine is running.'}
                         {' '}{notTrainable}
-                    </div>
-                ) : allData ? (
-                    <div className="rcx-line" data-testid="rc-one-note">
-                        Train and score keep every row. The export writes this line as the machine’s running status (stopped at or below <span className="rc1-num">{fmtNumText(value.trim())}{unit ? ` ${unit}` : ''}</span>).
                     </div>
                 ) : (
                     <div className="rcx-line" data-testid="rc-one-note">

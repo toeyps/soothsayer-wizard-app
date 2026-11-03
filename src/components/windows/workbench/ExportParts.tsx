@@ -12,6 +12,7 @@ import { exportFolderName, revealExportFolder } from '../../../utils/workspaceEx
 import { fmtOffset } from '../../../utils/projectDetails';
 import { MODEL_KIND_LABEL } from '../../../utils/modelNames';
 import { isPickerSurfaceOpen } from '../../sensor/SensorPicker';
+import { SensorPickerModal } from '../SensorPickers';
 import { focusableIn } from '../useModalFocus';
 import { fgLabel } from '../../../utils/fgLabel';
 
@@ -216,9 +217,9 @@ function ModelRow({ r, status, tone, act, also }: { r: ExportReadinessRow; statu
 
 /** One line of the checklist. `fix` = a working link in THIS window; `where` =
  *  plain words for a place in another window (never a dead link). */
-function ReadyLine({ id, ok, info, text, sub, fix, where }: {
+function ReadyLine({ id, ok, info, text, sub, fix, where, below }: {
     id: string; ok: boolean; info?: boolean; text: ReactNode; sub?: ReactNode;
-    fix?: { label: string; run: () => void }; where?: string;
+    fix?: { label: string; run: () => void }; where?: string; below?: ReactNode;
 }) {
     const ico = info ? 'info' : ok ? 'ok' : 'bad';
     return (
@@ -229,6 +230,7 @@ function ReadyLine({ id, ok, info, text, sub, fix, where }: {
             <div className="rd-t">
                 <div>{text}</div>
                 {sub && <div className="rd-sub">{sub}</div>}
+                {below}
             </div>
             <div className="rd-act">
                 {fix && <button type="button" className="tq-link" data-testid={`ready-${id}-fix`} onClick={fix.run}>{fix.label}</button>}
@@ -259,9 +261,13 @@ export interface ExportModalProps {
     onOpenModel: (id: string) => void;
     onOpenProjectDetails: () => void;
     onOpenRunningCondition: () => void;
+    /** For the running status on "Use all data": the settings hide the line, so it is filled in here. */
+    sensors: string[];
+    getComponent: (tag: string) => string;
+    onSaveRunningStatus: (sensor: string, value: string) => Promise<void>;
 }
 
-export function ExportModal({ readiness, groups, projectName, machineTag, exp, planFailed = false, stacked, unitOf, onClose, onOpenModel, onOpenProjectDetails, onOpenRunningCondition }: ExportModalProps) {
+export function ExportModal({ readiness, groups, projectName, machineTag, exp, planFailed = false, stacked, unitOf, onClose, onOpenModel, onOpenProjectDetails, onOpenRunningCondition, sensors, getComponent, onSaveRunningStatus }: ExportModalProps) {
     const ref = useRef<HTMLDivElement>(null);
     const { phase, exportPlan: plan, result, error, progress, showProgress, hidden } = exp;
     const [confirming, setConfirming] = useState(false);
@@ -297,6 +303,13 @@ export function ExportModal({ readiness, groups, projectName, machineTag, exp, p
         // Only on the not-ready -> ready step.
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [allReady]);
+
+    // A new running status when everything was already there: the dry run shown is
+    // out of date (the not-ready -> ready step runs it in the effect above).
+    const saveRunningStatus = async (sensor: string, value: string) => {
+        await onSaveRunningStatus(sensor, value);
+        if (allReady && (phase === 'idle' || phase === 'ready' || phase === 'cancelled' || planFailed)) void exp.plan();
+    };
 
     // ---- keyboard: first focus, Tab kept inside, Esc closes only the top dialog ----
     const stackedRef = useRef(stacked);
@@ -557,7 +570,7 @@ export function ExportModal({ readiness, groups, projectName, machineTag, exp, p
                             )}
                             <div className="rd-list">
                                 {items.map(it => (
-                                    <ItemLine key={it.id} it={it} noComponent={noComponent} unitOf={unitOf} onOpenProjectDetails={onOpenProjectDetails} onOpenRunningCondition={onOpenRunningCondition} />
+                                    <ItemLine key={it.id} it={it} noComponent={noComponent} unitOf={unitOf} onOpenProjectDetails={onOpenProjectDetails} onOpenRunningCondition={onOpenRunningCondition} sensors={sensors} getComponent={getComponent} onSaveRunningStatus={saveRunningStatus} />
                                 ))}
                                 <ReadyLine
                                     id="models"
@@ -765,13 +778,80 @@ export function ExportIssueLine({ issue, row, spec }: { issue: ExportIssue; row?
     );
 }
 
+/** The running status typed in the checklist ("Use all data": it filters nothing,
+ *  so the settings do not ask for it). */
+function RunningStatusEditor({ status, sensors, getComponent, unitOf, onSave }: {
+    status: { sensor: string; value: number } | null;
+    sensors: string[];
+    getComponent: (tag: string) => string;
+    unitOf: (tag: string) => string;
+    onSave: (sensor: string, value: string) => Promise<void>;
+}) {
+    const [sensor, setSensor] = useState(status?.sensor ?? '');
+    const [value, setValue] = useState(status ? String(status.value) : '');
+    const unit = sensor ? unitOf(sensor) : '';
+    const canSave = !!sensor && value.trim() !== '' && Number.isFinite(Number(value));
+    return (
+        <div className="rs-row rd-rs" data-testid="ready-running-editor">
+            <span className="rs-l">Machine is running when</span>
+            <span className={`rs-pick${!sensor ? ' rc1-pick--empty' : ''}`}>
+                <SensorPickerModal sensors={sensors} getComponent={getComponent} single value={sensor} onSelect={setSensor} noun="sensor" />
+            </span>
+            <span className="rs-l">is above</span>
+            <label className={`rcm-val rs-val${!value.trim() ? ' rs-val--empty' : ''}`}>
+                <input type="number" value={value} aria-label="Running above this value" placeholder="e.g. 1000" onChange={e => setValue(e.target.value)} />
+                {unit && <span>{unit}</span>}
+            </label>
+            <button type="button" className="rcx-btn rcx-btn--sm" data-testid="ready-running-save" disabled={!canSave} onClick={() => { void onSave(sensor, value.trim()); }}>Save</button>
+        </div>
+    );
+}
+
+function RunningStatusLine({ it, unitOf, onOpenRunningCondition, sensors, getComponent, onSaveRunningStatus }: {
+    it: Extract<ExportReadinessItem, { id: 'running' }>;
+    unitOf: (tag: string) => string;
+    onOpenRunningCondition: () => void;
+    sensors: string[];
+    getComponent: (tag: string) => string;
+    onSaveRunningStatus: (sensor: string, value: string) => Promise<void>;
+}) {
+    const s = it.status;
+    const unit = s ? unitOf(s.sensor) : '';
+    const [changing, setChanging] = useState(false);
+    const editing = !!it.allData && (!s || changing);
+    const save = async (sensor: string, value: string) => {
+        await onSaveRunningStatus(sensor, value);
+        setChanging(false);
+    };
+    const need = 'The customer\'s monitoring system needs one sensor and the value at or below which the machine counts as stopped.';
+    return (
+        <ReadyLine
+            id="running"
+            ok={it.ok}
+            text={s
+                ? <><b>Running status</b> · Machine is running when <SensorInline tag={s.sensor} /> is above <span className="ex-mono">{String(s.value)}{unit ? ` ${unit}` : ''}</span></>
+                : <><b>Running status</b> · not set — pick the sensor that shows the machine is running</>}
+            sub={it.allData
+                ? (s ? 'For the monitoring system only — training uses all data.' : `${need} Training uses all data, so this changes no model.`)
+                : (s ? 'From the running condition — the same line used for training.' : need)}
+            fix={!it.allData
+                ? { label: 'Open running condition', run: onOpenRunningCondition }
+                : s ? { label: changing ? 'Keep' : 'Change', run: () => setChanging(c => !c) } : undefined}
+            below={editing && <RunningStatusEditor status={s} sensors={sensors} getComponent={getComponent} unitOf={unitOf} onSave={save} />}
+        />
+    );
+}
+
 /** One checklist item, in the words the editors use. */
-function ItemLine({ it, noComponent, unitOf, onOpenProjectDetails, onOpenRunningCondition }: {
+function ItemLine({ it, noComponent, unitOf, onOpenProjectDetails, onOpenRunningCondition, sensors, getComponent, onSaveRunningStatus }: {
     it: ExportReadinessItem;
     noComponent: readonly NoComponentSensor[];
     unitOf: (tag: string) => string;
     onOpenProjectDetails: () => void;
     onOpenRunningCondition: () => void;
+    sensors: string[];
+    getComponent: (tag: string) => string;
+    onSaveRunningStatus: (sensor: string, value: string) => Promise<void>;
 }) {
     switch (it.id) {
         case 'machine': {
@@ -803,22 +883,8 @@ function ItemLine({ it, noComponent, unitOf, onOpenProjectDetails, onOpenRunning
                     fix={{ label: 'Change', run: onOpenProjectDetails }}
                 />
             );
-        case 'running': {
-            const s = it.status;
-            const unit = s ? unitOf(s.sensor) : '';
-            return (
-                <ReadyLine
-                    id="running"
-                    ok={it.ok}
-                    text={s
-                        ? <><b>Running status</b> · Machine is running when <SensorInline tag={s.sensor} /> is above <span className="ex-mono">{String(s.value)}{unit ? ` ${unit}` : ''}</span></>
-                        : <><b>Running status</b> · not set — pick the sensor that shows the machine is running</>}
-                    sub={!s ? 'The customer\'s monitoring system needs one sensor and the value at or below which the machine counts as stopped.'
-                        : 'From the running condition — the same line used for training.'}
-                    fix={{ label: 'Open running condition', run: onOpenRunningCondition }}
-                />
-            );
-        }
+        case 'running':
+            return <RunningStatusLine it={it} unitOf={unitOf} onOpenRunningCondition={onOpenRunningCondition} sensors={sensors} getComponent={getComponent} onSaveRunningStatus={onSaveRunningStatus} />;
         case 'sensors':
             return (
                 <ReadyLine

@@ -10397,22 +10397,40 @@ describe('The ONE running-condition line ("Machine is running when … is above 
         expect(screen.queryByRole('dialog', { name: 'Running condition' })).toBeNull();
     });
 
-    it('"Use all data" (2026-10-28): Apply writes the choice and KEEPS the line (the export needs it); editing the line keeps the choice', async () => {
+    it('"Use all data" hides the line; Apply writes the choice and KEEPS a line that was set; back on "Only when running" it is there again', async () => {
         await mount({ runningConditionFilters: [ABOVE1] });
         fireEvent.click(screen.getByTestId('rc-mode-all'));
-        setRcLine('TAG2', '40');
-        expect(screen.getByTestId('rc-mode-all').getAttribute('aria-checked')).toBe('true');
+        expect(screen.queryByTestId('rc-one')).toBeNull();
         expect(why()).toBeNull();
+        fireEvent.click(screen.getByTestId('rc-mode-running'));
+        expect(rcValueInput().value).toBe('5');
+        fireEvent.click(screen.getByTestId('rc-mode-all'));
         await apply();
         const fg = disk.failureGroupState;
         expect(fg.runningConditionAllData).toBe(true);
-        expect(fg.runningConditionFilters).toEqual([{ id: 'f1', sensor: 'TAG2', operation: 'greater_than', value1: '40', value2: '' }]);
+        expect(fg.runningConditionFilters).toEqual([ABOVE1]);
     });
 
-    it('"Use all data" does not excuse a half-filled line (the line is required for the export)', async () => {
+    it('"Use all data" with no line: nothing is required, Apply is free, and the card says it is set', async () => {
         await mount({ runningConditionFilters: [] });
+        expect(screen.getByTestId('rc-required-pill')).toBeTruthy();
         fireEvent.click(screen.getByTestId('rc-mode-all'));
-        setRcLine('TAG2', null);
+        expect(screen.queryByTestId('rc-required-pill')).toBeNull();
+        expect(screen.queryByTestId('rc-one')).toBeNull();
+        expect(applyBtn().disabled).toBe(false);
+        await apply();
+        expect(disk.failureGroupState.runningConditionAllData).toBe(true);
+        expect(disk.failureGroupState.runningConditionFilters).toEqual([]);
+        expect(screen.getByTestId('rc-card').getAttribute('data-state')).toBe('set');
+        expect(screen.getByTestId('rc-card-all-data').textContent).toBe('Use all data');
+        expect(screen.queryByTestId('rc-card-cond')).toBeNull();
+    });
+
+    it('from "Use all data" with no line, going back to "Only when running" needs the line before Apply', async () => {
+        await mount({ runningConditionFilters: [], runningConditionAllData: true });
+        fireEvent.click(screen.getByTestId('rc-card-open'));
+        fireEvent.click(screen.getByTestId('rc-mode-running'));
+        expect(screen.getByTestId('rc-one')).toBeTruthy();
         expect(applyBtn().disabled).toBe(true);
         expect(why()).toBe(WHY);
     });

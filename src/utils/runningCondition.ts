@@ -15,9 +15,8 @@ export interface EffectiveRunningCondition {
     filters: WorkspaceSensorFilter[];
     combine: 'and' | 'or';
     /** "Use all data" (2026-10-28): Train and the Health score use every row of
-     *  the periods — the condition picks no rows. The workspace condition is
-     *  still required (it is the export's running status); a Custom model on
-     *  all data needs no condition of its own. */
+     *  the periods — no condition is needed to train (2026-11-03). The export
+     *  still needs the workspace line as its running status, and asks for it. */
     allData: boolean;
     /** TRAIN periods (required to train). */
     periods: TimePeriod[];
@@ -76,20 +75,16 @@ function hasAboveCondition(filters: WorkspaceSensorFilter[], headers?: string[] 
     return filters.some((f) => f.operation === 'greater_than' && isCompleteCondition(f, headers));
 }
 
-/** Workspace-level: its one complete "sensor > value" row is set — required even
- *  on "Use all data", because it is the export's running status. Time periods
- *  never count. */
+/** Workspace-level: "Use all data" (no line needed to train), or its one complete
+ *  "sensor > value" row is set. Time periods never count. */
 export function isWorkspaceRunningConditionConfigured(fg: RunningConditionFg, headers?: string[] | null): boolean {
-    return hasAboveCondition(fg?.runningConditionFilters ?? [], headers);
+    return !!fg?.runningConditionAllData || hasAboveCondition(fg?.runningConditionFilters ?? [], headers);
 }
 
 /** Is this model's EFFECTIVE running condition (workspace or Custom) configured? */
 export function isRunningConditionConfigured(model: FailureModel, fg: RunningConditionFg, headers?: string[] | null): boolean {
     const eff = effectiveRunningCondition(model, fg);
-    // A Custom model on all data uses no condition of its own (the export reads
-    // the workspace's).
-    if (eff.mode === 'custom' && eff.allData) return true;
-    return hasAboveCondition(eff.filters, headers);
+    return eff.allData || hasAboveCondition(eff.filters, headers);
 }
 
 /** Single source for the missing-category reason (Overview footer, pill, Finish). */

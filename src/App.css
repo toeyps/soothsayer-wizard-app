@@ -7051,6 +7051,7 @@ body {
 .rs-l { white-space: nowrap; }
 .rs-pick { flex: 0 1 320px; min-width: 200px; max-width: 360px; }
 .rs-val { flex: 0 0 140px; }
+.rd-rs { margin-top: 8px; }
 .rs-val input { width: 100%; min-width: 0; background: none; border: 0; outline: none; color: var(--text-primary); font: inherit; font-family: var(--mono); font-size: 12px; }
 .rs-val--empty { border-style: dashed; border-color: var(--warn); }
 
