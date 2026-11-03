@@ -7247,3 +7247,23 @@ fieldset.bmw-sets-body { margin: 0; border: 0; min-width: 0; }
 .special-sensor-sticky { height: auto; line-height: 1.35; padding: 5px 14px; white-space: normal; overflow: visible; flex-wrap: wrap; }
 .special-sensor-sticky > .special-sensor-run-name { flex: 1 1 100%; }
 .special-sensor-run-name { min-width: 0; }
+
+/* Running condition date picker: always 24-hour (a native datetime-local follows the Windows region). */
+.dt24-pop { display: flex; flex-direction: column; gap: 8px; padding: 10px; }
+.dt24-head { display: flex; align-items: center; gap: 2px; }
+.dt24-head b { flex: 1; text-align: center; font-size: 12px; font-weight: 600; color: var(--text-primary); }
+.dt24-head button { display: flex; padding: 3px; background: none; border: none; border-radius: 4px; color: var(--text-secondary); cursor: pointer; }
+.dt24-head button:hover { background: var(--bg-primary); color: var(--text-primary); }
+.dt24-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+.dt24-wd { padding: 2px 0; text-align: center; font-size: 10px; color: var(--text-secondary); }
+.dt24-day { height: 26px; background: none; border: none; border-radius: 4px; font-family: var(--mono); font-size: 11px; color: var(--text-primary); cursor: pointer; }
+.dt24-day:hover:not(:disabled) { background: var(--bg-primary); }
+.dt24-day--out { color: var(--text-secondary); opacity: .6; }
+.dt24-day--on, .dt24-day--on:hover:not(:disabled) { background: var(--accent-color); color: #fff; opacity: 1; }
+.dt24-day:disabled { opacity: .25; cursor: not-allowed; }
+.dt24-time { display: flex; align-items: center; gap: 5px; padding-top: 8px; border-top: 1px solid var(--border); font-size: 11px; color: var(--text-secondary); }
+.dt24-time input { width: 32px; height: 24px; padding: 0; text-align: center; background: var(--bg-primary); border: 1px solid var(--border-strong); border-radius: 4px; outline: none; font-family: var(--mono); font-size: 12px; color: var(--text-primary); }
+.dt24-time input:focus { border-color: var(--accent-color); }
+.dt24-time i { font-style: normal; color: var(--text-primary); }
+.dt24-time em { font-style: normal; font-size: 10px; }
+.dt24-done { margin-left: auto; padding: 3px 9px; background: var(--accent-color); border: none; border-radius: 4px; font-size: 11px; font-weight: 600; color: #fff; cursor: pointer; }

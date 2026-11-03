@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { Calendar, Plus, Trash2, X } from 'lucide-react';
+import { Plus, Trash2, X } from 'lucide-react';
+import { DateTime24Input } from './DateTime24Input';
 import type { TimePeriod } from '../../types';
 import { PERIOD_COUNTS_IDLE, noRunningRowsNote, trainRowModels, type PeriodCountsState } from '../../utils/periodCounts';
 import { NO_TRAIN_PERIOD_EMPTY_TEXT } from '../../utils/runningCondition';
@@ -110,7 +111,6 @@ interface DateFieldProps {
 }
 
 function DateField({ ariaLabel, side, value, committedBlank, min, max, bad, canOpen, onType, onCommit, onOpen, onSetDate, setDateDisabled }: DateFieldProps) {
-    const ref = useRef<HTMLInputElement>(null);
     if (committedBlank && !value.trim()) {
         return (
             <div
@@ -125,38 +125,20 @@ function DateField({ ariaLabel, side, value, committedBlank, min, max, bad, canO
     }
     return (
         <div className={`f4-dtw${bad ? ' f4-dtw--bad' : ''}`}>
-            <input
-                ref={ref}
-                type="datetime-local"
-                aria-label={ariaLabel}
-                aria-invalid={bad || undefined}
-                value={value}
-                min={min}
-                max={max}
-                onChange={e => onType(e.target.value)}
-                onBlur={onCommit}
-                onKeyDown={e => { if (e.key === 'Enter') onCommit(); }}
-            />
-            {canOpen && (
-                <button
-                    type="button"
-                    className="f4-link f4-link--muted"
-                    data-testid={`period-open-toggle-${side}`}
-                    aria-label={side === 'start' ? 'Start from the first row of data' : 'Run to the last row of data'}
-                    title={side === 'start' ? 'Start from the first row of data' : 'Run to the last row of data'}
-                    onClick={onOpen}
-                >
-                    <X size={12} aria-hidden="true" />
-                </button>
-            )}
-            <button
-                type="button"
-                className="f4-dtw-cal"
-                aria-label="Open date picker"
-                onClick={() => { try { ref.current?.showPicker(); } catch { ref.current?.focus(); } }}
-            >
-                <Calendar size={14} />
-            </button>
+            <DateTime24Input ariaLabel={ariaLabel} invalid={bad} value={value} min={min} max={max} onChange={onType} onCommit={onCommit}>
+                {canOpen && (
+                    <button
+                        type="button"
+                        className="f4-link f4-link--muted"
+                        data-testid={`period-open-toggle-${side}`}
+                        aria-label={side === 'start' ? 'Start from the first row of data' : 'Run to the last row of data'}
+                        title={side === 'start' ? 'Start from the first row of data' : 'Run to the last row of data'}
+                        onClick={onOpen}
+                    >
+                        <X size={12} aria-hidden="true" />
+                    </button>
+                )}
+            </DateTime24Input>
         </div>
     );
 }

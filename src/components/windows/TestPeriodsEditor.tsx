@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { Calendar, Plus, Trash2 } from 'lucide-react';
+import { Plus, Trash2 } from 'lucide-react';
+import { DateTime24Input } from './DateTime24Input';
 import type { TestPeriod, TimePeriod } from '../../types';
 import { PERIOD_COUNTS_IDLE, noRunningRowsNote, scoringRowModels, type PeriodCountsState } from '../../utils/periodCounts';
 import { noScoringPeriodNote } from '../../utils/runningCondition';
@@ -223,31 +224,15 @@ export default function TestPeriodsEditor({ tests, train, onChange, bounds, bloc
 
     const dateInput = (i: number, which: 'start' | 'end', label: string, bad = false) => (
         <div className={`f4-dtw${bad ? ' f4-dtw--bad' : ''}`}>
-            <input
-                type="datetime-local"
-                aria-label={label}
-                aria-invalid={bad || undefined}
+            <DateTime24Input
+                ariaLabel={label}
+                invalid={bad}
                 value={toInputValue(draft[i][which])}
                 min={minAttr}
                 max={maxAttr}
-                onChange={e => type(i, which, e.target.value)}
-                onBlur={() => commit(settled(draft))}
-                onKeyDown={e => { if (e.key === 'Enter') commit(settled(draft)); }}
+                onChange={v => type(i, which, v)}
+                onCommit={() => commit(settled(draft))}
             />
-            {/* `.f4-dtw` hides the browser's own calendar icon, so the field needs this button
-                — the same one the train-period fields have. Without it a scoring date could
-                only be typed. */}
-            <button
-                type="button"
-                className="f4-dtw-cal"
-                aria-label="Open date picker"
-                onClick={e => {
-                    const input = e.currentTarget.parentElement?.querySelector('input');
-                    try { input?.showPicker(); } catch { input?.focus(); }
-                }}
-            >
-                <Calendar size={14} />
-            </button>
         </div>
     );
 

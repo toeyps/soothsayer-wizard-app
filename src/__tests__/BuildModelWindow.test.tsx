@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { formatDateTime24 } from '../utils/dateTime24';
 import { render, screen, fireEvent, act, cleanup, within, waitFor } from '@testing-library/react';
 
 const mockClose = vi.fn().mockResolvedValue(undefined);
@@ -1866,7 +1867,7 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
                 expect(screen.queryByRole('dialog', { name: 'Running condition' })).toBeNull();
 
                 fireEvent.click(screen.getByTestId('rc-card-open'));
-                expect((screen.getByLabelText('P1 end') as HTMLInputElement).value).toBe('2024-02-15T12:00');
+                expect((screen.getByLabelText('P1 end') as HTMLInputElement).value).toBe('2024/02/15 12:00');
             });
 
             it('(b) closing via X right after typing (no blur) commits the typed date into the draft, so the discard prompt appears instead of silently dropping it', async () => {
@@ -1882,7 +1883,7 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
                 expect(screen.getByRole('dialog', { name: 'Running condition' })).toBeTruthy();
                 // "Keep editing" returns to the draft with the typed value intact.
                 fireEvent.click(screen.getByTestId('rc-discard-keep'));
-                expect((screen.getByLabelText('P1 end') as HTMLInputElement).value).toBe('2024-02-15T12:00');
+                expect((screen.getByLabelText('P1 end') as HTMLInputElement).value).toBe('2024/02/15 12:00');
                 expect(mockUpdateWorkspaceData).not.toHaveBeenCalled();
             });
 
@@ -2936,7 +2937,7 @@ describe('Running Condition Filter modal — open/close with ZERO edits must not
 
         fireEvent.click(screen.getByTestId('rc-card-open'));
         // Sanity: the modal actually shows the seeded condition before closing.
-        expect((screen.getByLabelText('P1 end') as HTMLInputElement).value).toBe(seededPeriod.end);
+        expect((screen.getByLabelText('P1 end') as HTMLInputElement).value).toBe(formatDateTime24(seededPeriod.end));
         expect(screen.getByDisplayValue('5')).toBeTruthy();
 
         fireEvent.click(screen.getByLabelText('Close')); // the modal's own X — zero edits made first
@@ -2945,7 +2946,7 @@ describe('Running Condition Filter modal — open/close with ZERO edits must not
         // Re-open and check what's actually shown now — this is what the
         // user sees and reports as "the setting doesn't stay".
         fireEvent.click(screen.getByTestId('rc-card-open'));
-        expect((screen.getByLabelText('P1 end') as HTMLInputElement).value).toBe(seededPeriod.end);
+        expect((screen.getByLabelText('P1 end') as HTMLInputElement).value).toBe(formatDateTime24(seededPeriod.end));
         expect(screen.getByDisplayValue('5')).toBeTruthy();
 
         // And the durable "disk" snapshot (what a reload / app relaunch would
@@ -2971,7 +2972,7 @@ describe('Running Condition Filter modal — open/close with ZERO edits must not
         await flush();
 
         fireEvent.click(screen.getByTestId('rc-card-open'));
-        expect((screen.getByLabelText('P1 end') as HTMLInputElement).value).toBe(seededPeriod.end);
+        expect((screen.getByLabelText('P1 end') as HTMLInputElement).value).toBe(formatDateTime24(seededPeriod.end));
         expect(screen.getByDisplayValue('5')).toBeTruthy();
 
         if (mockUpdateWorkspaceData.mock.calls.length > 0) {
@@ -2988,7 +2989,7 @@ describe('Running Condition Filter modal — open/close with ZERO edits must not
         statefulUpdateMock(fg.models, fg);
 
         fireEvent.click(screen.getByTestId('rc-card-open'));
-        expect((screen.getByLabelText('P1 end') as HTMLInputElement).value).toBe(seededPeriod.end);
+        expect((screen.getByLabelText('P1 end') as HTMLInputElement).value).toBe(formatDateTime24(seededPeriod.end));
 
         const preventDefault = vi.fn();
         await act(async () => {
@@ -3333,7 +3334,7 @@ describe('Running Condition Filter modal — draft + explicit Apply (2026-10-03)
 
             fireEvent.blur(end);
             expect(screen.queryByTestId('rc-pending-date')).toBeNull();
-            expect((dlg().getByLabelText('P1 end') as HTMLInputElement).value).toBe(seededPeriod.end);
+            expect((dlg().getByLabelText('P1 end') as HTMLInputElement).value).toBe(formatDateTime24(seededPeriod.end));
             expect(apply().disabled).toBe(true);
             // nothing was edited: X closes without a "Discard?" and without a write
             fireEvent.click(dlg().getByLabelText('Close'));
@@ -3404,8 +3405,8 @@ describe('Running Condition Filter modal — draft + explicit Apply (2026-10-03)
             expect(screen.getByTestId('rc-impact')).toBeTruthy();
             fireEvent.blur(field);
             // sorted now: the edited period is P1
-            expect((dlg().getByLabelText('P1 start') as HTMLInputElement).value).toBe('2023-12-01T00:00');
-            expect((dlg().getByLabelText('P2 start') as HTMLInputElement).value).toBe(seededPeriod.start);
+            expect((dlg().getByLabelText('P1 start') as HTMLInputElement).value).toBe('2023/12/01 00:00');
+            expect((dlg().getByLabelText('P2 start') as HTMLInputElement).value).toBe(formatDateTime24(seededPeriod.start));
         });
 
         it('after Apply: the notice under the running-condition line counts the models still to train, and goes away once they are trained', async () => {

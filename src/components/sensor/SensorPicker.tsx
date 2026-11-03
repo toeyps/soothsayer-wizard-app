@@ -337,7 +337,7 @@ export function PickerList({ sensors, query, setQuery, isOn, onPick, noneRow, no
  *  surrounding owner that closes on Esc (a modal, a sheet, an expanded chart) must skip that Esc
  *  then — the picker takes it, and one Esc must not close both. */
 export function isPickerSurfaceOpen(): boolean {
-    return typeof document !== 'undefined' && document.querySelector('.pk-pop, .pk-scrim, .cp-pop') !== null;
+    return typeof document !== 'undefined' && document.querySelector('.pk-pop, .pk-scrim, .cp-pop, .dt24-pop') !== null;
 }
 
 /** Closes on a mousedown outside the trigger and the picker's own surface, and on an Esc that

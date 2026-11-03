@@ -89,8 +89,8 @@ describe('TestPeriodsEditor (scoring periods)', () => {
         const onChange = setup({ tests: [t('a', '2026-02-01T00:00', '2026-02-15T00:00')] });
         const row = screen.getByTestId('test-row-1');
         expect(row.querySelector('.tpe-pn')!.textContent).toBe('S1');
-        expect((screen.getByLabelText('Scoring period 1 start') as HTMLInputElement).value).toBe('2026-02-01T00:00');
-        expect((screen.getByLabelText('Scoring period 1 end') as HTMLInputElement).value).toBe('2026-02-15T00:00');
+        expect((screen.getByLabelText('Scoring period 1 start') as HTMLInputElement).value).toBe('2026/02/01 00:00');
+        expect((screen.getByLabelText('Scoring period 1 end') as HTMLInputElement).value).toBe('2026/02/15 00:00');
         expect(screen.getByTestId('test-days-1').textContent).toBe('14 d');
         // The removed controls: label buttons, event time, From Highlights.
         expect(row.querySelectorAll('input')).toHaveLength(2);
@@ -108,27 +108,16 @@ describe('TestPeriodsEditor (scoring periods)', () => {
 
     // Real-app bug: the scoring date fields had no calendar button (the shared field style hides
     // the browser's own icon), so a scoring date could only be typed — unlike a train date.
-    it('each date field has a calendar button that opens the picker of ITS field', () => {
-        setup({ tests: [t('a', '2026-02-01T00:00', '2026-02-15T00:00')] });
-        const start = screen.getByLabelText('Scoring period 1 start') as HTMLInputElement;
-        const end = screen.getByLabelText('Scoring period 1 end') as HTMLInputElement;
-        start.showPicker = vi.fn();
-        end.showPicker = vi.fn();
+    it('each date field has a calendar button that opens the 24-hour picker of ITS field', () => {
+        setup({ tests: [t('a', '2026-02-01T00:00', '2026-02-15T13:30')] });
         const [calStart, calEnd] = screen.getAllByLabelText('Open date picker');
         expect(calStart.className).toContain('f4-dtw-cal');
         fireEvent.click(calEnd);
-        expect(end.showPicker).toHaveBeenCalledTimes(1);
-        expect(start.showPicker).not.toHaveBeenCalled();
+        expect(screen.getByRole('dialog', { name: /Scoring period 1 end/ })).toBeTruthy();
+        expect((screen.getByLabelText('Hour, 00 to 23') as HTMLInputElement).value).toBe('13');
+        fireEvent.click(calEnd);
         fireEvent.click(calStart);
-        expect(start.showPicker).toHaveBeenCalledTimes(1);
-    });
-
-    it('the calendar button falls back to focusing the field when the picker cannot open', () => {
-        setup({ tests: [t('a', '2026-02-01T00:00', '2026-02-15T00:00')] });
-        const start = screen.getByLabelText('Scoring period 1 start') as HTMLInputElement;
-        start.showPicker = vi.fn(() => { throw new Error('not allowed'); });
-        fireEvent.click(screen.getAllByLabelText('Open date picker')[0]);
-        expect(document.activeElement).toBe(start);
+        expect(screen.getByRole('dialog', { name: /Scoring period 1 start/ })).toBeTruthy();
     });
 
     it('the only button under the list is "Add scoring period" (no From Highlights button or menu); a row has its two calendar buttons and Remove', () => {
@@ -164,14 +153,14 @@ describe('TestPeriodsEditor (scoring periods)', () => {
         // no "S2 needs an end date" is written by leaving the field
         fireEvent.blur(end);
         expect(onChange).not.toHaveBeenCalled();
-        expect((screen.getByLabelText('Scoring period 2 end') as HTMLInputElement).value).toBe('2026-03-10T00:00');
+        expect((screen.getByLabelText('Scoring period 2 end') as HTMLInputElement).value).toBe('2026/03/10 00:00');
         expect(onChange.onPending).toHaveBeenLastCalledWith(null);
 
         const start = screen.getByLabelText('Scoring period 1 start') as HTMLInputElement;
         fireEvent.change(start, { target: { value: '' } });
         fireEvent.keyDown(start, { key: 'Enter' });
         expect(onChange).not.toHaveBeenCalled();
-        expect((screen.getByLabelText('Scoring period 1 start') as HTMLInputElement).value).toBe('2026-02-01T00:00');
+        expect((screen.getByLabelText('Scoring period 1 start') as HTMLInputElement).value).toBe('2026/02/01 00:00');
     });
 
     it('a blur or Enter with nothing changed does not call onChange', () => {
@@ -249,7 +238,7 @@ describe('TestPeriodsEditor (scoring periods)', () => {
         expect(lastCall(onChange).map(x => x.id)).toEqual(['a', 'b']);
         fireEvent.blur(start);
         expect(lastCall(onChange).map(x => x.id)).toEqual(['b', 'a']);
-        expect((screen.getByLabelText('Scoring period 1 start') as HTMLInputElement).value).toBe('2026-04-01T00:00');
+        expect((screen.getByLabelText('Scoring period 1 start') as HTMLInputElement).value).toBe('2026/04/01 00:00');
     });
 
     describe('per-period running days (count_period_rows)', () => {

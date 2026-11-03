@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { formatDateTime24 } from '../utils/dateTime24';
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup } from '@testing-library/react';
 import TimePeriodsEditor from '../components/windows/TimePeriodsEditor';
@@ -124,7 +125,7 @@ describe('TimePeriodsEditor — adding and committing', () => {
         expect(screen.queryByTestId('period-open-end')).toBeNull();
         fireEvent.blur(field);
         expect(onChange).not.toHaveBeenCalled(); // no half value was written
-        expect((screen.getByLabelText('P2 end') as HTMLInputElement).value).toBe(B.end);
+        expect((screen.getByLabelText('P2 end') as HTMLInputElement).value).toBe(formatDateTime24(B.end));
         expect(onPending).toHaveBeenLastCalledWith(null);
     });
 
@@ -168,13 +169,13 @@ describe('TimePeriodsEditor — adding and committing', () => {
         fireEvent.blur(screen.getByLabelText('P1 start'));
         expect(onChange).not.toHaveBeenCalled();
         expect(screen.queryByTestId('period-open-start')).toBeNull();
-        expect((screen.getByLabelText('P1 start') as HTMLInputElement).value).toBe(A.start);
+        expect((screen.getByLabelText('P1 start') as HTMLInputElement).value).toBe(formatDateTime24(A.start));
 
         fireEvent.change(screen.getByLabelText('P2 end'), { target: { value: '' } });
         fireEvent.keyDown(screen.getByLabelText('P2 end'), { key: 'Enter' });
         expect(onChange).not.toHaveBeenCalled();
         expect(screen.queryByTestId('period-open-end')).toBeNull();
-        expect((screen.getByLabelText('P2 end') as HTMLInputElement).value).toBe(B.end);
+        expect((screen.getByLabelText('P2 end') as HTMLInputElement).value).toBe(formatDateTime24(B.end));
 
         // the explicit action still works
         fireEvent.click(screen.getByTestId('period-open-toggle-start'));
