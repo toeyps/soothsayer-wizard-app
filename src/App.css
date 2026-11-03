@@ -5389,9 +5389,7 @@ body {
 .wb3-stack-in--xy .wb3-stack-top { flex-basis: 64%; }
 .wb3-stack-in--xy .wb3-stack-bot { flex-basis: 36%; }
 /* Relation model: Actual and Predicted on top, then the residual, then the score. */
-.wb3-stack-fit { display: flex; flex-direction: column; flex: 1 1 36%; min-height: 0; }
-.wb3-stack-fit-plot { flex: 1 1 auto; min-height: 0; }
-.wb3-stack-key { display: flex; gap: 14px; padding: 0 0 2px 58px; font-size: 11px; color: var(--text-secondary); }
+.wb3-stack-fit { flex: 1 1 36%; min-height: 0; }
 .wb3-stack-in--fit .wb3-stack-top { flex-basis: 35%; margin-top: 2px; padding-top: 4px; border-top: 1px dashed var(--border-strong); }
 .wb3-stack-in--fit .wb3-stack-bot { flex-basis: 29%; }
 /* The lower half while there is no score to draw: the lock sentence, or the "could not be

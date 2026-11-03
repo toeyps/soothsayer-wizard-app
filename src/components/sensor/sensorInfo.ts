@@ -289,6 +289,12 @@ export function axisRowHtml(key: string, info: SensorInfo, valueText: string): s
         .replace('<span class="tt-label">', `<b class="tt-key">${escapeHtml(key)}</b><span class="tt-label">`);
 }
 
+/** A tooltip row for one line of a chart: its colour, its name and its value in that colour. */
+export function lineRowHtml(label: string, colour: string, valueText: string): string {
+    const c = safeColour(colour);
+    return `<div class="tt-row"><i class="tt-sw" style="background:${c}"></i><span class="tt-label"><span class="tt-desc">${escapeHtml(label)}</span></span><span class="tt-val" style="color:${c}">${escapeHtml(valueText)}</span></div>`;
+}
+
 /** A tooltip row that is not a sensor ("Health score"), lined up with `axisRowHtml` rows. */
 export function plainRowHtml(label: string, valueText: string): string {
     return `<div class="tt-row"><b class="tt-key"></b><span class="tt-label"><span class="tt-desc">${escapeHtml(label)}</span></span><span class="tt-val">${escapeHtml(valueText)}</span></div>`;

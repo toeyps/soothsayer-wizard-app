@@ -621,15 +621,31 @@ describe('Relationship charts', () => {
         expect(o.series[1].lineStyle.color).toBe(CHART.predicted);
     });
 
-    // The names are the card's own colour key (ModelFitPage); the chart draws
-    // no name that a zoom could misplace.
-    it('Target vs predicted: the two lines carry NO name on the plot (the card keeps the Actual / Predicted colour key)', () => {
+    it('Target vs predicted: the hover box gives the time, then each line with its colour, name and value', () => {
+        const o: any = buildTargetVsPredictedOption({ kind: 'relationship', rows: [0, 1], timestamps: ['2026-05-10T08:00:00', '2026-05-10T09:00:00'], actual: [15.266, 16], predicted: [2.178, null], residual: [13.088, null], score: null, total_points: 2 } as any, '%');
+        const x = o.series[0].data[0][0];
+        const html: string = o.tooltip.formatter([
+            { seriesName: 'Actual', color: CHART.actual, axisValue: x, value: [x, 15.266] },
+            { seriesName: 'Predicted', color: CHART.predicted, axisValue: x, value: [x, null] },
+            { seriesName: '__scopes', color: '#000', axisValue: x, value: [x, 0] },
+        ]);
+        const box = document.createElement('div');
+        box.innerHTML = html;
+        expect(box.querySelector('.tt-head')!.textContent).toBe('2026/05/10 08:00:00');
+        const rows = [...box.querySelectorAll('.tt-row')];
+        expect(rows.map(r => r.querySelector('.tt-desc')!.textContent)).toEqual(['Actual', 'Predicted']);
+        expect(rows.map(r => r.querySelector('.tt-val')!.textContent)).toEqual(['15.266', '–']);
+        expect(rows.every(r => (r.querySelector('.tt-sw') as HTMLElement).style.background !== '')).toBe(true);
+    });
+
+    // The hover box names the colours; the chart draws no name that a zoom could misplace.
+    it('Target vs predicted: the two lines carry NO name on the plot', () => {
         const p = rel();
         const o: any = buildTargetVsPredictedOption(p.series as RelationshipSeries, '°C');
         expect(o.series.map((s: any) => s.endLabel)).toEqual([undefined, undefined]);
         expect(o.series.map((s: any) => s.labelLayout)).toEqual([undefined, undefined]);
         expect(o.grid.right).toBe(18); // no gutter: the plot uses the width
-        expect(o.legend).toEqual({ show: false }); // the key is the card's, not an ECharts legend
+        expect(o.legend).toEqual({ show: false });
         // the data itself is exactly what it was: nothing added for the labels
         expect(o.series[0].data.map((d: any) => d[1])).toEqual((p.series as RelationshipSeries).actual);
         expect(o.series[1].data.map((d: any) => d[1])).toEqual((p.series as RelationshipSeries).predicted);

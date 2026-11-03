@@ -305,28 +305,13 @@ describe('ModelFitPage — Relationship', () => {
         expect(screen.getAllByTestId('chart-outdated')).toHaveLength(3);
     });
 
-    // "Actual" / "Predicted" drawn at the line ends did not follow
-    // their lines through a wheel-zoom or a drag (a name could end up beside the OTHER line), and
-    // with the legend gone they were the only key. The card now keeps a fixed two-item colour key.
-    it('Target vs predicted keeps a fixed "Actual" / "Predicted" colour key under the chart, and draws NO name on the plot', () => {
+    // The hover box says which colour is which (user decision 2026-11-03), and "Actual" / "Predicted"
+    // drawn at the line ends did not follow their lines through a wheel-zoom or a drag.
+    it('Target vs predicted has no colour key beside the chart, and draws NO name on the plot', () => {
         page(rel(), { target: 'T1', predictors: ['A', 'B'] });
-        expect(legendOf('tvp')).toBe('ActualPredicted');
-        const key = [...screen.getByTestId('chart-card-tvp').querySelectorAll('.wb2-legend .wb2-lg')];
-        expect(key.map(k => k.textContent)).toEqual(['Actual', 'Predicted']);
-        // each name next to a LINE swatch of its series' colour (blue = actual, red = predicted)
-        const swatch = key.map(k => k.querySelector('i')!);
-        expect(swatch.map(i => i.className)).toEqual(['', '']); // a line, not the square of a point colour
-        expect(swatch.map(i => i.style.borderColor)).toEqual(['rgb(111, 158, 232)', 'rgb(238, 90, 69)']);
-        // the chart itself carries the two series and nothing that a zoom could misplace
+        expect(legendOf('tvp')).toBeNull();
         expect(chartOf('tvp').getAttribute('data-series')).toBe('Actual|Predicted');
         expect(chartOf('tvp').getAttribute('data-end-labels')).toBe('');
-    });
-
-    it('the key survives the expanded copy of the chart (the only place the two lines are named)', () => {
-        page(rel(), { target: 'T1', predictors: ['A', 'B'] });
-        fireEvent.click(screen.getByTestId('chart-expand-tvp'));
-        const overlay = screen.getByTestId('chart-overlay-tvp');
-        expect(overlay.querySelector('.wb2-legend')!.textContent).toBe('ActualPredicted');
     });
 
     it('Residual has no legend row (its ±2RMSE lines are named on the chart); Fit keeps its two point colours', () => {

@@ -1016,12 +1016,13 @@ describe('Health score chart', () => {
             return charts.slice(-document.querySelectorAll('[data-testid="echarts-mock"]').length)[index];
         };
 
-        it('three charts in order, with the key and the title and subtitle that say so', () => {
+        it('three charts in order, no colour key beside them, and the title and subtitle that say so', () => {
             mount({ kind: 'relationship', sp: REL_VALID });
             expect(stackCard().className).toBe('wb2-card wb2-card--stack3 wb2-full');
             expect(stackCard().querySelector('.wb2-card-h b')!.textContent).toBe('Actual vs predicted, residual and health score');
             expect([...screen.getByTestId('chart-stack').children]).toEqual([screen.getByTestId('chart-card-fit'), screen.getByTestId('chart-card-set-relationship'), screen.getByTestId('chart-card-score')]);
-            expect(screen.getByTestId('chart-card-fit').textContent).toBe('ActualPredicted');
+            expect(screen.getByTestId('chart-card-fit').querySelector('.wb2-lg')).toBeNull();
+            expect(typeof option('chart-card-fit').option.tooltip.formatter).toBe('function'); // the hover box names the colours
             expect(stackSub()).toBe('residual = actual − predicted (bar) · 1-hour averages of the running rows · one time axis, one cursor for all');
         });
 

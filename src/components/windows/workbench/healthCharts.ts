@@ -10,7 +10,7 @@ import type {
 } from '../../../types/health';
 import { formatAxisTick, formatDateTime } from '../../../utils/dateFormat';
 import { testNumberFor } from '../../../utils/timePeriods';
-import { axisRowHtml, plainRowHtml, type SensorInfo } from '../../sensor/sensorInfo';
+import { axisRowHtml, lineRowHtml, plainRowHtml, type SensorInfo } from '../../sensor/sensorInfo';
 import { withAxisNames } from '../../../utils/axisName';
 import { formatDataStamp, parseLocal } from '../periodDisplay';
 import { CHART, CHART_MONO, CLUSTER_COLORS, FONT, axisValueFormatter, fmtAxisValue, fmtNum } from './chartTheme';
@@ -609,6 +609,8 @@ export interface TimeSeriesSpec {
      *  them, a band + name is drawn for the train ones only. Absent / null = no
      *  scopes (the chart is drawn as before). Only on a time axis. */
     scopes?: TimeScopes | null;
+    /** The hover box says which colour is which line (no key row beside the chart). */
+    lineRowsTooltip?: boolean;
 }
 
 /** Value(s) over time with horizontal reference lines and shaded bands. The
@@ -654,6 +656,21 @@ export function timeHeadingFormatter(timestamps: readonly string[], ms: readonly
         const row = rowAt.get(x);
         if (row !== undefined) return formatDataStamp(timestamps[row]);
         return formatDateTime(new Date(x));
+    };
+}
+
+/** The hover box of a chart that tells its lines apart by colour: the time, then one row
+ *  per line with its colour, name and value. */
+export function lineRowsTooltipFormatter(timestamps: readonly string[], ms: readonly number[]) {
+    const heading = timeHeadingFormatter(timestamps, ms);
+    return (params: { seriesName?: string; color?: string; axisValue?: unknown; value?: unknown }[]) => {
+        const rows = params.filter(p => p.seriesName !== '__scopes');
+        if (rows.length === 0) return '';
+        const head = `<div class="tt-head">${heading({ value: rows[0].axisValue })}</div>`;
+        return head + rows.map(p => {
+            const y = Array.isArray(p.value) ? p.value[1] : p.value;
+            return lineRowHtml(p.seriesName ?? '', p.color ?? '', typeof y === 'number' ? fmtNum(y) : '–');
+        }).join('');
     };
 }
 
@@ -737,7 +754,12 @@ export function buildTimeSeriesOption(spec: TimeSeriesSpec) {
         textStyle: { fontFamily: FONT },
         animation: false,
         axisPointer: { ...HOVER_AXIS_POINTER },
-        tooltip: { ...tooltipBase, trigger: 'axis', axisPointer: { type: 'line', lineStyle: { color: 'rgba(255,255,255,.35)', type: 'dashed' } } },
+        tooltip: {
+            ...tooltipBase,
+            trigger: 'axis',
+            axisPointer: { type: 'line', lineStyle: { color: 'rgba(255,255,255,.35)', type: 'dashed' } },
+            ...(spec.lineRowsTooltip && ms ? { formatter: lineRowsTooltipFormatter(timestamps, ms) } : {}),
+        },
         legend: { show: false },
         grid: { left: 58, right, top: scopes ? 10 + SCOPE_STRIP : 14, bottom: 28, containLabel: false },
         dataZoom: [{ type: 'inside', xAxisIndex: 0, filterMode: 'none' }],
@@ -977,7 +999,7 @@ export function buildFitScatterOption(fit: HealthFitScatter, yName: string, xInf
 }
 
 /** "Target vs predicted" over time: the Actual (blue) and Predicted (red) lines.
- *  Which is which is the card's own two-item colour key (`ModelFitPage`) — the
+ *  Which is which is in the hover box (user decision 2026-11-03: no key row) — the
  *  lines are NOT named on the plot: ECharts places a line's end label only while
  *  it animates the line in, so after a wheel-zoom or a drag a name would stay where
  *  its line used to end and could sit beside the OTHER line. */
@@ -986,6 +1008,7 @@ export function buildTargetVsPredictedOption(series: RelationshipSeries, unit: s
         timestamps: series.timestamps,
         scopes,
         yName: unit || undefined,
+        lineRowsTooltip: true,
         lines: [
             { name: 'Actual', values: series.actual, color: CHART.actual },
             { name: 'Predicted', values: series.predicted, color: CHART.predicted },

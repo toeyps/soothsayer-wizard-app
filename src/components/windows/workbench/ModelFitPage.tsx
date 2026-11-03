@@ -66,9 +66,10 @@ import { shareText } from './HealthScorePage';
  * A chart whose lines are labelled ON the chart has no legend row under it:
  * reference lines carry their name at the right
  * edge, the ring levels at the ring's edge. A legend row stays where DATA is told
- * apart by colour: Distribution (Rows / Normal curve), Fit (two point colours)
- * and Target vs predicted (Actual / Predicted — a fixed key, because a name
- * drawn at a line's end does not follow the line through a zoom). Design rule:
+ * apart by colour: Distribution (Rows / Normal curve) and Fit (two point colours).
+ * Target vs predicted has none: its hover box names each colour (user decision
+ * 2026-11-03), and a name drawn at a line's end does not follow the line through a
+ * zoom. Design rule:
  * a name on the chart is the ONLY key only on a chart that cannot zoom or pan —
  * the Clusters chart zooms on both axes, so its rings have a fixed key too.
  *
@@ -261,10 +262,6 @@ function ModelFitPage(props: ModelFitPageProps) {
                     sub={`${unit ? `${unit} · ` : ''}${rowsShown}`}
                     stale={stale}
                     option={buildTargetVsPredictedOption(series, unit, compactScopes(scopes))}
-                    legend={<>
-                        <LegendItem color={CHART.actual} label="Actual" />
-                        <LegendItem color={CHART.predicted} label="Predicted" />
-                    </>}
                 />
                 <ChartCard
                     id="res"

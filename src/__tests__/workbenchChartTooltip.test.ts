@@ -145,7 +145,9 @@ describe('every Workbench time chart carries the heading on its time X axis — 
         it(`${name}: the tooltip keeps its value rows and its behaviour; the hover crosshair is untouched`, () => {
             const o = build(SCOPES);
             expect(o.tooltip).toMatchObject({ trigger: 'axis', confine: true, transitionDuration: 0, hideDelay: 0, enterable: false });
-            expect(o.tooltip.formatter).toBeUndefined(); // the rows under the heading are ECharts' own
+            // the rows under the heading are ECharts' own, except on the chart that tells two lines apart by colour
+            if (name.includes('target vs predicted')) expect(typeof o.tooltip.formatter).toBe('function');
+            else expect(o.tooltip.formatter).toBeUndefined();
             expect(typeof o.tooltip.valueFormatter).toBe('function');
             expect(o.tooltip.axisPointer.type).toBe('line');
             expect(o.axisPointer).toEqual(linked ? { ...HOVER_AXIS_POINTER, link: [{ xAxisIndex: 'all' }] } : { ...HOVER_AXIS_POINTER });

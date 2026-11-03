@@ -6,8 +6,7 @@ import ResponsiveECharts from '../../charts/ResponsiveECharts';
 import type { HealthIssue, HealthPreview, ScoreSummary } from '../../../types/health';
 import { PairSub } from './PairSub';
 import { useSensorLookup } from '../../sensor/sensorInfo';
-import ChartCard, { LegendItem } from './ChartCard';
-import { CHART } from './chartTheme';
+import ChartCard from './ChartCard';
 import ChecksCard from './ChecksCard';
 import ScoreRuler from './ScoreRuler';
 import { Kpi, KpiStrip } from './Kpi';
@@ -642,13 +641,7 @@ function StackCharts({ data, props, hoverIdx, onHover, stale, unit, scopes, zoom
             <div className={`wb3-stack-in${built.time ? '' : ' wb3-stack-in--xy'}${fitOption ? ' wb3-stack-in--fit' : ''}`} data-testid={id('chart-stack')} data-upper={stats.kind}>
                 {fitOption && (
                     <div className="wb3-stack-fit" data-testid={id('chart-card-fit')}>
-                        <div className="wb3-stack-key">
-                            <LegendItem color={CHART.actual} label="Actual" />
-                            <LegendItem color={CHART.predicted} label="Predicted" />
-                        </div>
-                        <div className="wb3-stack-fit-plot">
-                            <ResponsiveECharts option={fitOption} style={{ height: '100%', minHeight: 0 }} {...timeProps} />
-                        </div>
+                        <ResponsiveECharts option={fitOption} style={{ height: '100%', minHeight: 0 }} {...timeProps} />
                     </div>
                 )}
                 <div className="wb3-stack-top" data-testid={id(`chart-card-set-${stats.kind}`)}>
