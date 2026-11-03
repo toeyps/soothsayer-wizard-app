@@ -560,7 +560,7 @@ describe('LineChart option building', () => {
             const html = formatter([{ axisValue: ms, seriesName: 'A', value: [ms, 12345.6], color: '#10b981' }]);
             expect(html).toContain('<div class="tt-head">2026/01/01');
             expect(html).toContain('<span class="tt-desc">Exhaust temperature</span><span class="tt-tag">A</span>');
-            expect(html).toContain('<span class="tt-val" style="color:#10b981">12,345.600 DEGC</span>');
+            expect(html).toMatch(/<span class="tt-val tt-coloured tt-c\d+">12,345\.600 DEGC<\/span>/);
             expect(html).not.toMatch(/\(A\)/);
         });
 
@@ -1300,7 +1300,7 @@ describe('LineChart tooltip: long sensor names (rule 4)', () => {
         expect(html).not.toContain('…');
         expect(html).toContain(`<span class="tt-desc">${LONG(1)}</span>`);
         expect(html).toContain(`<span class="tt-desc">${LONG(3)}</span>`);
-        expect(count(html, 'class="tt-val"')).toBe(3);
+        expect(count(html, 'class="tt-val ')).toBe(3);
     });
 
     it('real data: rows with the same description read differently, each with the end of its tag', () => {

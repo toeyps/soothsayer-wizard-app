@@ -251,7 +251,7 @@ export default function HomeStep({
         </section>
 
         <div style={{ marginTop: 16, display: 'flex', gap: 14, fontFamily: mono, fontSize: 11, color: T.textFaint }}>
-          {version && <span>v{version}</span>}
+          {version && <span style={{ fontSize: 13, fontWeight: 600, color: T.textMuted }}>v{version}</span>}
           <span>Data stays on this machine</span>
         </div>
       </div>

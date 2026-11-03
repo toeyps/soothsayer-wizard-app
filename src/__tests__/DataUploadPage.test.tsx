@@ -2195,6 +2195,7 @@ describe('L. Get started page (step 0)', () => {
     it('L2. footer shows the app version and the privacy line', async () => {
       renderPage();
       await waitFor(() => expect(screen.getByText('v9.8.7')).toBeTruthy());
+      expect(screen.getByText('v9.8.7').style.fontSize).toBe('13px');
       expect(screen.getByText('Data stays on this machine')).toBeTruthy();
     });
 

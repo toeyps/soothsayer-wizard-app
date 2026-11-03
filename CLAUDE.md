@@ -108,6 +108,8 @@ This was tried and reverted on 2026-09-03 (shipped broken in 0.4.0, fixed in 0.4
 
 `'wasm-unsafe-eval'` does not help here — it permits WebAssembly compilation, not JavaScript eval.
 
+**`style="..."` inside an HTML string does nothing in the built app (found 2026-11-03)**: Tauri adds a nonce to `style-src`, which switches off `'unsafe-inline'`. That covers ECharts tooltip HTML, including ECharts' own default rows. Dev mode and jsdom tests do not show it. Colour a tooltip through `tooltipColourClass` (`sensorInfo.ts`, a constructed stylesheet). React's `style={{}}` is fine. The CSP itself was left unchanged.
+
 ## Release checklist — required before every `.exe`/installer build
 
 **Run it through `release-agent`** (2026-10-07): a prepare run first (version + changelog draft, shown to the user), then a build run after the user approves; the main session commits, tags and pushes.

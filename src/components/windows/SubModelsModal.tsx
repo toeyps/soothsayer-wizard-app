@@ -4,7 +4,7 @@ import { displayedName, familyPrefix } from '../../utils/sensorNames';
 import ResponsiveECharts from '../charts/ResponsiveECharts';
 import { isPickerSurfaceOpen } from '../sensor/SensorPicker';
 import { SensorInline, SensorSetProvider, SetPrefixLine } from '../sensor/SensorLabel';
-import { escapeHtml, safeColour, sensorInlineHtml, useSensorLookup, type SensorInfo } from '../sensor/sensorInfo';
+import { escapeHtml, sensorInlineHtml, tooltipColourClass, useSensorLookup, type SensorInfo } from '../sensor/sensorInfo';
 import { withAxisNames } from '../../utils/axisName';
 import { tooltipDistinctEnds } from '../../utils/tooltipLayout';
 import { sensorAxisTitle } from './workbench/healthCharts';
@@ -91,9 +91,9 @@ export function buildSubModelOption(fit: SubModelFit, xSensor: string, targetSen
             confine: true,
             formatter: (p: any) => {
                 const v = p.value as [number, number];
-                const c = safeColour(typeof p.color === 'string' ? p.color : undefined);
+                const c = tooltipColourClass(typeof p.color === 'string' ? p.color : undefined);
                 const ends = tooltipDistinctEnds([xInfo, yInfo]);
-                return `<div class="tt-grid"><div class="tt-title"${c ? ` style="color:${c}"` : ''}>${escapeHtml(String(p.seriesName ?? ''))}</div>`
+                return `<div class="tt-grid"><div class="${c ? `tt-title tt-coloured ${c}` : 'tt-title'}">${escapeHtml(String(p.seriesName ?? ''))}</div>`
                     + sensorInlineHtml(xInfo, undefined, typeof v?.[0] === 'number' ? v[0].toFixed(4) : '—', ends.get(xInfo.tag))
                     + sensorInlineHtml(yInfo, undefined, typeof v?.[1] === 'number' ? v[1].toFixed(4) : '—', ends.get(yInfo.tag))
                     + '</div>';

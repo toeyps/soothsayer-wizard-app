@@ -6,6 +6,7 @@ import {
 import {
     axisRowHtml, buildSensorLookup, fmtNum, fmtNumExact, fmtNumText, plainRowHtml, plainSensorLookup, sameNameLoosely,
     sensorHaystack, sensorInlineHtml, sensorPlainLabel, sensorTitle, ttRowClass, useSensorLookup,
+    tooltipColourClass,
 } from '../components/sensor/sensorInfo';
 // @ts-expect-error - @types/node is not installed; vitest runs in Node so this resolves at runtime
 import { readFileSync } from 'node:fs';
@@ -126,7 +127,8 @@ describe('sensorInlineHtml (ECharts tooltip rows)', () => {
     it('description then tag, value in the series colour, everything escaped', () => {
         const html = sensorInlineHtml({ tag: 'T<1>', description: 'A & "B"', unit: 'C' }, '#3b82f6', '1,000 C');
         expect(html).toContain('<span class="tt-desc">A &amp; &quot;B&quot;</span><span class="tt-tag">T&lt;1&gt;</span>');
-        expect(html).toContain('style="color:#3b82f6"');
+        expect(html).toContain(`tt-val tt-coloured ${tooltipColourClass('#3b82f6')}`);
+        expect(html).not.toContain('style=');
         expect(html).toContain('>1,000 C</span>');
         expect(html.indexOf('tt-desc')).toBeLessThan(html.indexOf('tt-tag'));
     });
@@ -288,14 +290,38 @@ describe('tooltip rows: the value can never overlap the name (user complaint no.
         const val = row.querySelector('.tt-val') as HTMLElement;
         expect(val.parentElement).toBe(row);
         expect(row.querySelector('.tt-label .tt-val')).toBeNull();
-        expect([...row.children].map(c => c.className)).toEqual(['tt-sw', 'tt-label', 'tt-val']);
+        const c = tooltipColourClass('#3b82f6');
+        expect([...row.children].map(e => e.className)).toEqual([`tt-sw ${c}`, 'tt-label', `tt-val tt-coloured ${c}`]);
+    });
+
+    it('a colour becomes one class per colour, and an unsafe colour gets none', () => {
+        expect(tooltipColourClass('#123456')).toMatch(/^tt-c\d+$/);
+        expect(tooltipColourClass('#123456')).toBe(tooltipColourClass('#123456'));
+        expect(tooltipColourClass('#654321')).not.toBe(tooltipColourClass('#123456'));
+        expect(tooltipColourClass('red;}body{display:none')).toBe('');
+        expect(tooltipColourClass(undefined)).toBe('');
+    });
+
+    it('the colour reaches the page through a constructed stylesheet (the CSP blocks style attributes)', async () => {
+        const insertRule = vi.fn();
+        vi.stubGlobal('CSSStyleSheet', class { insertRule = insertRule; });
+        const before = document.adoptedStyleSheets;
+        document.adoptedStyleSheets = [];
+        vi.resetModules();
+        const fresh = await import('../components/sensor/sensorInfo');
+        const name = fresh.tooltipColourClass('#abcdef');
+        expect(insertRule).toHaveBeenCalledWith(`.${name}{--tt-c:#abcdef}`);
+        expect(document.adoptedStyleSheets).toHaveLength(1);
+        document.adoptedStyleSheets = before;
+        vi.unstubAllGlobals();
     });
 
     it('a short row keeps the old markup exactly', () => {
+        const c = tooltipColourClass('#3b82f6');
         expect(sensorInlineHtml({ tag: 'TT101', description: 'Bearing temperature', unit: 'C' }, '#3b82f6', '1.000 C')).toBe(
-            '<div class="tt-row" title="Bearing temperature · TT101 · C"><i class="tt-sw" style="background:#3b82f6"></i>'
+            `<div class="tt-row" title="Bearing temperature · TT101 · C"><i class="tt-sw ${c}"></i>`
             + '<span class="tt-label"><span class="tt-desc">Bearing temperature</span><span class="tt-tag">TT101</span></span>'
-            + '<span class="tt-val" style="color:#3b82f6">1.000 C</span></div>',
+            + `<span class="tt-val tt-coloured ${c}">1.000 C</span></div>`,
         );
         expect(sensorInlineHtml({ tag: 'PT200' }, undefined, '5')).toBe(
             '<div class="tt-row" title="PT200"><span class="tt-label"><span class="tt-desc tt-mono">PT200</span></span><span class="tt-val">5</span></div>',

@@ -71,7 +71,8 @@ describe('buildSubModelOption', () => {
         expect(html).not.toContain('<img');
         expect(html).not.toContain('url(x)');
         const ok: string = o.tooltip.formatter({ value: [2, 1.1], color: '#3b82f6', seriesName: 'Raw' });
-        expect(ok).toContain('color:#3b82f6">Raw</div>');
+        expect(ok).toMatch(/tt-title tt-coloured tt-c\d+">Raw<\/div>/);
+        expect(ok).not.toContain('style=');
     });
 
     it('null when the predictor is not part of the fit or the arrays are missing', () => {
@@ -313,7 +314,7 @@ describe('buildSubModelOption: long sensor names', () => {
         const info: Record<string, SensorInfo> = { B: { tag: 'B', description: LONG(1) }, T: { tag: 'T', description: LONG(2) } };
         const o: any = buildSubModelOption(fit, 'B', 'T', tag => info[tag]);
         const html: string = o.tooltip.formatter({ value: [2, 1.1], color: '#3b82f6', seriesName: 'Raw' });
-        expect(html.startsWith('<div class="tt-grid"><div class="tt-title"')).toBe(true);
+        expect(html.startsWith('<div class="tt-grid"><div class="tt-title')).toBe(true);
         expect(html).toContain(`<span class="tt-desc">${LONG(1)}</span>`);
         expect(html).toContain(`<span class="tt-desc">${LONG(2)}</span>`);
     });

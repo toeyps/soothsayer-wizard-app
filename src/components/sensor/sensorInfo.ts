@@ -256,6 +256,28 @@ export const escapeHtml = (s: string): string =>
 export const safeColour = (c: string | undefined): string | undefined =>
     c && /^[#a-zA-Z0-9(),.%\s/-]+$/.test(c) ? c : undefined;
 
+const colourClasses = new Map<string, string>();
+let colourSheet: CSSStyleSheet | undefined;
+
+/** Class that sets `--tt-c` for tooltip HTML: the built app's CSP blocks `style="..."` there. */
+export function tooltipColourClass(colour: string | undefined): string {
+    const c = safeColour(colour);
+    if (!c) return '';
+    let name = colourClasses.get(c);
+    if (!name) {
+        name = `tt-c${colourClasses.size}`;
+        colourClasses.set(c, name);
+        try {
+            if (!colourSheet) {
+                colourSheet = new CSSStyleSheet();
+                document.adoptedStyleSheets = [...document.adoptedStyleSheets, colourSheet];
+            }
+            colourSheet.insertRule(`.${name}{--tt-c:${c}}`);
+        } catch { /* no constructed stylesheets (jsdom): the row just has no colour */ }
+    }
+    return name;
+}
+
 /** The class of a tooltip row: a row that would pass the tooltip's limit wraps its name (rule 4). A row
  *  that fits is plain `tt-row`, exactly as before. For a React row, pass what it prints. */
 export function ttRowClass(info: SensorInfo, valueText?: string, distinct?: string): string {
@@ -270,15 +292,15 @@ export function ttRowClass(info: SensorInfo, valueText?: string, distinct?: stri
  * `distinct`: what tells the row from one with the same description (`tooltipDistinctEnds`).
  */
 export function sensorInlineHtml(info: SensorInfo, colour?: string, valueText?: string, distinct?: string): string {
-    const c = safeColour(colour);
+    const c = tooltipColourClass(colour);
     const row = layoutTooltipRow({ ...info, valueText, distinct });
     const name = escapeHtml(row.name);
     const label = info.description
         ? `<span class="tt-desc">${name}</span>${row.tagShown ? `<span class="tt-tag">${escapeHtml(info.tag)}</span>` : ''}`
         : `<span class="tt-desc tt-mono">${name}</span>`;
-    const sw = c ? `<i class="tt-sw" style="background:${c}"></i>` : '';
+    const sw = c ? `<i class="tt-sw ${c}"></i>` : '';
     const val = valueText != null
-        ? `<span class="tt-val"${c ? ` style="color:${c}"` : ''}>${escapeHtml(valueText)}</span>`
+        ? `<span class="${c ? `tt-val tt-coloured ${c}` : 'tt-val'}">${escapeHtml(valueText)}</span>`
         : '';
     return `<div class="${row.wraps ? 'tt-row tt-row--wrap' : 'tt-row'}" title="${escapeHtml(sensorTitle(info))}">${sw}<span class="tt-label">${label}</span>${val}</div>`;
 }
@@ -291,8 +313,8 @@ export function axisRowHtml(key: string, info: SensorInfo, valueText: string): s
 
 /** A tooltip row for one line of a chart: its colour, its name and its value in that colour. */
 export function lineRowHtml(label: string, colour: string, valueText: string): string {
-    const c = safeColour(colour);
-    return `<div class="tt-row"><i class="tt-sw" style="background:${c}"></i><span class="tt-label"><span class="tt-desc">${escapeHtml(label)}</span></span><span class="tt-val" style="color:${c}">${escapeHtml(valueText)}</span></div>`;
+    const c = tooltipColourClass(colour);
+    return `<div class="tt-row"><i class="tt-sw ${c}"></i><span class="tt-label"><span class="tt-desc">${escapeHtml(label)}</span></span><span class="tt-val tt-coloured ${c}">${escapeHtml(valueText)}</span></div>`;
 }
 
 /** A tooltip row that is not a sensor ("Health score"), lined up with `axisRowHtml` rows. */

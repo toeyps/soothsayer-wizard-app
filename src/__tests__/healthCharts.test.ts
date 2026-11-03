@@ -628,7 +628,7 @@ describe('Relationship charts', () => {
         const [line, x] = [...box.querySelectorAll('.tt-row')];
         expect(line.querySelector('.tt-desc')!.textContent).toBe('Relation model');
         expect(line.querySelector('.tt-val')!.textContent).toBe('80.25');
-        expect((line.querySelector('.tt-sw') as HTMLElement).style.background).not.toBe('');
+        expect(line.querySelector('.tt-sw')!.className).toMatch(/tt-c\d+/);
         expect(x.querySelector('.tt-key')!.textContent).toBe('X');
         expect(x.querySelector('.tt-desc')!.textContent).toBe('Inlet flow');
         expect(x.querySelector('.tt-val')!.textContent).toBe('12.5');
@@ -648,7 +648,7 @@ describe('Relationship charts', () => {
         const rows = [...box.querySelectorAll('.tt-row')];
         expect(rows.map(r => r.querySelector('.tt-desc')!.textContent)).toEqual(['Actual', 'Predicted']);
         expect(rows.map(r => r.querySelector('.tt-val')!.textContent)).toEqual(['15.266', '–']);
-        expect(rows.every(r => (r.querySelector('.tt-sw') as HTMLElement).style.background !== '')).toBe(true);
+        expect(rows.every(r => /tt-c\d+/.test(r.querySelector('.tt-sw')!.className))).toBe(true);
     });
 
     // The hover box names the colours; the chart draws no name that a zoom could misplace.
