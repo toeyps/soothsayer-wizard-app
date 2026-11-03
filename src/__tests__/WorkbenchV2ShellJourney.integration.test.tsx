@@ -369,7 +369,7 @@ describe('Workbench detail v2 — one model of each kind through the whole new s
         expect(bmw().getByTestId('kpi-below80').className, 'only a SCORE is coloured').toBe('wb3-kpi');
         expect(q(tid('score-locked'))).toBeNull();
         const stack = bmw().getByTestId('chart-stack');
-        expect([...stack.children].map(c => c.getAttribute('data-testid'))).toEqual([`chart-card-set-${k.kind}`, 'chart-card-score']);
+        expect([...stack.children].map(c => c.getAttribute('data-testid'))).toEqual([...(k.kind === 'relationship' ? ['chart-card-fit'] : []), `chart-card-set-${k.kind}`, 'chart-card-score']);
         await waitFor(() => expect(diskModel(k.id).healthVerdict).toBe('valid'));
         await waitFor(() => expect(dashDot(1, k.key, k.kind)).toBe('trained'));
         expectNoOldShell('valid set points');
