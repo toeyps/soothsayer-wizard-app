@@ -34,7 +34,6 @@ npm run tauri:build               # release bundle; per-target + installer scrip
 3. **The frontend never receives the full dataset** (since v0.2.1). Display queries run Rust-side in `chart_query.rs` — filter → operation transform → optional hourly aggregation → min/max downsample — so the WebView only ever gets O(max_points) rows:
    - `get_chart_data` (hard ceiling 100k points) via `useChartData` — line chart. (There is no data-table query any more: `get_table_page`, `useTablePage` and `DataTable` were deleted 2026-09-20, after the Data Insight tab was removed 2026-08-16.)
    - `get_scatter_sample` (reservoir sampling, `max_points` cap) via `useScatterSample` — scatter + pair plot.
-   - `export_chart_csv` writes CSV exports straight to disk from Rust instead of round-tripping rows through JS.
 4. Chart-level GPU guards: `ScatterChart` and `PairPlotCell` handle WebGL context loss (retry overlay) and apply defensive stride caps (500k / 100k points) as a last line of defense.
 
 ### IPC contract — conventions that break silently if violated
@@ -45,7 +44,7 @@ npm run tauri:build               # release bundle; per-target + installer scrip
 
 ### Windows & capabilities
 
-Multi-window app: `main` (upload → dashboard) plus sub-windows `build-model` (full capability, `src-tauri/capabilities/default.json`, same as `main`) and `add-sensor` (slimmer capability, `add-sensor.json`). The fs plugin is scoped to `$APPDATA` — writes to arbitrary user-picked paths must go through a Rust command, never plugin-fs. The generic `write_user_file` command (any path, any bytes) was deleted 2026-10-28 (security review: nothing called it since 2026-10-09, and it let any window write anywhere) — a new user-picked export gets its own purpose-built Rust command (like `export_chart_csv` / `export_workspace_results`), never a generic byte writer.
+Multi-window app: `main` (upload → dashboard) plus sub-windows `build-model` (full capability, `src-tauri/capabilities/default.json`, same as `main`) and `add-sensor` (slimmer capability, `add-sensor.json`). The fs plugin is scoped to `$APPDATA` — writes to arbitrary user-picked paths must go through a Rust command, never plugin-fs. The generic `write_user_file` command (any path, any bytes) was deleted 2026-10-28 (security review: nothing called it since 2026-10-09, and it let any window write anywhere) — a new user-picked export gets its own purpose-built Rust command (like `export_workspace_results`), never a generic byte writer.
 
 **2026-08-06**: the standalone `failure-group` sub-window (`FailureGroupCreation.tsx`) was deleted — failure-group management now lives inline in the Dashboard window as a "Failure Groups" tab in the Sensor panel (`FailureGroupsPanel.tsx`), plus a per-sensor quick-assign in the existing Sensor tab (`SensorSelection.tsx`). **2026-09-20**: the `save-as` window (`SaveAsWindow.tsx`) and its only spawner `useSubWindowMenu` were confirmed unreachable and deleted — renaming a workspace is done in the Project details modal (`saveProjectDetails`, the only writer of the name since 2026-10-20 — the inline `handleRenameWorkspace` path is gone). Don't re-add a `save-as` route/capability label. See `docs/handover/` for the full account.
 
@@ -164,7 +163,7 @@ The user tracks all work in the Notion database **"wizard application plan impro
 
 - 2 GB per-file CSV cap (`MAX_CSV_BYTES`).
 - Any new file-I/O command must use `validate_read_path` for frontend-supplied read paths, and must not build a file name from a raw name: `workspace_export.rs` is the model for that.
-- The formula engine enforces expression length + nesting-depth limits. `excel_safe` (Excel formula-injection escaping) was only used by a deleted writer and went with it: `export_chart_csv` does not escape its cells (found 2026-11-03, not decided yet).
+- The formula engine enforces expression length + nesting-depth limits. The only CSV the app writes is Export results (`workspace_export.rs`), for machines: its header holds tags exactly as the spec says, so it is not escaped for Excel.
 - Don't widen the CSP or fs scope without explicit approval.
 
 ## Agent Roles & File Ownership
@@ -249,7 +248,7 @@ When unsure between two sizes, start with the smaller one and step up only if it
 
 ## Anti-patterns
 
-- ❌ Long code comments (user rule, 2026-11-03: "เขียนแค่พอเข้าใจไม่ต้องเยอะ"). One short line where the code is not obvious; history and decisions go in `docs/handover/`
+- ❌ Long code comments (user rule, 2026-11-03: "เขียนแค่พอเข้าใจไม่ต้องเยอะ"). One short line where the code is not obvious; history and decisions go in `docs/handover/`. Old long comments: shorten them in the files a task touches, no project-wide rewrite (user decision 2026-11-03)
 - ❌ `invoke()` without a TypeScript return type, or with camelCase arg keys
 - ❌ A new command with multi-word args but no `#[tauri::command(rename_all = "snake_case")]`
 - ❌ Storing large data in `plugin-store` (use the filesystem)
