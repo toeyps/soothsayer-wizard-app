@@ -9,7 +9,7 @@
  */
 
 import type { CsvFileInfo, CsvLoadProgress, CsvLoadReport, MappingResult } from '../../types/dataUpload';
-import type { SensorMetadata, WorkspaceMetadata } from '../../types';
+import type { SensorMetadata } from '../../types';
 import { formatRowTime, formatWallClock } from '../../utils/dateFormat';
 
 /** Longest project name the Name step accepts (also the counter's denominator). */
@@ -93,13 +93,6 @@ export function formatCount(n: number | null | undefined): string | null {
 }
 
 /* ------------------------------ project name ------------------------------ */
-
-/** True when `name` (trimmed, case-insensitive) equals the name of an existing project. A blank name is never a duplicate. */
-export function isDuplicateProjectName(name: string, existing: Pick<WorkspaceMetadata, 'name'>[]): boolean {
-  const key = name.trim().toLowerCase();
-  if (!key) return false;
-  return existing.some((w) => typeof w.name === 'string' && w.name.trim().toLowerCase() === key);
-}
 
 /* ------------------------------ load report ------------------------------ */
 

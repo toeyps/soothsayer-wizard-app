@@ -7,7 +7,6 @@
 import { displayedName, splitName, type NamedSensor } from './sensorNames';
 import { monoFontFamily, textWidth, uiFontFamily, type MeasureText } from './textMeasure';
 
-export const TOOLTIP_BOX_MAX_PX = 440;
 export const TOOLTIP_ROW_MAX_PX = 418;
 export const TOOLTIP_VALUE_GAP_PX = 18;
 const SWATCH_PX = 16;

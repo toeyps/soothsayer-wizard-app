@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { formatDate, formatDateTime, formatDateTimeMinutes } from '../utils/dateFormat';
-import { clockText, dateText, formatBound, formatDataStamp, formatStamp, parseLocal } from '../utils/workbenchDate';
+import { dateText, formatBound, formatDataStamp, formatStamp, parseLocal } from '../utils/workbenchDate';
 import * as workbenchDate from '../utils/workbenchDate';
 import * as periodDisplay from '../components/windows/periodDisplay';
 
@@ -29,11 +29,10 @@ describe('workbenchDate', () => {
         for (const v of ['', '   ', 'garbage', null, undefined]) expect(parseLocal(v)).toBeNull();
     });
 
-    it('dateText / clockText are the two halves of the one format — and they ARE the single source', () => {
+    it('dateText and the clock are the two halves of the one format — and they ARE the single source', () => {
         const ms = new Date(2026, 1, 9, 5, 7).getTime();
         expect(dateText(ms)).toBe('2026/02/09');
-        expect(clockText(ms)).toBe('05:07');
-        expect(formatStamp(ms)).toBe(`${dateText(ms)} ${clockText(ms)}`);
+        expect(formatStamp(ms)).toBe(`${dateText(ms)} 05:07`);
         expect(dateText(ms)).toBe(formatDate(new Date(ms)));
         expect(formatStamp(ms)).toBe(formatDateTimeMinutes(new Date(ms)));
     });
@@ -101,7 +100,7 @@ describe('workbenchDate', () => {
             const mm = String(m).padStart(2, '0');
             const ms = new Date(2025, m - 1, 9, 15, 4, 5).getTime();
             const texts = [
-                dateText(ms), dateText(ms, true), dateText(ms, false), clockText(ms),
+                dateText(ms), dateText(ms, true), dateText(ms, false),
                 formatStamp(ms), formatStamp(`2025-${mm}-09T15:04`), formatStamp(`2025-${mm}-09T15:04:05.000Z`),
                 formatBound(`2025-${mm}-09T00:00`, 'start'), formatBound(`2025-${mm}-09T23:59`, 'end'), formatBound(`2025-${mm}-09`),
                 formatDataStamp(`2025-${mm}-09 15:04:05`), formatDataStamp(`2025-${mm}-09T15:04:05+07:00`),

@@ -1,4 +1,4 @@
-import { excelRoundCalls, isFormulaAtom, tokenizeFormula, type ExcelRoundCall } from './formulaTokens';
+import { isFormulaAtom, tokenizeFormula, type ExcelRoundCall } from './formulaTokens';
 
 /**
  * Rounding in special-sensor formulas.
@@ -182,22 +182,3 @@ export function convertExcelRoundCall(text: string, call: ExcelRoundCall): strin
     return standsAlone(text, call.start, call.end) ? core : `(${core})`;
 }
 
-/**
- * Local twin of Rust's `convert_legacy_round`: every convertible
- * spreadsheet-order call rewritten, right to left (nested calls included).
- * Used for the fix button when Rust gave no `converted_formula`; the stored
- * recipes on workspace open are converted by Rust itself
- * (`convert_legacy_formula`), never by this.
- */
-export function convertLegacyRoundLocal(text: string): string {
-    let out = text;
-    const starts = excelRoundCalls(text).map(c => c.start);
-    for (const start of [...starts].reverse()) {
-        const call = excelRoundCalls(out).find(c => c.start === start);
-        if (!call) continue;
-        const rep = convertExcelRoundCall(out, call);
-        if (rep === null) continue;
-        out = out.slice(0, call.start) + rep + out.slice(call.end);
-    }
-    return out;
-}

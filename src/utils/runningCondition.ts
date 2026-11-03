@@ -146,9 +146,6 @@ export function noTrainRowsReason(mode: 'workspace' | 'custom', hasCondition = t
     const what = `No rows match — nothing to train on. Widen a train period${hasCondition ? ' or relax the condition' : ''}`;
     return mode === 'custom' ? `${what} in Model settings → Training data (Custom).` : `${what} (Running condition → Edit).`;
 }
-/** `noTrainRowsReason('workspace')` / `('custom')` of a running condition that has a condition. */
-export const NO_TRAIN_ROWS_REASON = noTrainRowsReason('workspace', true);
-export const NO_TRAIN_ROWS_REASON_CUSTOM = noTrainRowsReason('custom', true);
 
 /** Start of the reason of a model none of whose train periods is inside the data. */
 export const NO_TRAIN_DATA_WORDS = 'No train period is inside the data';

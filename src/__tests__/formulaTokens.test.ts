@@ -1,9 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
-    bracketPairAt, excelRoundCalls, formulaSensorRefs, hasTopLevelOperator, isFormulaAtom,
-    referencedSensors, tokenAt, tokenizeFormula,
+    bracketPairAt, excelRoundCalls, hasTopLevelOperator, isFormulaAtom,
+    referencedSensors, tokenizeFormula,
 } from '../utils/formulaTokens';
-import { formulaRefNames } from '../utils/formulaRefs';
 
 const kinds = (f: string) => tokenizeFormula(f).map(t => [t.kind, t.text]);
 
@@ -27,12 +26,6 @@ describe('tokenizeFormula (twin of Rust formula_diagnostics::tokenize + scan_sen
         expect(names).toEqual([['11PT1214A.PV', false], ['อุณหภูมิ', false], ['Flow (m3/h)', true], ['Total', false]]);
         // `-Power` after `$Total` is an operator and a word.
         expect(t.slice(-2).map(x => [x.kind, x.text])).toEqual([['op', '-'], ['word', 'Power']]);
-    });
-
-    it('agrees with formulaRefs.ts on the names referenced', () => {
-        for (const f of ['$A + ${B c} * $A', '${x}${y}', '$_a.b.c + 1', '${} + $', '${unclosed + $Z']) {
-            expect(formulaSensorRefs(f).map(r => r.name).filter((n, i, a) => a.indexOf(n) === i)).toEqual(formulaRefNames(f));
-        }
     });
 
     it('an empty ${} or an unclosed ${ names nothing; its characters are bad tokens like in Rust', () => {
@@ -89,13 +82,6 @@ describe('tokenizeFormula (twin of Rust formula_diagnostics::tokenize + scan_sen
 });
 
 describe('token helpers', () => {
-    it('tokenAt finds the token under a position', () => {
-        const t = tokenizeFormula('$A + 10');
-        expect(t[tokenAt(t, 1)].text).toBe('$A');
-        expect(tokenAt(t, 2)).toBe(-1); // the space
-        expect(t[tokenAt(t, 6)].text).toBe('10');
-    });
-
     it('bracketPairAt: a caret before / after either bracket, or a selection covering the pair', () => {
         const f = 'abs(($A + 1) * 2)';
         const t = tokenizeFormula(f);

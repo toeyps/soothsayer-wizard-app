@@ -111,14 +111,6 @@ export function testsChangedNoticeParts(n: TestsChangedNotice): { headline: stri
         : { headline: `Scoring periods changed — ${models} ${need} Mark complete again`, rest: `${they} re-scored with the same trained model, not re-trained.` };
 }
 
-/** The whole notice as one string (workbench redesign §5 "After Apply"):
- *  "Scoring periods changed — N complete models need Mark complete again. They
- *  were re-scored with the same trained model, not re-trained." */
-export function testsChangedNoticeText(n: TestsChangedNotice): string {
-    const { headline, rest } = testsChangedNoticeParts(n);
-    return `${headline}. ${rest}`;
-}
-
 /** Stable code of the WARNING issue `compute_health_preview` adds when the
  *  Relation model engine could not predict the points to score (it did not
  *  answer, or is too old).

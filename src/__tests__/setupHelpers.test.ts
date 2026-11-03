@@ -15,7 +15,6 @@ import {
   formatMissingPercent,
   formatSpan,
   isCsvLoadProgress,
-  isDuplicateProjectName,
   matchedFraction,
   progressRank,
   progressStageLabel,
@@ -151,20 +150,7 @@ describe('formatCount / baseName', () => {
   });
 });
 
-describe('isDuplicateProjectName', () => {
-  const existing = [{ name: 'GEG-4 Bearing study' }, { name: '  Cooling water  ' }];
-  it('matches case-insensitively and ignores surrounding spaces on both sides', () => {
-    expect(isDuplicateProjectName('geg-4 bearing STUDY', existing)).toBe(true);
-    expect(isDuplicateProjectName('  GEG-4 Bearing study ', existing)).toBe(true);
-    expect(isDuplicateProjectName('cooling water', existing)).toBe(true);
-  });
-  it('is false for a different name, a partial match and a blank name', () => {
-    expect(isDuplicateProjectName('GEG-4', existing)).toBe(false);
-    expect(isDuplicateProjectName('Something else', existing)).toBe(false);
-    expect(isDuplicateProjectName('   ', existing)).toBe(false);
-    expect(isDuplicateProjectName('', [{ name: '' }])).toBe(false);
-    expect(isDuplicateProjectName('x', [])).toBe(false);
-  });
+describe('project name', () => {
   it('the name limit is 80', () => {
     expect(PROJECT_NAME_MAX).toBe(80);
   });

@@ -3,7 +3,7 @@ import type { TimePeriod } from '../types';
 import {
     validatePeriods, sortPeriods, mergeOverlapping, nextDefaultPeriod,
     isRangeFullyCovered, toFilterRanges,
-    periodReasonTexts, faultSide, fixPeriodFirstText, firstInvalidPeriodNumber, firstInvalidTestPeriodNumber, validateTestPeriods,
+    periodReasonTexts, faultSide, fixPeriodFirstText, firstInvalidTestPeriodNumber, validateTestPeriods,
 } from '../utils/timePeriods';
 
 const p = (id: string, start: string, end: string): TimePeriod => ({ id, start, end });
@@ -86,10 +86,7 @@ describe('period reasons say P<n> / S<n> (workbench redesign §5)', () => {
         expect(fixPeriodFirstText('P2')).toBe('Fix P2 before applying');
         expect(fixPeriodFirstText('S1', 'saving')).toBe('Fix S1 before saving');
     });
-    it('firstInvalidPeriodNumber / firstInvalidTestPeriodNumber give the list number, or null', () => {
-        expect(firstInvalidPeriodNumber([p('a', '2025-01-01T00:00', '2025-01-31T23:59'), p('b', '2025-03-01T00:00', '2025-02-01T00:00')])).toBe(2);
-        expect(firstInvalidPeriodNumber([p('a', '', '')])).toBeNull();
-        expect(firstInvalidPeriodNumber([])).toBeNull();
+    it('firstInvalidTestPeriodNumber gives the list number, or null', () => {
         expect(firstInvalidTestPeriodNumber([{ id: 't', start: '2026-01-01T00:00', end: '2026-01-31T23:59' }, { id: 'u', start: '', end: '' }])).toBe(2);
         expect(firstInvalidTestPeriodNumber([])).toBeNull();
     });

@@ -83,11 +83,6 @@ export const TZ_OPTIONS: readonly number[] = [
     345, 525, 765, 825,
 ].sort((a, b) => a - b);
 
-/** Is `min` a valid data offset (an integer inside the export's range)? */
-export function isValidUtcOffset(min: unknown): min is number {
-    return typeof min === 'number' && Number.isInteger(min) && min >= MIN_UTC_OFFSET_MIN && min <= MAX_UTC_OFFSET_MIN;
-}
-
 /** What Project details saves. */
 export interface ProjectDetailsValue {
     machine: MachineDetails;

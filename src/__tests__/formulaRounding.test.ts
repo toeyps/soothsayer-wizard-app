@@ -1,6 +1,7 @@
+import { convertLegacyRoundStandIn } from './helpers/legacyRoundStandIn';
 import { describe, it, expect } from 'vitest';
 import {
-    convertLegacyRoundLocal, hasUnpairedBracket, rangeToBody, roundExpression, roundPlaces, splitRoundResult, withRoundResult,
+    hasUnpairedBracket, rangeToBody, roundExpression, roundPlaces, splitRoundResult, withRoundResult,
 } from '../utils/formulaRounding';
 
 describe('roundExpression: the engine form round(X * 10^N) / 10^N, never round(0.01, X)', () => {
@@ -76,7 +77,7 @@ describe('roundPlaces', () => {
     });
 });
 
-describe('convertLegacyRoundLocal: the same output as Rust convert_legacy_round (its test table)', () => {
+describe('the test stand-in: the same output as Rust convert_legacy_round (its test table)', () => {
     const table: Array<[string, string]> = [
         ['round($A, 2)', 'round($A * 100) / 100'],
         ['round($A, 0)', 'round($A)'],
@@ -96,16 +97,16 @@ describe('convertLegacyRoundLocal: the same output as Rust convert_legacy_round 
         ['round(round($A, 2), 0.5)', 'round(round($A * 100) / 100, 0.5)'],
     ];
     for (const [from, to] of table) {
-        it(from, () => expect(convertLegacyRoundLocal(from)).toBe(to));
+        it(from, () => expect(convertLegacyRoundStandIn(from)).toBe(to));
     }
 
     it('leaves everything else alone and is idempotent', () => {
         for (const f of ['$A + $B', 'round($A)', 'round(0.01, $A)', 'round($B, $A)', 'round(1.5, 2) + $A', 'round($A, 0.5)', '${x round($A, 2)} * 2', '$round + round']) {
-            expect(convertLegacyRoundLocal(f), f).toBe(f);
+            expect(convertLegacyRoundStandIn(f), f).toBe(f);
         }
         for (const f of ['round($A, 2)', 'round(round($A, 2) + $B, 1)', '2 ^ round($A, 1)']) {
-            const once = convertLegacyRoundLocal(f);
-            expect(convertLegacyRoundLocal(once)).toBe(once);
+            const once = convertLegacyRoundStandIn(f);
+            expect(convertLegacyRoundStandIn(once)).toBe(once);
         }
     });
 });

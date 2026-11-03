@@ -20,7 +20,7 @@ vi.mock('../workspaceManager', () => ({
 }));
 
 import {
-    EMPTY_MACHINE, TZ_OPTIONS, ensureDataUtcOffset, fmtOffset, isDuplicatePlantMachine, isValidUtcOffset, machineOf,
+    EMPTY_MACHINE, TZ_OPTIONS, ensureDataUtcOffset, fmtOffset, isDuplicatePlantMachine, machineOf,
     machineOfOldProject, missingMachineFields, pcOffsetMin, projectDescription, projectDisplayName, saveProjectDetails,
 } from '../utils/projectDetails';
 
@@ -98,13 +98,7 @@ describe('time zone', () => {
         expect([...TZ_OPTIONS].sort((a, b) => a - b)).toEqual([...TZ_OPTIONS]);
         expect(new Set(TZ_OPTIONS).size).toBe(TZ_OPTIONS.length);
         expect(TZ_OPTIONS.length).toBe(53 + 4);
-        expect(TZ_OPTIONS.every(isValidUtcOffset)).toBe(true);
-    });
-    it('isValidUtcOffset', () => {
-        expect(isValidUtcOffset(-721)).toBe(false);
-        expect(isValidUtcOffset(841)).toBe(false);
-        expect(isValidUtcOffset(1.5)).toBe(false);
-        expect(isValidUtcOffset('420')).toBe(false);
+        expect(TZ_OPTIONS.every(m => Number.isInteger(m) && m >= -720 && m <= 840)).toBe(true);
     });
 });
 

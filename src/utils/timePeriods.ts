@@ -300,12 +300,6 @@ export function validatePeriods(list: TimePeriod[], bounds?: PeriodDataBounds | 
     });
 }
 
-/** 1-based list number of the first invalid train period (its P-number), or null. */
-export function firstInvalidPeriodNumber(list: TimePeriod[], bounds?: PeriodDataBounds | null, baseline?: PeriodBaseline): number | null {
-    const i = validatePeriods(list, bounds, baseline).findIndex(s => s.invalid);
-    return i < 0 ? null : i + 1;
-}
-
 /** Cheap "is the previous period itself unparseable / reversed" check used to
  *  skip overlap reporting against a period that is already flagged. */
 function statusInvalidAt(list: TimePeriod[], parsed: { s: number | null; e: number | null }[], i: number): boolean {

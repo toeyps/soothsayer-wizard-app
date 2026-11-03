@@ -35,18 +35,6 @@ export interface RunningConditionDraft {
     testPeriods: TestPeriod[];
 }
 
-/** The persisted workspace running condition of `fg`, in draft shape (missing
- *  fields read as their defaults). */
-export function runningConditionDraftOf(fg: RunningConditionFg): RunningConditionDraft {
-    return {
-        filters: fg?.runningConditionFilters ?? [],
-        combine: fg?.runningConditionCombine ?? 'and',
-        periods: fg?.runningConditionTimePeriods ?? [],
-        allData: fg?.runningConditionAllData ?? false,
-        testPeriods: fg?.runningConditionTestPeriods ?? [],
-    };
-}
-
 /** `fg` as it would be after applying `draft`: everything else in the slice is
  *  carried over untouched (models, groups, and any field added later). For
  *  predictions only — the write itself goes through `withFailureGroupState`. */
@@ -207,10 +195,3 @@ export function retrainNoticeParts(n: number): { headline: string; rest: string 
         };
 }
 
-/** `retrainNoticeParts` as one string: "Running condition changed — N models
- *  need training again. Use Train all, or Train sensor on each one; the amber
- *  dots in the list show which." */
-export function retrainNoticeText(n: number): string {
-    const { headline, rest } = retrainNoticeParts(n);
-    return `${headline}. ${rest}`;
-}

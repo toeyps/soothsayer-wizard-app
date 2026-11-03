@@ -10,7 +10,7 @@ import {
 import * as timePeriods from '../utils/timePeriods';
 import {
     RECOMMENDED_TRAIN_DAYS, isBelowRecommendedTrainDays, trainDaysWarning,
-    testsChangedState, testsChangedBannerText, testsChangedNotice, testsChangedNoticeText, testsChangedNoticeParts,
+    testsChangedState, testsChangedBannerText, testsChangedNotice, testsChangedNoticeParts,
     testScoringFailure, TEST_SCORING_FAILED_CODE, TEST_SCORING_OUTDATED_CODE, TEST_SCORING_TOO_LARGE_CODE, isTestScoringRetryable,
     TEST_SCORING_FAILED_TEXT, TEST_SCORING_OUTDATED_TEXT, SLOW_TEST_SCORING_TEXT,
 } from '../utils/trainTestValidation';
@@ -284,27 +284,20 @@ describe('"scoring periods changed" banners (SPEC rule 8)', () => {
         expect(testsChangedNotice([fresh], changedTrain)).toBeNull();
     });
 
-    it('workspace notice: count + all removed, and its text', () => {
+    it('workspace notice: count + all removed', () => {
         expect(testsChangedNotice([mk({ id: 'x' })], fg())).toBeNull();
         const n = testsChangedNotice([stamped({ id: 'a' }), stamped({ id: 'b' }), mk({ id: 'c' })], fg());
         expect(n).toEqual({ count: 2, allRemoved: false });
-        // Workbench redesign §5 "After Apply": the reworded notice says they were re-scored, not re-trained.
-        expect(testsChangedNoticeText(n!)).toBe('Scoring periods changed — 2 complete models need Mark complete again. They were re-scored with the same trained model, not re-trained.');
-        expect(testsChangedNoticeText({ count: 1, allRemoved: false })).toBe('Scoring periods changed — 1 complete model needs Mark complete again. It was re-scored with the same trained model, not re-trained.');
         const r = testsChangedNotice([stamped()], fg({ runningConditionTestPeriods: [] }));
         expect(r).toEqual({ count: 1, allRemoved: true });
-        // every scoring period removed: nothing was re-scored, so the notice does not claim it
-        expect(testsChangedNoticeText(r!)).toBe('Scoring periods removed — 1 complete model needs a scoring period and Mark complete again. It was not re-trained.');
-        expect(testsChangedNoticeText({ count: 3, allRemoved: true })).toBe('Scoring periods removed — 3 complete models need a scoring period and Mark complete again. They were not re-trained.');
     });
-    it('the notice in two parts (bold headline + one sentence); the text is exactly "headline. rest"', () => {
+    it('the notice in two parts (bold headline + one sentence)', () => {
         expect(testsChangedNoticeParts({ count: 3, allRemoved: false })).toEqual({
             headline: 'Scoring periods changed — 3 complete models need Mark complete again',
             rest: 'They were re-scored with the same trained model, not re-trained.',
         });
         for (const n of [{ count: 1, allRemoved: false }, { count: 4, allRemoved: true }]) {
             const parts = testsChangedNoticeParts(n);
-            expect(testsChangedNoticeText(n)).toBe(`${parts.headline}. ${parts.rest}`);
             expect(parts.headline).not.toMatch(/\.$/);
         }
     });

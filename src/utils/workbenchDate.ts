@@ -19,7 +19,7 @@
  * importing them from there.
  */
 
-import { formatClock, formatDate, formatDateTime, formatDateTimeMinutes, formatRowTime } from './dateFormat';
+import { formatDate, formatDateTime, formatDateTimeMinutes, formatRowTime } from './dateFormat';
 
 /** Epoch ms of a `datetime-local` / ISO-ish string as LOCAL time; null if
  *  blank or unparseable. Date-only strings are read as local midnight. */
@@ -29,11 +29,6 @@ export function parseLocal(s: string | null | undefined): number | null {
     const norm = /^\d{4}-\d{2}-\d{2}$/.test(t) ? `${t}T00:00` : t.replace(' ', 'T');
     const ms = new Date(norm).getTime();
     return Number.isNaN(ms) ? null : ms;
-}
-
-/** "23:50" (local, 24 h). */
-export function clockText(ms: number): string {
-    return formatClock(new Date(ms));
 }
 
 /**

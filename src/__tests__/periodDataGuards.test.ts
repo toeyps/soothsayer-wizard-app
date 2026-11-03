@@ -6,13 +6,13 @@ import type { PeriodCount, PeriodCounts } from '../types/periodCounts';
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
 
 import {
-    allPeriodsOutsideData, dataRangeText, faultOnSide, faultSide, firstInvalidPeriodNumber, firstInvalidTestPeriodNumber, isPeriodUnchanged,
+    allPeriodsOutsideData, dataRangeText, faultOnSide, faultSide, firstInvalidTestPeriodNumber, isPeriodUnchanged,
     periodDataFit, savedOutsideDataNotes, testPeriodsError, toFilterRanges, validatePeriods, validateTestPeriods,
 } from '../utils/timePeriods';
 import {
     customBlockText, getBuildBlock, getBuildBlockReason, markCompleteBlockReason, noModelDataCauseText, noModelDataFooter,
     noModelDataMarkReason, noTrainDataReason, noTrainRowsReason, noTrainRowsText, runningConditionApplyBlock,
-    NO_MODEL_DATA_TITLE, NO_MODEL_DATA_WORDS, NO_TRAIN_ROWS_FOOTER, NO_TRAIN_ROWS_REASON, NO_TRAIN_ROWS_REASON_CUSTOM, NO_TRAIN_ROWS_TEXT,
+    NO_MODEL_DATA_TITLE, NO_MODEL_DATA_WORDS, NO_TRAIN_ROWS_FOOTER, NO_TRAIN_ROWS_TEXT,
 } from '../utils/runningCondition';
 import {
     countedNoTrainRows, noRunningRowsNote, runningConditionCaption, scoringCountPlan, scoringRowModels, trainCountKey, trainCountPlan,
@@ -52,7 +52,6 @@ describe('periodDataFit / validatePeriods against the loaded data', () => {
         expect(st.dataNote).toBeUndefined();
         expect(faultOnSide('outside-data', 'start')).toBe(true);
         expect(faultOnSide('outside-data', 'end')).toBe(true);
-        expect(firstInvalidPeriodNumber([INSIDE, AFTER], DATA)).toBe(2);
     });
 
     it('a period entirely BEFORE the data is invalid too, named by its list number', () => {
@@ -95,7 +94,6 @@ describe('periodDataFit / validatePeriods against the loaded data', () => {
             expect(st).toMatchObject({ invalid: false, fault: undefined, dataNote: undefined });
         }
         expect(validatePeriods([AFTER])[0].invalid).toBe(false);
-        expect(firstInvalidPeriodNumber([AFTER])).toBeNull();
     });
 
     it('a date fault comes first: a reversed or unreadable period keeps its own reason', () => {
@@ -140,7 +138,6 @@ describe('a period outside the data: NEW / CHANGED in the draft = invalid, exact
         expect(inside).toMatchObject({ invalid: false, dataNote: undefined });
         expect(inside.outsideData).toBeUndefined();
         expect(out).toMatchObject({ invalid: false, fault: undefined, outsideData: true, dataNote: 'P2 is outside the data (2025/01/01 00:00 – 2025/12/31 23:59) — it is not used' });
-        expect(firstInvalidPeriodNumber([INSIDE, AFTER], DATA, [INSIDE, AFTER])).toBeNull();
     });
 
     it('changed against the saved list (another date under the same id), or not in it at all: invalid as before', () => {
@@ -275,9 +272,9 @@ describe('getBuildBlock with the data guards (the PERSISTED state)', () => {
         });
         expect(getBuildBlock(model(), { ...fg([INSIDE]), runningConditionNoneConfirmed: true }, null, { noTrainRows: true })).toMatchObject({ hasCondition: true });
         const withCond = fg([INSIDE]);
-        expect(getBuildBlock(model(), withCond, null, { noTrainRows: true })).toMatchObject({ cause: 'zero-rows', hasCondition: true, reason: NO_TRAIN_ROWS_REASON });
+        expect(getBuildBlock(model(), withCond, null, { noTrainRows: true })).toMatchObject({ cause: 'zero-rows', hasCondition: true, reason: noTrainRowsReason('workspace', true) });
         const custom = model({ runningConditionMode: 'custom', customRunningConditionFilters: [COND], filterTimePeriods: [INSIDE] });
-        expect(getBuildBlock(custom, fg([]), null, { noTrainRows: true })).toMatchObject({ kind: 'no-rows', mode: 'custom', cause: 'zero-rows', reason: NO_TRAIN_ROWS_REASON_CUSTOM });
+        expect(getBuildBlock(custom, fg([]), null, { noTrainRows: true })).toMatchObject({ kind: 'no-rows', mode: 'custom', cause: 'zero-rows', reason: noTrainRowsReason('custom', true) });
         expect(noTrainRowsReason('custom', false)).toBe('No rows match — nothing to train on. Widen a train period in Model settings → Training data (Custom).');
         // a missing train period is said first; "no period inside the data" before the count
         expect(getBuildBlock(model(), fg([]), null, { noTrainRows: true })!.kind).toBe('no-train');
@@ -311,8 +308,8 @@ describe('getBuildBlock with the data guards (the PERSISTED state)', () => {
     it('the train queue names both reasons: preflight "Skipped" text + where Fix → goes', () => {
         expect(preflightReason('P1 is outside the data (2025/01/01 00:00 – 2025/12/31 23:59).')).toEqual({ text: 'Train period P1 is outside the data (2025/01/01 00:00 – 2025/12/31 23:59)', fix: 'runningCondition' });
         expect(preflightReason('P1 is outside the data (2025/01/01 00:00 – 2025/12/31 23:59).', { customMode: true }).fix).toBe('settings');
-        expect(preflightReason(NO_TRAIN_ROWS_REASON)).toEqual({ text: 'No rows to train on', fix: 'runningCondition' });
-        expect(preflightReason(NO_TRAIN_ROWS_REASON_CUSTOM, { customMode: true })).toEqual({ text: 'No rows to train on in its own training data', fix: 'settings' });
+        expect(preflightReason(noTrainRowsReason('workspace', true))).toEqual({ text: 'No rows to train on', fix: 'runningCondition' });
+        expect(preflightReason(noTrainRowsReason('custom', true), { customMode: true })).toEqual({ text: 'No rows to train on in its own training data', fix: 'settings' });
         // ...whether or not there is a condition to relax
         expect(preflightReason(noTrainRowsReason('workspace', false))).toEqual({ text: 'No rows to train on', fix: 'runningCondition' });
         expect(preflightReason(noTrainRowsReason('custom', false), { customMode: true })).toEqual({ text: 'No rows to train on in its own training data', fix: 'settings' });
@@ -320,7 +317,7 @@ describe('getBuildBlock with the data guards (the PERSISTED state)', () => {
         expect(preflightReason(noTrainDataReason('workspace', DATA))).toEqual({ text: 'No train period inside the data', fix: 'runningCondition' });
         expect(preflightReason(noTrainDataReason('custom', DATA), { customMode: true })).toEqual({ text: 'No train period inside the data in its own training data', fix: 'settings' });
         // a blocked model is never "ready", whatever its dot says
-        expect(classifyTrainPlan({ blockReason: NO_TRAIN_ROWS_REASON, dotState: 'trained' })).toEqual({ kind: 'missing', reason: 'No rows to train on', fix: 'runningCondition' });
+        expect(classifyTrainPlan({ blockReason: noTrainRowsReason('workspace', true), dotState: 'trained' })).toEqual({ kind: 'missing', reason: 'No rows to train on', fix: 'runningCondition' });
     });
 
     it('a train that FAILED for want of rows is named (what Rust answers for an empty training scope, per kind) — any other failure is left alone', () => {

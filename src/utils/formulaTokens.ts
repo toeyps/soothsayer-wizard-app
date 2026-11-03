@@ -113,12 +113,6 @@ function scanRefSpans(chars: string[]): Array<{ start: number; end: number; brac
     return out;
 }
 
-/** Every sensor reference, in order, with UTF-16 ranges. */
-export function formulaSensorRefs(text: string): FormulaSensorRef[] {
-    const { chars, off } = codePoints(text);
-    return scanRefSpans(chars).map(s => ({ name: s.name, start: off[s.start], end: off[s.end], braced: s.braced }));
-}
-
 /** Tokenize `text`. Never throws; every non-space character lands in exactly one token. */
 export function tokenizeFormula(text: string): FormulaToken[] {
     const { chars, off } = codePoints(text);
@@ -215,15 +209,6 @@ function annotate(toks: FormulaToken[]): void {
             }
         }
     }
-}
-
-/** Index of the token that contains `pos` (start <= pos < end), or -1. */
-export function tokenAt(tokens: FormulaToken[], pos: number): number {
-    for (let k = 0; k < tokens.length; k++) {
-        if (tokens[k].start <= pos && pos < tokens[k].end) return k;
-        if (tokens[k].start > pos) break;
-    }
-    return -1;
 }
 
 /**

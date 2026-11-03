@@ -4,7 +4,7 @@ import type { FailureModel, SpecialSensorRecipe, WorkspaceState } from '../types
 import {
     applyLegacyConversion, convertLegacyFormulaRecipes, legacyConversionMessage,
 } from '../utils/legacyFormulaConversion';
-import { convertLegacyRoundLocal } from '../utils/formulaRounding';
+import { convertLegacyRoundStandIn } from './helpers/legacyRoundStandIn';
 import { computeTrainFingerprint } from '../utils/trainFingerprint';
 
 const F = (tag: string, formula: string): SpecialSensorRecipe => ({ kind: 'formula', tag, formula });
@@ -15,7 +15,7 @@ function rustInvoker() {
     return vi.fn(async (cmd: string, args: Record<string, unknown>) => {
         if (cmd !== 'convert_legacy_formula') throw new Error(`unexpected ${cmd}`);
         const formula = String(args.formula);
-        const converted = convertLegacyRoundLocal(formula);
+        const converted = convertLegacyRoundStandIn(formula);
         return { formula: converted, changed: converted !== formula };
     });
 }
