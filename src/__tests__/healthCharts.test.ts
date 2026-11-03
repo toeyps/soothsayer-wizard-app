@@ -621,6 +621,19 @@ describe('Relationship charts', () => {
         expect(o.series[1].lineStyle.color).toBe(CHART.predicted);
     });
 
+    it('Fit: the hover box gives the point\'s colour and name, its value and its X sensor', () => {
+        const o: any = buildFitScatterOption({ x_sensor: 'X1', predictors: ['X1'], x: [1], actual: [2], predicted: [3], total: 1 } as any, '%', { tag: 'X1', description: 'Inlet flow', unit: 'm3/h' } as any);
+        const box = document.createElement('div');
+        box.innerHTML = o.tooltip.formatter({ seriesName: 'Relation model', color: CHART.predicted, value: [12.5, 80.25] });
+        const [line, x] = [...box.querySelectorAll('.tt-row')];
+        expect(line.querySelector('.tt-desc')!.textContent).toBe('Relation model');
+        expect(line.querySelector('.tt-val')!.textContent).toBe('80.25');
+        expect((line.querySelector('.tt-sw') as HTMLElement).style.background).not.toBe('');
+        expect(x.querySelector('.tt-key')!.textContent).toBe('X');
+        expect(x.querySelector('.tt-desc')!.textContent).toBe('Inlet flow');
+        expect(x.querySelector('.tt-val')!.textContent).toBe('12.5');
+    });
+
     it('Target vs predicted: the hover box gives the time, then each line with its colour, name and value', () => {
         const o: any = buildTargetVsPredictedOption({ kind: 'relationship', rows: [0, 1], timestamps: ['2026-05-10T08:00:00', '2026-05-10T09:00:00'], actual: [15.266, 16], predicted: [2.178, null], residual: [13.088, null], score: null, total_points: 2 } as any, '%');
         const x = o.series[0].data[0][0];

@@ -314,11 +314,11 @@ describe('ModelFitPage — Relationship', () => {
         expect(chartOf('tvp').getAttribute('data-end-labels')).toBe('');
     });
 
-    it('Residual has no legend row (its ±2RMSE lines are named on the chart); Fit keeps its two point colours', () => {
+    it('Residual has no legend row (its ±2RMSE lines are named on the chart); neither has Fit (its hover box names the colours)', () => {
         page(rel(), { target: 'T1', predictors: ['A', 'B'] });
         expect(legendOf('res')).toBeNull();
         expect(chartOf('res').getAttribute('data-end-labels')).toBe('');
-        expect(legendOf('fit')).toBe('ActualRelation model'); // points, not labelled lines
+        expect(legendOf('fit')).toBeNull();
         expect(chartOf('fit').getAttribute('data-end-labels')).toBe('');
     });
 
