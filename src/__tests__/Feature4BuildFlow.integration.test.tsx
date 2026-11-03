@@ -330,7 +330,7 @@ describe('(1) opening a v1 (pre-Feature-4) workspace', () => {
         expect(screen.getByTestId('rc-card').getAttribute('data-state')).toBe('unset');
         expect(rcModal()).toBeTruthy();
         expect(screen.getByTestId('rc-required-pill')).toBeTruthy();
-        expect(screen.getAllByLabelText('P1 end').map(e => (e as HTMLInputElement).value)).toContain('2026-06-30T23:59');
+        expect(screen.getAllByLabelText('P1 end').map(e => (e as HTMLInputElement).value)).toContain('2026/06/30 23:59');
         openFirstRow();
         expect(screen.getByTestId('build-block-reason').textContent).toBe(GATE_REASON);
 
