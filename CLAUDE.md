@@ -249,6 +249,7 @@ When unsure between two sizes, start with the smaller one and step up only if it
 
 ## Anti-patterns
 
+- ❌ Long code comments (user rule, 2026-11-03: "เขียนแค่พอเข้าใจไม่ต้องเยอะ"). One short line where the code is not obvious; history and decisions go in `docs/handover/`
 - ❌ `invoke()` without a TypeScript return type, or with camelCase arg keys
 - ❌ A new command with multi-word args but no `#[tauri::command(rename_all = "snake_case")]`
 - ❌ Storing large data in `plugin-store` (use the filesystem)
