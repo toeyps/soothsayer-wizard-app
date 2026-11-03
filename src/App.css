@@ -3899,15 +3899,6 @@ body {
     outline: none;
     color: var(--text-primary);
 }
-/* Each input has its own `.timebar-cal` button right after it that opens
-   the native picker (see Dashboard.tsx) — without this, the
-   browser also draws its OWN calendar icon inside each (too-narrow)
-   input, colliding with the date text. Same fix as `.date-input-wrapper`
-   above. */
-.timebar-range input::-webkit-calendar-picker-indicator {
-    opacity: 0;
-    pointer-events: none;
-}
 .timebar-cal {
     display: inline-flex;
     align-items: center;
@@ -4287,9 +4278,12 @@ body {
     outline: none;
     min-width: 0;
 }
-.highlights-field--date {
+.highlights-date {
     flex: 1;
-    min-width: 128px;
+    min-width: 142px;
+    background: var(--input-bg);
+    border-color: var(--border);
+    border-radius: 6px;
 }
 .highlights-field--grow {
     flex: 1;

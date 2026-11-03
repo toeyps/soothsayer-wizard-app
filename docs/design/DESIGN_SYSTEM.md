@@ -117,7 +117,7 @@ Studio is the Base layer plus: ambient glow behind content, faint grid, glass ca
 - **Component groups:** coloured two-letter badge + name + "selected / total".
 - **Model kinds:** I / R / C badges (18 px rounded square, kind colour on 16–30% tint). UI says **"Relation model"** — the algorithm name is confidential.
 - **Status:** a pill (Complete / Trained / Incomplete / Set points needed / Fix set point) + a corner dot on kind badges (amber = needs input or re-train, red = fix, green = complete). One rule feeds all of them (`modelSetPointFlag`).
-- **Date and time fields on the Running condition page (2026-11-03, user rule):** always 24-hour, `YYYY/MM/DD HH:mm`, through `DateTime24Input` (text + the app's own calendar). Never a native `datetime-local` there: it follows the Windows region and can show AM/PM.
+- **Date and time fields (2026-11-03, user rule):** always 24-hour, `YYYY/MM/DD HH:mm`, through `DateTime24Input` (text + the app's own calendar), on every screen. Never a native `datetime-local`: it follows the Windows region and can show AM/PM.
 - **Failure-group assignment:** the matrix sheet (rows = groups, columns = I/R/C toggle cells, search, All/Assigned, ‹ › to step sensors, create group inline). Removing a model's last group deletes that model — say so in a toast.
 - **Confirmations:** inline in the row (rename, delete) rather than OS dialogs, except irreversible bulk deletes.
 - **Blocked actions:** keep the button visible but disabled, with the reason as text next to it (footer) and a tooltip. Exactly one blocked primary action per page (e.g. Mark complete).

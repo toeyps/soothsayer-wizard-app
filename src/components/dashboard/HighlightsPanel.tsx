@@ -5,6 +5,7 @@ import ColourPicker from '../sensor/ColourPicker';
 import { SensorPickerSingle } from '../sensor/SensorPicker';
 import { fmtNumExact, useSensorLookup } from '../sensor/sensorInfo';
 import { formatDateTimeMinutes } from '../../utils/dateFormat';
+import { DateTime24Input } from '../windows/DateTime24Input';
 
 interface HighlightsPanelProps {
     // "By time" -- timestamp windows, read by Line + Scatter (not Pair Plot).
@@ -42,6 +43,9 @@ interface HighlightsPanelProps {
      *  does nothing on the current chart is worse than one that's plainly
      *  disabled. */
     chartType: 'line' | 'scatter' | 'pair';
+    /** First and last time of the data: the calendar opens there and stays inside. */
+    dataStart?: string;
+    dataEnd?: string;
 }
 
 /** "2025/03/14 21:25 → 2025/03/15 08:00": a highlight's two bounds in the app's
@@ -69,7 +73,7 @@ export default function HighlightsPanel({
     onRenameTimeHighlight,
     valueHighlight, valueHighlightSensors, onSetValueHighlightSensor, onAddValueHighlightRange,
     onToggleValueHighlightRange, onRemoveValueHighlightRange, onRecolorValueHighlightRange,
-    chartType,
+    chartType, dataStart, dataEnd,
 }: HighlightsPanelProps) {
     const highlightApplies = chartType !== 'pair';
     // "By value" only ever does anything on Scatter -- Line has no 3rd-
@@ -154,9 +158,13 @@ export default function HighlightsPanel({
 
                 <fieldset disabled={!highlightApplies} className={`highlights-fieldset${highlightApplies ? '' : ' highlights-fieldset--dim'}`}>
                     <div className="highlights-add-row">
-                        <input type="datetime-local" value={draftStart} onChange={e => { setDraftStart(e.target.value); setHighlightError(null); }} className="highlights-field highlights-field--date" />
+                        <div className="f4-dtw highlights-date">
+                            <DateTime24Input ariaLabel="Highlight start" value={draftStart} min={dataStart} max={dataEnd} onChange={v => { setDraftStart(v); setHighlightError(null); }} />
+                        </div>
                         <span className="highlights-add-sep">→</span>
-                        <input type="datetime-local" value={draftEnd} onChange={e => { setDraftEnd(e.target.value); setHighlightError(null); }} className="highlights-field highlights-field--date" />
+                        <div className="f4-dtw highlights-date">
+                            <DateTime24Input ariaLabel="Highlight end" value={draftEnd} min={dataStart} max={dataEnd} onChange={v => { setDraftEnd(v); setHighlightError(null); }} />
+                        </div>
                     </div>
                     <div className="highlights-add-row">
                         <input

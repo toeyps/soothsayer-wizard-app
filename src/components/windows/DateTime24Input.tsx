@@ -18,16 +18,21 @@ interface DateTime24InputProps {
     max?: string;
     /** Same as a `datetime-local`: the value when complete, `''` while it is not. */
     onChange: (value: string) => void;
-    onCommit: () => void;
+    onCommit?: () => void;
+    /** The field was left blank (a field whose owner shows a default when it has no value). */
+    onClear?: () => void;
+    /** The calendar button's own look and name, where the field is not inside `.f4-dtw`. */
+    calClassName?: string;
+    calLabel?: string;
     /** Placed between the text and the calendar button. */
     children?: ReactNode;
 }
 
 /**
- * Date and time field of the Running condition page, always 24-hour: the text plus a calendar button, for the inside
- * of `.f4-dtw`. What is being typed stays in the field while it is incomplete, as in a `datetime-local`.
+ * Date and time field, always 24-hour: the text plus a calendar button, for the inside of `.f4-dtw` or another shell.
+ * What is being typed stays in the field while it is incomplete, as in a `datetime-local`.
  */
-export function DateTime24Input({ ariaLabel, invalid, value, min, max, onChange, onCommit, children }: DateTime24InputProps) {
+export function DateTime24Input({ ariaLabel, invalid, value, min, max, onChange, onCommit, onClear, calClassName = 'f4-dtw-cal', calLabel = 'Open date picker', children }: DateTime24InputProps) {
     const [text, setText] = useState(() => formatDateTime24(value));
     const reported = useRef(value);
     const [rect, setRect] = useState<PopoverAnchorRect | null>(null);
@@ -46,7 +51,7 @@ export function DateTime24Input({ ariaLabel, invalid, value, min, max, onChange,
 
     const closePicker = () => {
         setRect(null);
-        onCommit();
+        onCommit?.();
         buttonRef.current?.focus({ preventScroll: true });
     };
 
@@ -64,27 +69,29 @@ export function DateTime24Input({ ariaLabel, invalid, value, min, max, onChange,
                     report(parseDateTime24(e.target.value));
                 }}
                 onBlur={() => {
-                    onCommit();
+                    onCommit?.();
                     setText(formatDateTime24(parseDateTime24(text) || value));
+                    if (!text.trim()) onClear?.();
                 }}
-                onKeyDown={e => { if (e.key === 'Enter') onCommit(); }}
+                onKeyDown={e => { if (e.key === 'Enter') onCommit?.(); }}
             />
             {children}
             <button
                 ref={buttonRef}
                 type="button"
-                className="f4-dtw-cal"
-                aria-label="Open date picker"
+                className={calClassName}
+                aria-label={calLabel}
+                title={calLabel}
                 aria-expanded={!!rect}
                 onClick={e => {
                     if (rect) closePicker();
-                    else setRect(e.currentTarget.closest('.f4-dtw')!.getBoundingClientRect());
+                    else setRect((e.currentTarget.closest('.f4-dtw') ?? e.currentTarget).getBoundingClientRect());
                 }}
             >
                 <Calendar size={14} />
             </button>
             {rect && (
-                <AnchoredPopover anchorRect={rect} onRequestClose={() => { setRect(null); onCommit(); }} width={POP_WIDTH}>
+                <AnchoredPopover anchorRect={rect} onRequestClose={() => { setRect(null); onCommit?.(); }} width={POP_WIDTH}>
                     <CalendarPanel
                         label={ariaLabel}
                         value={value}

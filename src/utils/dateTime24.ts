@@ -1,5 +1,5 @@
 /**
- * Text form of the Running condition date fields: `YYYY/MM/DD HH:mm`, always 24-hour. A native `datetime-local`
+ * Text form of the app's date fields: `YYYY/MM/DD HH:mm`, always 24-hour. A native `datetime-local`
  * follows the Windows region (AM/PM on many machines) and cannot be told otherwise. The value the rest of the app
  * holds stays what that field reported: `YYYY-MM-DDTHH:mm`, with seconds when it has them.
  */

@@ -146,6 +146,26 @@ describe('DateTime24Input', () => {
         expect(onCommit).toHaveBeenCalledTimes(3);
     });
 
+    it('leaving it blank calls onClear; an unfinished text does not', () => {
+        const onClear = vi.fn();
+        render(<DateTime24Input ariaLabel="P1 start" value="2026-07-30T14:28" onChange={vi.fn()} onClear={onClear} />);
+        fireEvent.change(field(), { target: { value: '2026/07' } });
+        fireEvent.blur(field());
+        expect(onClear).not.toHaveBeenCalled();
+        expect(field().value).toBe('2026/07/30 14:28');
+        fireEvent.change(field(), { target: { value: '  ' } });
+        fireEvent.blur(field());
+        expect(onClear).toHaveBeenCalledTimes(1);
+    });
+
+    it('outside `.f4-dtw` it opens from its own button, with the look and name it is given', () => {
+        render(<DateTime24Input ariaLabel="P1 start" calClassName="timebar-cal" calLabel="Pick start date" value="2026-07-30T14:28" onChange={vi.fn()} />);
+        const button = screen.getByRole('button', { name: 'Pick start date' });
+        expect(button.className).toBe('timebar-cal');
+        fireEvent.click(button);
+        expect(screen.getByTestId('dt24-pop')).toBeTruthy();
+    });
+
     it('a value changed from outside replaces the text', () => {
         const { rerender } = render(<DateTime24Input ariaLabel="P1 start" value="2026-07-30T14:28" onChange={vi.fn()} onCommit={vi.fn()} />);
         rerender(<DateTime24Input ariaLabel="P1 start" value="2026-01-02T03:04" onChange={vi.fn()} onCommit={vi.fn()} />);

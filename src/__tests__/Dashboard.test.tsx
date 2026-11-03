@@ -3490,61 +3490,63 @@ describe('Dashboard', () => {
         });
     });
 
-    // The Time range bar's single leading
-    // Calendar icon was decorative -- clicking it did nothing -- and the end
-    // date had no icon at all, so the only way to open the picker was to click
-    // the date text. Now each side has its OWN calendar button right after its
-    // input that opens THAT input's native picker; clicking the text is plain
-    // native editing again (typing works, no picker pops over it).
-    describe('TIME RANGE date inputs (a calendar button per side opens its native picker)', () => {
+    // Always 24-hour: a native datetime-local follows the Windows region, and on
+    // an AM/PM machine the bar's narrow field could hide the PM (user request 2026-11-03).
+    describe('TIME RANGE date inputs (24-hour text, a calendar button per side)', () => {
         const render1 = () => renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });
+        const startInput = () => screen.getByLabelText('Start date') as HTMLInputElement;
 
-        it('the Start calendar button opens the Start picker, the End one the End picker', () => {
+        it('both sides are text fields, never a native datetime field', () => {
             render1();
-            const startInput = screen.getByPlaceholderText('Start Date') as HTMLInputElement;
-            const endInput = screen.getByPlaceholderText('End Date') as HTMLInputElement;
-            const showPickerStart = vi.fn();
-            const showPickerEnd = vi.fn();
-            (startInput as any).showPicker = showPickerStart;
-            (endInput as any).showPicker = showPickerEnd;
+            expect(startInput().type).toBe('text');
+            expect((screen.getByLabelText('End date') as HTMLInputElement).type).toBe('text');
+            expect(document.querySelector('.timebar input[type="datetime-local"]')).toBeNull();
+        });
 
+        it('the Start calendar button opens the Start calendar, the End one the End calendar', () => {
+            render1();
             fireEvent.click(screen.getByRole('button', { name: 'Pick start date' }));
-            expect(showPickerStart).toHaveBeenCalledTimes(1);
-            expect(showPickerEnd).not.toHaveBeenCalled();
-
+            expect(screen.getByRole('dialog', { name: /^Start date/ })).toBeTruthy();
+            fireEvent.click(screen.getByRole('button', { name: 'Pick start date' }));
             fireEvent.click(screen.getByRole('button', { name: 'Pick end date' }));
-            expect(showPickerEnd).toHaveBeenCalledTimes(1);
-            expect(showPickerStart).toHaveBeenCalledTimes(1);
+            expect(screen.getByRole('dialog', { name: /^End date/ })).toBeTruthy();
+            expect(screen.queryByRole('dialog', { name: /^Start date/ })).toBeNull();
         });
 
-        it('clicking the date text does NOT pop the picker over it (typing stays possible) and typing still changes the period', () => {
+        it('clicking the date text opens no calendar, and typing a complete date changes the period and reads 24-hour', () => {
             render1();
-            const startInput = screen.getByPlaceholderText('Start Date') as HTMLInputElement;
-            const showPickerStart = vi.fn();
-            (startInput as any).showPicker = showPickerStart;
-            fireEvent.click(startInput);
-            expect(showPickerStart).not.toHaveBeenCalled();
+            fireEvent.click(startInput());
+            expect(screen.queryByRole('dialog')).toBeNull();
 
-            fireEvent.change(startInput, { target: { value: '2024-01-02T03:04' } });
-            expect(startInput.value).toBe('2024-01-02T03:04');
+            fireEvent.change(startInput(), { target: { value: '2024/01/02 15:04' } });
+            expect(startInput().value).toBe('2024/01/02 15:04');
+            const lastCall = last(mockUseChartData.mock.calls)![0] as any;
+            expect(lastCall.filter.timestamp_start).toBe('2024-01-02T15:04');
         });
 
-        it('falls back to focusing the input when showPicker() is unsupported or refused', () => {
+        it('an unfinished date keeps what is being typed and does not touch the period', () => {
             render1();
-            const startInput = screen.getByPlaceholderText('Start Date') as HTMLInputElement;
-            const endInput = screen.getByPlaceholderText('End Date') as HTMLInputElement;
-            (startInput as any).showPicker = undefined;
-            expect(() => fireEvent.click(screen.getByRole('button', { name: 'Pick start date' }))).not.toThrow();
-            expect(document.activeElement).toBe(startInput);
+            fireEvent.change(startInput(), { target: { value: '2024/01/02 15:04' } });
+            fireEvent.change(startInput(), { target: { value: '2024/01/0' } });
+            expect(startInput().value).toBe('2024/01/0');
+            const lastCall = last(mockUseChartData.mock.calls)![0] as any;
+            expect(lastCall.filter.timestamp_start).toBe('2024-01-02T15:04');
+            fireEvent.blur(startInput());
+            expect(startInput().value).toBe('2024/01/02 15:04');
+        });
 
-            (endInput as any).showPicker = () => { throw new DOMException('not allowed', 'NotAllowedError'); };
-            expect(() => fireEvent.click(screen.getByRole('button', { name: 'Pick end date' }))).not.toThrow();
-            expect(document.activeElement).toBe(endInput);
+        it('leaving the field blank clears that side of the period', () => {
+            render1();
+            fireEvent.change(startInput(), { target: { value: '2024/01/02 15:04' } });
+            fireEvent.change(startInput(), { target: { value: '' } });
+            fireEvent.blur(startInput());
+            const lastCall = last(mockUseChartData.mock.calls)![0] as any;
+            expect(lastCall.filter.timestamp_start).toBeNull();
         });
 
         it('layout inside the `.timebar-range` pill: start input, its calendar, the arrow, end input, its calendar', () => {
             render1();
-            const wrapper = screen.getByPlaceholderText('Start Date').closest('.timebar-range')!;
+            const wrapper = startInput().closest('.timebar-range')!;
             const shape = Array.from(wrapper.children).map(c =>
                 c.tagName === 'INPUT' ? 'input' : c.classList.contains('timebar-cal') ? 'cal' : c.classList.contains('timebar-range-sep') ? 'sep' : c.tagName.toLowerCase());
             expect(shape).toEqual(['input', 'cal', 'sep', 'input', 'cal']);
@@ -3630,7 +3632,7 @@ describe('Dashboard', () => {
             it('drops back to outline-only (stays selected, stops claiming "applied") when Start is edited by hand after Apply', () => {
                 renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });
                 fireEvent.click(screen.getByTitle('Apply relative range'));
-                fireEvent.change(screen.getByPlaceholderText('Start Date'), { target: { value: '2020-01-01T00:00' } });
+                fireEvent.change(screen.getByLabelText('Start date'), { target: { value: '2020-01-01T00:00' } });
                 const btn = dayBtn();
                 expect(btn.className).not.toContain('is-active');
                 expect(btn.className).toContain('is-selected'); // still selected
@@ -3639,7 +3641,7 @@ describe('Dashboard', () => {
             it('drops back to outline-only when End is edited by hand after Apply', () => {
                 renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });
                 fireEvent.click(screen.getByTitle('Apply relative range'));
-                fireEvent.change(screen.getByPlaceholderText('End Date'), { target: { value: '2020-01-02T00:00' } });
+                fireEvent.change(screen.getByLabelText('End date'), { target: { value: '2020-01-02T00:00' } });
                 const btn = dayBtn();
                 expect(btn.className).not.toContain('is-active');
                 expect(btn.className).toContain('is-selected');
@@ -3672,7 +3674,7 @@ describe('Dashboard', () => {
             it('re-solid-fills after clicking Apply again', () => {
                 renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });
                 fireEvent.click(screen.getByTitle('Apply relative range'));
-                fireEvent.change(screen.getByPlaceholderText('Start Date'), { target: { value: '2020-01-01T00:00' } });
+                fireEvent.change(screen.getByLabelText('Start date'), { target: { value: '2020-01-01T00:00' } });
                 fireEvent.click(screen.getByTitle('Apply relative range'));
                 const btn = dayBtn();
                 expect(btn.className).toContain('is-active');
@@ -3835,8 +3837,9 @@ describe('Dashboard', () => {
                 bounds: { min: '2020-01-01T00:00:00', max: '2026-08-01T00:00:00' },
                 loading: false, error: null,
             });
-            fireEvent.change(screen.getByPlaceholderText('Start Date'), { target: { value: '2020-01-01T00:00' } });
-            fireEvent.change(screen.getByPlaceholderText('Start Date'), { target: { value: '' } });
+            fireEvent.change(screen.getByLabelText('Start date'), { target: { value: '2020-01-01T00:00' } });
+            fireEvent.change(screen.getByLabelText('Start date'), { target: { value: '' } });
+            fireEvent.blur(screen.getByLabelText('Start date'));
             lastCall = last(mockUseChartData.mock.calls)![0] as any;
             expect(lastCall.filter.timestamp_start).toBeNull();
         });

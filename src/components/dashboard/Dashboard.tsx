@@ -31,6 +31,7 @@ import { NOT_IN_GROUP, appendFailureGroup, applyFailureGroupDetails, isDuplicate
 import { getFgGroupColor } from '../../utils/failureGroupColor';
 import { realFailureGroups } from '../../utils/failureGroupSummary';
 import HighlightsPanel from './HighlightsPanel';
+import { DateTime24Input } from '../windows/DateTime24Input';
 import ColourPicker from '../sensor/ColourPicker';
 import { SensorLabel, SensorSetProvider } from '../sensor/SensorLabel';
 import { SensorMetaContext, useLayeredSensorLookup } from '../sensor/sensorInfo';
@@ -48,7 +49,7 @@ import { applyRecipeRule, recipesDiffer } from '../../utils/incompleteRule';
 
 import { WebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { message } from '@tauri-apps/plugin-dialog';
-import { Plus, EyeOff, BarChart3, Radio, Calendar, ArrowLeft, Check, Trash2, LineChart as LineChartIcon, X, RotateCcw } from 'lucide-react';
+import { Plus, EyeOff, BarChart3, Radio, ArrowLeft, Check, Trash2, LineChart as LineChartIcon, X, RotateCcw } from 'lucide-react';
 import { debugLog } from '../../utils/debugLog';
 import { formatDateTime } from '../../utils/dateFormat';
 
@@ -174,18 +175,6 @@ const subtractRelativeAmount = (end: Date, unit: RelativeRangeUnit, n: number): 
 // Stable empty array for the line chart's unused row-based `data` prop
 // (the chart consumes the bounded `columnar` feed instead).
 const EMPTY_RECORDS: CsvRecord[] = [];
-
-/** Opens a date input's native picker from its calendar button. `showPicker()`
- *  is missing on older engines and throws when the engine refuses it (no user
- *  activation, input disabled); falling back to focus at least puts the caret
- *  in the field so the date can be typed. */
-const openNativePicker = (input: HTMLInputElement | null) => {
-    if (!input) return;
-    try {
-        if (typeof input.showPicker === 'function') { input.showPicker(); return; }
-    } catch { /* fall through to focus */ }
-    input.focus();
-};
 
 // Build the gutter element split.js inserts between panels. We use a wider
 // hit-target (12px) with a thin centered line so the resize handle is easy
@@ -1208,14 +1197,6 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     // collapse/expand changes whether the split should exist at all.
     const leftColumnRef = useRef<HTMLDivElement>(null);
     const rightColumnRef = useRef<HTMLDivElement>(null);
-    // Lets the `.timebar-range` row's per-side calendar buttons open the
-    // native picker of their Start/End datetime-local input, instead of
-    // relying on the browser-drawn `::-webkit-calendar-picker-indicator`
-    // pseudo-element (hidden in App.css — how visible it ends up is up to
-    // WebView2). One working calendar button PER input (see the `.timebar`
-    // JSX below).
-    const timeRangeStartRef = useRef<HTMLInputElement>(null);
-    const timeRangeEndRef = useRef<HTMLInputElement>(null);
     const slotLTRef = useRef<HTMLDivElement>(null);
     const slotLBRef = useRef<HTMLDivElement>(null);
     const slotRTRef = useRef<HTMLDivElement>(null);
@@ -2239,7 +2220,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         return undefined;
     }, [datasetBounds]);
 
-    // Format timestamp for datetime-local input
+    // Format timestamp for a date field
     const formatForInput = useCallback((dateStr: string) => {
         try {
             const date = new Date(dateStr);
@@ -2254,6 +2235,8 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     // Display values: show data range when filter is empty
     const displayTimestampStart = filters.timestampStart || (dataRange ? formatForInput(dataRange.min) : '');
     const displayTimestampEnd = filters.timestampEnd || (dataRange ? formatForInput(dataRange.max) : '');
+    const dataStartInput = dataRange ? formatForInput(dataRange.min) : undefined;
+    const dataEndInput = dataRange ? formatForInput(dataRange.max) : undefined;
 
     const applyRelativeRange = useCallback(() => {
         const n = parseFloat(relativeAmount);
@@ -2416,51 +2399,45 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                 sub-controls; the `.timebar-datarange` text on the right states
                 the loaded data's own range. */}
             <div className="timebar">
-                {/* Each side has its OWN calendar button that opens THAT input's
-                    native picker. Clicking the date text itself is plain native
-                    editing (type the digits). */}
+                {/* Each side has its OWN calendar button. An unfinished date changes
+                    nothing: clearing the filter here would put the full data range
+                    over what is being typed. Leaving the field blank clears it. */}
                 <div className="timebar-range">
-                    <input
-                        ref={timeRangeStartRef}
-                        type="datetime-local"
+                    <DateTime24Input
+                        ariaLabel="Start date"
+                        calClassName="timebar-cal"
+                        calLabel="Pick start date"
                         value={displayTimestampStart}
-                        onChange={(e) => {
-                            handleFiltersChange({ ...filters, timestampStart: e.target.value });
+                        min={dataStartInput}
+                        max={dataEndInput}
+                        onChange={(value) => {
+                            if (!value) return;
+                            handleFiltersChange({ ...filters, timestampStart: value });
                             setRelativeRangeApplied(false);
                         }}
-                        placeholder="Start Date"
-                        aria-label="Start date"
+                        onClear={() => {
+                            handleFiltersChange({ ...filters, timestampStart: '' });
+                            setRelativeRangeApplied(false);
+                        }}
                     />
-                    <button
-                        type="button"
-                        className="timebar-cal"
-                        aria-label="Pick start date"
-                        title="Pick start date"
-                        onClick={() => openNativePicker(timeRangeStartRef.current)}
-                    >
-                        <Calendar size={13} aria-hidden="true" />
-                    </button>
                     <span className="timebar-range-sep">→</span>
-                    <input
-                        ref={timeRangeEndRef}
-                        type="datetime-local"
+                    <DateTime24Input
+                        ariaLabel="End date"
+                        calClassName="timebar-cal"
+                        calLabel="Pick end date"
                         value={displayTimestampEnd}
-                        onChange={(e) => {
-                            handleFiltersChange({ ...filters, timestampEnd: e.target.value });
+                        min={dataStartInput}
+                        max={dataEndInput}
+                        onChange={(value) => {
+                            if (!value) return;
+                            handleFiltersChange({ ...filters, timestampEnd: value });
                             setRelativeRangeApplied(false);
                         }}
-                        placeholder="End Date"
-                        aria-label="End date"
+                        onClear={() => {
+                            handleFiltersChange({ ...filters, timestampEnd: '' });
+                            setRelativeRangeApplied(false);
+                        }}
                     />
-                    <button
-                        type="button"
-                        className="timebar-cal"
-                        aria-label="Pick end date"
-                        title="Pick end date"
-                        onClick={() => openNativePicker(timeRangeEndRef.current)}
-                    >
-                        <Calendar size={13} aria-hidden="true" />
-                    </button>
                 </div>
 
                 <span className="timebar-hint">Last</span>
@@ -2671,6 +2648,8 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                         onRemoveValueHighlightRange={handleRemoveValueHighlightRange}
                         onRecolorValueHighlightRange={handleRecolorValueHighlightRange}
                         chartType={chartType}
+                        dataStart={dataStartInput}
+                        dataEnd={dataEndInput}
                     />
                 ) : (
                     <div className="custom-scrollbar" style={{ display: 'flex', flexDirection: 'column', height: '100%', overflowY: 'auto' }}>

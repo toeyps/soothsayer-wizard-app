@@ -58,12 +58,30 @@ describe('HighlightsPanel', () => {
             const onAddTimeHighlight = vi.fn();
             render(<HighlightsPanel {...makeProps({ onAddTimeHighlight })} />);
             fireEvent.change(screen.getByPlaceholderText('Label (optional)'), { target: { value: 'Startup' } });
-            const dtInputs = document.querySelectorAll('input[type="datetime-local"]');
-            fireEvent.change(dtInputs[0], { target: { value: '2026-01-01T00:00' } });
-            fireEvent.change(dtInputs[1], { target: { value: '2026-01-01T01:00' } });
+            const start = screen.getByLabelText('Highlight start') as HTMLInputElement;
+            const end = screen.getByLabelText('Highlight end') as HTMLInputElement;
+            fireEvent.change(start, { target: { value: '2026/01/01 00:00' } });
+            fireEvent.change(end, { target: { value: '2026/01/01 13:00' } });
             fireEvent.click(screen.getByText('+ Add'));
-            expect(onAddTimeHighlight).toHaveBeenCalledWith('2026-01-01T00:00', '2026-01-01T01:00', 'Startup');
+            expect(onAddTimeHighlight).toHaveBeenCalledWith('2026-01-01T00:00', '2026-01-01T13:00', 'Startup');
             expect((screen.getByPlaceholderText('Label (optional)') as HTMLInputElement).value).toBe('');
+            expect(start.value).toBe('');
+            expect(end.value).toBe('');
+        });
+
+        it('the two date fields are always 24-hour text, never a native datetime field', () => {
+            render(<HighlightsPanel {...makeProps()} />);
+            expect(document.querySelector('input[type="datetime-local"]')).toBeNull();
+            expect((screen.getByLabelText('Highlight start') as HTMLInputElement).type).toBe('text');
+            expect((screen.getByLabelText('Highlight end') as HTMLInputElement).type).toBe('text');
+        });
+
+        it('the calendar opens on the first month of the data and days outside it cannot be picked', () => {
+            render(<HighlightsPanel {...makeProps({ dataStart: '2025-03-10T08:00', dataEnd: '2025-04-20T17:30' })} />);
+            fireEvent.click(screen.getAllByLabelText('Open date picker')[0]);
+            expect(screen.getByTestId('dt24-month').textContent).toBe('March 2025');
+            expect((screen.getByLabelText('2025-03-09') as HTMLButtonElement).disabled).toBe(true);
+            expect((screen.getByLabelText('2025-03-10') as HTMLButtonElement).disabled).toBe(false);
         });
 
         // One date format in the whole app (2026-10-12): the chip used to read "3/14 21:25 → 3/15 08:00".
@@ -94,9 +112,8 @@ describe('HighlightsPanel', () => {
         it('rejects start >= end with an inline error', () => {
             const onAddTimeHighlight = vi.fn();
             render(<HighlightsPanel {...makeProps({ onAddTimeHighlight })} />);
-            const dtInputs = document.querySelectorAll('input[type="datetime-local"]');
-            fireEvent.change(dtInputs[0], { target: { value: '2026-01-01T02:00' } });
-            fireEvent.change(dtInputs[1], { target: { value: '2026-01-01T01:00' } });
+            fireEvent.change(screen.getByLabelText('Highlight start'), { target: { value: '2026/01/01 02:00' } });
+            fireEvent.change(screen.getByLabelText('Highlight end'), { target: { value: '2026/01/01 01:00' } });
             fireEvent.click(screen.getByText('+ Add'));
             expect(screen.getByText('Start must be before end')).toBeTruthy();
             expect(onAddTimeHighlight).not.toHaveBeenCalled();
