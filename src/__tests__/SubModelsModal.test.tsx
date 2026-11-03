@@ -309,14 +309,13 @@ describe('buildSubModelOption: long sensor names', () => {
         result: { predictor_raw: [[1], [2], [3]], target_raw: [1, 2, 3], predicted: [1, 2, 3], r2_per_step: Array(n).fill(0), rmse2_per_step: Array(n).fill(0) },
     };
 
-    it('the tooltip is a grid, with the start both names share printed once', () => {
+    it('the tooltip is a grid, with each whole name', () => {
         const info: Record<string, SensorInfo> = { B: { tag: 'B', description: LONG(1) }, T: { tag: 'T', description: LONG(2) } };
         const o: any = buildSubModelOption(fit, 'B', 'T', tag => info[tag]);
         const html: string = o.tooltip.formatter({ value: [2, 1.1], color: '#3b82f6', seriesName: 'Raw' });
         expect(html.startsWith('<div class="tt-grid"><div class="tt-title"')).toBe(true);
-        expect(html).toContain('class="tt-prefix"');
-        expect(html).toContain('<span class="tt-desc">SegmentNo 1 - avg</span>');
-        expect(html).toContain('<span class="tt-desc">SegmentNo 2 - avg</span>');
+        expect(html).toContain(`<span class="tt-desc">${LONG(1)}</span>`);
+        expect(html).toContain(`<span class="tt-desc">${LONG(2)}</span>`);
     });
 
     it('a tag-only sensor reads as its tag, also on the axis marks', () => {
@@ -325,7 +324,6 @@ describe('buildSubModelOption: long sensor names', () => {
         expect(getAxisNames(o)).toEqual({ x: { tag: 'B' }, y: { tag: 'T' } });
         const html: string = o.tooltip.formatter({ value: [2, 1.1], color: '#3b82f6', seriesName: 'Raw' });
         expect(html).toContain('<span class="tt-desc tt-mono">B</span>');
-        expect(html).not.toContain('tt-prefix');
     });
 });
 

@@ -1,9 +1,10 @@
 /**
  * Tooltip row layout for long sensor names (DESIGN_SYSTEM §4 rule 4, SPEC FINAL addition 2): the box is at most
  * 440 px, a row at most 418 px, the description gets the room first, the tag takes what is left, the value
- * never overlaps the name. A row that fits is unchanged.
+ * never overlaps the name. A row that fits is unchanged. Every tooltip has one look: the whole name, at most two
+ * lines, never a separate line for a shared start (user decision 2026-11-03).
  */
-import { afterPrefix, commonPrefix, displayedName, type NamedSensor } from './sensorNames';
+import { displayedName, splitName, type NamedSensor } from './sensorNames';
 import { monoFontFamily, textWidth, uiFontFamily, type MeasureText } from './textMeasure';
 
 export const TOOLTIP_BOX_MAX_PX = 440;
@@ -17,13 +18,18 @@ const UNKNOWN_VALUE_PX = 84;
 const TAG_MIN_PX = 24;
 /** Canvas reads the name slightly narrower than the DOM. */
 const NAME_SAFETY = 1.03;
+/** Two lines hold a little less than twice the room: a line breaks at a word. */
+const TWO_LINES = 1.8;
+/** The end kept from a name with no separator to cut at. */
+const CUT_TAIL_CHARS = 24;
 
 export interface TooltipRowInput extends NamedSensor {
     /** The tag only re-spells the description (rule 3b). */
     tagHidden?: boolean;
     valueText?: string;
-    /** A prefix printed once above the rows: the row prints the rest. */
-    prefix?: string;
+    /** What tells this row from one with the same description (`tooltipDistinctEnds`): printed after the name, in
+     *  place of the tag. */
+    distinct?: string;
 }
 
 export interface TooltipMeasureOptions {
@@ -47,33 +53,88 @@ export interface TooltipRowLayout {
     tagShown: boolean;
 }
 
+/** A name too long for two lines keeps its start and its end, cut in the middle at a word. */
+function fitTwoLines(name: string, room: number, width: (text: string) => number): string {
+    const budget = room * TWO_LINES;
+    if (width(name) <= budget) return name;
+    const sp = splitName(name);
+    const tail = (sp.head ? sp.tail : name.slice(-CUT_TAIL_CHARS)).trim();
+    const left = budget - width(` … ${tail}`);
+    let head = '';
+    for (const word of name.split(' ')) {
+        const next = head ? `${head} ${word}` : word;
+        if (width(next) > left) break;
+        head = next;
+    }
+    if (!head) {
+        const perChar = width(name) / name.length;
+        head = name.slice(0, Math.max(1, Math.floor(left / perChar)));
+    }
+    return `${head} … ${tail}`;
+}
+
 /** The layout of one tooltip row. Fonts as rendered: a tag printed as the name is mono. */
 export function layoutTooltipRow(row: TooltipRowInput, options: TooltipMeasureOptions = {}): TooltipRowLayout {
     const measure = options.measure ?? textWidth;
     const ui = options.uiFamily ?? uiFontFamily();
     const mono = options.monoFamily ?? monoFontFamily();
     const raw = displayedName(row);
-    const name = row.prefix ? afterPrefix(raw, row.prefix) : raw;
-    const nameW = measure(name, `500 11.5px ${row.description ? ui : mono}`) * NAME_SAFETY;
-    const hasTag = !!row.description && !row.tagHidden;
+    const full = row.distinct ? `${raw} · ${row.distinct}` : raw;
+    const font = `500 11.5px ${row.description ? ui : mono}`;
+    const width = (text: string) => measure(text, font) * NAME_SAFETY;
+    const nameW = width(full);
+    const hasTag = !!row.description && !row.tagHidden && !row.distinct;
     const tagW = hasTag ? measure(row.tag, `10px ${mono}`) : 0;
     const valueW = row.valueText ? measure(row.valueText, `600 11.5px ${mono}`) : UNKNOWN_VALUE_PX;
     const room = TOOLTIP_ROW_MAX_PX - SWATCH_PX - TOOLTIP_VALUE_GAP_PX - valueW;
     const onePx = SWATCH_PX + nameW + (hasTag ? TAG_GAP_PX + tagW : 0) + TOOLTIP_VALUE_GAP_PX + valueW;
     const left = hasTag ? Math.max(0, room - nameW - TAG_GAP_PX) : 0;
     const tagShown = hasTag && left >= Math.min(TAG_MIN_PX, tagW);
+    const wraps = onePx > TOOLTIP_ROW_MAX_PX;
     return {
-        name,
+        name: wraps ? fitTwoLines(full, Math.max(1, room), width) : full,
         onePx,
-        wraps: onePx > TOOLTIP_ROW_MAX_PX,
+        wraps,
         nameRoomPx: Math.max(0, Math.min(nameW, room)),
         tagRoomPx: tagShown ? Math.min(left, tagW) : 0,
         tagShown,
     };
 }
 
-/** Rule 2 in a tooltip: the start the rows share, printed once, only when a row would pass the limit. */
-export function tooltipSharedPrefix(rows: readonly TooltipRowInput[], options: TooltipMeasureOptions = {}): string {
-    const cand = commonPrefix(rows.map(displayedName));
-    return cand && rows.some(r => layoutTooltipRow({ ...r, prefix: undefined }, options).wraps) ? cand : '';
+/** The end of a tag once the text all the tags share is gone, back to the last word break. */
+function endAfterShared(tag: string, tags: readonly string[]): string {
+    let i = 0;
+    while (i < tag.length && tags.every(t => t[i] === tag[i])) i++;
+    while (i > 0 && !/[\s_.\-]/.test(tag[i - 1])) i--;
+    return tag.slice(i).replace(/^[\s_.\-]+/, '');
+}
+
+/**
+ * Rows with the same description are told apart only by their tags (real data: "… SegmentNo 1" for its avg, max and
+ * min). When a tag of such a group has no room, the end that differs would be lost, so the group gets its ends,
+ * by tag. Decided from the names alone, so it does not flip as the values change. Tags that fit change nothing.
+ */
+export function tooltipDistinctEnds(rows: readonly TooltipRowInput[], options: TooltipMeasureOptions = {}): Map<string, string> {
+    const ends = new Map<string, string>();
+    const measure = options.measure ?? textWidth;
+    const mono = options.monoFamily ?? monoFontFamily();
+    const groups = new Map<string, TooltipRowInput[]>();
+    for (const row of rows) {
+        if (!row.description || row.tagHidden) continue;
+        groups.set(row.description, [...(groups.get(row.description) ?? []), row]);
+    }
+    for (const group of groups.values()) {
+        if (group.length < 2) continue;
+        const allFit = group.every(row => {
+            const layout = layoutTooltipRow(row, options);
+            return layout.tagShown && layout.tagRoomPx >= measure(row.tag, `10px ${mono}`);
+        });
+        if (allFit) continue;
+        const tags = group.map(row => row.tag);
+        for (const tag of tags) {
+            const end = endAfterShared(tag, tags);
+            if (end) ends.set(tag, end);
+        }
+    }
+    return ends;
 }

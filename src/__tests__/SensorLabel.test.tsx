@@ -5,7 +5,7 @@ import {
 } from '../components/sensor/SensorLabel';
 import {
     axisRowHtml, buildSensorLookup, fmtNum, fmtNumExact, fmtNumText, plainRowHtml, plainSensorLookup, sameNameLoosely,
-    sensorHaystack, sensorInlineHtml, sensorPlainLabel, sensorTitle, sharedPrefixHtml, ttRowClass, useSensorLookup,
+    sensorHaystack, sensorInlineHtml, sensorPlainLabel, sensorTitle, ttRowClass, useSensorLookup,
 } from '../components/sensor/sensorInfo';
 // @ts-expect-error - @types/node is not installed; vitest runs in Node so this resolves at runtime
 import { readFileSync } from 'node:fs';
@@ -316,18 +316,10 @@ describe('tooltip rows: the value can never overlap the name (user complaint no.
         expect(html).toContain(`<span class="tt-desc tt-mono">${CROSSHEAD}</span>`);
     });
 
-    it('under a shared start the row prints the rest, for a tag-only row too; the title keeps the full name', () => {
-        const prefix = 'Crosshead (P-P Trend) - Vibration crosshead slide 11A';
-        const html = sensorInlineHtml({ tag: CROSSHEAD }, undefined, '5', prefix);
-        expect(html).toContain('>SegmentNo 1 - avg</span>');
-        expect(html).toContain(`title="${CROSSHEAD}"`);
-        expect(html).toContain('class="tt-row"');
-    });
-
-    it('sharedPrefixHtml prints the start once, escaped; nothing when there is none', () => {
-        expect(sharedPrefixHtml('')).toBe('');
-        expect(sharedPrefixHtml('A & B')).toContain('A &amp; B …');
-        expect(sharedPrefixHtml('A')).toContain('class="tt-prefix"');
+    it('a distinct end follows the description and takes the place of the tag', () => {
+        const html = sensorInlineHtml({ tag: `${CROSSHEAD} - max`, description: CROSSHEAD }, undefined, '5', 'max');
+        expect(html).toContain(`<span class="tt-desc">${CROSSHEAD} · max</span>`);
+        expect(html).not.toContain('tt-tag');
     });
 
     it('axisRowHtml puts the key in the swatch column; plainRowHtml lines up with it', () => {

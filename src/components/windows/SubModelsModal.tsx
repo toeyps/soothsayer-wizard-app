@@ -4,9 +4,9 @@ import { displayedName, familyPrefix } from '../../utils/sensorNames';
 import ResponsiveECharts from '../charts/ResponsiveECharts';
 import { isPickerSurfaceOpen } from '../sensor/SensorPicker';
 import { SensorInline, SensorSetProvider, SetPrefixLine } from '../sensor/SensorLabel';
-import { escapeHtml, safeColour, sensorInlineHtml, sharedPrefixHtml, useSensorLookup, type SensorInfo } from '../sensor/sensorInfo';
+import { escapeHtml, safeColour, sensorInlineHtml, useSensorLookup, type SensorInfo } from '../sensor/sensorInfo';
 import { withAxisNames } from '../../utils/axisName';
-import { tooltipSharedPrefix } from '../../utils/tooltipLayout';
+import { tooltipDistinctEnds } from '../../utils/tooltipLayout';
 import { sensorAxisTitle } from './workbench/healthCharts';
 import type { SubModelFit, SubModelFitsState } from './useSubModelFits';
 
@@ -92,12 +92,10 @@ export function buildSubModelOption(fit: SubModelFit, xSensor: string, targetSen
             formatter: (p: any) => {
                 const v = p.value as [number, number];
                 const c = safeColour(typeof p.color === 'string' ? p.color : undefined);
-                // The start both names share once, then name · value rows of one grid (rule 4).
-                const prefix = tooltipSharedPrefix([xInfo, yInfo]);
+                const ends = tooltipDistinctEnds([xInfo, yInfo]);
                 return `<div class="tt-grid"><div class="tt-title"${c ? ` style="color:${c}"` : ''}>${escapeHtml(String(p.seriesName ?? ''))}</div>`
-                    + sharedPrefixHtml(prefix)
-                    + sensorInlineHtml(xInfo, undefined, typeof v?.[0] === 'number' ? v[0].toFixed(4) : '—', prefix)
-                    + sensorInlineHtml(yInfo, undefined, typeof v?.[1] === 'number' ? v[1].toFixed(4) : '—', prefix)
+                    + sensorInlineHtml(xInfo, undefined, typeof v?.[0] === 'number' ? v[0].toFixed(4) : '—', ends.get(xInfo.tag))
+                    + sensorInlineHtml(yInfo, undefined, typeof v?.[1] === 'number' ? v[1].toFixed(4) : '—', ends.get(yInfo.tag))
                     + '</div>';
             },
         },

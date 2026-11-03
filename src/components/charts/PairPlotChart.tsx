@@ -4,11 +4,11 @@ import PairPlotCell, { HoverInfo, Cluster } from './PairPlotCell';
 import AxisLabel from './AxisLabel';
 import ClusterLegend from './ClusterLegend';
 import { nextClusterColour, nextClusterName } from './pairPlotClusters';
-import { SensorInline } from '../sensor/SensorLabel';
+import { TooltipRowName } from '../sensor/SensorLabel';
 import { SensorMetaContext, fmtNum, ttRowClass, useLayeredSensorLookup } from '../sensor/sensorInfo';
 import { commonPrefix, displayedName, splitInSet } from '../../utils/sensorNames';
 import { monoFontFamily, textWidth } from '../../utils/textMeasure';
-import { tooltipSharedPrefix } from '../../utils/tooltipLayout';
+import { tooltipDistinctEnds } from '../../utils/tooltipLayout';
 import { ChartProps, MAX_PAIR_PLOT_SENSORS } from './ChartTypes';
 import { formatDateTime } from '../../utils/dateFormat';
 import { formatDataStamp } from '../../utils/workbenchDate';
@@ -369,9 +369,8 @@ function PairPlotChart({ data, sensors, headers, sensorMetadata }: ChartProps) {
     const keyOf = (sensor: string) => (pairKey ? sensors.indexOf(sensor) + 1 : undefined);
     const tailOf = (sensor: string) => pairKey?.tails[sensors.indexOf(sensor)];
 
-    // Rule 4: the start the two rows share, printed once, when a row would otherwise pass the box's limit.
-    const hoverPrefix = useMemo(() => (
-        hover && !hover.isTimeAxis ? tooltipSharedPrefix([sensorLookup(hover.sensorX), sensorLookup(hover.sensorY)]) : ''
+    const hoverEnds = useMemo(() => (
+        hover && !hover.isTimeAxis ? tooltipDistinctEnds([sensorLookup(hover.sensorX), sensorLookup(hover.sensorY)]) : new Map<string, string>()
     ), [hover?.sensorX, hover?.sensorY, hover?.isTimeAxis, sensorLookup]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const expandToolboxRef = useRef<HTMLDivElement>(null);
@@ -618,7 +617,6 @@ function PairPlotChart({ data, sensors, headers, sensorMetadata }: ChartProps) {
                         zIndex: 200,
                     }}
                 >
-                    {hoverPrefix && <div className="tt-prefix">{hoverPrefix} …</div>}
                     {/* Inline label + value + unit. */}
                     {(() => {
                         const xInfo = sensorLookup(hover.sensorX);
@@ -627,14 +625,14 @@ function PairPlotChart({ data, sensors, headers, sensorMetadata }: ChartProps) {
                         const yText = `${fmtNum(hover.yVal)}${yInfo.unit ? ` ${yInfo.unit}` : ''}`;
                         return (
                             <>
-                                <div className={hover.isTimeAxis ? 'tt-row' : ttRowClass(xInfo, xText, hoverPrefix || undefined)}>
+                                <div className={hover.isTimeAxis ? 'tt-row' : ttRowClass(xInfo, xText, hoverEnds.get(hover.sensorX))}>
                                     <span className="tt-label">
-                                        {hover.isTimeAxis ? <span className="tt-desc">Time</span> : <SensorInline tag={hover.sensorX} size="sm" prefix={hoverPrefix || undefined} />}
+                                        {hover.isTimeAxis ? <span className="tt-desc">Time</span> : <TooltipRowName info={xInfo} valueText={xText} distinct={hoverEnds.get(hover.sensorX)} />}
                                     </span>
                                     <span className="tt-val">{xText}</span>
                                 </div>
-                                <div className={ttRowClass(yInfo, yText, hoverPrefix || undefined)}>
-                                    <span className="tt-label"><SensorInline tag={hover.sensorY} size="sm" prefix={hoverPrefix || undefined} /></span>
+                                <div className={ttRowClass(yInfo, yText, hoverEnds.get(hover.sensorY))}>
+                                    <span className="tt-label"><TooltipRowName info={yInfo} valueText={yText} distinct={hoverEnds.get(hover.sensorY)} /></span>
                                     <span className="tt-val">{yText}</span>
                                 </div>
                             </>

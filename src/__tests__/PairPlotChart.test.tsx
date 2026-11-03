@@ -992,7 +992,7 @@ describe('PairPlotChart: long sensor names (rule 5)', () => {
         expect(container.querySelector('.pair-regl-axis-card--long')).toBeNull();
     });
 
-    it('the hover tooltip prints the shared start once and the rows the rest', () => {
+    it('the hover tooltip prints each whole name', () => {
         wide();
         const meta = [
             { tag: 'A', description: LONG(1), unit: '', component: '' },
@@ -1001,8 +1001,7 @@ describe('PairPlotChart: long sensor names (rule 5)', () => {
         const { container } = render(<PairPlotChart data={rows} sensors={['A', 'B']} headers={['A', 'B']} sensorMetadata={meta} />);
         fireEvent.click(screen.getByText('hover-A-B'));
         const tip = container.querySelector('.scatter-regl-tooltip') as HTMLElement;
-        expect(tip.querySelector('.tt-prefix')!.textContent).toBe('Crosshead (P-P Trend) - Vibration crosshead slide 11A …');
-        expect([...tip.querySelectorAll('[data-name-part="tail"]')].map(n => n.textContent).sort()).toEqual([' SegmentNo 1 - avg', ' SegmentNo 2 - avg']);
+        expect([...tip.querySelectorAll('.tt-desc')].map(n => n.textContent).sort()).toEqual([LONG(1), LONG(2)]);
         expect(tip.querySelector('.tt-val')).toBeTruthy();
     });
 });

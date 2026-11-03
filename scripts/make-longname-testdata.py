@@ -172,7 +172,17 @@ for row_no in range(1, 100):
 n_wide = make_data('LN-wide-4748.csv', WIDE, 14, 60, 4)
 write_csv('LN-wide-4748-tags.csv', TAG_HEAD, [list(s) for s in WIDE])
 
+# Same description, tags that differ only at the end: the shape of a real tag-name file.
+SAME_DESC = []
+for seg in (1, 2):
+    desc = f'Crosshead (P-P Trend) - Vibration crosshead slide 11A - SegmentNo {seg}'
+    for end in ('avg', 'max', 'min'):
+        SAME_DESC.append((f'{desc} - {end}', desc, 'mm/s', 'Crosshead'))
+n_same = make_data('LN-same-description.csv', SAME_DESC, 30, 5, 5)
+write_csv('LN-same-description-tags.csv', TAG_HEAD, [list(s) for s in SAME_DESC])
+
 # ---------------------------------------------------------------- check + EXPECTED.txt
+count_same = check_pair('LN-same-description.csv', 'LN-same-description-tags.csv')
 count_long = check_pair('LN-long.csv', 'LN-long-tags.csv')
 check_pair('LN-long.csv', 'LN-long-tags-no-descriptions.csv')
 count_medium = check_pair('LN-medium.csv', 'LN-medium-tags.csv')
@@ -192,6 +202,7 @@ lines = [
     f'LN-long-tags-no-descriptions.csv: tag ชุดเดียวกับ LN-long.csv ({count_long} ตัว) ทุกแถวไม่มี description → sensor ทุกตัวแสดง tag อย่างเดียว',
     f'LN-medium.csv + LN-medium-tags.csv: {count_medium} sensor, {n_medium:,} แถว · ชื่อเช่น "Boiler feed pump A - Motor bearing DE temperature" (ต่างกันตรงกลาง A / B และ DE / NDE)',
     f'LN-short.csv + LN-short-tags.csv: {count_short} sensor, {n_short:,} แถว · ชื่อสั้นทุกตัว',
+    f'LN-same-description.csv + LN-same-description-tags.csv: {count_same} sensor, {n_same:,} แถว · description ซ้ำกัน tag ต่างกันแค่ท้าย avg / max / min',
     f'LN-wide-4748.csv + LN-wide-4748-tags.csv: {count_wide:,} sensor, {n_wide:,} แถว, ทุก 1 ชั่วโมง, 14 วัน · component 5 กลุ่ม (Crosshead, Piston rod, Packing, Valve cover, Machine)',
 ]
 with open(path('EXPECTED.txt'), 'w', encoding='utf-8') as f:

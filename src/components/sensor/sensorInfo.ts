@@ -258,8 +258,8 @@ export const safeColour = (c: string | undefined): string | undefined =>
 
 /** The class of a tooltip row: a row that would pass the tooltip's limit wraps its name (rule 4). A row
  *  that fits is plain `tt-row`, exactly as before. For a React row, pass what it prints. */
-export function ttRowClass(info: SensorInfo, valueText?: string, prefix?: string): string {
-    return layoutTooltipRow({ ...info, valueText, prefix }).wraps ? 'tt-row tt-row--wrap' : 'tt-row';
+export function ttRowClass(info: SensorInfo, valueText?: string, distinct?: string): string {
+    return layoutTooltipRow({ ...info, valueText, distinct }).wraps ? 'tt-row tt-row--wrap' : 'tt-row';
 }
 
 /**
@@ -267,11 +267,11 @@ export function ttRowClass(info: SensorInfo, valueText?: string, prefix?: string
  * no brackets), value + unit right-aligned in the series colour. Everything is escaped.
  * `.tt-row` is a grid with the value in its own column, so a long name can never run under it. The
  * description gets the room first: the tag takes what is left and is dropped when that is nothing.
- * `prefix`: a start printed once above the rows (`sharedPrefixHtml`); the row prints the rest.
+ * `distinct`: what tells the row from one with the same description (`tooltipDistinctEnds`).
  */
-export function sensorInlineHtml(info: SensorInfo, colour?: string, valueText?: string, prefix?: string): string {
+export function sensorInlineHtml(info: SensorInfo, colour?: string, valueText?: string, distinct?: string): string {
     const c = safeColour(colour);
-    const row = layoutTooltipRow({ ...info, valueText, prefix });
+    const row = layoutTooltipRow({ ...info, valueText, distinct });
     const name = escapeHtml(row.name);
     const label = info.description
         ? `<span class="tt-desc">${name}</span>${row.tagShown ? `<span class="tt-tag">${escapeHtml(info.tag)}</span>` : ''}`
@@ -284,8 +284,8 @@ export function sensorInlineHtml(info: SensorInfo, colour?: string, valueText?: 
 }
 
 /** A tooltip row with an axis key (X / Y) in the swatch column (Clusters, Compare). */
-export function axisRowHtml(key: string, info: SensorInfo, valueText: string, prefix?: string): string {
-    return sensorInlineHtml(info, undefined, valueText, prefix)
+export function axisRowHtml(key: string, info: SensorInfo, valueText: string): string {
+    return sensorInlineHtml(info, undefined, valueText)
         .replace('<span class="tt-label">', `<b class="tt-key">${escapeHtml(key)}</b><span class="tt-label">`);
 }
 
@@ -293,7 +293,3 @@ export function axisRowHtml(key: string, info: SensorInfo, valueText: string, pr
 export function plainRowHtml(label: string, valueText: string): string {
     return `<div class="tt-row"><b class="tt-key"></b><span class="tt-label"><span class="tt-desc">${escapeHtml(label)}</span></span><span class="tt-val">${escapeHtml(valueText)}</span></div>`;
 }
-
-/** The start the rows share, printed once above them (`tooltipSharedPrefix` decides it); '' prints nothing. */
-export const sharedPrefixHtml = (prefix: string): string =>
-    prefix ? `<div class="tt-prefix" title="Every sensor below starts with this">${escapeHtml(prefix)} …</div>` : '';

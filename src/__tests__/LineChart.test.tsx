@@ -1292,27 +1292,35 @@ describe('LineChart tooltip: long sensor names (rule 4)', () => {
     };
     const count = (html: string, needle: string) => html.split(needle).length - 1;
 
-    it('prints the shared start once and each row the rest, with its value in its own column', () => {
+    it('every row prints its whole name, with no line for a shared start, and its value in its own column', () => {
         const tags = ['A', 'B', 'C'];
         const meta = tags.map((tag, i) => ({ tag, description: LONG(i + 1), unit: 'mm/s', component: '' }));
         render(<LineChart data={[]} columnar={columnar(3)} sensors={tags} headers={tags} sensorMetadata={meta} />);
         const html = hoverHtml();
-        expect(count(html, 'class="tt-prefix"')).toBe(1);
-        expect(html).toContain('Crosshead (P-P Trend) - Vibration crosshead slide 11A …');
-        expect(html).toContain('<span class="tt-desc">SegmentNo 1 - avg</span>');
-        expect(html).toContain('<span class="tt-desc">SegmentNo 3 - avg</span>');
+        expect(html).not.toContain('…');
+        expect(html).toContain(`<span class="tt-desc">${LONG(1)}</span>`);
+        expect(html).toContain(`<span class="tt-desc">${LONG(3)}</span>`);
         expect(count(html, 'class="tt-val"')).toBe(3);
+    });
+
+    it('real data: rows with the same description read differently, each with the end of its tag', () => {
+        const desc = 'Crosshead (P-P Trend) - Vibration crosshead slide 11A - SegmentNo 1';
+        const tags = ['avg', 'max', 'min'].map(end => `${desc} - ${end}`);
+        const meta = tags.map(tag => ({ tag, description: desc, unit: '', component: '' }));
+        render(<LineChart data={[]} columnar={columnar(3)} sensors={tags} headers={tags} sensorMetadata={meta} />);
+        const html = hoverHtml();
+        for (const end of ['avg', 'max', 'min']) expect(html).toContain(`<span class="tt-desc">${desc} · ${end}</span>`);
+        expect(html).not.toContain('tt-tag');
     });
 
     it('a tag-only project follows the same rule, in mono', () => {
         const tags = [LONG(1), LONG(2)];
         render(<LineChart data={[]} columnar={columnar(2)} sensors={tags} headers={tags} />);
         const html = hoverHtml();
-        expect(count(html, 'class="tt-prefix"')).toBe(1);
-        expect(html).toContain('<span class="tt-desc tt-mono">SegmentNo 2 - avg</span>');
+        expect(html).toContain(`<span class="tt-desc tt-mono">${LONG(2)}</span>`);
     });
 
-    it('short names keep plain rows and no shared line', () => {
+    it('short names keep plain rows', () => {
         const tags = ['A', 'B'];
         const meta = [
             { tag: 'A', description: 'GENERATOR POWER', unit: 'MW', component: '' },
@@ -1320,7 +1328,6 @@ describe('LineChart tooltip: long sensor names (rule 4)', () => {
         ];
         render(<LineChart data={[]} columnar={columnar(2)} sensors={tags} headers={tags} sensorMetadata={meta} />);
         const html = hoverHtml();
-        expect(html).not.toContain('tt-prefix');
         expect(html).not.toContain('tt-row--wrap');
         expect(html).toContain('<span class="tt-desc">GENERATOR POWER</span><span class="tt-tag">A</span>');
     });

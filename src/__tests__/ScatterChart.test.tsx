@@ -967,16 +967,25 @@ describe('ScatterChart: long sensor names', () => {
         expect(made[1].inst.draw).toHaveBeenCalled();
     });
 
-    it('the tooltip prints the start both names share once and the rows the rest; a row that would pass the limit wraps', () => {
+    it('the tooltip prints each whole name; a row that would pass the limit wraps', () => {
         const { container } = render(<ScatterChart data={data} sensors={['A', 'B']} headers={headers} sensorMetadata={longMeta} />);
         act(() => { lastInstance!.__subs['pointover'](0); });
         const tip = container.querySelector('.scatter-regl-tooltip') as HTMLElement;
-        expect(tip.querySelector('.tt-prefix')!.textContent).toBe('Crosshead (P-P Trend) - Vibration crosshead slide 11A …');
-        const names = [...tip.querySelectorAll('.tt-row [data-name-part="tail"]')].map(n => n.textContent);
-        expect(names).toEqual([' SegmentNo 1 - avg', ' SegmentNo 2 - avg']);
+        expect([...tip.querySelectorAll('.tt-desc')].map(n => n.textContent)).toEqual(longMeta.map(m => m.description));
+        expect(tip.querySelector('.tt-row--wrap')).toBeTruthy();
     });
 
-    it('short names keep the plain tooltip rows, no shared line', () => {
+    it('real data: X and Y with the same description read differently, each with the end of its tag', () => {
+        const desc = 'Crosshead (P-P Trend) - Vibration crosshead slide 11A - SegmentNo 1';
+        const tags = [`${desc} - avg`, `${desc} - max`];
+        const meta = tags.map(tag => ({ tag, description: desc, unit: '', component: '' }));
+        const { container } = render(<ScatterChart data={data} sensors={tags} headers={tags} sensorMetadata={meta} />);
+        act(() => { lastInstance!.__subs['pointover'](0); });
+        const tip = container.querySelector('.scatter-regl-tooltip') as HTMLElement;
+        expect([...tip.querySelectorAll('.tt-desc')].map(n => n.textContent)).toEqual([`${desc} · avg`, `${desc} · max`]);
+    });
+
+    it('short names keep the plain tooltip rows', () => {
         const meta = [
             { tag: 'A', description: 'GENERATOR POWER', unit: 'MW', component: '' },
             { tag: 'B', description: 'BEARING TEMP', unit: 'DEGC', component: '' },
@@ -984,7 +993,6 @@ describe('ScatterChart: long sensor names', () => {
         const { container } = render(<ScatterChart data={data} sensors={['A', 'B']} headers={headers} sensorMetadata={meta} />);
         act(() => { lastInstance!.__subs['pointover'](0); });
         const tip = container.querySelector('.scatter-regl-tooltip') as HTMLElement;
-        expect(tip.querySelector('.tt-prefix')).toBeNull();
         expect([...tip.querySelectorAll('.tt-row')].map(r => r.className)).toEqual(['tt-row', 'tt-row']);
     });
 

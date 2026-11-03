@@ -6289,16 +6289,6 @@ body {
 }
 .tt-row--wrap .tt-label .sl-split,
 .tt-row--wrap .tt-label .sl-split > [data-name-part] { display: inline; white-space: normal; overflow: visible; }
-/* The start the rows share, printed once. */
-.tt-prefix {
-    max-width: 418px;
-    margin: 0 0 4px;
-    padding-bottom: 4px;
-    border-bottom: 1px solid var(--border);
-    font-size: 11px;
-    color: var(--text-secondary);
-    white-space: normal;
-}
 /* ECharts tooltip with a title (Clusters, Compare). */
 .tt-grid { max-width: 440px; white-space: normal; }
 .tt-title { margin-bottom: 4px; font-family: Inter, system-ui, sans-serif; font-weight: 600; }

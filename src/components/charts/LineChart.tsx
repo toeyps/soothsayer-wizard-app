@@ -3,8 +3,8 @@ import { Tag, Trash2, Search, ZoomIn, ZoomOut } from 'lucide-react';
 import ResponsiveECharts from './ResponsiveECharts';
 import { ChartProps } from './ChartTypes';
 import { formatAxisTick, formatDateTime } from '../../utils/dateFormat';
-import { fmtNum, sensorInlineHtml, sharedPrefixHtml, useLayeredSensorLookup } from '../sensor/sensorInfo';
-import { tooltipSharedPrefix } from '../../utils/tooltipLayout';
+import { fmtNum, sensorInlineHtml, useLayeredSensorLookup } from '../sensor/sensorInfo';
+import { tooltipDistinctEnds } from '../../utils/tooltipLayout';
 import { hexToRgbaCss, rgbaToHex, RANGE_PALETTE, TAG_BADGES, MAX_TAGGED_POINTS } from './pairPlotColors';
 import type { LineTaggedPoint } from '../../types';
 import { firstFreeColorIndex, sortTagsByTime } from './TaggedPointList';
@@ -798,10 +798,7 @@ function LineChart({
                     const maxItems = 10;
                     const at = nearestMsIndex(xMs, xSorted, Number(pList[0].axisValue));
                     const shown = tipSeries.slice(0, maxItems);
-                    // The start the rows share, once on top, when a row would otherwise pass the box's limit
-                    // (rule 4). Decided from the names alone, so it does not flip as the values change.
-                    const prefix = tooltipSharedPrefix(shown.map(t => sensorLookup(t.sensor)));
-                    content += sharedPrefixHtml(prefix);
+                    const ends = tooltipDistinctEnds(shown.map(t => sensorLookup(t.sensor)));
                     shown.forEach(({ sensor, color, values }) => {
                         const rawValue = at >= 0 ? values[at] : null;
                         // Aggregated values (Avg etc.) are raw floating-point
@@ -815,7 +812,7 @@ function LineChart({
                         // right in the series colour. Unit from master data —
                         // absent unit → omitted.
                         const info = sensorLookup(sensor);
-                        content += sensorInlineHtml(info, color, `${displayValue}${hasValue && info.unit ? ` ${info.unit}` : ''}`, prefix);
+                        content += sensorInlineHtml(info, color, `${displayValue}${hasValue && info.unit ? ` ${info.unit}` : ''}`, ends.get(info.tag));
                     });
                     return content;
                 }

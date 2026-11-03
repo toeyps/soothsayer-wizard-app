@@ -66,11 +66,12 @@
 
 | ไฟล์ | คืออะไร | ใช้ในข้อ |
 |---|---|---|
-| `LN-long.csv` + `LN-long-tags.csv` | 42 sensor 30 วัน ทุก 5 นาที: Crosshead 24 ตัว ชื่อขึ้นต้นเหมือนกัน ต่างที่ท้าย เช่น `Crosshead (P-P Trend) - Vibration crosshead slide 11A - SegmentNo 1 - avg` (tag แค่สะกดต่างจากชื่อ), Cylinder 6 ตัว (tag ต่างจากชื่อจริง), Analyzer 4 ตัว (ชื่อยาวไม่มี " - "), ชื่อไม่มีช่องว่าง 2 ตัว, ชื่อสั้น + tag ยาวมาก 1 ตัว, ชื่อเกิน 150 ตัวอักษร 1 ตัว, ไม่มี description 2 ตัว | LN-31, LN-32, LN-7 ถึง LN-21, LN-35 ถึง LN-28, LN-30 |
+| `LN-long.csv` + `LN-long-tags.csv` | 42 sensor 30 วัน ทุก 5 นาที: Crosshead 24 ตัว ชื่อขึ้นต้นเหมือนกัน ต่างที่ท้าย เช่น `Crosshead (P-P Trend) - Vibration crosshead slide 11A - SegmentNo 1 - avg` (tag แค่สะกดต่างจากชื่อ), Cylinder 6 ตัว (tag ต่างจากชื่อจริง), Analyzer 4 ตัว (ชื่อยาวไม่มี " - "), ชื่อไม่มีช่องว่าง 2 ตัว, ชื่อสั้น + tag ยาวมาก 1 ตัว, ชื่อเกิน 150 ตัวอักษร 1 ตัว, ไม่มี description 2 ตัว | LN-31, LN-32, LN-37 ถึง LN-21, LN-35 ถึง LN-28, LN-30 |
 | `LN-long.csv` + `LN-long-tags-no-descriptions.csv` | ข้อมูลเดียวกัน ทุกแถวไม่มี description: sensor ทุกตัวแสดง tag อย่างเดียว (ไฟล์ Tag names ต้องมีเสมอ นี่คือวิธีเดียวที่จะได้โปรเจกต์แบบนี้) | LN-29 |
 | `LN-medium.csv` + `LN-medium-tags.csv` | 13 sensor: ชื่อเช่น `Boiler feed pump A - Motor bearing DE temperature` ต่างกันตรงกลาง (A / B, DE / NDE) | LN-3, LN-15, LN-33, LN-34, LN-35 |
 | `LN-short.csv` + `LN-short-tags.csv` | 8 sensor ชื่อสั้น ต้องหน้าตาเหมือนเดิม | LN-2, LN-11, LN-15 |
 | `LN-wide-4748.csv` + `LN-wide-4748-tags.csv` | 4,748 sensor 14 วัน ทุก 1 ชั่วโมง: รายการยาวมาก | LN-31, LN-6, LN-22, LN-36 |
+| `LN-same-description.csv` + `LN-same-description-tags.csv` | 6 sensor: description ซ้ำกัน tag ต่างกันแค่ท้าย avg / max / min แบบไฟล์จริง | LN-38 |
 | `EXPECTED.txt` | จำนวน sensor และแถวของทุกไฟล์ | LN-1 |
 
 ### `C:\WizardTestData\IMP` — ชุดไฟล์ PREP-6 และเครื่องสำหรับ MULTI / WFE / WFF
@@ -300,6 +301,7 @@ LN-1 => LN-long.csv, LN-long-tags.csv, LN-long-tags-no-descriptions.csv, LN-medi
 LN-2 => โปรเจกต์ LN · Short (LN-short.csv, LN-short-tags.csv)
 LN-3 => โปรเจกต์ LN · Medium (LN-medium.csv, LN-medium-tags.csv)
 LN-6 LN-22 => โปรเจกต์ LN · Wide (LN-wide-4748.csv, LN-wide-4748-tags.csv)
+LN-38 => LN-same-description.csv, LN-same-description-tags.csv
 LN-29 => โปรเจกต์ LN · Tag only (LN-long.csv, LN-long-tags-no-descriptions.csv)
 PREP-5 => โปรเจกต์ A = GEG-3.csv, GEG-tags.csv · โปรเจกต์ B = CMP-1.csv, CMP-1-tags.csv
 IMP-2 IMP-27..29 IMP-56..59 IMP-100..105 IMP-107..113 => โปรเจกต์อะไรก็ได้ (สร้างจาก IMP-normal.csv, IMP-normal-tags-exact.csv หรือชุด WF)

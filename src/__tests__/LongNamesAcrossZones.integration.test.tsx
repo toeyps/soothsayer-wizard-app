@@ -70,7 +70,6 @@ import { SensorPickerMulti, SensorPickerSingle } from '../components/sensor/Sens
 import { buildSensorLookup, plainSensorLookup, sensorInlineHtml } from '../components/sensor/sensorInfo';
 import { tagFileBlockReason } from '../components/upload/setupHelpers';
 import { buildSensorMetadataFromMapping } from '../hooks/useMappingData';
-import { tooltipSharedPrefix } from '../utils/tooltipLayout';
 import { emit } from '@tauri-apps/api/event';
 import { longName, restoreNames, stubNamesCut, stubNamesFit } from './helpers/nameGeometry';
 import { openPickerSurface, pickerRows, pickerSearch } from './helpers/sensorPicker';
@@ -151,16 +150,13 @@ describe('(1) a tag-name file with every description blank: a tag-only project f
         expect(onSelect).toHaveBeenCalledWith(tags[1]);
     });
 
-    it('tooltip rows: the tag is printed once, in its mono form, and the start is shared across the rows', () => {
+    it('tooltip rows: the tag is printed once, whole, in its mono form', () => {
         const lookup = buildSensorLookup(plainSensorLookup, metadata());
         const infos = tags.map(lookup);
-        const prefix = tooltipSharedPrefix(infos);
-        expect(prefix).toBe(SHARED);
-        const html = sensorInlineHtml(infos[1], '#fff', '1.5 mm/s', prefix);
+        const html = sensorInlineHtml(infos[1], '#fff', '1.5 mm/s');
         const row = document.createElement('div');
         row.innerHTML = html;
-        expect(row.textContent).toContain('SegmentNo 2 - avg');
-        expect(row.textContent).not.toContain('Crosshead');
+        expect(row.textContent).toContain(`${SHARED} - SegmentNo 2 - avg`);
         expect(row.querySelectorAll('.tt-desc.tt-mono')).toHaveLength(1);
         expect(row.querySelector('.tt-tag')).toBeNull();
     });

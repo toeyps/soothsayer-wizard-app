@@ -8,11 +8,11 @@ import { firstMatchingHighlight } from '../../utils/timeHighlights';
 import { formatDataStamp } from '../../utils/workbenchDate';
 import { readWallClock } from '../../utils/dateFormat';
 import { SensorPickerSingle } from '../sensor/SensorPicker';
-import { FxBadge, SensorInline } from '../sensor/SensorLabel';
+import { FxBadge, TooltipRowName } from '../sensor/SensorLabel';
 import { SensorMetaContext, fmtNum, sensorTitle, ttRowClass, useLayeredSensorLookup, type SensorInfo } from '../sensor/sensorInfo';
 import { scatterAxisTitle, type ScatterAxisTitle } from '../../utils/axisName';
 import { monoFontFamily, uiFontFamily } from '../../utils/textMeasure';
-import { tooltipSharedPrefix } from '../../utils/tooltipLayout';
+import { tooltipDistinctEnds } from '../../utils/tooltipLayout';
 import { hexToRgba, rgbaToHex, RANGE_PALETTE, TAG_BADGES, MAX_TAGGED_POINTS } from './pairPlotColors';
 import { reportError } from '../../errorReporter';
 import { useCoalescedDraw } from '../../hooks/useCoalescedDraw';
@@ -127,11 +127,11 @@ function AxisTitle({ axis, info, style, fit }: { axis: 'x' | 'y'; info: SensorIn
 
 /** One value row of the hover tooltip: inline label left, value + unit right
  *  (DESIGN_SYSTEM §4 "Tooltips and value boxes"). */
-function ValueRow({ info, value, prefix }: { info: SensorInfo; value: unknown; prefix?: string }) {
+function ValueRow({ info, value, distinct }: { info: SensorInfo; value: unknown; distinct?: string }) {
     const valueText = `${typeof value === 'number' ? fmtNum(value) : '—'}${info.unit ? ` ${info.unit}` : ''}`;
     return (
-        <div className={ttRowClass(info, valueText, prefix)}>
-            <span className="tt-label"><SensorInline tag={info.tag} info={info} size="sm" prefix={prefix} /></span>
+        <div className={ttRowClass(info, valueText, distinct)}>
+            <span className="tt-label"><TooltipRowName info={info} valueText={valueText} distinct={distinct} /></span>
             <span className="tt-val">{valueText}</span>
         </div>
     );
@@ -866,10 +866,9 @@ function ScatterChart({
             origIdx,
         };
     }, [hoveredIdx, sc, data, scatterX, scatterY, headers, innerDims.width, innerDims.height, sensorLookup]);
-    // Rule 4: the start the two rows share, printed once, when a row would otherwise pass the box's limit.
     const hasTooltip = !!tooltip;
-    const tooltipPrefix = useMemo(() => (
-        hasTooltip ? tooltipSharedPrefix([sensorLookup(scatterX), sensorLookup(scatterY)]) : ''
+    const tooltipEnds = useMemo(() => (
+        hasTooltip ? tooltipDistinctEnds([sensorLookup(scatterX), sensorLookup(scatterY)]) : new Map<string, string>()
     ), [hasTooltip, scatterX, scatterY, sensorLookup]);
 
     // Screen positions of every tagged point's ring. Recomputes
@@ -1129,9 +1128,8 @@ function ScatterChart({
                 {tooltip && (
                     <div className="scatter-regl-tooltip" style={{ left: tooltip.x, right: tooltip.right, top: tooltip.y, width: tooltip.hug ? 'max-content' : undefined }}>
                         {/* Inline label + value + unit. */}
-                        {tooltipPrefix && <div className="tt-prefix">{tooltipPrefix} …</div>}
-                        <ValueRow info={sensorLookup(scatterX)} value={tooltip.xVal} prefix={tooltipPrefix || undefined} />
-                        <ValueRow info={sensorLookup(scatterY)} value={tooltip.yVal} prefix={tooltipPrefix || undefined} />
+                        <ValueRow info={sensorLookup(scatterX)} value={tooltip.xVal} distinct={tooltipEnds.get(scatterX)} />
+                        <ValueRow info={sensorLookup(scatterY)} value={tooltip.yVal} distinct={tooltipEnds.get(scatterY)} />
                         {tooltip.timestamp && (
                             // The row's own time in the app's one date format ("2025/03/14 21:25:00").
                             <div className="scatter-regl-tooltip-ts">{formatDataStamp(tooltip.timestamp)}</div>

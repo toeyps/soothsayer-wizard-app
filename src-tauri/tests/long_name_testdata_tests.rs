@@ -66,6 +66,7 @@ fn the_generated_ln_set_imports_and_every_pair_matches() {
         ("LN-long.csv", "LN-long-tags-no-descriptions.csv", 42),
         ("LN-medium.csv", "LN-medium-tags.csv", 13),
         ("LN-short.csv", "LN-short-tags.csv", 8),
+        ("LN-same-description.csv", "LN-same-description-tags.csv", 6),
         ("LN-wide-4748.csv", "LN-wide-4748-tags.csv", 4748),
     ];
     for (data, tags, count) in pairs {

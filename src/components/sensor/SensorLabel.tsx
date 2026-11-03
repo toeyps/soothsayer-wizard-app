@@ -4,6 +4,7 @@ import {
     NAME_TAIL_MAX, afterPrefix, commonPrefix, compactName, displayedName, namesAfterPrefix, splitInSet, widerTailForms, withWiderTail,
     type NameSplit,
 } from '../../utils/sensorNames';
+import { layoutTooltipRow } from '../../utils/tooltipLayout';
 import type { SensorMetadata, SpecialSensorRecipe } from '../../types';
 import {
     SensorMetaContext, SensorNamesContext, SensorSearchContext, SensorSetContext, SensorSetDropContext,
@@ -256,6 +257,19 @@ export function NameText({ text, prefix, className = 'sl-desc', wrap, stack, gro
 /** The tag beside a description; a long one is cut like a name instead of running under the row's buttons. */
 function TagText({ tag, grow }: { tag: string; grow?: boolean }) {
     return <NameText text={tag} prefix="" grow={grow && tag.length > NAME_TAIL_MAX} className={tag.length > NAME_TAIL_MAX ? 'sl-tag sl-tag--long' : 'sl-tag'} />;
+}
+
+/** The name in a React tooltip row: a row that wraps or has a `distinct` end prints what the layout decided, as the
+ *  ECharts rows do; any other row is a plain inline label. */
+export function TooltipRowName({ info, valueText, distinct }: { info: SensorInfo; valueText?: string; distinct?: string }) {
+    const row = layoutTooltipRow({ ...info, valueText, distinct });
+    if (!row.wraps && !distinct) return <SensorInline tag={info.tag} info={info} size="sm" />;
+    return (
+        <>
+            <span className={info.description ? 'tt-desc' : 'tt-desc tt-mono'} title={sensorTitle(info)}>{row.name}</span>
+            {info.description && row.tagShown && <span className="tt-tag">{info.tag}</span>}
+        </>
+    );
 }
 
 export function FxBadge({ special }: { special?: 'f' | 's' }) {

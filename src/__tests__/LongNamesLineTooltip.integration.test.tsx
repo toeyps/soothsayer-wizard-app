@@ -68,12 +68,11 @@ afterEach(() => {
 });
 
 describe('the line tooltip under `body`, in the real ECharts', () => {
-    it('is a child of body, not of the chart, and prints the shared start once with four different rows', () => {
+    it('is a child of body, not of the chart, with four different rows and no line for a shared start', () => {
         startChart();
         const [box] = bodyBoxes();
         expect(box).toBeTruthy();
         expect(host.contains(box)).toBe(false);
-        expect(box.querySelectorAll('.tt-prefix')).toHaveLength(1);
         const names = [...box.querySelectorAll('.tt-desc')].map(n => n.textContent);
         expect(names).toHaveLength(4);
         expect(new Set(names).size).toBe(4);

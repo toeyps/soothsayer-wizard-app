@@ -965,14 +965,12 @@ describe('long sensor names on the Workbench charts', () => {
         expect(html).toContain('<b class="tt-key">X</b><span class="tt-label"><span class="tt-desc">BEARING TEMP</span></span><span class="tt-val">70.5 DEGC</span>');
         expect(html).toContain('<span class="tt-val">88.25 bar</span>');
         expect(html).not.toContain('tt-tag'); // the tags are in the card's subtitle
-        expect(html).not.toContain('tt-prefix');
     });
 
-    it('Clusters: names sharing a long start print it once, a tag-only sensor prints its tag in mono', () => {
+    it('Clusters: long names print whole, a tag-only sensor prints its tag in mono', () => {
         const f = clusterTooltipFormatter(clusterChartNames({ tag: 'A', description: LONG(1) }, { tag: 'B', description: LONG(2) }));
         const html = f({ seriesType: 'scatter', seriesName: 'Cluster 1', value: [1, 2] });
-        expect(html).toContain('class="tt-prefix"');
-        expect(html).toContain('<span class="tt-desc">SegmentNo 2 - avg</span>');
+        expect(html).toContain(`<span class="tt-desc">${LONG(2)}</span>`);
         const tagOnly = clusterTooltipFormatter(clusterChartNames({ tag: 'T1' }, { tag: 'T2', unit: 'mm' }))({ seriesType: 'scatter', seriesName: 'Cluster 1', value: [1, 2] });
         expect(tagOnly).toContain('<span class="tt-desc tt-mono">T1</span>');
         expect(tagOnly).toContain('<span class="tt-val">2 mm</span>');

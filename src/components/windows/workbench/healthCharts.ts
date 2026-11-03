@@ -10,9 +10,8 @@ import type {
 } from '../../../types/health';
 import { formatAxisTick, formatDateTime } from '../../../utils/dateFormat';
 import { testNumberFor } from '../../../utils/timePeriods';
-import { axisRowHtml, plainRowHtml, sharedPrefixHtml, type SensorInfo } from '../../sensor/sensorInfo';
+import { axisRowHtml, plainRowHtml, type SensorInfo } from '../../sensor/sensorInfo';
 import { withAxisNames } from '../../../utils/axisName';
-import { tooltipSharedPrefix } from '../../../utils/tooltipLayout';
 import { formatDataStamp, parseLocal } from '../periodDisplay';
 import { CHART, CHART_MONO, CLUSTER_COLORS, FONT, axisValueFormatter, fmtAxisValue, fmtNum } from './chartTheme';
 import { withFollowY } from '../../charts/followYAxis';
@@ -1248,10 +1247,8 @@ export function clusterTooltipFormatter(names: ClusterChartNames, opts: { scoreI
         const xi = axis(names.xInfo, names.x);
         const yi = axis(names.yInfo, names.y);
         const withUnit = (value: number, info: SensorInfo) => `${fmtNum(value)}${info.unit ? ` ${info.unit}` : ''}`;
-        const prefix = tooltipSharedPrefix([xi, yi]);
-        let rows = sharedPrefixHtml(prefix)
-            + axisRowHtml('X', xi, withUnit(v[0] as number, xi), prefix)
-            + axisRowHtml('Y', yi, withUnit(v[1] as number, yi), prefix);
+        let rows = axisRowHtml('X', xi, withUnit(v[0] as number, xi))
+            + axisRowHtml('Y', yi, withUnit(v[1] as number, yi));
         const score = opts.scoreIndex !== undefined ? v[opts.scoreIndex] : undefined;
         if (opts.scoreIndex !== undefined) rows += plainRowHtml('Health score', Number.isFinite(score) ? fmtNum(score as number) : 'no score');
         return `<div class="tt-grid"><div class="tt-title">${escHtml(heading)}</div>${rows}</div>`;
