@@ -280,6 +280,14 @@ describe('ManageSpecialSensors: the recipe summary with long names', () => {
         expect(summary('avg1').querySelector('[data-name-ref]')).toBeNull();
     });
 
+    it('a long name on a row prints whole, wrapped, with no cut', () => {
+        stubNamesCut();
+        const meta: SensorMetadata[] = [{ tag: totalFlow.tag, description: long(1), unit: '', component: 'Pump' }];
+        const { container } = renderList({ recipes: [totalFlow], sensorMetadata: meta });
+        const name = container.querySelector('.sl-wrapname--all') as HTMLElement;
+        expect(name.textContent!.replace(/ /g, ' ')).toBe(long(1));
+    });
+
     it('short names stay plain, end-cut text even when the line is cut', () => {
         stubNamesCut();
         renderList({ recipes: [totalFlow], sensorMetadata: metadata });

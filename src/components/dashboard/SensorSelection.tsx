@@ -636,7 +636,7 @@ export default function SensorSelection({
         if (it.k === 'prefix') {
             return (
                 <div className="sensor-run-prefix" data-testid="sensor-run-prefix" title={`Every sensor below starts with: ${it.prefix}`}>
-                    {it.prefix} <span aria-hidden="true">…</span>
+                    {it.prefix}
                 </div>
             );
         }
@@ -669,7 +669,7 @@ export default function SensorSelection({
     const listBody = windowed ? (
         <>
             <div className="sensor-run-stick" aria-hidden="true">
-                {stickyRun && <div className="sensor-run-sticky" data-testid="sensor-run-sticky"><b>{stickyRun.component}</b> · {stickyRun.prefix} …</div>}
+                {stickyRun && <div className="sensor-run-sticky" data-testid="sensor-run-sticky"><b>{stickyRun.component}</b> · {stickyRun.prefix}</div>}
             </div>
             <div className="sensor-list-window" style={{ height: offsets[items.length] }} data-testid="sensor-list-window">
                 {items.slice(windowStart, windowEnd).map((it, n) => {

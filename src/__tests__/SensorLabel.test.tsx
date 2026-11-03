@@ -391,10 +391,21 @@ describe('long names on labels (measured; a name that fits is untouched)', () =>
             expect(container.querySelector('.sl-tag')?.textContent).toBe('U8-CEPB-TE202');
         });
 
-        it('a short name stays one plain line however narrow the row', () => {
+        it('a short name that does not fit wraps too: a row that can grow never cuts', () => {
             narrow(40);
             const { container } = render(<SensorLabel tag="T" info={{ tag: 'T1', description: 'Boiler drum level' }} wrap="always" />);
-            expect(container.querySelector('.sl-desc')?.className).toBe('sl-desc');
+            const desc = container.querySelector('.sl-desc') as HTMLElement;
+            expect(desc.className).toContain('sl-wrapname--all');
+            expect(desc.textContent).toBe('Boiler drum level');
+        });
+
+        it('a long tag under a description wraps whole instead of being cut', () => {
+            narrow(200);
+            const tag = 'U8_CONDENSATE_EXTRACTION_PUMP_B_MOTOR_BEARING_NDE_TEMPERATURE';
+            const { container } = render(<SensorLabel tag="T" info={{ tag, description: pump }} wrap="always" />);
+            const shown = container.querySelector('.sl-tag') as HTMLElement;
+            expect(shown.className).toContain('sl-wrapname--all');
+            expect(shown.textContent).toBe(tag);
         });
 
         it('a name that would be cut wraps whole, so nothing that tells it apart goes ("pump B"); the tag line stays', () => {
@@ -407,10 +418,14 @@ describe('long names on labels (measured; a name that fits is untouched)', () =>
             expect(container.querySelector('.sl-tag')?.textContent).toBe('U8-CEPB-TE202');
         });
 
-        it('a name with no spaces has no word break: it end-cuts on one line', () => {
+        it('a name with no spaces prints whole and may break after _ . -', () => {
             narrow(200);
-            const { container } = render(<SensorLabel tag="T" info={{ tag: 'GC12_COM_Crosshead_PPTrend_Vibration_CrossheadSlide11A_SegmentNo1_avg' }} wrap="always" />);
-            expect(container.querySelector('.sl-desc')?.className).not.toContain('sl-wrapname');
+            const name = 'GC12_COM_Crosshead_PPTrend_Vibration_CrossheadSlide11A_SegmentNo1_avg';
+            const { container } = render(<SensorLabel tag="T" info={{ tag: name }} wrap="always" />);
+            const desc = container.querySelector('.sl-desc') as HTMLElement;
+            expect(desc.className).toContain('sl-wrapname--all');
+            expect(desc.textContent).toBe(name);
+            expect(desc.querySelector('wbr')).not.toBeNull();
         });
 
         it('a plain `wrap` under a tag line does not wrap (the Sensor panel)', () => {

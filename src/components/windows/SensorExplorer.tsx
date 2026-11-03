@@ -200,7 +200,7 @@ function SensorExplorer({
         if (l.k === 'prefix') {
             return (
                 <div className="special-sensor-run-prefix" data-testid="explorer-run-prefix" title={`Every sensor below starts with: ${l.prefix}`}>
-                    <NameText text={l.prefix} prefix="" className="special-sensor-run-name" /> <span aria-hidden="true">…</span>
+                    <NameText text={l.prefix} prefix="" grow className="special-sensor-run-name" />
                 </div>
             );
         }
@@ -245,7 +245,7 @@ function SensorExplorer({
                             <div className="special-sensor-sticky" data-testid="explorer-sticky">
                                 {sticky.component && <b>{sticky.component}</b>}
                                 {sticky.component && sticky.prefix && <span>·</span>}
-                                {sticky.prefix && <><NameText text={sticky.prefix} prefix="" className="special-sensor-run-name" /> <span>…</span></>}
+                                {sticky.prefix && <NameText text={sticky.prefix} prefix="" grow className="special-sensor-run-name" />}
                             </div>
                         )}
                     </div>

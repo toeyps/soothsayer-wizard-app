@@ -150,7 +150,7 @@ describe('TagCompareTable: long sensor names', () => {
     it('a cut set prints its shared start once in the corner; the rows print the rest, never the tag alone', () => {
         stubCut();
         render(<TagCompareTable items={items} rows={longRows(n => info(`T${n}`, LONG(n)))} onRemove={vi.fn()} />);
-        expect(screen.getByTestId('tag-table-prefix').textContent).toBe('Crosshead (P-P Trend) - Vibration crosshead slide 11A …');
+        expect(screen.getByTestId('tag-table-prefix').textContent).toBe('Crosshead (P-P Trend) - Vibration crosshead slide 11A');
         const names = screen.getAllByTestId('tag-table-name');
         expect(names[0].textContent).toContain('SegmentNo 1 - avg');
         expect(names[0].textContent).toContain('T1');

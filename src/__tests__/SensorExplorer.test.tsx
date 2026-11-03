@@ -137,15 +137,16 @@ describe('SensorExplorer: long sensor names', () => {
         fireEvent.click(screen.getByText('Crosshead'));
         expect(screen.getAllByTestId('explorer-run-prefix')).toHaveLength(1);
         expect(screen.getByTestId('explorer-run-prefix').getAttribute('title')).toContain('Crosshead (P-P Trend) - Vibration crosshead slide 11A');
-        const names = [...document.querySelectorAll('.special-sensor-row .sl-desc')].map(e => e.textContent);
+        const names = [...document.querySelectorAll('.special-sensor-row .sl-desc')].map(e => e.textContent!.replace(/ /g, ' '));
         expect(names).toEqual(['SegmentNo 1 - avg', 'SegmentNo 2 - avg']);
+        expect(screen.getByTestId('explorer-run-prefix').textContent).not.toContain('…');
     });
 
     it('tag-only sensors with no component are a set too', () => {
         stubNamesCut();
         render(<SensorExplorer {...makeProps({ sensors: [longName(1), longName(2)], sensorMetadata: null })} />);
         expect(screen.getByTestId('explorer-run-prefix').getAttribute('title')).toContain('Crosshead (P-P Trend)');
-        expect(document.querySelector('.special-sensor-row .sl-desc')!.textContent).toBe('SegmentNo 1 - avg');
+        expect(document.querySelector('.special-sensor-row .sl-desc')!.textContent!.replace(/ /g, ' ')).toBe('SegmentNo 1 - avg');
     });
 
     /** The reviewer's case: 320 px pane, a name has ~174 px. A row measures as cut only when its own text is too wide,
@@ -306,7 +307,7 @@ describe('SensorExplorer: long sensor names', () => {
         expect(rows.length).toBeGreaterThan(1);
         expect(screen.getAllByTestId('explorer-run-prefix')).toHaveLength(1);
         for (const row of rows) {
-            expect(row.querySelector('.sl-desc')!.textContent).toMatch(/^SegmentNo \d+ - avg$/);
+            expect(row.querySelector('.sl-desc')!.textContent!.replace(/ /g, ' ')).toMatch(/^SegmentNo \d+ - avg$/);
         }
         // No provider per row: no measuring element per row.
         expect(document.querySelector('i[hidden]')).toBeNull();

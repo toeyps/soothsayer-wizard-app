@@ -7241,3 +7241,19 @@ fieldset.bmw-sets-body { margin: 0; border: 0; min-width: 0; }
 .pane-resize.is-drag::before { opacity: 1; }
 .pane-resize:focus-visible::after { width: 2px; left: -0.5px; }
 .pane-resize:focus-visible::before { opacity: 1; background: var(--accent-color); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-color) 35%, transparent); }
+
+/* Long names in a list: a row that can grow prints the whole name; only the shared start moves to the run line. */
+.sl-wrapname--all { display: block; overflow: visible; white-space: normal; overflow-wrap: anywhere; text-overflow: clip; text-wrap: pretty; flex: 0 1 auto; min-width: 0; }
+.sl-tag.sl-wrapname--all { flex-shrink: 1; }
+.sl-l1:has(> .sl-wrapname--all), .sl-l2:has(> .sl-wrapname--all) { align-items: flex-start; }
+.sl-l1:has(> .sl-wrapname--all) > .sl-unit { margin-top: 1px; }
+.fg-srow-btn:has(.sl-wrapname--all) { align-items: flex-start; }
+.fg-srow-btn:has(.sl-wrapname--all) > svg { margin-top: 3px; }
+.sensor-run-prefix,
+.fg-card-prefix,
+.bmw-list-prefix,
+.special-sensor-run-prefix { white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: anywhere; color: var(--text-secondary); line-height: 1.35; text-wrap: pretty; }
+.sensor-run-sticky { white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: anywhere; line-height: 1.35; }
+.special-sensor-sticky { height: auto; line-height: 1.35; padding: 5px 14px; white-space: normal; overflow: visible; flex-wrap: wrap; }
+.special-sensor-sticky > .special-sensor-run-name { flex: 1 1 100%; }
+.special-sensor-run-name { min-width: 0; }

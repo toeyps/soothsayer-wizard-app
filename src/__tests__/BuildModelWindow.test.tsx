@@ -11018,7 +11018,7 @@ describe('BuildModelWindow: long sensor names', () => {
             await deliverData({ failureGroupState: { groups: [makeGroup()], models: listOf(['L1', 'L2']) } }, { sensorHeaders: ['L1', 'L2'], sensorMetadata: longMeta([1, 2]) });
             expect(screen.getAllByTestId('list-group-prefix')).toHaveLength(1);
             expect(screen.getByTestId('list-group-prefix').textContent).toContain('Crosshead (P-P Trend)');
-            const rows = screen.getAllByTestId('sensor-row-label').map(r => r.querySelector('.sl-l1')!.textContent);
+            const rows = screen.getAllByTestId('sensor-row-label').map(r => r.querySelector('.sl-l1')!.textContent!.replace(/ /g, ' '));
             expect(rows[0]).toContain('SegmentNo 1 - avg');
             expect(rows[1]).toContain('SegmentNo 2 - avg');
             expect(rows[0]).not.toContain('Crosshead (P-P Trend)');
@@ -11029,7 +11029,7 @@ describe('BuildModelWindow: long sensor names', () => {
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: { groups: [makeGroup()], models: listOf([longName(1), longName(2)]) } }, { sensorHeaders: [longName(1), longName(2)], sensorMetadata: [] });
             expect(screen.getByTestId('list-group-prefix')).toBeTruthy();
-            expect(screen.getAllByTestId('sensor-row-label')[1].textContent).toContain('SegmentNo 2 - avg');
+            expect(screen.getAllByTestId('sensor-row-label')[1].textContent!.replace(/ /g, ' ')).toContain('SegmentNo 2 - avg');
         });
 
         it('search marks the match only in a project with long names', async () => {

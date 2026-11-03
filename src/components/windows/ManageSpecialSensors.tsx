@@ -195,6 +195,7 @@ export default function ManageSpecialSensors({
                                     <SensorLabel
                                         tag={recipe.tag}
                                         info={{ tag: recipe.tag, description: meta?.description?.trim() || undefined, unit: meta?.unit?.trim() || undefined, component: meta?.component?.trim() || undefined }}
+                                        wrap="always"
                                     />
                                 </div>
 

@@ -125,7 +125,7 @@ describe('(1) a tag-name file with every description blank: a tag-only project f
         fireEvent.click(screen.getByText('Crosshead'));
         const lines = screen.getAllByTestId('sensor-run-prefix');
         expect(lines).toHaveLength(1);
-        expect(lines[0].textContent).toBe(`${SHARED} …`);
+        expect(lines[0].textContent).toBe(SHARED);
         const rows = [...container.querySelectorAll('.sensor-list-row')];
         expect(rows).toHaveLength(3);
         for (const row of rows) {
@@ -177,7 +177,7 @@ describe('(2) a windowed list with a search and a selection together', () => {
     }
     const search = (value: string) => fireEvent.change(screen.getByPlaceholderText('Search description, tag, unit or component…'), { target: { value } });
     const checkbox = (container: HTMLElement, end: string) => {
-        const row = [...container.querySelectorAll('.sensor-list-row')].find(r => r.textContent!.includes(end));
+        const row = [...container.querySelectorAll('.sensor-list-row')].find(r => r.textContent!.replace(/ /g, ' ').includes(end));
         return row?.querySelector('input[type="checkbox"]') as HTMLInputElement | undefined;
     };
 

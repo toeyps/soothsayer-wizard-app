@@ -1,4 +1,4 @@
-import { useCallback, useContext, useId, useMemo, useRef, type CSSProperties, type ReactNode } from 'react';
+import { Fragment, useCallback, useContext, useId, useMemo, useRef, type CSSProperties, type ReactNode } from 'react';
 import { useCutRuns, useLineCut, useNameFit, useTwoLine, useWideTail } from '../../hooks/useNameFit';
 import {
     NAME_TAIL_MAX, afterPrefix, commonPrefix, compactName, displayedName, namesAfterPrefix, splitInSet, widerTailForms, withWiderTail,
@@ -87,7 +87,7 @@ export function SetPrefixLine({ className, testid = 'set-prefix' }: { className:
     if (!prefix) return null;
     return (
         <div className={className} data-testid={testid} title={`Every sensor below starts with: ${prefix}`}>
-            {prefix} <span aria-hidden="true">…</span>
+            {prefix}
         </div>
     );
 }
@@ -137,12 +137,14 @@ interface LongNameProps {
     className: string;
     wrap?: boolean;
     stack?: boolean;
+    /** A row that can grow: prints the whole name, wrapped, never cut. */
+    grow?: boolean;
     q: string;
     measure: { 'data-name-run'?: string; 'data-name-full'?: string };
 }
 
 /** A name that may be cut. Plain text until measured as cut (or until its set's shared start is active). */
-function LongName({ text, names, prefix, className, wrap, stack, q, measure }: LongNameProps) {
+function LongName({ text, names, prefix, className, wrap, stack, grow, q, measure }: LongNameProps) {
     const [lineRef, lineCut] = useLineCut(text);
     const shared = !!prefix && text.startsWith(prefix);
     const active = lineCut || shared;
@@ -150,7 +152,7 @@ function LongName({ text, names, prefix, className, wrap, stack, q, measure }: L
         () => (active ? splitInSet(text, names, prefix) : { head: '', tail: text, shared: false }),
         [active, text, names, prefix],
     );
-    const canStack = active && !sp.shared && !!sp.head && (!!wrap || (!!stack && !!sp.pre));
+    const canStack = !grow && active && !sp.shared && !!sp.head && (!!wrap || (!!stack && !!sp.pre));
     const [twoRef, two] = useTwoLine(compactName(sp), text, canStack, !!wrap);
     const { forms, starts } = useMemo(() => widerTailForms(sp), [sp]);
     const [wideRef, wideK] = useWideTail(forms, active && !wrap && !two && forms.length > 1);
@@ -159,7 +161,7 @@ function LongName({ text, names, prefix, className, wrap, stack, q, measure }: L
     // A wrapping row wraps a cut name even with no head to split off (its end is over 28 characters); one with no
     // spaces has no word break to wrap at and end-cuts.
     const wrapsWhole = !!wrap && active && !shown.head && /\s/.test(text);
-    const form = wrapsWhole ? 'wrap' : !shown.head ? 'plain' : two ? 'two-line' : wrap ? 'wrap' : 'split';
+    const form = grow && active ? 'wrap' : wrapsWhole ? 'wrap' : !shown.head ? 'plain' : two ? 'two-line' : wrap ? 'wrap' : 'split';
     const fitRef = useNameFit(
         `${form}\0${pre}\0${shown.head}\0${shown.tail}`,
         form === 'two-line' || (form === 'split' && !shown.shared),
@@ -181,6 +183,15 @@ function LongName({ text, names, prefix, className, wrap, stack, q, measure }: L
                     <span data-name-part="head">{marked(shown.head2 ?? shown.head, q)}</span>
                 </span>
                 <span data-name-part="tail">{marked((shown.tail2 ?? shown.tail).trimStart(), q)}</span>
+            </span>
+        );
+    }
+    if (form === 'wrap' && grow) {
+        return (
+            <span key="grow" ref={ref} className={`${className} sl-wrapname--all`} {...measure}>
+                {!q && !/\s/.test(text)
+                    ? text.split(/(?<=[_.\-])/).map((part, i) => <Fragment key={i}>{i > 0 && <wbr />}{part}</Fragment>)
+                    : marked(keepSeparatorOnLine(text), q)}
             </span>
         );
     }
@@ -212,13 +223,15 @@ function LongName({ text, names, prefix, className, wrap, stack, q, measure }: L
  *  - `prefix`: an explicit shared start; '' = none and not part of the surrounding set (a tag).
  *  - `wrap`: a row with room for two lines: a name that does not fit wraps at word breaks.
  *  - `stack`: a stacked row: a kept start + end that do not fit on one line go on two lines.
+ *  - `grow`: a row that can grow: a name that does not fit prints whole, wrapped, with no "…".
  */
-export function NameText({ text, prefix, className = 'sl-desc', wrap, stack }: {
+export function NameText({ text, prefix, className = 'sl-desc', wrap, stack, grow }: {
     text: string;
     prefix?: string;
     className?: string;
     wrap?: boolean;
     stack?: boolean;
+    grow?: boolean;
 }) {
     const setPrefix = useContext(SensorSetContext);
     const drop = useContext(SensorSetDropContext);
@@ -234,15 +247,15 @@ export function NameText({ text, prefix, className = 'sl-desc', wrap, stack }: {
     }, [inSet, dropped, setNames, pfx]);
     const measure = inSet && run ? { 'data-name-run': run, 'data-name-full': text } : {};
     const splitPrefix = dropped ? undefined : pfx;
-    if (printed.length <= NAME_TAIL_MAX && !(splitPrefix && printed.startsWith(splitPrefix))) {
+    if (!grow && printed.length <= NAME_TAIL_MAX && !(splitPrefix && printed.startsWith(splitPrefix))) {
         return <span className={className} {...measure}>{marked(printed, q)}</span>;
     }
-    return <LongName text={printed} names={names} prefix={splitPrefix} className={className} wrap={wrap} stack={stack} q={q} measure={measure} />;
+    return <LongName text={printed} names={names} prefix={splitPrefix} className={className} wrap={wrap} stack={stack} grow={grow} q={q} measure={measure} />;
 }
 
 /** The tag beside a description; a long one is cut like a name instead of running under the row's buttons. */
-function TagText({ tag }: { tag: string }) {
-    return <NameText text={tag} prefix="" className={tag.length > NAME_TAIL_MAX ? 'sl-tag sl-tag--long' : 'sl-tag'} />;
+function TagText({ tag, grow }: { tag: string; grow?: boolean }) {
+    return <NameText text={tag} prefix="" grow={grow && tag.length > NAME_TAIL_MAX} className={tag.length > NAME_TAIL_MAX ? 'sl-tag sl-tag--long' : 'sl-tag'} />;
 }
 
 export function FxBadge({ special }: { special?: 'f' | 's' }) {
@@ -283,6 +296,7 @@ export function SensorLabel({ tag, info, unit = true, size = 'md', muted, classN
     const lookup = useSensorLookup();
     const i = info ?? lookup(tag);
     const showTag = !!i.description && !i.tagHidden;
+    const grow = wrap === 'always' && !after;
     return (
         <span
             className={['sl', sizeClass(size, muted), i.description ? '' : 'sl--notag', className].filter(Boolean).join(' ')}
@@ -291,12 +305,12 @@ export function SensorLabel({ tag, info, unit = true, size = 'md', muted, classN
         >
             <span className="sl-l1">
                 <FxBadge special={i.special} />
-                <NameText text={i.description || i.tag} prefix={prefix} wrap={!after && (wrap === 'always' || (!!wrap && !showTag))} stack />
+                <NameText text={i.description || i.tag} prefix={prefix} wrap={!after && (wrap === 'always' || (!!wrap && !showTag))} stack grow={grow} />
                 {unit && i.unit && <span className="unit-badge sl-unit">{i.unit}</span>}
             </span>
             {(showTag || after) && (
                 <span className="sl-l2">
-                    {showTag && <TagText tag={i.tag} />}
+                    {showTag && <TagText tag={i.tag} grow={grow} />}
                     {after}
                 </span>
             )}

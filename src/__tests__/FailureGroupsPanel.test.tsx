@@ -788,7 +788,7 @@ describe('FailureGroupsPanel: long sensor names', () => {
         expect(screen.getByTestId('fg-card-prefix').textContent).toContain('Crosshead (P-P Trend)');
         const row = document.querySelector('[data-testid^="fg-sensor-row-1:"]')!;
         expect(row.textContent).not.toContain('Crosshead (P-P Trend)');
-        expect(row.textContent).toContain('SegmentNo 1 - avg');
+        expect(row.textContent!.replace(/ /g, ' ')).toContain('SegmentNo 1 - avg');
         expect(modelLabels()).toEqual(['Model 1', 'Model 2']);
     });
 

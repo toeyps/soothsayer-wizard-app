@@ -805,9 +805,9 @@ describe('SensorSelection: long sensor names', () => {
         openList('Crosshead');
         const lines = screen.getAllByTestId('sensor-run-prefix');
         expect(lines).toHaveLength(1);
-        expect(lines[0].textContent).toBe(`${SHARED} …`);
+        expect(lines[0].textContent).toBe(SHARED);
         const row = screen.getByLabelText(/SegmentNo 2/);
-        const text = row.closest('.sensor-list-row')!.textContent!;
+        const text = row.closest('.sensor-list-row')!.textContent!.replace(/ /g, ' ');
         expect(text).toContain('SegmentNo 2 - avg');
         expect(text).not.toContain('Crosshead');
     });
@@ -837,7 +837,7 @@ describe('SensorSelection: long sensor names', () => {
         const pump = 'Condensate extraction pump B - Motor bearing NDE temperature';
         const { container } = render(<SensorSelection {...makeProps({ sensors: ['U8-TE202'], sensorMetadata: metaOf([pump]).map(m => ({ ...m, tag: 'U8-TE202' })) })} />);
         openList('Crosshead');
-        const desc = container.querySelector('.sl-wrapname') as HTMLElement;
+        const desc = container.querySelector('.sl-wrapname--all') as HTMLElement;
         expect(desc.textContent).toContain('pump B');
         expect(desc.querySelector('[data-name-part]')).toBeNull();
         expect(container.querySelector('.sl-tag')?.textContent).toBe('U8-TE202');
@@ -848,7 +848,7 @@ describe('SensorSelection: long sensor names', () => {
         const tags = [LONG('11A', 1), LONG('11A', 2)];
         render(<SensorSelection {...makeProps({ sensors: tags, sensorMetadata: null })} />);
         openList('Uncategorized');
-        expect(screen.getAllByTestId('sensor-run-prefix')[0].textContent).toBe(`${SHARED} …`);
+        expect(screen.getAllByTestId('sensor-run-prefix')[0].textContent).toBe(SHARED);
     });
 
     it('short names carry no measuring attribute and never get a run line, even when measured as cut', () => {
@@ -895,7 +895,7 @@ describe('SensorSelection: long sensor names', () => {
         const list = container.querySelector('.sensor-list-widget') as HTMLElement;
         list.scrollTop = 2000;
         fireEvent.scroll(list);
-        expect(screen.getByTestId('sensor-run-sticky').textContent).toBe(`Crosshead · ${SHARED} …`);
+        expect(screen.getByTestId('sensor-run-sticky').textContent).toBe(`Crosshead · ${SHARED}`);
     });
 
     it('rule 6: a line above the view that gets its real height (scrolled to, a late font or width change) does not move what is in view', () => {
