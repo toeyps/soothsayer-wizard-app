@@ -3637,8 +3637,7 @@ body {
    `.text-btn`, `.fg-icon-btn`, `.fg-group-dot`,
    `.fg-group-color-*`, `.fg-group-card`,
    `.fg-build-model-btn`. The per-kind STATUS DOT on
-   the sensor row uses `.f4-kb-dot`/`--*` (NOT
-   `.kind-badge-dot`) — deliberately; see
+   the sensor row uses `.f4-kb-dot`/`--*` — deliberately; see
    FailureGroupsPanel.tsx's renderSensorRow comment
    (a cross-window integration test asserts that
    exact class name).

@@ -861,7 +861,7 @@ fn s1_reference(data: &ColumnarData, f: &dyn Fn(&[f64]) -> f64) -> Vec<f64> {
 #[test]
 fn c01_create_chain_values_are_correct_everywhere() {
     let state = AppState(RwLock::new(None));
-    let g = install_session(&state, dataset(31), vec![]).unwrap();
+    let g = install_session(&state, dataset(31)).unwrap();
     for r in chain_recipes() {
         run(&state, &r, false, Some(g)).unwrap();
     }
@@ -875,7 +875,7 @@ fn c01_create_chain_values_are_correct_everywhere() {
 #[test]
 fn c02_edit_formula_of_a_base_sensor_recomputes_it_and_every_dependent_correctly_everywhere() {
     let state = AppState(RwLock::new(None));
-    let g = install_session(&state, dataset(32), vec![]).unwrap();
+    let g = install_session(&state, dataset(32)).unwrap();
     let recipes = chain_recipes();
     for r in &recipes {
         run(&state, r, false, Some(g)).unwrap();
@@ -904,7 +904,7 @@ fn c02_edit_formula_of_a_base_sensor_recomputes_it_and_every_dependent_correctly
 #[test]
 fn c03_edit_then_revert_restores_every_column_bit_for_bit() {
     let state = AppState(RwLock::new(None));
-    let g = install_session(&state, dataset(33), vec![]).unwrap();
+    let g = install_session(&state, dataset(33)).unwrap();
     let recipes = chain_recipes();
     for r in &recipes {
         run(&state, r, false, Some(g)).unwrap();
@@ -933,7 +933,7 @@ fn c03_edit_then_revert_restores_every_column_bit_for_bit() {
 #[test]
 fn c04_rust_does_not_cascade_so_the_frontend_must_recompute_downstream() {
     let state = AppState(RwLock::new(None));
-    let g = install_session(&state, dataset(34), vec![]).unwrap();
+    let g = install_session(&state, dataset(34)).unwrap();
     for r in chain_recipes() {
         run(&state, &r, false, Some(g)).unwrap();
     }
@@ -945,7 +945,7 @@ fn c04_rust_does_not_cascade_so_the_frontend_must_recompute_downstream() {
 #[test]
 fn c05_edit_operation_sources_and_type_and_change_kind_operation_to_formula() {
     let state = AppState(RwLock::new(None));
-    let g = install_session(&state, dataset(35), vec![]).unwrap();
+    let g = install_session(&state, dataset(35)).unwrap();
     for r in chain_recipes() {
         run(&state, &r, false, Some(g)).unwrap();
     }
@@ -984,7 +984,7 @@ fn c05_edit_operation_sources_and_type_and_change_kind_operation_to_formula() {
 #[test]
 fn c06_rename_with_thai_and_space_keeps_every_value_and_drops_the_old_column() {
     let state = AppState(RwLock::new(None));
-    let g = install_session(&state, dataset(36), vec![]).unwrap();
+    let g = install_session(&state, dataset(36)).unwrap();
     for r in chain_recipes() {
         run(&state, &r, false, Some(g)).unwrap();
     }
@@ -1018,7 +1018,7 @@ fn c06_rename_with_thai_and_space_keeps_every_value_and_drops_the_old_column() {
 #[test]
 fn c07_case_only_rename_overwrites_in_place_and_formulas_still_resolve() {
     let state = AppState(RwLock::new(None));
-    let g = install_session(&state, dataset(37), vec![]).unwrap();
+    let g = install_session(&state, dataset(37)).unwrap();
     for r in chain_recipes() {
         run(&state, &r, false, Some(g)).unwrap();
     }
@@ -1036,7 +1036,7 @@ fn c07_case_only_rename_overwrites_in_place_and_formulas_still_resolve() {
 #[test]
 fn c08_an_edit_that_reads_itself_or_a_wrong_generation_changes_nothing() {
     let state = AppState(RwLock::new(None));
-    let g = install_session(&state, dataset(38), vec![]).unwrap();
+    let g = install_session(&state, dataset(38)).unwrap();
     for r in chain_recipes() {
         run(&state, &r, false, Some(g)).unwrap();
     }
@@ -1063,11 +1063,11 @@ fn c08_an_edit_that_reads_itself_or_a_wrong_generation_changes_nothing() {
 #[test]
 fn c09_edit_from_a_window_bound_to_the_previous_load_is_refused() {
     let state = AppState(RwLock::new(None));
-    let g1 = install_session(&state, dataset(39), vec![]).unwrap();
+    let g1 = install_session(&state, dataset(39)).unwrap();
     for r in chain_recipes() {
         run(&state, &r, false, Some(g1)).unwrap();
     }
-    let g2 = install_session(&state, dataset(40), vec![]).unwrap();
+    let g2 = install_session(&state, dataset(40)).unwrap();
     for r in chain_recipes() {
         run(&state, &r, true, Some(g2)).unwrap(); // the reopen replay
     }
@@ -1121,7 +1121,7 @@ fn d01_reopen_replay_on_real_merged_be_csvs_reproduces_the_edited_values_bit_for
 
     // Session 1: load, create, EDIT.
     let state = AppState(RwLock::new(None));
-    let g1 = install_session(&state, read_merge_csvs_with_report(paths.clone()).unwrap().data, paths.clone()).unwrap();
+    let g1 = install_session(&state, read_merge_csvs_with_report(paths.clone()).unwrap().data).unwrap();
     with_data(&state, |d| {
         assert!(d.ts_parsed.iter().all(|&t| t != TS_MISSING), "every BE timestamp (incl. 29 Feb) parsed");
         assert_eq!(d.n_rows(), 49);
@@ -1156,7 +1156,7 @@ fn d01_reopen_replay_on_real_merged_be_csvs_reproduces_the_edited_values_bit_for
 
     // Session 2 ("reopen"): a NEW load of the same files, recipes replayed in
     // stored order with replace: true (replaySpecialSensorRecipes).
-    let g2 = install_session(&state, read_merge_csvs_with_report(paths.clone()).unwrap().data, paths).unwrap();
+    let g2 = install_session(&state, read_merge_csvs_with_report(paths.clone()).unwrap().data).unwrap();
     assert!(g2 > g1);
     for r in &recipes {
         run(&state, r, true, Some(g2)).unwrap();

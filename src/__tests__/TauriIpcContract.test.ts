@@ -36,14 +36,7 @@ const ROOT = '.';
 const LIB = readText(joinPath(ROOT, 'src-tauri', 'src', 'lib.rs'));
 
 /** Registered but intentionally not called from the frontend (decide before adding here). */
-const INTENTIONALLY_UNCALLED = new Set([
-    // The standalone train-and-save commands. Export results writes the model files
-    // (Mark complete writes none since 2026-10-20); these three are kept registered as
-    // direct entry points to the same training code and for future use — not dead code, don't delete.
-    'train_individual_model', 'train_clustering_model', 'train_relationship_model',
-    // Diagnostic; no caller since the upload page stopped re-checking loaded paths.
-    'get_loaded_paths',
-]);
+const INTENTIONALLY_UNCALLED = new Set<string>();
 
 // ── Rust side ────────────────────────────────────────────────────────────
 

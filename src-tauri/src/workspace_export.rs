@@ -1793,7 +1793,6 @@ mod tests {
     fn state(data: ColumnarData, generation: u64) -> AppState {
         AppState(RwLock::new(Some(SessionData {
             data,
-            paths: vec![],
             derived: derived(),
             generation,
             rel_cache: Default::default(),

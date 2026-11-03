@@ -2435,38 +2435,6 @@ mod tests {
             .collect()
     }
 
-    #[test]
-    fn clustering_stats_match_the_info_file_rounding() {
-        let d = cl_data();
-        let p = clustering_preview(&d, &cl_req(2, Some(5.0))).unwrap();
-        let (st, _) = clus(&p);
-        assert_eq!(st.cluster_count, 2);
-        assert_eq!(st.clusters.len(), 2);
-        // Same numbers build_cluster_info writes for the same clusters.
-        let prev = clustering_preview_in(
-            &d,
-            "X".into(),
-            "Y".into(),
-            2,
-            Some("C".into()),
-            cl_req(2, None).cluster_ranges,
-            None,
-        )
-        .unwrap();
-        let info = crate::build_cluster_info(&prev.clusters, None);
-        for c in &st.clusters {
-            let e = &info[c.cluster_id.to_string()];
-            assert_eq!(e["x_cluster_center"].as_f64().unwrap(), c.x_center);
-            assert_eq!(e["y_cluster_center"].as_f64().unwrap(), c.y_center);
-            assert_eq!(e["x_sd"].as_f64().unwrap(), c.x_sd);
-            assert_eq!(e["y_sd"].as_f64().unwrap(), c.y_sd);
-            assert_eq!(e["angle_deg"].as_f64().unwrap(), c.angle_deg);
-        }
-        assert_eq!(st.rows, 2000);
-        assert_eq!(st.assigned_rows, 2000);
-        assert_eq!(st.unassigned_rows, 0);
-    }
-
     // The Model fit page's "Inside 3x SD" tile: the share is in the stats with
     // or without scoring periods (it used to exist only in the train block of
     // `test_validation`, so the tile read "-" for a model with no period).

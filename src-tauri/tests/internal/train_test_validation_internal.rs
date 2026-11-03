@@ -44,7 +44,6 @@ use crate::{
     PreviewValueFilter, SessionData, TimeRangeArg,
 };
 use std::collections::HashSet;
-use std::path::Path;
 use std::sync::RwLock;
 
 const DAY: usize = 144;
@@ -69,7 +68,6 @@ fn ds(cols: Vec<(&str, Vec<f64>)>) -> ColumnarData {
 fn state_with(data: ColumnarData) -> AppState {
     AppState(RwLock::new(Some(SessionData {
         data,
-        paths: vec![],
         derived: HashSet::new(),
         generation: 1,
         rel_cache: Default::default(),
@@ -1991,25 +1989,6 @@ fn the_preview_and_the_prediction_step_use_the_same_hourly_points() {
 
 // ---------- the export still refuses what it cannot validate ----------
 
-#[test]
-fn export_never_claims_a_validation_it_could_not_compute() {
-    use crate::export_extra_predictions as ex;
-    // No hourly point: nothing to predict, nothing required.
-    assert_eq!(ex(None, 0), Ok(vec![]));
-    // An outdated sidecar ignores X_extra: refuse (nothing is written by the caller).
-    assert!(ex(None, 3).unwrap_err().starts_with("SIDECAR_OUTDATED:"));
-    // Wrong length: refuse. This error is SHOWN (Mark complete): user wording
-    // first ("Relation model engine", never "sidecar"), the numbers after it.
-    let wrong = ex(Some(&[Some(1.0)]), 3).unwrap_err();
-    assert!(wrong.starts_with("The Relation model engine's answer does not match the request"), "{wrong}");
-    assert!(wrong.contains("length mismatch (got 1 expected 3)"), "{wrong}");
-    assert!(!wrong.to_lowercase().contains("sidecar") && !wrong.contains("Python"), "{wrong}");
-    // Good answer: NaN for a missing / non-finite value.
-    let v = ex(Some(&[Some(1.0), None, Some(f64::INFINITY)]), 3).unwrap();
-    assert_eq!(v[0], 1.0);
-    assert!(v[1].is_nan() && v[2].is_nan());
-}
-
 // ===========================================================================
 // Clustering
 // ===========================================================================
@@ -2240,100 +2219,6 @@ fn clustering_overlap_and_training_summary_stay_training_only() {
 // ===========================================================================
 // Export
 // ===========================================================================
-
-fn read_json(p: &Path) -> serde_json::Value {
-    serde_json::from_str(&std::fs::read_to_string(p).unwrap()).unwrap()
-}
-
-/// The export document without the keys that legitimately differ between two runs.
-fn comparable(mut v: serde_json::Value) -> serde_json::Value {
-    let o = v.as_object_mut().unwrap();
-    o.remove("validation");
-    o.remove("model_update_record");
-    v
-}
-
-#[test]
-fn relationship_export_block_matches_the_preview_and_writes_into_the_info_file() {
-    use crate::{write_relationship_outputs, RelationshipOutputs};
-    let d = rel_data();
-    let fit = rel_fit(&d);
-    let tests = vec![tp(288, 575), tp(576, 1151)];
-    // What the export's one sidecar run answers for the hourly points it sent
-    // (the training hours and the hours of both periods).
-    let extra = rel_extra(&d, &fit, &rel_req(tests.clone()));
-    assert_eq!(extra.len(), 48 + 48 + 96);
-
-    // What the sidecar returned for the training rows (rounded like the files).
-    let predicted: Vec<Option<f64>> = fit.predicted.iter().map(|&p| Some(p)).collect();
-    let residual: Vec<Option<f64>> = (0..fit.rows.len()).map(|i| Some(fit.actual[i] - fit.predicted[i])).collect();
-    let x_matrix: Vec<Vec<f64>> = fit.x_cols[0].iter().map(|&v| vec![v]).collect();
-    let ts: Vec<Option<String>> = fit.rows.iter().map(|&r| d.timestamps[r as usize].clone()).collect();
-    let dir = tempfile::tempdir().unwrap();
-    let sp = rel_sp();
-    let info_path = write_relationship_outputs(
-        dir.path().to_str().unwrap(),
-        &RelationshipOutputs {
-            predictors: &["X".to_string()],
-            target: "Y",
-            lambda: 1.0,
-            model_name: None,
-            x_matrix: &x_matrix,
-            y: &fit.actual,
-            row_timestamps: &ts,
-            time_bounds: &(ts_at(0), ts_at(287)),
-            r2: 0.9,
-            rmse2: 2.0,
-            predicted: &predicted,
-            residual: &residual,
-            set_points: Some(&sp),
-        },
-    )
-    .unwrap();
-    let before = read_json(&info_path);
-
-    let filter = train_to(2 * DAY - 1, vec![]);
-    let block = crate::model_export::relationship_block(&d, &fit, &extra, Some(&filter), Some(&sp), &tests).unwrap();
-    crate::health_validation::inject_validation(&info_path, block).unwrap();
-    let after = read_json(&info_path);
-    assert_eq!(comparable(after.clone()), comparable(before.clone()), "every existing key is untouched");
-    assert!(before.get("validation").is_none());
-
-    // The block IS the preview's `test_validation` plus `tested`, `validated_at`
-    // and the two keys that declare the hourly scoring - nothing else.
-    let v = &after["validation"];
-    let preview = relationship_preview_ex(&d, &fit, Some(&extra), &rel_req(tests.clone())).unwrap();
-    let pv = serde_json::to_value(tv(&preview)).unwrap();
-    for key in ["train", "train_ranges", "tests"] {
-        assert_eq!(v[key], pv[key], "{key}");
-    }
-    let mut keys: Vec<&str> = v.as_object().unwrap().keys().map(String::as_str).collect();
-    keys.sort_unstable();
-    assert_eq!(
-        keys,
-        vec!["scoring_aggregation", "scoring_interval_seconds", "tested", "tests", "train", "train_ranges", "validated_at"]
-    );
-    assert_eq!(v["tested"], true);
-    chrono::DateTime::parse_from_rfc3339(v["validated_at"].as_str().unwrap()).expect("RFC 3339");
-    assert_eq!((v["scoring_interval_seconds"].clone(), v["scoring_aggregation"].clone()), (3600.into(), "mean".into()));
-    // It really is hourly now: raw rows beside hours, the scores judged per hour.
-    assert_eq!((v["train"]["rows"].clone(), v["train"]["hours"].clone()), (288.into(), 48.into()));
-    assert_eq!(v["train"]["rmse"], 1.0, "the train block stays the raw rows' numbers");
-    let t = &v["tests"][1];
-    assert_eq!((t["rows"].clone(), t["hours"].clone(), t["scored"].clone()), (576.into(), 96.into(), 96.into()));
-    assert_eq!(t["pct_below_80"], 65.6);
-    assert_eq!(t["lowest"], 40.0);
-    assert_eq!(t["lowest_at"], ts_at(PLATEAU_ROW));
-    for gone in ["label", "event_time", "lead_days", "first_below_80"] {
-        assert!(!v.to_string().contains(gone), "{gone} must not be written");
-    }
-    assert!(v["tests"][0].get("r2").is_some() && v["tests"][0].get("residual_sd").is_some());
-    // An export whose engine answered for no hourly point of a period would write
-    // "not scored" - the caller refuses before that (`export_extra_predictions`).
-    let none = crate::model_export::relationship_block(&d, &fit, &RelExtra::default(), Some(&filter), Some(&sp), &tests).unwrap();
-    assert_eq!(none["tests"][1]["scored"], 0);
-    assert!(none["tests"][1]["lowest"].is_null());
-}
 
 // ===========================================================================
 // Parity with the frontend's fake Rust backend (one shared fixture)

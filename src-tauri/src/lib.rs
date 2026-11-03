@@ -7,7 +7,6 @@ mod health_hourly;
 mod health_preview;
 mod health_validation;
 pub mod metrics;
-mod model_export;
 pub mod operation_registry;
 mod period_counts;
 mod workspace_export;
@@ -38,7 +37,7 @@ mod qa_timestamp_import_internal;
 mod qa_workspace_export_internal;
 use formula_diagnostics::FormulaIssue;
 use csv_processor::{
-    load_metadata, micros_to_naive, parse_timestamp, ts_to_micros, ColumnarData, CsvLoadReport,
+    load_metadata, parse_timestamp, ts_to_micros, ColumnarData, CsvLoadReport,
     CsvRecord, MappingData, MappingResult, SensorMetadata, TS_MISSING,
 };
 use fasteval::Evaler;
@@ -50,28 +49,6 @@ use tauri::{Emitter, State};
 // ---------------------------------------------------------------------------
 // Security / path-validation helpers
 // ---------------------------------------------------------------------------
-
-/// Validate a single path component intended to be used as a filename
-/// (or directory name) on disk. Rejects empty strings, `.` / `..`, any
-/// path separators (`/` `\`), `:`, NUL, Windows-reserved chars (`* ? < > | "`),
-/// and ASCII control characters.
-///
-/// Used to defend the `train_*` commands against path-traversal via
-/// frontend-supplied sensor/target names that are interpolated into
-/// `Path::join` / `format!` filename templates.
-fn sanitize_filename_component(s: &str) -> Result<String, String> {
-    if s.is_empty() {
-        return Err("empty filename component".into());
-    }
-    if s == "." || s == ".." {
-        return Err("reserved filename component".into());
-    }
-    let bad = ['/', '\\', ':', '\0', '*', '?', '<', '>', '|', '"'];
-    if s.chars().any(|c| bad.contains(&c) || c.is_control()) {
-        return Err(format!("invalid character in name: {}", s));
-    }
-    Ok(s.to_string())
-}
 
 /// Validate a path passed from the frontend that we're about to open
 /// for read (`load_csv`, `load_metadata_command`, `load_mapping_csv`).
@@ -95,24 +72,6 @@ fn validate_read_path(p: &str) -> Result<(), String> {
         }
     }
     Ok(())
-}
-
-/// Prefix a string cell with a leading apostrophe if it would otherwise
-/// be interpreted as a formula by Excel / Numbers / LibreOffice
-/// (CSV injection / "formula injection" defense, CWE-1236).
-///
-/// The leading apostrophe forces spreadsheet apps to treat the cell as
-/// a literal string, and is stripped on display. Apply ONLY to string
-/// cells — numeric values written with `{:e}`/`{}` start with a digit,
-/// `+`, or `-`, but their value semantics rely on Excel parsing them as
-/// numbers, so escaping would break that.
-fn excel_safe(s: &str) -> String {
-    if let Some(c) = s.chars().next() {
-        if matches!(c, '=' | '+' | '-' | '@' | '\t' | '\r') {
-            return format!("'{}", s);
-        }
-    }
-    s.to_string()
 }
 
 /// Validate a frontend-supplied directory the backend will write into
@@ -155,45 +114,6 @@ mod path_validation_tests {
 
     // ── sanitize_filename_component ─────────────────────────────────
 
-    #[test]
-    fn sanitize_filename_component_accepts_a_plain_name() {
-        assert_eq!(
-            sanitize_filename_component("Sensor A").unwrap(),
-            "Sensor A"
-        );
-    }
-
-    #[test]
-    fn sanitize_filename_component_rejects_empty() {
-        assert!(sanitize_filename_component("").is_err());
-    }
-
-    #[test]
-    fn sanitize_filename_component_rejects_dot_and_dotdot() {
-        assert!(sanitize_filename_component(".").is_err());
-        assert!(sanitize_filename_component("..").is_err());
-    }
-
-    #[test]
-    fn sanitize_filename_component_rejects_path_separators() {
-        assert!(sanitize_filename_component("a/b").is_err());
-        assert!(sanitize_filename_component("a\\b").is_err());
-    }
-
-    #[test]
-    fn sanitize_filename_component_rejects_windows_reserved_chars() {
-        for c in ['*', '?', '<', '>', '|', '"', ':'] {
-            let s = format!("bad{c}name");
-            assert!(sanitize_filename_component(&s).is_err(), "should reject {c:?}");
-        }
-    }
-
-    #[test]
-    fn sanitize_filename_component_rejects_nul_and_control_chars() {
-        assert!(sanitize_filename_component("a\0b").is_err());
-        assert!(sanitize_filename_component("a\nb").is_err());
-    }
-
     // ── validate_read_path ──────────────────────────────────────────
 
     #[test]
@@ -227,39 +147,6 @@ mod path_validation_tests {
     }
 
     // ── excel_safe ───────────────────────────────────────────────────
-
-    #[test]
-    fn excel_safe_escapes_formula_trigger_chars() {
-        for c in ['=', '+', '-', '@'] {
-            let s = format!("{c}cmd|calc");
-            let escaped = excel_safe(&s);
-            assert!(escaped.starts_with('\''), "should escape leading {c:?}");
-            assert_eq!(&escaped[1..], s);
-        }
-    }
-
-    #[test]
-    fn excel_safe_escapes_leading_tab_and_cr() {
-        assert!(excel_safe("\tdanger").starts_with('\''));
-        assert!(excel_safe("\rdanger").starts_with('\''));
-    }
-
-    #[test]
-    fn excel_safe_leaves_ordinary_strings_untouched() {
-        assert_eq!(excel_safe("Sensor A"), "Sensor A");
-        assert_eq!(excel_safe(""), "");
-    }
-
-    #[test]
-    fn excel_safe_leaves_numeric_looking_strings_untouched() {
-        // Numbers can start with -/+ but must round-trip as numeric values,
-        // not be defensively escaped (escaping would corrupt them).
-        // Only string CELLS go through excel_safe in practice, but the
-        // function itself has no way to know that -- document the actual
-        // (intentional) behavior: a leading '-' or '+' IS escaped.
-        assert!(excel_safe("-5.2").starts_with('\''));
-        assert_eq!(excel_safe("5.2"), "5.2");
-    }
 
     // ── validate_save_dir ────────────────────────────────────────────
 
@@ -309,7 +196,6 @@ mod path_validation_tests {
 
 struct SessionData {
     data: ColumnarData,
-    paths: Vec<String>,
     /// Lower-cased, trimmed names (see [`name_key`]) of the columns that were
     /// COMPUTED in this session by `calculate_new_sensor` / `evaluate_formula`
     /// ("special sensors"), as opposed to imported from the CSV. Only these may
@@ -377,7 +263,7 @@ async fn load_csv(
     })
     .await
     .map_err(|e| format!("CSV load task failed: {e}"))??;
-    report.generation = install_session(&state, data, paths)?;
+    report.generation = install_session(&state, data)?;
     let _ = app.emit(
         CSV_LOAD_PROGRESS_EVENT,
         csv_processor::CsvLoadProgress::after_reading(file_count, true),
@@ -388,12 +274,11 @@ async fn load_csv(
 /// Replace the session with a freshly loaded dataset and return its (new,
 /// strictly greater than any earlier) generation. The generation is allocated
 /// while the write lock is held, so it is exactly the one stored in the session.
-fn install_session(state: &AppState, data: ColumnarData, paths: Vec<String>) -> Result<u64, String> {
+fn install_session(state: &AppState, data: ColumnarData) -> Result<u64, String> {
     let mut state_lock = state.0.write().map_err(|e| e.to_string())?;
     let generation = SESSION_GENERATION.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
     *state_lock = Some(SessionData {
         data,
-        paths,
         derived: std::collections::HashSet::new(),
         generation,
         rel_cache: health_score::RelCache::default(),
@@ -486,15 +371,6 @@ fn check_expected_generation(expected: Option<u64>, actual: u64) -> Result<(), S
     match expected {
         Some(g) if g != actual => Err(STALE_SESSION_ERROR.to_string()),
         _ => Ok(()),
-    }
-}
-
-#[tauri::command]
-fn get_loaded_paths(state: State<AppState>) -> Result<Vec<String>, String> {
-    let state_lock = state.0.read().map_err(|e| e.to_string())?;
-    match &*state_lock {
-        Some(session) => Ok(session.paths.clone()),
-        None => Ok(Vec::new()),
     }
 }
 
@@ -891,31 +767,6 @@ fn report_engine_failure(app: &tauri::AppHandle, failure: EngineFailure) -> Stri
     failure.user.to_string()
 }
 
-/// A required field is absent from the engine's answer.
-fn engine_missing_field_error(field: &str) -> String {
-    format!("The Relation model engine's answer is incomplete: missing {field}")
-}
-
-/// The engine's `train_relationship` answer.
-#[derive(Deserialize)]
-struct SidecarTrainResponse {
-    r2: Option<f64>,
-    rmse2: Option<f64>,
-    model_path: Option<String>,
-    /// Per-row LinearGAM predictions, NaN-cleaned (None) and rounded to
-    /// 3 decimals by `backend.py::train_relationship`. Length matches
-    /// the surviving-row count we sent over.
-    predicted: Option<Vec<Option<f64>>>,
-    /// Per-row residuals (`y - predicted`), same shape as `predicted`.
-    residual: Option<Vec<Option<f64>>>,
-    /// Scoring periods: the model's (raw) predictions for `X_extra` - the
-    /// hourly points (mean predictors per clock hour) - in the same order.
-    predicted_extra: Option<Vec<Option<f64>>>,
-    /// The engine's own error / traceback: LOG ONLY, never shown.
-    error: Option<String>,
-    trace: Option<String>,
-}
-
 /// What the engine printed for `step`, as JSON of type `T`. No output or an
 /// unreadable answer is a failure (user sentence + log entry).
 fn read_engine_answer<T: serde::de::DeserializeOwned>(
@@ -927,16 +778,6 @@ fn read_engine_answer<T: serde::de::DeserializeOwned>(
         return Err(engine_no_output_failure(step, stderr));
     }
     serde_json::from_str(stdout.trim()).map_err(|e| engine_unreadable_answer_failure(step, &e, stdout))
-}
-
-/// The engine's `train_relationship` answer; its own `error` is a failure too.
-fn read_train_answer(stdout: &str, stderr: &str) -> Result<SidecarTrainResponse, EngineFailure> {
-    const STEP: &str = "train_relationship";
-    let resp: SidecarTrainResponse = read_engine_answer(STEP, stdout, stderr)?;
-    match &resp.error {
-        Some(err) => Err(engine_reported_failure(STEP, err, resp.trace.as_deref())),
-        None => Ok(resp),
-    }
 }
 
 #[cfg(test)]
@@ -1138,35 +979,6 @@ mod engine_wording_tests {
     }
 
     #[test]
-    fn a_train_answer_with_an_engine_error_fails_with_the_fixed_sentence() {
-        let stdout = serde_json::json!({ "error": NASTY, "trace": NASTY_TRACE }).to_string();
-        let f = read_train_answer(&stdout, "").err().expect("an error answer");
-        assert_eq!(f.user, ENGINE_FIT_FAILED);
-        assert_no_engine_text(f.user);
-        assert_logged(&f, &[NASTY, "trace: Traceback"]);
-        assert!(f.log_message.ends_with("[train_relationship]"));
-        // No output at all: the stderr traceback is logged, not shown.
-        let f = read_train_answer("  \n", NASTY_TRACE).err().unwrap();
-        assert_eq!(f.user, ENGINE_NO_OUTPUT_LOGGED);
-        assert_logged(&f, &["stderr: Traceback"]);
-        assert_eq!(read_train_answer("", "").err().unwrap().user, ENGINE_NO_OUTPUT);
-        // Not JSON / the wrong shape: the raw output is logged, not shown.
-        let f = read_train_answer(&format!("{NASTY} {{"), "").err().unwrap();
-        assert_eq!(f.user, ENGINE_UNREADABLE);
-        assert_no_engine_text(f.user);
-        assert_logged(&f, &["parse error: ", "raw: pygam LinearGAM"]);
-        let f = read_train_answer(r#"{"r2": "pygam"}"#, "").err().unwrap();
-        assert_eq!(f.user, ENGINE_UNREADABLE);
-        // A good answer still parses (surrounding whitespace is fine).
-        let ok = read_train_answer("\n{\"r2\": 0.9, \"rmse2\": 1.5, \"model_path\": \"m.pkl\", \"predicted\": [1.0, null], \"residual\": [0.0, null]}\n", "noise")
-            .ok()
-            .expect("a good answer");
-        assert_eq!((ok.r2, ok.rmse2, ok.model_path.as_deref()), (Some(0.9), Some(1.5), Some("m.pkl")));
-        assert_eq!(ok.predicted, Some(vec![Some(1.0), None]));
-        assert!(ok.predicted_extra.is_none() && ok.error.is_none() && ok.trace.is_none());
-    }
-
-    #[test]
     fn the_log_file_gets_the_engine_text_under_the_sidecar_tag() {
         let dir = std::env::temp_dir().join(format!("wizard-engine-log-{}-{:?}", std::process::id(), std::thread::current().id()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -1184,12 +996,6 @@ mod engine_wording_tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    #[test]
-    fn rust_authored_engine_messages_keep_their_detail() {
-        let missing = engine_missing_field_error("rmse2");
-        assert!(missing.ends_with("missing rmse2"));
-        assert_user_wording(&missing);
-    }
 }
 
 /// Optional value-filter passed alongside `preview_relationship_model`.
@@ -2327,58 +2133,6 @@ fn rel_fit_from_response(
 
 // ── Predictive-model save commands (Individual + Clustering) ──
 
-/// Scan a column; return (min_iso, max_iso) over the load-time-parsed
-/// timestamps of every row whose value at `value_idx` is finite. Falls back
-/// to empty strings if no timestamps parsed. When `filter.is_noop()` is
-/// false, rows are first gated by the dashboard filter (timestamp + value
-/// bounds).
-fn dataset_time_bounds(
-    data: &ColumnarData,
-    value_idx: usize,
-    filter: &ResolvedFilter,
-) -> (String, String) {
-    let col = &data.columns[value_idx];
-    let mut min_us: Option<i64> = None;
-    let mut max_us: Option<i64> = None;
-    for (r, &v) in col.iter().enumerate() {
-        if !filter.is_noop() && !filter.keeps(data, r) {
-            continue;
-        }
-        if !v.is_finite() {
-            continue;
-        }
-        let us = data.ts_parsed[r];
-        if us == TS_MISSING {
-            continue;
-        }
-        min_us = Some(min_us.map_or(us, |m| m.min(us)));
-        max_us = Some(max_us.map_or(us, |m| m.max(us)));
-    }
-    match (
-        min_us.and_then(micros_to_naive),
-        max_us.and_then(micros_to_naive),
-    ) {
-        (Some(mn), Some(mx)) => (
-            mn.format("%Y-%m-%dT%H:%M:%S").to_string(),
-            mx.format("%Y-%m-%dT%H:%M:%S").to_string(),
-        ),
-        _ => (String::new(), String::new()),
-    }
-}
-
-#[derive(Debug, Serialize)]
-pub struct IndividualModelInfo {
-    pub model_name: String,
-    pub publish_id: i64,
-    pub training_set_start_date: String,
-    pub training_set_end_date: String,
-    pub mean: f64,
-    pub sd: f64,
-    pub boundary_1sd: [f64; 2],
-    pub boundary_3sd: [f64; 2],
-    pub saved_path: String,
-}
-
 /// Round an Individual model's mean/SD and derive the 1SD / 3SD boundaries
 /// the way `wizard.py::_execute_individual` does (boundaries come from the
 /// ALREADY-rounded mean and SD), returning `(mean, sd, [lo1, hi1], [lo3, hi3])`.
@@ -2406,191 +2160,6 @@ fn individual_rounded_metrics(mean: f64, sd: f64) -> (f64, f64, [f64; 2], [f64; 
         round_metric_scaled(mean_r + 3.0 * sd_r, sd_r),
     ];
     (mean_r, sd_r, b1, b3)
-}
-
-/// Build the `INDIVIDUAL_INFO` JSON payload (matching wizard.py exactly) and
-/// write it to `{save_path}/output/{target}/INDV_INFO_{target}.json`.
-///
-/// Numeric values are rounded like wizard.py's `round(..., 3)` calls in
-/// `_execute_individual`, except small magnitudes keep 4 significant digits
-/// (see `individual_rounded_metrics`).
-///
-/// `set_points` (optional, the model's `healthSetPoints`): when given they are
-/// validated against the freshly computed band (a failure returns a
-/// `VALIDATION: ...` error and writes nothing) and written to
-/// `model_metrics.setpoint_health_score` as `[lower, upper]` (L, H). Omitted =
-/// `[null, null]` as before.
-#[tauri::command(rename_all = "snake_case")]
-fn train_individual_model(
-    target: String,
-    model_name: Option<String>,
-    save_path: String,
-    // Dashboard filter (timestamp + value gates). When set, the trained mean/
-    // SD and the saved start/end_date all reflect the filtered slice rather
-    // than the entire dataset.
-    filter: Option<PreviewFilter>,
-    set_points: Option<health_score::SetPointsArg>,
-    state: State<AppState>,
-) -> Result<IndividualModelInfo, String> {
-    let state_lock = state.0.read().map_err(|e| e.to_string())?;
-    let session = state_lock.as_ref().ok_or("No data loaded")?;
-    write_individual_info(
-        &session.data,
-        target,
-        model_name,
-        &save_path,
-        filter,
-        set_points.as_ref(),
-    )
-    .map_err(model_export::CoreError::into_string)
-}
-
-/// `[L, H]` for `setpoint_health_score` (nulls when no set points were given).
-fn individual_setpoint_json(sp: Option<&health_score::SetPointsArg>) -> serde_json::Value {
-    let v = |x: Option<f64>| x.map_or(serde_json::Value::Null, |n| serde_json::json!(n));
-    match sp {
-        Some(sp) => serde_json::json!([v(sp.lower), v(sp.upper)]),
-        None => serde_json::json!([serde_json::Value::Null, serde_json::Value::Null]),
-    }
-}
-
-/// Core of [`train_individual_model`] over an already-locked dataset (also
-/// used by its tests).
-fn write_individual_info(
-    data: &ColumnarData,
-    target: String,
-    model_name: Option<String>,
-    save_path: &str,
-    filter: Option<PreviewFilter>,
-    set_points: Option<&health_score::SetPointsArg>,
-) -> Result<IndividualModelInfo, model_export::CoreError> {
-    use rayon::prelude::*;
-
-    if target.is_empty() {
-        return Err("Target sensor is required.".into());
-    }
-    if save_path.is_empty() {
-        return Err("save_path is required.".into());
-    }
-    // Path-traversal defense: `target` is interpolated into the on-disk
-    // filename / directory under `save_path/output/{target}/INDV_INFO_*`.
-    // A sensor name containing `/`, `..`, etc. would either escape the
-    // intended directory or produce an opaque filesystem error.
-    let target = sanitize_filename_component(&target)
-        .map_err(|e| format!("target: {}", e))?;
-    validate_save_dir(save_path)?;
-
-    let idx = data
-        .headers
-        .iter()
-        .position(|h| h == &target)
-        .ok_or_else(|| format!("Sensor not found: {}", target))?;
-
-    let resolved = ResolvedFilter::resolve(filter.as_ref(), &data.headers)?;
-
-    // Finite values for the target column (NaN = missing), gated by the
-    // dashboard filter when one is set.
-    let col = &data.columns[idx];
-    let values: Vec<f64> = if resolved.is_noop() {
-        col.par_iter().copied().filter(|v| v.is_finite()).collect()
-    } else {
-        (0..data.n_rows())
-            .into_par_iter()
-            .filter(|&r| resolved.keeps(data, r))
-            .map(|r| col[r])
-            .filter(|v| v.is_finite())
-            .collect()
-    };
-
-    if values.is_empty() {
-        return Err(format!("No valid numeric values for sensor '{}'", target).into());
-    }
-
-    let mean = metrics::mean(&values);
-    let sd_raw = metrics::sample_sd(&values, mean);
-    let sd = if sd_raw.is_nan() { 0.0 } else { sd_raw };
-
-    // 3 decimals like wizard.py, but never fewer than 4 significant digits
-    // (see `individual_rounded_metrics` / `metrics::round_metric`).
-    let (mean_r, sd_r, b1, b3) = individual_rounded_metrics(mean, sd);
-
-    // Health-score set points: never write a half-valid file. Validated
-    // against THIS call's band (the training scope may have changed σ since
-    // the page last looked).
-    if let Some(sp) = set_points {
-        let band = health_score::IndividualBand::from_rounded(mean_r, sd_r, b1, b3);
-        let issues = health_score::validate_individual(&band, sp);
-        if health_score::has_errors(&issues) {
-            return Err(model_export::CoreError::Validation(issues));
-        }
-    }
-
-    // start/end_date follow the same filter — otherwise saved metadata
-    // would advertise the full dataset's span.
-    let (start_date, end_date) = dataset_time_bounds(data, idx, &resolved);
-
-    // Default model_name follows wizard.py: f"{descr} ({tag})". We don't have
-    // the sensor mapper Rust-side, so just use the tag.
-    let resolved_name = model_name
-        .as_deref()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| format!("({})", target));
-
-    let now = chrono::Utc::now().to_rfc3339();
-
-    // Build the JSON payload matching wizard.PredictiveImplementationTemplate.INDIVIDUAL_INFO
-    let json_payload = serde_json::json!({
-        "model_name": resolved_name,
-        "model_composition": {},
-        "model_training_set_info": {
-            "publish_id": 0,
-            "training_set_start_date": start_date,
-            "training_set_end_date": end_date,
-            "training_set_comments": ""
-        },
-        "model_metrics": {
-            "mean": mean_r,
-            "sd": sd_r,
-            "1sd_boundary": [b1[0], b1[1]],
-            "3sd_boundary": [b3[0], b3[1]],
-            "setpoint_health_score": individual_setpoint_json(set_points)
-        },
-        "historical_sd_band_and_set_point": {},
-        "model_update_record": [
-            {
-                "publish_id": 0,
-                "updated_timestamp": now,
-                "updated_by": "Wizard",
-                "activity": "Wizard",
-                "comments": ""
-            }
-        ]
-    });
-
-    // Write to disk: {save_path}/output/{target}/INDV_INFO_{target}.json
-    let out_dir = std::path::Path::new(&save_path)
-        .join("output")
-        .join(&target);
-    std::fs::create_dir_all(&out_dir)
-        .map_err(|e| format!("Failed to create output dir: {}", e))?;
-    let out_file = out_dir.join(format!("INDV_INFO_{}.json", target));
-    let json_text = serde_json::to_string_pretty(&json_payload)
-        .map_err(|e| format!("JSON serialize failed: {}", e))?;
-    std::fs::write(&out_file, json_text)
-        .map_err(|e| format!("Failed to write {}: {}", out_file.display(), e))?;
-
-    Ok(IndividualModelInfo {
-        model_name: resolved_name,
-        publish_id: 0,
-        training_set_start_date: start_date,
-        training_set_end_date: end_date,
-        mean: mean_r,
-        sd: sd_r,
-        boundary_1sd: b1,
-        boundary_3sd: b3,
-        saved_path: out_file.to_string_lossy().into_owned(),
-    })
 }
 
 /// Half-open interval `(min, max]` over the criteria sensor's value, i.e.
@@ -2845,843 +2414,6 @@ fn clustering_preview_in(
         n_rows: total_rows,
         clusters,
     })
-}
-
-#[derive(Debug, Serialize)]
-pub struct ClusteringModelInfo {
-    pub model_name: String,
-    pub first_sensor: String,
-    pub second_sensor: String,
-    pub criteria_sensor: Option<String>,
-    pub cluster_count: u32,
-    /// Per-cluster ellipse fits, in cluster_id order.
-    pub clusters: Vec<ClusterDetail>,
-    pub saved_path: String,
-}
-
-/// JSON key pair for a cluster's criteria range, correctly spelled. This is
-/// the spelling `backend.py` writes and the health-score reference code
-/// (`assign_cluster`) reads with `.get()`.
-const CLUSTER_KEY_HIGHER: &str = "criteria_sensor_value_higher_than";
-const CLUSTER_KEY_LOWER: &str = "criteria_sensor_value_lower_than";
-/// LEGACY misspelling (`critera`, missing the `i`). Emitted TOGETHER WITH the
-/// correct pair (same values): the consumer of the model files still reads it.
-const CLUSTER_KEY_HIGHER_LEGACY: &str = "critera_sensor_value_higher_than";
-const CLUSTER_KEY_LOWER_LEGACY: &str = "critera_sensor_value_lower_than";
-
-/// Build the wizard.py-shaped `cluster_info` map for `CLUS_INFO_*.json`.
-/// Each cluster entry gets the ellipse params plus the optional
-/// criteria-range fields, emitted only when the corresponding bound is
-/// finite (mirrors wizard.py's three-branch handling of -inf / +inf). Every
-/// range bound is written under BOTH the correct `criteria_…` key and the
-/// legacy `critera_…` key with the identical value. A cluster with no range
-/// — always the case for the single-cluster path (`range: None`) — gets
-/// neither pair, exactly as before.
-///
-/// FITTED numbers (centre / SD / angle) go through `metrics::round_metric`
-/// (3 decimals, or 4 significant digits for small magnitudes); a centre is
-/// rounded at least as finely as its own axis SD so a tiny SD next to a large
-/// centre stays resolvable. The criteria range BOUNDS are user inputs and are
-/// written verbatim (full f64) — a consumer assigning rows from the file must
-/// land in the same cluster the preview used.
-/// `outer_sd` fills every cluster's `boundary_sd_health_score` (health-score
-/// set point N, > 3).
-fn build_cluster_info(clusters: &[ClusterDetail], outer_sd: Option<f64>) -> serde_json::Value {
-    use metrics::{round_metric, round_metric_scaled};
-
-    let mut cluster_info_map = serde_json::Map::new();
-    for cluster in clusters {
-        let mut entry = serde_json::Map::new();
-        if let Some(range) = &cluster.range {
-            if let Some(lo) = range.min {
-                // User input, written VERBATIM (never `round_metric`): rows are
-                // assigned with the raw bound, so a rounded copy in the file
-                // would send rows between the two values to another cluster.
-                let v = serde_json::json!(lo);
-                entry.insert(CLUSTER_KEY_HIGHER.into(), v.clone());
-                entry.insert(CLUSTER_KEY_HIGHER_LEGACY.into(), v);
-            }
-            if let Some(hi) = range.max {
-                let v = serde_json::json!(hi);
-                entry.insert(CLUSTER_KEY_LOWER.into(), v.clone());
-                entry.insert(CLUSTER_KEY_LOWER_LEGACY.into(), v);
-            }
-        }
-        let e = &cluster.ellipse;
-        entry.insert(
-            "x_cluster_center".into(),
-            serde_json::json!(round_metric_scaled(e.x_center, e.x_sd)),
-        );
-        entry.insert(
-            "y_cluster_center".into(),
-            serde_json::json!(round_metric_scaled(e.y_center, e.y_sd)),
-        );
-        entry.insert("x_sd".into(), serde_json::json!(round_metric(e.x_sd)));
-        entry.insert("y_sd".into(), serde_json::json!(round_metric(e.y_sd)));
-        entry.insert("angle_deg".into(), serde_json::json!(round_metric(e.angle_deg)));
-        // The user's outer ring N (health 0 at N x this cluster's SD), the SAME
-        // number for every cluster; `null` when no set point was given (legacy).
-        entry.insert(
-            "boundary_sd_health_score".into(),
-            outer_sd.map_or(serde_json::Value::Null, |n| serde_json::json!(n)),
-        );
-
-        cluster_info_map.insert(cluster.cluster_id.to_string(), serde_json::Value::Object(entry));
-    }
-    serde_json::Value::Object(cluster_info_map)
-}
-
-/// Persist a (single- or multi-) cluster GMM ellipse fit to
-/// `{save_path}/output/{second_sensor}/CLUS_INFO_{first_sensor}_{second_sensor}.json`
-/// matching `wizard.py`'s `CLUSTERING_INFO` template. Per-cluster criteria
-/// ranges are written under both `criteria_sensor_value_*` (correct) and the
-/// legacy `critera_sensor_value_*` spelling — see `build_cluster_info`.
-///
-/// `set_points` (optional): `outer_sd` = N (> 3) is validated (a failure
-/// returns `VALIDATION: ...` and writes nothing) and written as every
-/// cluster's `boundary_sd_health_score`. Omitted = `null` as before.
-#[tauri::command(rename_all = "snake_case")]
-fn train_clustering_model(
-    first_sensor: String,
-    second_sensor: String,
-    n_clusters: u32,
-    criteria_sensor: Option<String>,
-    cluster_ranges: Option<Vec<ClusterRange>>,
-    model_name: Option<String>,
-    save_path: String,
-    // Forwarded straight to the preview fit so the trained ellipse mirrors the
-    // dashboard's filtered slice.
-    filter: Option<PreviewFilter>,
-    set_points: Option<health_score::SetPointsArg>,
-    state: State<AppState>,
-) -> Result<ClusteringModelInfo, String> {
-    let state_lock = state.0.read().map_err(|e| e.to_string())?;
-    let session = state_lock.as_ref().ok_or("No data loaded")?;
-    write_clustering_info(
-        &session.data,
-        first_sensor,
-        second_sensor,
-        n_clusters,
-        criteria_sensor,
-        cluster_ranges,
-        model_name,
-        &save_path,
-        filter,
-        set_points.as_ref(),
-    )
-    .map_err(model_export::CoreError::into_string)
-}
-
-/// Core of [`train_clustering_model`] over an already-locked dataset (also
-/// used by its tests).
-#[allow(clippy::too_many_arguments)]
-fn write_clustering_info(
-    data: &ColumnarData,
-    first_sensor: String,
-    second_sensor: String,
-    n_clusters: u32,
-    criteria_sensor: Option<String>,
-    cluster_ranges: Option<Vec<ClusterRange>>,
-    model_name: Option<String>,
-    save_path: &str,
-    filter: Option<PreviewFilter>,
-    set_points: Option<&health_score::SetPointsArg>,
-) -> Result<ClusteringModelInfo, model_export::CoreError> {
-    if save_path.is_empty() {
-        return Err("save_path is required.".into());
-    }
-    // Path-traversal defense — both sensors land in the filename
-    // (`CLUS_INFO_{first}_{second}.json`) and `second_sensor` is also
-    // a directory component. Reject any traversal/separator chars before
-    // we let them anywhere near `Path::join` / `format!`.
-    let first_sensor = sanitize_filename_component(&first_sensor)
-        .map_err(|e| format!("first_sensor: {}", e))?;
-    let second_sensor = sanitize_filename_component(&second_sensor)
-        .map_err(|e| format!("second_sensor: {}", e))?;
-    validate_save_dir(save_path)?;
-
-    // Reuse the preview path — it already does all the validation /
-    // splitting / ellipse-fitting for both 1-cluster and N-cluster cases.
-    let preview = clustering_preview_in(
-        data,
-        first_sensor.clone(),
-        second_sensor.clone(),
-        n_clusters,
-        criteria_sensor.clone(),
-        cluster_ranges,
-        filter.clone(),
-    )?;
-
-    // Health-score set point N: validated against the clusters that are about
-    // to be written (rounded like the file), before anything touches disk.
-    let outer_sd = match set_points {
-        Some(sp) => {
-            let geoms: Vec<health_score::ClusterGeom> = preview
-                .clusters
-                .iter()
-                .map(|c| health_preview::rounded_geom(c.cluster_id, &c.ellipse))
-                .collect();
-            let issues = health_score::validate_clustering(&geoms, sp);
-            if health_score::has_errors(&issues) {
-                return Err(model_export::CoreError::Validation(issues));
-            }
-            sp.outer_sd
-        }
-        None => None,
-    };
-
-    // Need start/end dates over the joined-non-null subset (matches
-    // single-cluster behaviour even when n_clusters > 1; the criteria
-    // filter doesn't shift the training date range). The dashboard
-    // filter — distinct from the per-cluster criteria range — does narrow
-    // it, so we gate rows by `resolved.keeps(row)` here too.
-    let (start_date, end_date) = {
-        let i1 = data.headers.iter().position(|h| h == &first_sensor).unwrap();
-        let i2 = data.headers.iter().position(|h| h == &second_sensor).unwrap();
-
-        let resolved = ResolvedFilter::resolve(filter.as_ref(), &data.headers)?;
-        let c1 = &data.columns[i1];
-        let c2 = &data.columns[i2];
-        let mut min_us: Option<i64> = None;
-        let mut max_us: Option<i64> = None;
-        for r in 0..data.n_rows() {
-            if !resolved.is_noop() && !resolved.keeps(data, r) { continue; }
-            if !(c1[r].is_finite() && c2[r].is_finite()) { continue; }
-            let us = data.ts_parsed[r];
-            if us == TS_MISSING { continue; }
-            min_us = Some(min_us.map_or(us, |m| m.min(us)));
-            max_us = Some(max_us.map_or(us, |m| m.max(us)));
-        }
-        match (
-            min_us.and_then(micros_to_naive),
-            max_us.and_then(micros_to_naive),
-        ) {
-            (Some(a), Some(b)) => (
-                a.format("%Y-%m-%dT%H:%M:%S").to_string(),
-                b.format("%Y-%m-%dT%H:%M:%S").to_string(),
-            ),
-            _ => (String::new(), String::new()),
-        }
-    };
-
-    let resolved_name = model_name
-        .as_deref()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| format!("({}) VS ({})", first_sensor, second_sensor));
-
-    let now = chrono::Utc::now().to_rfc3339();
-
-    let cluster_info = build_cluster_info(&preview.clusters, outer_sd);
-
-    let composition_criteria = preview
-        .criteria_sensor
-        .clone()
-        .unwrap_or_default();
-
-    let json_payload = serde_json::json!({
-        "model_name": resolved_name,
-        "model_composition": {
-            "first_sensor": first_sensor,
-            "second_sensor": second_sensor,
-            "criteria_sensor": composition_criteria,
-            "cluster_count": preview.cluster_count,
-        },
-        "model_training_set_info": {
-            "publish_id": 0,
-            "training_set_start_date": start_date,
-            "training_set_end_date": end_date,
-            "training_set_comments": ""
-        },
-        "cluster_info": cluster_info,
-        "model_update_record": [
-            {
-                "publish_id": 0,
-                "updated_timestamp": now,
-                "updated_by": "Wizard",
-                "activity": "Wizard",
-                "comments": ""
-            }
-        ]
-    });
-
-    let out_dir = std::path::Path::new(save_path)
-        .join("output")
-        .join(&second_sensor);
-    std::fs::create_dir_all(&out_dir)
-        .map_err(|e| format!("Failed to create output dir: {}", e))?;
-    let out_file = out_dir.join(format!(
-        "CLUS_INFO_{}_{}.json",
-        first_sensor, second_sensor
-    ));
-    let json_text = serde_json::to_string_pretty(&json_payload)
-        .map_err(|e| format!("JSON serialize failed: {}", e))?;
-    std::fs::write(&out_file, json_text)
-        .map_err(|e| format!("Failed to write {}: {}", out_file.display(), e))?;
-
-    Ok(ClusteringModelInfo {
-        model_name: resolved_name,
-        first_sensor,
-        second_sensor,
-        criteria_sensor: preview.criteria_sensor,
-        cluster_count: preview.cluster_count,
-        clusters: preview.clusters,
-        saved_path: out_file.to_string_lossy().into_owned(),
-    })
-}
-
-/// `setpoint_health_score` object of `REL_INFO_*.json` (nulls when no set
-/// points were given).
-fn relationship_setpoint_json(sp: Option<&health_score::SetPointsArg>) -> serde_json::Value {
-    let v = |x: Option<f64>| x.map_or(serde_json::Value::Null, |n| serde_json::json!(n));
-    let d = health_score::SetPointsArg::default();
-    let sp = sp.unwrap_or(&d);
-    serde_json::json!({
-        "residual_at_health_80_lower": v(sp.residual_at_80_lower),
-        "residual_at_health_80_upper": v(sp.residual_at_80_upper),
-        "residual_at_health_0_lower": v(sp.residual_at_0_lower),
-        "residual_at_health_0_upper": v(sp.residual_at_0_upper)
-    })
-}
-
-#[derive(Debug, Serialize)]
-pub struct RelationshipTrainResult {
-    pub model_path: String,
-    pub r2: f64,
-    pub rmse2: f64,
-    pub n_rows: usize,
-    pub info_path: String,
-}
-
-/// Train a Relationship (LinearGAM) model via the sidecar and persist:
-///   - The pickled model under `{save_path}/output/{target}/REL_MODEL_*.pkl`
-///   - A `REL_INFO_*.json` written by Rust (Python only saves the .pkl).
-///
-/// `set_points` (optional): the four residual set points are validated against
-/// THIS fit's `2rmse` right after the sidecar returns (a failure returns
-/// `VALIDATION: ...` and writes no INFO/CSV) and written to
-/// `setpoint_health_score` (`residual_at_health_80/0_lower/upper`). Omitted =
-/// `null`s as before.
-#[tauri::command(rename_all = "snake_case")]
-async fn train_relationship_model(
-    predictors: Vec<String>,
-    target: String,
-    lambda: f64,
-    save_path: String,
-    model_name: Option<String>,
-    // Dashboard filter (timestamp + value gates). When set, the LinearGAM
-    // is trained on the filtered slice and the REL_DATASET CSV / time
-    // bounds reflect the same restricted row set.
-    filter: Option<PreviewFilter>,
-    set_points: Option<health_score::SetPointsArg>,
-    app: tauri::AppHandle,
-    state: State<'_, AppState>,
-) -> Result<RelationshipTrainResult, String> {
-    write_relationship_files(
-        &predictors,
-        &target,
-        lambda,
-        &save_path,
-        model_name,
-        filter,
-        set_points.as_ref(),
-        &[],
-        &app,
-        &state,
-    )
-    .await
-    .map_err(model_export::CoreError::into_string)
-}
-
-/// Core of [`train_relationship_model`].
-///
-/// `test_periods` (scoring periods; empty = none, and then no `validation`
-/// block): the sidecar also PREDICTS every hourly point of the universe - the
-/// training hours and the hours of the scoring periods, each at the hour's
-/// mean predictors - with the model it just fitted (`X_extra`, no refit on
-/// them), in the same run. The same preview code as `compute_health_preview`
-/// turns that into the hourly `validation` block added to `REL_INFO_*.json`.
-/// `REL_DATASET_*.csv`, the `.pkl` and every other `REL_INFO` key are the raw
-/// training rows' numbers, unchanged.
-#[allow(clippy::too_many_arguments)]
-async fn write_relationship_files(
-    predictors: &[String],
-    target: &str,
-    lambda: f64,
-    save_path: &str,
-    model_name: Option<String>,
-    filter: Option<PreviewFilter>,
-    set_points: Option<&health_score::SetPointsArg>,
-    test_periods: &[health_validation::TestPeriodArg],
-    app: &tauri::AppHandle,
-    state: &AppState,
-) -> Result<RelationshipTrainResult, model_export::CoreError> {
-    let predictors: Vec<String> = predictors.to_vec();
-    let target: String = target.to_string();
-    if predictors.is_empty() {
-        return Err("At least one predictor is required.".into());
-    }
-    if target.is_empty() {
-        return Err("Target sensor is required.".into());
-    }
-    if save_path.is_empty() {
-        return Err("save_path is required.".into());
-    }
-    // Path-traversal defense: `target` ends up as a directory name
-    // (`save_path/output/{target}/`) and each predictor is joined with `+`
-    // to form the `{feat_token}` interpolated into REL_DATASET/REL_INFO
-    // filenames. Any of these containing path separators or `..` would
-    // either escape the output dir or corrupt the filename.
-    let target = sanitize_filename_component(&target)
-        .map_err(|e| format!("target: {}", e))?;
-    let predictors: Vec<String> = predictors
-        .iter()
-        .map(|p| sanitize_filename_component(p).map_err(|e| format!("predictor '{}': {}", p, e)))
-        .collect::<Result<Vec<_>, String>>()?;
-    validate_save_dir(save_path)?;
-
-    // Build (X, y) the same way preview does. Also capture the raw timestamp
-    // string per surviving row — we use it later as the first CSV column so
-    // the REL_DATASET file aligns with `wizard.py::SaveThisSensor`'s
-    // `training_set.to_csv(...)` (which writes the DataFrame's DatetimeIndex
-    // as the unnamed first column).
-    let (x_matrix, y_vector, row_timestamps, time_bounds, row_idx, extra_points, stamp) = {
-        let state_lock = state.0.read().map_err(|e| e.to_string())?;
-        let session = state_lock.as_ref().ok_or("No data loaded")?;
-        let data = &session.data;
-        let stamp = session.stamp();
-
-        let mut predictor_indices: Vec<usize> = Vec::with_capacity(predictors.len());
-        for p in &predictors {
-            let idx = data
-                .headers
-                .iter()
-                .position(|h| h == p)
-                .ok_or_else(|| format!("Predictor not found: {}", p))?;
-            predictor_indices.push(idx);
-        }
-        let target_idx = data
-            .headers
-            .iter()
-            .position(|h| h == &target)
-            .ok_or_else(|| format!("Target not found: {}", target))?;
-
-        let resolved = ResolvedFilter::resolve(filter.as_ref(), &data.headers)?;
-
-        let pred_cols: Vec<&[f64]> = predictor_indices
-            .iter()
-            .map(|&i| data.columns[i].as_slice())
-            .collect();
-        let target_col: &[f64] = &data.columns[target_idx];
-
-        let mut x_matrix: Vec<Vec<f64>> = Vec::with_capacity(data.n_rows());
-        let mut y_vector: Vec<f64> = Vec::with_capacity(data.n_rows());
-        let mut row_timestamps: Vec<Option<String>> = Vec::with_capacity(data.n_rows());
-        // Dataset row of each surviving row (ascending).
-        let mut row_idx: Vec<u32> = Vec::with_capacity(data.n_rows());
-        let mut min_us: Option<i64> = None;
-        let mut max_us: Option<i64> = None;
-        for r in 0..data.n_rows() {
-            if !resolved.is_noop() && !resolved.keeps(data, r) {
-                continue;
-            }
-            let mut x_row: Vec<f64> = Vec::with_capacity(pred_cols.len());
-            let mut ok = true;
-            for col in &pred_cols {
-                let v = col[r];
-                if v.is_finite() {
-                    x_row.push(v);
-                } else {
-                    ok = false;
-                    break;
-                }
-            }
-            if !ok { continue; }
-            let y_val = target_col[r];
-            if !y_val.is_finite() {
-                continue;
-            }
-            x_matrix.push(x_row);
-            y_vector.push(y_val);
-            row_idx.push(r as u32);
-            row_timestamps.push(data.timestamps[r].clone());
-            let us = data.ts_parsed[r];
-            if us != TS_MISSING {
-                min_us = Some(min_us.map_or(us, |m| m.min(us)));
-                max_us = Some(max_us.map_or(us, |m| m.max(us)));
-            }
-        }
-        if x_matrix.is_empty() {
-            return Err("No rows remain after dropping nulls.".into());
-        }
-        let bounds = match (
-            min_us.and_then(micros_to_naive),
-            max_us.and_then(micros_to_naive),
-        ) {
-            (Some(a), Some(b)) => (
-                a.format("%Y-%m-%dT%H:%M:%S").to_string(),
-                b.format("%Y-%m-%dT%H:%M:%S").to_string(),
-            ),
-            _ => (String::new(), String::new()),
-        };
-        // Scoring periods: the hourly points the model has to PREDICT (the
-        // training hours and the hours of the scoring periods, at their mean
-        // predictors) - the same selection as the preview's.
-        let extra_points = if test_periods.is_empty() {
-            health_score::RelHourPoints::default()
-        } else {
-            let plan = health_validation::TestPlan::resolve(test_periods, filter.as_ref(), &data.headers);
-            if health_score::has_errors(&plan.issues) {
-                return Err(model_export::CoreError::Validation(plan.issues));
-            }
-            let cols = health_validation::RelCols {
-                target: target_idx,
-                predictors: &predictor_indices,
-            };
-            let train = health_validation::RelTrain {
-                rows: &row_idx,
-                actual: &y_vector,
-                x: health_validation::RelX::Rows(&x_matrix),
-                n_pred: predictors.len(),
-            };
-            health_validation::RelHours::build(data, &train, Some((&plan, &cols))).points()
-        };
-        (
-            x_matrix,
-            y_vector,
-            row_timestamps,
-            bounds,
-            row_idx,
-            extra_points,
-            stamp,
-        )
-    };
-
-    let n_rows = x_matrix.len();
-
-    let mut payload = serde_json::json!({
-        "action": "train_relationship",
-        "payload": {
-            "predictors": predictors,
-            "target": target,
-            "X": x_matrix,
-            "y": y_vector,
-            "smoothing": lambda,
-            "saved_path": save_path,
-        }
-    });
-    if !extra_points.is_empty() {
-        payload["payload"]["X_extra"] = serde_json::json!(extra_points.x_rows());
-    }
-
-    let payload_line = signed_sidecar_line(&payload)?;
-
-    let (mut rx, mut child) = spawn_sidecar(app)?;
-    child
-        .write(payload_line.as_bytes())
-        .map_err(|e| e.to_string())?;
-
-    let mut stdout_buf = String::new();
-    let mut stderr_buf = String::new();
-    while let Some(event) = rx.recv().await {
-        match event {
-            CommandEvent::Stdout(line) => {
-                stdout_buf.push_str(&String::from_utf8_lossy(&line));
-            }
-            CommandEvent::Stderr(line) => {
-                stderr_buf.push_str(&String::from_utf8_lossy(&line));
-            }
-            CommandEvent::Terminated(_) => break,
-            _ => {}
-        }
-    }
-
-    // No output, an unreadable answer or the engine's own error: the user gets
-    // a fixed sentence, the engine's text goes to the error log.
-    let resp = read_train_answer(&stdout_buf, &stderr_buf)
-        .map_err(|failure| report_engine_failure(app, failure))?;
-    let r2 = resp.r2.ok_or_else(|| engine_missing_field_error("r2"))?;
-    let rmse2 = resp.rmse2.ok_or_else(|| engine_missing_field_error("rmse2"))?;
-
-    let model_path = resp.model_path.ok_or_else(|| engine_missing_field_error("model_path"))?;
-    let predicted = resp
-        .predicted
-        .ok_or_else(|| engine_missing_field_error("predicted"))?;
-    let residual = resp
-        .residual
-        .ok_or_else(|| engine_missing_field_error("residual"))?;
-    if predicted.len() != n_rows || residual.len() != n_rows {
-        return Err(format!(
-            "The Relation model engine's answer does not match the request: predicted/residual \
-             length mismatch (got {}/{} expected {})",
-            predicted.len(),
-            residual.len(),
-            n_rows,
-        )
-        .into());
-    }
-
-    // Hourly predictions (an old sidecar ignores `X_extra`: refuse rather than
-    // export a validation block without its numbers).
-    let extra_pred = export_extra_predictions(resp.predicted_extra.as_deref(), extra_points.len())?;
-
-    let info_path = write_relationship_outputs(
-        save_path,
-        &RelationshipOutputs {
-            predictors: &predictors,
-            target: &target,
-            lambda,
-            model_name,
-            x_matrix: &x_matrix,
-            y: &y_vector,
-            row_timestamps: &row_timestamps,
-            time_bounds: &time_bounds,
-            r2,
-            rmse2,
-            predicted: &predicted,
-            residual: &residual,
-            set_points,
-        },
-    )?;
-
-    // The `validation` block: the SAME preview code as `compute_health_preview`,
-    // over this fresh fit and its hourly predictions.
-    if !test_periods.is_empty() {
-        let predicted_all: Vec<f64> = predicted.iter().map(|p| p.unwrap_or(f64::NAN)).collect();
-        let fit = health_score::RelFit {
-            target: target.clone(),
-            predictors: predictors.clone(),
-            lambda,
-            rows: row_idx,
-            actual: y_vector.clone(),
-            predicted: predicted_all,
-            x_cols: (0..predictors.len())
-                .map(|k| x_matrix.iter().map(|row| row[k]).collect())
-                .collect(),
-            r2_per_step: Vec::new(),
-            rmse2_per_step: Vec::new(),
-        };
-        let extra = health_score::RelExtra::new(&extra_points, &extra_pred)
-            .ok_or("internal: the hourly predictions do not match the request")?;
-        let block = {
-            let lock = state.0.read().map_err(|e| e.to_string())?;
-            let session = lock.as_ref().ok_or("No data loaded")?;
-            if session.stamp() != stamp {
-                return Err(STALE_SESSION_ERROR.to_string().into());
-            }
-            model_export::relationship_block(
-                &session.data,
-                &fit,
-                &extra,
-                filter.as_ref(),
-                set_points,
-                test_periods,
-            )?
-        };
-        health_validation::inject_validation(&info_path, block)?;
-    }
-
-    Ok(RelationshipTrainResult {
-        model_path,
-        r2,
-        rmse2,
-        n_rows,
-        info_path: info_path.to_string_lossy().into_owned(),
-    })
-}
-
-/// The model's predictions for the `want` hourly points of an EXPORT
-/// (`train_relationship`'s `predicted_extra`). An export never claims a
-/// validation it could not compute: a missing array (an outdated sidecar ignores
-/// `X_extra`) or a wrong length is an error and nothing is written.
-fn export_extra_predictions(
-    predicted_extra: Option<&[Option<f64>]>,
-    want: usize,
-) -> Result<Vec<f64>, String> {
-    if want == 0 {
-        return Ok(Vec::new());
-    }
-    let arr = predicted_extra.ok_or_else(|| SIDECAR_OUTDATED.to_string())?;
-    if arr.len() != want {
-        return Err(format!(
-            "The Relation model engine's answer does not match the request: predicted_extra \
-             length mismatch (got {} expected {want})",
-            arr.len()
-        ));
-    }
-    Ok(arr
-        .iter()
-        .map(|v| v.filter(|x| x.is_finite()).unwrap_or(f64::NAN))
-        .collect())
-}
-
-/// Everything `write_relationship_outputs` needs from a finished sidecar fit.
-struct RelationshipOutputs<'a> {
-    predictors: &'a [String],
-    target: &'a str,
-    lambda: f64,
-    model_name: Option<String>,
-    x_matrix: &'a [Vec<f64>],
-    y: &'a [f64],
-    row_timestamps: &'a [Option<String>],
-    time_bounds: &'a (String, String),
-    r2: f64,
-    rmse2: f64,
-    predicted: &'a [Option<f64>],
-    residual: &'a [Option<f64>],
-    set_points: Option<&'a health_score::SetPointsArg>,
-}
-
-/// The Rust half of a Relationship export, split out of
-/// [`write_relationship_files`] so it is testable without the sidecar: validate
-/// the set points against THIS fit's `2rmse` (the number written to the INFO
-/// file) BEFORE writing anything, then write `REL_DATASET_*.csv` and
-/// `REL_INFO_*.json` under `{save_path}/output/{target}/`. Returns the INFO
-/// path. (The `.pkl` is written by the sidecar itself.)
-fn write_relationship_outputs(
-    save_path: &str,
-    o: &RelationshipOutputs,
-) -> Result<std::path::PathBuf, model_export::CoreError> {
-    let predictors = o.predictors;
-    let target = o.target.to_string();
-    let lambda = o.lambda;
-    let (r2, rmse2) = (o.r2, o.rmse2);
-    let n_rows = o.y.len();
-    let (x_matrix, y_vector) = (o.x_matrix, o.y);
-    let (row_timestamps, time_bounds) = (o.row_timestamps, o.time_bounds);
-    let (predicted, residual) = (o.predicted, o.residual);
-    let set_points = o.set_points;
-    let model_name = o.model_name.clone();
-
-    if let Some(sp) = set_points {
-        let issues = health_score::validate_relationship(Some(rmse2), sp);
-        if health_score::has_errors(&issues) {
-            return Err(model_export::CoreError::Validation(issues));
-        }
-    }
-
-    let feat_token = predictors.join("+");
-    let out_dir = std::path::Path::new(save_path).join("output").join(&target);
-    std::fs::create_dir_all(&out_dir)
-        .map_err(|e| format!("Failed to create output dir: {}", e))?;
-
-    // ── REL_DATASET_*.csv ─────────────────────────────────────────────
-    // Mirror wizard.py::_execute_relationship line 239:
-    //   training_set.to_csv(f"{saved_path}/output/{target}/REL_DATASET_{features}_{target}.csv")
-    // The file is the input matrix plus the model's predictions and
-    // residuals on the same rows. PREDICTED and RESIDUAL arrive from the
-    // sidecar already rounded to 3 decimals (`backend.py::train_relationship`).
-    // Raw predictor + target values are written verbatim — pandas's
-    // default `to_csv` also doesn't reformat numeric columns.
-    {
-        let fmt_f = |v: f64| format!("{}", v);
-        let fmt_opt = |v: Option<f64>| -> String {
-            match v {
-                Some(n) if n.is_finite() => fmt_f(n),
-                _ => String::new(),
-            }
-        };
-
-        let mut csv = String::new();
-        // `timestamp` is a hard-coded literal and safe, but the user-supplied
-        // predictor + target names are not — escape them so a sensor named
-        // `=cmd|...` doesn't run as a formula when the CSV is opened in
-        // Excel. Numeric value cells use `format!("{}", f64)` which always
-        // starts with a digit, `-`, or `inf`/`NaN` text — we leave those
-        // unescaped so Excel still parses them as numbers.
-        csv.push_str("timestamp");
-        for p in predictors {
-            csv.push(',');
-            csv.push_str(&excel_safe(p));
-        }
-        csv.push(',');
-        csv.push_str(&excel_safe(&target));
-        csv.push_str(",PREDICTED,RESIDUAL\n");
-
-        for i in 0..n_rows {
-            let ts = row_timestamps
-                .get(i)
-                .and_then(|t| t.as_deref())
-                .unwrap_or("");
-            // Timestamp is the only per-row string cell — escape to prevent
-            // formula injection from a malformed-but-valid CSV input.
-            csv.push_str(&excel_safe(ts));
-            for v in &x_matrix[i] {
-                csv.push(',');
-                csv.push_str(&fmt_f(*v));
-            }
-            csv.push(',');
-            csv.push_str(&fmt_f(y_vector[i]));
-            csv.push(',');
-            csv.push_str(&fmt_opt(predicted[i]));
-            csv.push(',');
-            csv.push_str(&fmt_opt(residual[i]));
-            csv.push('\n');
-        }
-
-        let csv_path = out_dir.join(format!("REL_DATASET_{}_{}.csv", feat_token, target));
-        std::fs::write(&csv_path, csv)
-            .map_err(|e| format!("Failed to write {}: {}", csv_path.display(), e))?;
-    }
-
-    // Write the REL_INFO_*.json on the Rust side (parity with wizard.py).
-    let resolved_name = model_name
-        .as_deref()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| {
-            let pred_str = predictors
-                .iter()
-                .map(|p| format!("({})", p))
-                .collect::<Vec<_>>()
-                .join(" + ");
-            format!("{} -> ({})", pred_str, target)
-        });
-
-    let predictors_obj: serde_json::Map<String, serde_json::Value> = predictors
-        .iter()
-        .map(|p| (p.clone(), serde_json::Value::String(p.clone())))
-        .collect();
-
-    let now = chrono::Utc::now().to_rfc3339();
-    let info_payload = serde_json::json!({
-        "model_name": resolved_name,
-        "model_composition": {
-            "predictors": predictors_obj,
-            "target": { target.clone(): target.clone() },
-            "linearGAM_lambda": lambda
-        },
-        "model_training_set_info": {
-            "publish_id": 0,
-            "training_set_file_name": format!("{}/REL_DATASET_{}_{}.csv", target, feat_token, target),
-            "training_set_start_date": time_bounds.0,
-            "training_set_end_date": time_bounds.1,
-            "training_set_comments": ""
-        },
-        "model_metrics": {
-            "r2_score": r2,
-            "2rmse": rmse2
-        },
-        "model_location": format!("{}/REL_MODEL_{}_{}.pkl", target, feat_token, target),
-        "setpoint_health_score": relationship_setpoint_json(set_points),
-        "model_update_record": [
-            {
-                "publish_id": 0,
-                "updated_timestamp": now,
-                "updated_by": "Wizard",
-                "activity": "Wizard",
-                "comments": ""
-            }
-        ]
-    });
-
-    let info_path = out_dir.join(format!("REL_INFO_{}_{}.json", feat_token, target));
-    let info_text = serde_json::to_string_pretty(&info_payload)
-        .map_err(|e| format!("JSON serialize failed: {}", e))?;
-    std::fs::write(&info_path, info_text)
-        .map_err(|e| format!("Failed to write {}: {}", info_path.display(), e))?;
-
-    Ok(info_path)
 }
 
 #[derive(Debug, Deserialize)]
@@ -4760,7 +3492,6 @@ mod special_sensor_tests {
     fn app_state(generation: u64) -> AppState {
         AppState(RwLock::new(Some(SessionData {
             data: dataset(),
-            paths: vec![],
             derived: HashSet::new(),
             generation,
             rel_cache: Default::default(),
@@ -5002,12 +3733,12 @@ mod special_sensor_tests {
         let state = AppState(RwLock::new(None));
         assert_eq!(session_generation(&state).unwrap(), None);
 
-        let g1 = install_session(&state, dataset(), vec!["a.csv".into()]).unwrap();
+        let g1 = install_session(&state, dataset()).unwrap();
         assert_eq!(session_generation(&state).unwrap(), Some(g1));
-        let g2 = install_session(&state, dataset(), vec!["b.csv".into()]).unwrap();
+        let g2 = install_session(&state, dataset()).unwrap();
         assert!(g2 > g1, "{g2} should be > {g1}");
         assert_eq!(session_generation(&state).unwrap(), Some(g2));
-        let g3 = install_session(&state, dataset(), vec![]).unwrap();
+        let g3 = install_session(&state, dataset()).unwrap();
         assert!(g3 > g2);
         assert_eq!(session_generation(&state).unwrap(), Some(g3));
     }
@@ -5015,10 +3746,10 @@ mod special_sensor_tests {
     #[test]
     fn a_window_bound_to_the_previous_dataset_cannot_touch_the_new_one() {
         let state = AppState(RwLock::new(None));
-        let g_a = install_session(&state, dataset(), vec![]).unwrap();
+        let g_a = install_session(&state, dataset()).unwrap();
         calc(&state, "Mine", false, Some(g_a)).unwrap();
         // Workspace B is loaded; the leftover window still holds g_a.
-        let g_b = install_session(&state, dataset(), vec![]).unwrap();
+        let g_b = install_session(&state, dataset()).unwrap();
         calc(&state, "Mine", false, Some(g_b)).unwrap();
 
         assert_eq!(calc(&state, "Mine", true, Some(g_a)).unwrap_err(), STALE_SESSION_ERROR);
@@ -7916,7 +6647,6 @@ mod count_period_rows_tests {
         );
         AppState(RwLock::new(Some(SessionData {
             data,
-            paths: vec![],
             derived: std::collections::HashSet::new(),
             generation,
             rel_cache: Default::default(),
@@ -8032,7 +6762,7 @@ mod count_period_rows_tests {
         let report = csv_processor::build_load_report(&merged);
         assert_eq!(median_interval_runs() - before, 1, "computed afresh for the new dataset");
         assert_eq!(report.interval_seconds, Some(60.0));
-        let generation = install_session(&state, merged.data, vec![]).unwrap();
+        let generation = install_session(&state, merged.data).unwrap();
 
         let before = median_interval_runs();
         let new = count_period_rows_in(&state, &[TimeRangeArg::default()], None, Some(generation)).unwrap();
@@ -8046,7 +6776,7 @@ mod count_period_rows_tests {
 
         // A dataset installed WITHOUT a load report (tests only) is still
         // right: its first reader computes it, once.
-        install_session(&state, minute_rows(1), vec![]).unwrap();
+        install_session(&state, minute_rows(1)).unwrap();
         let before = median_interval_runs();
         let one = count_period_rows_in(&state, &[TimeRangeArg::default()], None, None).unwrap();
         count_period_rows_in(&state, &[TimeRangeArg::default()], None, None).unwrap();
@@ -8245,8 +6975,7 @@ mod exported_folder_tests {
 #[cfg(test)]
 mod health_export_tests {
     use super::*;
-    use crate::health_score::{RelFit, SetPointsArg};
-    use crate::model_export::CoreError;
+    use crate::health_score::RelFit;
     use std::collections::HashSet;
 
     fn ds(cols: Vec<(&str, Vec<f64>)>) -> ColumnarData {
@@ -8271,19 +7000,10 @@ mod health_export_tests {
     fn state_with(data: ColumnarData, generation: u64) -> AppState {
         AppState(RwLock::new(Some(SessionData {
             data,
-            paths: vec![],
             derived: HashSet::new(),
             generation,
             rel_cache: Default::default(),
         })))
-    }
-
-    fn sp_ind(l: f64, h: f64) -> SetPointsArg {
-        SetPointsArg { lower: Some(l), upper: Some(h), ..Default::default() }
-    }
-
-    fn read_json(p: &std::path::Path) -> serde_json::Value {
-        serde_json::from_str(&std::fs::read_to_string(p).unwrap()).unwrap()
     }
 
     fn fit() -> RelFit {
@@ -8351,7 +7071,7 @@ mod health_export_tests {
         assert!(store_rel_fit(&state, SessionStamp::new(1, 0), "k".into(), fit()));
         assert!(health_preview_in(&state, &rel_request(Some("k"))).is_ok());
         // What `load_csv` does with a freshly loaded dataset:
-        install_session(&state, ds(vec![("S", vec![0.0; 50])]), vec![]).unwrap();
+        install_session(&state, ds(vec![("S", vec![0.0; 50])])).unwrap();
         assert!(state.0.read().unwrap().as_ref().unwrap().rel_cache.is_empty());
         let e = health_preview_in(&state, &rel_request(Some("k"))).unwrap_err();
         assert!(e.starts_with("NOT_FITTED"), "{e}");
@@ -8456,322 +7176,11 @@ mod health_export_tests {
 
     // ---------- set-point JSON helpers ----------
 
-    #[test]
-    fn relationship_setpoint_json_uses_the_legacy_keys() {
-        let sp = SetPointsArg {
-            residual_at_80_lower: Some(-4.0),
-            residual_at_80_upper: Some(6.0),
-            residual_at_0_lower: Some(-10.0),
-            residual_at_0_upper: Some(20.0),
-            ..Default::default()
-        };
-        let j = relationship_setpoint_json(Some(&sp));
-        assert_eq!(j["residual_at_health_80_lower"], -4.0);
-        assert_eq!(j["residual_at_health_80_upper"], 6.0);
-        assert_eq!(j["residual_at_health_0_lower"], -10.0);
-        assert_eq!(j["residual_at_health_0_upper"], 20.0);
-        let n = relationship_setpoint_json(None);
-        assert!(n["residual_at_health_80_lower"].is_null());
-        assert_eq!(n.as_object().unwrap().len(), 4);
-        // A partly-entered object keeps nulls for the rest.
-        let p = relationship_setpoint_json(Some(&SetPointsArg { residual_at_0_upper: Some(1.0), ..Default::default() }));
-        assert!(p["residual_at_health_80_lower"].is_null());
-        assert_eq!(p["residual_at_health_0_upper"], 1.0);
-    }
-
-    #[test]
-    fn individual_setpoint_json_is_lower_then_upper() {
-        assert_eq!(individual_setpoint_json(Some(&sp_ind(1.5, 9.0))), serde_json::json!([1.5, 9.0]));
-        assert_eq!(individual_setpoint_json(None), serde_json::json!([null, null]));
-        let only_l = SetPointsArg { lower: Some(2.0), ..Default::default() };
-        assert_eq!(individual_setpoint_json(Some(&only_l)), serde_json::json!([2.0, null]));
-    }
-
-    #[test]
-    fn cluster_info_boundary_is_n_for_every_cluster_and_null_without_a_set_point() {
-        let e = clustering::EllipseFit { x_center: 1.0, y_center: 2.0, x_sd: 3.0, y_sd: 1.0, angle_deg: 10.0 };
-        let mk = |id: u32, lo: Option<f64>, hi: Option<f64>| ClusterDetail {
-            cluster_id: id,
-            range: Some(ClusterRange { min: lo, max: hi }),
-            n_rows: 3,
-            ellipse: e.clone(),
-            xs: vec![],
-            ys: vec![],
-        };
-        let cs = vec![mk(1, None, Some(5.0)), mk(2, Some(5.0), None)];
-        let with = build_cluster_info(&cs, Some(5.0));
-        assert_eq!(with["1"]["boundary_sd_health_score"], 5.0);
-        assert_eq!(with["2"]["boundary_sd_health_score"], 5.0);
-        let without = build_cluster_info(&cs, None);
-        assert!(without["1"]["boundary_sd_health_score"].is_null());
-        // The phase-1 key spellings are untouched by the new argument.
-        for k in ["criteria_sensor_value_lower_than", "critera_sensor_value_lower_than"] {
-            assert_eq!(with["1"][k], 5.0);
-        }
-        for k in ["criteria_sensor_value_higher_than", "critera_sensor_value_higher_than"] {
-            assert_eq!(with["2"][k], 5.0);
-        }
-    }
-
     // ---------- Individual files ----------
-
-    fn band_of(data: &ColumnarData) -> health_score::IndividualBand {
-        let col = &data.columns[1];
-        let mean = metrics::mean(col);
-        let sd = metrics::sample_sd(col, mean);
-        let (m, s, b1, b3) = individual_rounded_metrics(mean, sd);
-        health_score::IndividualBand::from_rounded(m, s, b1, b3)
-    }
-
-    #[test]
-    fn train_individual_writes_the_set_points_as_lower_upper() {
-        let data = ds(vec![("S", s_values())]);
-        let b = band_of(&data);
-        let dir = tempfile::tempdir().unwrap();
-        let sp = sp_ind(b.lower_3sd - 5.0, b.upper_3sd + 7.0);
-        let info = write_individual_info(&data, "S".into(), None, dir.path().to_str().unwrap(), None, Some(&sp)).unwrap();
-        let j = read_json(std::path::Path::new(&info.saved_path));
-        let m = &j["model_metrics"];
-        assert_eq!(m["setpoint_health_score"], serde_json::json!([sp.lower, sp.upper]));
-        assert_eq!(m["mean"], b.mean);
-        assert_eq!(m["sd"], b.sd);
-        assert_eq!(m["1sd_boundary"], serde_json::json!([b.lower_1sd, b.upper_1sd]));
-        assert_eq!(m["3sd_boundary"], serde_json::json!([b.lower_3sd, b.upper_3sd]));
-        assert!(info.saved_path.ends_with("INDV_INFO_S.json"));
-    }
-
-    #[test]
-    fn train_individual_without_set_points_keeps_the_legacy_null_pair() {
-        let data = ds(vec![("S", s_values())]);
-        let dir = tempfile::tempdir().unwrap();
-        let info = write_individual_info(&data, "S".into(), None, dir.path().to_str().unwrap(), None, None).unwrap();
-        let j = read_json(std::path::Path::new(&info.saved_path));
-        assert_eq!(j["model_metrics"]["setpoint_health_score"], serde_json::json!([null, null]));
-    }
-
-    #[test]
-    fn train_individual_refuses_invalid_set_points_without_writing_anything() {
-        let data = ds(vec![("S", s_values())]);
-        let b = band_of(&data);
-        let dir = tempfile::tempdir().unwrap();
-        // H inside the upper 3σ boundary.
-        let sp = sp_ind(b.lower_3sd - 5.0, b.upper_3sd - 0.001);
-        let e = write_individual_info(&data, "S".into(), None, dir.path().to_str().unwrap(), None, Some(&sp)).unwrap_err();
-        match e {
-            CoreError::Validation(v) => assert!(v.iter().any(|i| i.code == "upper_inside_3sd"), "{v:?}"),
-            CoreError::Other(s) => panic!("{s}"),
-        }
-        assert!(!dir.path().join("output").exists(), "nothing may be created for an invalid model");
-        // Through the flat error channel of the direct command:
-        let e = write_individual_info(&data, "S".into(), None, dir.path().to_str().unwrap(), None, Some(&sp)).unwrap_err();
-        assert!(e.into_string().starts_with("VALIDATION: "));
-    }
-
-    #[test]
-    fn train_individual_refuses_a_constant_sensor() {
-        let data = ds(vec![("S", vec![5.0; 100])]);
-        let dir = tempfile::tempdir().unwrap();
-        let e = write_individual_info(&data, "S".into(), None, dir.path().to_str().unwrap(), None, Some(&sp_ind(1.0, 9.0))).unwrap_err();
-        match e {
-            CoreError::Validation(v) => assert!(v.iter().any(|i| i.code == "degenerate_band")),
-            CoreError::Other(s) => panic!("{s}"),
-        }
-        assert!(!dir.path().join("output").exists());
-    }
 
     // ---------- Clustering files ----------
 
-    fn cl_data() -> ColumnarData {
-        let n = 1000;
-        let (mut x, mut y, mut c) = (vec![], vec![], vec![]);
-        for i in 0..n {
-            let (cx, cy, crit) = if i % 2 == 0 { (0.0, 0.0, 5.0) } else { (50.0, 50.0, 15.0) };
-            let a = i as f64 * 0.618;
-            x.push(cx + a.sin() * 2.0 + ((i * 31 % 17) as f64 - 8.0) * 0.1);
-            y.push(cy + a.cos() + ((i * 17 % 13) as f64 - 6.0) * 0.1);
-            c.push(crit);
-        }
-        ds(vec![("X", x), ("Y", y), ("C", c)])
-    }
-
-    fn ranges() -> Option<Vec<ClusterRange>> {
-        Some(vec![
-            ClusterRange { min: None, max: Some(10.0) },
-            ClusterRange { min: Some(10.0), max: None },
-        ])
-    }
-
-    fn outer(n: Option<f64>) -> SetPointsArg {
-        SetPointsArg { outer_sd: n, ..Default::default() }
-    }
-
-    #[test]
-    fn train_clustering_writes_n_for_every_cluster_and_both_criteria_spellings() {
-        let data = cl_data();
-        let dir = tempfile::tempdir().unwrap();
-        let info = write_clustering_info(
-            &data, "X".into(), "Y".into(), 2, Some("C".into()), ranges(), None,
-            dir.path().to_str().unwrap(), None, Some(&outer(Some(5.5))),
-        )
-        .unwrap();
-        let j = read_json(std::path::Path::new(&info.saved_path));
-        for id in ["1", "2"] {
-            assert_eq!(j["cluster_info"][id]["boundary_sd_health_score"], 5.5, "cluster {id}");
-        }
-        assert_eq!(j["cluster_info"]["1"]["criteria_sensor_value_lower_than"], 10.0);
-        assert_eq!(j["cluster_info"]["1"]["critera_sensor_value_lower_than"], 10.0);
-        assert_eq!(j["cluster_info"]["2"]["criteria_sensor_value_higher_than"], 10.0);
-        assert_eq!(j["cluster_info"]["2"]["critera_sensor_value_higher_than"], 10.0);
-        assert!(info.saved_path.ends_with("CLUS_INFO_X_Y.json"));
-        assert_eq!(j["model_composition"]["cluster_count"], 2);
-    }
-
-    #[test]
-    fn train_clustering_without_a_set_point_keeps_null() {
-        let data = cl_data();
-        let dir = tempfile::tempdir().unwrap();
-        let info = write_clustering_info(
-            &data, "X".into(), "Y".into(), 2, Some("C".into()), ranges(), None,
-            dir.path().to_str().unwrap(), None, None,
-        )
-        .unwrap();
-        let j = read_json(std::path::Path::new(&info.saved_path));
-        assert!(j["cluster_info"]["1"]["boundary_sd_health_score"].is_null());
-    }
-
-    #[test]
-    fn train_clustering_refuses_n_not_above_3_without_writing() {
-        let data = cl_data();
-        for n in [None, Some(3.0), Some(2.0)] {
-            let dir = tempfile::tempdir().unwrap();
-            let e = write_clustering_info(
-                &data, "X".into(), "Y".into(), 2, Some("C".into()), ranges(), None,
-                dir.path().to_str().unwrap(), None, Some(&outer(n)),
-            )
-            .unwrap_err();
-            assert!(matches!(e, CoreError::Validation(_)), "{n:?}");
-            assert!(!dir.path().join("output").exists(), "{n:?}");
-        }
-    }
-
     // ---------- Relationship files (everything except the sidecar run) ----------
-
-    fn rel_sp(w: f64) -> SetPointsArg {
-        SetPointsArg {
-            residual_at_80_lower: Some(-(w + 1.0)),
-            residual_at_80_upper: Some(w + 2.0),
-            residual_at_0_lower: Some(-(w + 5.0)),
-            residual_at_0_upper: Some(w + 9.0),
-            ..Default::default()
-        }
-    }
-
-    struct RelFixture {
-        predictors: Vec<String>,
-        x: Vec<Vec<f64>>,
-        y: Vec<f64>,
-        ts: Vec<Option<String>>,
-        bounds: (String, String),
-        predicted: Vec<Option<f64>>,
-        residual: Vec<Option<f64>>,
-    }
-
-    fn rel_fixture() -> RelFixture {
-        RelFixture {
-            predictors: vec!["A".into(), "B".into()],
-            x: vec![vec![1.0, 10.0], vec![2.0, 20.0], vec![3.0, 30.0]],
-            y: vec![1.5, 2.5, 3.5],
-            ts: vec![Some("2024-01-01T00:00:00".into()), Some("2024-01-01T00:01:00".into()), None],
-            bounds: ("2024-01-01T00:00:00".into(), "2024-01-01T00:01:00".into()),
-            predicted: vec![Some(1.0), None, Some(3.0)],
-            residual: vec![Some(0.5), None, Some(0.5)],
-        }
-    }
-
-    fn rel_outputs<'a>(f: &'a RelFixture, sp: Option<&'a SetPointsArg>, rmse2: f64) -> RelationshipOutputs<'a> {
-        RelationshipOutputs {
-            predictors: &f.predictors,
-            target: "T",
-            lambda: 10000.0,
-            model_name: None,
-            x_matrix: &f.x,
-            y: &f.y,
-            row_timestamps: &f.ts,
-            time_bounds: &f.bounds,
-            r2: 0.93,
-            rmse2,
-            predicted: &f.predicted,
-            residual: &f.residual,
-            set_points: sp,
-        }
-    }
-
-    #[test]
-    fn relationship_info_and_dataset_are_written_with_the_set_points() {
-        let f = rel_fixture();
-        let dir = tempfile::tempdir().unwrap();
-        let sp = rel_sp(2.0);
-        let info = write_relationship_outputs(dir.path().to_str().unwrap(), &rel_outputs(&f, Some(&sp), 2.0)).unwrap();
-        assert!(info.ends_with("REL_INFO_A+B_T.json"));
-        let j = read_json(&info);
-        assert_eq!(j["model_metrics"]["2rmse"], 2.0);
-        assert_eq!(j["model_metrics"]["r2_score"], 0.93);
-        let s = &j["setpoint_health_score"];
-        assert_eq!(s["residual_at_health_80_lower"], -3.0);
-        assert_eq!(s["residual_at_health_80_upper"], 4.0);
-        assert_eq!(s["residual_at_health_0_lower"], -7.0);
-        assert_eq!(s["residual_at_health_0_upper"], 11.0);
-        assert_eq!(j["model_location"], "T/REL_MODEL_A+B_T.pkl");
-        assert_eq!(j["model_training_set_info"]["training_set_file_name"], "T/REL_DATASET_A+B_T.csv");
-        assert_eq!(j["model_composition"]["linearGAM_lambda"], 10000.0);
-        assert_eq!(j["model_name"], "(A) + (B) -> (T)");
-        let csv = std::fs::read_to_string(dir.path().join("output/T/REL_DATASET_A+B_T.csv")).unwrap();
-        let lines: Vec<&str> = csv.lines().collect();
-        assert_eq!(lines[0], "timestamp,A,B,T,PREDICTED,RESIDUAL");
-        assert_eq!(lines[1], "2024-01-01T00:00:00,1,10,1.5,1,0.5");
-        assert_eq!(lines[2], "2024-01-01T00:01:00,2,20,2.5,,");
-        assert_eq!(lines[3], ",3,30,3.5,3,0.5");
-    }
-
-    #[test]
-    fn relationship_without_set_points_keeps_the_four_nulls() {
-        let f = rel_fixture();
-        let dir = tempfile::tempdir().unwrap();
-        let info = write_relationship_outputs(dir.path().to_str().unwrap(), &rel_outputs(&f, None, 2.0)).unwrap();
-        let j = read_json(&info);
-        for k in ["residual_at_health_80_lower", "residual_at_health_80_upper", "residual_at_health_0_lower", "residual_at_health_0_upper"] {
-            assert!(j["setpoint_health_score"][k].is_null(), "{k}");
-        }
-    }
-
-    #[test]
-    fn relationship_set_points_are_validated_against_this_fits_2rmse_before_writing() {
-        let f = rel_fixture();
-        let dir = tempfile::tempdir().unwrap();
-        // Built for W = 2, but the freshly trained fit has 2rmse = 3.5: the
-        // lower 80-point (-3) now sits INSIDE the band -> refused, no files.
-        let sp = rel_sp(2.0);
-        let e = write_relationship_outputs(dir.path().to_str().unwrap(), &rel_outputs(&f, Some(&sp), 3.5)).unwrap_err();
-        match e {
-            CoreError::Validation(v) => assert!(v.iter().any(|i| i.code == "point80_inside_band"), "{v:?}"),
-            CoreError::Other(m) => panic!("{m}"),
-        }
-        assert!(!dir.path().join("output").exists(), "nothing written for an invalid model");
-        // Exactly on the band edge is refused too.
-        let mut edge = rel_sp(2.0);
-        edge.residual_at_80_upper = Some(3.5);
-        assert!(matches!(
-            write_relationship_outputs(dir.path().to_str().unwrap(), &rel_outputs(&f, Some(&edge), 3.5)),
-            Err(CoreError::Validation(_))
-        ));
-        assert!(!dir.path().join("output").exists());
-        // Missing set points are refused as well.
-        let none = SetPointsArg::default();
-        assert!(matches!(
-            write_relationship_outputs(dir.path().to_str().unwrap(), &rel_outputs(&f, Some(&none), 2.0)),
-            Err(CoreError::Validation(_))
-        ));
-    }
 
     // ---------- whole Individual flow: CSV -> session -> preview -> export -> file ----------
 
@@ -8795,7 +7204,6 @@ mod health_fix_tests {
         let cols = vec![vec![f64::NAN; n], vec![1.0; n], vec![2.0; n]];
         AppState(RwLock::new(Some(SessionData {
             data: ColumnarData::from_parts(headers, timestamps, cols),
-            paths: vec![],
             derived: HashSet::new(),
             generation,
             rel_cache: Default::default(),
@@ -8817,42 +7225,6 @@ mod health_fix_tests {
     }
 
     // ---------- bug 2: criteria bounds verbatim ----------
-
-    #[test]
-    fn cluster_info_writes_criteria_bounds_verbatim_and_still_rounds_fitted_numbers() {
-        let ellipse = clustering::EllipseFit {
-            x_center: 1.234_567_8,
-            y_center: 2.0,
-            x_sd: 0.987_654_3,
-            y_sd: 0.5,
-            angle_deg: 12.345_678,
-        };
-        let mk = |id, min, max| ClusterDetail {
-            cluster_id: id,
-            range: Some(ClusterRange { min, max }),
-            n_rows: 3,
-            ellipse: ellipse.clone(),
-            xs: vec![],
-            ys: vec![],
-        };
-        let info = build_cluster_info(
-            &[mk(1, None, Some(10.12345)), mk(2, Some(10.12345), Some(0.000_123_45))],
-            Some(5.0),
-        );
-        for (id, key, want) in [
-            ("1", "criteria_sensor_value_lower_than", 10.12345),
-            ("1", "critera_sensor_value_lower_than", 10.12345),
-            ("2", "criteria_sensor_value_higher_than", 10.12345),
-            ("2", "critera_sensor_value_higher_than", 10.12345),
-            ("2", "criteria_sensor_value_lower_than", 0.000_123_45),
-            ("2", "critera_sensor_value_lower_than", 0.000_123_45),
-        ] {
-            assert_eq!(info[id][key].as_f64(), Some(want), "{id}.{key}");
-        }
-        // Fitted numbers are still rounded (4 significant digits / 3 decimals).
-        assert_eq!(info["1"]["x_sd"].as_f64(), Some(metrics::round_metric(0.987_654_3)));
-        assert_ne!(info["1"]["angle_deg"].as_f64(), Some(12.345_678));
-    }
 
     // ---------- bug 1: derived epoch ----------
 
@@ -8876,7 +7248,7 @@ mod health_fix_tests {
             vec![Some("2024-03-01T00:00:00".into())],
             vec![vec![f64::NAN], vec![1.0]],
         );
-        let g = install_session(&state, fresh, vec![]).unwrap();
+        let g = install_session(&state, fresh).unwrap();
         assert_eq!(session_stamp(&state).unwrap().unwrap(), SessionStamp::new(g, 0));
     }
 
@@ -8966,115 +7338,6 @@ mod model_info_output_tests {
 
     // ---------- build_cluster_info ----------
 
-    fn ellipse() -> clustering::EllipseFit {
-        clustering::EllipseFit {
-            x_center: 10.123456,
-            y_center: 20.654321,
-            x_sd: 1.23456,
-            y_sd: 0.000412345,
-            angle_deg: 33.33333,
-        }
-    }
-
-    fn detail(id: u32, min: Option<f64>, max: Option<f64>, with_range: bool) -> ClusterDetail {
-        ClusterDetail {
-            cluster_id: id,
-            range: if with_range { Some(ClusterRange { min, max }) } else { None },
-            n_rows: 5,
-            ellipse: ellipse(),
-            xs: vec![],
-            ys: vec![],
-        }
-    }
-
-    fn entry<'a>(v: &'a serde_json::Value, id: &str) -> &'a serde_json::Map<String, serde_json::Value> {
-        v.get(id).and_then(|e| e.as_object()).expect("cluster entry")
-    }
-
-    #[test]
-    fn cluster_info_writes_both_spellings_with_identical_values_for_every_cluster() {
-        let clusters = vec![
-            detail(1, None, Some(10.0), true),            // lower-bounded only
-            detail(2, Some(10.0), Some(20.0), true),      // both bounds
-            detail(3, Some(20.5), None, true),            // upper-open
-        ];
-        let info = build_cluster_info(&clusters, None);
-
-        let e1 = entry(&info, "1");
-        assert_eq!(e1[CLUSTER_KEY_LOWER], serde_json::json!(10.0));
-        assert_eq!(e1[CLUSTER_KEY_LOWER_LEGACY], e1[CLUSTER_KEY_LOWER]);
-        assert!(!e1.contains_key(CLUSTER_KEY_HIGHER));
-        assert!(!e1.contains_key(CLUSTER_KEY_HIGHER_LEGACY));
-
-        let e2 = entry(&info, "2");
-        assert_eq!(e2[CLUSTER_KEY_HIGHER], serde_json::json!(10.0));
-        assert_eq!(e2[CLUSTER_KEY_LOWER], serde_json::json!(20.0));
-        assert_eq!(e2[CLUSTER_KEY_HIGHER_LEGACY], e2[CLUSTER_KEY_HIGHER]);
-        assert_eq!(e2[CLUSTER_KEY_LOWER_LEGACY], e2[CLUSTER_KEY_LOWER]);
-
-        let e3 = entry(&info, "3");
-        assert_eq!(e3[CLUSTER_KEY_HIGHER], serde_json::json!(20.5));
-        assert_eq!(e3[CLUSTER_KEY_HIGHER_LEGACY], e3[CLUSTER_KEY_HIGHER]);
-        assert!(!e3.contains_key(CLUSTER_KEY_LOWER));
-        assert!(!e3.contains_key(CLUSTER_KEY_LOWER_LEGACY));
-    }
-
-    #[test]
-    fn cluster_info_key_spellings_are_exactly_what_the_consumer_reads() {
-        assert_eq!(CLUSTER_KEY_HIGHER, "criteria_sensor_value_higher_than");
-        assert_eq!(CLUSTER_KEY_LOWER, "criteria_sensor_value_lower_than");
-        assert_eq!(CLUSTER_KEY_HIGHER_LEGACY, "critera_sensor_value_higher_than");
-        assert_eq!(CLUSTER_KEY_LOWER_LEGACY, "critera_sensor_value_lower_than");
-    }
-
-    #[test]
-    fn cluster_info_single_cluster_has_no_range_keys_of_either_spelling() {
-        // Single-cluster path: `range: None` → no criteria keys at all (same
-        // as before this change); ellipse fields + null score still present.
-        let info = build_cluster_info(&[detail(1, None, None, false)], None);
-        let e = entry(&info, "1");
-        for k in [
-            CLUSTER_KEY_HIGHER,
-            CLUSTER_KEY_LOWER,
-            CLUSTER_KEY_HIGHER_LEGACY,
-            CLUSTER_KEY_LOWER_LEGACY,
-        ] {
-            assert!(!e.contains_key(k), "{k} must be absent");
-        }
-        for k in ["x_cluster_center", "y_cluster_center", "x_sd", "y_sd", "angle_deg"] {
-            assert!(e[k].is_number(), "{k}");
-        }
-        assert!(e["boundary_sd_health_score"].is_null());
-    }
-
-    #[test]
-    fn cluster_info_ellipse_numbers_use_the_small_value_rounding_rule() {
-        let info = build_cluster_info(&[detail(1, None, None, false)], None);
-        let e = entry(&info, "1");
-        // y_sd 0.000412345 survives (legacy r3 wrote 0.0).
-        assert_eq!(e["y_sd"], serde_json::json!(0.0004123));
-        assert_eq!(e["x_sd"], serde_json::json!(1.235));
-        assert_eq!(e["angle_deg"], serde_json::json!(33.333));
-        // Centres: x_center normal; y_center rounded at least as finely as y_sd.
-        assert_eq!(e["x_cluster_center"], serde_json::json!(10.123));
-        assert_eq!(e["y_cluster_center"], serde_json::json!(20.654321));
-    }
-
-    #[test]
-    fn python_sidecar_clustering_writer_agrees_on_the_criteria_spelling() {
-        // The compiled sidecar's `train_clustering` writes the same JSON
-        // shape; its source must carry the correct `criteria_` pair (and,
-        // like this writer, the legacy pair until it is dropped).
-        let py = include_str!("../python/backend.py");
-        for k in [
-            CLUSTER_KEY_HIGHER,
-            CLUSTER_KEY_LOWER,
-            CLUSTER_KEY_HIGHER_LEGACY,
-            CLUSTER_KEY_LOWER_LEGACY,
-        ] {
-            assert!(py.contains(k), "backend.py is missing key {k}");
-        }
-    }
 }
 
 #[cfg(test)]
@@ -9356,7 +7619,6 @@ pub fn run() {
             load_metadata_command,
             compute_sensor_stats,
             preview_relationship_model,
-            get_loaded_paths,
             get_session_generation,
             calculate_new_sensor,
             remove_sensor_columns,
@@ -9370,10 +7632,7 @@ pub fn run() {
             convert_legacy_formula,
             extract_formula_refs,
             rename_formula_refs,
-            train_individual_model,
             compute_clustering_preview,
-            train_clustering_model,
-            train_relationship_model,
             compute_health_preview,
             count_period_rows,
             plan_workspace_export,
@@ -9496,7 +7755,6 @@ mod relationship_response_tests {
         let columns = vec![vec![f64::NAN; n], vec![0.0; n], vec![0.0; n], vec![0.0; n]];
         AppState(RwLock::new(Some(SessionData {
             data: ColumnarData::from_parts(headers, timestamps, columns),
-            paths: vec![],
             derived: HashSet::new(),
             generation: 3,
             rel_cache: Default::default(),

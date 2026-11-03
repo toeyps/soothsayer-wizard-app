@@ -127,7 +127,6 @@ fn load_state(generation: u64) -> (AppState, tempfile::TempDir) {
     let merged = crate::csv_processor::read_merge_csvs_with_report(vec![path.to_string_lossy().into_owned()]).unwrap();
     let state = AppState(RwLock::new(Some(SessionData {
         data: merged.data,
-        paths: vec![],
         // POWER is a special sensor computed in this session (name_key form).
         derived: HashSet::from(["power".to_string()]),
         generation,

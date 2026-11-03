@@ -185,15 +185,12 @@ describe('CSS contract: the same semantic element renders the same on every refr
         }
     });
 
-    it('status dot colours agree between the FG tab dot, the Build Model dot (same .f4-kb-dot class), the FG legend and the Phase 0 .kind-badge-dot', () => {
+    it('status dot colours agree between the FG tab dot, the Build Model dot (same .f4-kb-dot class) and the FG legend', () => {
         for (const state of ['trained', 'complete'] as const) {
             const dot = prop(`.f4-kb-dot--${state}`, 'background');
             expect(dot).toBeTruthy();
             expect(prop(`.fg-legend-dot--${state}`, 'background'), `legend ${state}`).toBe(dot);
-            expect(prop(`.kind-badge-dot--${state}`, 'background'), `.kind-badge-dot ${state}`).toBe(dot);
         }
-        // The legend's neutral dot and the kind badge's neutral dot share one fill.
-        expect(prop('.fg-legend-dot', 'background')).toBe(prop('.kind-badge-dot', 'background'));
     });
 
     it('the FG tab keeps .f4-kb-dot inside a .kind-badge shell — both shells are positioned, so the absolute corner dot stays on its badge (not the .sensor-autocomplete-icon escape bug)', () => {
@@ -342,7 +339,7 @@ describe('FG tab legend vs the badges it explains', () => {
         const legendNotTrained = screen.getByText('Not trained').querySelector('.fg-legend-dot');
         const untrainedBadge = container.querySelector('[data-testid="fg-sensor-row-1:tag1"] .kind-badge--individual')!;
         expect(untrainedBadge).not.toBeNull();
-        const badgeDot = untrainedBadge.querySelector('.f4-kb-dot, .kind-badge-dot');
+        const badgeDot = untrainedBadge.querySelector('.f4-kb-dot');
         expect(!!badgeDot).toBe(!!legendNotTrained);
     });
 });

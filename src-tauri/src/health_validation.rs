@@ -10,10 +10,6 @@
 //! This module is the one implementation of that maths. The three previews
 //! (`health_preview`) feed it the rows they already scored with the TRAIN-only
 //! model and it returns the `test_validation` block of `compute_health_preview`;
-//! a legacy `train_relationship_model` run with scoring periods runs the very
-//! same preview code (`model_export::relationship_block`) and writes
-//! the same block as `validation` into the `*_INFO_*.json` file. Nothing here
-//! ever fits or refits anything.
 //!
 //! Semantics (all three kinds - [`build_hourly`]; since 2026-10-11 the health
 //! score is computed on 1-HOUR AVERAGES, see `health_hourly`):
@@ -51,10 +47,9 @@
 
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
-use std::path::Path;
 
 use crate::csv_processor::ColumnarData;
-use crate::health_hourly::{HourGroups, SCORING_AGGREGATION, SCORING_INTERVAL_SECS};
+use crate::health_hourly::HourGroups;
 use crate::health_score::{Issue, RelExtra, RelFit, RelHourPoints, Severity, SCORE_AT_3SD};
 use crate::{parse_time_bound, PreviewFilter, ResolvedFilter, TimeRangeArg};
 
@@ -982,43 +977,6 @@ pub fn build_hourly(
 // Export block
 // ---------------------------------------------------------------------------
 
-/// The `validation` object written into the `*_INFO_*.json` file. `tests` are
-/// the scoring periods exactly as in `test_validation` (so: no `label`, no
-/// `event_time`, no `first_below_80`, no `lead_days`).
-///
-/// `scoring_interval_seconds` / `scoring_aggregation` declare how the scores
-/// behind `tests[].scored` / `pct_below_80` / `lowest` were sampled: one point
-/// per clock hour, the mean of the hour's running rows (`health_hourly`). A
-/// file written before 2026-10-11 has neither key and was scored row by row.
-/// No older key is removed or renamed.
-pub fn export_block(v: &TestValidation, validated_at: &str) -> serde_json::Value {
-    serde_json::json!({
-        "tested": true,
-        "validated_at": validated_at,
-        "scoring_interval_seconds": SCORING_INTERVAL_SECS,
-        "scoring_aggregation": SCORING_AGGREGATION,
-        "train": v.train,
-        "train_ranges": v.train_ranges,
-        "tests": v.tests,
-    })
-}
-
-/// Add `validation` to an already written `*_INFO_*.json` (every other key is
-/// left exactly as it was).
-pub fn inject_validation(info_path: &Path, block: serde_json::Value) -> Result<(), String> {
-    let text = std::fs::read_to_string(info_path)
-        .map_err(|e| format!("Failed to read {}: {e}", info_path.display()))?;
-    let mut doc: serde_json::Value = serde_json::from_str(&text)
-        .map_err(|e| format!("Failed to parse {}: {e}", info_path.display()))?;
-    let obj = doc
-        .as_object_mut()
-        .ok_or_else(|| format!("{} is not a JSON object", info_path.display()))?;
-    obj.insert("validation".to_string(), block);
-    let out = serde_json::to_string_pretty(&doc).map_err(|e| format!("JSON serialize failed: {e}"))?;
-    std::fs::write(info_path, out)
-        .map_err(|e| format!("Failed to write {}: {}", info_path.display(), e))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1629,86 +1587,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn a_result_is_exactly_the_scoring_facts_no_label_event_or_verdict_keys() {
-        let t = TestResult {
-            index: 2,
-            start: Some("a".into()),
-            end: Some("b".into()),
-            days: 1.5,
-            rows: 10,
-            hours: 4,
-            metrics: KindMetrics::default(),
-            train_rows: 3,
-            train_days: 0.5,
-            train_hours: 1,
-            scored: 4,
-            pct_below_80: Some(25.0),
-            lowest: Some(42.0),
-            lowest_at: Some("c".into()),
-        };
-        let j = serde_json::to_value(&t).unwrap();
-        let mut keys: Vec<&str> = j.as_object().unwrap().keys().map(String::as_str).collect();
-        keys.sort_unstable();
-        // Every key from before the hourly scoring is still there; `hours` and
-        // `train_hours` are the only additions.
-        assert_eq!(
-            keys,
-            vec![
-                "days", "end", "hours", "index", "lowest", "lowest_at", "pct_below_80", "rows", "scored", "start",
-                "train_days", "train_hours", "train_rows",
-            ]
-        );
-        // The export block carries the periods unchanged.
-        let v = TestValidation {
-            train: TrainBlock { rows: 10, days: 1.0, hours: 2, metrics: KindMetrics::default() },
-            train_ranges: vec![],
-            tests: vec![t],
-        };
-        let block = export_block(&v, "2026-10-10T00:00:00Z");
-        assert_eq!(block["tests"][0], j);
-        let text = block.to_string();
-        for gone in ["label", "event_time", "lead_days", "first_below_80"] {
-            assert!(!text.contains(gone), "{gone} must not be written");
-        }
-        assert_eq!((block["tested"].clone(), block["validated_at"].clone()), (true.into(), "2026-10-10T00:00:00Z".into()));
-    }
-
-    #[test]
-    fn the_export_block_keeps_every_old_key_and_declares_the_hourly_scoring() {
-        let v = TestValidation {
-            train: TrainBlock {
-                rows: 288,
-                days: 1.0,
-                hours: 24,
-                metrics: KindMetrics { mean: Some(1.0), sd: Some(0.5), ..Default::default() },
-            },
-            train_ranges: vec![TrainRange { start: Some("s".into()), end: None }],
-            tests: vec![],
-        };
-        let block = export_block(&v, "2026-10-11T00:00:00Z");
-        let mut keys: Vec<&str> = block.as_object().unwrap().keys().map(String::as_str).collect();
-        keys.sort_unstable();
-        assert_eq!(
-            keys,
-            vec![
-                "scoring_aggregation", "scoring_interval_seconds", "tested", "tests", "train", "train_ranges",
-                "validated_at",
-            ]
-        );
-        // The five keys a file written before 2026-10-11 has - none removed or renamed.
-        for old in ["tested", "validated_at", "train", "train_ranges", "tests"] {
-            assert!(block.get(old).is_some(), "{old}");
-        }
-        assert_eq!(block["scoring_interval_seconds"], 3600);
-        assert_eq!(block["scoring_aggregation"], "mean");
-        // The train block: the raw facts keep their keys, `hours` is added.
-        let mut train: Vec<&str> = block["train"].as_object().unwrap().keys().map(String::as_str).collect();
-        train.sort_unstable();
-        assert_eq!(train, vec!["days", "hours", "mean", "rows", "sd"]);
-        assert_eq!((block["train"]["rows"].clone(), block["train"]["hours"].clone()), (288.into(), 24.into()));
-    }
-
     // ---------- hourly mode ----------
 
     #[test]
@@ -1816,17 +1694,4 @@ mod tests {
         assert!(t0.pct_below_80.is_none() && t0.lowest.is_none() && t0.lowest_at.is_none());
     }
 
-    #[test]
-    fn inject_validation_adds_one_key_and_keeps_the_rest() {
-        let dir = tempfile::tempdir().unwrap();
-        let p = dir.path().join("INDV_INFO_S.json");
-        std::fs::write(&p, r#"{"model_name":"m","model_metrics":{"mean":1.0},"model_update_record":[{"a":1}]}"#).unwrap();
-        inject_validation(&p, serde_json::json!({"tested": true})).unwrap();
-        let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&p).unwrap()).unwrap();
-        assert_eq!(v["validation"]["tested"], true);
-        assert_eq!(v["model_name"], "m");
-        assert_eq!(v["model_metrics"]["mean"], 1.0);
-        assert_eq!(v["model_update_record"][0]["a"], 1);
-        assert!(inject_validation(&dir.path().join("missing.json"), serde_json::json!({})).is_err());
-    }
 }

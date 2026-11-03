@@ -247,8 +247,6 @@ export interface FakeRustOptions {
      * for paths it does not know. Without it every `load_csv` reloads `raw`.
      */
     datasets?: Record<string, RawCsv>;
-    /** What `get_loaded_paths` answers before the first `load_csv`. */
-    initialPaths?: string[];
 }
 
 /** Rust `commit_derived`'s refusal when `load_csv` replaced the session while a
@@ -266,7 +264,7 @@ export function createFakeRust(raw: RawCsv, opts: FakeRustOptions = {}) {
     let generation = 0;
     let loaded = false;
     let dataset: RawCsv = raw;
-    let loadedPaths: string[] = opts.initialPaths ?? [];
+    let loadedPaths: string[] = [];
     let nRows = raw.columns[0]?.length ?? 0;
     const tsFor = (n: number) => Array.from({ length: n }, (_, i) => `2026-01-01 0${i}:00:00`);
     let timestamps = tsFor(nRows);
@@ -501,8 +499,6 @@ export function createFakeRust(raw: RawCsv, opts: FakeRustOptions = {}) {
             case 'get_all_sensors':
                 if (!loaded) throw 'No data loaded';
                 return [...headers];
-            case 'get_loaded_paths':
-                return [...loadedPaths];
             case 'evaluate_formula':
                 checkExpected(args);
                 if (!loaded) throw 'No data loaded';

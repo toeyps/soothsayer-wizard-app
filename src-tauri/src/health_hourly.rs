@@ -31,9 +31,6 @@ use crate::csv_processor::TS_MISSING;
 /// `compute_health_preview`, `scoring_interval_seconds` of the exported block).
 pub const SCORING_INTERVAL_SECS: u64 = (HOUR_US / 1_000_000) as u64;
 
-/// How the rows of one interval become its point (`scoring_aggregation` of the
-/// exported block).
-pub const SCORING_AGGREGATION: &str = "mean";
 
 /// "This position belongs to no hour" in [`HourGroups::of`].
 const NO_HOUR: u32 = u32::MAX;
@@ -283,7 +280,6 @@ mod tests {
         assert_eq!(g.label(1), "2024-01-01T11:00:00");
         assert_eq!(g.label(0), crate::chart_query::hour_label(us.div_euclid(HOUR_US)));
         assert_eq!(SCORING_INTERVAL_SECS, 3600);
-        assert_eq!(SCORING_AGGREGATION, "mean");
     }
 
     #[test]

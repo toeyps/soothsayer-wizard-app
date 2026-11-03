@@ -29,7 +29,7 @@ export interface CrossFeatureBackend {
 }
 
 const SESSION_CMDS = new Set([
-    'load_csv', 'get_all_sensors', 'get_loaded_paths', 'evaluate_formula', 'calculate_new_sensor',
+    'load_csv', 'get_all_sensors', 'evaluate_formula', 'calculate_new_sensor',
     'remove_sensor_columns', 'extract_formula_refs', 'rename_formula_refs', 'validate_formula', 'get_chart_data',
 ]);
 const MUTATING = new Set(['load_csv', 'evaluate_formula', 'calculate_new_sensor', 'remove_sensor_columns']);

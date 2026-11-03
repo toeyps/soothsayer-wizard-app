@@ -84,7 +84,7 @@ fn same_bits(a: &[f64], b: &[f64]) -> bool {
 
 fn state_with(data: ColumnarData) -> (AppState, u64) {
     let state = AppState(RwLock::new(None));
-    let generation = install_session(&state, data, vec![]).unwrap();
+    let generation = install_session(&state, data).unwrap();
     (state, generation)
 }
 
