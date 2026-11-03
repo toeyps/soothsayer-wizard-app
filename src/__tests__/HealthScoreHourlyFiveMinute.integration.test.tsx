@@ -334,7 +334,8 @@ describe('Relation model on 5-minute data', () => {
         await waitFor(() => expect(bmw().getByTestId('score-summary').dataset.state).toBe('ready'));
         // here too only the TRAIN period is shaded and named — once, above the UPPER chart of the stacked card (the
         // score chart under it is the same time axis); the scoring periods' hours are on the line (below)
-        expect(stripOf(lastChart('Residual', from, true))).toEqual(['TRAIN']);
+        expect(stripOf(lastChart('Actual', from, true))).toEqual(['TRAIN']); // named once, above the top chart
+        expect(stripOf(lastChart('Residual', from, true))).toEqual([]);
         expect(stripOf(lastChart('Health score', from, true))).toEqual([]);
         expect(((seriesOf(lastChart('Health score', from, true), '__scopes')?.markArea?.data ?? []) as any[]).map(x => x[0].name)).toEqual(['TRAIN']); // the band itself is still drawn
         // an hourly point's tooltip is headed by its hour START, date and time

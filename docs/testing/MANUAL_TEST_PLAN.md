@@ -3901,6 +3901,18 @@ _ปุ่มดินสอที่แต่ละแถวในแท็บ 
   - เปิด popup Running condition กด "Only when running"
   - **คาดหวัง:** พอกด "Use all data" ช่อง sensor กับช่องค่าหาย ป้าย "Required" หาย ประโยคท้ายหัวข้อเขียน "train and score use every row of the periods." และกด Apply ได้ · การ์ดด้านบนขึ้นเครื่องหมายถูก เขียน "Use all data" ไม่มีคำว่า "Machine running: not set" · Train ได้เลย และกราฟมีจุดของช่วงที่เครื่องหยุด · หน้า Export มีแถว "Running status" พร้อมช่องเลือก sensor ช่องค่า และปุ่ม "Save" ที่กดได้เมื่อกรอกครบ ไม่มีปุ่ม "Open running condition" · หลัง "Save" แถวเป็นเครื่องหมายถูก เขียน "For the monitoring system only — training uses all data." และ Export ได้ · โมเดลยังเป็น Complete ทั้งตอน Save และตอน Change · `running_status` ในไฟล์เป็น sensor และค่าล่าสุด · กลับมา "Only when running" แล้วช่องกลับมาพร้อมค่าที่กรอกในหน้า Export
 
+- [ ] **BMW-416 — Relation model หน้า Health score: กราฟ Actual กับ Predicted อยู่บนสุด เหนือกราฟ Residual** 🆕
+  - *(วิธีเตรียม: Relation model ที่ Train แล้ว และมี Scoring period ยาวกว่า Train period)*
+  - เปิดหน้า Model fit ของโมเดลนี้ ดูช่วงเวลาของกราฟ "Target vs predicted"
+  - เปิดหน้า Health score ดูชื่อการ์ดและกราฟในการ์ดจากบนลงล่าง
+  - เลื่อนเมาส์บนกราฟบนสุด แล้วดูเส้นเคอร์เซอร์ในกราฟข้างล่าง
+  - อ่านค่า Actual กับ Predicted ของจุดหนึ่ง แล้วเทียบกับค่า Residual ของจุดเดียวกัน
+  - หมุนลูกกลิ้งเมาส์เพื่อซูมบนกราฟบนสุด
+  - กดปุ่มขยายการ์ด แล้วลองซูมและเลื่อนเมาส์ในหน้าต่างที่ขยาย
+  - กรอก set point ให้ครบ แล้วดูกราฟคะแนนด้านล่าง
+  - เปิดหน้า Health score ของโมเดลแบบ Individual และ Clustering
+  - **คาดหวัง:** หน้า Model fit แสดงเฉพาะช่วง Train · หน้า Health score ชื่อการ์ดเป็น "Actual vs predicted, residual and health score" เรียงกราฟเป็น Actual กับ Predicted (เส้นสีน้ำเงินกับแดง มีป้ายสีเหนือกราฟ) → Residual → คะแนน · กราฟบนสุดแสดงช่วงเดียวกับกราฟข้างล่าง คือตลอด Scoring period มีแถบ TRAIN และป้าย "TRAIN" ครั้งเดียวเหนือกราฟบนสุด · เวลาเดียวกันตรงกันแนวดิ่งทั้ง 3 กราฟ เคอร์เซอร์และการซูมไปพร้อมกัน · Actual ลบ Predicted เท่ากับ Residual ของจุดเดียวกัน · วันที่แกนเวลาพิมพ์ครั้งเดียวใต้กราฟล่างสุด · หน้าต่างที่ขยายใช้ได้เหมือนกัน · Individual และ Clustering เหมือนเดิม
+
 - [ ] **BMW-409 — โมเดลแบบ Custom: "Use all data" ของโมเดลเอง ไม่ต้องกรอกบรรทัด sensor** 🆕
   - เลือกโมเดลหนึ่ง เปิด Model settings → Training data เลือก "Custom"
   - ในส่วน "When the machine is running" ของโมเดล กด "Use all data"

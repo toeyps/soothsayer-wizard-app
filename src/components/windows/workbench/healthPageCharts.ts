@@ -15,6 +15,8 @@ import { keepFollowY } from '../../charts/followYAxis';
 import { CHART, CHART_MONO, CLUSTER_COLORS, FONT, fmtScoreAxisValue } from './chartTheme';
 import {
     HOVER_AXIS_POINTER,
+    REF_LABEL_GUTTER,
+    buildTargetVsPredictedOption,
     buildTimeSeriesOption,
     centreLabelSeries,
     clusterAxes,
@@ -208,6 +210,15 @@ export function buildRelationshipSetPointOption(
         hLines,
     });
     return keepFollowY(opt, { ...opt, ...SYNC });
+}
+
+/** The hourly Actual and Predicted lines, the top chart of the Relation model's card: the
+ *  same two lines as Model fit's "Target vs predicted", over the Health score page's whole
+ *  range. Actual − Predicted is the residual right under it, and the plot keeps the
+ *  residual's right edge so a moment in time is at the same X in all three charts. */
+export function buildHealthFitOption(series: RelationshipSeries, unit: string, scopes: TimeScopes | null = null) {
+    const opt = buildTargetVsPredictedOption(series, unit, scopes);
+    return keepFollowY(opt, { ...opt, ...SYNC, grid: { ...opt.grid, right: REF_LABEL_GUTTER } });
 }
 
 // ---------------------------------------------------------------------------

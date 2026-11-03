@@ -5381,12 +5381,19 @@ body {
    (the Clusters scatter above it is taller: it has two value axes). */
 .wb2-card--stack .wb2-cv { height: 560px; }
 .wb2-card--stackxy .wb2-cv { height: 700px; }
+.wb2-card--stack3 .wb2-cv { height: 740px; }
 /* The two halves (also the body of the enlarged copy, which fills its dialog). */
 .wb3-stack-in { display: flex; flex-direction: column; flex: 1 1 auto; height: 100%; min-height: 0; }
 .wb3-stack-top { flex: 1 1 58%; min-height: 0; }
 .wb3-stack-bot { position: relative; flex: 1 1 42%; min-height: 0; margin-top: 2px; padding-top: 4px; border-top: 1px dashed var(--border-strong); }
 .wb3-stack-in--xy .wb3-stack-top { flex-basis: 64%; }
 .wb3-stack-in--xy .wb3-stack-bot { flex-basis: 36%; }
+/* Relation model: Actual and Predicted on top, then the residual, then the score. */
+.wb3-stack-fit { display: flex; flex-direction: column; flex: 1 1 36%; min-height: 0; }
+.wb3-stack-fit-plot { flex: 1 1 auto; min-height: 0; }
+.wb3-stack-key { display: flex; gap: 14px; padding: 0 0 2px 58px; font-size: 11px; color: var(--text-secondary); }
+.wb3-stack-in--fit .wb3-stack-top { flex-basis: 35%; margin-top: 2px; padding-top: 4px; border-top: 1px dashed var(--border-strong); }
+.wb3-stack-in--fit .wb3-stack-bot { flex-basis: 29%; }
 /* The lower half while there is no score to draw: the lock sentence, or the "could not be
    calculated" notice, in the score chart's own place. */
 .wb3-stack-bot--lock { display: grid; place-items: center; padding-top: 10px; }

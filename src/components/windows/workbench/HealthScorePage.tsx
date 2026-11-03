@@ -6,7 +6,8 @@ import ResponsiveECharts from '../../charts/ResponsiveECharts';
 import type { HealthIssue, HealthPreview, ScoreSummary } from '../../../types/health';
 import { PairSub } from './PairSub';
 import { useSensorLookup } from '../../sensor/sensorInfo';
-import ChartCard from './ChartCard';
+import ChartCard, { LegendItem } from './ChartCard';
+import { CHART } from './chartTheme';
 import ChecksCard from './ChecksCard';
 import ScoreRuler from './ScoreRuler';
 import { Kpi, KpiStrip } from './Kpi';
@@ -23,6 +24,7 @@ import {
     HEALTH_SYNC_GROUP_EXPANDED,
     asStackLower,
     asStackUpper,
+    buildHealthFitOption,
     buildClusterSetPointOption,
     buildIndividualSetPointOption,
     buildRelationshipSetPointOption,
@@ -522,8 +524,8 @@ function StackCharts({ data, props, hoverIdx, onHover, stale, unit, scopes, zoom
         }
         if (stats.kind === 'relationship' && series.kind === 'relationship') {
             return {
-                title: 'Residual',
-                what: `actual − predicted${unit ? ` (${unit})` : ''}`,
+                title: 'Actual vs predicted, residual',
+                what: `residual = actual − predicted${unit ? ` (${unit})` : ''}`,
                 option: buildRelationshipSetPointOption(series, stats.two_rmse, setPoints.kind === 'relationship' ? setPoints : null, unit, scopes),
                 time: true as const,
             };
@@ -547,12 +549,20 @@ function StackCharts({ data, props, hoverIdx, onHover, stale, unit, scopes, zoom
     }, [stats, series, setPoints, unit, model.xSensor, model.ySensor, scopes, lookup, stats.kind === 'clustering' ? hoverIdx : null]);
 
     const isTime = !!built?.time;
+    // Relation model: Actual and Predicted on top of the residual, because the residual is
+    // those two lines subtracted. It names the train periods, once, above the whole stack.
+    const fitOption = useMemo(
+        () => (stats.kind === 'relationship' && series.kind === 'relationship' ? asStackUpper(buildHealthFitOption(series, unit, scopes)) : null),
+        [stats.kind, series, unit, scopes],
+    );
     // With the score chart under it a time chart is the UPPER half of one plot (no X labels
     // of its own); alone — the score is locked — it keeps them.
-    const upperOption = useMemo(
-        () => (built ? (built.time && score ? asStackUpper(built.option) : built.option) : null),
-        [built, score],
-    );
+    const upperOption = useMemo(() => {
+        if (!built) return null;
+        if (!built.time) return built.option;
+        const option = fitOption ? asStackLower(built.option) : built.option;
+        return score ? asStackUpper(option) : option;
+    }, [built, fitOption, score]);
     // Under a time chart the periods are already named; under the scatter the strip is its own.
     const lowerOption = useMemo(() => {
         if (!score) return null;
@@ -566,7 +576,7 @@ function StackCharts({ data, props, hoverIdx, onHover, stale, unit, scopes, zoom
         if (!isTime && !lowerOption) return;
         zoom.restore();
         zoomExpanded.restore();
-    }, [upperOption, lowerOption, isTime, zoom, zoomExpanded]);
+    }, [fitOption, upperOption, lowerOption, isTime, zoom, zoomExpanded]);
 
     // The charts' event handlers are made ONCE (they read the latest `onHover` and
     // timestamps through refs). A new `onEvents` object on every render — and every hovered
@@ -603,7 +613,7 @@ function StackCharts({ data, props, hoverIdx, onHover, stale, unit, scopes, zoom
         <>
             {built.what && <>{built.what} · </>}
             <span data-testid="score-basis">1-hour averages of the running rows</span>
-            {' '}· one time axis, one cursor for both
+            {' '}· one time axis, one cursor for {fitOption ? 'all' : 'both'}
         </>
     ) : (
         <PairSub
@@ -629,7 +639,18 @@ function StackCharts({ data, props, hoverIdx, onHover, stale, unit, scopes, zoom
         // (it would repeat them).
         const id = (name: string) => (expanded ? undefined : name);
         return (
-            <div className={`wb3-stack-in${built.time ? '' : ' wb3-stack-in--xy'}`} data-testid={id('chart-stack')} data-upper={stats.kind}>
+            <div className={`wb3-stack-in${built.time ? '' : ' wb3-stack-in--xy'}${fitOption ? ' wb3-stack-in--fit' : ''}`} data-testid={id('chart-stack')} data-upper={stats.kind}>
+                {fitOption && (
+                    <div className="wb3-stack-fit" data-testid={id('chart-card-fit')}>
+                        <div className="wb3-stack-key">
+                            <LegendItem color={CHART.actual} label="Actual" />
+                            <LegendItem color={CHART.predicted} label="Predicted" />
+                        </div>
+                        <div className="wb3-stack-fit-plot">
+                            <ResponsiveECharts option={fitOption} style={{ height: '100%', minHeight: 0 }} {...timeProps} />
+                        </div>
+                    </div>
+                )}
                 <div className="wb3-stack-top" data-testid={id(`chart-card-set-${stats.kind}`)}>
                     <ResponsiveECharts option={upperOption} style={{ height: '100%', minHeight: 0 }} {...upperProps} />
                 </div>
@@ -658,7 +679,7 @@ function StackCharts({ data, props, hoverIdx, onHover, stale, unit, scopes, zoom
             title={`${built.title} and health score`}
             sub={sub}
             full
-            size={built.time ? 'stack' : 'stackxy'}
+            size={fitOption ? 'stack3' : built.time ? 'stack' : 'stackxy'}
             stale={stale}
             extra={<span className="hs-rd" data-testid="hs-readout">{text}</span>}
             render={body}

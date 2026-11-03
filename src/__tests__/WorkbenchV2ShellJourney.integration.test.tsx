@@ -165,7 +165,7 @@ const KINDS: Kind[] = [
         },
         fitStrip: 'rel-stats', fitTiles: ['stat-r2', 'stat-rmse', 'stat-res-sd'], fitBoard: 'model-fit-relationship',
         empty: 4, userTicks: ['residual_at_0_lower', 'residual_at_80_lower', 'residual_at_80_upper', 'residual_at_0_upper'],
-        stackTitle: 'Residual and health score',
+        stackTitle: 'Actual vs predicted, residual and health score',
         typeWrong: async () => {
             const w = lastPreview().stats.two_rmse as number;
             // three valid points; "80 high" has the WRONG SIGN (negative on the high side): rejected.

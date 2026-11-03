@@ -20,7 +20,7 @@ import { isPickerSurfaceOpen } from '../../sensor/SensorPicker';
 
 /** `stack` / `stackxy` = the Health score page's card of two charts, one above the other
  *  (560 px; 700 px when the upper one is the Clusters scatter). */
-export type ChartCardSize = 'normal' | 'tall' | 'xtall' | 'stack' | 'stackxy';
+export type ChartCardSize = 'normal' | 'tall' | 'xtall' | 'stack' | 'stack3' | 'stackxy';
 
 export interface ChartCardProps {
     /** Stable id — becomes `data-testid="chart-card-{id}"` / `chart-expand-{id}`. */

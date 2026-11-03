@@ -1003,10 +1003,61 @@ describe('Health score chart', () => {
         expect(scoreChart().option.grid.top).toBe(14);
         // a time kind is the 560 px one
         cleanup();
-        mount({ kind: 'relationship', sp: REL_VALID });
+        mount({ sp: IND_VALID });
         expect(stackCard().className).toBe('wb2-card wb2-card--stack wb2-full');
-        expect(stackCard().querySelector('.wb2-card-h b')!.textContent).toBe('Residual and health score');
         expect(screen.getByTestId('chart-stack').className).toBe('wb3-stack-in');
+        expect(screen.queryByTestId('chart-card-fit')).toBeNull();
+    });
+
+    describe('Relation model: Actual and Predicted on top of the residual', () => {
+        const option = (id: string) => {
+            const dom = screen.getByTestId(id).querySelector('[data-testid="echarts-mock"]');
+            const index = [...document.querySelectorAll('[data-testid="echarts-mock"]')].indexOf(dom!);
+            return charts.slice(-document.querySelectorAll('[data-testid="echarts-mock"]').length)[index];
+        };
+
+        it('three charts in order, with the key and the title and subtitle that say so', () => {
+            mount({ kind: 'relationship', sp: REL_VALID });
+            expect(stackCard().className).toBe('wb2-card wb2-card--stack3 wb2-full');
+            expect(stackCard().querySelector('.wb2-card-h b')!.textContent).toBe('Actual vs predicted, residual and health score');
+            expect([...screen.getByTestId('chart-stack').children]).toEqual([screen.getByTestId('chart-card-fit'), screen.getByTestId('chart-card-set-relationship'), screen.getByTestId('chart-card-score')]);
+            expect(screen.getByTestId('chart-card-fit').textContent).toBe('ActualPredicted');
+            expect(stackSub()).toBe('residual = actual − predicted (bar) · 1-hour averages of the running rows · one time axis, one cursor for all');
+        });
+
+        it('the top chart draws the hourly actual and predicted, in the Model fit colours, over the same hours as the residual', () => {
+            const data = previewFor('relationship', REL_VALID);
+            mount({ kind: 'relationship', sp: REL_VALID, data });
+            const fit = option('chart-card-fit').option;
+            const hourly = data.hourly as any;
+            const lines = fit.series.filter((s: any) => s.name !== '__scopes');
+            expect(lines.map((s: any) => [s.name, s.lineStyle.color])).toEqual([['Actual', CHART.actual], ['Predicted', CHART.predicted]]);
+            expect(lines[0].data.map((p: any) => p[1])).toEqual(hourly.actual);
+            expect(lines[1].data.map((p: any) => p[1])).toEqual(hourly.predicted);
+            const residual = option('chart-card-set-relationship').option.series[0];
+            expect(lines[0].data.map((p: any) => p[0])).toEqual(residual.data.map((p: any) => p[0]));
+        });
+
+        it('one time axis: same plot edges, X labels only under the score, and every chart shares the cursor and zoom', () => {
+            mount({ kind: 'relationship', sp: REL_VALID });
+            const [fit, residual, score] = ['chart-card-fit', 'chart-card-set-relationship', 'chart-card-score'].map(option);
+            for (const c of [fit, residual, score]) {
+                expect(c.option.grid.left).toBe(residual.option.grid.left);
+                expect(c.option.grid.right).toBe(residual.option.grid.right);
+                expect(c.onChartReady).toBe(fit.onChartReady);
+                expect(c.onEvents).toBe(fit.onEvents);
+            }
+            expect(fit.option.xAxis.axisLabel.show).toBe(false);
+            expect(residual.option.xAxis.axisLabel.show).toBe(false);
+            expect(score.option.xAxis.axisLabel?.show).not.toBe(false);
+        });
+
+        it('the score is locked: the residual prints the time labels, and the top chart stays', () => {
+            mount({ kind: 'relationship', sp: REL_EMPTY });
+            expect(screen.getByTestId('score-locked')).toBeTruthy();
+            expect(option('chart-card-fit').option.xAxis.axisLabel.show).toBe(false);
+            expect(option('chart-card-set-relationship').option.xAxis.axisLabel?.show).not.toBe(false);
+        });
     });
 
     it('the hover read-out is in the card header — there whether or not the score is drawn', () => {
@@ -1264,7 +1315,7 @@ describe('set-point chart per kind', () => {
         type('sp-residual_at_0_lower', '-9.61234');
         expect(marks(setChart()).slice(3)).toEqual(['80 · +5', '80 · −2.5', '0 · +12.25', '0 · −9.61234']);
         const card = stackCard();
-        expect(stackSub()).toBe('actual − predicted (bar) · 1-hour averages of the running rows · one time axis, one cursor for both');
+        expect(stackSub()).toBe('residual = actual − predicted (bar) · 1-hour averages of the running rows · one time axis, one cursor for all');
         expect(card.textContent).not.toMatch(/type the 80|on the right/);
         expect(card.querySelector('.wb2-legend')).toBeNull();
     });
@@ -2001,7 +2052,7 @@ describe('Scoring periods on the Health score page ("just score it", 2026-10-10)
             mount({ kind: 'relationship', sp: REL_VALID, data: noScore(), onRetryPreview });
             const card = screen.getByTestId('score-failed');
             expect(card.className).toBe('wb3-stack-bot wb3-stack-bot--lock'); // the score chart's own place: not a new banner
-            expect([...screen.getByTestId('chart-stack').children]).toEqual([screen.getByTestId('chart-card-set-relationship'), card]);
+            expect([...screen.getByTestId('chart-stack').children]).toEqual([screen.getByTestId('chart-card-fit'), screen.getByTestId('chart-card-set-relationship'), card]);
             expect(screen.getAllByTestId('score-failed')).toHaveLength(1);
             // the residual chart above it is alone, so it keeps its own time labels
             expect(setChart().option.xAxis.axisLabel.show).not.toBe(false);
