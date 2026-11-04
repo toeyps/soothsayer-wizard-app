@@ -235,7 +235,7 @@ The export contract (`docs/specs/WIZARD_OUTPUT_SPEC.md` v1.0, amended 2026-10-20
 - English UI copy; replies to the user in Thai.
 - Say what the user recognises (Tag names, On the chart) rather than system terms (mapping, selected sensors) — but don't rename shipped labels without the user's OK.
 - Buttons say exactly what happens ("Mark complete", "Open Dashboard", "Create sensor"). Errors say what is wrong and how to fix it, no apologies.
-- Simulated/illustrative data is labelled as such ("Illustration · simulated readings").
+- Simulated data on a working screen is labelled as such. The Welcome page's machine picture carries no such label (user decision, 2026-11-04).
 - **No forecasting words in user-facing copy:** never "predict", "before it happens", "early warning", "forecast", "ahead of time", "about to fail". Say what the app does: *find abnormal behaviour*, *learn normal operation*, *score how far a period strays from normal*, *in historical / offline data*. ("Predicted" is fine only where it names the Relation model's fitted value — actual vs predicted at the same time — not a future.) Internal code names such as `predictiveModel` are unaffected.
 
 ## 6. Lessons from user feedback (do not repeat these mistakes)

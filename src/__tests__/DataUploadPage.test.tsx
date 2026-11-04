@@ -2192,22 +2192,18 @@ describe('L. Get started page (step 0)', () => {
       await act(async () => { await Promise.resolve(); });
     });
 
-    it('L2. footer shows the app version and the privacy line', async () => {
+    it('L2. footer shows the app version and nothing else', async () => {
       renderPage();
       await waitFor(() => expect(screen.getByText('v9.8.7')).toBeTruthy());
-      // Both texts take size and colour from the one row, so they always match.
-      expect(screen.getByText('v9.8.7').getAttribute('style')).toBeNull();
-      expect(screen.getByText('Data stays on this machine').getAttribute('style')).toBeNull();
-      expect(screen.getByTestId('home-footer').style.fontSize).toBe('12px');
-      expect(screen.getByText('Data stays on this machine')).toBeTruthy();
+      expect(screen.getByText('v9.8.7').style.fontSize).toBe('12px');
+      expect(screen.queryByText(/Data stays/)).toBeNull();
     });
 
-    it('L3. when the version cannot be read the number is omitted but the privacy line stays', async () => {
+    it('L3. when the version cannot be read the number is omitted', async () => {
       mockGetVersion.mockRejectedValue(new Error('not in tauri'));
       renderPage();
       await act(async () => { await Promise.resolve(); await Promise.resolve(); });
       expect(screen.queryByText(/^v\d/)).toBeNull();
-      expect(screen.getByText('Data stays on this machine')).toBeTruthy();
     });
   });
 

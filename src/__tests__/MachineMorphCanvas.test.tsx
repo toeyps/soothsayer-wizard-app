@@ -523,12 +523,12 @@ describe('MachineMorphCanvas', () => {
     expect(canvas.getAttribute('aria-label')).not.toMatch(/double-click/i);
   });
 
-  it('hero shows the machine name, the six progress dots and the simulated-readings note', () => {
+  it('hero shows the machine name and the six progress dots, centred, with no other note', () => {
     render(<MachineMorphCanvas />);
-    expect(screen.getByText('Works with any machine that has sensors')).toBeTruthy();
+    const works = screen.getByText('Works with any machine that has sensors');
+    expect((works.parentElement as HTMLElement).style.justifyContent).toBe('center');
     expect(screen.getByText('Gas turbine generator')).toBeTruthy();
-    const note = screen.getByText('Illustration · simulated readings');
-    expect(note.style.color).toBe('rgb(140, 140, 148)'); // --text-secondary, legible
+    expect(screen.queryByText(/simulated readings/)).toBeNull();
     const dots = screen.getAllByTestId('machine-dot');
     expect(dots).toHaveLength(6);
     expect(dots.filter((d) => d.getAttribute('data-active') === 'true')).toHaveLength(1);
@@ -550,7 +550,6 @@ describe('MachineMorphCanvas', () => {
   it('mini renders no labels or bottom bar and draws no text, but draws its dots', () => {
     render(<MachineMorphCanvas variant="mini" />);
     expect(screen.queryByText('Works with any machine that has sensors')).toBeNull();
-    expect(screen.queryByText('Illustration · simulated readings')).toBeNull();
     expect(screen.queryByText('Gas turbine generator')).toBeNull();
     expect(screen.queryAllByTestId('machine-dot')).toHaveLength(0);
     runFrame(performance.now() + 100);

@@ -250,10 +250,9 @@ export default function HomeStep({
           ) : null}
         </section>
 
-        <div data-testid="home-footer" style={{ marginTop: 16, display: 'flex', gap: 14, fontFamily: mono, fontSize: 12, color: T.textMuted }}>
-          {version && <span>v{version}</span>}
-          <span>Data stays on this machine</span>
-        </div>
+        {version && (
+          <div style={{ marginTop: 16, fontFamily: mono, fontSize: 12, color: T.textMuted }}>v{version}</div>
+        )}
       </div>
 
       {/* ---------------- Right: illustration ---------------- */}

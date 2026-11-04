@@ -593,6 +593,7 @@ export default function MachineMorphCanvas({ variant = 'hero', className, style 
             bottom: 18,
             display: 'flex',
             alignItems: 'center',
+            justifyContent: 'center',
             gap: 6,
             flexWrap: 'wrap',
             fontSize: 12,
@@ -646,8 +647,6 @@ export default function MachineMorphCanvas({ variant = 'hero', className, style 
               </button>
             ))}
           </span>
-          {/* --text-secondary so the required "simulated" label is legible. */}
-          <span style={{ marginLeft: 'auto', font: `12px ${FONT_MONO}`, color: INK_MUTED }}>Illustration · simulated readings</span>
         </div>
       )}
     </div>
