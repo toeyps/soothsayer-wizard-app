@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, act, cleanup, waitFor } from '@testing-library/react';
 import { createRef } from 'react';
+import windowCapabilities from '../../src-tauri/capabilities/default.json';
 import type { CsvMetadata, SensorMetadata, WorkspaceState } from '../types';
 import type { DashboardRef } from '../components/dashboard/Dashboard';
 import { showSensorTab } from './helpers/dashboardLanding';
@@ -780,17 +781,16 @@ describe('Dashboard', () => {
                 });
                 const closeAdd = vi.fn().mockResolvedValue(undefined);
                 const setFocus = vi.fn().mockResolvedValue(undefined);
-                const hide = vi.fn().mockResolvedValue(undefined);
-                const show = vi.fn().mockResolvedValue(undefined);
+                const unminimize = vi.fn().mockResolvedValue(undefined);
                 const once = vi.fn(async (_event: string, cb: () => void) => {
                     destroyed = cb;
                     return () => { destroyed = null; };
                 });
                 const destroyWindow = vi.fn(async () => { open = false; destroyed?.(); });
-                const buildModel = { close: closeBuild, destroy: destroyWindow, setFocus, hide, show, once };
+                const buildModel = { close: closeBuild, destroy: destroyWindow, setFocus, unminimize, once };
                 mockGetByLabel.mockImplementation((label: string) => Promise.resolve(label === 'build-model' ? (open ? buildModel : null) : { close: closeAdd }));
                 return {
-                    closeBuild, closeAdd, destroyWindow, setFocus, hide, show, once,
+                    closeBuild, closeAdd, destroyWindow, setFocus, unminimize, once,
                     isListening: () => destroyed !== null,
                     destroy: () => { open = false; destroyed?.(); },
                 };
@@ -846,15 +846,27 @@ describe('Dashboard', () => {
                 mockWindowClose.mockReset().mockResolvedValue(undefined);
             });
 
-            it('setFocus not allowed: hide + show raises the window instead', async () => {
+            it('a minimized Build Model is restored before it is focused', async () => {
                 await renderClean();
                 const c = children(() => 'asks');
-                c.setFocus.mockRejectedValue(new Error('window.set_focus not allowed'));
                 await pressClose();
                 await act(async () => { await vi.advanceTimersByTimeAsync(300); });
-                expect(c.hide).toHaveBeenCalledTimes(1);
-                expect(c.show).toHaveBeenCalledTimes(1);
-                expect(c.hide.mock.invocationCallOrder[0]).toBeLessThan(c.show.mock.invocationCallOrder[0]);
+                expect(c.unminimize).toHaveBeenCalledTimes(1);
+                expect(c.setFocus).toHaveBeenCalledTimes(1);
+                expect(c.unminimize.mock.invocationCallOrder[0]).toBeLessThan(c.setFocus.mock.invocationCallOrder[0]);
+            });
+
+            it('restoring fails: it still tries to focus', async () => {
+                await renderClean();
+                const c = children(() => 'asks');
+                c.unminimize.mockRejectedValue(new Error('no'));
+                await pressClose();
+                await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+                expect(c.setFocus).toHaveBeenCalledTimes(1);
+            });
+
+            it('the main window may restore and focus Build Model', () => {
+                expect(windowCapabilities.permissions).toEqual(expect.arrayContaining(['core:window:allow-unminimize', 'core:window:allow-set-focus']));
             });
 
             it('kept: nothing closes, this window stays; a later close of Build Model alone does not close it', async () => {
@@ -3943,16 +3955,15 @@ describe('Dashboard', () => {
         });
 
         it('focuses an already-open build-model window instead of spawning a second one', async () => {
-            const existing = { setFocus: vi.fn().mockResolvedValue(undefined) };
+            const existing = { setFocus: vi.fn().mockResolvedValue(undefined), unminimize: vi.fn().mockResolvedValue(undefined) };
             mockGetByLabel.mockResolvedValue(existing);
             renderDashboard();
             fireEvent.click(screen.getByText('Failure Groups'));
             await act(async () => {
                 fireEvent.click(screen.getByText('open-build-model'));
-                await Promise.resolve();
-                await Promise.resolve();
-                await Promise.resolve();
+                for (let i = 0; i < 6; i++) await Promise.resolve();
             });
+            expect(existing.unminimize).toHaveBeenCalled();
             expect(existing.setFocus).toHaveBeenCalled();
             expect(webviewWindowCalls.some((c) => c.label === 'build-model')).toBe(false);
         });

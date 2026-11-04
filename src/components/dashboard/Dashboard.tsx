@@ -143,14 +143,10 @@ const BUILD_MODEL_UNREACHABLE_NOTICE = 'Could not reach the Build Model window, 
 
 type BuildModelHandle = NonNullable<Awaited<ReturnType<typeof WebviewWindow.getByLabel>>>;
 
-/** `setFocus` needs a permission the capabilities do not grant; hide + show also raises the window. */
+/** A minimized window ignores setFocus, so restore it first. */
 async function bringToFront(window: BuildModelHandle): Promise<void> {
-    try {
-        await window.setFocus();
-        return;
-    } catch { /* not allowed: below */ }
-    try { await window.hide(); } catch { /* still shown below */ }
-    try { await window.show(); } catch { /* best effort */ }
+    try { await window.unminimize(); } catch { /* still try to focus */ }
+    try { await window.setFocus(); } catch { /* best effort */ }
 }
 const FG_SAVE_FAILED_NOTICE = 'Could not save your last Failure Group change. The screen is back to what the project file holds.';
 const FG_SAVE_FAILED_UNREAD_NOTICE = 'Could not save your last Failure Group change, and the project file could not be read. What you see may not match the file.';
@@ -1752,7 +1748,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         try {
             const existing = await WebviewWindow.getByLabel(label);
             if (existing) {
-                try { await existing.setFocus(); } catch { /* ignore */ }
+                await bringToFront(existing);
                 // The open window fetched its data once, on its own mount —
                 // re-point it at THIS workspace instead of trusting that it
                 // still is (it may be a leftover from the previous project).
@@ -3103,7 +3099,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                                 // Already open — creating another with the
                                 // same label just errors. Focus it and hand
                                 // it this workspace's data afresh.
-                                try { await existing.setFocus(); } catch { /* ignore */ }
+                                await bringToFront(existing);
                                 const cur = stateRef.current;
                                 emit('sensors-data', {
                                     workspaceId: workspaceIdRef.current,
