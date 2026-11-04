@@ -398,6 +398,8 @@ describe('(c) the X of the main window asks Build Model, on the real handlers of
         expect(x.prevented()).toBe(true);
         expect(w.closingEmits()).toHaveLength(0);
         expect(w.log.buildCloses).toBe(1);
+        // Raised only after a short delay, so a window with nothing to ask does not blink.
+        await act(async () => { await settle(350); });
         expect(w.log.focused).toBe(1);
         expect(bmw().getAllByRole('alertdialog')).toHaveLength(1);
         expect(bmw().getByTestId('close-run-dialog')).toBeTruthy();

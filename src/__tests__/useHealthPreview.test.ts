@@ -69,6 +69,23 @@ describe('useHealthPreview', () => {
         expect(result.current.idle).toBeNull();
     });
 
+    it('inFlightRef counts only sent requests, superseded ones until they answer, and failures too', async () => {
+        const inFlightRef = { current: 0 };
+        const answers: Array<{ ok: (v: HealthPreview) => void; no: (e: unknown) => void }> = [];
+        mockInvoke.mockImplementation(() => new Promise((ok, no) => { answers.push({ ok, no }); }));
+        const { rerender } = renderHook((o: UseHealthPreviewOptions) => useHealthPreview(o), { initialProps: opts({ inFlightRef }) });
+        expect(inFlightRef.current).toBe(0); // the debounce window sends nothing
+        await settle();
+        expect(inFlightRef.current).toBe(1);
+        rerender(opts({ inFlightRef, setPoints: sp(2, 8) }));
+        await settle();
+        expect(inFlightRef.current).toBe(2); // the first one still holds the engine
+        await act(async () => { answers[0].ok(preview('a')); await Promise.resolve(); await Promise.resolve(); });
+        expect(inFlightRef.current).toBe(1);
+        await act(async () => { answers[1].no('NO_DATA: nothing'); await Promise.resolve(); await Promise.resolve(); });
+        expect(inFlightRef.current).toBe(0);
+    });
+
     it('debounces set-point edits: rapid changes make ONE call, with the last value', async () => {
         mockInvoke.mockResolvedValue(preview('a'));
         const { rerender } = renderHook((o: UseHealthPreviewOptions) => useHealthPreview(o), { initialProps: opts() });

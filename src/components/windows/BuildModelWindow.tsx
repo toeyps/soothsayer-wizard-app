@@ -329,7 +329,7 @@ const TRAIN_RUN_ACTIVE_REASON = 'Wait for the training run to finish';
 /** A model whose Mark complete is being checked is not trained meanwhile. */
 const BEING_SAVED_REASON = 'It is being checked for Mark complete';
 /** The close notice when "Stop after this model and close" gave up waiting. */
-const RUN_CLOSE_WAIT_NOTICE = 'Training took too long, so it is being stopped. Close the window again to leave.';
+const RUN_CLOSE_WAIT_NOTICE = 'This model is still training. The window closes when it finishes. Close it again to stop training and leave now.';
 /** A model stopped by a close that gave up: its row says this, not "Failed". */
 const ENGINE_STOPPED_ROW_NOTE = 'Stopped before it finished';
 /** THE kind names of this window — tabs, tooltips, notices: Individual / Relation
@@ -688,7 +688,7 @@ export default function BuildModelWindow() {
     const [includeUpToDate, setIncludeUpToDate] = useState(false);
     /** The close-during-a-run dialog is open. */
     const [closeAsk, setCloseAsk] = useState(false);
-    /** Every engine call of this window (Train, a silent load, Compare) goes through this: one at a time. */
+    /** Engine calls in progress: the queue below (Train, a silent load, Compare) and health previews. */
     const engineCallsRef = useRef(0);
     const [onEngine] = useState<EngineQueue>(() => {
         const inTurn = createEngineQueue();
@@ -712,6 +712,8 @@ export default function BuildModelWindow() {
     const closeBypassRef = useRef(false);
     /** "Stop after this model and close" gave up waiting: the next close skips the run dialog. */
     const runWaitGaveUpRef = useRef(false);
+    /** After that give-up the window still closes when the run ends, unless a new close got there first. */
+    const closeAfterRunRef = useRef(false);
     /** Window.close() was called: its `close-requested` pass lets the window go. */
     const leavingRef = useRef(false);
     /** The close-with-unsaved-edits dialog is open. */
@@ -1133,6 +1135,7 @@ export default function BuildModelWindow() {
                 setCloseAsk(false);
                 setUnsavedAsk(false);
                 runWaitGaveUpRef.current = false;
+                closeAfterRunRef.current = false;
                 leavingRef.current = false;
                 // Never left showing the old project's, should the new one fail to load.
                 setProjectInfo(null);
@@ -2527,6 +2530,12 @@ export default function BuildModelWindow() {
         if (!id) return;
         Promise.resolve(emit('build-model-close-kept', { workspaceId: id })).catch(() => { /* best effort */ });
     }, []);
+    /** Tells a waiting main window this webview is alive. */
+    const tellCloseSeen = useCallback(() => {
+        const id = workspaceIdRef.current;
+        if (!id) return;
+        Promise.resolve(emit('build-model-close-ack', { workspaceId: id })).catch(() => { /* best effort */ });
+    }, []);
     /** Leaving with an engine call active: nobody would read its answer, and it would hold the next run's turn. */
     const stopEngineIfBusy = useCallback(async () => {
         const running = queueRef.current.isRunningNow();
@@ -2557,6 +2566,7 @@ export default function BuildModelWindow() {
      *  settles on blur only), then flush every pending write (and wait for a
      *  running Mark complete, capped), then close. */
     const closeNow = async () => {
+        closeAfterRunRef.current = false;
         flushFocusedInput();
         await waitForExportBeforeClose();
         // `false` = a running save did not finish in time: the window stays open (notice shown).
@@ -2575,15 +2585,16 @@ export default function BuildModelWindow() {
         if (unsavedEditsAtClose()) { setUnsavedAsk(true); return; }
         await closeNow();
     };
+    const closeOrAskUnsavedRef = useRef(closeOrAskUnsaved);
+    closeOrAskUnsavedRef.current = closeOrAskUnsaved;
     const handleClose = async () => {
         // In-window dialog, "Keep training" is the default.
         if (mustAskBeforeClose()) { setCloseAsk(true); return; }
         await closeOrAskUnsaved();
     };
     /** The close dialog's "Stop after this model and close": the run ends after the
-     *  model in training (a sidecar call is never cut off), then the usual close.
-     *  The wait is capped like the Mark complete wait: a hung sidecar gives up with
-     *  a notice, and the NEXT close goes through without the dialog. */
+     *  model in training, then the usual close. Past the cap the model keeps training,
+     *  with a notice: only the NEXT close stops the engine (no dialog). */
     const stopRunAndClose = async () => {
         setCloseAsk(false);
         if (stopClosingRef.current) return;
@@ -2597,10 +2608,15 @@ export default function BuildModelWindow() {
             if (timer) clearTimeout(timer);
             if (!finished) {
                 runWaitGaveUpRef.current = true;
-                // Only for this run: the next Train asks before closing again.
-                void idle.then(() => { runWaitGaveUpRef.current = false; });
+                closeAfterRunRef.current = true;
+                void idle.then(() => {
+                    // Only for this run: the next Train asks before closing again.
+                    runWaitGaveUpRef.current = false;
+                    if (!closeAfterRunRef.current) return;
+                    setCloseNotice(null);
+                    void closeOrAskUnsavedRef.current();
+                });
                 setCloseNotice(RUN_CLOSE_WAIT_NOTICE);
-                void stopRunningEngine();
                 tellCloseKept();
                 return;
             }
@@ -2618,6 +2634,7 @@ export default function BuildModelWindow() {
         let unlisten: (() => void) | undefined;
         const win = getCurrentWindow();
         Promise.resolve(win.onCloseRequested(async (event) => {
+            tellCloseSeen();
             if (leavingRef.current) return;
             // "Stop after this model and close" is waiting: it decides, no second question.
             if (stopClosingRef.current && !closeBypassRef.current) {
@@ -2643,6 +2660,7 @@ export default function BuildModelWindow() {
                 setUnsavedAsk(true);
                 return;
             }
+            closeAfterRunRef.current = false;
             // A set-point draft typed but never blurred is a pending write too.
             if (!leaveUnsavedRef.current) void commitSetPointDrafts();
             const pending = pendingSaveRef.current;
@@ -2658,7 +2676,7 @@ export default function BuildModelWindow() {
             await leaveWindow();
         })).then(fn => { if (disposed) fn(); else unlisten = fn; });
         return () => { disposed = true; if (unlisten) unlisten(); };
-    }, [flushAllPending, commitSetPointDrafts, waitForExportBeforeClose, leaveWindow, mustAskBeforeClose, unsavedEditsAtClose, stopEngineIfBusy, tellCloseKept]);
+    }, [flushAllPending, commitSetPointDrafts, waitForExportBeforeClose, leaveWindow, mustAskBeforeClose, unsavedEditsAtClose, stopEngineIfBusy, tellCloseKept, tellCloseSeen]);
 
     // The Dashboard that opened this window is going away (Back to Import / another
     // project): it closes this window right after. A run would hold that close
@@ -2674,6 +2692,7 @@ export default function BuildModelWindow() {
             if (typeof g === 'number' && generationRef.current !== undefined && g !== generationRef.current) return;
             const wasHeld = queueRef.current.isRunningNow() || closeAskRef.current || unsavedAskRef.current;
             closeBypassRef.current = true;
+            closeAfterRunRef.current = false;
             queueReset();
             setCloseAsk(false);
             setUnsavedAsk(false);
@@ -2854,6 +2873,7 @@ export default function BuildModelWindow() {
         xPredictor: activeFitKey,
         expectedGeneration: generation,
         revision: healthRevision,
+        inFlightRef: engineCallsRef,
     });
     // A Relation-model preview that scores scoring periods may have to run the
     // sidecar for their rows (~15 s, e.g. right after the scoring periods

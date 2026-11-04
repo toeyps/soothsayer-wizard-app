@@ -24,6 +24,7 @@ import FilterPanel, { FilterState, FilterSensorChange } from './FilterPanel';
 import SensorSelection from './SensorSelection';
 import UndoToastStack from './UndoToastStack';
 import Portal from '../Portal';
+import BuildModelHungDialog from './BuildModelHungDialog';
 import { UNDO_SECONDS } from './FailureGroupAssignSheet';
 import { kindModelName } from '../../utils/modelNames';
 import { defaultModelName } from './defaultModelName';
@@ -33,6 +34,7 @@ import { getFgGroupColor } from '../../utils/failureGroupColor';
 import { realFailureGroups } from '../../utils/failureGroupSummary';
 import HighlightsPanel from './HighlightsPanel';
 import { DateTime24Input } from '../windows/DateTime24Input';
+import { stopRunningEngine } from '../windows/engineStop';
 import ColourPicker from '../sensor/ColourPicker';
 import { SensorLabel, SensorSetProvider } from '../sensor/SensorLabel';
 import { SensorMetaContext, buildSensorLookup, sensorPlainLabel, useLayeredSensorLookup } from '../sensor/sensorInfo';
@@ -132,6 +134,12 @@ const CLOSE_SAVE_FAILED_NOTICE = 'Could not save your latest changes to the proj
 const AUTOSAVE_FAILED_NOTICE = 'Could not save your latest changes to the project file. It will try again with your next change.';
 /** A child window that does not answer must not keep the main window open. */
 const CHILD_CLOSE_WAIT_MS = 2_000;
+/** Build Model says it saw a close request within this, or a second X may offer to force it. */
+const BUILD_MODEL_ACK_WAIT_MS = 3_000;
+/** A Build Model with nothing to ask is gone by then, so it does not blink. */
+const BUILD_MODEL_RAISE_DELAY_MS = 300;
+const BUILD_MODEL_ANSWER_NOTICE = 'Build Model needs an answer before the app can close.';
+const BUILD_MODEL_UNREACHABLE_NOTICE = 'Could not reach the Build Model window, so nothing was closed. Close this window again to retry.';
 
 type BuildModelHandle = NonNullable<Awaited<ReturnType<typeof WebviewWindow.getByLabel>>>;
 
@@ -2011,7 +2019,16 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     /** A close is waiting for the saves or Build Model: a second X does not start another. */
     const closingRef = useRef(false);
     /** The X is waiting for Build Model's answer. */
-    const buildModelWaitRef = useRef<{ settle: (gone: boolean) => void; request: () => void } | null>(null);
+    const buildModelWaitRef = useRef<{
+        settle: (gone: boolean) => void;
+        request: () => void;
+        notResponding: () => boolean;
+        destroy: () => void;
+    } | null>(null);
+    /** Why the X has not closed the app yet; shown over `saveNotice`. */
+    const [closeWaitNotice, setCloseWaitNotice] = useState<string | null>(null);
+    /** The "Build Model is not responding" question is open. */
+    const [buildModelHung, setBuildModelHung] = useState(false);
     // The first autosave after opening always writes: it moves the project to
     // the top of Recents even when nothing changed.
     const autosavedOnceRef = useRef(false);
@@ -2167,7 +2184,9 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     // it pass, so the close can never loop. A save that failed keeps the window once,
     // with a message; the next close leaves. Build Model is asked next, WITHOUT
     // `workspace-closing`, so its own questions still come up: it goes, or says
-    // `build-model-close-kept` and everything stays. Other child windows close after
+    // `build-model-close-kept` and everything stays. When Build Model cannot be
+    // checked, the close holds: `workspace-closing` goes only once it is known gone.
+    // Other child windows close after
     // that and before this one goes (Tauri destroys it only once this handler has
     // returned): a window destroyed here never unmounts, so the unmount effect would not run.
     useEffect(() => {
@@ -2183,7 +2202,9 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         const findBuildModel = async (): Promise<BuildModelHandle | null | 'no answer'> => {
             let timer: ReturnType<typeof setTimeout> | undefined;
             const gaveUp = new Promise<'no answer'>((resolve) => { timer = setTimeout(() => resolve('no answer'), CHILD_CLOSE_WAIT_MS); });
-            const found = Promise.resolve().then(() => WebviewWindow.getByLabel('build-model')).catch(() => null);
+            const found = Promise.resolve()
+                .then(() => WebviewWindow.getByLabel('build-model'))
+                .catch((): 'no answer' => 'no answer');
             const answer = await Promise.race([found, gaveUp]);
             if (timer) clearTimeout(timer);
             return answer;
@@ -2191,6 +2212,9 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         /** True when Build Model went, false when the user kept it. */
         const askBuildModelToClose = async (buildModel: BuildModelHandle): Promise<boolean> => {
             let answered = false;
+            let acked = false;
+            let requestedAt: number | null = null;
+            let raiseTimer: ReturnType<typeof setTimeout> | undefined;
             let settle!: (gone: boolean) => void;
             const answer = new Promise<boolean>((resolve) => {
                 settle = (gone) => { answered = true; resolve(gone); };
@@ -2198,25 +2222,57 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
             const offKept = subscribe<{ workspaceId?: string }>('build-model-close-kept', (event) => {
                 if (event.payload?.workspaceId === workspaceIdRef.current) settle(false);
             });
+            const offAck = subscribe<{ workspaceId?: string }>('build-model-close-ack', (event) => {
+                if (event.payload?.workspaceId !== workspaceIdRef.current) return;
+                acked = true;
+                setBuildModelHung(false);
+            });
             let offGone: (() => void) | undefined;
             const goneReady = Promise.resolve()
                 .then(() => buildModel.once('tauri://destroyed', () => settle(true)))
                 .then((fn) => { if (answered) fn(); else offGone = fn; })
                 .catch((e) => console.warn('Could not watch the Build Model window:', e));
+            /** A call on the window failed: only a window that is really gone lets the close go on. */
+            const callFailed = async () => {
+                const found = await findBuildModel();
+                if (found === null) { settle(true); return; }
+                if (!answered) setCloseWaitNotice(BUILD_MODEL_UNREACHABLE_NOTICE);
+                settle(false);
+            };
             const request = () => {
+                requestedAt ??= Date.now();
                 void Promise.resolve()
                     .then(() => buildModel.close())
-                    .then(() => { if (!answered) return bringToFront(buildModel); })
-                    .catch(() => settle(true)); // already gone
+                    .then(() => {
+                        if (answered) return;
+                        if (raiseTimer) clearTimeout(raiseTimer);
+                        raiseTimer = setTimeout(() => { if (!answered) void bringToFront(buildModel); }, BUILD_MODEL_RAISE_DELAY_MS);
+                    })
+                    .catch(callFailed);
             };
-            buildModelWaitRef.current = { settle, request };
+            const notResponding = () => !acked && requestedAt !== null && Date.now() - requestedAt >= BUILD_MODEL_ACK_WAIT_MS;
+            const destroy = () => {
+                setBuildModelHung(false);
+                // Its run would otherwise keep the engine until the app exits.
+                void stopRunningEngine();
+                void Promise.resolve()
+                    .then(() => buildModel.destroy())
+                    .then(() => settle(true))
+                    .catch(callFailed);
+            };
+            buildModelWaitRef.current = { settle, request, notResponding, destroy };
+            setCloseWaitNotice(BUILD_MODEL_ANSWER_NOTICE);
             try {
-                await Promise.all([offKept.ready, goneReady]);
+                await Promise.all([offKept.ready, offAck.ready, goneReady]);
                 if (!answered) request();
                 return await answer;
             } finally {
                 buildModelWaitRef.current = null;
+                if (raiseTimer) clearTimeout(raiseTimer);
+                setBuildModelHung(false);
+                setCloseWaitNotice(prev => (prev === BUILD_MODEL_ANSWER_NOTICE ? null : prev));
                 offKept();
+                offAck();
                 offGone?.();
             }
         };
@@ -2237,11 +2293,13 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                 if (wait) {
                     const buildModel = await findBuildModel();
                     if (buildModel === null) wait.settle(true);
+                    else if (wait.notResponding()) setBuildModelHung(true);
                     else wait.request();
                 }
                 return;
             }
             closingRef.current = true;
+            setCloseWaitNotice(null);
             try {
                 const dirty = autosaveDirtyRef.current || writesRef.current.size > 0;
                 if (dirty) {
@@ -2250,9 +2308,11 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                 }
                 const buildModel = await findBuildModel();
                 if (buildModel === 'no answer') {
-                    void closeChildWindows();
-                    if (!dirty) return;
-                } else if (buildModel) {
+                    event.preventDefault();
+                    setCloseWaitNotice(BUILD_MODEL_UNREACHABLE_NOTICE);
+                    return;
+                }
+                if (buildModel) {
                     event.preventDefault();
                     if (!(await askBuildModelToClose(buildModel))) return;
                     // This window stayed usable during the question.
@@ -3118,12 +3178,27 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                 onExpire={expireUndo}
                 durationMs={UNDO_SECONDS * 1000}
             />
-            {saveNotice && (
+            {closeWaitNotice ? (
+                <Portal>
+                    <div className="dash-save-notice" role="alert" data-testid="close-wait-notice">
+                        <span>{closeWaitNotice}</span>
+                        <button type="button" className="fg-undo-toast-btn" onClick={() => setCloseWaitNotice(null)}>Dismiss</button>
+                    </div>
+                </Portal>
+            ) : saveNotice && (
                 <Portal>
                     <div className="dash-save-notice" role="alert" data-testid="save-failed-notice">
                         <span>{saveNotice}</span>
                         <button type="button" className="fg-undo-toast-btn" onClick={() => setSaveNotice(null)}>Dismiss</button>
                     </div>
+                </Portal>
+            )}
+            {buildModelHung && (
+                <Portal>
+                    <BuildModelHungDialog
+                        onCloseIt={() => buildModelWaitRef.current?.destroy()}
+                        onCancel={() => buildModelWaitRef.current?.settle(false)}
+                    />
                 </Portal>
             )}
             {/* Collapsed Tabs Sidebar */}

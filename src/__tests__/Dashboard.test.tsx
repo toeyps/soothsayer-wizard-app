@@ -786,10 +786,11 @@ describe('Dashboard', () => {
                     destroyed = cb;
                     return () => { destroyed = null; };
                 });
-                const buildModel = { close: closeBuild, setFocus, hide, show, once };
+                const destroyWindow = vi.fn(async () => { open = false; destroyed?.(); });
+                const buildModel = { close: closeBuild, destroy: destroyWindow, setFocus, hide, show, once };
                 mockGetByLabel.mockImplementation((label: string) => Promise.resolve(label === 'build-model' ? (open ? buildModel : null) : { close: closeAdd }));
                 return {
-                    closeBuild, closeAdd, setFocus, hide, show, once,
+                    closeBuild, closeAdd, destroyWindow, setFocus, hide, show, once,
                     isListening: () => destroyed !== null,
                     destroy: () => { open = false; destroyed?.(); },
                 };
@@ -831,6 +832,7 @@ describe('Dashboard', () => {
                 const { preventDefault, closing } = await pressClose();
                 expect(preventDefault).toHaveBeenCalled();
                 expect(c.closeBuild).toHaveBeenCalledTimes(1);
+                await act(async () => { await vi.advanceTimersByTimeAsync(300); });
                 expect(c.setFocus).toHaveBeenCalledTimes(1);
                 expect(closingEmits()).toHaveLength(0);
                 expect(c.closeAdd).not.toHaveBeenCalled();
@@ -849,6 +851,7 @@ describe('Dashboard', () => {
                 const c = children(() => 'asks');
                 c.setFocus.mockRejectedValue(new Error('window.set_focus not allowed'));
                 await pressClose();
+                await act(async () => { await vi.advanceTimersByTimeAsync(300); });
                 expect(c.hide).toHaveBeenCalledTimes(1);
                 expect(c.show).toHaveBeenCalledTimes(1);
                 expect(c.hide.mock.invocationCallOrder[0]).toBeLessThan(c.show.mock.invocationCallOrder[0]);
@@ -906,13 +909,175 @@ describe('Dashboard', () => {
                 expect(mockWindowClose).toHaveBeenCalledTimes(1);
             });
 
-            it('close() of Build Model rejects (already gone): the close goes on', async () => {
+            it('close() of Build Model rejects and the window is gone: the close goes on', async () => {
                 await renderClean();
                 const c = children();
-                c.closeBuild.mockRejectedValue(new Error('window not found'));
+                c.closeBuild.mockImplementation(async () => {
+                    mockGetByLabel.mockImplementation((label: string) => Promise.resolve(label === 'build-model' ? null : { close: c.closeAdd }));
+                    throw new Error('window not found');
+                });
                 const { closing } = await pressClose();
-                await act(async () => { await closing; });
+                await act(async () => { await vi.advanceTimersByTimeAsync(0); await closing; });
                 expect(mockWindowClose).toHaveBeenCalledTimes(1);
+            });
+
+            it('close() of Build Model rejects and the window is still there: nothing closes, a notice shows, the next X retries', async () => {
+                await renderClean();
+                const c = children();
+                c.closeBuild.mockRejectedValueOnce(new Error('not allowed'));
+                mockEmit.mockClear();
+                const { closing } = await pressClose();
+                await act(async () => { await vi.advanceTimersByTimeAsync(0); await closing; });
+                expect(closingEmits()).toHaveLength(0);
+                expect(c.closeAdd).not.toHaveBeenCalled();
+                expect(mockWindowClose).not.toHaveBeenCalled();
+                expect(screen.getByTestId('close-wait-notice').textContent).toContain('Could not reach the Build Model window');
+
+                const second = await pressClose();
+                await act(async () => { await vi.advanceTimersByTimeAsync(0); await second.closing; });
+                expect(c.closeBuild).toHaveBeenCalledTimes(2);
+                expect(closingEmits().map(c2 => c2[1].workspaceId)).toEqual(['ws-A']);
+                expect(mockWindowClose).toHaveBeenCalledTimes(1);
+                expect(screen.queryByTestId('close-wait-notice')).toBeNull();
+            });
+
+            it.each([
+                ['fails', () => Promise.reject(new Error('ipc'))],
+                ['never answers', () => new Promise(() => {})],
+            ])('looking up Build Model %s: the close holds with a notice, no workspace-closing, and the next X retries', async (_name, lookup) => {
+                await renderClean();
+                const closeAdd = vi.fn().mockResolvedValue(undefined);
+                mockGetByLabel.mockImplementation(lookup);
+                mockEmit.mockClear();
+                const { preventDefault, closing } = await pressClose();
+                await act(async () => { await vi.advanceTimersByTimeAsync(2_000); await closing; });
+                expect(preventDefault).toHaveBeenCalled();
+                expect(closingEmits()).toHaveLength(0);
+                expect(screen.getByTestId('close-wait-notice').textContent).toContain('Close this window again to retry');
+
+                mockGetByLabel.mockImplementation((label: string) => Promise.resolve(label === 'build-model' ? null : { close: closeAdd }));
+                const second = await pressClose();
+                await act(async () => { await second.closing; });
+                expect(second.preventDefault).not.toHaveBeenCalled();
+                expect(closingEmits().map(c => c[1].workspaceId)).toEqual(['ws-A']);
+                expect(closeAdd).toHaveBeenCalledTimes(1);
+            });
+
+            describe('Build Model has to answer', () => {
+                const ack = (workspaceId = 'ws-A') => act(async () => {
+                    for (const cb of [...(listenCallbacks['build-model-close-ack'] ?? [])]) cb({ payload: { workspaceId } });
+                    await vi.advanceTimersByTimeAsync(0);
+                });
+                const hungDialog = () => screen.queryByTestId('build-model-hung-dialog');
+                const passAckWait = () => act(async () => { await vi.advanceTimersByTimeAsync(3_000); });
+
+                it('a notice shows while it waits, and goes when Build Model answers', async () => {
+                    await renderClean();
+                    children(() => 'asks');
+                    const { closing } = await pressClose();
+                    expect(screen.getByTestId('close-wait-notice').textContent).toContain('Build Model needs an answer before the app can close.');
+                    await kept();
+                    await act(async () => { await closing; });
+                    expect(screen.queryByTestId('close-wait-notice')).toBeNull();
+                });
+
+                it('a window that goes at once is never raised', async () => {
+                    await renderClean();
+                    const c = children();
+                    const { closing } = await pressClose();
+                    await act(async () => { await closing; await vi.advanceTimersByTimeAsync(1_000); });
+                    expect(c.setFocus).not.toHaveBeenCalled();
+                });
+
+                it('no acknowledgement, second X after the wait: the question comes up and no new close is sent; "Close it" destroys Build Model and the app closes', async () => {
+                    await renderClean();
+                    const c = children(() => 'asks');
+                    reenter();
+                    mockEmit.mockClear();
+                    const { closing } = await pressClose();
+                    await passAckWait();
+                    const second = await pressClose();
+                    await act(async () => { await second.closing; });
+                    expect(second.preventDefault).toHaveBeenCalled();
+                    expect(hungDialog()).toBeTruthy();
+                    expect(c.closeBuild).toHaveBeenCalledTimes(1);
+                    expect(c.destroyWindow).not.toHaveBeenCalled();
+                    expect(closingEmits()).toHaveLength(0);
+
+                    await act(async () => { fireEvent.click(screen.getByTestId('build-model-hung-close')); await vi.advanceTimersByTimeAsync(0); await closing; });
+                    expect(c.destroyWindow).toHaveBeenCalledTimes(1);
+                    expect(mockInvoke).toHaveBeenCalledWith('stop_running_engine', undefined);
+                    expect(hungDialog()).toBeNull();
+                    expect(closingEmits().map(c2 => c2[1].workspaceId)).toEqual(['ws-A']);
+                    expect(mockWindowClose).toHaveBeenCalledTimes(1);
+                    mockWindowClose.mockReset().mockResolvedValue(undefined);
+                });
+
+                it('"Cancel" keeps everything, and the next X starts over without asking at once', async () => {
+                    await renderClean();
+                    const c = children(() => 'asks');
+                    mockEmit.mockClear();
+                    const { closing } = await pressClose();
+                    await passAckWait();
+                    const second = await pressClose();
+                    await act(async () => { await second.closing; });
+                    await act(async () => { fireEvent.click(screen.getByTestId('build-model-hung-cancel')); await vi.advanceTimersByTimeAsync(0); await closing; });
+                    expect(hungDialog()).toBeNull();
+                    expect(screen.queryByTestId('close-wait-notice')).toBeNull();
+                    expect(c.destroyWindow).not.toHaveBeenCalled();
+                    expect(closingEmits()).toHaveLength(0);
+                    expect(c.closeAdd).not.toHaveBeenCalled();
+                    expect(mockWindowClose).not.toHaveBeenCalled();
+
+                    await pressClose();
+                    expect(hungDialog()).toBeNull();
+                    expect(c.closeBuild).toHaveBeenCalledTimes(2);
+                });
+
+                it('a second X before the wait, or after an acknowledgement, just asks again', async () => {
+                    await renderClean();
+                    const c = children(() => 'asks');
+                    await pressClose();
+                    const early = await pressClose();
+                    await act(async () => { await early.closing; });
+                    expect(hungDialog()).toBeNull();
+                    expect(c.closeBuild).toHaveBeenCalledTimes(2);
+
+                    await ack();
+                    await passAckWait();
+                    const late = await pressClose();
+                    await act(async () => { await late.closing; });
+                    expect(hungDialog()).toBeNull();
+                    expect(c.closeBuild).toHaveBeenCalledTimes(3);
+                });
+
+                it('an acknowledgement for another workspace does not count; a late one of this workspace takes the question down', async () => {
+                    await renderClean();
+                    children(() => 'asks');
+                    await pressClose();
+                    await ack('ws-B');
+                    await passAckWait();
+                    const second = await pressClose();
+                    await act(async () => { await second.closing; });
+                    expect(hungDialog()).toBeTruthy();
+                    await ack();
+                    expect(hungDialog()).toBeNull();
+                });
+
+                it('destroy() fails with the window still there: nothing closes and a notice shows', async () => {
+                    await renderClean();
+                    const c = children(() => 'asks');
+                    c.destroyWindow.mockRejectedValue(new Error('not allowed'));
+                    mockEmit.mockClear();
+                    const { closing } = await pressClose();
+                    await passAckWait();
+                    const second = await pressClose();
+                    await act(async () => { await second.closing; });
+                    await act(async () => { fireEvent.click(screen.getByTestId('build-model-hung-close')); await vi.advanceTimersByTimeAsync(0); await closing; });
+                    expect(closingEmits()).toHaveLength(0);
+                    expect(mockWindowClose).not.toHaveBeenCalled();
+                    expect(screen.getByTestId('close-wait-notice').textContent).toContain('Could not reach the Build Model window');
+                });
             });
 
             it('leaving the Dashboard during the question: the bypass goes out as before and this window is not closed', async () => {

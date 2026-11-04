@@ -24,8 +24,8 @@ import { estimateTimeLeftMs, isStaleTrainError, planTrainRun, queuePosition, sum
  * - Skips are decided BEFORE the run (`TrainCandidate.plan`, see
  *   `classifyTrainPlan`); `train()` may still answer `{ ok: false, skip }`
  *   when a model can no longer train at its turn.
- * - Cancel (`stopAfterCurrent`) never interrupts a train call — a running
- *   train cannot be cancelled; the run stops after the current model.
+ * - Cancel (`stopAfterCurrent`) never interrupts a train call: the run stops
+ *   after the current model. Only an explicit second close stops the engine.
  * - A STALE_SESSION answer (`stale: true`, or an error text starting with
  *   `STALE_SESSION`) stops the run at once and sets `stale` until `reset()`.
  * - `scopeKey` (the workspace id): when it changes, the run is dropped

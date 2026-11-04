@@ -7704,7 +7704,7 @@ describe('train queue wiring — review fixes (phase 4)', () => {
         }
     });
 
-    it('a hung train at close: "Stop after this model and close" gives up after the cap with a notice; the next close goes through', async () => {
+    it('a long train at close: past the cap the engine is NOT stopped and a notice says so; the next close stops it and leaves', async () => {
         const wait = MARK_COMPLETE_CLOSE_WAIT.ms;
         MARK_COMPLETE_CLOSE_WAIT.ms = 30;
         try {
@@ -7714,16 +7714,17 @@ describe('train queue wiring — review fixes (phase 4)', () => {
             await act(async () => { fireEvent.click(screen.getByTitle('Close')); await Promise.resolve(); });
             await act(async () => { fireEvent.click(screen.getByTestId('close-run-stop')); await Promise.resolve(); });
             // Nothing else happens until the cap has elapsed - however long that takes on this machine.
-            await waitFor(() => expect(screen.getByTestId('close-wait-notice').textContent).toContain('Training took too long'));
+            await waitFor(() => expect(screen.getByTestId('close-wait-notice').textContent).toContain('Close it again to stop training'));
             expect(mockClose).not.toHaveBeenCalled();
-            // The give-up stops the engine and tells a waiting main window this one stayed.
-            expect(stopCalls()).toHaveLength(1);
+            expect(stopCalls()).toHaveLength(0);
+            // A waiting main window is told this one stayed.
             expect(keptEmits()).toEqual([{ workspaceId: 'ws1' }]);
-            // The next close goes through (no dialog), and a rejected close() is caught.
+            // The next close goes through (no dialog) and stops the engine; a rejected close() is caught.
             mockClose.mockRejectedValueOnce(new Error('window already closing'));
             await act(async () => { fireEvent.click(screen.getByTitle('Close')); await Promise.resolve(); await Promise.resolve(); });
             expect(screen.queryByRole('alertdialog')).toBeNull();
             await waitFor(() => expect(mockClose).toHaveBeenCalledTimes(1));
+            expect(stopCalls()).toHaveLength(1);
             const preventDefault = vi.fn();
             await act(async () => { await mockCloseRequestedHandler!({ preventDefault }); });
             expect(screen.queryByRole('alertdialog')).toBeNull();
@@ -7743,7 +7744,48 @@ describe('train queue wiring — review fixes (phase 4)', () => {
         });
     }
 
-    it('a give-up stops the model without a failure: no trainError, a "Skipped" row, and the next model never starts', async () => {
+    it('the run finishes after the give-up: the window closes by itself and the engine is never stopped', async () => {
+        const wait = MARK_COMPLETE_CLOSE_WAIT.ms;
+        MARK_COMPLETE_CLOSE_WAIT.ms = 30;
+        try {
+            const release = hold('TAG2');
+            await mountModels([IND2(), makeModel({ id: 'i4', targetSensor: 'TAG3' })]);
+            await clickTrainAll();
+            await act(async () => { fireEvent.click(screen.getByTitle('Close')); await Promise.resolve(); });
+            await act(async () => { fireEvent.click(screen.getByTestId('close-run-stop')); await Promise.resolve(); });
+            await waitFor(() => expect(screen.getByTestId('close-wait-notice')).toBeTruthy());
+            expect(mockClose).not.toHaveBeenCalled();
+            await release();
+            await waitFor(() => expect(mockClose).toHaveBeenCalledTimes(1));
+            expect(stopCalls()).toHaveLength(0);
+            expect(statsFor('TAG3')).toHaveLength(0);
+        } finally {
+            MARK_COMPLETE_CLOSE_WAIT.ms = wait;
+        }
+    });
+
+    it('a second close after the give-up leaves once: the run ending afterwards does not close again', async () => {
+        const wait = MARK_COMPLETE_CLOSE_WAIT.ms;
+        MARK_COMPLETE_CLOSE_WAIT.ms = 30;
+        try {
+            const release = hold('TAG2');
+            await mountModels([IND2()]);
+            await act(async () => { fireEvent.click(trainSensorBtn()); await Promise.resolve(); });
+            await act(async () => { fireEvent.click(screen.getByTitle('Close')); await Promise.resolve(); });
+            await act(async () => { fireEvent.click(screen.getByTestId('close-run-stop')); await Promise.resolve(); });
+            await waitFor(() => expect(screen.getByTestId('close-wait-notice')).toBeTruthy());
+            await act(async () => { fireEvent.click(screen.getByTitle('Close')); await Promise.resolve(); });
+            await waitFor(() => expect(mockClose).toHaveBeenCalledTimes(1));
+            await release();
+            await flush();
+            expect(mockClose).toHaveBeenCalledTimes(1);
+            expect(stopCalls()).toHaveLength(1);
+        } finally {
+            MARK_COMPLETE_CLOSE_WAIT.ms = wait;
+        }
+    });
+
+    it('the second close stops the model without a failure: no trainError, a "Skipped" row, and the next model never starts', async () => {
         const wait = MARK_COMPLETE_CLOSE_WAIT.ms;
         MARK_COMPLETE_CLOSE_WAIT.ms = 30;
         try {
@@ -7754,20 +7796,19 @@ describe('train queue wiring — review fixes (phase 4)', () => {
             await act(async () => { fireEvent.click(screen.getByTestId('train-all-close')); });
             await act(async () => { fireEvent.click(screen.getByTitle('Close')); await Promise.resolve(); });
             await act(async () => { fireEvent.click(screen.getByTestId('close-run-stop')); await Promise.resolve(); });
+            await waitFor(() => expect(screen.getByTestId('close-wait-notice')).toBeTruthy());
+            expect(stopCalls()).toHaveLength(0);
+            await act(async () => { fireEvent.click(screen.getByTitle('Close')); await Promise.resolve(); });
             await waitFor(() => expect(stopCalls()).toHaveLength(1));
             await waitFor(() => expect(screen.getByTestId('train-run-text').textContent).toBe('Stopped · 0 trained · 1 not started'));
             expect(statsFor('TAG3')).toHaveLength(0);
-            expect(mockClose).not.toHaveBeenCalled();
             expect(document.body.textContent).not.toContain(ENGINE_STOPPED_MESSAGE);
             expect(screen.queryByTestId('results-error')).toBeNull();
             expect(document.body.textContent).not.toContain('Training failed');
             await act(async () => { fireEvent.click(screen.getByTestId('train-run-details')); });
             expect(screen.getByTestId('train-row-status-i2').textContent).toBe('Skipped');
             expect(screen.getByTestId('train-row-note-i2').textContent).toBe('Stopped before it finished');
-            // The run ended: closing is ordinary again and stops nothing more.
-            await act(async () => { fireEvent.click(screen.getByTitle('Close')); });
-            await flush();
-            expect(mockClose).toHaveBeenCalledTimes(1);
+            await waitFor(() => expect(mockClose).toHaveBeenCalledTimes(1));
             expect(stopCalls()).toHaveLength(1);
         } finally {
             MARK_COMPLETE_CLOSE_WAIT.ms = wait;
@@ -7801,7 +7842,7 @@ describe('train queue wiring — review fixes (phase 4)', () => {
         await flush();
     });
 
-    it('after a give-up the next close during a still hung run leaves and stops the engine again', async () => {
+    it('after a give-up the next close during a still hung run leaves and stops the engine', async () => {
         const wait = MARK_COMPLETE_CLOSE_WAIT.ms;
         MARK_COMPLETE_CLOSE_WAIT.ms = 30;
         try {
@@ -7810,11 +7851,12 @@ describe('train queue wiring — review fixes (phase 4)', () => {
             await act(async () => { fireEvent.click(trainSensorBtn()); await Promise.resolve(); });
             await act(async () => { fireEvent.click(screen.getByTitle('Close')); await Promise.resolve(); });
             await act(async () => { fireEvent.click(screen.getByTestId('close-run-stop')); await Promise.resolve(); });
-            await waitFor(() => expect(stopCalls()).toHaveLength(1));
+            await waitFor(() => expect(screen.getByTestId('close-wait-notice')).toBeTruthy());
+            expect(stopCalls()).toHaveLength(0);
             const preventDefault = vi.fn();
             await act(async () => { await mockCloseRequestedHandler!({ preventDefault }); });
             expect(preventDefault).not.toHaveBeenCalled();
-            expect(stopCalls()).toHaveLength(2);
+            expect(stopCalls()).toHaveLength(1);
         } finally {
             MARK_COMPLETE_CLOSE_WAIT.ms = wait;
         }
@@ -7828,6 +7870,32 @@ describe('train queue wiring — review fixes (phase 4)', () => {
         await act(async () => { await mockCloseRequestedHandler!({ preventDefault }); });
         expect(preventDefault).not.toHaveBeenCalled();
         expect(stopCalls()).toHaveLength(1);
+    });
+
+    it('a health preview in flight counts as busy: a close stops the engine; once answered it does not', async () => {
+        let answer: () => void = () => {};
+        const gate = new Promise<void>(r => { answer = r; });
+        mockInvoke.mockImplementation((cmd: string, args?: any) =>
+            cmd === 'compute_health_preview' ? gate.then(() => defaultInvoke(cmd, args)) : defaultInvoke(cmd, args));
+        await mountModels([IND3T()]);
+        await waitFor(() => expect(healthCalls().length).toBeGreaterThan(0), { timeout: 3000 });
+        const preventDefault = vi.fn();
+        await act(async () => { await mockCloseRequestedHandler!({ preventDefault }); });
+        expect(stopCalls()).toHaveLength(1);
+
+        await act(async () => { answer(); await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+        await flush();
+        mockInvoke.mockClear();
+        await act(async () => { await mockCloseRequestedHandler!({ preventDefault }); });
+        expect(stopCalls()).toHaveLength(0);
+    });
+
+    it('a native close tells a waiting main window that this webview is alive, with the workspace id', async () => {
+        await mountModels([IND2()]);
+        await flush();
+        mockEmit.mockClear();
+        await act(async () => { await mockCloseRequestedHandler!({ preventDefault: vi.fn() }); });
+        expect(mockEmit).toHaveBeenCalledWith('build-model-close-ack', { workspaceId: 'ws1' });
     });
 
     it('a close with nothing running does not ask the engine to stop', async () => {

@@ -36,6 +36,8 @@ export interface UseHealthPreviewOptions {
      *  after a Relationship re-train re-populated Rust's fit cache). */
     revision?: number;
     debounceMs?: number;
+    /** Counts the requests Rust is working on, superseded ones too: they still hold the engine. */
+    inFlightRef?: { current: number };
 }
 
 export interface UseHealthPreviewResult {
@@ -183,7 +185,10 @@ export function useHealthPreview(opts: UseHealthPreviewOptions): UseHealthPrevie
             retryScoringRef.current = null;
             const retryScoring = !!pending && pending.modelId === modelId && pending.cacheKey === (req.cache_key ?? null);
             const sent = retryScoring ? { ...req, retry_test_scoring: true } : req;
+            const inFlight = opts.inFlightRef;
+            if (inFlight) inFlight.current++;
             invoke<HealthPreview>('compute_health_preview', { request: sent })
+                .finally(() => { if (inFlight) inFlight.current--; })
                 .then(data => {
                     if (seqRef.current !== mySeq) return; // superseded
                     setState({ modelId, data, lastData: data, loading: false, error: null, errorCode: null });
