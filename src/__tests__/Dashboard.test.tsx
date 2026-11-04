@@ -771,26 +771,162 @@ describe('Dashboard', () => {
         });
 
         describe('child windows on the main window X', () => {
-            const children = () => {
-                const closeBuild = vi.fn().mockResolvedValue(undefined);
+            /** A stateful Build Model window: `close` re-enters `onClose`, which says whether it goes. */
+            const children = (onClose: () => 'goes' | 'asks' = () => 'goes') => {
+                let open = true;
+                let destroyed: (() => void) | null = null;
+                const closeBuild = vi.fn(async () => {
+                    if (onClose() === 'goes') { open = false; destroyed?.(); }
+                });
                 const closeAdd = vi.fn().mockResolvedValue(undefined);
-                mockGetByLabel.mockImplementation((label: string) => Promise.resolve(label === 'build-model' ? { close: closeBuild } : { close: closeAdd }));
-                return { closeBuild, closeAdd };
+                const setFocus = vi.fn().mockResolvedValue(undefined);
+                const hide = vi.fn().mockResolvedValue(undefined);
+                const show = vi.fn().mockResolvedValue(undefined);
+                const once = vi.fn(async (_event: string, cb: () => void) => {
+                    destroyed = cb;
+                    return () => { destroyed = null; };
+                });
+                const buildModel = { close: closeBuild, setFocus, hide, show, once };
+                mockGetByLabel.mockImplementation((label: string) => Promise.resolve(label === 'build-model' ? (open ? buildModel : null) : { close: closeAdd }));
+                return {
+                    closeBuild, closeAdd, setFocus, hide, show, once,
+                    isListening: () => destroyed !== null,
+                    destroy: () => { open = false; destroyed?.(); },
+                };
             };
             const closingEmits = () => mockEmit.mock.calls.filter(c => c[0] === 'workspace-closing');
-
-            it('nothing to save: both close and the window is let go, without holding it', async () => {
+            const reenter = () => mockWindowClose.mockImplementation(async () => {
+                const preventDefault = vi.fn();
+                await mockCloseRequestedHandler!({ preventDefault });
+                expect(preventDefault).not.toHaveBeenCalled();
+            });
+            const kept = (workspaceId = 'ws-A') => act(async () => {
+                for (const cb of [...(listenCallbacks['build-model-close-kept'] ?? [])]) cb({ payload: { workspaceId } });
+                await vi.advanceTimersByTimeAsync(0);
+            });
+            const renderClean = async () => {
                 vi.useFakeTimers();
                 renderDashboard({ initialState: makeInitialState({ id: 'ws-A' }) });
                 await act(async () => { await vi.advanceTimersByTimeAsync(250); });
-                const { closeBuild, closeAdd } = children();
+            };
+
+            it('no Build Model window, nothing to save: Add Sensor closes and the window is let go, without holding it', async () => {
+                await renderClean();
+                const closeAdd = vi.fn().mockResolvedValue(undefined);
+                mockGetByLabel.mockImplementation((label: string) => Promise.resolve(label === 'build-model' ? null : { close: closeAdd }));
                 mockEmit.mockClear();
                 const { preventDefault, closing } = await pressClose();
                 await act(async () => { await closing; });
                 expect(preventDefault).not.toHaveBeenCalled();
                 expect(closingEmits().map(c => c[1].workspaceId)).toEqual(['ws-A']);
-                expect(closeBuild).toHaveBeenCalledTimes(1);
                 expect(closeAdd).toHaveBeenCalledTimes(1);
+                expect(mockWindowClose).not.toHaveBeenCalled();
+            });
+
+            it('Build Model is closed WITHOUT workspace-closing, and this window waits until it is gone; the re-entry closes nothing again', async () => {
+                await renderClean();
+                const c = children(() => 'asks');
+                reenter();
+                mockEmit.mockClear();
+                const { preventDefault, closing } = await pressClose();
+                expect(preventDefault).toHaveBeenCalled();
+                expect(c.closeBuild).toHaveBeenCalledTimes(1);
+                expect(c.setFocus).toHaveBeenCalledTimes(1);
+                expect(closingEmits()).toHaveLength(0);
+                expect(c.closeAdd).not.toHaveBeenCalled();
+                expect(mockWindowClose).not.toHaveBeenCalled();
+
+                await act(async () => { c.destroy(); await vi.advanceTimersByTimeAsync(0); await closing; });
+                expect(closingEmits().map(c2 => c2[1].workspaceId)).toEqual(['ws-A']);
+                expect(c.closeAdd).toHaveBeenCalledTimes(1);
+                expect(mockWindowClose).toHaveBeenCalledTimes(1);
+                expect(c.closeBuild).toHaveBeenCalledTimes(1);
+                mockWindowClose.mockReset().mockResolvedValue(undefined);
+            });
+
+            it('setFocus not allowed: hide + show raises the window instead', async () => {
+                await renderClean();
+                const c = children(() => 'asks');
+                c.setFocus.mockRejectedValue(new Error('window.set_focus not allowed'));
+                await pressClose();
+                expect(c.hide).toHaveBeenCalledTimes(1);
+                expect(c.show).toHaveBeenCalledTimes(1);
+                expect(c.hide.mock.invocationCallOrder[0]).toBeLessThan(c.show.mock.invocationCallOrder[0]);
+            });
+
+            it('kept: nothing closes, this window stays; a later close of Build Model alone does not close it', async () => {
+                await renderClean();
+                const c = children(() => 'asks');
+                mockEmit.mockClear();
+                const { closing } = await pressClose();
+                await kept();
+                await act(async () => { await closing; });
+                expect(closingEmits()).toHaveLength(0);
+                expect(c.closeAdd).not.toHaveBeenCalled();
+                expect(mockWindowClose).not.toHaveBeenCalled();
+                // Nothing is listening any more.
+                expect(listenCallbacks['build-model-close-kept'] ?? []).toHaveLength(0);
+                expect(c.isListening()).toBe(false);
+
+                c.destroy();
+                await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
+                expect(c.closeAdd).not.toHaveBeenCalled();
+                expect(mockWindowClose).not.toHaveBeenCalled();
+
+                // A new X starts over, with no Build Model left.
+                const second = await pressClose();
+                await act(async () => { await second.closing; });
+                expect(c.closeAdd).toHaveBeenCalledTimes(1);
+            });
+
+            it('a kept answer for another workspace is ignored', async () => {
+                await renderClean();
+                const c = children(() => 'asks');
+                const { closing } = await pressClose();
+                await kept('ws-B');
+                await act(async () => { c.destroy(); await vi.advanceTimersByTimeAsync(0); await closing; });
+                expect(mockWindowClose).toHaveBeenCalledTimes(1);
+            });
+
+            it('a second X during the question asks again instead of staying held; Build Model gone unnoticed finishes the close', async () => {
+                await renderClean();
+                const c = children(() => 'asks');
+                const { closing } = await pressClose();
+                const second = await pressClose();
+                await act(async () => { await second.closing; });
+                expect(second.preventDefault).toHaveBeenCalled();
+                expect(c.closeBuild).toHaveBeenCalledTimes(2);
+                expect(c.closeAdd).not.toHaveBeenCalled();
+
+                // The destroyed event was lost: the next X finds no window.
+                mockGetByLabel.mockImplementation((label: string) => Promise.resolve(label === 'build-model' ? null : { close: c.closeAdd }));
+                const third = await pressClose();
+                await act(async () => { await third.closing; await closing; });
+                expect(c.closeAdd).toHaveBeenCalledTimes(1);
+                expect(mockWindowClose).toHaveBeenCalledTimes(1);
+            });
+
+            it('close() of Build Model rejects (already gone): the close goes on', async () => {
+                await renderClean();
+                const c = children();
+                c.closeBuild.mockRejectedValue(new Error('window not found'));
+                const { closing } = await pressClose();
+                await act(async () => { await closing; });
+                expect(mockWindowClose).toHaveBeenCalledTimes(1);
+            });
+
+            it('leaving the Dashboard during the question: the bypass goes out as before and this window is not closed', async () => {
+                vi.useFakeTimers();
+                const ui = renderDashboard({ initialState: makeInitialState({ id: 'ws-A' }) });
+                await act(async () => { await vi.advanceTimersByTimeAsync(250); });
+                const c = children(() => 'asks');
+                mockEmit.mockClear();
+                const { closing } = await pressClose();
+                act(() => { ui.unmount(); });
+                await act(async () => { await vi.advanceTimersByTimeAsync(0); await closing; });
+                expect(closingEmits().map(c2 => c2[1].workspaceId)).toEqual(['ws-A']);
+                c.destroy();
+                await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
                 expect(mockWindowClose).not.toHaveBeenCalled();
             });
 
@@ -798,11 +934,7 @@ describe('Dashboard', () => {
                 await openAndEdit();
                 const { closeBuild, closeAdd } = children();
                 mockEmit.mockClear();
-                mockWindowClose.mockImplementation(async () => {
-                    const preventDefault = vi.fn();
-                    await mockCloseRequestedHandler!({ preventDefault });
-                    expect(preventDefault).not.toHaveBeenCalled();
-                });
+                reenter();
                 const { closing } = await pressClose();
                 await act(async () => { await closing; });
                 expect(mockSaveWorkspaceData.mock.invocationCallOrder[0]).toBeLessThan(closeBuild.mock.invocationCallOrder[0]);

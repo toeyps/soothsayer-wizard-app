@@ -32,7 +32,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 
 const wv = vi.hoisted(() => ({
     /** What `WebviewWindow.getByLabel('build-model')` returns to the Dashboard. */
-    handle: null as null | { close: () => Promise<void>; setFocus: () => Promise<void> },
+    handle: null as null | { close: () => Promise<void>; setFocus: () => Promise<void>; once?: (event: string, cb: () => void) => Promise<() => void> },
 }));
 
 vi.mock('@tauri-apps/api/event', async () => (await import('./helpers/healthEnv')).eventModule());
@@ -330,6 +330,157 @@ describe('(a) the Dashboard goes away (Back to Import) while Train all runs', ()
         await act(async () => { fireEvent.click(bmw().getByTitle('Close')); });
         expect(env.windowClose).toBe(1); // actual: 2 — closed mid-run without asking
         expect(bmw().getByRole('alertdialog').textContent).toContain('Training is still running');
+    });
+});
+
+// ---------------------------------------------------------------------------
+// (c) The X of the main window while Build Model has something to ask
+// ---------------------------------------------------------------------------
+
+describe('(c) the X of the main window asks Build Model, on the real handlers of both windows', () => {
+    const start = () => wsState({
+        models: [model({ id: 'i3', targetSensor: 'TAG3' }), model({ id: 'i4', targetSensor: 'TAG4' })],
+    }, 'ws1', 'Project one');
+
+    /** Main first, Build Model second. The handle runs Build Model's own close handler, like
+     *  Tauri does, and destroys it unless the handler prevented that; the main window's `close()`
+     *  re-enters its own handler. */
+    async function mountBoth() {
+        writeDisk(start(), 'ws1');
+        await mountDashboard('ws1');
+        await mountBuildModel();
+        const [mainHandler, buildHandler] = env.closeHandlers;
+        const log = { buildCloses: 0, destroyed: false, focused: 0, mainClosed: 0 };
+        let onDestroyed: (() => void) | null = null;
+        const destroy = () => {
+            log.destroyed = true;
+            wv.handle = null;
+            onDestroyed?.();
+        };
+        wv.handle = {
+            setFocus: async () => { log.focused++; },
+            once: async (_event, cb) => { onDestroyed = cb; return () => { onDestroyed = null; }; },
+            close: async () => {
+                log.buildCloses++;
+                let prevented = false;
+                await buildHandler({ preventDefault: () => { prevented = true; } });
+                if (!prevented) destroy();
+            },
+        };
+        const pressMainX = async () => {
+            let prevented = false;
+            let done!: Promise<unknown>;
+            await act(async () => {
+                done = Promise.resolve(mainHandler({ preventDefault: () => { prevented = true; } }));
+                await settle(50);
+            });
+            return { done, prevented: () => prevented };
+        };
+        const closingEmits = () => env.emitted.filter(e => e.event === 'workspace-closing');
+        return { log, destroy, pressMainX, closingEmits, mainHandler };
+    }
+    const editName = () => {
+        fireEvent.click(bmw().getByTestId('sensor-list-row-fg:1-tag3'));
+    };
+    async function runHeld() {
+        const gate = env.backend!.gate('compute_sensor_stats', a => a?.sensor === 'TAG3');
+        await act(async () => { fireEvent.click(bmw().getByTestId('train-all')); });
+        await act(async () => { fireEvent.click(bmw().getByTestId('train-all-start')); });
+        await waitFor(() => expect(gate.entered).toBe(true));
+        fireEvent.click(bmw().getByTestId('train-all-close'));
+        return gate;
+    }
+
+    it('during Train all: one question, "Keep training" keeps everything, and closing Build Model later leaves the main window open', async () => {
+        const w = await mountBoth();
+        const gate = await runHeld();
+        const x = await w.pressMainX();
+        expect(x.prevented()).toBe(true);
+        expect(w.closingEmits()).toHaveLength(0);
+        expect(w.log.buildCloses).toBe(1);
+        expect(w.log.focused).toBe(1);
+        expect(bmw().getAllByRole('alertdialog')).toHaveLength(1);
+        expect(bmw().getByTestId('close-run-dialog')).toBeTruthy();
+        expect(env.windowClose).toBe(0);
+
+        await act(async () => { fireEvent.click(bmw().getByTestId('close-run-keep')); await settle(20); });
+        await act(async () => { await x.done; });
+        expect(bmw().queryByRole('alertdialog')).toBeNull();
+        expect(w.log.destroyed).toBe(false);
+        expect(w.closingEmits()).toHaveLength(0);
+        expect(env.windowClose).toBe(0);
+        expect(bmw().getByTestId('train-run-text').textContent).toBe('Training 1 of 2');
+        expect(env.emitted.filter(e => e.event === 'build-model-close-kept').map(e => e.payload)).toEqual([{ workspaceId: 'ws1' }]);
+
+        // The run finishes, then Build Model is closed on its own.
+        await act(async () => { gate.release(); });
+        await waitFor(() => expect(strip().getAttribute('data-phase')).toBe('done'));
+        await act(async () => { await wv.handle!.close(); await settle(50); });
+        expect(w.log.destroyed).toBe(true);
+        expect(env.windowClose).toBe(0);
+        expect(w.closingEmits()).toHaveLength(0);
+    });
+
+    it('during Train all: "Stop after this model and close" finishes the model, Build Model goes, then the main window goes, once', async () => {
+        const w = await mountBoth();
+        const gate = await runHeld();
+        const x = await w.pressMainX();
+        await act(async () => { fireEvent.click(bmw().getByTestId('close-run-stop')); await settle(20); });
+        expect(env.windowClose).toBe(0);
+        expect(w.log.destroyed).toBe(false);
+        expect(env.backend!.cmds('stop_running_engine')).toHaveLength(0);
+
+        // Build Model's own close() re-enters its handler and is let through, as in the real app.
+        const mainCloses = env.windowClose;
+        await act(async () => { gate.release(); await settle(100); });
+        expect(env.windowClose).toBe(mainCloses + 1); // Build Model's own Window.close()
+        await act(async () => { w.destroy(); await settle(50); await x.done; });
+        expect(w.closingEmits().map(e => e.payload.workspaceId)).toEqual(['ws1']);
+        expect(env.windowClose).toBe(mainCloses + 2); // … and the main window's
+        expect(freshOnDisk('ws1', 'i3')).toBe(true);
+        expect(env.backend!.cmds('compute_sensor_stats').filter(c => c.args.sensor === 'TAG4')).toHaveLength(0);
+
+        // The main window's close comes back through its handler: passes, closes nothing again.
+        const emitted = w.closingEmits().length;
+        let prevented = false;
+        await act(async () => { await w.mainHandler({ preventDefault: () => { prevented = true; } }); });
+        expect(prevented).toBe(false);
+        expect(w.closingEmits()).toHaveLength(emitted);
+    });
+
+    it('with an unsaved Model name: "Keep editing" keeps both windows and the edit; "Discard" on the next X closes both', async () => {
+        const w = await mountBoth();
+        editName();
+        await settle(20);
+        if (!bmw().queryByTestId('add-model-form')) fireEvent.click(bmw().getByText('Model settings', { selector: 'b' }));
+        const name = bmw().getByTestId('add-model-form').querySelector('input') as HTMLInputElement;
+        fireEvent.change(name, { target: { value: 'Edited name' } });
+
+        const first = await w.pressMainX();
+        expect(bmw().getByTestId('close-unsaved-dialog')).toBeTruthy();
+        expect(w.closingEmits()).toHaveLength(0);
+        await act(async () => { fireEvent.click(bmw().getByTestId('close-unsaved-keep')); await settle(20); });
+        await act(async () => { await first.done; });
+        expect(env.windowClose).toBe(0);
+        expect(w.log.destroyed).toBe(false);
+        expect(name.value).toBe('Edited name');
+
+        const second = await w.pressMainX();
+        expect(bmw().getByTestId('close-unsaved-dialog')).toBeTruthy();
+        await act(async () => { fireEvent.click(bmw().getByTestId('close-unsaved-discard')); await settle(50); });
+        await act(async () => { w.destroy(); await settle(50); await second.done; });
+        expect(w.closingEmits().map(e => e.payload.workspaceId)).toEqual(['ws1']);
+        expect(env.windowClose).toBe(2); // Build Model's and the main window's
+    });
+
+    it('nothing to ask: Build Model goes at once and the main window follows', async () => {
+        const w = await mountBoth();
+        const x = await w.pressMainX();
+        await act(async () => { await x.done; });
+        expect(w.log.destroyed).toBe(true);
+        expect(w.log.buildCloses).toBe(1);
+        expect(env.windowClose).toBe(1);
+        expect(w.closingEmits().map(e => e.payload.workspaceId)).toEqual(['ws1']);
     });
 });
 

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, onTestFinished } from 'vitest';
 import { render, screen, fireEvent, waitFor, within, cleanup, act } from '@testing-library/react';
 import DataUploadPage from '../components/upload/DataUploadPage';
 import type {
@@ -967,6 +967,48 @@ describe('S. Step 3 "Failure groups"', () => {
     warn.mockRestore();
   });
 
+  it('S9b. a retry after a failed save keeps the same project id (the file may already be written); a NEW project gets its own', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    let tick = 1_000;
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => (tick += 7));
+    onTestFinished(() => clock.mockRestore());
+    mockSaveWorkspace.mockRejectedValueOnce(new Error('recents update failed'));
+    renderAtStep3();
+    addGroup('Bearing overheating');
+    fireEvent.click(openDashboardButton());
+    await waitFor(() => expect(screen.getByText(/Could not save the new project/)).toBeTruthy());
+    fireEvent.click(openDashboardButton());
+    await waitFor(() => expect(onDataReady).toHaveBeenCalledTimes(1), { timeout: 3000 });
+    expect(mockSaveWorkspace).toHaveBeenCalledTimes(2);
+    const [first, second] = mockSaveWorkspace.mock.calls.map(c => (c[0] as WorkspaceState).id);
+    expect(second).toBe(first);
+    warn.mockRestore();
+  });
+
+  it('S9c. a failed save, then a new project from the home page: not the failed one\'s id', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    let tick = 1_000;
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => (tick += 7));
+    onTestFinished(() => clock.mockRestore());
+    mockSaveWorkspace.mockRejectedValueOnce(new Error('recents update failed'));
+    renderAtStep3();
+    addGroup('Bearing overheating');
+    fireEvent.click(openDashboardButton());
+    await waitFor(() => expect(screen.getByText(/Could not save the new project/)).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'All projects' }));
+    fireEvent.click(newProjectButton());
+    fillMachine({ plant: 'Another', machine: 'M', tag: 'T' });
+    fireEvent.click(continueButton());
+    fireEvent.click(continueButton());
+    addGroup('Another group');
+    fireEvent.click(openDashboardButton());
+    await waitFor(() => expect(onDataReady).toHaveBeenCalledTimes(1), { timeout: 3000 });
+    expect(mockSaveWorkspace).toHaveBeenCalledTimes(2);
+    const [first, second] = mockSaveWorkspace.mock.calls.map(c => (c[0] as WorkspaceState).id);
+    expect(second).not.toBe(first);
+    warn.mockRestore();
+  });
+
   it('S10. Back (or the rail) returns to step 2 and keeps the typed groups; a NEW project starts with none', () => {
     renderAtStep3();
     addGroup('Bearing overheating');
@@ -1291,6 +1333,73 @@ describe('F. Load workspace flow', () => {
       expect((onDataReady.mock.calls[0][1] as WorkspaceState).failureGroupState).toEqual(onDisk.failureGroupState);
       expect(warn).toHaveBeenCalledWith('Could not correct running-condition spelling:', expect.any(Error));
       warn.mockRestore();
+    });
+
+    it('F-spell-overtaken. another project clicked during the correction: the written demotion is still logged and shown, naming its project', async () => {
+      let releaseWrite!: () => void;
+      const hold = new Promise<void>(r => { releaseWrite = r; });
+      mockUpdateWorkspace.mockImplementation(async (_id: string, patch: (s: WorkspaceState) => WorkspaceState) => {
+        patch(onDisk as unknown as WorkspaceState);
+        await hold;
+        return respelled([{ ...complete, status: false }, other]);
+      });
+      mockGetRecent.mockResolvedValue(FAKE_WORKSPACES);
+      mockLoadWorkspace.mockImplementation((id: string) => (id === 'ws_1' ? Promise.resolve(onDisk) : new Promise(() => {})));
+      mockInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'load_csv') return Promise.resolve({ headers: ['timestamp', 'Temp A'], total_rows: 100 });
+        if (cmd === 'get_all_sensors') return Promise.resolve(['timestamp', 'Temp A', 'Special']);
+        return Promise.resolve(null);
+      });
+      render(<DataUploadPage onDataReady={onDataReady} />);
+      await waitFor(() => screen.getByText('Engine pressure run'));
+      fireEvent.click(screen.getByText('Engine pressure run'));
+      await waitFor(() => expect(mockUpdateWorkspace).toHaveBeenCalledTimes(1));
+      fireEvent.click(screen.getByText('Compressor health'));
+      await act(async () => { releaseWrite(); });
+
+      await waitFor(() => expect(mockDialogMessage).toHaveBeenCalledTimes(1));
+      const [text, opts] = mockDialogMessage.mock.calls[0];
+      expect(String(text)).toContain(`Project "${baseLoadedWs.name}"`);
+      expect(String(text)).toContain('1 Complete model went back to Incomplete.');
+      expect(opts).toEqual({ title: 'Running condition corrected', kind: 'info' });
+      expect(mockLogToFile).toHaveBeenCalledWith('running-condition-spelling', expect.stringContaining('1 Complete model'), expect.any(String));
+      expect(onDataReady).not.toHaveBeenCalled();
+    });
+
+    it('F-round-overtaken. the same for a rounding conversion written just before another click', async () => {
+      const original = { kind: 'formula' as const, tag: 'R', formula: 'round($sensor_a, 2)' };
+      const fixed = { kind: 'formula' as const, tag: 'R', formula: 'round($sensor_a * 100) / 100' };
+      let releaseSave!: () => void;
+      const hold = new Promise<void>(r => { releaseSave = r; });
+      mockSaveLegacyConversion.mockImplementation(async () => {
+        await hold;
+        return {
+          state: { ...onDisk, specialSensorRecipes: [fixed] },
+          converted: [{ tag: 'R', from: original.formula, to: fixed.formula }],
+          retrainModelIds: [],
+          message: 'Rounding text.',
+        };
+      });
+      mockGetRecent.mockResolvedValue(FAKE_WORKSPACES);
+      mockLoadWorkspace.mockImplementation((id: string) => (id === 'ws_1' ? Promise.resolve({ ...onDisk, specialSensorRecipes: [original] }) : new Promise(() => {})));
+      mockInvoke.mockImplementation((cmd: string, args?: any) => {
+        if (cmd === 'convert_legacy_formula') return Promise.resolve({ formula: fixed.formula, changed: true });
+        if (cmd === 'load_csv') return Promise.resolve({ headers: ['timestamp', 'sensor_a'], total_rows: 100 });
+        if (cmd === 'evaluate_formula') return Promise.resolve(args.customName);
+        return Promise.resolve(null);
+      });
+      render(<DataUploadPage onDataReady={onDataReady} />);
+      await waitFor(() => screen.getByText('Engine pressure run'));
+      fireEvent.click(screen.getByText('Engine pressure run'));
+      await waitFor(() => expect(mockSaveLegacyConversion).toHaveBeenCalledTimes(1));
+      fireEvent.click(screen.getByText('Compressor health'));
+      await act(async () => { releaseSave(); });
+
+      await waitFor(() => expect(mockDialogMessage).toHaveBeenCalledTimes(1));
+      expect(String(mockDialogMessage.mock.calls[0][0])).toContain('Rounding text.');
+      expect(mockDialogMessage.mock.calls[0][1]).toEqual({ title: 'Rounding updated', kind: 'info' });
+      expect(mockLogToFile).toHaveBeenCalledWith('special-sensor-rounding', 'Rounding text.', expect.any(String));
+      expect(onDataReady).not.toHaveBeenCalled();
     });
 
     it('F-spell-both. with a rounding conversion too, one dialog carries both messages', async () => {

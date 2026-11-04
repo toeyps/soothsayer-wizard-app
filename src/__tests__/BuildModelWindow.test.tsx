@@ -110,6 +110,7 @@ vi.mock('../components/windows/SensorPickers', () => ({
 import { useContext } from 'react';
 import { SensorSetExtraContext } from '../components/sensor/sensorInfo';
 import BuildModelWindow from '../components/windows/BuildModelWindow';
+import { ENGINE_STOPPED_MESSAGE } from '../components/windows/engineStop';
 import { makeHealthPreview, makeSetPointAwarePreview } from './helpers/healthPreviewFixture';
 import { makeTestResult, makeValidation } from './helpers/validationFixture';
 import { computeTrainFingerprint } from '../utils/trainFingerprint';
@@ -7623,6 +7624,8 @@ describe('train queue wiring — review fixes (phase 4)', () => {
         await emitEvent('build-model-data', { workspaceId: 'ws2', sensorHeaders: ['TAG1', 'TAG2'], sensorMetadata: [], metadata: { headers: ['timestamp', 'TAG1', 'TAG2'], total_rows: 1 } });
         await flush();
     };
+    const stopCalls = () => mockInvoke.mock.calls.filter(c => c[0] === 'stop_running_engine');
+    const keptEmits = () => mockEmit.mock.calls.filter(c => c[0] === 'build-model-close-kept').map(c => c[1]);
     const stamped = async () => (await Promise.all(mockUpdateWorkspaceData.mock.results.map(r => r.value)))
         .flatMap((w: any) => w?.failureGroupState?.models ?? []).filter((m: any) => m.lastTrainedAt && m.id !== 'i3');
 
@@ -7711,8 +7714,11 @@ describe('train queue wiring — review fixes (phase 4)', () => {
             await act(async () => { fireEvent.click(screen.getByTitle('Close')); await Promise.resolve(); });
             await act(async () => { fireEvent.click(screen.getByTestId('close-run-stop')); await Promise.resolve(); });
             // Nothing else happens until the cap has elapsed - however long that takes on this machine.
-            await waitFor(() => expect(screen.getByTestId('close-wait-notice').textContent).toContain('Still training a model'));
+            await waitFor(() => expect(screen.getByTestId('close-wait-notice').textContent).toContain('Training took too long'));
             expect(mockClose).not.toHaveBeenCalled();
+            // The give-up stops the engine and tells a waiting main window this one stayed.
+            expect(stopCalls()).toHaveLength(1);
+            expect(keptEmits()).toEqual([{ workspaceId: 'ws1' }]);
             // The next close goes through (no dialog), and a rejected close() is caught.
             mockClose.mockRejectedValueOnce(new Error('window already closing'));
             await act(async () => { fireEvent.click(screen.getByTitle('Close')); await Promise.resolve(); await Promise.resolve(); });
@@ -7724,6 +7730,136 @@ describe('train queue wiring — review fixes (phase 4)', () => {
         } finally {
             MARK_COMPLETE_CLOSE_WAIT.ms = wait;
         }
+    });
+
+    /** `compute_sensor_stats` of `sensor` hangs until the engine is stopped, then answers with Rust's stopped text. */
+    function hangUntilStopped(sensor: string) {
+        let stop: (() => void) = () => {};
+        const stopped = new Promise<void>(r => { stop = r; });
+        mockInvoke.mockImplementation((cmd: string, args?: any) => {
+            if (cmd === 'stop_running_engine') { stop(); return Promise.resolve(undefined); }
+            if (cmd === 'compute_sensor_stats' && args?.sensor === sensor) return stopped.then(() => { throw ENGINE_STOPPED_MESSAGE; });
+            return defaultInvoke(cmd, args);
+        });
+    }
+
+    it('a give-up stops the model without a failure: no trainError, a "Skipped" row, and the next model never starts', async () => {
+        const wait = MARK_COMPLETE_CLOSE_WAIT.ms;
+        MARK_COMPLETE_CLOSE_WAIT.ms = 30;
+        try {
+            hangUntilStopped('TAG2');
+            await mountModels([IND2(), makeModel({ id: 'i4', targetSensor: 'TAG3' })]);
+            await clickTrainAll();
+            await waitFor(() => expect(statsFor('TAG2')).toHaveLength(1));
+            await act(async () => { fireEvent.click(screen.getByTestId('train-all-close')); });
+            await act(async () => { fireEvent.click(screen.getByTitle('Close')); await Promise.resolve(); });
+            await act(async () => { fireEvent.click(screen.getByTestId('close-run-stop')); await Promise.resolve(); });
+            await waitFor(() => expect(stopCalls()).toHaveLength(1));
+            await waitFor(() => expect(screen.getByTestId('train-run-text').textContent).toBe('Stopped · 0 trained · 1 not started'));
+            expect(statsFor('TAG3')).toHaveLength(0);
+            expect(mockClose).not.toHaveBeenCalled();
+            expect(document.body.textContent).not.toContain(ENGINE_STOPPED_MESSAGE);
+            expect(screen.queryByTestId('results-error')).toBeNull();
+            expect(document.body.textContent).not.toContain('Training failed');
+            await act(async () => { fireEvent.click(screen.getByTestId('train-run-details')); });
+            expect(screen.getByTestId('train-row-status-i2').textContent).toBe('Skipped');
+            expect(screen.getByTestId('train-row-note-i2').textContent).toBe('Stopped before it finished');
+            // The run ended: closing is ordinary again and stops nothing more.
+            await act(async () => { fireEvent.click(screen.getByTitle('Close')); });
+            await flush();
+            expect(mockClose).toHaveBeenCalledTimes(1);
+            expect(stopCalls()).toHaveLength(1);
+        } finally {
+            MARK_COMPLETE_CLOSE_WAIT.ms = wait;
+        }
+    });
+
+    it('"Stop after this model and close" without a give-up: the model finishes and the engine is never stopped', async () => {
+        const release = hold('TAG2');
+        await mountModels([IND2(), makeModel({ id: 'i4', targetSensor: 'TAG3' })]);
+        await clickTrainAll();
+        await act(async () => { fireEvent.click(screen.getByTestId('train-all-close')); });
+        await act(async () => { fireEvent.click(screen.getByTitle('Close')); await Promise.resolve(); });
+        await act(async () => { fireEvent.click(screen.getByTestId('close-run-stop')); await Promise.resolve(); });
+        expect(stopCalls()).toHaveLength(0);
+        await release();
+        await flush();
+        await waitFor(() => expect(mockClose).toHaveBeenCalledTimes(1));
+        expect(stopCalls()).toHaveLength(0);
+        expect((await stamped()).map((m: any) => m.id)).toContain('i2');
+        expect(statsFor('TAG3')).toHaveLength(0);
+    });
+
+    it('the Cancel of a run does not stop the engine either', async () => {
+        const release = hold('TAG2');
+        await mountModels([IND2(), makeModel({ id: 'i4', targetSensor: 'TAG3' })]);
+        await clickTrainAll();
+        await act(async () => { fireEvent.click(screen.getByTestId('train-all-close')); });
+        await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Cancel' })); });
+        expect(stopCalls()).toHaveLength(0);
+        await release();
+        await flush();
+    });
+
+    it('after a give-up the next close during a still hung run leaves and stops the engine again', async () => {
+        const wait = MARK_COMPLETE_CLOSE_WAIT.ms;
+        MARK_COMPLETE_CLOSE_WAIT.ms = 30;
+        try {
+            hold('TAG2'); // never released: stopping did not help
+            await mountModels([IND2()]);
+            await act(async () => { fireEvent.click(trainSensorBtn()); await Promise.resolve(); });
+            await act(async () => { fireEvent.click(screen.getByTitle('Close')); await Promise.resolve(); });
+            await act(async () => { fireEvent.click(screen.getByTestId('close-run-stop')); await Promise.resolve(); });
+            await waitFor(() => expect(stopCalls()).toHaveLength(1));
+            const preventDefault = vi.fn();
+            await act(async () => { await mockCloseRequestedHandler!({ preventDefault }); });
+            expect(preventDefault).not.toHaveBeenCalled();
+            expect(stopCalls()).toHaveLength(2);
+        } finally {
+            MARK_COMPLETE_CLOSE_WAIT.ms = wait;
+        }
+    });
+
+    it('a native close while a silent load runs (no run) stops the engine; with nothing running it does not', async () => {
+        hold('TAG3'); // the auto-recompute of the open, trained i3
+        await mountModels([IND3T()]);
+        await waitFor(() => expect(statsFor('TAG3').length).toBeGreaterThan(0));
+        const preventDefault = vi.fn();
+        await act(async () => { await mockCloseRequestedHandler!({ preventDefault }); });
+        expect(preventDefault).not.toHaveBeenCalled();
+        expect(stopCalls()).toHaveLength(1);
+    });
+
+    it('a close with nothing running does not ask the engine to stop', async () => {
+        await mountModels([IND2()]);
+        await flush();
+        const preventDefault = vi.fn();
+        await act(async () => { await mockCloseRequestedHandler!({ preventDefault }); });
+        expect(preventDefault).not.toHaveBeenCalled();
+        expect(stopCalls()).toHaveLength(0);
+    });
+
+    it('"Keep training" tells a waiting main window, with this workspace id; a close during "Stop and close" asks nothing again', async () => {
+        const release = hold('TAG2');
+        await mountModels([IND2()]);
+        await act(async () => { fireEvent.click(trainSensorBtn()); await Promise.resolve(); });
+        const first = vi.fn();
+        await act(async () => { await mockCloseRequestedHandler!({ preventDefault: first }); });
+        expect(first).toHaveBeenCalled();
+        expect(keptEmits()).toEqual([]);
+        fireEvent.click(screen.getByTestId('close-run-keep'));
+        expect(keptEmits()).toEqual([{ workspaceId: 'ws1' }]);
+
+        await act(async () => { await mockCloseRequestedHandler!({ preventDefault: vi.fn() }); });
+        await act(async () => { fireEvent.click(screen.getByTestId('close-run-stop')); await Promise.resolve(); });
+        expect(screen.queryByTestId('close-run-dialog')).toBeNull();
+        const again = vi.fn();
+        await act(async () => { await mockCloseRequestedHandler!({ preventDefault: again }); });
+        expect(again).toHaveBeenCalled();
+        expect(screen.queryByTestId('close-run-dialog')).toBeNull();
+        await release();
+        await flush();
+        await waitFor(() => expect(mockClose).toHaveBeenCalledTimes(1));
     });
 
     it('re-pointed mid-train: releasing the held train writes nothing to either workspace and leaves the new one alone', async () => {
@@ -11374,9 +11510,11 @@ describe('Build Model window fixes from the 2026-11-04 review', () => {
             expect(screen.getByTestId('close-unsaved-models').textContent).toContain('Model One');
             expect(mockClose).not.toHaveBeenCalled();
 
+            mockEmit.mockClear();
             fireEvent.click(screen.getByTestId('close-unsaved-keep'));
             expect(screen.queryByTestId('close-unsaved-dialog')).toBeNull();
             expect(screen.getByText('Save changes')).toBeTruthy();
+            expect(mockEmit).toHaveBeenCalledWith('build-model-close-kept', { workspaceId: 'ws1' });
 
             await act(async () => { fireEvent.click(screen.getByTitle('Close')); });
             await act(async () => { fireEvent.click(screen.getByTestId('close-unsaved-discard')); });

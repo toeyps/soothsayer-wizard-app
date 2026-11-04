@@ -45,7 +45,8 @@ import { NAME_TAIL_MAX, displayedName } from "../../utils/sensorNames";
 import { SensorMetaContext, fmtNumText, sensorHaystack, sensorPlainLabel, sensorTitle, useLayeredSensorLookup } from "../sensor/sensorInfo";
 import { useModalFocus } from "./useModalFocus";
 import SubModelsModal from "./SubModelsModal";
-import { createEngineQueue, useSubModelFits } from "./useSubModelFits";
+import { createEngineQueue, useSubModelFits, type EngineQueue } from "./useSubModelFits";
+import { ENGINE_STOPPED_MESSAGE, stopRunningEngine } from "./engineStop";
 import ModelFitPage from "./workbench/ModelFitPage";
 import { CLUSTER_COLORS as CLUSTER_PALETTE, TYPED_DECIMALS_MAX, fmtClusterBound, shortDecimals } from "./workbench/chartTheme";
 import HealthScorePage from "./workbench/HealthScorePage";
@@ -328,7 +329,9 @@ const TRAIN_RUN_ACTIVE_REASON = 'Wait for the training run to finish';
 /** A model whose Mark complete is being checked is not trained meanwhile. */
 const BEING_SAVED_REASON = 'It is being checked for Mark complete';
 /** The close notice when "Stop after this model and close" gave up waiting. */
-const RUN_CLOSE_WAIT_NOTICE = 'Still training a model — the window stays open so nothing is cut off half-way. Close it again to leave without waiting.';
+const RUN_CLOSE_WAIT_NOTICE = 'Training took too long, so it is being stopped. Close the window again to leave.';
+/** A model stopped by a close that gave up: its row says this, not "Failed". */
+const ENGINE_STOPPED_ROW_NOTE = 'Stopped before it finished';
 /** THE kind names of this window — tabs, tooltips, notices: Individual / Relation
  *  model / Clustering. (The UI never says "Relationship": CLAUDE.md naming rule.)
  *  The app-wide map (`utils/modelNames.ts`) — the Dashboard and the special-sensor
@@ -686,7 +689,14 @@ export default function BuildModelWindow() {
     /** The close-during-a-run dialog is open. */
     const [closeAsk, setCloseAsk] = useState(false);
     /** Every engine call of this window (Train, a silent load, Compare) goes through this: one at a time. */
-    const [onEngine] = useState(createEngineQueue);
+    const engineCallsRef = useRef(0);
+    const [onEngine] = useState<EngineQueue>(() => {
+        const inTurn = createEngineQueue();
+        return <T,>(fn: () => Promise<T>) => {
+            engineCallsRef.current++;
+            return inTurn(fn).finally(() => { engineCallsRef.current--; });
+        };
+    });
     /** The header's Train sensor button (every "Train sensor ↑" link focuses it). */
     const trainSensorBtnRef = useRef<HTMLButtonElement>(null);
     /** The ▾ of Train sensor: the "Marked complete" board points at its menu. */
@@ -2210,12 +2220,14 @@ export default function BuildModelWindow() {
                 delete rest[id];
                 return rest;
             });
+            const raw = e instanceof Error ? e.message : String(e);
+            // Stopped by a close that gave up: nothing is wrong with this model.
+            if (raw === ENGINE_STOPPED_MESSAGE) return { ok: false, skip: ENGINE_STOPPED_ROW_NOTE };
             // The bundled Relation model engine is too old: show the app's own wording.
             const parsed = parseHealthError(e);
             // The engine found nothing to train on (a scope the window had not counted —
             // a Custom model that is not the open one — or a sensor with no value in the
             // train periods): the named reason and where to fix it, not the raw text.
-            const raw = e instanceof Error ? e.message : String(e);
             const noRows = parsed.code === 'SIDECAR_OUTDATED' ? null : noRowsTrainError(raw, merged.runningConditionMode === 'custom');
             const message = parsed.code === 'STALE_SESSION'
                 ? TRAIN_STALE_MESSAGE
@@ -2509,16 +2521,31 @@ export default function BuildModelWindow() {
         }
     };
 
+    /** A close was refused here: a main window waiting on this one stays open. */
+    const tellCloseKept = useCallback(() => {
+        const id = workspaceIdRef.current;
+        if (!id) return;
+        Promise.resolve(emit('build-model-close-kept', { workspaceId: id })).catch(() => { /* best effort */ });
+    }, []);
+    /** Leaving with an engine call active: nobody would read its answer, and it would hold the next run's turn. */
+    const stopEngineIfBusy = useCallback(async () => {
+        const running = queueRef.current.isRunningNow();
+        if (!running && engineCallsRef.current === 0 && markRunsRef.current.size === 0) return;
+        if (running) queueRef.current.stopAfterCurrent('close');
+        await stopRunningEngine();
+    }, []);
     /** Window.close() comes back through `onCloseRequested`: `leavingRef` lets that pass
      *  through, so nothing asks or waits twice and the close can never loop. */
     const leaveWindow = useCallback(async () => {
+        await stopEngineIfBusy();
         leavingRef.current = true;
         try {
             await getCurrentWindow().close();
         } catch {
             leavingRef.current = false;
+            tellCloseKept();
         }
-    }, []);
+    }, [stopEngineIfBusy, tellCloseKept]);
     /** Model settings or Running condition edits that closing would drop (none when
      *  the workspace is closing from the Dashboard). */
     const unsavedEditsAtClose = useCallback((): boolean => {
@@ -2533,7 +2560,7 @@ export default function BuildModelWindow() {
         flushFocusedInput();
         await waitForExportBeforeClose();
         // `false` = a running save did not finish in time: the window stays open (notice shown).
-        if (!(await flushAllPending())) return;
+        if (!(await flushAllPending())) { tellCloseKept(); return; }
         await leaveWindow();
     };
     const closeNowRef = useRef(closeNow);
@@ -2573,6 +2600,8 @@ export default function BuildModelWindow() {
                 // Only for this run: the next Train asks before closing again.
                 void idle.then(() => { runWaitGaveUpRef.current = false; });
                 setCloseNotice(RUN_CLOSE_WAIT_NOTICE);
+                void stopRunningEngine();
+                tellCloseKept();
                 return;
             }
             await closeOrAskUnsaved();
@@ -2590,6 +2619,11 @@ export default function BuildModelWindow() {
         const win = getCurrentWindow();
         Promise.resolve(win.onCloseRequested(async (event) => {
             if (leavingRef.current) return;
+            // "Stop after this model and close" is waiting: it decides, no second question.
+            if (stopClosingRef.current && !closeBypassRef.current) {
+                event.preventDefault();
+                return;
+            }
             // A training run is active: keep the window and ask (in-window alertdialog) —
             // unless the workspace is closing or an earlier "stop and close" gave up.
             if (mustAskBeforeClose()) {
@@ -2614,14 +2648,17 @@ export default function BuildModelWindow() {
             const pending = pendingSaveRef.current;
             // A running "Mark complete" (export + save) counts as pending too, and so does
             // a running Export results.
-            if (!saving && !pending && markRunsRef.current.size === 0 && !exportRunRef.current) return;
+            if (!saving && !pending && markRunsRef.current.size === 0 && !exportRunRef.current) {
+                await stopEngineIfBusy();
+                return;
+            }
             event.preventDefault();
             await waitForExportBeforeClose();
-            if (!(await flushAllPending())) return;
+            if (!(await flushAllPending())) { tellCloseKept(); return; }
             await leaveWindow();
         })).then(fn => { if (disposed) fn(); else unlisten = fn; });
         return () => { disposed = true; if (unlisten) unlisten(); };
-    }, [flushAllPending, commitSetPointDrafts, waitForExportBeforeClose, leaveWindow, mustAskBeforeClose, unsavedEditsAtClose]);
+    }, [flushAllPending, commitSetPointDrafts, waitForExportBeforeClose, leaveWindow, mustAskBeforeClose, unsavedEditsAtClose, stopEngineIfBusy, tellCloseKept]);
 
     // The Dashboard that opened this window is going away (Back to Import / another
     // project): it closes this window right after. A run would hold that close
@@ -3300,7 +3337,7 @@ export default function BuildModelWindow() {
         else if (fix === 'runningCondition') setRcFilterOpen(true);
     };
     const closeTrainAll = () => setTrainAllView(null);
-    const keepTraining = () => setCloseAsk(false);
+    const keepTraining = () => { setCloseAsk(false); tellCloseKept(); };
     const startTrainAll = () => {
         if (queue.start(allCandidates, { includeUpToDate, source: 'all' })) setTrainAllView('run');
     };
@@ -5690,7 +5727,7 @@ export default function BuildModelWindow() {
                 <CloseUnsavedDialog
                     models={allModels.filter(m => m.id in drafts).map(modelDisplayLabel)}
                     runningCondition={!!rcDraft && !rcDraftEqual(rcDraft, rcPersisted)}
-                    onKeep={() => setUnsavedAsk(false)}
+                    onKeep={() => { setUnsavedAsk(false); tellCloseKept(); }}
                     onDiscard={() => { setUnsavedAsk(false); void closeNow(); }}
                 />
             )}

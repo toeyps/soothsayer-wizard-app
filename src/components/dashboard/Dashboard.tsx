@@ -132,6 +132,18 @@ const CLOSE_SAVE_FAILED_NOTICE = 'Could not save your latest changes to the proj
 const AUTOSAVE_FAILED_NOTICE = 'Could not save your latest changes to the project file. It will try again with your next change.';
 /** A child window that does not answer must not keep the main window open. */
 const CHILD_CLOSE_WAIT_MS = 2_000;
+
+type BuildModelHandle = NonNullable<Awaited<ReturnType<typeof WebviewWindow.getByLabel>>>;
+
+/** `setFocus` needs a permission the capabilities do not grant; hide + show also raises the window. */
+async function bringToFront(window: BuildModelHandle): Promise<void> {
+    try {
+        await window.setFocus();
+        return;
+    } catch { /* not allowed: below */ }
+    try { await window.hide(); } catch { /* still shown below */ }
+    try { await window.show(); } catch { /* best effort */ }
+}
 const FG_SAVE_FAILED_NOTICE = 'Could not save your last Failure Group change. The screen is back to what the project file holds.';
 const FG_SAVE_FAILED_UNREAD_NOTICE = 'Could not save your last Failure Group change, and the project file could not be read. What you see may not match the file.';
 const RENAME_MODELS_FAILED_NOTICE = 'Could not update the models that use the renamed sensor. In the project file they still use its old name: reopen the project and check them.';
@@ -1996,8 +2008,10 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     const closeToldRef = useRef(false);
     /** Window.close() was called: its `close-requested` pass lets the window go. */
     const leavingRef = useRef(false);
-    /** A close is waiting for the saves: a second X does not start another. */
+    /** A close is waiting for the saves or Build Model: a second X does not start another. */
     const closingRef = useRef(false);
+    /** The X is waiting for Build Model's answer. */
+    const buildModelWaitRef = useRef<{ settle: (gone: boolean) => void; request: () => void } | null>(null);
     // The first autosave after opening always writes: it moves the project to
     // the top of Recents even when nothing changed.
     const autosavedOnceRef = useRef(false);
@@ -2151,9 +2165,11 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     // `preventDefault()` only BLOCKS the close, so once the saves are done we call
     // `close()` ourselves. That comes back through this handler: `leavingRef` lets
     // it pass, so the close can never loop. A save that failed keeps the window once,
-    // with a message; the next close leaves. Child windows close after the saves and
-    // before this one goes (Tauri destroys it only once this handler has returned):
-    // a window destroyed here never unmounts, so the unmount effect would not run.
+    // with a message; the next close leaves. Build Model is asked next, WITHOUT
+    // `workspace-closing`, so its own questions still come up: it goes, or says
+    // `build-model-close-kept` and everything stays. Other child windows close after
+    // that and before this one goes (Tauri destroys it only once this handler has
+    // returned): a window destroyed here never unmounts, so the unmount effect would not run.
     useEffect(() => {
         let disposed = false;
         let unlisten: (() => void) | undefined;
@@ -2164,23 +2180,88 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
             await Promise.race([closeChildWindows(), gaveUp]);
             if (timer) clearTimeout(timer);
         };
+        const findBuildModel = async (): Promise<BuildModelHandle | null | 'no answer'> => {
+            let timer: ReturnType<typeof setTimeout> | undefined;
+            const gaveUp = new Promise<'no answer'>((resolve) => { timer = setTimeout(() => resolve('no answer'), CHILD_CLOSE_WAIT_MS); });
+            const found = Promise.resolve().then(() => WebviewWindow.getByLabel('build-model')).catch(() => null);
+            const answer = await Promise.race([found, gaveUp]);
+            if (timer) clearTimeout(timer);
+            return answer;
+        };
+        /** True when Build Model went, false when the user kept it. */
+        const askBuildModelToClose = async (buildModel: BuildModelHandle): Promise<boolean> => {
+            let answered = false;
+            let settle!: (gone: boolean) => void;
+            const answer = new Promise<boolean>((resolve) => {
+                settle = (gone) => { answered = true; resolve(gone); };
+            });
+            const offKept = subscribe<{ workspaceId?: string }>('build-model-close-kept', (event) => {
+                if (event.payload?.workspaceId === workspaceIdRef.current) settle(false);
+            });
+            let offGone: (() => void) | undefined;
+            const goneReady = Promise.resolve()
+                .then(() => buildModel.once('tauri://destroyed', () => settle(true)))
+                .then((fn) => { if (answered) fn(); else offGone = fn; })
+                .catch((e) => console.warn('Could not watch the Build Model window:', e));
+            const request = () => {
+                void Promise.resolve()
+                    .then(() => buildModel.close())
+                    .then(() => { if (!answered) return bringToFront(buildModel); })
+                    .catch(() => settle(true)); // already gone
+            };
+            buildModelWaitRef.current = { settle, request };
+            try {
+                await Promise.all([offKept.ready, goneReady]);
+                if (!answered) request();
+                return await answer;
+            } finally {
+                buildModelWaitRef.current = null;
+                offKept();
+                offGone?.();
+            }
+        };
+        /** Saves what is pending; false when the failure was just reported and this window stays. */
+        const saveOrTell = async (): Promise<boolean> => {
+            const saved = await saveAllBeforeClose();
+            if (saved || closeToldRef.current) return true;
+            closeToldRef.current = true;
+            setSaveNotice(CLOSE_SAVE_FAILED_NOTICE);
+            return false;
+        };
         Promise.resolve(win.onCloseRequested(async (event) => {
             if (leavingRef.current) return;
-            if (!autosaveDirtyRef.current && writesRef.current.size === 0) {
-                await closeChildrenCapped();
+            if (closingRef.current) {
+                event.preventDefault();
+                // The answer may have been lost: ask again rather than stay held for good.
+                const wait = buildModelWaitRef.current;
+                if (wait) {
+                    const buildModel = await findBuildModel();
+                    if (buildModel === null) wait.settle(true);
+                    else wait.request();
+                }
                 return;
             }
-            event.preventDefault();
-            if (closingRef.current) return;
             closingRef.current = true;
             try {
-                const saved = await saveAllBeforeClose();
-                if (!saved && !closeToldRef.current) {
-                    closeToldRef.current = true;
-                    setSaveNotice(CLOSE_SAVE_FAILED_NOTICE);
-                    return;
+                const dirty = autosaveDirtyRef.current || writesRef.current.size > 0;
+                if (dirty) {
+                    event.preventDefault();
+                    if (!(await saveOrTell())) return;
                 }
-                await closeChildrenCapped();
+                const buildModel = await findBuildModel();
+                if (buildModel === 'no answer') {
+                    void closeChildWindows();
+                    if (!dirty) return;
+                } else if (buildModel) {
+                    event.preventDefault();
+                    if (!(await askBuildModelToClose(buildModel))) return;
+                    // This window stayed usable during the question.
+                    if (!(await saveOrTell())) return;
+                    await closeChildrenCapped();
+                } else {
+                    await closeChildrenCapped();
+                    if (!dirty) return;
+                }
                 leavingRef.current = true;
                 await win.close();
             } catch (e) {
@@ -2190,7 +2271,12 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                 closingRef.current = false;
             }
         })).then(fn => { if (disposed) fn(); else unlisten = fn; });
-        return () => { disposed = true; if (unlisten) unlisten(); };
+        return () => {
+            disposed = true;
+            if (unlisten) unlisten();
+            // Leaving the Dashboard: Build Model closing now must not close this window.
+            buildModelWaitRef.current?.settle(false);
+        };
     }, [saveAllBeforeClose, closeChildWindows]);
 
     // ── Scatter / Pair-plot data path (bounded sample) ───────────────────

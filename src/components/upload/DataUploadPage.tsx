@@ -187,8 +187,11 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
     }
   };
   const continuingRef = useRef(false);
+  // Kept across retries: a save can write the file, then fail on Recents.
+  const newProjectIdRef = useRef<string | null>(null);
   const startNewProject = () => {
     continuingRef.current = false;
+    newProjectIdRef.current = null;
     setDraftGroups([]);
     setGroupsSkipped(false);
     setStep(1);
@@ -322,7 +325,7 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
     setGroupsSkipped(skip);
     setStep(4);
     try {
-      const workspaceId = `ws_${Date.now()}`;
+      const workspaceId = (newProjectIdRef.current ??= `ws_${Date.now()}`);
       const metadata: CsvMetadata = {
         headers: report.headers,
         total_rows: report.total_rows,
@@ -363,6 +366,7 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
         saveWorkspaceData(state),
         new Promise((resolve) => setTimeout(resolve, MIN_TRANSITION_MS)),
       ]);
+      newProjectIdRef.current = null;
       onDataReady(metadata, state, mapping.sensorMetadata);
     } catch (err) {
       console.warn("Could not save the new project:", err);
@@ -377,6 +381,12 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
     const seq = ++loadSeqRef.current;
     const isLatest = () => seq === loadSeqRef.current;
     let inBackendPhase = false;
+    // What to tell the user (a message, not an error: nothing failed, the values changed).
+    let projectName = "";
+    let roundingNotice: { text: string; trace: string } | null = null;
+    let roundingWritten = false;
+    let conditionNotice: { text: string; trace: string } | null = null;
+    let handedOver = false;
     setLoadingWorkspace(true);
     setWorkspaceError(null);
     setActiveWorkspaceId(id);
@@ -387,6 +397,7 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
       // touches the backend at all.
       if (!isLatest()) return;
       if (!state) throw new Error("Workspace not found");
+      projectName = state.name;
 
       backendPhaseRef.current += 1;
       inBackendPhase = true;
@@ -476,11 +487,7 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
         } catch (err) {
           console.warn("Could not save the converted special-sensor rounding:", err);
         }
-        if (!isLatest()) return;
       }
-      // What to tell the user (shown once the Dashboard is up, below). An
-      // information message, not an error: nothing failed, the values changed.
-      let roundingNotice: { text: string; trace: string } | null = null;
       if (notice) {
         opened = notice.state;
         roundingNotice = {
@@ -488,6 +495,9 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
           trace: `Converted: ${notice.converted.map(c => `${c.tag}: ${c.from} → ${c.to}`).join('; ')}`
             + (notice.retrainModelIds.length > 0 ? `. Models set back to Incomplete: ${notice.retrainModelIds.length}.` : '.'),
         };
+        // Written: the next open finds nothing to change, so it is logged now.
+        roundingWritten = true;
+        logToFile('special-sensor-rounding', roundingNotice.text, roundingNotice.trace);
       } else if (converted.length > 0) {
         // The file could not be written: the replay used the converted text, so
         // the Dashboard must hold it too (its autosave then saves it -- and
@@ -498,11 +508,11 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
           trace: `Converted (not written yet, saved by the Dashboard): ${converted.map(c => `${c.tag}: ${c.from} → ${c.to}`).join('; ')}.`,
         };
       }
+      if (converted.length > 0 && !isLatest()) return;
 
       // A running condition spelled differently from its header: Rust ignored it,
       // so a model trained on it used all rows. Copy only the slice: `opened` may
       // hold converted recipes the file does not have yet.
-      let conditionNotice: { text: string; trace: string } | null = null;
       try {
         const headers = await invoke<string[]>("get_all_sensors"); // includes replayed special sensors
         if (!isLatest()) return;
@@ -511,7 +521,6 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
           for (const m of s.failureGroupState?.models ?? []) if (m.status) wasComplete.add(m.id);
           return normalizeConditionSpelling(s, headers);
         });
-        if (!isLatest()) return;
         if (written) {
           opened = { ...opened, failureGroupState: written.failureGroupState };
           const retrain = (written.failureGroupState?.models ?? []).filter(m => wasComplete.has(m.id) && !m.status).length;
@@ -522,8 +531,11 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
                 : `${retrain} Complete models went back to Incomplete. The running condition was not applied when they were trained, so they need training again.`,
               trace: `Running condition spelling corrected. Models set back to Incomplete: ${retrain}.`,
             };
+            // Written: the next open finds nothing to change, so it is logged now.
+            logToFile('running-condition-spelling', conditionNotice.text, conditionNotice.trace);
           }
         }
+        if (!isLatest()) return;
       } catch (err) {
         console.warn("Could not correct running-condition spelling:", err);
       }
@@ -597,17 +609,8 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
       // Only the newest click hands over (a mapping load above may have taken
       // long enough for another workspace to be clicked).
       if (!isLatest()) return;
+      handedOver = true;
       onDataReady(dataMetadata, stateForDashboard, sm);
-      if (roundingNotice) logToFile('special-sensor-rounding', roundingNotice.text, roundingNotice.trace);
-      if (conditionNotice) logToFile('running-condition-spelling', conditionNotice.text, conditionNotice.trace);
-      if (roundingNotice || conditionNotice) {
-        // One dialog, not awaited: the Dashboard opens behind it.
-        const text = [roundingNotice?.text, conditionNotice?.text].filter(Boolean).join('\n\n');
-        const title = !conditionNotice ? 'Rounding updated' : !roundingNotice ? 'Running condition corrected' : 'Project updated';
-        void Promise.resolve()
-          .then(() => message(text, { title, kind: 'info' }))
-          .catch(e => console.warn('Could not show the notice:', e));
-      }
     } catch (err) {
       // An older load's failure is not the user's concern any more.
       if (!isLatest()) return;
@@ -617,6 +620,19 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
       loadingStartedAtRef.current = null;
     } finally {
       if (inBackendPhase) backendPhaseRef.current -= 1;
+      // Also when this load was overtaken or failed after a write. A rounding
+      // conversion that was not written is simply done again on the next open.
+      const rounding = roundingWritten || handedOver ? roundingNotice : null;
+      if (rounding && !roundingWritten) logToFile('special-sensor-rounding', rounding.text, rounding.trace);
+      if (rounding || conditionNotice) {
+        // One dialog, not awaited: the Dashboard opens behind it.
+        const body = [rounding?.text, conditionNotice?.text].filter(Boolean).join('\n\n');
+        const text = handedOver ? body : `Project "${projectName}":\n\n${body}`;
+        const title = !conditionNotice ? 'Rounding updated' : !rounding ? 'Running condition corrected' : 'Project updated';
+        void Promise.resolve()
+          .then(() => message(text, { title, kind: 'info' }))
+          .catch(e => console.warn('Could not show the notice:', e));
+      }
     }
   };
 
