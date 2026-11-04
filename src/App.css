@@ -5313,6 +5313,7 @@ body {
 .wb2-lg { display: inline-flex; align-items: center; gap: 5px; }
 .wb2-lg i { display: inline-block; width: 12px; height: 0; border-top: 2px solid; }
 .wb2-lg i.wb2-lg-sq { width: 9px; height: 9px; border: 0; border-radius: 2px; }
+.wb2-xsel { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-faint); }
 
 /* Model fit, Individual: one column — the tiles, then both charts at full width;
    the value chart is taller than a "tall" card elsewhere. */
@@ -6386,6 +6387,7 @@ body {
 .bmw-srow .sl { min-width: 0; }
 .bmw-dhead h3.bmw-dh-sl { margin: 0; min-width: 0; white-space: normal; overflow: visible; }
 .f4-readout--sl .sl-fit { min-width: 0; }
+.wb2-xpk { display: inline-flex; width: clamp(160px, 18vw, 260px); min-width: 0; vertical-align: middle; }
 .wb2-sub-sl { display: inline-flex; align-items: baseline; gap: 5px; min-width: 0; max-width: 100%; }
 .wb2-sub-lead { flex: none; white-space: nowrap; }
 /* A short note after the sensor labels of a chart subtitle ("· 1 h averages · coloured by score"):

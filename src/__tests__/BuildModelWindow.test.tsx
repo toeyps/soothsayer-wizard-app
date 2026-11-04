@@ -120,6 +120,7 @@ import { applyIncompleteRule } from '../utils/incompleteRule';
 import { ADD_TRAIN_PERIOD_HINT, NO_TEST_PERIOD_REASON } from '../utils/runningCondition';
 // @ts-expect-error - @types/node is not installed; vitest runs in Node so this resolves at runtime
 import { readFileSync } from 'node:fs';
+import { pickSingle, rowTag } from './helpers/sensorPicker';
 import { openTabStatus } from './helpers/workbenchStatus';
 import { TRAIN_NEEDS_RUNNING_CONDITION } from '../utils/trainQueue';
 import { longName, restoreNames, stubNamesCut, stubNamesFit } from './helpers/nameGeometry';
@@ -2200,6 +2201,71 @@ describe('Custom running-condition editor (2026-09-30 port)', () => {
         await waitFor(() => expect(screen.getByTestId('custom-rc-editor')).toBeTruthy());
         await waitFor(() => expect(periodCountCalls()).toHaveLength(counts + 2));
         expect(mockLoadWorkspaceData.mock.calls.length).toBe(loads + 1);
+    });
+});
+
+describe('Relationship X-axis switcher (2026-09-30 port)', () => {
+    it('defaults to the first fitted predictor, changes the chart X-axis immediately (no draft/Save needed), and persists scatterXSensor', async () => {
+        const rel = makeModel({ id: 'r1', kind: 'relationship', targetSensor: 'TAG1', predictorSensors: ['TAG2', 'TAG3'], scatterXSensor: '' });
+        mockInvoke.mockImplementation((cmd: string, args?: any) => {
+            if (cmd === 'preview_relationship_model') {
+                return Promise.resolve({
+                    request: 'req-1', r2_per_step: [0.8], rmse2_per_step: [0.4],
+                    n_rows: 3, predicted: [1, 2, 3],
+                    target_raw: [1.1, 2.1, 2.9], predictor_raw: [[1, 10], [2, 20], [3, 30]],
+                });
+            }
+            return defaultInvoke(cmd, args);
+        });
+        render(<BuildModelWindow />);
+        await deliverData({ failureGroupState: { groups: [makeGroup()], models: [rel] } });
+        statefulUpdateMock([rel]);
+        await act(async () => {
+            fireEvent.click(trainSensorBtn());
+            await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+        });
+        await waitFor(() => expect(screen.getByTestId('results-chart')).toBeTruthy());
+        const xTrigger = () => within(screen.getByTestId('fit-x-selector')).getByRole('button', { name: 'X sensor' });
+        const fitAxis = () => within(screen.getByTestId('chart-card-fit')).getByTestId('echarts-mock').getAttribute('data-x-axis-name');
+        expect(rowTag(xTrigger())).toBe('TAG2');
+        expect(fitAxis()).toBe('Pump Temp · C');
+        expect(screen.queryByText(/Unsaved changes/)).toBeNull();
+
+        pickSingle(xTrigger(), 'TAG3');
+        await flush();
+        // The write is immediate and the preview is re-requested with the new X predictor.
+        await waitFor(() => expect(fitAxis()).toBe('TAG3')); // no description: its tag
+        expect(healthCalls().pop()).toMatchObject({ x_predictor: 'TAG3' });
+        const state = await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value;
+        expect(state.failureGroupState.models[0].scatterXSensor).toBe('TAG3');
+        // Still no draft — this was a direct, immediate write.
+        expect(screen.queryByText(/Unsaved changes/)).toBeNull();
+    });
+
+    it('falls back to the first predictor when the saved scatterXSensor is no longer among the fitted predictors', async () => {
+        const rel = makeModel({ id: 'r1', kind: 'relationship', targetSensor: 'TAG1', predictorSensors: ['TAG2'], scatterXSensor: 'TAG3-removed' });
+        mockInvoke.mockImplementation((cmd: string, args?: any) => {
+            if (cmd === 'preview_relationship_model') {
+                return Promise.resolve({
+                    request: 'req-1', r2_per_step: [0.8], rmse2_per_step: [0.4],
+                    n_rows: 3, predicted: [1, 2, 3],
+                    target_raw: [1.1, 2.1, 2.9], predictor_raw: [[1], [2], [3]],
+                });
+            }
+            return defaultInvoke(cmd, args);
+        });
+        render(<BuildModelWindow />);
+        await deliverData({ failureGroupState: { groups: [makeGroup()], models: [rel] } });
+        statefulUpdateMock([rel]);
+        await act(async () => {
+            fireEvent.click(trainSensorBtn());
+            await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+        });
+        await waitFor(() => expect(screen.getByTestId('results-chart')).toBeTruthy());
+        // The saved X predictor is not among the fitted ones: the request carries NO x_predictor,
+        // so the Fit chart falls back to the first predictor.
+        expect(healthCalls()[0].x_predictor).toBeUndefined();
+        expect(within(screen.getByTestId('chart-card-fit')).getByTestId('echarts-mock').getAttribute('data-x-axis-name')).toBe('Pump Temp · C');
     });
 });
 
@@ -5247,6 +5313,25 @@ describe('Workbench two pages — shell + Model fit page (health score 3b-1)', (
             expect(screen.getByTestId('sub-models-modal')).toBeTruthy();
             fireEvent.click(screen.getByRole('tab', { name: /Individual/ }));
             expect(screen.queryByTestId('sub-models-modal')).toBeNull();
+        });
+    });
+
+    describe('Relationship X predictor', () => {
+        it('the selector lists the fitted predictors and re-requests the preview with the chosen x_predictor (written immediately)', async () => {
+            const rel = trainedRel();
+            statefulUpdateMock([rel]);
+            await mount([rel]);
+            await chartsReady();
+            const trigger = within(screen.getByTestId('fit-x-selector')).getByRole('button', { name: 'X sensor' });
+            expect(rowTag(trigger)).toBe('TAG2');
+            fireEvent.click(trigger);
+            expect([...document.querySelectorAll('.pk-pop [role="option"]')].map(rowTag)).toEqual(['TAG2', 'TAG3']);
+            fireEvent.click(trigger);
+            pickSingle(trigger, 'TAG3');
+            await flush();
+            await waitFor(() => expect(healthCalls().pop()).toMatchObject({ x_predictor: 'TAG3' }));
+            const state = await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value;
+            expect(state.failureGroupState.models[0].scatterXSensor).toBe('TAG3');
         });
     });
 

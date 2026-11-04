@@ -217,9 +217,10 @@ describe('Relationship: the whole journey', () => {
         expect(hp.args.request.cache_key).toBe(pr.args.cache_key);
         expect(hp.error).toBeUndefined();
 
-        // Model fit: KPI strip, Fit scatter (+ Compare predictors), residual over time; NO residual distribution.
+        // Model fit: KPI strip, Fit scatter (+ X selector + Compare predictors), residual over time; NO residual distribution.
         await waitFor(() => expect(bmw().getByTestId('model-fit-relationship')).toBeTruthy());
         expect(bmw().getByTestId('rel-stats')).toBeTruthy();
+        expect(bmw().getByTestId('fit-x-selector')).toBeTruthy();
         expect(bmw().getByTestId('compare-predictors')).toBeTruthy();
         const names = env.charts.flatMap(c => ((c.option?.series ?? []) as any[]).map(x => String(x?.name ?? '')));
         expect(names.some(n => /residual/i.test(n))).toBe(true);

@@ -6,7 +6,8 @@ import { render, screen, fireEvent, act, cleanup, waitFor, within } from '@testi
  * Three features of the Build
  * Model Workbench:
  *   (1) Custom running-condition editor — DRAFT field, committed by Save/Train;
- *   (2) Clustering cluster-range slider + its new `compute_sensor_stats` fetch.
+ *   (2) Relationship X-axis switcher — IMMEDIATE `scatterXSensor` write;
+ *   (3) Clustering cluster-range slider + its new `compute_sensor_stats` fetch.
  *
  * Unit tests in BuildModelWindow.test.tsx mock the sensor pickers
  * and feed data straight into state. Everything here is
@@ -201,6 +202,8 @@ function wsState(models: unknown[], extra: Record<string, unknown> = {}): Worksp
     } as WorkspaceState;
 }
 
+const REL = () => dashModel({ id: 'r1', kind: 'relationship', tag: 'TAG1', predictorSensors: ['TAG2', 'TAG3'] });
+
 const writeDisk = (s: unknown) => h.files.set(WS_FILE, JSON.stringify(s));
 const readDisk = () => JSON.parse(h.files.get(WS_FILE)!);
 const diskModel = (id: string) => readDisk().failureGroupState.models.find((m: any) => m.id === id);
@@ -226,6 +229,10 @@ async function settle(ms = 0) {
 async function dashSelectTag1Saved() {
     await act(async () => { fireEvent.click(screen.getByText('dash-select-tag1')); });
     await waitFor(() => expect(readDisk().selectedSensors).toEqual(['TAG1']), { timeout: 3000 });
+}
+async function dashRenameFg1Saved() {
+    await act(async () => { fireEvent.click(screen.getByText('dash-rename-fg1')); });
+    await waitFor(() => expect(readDisk().failureGroupState.groups.find((g: any) => g.no === 1).name).toBe('FG-A renamed'), { timeout: 3000 });
 }
 async function dashToggleTag2Saved() {
     await act(async () => { fireEvent.click(screen.getByText('dash-toggle-tag2-individual-fg1')); });
@@ -262,6 +269,7 @@ const bmwEl = () => screen.getByTestId('build-model-window');
  *  that tab (the footer pill is gone: Workbench detail v2 §4). */
 const pill = () => openTabStatus(bmwEl());
 // The Fit chart card's X-axis name. The charts come from the (debounced) health preview, so read it with waitFor.
+const echartsX = () => within(bmw().getByTestId('chart-card-fit')).getByTestId('echarts-mock').getAttribute('data-x-axis-name');
 const dropBuildModelBroadcasts = () => {
     h.drop = (event, payload) => event === 'failure-group-state-changed' && payload?.origin === 'build-model';
 };
@@ -278,6 +286,16 @@ async function clickTrain() {
 
 async function clickSave() {
     await act(async () => { fireEvent.click(bmw().getByText('Save changes')); });
+    await settle(30);
+}
+
+/** Drive the REAL compact single picker of the Relationship X-axis switcher. */
+async function pickXAxis(tag: string) {
+    await waitFor(() => expect(bmwEl().querySelector('[data-testid="fit-x-selector"]')).toBeTruthy());
+    const wrap = bmwEl().querySelector('[data-testid="fit-x-selector"]') as HTMLElement;
+    const trigger = within(wrap).getByRole('button', { name: 'X sensor' });
+    pickSingle(trigger, tag);
+    await act(async () => { await Promise.resolve(); });
     await settle(30);
 }
 
@@ -318,6 +336,49 @@ afterEach(() => {
 //     the whole on-disk slice — these tests pin
 //     that the two NEW write paths are covered by that, too.
 // ─────────────────────────────────────────────────────────────────────────
+
+describe('(1) the X-axis switcher\'s IMMEDIATE scatterXSensor write vs. Dashboard\'s mirror', () => {
+    for (const lost of [false, true]) {
+        it(`scatterXSensor survives Dashboard autosave / FG rename / new model (${lost ? 'broadcast LOST — stale mirror' : 'broadcast delivered'}) and reopens on the chosen axis`, async () => {
+            // Two same-named models of different sensors can't collide, but the
+            // Dashboard toggle below creates a TAG2 Individual — give it room.
+            writeDisk(wsState([REL()]));
+            await mountBoth();
+            if (lost) dropBuildModelBroadcasts();
+
+            await clickTrain();
+            expect(diskFresh('r1')).toBe(true);
+            await waitFor(() => expect(echartsX()).toBe('Pump Temp · C')); // first fitted predictor by default
+
+            await pickXAxis('TAG3');
+            expect(diskModel('r1').scatterXSensor).toBe('TAG3');
+            await waitFor(() => expect(echartsX()).toBe('Motor Current · A'));
+            // A view choice, not a fit input: no staleness, no draft created.
+            expect(pill()).toBe('Trained');
+            expect(bmw().queryByTestId('save-changes')).toBeNull();
+            expect(diskFresh('r1')).toBe(true);
+
+            // Dashboard, whose mirror (in the lost case) still has scatterXSensor ''.
+            await dashSelectTag1Saved();
+            await dashRenameFg1Saved();
+            await dashToggleTag2Saved();
+
+            expect(readDisk().failureGroupState.models).toHaveLength(2);
+            expect(diskModel('r1').scatterXSensor).toBe('TAG3');
+            expect(diskFresh('r1')).toBe(true);
+            // Dashboard's own broadcasts reached Build Model; the chart kept the axis.
+            selectRow('TAG1');
+            await waitFor(() => expect(echartsX()).toBe('Motor Current · A'));
+
+            // Reopen both windows from the file: auto-recompute lands on TAG3.
+            cleanup();
+            h.drop = null;
+            await mountBoth();
+            selectRow('TAG1');
+            await waitFor(() => expect(echartsX()).toBe('Motor Current · A'));
+        });
+    }
+});
 
 describe('(1) a Custom running condition saved from the Workbench vs. Dashboard\'s mirror', () => {
     for (const lost of [false, true]) {
@@ -422,6 +483,54 @@ describe('(2) Custom condition/period: Save changes -> close -> reopen -> Train 
 // (3) The two draft flows side by side: X-axis (immediate) vs. everything
 //     else (draft until Save).
 // ─────────────────────────────────────────────────────────────────────────
+
+describe('(3) immediate X-axis write and the pending draft do not cross-contaminate', () => {
+    it('changing the X-axis while a name edit is unsaved writes ONLY scatterXSensor; the draft stays pending and Save later keeps the new axis', async () => {
+        writeDisk(wsState([REL()]));
+        await mountBuildModel();
+        await clickTrain();
+
+        openSettings();
+        fireEvent.change(bmw().getByPlaceholderText('e.g. Bearing vibration model'), { target: { value: 'Renamed rel' } });
+        expect(bmw().getByTestId('footer-status').textContent).toMatch(/Unsaved changes/);
+
+        await pickXAxis('TAG3');
+        // The immediate write did not commit the pending draft …
+        expect(diskModel('r1').scatterXSensor).toBe('TAG3');
+        expect(diskModel('r1').name).toBe('QA model');
+        // … and did not discard it either.
+        expect((bmw().getByPlaceholderText('e.g. Bearing vibration model') as HTMLInputElement).value).toBe('Renamed rel');
+        expect(bmw().getByTestId('footer-status').textContent).toMatch(/Unsaved changes/);
+        expect(pill()).toBe('Trained');
+
+        await clickSave();
+        expect(diskModel('r1').name).toBe('Renamed rel');
+        expect(diskModel('r1').scatterXSensor).toBe('TAG3');
+        expect(diskFresh('r1')).toBe(true);
+        await waitFor(() => expect(echartsX()).toBe('Motor Current · A'));
+    });
+
+    it('a fingerprinted draft edit made AFTER an X-axis change (stiffness) saves without reverting the axis, and re-training keeps it', async () => {
+        writeDisk(wsState([REL()]));
+        await mountBuildModel();
+        await clickTrain();
+        await pickXAxis('TAG3');
+
+        openSettings();
+        fireEvent.click(bmw().getByRole('button', { name: 'Strict' }));
+        expect(bmw().getByTestId('stale-banner')).toBeTruthy(); // the charts stay, "Out of date", under the banner
+        expect(bmw().getAllByTestId('chart-outdated').length).toBeGreaterThan(0);
+        await clickSave();
+        expect(diskModel('r1').relStiffness).toBe(1_000_000);
+        expect(diskModel('r1').scatterXSensor).toBe('TAG3');
+
+        await act(async () => { fireEvent.click(bmw().getByTestId('train-sensor')); });
+        await settle(30);
+        expect(diskFresh('r1')).toBe(true);
+        expect(diskModel('r1').scatterXSensor).toBe('TAG3');
+        await waitFor(() => expect(echartsX()).toBe('Motor Current · A'));
+    });
+});
 
 // ─────────────────────────────────────────────────────────────────────────
 // (4) The slider's new criteria-stats fetch vs. fast model switching.

@@ -964,58 +964,46 @@ export function estimateRowsOutside3sd(h: HealthHistogram | null, stats: Individ
 // Relationship
 // ---------------------------------------------------------------------------
 
-export function fitTooltipFormatter(p: { value?: unknown }) {
-    const [actual, predicted] = (Array.isArray(p.value) ? p.value : []) as number[];
-    return plainRowHtml('Actual', fmtNum(actual)) + plainRowHtml('Predicted', fmtNum(predicted));
+/** "Fit": predictor (X) against the target — actual (blue) vs the Relation
+ *  model's prediction (red). `yName` is the Y title (the unit, or description · unit when the target has
+ *  none, then `yInfo` lets the title wrap); the X title is the predictor's description · unit, never its tag. */
+export function fitTooltipFormatter(xInfo: SensorInfo) {
+    return (p: { seriesName?: string; color?: string; value?: unknown }) => {
+        const [x, y] = (Array.isArray(p.value) ? p.value : []) as number[];
+        return lineRowHtml(p.seriesName ?? '', p.color ?? '', fmtNum(y)) + axisRowHtml('X', xInfo, fmtNum(x));
+    };
 }
 
-/** "Fit": the target's actual value (X) against the Relation model's prediction (Y), on the same
- *  scale. A perfect fit sits on the dashed line. */
-export function buildFitScatterOption(fit: HealthFitScatter, unit: string) {
-    const points: [number, number][] = [];
-    let lo = Infinity;
-    let hi = -Infinity;
-    const n = Math.min(fit.actual.length, fit.predicted.length);
+export function buildFitScatterOption(fit: HealthFitScatter, yName: string, xInfo: SensorInfo, yInfo?: SensorInfo) {
+    const actual: [number, number][] = [];
+    const predicted: [number, number][] = [];
+    const n = Math.min(fit.x.length, fit.actual.length);
     for (let i = 0; i < n; i++) {
+        const x = fit.x[i];
+        if (!Number.isFinite(x)) continue;
         const a = fit.actual[i];
+        if (Number.isFinite(a)) actual.push([x, a]);
         const p = fit.predicted[i];
-        if (!Number.isFinite(a) || typeof p !== 'number' || !Number.isFinite(p)) continue;
-        points.push([a, p]);
-        lo = Math.min(lo, a, p);
-        hi = Math.max(hi, a, p);
+        if (typeof p === 'number' && Number.isFinite(p)) predicted.push([x, p]);
     }
-    const [min, max, interval]: NiceRange = points.length > 0 ? niceExtent(lo, hi) : niceExtent(0, 1);
-    const big = points.length > 6000;
-    const axisName = (name: string) => (unit ? `${name} · ${unit}` : name);
-    const axis = { type: 'value' as const, min, max, interval, nameLocation: 'middle' as const, nameTextStyle: { color: CHART.textSecondary, fontSize: 10 }, ...valueAxisCommon, axisLine: EDGE_AXIS_LINE };
-    return {
+    const big = actual.length + predicted.length > 6000;
+    const common = { type: 'scatter' as const, symbolSize: big ? 2.5 : 4, large: big, largeThreshold: 2000, silent: false };
+    return withAxisNames({
         backgroundColor: 'transparent',
         textStyle: { fontFamily: FONT },
         animation: false,
-        tooltip: { ...tooltipBase, trigger: 'item', formatter: fitTooltipFormatter },
+        // The hover box says which colour is which (user decision 2026-11-03: no key row).
+        tooltip: { ...tooltipBase, trigger: 'item', formatter: fitTooltipFormatter(xInfo) },
         legend: { show: false },
         grid: { left: 58, right: 18, top: 14, bottom: 40, containLabel: false },
         dataZoom: [{ type: 'inside', xAxisIndex: 0, filterMode: 'none' }, { type: 'inside', yAxisIndex: 0, filterMode: 'none' }],
-        xAxis: { ...axis, name: axisName('Actual'), nameGap: 24, splitLine: { show: false } },
-        yAxis: { ...axis, name: axisName('Predicted'), nameGap: 44, splitLine: { show: true, lineStyle: { color: CHART.splitLine } } },
-        series: [{
-            type: 'scatter' as const,
-            name: 'Fit',
-            data: points,
-            symbolSize: big ? 2.5 : 4,
-            large: big,
-            largeThreshold: 2000,
-            itemStyle: { color: CHART.actual, opacity: 0.5 },
-            markLine: {
-                silent: true,
-                symbol: 'none',
-                animation: false,
-                label: { show: false },
-                lineStyle: { color: 'rgba(255,255,255,0.35)', type: 'dashed', width: 1 },
-                data: [[{ coord: [min, min] }, { coord: [max, max] }]],
-            },
-        }],
-    };
+        xAxis: { type: 'value', name: sensorAxisTitle(xInfo), nameLocation: 'middle', nameGap: 24, nameTextStyle: { color: CHART.textSecondary, fontSize: 10 }, scale: true, ...valueAxisCommon, axisLine: EDGE_AXIS_LINE, splitLine: { show: false } },
+        yAxis: { type: 'value', name: yName, nameLocation: 'middle', nameGap: 44, nameTextStyle: { color: CHART.textSecondary, fontSize: 10 }, scale: true, ...valueAxisCommon, axisLine: EDGE_AXIS_LINE, splitLine: { show: true, lineStyle: { color: CHART.splitLine } } },
+        series: [
+            { ...common, name: 'Actual', data: actual, itemStyle: { color: CHART.actual, opacity: 0.45 } },
+            { ...common, name: 'Relation model', data: predicted, itemStyle: { color: CHART.predicted, opacity: 0.6 } },
+        ],
+    }, yInfo ? { x: xInfo, y: yInfo } : { x: xInfo });
 }
 
 /** "Target vs predicted" over time: the Actual (blue) and Predicted (red) lines.

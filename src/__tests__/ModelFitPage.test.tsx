@@ -27,6 +27,7 @@ vi.mock('../components/charts/ResponsiveECharts', () => ({
 
 import ModelFitPage, { inClusterSub, outsideText } from '../components/windows/workbench/ModelFitPage';
 import { SensorMetaProvider } from '../components/sensor/SensorLabel';
+import { openPickerSurface, pickSingle, pickerRows, rowTag } from './helpers/sensorPicker';
 import { makeHealthPreview } from './helpers/healthPreviewFixture';
 import { makeTestResult, makeValidation } from './helpers/validationFixture';
 import type { UseHealthPreviewResult } from '../hooks/useHealthPreview';
@@ -50,7 +51,7 @@ function page(m: FailureModel, req: Record<string, any>, over: Record<string, an
     const data = makeHealthPreview({ kind: m.kind, ...req });
     const props = {
         model: m, stale: false, preview: { ...idle, data }, unit: '°C', data,
-        onCompare: vi.fn(),
+        onXPredictorChange: vi.fn(), onCompare: vi.fn(),
         ...over,
     };
     render(<SensorMetaProvider metadata={META}><ModelFitPage {...props} /></SensorMetaProvider>);
@@ -143,12 +144,12 @@ describe('ModelFitPage — Individual', () => {
         const tiny = { ...makeHealthPreview({ kind: 'individual' }) };
         tiny.stats = { ...(tiny.stats as any), rows: 1_000_000 };
         tiny.histogram = { bin_edges: [0, 2, 4, 6, 8, 10], counts: [1, 0, 999_999, 0, 0], curve: [0, 0, 0, 0, 0], bin_width: 2, n: 1_000_000 };
-        render(<ModelFitPage model={model()} stale={false} preview={{ ...idle, data: tiny }} unit="" data={tiny} onCompare={() => {}} />);
+        render(<ModelFitPage model={model()} stale={false} preview={{ ...idle, data: tiny }} unit="" data={tiny} onXPredictorChange={() => {}} onCompare={() => {}} />);
         expect(tile('stat-outside3')).toMatchObject({ value: '< 0.01%', sub: '±3SD 2 – 8' });
         cleanup();
         const none = { ...makeHealthPreview({ kind: 'individual' }) };
         none.histogram = { bin_edges: [0, 2, 4, 6, 8, 10], counts: [0, 0, 1000, 0, 0], curve: [0, 0, 0, 0, 0], bin_width: 2, n: 1000 };
-        render(<ModelFitPage model={model()} stale={false} preview={{ ...idle, data: none }} unit="" data={none} onCompare={() => {}} />);
+        render(<ModelFitPage model={model()} stale={false} preview={{ ...idle, data: none }} unit="" data={none} onXPredictorChange={() => {}} onCompare={() => {}} />);
         expect(tile('stat-outside3')).toMatchObject({ value: '0.00%', sub: '±3SD 2 – 8' });
         expect(outsideText(0.004)).toBe('< 0.01%');
         expect(outsideText(0.27)).toBe('0.27%');
@@ -163,7 +164,7 @@ describe('ModelFitPage — Individual', () => {
 
     it('without a histogram the Distribution card says so instead of drawing, and the Outside ±3SD tile is a dash', () => {
         const data = { ...makeHealthPreview({ kind: 'individual' }), histogram: null };
-        render(<ModelFitPage model={model()} stale={false} preview={{ ...idle, data }} unit="" data={data} onCompare={() => {}} />);
+        render(<ModelFitPage model={model()} stale={false} preview={{ ...idle, data }} unit="" data={data} onXPredictorChange={() => {}} onCompare={() => {}} />);
         expect(within(screen.getByTestId('chart-card-dist')).queryByTestId('echarts-mock')).toBeNull();
         expect(screen.getByText('No distribution for this scope')).toBeTruthy();
         expect(tile('stat-outside3')).toEqual({ label: 'Outside ±3SD', value: '—', unit: null, sub: 'no distribution' });
@@ -247,22 +248,37 @@ describe('ModelFitPage — Relationship', () => {
     it('Fit draws Actual and Relation model; Target vs predicted draws Actual and Predicted; Residual draws one series', () => {
         page(rel(), { target: 'T1', predictors: ['A', 'B'] });
         const series = (id: string) => within(screen.getByTestId(`chart-card-${id}`)).getByTestId('echarts-mock').getAttribute('data-series');
-        expect(series('fit')).toBe('Fit');
+        expect(series('fit')).toBe('Actual|Relation model');
         expect(series('tvp')).toBe('Actual|Predicted');
         expect(series('res')).toBe('Residual');
     });
 
-    it('the Fit card has no predictor picker, and keeps Compare predictors', () => {
-        page(rel(), { target: 'T1', predictors: ['A', 'B'] });
-        const card = within(screen.getByTestId('chart-card-fit'));
-        expect(card.queryByRole('button', { name: 'X sensor' })).toBeNull();
-        expect(card.getByTestId('compare-predictors')).toBeTruthy();
+    it('the X selector lists the fitted predictors, shows the plotted one and reports a change', () => {
+        const p = page(rel(), { target: 'T1', predictors: ['A', 'B'], x_predictor: 'B' });
+        const trigger = within(screen.getByTestId('fit-x-selector')).getByRole('button', { name: 'X sensor' });
+        expect(trigger.classList.contains('pk-trigger--sm')).toBe(true);
+        expect(rowTag(trigger)).toBe('B');
+        expect(within(screen.getByTestId('chart-card-fit')).getByTestId('echarts-mock').getAttribute('data-x-axis-name')).toBe('Label of B');
+        fireEvent.click(trigger);
+        expect(openPickerSurface().querySelector('.pk-scope')?.textContent).toBe('Predictors of this model · 2');
+        expect(pickerRows().map(rowTag)).toEqual(['A', 'B']);
+        fireEvent.click(trigger); // close
+        pickSingle(trigger, 'A');
+        expect(p.onXPredictorChange).toHaveBeenCalledWith('A');
+    });
+
+    it('with ONE predictor the X selector is disabled, still shows its value, and gives the reason in a tooltip', () => {
+        page(rel(), { target: 'T1', predictors: ['A'], x_predictor: 'A' });
+        const trigger = within(screen.getByTestId('fit-x-selector')).getByRole('button', { name: 'X sensor' }) as HTMLButtonElement;
+        expect(trigger.disabled).toBe(true);
+        expect(rowTag(trigger)).toBe('A');
+        expect(trigger.getAttribute('title')).toBe('Only one predictor — nothing else to plot on X');
     });
 
     it('the Fit card subtitle names the target with the muted Inline label (no brackets)', () => {
         page(rel(), { target: 'T1', predictors: ['A', 'B'] });
-        const sub = within(screen.getByTestId('chart-card-fit')).getByText('actual vs predicted of', { exact: false });
-        expect(sub.textContent).toBe('actual vs predicted of Label of T1T1');
+        const sub = within(screen.getByTestId('chart-card-fit')).getByText('predictor vs', { exact: false });
+        expect(sub.textContent).toBe('predictor vs Label of T1T1');
         expect(sub.querySelector('.sl--muted')).toBeTruthy();
     });
 
@@ -277,7 +293,7 @@ describe('ModelFitPage — Relationship', () => {
     it('a tiny non-zero statistic never reads as zero: "0.0002", not "0.000"', () => {
         const base = makeHealthPreview({ kind: 'relationship', target: 'T1', predictors: ['A'] });
         const data = { ...base, stats: { ...(base.stats as any), residual_mean: 0.0002, residual_sd: 0.00004567, rmse: 1234.5678, two_rmse: -0 } };
-        render(<ModelFitPage model={rel()} stale={false} preview={{ ...idle, data }} unit="" data={data} onCompare={() => {}} />);
+        render(<ModelFitPage model={rel()} stale={false} preview={{ ...idle, data }} unit="" data={data} onXPredictorChange={() => {}} onCompare={() => {}} />);
         expect(tile('stat-res-sd').sub).toBe('mean 0.0002');
         expect(tile('stat-res-sd').value).toBe('0.0000457'); // 3 significant digits
         expect(tile('stat-rmse').value).toBe('1,234.568'); // not rounded to "1,235"
@@ -438,7 +454,7 @@ describe('ModelFitPage — Clustering', () => {
         const data = makeHealthPreview({ kind: 'clustering', n_clusters: 2 });
         render(
             <SensorMetaProvider metadata={meta}>
-                <ModelFitPage model={clu()} stale={false} preview={{ ...idle, data }} unit="" data={data} onCompare={() => {}} />
+                <ModelFitPage model={clu()} stale={false} preview={{ ...idle, data }} unit="" data={data} onXPredictorChange={() => {}} onCompare={() => {}} />
             </SensorMetaProvider>,
         );
         const chart = chartOf('cl');
@@ -452,7 +468,7 @@ describe('ModelFitPage — Clustering', () => {
 
     it('a sensor with no description (or no Tag names at all) falls back to its tag on the axis', () => {
         const data = makeHealthPreview({ kind: 'clustering', n_clusters: 1 });
-        render(<ModelFitPage model={clu()} stale={false} preview={{ ...idle, data }} unit="" data={data} onCompare={() => {}} />);
+        render(<ModelFitPage model={clu()} stale={false} preview={{ ...idle, data }} unit="" data={data} onXPredictorChange={() => {}} onCompare={() => {}} />);
         expect(chartOf('cl').getAttribute('data-x-axis-name')).toBe('X1');
         expect(chartOf('cl').getAttribute('data-y-axis-name')).toBe('Y1');
     });
@@ -478,7 +494,7 @@ describe('ModelFitPage — train and scoring periods ("just score it", 2026-10-1
         const base = makeHealthPreview({ kind: m.kind, ...req });
         const data = { ...base, ...extra };
         render(<ModelFitPage model={m} stale={false} preview={{ ...idle, data }} unit="°C" data={data}
-            onCompare={vi.fn()} trainDaysEstimate={extra.estimate} />);
+            onXPredictorChange={vi.fn()} onCompare={vi.fn()} trainDaysEstimate={extra.estimate} />);
     };
 
     /** The removed "Train and scoring periods" table (user decision 2026-10-11) left nothing behind. */
@@ -588,7 +604,7 @@ describe('ModelFitPage — train and scoring periods ("just score it", 2026-10-1
     it('whatever testNumbers says, the chart strip names no scoring period (neither "S1" nor "S2"); slowScoring shows the hint', () => {
         const data = { ...makeHealthPreview({ kind: 'individual', target: 'T1' }), test_validation: makeValidation({ tests: [makeTestResult({ index: 1 })] }) };
         render(<ModelFitPage model={model()} stale={false} preview={{ ...idle, data }} unit="°C" data={data}
-            onCompare={vi.fn()} testNumbers={[2]} slowScoring />);
+            onXPredictorChange={vi.fn()} onCompare={vi.fn()} testNumbers={[2]} slowScoring />);
         // the user's list is [S1 not sent, S2]
         expect(chartOf('ts').getAttribute('data-strip')).toBe('TRAIN');
         expect(chartOf('ts').getAttribute('data-bands')).toBe('TRAIN');
