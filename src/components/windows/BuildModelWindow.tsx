@@ -2217,7 +2217,9 @@ export default function BuildModelWindow() {
             // train periods): the named reason and where to fix it, not the raw text.
             const raw = e instanceof Error ? e.message : String(e);
             const noRows = parsed.code === 'SIDECAR_OUTDATED' ? null : noRowsTrainError(raw, merged.runningConditionMode === 'custom');
-            const message = parsed.code === 'SIDECAR_OUTDATED' ? parsed.message : noRows ?? raw;
+            const message = parsed.code === 'STALE_SESSION'
+                ? TRAIN_STALE_MESSAGE
+                : parsed.code === 'SIDECAR_OUTDATED' ? parsed.message : noRows ?? raw;
             if (noRows !== null && !opts.persistMeta) {
                 // A SILENT load (opening a trained / Complete model, "Load it again") that
                 // found no row: nobody trained it and nothing about the model changed, so
@@ -2229,9 +2231,7 @@ export default function BuildModelWindow() {
             }
             forgetNoRowsLoad(id);
             setTrainError(prev => ({ ...prev, [id]: message }));
-            // The train commands never answer STALE_SESSION themselves: the real
-            // "this data is not ours any more" signal is the generation check above
-            // (DATASET_CHANGED_MESSAGE). Either one stops a run.
+            // Either "this data is not ours any more" signal stops a run.
             const stale = message === DATASET_CHANGED_MESSAGE || parsed.code === 'STALE_SESSION' || isStaleTrainError(message);
             return stale ? { ok: false, error: message, stale: true } : { ok: false, error: message };
         }

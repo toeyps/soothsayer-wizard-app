@@ -57,7 +57,7 @@ vi.mock('../hooks/useScatterSample', () => ({
 }));
 vi.mock('../components/charts/LineChart', () => ({ default: () => <div /> }));
 
-import { env, nativeClose, resetEnv } from './helpers/healthEnv';
+import { env, nativeCloseLastWindow, resetEnv } from './helpers/healthEnv';
 import {
     COND, WS, bmw, bmwDot, bmwEl, dash, dashDot, diskModel, enterSp, markBtn, markComplete, model, mountWindows, newBackend,
     openDashFgTab, openDashSensorTab, openHealth, openSettings, pickInModal, pill, readDisk, restartApp, selectKindTab, selectSensor,
@@ -302,7 +302,7 @@ describe('A. Train sensor ▾ and the page states, on the real workspace file', 
 
         // the OS close button: held back, the dialog asks
         let prevented = false;
-        await act(async () => { prevented = await nativeClose(); });
+        await act(async () => { prevented = await nativeCloseLastWindow(); });
         expect(prevented).toBe(true);
         const dialog = await waitFor(() => screen.getByTestId('close-run-dialog'));
         expect(document.activeElement).toBe(screen.getByTestId('close-run-keep'));
@@ -324,7 +324,7 @@ describe('A. Train sensor ▾ and the page states, on the real workspace file', 
         expect(freshOnDisk('i4')).toBe(true);
         expect(env.windowClose).toBe(0);
         // with no run active the same close goes straight through
-        await act(async () => { prevented = await nativeClose(); });
+        await act(async () => { prevented = await nativeCloseLastWindow(); });
         expect(screen.queryByTestId('close-run-dialog')).toBeNull();
     });
 

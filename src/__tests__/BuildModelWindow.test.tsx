@@ -7182,6 +7182,20 @@ describe('Train periods and scoring periods — review fixes (2026-10-07)', () =
             await waitFor(() => expect(screen.getByTestId('slow-test-scoring')).toBeTruthy(), { timeout: 3000 });
         });
 
+        it('STALE_SESSION on Train shows the app wording, not the raw code', async () => {
+            mockInvoke.mockImplementation((cmd: string, args?: any) =>
+                cmd === 'preview_relationship_model'
+                    ? Promise.reject('STALE_SESSION: the dataset changed while this was running.')
+                    : healthInvoke(cmd, args));
+            const rel = relModel();
+            statefulUpdateMock([rel]);
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: { groups: [makeGroup()], models: [rel] } });
+            await act(async () => { fireEvent.click(trainSensorBtn()); await Promise.resolve(); await Promise.resolve(); });
+            await waitFor(() => expect(document.body.textContent).toContain('The data in this window is out of date'));
+            expect(document.body.textContent).not.toContain('STALE_SESSION');
+        });
+
         it('SIDECAR_OUTDATED on Train shows the app wording, not the raw code', async () => {
             mockInvoke.mockImplementation((cmd: string, args?: any) =>
                 cmd === 'preview_relationship_model'

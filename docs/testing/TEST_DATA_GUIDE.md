@@ -49,16 +49,16 @@
 | `merge\M1_iso.csv` + `M1_us_ampm.csv` | เวลาเดียวกันเขียนสองแบบ | IMP-131 (โปรเจกต์ 1) |
 | `merge\M2_part1.csv` + `M2_part2.csv` | ไฟล์ที่มีคอลัมน์ร่วมกัน | IMP-131 (โปรเจกต์ 2) |
 | `merge\M3_column_twice.csv` | คอลัมน์ชื่อซ้ำ | IMP-131 (โปรเจกต์ 3) |
-| `scenario\I-1_…`, `I-2_…`, `I-3_…`, `I-tags.csv` | เครื่องเดียวกัน 6 เดือน จาก 3 แหล่ง 3 รูปแบบ | WFI-1 ถึง WFI-4 |
+| `scenario\I-1_…`, `I-2_…`, `I-3_…`, `I-tags.csv` | เครื่องเดียวกัน 6 เดือน จาก 3 แหล่ง 3 รูปแบบ | WFI-1, WFI-2, WFI-9, WFI-10 |
 
 ### `C:\WizardTestData\EXP` — ข้อมูลสำหรับ Export results
 
 | ไฟล์ | คืออะไร | ใช้ในข้อ |
 |---|---|---|
-| `EXP-data.csv` + `EXP-tags.csv` | 30 วัน ชื่อ sensor ที่มีช่องว่าง `/` ภาษาไทย ชื่อต้องห้ามของ Windows, เวลาซ้ำ 3 จุด, แถวไม่มีเวลา 2 แถว | BMW-355 ถึง BMW-403 (หมวด Export ใน BMW), WFJ ทั้งหมด, WFK-5 |
+| `EXP-data.csv` + `EXP-tags.csv` | 30 วัน ชื่อ sensor ที่มีช่องว่าง `/` ภาษาไทย ชื่อต้องห้ามของ Windows, เวลาซ้ำ 3 จุด, แถวไม่มีเวลา 2 แถว | BMW-355 ถึง BMW-421 (หมวด Export ใน BMW), WFJ ทั้งหมด, WFK-5 |
 | `EXP-numbers.csv` + `EXP-numbers-tags.csv` | ตัวเลขที่ปัดพลาดง่าย (ทศนิยมยาว, ติดลบ, เล็กมาก, ใหญ่มาก, `1.5E-05`) + sensor เดินเครื่อง RUN | WFK-1 ถึง WFK-10 |
 | `EXP-fleet.csv` + `EXP-fleet-tags.csv` | เครื่องใหญ่ 37 sensor 6 component | WFK-11, WFK-12 |
-| `EXPECTED.txt` | ชื่อไฟล์ที่ต้องได้ จำนวนแถว ค่าเฉลี่ย / SD ของทุกโมเดล | BMW-402, BMW-403, WFJ, WFK |
+| `EXPECTED.txt` | ชื่อไฟล์ที่ต้องได้ จำนวนแถว ค่าเฉลี่ย / SD ของทุกโมเดล | BMW-402, BMW-421, WFJ, WFK |
 
 ### `C:\WizardTestData\LN` — ชื่อ sensor ยาว (ม.ค. 2025 เครื่องหยุดวันที่ 10 ม.ค. ทั้งวัน · Running condition แนะนำ `KW-9001` is above 100)
 
@@ -91,8 +91,8 @@
 | ไฟล์ | คืออะไร | ใช้ในข้อ |
 |---|---|---|
 | `MF-overlap-1.csv`, `-2.csv`, `-3.csv` | 3 ไฟล์ ช่วงเวลาซ้อนกันบางส่วน (รวมแล้ว 6,912 แถว) | PREP-6, IMP-35, IMP-36, IMP-130, PERF-8 (ฉบับเล็ก) |
-| `MF-adjacent-1.csv`, `-2.csv` | 2 ไฟล์ช่วงเวลาต่อกันพอดี ไม่ซ้อน | PREP-6, IMP-36, IMP-130 |
-| `MF-samecol-1.csv`, `-2.csv` | คู่ไฟล์ที่มีคอลัมน์ TI-101 ซ้ำกันข้ามไฟล์ | PREP-6, IMP-36 |
+| `MF-adjacent-1.csv`, `-2.csv` | 2 ไฟล์ช่วงเวลาต่อกันพอดี ไม่ซ้อน | PREP-6, IMP-36, IMP-130, IMP-135 |
+| `MF-samecol-1.csv`, `-2.csv` | คู่ไฟล์ที่มีคอลัมน์ TI-101 ซ้ำกันข้ามไฟล์ | PREP-6, IMP-36, IMP-135 |
 | `MF-extra-columns-B.csv` | ไฟล์ B ที่มีคอลัมน์เพิ่ม 3 ตัว (TI-103, PI-202, XV-701) | IMP-121 |
 | `MF-extra-columns-tags.csv` | Tag names 10 ตัว: ตรงกับ `IMP-normal.csv` + ไฟล์ B รวมกันเท่านั้น (ไฟล์ A อย่างเดียวถูกปฏิเสธ) | IMP-121 |
 | `MF-set-1.csv`, `MF-set-2-BROKEN.csv`, `MF-set-3.csv` | 3 ไฟล์ ไฟล์ที่ 2 เสีย | IMP-73 |
@@ -114,10 +114,11 @@
 
 | ไฟล์ | ใช้คู่กับ | ใช้ในข้อ |
 |---|---|---|
-| `BE-2567-leap-day-tags.csv` | `BE-2567-leap-day.csv` | IMP-20 |
+| `BE-2567-leap-day-tags.csv` | `BE-2567-leap-day.csv` และ `BE-mixed-…` ทุกไฟล์ | IMP-20, IMP-134, IMP-136 |
 | `ODD-text-and-empty-cells-tags.csv` | `ODD-text-and-empty-cells.csv` | IMP-63 |
 | `ODD-empty-and-repeated-time-tags.csv` | `ODD-empty-and-repeated-time.csv` | IMP-67 |
-| `ODD-same-column-twice-tags.csv` | `ODD-same-column-twice.csv`, `ODD-same-column-twice-case.csv` | IMP-132 |
+| `ODD-same-column-twice-tags.csv` | `ODD-same-column-twice.csv` | IMP-132 |
+| `ODD-same-column-twice-case-tags.csv` | `ODD-same-column-twice-case.csv` | IMP-132 |
 | `ODD-time-header-tags.csv` | `ODD-time-header-Timestamp.csv`, `ODD-time-header-TIME.csv` | IMP-64 |
 | `ODD-time-in-column-3-tags.csv` | `ODD-time-in-column-3.csv` | IMP-64 |
 | `BRK-date-header-tags.csv` | `BRK-date-header.csv`, `BRK-datetime-header.csv` | IMP-128 |
@@ -125,7 +126,7 @@
 | `IMP88-tags.csv` | `2025.csv` + `2026.csv` | IMP-88 |
 | `INT-tags.csv` | `INT-…` ทุกไฟล์ และ `BRK-header-only.csv` — ไฟล์เล็กไว้สร้างโปรเจกต์เร็ว ๆ | IMP-36, IMP-129, IMP-69, MULTI-21, WFH-20 |
 | `MF-tags.csv` | `MF-overlap-…`, `MF-adjacent-…` ทุกไฟล์ | IMP-37, IMP-83 |
-| `MF-samecol-tags.csv` | `MF-samecol-1.csv` + `MF-samecol-2.csv` | IMP-19 |
+| `MF-samecol-tags.csv` | `MF-samecol-1.csv` + `MF-samecol-2.csv` | IMP-135 |
 | `M1-M2-tags.csv`, `M3-tags.csv` | `M1_…` / `M2_…` และ `M3_column_twice.csv` ของชุด TS | IMP-131 |
 
 **`buddhist\` — ปี พ.ศ.**
@@ -133,6 +134,8 @@
 | ไฟล์ | คืออะไร | ใช้ในข้อ |
 |---|---|---|
 | `BE-2567-leap-day.csv` | `2567-02-28 …` ถึง `2567-03-01 …` มีวันที่ 29 ก.พ. 2567 ครบ 288 จุด | PREP-6, IMP-20, IMP-74 |
+| `BE-mixed-one-file.csv` | ไฟล์เดียวที่ปนปี พ.ศ. กับ ค.ศ. (วันที่ 1 มี.ค. 2024 มีทั้งสองแบบ) | IMP-136 |
+| `BE-mixed-part1.csv`, `BE-mixed-part2.csv` | แถวเดียวกันแต่แยกเป็น 2 ไฟล์ | IMP-136 |
 
 **`odd\` — ข้อมูลแปลก**
 
@@ -140,7 +143,7 @@
 |---|---|---|
 | `ODD-text-and-empty-cells.csv` | ช่องตัวเลขเป็น `abc`, `#N/A`, `1,234` และช่องว่าง (จำนวนต่อคอลัมน์อยู่ใน EXPECTED.txt) | PREP-6, IMP-63, IMP-74 |
 | `ODD-empty-and-repeated-time.csv` | แถวที่ช่องเวลาว่าง 3 แถว + เวลาซ้ำ 2 คู่ (ค่าคนละค่า บางช่องว่าง) | PREP-6, IMP-67 |
-| `ODD-same-column-twice.csv` | คอลัมน์ `TI-101` 2 คอลัมน์ในไฟล์เดียว | PREP-6, IMP-132 |
+| `ODD-same-column-twice.csv` | คอลัมน์ `TI-101` 2 คอลัมน์ในไฟล์เดียว | PREP-6, IMP-132, IMP-135 |
 | `ODD-same-column-twice-case.csv` | `TI-101` กับ `ti-101` | IMP-132 |
 | `ODD-time-header-Timestamp.csv`, `ODD-time-header-TIME.csv` | คอลัมน์เวลาชื่อ `Timestamp` / `TIME` | PREP-6, IMP-64 |
 | `ODD-time-in-column-3.csv` | คอลัมน์ `timestamp` อยู่คอลัมน์ที่ 3 | PREP-6, IMP-64 |
@@ -186,6 +189,7 @@
 |---|---|---|
 | `IMP-normal_without-TI-101.csv` | ไม่มีคอลัมน์ TI-101 (ใช้เป็น `TAG1`) | PER-15, BMW-396 |
 | `IMP-normal_without-KW-401.csv` | ไม่มีคอลัมน์ sensor ของ Running condition | BMW-396 |
+| `IMP-normal_lowercase-KW-401.csv` | หัวคอลัมน์ `kw-401` เป็นตัวพิมพ์เล็ก ข้อมูลเหมือนเดิมทุกค่า | BMW-420 |
 | `IMP-normal_plus-1-day.csv` | ต่อท้ายอีก 1 วัน (31 ม.ค.) | PER-19 |
 | `IMP-normal_first-10-days.csv` | ช่วงสั้นกว่าเดิม (1–10 ม.ค.) | BMW-201, BMW-358 (ข้อ 6) |
 | `IMP-normal-tags_changed.csv` | `IMP-normal-tags-exact.csv` ที่แก้ชื่อ / component / alarm H แล้ว (ทับไฟล์ `IMP-normal-tags-exact.csv`) | PER-19 |
@@ -321,7 +325,7 @@ IMP-83 => MF-overlap-1.csv, MF-overlap-2.csv, MF-tags.csv
 IMP-35 IMP-36 IMP-130 PERF-8 => MF-overlap-1.csv, MF-overlap-2.csv, MF-overlap-3.csv
 IMP-36 IMP-130 => MF-adjacent-1.csv, MF-adjacent-2.csv
 IMP-36 => MF-samecol-1.csv, MF-samecol-2.csv
-IMP-19 => MF-samecol-1.csv, MF-samecol-2.csv, MF-samecol-tags.csv
+IMP-135 => MF-samecol-1.csv, MF-samecol-2.csv, MF-samecol-tags.csv · MF-adjacent-1.csv, ODD-same-column-twice.csv, MF-tags.csv
 IMP-37 => MF-overlap-1.csv, MF-overlap-2.csv, MF-overlap-3.csv, MF-adjacent-1.csv, MF-adjacent-2.csv, MF-tags.csv
 IMP-121 => MF-extra-columns-B.csv
 IMP-73 => MF-set-1.csv, MF-set-2-BROKEN.csv, MF-set-3.csv
@@ -330,10 +334,11 @@ IMP-80 => T03-duplicate-tag-TI-101.csv
 IMP-125 => T04-broken-short-row.csv, T05-empty-0-byte.csv
 IMP-20 IMP-74 => BE-2567-leap-day.csv
 IMP-20 => BE-2567-leap-day-tags.csv
+IMP-136 => BE-mixed-one-file.csv, BE-mixed-part1.csv, BE-mixed-part2.csv, BE-2567-leap-day-tags.csv
 IMP-63 IMP-74 => ODD-text-and-empty-cells.csv
 IMP-63 => ODD-text-and-empty-cells-tags.csv
 IMP-67 => ODD-empty-and-repeated-time.csv, ODD-empty-and-repeated-time-tags.csv
-IMP-132 => ODD-same-column-twice.csv, ODD-same-column-twice-case.csv, ODD-same-column-twice-tags.csv
+IMP-132 => ODD-same-column-twice.csv, ODD-same-column-twice-tags.csv · ODD-same-column-twice-case.csv, ODD-same-column-twice-case-tags.csv
 IMP-64 => ODD-time-header-Timestamp.csv, ODD-time-header-TIME.csv, ODD-time-header-tags.csv · ODD-time-in-column-3.csv, ODD-time-in-column-3-tags.csv
 IMP-128 => BRK-date-header.csv, BRK-datetime-header.csv, BRK-date-header-tags.csv
 IMP-69 => BRK-empty-0-byte.csv, BRK-header-only.csv, INT-tags.csv
@@ -360,7 +365,8 @@ BMW-212 => INT-10s.csv, INT-1h.csv, IMP66-5…, IMP66-5b_offset-minus0500.csv
 BMW-358 => EXP-data.csv, EXP-tags.csv · ข้อ 6: IMP-normal_first-10-days.csv
 BMW-381 => EXP-data_with-A-B-columns.csv, EXP-tags_with-A-B-columns.csv
 BMW-396 => EXP-data_without-FLOW-A.csv (รอบแรก) แล้ว EXP-data_without-KW.csv (รอบที่สอง) · หรือ IMP-normal_without-TI-101.csv / IMP-normal_without-KW-401.csv
-BMW-402 BMW-403 => EXP-data.csv, EXP-tags.csv · ตัวเลขที่ต้องได้: EXPECTED.txt ของชุด EXP
+BMW-420 => IMP-normal.csv, IMP-normal-tags-exact.csv, IMP-normal_lowercase-KW-401.csv
+BMW-402 BMW-421 => EXP-data.csv, EXP-tags.csv · ตัวเลขที่ต้องได้: EXPECTED.txt ของชุด EXP
 MULTI-8 => B สร้างจาก GEG-3.csv อีกครั้ง
 MULTI-10 => BIG-300MB.csv, BIG-tags.csv (ไฟล์ใหญ่)
 MULTI-21 => INT-1d.csv, INT-tags.csv (โปรเจกต์ C)
@@ -382,7 +388,7 @@ WFF-4 => GEG-tags-thai-saved-as-plain-CSV.csv แล้ว GEG-tags-D-thai.csv
 WFF-5 => GEG-tags_changed.csv
 WFG-13 => BIG-1_9GB.csv และ BIG-2_1GB-over-limit.csv
 WFH-3 => CSV + Tag names ชุดเดิมของโปรเจกต์ต้นฉบับ (เช่น GEG-3.csv, GEG-tags.csv)
-+ WFJ-1..13 => ตัวเลขที่ต้องได้: EXPECTED.txt ของชุด EXP
++ WFJ-1..14 => ตัวเลขที่ต้องได้: EXPECTED.txt ของชุด EXP
 WFK-1..10 => EXP-numbers.csv, EXP-numbers-tags.csv
 WFK-11 WFK-12 => EXP-fleet.csv, EXP-fleet-tags.csv
 WFK-5 => โปรเจกต์จาก WFJ (EXP-data.csv, EXP-tags.csv)

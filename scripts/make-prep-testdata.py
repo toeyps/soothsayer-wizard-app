@@ -14,7 +14,7 @@
 #   multi-file/  overlapping / adjacent / same-column pairs, a file B with extra columns, a 3-file set with a bad file
 #   tags/        tag-name files: other header names, description+name, a tag twice, a broken row, 0 byte,
 #                fewer tags than the data, same count with 1 or 2 different tags
-#   buddhist/    Buddhist-year file 2567-02-28 -> 2567-03-01 (has 29 Feb 2567)
+#   buddhist/    Buddhist-year file 2567-02-28 -> 2567-03-01 (has 29 Feb 2567), one file mixing 2567 and 2024 + the same rows as 2 files
 #   odd/         text in number cells, empty cells, empty / repeated time, a column twice, Timestamp / TIME / column 3
 #   broken/      Date / DateTime header, 0 byte, header only, extra comma on line 50, semicolons, a real .xlsx renamed
 #   time-shapes/ one file per time shape (IMP-66), Excel-style dates (IMP-87), historian look-alike 2025/2026 (IMP-88)
@@ -251,13 +251,13 @@ for k, (a, b) in enumerate([(datetime(2024, 1, 1), datetime(2024, 1, 10, 23, 55)
     rr = [[ts(t)] + two_col(t) for t in tt]
     write(f'multi-file/MF-overlap-{k}.csv', ['timestamp', 'TI-101', 'PI-201'], rr)
     MF.append(tt)
-    note(f'multi-file/MF-overlap-{k}.csv', ['IMP-35', 'IMP-36', 'IMP-86', 'PERF-8'], stats_lines(tt, ['timestamp', 'TI-101', 'PI-201'], rr))
+    note(f'multi-file/MF-overlap-{k}.csv', ['IMP-35', 'IMP-36', 'IMP-130', 'PERF-8'], stats_lines(tt, ['timestamp', 'TI-101', 'PI-201'], rr))
 uniq = sorted(set(MF[0] + MF[1] + MF[2]))
 note('multi-file/(MF-overlap-1 + 2 + 3 พร้อมกัน)', ['IMP-36', 'PERF-8'],
      [f'รวม 3 ไฟล์: Rows (after merge) = {len(uniq):,} · Period {fmt(uniq[0])} → {fmt(uniq[-1])} · Interval 5 min · Sensors 2',
       f'ช่วงที่ซ้อนกัน: 08–10 ม.ค. (ไฟล์ 1+2) และ 15–17 ม.ค. (ไฟล์ 2+3) = เวลาซ้ำ {len(MF[0]) + len(MF[1]) + len(MF[2]) - len(uniq):,} จุด '
       '→ ควรมีบรรทัด "… duplicate timestamp(s) found across files" · ค่าในช่วงซ้อนเหมือนกันทุกไฟล์ จึงไม่มีจุดกระโดด',
-      'ชื่อคอลัมน์เหมือนกันทุกไฟล์ → อาจขึ้น "Duplicate column …" ทุกคอลัมน์ (ทราบแล้ว ดู WFF-2)'])
+      'ชื่อคอลัมน์เหมือนกันทุกไฟล์ → ต้องไม่มีบรรทัด "Duplicate column"'])
 
 ADJ = []
 for k, (a, b) in enumerate([(datetime(2024, 2, 1), datetime(2024, 2, 14, 23, 55)),
@@ -266,7 +266,7 @@ for k, (a, b) in enumerate([(datetime(2024, 2, 1), datetime(2024, 2, 14, 23, 55)
     rr = [[ts(t)] + two_col(t) for t in tt]
     write(f'multi-file/MF-adjacent-{k}.csv', ['timestamp', 'TI-101', 'PI-201'], rr)
     ADJ += tt
-    note(f'multi-file/MF-adjacent-{k}.csv', ['IMP-36', 'IMP-86'], stats_lines(tt, ['timestamp', 'TI-101', 'PI-201'], rr))
+    note(f'multi-file/MF-adjacent-{k}.csv', ['IMP-36', 'IMP-130', 'IMP-135'], stats_lines(tt, ['timestamp', 'TI-101', 'PI-201'], rr))
 note('multi-file/(MF-adjacent-1 + 2 พร้อมกัน)', ['IMP-36'],
      [f'รวม 2 ไฟล์: Rows = {len(ADJ):,} (ต่อกันพอดี ไม่มีเวลาซ้ำ) · Period {fmt(ADJ[0])} → {fmt(ADJ[-1])} · '
       'Time coverage สองแถบต่อกันพอดี ไม่มีช่องว่าง ไม่ซ้อน'])
@@ -276,11 +276,11 @@ r1 = [[ts(t)] + two_col(t) for t in tt]
 r2 = [[ts(t), round(two_col(t)[0] + 5, 2), round(450 + 20 * math.sin(i / 50), 2)] for i, t in enumerate(tt)]
 write('multi-file/MF-samecol-1.csv', ['timestamp', 'TI-101', 'PI-201'], r1)
 write('multi-file/MF-samecol-2.csv', ['timestamp', 'TI-101', 'FI-301'], r2)
-note('multi-file/MF-samecol-1.csv + MF-samecol-2.csv', ['PREP-6', 'IMP-36'],
+note('multi-file/MF-samecol-1.csv + MF-samecol-2.csv', ['PREP-6', 'IMP-36', 'IMP-135'],
      [f'แต่ละไฟล์ {len(tt):,} แถว ช่วงเดียวกัน {fmt(tt[0])} → {fmt(tt[-1])}',
-      'คอลัมน์ TI-101 อยู่ทั้ง 2 ไฟล์ (ค่าในไฟล์ 2 สูงกว่า 5) → ต้องมี "Duplicate column \'TI-101\' found in file 1, file 2"',
+      'คอลัมน์ TI-101 อยู่ทั้ง 2 ไฟล์ (ค่าในไฟล์ 2 สูงกว่า 5) → ต้องไม่มีบรรทัด "Duplicate column" (มีเฉพาะคอลัมน์ซ้ำในไฟล์เดียว)',
       f'รวมกัน: Rows {len(tt):,} · Sensors 3 (TI-101, PI-201, FI-301) · ค่า TI-101 เป็นของไฟล์ 2 (ไฟล์หลังทับไฟล์แรก)',
-      f'เวลาซ้ำข้ามไฟล์ {len(tt):,} จุด'])
+      f'เวลาซ้ำข้ามไฟล์ {len(tt):,} จุด → ต้องมี "{len(tt)} duplicate timestamp(s) found across files (values were merged/overwritten)"'])
 
 times_b = series(datetime(2024, 1, 1), 30 * 288)
 rnd = random.Random(7)
@@ -377,6 +377,30 @@ note('buddhist/BE-2567-leap-day.csv', ['PREP-6', 'IMP-20', 'IMP-74'],
          'ต้องมีบรรทัด "864 timestamp(s) used a Buddhist-Era year (พ.ศ.) — converted to Gregorian (ค.ศ.) …"',
          'วันที่ 29 ก.พ. 2024 ต้องมีครบ 288 จุด (00:00 → 23:55)'])
 
+# The BE rows come first though the CE rows are later in time, so the order of the text is not the order of time.
+def be_text(t):
+    return str(t.year + 543) + ts(t)[4:]
+
+
+mix_a = series(datetime(2024, 2, 28), 3 * 288)
+mix_b = series(datetime(2024, 3, 1), 2 * 288)
+rows_a = [[be_text(t)] + two_col(t) for t in mix_a]
+rows_b = [[ts(t), round(two_col(t)[0] + 5, 2), '' if t.day == 1 else two_col(t)[1]] for t in mix_b]
+MIX_H = ['timestamp', 'TI-101', 'PI-201']
+mix_uniq = sorted(set(mix_a + mix_b))
+at_mar1 = two_col(datetime(2024, 3, 1))
+write('buddhist/BE-mixed-one-file.csv', MIX_H, rows_a + rows_b)
+write('buddhist/BE-mixed-part1.csv', MIX_H, rows_a)
+write('buddhist/BE-mixed-part2.csv', MIX_H, rows_b)
+note('buddhist/BE-mixed-one-file.csv', ['IMP-136'], [
+    f'แถวข้อมูลในไฟล์: {len(rows_a) + len(rows_b):,} = ปี พ.ศ. {len(rows_a)} แถว (2567-02-28 → 2567-03-01) ตามด้วยปี ค.ศ. {len(rows_b)} แถว (2024-03-01 → 2024-03-02)',
+    f'ต้องได้: Rows {len(mix_uniq):,} · Period {fmt(mix_uniq[0])} → {fmt(mix_uniq[-1])} · ไม่มีปี 2567',
+    f'ต้องมี "{len(rows_a)} timestamp(s) used a Buddhist-Era year (พ.ศ.) — converted to Gregorian (ค.ศ.) …" · ไม่มีบรรทัด duplicate timestamp (ไฟล์เดียว)',
+    f'วันที่ 2024/03/01 มีทั้งสองแบบ: แถวหลังชนะ ยกเว้นช่องว่าง → ที่ 2024/03/01 00:00:00 TI-101 = {round(at_mar1[0] + 5, 2)}, PI-201 = {at_mar1[1]}'])
+note('buddhist/BE-mixed-part1.csv + BE-mixed-part2.csv', ['IMP-136'], [
+    'แถวเดียวกับ BE-mixed-one-file.csv แยกเป็น 2 ไฟล์ → Rows, Period และค่าทุกจุดต้องเท่ากับไฟล์เดียว',
+    f'เพิ่มบรรทัด "{len(set(mix_a) & set(mix_b))} duplicate timestamp(s) found across files (values were merged/overwritten)"'])
+
 # ─────────────────────────────── odd/ ───────────────────────────────
 tt = series(datetime(2024, 5, 1), 2 * 288)
 rr = [[ts(t)] + two_col(t) + [round(450 + 10 * math.sin(i / 40), 2)] for i, t in enumerate(tt)]
@@ -416,17 +440,16 @@ note('odd/ODD-empty-and-repeated-time.csv', ['PREP-6', 'IMP-67'], stats_lines(ti
     f'→ ถ้ารวมแบบ "แถวหลังชนะ ยกเว้นช่องว่าง" = TI-101 99.9, PI-201 {v100[1]}',
     f'เวลาซ้ำ 2: {fmt(base[400])} แถวแรก TI-101 {v400[0]} PI-201 {v400[1]} · แถวหลัง TI-101 ว่าง PI-201 7.777 '
     f'→ ถ้ารวม = TI-101 {v400[0]}, PI-201 7.777',
-    'ข้อ IMP-67 คาดหวัง Rows = 576 (= แถวในไฟล์ − 5) · ถ้าเห็น 581 แปลว่าไฟล์เดียวไม่ตัดแถวเวลาว่าง/ไม่รวมเวลาซ้ำ '
-    '(เป็นไปตามคำเตือน ⚠ ในข้อนั้น ให้บันทึกผลตามจริง)'])
+    'ข้อ IMP-67 คาดหวัง Rows = 576 (= แถวในไฟล์ − 5) · กล่อง "Fixed while reading" อาจไม่มีบรรทัดบอกเรื่องนี้ (ดูคำเตือน ⚠ ในข้อนั้น)'])
 
 tt = series(datetime(2024, 5, 5), 288)
 rr = [[ts(t)] + two_col(t) + [round(two_col(t)[0] + 20, 2)] for t in tt]
 write('odd/ODD-same-column-twice.csv', ['timestamp', 'TI-101', 'PI-201', 'TI-101'], rr)
 write('odd/ODD-same-column-twice-case.csv', ['timestamp', 'TI-101', 'PI-201', 'ti-101'], rr)
-note('odd/ODD-same-column-twice.csv', ['IMP-68'], [
+note('odd/ODD-same-column-twice.csv', ['IMP-132', 'IMP-135'], [
     '288 แถว (2024/05/05 00:00:00 → 23:55:00) · คอลัมน์ TI-101 มี 2 คอลัมน์ (คอลัมน์ที่สองสูงกว่าคอลัมน์แรก 20)',
-    'ควรมีคำเตือนชื่อคอลัมน์ซ้ำ และ Dashboard ไม่มี TI-101 สองตัวที่ตัวหนึ่งว่าง'])
-note('odd/ODD-same-column-twice-case.csv', ['IMP-68'], ['เหมือนไฟล์บน แต่คอลัมน์ที่สองชื่อ ti-101 (ตัวพิมพ์เล็ก)'])
+    'ต้องมี "Duplicate column \'ti-101\' found in file 1" · Rows 288 · Dashboard มี TI-101 ตัวเดียวและมีเส้นข้อมูลครบ · ค่าใช้ของคอลัมน์ที่อยู่ทีหลัง (จุดแรก 86.25)'])
+note('odd/ODD-same-column-twice-case.csv', ['IMP-132'], ['เหมือนไฟล์บน แต่คอลัมน์ที่สองชื่อ ti-101 (ตัวพิมพ์เล็ก) → รวมเป็นคอลัมน์เดียว ชื่อ TI-101 · Sensors = 2 · คำเตือนและค่าเหมือนไฟล์บน'])
 for name, header in [('ODD-time-header-Timestamp.csv', ['Timestamp', 'TI-101', 'PI-201']),
                      ('ODD-time-header-TIME.csv', ['TIME', 'TI-101', 'PI-201'])]:
     write('odd/' + name, header, [[ts(t)] + two_col(t) for t in tt])
@@ -514,9 +537,9 @@ SHAPES = [
      'อ่านได้ เวลาตามที่เขียน (ไม่เลื่อนเขตเวลา)'),
     ('IMP66-5b_offset-minus0500.csv', datetime(2024, 1, 6), lambda t: t.strftime('%Y-%m-%dT%H:%M:%S') + '-05:00',
      'ใช้กับ BMW-212 (เขตเวลาที่ไม่ใช่ของเครื่อง)'),
-    ('IMP66-6_year-slash.csv', datetime(2025, 1, 1), lambda t: t.strftime('%Y/%m/%d %H:%M:%S'), 'แผนเดิมคาดว่าอาจอ่านไม่ได้ (⚠)'),
-    ('IMP66-7_day-month-year.csv', datetime(2023, 5, 13), lambda t: t.strftime('%d/%m/%Y %H:%M'), 'แผนเดิมคาดว่าอาจอ่านไม่ได้ (⚠)'),
-    ('IMP66-8_iso-Z.csv', datetime(2026, 2, 9), lambda t: t.strftime('%Y-%m-%dT%H:%M:%SZ'), 'Z = เวลา UTC (ดูส่วน "ของที่รู้อยู่แล้ว")'),
+    ('IMP66-6_year-slash.csv', datetime(2025, 1, 1), lambda t: t.strftime('%Y/%m/%d %H:%M:%S'), 'อ่านได้'),
+    ('IMP66-7_day-month-year.csv', datetime(2023, 5, 13), lambda t: t.strftime('%d/%m/%Y %H:%M'), 'อ่านได้ แบบวัน/เดือน/ปี ("Dates in … read as day/month/year …")'),
+    ('IMP66-8_iso-Z.csv', datetime(2026, 2, 9), lambda t: t.strftime('%Y-%m-%dT%H:%M:%SZ'), 'อ่านได้ เวลาตามที่เขียน (ไม่เลื่อนเขตเวลา)'),
 ]
 for name, start, f_, hint in SHAPES:
     tk = series(start, 288)
@@ -609,6 +632,11 @@ t_, h_, r_ = make_normal(days=10)
 write('variants/IMP-normal_first-10-days.csv', h_, r_)
 note('variants/IMP-normal_first-10-days.csv', ['BMW-201', 'BMW-358'], stats_lines(t_, h_, r_) + [
     'ช่วงสั้นกว่าเดิม (สิ้นสุด 2024/01/10 23:55) — ตั้ง Train / Scoring period หลังวันที่ 11 ม.ค. ด้วยไฟล์เต็มก่อน แล้วค่อยเปลี่ยนเป็นไฟล์นี้'])
+t_, h_, r_ = make_normal()
+write('variants/IMP-normal_lowercase-KW-401.csv', [c.lower() if c == 'KW-401' else c for c in h_], r_)
+note('variants/IMP-normal_lowercase-KW-401.csv', ['BMW-420'],
+     ['เหมือน normal/IMP-normal.csv ทุกค่า แต่หัวคอลัมน์เป็น kw-401 (ตัวพิมพ์เล็ก) · วิธีใช้แบบเดียวกัน · '
+      'โปรเจกต์ที่ Train ด้วย Running condition "KW-401" แล้วเปิดกับไฟล์นี้: โมเดล Complete ที่ใช้เงื่อนไขนั้นกลับเป็น Incomplete พร้อมกล่อง "Running condition corrected"'])
 chg = [list(r) for r in NORM_TAGS_EXACT]
 chg[0][1] = 'Pump bearing temperature (CHANGED)'
 chg[3][3] = 'Pump P-2'
@@ -748,13 +776,18 @@ if EXP:
 # ─────────────────────────────── matching-tags/ ───────────────────────────────
 # A tag-name file is required on step 2 and must list exactly the sensors of the data, so each data file that had
 # none gets one, written from its real header row. The column called timestamp / time (else the first column) is the
-# time column, never a sensor. Files that share the same columns share one tag file.
+# time column, never a sensor. A column written twice, also in another case, is one sensor under its first spelling.
+# Files that share the same columns share one tag file.
 def data_sensors(rel):
     with open(p(*rel.split('/')), newline='', encoding='utf-8-sig') as f:
         hdr = next(csv.reader(f))
     times = [i for i, h in enumerate(hdr) if h.strip().lower() in ('timestamp', 'time')]
     skip = times[0] if times else 0
-    return list(dict.fromkeys(h.strip() for i, h in enumerate(hdr) if i != skip))
+    sensors = {}
+    for i, h in enumerate(hdr):
+        if i != skip:
+            sensors.setdefault(h.strip().lower(), h.strip())
+    return list(sensors.values())
 
 
 def matching_tags(name, sensors, uses, about):
@@ -764,26 +797,26 @@ def matching_tags(name, sensors, uses, about):
 
 
 MATCHING = [
-    ('BE-2567-leap-day-tags.csv', 'buddhist/BE-2567-leap-day.csv', ['IMP-20'], 'BE-2567-leap-day.csv'),
+    ('BE-2567-leap-day-tags.csv', 'buddhist/BE-2567-leap-day.csv', ['IMP-20', 'IMP-134', 'IMP-136'], 'BE-2567-leap-day.csv และ BE-mixed-… ทุกไฟล์'),
     ('ODD-text-and-empty-cells-tags.csv', 'odd/ODD-text-and-empty-cells.csv', ['IMP-63'], 'ODD-text-and-empty-cells.csv'),
     ('ODD-empty-and-repeated-time-tags.csv', 'odd/ODD-empty-and-repeated-time.csv', ['IMP-67'], 'ODD-empty-and-repeated-time.csv'),
-    ('ODD-same-column-twice-tags.csv', 'odd/ODD-same-column-twice.csv', ['IMP-68'], 'ODD-same-column-twice.csv'),
-    ('ODD-same-column-twice-case-tags.csv', 'odd/ODD-same-column-twice-case.csv', ['IMP-68'], 'ODD-same-column-twice-case.csv'),
+    ('ODD-same-column-twice-tags.csv', 'odd/ODD-same-column-twice.csv', ['IMP-132', 'IMP-135'], 'ODD-same-column-twice.csv'),
+    ('ODD-same-column-twice-case-tags.csv', 'odd/ODD-same-column-twice-case.csv', ['IMP-132'], 'ODD-same-column-twice-case.csv'),
     ('ODD-time-header-tags.csv', 'odd/ODD-time-header-Timestamp.csv', ['IMP-64'], 'ODD-time-header-Timestamp.csv และ ODD-time-header-TIME.csv'),
     ('ODD-time-in-column-3-tags.csv', 'odd/ODD-time-in-column-3.csv', ['IMP-64'], 'ODD-time-in-column-3.csv'),
     ('BRK-date-header-tags.csv', 'broken/BRK-date-header.csv', ['IMP-128'], 'sensor ของ BRK-date-header.csv และ BRK-datetime-header.csv (ไม่นับคอลัมน์แรก)'),
     ('IMP87-tags.csv', 'time-shapes/IMP87-A_month-day-year.csv', ['IMP-87'], 'ไฟล์ IMP87-A ถึง IMP87-D ทุกไฟล์'),
     ('IMP88-tags.csv', 'time-shapes/IMP88/2025.csv', ['IMP-88'], '2025.csv และ 2026.csv'),
-    ('INT-tags.csv', 'intervals/INT-1d.csv', ['IMP-56', 'WFH-4'], 'ไฟล์ INT-… ทุกไฟล์'),
+    ('INT-tags.csv', 'intervals/INT-1d.csv', ['IMP-129', 'WFH-20'], 'ไฟล์ INT-… ทุกไฟล์'),
     ('MF-tags.csv', 'multi-file/MF-overlap-1.csv', ['IMP-37'], 'MF-overlap-… และ MF-adjacent-… ทุกไฟล์'),
-    ('MF-samecol-tags.csv', None, ['IMP-19'], 'MF-samecol-1.csv + MF-samecol-2.csv รวมกัน'),
+    ('MF-samecol-tags.csv', None, ['IMP-135'], 'MF-samecol-1.csv + MF-samecol-2.csv รวมกัน'),
 ]
 for name, rel, uses, about in MATCHING:
     sensors = data_sensors(rel) if rel else ['TI-101', 'PI-201', 'FI-301']
     matching_tags(name, sensors, uses, about)
 # The TS set's merge files have no tag file (make-ts-testdata.py writes TS-tags.csv and I-tags.csv only).
-matching_tags('M1-M2-tags.csv', ['FLOW_A', 'FLOW_B'], ['IMP-98'], 'M1_iso.csv + M1_us_ampm.csv และ M2_part1.csv + M2_part2.csv ในชุด TS')
-matching_tags('M3-tags.csv', ['FLOW_A'], ['IMP-98'], 'M3_column_twice.csv ในชุด TS')
+matching_tags('M1-M2-tags.csv', ['FLOW_A', 'FLOW_B'], ['IMP-131'], 'M1_iso.csv + M1_us_ampm.csv และ M2_part1.csv + M2_part2.csv ในชุด TS')
+matching_tags('M3-tags.csv', ['FLOW_A'], ['IMP-131'], 'M3_column_twice.csv ในชุด TS')
 
 # ─────────────────────────────── big/ and wfg/ (--big) ───────────────────────────────
 HM = [f'{m // 60:02d}:{m % 60:02d}:00' for m in range(1440)]
@@ -861,7 +894,7 @@ if BIG:
     big_note('big/BIG-2_1GB-part1.csv', ['WFF-2'], r1)
     big_note('big/BIG-2_1GB-part2.csv', ['WFF-2'], r2,
              [f'part1 + part2 = ไฟล์ 2.1 GB แบ่งตามเวลา ซ้อนกัน 1 วัน (1,440 แถว ค่าเหมือนกัน) → รวมแล้ว Rows = {N21:,} เท่าไฟล์เดิม',
-              '"Fixed while reading" ต้องมี "1440 duplicate timestamp(s) found across files" (และอาจมี Duplicate column ทุกคอลัมน์ — ทราบแล้ว)'])
+              '"Fixed while reading" ต้องมี "1440 duplicate timestamp(s) found across files" และไม่มีบรรทัด "Duplicate column"'])
     L = int(200 * 1024 ** 2 * SCALE) // (len(pool[0]) + 21)
     for k in range(3):
         r = big_write(f'big/BIG-overlap-{k + 1}.csv', NS, pool, S0, k * (L - 3 * 1440), n_rows=L)

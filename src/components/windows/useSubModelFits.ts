@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import type { RelationshipPreviewResult } from '../../types/commands';
 import { debugLog } from '../../utils/debugLog';
+import { TRAIN_STALE_MESSAGE } from '../../utils/trainQueue';
 import { HEALTH_DEFAULT_MAX_POINTS } from '../../utils/healthRequest';
 
 /*
@@ -155,7 +156,8 @@ export function useSubModelFits(opts: SubModelFitsOptions): SubModelFitsState {
             }
         } catch (e) {
             if (myGen === genRef.current) {
-                setError(e instanceof Error ? e.message : String(e));
+                const text = e instanceof Error ? e.message : String(e);
+                setError(text.startsWith('STALE_SESSION') ? TRAIN_STALE_MESSAGE : text);
                 console.error('runSubModelFits failed:', e);
             }
         } finally {

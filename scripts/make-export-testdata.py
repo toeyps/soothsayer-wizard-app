@@ -75,7 +75,7 @@ n = len(rows) - 2
 exp = [
     'Export test data — what the checks expect', '',
     f'EXP-data.csv: {len(rows)} lines of data = {n} rows with a timestamp (4,320 instants + 3 written twice) + 2 rows without one.',
-    f'Import shows Rows = {len(rows):,} (one file: the repeated instants are NOT merged at import, and the 2 rows without a timestamp stay as rows).',
+    f'Import shows Rows = 4,320 (repeated instants are merged at import, the later copy wins; the 2 rows without a timestamp are dropped).',
     'Stop: 2026/01/10 00:00 → 2026/01/11 23:50 (KW = 0, SPEED = 0). Running condition for the tests: KW > 50.',
     'Repeated instants 2026-01-15 10:00 / 10:10 / 10:20: the export keeps the LAST copy → VIB.X = 9.99 on those rows in every CSV that has VIB.X.',
     '', 'Model keys (file names in models/):',

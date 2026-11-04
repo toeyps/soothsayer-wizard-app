@@ -109,6 +109,13 @@ export const windowModule = () => ({
 });
 
 /** Fires the native close of every mounted window; resolves with whether any handler prevented it. */
+/** The X of the window mounted last only: the main window's handler also closes its child windows. */
+export async function nativeCloseLastWindow(): Promise<boolean> {
+    let prevented = false;
+    await env.closeHandlers[env.closeHandlers.length - 1]?.({ preventDefault: () => { prevented = true; } });
+    return prevented;
+}
+
 export async function nativeClose(): Promise<boolean> {
     let prevented = false;
     for (const cb of [...env.closeHandlers]) await cb({ preventDefault: () => { prevented = true; } });
