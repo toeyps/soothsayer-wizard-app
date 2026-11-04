@@ -83,10 +83,6 @@ interface ClusterDetail {
   range: ClusterRange | null;
   n_rows: number;
   ellipse: EllipseFit;
-  /** Per-row X values for this cluster (first_sensor, NaN-dropped). */
-  xs: number[];
-  /** Per-row Y values for this cluster (second_sensor, NaN-dropped). */
-  ys: number[];
 }
 
 /** Result of `compute_clustering_preview` — supports 1..N clusters. */

@@ -458,7 +458,10 @@ pub(crate) fn training_rows(
     regimes: Option<(usize, &[ClusterRange])>,
 ) -> Vec<u32> {
     let noop = resolved.is_noop();
-    let regimes = regimes.map(|(ci, ranges)| (ci, ClusterRange::bounds(ranges)));
+    let bounds = regimes.map(|(_, ranges)| ClusterRange::bounds(ranges));
+    let regimes = regimes
+        .zip(bounds.as_deref())
+        .map(|((ci, _), b)| (ci, crate::health_score::ClusterAssigner::new(b)));
     (0..data.n_rows())
         .into_par_iter()
         .filter(|&r| {
@@ -470,9 +473,7 @@ pub(crate) fn training_rows(
             }
             match &regimes {
                 None => true,
-                Some((ci, bounds)) => {
-                    crate::health_score::assign_cluster(data.columns[*ci][r], bounds).is_some()
-                }
+                Some((ci, assigner)) => assigner.assign(data.columns[*ci][r]).is_some(),
             }
         })
         .map(|r| r as u32)
@@ -776,57 +777,122 @@ impl<W: Write> Write for Counting<W> {
 #[derive(Debug)]
 enum CsvFail {
     Cancelled,
+    Stale,
     Io(String),
+}
+
+fn csv_writer<W: Write>(w: W) -> csv::Writer<W> {
+    csv::WriterBuilder::new().terminator(csv::Terminator::Any(b'\n')).from_writer(w)
+}
+
+fn write_csv_header<W: Write>(wtr: &mut csv::Writer<W>, columns: &[String]) -> csv::Result<()> {
+    let mut header = Vec::with_capacity(columns.len() + 1);
+    header.push("TimeStamp");
+    header.extend(columns.iter().map(String::as_str));
+    wtr.write_record(&header)
+}
+
+/// One data row. `fields` (when given) receives what was written.
+fn write_csv_row<W: Write>(
+    wtr: &mut csv::Writer<W>,
+    data: &ColumnarData,
+    model: &ModelWork,
+    r: usize,
+    offset_min: i32,
+    field: &mut String,
+    mut fields: Option<&mut Vec<String>>,
+) -> Result<(), CsvFail> {
+    let io = |e: &dyn std::fmt::Display| CsvFail::Io(e.to_string());
+    let ts = timestamp_text(data.ts_parsed[r], offset_min)
+        .ok_or_else(|| CsvFail::Io(format!("row {r} has no valid timestamp")))?;
+    wtr.write_field(&ts).map_err(|e| io(&e))?;
+    if let Some(f) = fields.as_deref_mut() {
+        f.push(ts);
+    }
+    for &c in &model.col_idx {
+        field.clear();
+        use std::fmt::Write as _;
+        let _ = write!(field, "{}", data.columns[c][r]);
+        wtr.write_field(&*field).map_err(|e| io(&e))?;
+        if let Some(f) = fields.as_deref_mut() {
+            f.push(field.clone());
+        }
+    }
+    wtr.write_record(None::<&[u8]>).map_err(|e| io(&e))
 }
 
 /// Write the model's CSV to `w` and return `(bytes, inner writer)`. `peek`
 /// (when given) receives the first [`PEEK_ROWS`] data rows' fields, exactly as
-/// written. `cancel` is checked every [`CANCEL_CHECK_ROWS`] rows.
-#[allow(clippy::too_many_arguments)]
+/// written.
 fn write_csv<W: Write>(
     w: W,
     data: &ColumnarData,
     columns: &[String],
     model: &ModelWork,
     offset_min: i32,
-    cancel: Option<&AtomicBool>,
     mut peek: Option<&mut Vec<Vec<String>>>,
 ) -> Result<(u64, W), CsvFail> {
     let io = |e: &dyn std::fmt::Display| CsvFail::Io(e.to_string());
-    let mut wtr = csv::WriterBuilder::new()
-        .terminator(csv::Terminator::Any(b'\n'))
-        .from_writer(Counting { inner: w, n: 0 });
-    let mut header = Vec::with_capacity(columns.len() + 1);
-    header.push("TimeStamp");
-    header.extend(columns.iter().map(String::as_str));
-    wtr.write_record(&header).map_err(|e| io(&e))?;
+    let mut wtr = csv_writer(Counting { inner: w, n: 0 });
+    write_csv_header(&mut wtr, columns).map_err(|e| io(&e))?;
     let mut field = String::new();
-    for (i, &r) in model.rows.iter().enumerate() {
-        if i % CANCEL_CHECK_ROWS == 0 && i > 0 && cancel.is_some_and(|c| c.load(Ordering::SeqCst)) {
-            return Err(CsvFail::Cancelled);
-        }
-        let r = r as usize;
-        let ts = timestamp_text(data.ts_parsed[r], offset_min)
-            .ok_or_else(|| CsvFail::Io(format!("row {r} has no valid timestamp")))?;
-        wtr.write_field(&ts).map_err(|e| io(&e))?;
+    for &r in &model.rows {
         let mut fields: Option<Vec<String>> =
-            peek.as_ref().filter(|p| p.len() < PEEK_ROWS).map(|_| vec![ts.clone()]);
-        for &c in &model.col_idx {
-            field.clear();
-            use std::fmt::Write as _;
-            let _ = write!(field, "{}", data.columns[c][r]);
-            wtr.write_field(&field).map_err(|e| io(&e))?;
-            if let Some(f) = fields.as_mut() {
-                f.push(field.clone());
-            }
-        }
-        wtr.write_record(None::<&[u8]>).map_err(|e| io(&e))?;
+            peek.as_ref().filter(|p| p.len() < PEEK_ROWS).map(|_| Vec::new());
+        write_csv_row(&mut wtr, data, model, r as usize, offset_min, &mut field, fields.as_mut())?;
         if let (Some(p), Some(f)) = (peek.as_deref_mut(), fields) {
             p.push(f);
         }
     }
     let counting = wtr.into_inner().map_err(|e| io(&e.error().to_string()))?;
     Ok((counting.n, counting.inner))
+}
+
+/// The bytes of [`write_csv`], written to `w` WITHOUT the session lock held:
+/// each `chunk_rows` rows are formatted into memory under a read lock, after
+/// checking the session is still `stamp` (so the column indices still hold),
+/// and the lock is released before they reach the disk.
+#[allow(clippy::too_many_arguments)]
+fn write_csv_unlocked<W: Write>(
+    mut w: W,
+    state: &AppState,
+    stamp: SessionStamp,
+    columns: &[String],
+    model: &ModelWork,
+    offset_min: i32,
+    cancel: &AtomicBool,
+    chunk_rows: usize,
+) -> Result<(u64, W), CsvFail> {
+    let io = |e: &dyn std::fmt::Display| CsvFail::Io(e.to_string());
+    let mut buf: Vec<u8> = Vec::new();
+    {
+        let mut wtr = csv_writer(&mut buf);
+        write_csv_header(&mut wtr, columns).map_err(|e| io(&e))?;
+        wtr.flush().map_err(|e| io(&e))?;
+    }
+    let mut field = String::new();
+    let mut total = 0u64;
+    for (i, rows) in model.rows.chunks(chunk_rows.max(1)).enumerate() {
+        if i > 0 && cancel.load(Ordering::SeqCst) {
+            return Err(CsvFail::Cancelled);
+        }
+        {
+            let lock = state.0.read().map_err(|e| io(&e))?;
+            let session = lock.as_ref().filter(|s| s.stamp() == stamp).ok_or(CsvFail::Stale)?;
+            let mut wtr = csv_writer(&mut buf);
+            for &r in rows {
+                write_csv_row(&mut wtr, &session.data, model, r as usize, offset_min, &mut field, None)?;
+            }
+            wtr.flush().map_err(|e| io(&e))?;
+        }
+        w.write_all(&buf).map_err(|e| io(&e))?;
+        total += buf.len() as u64;
+        buf.clear();
+    }
+    // A model without rows still has its header here.
+    w.write_all(&buf).map_err(|e| io(&e))?;
+    total += buf.len() as u64;
+    Ok((total, w))
 }
 
 // ---------------------------------------------------------------------------
@@ -1105,7 +1171,7 @@ pub fn build_plan(
         let csv_bytes = if unknown {
             0
         } else {
-            write_csv(std::io::sink(), data, &columns, &mw, req.data_utc_offset_min, None, Some(&mut peek_rows))
+            write_csv(std::io::sink(), data, &columns, &mw, req.data_utc_offset_min, Some(&mut peek_rows))
                 .map(|(n, _)| n)
                 .map_err(|e| format!("CSV size: {e:?}"))?
         };
@@ -1535,10 +1601,12 @@ fn write_export_with(
         if hooks.fail_before_model == Some(i) {
             return Err(write_failed(&format!("models/{}.json", pm.key), &"simulated failure"));
         }
-        let lock = state.0.read().map_err(|e| e.to_string())?;
-        let session = lock.as_ref().ok_or_else(|| STALE_SESSION_ERROR.to_string())?;
-        if session.stamp() != stamp {
-            return Err(STALE_SESSION_ERROR.into());
+        // Cheap early stop; write_csv_unlocked checks again for every chunk it reads.
+        {
+            let lock = state.0.read().map_err(|e| e.to_string())?;
+            if lock.as_ref().map(|s| s.stamp()) != Some(stamp) {
+                return Err(STALE_SESSION_ERROR.into());
+            }
         }
         let json_name = format!("{}.json", pm.key);
         let json_text = serde_json::to_string_pretty(&pm.json).map_err(|e| e.to_string())?;
@@ -1548,24 +1616,23 @@ fn write_export_with(
         let csv_path = models_dir.join(&csv_name);
         let file = std::fs::File::create(&csv_path)
             .map_err(|e| write_failed(&format!("models/{csv_name}"), &e))?;
-        let (n, buf) = write_csv(
-            std::io::BufWriter::new(file),
-            &session.data,
+        let (n, file) = write_csv_unlocked(
+            file,
+            state,
+            stamp,
             &pm.csv_columns,
             mw,
             req.data_utc_offset_min,
-            Some(cancel),
-            None,
+            cancel,
+            CANCEL_CHECK_ROWS,
         )
         .map_err(|e| match e {
             CsvFail::Cancelled => CANCELLED.to_string(),
+            CsvFail::Stale => STALE_SESSION_ERROR.to_string(),
             CsvFail::Io(msg) => write_failed(&format!("models/{csv_name}"), &msg),
         })?;
-        buf.into_inner()
-            .map_err(|e| write_failed(&format!("models/{csv_name}"), &e.error().to_string()))?
-            .sync_all()
+        file.sync_all()
             .map_err(|e| write_failed(&format!("models/{csv_name}"), &e))?;
-        drop(lock);
         bytes += json_text.len() as u64 + n;
         progress(i + 1, total, &pm.key);
     }
@@ -1754,6 +1821,96 @@ mod tests {
     use super::*;
     use crate::{clustering_preview_in, SessionData};
     use std::sync::RwLock;
+
+    // ---- the session lock is not held while writing ----
+
+    /// Runs `on_write` for every write it receives.
+    struct Probe<F: FnMut()> {
+        out: Vec<u8>,
+        on_write: F,
+    }
+
+    impl<F: FnMut()> Write for Probe<F> {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            (self.on_write)();
+            self.out.extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    fn work_on_all_rows(d: &ColumnarData) -> (Vec<String>, ModelWork) {
+        (
+            vec!["A".to_string(), "Odd tag/1".to_string()],
+            ModelWork { col_idx: vec![1, 6], rows: (0..d.n_rows() as u32).collect() },
+        )
+    }
+
+    #[test]
+    fn the_file_is_written_with_no_session_lock_held_and_matches_the_plans_bytes() {
+        let d = data();
+        let (columns, work) = work_on_all_rows(&d);
+        let (plan_n, plan_bytes) = write_csv(Vec::new(), &d, &columns, &work, 420, None).unwrap();
+        let st = state(d, 3);
+        let stamp = st.0.read().unwrap().as_ref().unwrap().stamp();
+        let cancel = AtomicBool::new(false);
+        for chunk in [1, 7, 1000] {
+            let writes = std::cell::Cell::new(0);
+            let probe = Probe {
+                out: Vec::new(),
+                on_write: || {
+                    // A special-sensor change or a CSV load needs this lock.
+                    assert!(st.0.try_write().is_ok(), "the session lock is held during a disk write");
+                    writes.set(writes.get() + 1);
+                },
+            };
+            let (n, probe) =
+                write_csv_unlocked(probe, &st, stamp, &columns, &work, 420, &cancel, chunk).unwrap();
+            assert_eq!(probe.out, plan_bytes, "chunk {chunk}");
+            assert_eq!(n, plan_n);
+            assert!(writes.get() >= 1);
+        }
+        // No rows: the header alone, as in the plan.
+        let empty = ModelWork { col_idx: work.col_idx.clone(), rows: Vec::new() };
+        let (_, expected) = write_csv(Vec::new(), &data(), &columns, &empty, 420, None).unwrap();
+        let (n, out) = write_csv_unlocked(Vec::new(), &st, stamp, &columns, &empty, 420, &cancel, 8).unwrap();
+        assert_eq!(out, expected);
+        assert_eq!(n, expected.len() as u64);
+    }
+
+    #[test]
+    fn a_session_change_between_chunks_stops_the_file_instead_of_mixing_data() {
+        let d = data();
+        let (columns, work) = work_on_all_rows(&d);
+        let st = state(d, 3);
+        let stamp = st.0.read().unwrap().as_ref().unwrap().stamp();
+        let cancel = AtomicBool::new(false);
+        // A special sensor is recomputed as soon as the first chunk reaches the disk.
+        let probe = Probe {
+            out: Vec::new(),
+            on_write: || st.0.write().unwrap().as_mut().unwrap().rel_cache.clear(),
+        };
+        let err = write_csv_unlocked(probe, &st, stamp, &columns, &work, 420, &cancel, 5).err().unwrap();
+        assert!(matches!(err, CsvFail::Stale), "{err:?}");
+        // The dataset is replaced.
+        *st.0.write().unwrap() = None;
+        let err = write_csv_unlocked(Vec::new(), &st, stamp, &columns, &work, 420, &cancel, 5).err().unwrap();
+        assert!(matches!(err, CsvFail::Stale), "{err:?}");
+    }
+
+    #[test]
+    fn cancel_is_seen_between_chunks() {
+        let d = data();
+        let (columns, work) = work_on_all_rows(&d);
+        let st = state(d, 3);
+        let stamp = st.0.read().unwrap().as_ref().unwrap().stamp();
+        let cancel = AtomicBool::new(false);
+        let probe = Probe { out: Vec::new(), on_write: || cancel.store(true, Ordering::SeqCst) };
+        let err = write_csv_unlocked(probe, &st, stamp, &columns, &work, 420, &cancel, 5).err().unwrap();
+        assert!(matches!(err, CsvFail::Cancelled), "{err:?}");
+    }
 
     // ---- fixtures ----
 

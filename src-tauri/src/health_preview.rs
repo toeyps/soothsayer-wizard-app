@@ -734,8 +734,7 @@ pub fn individual_preview(
 // Relationship
 // ---------------------------------------------------------------------------
 
-/// A residual with the rounding `REL_DATASET_*.csv` uses
-/// (`backend.py::train_relationship`):
+/// A residual with the rounding the training files use:
 /// `RESIDUAL = round_metric(actual − round_metric(predicted))` — taken from the
 /// ROUNDED prediction and then rounded itself.
 ///
@@ -756,9 +755,7 @@ pub fn individual_preview(
 /// is what the `validation` block of `REL_INFO` declares with
 /// `scoring_interval_seconds: 3600` / `scoring_aggregation: "mean"`.
 ///
-/// **This function and `backend.py::train_relationship` must stay in sync**
-/// (same rounding, same order of operations). Non-finite input gives NaN (an
-/// unscored point).
+/// Non-finite input gives NaN (an unscored point).
 pub fn file_residual(actual: f64, predicted: f64) -> f64 {
     if actual.is_finite() && predicted.is_finite() {
         round_metric(actual - round_metric(predicted))
@@ -767,8 +764,7 @@ pub fn file_residual(actual: f64, predicted: f64) -> f64 {
     }
 }
 
-/// Statistics of a cached fit, computed the way `train_relationship` writes
-/// them to `REL_INFO_*.json`: predictions rounded with `round_metric`, `r2`
+/// Statistics of a cached fit: predictions rounded with `round_metric`, `r2`
 /// to 2 decimals, `2rmse = round_metric(2 · RMSE)`. The residual statistics
 /// use [`file_residual`] (the residual the file stores).
 pub fn relationship_stats(fit: &RelFit) -> Result<RelationshipStats, String> {
@@ -1206,13 +1202,11 @@ pub fn clustering_preview(
     } else {
         Vec::new()
     };
+    let assigner = crate::health_score::ClusterAssigner::new(&ranges);
     let assign: Vec<u32> = rows
         .par_iter()
         .map(|&r| match criteria_idx {
-            Some(ci) => {
-                crate::health_score::assign_cluster(data.columns[ci][r as usize], &ranges)
-                    .map_or(NONE, |k| k as u32)
-            }
+            Some(ci) => assigner.assign(data.columns[ci][r as usize]).map_or(NONE, |k| k as u32),
             None => 0, // single cluster: every row
         })
         .collect();

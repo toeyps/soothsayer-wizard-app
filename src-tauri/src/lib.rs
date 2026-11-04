@@ -75,7 +75,7 @@ fn validate_read_path(p: &str) -> Result<(), String> {
 }
 
 /// Validate a frontend-supplied directory the backend will write into
-/// (the `save_path` argument to the `train_*` commands). The user picks
+/// (the export destination). The user picks
 /// this via a native dialog, so we don't constrain it to a specific
 /// root — but we do reject obviously-malicious shapes.
 ///
@@ -222,6 +222,28 @@ static SESSION_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::Ato
 
 struct AppState(RwLock<Option<SessionData>>);
 
+/// Run `f` with the session on the blocking pool. A plain sync command runs on
+/// the main thread, where a slow query or a wait for the session lock freezes
+/// every window.
+async fn on_blocking_pool<T, F>(app: tauri::AppHandle, f: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce(&AppState) -> Result<T, String> + Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(move || {
+        use tauri::Manager;
+        let state = app.state::<AppState>();
+        f(state.inner())
+    })
+    .await
+    .map_err(|e| format!("Background task failed: {e}"))?
+}
+
+/// One special-sensor change at a time, in arrival order. These commands take
+/// the session lock twice (compute, then store), so without this a sensor could
+/// be built from a column another call is replacing or removing.
+static SENSOR_CHANGE_LOCK: tauri::async_runtime::Mutex<()> = tauri::async_runtime::Mutex::const_new(());
+
 /// Name of the global event `load_csv` emits while it runs (payload:
 /// [`csv_processor::CsvLoadProgress`]).
 const CSV_LOAD_PROGRESS_EVENT: &str = "csv-load-progress";
@@ -356,8 +378,8 @@ fn session_generation(state: &AppState) -> Result<Option<u64>, String> {
 /// Read-only diagnostic: the generation of the loaded dataset (the same value
 /// `load_csv` returned as `generation`), or `null` when nothing is loaded.
 #[tauri::command]
-fn get_session_generation(state: State<AppState>) -> Result<Option<u64>, String> {
-    session_generation(&state)
+async fn get_session_generation(app: tauri::AppHandle) -> Result<Option<u64>, String> {
+    on_blocking_pool(app, session_generation).await
 }
 
 /// Stable prefix of the error returned when a caller bound to an older dataset
@@ -375,10 +397,13 @@ fn check_expected_generation(expected: Option<u64>, actual: u64) -> Result<(), S
 }
 
 #[tauri::command]
-fn get_all_sensors(state: State<AppState>) -> Result<Vec<String>, String> {
-    let state_lock = state.0.read().map_err(|e| e.to_string())?;
-    let session = state_lock.as_ref().ok_or("No data loaded")?;
-    Ok(session.data.headers.clone())
+async fn get_all_sensors(app: tauri::AppHandle) -> Result<Vec<String>, String> {
+    on_blocking_pool(app, |state| {
+        let state_lock = state.0.read().map_err(|e| e.to_string())?;
+        let session = state_lock.as_ref().ok_or("No data loaded")?;
+        Ok(session.data.headers.clone())
+    })
+    .await
 }
 
 #[tauri::command]
@@ -411,14 +436,22 @@ struct SensorStats {
 /// difference is `sqrt(N/(N-1))` per σ — invisible at large N, slightly wider
 /// boundaries at small N.
 #[tauri::command]
-fn compute_sensor_stats(
+async fn compute_sensor_stats(
     sensor: String,
     // Same dashboard filter the predictive-model preview commands take.
     // When present, mean/SD/±σ are computed over the filtered slice — so
     // the boundary markers on the PM target chart match the slice the user
     // explored in the dashboard.
     filter: Option<PreviewFilter>,
-    state: State<AppState>,
+    app: tauri::AppHandle,
+) -> Result<SensorStats, String> {
+    on_blocking_pool(app, move |state| sensor_stats_in(state, &sensor, filter.as_ref())).await
+}
+
+fn sensor_stats_in(
+    state: &AppState,
+    sensor: &str,
+    filter: Option<&PreviewFilter>,
 ) -> Result<SensorStats, String> {
     use rayon::prelude::*;
 
@@ -429,10 +462,10 @@ fn compute_sensor_stats(
     let idx = data
         .headers
         .iter()
-        .position(|h| h == &sensor)
+        .position(|h| h == sensor)
         .ok_or_else(|| format!("Sensor not found: {}", sensor))?;
 
-    let resolved = ResolvedFilter::resolve(filter.as_ref(), &data.headers)?;
+    let resolved = ResolvedFilter::resolve(filter, &data.headers)?;
 
     // Parallel collect of all finite values for the target column (NaN =
     // missing, so `is_finite` drops missing and ±inf alike) — restricted to
@@ -647,6 +680,11 @@ const ENGINE_NO_OUTPUT_LOGGED: &str =
 const ENGINE_UNREADABLE: &str =
     "The Relation model engine returned an answer that could not be read. The details are in the error log.";
 
+/// A run stopped at [`ENGINE_RUN_TIMEOUT`]. One line: the Train queue row shows
+/// only the first line of an error.
+const ENGINE_TIMED_OUT: &str = "Train did not finish: the Relation model ran for 10 minutes without an answer \
+     and was stopped. Try again, or use fewer rows or predictors.";
+
 // Byte budgets of one engine-failure log entry. Their worst-case sum (plus the
 // labels and the truncation markers) stays under [`ERROR_LOG_DETAIL_MAX`].
 /// The engine's `error` text (start kept).
@@ -690,6 +728,20 @@ fn engine_no_output_failure(step: &str, stderr: &str) -> EngineFailure {
     EngineFailure {
         user: if stderr.is_empty() { ENGINE_NO_OUTPUT } else { ENGINE_NO_OUTPUT_LOGGED },
         log_message: format!("Relation model engine (sidecar) returned no output [{step}]"),
+        log_detail: (!stderr.is_empty())
+            .then(|| format!("stderr: {}", truncate_log_tail(stderr, ENGINE_LOG_STDERR_MAX))),
+    }
+}
+
+/// The engine hit [`ENGINE_RUN_TIMEOUT`] and was killed.
+fn engine_timed_out_failure(step: &str, stderr: &str) -> EngineFailure {
+    let stderr = stderr.trim();
+    EngineFailure {
+        user: ENGINE_TIMED_OUT,
+        log_message: format!(
+            "Relation model engine (sidecar) did not finish within {} s and was killed [{step}]",
+            ENGINE_RUN_TIMEOUT.as_secs()
+        ),
         log_detail: (!stderr.is_empty())
             .then(|| format!("stderr: {}", truncate_log_tail(stderr, ENGINE_LOG_STDERR_MAX))),
     }
@@ -876,7 +928,7 @@ mod engine_wording_tests {
         assert_eq!(quiet.log_detail, None, "nothing to log but the line itself");
         assert!(quiet.log_message.ends_with("[preview_relationship]"));
         // stderr can be a full traceback.
-        let loud = engine_no_output_failure("train_relationship", &format!("  {NASTY_TRACE}\n"));
+        let loud = engine_no_output_failure("preview_relationship", &format!("  {NASTY_TRACE}\n"));
         assert_eq!(
             loud.user,
             "The Relation model engine stopped without returning a result. The details are in the error log."
@@ -891,7 +943,7 @@ mod engine_wording_tests {
     #[test]
     fn an_unreadable_answer_shows_neither_the_parse_error_nor_the_raw_output() {
         let raw = format!("{NASTY}\n{{\"r2\":");
-        let f = engine_unreadable_answer_failure("train_relationship", &"EOF while parsing a value", &raw);
+        let f = engine_unreadable_answer_failure("preview_relationship", &"EOF while parsing a value", &raw);
         assert_eq!(
             f.user,
             "The Relation model engine returned an answer that could not be read. The details are in the error log."
@@ -904,13 +956,13 @@ mod engine_wording_tests {
 
     #[test]
     fn an_engine_error_shows_the_fixed_sentence_and_logs_error_and_trace() {
-        let f = engine_reported_failure("train_relationship", NASTY, Some(NASTY_TRACE));
+        let f = engine_reported_failure("preview_relationship", NASTY, Some(NASTY_TRACE));
         assert_eq!(f.user, "The Relation model engine could not fit this model. The details are in the error log.");
         assert_user_wording(f.user);
         assert_no_engine_text(f.user);
         assert_logged(&f, &[NASTY, "trace: Traceback", "SVD did not converge"]);
         // No trace (the "Unknown action" answer has none): just the error.
-        let bare = engine_reported_failure("train_relationship", "Unknown action: 'x'", None);
+        let bare = engine_reported_failure("preview_relationship", "Unknown action: 'x'", None);
         assert_eq!(bare.log_detail.as_deref(), Some("error: Unknown action: 'x'"));
         // The engine's own KNOWN validation messages get no special treatment:
         // they are internal mismatches the user cannot act on.
@@ -939,6 +991,22 @@ mod engine_wording_tests {
             assert!(e.len() <= ERROR_LOG_DETAIL_MAX, "{}: {} bytes", f.log_message, e.len());
             assert!(e.contains("bytes truncated)"), "{}", f.log_message);
         }
+    }
+
+    #[test]
+    fn a_timed_out_train_says_so_in_plain_words_and_logs_the_rest() {
+        let f = engine_timed_out_failure("preview_relationship", &format!("  {NASTY_TRACE}\n"));
+        assert!(f.user.starts_with("Train did not finish"), "{}", f.user);
+        assert!(f.user.contains("Relation model"));
+        assert!(f.user.contains("10 minutes"));
+        assert_eq!(ENGINE_RUN_TIMEOUT.as_secs(), 600, "the sentence names this cap");
+        assert!(!f.user.contains('\n'));
+        for w in DEV_WORDS {
+            assert!(!f.user.contains(w), "developer wording ({w}) in: {}", f.user);
+        }
+        assert_no_engine_text(f.user);
+        assert_logged(&f, &["killed", "SVD did not converge"]);
+        assert_eq!(engine_timed_out_failure("s", " ").log_detail, None);
     }
 
     #[test]
@@ -985,12 +1053,12 @@ mod engine_wording_tests {
         let path = dir.join("frontend-errors.log");
         let f = engine_reported_failure("preview_relationship", NASTY, Some(NASTY_TRACE));
         write_engine_failure(&path, &f);
-        let quiet = engine_no_output_failure("train_relationship", "");
+        let quiet = engine_no_output_failure("preview_relationship", "");
         write_engine_failure(&path, &quiet);
         let log = std::fs::read_to_string(&path).unwrap();
         assert!(log.contains("[sidecar] Relation model engine (sidecar) reported an error [preview_relationship]"), "{log}");
         assert!(log.contains(&format!("error: {NASTY}")) && log.contains("numpy.linalg.LinAlgError: SVD did not converge"), "{log}");
-        assert!(log.contains("[sidecar] Relation model engine (sidecar) returned no output [train_relationship]"), "{log}");
+        assert!(log.contains("[sidecar] Relation model engine (sidecar) returned no output [preview_relationship]"), "{log}");
         // Best effort: a path that cannot be written is silently skipped.
         write_engine_failure(&dir.join("no-such-dir").join("x.log"), &f);
         let _ = std::fs::remove_dir_all(&dir);
@@ -1842,31 +1910,16 @@ async fn preview_relationship_model(
     }
 
     let payload_line = signed_sidecar_line(&payload)?;
+    drop(payload);
 
-    // ── Spawn sidecar and pipe payload over stdin. ──
-    let (mut rx, mut child) = spawn_sidecar(&app)?;
-    child
-        .write(payload_line.as_bytes())
-        .map_err(|e| e.to_string())?;
-
-    let mut stdout_buf = String::new();
-    let mut stderr_buf = String::new();
-    while let Some(event) = rx.recv().await {
-        match event {
-            CommandEvent::Stdout(line) => {
-                stdout_buf.push_str(&String::from_utf8_lossy(&line));
-            }
-            CommandEvent::Stderr(line) => {
-                stderr_buf.push_str(&String::from_utf8_lossy(&line));
-            }
-            CommandEvent::Terminated(_) => break,
-            _ => {}
-        }
+    let run = run_engine(&app, payload_line).await?;
+    if run.timed_out {
+        return Err(report_engine_failure(&app, engine_timed_out_failure(PREVIEW_ENGINE_STEP, &run.stderr)));
     }
 
     // The engine's own text (stderr, raw output, its `error` / `trace`) goes to
     // the error log; the user only ever reads a fixed sentence.
-    let parsed: serde_json::Value = read_engine_answer(PREVIEW_ENGINE_STEP, &stdout_buf, &stderr_buf)
+    let parsed: serde_json::Value = read_engine_answer(PREVIEW_ENGINE_STEP, &run.stdout, &run.stderr)
         .map_err(|failure| report_engine_failure(&app, failure))?;
 
     finish_relationship_response_ex(
@@ -2222,10 +2275,6 @@ pub struct ClusterDetail {
     pub range: Option<ClusterRange>,
     pub n_rows: usize,
     pub ellipse: clustering::EllipseFit,
-    /// Per-row X values for this cluster (first_sensor, NaN-dropped).
-    pub xs: Vec<f64>,
-    /// Per-row Y values for this cluster (second_sensor, NaN-dropped).
-    pub ys: Vec<f64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -2253,29 +2302,32 @@ pub struct ClusteringPreview {
 ///     a single Gaussian to produce an ellipse. Mirrors
 ///     `wizard.py::PreviewModel.clustering` semantics.
 #[tauri::command(rename_all = "snake_case")]
-fn compute_clustering_preview(
+async fn compute_clustering_preview(
     first_sensor: String,
     second_sensor: String,
     n_clusters: u32,
     criteria_sensor: Option<String>,
     cluster_ranges: Option<Vec<ClusterRange>>,
     // Same dashboard filter the predictive-model preview commands take.
-    // When present the ellipse fit and per-cluster scatter are restricted
-    // to the filtered slice, matching what the user saw in the dashboard.
+    // When present the ellipse fit is restricted to the filtered slice,
+    // matching what the user saw in the dashboard.
     filter: Option<PreviewFilter>,
-    state: State<AppState>,
+    app: tauri::AppHandle,
 ) -> Result<ClusteringPreview, String> {
-    let state_lock = state.0.read().map_err(|e| e.to_string())?;
-    let session = state_lock.as_ref().ok_or("No data loaded")?;
-    clustering_preview_in(
-        &session.data,
-        first_sensor,
-        second_sensor,
-        n_clusters,
-        criteria_sensor,
-        cluster_ranges,
-        filter,
-    )
+    on_blocking_pool(app, move |state| {
+        let state_lock = state.0.read().map_err(|e| e.to_string())?;
+        let session = state_lock.as_ref().ok_or("No data loaded")?;
+        clustering_preview_in(
+            &session.data,
+            first_sensor,
+            second_sensor,
+            n_clusters,
+            criteria_sensor,
+            cluster_ranges,
+            filter,
+        )
+    })
+    .await
 }
 
 /// Pure core of [`compute_clustering_preview`] (no Tauri state): one ellipse
@@ -2347,8 +2399,6 @@ fn clustering_preview_in(
                 range: None,
                 n_rows,
                 ellipse,
-                xs,
-                ys,
             }],
         });
     }
@@ -2372,9 +2422,6 @@ fn clustering_preview_in(
         .position(|h| h == &criteria)
         .ok_or_else(|| format!("Criteria sensor not found: {}", criteria))?;
 
-    let mut clusters: Vec<ClusterDetail> = Vec::with_capacity(n_clusters as usize);
-    let mut total_rows: usize = 0;
-
     let c1 = &data.columns[i1];
     let c2 = &data.columns[i2];
     let cc = &data.columns[ic];
@@ -2382,35 +2429,33 @@ fn clustering_preview_in(
     // One rule with the health score and the export (outer edges open with
     // >= 2 ranges; first match wins on an overlap).
     let bounds = ClusterRange::bounds(&ranges);
-    for (idx, range) in ranges.iter().enumerate() {
-        let cluster_id = (idx + 1) as u32;
-        let mut xs: Vec<f64> = Vec::new();
-        let mut ys: Vec<f64> = Vec::new();
-        for r in 0..data.n_rows() {
-            if !resolved.is_noop() && !resolved.keeps(data, r) {
-                continue;
-            }
-            if health_score::assign_cluster(cc[r], &bounds) != Some(idx) {
-                continue;
-            }
-            let x = c1[r];
-            if !x.is_finite() {
-                continue;
-            }
-            let y = c2[r];
-            if !y.is_finite() {
-                continue;
-            }
-            xs.push(x);
-            ys.push(y);
+    let assigner = health_score::ClusterAssigner::new(&bounds);
+    let mut points: Vec<(Vec<f64>, Vec<f64>)> = vec![(Vec::new(), Vec::new()); ranges.len()];
+    for r in 0..data.n_rows() {
+        if !resolved.is_noop() && !resolved.keeps(data, r) {
+            continue;
         }
+        let Some(k) = assigner.assign(cc[r]) else {
+            continue;
+        };
+        let (x, y) = (c1[r], c2[r]);
+        if x.is_finite() && y.is_finite() {
+            points[k].0.push(x);
+            points[k].1.push(y);
+        }
+    }
+
+    let mut clusters: Vec<ClusterDetail> = Vec::with_capacity(ranges.len());
+    let mut total_rows: usize = 0;
+    for (idx, (range, (xs, ys))) in ranges.iter().zip(&points).enumerate() {
+        let cluster_id = (idx + 1) as u32;
         if xs.is_empty() {
             return Err(format!(
                 "Cluster {} has no rows after applying its criteria range.",
                 cluster_id
             ));
         }
-        let ellipse = clustering::fit_single_cluster_ellipse(&xs, &ys)?;
+        let ellipse = clustering::fit_single_cluster_ellipse(xs, ys)?;
         let n_rows = xs.len();
         total_rows += n_rows;
         clusters.push(ClusterDetail {
@@ -2418,8 +2463,6 @@ fn clustering_preview_in(
             range: Some(range.clone()),
             n_rows,
             ellipse,
-            xs,
-            ys,
         });
     }
 
@@ -2665,12 +2708,13 @@ fn remove_derived_in_state(
 /// current session generation, nothing is removed and `STALE_SESSION_ERROR` is
 /// returned.
 #[tauri::command]
-fn remove_sensor_columns(
+async fn remove_sensor_columns(
     names: Vec<String>,
     expected_generation: Option<u64>,
-    state: State<AppState>,
+    app: tauri::AppHandle,
 ) -> Result<usize, String> {
-    remove_derived_in_state(&state, &names, expected_generation)
+    let _serial = SENSOR_CHANGE_LOCK.lock().await;
+    on_blocking_pool(app, move |state| remove_derived_in_state(state, &names, expected_generation)).await
 }
 
 /// User-facing name of a multi operation in messages.
@@ -2941,21 +2985,25 @@ fn calculate_sensor_in_state(
 /// by the `load_csv` that produced the dataset the caller is bound to. A
 /// mismatch returns `STALE_SESSION_ERROR` and mutates nothing.
 #[tauri::command]
-fn calculate_new_sensor(
+async fn calculate_new_sensor(
     sensors: Vec<String>,
     config: SensorOperationConfig,
     replace: Option<bool>,
     expected_generation: Option<u64>,
-    state: State<AppState>,
+    app: tauri::AppHandle,
 ) -> Result<String, String> {
-    calculate_sensor_in_state(
-        &state,
-        &sensors,
-        &config,
-        replace.unwrap_or(false),
-        expected_generation,
-        &|| {},
-    )
+    let _serial = SENSOR_CHANGE_LOCK.lock().await;
+    on_blocking_pool(app, move |state| {
+        calculate_sensor_in_state(
+            state,
+            &sensors,
+            &config,
+            replace.unwrap_or(false),
+            expected_generation,
+            &|| {},
+        )
+    })
+    .await
 }
 
 // ---------------------------------------------------------------------------
@@ -5072,12 +5120,12 @@ const FORMULA_NO_REFS_ERROR: &str =
 /// current session generation, `STALE_SESSION_ERROR` is returned instead of a
 /// verdict about another workspace's dataset. Read-only either way.
 #[tauri::command]
-fn validate_formula(
+async fn validate_formula(
     formula: String,
     expected_generation: Option<u64>,
-    state: State<AppState>,
+    app: tauri::AppHandle,
 ) -> Result<FormulaValidationResult, String> {
-    validate_formula_in_state(&state, &formula, expected_generation)
+    on_blocking_pool(app, move |state| validate_formula_in_state(state, &formula, expected_generation)).await
 }
 
 /// Session-level `validate_formula` (testable without a Tauri `State`).
@@ -5314,21 +5362,25 @@ fn evaluate_formula_in_state(
 /// by the `load_csv` that produced the dataset the caller is bound to. A
 /// mismatch returns `STALE_SESSION_ERROR` and mutates nothing.
 #[tauri::command]
-fn evaluate_formula(
+async fn evaluate_formula(
     formula: String,
     custom_name: Option<String>,
     replace: Option<bool>,
     expected_generation: Option<u64>,
-    state: State<AppState>,
+    app: tauri::AppHandle,
 ) -> Result<String, String> {
-    evaluate_formula_in_state(
-        &state,
-        &formula,
-        custom_name.as_deref(),
-        replace.unwrap_or(false),
-        expected_generation,
-        &|| {},
-    )
+    let _serial = SENSOR_CHANGE_LOCK.lock().await;
+    on_blocking_pool(app, move |state| {
+        evaluate_formula_in_state(
+            state,
+            &formula,
+            custom_name.as_deref(),
+            replace.unwrap_or(false),
+            expected_generation,
+            &|| {},
+        )
+    })
+    .await
 }
 
 // ---------------------------------------------------------------------------
@@ -5742,22 +5794,25 @@ impl DataFilter {
 // `rename_all = "snake_case"`: the frontend sends `max_points` verbatim
 // (same convention as `get_scatter_sample`).
 #[tauri::command(rename_all = "snake_case")]
-fn get_chart_data(
+async fn get_chart_data(
     filter: DataFilter,
     sampling: String,
     operation: Option<chart_query::OperationConfig>,
     max_points: usize,
-    state: State<AppState>,
+    app: tauri::AppHandle,
 ) -> Result<chart_query::ChartView, String> {
-    let state_lock = state.0.read().map_err(|e| e.to_string())?;
-    let session = state_lock.as_ref().ok_or("No data loaded")?;
-    chart_query::build_chart_view(
-        &session.data,
-        &filter,
-        operation.as_ref(),
-        &sampling,
-        max_points,
-    )
+    on_blocking_pool(app, move |state| {
+        let state_lock = state.0.read().map_err(|e| e.to_string())?;
+        let session = state_lock.as_ref().ok_or("No data loaded")?;
+        chart_query::build_chart_view(
+            &session.data,
+            &filter,
+            operation.as_ref(),
+            &sampling,
+            max_points,
+        )
+    })
+    .await
 }
 
 /// True first/last timestamp across the WHOLE loaded dataset, ignoring any
@@ -5772,11 +5827,14 @@ struct DatasetTimeBounds {
 }
 
 #[tauri::command]
-fn get_dataset_time_bounds(state: State<AppState>) -> Result<DatasetTimeBounds, String> {
-    let state_lock = state.0.read().map_err(|e| e.to_string())?;
-    let session = state_lock.as_ref().ok_or("No data loaded")?;
-    let (min, max) = chart_query::full_dataset_time_bounds(&session.data);
-    Ok(DatasetTimeBounds { min, max })
+async fn get_dataset_time_bounds(app: tauri::AppHandle) -> Result<DatasetTimeBounds, String> {
+    on_blocking_pool(app, |state| {
+        let state_lock = state.0.read().map_err(|e| e.to_string())?;
+        let session = state_lock.as_ref().ok_or("No data loaded")?;
+        let (min, max) = chart_query::full_dataset_time_bounds(&session.data);
+        Ok(DatasetTimeBounds { min, max })
+    })
+    .await
 }
 
 /// Tiny dependency-free PRNG (xorshift64*) used to drive reservoir sampling.
@@ -5841,14 +5899,17 @@ struct ScatterSample {
 // camelCased key `maxPoints` and every invoke fails with "missing required
 // key" before the command body ever runs.
 #[tauri::command(rename_all = "snake_case")]
-fn get_scatter_sample(
+async fn get_scatter_sample(
     filter: DataFilter,
     max_points: usize,
-    state: State<AppState>,
+    app: tauri::AppHandle,
 ) -> Result<ScatterSample, String> {
-    let state_lock = state.0.read().map_err(|e| e.to_string())?;
-    let session = state_lock.as_ref().ok_or("No data loaded")?;
-    sample_dataset(&session.data, &filter, max_points)
+    on_blocking_pool(app, move |state| {
+        let state_lock = state.0.read().map_err(|e| e.to_string())?;
+        let session = state_lock.as_ref().ok_or("No data loaded")?;
+        sample_dataset(&session.data, &filter, max_points)
+    })
+    .await
 }
 
 /// Pure core of [`get_scatter_sample`] (no Tauri state) so it's unit-testable.
@@ -6442,10 +6503,12 @@ fn apply_rel_extra(state: &AppState, job: &RelExtraJob, predicted: &[f64]) -> Re
     }
 }
 
-/// Longest wait for one `predict_relationship` sidecar run (a refit on the
-/// training rows + the predictions; normally ~15 s). Generous on purpose: only
-/// a hung engine should ever reach it.
-const PREDICT_SIDECAR_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+/// Longest wait for one sidecar run (Train, Compare predictors, the hourly
+/// predictions; normally ~15 s). Only a hung engine should ever reach it.
+const ENGINE_RUN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+
+/// After a kill, how long to wait for the end event before giving up on it.
+const ENGINE_KILL_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// Run `on_timeout` on a helper thread once `limit` has passed, unless the
 /// returned `Sender` is dropped (or sent to) first - which also ends the thread
@@ -6469,9 +6532,120 @@ fn arm_timeout<F: FnOnce() + Send + 'static>(
     (done_tx, fired)
 }
 
-/// Run one request through the sidecar and return its JSON answer. A sidecar
-/// that has not finished after `limit` is KILLED (the process does not linger)
-/// and the call fails with a "did not answer" error.
+/// What one engine run printed. `timed_out` = it was killed at the cap and its
+/// output is not an answer.
+#[derive(Debug, Default)]
+struct EngineOutput {
+    stdout: String,
+    stderr: String,
+    timed_out: bool,
+}
+
+/// Kill the engine and everything it started. The one-file launcher runs the
+/// real engine as its child, and killing only the launcher leaves that child
+/// running with the output pipes open (no end event either). Best effort.
+fn kill_engine_tree(pid: u32) {
+    use std::process::{Command, Stdio};
+    let mut commands: Vec<Command> = Vec::new();
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let root = std::env::var_os("SystemRoot").unwrap_or_else(|| r"C:\Windows".into());
+        let mut c = Command::new(std::path::Path::new(&root).join("System32").join("taskkill.exe"));
+        c.args(["/F", "/T", "/PID", &pid.to_string()]).creation_flags(CREATE_NO_WINDOW);
+        commands.push(c);
+    }
+    #[cfg(not(windows))]
+    {
+        let mut children = Command::new("/usr/bin/pkill");
+        children.args(["-KILL", "-P", &pid.to_string()]);
+        commands.push(children);
+        let mut parent = Command::new("/bin/kill");
+        parent.args(["-KILL", &pid.to_string()]);
+        commands.push(parent);
+    }
+    for mut c in commands {
+        let _ = c.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status();
+    }
+}
+
+/// Send the request and collect the output until the run ends. After `limit`
+/// `kill` runs, and after `grace` more the wait stops whether or not the end
+/// event came. The cap covers the write too: an engine stuck before reading
+/// stdin would block it. A failed write also kills, so nothing waits on stdin.
+async fn collect_engine_output<W, K>(
+    mut rx: tauri::async_runtime::Receiver<CommandEvent>,
+    write: W,
+    kill: K,
+    limit: std::time::Duration,
+    grace: std::time::Duration,
+) -> EngineOutput
+where
+    W: FnOnce() -> Result<(), String> + Send + 'static,
+    K: Fn() + Send + Sync + 'static,
+{
+    let kill = std::sync::Arc::new(kill);
+    let (give_up_tx, mut give_up_rx) = tauri::async_runtime::channel::<()>(1);
+    let timer_kill = kill.clone();
+    let (done, timed_out) = arm_timeout(limit, move || {
+        (*timer_kill)();
+        std::thread::sleep(grace);
+        let _ = give_up_tx.try_send(());
+    });
+    let write_error = std::sync::Arc::new(std::sync::Mutex::new(None::<String>));
+    let writer_error = write_error.clone();
+    // Off the runtime: a big request blocks until the engine has read it. The
+    // output must also be drained meanwhile, or both sides can wait on a full pipe.
+    tauri::async_runtime::spawn_blocking(move || {
+        if let Err(e) = write() {
+            if let Ok(mut slot) = writer_error.lock() {
+                *slot = Some(e);
+            }
+            (*kill)();
+        }
+    });
+    let mut out = EngineOutput::default();
+    loop {
+        let event = std::future::poll_fn(|cx| {
+            if let std::task::Poll::Ready(Some(())) = give_up_rx.poll_recv(cx) {
+                return std::task::Poll::Ready(None);
+            }
+            rx.poll_recv(cx)
+        })
+        .await;
+        match event {
+            Some(CommandEvent::Stdout(l)) => out.stdout.push_str(&String::from_utf8_lossy(&l)),
+            Some(CommandEvent::Stderr(l)) => out.stderr.push_str(&String::from_utf8_lossy(&l)),
+            Some(CommandEvent::Terminated(_)) | None => break,
+            Some(_) => {}
+        }
+    }
+    drop(done); // ends the timer thread
+    out.timed_out = timed_out.load(std::sync::atomic::Ordering::SeqCst);
+    if let Some(e) = write_error.lock().ok().and_then(|mut slot| slot.take()) {
+        out.stderr.push_str(&format!("\nThe request could not be sent: {e}"));
+    }
+    out
+}
+
+/// One run of the engine with `line` on stdin, capped at [`ENGINE_RUN_TIMEOUT`].
+/// The child is dropped after the write, which closes stdin (the engine reads
+/// one line only).
+async fn run_engine(app: &tauri::AppHandle, line: String) -> Result<EngineOutput, String> {
+    let (rx, mut child) = spawn_sidecar(app)?;
+    let pid = child.pid();
+    Ok(collect_engine_output(
+        rx,
+        move || child.write(line.as_bytes()).map_err(|e| e.to_string()),
+        move || kill_engine_tree(pid),
+        ENGINE_RUN_TIMEOUT,
+        ENGINE_KILL_GRACE,
+    )
+    .await)
+}
+
+/// Run one request through the sidecar and return its JSON answer.
 ///
 /// Its errors (and [`parse_predicted_extra`]'s) are LOG-ONLY: the one caller,
 /// [`predict_rel_hours`], writes them to the error log and shows the user the
@@ -6482,42 +6656,20 @@ fn arm_timeout<F: FnOnce() + Send + 'static>(
 async fn run_sidecar_json(
     app: &tauri::AppHandle,
     payload: &serde_json::Value,
-    limit: std::time::Duration,
 ) -> Result<serde_json::Value, String> {
     let line = signed_sidecar_line(payload)?;
-    let (mut rx, mut child) = spawn_sidecar(app)?;
-    if let Err(e) = child.write(line.as_bytes()) {
-        // Do not leave a process waiting on its stdin forever.
-        let _ = child.kill();
-        return Err(e.to_string());
-    }
-    // The timer thread owns the child from here: on timeout it kills it, which
-    // makes the shell plugin send `Terminated` and ends the loop below.
-    let (done, timed_out) = arm_timeout(limit, move || {
-        let _ = child.kill();
-    });
-    let mut stdout_buf = String::new();
-    let mut stderr_buf = String::new();
-    while let Some(event) = rx.recv().await {
-        match event {
-            CommandEvent::Stdout(l) => stdout_buf.push_str(&String::from_utf8_lossy(&l)),
-            CommandEvent::Stderr(l) => stderr_buf.push_str(&String::from_utf8_lossy(&l)),
-            CommandEvent::Terminated(_) => break,
-            _ => {}
-        }
-    }
-    drop(done); // stop the timer (it drops the already finished child)
-    if timed_out.load(std::sync::atomic::Ordering::SeqCst) {
+    let run = run_engine(app, line).await?;
+    if run.timed_out {
         return Err(format!(
             "The Relation model engine did not answer within {} s and was stopped.",
-            limit.as_secs()
+            ENGINE_RUN_TIMEOUT.as_secs()
         ));
     }
-    if stdout_buf.trim().is_empty() {
-        return Err(format!("Sidecar returned no output. Stderr: {}", stderr_buf.trim()));
+    if run.stdout.trim().is_empty() {
+        return Err(format!("Sidecar returned no output. Stderr: {}", run.stderr.trim()));
     }
-    serde_json::from_str(stdout_buf.trim())
-        .map_err(|e| format!("Failed to parse sidecar output: {e} (raw: {stdout_buf})"))
+    serde_json::from_str(run.stdout.trim())
+        .map_err(|e| format!("Failed to parse sidecar output: {e} (raw: {})", run.stdout))
 }
 
 /// Message when the bundled sidecar predates `predict_relationship` /
@@ -6568,7 +6720,7 @@ async fn run_predict_relationship(
             "smoothing": job.lambda,
         }
     });
-    let resp = run_sidecar_json(app, &payload, PREDICT_SIDECAR_TIMEOUT).await?;
+    let resp = run_sidecar_json(app, &payload).await?;
     parse_predicted_extra(&resp, job.points.len())
 }
 
@@ -6591,7 +6743,7 @@ fn health_preview_in(
                 .as_deref()
                 .filter(|k| !k.is_empty())
                 .ok_or_else(|| health_preview::not_fitted("no cache_key was given"))?;
-            let fit = session.rel_cache.peek(key).ok_or_else(|| {
+            let fit = session.rel_cache.get(key).ok_or_else(|| {
                 health_preview::not_fitted(
                     "this Relation model has no fit in memory (not trained yet, or the data changed) - train it first",
                 )
@@ -6857,6 +7009,292 @@ mod count_period_rows_tests {
             assert_eq!(v.tests[0].days, health_validation::days_of(72, fresh));
             assert_eq!(v.tests[0].days, 0.5);
             assert_eq!(v.train.days, health_validation::days_of(v.train.rows, fresh));
+        }
+    }
+}
+
+#[cfg(test)]
+mod engine_run_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    use std::time::{Duration, Instant};
+    use tauri_plugin_shell::process::TerminatedPayload;
+
+    const LONG: Duration = Duration::from_secs(60);
+
+    fn ended() -> CommandEvent {
+        CommandEvent::Terminated(TerminatedPayload { code: Some(0), signal: None })
+    }
+
+    fn counter() -> (Arc<AtomicUsize>, impl Fn() + Send + Sync + 'static) {
+        let n = Arc::new(AtomicUsize::new(0));
+        let m = n.clone();
+        (n, move || {
+            m.fetch_add(1, Ordering::SeqCst);
+        })
+    }
+
+    #[test]
+    fn a_normal_run_returns_its_output_and_kills_nothing() {
+        let (tx, rx) = tauri::async_runtime::channel(8);
+        let (kills, kill) = counter();
+        let out = tauri::async_runtime::block_on(async move {
+            tx.send(CommandEvent::Stdout(b"{\"r\":".to_vec())).await.unwrap();
+            tx.send(CommandEvent::Stderr(b"note".to_vec())).await.unwrap();
+            tx.send(CommandEvent::Stdout(b"1}".to_vec())).await.unwrap();
+            tx.send(ended()).await.unwrap();
+            collect_engine_output(rx, || Ok(()), kill, LONG, LONG).await
+        });
+        assert_eq!((out.stdout.as_str(), out.stderr.as_str(), out.timed_out), ("{\"r\":1}", "note", false));
+        assert_eq!(kills.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn a_hung_engine_is_killed_at_the_cap_and_the_call_returns_even_with_no_end_event() {
+        // `_tx` stays open: the process never reports its end.
+        let (_tx, rx) = tauri::async_runtime::channel(8);
+        let (kills, kill) = counter();
+        let start = Instant::now();
+        let out = tauri::async_runtime::block_on(collect_engine_output(
+            rx,
+            || Ok(()),
+            kill,
+            Duration::from_millis(50),
+            Duration::from_millis(50),
+        ));
+        assert!(out.timed_out);
+        assert_eq!(kills.load(Ordering::SeqCst), 1);
+        assert!(start.elapsed() < Duration::from_secs(10));
+    }
+
+    #[test]
+    fn the_end_event_after_the_kill_ends_the_wait_without_the_grace_period() {
+        let (tx, rx) = tauri::async_runtime::channel(8);
+        let kill = move || {
+            let _ = tx.try_send(ended());
+        };
+        let start = Instant::now();
+        let out = tauri::async_runtime::block_on(collect_engine_output(rx, || Ok(()), kill, Duration::from_millis(50), LONG));
+        assert!(out.timed_out);
+        assert!(start.elapsed() < Duration::from_secs(10), "it did not sit out the grace period");
+    }
+
+    #[test]
+    fn the_cap_also_covers_a_write_that_never_returns() {
+        let (_tx, rx) = tauri::async_runtime::channel(8);
+        let (release, stuck) = std::sync::mpsc::channel::<()>();
+        let (kills, kill) = counter();
+        let out = tauri::async_runtime::block_on(collect_engine_output(
+            rx,
+            move || {
+                let _ = stuck.recv();
+                Ok(())
+            },
+            kill,
+            Duration::from_millis(50),
+            Duration::from_millis(50),
+        ));
+        assert!(out.timed_out);
+        assert_eq!(kills.load(Ordering::SeqCst), 1);
+        drop(release);
+    }
+
+    #[test]
+    fn a_failed_write_kills_the_engine_and_lands_in_the_log_text_only() {
+        let (tx, rx) = tauri::async_runtime::channel(8);
+        let n = Arc::new(AtomicUsize::new(0));
+        let m = n.clone();
+        let kill = move || {
+            m.fetch_add(1, Ordering::SeqCst);
+            let _ = tx.try_send(ended());
+        };
+        let out = tauri::async_runtime::block_on(collect_engine_output(
+            rx,
+            || Err("The pipe has been ended. (os error 109)".to_string()),
+            kill,
+            LONG,
+            LONG,
+        ));
+        assert!(!out.timed_out);
+        assert_eq!(n.load(Ordering::SeqCst), 1);
+        assert!(out.stderr.contains("os error 109"));
+        // The user reads the fixed sentence, not the OS text.
+        let failure = read_engine_answer::<serde_json::Value>("s", &out.stdout, &out.stderr).unwrap_err();
+        assert_eq!(failure.user, ENGINE_NO_OUTPUT_LOGGED);
+    }
+
+    #[test]
+    fn a_run_after_a_timed_out_one_works() {
+        let (_tx, rx) = tauri::async_runtime::channel(8);
+        let first = tauri::async_runtime::block_on(collect_engine_output(
+            rx,
+            || Ok(()),
+            || {},
+            Duration::from_millis(20),
+            Duration::from_millis(20),
+        ));
+        assert!(first.timed_out);
+        let (tx, rx) = tauri::async_runtime::channel(8);
+        let second = tauri::async_runtime::block_on(async move {
+            tx.send(CommandEvent::Stdout(b"{}".to_vec())).await.unwrap();
+            tx.send(ended()).await.unwrap();
+            collect_engine_output(rx, || Ok(()), || {}, LONG, LONG).await
+        });
+        assert!(!second.timed_out);
+        assert_eq!(second.stdout, "{}");
+    }
+
+    /// The real shape of the one-file engine: a parent whose child inherits the
+    /// pipes. Killing the parent alone leaves the pipe open for the whole ping.
+    #[cfg(windows)]
+    #[test]
+    fn the_tree_kill_also_ends_the_child_that_holds_the_pipes() {
+        use std::io::Read;
+        use std::process::{Command, Stdio};
+        let mut parent = Command::new("cmd")
+            .args(["/C", "ping -n 60 127.0.0.1"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let mut pipe = parent.stdout.take().unwrap();
+        // ping prints as soon as it runs: the child exists when this returns.
+        let mut first = [0u8; 1];
+        pipe.read_exact(&mut first).unwrap();
+        let start = Instant::now();
+        kill_engine_tree(parent.id());
+        let mut rest = Vec::new();
+        let _ = pipe.read_to_end(&mut rest);
+        assert!(start.elapsed() < Duration::from_secs(20), "the child kept the pipe open");
+        let _ = parent.wait();
+    }
+}
+
+#[cfg(test)]
+mod off_main_thread_tests {
+    use super::*;
+
+    /// A sync command runs on the main thread (and a slow one freezes every window).
+    #[test]
+    fn session_commands_stay_async_and_keep_their_argument_casing() {
+        let src = include_str!("lib.rs");
+        for (name, attr) in [
+            ("get_session_generation", "#[tauri::command]"),
+            ("get_all_sensors", "#[tauri::command]"),
+            ("compute_sensor_stats", "#[tauri::command]"),
+            ("compute_clustering_preview", "#[tauri::command(rename_all = \"snake_case\")]"),
+            ("remove_sensor_columns", "#[tauri::command]"),
+            ("calculate_new_sensor", "#[tauri::command]"),
+            ("evaluate_formula", "#[tauri::command]"),
+            ("validate_formula", "#[tauri::command]"),
+            ("get_chart_data", "#[tauri::command(rename_all = \"snake_case\")]"),
+            ("get_dataset_time_bounds", "#[tauri::command]"),
+            ("get_scatter_sample", "#[tauri::command(rename_all = \"snake_case\")]"),
+        ] {
+            let signature = format!("async fn {name}(");
+            let pos = src.find(&signature).unwrap_or_else(|| panic!("{name} is not async"));
+            let before = src[..pos].trim_end();
+            assert!(before.ends_with(attr), "{name} lost {attr}");
+        }
+    }
+
+    #[test]
+    fn the_blocking_pool_is_not_the_calling_thread() {
+        let caller = std::thread::current().id();
+        let worker = tauri::async_runtime::block_on(tauri::async_runtime::spawn_blocking(|| std::thread::current().id()))
+            .unwrap();
+        assert_ne!(worker, caller);
+    }
+
+    #[test]
+    fn clustering_payload_carries_no_rows() {
+        let n = 400;
+        let data = ColumnarData::from_parts(
+            vec!["timestamp".into(), "X".into(), "Y".into(), "C".into()],
+            (0..n).map(|i| Some(format!("2024-01-01T{:02}:{:02}:00", i / 60, i % 60))).collect(),
+            vec![
+                vec![f64::NAN; n],
+                (0..n).map(|i| i as f64).collect(),
+                (0..n).map(|i| (i as f64 * 0.7).sin()).collect(),
+                (0..n).map(|i| (i % 2) as f64).collect(),
+            ],
+        );
+        for (clusters, criteria, ranges) in [
+            (1, None, None),
+            (
+                2,
+                Some("C".to_string()),
+                Some(vec![
+                    ClusterRange { min: None, max: Some(0.0) },
+                    ClusterRange { min: Some(0.0), max: None },
+                ]),
+            ),
+        ] {
+            let p = clustering_preview_in(&data, "X".into(), "Y".into(), clusters, criteria, ranges, None).unwrap();
+            assert_eq!(p.n_rows, n);
+            assert_eq!(p.clusters.iter().map(|c| c.n_rows).sum::<usize>(), n);
+            let json = serde_json::to_value(&p).unwrap();
+            for c in json["clusters"].as_array().unwrap() {
+                let keys: Vec<&str> = c.as_object().unwrap().keys().map(String::as_str).collect();
+                assert!(!keys.contains(&"xs") && !keys.contains(&"ys"), "{keys:?}");
+                assert!(c["ellipse"]["x_sd"].is_number());
+            }
+            assert!(json.to_string().len() < 2_000, "bounded by the cluster count, not the rows");
+        }
+    }
+
+    #[test]
+    fn the_one_pass_cluster_split_fits_the_same_rows_as_a_loop_per_cluster() {
+        // Overlap and a gap: first match wins, gap rows go nowhere, a NaN Y is dropped.
+        let n = 300;
+        let cc: Vec<f64> = (0..n).map(|i| (i % 30) as f64).collect();
+        let xs: Vec<f64> = (0..n).map(|i| i as f64).collect();
+        let ys: Vec<f64> = (0..n).map(|i| if i % 37 == 0 { f64::NAN } else { (i as f64).sqrt() }).collect();
+        let data = ColumnarData::from_parts(
+            vec!["timestamp".into(), "X".into(), "Y".into(), "C".into()],
+            (0..n).map(|i| Some(format!("2024-01-01T{:02}:{:02}:00", i / 60, i % 60))).collect(),
+            vec![vec![f64::NAN; n], xs.clone(), ys.clone(), cc.clone()],
+        );
+        let ranges = vec![
+            ClusterRange { min: None, max: Some(10.0) },
+            ClusterRange { min: Some(5.0), max: Some(15.0) },
+            ClusterRange { min: Some(20.0), max: None },
+        ];
+        let p = clustering_preview_in(&data, "X".into(), "Y".into(), 3, Some("C".into()), Some(ranges.clone()), None).unwrap();
+        let bounds = ClusterRange::bounds(&ranges);
+        for (k, c) in p.clusters.iter().enumerate() {
+            let rows: Vec<usize> = (0..n)
+                .filter(|&r| health_score::assign_cluster(cc[r], &bounds) == Some(k) && ys[r].is_finite())
+                .collect();
+            let x: Vec<f64> = rows.iter().map(|&r| xs[r]).collect();
+            let y: Vec<f64> = rows.iter().map(|&r| ys[r]).collect();
+            assert_eq!(c.n_rows, rows.len());
+            let fit = clustering::fit_single_cluster_ellipse(&x, &y).unwrap();
+            assert_eq!(c.ellipse.x_center.to_bits(), fit.x_center.to_bits());
+            assert_eq!(c.ellipse.x_sd.to_bits(), fit.x_sd.to_bits());
+            assert_eq!(c.ellipse.angle_deg.to_bits(), fit.angle_deg.to_bits());
+        }
+        assert_eq!(p.n_rows, p.clusters.iter().map(|c| c.n_rows).sum::<usize>());
+        // The first empty cluster is still the one named.
+        let empty = vec![
+            ClusterRange { min: None, max: Some(10.0) },
+            ClusterRange { min: Some(1000.0), max: Some(1001.0) },
+            ClusterRange { min: Some(2000.0), max: None },
+        ];
+        // Outer edges are open, so only the middle range can stay empty.
+        let e = clustering_preview_in(&data, "X".into(), "Y".into(), 3, Some("C".into()), Some(empty), None).unwrap_err();
+        assert!(e.starts_with("Cluster 2 has no rows"), "{e}");
+    }
+
+    #[test]
+    fn the_sidecar_source_rounds_compare_like_model_fit_and_lost_the_old_actions() {
+        let py = include_str!("../python/backend.py");
+        assert!(py.contains("rmse2 = _round_metric(2.0 * _rmse(y, pred))"), "Compare predictors uses round_metric");
+        assert!(!py.contains("round(2.0 * _rmse"), "a fixed rounding turns a small 2RMSE into 0");
+        for gone in ["train_relationship", "train_clustering", "pickle", "CLUS_INFO"] {
+            assert!(!py.contains(gone), "{gone} is still in backend.py");
         }
     }
 }
@@ -8136,7 +8574,7 @@ mod signed_sidecar_tests {
 
     #[test]
     fn a_signed_line_is_timestamp_signature_and_the_request() {
-        let request = serde_json::json!({"action": "train_clustering", "payload": {"name": "ถังน้ำ \"A\"\nB"}});
+        let request = serde_json::json!({"action": "predict_relationship", "payload": {"name": "ถังน้ำ \"A\"\nB"}});
         let line = signed_sidecar_line_at(&request, 1_700_000_000).unwrap();
         // One line: the sidecar reads exactly one line from stdin.
         assert!(line.ends_with('\n'));

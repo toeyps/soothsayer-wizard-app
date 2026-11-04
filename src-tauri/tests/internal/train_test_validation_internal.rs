@@ -1960,7 +1960,23 @@ fn a_sidecar_timeout_fires_once_and_a_finished_run_cancels_it() {
     drop(done);
     assert!(rx.recv_timeout(Duration::from_millis(600)).is_err(), "never called after the run finished");
     assert!(!fired.load(Ordering::SeqCst));
-    assert!(crate::PREDICT_SIDECAR_TIMEOUT >= Duration::from_secs(300), "generous: only a hung engine hits it");
+    assert!(crate::ENGINE_RUN_TIMEOUT >= Duration::from_secs(300), "generous: only a hung engine hits it");
+}
+
+#[test]
+fn a_fit_the_health_page_keeps_reading_outlives_later_trains() {
+    let (state, d) = rel_state();
+    let stamp = crate::session_stamp(&state).unwrap().unwrap();
+    for i in 0..(crate::health_score::REL_CACHE_MAX_ENTRIES - 1) {
+        assert!(crate::store_rel_fit(&state, stamp, format!("other{i}"), rel_fit(&d)));
+    }
+    // The cache is full and "m1::fp" was trained first.
+    let _ = crate::health_preview_in(&state, &rel_req(Vec::new()));
+    assert!(crate::store_rel_fit(&state, stamp, "newest".into(), rel_fit(&d)));
+    let lock = state.0.read().unwrap();
+    let cache = &lock.as_ref().unwrap().rel_cache;
+    assert!(cache.peek("m1::fp").is_some(), "read just now: kept");
+    assert!(cache.peek("other0").is_none(), "the fit nobody read goes");
 }
 
 #[test]

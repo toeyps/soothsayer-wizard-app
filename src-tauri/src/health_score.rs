@@ -25,6 +25,7 @@
 
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Weak};
 
 use crate::metrics::round_metric;
@@ -751,27 +752,53 @@ pub fn score_clustering_distance(d: f64, outer_sd: f64) -> Option<f64> {
 /// Train (`compute_clustering_preview`), the health score and the export's
 /// row selection (`workspace_export::training_rows`).
 pub fn assign_cluster(c: f64, ranges: &[(Option<f64>, Option<f64>)]) -> Option<usize> {
-    if !c.is_finite() {
-        return None;
-    }
-    let (lowest, highest) = outer_range_indices(ranges);
-    ranges.iter().enumerate().position(|(i, &(lo, hi))| {
-        let lo = if Some(i) == lowest { None } else { lo };
-        let hi = if Some(i) == highest { None } else { hi };
-        lo.is_none_or(|lo| c > lo) && hi.is_none_or(|hi| c <= hi)
-    })
+    ClusterAssigner::new(ranges).assign(c)
 }
 
-/// Indices of the lowest and highest range by `min` (`None` = -inf), stable
-/// on ties. `(None, None)` for fewer than two ranges (nothing is opened).
+/// [`assign_cluster`] for per-row loops: the outer ranges are found once.
+#[derive(Debug, Clone, Copy)]
+pub struct ClusterAssigner<'a> {
+    ranges: &'a [(Option<f64>, Option<f64>)],
+    lowest: Option<usize>,
+    highest: Option<usize>,
+}
+
+impl<'a> ClusterAssigner<'a> {
+    pub fn new(ranges: &'a [(Option<f64>, Option<f64>)]) -> Self {
+        let (lowest, highest) = outer_range_indices(ranges);
+        ClusterAssigner { ranges, lowest, highest }
+    }
+
+    pub fn assign(&self, c: f64) -> Option<usize> {
+        if !c.is_finite() {
+            return None;
+        }
+        self.ranges.iter().enumerate().position(|(i, &(lo, hi))| {
+            let lo = if Some(i) == self.lowest { None } else { lo };
+            let hi = if Some(i) == self.highest { None } else { hi };
+            lo.is_none_or(|lo| c > lo) && hi.is_none_or(|hi| c <= hi)
+        })
+    }
+}
+
+/// Indices of the lowest and highest range by `min` (`None` = -inf): the first
+/// of equal lows, the last of equal highs. `(None, None)` for fewer than two
+/// ranges (nothing is opened).
 fn outer_range_indices(ranges: &[(Option<f64>, Option<f64>)]) -> (Option<usize>, Option<usize>) {
     if ranges.len() < 2 {
         return (None, None);
     }
-    let mut idx: Vec<usize> = (0..ranges.len()).collect();
     let key = |i: usize| ranges[i].0.unwrap_or(f64::NEG_INFINITY);
-    idx.sort_by(|&a, &b| key(a).partial_cmp(&key(b)).unwrap_or(std::cmp::Ordering::Equal));
-    (idx.first().copied(), idx.last().copied())
+    let (mut lowest, mut highest) = (0, 0);
+    for i in 1..ranges.len() {
+        if key(i) < key(lowest) {
+            lowest = i;
+        }
+        if key(i) >= key(highest) {
+            highest = i;
+        }
+    }
+    (Some(lowest), Some(highest))
 }
 
 /// Validated parameters of a Clustering score.
@@ -1425,13 +1452,23 @@ fn same_fit(entry: &Arc<RelFit>, fit: &Weak<RelFit>) -> bool {
     std::ptr::eq(Arc::as_ptr(entry), fit.as_ptr())
 }
 
-/// Most-recent-first bounded cache of [`RelFit`]s. Lives INSIDE the session
+/// One cached fit. `last_used` can move under a read lock: a health preview
+/// only holds one.
+#[derive(Debug)]
+struct RelEntry {
+    key: String,
+    fit: Arc<RelFit>,
+    last_used: AtomicU64,
+}
+
+/// Bounded cache of [`RelFit`]s, least recently used evicted first. Lives INSIDE the session
 /// (`SessionData`), so a new `load_csv` drops it with the dataset it
 /// described; the caller-supplied key is `modelId + fingerprint`.
 #[derive(Debug)]
 pub struct RelCache {
-    /// Most recently used LAST.
-    entries: Vec<(String, Arc<RelFit>)>,
+    entries: Vec<RelEntry>,
+    /// Source of `last_used`.
+    clock: AtomicU64,
     /// Hourly predictions of the entries above (same key), see [`RelExtra`].
     extras: Vec<(String, Arc<RelExtra>)>,
     /// Cached fits whose LAST hourly-prediction attempt failed (sidecar error /
@@ -1466,6 +1503,7 @@ impl RelCache {
     pub fn new(max_entries: usize, max_bytes: usize) -> Self {
         RelCache {
             entries: Vec::new(),
+            clock: AtomicU64::new(0),
             extras: Vec::new(),
             failed: Vec::new(),
             max_entries: max_entries.max(1),
@@ -1498,7 +1536,7 @@ impl RelCache {
     }
 
     fn total_bytes(&self) -> usize {
-        self.entries.iter().map(|(_, f)| f.approx_bytes()).sum::<usize>()
+        self.entries.iter().map(|e| e.fit.approx_bytes()).sum::<usize>()
             + self.extras.iter().map(|(_, e)| e.approx_bytes()).sum::<usize>()
     }
 
@@ -1506,12 +1544,22 @@ impl RelCache {
     /// predictions and its failed marker, so the next `total_bytes()` does not
     /// count orphaned predictions (which would evict more fits than needed).
     fn evict_lru(&mut self) {
-        if self.entries.is_empty() {
+        let oldest = self
+            .entries
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, e)| e.last_used.load(Ordering::Relaxed))
+            .map(|(i, _)| i);
+        let Some(oldest) = oldest else {
             return;
-        }
-        let (key, _) = self.entries.remove(0);
+        };
+        let key = self.entries.remove(oldest).key;
         self.extras.retain(|(k, _)| k != &key);
         self.failed.retain(|f| f.key != key);
+    }
+
+    fn tick(&self) -> u64 {
+        self.clock.fetch_add(1, Ordering::Relaxed) + 1
     }
 
     /// Evict the least recently used entries (and their extras) until both
@@ -1531,13 +1579,14 @@ impl RelCache {
     /// [`RelCache::mark_extra_failed`] require, so work started for THIS fit
     /// never lands on a later fit under the same key.
     pub fn insert(&mut self, key: String, fit: RelFit) -> Arc<RelFit> {
-        self.entries.retain(|(k, _)| k != &key);
+        self.entries.retain(|e| e.key != key);
         // A new fit under the same key invalidates the old fit's hourly
         // predictions and its "last prediction attempt failed" marker.
         self.extras.retain(|(k, _)| k != &key);
         self.failed.retain(|f| f.key != key);
         let fit = Arc::new(fit);
-        self.entries.push((key, fit.clone()));
+        let last_used = AtomicU64::new(self.tick());
+        self.entries.push(RelEntry { key, fit: fit.clone(), last_used });
         self.enforce_bounds();
         fit
     }
@@ -1545,7 +1594,7 @@ impl RelCache {
     /// Is `fit` still the fit cached under `key` (not evicted, not replaced by
     /// a re-train under the same key)?
     pub fn is_current(&self, key: &str, fit: &Weak<RelFit>) -> bool {
-        self.entries.iter().any(|(k, f)| k == key && same_fit(f, fit))
+        self.entries.iter().any(|e| e.key == key && same_fit(&e.fit, fit))
     }
 
     /// Remember that the hourly-prediction attempt for the cached fit `key`
@@ -1624,19 +1673,19 @@ impl RelCache {
         let Some(pos) = self
             .entries
             .iter()
-            .position(|(k, f)| k == key && same_fit(f, fit))
+            .position(|e| e.key == key && same_fit(&e.fit, fit))
         else {
             return false;
         };
         if points.len() != predicted.len()
-            || (!points.is_empty() && points.n_pred() != self.entries[pos].1.predictors.len())
+            || (!points.is_empty() && points.n_pred() != self.entries[pos].fit.predictors.len())
         {
             return false;
         }
-        // Touch (most recently used = last), so eviction below never picks it.
-        let touched = self.entries.remove(pos);
-        let fit_bytes = touched.1.approx_bytes();
-        self.entries.push(touched);
+        // Most recently used, so eviction below never picks it.
+        let tick = self.tick();
+        self.entries[pos].last_used.store(tick, Ordering::Relaxed);
+        let fit_bytes = self.entries[pos].fit.approx_bytes();
 
         let old = self
             .extras
@@ -1657,8 +1706,8 @@ impl RelCache {
         self.extras.push((key.to_string(), Arc::new(merged)));
         self.failed.retain(|f| f.key != key);
         // Evict the least recently used OTHER fits (each with its own
-        // predictions) until the budget holds (the merged key is last, so it is
-        // never removed; the check above guarantees it fits once it is alone).
+        // predictions) until the budget holds (the merged key is the newest, so
+        // it is never removed; the check above guarantees it fits once it is alone).
         while self.entries.len() > 1 && self.total_bytes() > self.max_bytes {
             self.evict_lru();
         }
@@ -1666,21 +1715,16 @@ impl RelCache {
         true
     }
 
-    /// Look up and mark as most recently used.
-    pub fn get(&mut self, key: &str) -> Option<Arc<RelFit>> {
-        let pos = self.entries.iter().position(|(k, _)| k == key)?;
-        let e = self.entries.remove(pos);
-        let fit = e.1.clone();
-        self.entries.push(e);
-        Some(fit)
+    /// Look up and mark as most recently used (works under a read lock).
+    pub fn get(&self, key: &str) -> Option<Arc<RelFit>> {
+        let e = self.entries.iter().find(|e| e.key == key)?;
+        e.last_used.store(self.tick(), Ordering::Relaxed);
+        Some(e.fit.clone())
     }
 
-    /// Look up without touching recency (usable under a read lock).
+    /// Look up without touching recency.
     pub fn peek(&self, key: &str) -> Option<Arc<RelFit>> {
-        self.entries
-            .iter()
-            .find(|(k, _)| k == key)
-            .map(|(_, f)| f.clone())
+        self.entries.iter().find(|e| e.key == key).map(|e| e.fit.clone())
     }
 }
 
@@ -2264,6 +2308,47 @@ mod tests {
         assert_eq!(assign_cluster(15.0, &shuffled), Some(0));
     }
 
+    /// The sort this replaced, as the reference for the allocation-free scan.
+    fn outer_by_stable_sort(r: &[(Option<f64>, Option<f64>)]) -> (Option<usize>, Option<usize>) {
+        if r.len() < 2 {
+            return (None, None);
+        }
+        let key = |i: usize| r[i].0.unwrap_or(f64::NEG_INFINITY);
+        let mut idx: Vec<usize> = (0..r.len()).collect();
+        idx.sort_by(|&a, &b| key(a).partial_cmp(&key(b)).unwrap());
+        (idx.first().copied(), idx.last().copied())
+    }
+
+    #[test]
+    fn outer_ranges_match_the_stable_sort_including_ties_and_open_mins() {
+        let mins = [None, Some(-1.0), Some(0.0), Some(0.0), Some(5.0)];
+        let mut cases: Vec<Vec<(Option<f64>, Option<f64>)>> = vec![vec![], vec![(None, None)]];
+        for a in mins {
+            for b in mins {
+                cases.push(vec![(a, None), (b, None)]);
+                for c in mins {
+                    cases.push(vec![(a, None), (b, None), (c, None)]);
+                    for d in mins {
+                        cases.push(vec![(a, None), (b, None), (c, None), (d, None)]);
+                    }
+                }
+            }
+        }
+        for r in cases {
+            assert_eq!(outer_range_indices(&r), outer_by_stable_sort(&r), "{r:?}");
+        }
+    }
+
+    #[test]
+    fn the_assigner_answers_like_assign_cluster() {
+        let r = [(Some(10.0), Some(20.0)), (None, Some(10.0)), (Some(20.0), Some(30.0))];
+        let assigner = ClusterAssigner::new(&r);
+        for c in [-1e9, 0.0, 10.0, 10.5, 20.0, 25.0, 1e9, f64::NAN, f64::INFINITY] {
+            assert_eq!(assigner.assign(c), assign_cluster(c, &r), "{c}");
+        }
+        assert_eq!(assigner.assign(1e9), Some(2), "the outer edge stays open");
+    }
+
     #[test]
     fn assign_cluster_keeps_both_bounds_of_a_single_range() {
         let one = [(Some(0.0), Some(10.0))];
@@ -2731,6 +2816,25 @@ mod tests {
         assert!(c.peek("a").is_none() && c.peek_extra("a").is_none());
         assert!(c.peek("b").is_some(), "b must not pay for a's orphaned predictions");
         assert!(c.peek("c").is_some() && c.peek_extra("c").is_some());
+    }
+
+    #[test]
+    fn a_fit_read_through_a_shared_reference_survives_over_a_newer_unused_one() {
+        let mut c = RelCache::new(2, usize::MAX);
+        c.insert("trained-first".into(), fit(5, "T"));
+        c.insert("trained-second".into(), fit(5, "T"));
+        // Only `&self`: what a health preview holds under the session's read lock.
+        let shared: &RelCache = &c;
+        assert!(shared.get("trained-first").is_some());
+        c.insert("trained-third".into(), fit(5, "T"));
+        assert!(c.peek("trained-first").is_some(), "used last: kept");
+        assert!(c.peek("trained-second").is_none(), "the least recently used goes, not the first trained");
+        // peek is not a use.
+        assert!(c.peek("trained-first").is_some());
+        assert!(c.get("trained-third").is_some());
+        c.insert("fourth".into(), fit(5, "T"));
+        assert!(c.peek("trained-first").is_none());
+        assert!(c.peek("trained-third").is_some());
     }
 
     #[test]

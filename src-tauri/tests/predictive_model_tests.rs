@@ -6,12 +6,10 @@
 //!   1. `clustering::fit_single_cluster_ellipse` end-to-end via the public
 //!      module surface (parity check on a hand-prepared 2D Gaussian).
 //!   2. JSON-contract shape verification for the sidecar response
-//!      (`preview_relationship` / `train_relationship`). The harness
+//!      (`preview_relationship`). The harness
 //!      simulates a sidecar response payload and checks that the field
 //!      names + types match the wizard contract.
-//!   3. Round-trip JSON serialisation of the public structs
-//!      `IndividualModelInfo`, `ClusteringPreview`, `ClusteringModelInfo`,
-//!      `RelationshipTrainResult` (catches accidental field renames).
+//!   3. JSON field names of the public ellipse fit (catches accidental renames).
 
 use serde::{Deserialize, Serialize};
 use tauri_app_lib::clustering;
@@ -97,34 +95,9 @@ fn preview_relationship_no_legacy_fields_required() {
     assert_eq!(parsed.r2_per_step.len(), 0);
 }
 
-#[derive(Debug, Deserialize)]
-struct TrainRelationshipResponse {
-    r2: f64,
-    rmse2: f64,
-    model_path: String,
-}
-
-#[test]
-fn train_relationship_response_shape_parses_cleanly() {
-    let payload = r#"{
-        "request": "SaveThisSensor/relationship",
-        "r2": 0.94,
-        "rmse2": 0.18,
-        "predicted": [1.0, 2.0],
-        "residual": [0.0, 0.0],
-        "model_path": "/tmp/output/T/REL_MODEL_P1+P2_T.pkl"
-    }"#;
-    let parsed: TrainRelationshipResponse = serde_json::from_str(payload).expect("parse");
-    assert!((parsed.r2 - 0.94).abs() < 1e-9);
-    assert!((parsed.rmse2 - 0.18).abs() < 1e-9);
-    assert!(parsed.model_path.ends_with(".pkl"));
-}
-
 #[test]
 fn sidecar_error_envelope_parses_cleanly() {
-    // The sidecar wraps exceptions as `{"error": ..., "trace": ...}`. The
-    // train_relationship_model command relies on the `error` field being
-    // an `Option<String>`.
+    // The sidecar wraps exceptions as `{"error": ..., "trace": ...}`.
     let payload = r#"{"error": "boom", "trace": "Traceback ..."}"#;
     #[derive(Debug, Deserialize)]
     struct Env {
@@ -137,8 +110,7 @@ fn sidecar_error_envelope_parses_cleanly() {
 }
 
 // ────────────────────────────────────────────────────────────────────────
-// 3. Public struct round-trip — IndividualModelInfo / ClusteringPreview
-//    etc. flow back to TS via Tauri. A round-trip test catches accidental
+// 3. The ellipse fit flows back to TS via Tauri. This catches accidental
 //    field renames (which would silently break the TypeScript bindings).
 // ────────────────────────────────────────────────────────────────────────
 
