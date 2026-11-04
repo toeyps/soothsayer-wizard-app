@@ -1835,13 +1835,6 @@ export default function BuildModelWindow() {
      *  stiffness / training scope, so it does not belong in the draft / Save-
      *  changes flow. Same immediate-write shape as `changeCategory` above — a
      *  direct `persist()` call, not a `patchDraft`. */
-    const changeScatterX = (modelId: string, xSensor: string) => {
-        void persist((models, groups) => ({
-            groups,
-            models: models.map(x => x.id === modelId ? { ...x, scatterXSensor: xSensor } : x),
-        }));
-    };
-
     /** The detail header's category control: writes EVERY model of that
      *  sensor in EVERY failure group, and saves instantly (no Save button). */
     const changeCategory = async (key: string, cat: ModelCategory) => {
@@ -2656,11 +2649,6 @@ export default function BuildModelWindow() {
     const activeFingerprint = activeEffective ? computeTrainFingerprint(activeEffective, gateFg) : null;
     const activeStale = activeEffective ? isModelStaleFor(activeEffective, gateFg, specialRecipes) : false;
     const activeTrainEntry = activeModel ? trainResults[activeModel.id] : undefined;
-    const activeFitKey = activeEffective
-        && activeEffective.kind === 'relationship'
-        && activeEffective.scatterXSensor
-        && activeEffective.predictorSensors.includes(activeEffective.scatterXSensor)
-        ? activeEffective.scatterXSensor : undefined;
     // Only a model that was trained, is still current, has nothing blocking it and
     // whose last run did not fail is asked for a preview. A Relationship preview
     // ALSO needs its fit in Rust's cache — the Train / reopen run that filled it
@@ -2682,7 +2670,6 @@ export default function BuildModelWindow() {
         // model stale.
         setPoints: activeModel ? setPointsOf(activeModel) : null,
         enabled: healthReady,
-        xPredictor: activeFitKey,
         expectedGeneration: generation,
         revision: healthRevision,
     });
@@ -3000,7 +2987,6 @@ export default function BuildModelWindow() {
         runDismiss: () => void;
         runCloseWindow: () => void;
         runNotStarted: () => void;
-        fitX: (tag: string) => void;
         compare: () => void;
         spChange: (next: HealthSetPoints, commit?: boolean) => void;
         spCommit: () => void;
@@ -3011,7 +2997,6 @@ export default function BuildModelWindow() {
     const onRunDismiss = useCallback(() => actionsRef.current?.runDismiss(), []);
     const onRunCloseWindow = useCallback(() => actionsRef.current?.runCloseWindow(), []);
     const onRunNotStarted = useCallback(() => actionsRef.current?.runNotStarted(), []);
-    const onFitX = useCallback((tag: string) => actionsRef.current?.fitX(tag), []);
     const onCompare = useCallback(() => actionsRef.current?.compare(), []);
     const onSpChange = useCallback((next: HealthSetPoints, commit?: boolean) => actionsRef.current?.spChange(next, commit), []);
     const onSpCommit = useCallback(() => actionsRef.current?.spCommit(), []);
@@ -3178,7 +3163,6 @@ export default function BuildModelWindow() {
         runDismiss: () => { queue.dismiss(); setTrainAllView(v => (v === 'run' ? null : v)); },
         runCloseWindow: () => { void closeNow(); },
         runNotStarted: () => retryModels(queue.summary?.notStartedIds ?? []),
-        fitX: (tag: string) => { if (activeModel) changeScatterX(activeModel.id, tag); },
         // One sidecar call at a time: no Sub-models comparison while a run is active.
         compare: () => { if (!queueRef.current.isRunningNow()) openCompare(); },
         spChange: (next: HealthSetPoints, commit?: boolean) => { if (activeModel) changeSetPoints(activeModel, next, commit); },
@@ -4196,7 +4180,7 @@ export default function BuildModelWindow() {
             // The last charts of this session (if any) stay up under "Out of date".
             return healthPreview.data ? (
                 <div data-testid="results-chart" data-stale="true">
-                    <ModelFitPage {...props} data={healthPreview.data} onXPredictorChange={onFitX} onCompare={onCompare} compareDisabledReason={queue.isRunning ? TRAIN_RUN_ACTIVE_REASON : undefined} trainDaysEstimate={trainDaysEstimateFor(m)} />
+                    <ModelFitPage {...props} data={healthPreview.data} onCompare={onCompare} compareDisabledReason={queue.isRunning ? TRAIN_RUN_ACTIVE_REASON : undefined} trainDaysEstimate={trainDaysEstimateFor(m)} />
                 </div>
             ) : board('results-stale', 'plain', 'Out of date',
                 <>Settings or running condition changed — train it again with {trainSensorLink('board-train-sensor')} to see the charts.</>);
@@ -4220,7 +4204,7 @@ export default function BuildModelWindow() {
         }
         return (
             <div data-testid="results-chart">
-                <ModelFitPage {...props} data={healthPreview.data} onXPredictorChange={onFitX} onCompare={onCompare} compareDisabledReason={queue.isRunning ? TRAIN_RUN_ACTIVE_REASON : undefined} trainDaysEstimate={trainDaysEstimateFor(m)} />
+                <ModelFitPage {...props} data={healthPreview.data} onCompare={onCompare} compareDisabledReason={queue.isRunning ? TRAIN_RUN_ACTIVE_REASON : undefined} trainDaysEstimate={trainDaysEstimateFor(m)} />
             </div>
         );
     };

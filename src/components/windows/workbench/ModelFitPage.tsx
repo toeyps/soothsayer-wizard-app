@@ -1,7 +1,6 @@
 import { memo } from 'react';
 import { samePageProps } from './pageMemo';
 import { LayoutGrid } from 'lucide-react';
-import { SensorPickerSingle } from '../../sensor/SensorPicker';
 import { SensorInline } from '../../sensor/SensorLabel';
 import { PairSub } from './PairSub';
 import { useSensorLookup } from '../../sensor/sensorInfo';
@@ -38,7 +37,7 @@ import { shareText } from './HealthScorePage';
  *
  *   Individual   tiles Mean · SD · Outside ±3SD, then Sensor value over time
  *                (±1SD/±3SD) and Distribution, both full width
- *   Relationship tiles R² · RMSE · Residual SD, then Fit (+ X selector, Compare
+ *   Relationship tiles R² · RMSE · Residual SD, then Fit (+ Compare
  *                predictors) · Target vs predicted · Residual over time (±2RMSE)
  *                (no residual distribution, no side histogram — by design)
  *   Clustering   tiles Clusters · In a cluster · Inside 3× SD, then the scatter +
@@ -89,9 +88,6 @@ import { shareText } from './HealthScorePage';
 export interface ModelFitPageProps extends WorkbenchPageProps {
     /** The data to draw. The container only renders this page once it exists. */
     data: HealthPreview;
-    /** Relationship: the user picked another predictor for the Fit chart's X
-     *  axis (written immediately by the container as `scatterXSensor`). */
-    onXPredictorChange: (tag: string) => void;
     /** Relationship: open the Sub-models comparison modal. */
     onCompare: () => void;
     /** Why "Compare predictors" cannot run now (a training run is active: one
@@ -218,28 +214,7 @@ function ModelFitPage(props: ModelFitPageProps) {
                         unit ? undefined : lookup(model.targetSensor ?? ''),
                     ) : null}
                     empty="No fit to draw"
-                    extra={<>
-                        {fit && fit.predictors.length > 0 && (
-                            <span className="wb2-xsel" data-testid="fit-x-selector">
-                                X:
-                                {/* The compact single picker, scoped to this
-                                    model's predictors. With one predictor it is disabled but
-                                    still shows its value, and the tooltip gives the reason. */}
-                                <span className="wb2-xpk" title={fit.predictors.length === 1 ? 'Only one predictor — nothing else to plot on X' : undefined}>
-                                    <SensorPickerSingle
-                                        compact
-                                        alignRight
-                                        sensors={fit.predictors}
-                                        value={fit.x_sensor}
-                                        onSelect={(t) => { if (t) props.onXPredictorChange(t); }}
-                                        disabled={fit.predictors.length === 1}
-                                        disabledReason={fit.predictors.length === 1 ? 'Only one predictor — nothing else to plot on X' : undefined}
-                                        scope={<>Predictors of this model · {fit.predictors.length}</>}
-                                        ariaLabel="X sensor"
-                                    />
-                                </span>
-                            </span>
-                        )}
+                    extra={
                         <button
                             type="button"
                             className="rcx-btn rcx-btn--sm"
@@ -250,7 +225,7 @@ function ModelFitPage(props: ModelFitPageProps) {
                         >
                             <LayoutGrid size={12} aria-hidden="true" />Compare predictors
                         </button>
-                    </>}
+                    }
                 />
                 <ChartCard
                     id="tvp"
