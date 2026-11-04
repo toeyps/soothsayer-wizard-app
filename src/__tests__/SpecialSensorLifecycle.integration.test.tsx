@@ -119,6 +119,11 @@ vi.mock('../workspaceManager', () => {
     return {
         saveWorkspaceData: async (state: any) => { h.disk.set(state.id, clone(state)); },
         loadWorkspaceData: async (id: string) => clone(h.disk.get(id) ?? null),
+        saveWorkspaceFrom: async (id: string, compute: (disk: any) => any) => {
+            const next = compute(clone(h.disk.get(id) ?? null));
+            if (next) h.disk.set(next.id, clone(next));
+            return next;
+        },
         updateWorkspaceData: async (id: string, patch: (s: any) => any) => {
             const next = patch(clone(h.disk.get(id) ?? { id }));
             h.disk.set(id, clone(next));

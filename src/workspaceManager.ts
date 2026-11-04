@@ -121,65 +121,69 @@ async function writeWorkspaceJsonAtomically(filePath: string, json: string): Pro
     }
 }
 
-async function writeWorkspaceFile(state: WorkspaceState): Promise<void> {
+async function writeWorkspaceFileOrThrow(state: WorkspaceState): Promise<void> {
     debugLog("Saving Workspace Data for:", state.id);
+    const workspacesDir = 'workspaces';
+
+    // Ensure directory exists
+    const dirExists = await exists(workspacesDir, { baseDir: BaseDirectory.AppData });
+    if (!dirExists) {
+        debugLog("Creating workspaces directory in AppData...");
+        await mkdir(workspacesDir, { recursive: true, baseDir: BaseDirectory.AppData });
+    }
+
+    const filePath = `${workspacesDir}/${state.id}.json`;
+    debugLog("Writing workspace JSON to:", filePath);
+
+    // Serialize state
+    const json = JSON.stringify(state);
+    await writeWorkspaceJsonAtomically(filePath, json);
+
+    // Update recent workspaces list
+    let recent = await getRecentWorkspaces();
+    const meta: WorkspaceMetadata = {
+        id: state.id,
+        name: state.name,
+        description: state.description,
+        lastModified: Date.now(),
+        filePath
+    };
+
+    const existingIdx = recent.findIndex(w => w.id === state.id);
+    // The recent-project chip's Failure
+    // Group count + colours. Derived from the groups being written HERE —
+    // every save and every `updateWorkspaceData` (Dashboard autosave and FG
+    // edits, Build Model window writes, rename, duplicate) funnels through
+    // this function and already rewrites this entry, so the chip can never
+    // go stale and keeping it current costs no extra disk write. A state
+    // with no Failure Group slice keeps the entry's previous values (so a
+    // project saved before these fields existed stays `undefined` = no
+    // chip, rather than turning into a fake "No failure groups").
+    const fgMeta = failureGroupMetaFields(state.failureGroupState?.groups);
+    const previous = existingIdx >= 0 ? recent[existingIdx] : undefined;
+    if (fgMeta) {
+        Object.assign(meta, fgMeta);
+    } else if (previous?.failureGroupCount !== undefined) {
+        meta.failureGroupCount = previous.failureGroupCount;
+        if (previous.failureGroupNos !== undefined) meta.failureGroupNos = previous.failureGroupNos;
+    }
+    if (existingIdx >= 0) {
+        recent[existingIdx] = meta;
+    } else {
+        recent.unshift(meta);
+    }
+
+    // Keep top 10, sort by most recent
+    recent = recent.sort((a, b) => b.lastModified - a.lastModified).slice(0, 10);
+
+    await saveRecentWorkspaces(recent);
+
+    debugLog("Workspace save successful.");
+}
+
+async function writeWorkspaceFile(state: WorkspaceState): Promise<void> {
     try {
-        const workspacesDir = 'workspaces';
-
-        // Ensure directory exists
-        const dirExists = await exists(workspacesDir, { baseDir: BaseDirectory.AppData });
-        if (!dirExists) {
-            debugLog("Creating workspaces directory in AppData...");
-            await mkdir(workspacesDir, { recursive: true, baseDir: BaseDirectory.AppData });
-        }
-
-        const filePath = `${workspacesDir}/${state.id}.json`;
-        debugLog("Writing workspace JSON to:", filePath);
-
-        // Serialize state
-        const json = JSON.stringify(state);
-        await writeWorkspaceJsonAtomically(filePath, json);
-
-        // Update recent workspaces list
-        let recent = await getRecentWorkspaces();
-        const meta: WorkspaceMetadata = {
-            id: state.id,
-            name: state.name,
-            description: state.description,
-            lastModified: Date.now(),
-            filePath
-        };
-
-        const existingIdx = recent.findIndex(w => w.id === state.id);
-        // The recent-project chip's Failure
-        // Group count + colours. Derived from the groups being written HERE —
-        // every save and every `updateWorkspaceData` (Dashboard autosave and FG
-        // edits, Build Model window writes, rename, duplicate) funnels through
-        // this function and already rewrites this entry, so the chip can never
-        // go stale and keeping it current costs no extra disk write. A state
-        // with no Failure Group slice keeps the entry's previous values (so a
-        // project saved before these fields existed stays `undefined` = no
-        // chip, rather than turning into a fake "No failure groups").
-        const fgMeta = failureGroupMetaFields(state.failureGroupState?.groups);
-        const previous = existingIdx >= 0 ? recent[existingIdx] : undefined;
-        if (fgMeta) {
-            Object.assign(meta, fgMeta);
-        } else if (previous?.failureGroupCount !== undefined) {
-            meta.failureGroupCount = previous.failureGroupCount;
-            if (previous.failureGroupNos !== undefined) meta.failureGroupNos = previous.failureGroupNos;
-        }
-        if (existingIdx >= 0) {
-            recent[existingIdx] = meta;
-        } else {
-            recent.unshift(meta);
-        }
-
-        // Keep top 10, sort by most recent
-        recent = recent.sort((a, b) => b.lastModified - a.lastModified).slice(0, 10);
-
-        await saveRecentWorkspaces(recent);
-
-        debugLog("Workspace save successful.");
+        await writeWorkspaceFileOrThrow(state);
     } catch (e) {
         console.error("CRITICAL: Failed to save workspace:", e);
     }
@@ -227,6 +231,24 @@ export async function updateWorkspaceData(
         // `current` (what is on disk), never a caller's possibly stale mirror.
         const next = applyIncompleteRule(current, patch(current));
         await writeWorkspaceFile(next);
+        return next;
+    });
+}
+
+/**
+ * One queued read-then-write: `compute` gets what is on disk and returns the
+ * state to write, or null to write nothing. A write queued in this window can
+ * never land between the read and the write. Rejects when the file exists but
+ * cannot be read (`WorkspaceReadError`) or the write fails. Returns what was
+ * written, else null.
+ */
+export async function saveWorkspaceFrom(
+    id: string,
+    compute: (disk: WorkspaceState | null) => WorkspaceState | null,
+): Promise<WorkspaceState | null> {
+    return enqueue(async () => {
+        const next = compute(await readWorkspaceFile(id));
+        if (next) await writeWorkspaceFileOrThrow(next);
         return next;
     });
 }

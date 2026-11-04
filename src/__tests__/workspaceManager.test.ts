@@ -574,6 +574,70 @@ describe('loadWorkspaceData', () => {
     });
 });
 
+describe('saveWorkspaceFrom', () => {
+    it('an update queued while its read is in flight lands after the write, so it is not overwritten', async () => {
+        const files = new Map<string, string>([['workspaces/ws1.json', JSON.stringify({ id: 'ws1', name: 'old', failureGroupState: { groups: [], models: [] } })]]);
+        mockExists.mockImplementation(async (p: string) => files.has(p) || p === 'workspaces');
+        mockReadTextFile.mockImplementation(async (p: string) => files.get(p) ?? '');
+        mockWriteTextFile.mockImplementation(async (p: string, c: string) => { files.set(p, c); });
+        mockRename.mockImplementation(async (a: string, b: string) => { files.set(b, files.get(a) ?? ''); files.delete(a); });
+        const { saveWorkspaceFrom, updateWorkspaceData } = await freshModule();
+
+        const save = saveWorkspaceFrom('ws1', disk => ({ ...disk!, name: 'from autosave' }));
+        const update = updateWorkspaceData('ws1', prev => ({ ...prev, description: 'from the update' }));
+        await Promise.all([save, update]);
+
+        const onDisk = JSON.parse(files.get('workspaces/ws1.json') ?? '{}');
+        expect(onDisk.name).toBe('from autosave');
+        expect(onDisk.description).toBe('from the update');
+    });
+
+    it('writes nothing when compute returns null', async () => {
+        const files = new Map<string, string>([['workspaces/ws1.json', JSON.stringify({ id: 'ws1', name: 'old' })]]);
+        mockExists.mockImplementation(async (p: string) => files.has(p));
+        mockReadTextFile.mockImplementation(async (p: string) => files.get(p) ?? '');
+        const { saveWorkspaceFrom } = await freshModule();
+        await expect(saveWorkspaceFrom('ws1', () => null)).resolves.toBeNull();
+        expect(mockWriteTextFile).not.toHaveBeenCalled();
+    });
+});
+
+describe('saveWorkspaceFrom failures', () => {
+    const readable = () => {
+        mockExists.mockResolvedValue(true);
+        mockReadTextFile.mockResolvedValue(JSON.stringify({ id: 'ws1', name: 'A' }));
+    };
+
+    it('rejects when the write fails (temp file and direct write), unlike saveWorkspaceData', async () => {
+        readable();
+        mockWriteTextFile.mockRejectedValue(new Error('disk full'));
+        const { saveWorkspaceFrom, saveWorkspaceData } = await freshModule();
+        await expect(saveWorkspaceFrom('ws1', d => d)).rejects.toThrow('disk full');
+        const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+        await expect(saveWorkspaceData({ id: 'ws1' } as any)).resolves.toBeUndefined();
+        err.mockRestore();
+        mockWriteTextFile.mockReset();
+        mockWriteTextFile.mockResolvedValue(undefined);
+    });
+
+    it('rejects with WorkspaceReadError on an unreadable file: compute never runs, nothing is written', async () => {
+        mockExists.mockResolvedValue(true);
+        mockReadTextFile.mockResolvedValue('{ not json');
+        const { saveWorkspaceFrom, WorkspaceReadError } = await freshModule();
+        const compute = vi.fn();
+        await expect(saveWorkspaceFrom('ws1', compute)).rejects.toBeInstanceOf(WorkspaceReadError);
+        expect(compute).not.toHaveBeenCalled();
+        expect(mockWriteTextFile).not.toHaveBeenCalled();
+    });
+
+    it('a compute that throws rejects and does not block the next queued write', async () => {
+        readable();
+        const { saveWorkspaceFrom } = await freshModule();
+        await expect(saveWorkspaceFrom('ws1', () => { throw new Error('boom'); })).rejects.toThrow('boom');
+        await expect(saveWorkspaceFrom('ws1', d => d)).resolves.toMatchObject({ id: 'ws1' });
+    });
+});
+
 describe('updateWorkspaceData', () => {
     it('returns null without saving when the workspace does not exist', async () => {
         mockStoreGet.mockResolvedValue([]);

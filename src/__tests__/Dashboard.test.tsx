@@ -203,6 +203,11 @@ vi.mock('../workspaceManager', () => ({
     saveWorkspaceData: (state: unknown) => mockSaveWorkspaceData(state),
     updateWorkspaceData: (id: string, patch: any) => mockUpdateWorkspaceData(id, patch),
     loadWorkspaceData: (id: string) => mockLoadWorkspaceData(id),
+    saveWorkspaceFrom: async (id: string, compute: (disk: any) => any) => {
+        const next = compute(await mockLoadWorkspaceData(id));
+        if (next) await mockSaveWorkspaceData(next);
+        return next;
+    },
 }));
 
 // A sensor-kind toggle is now computed against what is on DISK (so a stale
@@ -341,8 +346,9 @@ describe('Dashboard', () => {
         let disk: any = { id: initial.id, failureGroupState: initial.failureGroupState };
         mockUpdateWorkspaceData.mockImplementation(async (_id: string, patch: (s: any) => any) => { disk = patch(disk); return disk; });
         mockLoadWorkspaceData.mockImplementation(async () => disk);
+        mockSaveWorkspaceData.mockImplementation(async (st: any) => { disk = structuredClone(st); });
         renderDashboard({ initialState: initial });
-        // Let the on-mount autosave land so the "already on disk" payload is primed.
+        // Let the on-mount autosave land.
         await act(async () => { vi.advanceTimersByTime(300); });
         mockSaveWorkspaceData.mockClear();
 
@@ -354,6 +360,57 @@ describe('Dashboard', () => {
 
         await act(async () => { vi.advanceTimersByTime(300); });
         expect(mockSaveWorkspaceData).not.toHaveBeenCalled();
+    });
+
+    describe('a failure-group write does not stand in for the autosave', () => {
+        const openOnDisk = async (extra: Record<string, unknown> = {}) => {
+            vi.useFakeTimers();
+            const initial = makeInitialState({ failureGroupState: { groups: [{ no: 1, name: 'Group A' }], models: [] }, ...extra });
+            let disk: any = structuredClone(initial);
+            mockUpdateWorkspaceData.mockImplementation(async (_id: string, patch: (s: any) => any) => {
+                // The write lands after React has committed the edit, as in the app.
+                await new Promise(r => setTimeout(r, 5));
+                disk = patch(disk);
+                return disk;
+            });
+            mockLoadWorkspaceData.mockImplementation(async () => structuredClone(disk));
+            mockSaveWorkspaceData.mockImplementation(async (st: any) => { disk = structuredClone(st); });
+            renderDashboard({ initialState: initial });
+            await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+            mockSaveWorkspaceData.mockClear();
+            return { initial, disk: () => disk };
+        };
+
+        it('a selection made just before a failure-group toggle still reaches disk', async () => {
+            const { disk } = await openOnDisk();
+            act(() => { fireEvent.click(screen.getByText('select-tag1')); });
+            await act(async () => { await vi.advanceTimersByTimeAsync(50); });
+            act(() => { fireEvent.click(screen.getByText('toggle-group')); });
+            await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+            expect(disk().selectedSensors).toContain('TAG1');
+            expect(disk().failureGroupState.models).toHaveLength(1);
+        });
+
+        it('a special-sensor rename reaches disk: recipes, metadata and selection, not only the models', async () => {
+            const { initial, disk } = await openOnDisk({
+                selectedSensors: ['CALC1'], visibleSensors: ['CALC1'],
+                specialSensorRecipes: [{ kind: 'formula', tag: 'CALC1', formula: '$TAG1*2' }],
+                extraSensorMetadata: [{ tag: 'CALC1', description: 'D', unit: '', component: '' }],
+            });
+            await act(async () => {
+                for (const cb of listenCallbacks['rename-special-sensor'] ?? []) {
+                    cb({ payload: {
+                        workspaceId: initial.id, oldTag: 'CALC1', newTag: 'CALC9',
+                        recipe: { kind: 'formula', tag: 'CALC9', formula: '$TAG1*2' },
+                        metadata: { tag: 'CALC9', description: 'D', unit: '', component: '' },
+                        updatedRecipes: [],
+                    } });
+                }
+            });
+            await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+            expect(disk().specialSensorRecipes.map((r: any) => r.tag)).toEqual(['CALC9']);
+            expect(disk().selectedSensors).toEqual(['CALC9']);
+        });
     });
 
     it('re-reads failureGroupState fresh from disk before an autosave, so a Dashboard-only edit can never clobber a fresher write another window already made (2026-09-18 data-loss fix: the "failure-group-state-changed" broadcast is best-effort cross-window IPC, not a guarantee this window\'s local mirror is current -- a user reported all their Failure Groups gone after nothing more than closing and reopening the app, no rapid clicking needed)', async () => {
@@ -434,7 +491,7 @@ describe('Dashboard', () => {
         act(() => { fireEvent.click(screen.getByText('select-tag1')); });
         await act(async () => { await vi.advanceTimersByTimeAsync(300); });
         expect(mockSaveWorkspaceData).not.toHaveBeenCalled();
-        expect(warn).toHaveBeenCalledWith(expect.stringContaining('Autosave skipped'), expect.anything());
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining('Autosave failed'), expect.anything());
 
         // The file reads again: the next change saves -- with what is ON DISK.
         mockLoadWorkspaceData.mockResolvedValue({ failureGroupState: onDisk });
@@ -2809,26 +2866,15 @@ describe('Dashboard', () => {
                         cb({ payload: { workspaceId: 'ws1', recipe: after, metadata: { tag: 'CALC1', description: 'x5', unit: '', component: '' }, recomputed: ['CALC1'] } });
                     }
                 });
-                await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+                // Separate act() scopes: state only flushes between them, so a re-arm would show.
+                for (let i = 0; i < 8; i++) {
+                    await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+                }
                 expect(mockSaveWorkspaceData).toHaveBeenCalledTimes(1);
                 expect(mockEmit).not.toHaveBeenCalledWith('failure-group-state-changed', expect.anything());
                 fireEvent.click(screen.getByText('Failure Groups'));
                 expect(last(fgPanelProps).fgModels.find((m: any) => m.id === 'm-calc').status).toBe(true);
                 warn.mockRestore();
-            });
-
-            it('a write that fails SILENTLY (saveWorkspaceData only logs) re-arms nothing: one write, at most one broadcast', async () => {
-                await open();
-                // The real saveWorkspaceData swallows a failed write: it resolves, disk is unchanged.
-                mockSaveWorkspaceData.mockImplementation(async () => {});
-                await act(async () => {
-                    for (const cb of listenCallbacks['update-special-sensor'] ?? []) {
-                        cb({ payload: { workspaceId: 'ws1', recipe: after, metadata: { tag: 'CALC1', description: 'x5', unit: '', component: '' }, recomputed: ['CALC1'] } });
-                    }
-                });
-                await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
-                expect(mockSaveWorkspaceData).toHaveBeenCalledTimes(1);
-                expect(mockEmit.mock.calls.filter(c => c[0] === 'failure-group-state-changed').length).toBeLessThanOrEqual(1);
             });
 
             it('passes the recipes to the Failure Groups panel (its status dots judge a changed formula as out of date)', async () => {

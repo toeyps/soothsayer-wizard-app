@@ -183,6 +183,16 @@ vi.mock('../workspaceManager', () => {
             if (g) { g.armed = false; await g.promise; }
             return clone(h.disk.get(id) ?? null);
         },
+        saveWorkspaceFrom: async (id: string, compute: (disk: any) => any) => {
+            const g = h.diskGates.find(x => x.armed && x.id === id);
+            if (g) { g.armed = false; await g.promise; }
+            const next = compute(clone(h.disk.get(id) ?? null));
+            if (next) {
+                h.writes.push({ id: next.id, state: clone(next) });
+                h.disk.set(next.id, clone(next));
+            }
+            return next;
+        },
         updateWorkspaceData: async (id: string, patch: (s: any) => any) => {
             const next = patch(clone(h.disk.get(id) ?? { id }));
             h.writes.push({ id, state: clone(next) });

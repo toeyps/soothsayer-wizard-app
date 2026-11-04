@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect, useDeferredValue, useRef, forwardRef, use
 import { emit, UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import Split from 'split.js';
-import { saveWorkspaceData, updateWorkspaceData, loadWorkspaceData } from '../../workspaceManager';
+import { saveWorkspaceFrom, updateWorkspaceData } from '../../workspaceManager';
 import { withFailureGroupState, restoreDeletedModel } from '../../utils/failureGroupState';
 import { modelsOnlyIn, modelSensorKey, sensorCategory } from '../../utils/modelGrouping';
 import { seedHealthSetPoints } from '../../utils/healthSetPoints';
@@ -412,16 +412,6 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         return rest;
     });
 
-    // Serialized WorkspaceState that is already known to be on disk. The
-    // debounced autosave below compares against this and skips a write whose
-    // payload would be byte-identical — see its own comment for why that
-    // matters. Every path that actually persists updates this.
-    const lastSavedPayloadRef = useRef<string | null>(null);
-    // Latest `buildWorkspaceState`, reachable from callbacks declared above
-    // it. It is defined much further down, so naming it directly here (or in
-    // a dependency array) would be a temporal-dead-zone error at render time.
-    const buildWorkspaceStateRef = useRef<((overrides?: Partial<WorkspaceState>) => WorkspaceState) | null>(null);
-
     // Core writer: `compute` receives the groups/models that are on DISK right
     // now (`prev` is a fresh read, not this window's possibly-stale mirror) and
     // returns the new ones. Everything else in `failureGroupState` — filters,
@@ -482,16 +472,6 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                         workspaceId: initialState.id,
                         origin: 'dashboard',
                     }).catch(e => console.warn('Failed to broadcast failure-group state:', e));
-                }
-                // This write already made the new failure-group state durable,
-                // so record what the disk now holds: the debounced autosave
-                // then skips rewriting the very same content ~250ms later.
-                const build = buildWorkspaceStateRef.current;
-                if (build && next?.failureGroupState) {
-                    lastSavedPayloadRef.current = JSON.stringify(build({
-                        failureGroupState: next.failureGroupState,
-                        ...projectDetailsFromDisk(next),
-                    }));
                 }
                 if (onWritten && next?.failureGroupState) onWritten(next.failureGroupState.models);
             })
@@ -1957,12 +1937,6 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         valueHighlight, relativeAmount, relativeUnit,
     ]);
 
-    // Keeps `buildWorkspaceStateRef` pointing at the current builder so the
-    // callbacks declared above it (persistFailureGroupStateFrom) can reach it.
-    // Runs after every render, so it is always current by the time any click
-    // handler fires.
-    useEffect(() => { buildWorkspaceStateRef.current = buildWorkspaceState; });
-
     // What the close-flush effect below awaits before actually letting the
     // window close. Always overwritten to the LATEST scheduled save on every
     // effect rerun (a superseded save's promise is simply abandoned — nothing
@@ -1977,6 +1951,9 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     // `runAutosaveRef`, which is the very same routine the timer runs.
     const autosaveDirtyRef = useRef(false);
     const runAutosaveRef = useRef<(() => Promise<void>) | null>(null);
+    // The first autosave after opening always writes: it moves the project to
+    // the top of Recents even when nothing changed.
+    const autosavedOnceRef = useRef(false);
 
     // Auto-save state changes — debounced (see AUTOSAVE_DEBOUNCE_MS) so a
     // burst of rapid edits (typing, dragging a slider, resizing panels)
@@ -2004,66 +1981,45 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         // Dashboard's own workspace (`initialState.id`), built from this
         // render's state.
         const runAutosave = async () => {
-            let freshFailureGroupState: FailureGroupStateSlice = { ...fgExtra, groups: fgGroups, models: fgModels };
-            let onDisk: WorkspaceState | null;
+            const run: { built: WorkspaceState | null; recipesChanged: boolean } = { built: null, recipesChanged: false };
+            let next: WorkspaceState | null;
             try {
-                onDisk = await loadWorkspaceData(initialState.id);
-                if (onDisk?.failureGroupState) {
-                    // The whole slice as it is on disk — never a field list.
-                    freshFailureGroupState = onDisk.failureGroupState;
-                }
+                // Read and write are one queue step, so a failure-group write
+                // from this window lands before the read or after the write.
+                next = await saveWorkspaceFrom(initialState.id, (onDisk) => {
+                    // The project's name, description, machine and data time zone
+                    // are written ONLY by Project details (`saveProjectDetails`):
+                    // like the failure-group slice, they are carried over from disk.
+                    const built = buildWorkspaceState({
+                        failureGroupState: onDisk?.failureGroupState ?? { ...fgExtra, groups: fgGroups, models: fgModels },
+                        ...projectDetailsFromDisk(onDisk),
+                    });
+                    // A special-sensor recipe change that reaches disk through this
+                    // autosave sends the models trained on it back to Incomplete in
+                    // the SAME write. Only when the recipes really changed, so an
+                    // ordinary autosave does no fingerprinting at all.
+                    const recipesChanged = !!onDisk && recipesDiffer(onDisk.specialSensorRecipes, built.specialSensorRecipes);
+                    const state = recipesChanged && onDisk ? applyRecipeRule(onDisk, built) : built;
+                    // Compared with the file itself: nothing to write when it already
+                    // holds this state (e.g. after a failure-group write).
+                    if (autosavedOnceRef.current && JSON.stringify(state) === JSON.stringify(onDisk)) return null;
+                    run.built = built;
+                    run.recipesChanged = recipesChanged;
+                    return state;
+                });
             } catch (e) {
-                // The file is there but could not be read (`WorkspaceReadError`).
-                // Write NOTHING: falling back to this window's mirror could wipe
-                // everything saved since (the mirror can be far behind disk, e.g.
-                // after a hot-reload remount under `tauri dev`). Keep the autosave
-                // pending so the next change (or leaving the Dashboard) tries again
-                // against a readable file.
-                console.warn('Autosave skipped: the workspace file could not be read, nothing was overwritten:', e);
+                // Unreadable file or failed write: nothing was overwritten. Keep the
+                // autosave pending so the next change (or leaving) tries again.
+                console.warn('Autosave failed, nothing overwritten, adopted or broadcast:', e);
                 autosaveDirtyRef.current = true;
                 return;
             }
-            // The project's name, description, machine and data time zone are
-            // written ONLY by Project details (`saveProjectDetails`, possibly
-            // from another window): this full-object write carries them over
-            // from disk, like the failure-group slice, so it never writes this
-            // window's old name back or erases the machine.
-            const built = buildWorkspaceState({
-                failureGroupState: freshFailureGroupState,
-                ...projectDetailsFromDisk(onDisk),
-            });
-            // A special-sensor recipe change that reaches disk THROUGH this
-            // autosave sends the models trained on it back to Incomplete (and
-            // out of date) in the SAME write. Only the recipe rule, and only
-            // when this write really changes the recipes (by content) -- the
-            // slice itself is the one on disk, so nothing else can need it, and
-            // an ordinary autosave does no fingerprinting at all.
-            const recipesChanged = !!onDisk && recipesDiffer(onDisk.specialSensorRecipes, built.specialSensorRecipes);
-            const next = recipesChanged && onDisk ? applyRecipeRule(onDisk, built) : built;
-            const payload = JSON.stringify(next);
-            // Skip the write when the state is byte-identical to what is
-            // already on disk: an FG write (`persistFailureGroupStateFrom`)
-            // already wrote immediately, and any other path that reschedules
-            // an autosave without actually changing anything costs nothing.
-            // Adopting / broadcasting happens ONLY when this run wrote.
-            // `saveWorkspaceData` never rejects (a failed write is only
-            // logged), so a run that merely re-computes the same payload must do
-            // nothing -- otherwise adopting re-arms this effect every 250 ms.
-            if (payload === lastSavedPayloadRef.current) return;
-            try {
-                await saveWorkspaceData(next);
-            } catch (e) {
-                // Nothing reached disk: adopt nothing, tell nobody; the next change
-                // (or leaving the Dashboard) tries again.
-                console.warn('Autosave failed, nothing adopted or broadcast:', e);
-                autosaveDirtyRef.current = true;
-                return;
-            }
-            lastSavedPayloadRef.current = payload;
-            if (!recipesChanged) return;
+            if (!next) return;
+            autosavedOnceRef.current = true;
+            if (!run.recipesChanged) return;
             // Models were demoted in that write: adopt them (the mirror would
             // otherwise show them as before until the next broadcast).
-            const demoted = next.failureGroupState?.models !== built.failureGroupState?.models ? next.failureGroupState : undefined;
+            const demoted = next.failureGroupState?.models !== run.built?.failureGroupState?.models ? next.failureGroupState : undefined;
             if (demoted) {
                 const { groups, models, ...rest } = demoted;
                 setFgGroups(groups);
@@ -2073,7 +2029,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
             // Tell any open Build Model window the recipes on disk changed (it
             // re-reads them; never sent in the payload) -- scoped to this
             // workspace, tagged so this window's own listener skips the echo.
-            const fgNow = next.failureGroupState ?? built.failureGroupState;
+            const fgNow = next.failureGroupState ?? run.built?.failureGroupState;
             if (fgNow) {
                 const changed: FailureGroupStateChangedPayload = {
                     ...fgNow,

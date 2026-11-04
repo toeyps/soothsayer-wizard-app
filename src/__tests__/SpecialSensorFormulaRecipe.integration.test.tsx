@@ -528,7 +528,7 @@ describe('(a) opening an old workspace with a legacy round($TAG1, 2) special sen
         await settle(600);
         expect(extraCalls.filter(c => c.cmd === 'convert_legacy_formula').length - c2, 'convert_legacy_formula calls on the second open').toBe(0);
         // Nothing changes on disk. (The Dashboard's first autosave after mount re-writes the SAME
-        // bytes once -- pre-existing, `lastSavedPayloadRef` starts empty -- never a conversion write.)
+        // bytes once -- the first autosave after opening always writes -- never a conversion write.)
         const second = env.writes.slice(w2).filter(x => x.path === wsFile(A));
         expect(second.length, "at most the Dashboard's one identical first autosave").toBeLessThanOrEqual(1);
         for (const x of second) expect(x.content, 'a write on the second open changed the file').toBe(onDiskBefore);

@@ -98,6 +98,11 @@ vi.mock('../workspaceManager', () => ({
     saveWorkspaceData: (s: unknown) => mockSaveWorkspaceData(s),
     updateWorkspaceData: async (id: string, patch: (s: any) => any) => patch({ id }),
     loadWorkspaceData: () => Promise.resolve(null),
+    saveWorkspaceFrom: async (_id: string, compute: (disk: any) => any) => {
+        const next = compute(null);
+        if (next) await mockSaveWorkspaceData(next);
+        return next;
+    },
 }));
 vi.mock('../errorReporter', () => ({ reportError: vi.fn() }));
 
