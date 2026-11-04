@@ -509,7 +509,7 @@ describe('(a) opening an old workspace with a legacy round($TAG1, 2) special sen
         expect(screen.getByTestId('add-sensor-window').textContent).toContain('$TAG1 · rounded to 2 decimals');
         expect(screen.getByTestId('add-sensor-window').textContent).not.toContain(LEGACY);
         // Edit opens it as `$TAG1` with "Round the result" = 2 (the stored text, split back).
-        await act(async () => { fireEvent.click(ASW().getByLabelText('Edit SPR')); });
+        await act(async () => { fireEvent.click(ASW().getByLabelText(/^Edit (.* · )?SPR$/)); });
         await settle(100);
         expect(formulaBox().value).toBe('$TAG1');
         expect(within(ASW().getByRole('radiogroup', { name: 'Round the result' })).getByRole('radio', { checked: true }).textContent).toBe('2');
@@ -623,7 +623,7 @@ describe('(b) Dashboard + Add Sensor + Build Model: a special sensor\'s recipe c
         //    road to a different formula while the model uses it is a Repair).
         await act(async () => { fireEvent.click(ASW().getByRole('tab', { name: /Manage/ })); });
         await settle(200);
-        await act(async () => { fireEvent.click(ASW().getByLabelText('Edit SP')); });
+        await act(async () => { fireEvent.click(ASW().getByLabelText(/^Edit (.* · )?SP$/)); });
         await settle(100);
         expect((ASW().getByLabelText('Name') as HTMLInputElement).readOnly, 'Name locked').toBe(true);
         expect(ASW().getByTestId('edit-lock-banner').textContent).toMatch(/Name and formula are locked/);
@@ -653,7 +653,7 @@ describe('(b) Dashboard + Add Sensor + Build Model: a special sensor\'s recipe c
         await openAddSensorWindow();
         await act(async () => { fireEvent.click(ASW().getByRole('tab', { name: /Manage/ })); });
         await settle(300);
-        await act(async () => { fireEvent.click(ASW().getByLabelText('Edit SP')); });
+        await act(async () => { fireEvent.click(ASW().getByLabelText(/^Edit (.* · )?SP$/)); });
         await settle(200);
         expect(ASW().getByTestId('restore-note')).toBeTruthy();
         expect(ASW().queryByTestId('edit-lock-banner'), 'a repair is not locked').toBeNull();

@@ -4,6 +4,7 @@ import { FailureModel, SensorMetadata, SpecialSensorRecipe } from "../../types";
 import { buildSpecialSensorUsage, describeEditLock, usageFor, SpecialSensorUsage } from "../../utils/specialSensorDeps";
 import { describeSpecialSensor } from "../../utils/specialSensorDescribe";
 import { SensorLabel } from '../sensor/SensorLabel';
+import { sensorPlainLabel, useLayeredSensorLookup } from '../sensor/sensorInfo';
 import { RecipeSummary } from './RecipeSummary';
 
 interface Props {
@@ -87,6 +88,8 @@ export default function ManageSpecialSensors({
 
     const metaFor = (tag: string) => sensorMetadata?.find(m => m.tag.toLowerCase() === tag.toLowerCase());
     const descriptionOf = (tag: string) => metaFor(tag)?.description?.trim() || tag;
+    const lookup = useLayeredSensorLookup(sensorMetadata);
+    const nameOf = (tag: string) => sensorPlainLabel(lookup(tag));
 
     // One human line per recipe: sources read by their description in a block /
     // operation; a formula keeps its own `$TAG` text.
@@ -166,10 +169,11 @@ export default function ManageSpecialSensors({
                     const isEditing = editingTag !== null && editingTag.toLowerCase() === recipe.tag.toLowerCase();
                     const canDelete = info.deletable && formulaRefs !== null && usageKnown && !isEditing;
                     // Why Delete is off, in one line (its tooltip): "Used by X — remove it there first".
-                    const deleteReason = canDelete ? `Delete ${recipe.tag}`
+                    const name = nameOf(recipe.tag);
+                    const deleteReason = canDelete ? `Delete ${name}`
                         : isEditing ? 'Close the edit first'
                         : info.deletable ? 'Still checking what uses this sensor'
-                            : info.dependentSensors.length > 0 ? `Used by ${info.dependentSensors.join(', ')} — remove it there first`
+                            : info.dependentSensors.length > 0 ? `Used by ${info.dependentSensors.map(nameOf).join(', ')} — remove it there first`
                                 : `${summary ?? 'Something still uses this sensor'} — remove it there first`;
                     const expanded = expandedTag === recipe.tag;
                     const desc = descriptions.get(recipe.tag);
@@ -238,8 +242,8 @@ export default function ManageSpecialSensors({
                                     type="button"
                                     onClick={() => onEdit(recipe.tag)}
                                     disabled={savingEdit}
-                                    title={`Edit ${recipe.tag}`}
-                                    aria-label={`Edit ${recipe.tag}`}
+                                    title={`Edit ${name}`}
+                                    aria-label={`Edit ${name}`}
                                     aria-pressed={isEditing}
                                     className="flex items-center justify-center shrink-0 rounded"
                                     style={{
@@ -256,7 +260,7 @@ export default function ManageSpecialSensors({
                                     onClick={() => onDelete(recipe.tag)}
                                     disabled={!canDelete}
                                     title={deleteReason}
-                                    aria-label={`Delete ${recipe.tag}`}
+                                    aria-label={`Delete ${name}`}
                                     className="flex items-center justify-center shrink-0 rounded"
                                     style={{
                                         width: 26, height: 26,
@@ -283,7 +287,7 @@ export default function ManageSpecialSensors({
                                         {info.dependentSensors.length > 0 && (
                                             <div>
                                                 <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>Built on top of this:</span>{' '}
-                                                {info.dependentSensors.join(', ')}
+                                                {info.dependentSensors.map(nameOf).join(', ')}
                                                 <div style={{ marginTop: 2 }}>Delete those first, then this one can go.</div>
                                             </div>
                                         )}

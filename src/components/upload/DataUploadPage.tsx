@@ -17,6 +17,8 @@ import {
 import { formatDateTime } from "../../utils/dateFormat";
 import { logToFile, reportError } from "../../errorReporter";
 import { replaySpecialSensorRecipes } from "../../utils/specialSensorReplay";
+import { removeTagsFromFilters } from "../../utils/specialSensorRename";
+import { buildSensorLookup, sensorPlainLabel } from "../sensor/sensorInfo";
 import { convertLegacyFormulaRecipes, legacyConversionMessage } from "../../utils/legacyFormulaConversion";
 import { bindToGeneration, StaleSessionError } from "../../utils/staleSession";
 import { withFailureGroupState } from "../../utils/failureGroupState";
@@ -83,7 +85,13 @@ interface DataUploadPageProps {
  * with `StaleSessionError` instead of building this workspace's sensors on
  * another workspace's data. The caller reloads and retries.
  */
-async function restoreSpecialSensors(recipes: SpecialSensorRecipe[], generation: number | undefined): Promise<string[]> {
+async function restoreSpecialSensors(
+  recipes: SpecialSensorRecipe[],
+  generation: number | undefined,
+  metadata: SensorMetadata[] | undefined,
+): Promise<string[]> {
+  const lookup = buildSensorLookup(null, metadata);
+  const nameOf = (tag: string) => sensorPlainLabel(lookup(tag));
   const { failed, skipped, errors } = await replaySpecialSensorRecipes(
     recipes,
     bindToGeneration((cmd, args) => invoke<unknown>(cmd, args), generation),
@@ -94,11 +102,11 @@ async function restoreSpecialSensors(recipes: SpecialSensorRecipe[], generation:
         // Each with the backend's reason (a removed source, or a formula
         // Rust refuses, e.g. `$A * pi`).
         ? `${failed.length} special sensor${failed.length !== 1 ? 's' : ''} couldn't be restored: ${failed
-            .map(tag => (errors?.[tag] ? `${tag} (${errors[tag]})` : tag))
+            .map(tag => (errors?.[tag] ? `${nameOf(tag)} (${errors[tag]})` : nameOf(tag)))
             .join(', ')}.`
         : null,
       skipped.length > 0
-        ? `Skipped because they are built on a sensor that couldn't be restored: ${skipped.join(', ')}.`
+        ? `Skipped because they are built on a sensor that couldn't be restored: ${skipped.map(nameOf).join(', ')}.`
         : null,
       // What to DO: the fix is editing the broken recipe, and it
       // works even when a model uses the sensor (only its name stays locked).
@@ -115,7 +123,7 @@ async function restoreSpecialSensors(recipes: SpecialSensorRecipe[], generation:
       'special-sensor-restore',
       parts.join(' '),
       'A source sensor may have been renamed or removed since they were created, or the formula is no longer accepted. ' +
-        'They have no data and are left off the chart until fixed. Models that use a fixed sensor are set back to Incomplete and must be trained again.'
+        'They have no data until fixed: they are left off the chart, and any filter condition on them is removed. Models that use a fixed sensor are set back to Incomplete and must be trained again.'
     );
   }
   return [...failed, ...skipped];
@@ -389,6 +397,10 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
         (c, a) => invoke<unknown>(c, a),
       );
       if (!isLatest()) return;
+      // The Rust session is about to become this project's. A parse from step 2 lands
+      // before it (`load_csv` is serialised, oldest first), but its report no longer
+      // describes the session, so it must not reach the screen.
+      dataUpload.abandonParse();
       const olderLoads = () =>
         [...loadCsvInFlightRef.current.entries()].filter(([k]) => k < seq).map(([, p]) => p);
 
@@ -426,7 +438,7 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
         // manual refresh (see `replaySpecialSensorRecipes`'s own comment).
         if (recipesToReplay.length) {
           try {
-            noData = await restoreSpecialSensors(recipesToReplay, loaded.generation);
+            noData = await restoreSpecialSensors(recipesToReplay, loaded.generation, state.extraSensorMetadata);
           } catch (err) {
             // The session was replaced mid-replay: reload and rebuild.
             if (err instanceof StaleSessionError) continue;
@@ -502,14 +514,19 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
         if (noData.length > 0) {
           // A sensor with no column behind it must not stay plotted: its chart
           // series would be empty (or the scatter/pair cell blank). Its recipe
-          // and metadata are kept so it can still be fixed in Manage.
+          // and metadata are kept so it can still be fixed in Manage. A filter
+          // condition on it goes too: Rust ignores a condition on a missing
+          // column, so the chart would show every row while the tab says filtered.
           const gone = new Set(noData.map(t => t.trim().toLowerCase()));
           const keep = (tags: string[] | undefined) =>
             tags?.filter(t => !gone.has(t.trim().toLowerCase()));
           stateForDashboard = {
-            ...opened,
+            ...stateForDashboard,
             selectedSensors: keep(opened.selectedSensors) ?? [],
             visibleSensors: keep(opened.visibleSensors) ?? [],
+            ...(opened.filters
+              ? { filters: { ...opened.filters, sensorFilters: removeTagsFromFilters(opened.filters.sensorFilters, noData) } }
+              : {}),
           };
         }
       }

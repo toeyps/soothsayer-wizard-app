@@ -557,8 +557,8 @@ describe.each(['individual', 'relationship', 'clustering'] as Kind[])('cross-fea
         if (!roots.has('add-sensor')) await openAddSensorWindow();
         await goManage();
         await settle(200);
-        expect((ASW().getByLabelText('Delete SP1') as HTMLButtonElement).disabled, 'Delete SP1 locked').toBe(true);
-        await act(async () => { fireEvent.click(ASW().getByLabelText('Edit SP1')); });
+        expect((ASW().getByLabelText(/^Delete (.* · )?SP1$/) as HTMLButtonElement).disabled, 'Delete SP1 locked').toBe(true);
+        await act(async () => { fireEvent.click(ASW().getByLabelText(/^Edit (.* · )?SP1$/)); });
         await settle(50);
         expect((ASW().getByLabelText('Name') as HTMLInputElement).readOnly, 'Name locked').toBe(true);
 
@@ -615,7 +615,7 @@ describe.each(['individual', 'relationship', 'clustering'] as Kind[])('cross-fea
         // 10) Back -> delete A: workspace file + model output folder gone; B untouched.
         await backToImport();
         // The delete confirms in the row -- trash button, then [Delete].
-        await act(async () => { fireEvent.click(app().getByLabelText('Delete project Alpha · Unit')); });
+        await act(async () => { fireEvent.click(app().getByLabelText(/^Delete (.* · )?project Alpha · Unit$/)); });
         expect(env.files.has(`workspaces/${A}.json`), 'nothing deleted before the in-row confirm').toBe(true);
         await act(async () => { fireEvent.click(within(app().getByRole('alertdialog')).getByRole('button', { name: 'Delete' })); });
         await settle(200);
@@ -642,7 +642,7 @@ const chartBtn = (name: 'Line' | 'Scatter' | 'Pair Plot') =>
 
 async function renameSpecialSensor(from: string, to: string) {
     await goManage();
-    await act(async () => { fireEvent.click(ASW().getByLabelText(`Edit ${from}`)); });
+    await act(async () => { fireEvent.click(ASW().getByLabelText(new RegExp(`^Edit (.* · )?${from}$`))); });
     await settle(30);
     await act(async () => { fireEvent.change(ASW().getByLabelText('Name'), { target: { value: to } }); });
     await settle(30);
@@ -755,13 +755,13 @@ describe('Dashboard VIS behaviour around a special sensor no model uses', () => 
         expect(disk(L).failureGroupState.models.map((m: any) => m.targetSensor)).toEqual(['SP1']);
         await goManage();
         await settle(200);
-        expect((ASW().getByLabelText('Delete SP1') as HTMLButtonElement).disabled).toBe(true);
+        expect((ASW().getByLabelText(/^Delete (.* · )?SP1$/) as HTMLButtonElement).disabled).toBe(true);
 
         await inSheet('SP1', async sheet => { await clickCell(sheet, 'Individual · FG-A'); });
         expect(disk(L).failureGroupState.models).toEqual([]);
         expect(screen.getAllByTestId('fg-undo-toast')).toHaveLength(1);
         await settle(300);
-        await waitFor(() => expect((ASW().getByLabelText('Delete SP1') as HTMLButtonElement).disabled, 'lock released').toBe(false));
+        await waitFor(() => expect((ASW().getByLabelText(/^Delete (.* · )?SP1$/) as HTMLButtonElement).disabled, 'lock released').toBe(false));
 
         expect(reactWarnings(), 'React warnings').toEqual([]);
         expect(rejections, 'unhandled rejections').toEqual([]);
@@ -871,8 +871,8 @@ describe('two undo windows at once: the FG-sheet model Undo vs the special-senso
         await goManage();
         await inSheet('SP1', async sheet => { await clickCell(sheet, 'Individual · FG-A'); });
         await settle(300);
-        await waitFor(() => expect((ASW().getByLabelText('Delete SP1') as HTMLButtonElement).disabled).toBe(false));
-        await act(async () => { fireEvent.click(ASW().getByLabelText('Delete SP1')); });
+        await waitFor(() => expect((ASW().getByLabelText(/^Delete (.* · )?SP1$/) as HTMLButtonElement).disabled).toBe(false));
+        await act(async () => { fireEvent.click(ASW().getByLabelText(/^Delete (.* · )?SP1$/)); });
         await settle(200);
         // Undo the MODEL deletion while the sensor deletion is still inside its own undo window.
         const toast = screen.getAllByTestId('fg-undo-toast')[0];
@@ -884,7 +884,7 @@ describe('two undo windows at once: the FG-sheet model Undo vs the special-senso
         await settle(500);
         expect(be.session.has('SP1'), 'column kept for the restored model').toBe(true);
         expect((disk(L).specialSensorRecipes ?? []).map((r: any) => r.tag)).toEqual(['SP1']);
-        expect(screen.getByTestId('add-sensor-window').textContent).toMatch(/Didn't delete SP1/);
+        expect(screen.getByTestId('add-sensor-window').textContent).toMatch(/Didn't delete (.* · )?SP1/);
         expect(reactWarnings(), 'React warnings').toEqual([]);
         expect(rejections, 'unhandled rejections').toEqual([]);
     });

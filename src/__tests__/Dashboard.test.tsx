@@ -603,11 +603,140 @@ describe('Dashboard', () => {
     });
 
     describe('close-flush (docs/BACKLOG.md item 8: a change made in the last AUTOSAVE_DEBOUNCE_MS before quitting used to be lost silently)', () => {
+        // Opens a project, lets the on-mount autosave settle, then makes one real edit (pending).
+        const openAndEdit = async () => {
+            vi.useFakeTimers();
+            renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });
+            await act(async () => { await vi.advanceTimersByTimeAsync(250); });
+            mockSaveWorkspaceData.mockClear();
+            mockWindowClose.mockClear();
+            act(() => { fireEvent.click(screen.getByText('select-none')); });
+        };
+        const pressClose = async () => {
+            const preventDefault = vi.fn();
+            let closing!: Promise<void>;
+            await act(async () => {
+                closing = mockCloseRequestedHandler!({ preventDefault }) as Promise<void>;
+                await vi.advanceTimersByTimeAsync(0);
+            });
+            return { preventDefault, closing };
+        };
+
+        it('writes the last edit at once, without waiting for the debounce, and closes on the first X', async () => {
+            await openAndEdit();
+            const { preventDefault, closing } = await pressClose();
+            await act(async () => { await closing; });
+            expect(preventDefault).toHaveBeenCalledTimes(1);
+            expect(mockSaveWorkspaceData).toHaveBeenCalledTimes(1);
+            expect(mockSaveWorkspaceData.mock.calls[0][0].selectedSensors).toEqual([]);
+            expect(mockWindowClose).toHaveBeenCalledTimes(1);
+        });
+
+        it('Window.close() re-enters the handler: that pass lets the window go, so the close cannot loop', async () => {
+            await openAndEdit();
+            mockWindowClose.mockImplementation(async () => {
+                const preventDefault = vi.fn();
+                await mockCloseRequestedHandler!({ preventDefault });
+                expect(preventDefault).not.toHaveBeenCalled();
+            });
+            const { closing } = await pressClose();
+            await act(async () => { await closing; });
+            expect(mockWindowClose).toHaveBeenCalledTimes(1);
+            mockWindowClose.mockReset().mockResolvedValue(undefined);
+        });
+
+        it('an edit made while the close waits does not strand the close, and is written too', async () => {
+            await openAndEdit();
+            let release!: () => void;
+            mockSaveWorkspaceData.mockImplementationOnce(() => new Promise<void>((resolve) => { release = resolve; }));
+            const { closing } = await pressClose();
+            expect(mockWindowClose).not.toHaveBeenCalled();
+            act(() => { fireEvent.click(screen.getByText('select-tag1')); });
+            await act(async () => { release(); await vi.advanceTimersByTimeAsync(0); await closing; });
+            expect(mockWindowClose).toHaveBeenCalledTimes(1);
+            expect(last(mockSaveWorkspaceData.mock.calls)[0].selectedSensors).toEqual(['TAG1']);
+        });
+
+        it('a second X while the close waits does not start another close', async () => {
+            await openAndEdit();
+            let release!: () => void;
+            mockSaveWorkspaceData.mockImplementationOnce(() => new Promise<void>((resolve) => { release = resolve; }));
+            const first = await pressClose();
+            const second = await pressClose();
+            expect(second.preventDefault).toHaveBeenCalledTimes(1);
+            await act(async () => { release(); await vi.advanceTimersByTimeAsync(0); await first.closing; await second.closing; });
+            expect(mockWindowClose).toHaveBeenCalledTimes(1);
+        });
+
+        it('a save that fails keeps the window once with a notice; the next close leaves', async () => {
+            await openAndEdit();
+            const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+            mockSaveWorkspaceData.mockImplementation(async () => { throw new Error('disk full'); });
+
+            const first = await pressClose();
+            await act(async () => { await first.closing; });
+            expect(first.preventDefault).toHaveBeenCalledTimes(1);
+            expect(mockWindowClose).not.toHaveBeenCalled();
+            expect(screen.getByTestId('save-failed-notice').textContent).toMatch(/Close the window again to leave without them/);
+
+            const second = await pressClose();
+            await act(async () => { await second.closing; });
+            expect(mockSaveWorkspaceData).toHaveBeenCalledTimes(2); // tried once more
+            expect(mockWindowClose).toHaveBeenCalledTimes(1);
+            warn.mockRestore();
+        });
+
+        it('a failed autosave before the close is retried by it, and closes when that works', async () => {
+            await openAndEdit();
+            const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+            mockSaveWorkspaceData.mockImplementationOnce(async () => { throw new Error('disk busy'); });
+            await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+            expect(mockSaveWorkspaceData).toHaveBeenCalledTimes(1);
+
+            const { closing } = await pressClose();
+            await act(async () => { await closing; });
+            expect(mockSaveWorkspaceData).toHaveBeenCalledTimes(2);
+            expect(screen.queryByTestId('save-failed-notice')).toBeNull();
+            expect(mockWindowClose).toHaveBeenCalledTimes(1);
+            warn.mockRestore();
+        });
+
+        it('a write that hangs counts as failed after the wait, so the window can still be closed', async () => {
+            await openAndEdit();
+            mockSaveWorkspaceData.mockImplementationOnce(() => new Promise<void>(() => {}));
+            const first = await pressClose();
+            await act(async () => { await vi.advanceTimersByTimeAsync(10_000); await first.closing; });
+            expect(mockWindowClose).not.toHaveBeenCalled();
+            expect(screen.getByTestId('save-failed-notice')).toBeTruthy();
+
+            const second = await pressClose();
+            await act(async () => { await vi.advanceTimersByTimeAsync(10_000); await second.closing; });
+            expect(mockWindowClose).toHaveBeenCalledTimes(1);
+        });
+
+        it('waits for a failure-group write still in flight', async () => {
+            vi.useFakeTimers();
+            const state = makeInitialState({ failureGroupState: { groups: [{ no: 1, name: 'Group A' }], models: [] } });
+            seedDisk(state);
+            renderDashboard({ initialState: state });
+            await act(async () => { await vi.advanceTimersByTimeAsync(250); });
+            mockWindowClose.mockClear();
+            fireEvent.click(screen.getByText('Failure Groups'));
+            let release!: (v: any) => void;
+            mockUpdateWorkspaceData.mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }));
+            act(() => { last(fgPanelProps).onDeleteGroup(1); });
+            const { closing } = await pressClose();
+            expect(mockWindowClose).not.toHaveBeenCalled();
+            await act(async () => { release(state); await vi.advanceTimersByTimeAsync(0); await closing; });
+            expect(mockWindowClose).toHaveBeenCalledTimes(1);
+        });
+
         it('flushes a pending autosave before letting the window close, then closes it itself', async () => {
             vi.useFakeTimers();
             renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });
             await act(async () => { await vi.advanceTimersByTimeAsync(250); }); // let the on-mount autosave settle
             mockSaveWorkspaceData.mockClear();
+            mockWindowClose.mockClear();
             expect(mockCloseRequestedHandler).not.toBeNull();
 
             // Trigger an edit -- schedules a new debounced save, still pending.
@@ -624,10 +753,9 @@ describe('Dashboard', () => {
                 await Promise.resolve(); // let preventDefault's synchronous call land
             });
             expect(preventDefault).toHaveBeenCalledTimes(1); // blocks the close immediately
-            expect(mockWindowClose).not.toHaveBeenCalled(); // not yet -- the save hasn't landed on disk
 
             await act(async () => {
-                await vi.advanceTimersByTimeAsync(250); // let the debounced save actually fire
+                await vi.advanceTimersByTimeAsync(0);
                 await closePromise;
             });
             expect(mockSaveWorkspaceData).toHaveBeenCalledTimes(1); // the pending edit was actually flushed
@@ -647,6 +775,108 @@ describe('Dashboard', () => {
             expect(preventDefault).not.toHaveBeenCalled();
             expect(mockWindowClose).not.toHaveBeenCalled(); // we never call close ourselves -- Tauri's own default handles an unintercepted close
         });
+    });
+
+    describe('a failure-group write that does not reach the file', () => {
+        const onDisk = { groups: [{ no: 0, name: 'Not in Group' }, { no: 1, name: 'Group A' }], models: [{ id: 'm1', targetSensor: 'TAG1', groupNos: [1], kind: 'individual', status: true, name: 'M' }] };
+        const open = async () => {
+            const state = makeInitialState({ failureGroupState: onDisk as any });
+            renderDashboard({ initialState: state, });
+            await act(async () => { await Promise.resolve(); });
+            fireEvent.click(screen.getByText('Failure Groups'));
+            mockEmit.mockClear();
+            mockLoadWorkspaceData.mockResolvedValue(state);
+            return state;
+        };
+        let error: ReturnType<typeof vi.spyOn>;
+        beforeEach(() => { error = vi.spyOn(console, 'error').mockImplementation(() => {}); });
+        afterEach(() => { error.mockRestore(); mockLoadWorkspaceData.mockReset().mockResolvedValue(null); });
+
+        it('deleting a model: the model comes back from the file, the user is told, nothing is broadcast', async () => {
+            await open();
+            mockUpdateWorkspaceData.mockImplementationOnce(async () => { throw new Error('disk full'); });
+            await act(async () => { last(fgPanelProps).onDeleteModel('m1'); });
+            expect(last(fgPanelProps).fgModels.map((m: any) => m.id)).toEqual(['m1']);
+            expect(screen.getByTestId('save-failed-notice').textContent).toMatch(/Could not save your last Failure Group change/);
+            expect(mockEmit).not.toHaveBeenCalledWith('failure-group-state-changed', expect.anything());
+            fireEvent.click(screen.getByText('Dismiss'));
+            expect(screen.queryByTestId('save-failed-notice')).toBeNull();
+        });
+
+        it('deleting a group: the group comes back from the file', async () => {
+            await open();
+            mockUpdateWorkspaceData.mockImplementationOnce(async () => { throw new Error('disk full'); });
+            await act(async () => { last(fgPanelProps).onDeleteGroup(1); });
+            expect(last(fgPanelProps).fgGroups.map((g: any) => g.no)).toEqual([0, 1]);
+            expect(screen.getByTestId('save-failed-notice')).toBeTruthy();
+        });
+
+        it('a missing file counts as not saved, and says the file could not be read when the reload finds nothing', async () => {
+            await open();
+            mockLoadWorkspaceData.mockResolvedValue(null);
+            mockUpdateWorkspaceData.mockImplementationOnce(async () => null);
+            await act(async () => { last(fgPanelProps).onDeleteModel('m1'); });
+            expect(screen.getByTestId('save-failed-notice').textContent).toMatch(/could not be read/);
+            expect(mockEmit).not.toHaveBeenCalledWith('failure-group-state-changed', expect.anything());
+        });
+
+        it('a special-sensor rename says its models keep the old name, and they do on screen', async () => {
+            await open();
+            mockUpdateWorkspaceData.mockImplementationOnce(async () => { throw new Error('disk full'); });
+            await act(async () => {
+                for (const cb of listenCallbacks['rename-special-sensor'] ?? []) {
+                    cb({ payload: {
+                        workspaceId: 'ws1', oldTag: 'TAG1', newTag: 'TAG9',
+                        recipe: { kind: 'formula', tag: 'TAG9', formula: '$TAG2' },
+                        metadata: { tag: 'TAG9', description: '', unit: '', component: '' },
+                        updatedRecipes: [],
+                    } });
+                }
+            });
+            expect(screen.getByTestId('save-failed-notice').textContent).toMatch(/still use its old name/);
+            expect(last(fgPanelProps).fgModels[0].targetSensor).toBe('TAG1');
+        });
+
+        it('a repaired sensor says its models could not be set back to Incomplete', async () => {
+            await open();
+            mockUpdateWorkspaceData.mockImplementationOnce(async () => { throw new Error('disk full'); });
+            await act(async () => {
+                for (const cb of listenCallbacks['update-special-sensor'] ?? []) {
+                    cb({ payload: {
+                        workspaceId: 'ws1', repaired: true, affectedTags: ['TAG1'],
+                        recipe: { kind: 'formula', tag: 'TAG1', formula: '$TAG2' },
+                        metadata: { tag: 'TAG1', description: '', unit: '', component: '' },
+                    } });
+                }
+            });
+            expect(screen.getByTestId('save-failed-notice').textContent).toMatch(/back to Incomplete/);
+        });
+
+        it('a sensor toggle that would delete the model takes its Undo toast back', async () => {
+            const state = makeInitialState({ failureGroupState: onDisk as any });
+            mockLoadWorkspaceData.mockResolvedValue(state);
+            renderDashboard({ initialState: state });
+            await act(async () => { await Promise.resolve(); });
+            let release!: () => void;
+            mockUpdateWorkspaceData.mockImplementationOnce(() => new Promise((_resolve, reject) => { release = () => reject(new Error('disk full')); }));
+            act(() => { last(sensorSelectionProps).onToggleSensorGroupKind('TAG1', 1, 'individual'); });
+            expect(screen.getByTestId('fg-undo-toast')).toBeTruthy();
+            await act(async () => { release(); });
+            expect(screen.queryByTestId('fg-undo-toast')).toBeNull();
+            expect(screen.getByTestId('save-failed-notice')).toBeTruthy();
+        });
+    });
+
+    it('the Pair Plot cap message names a sensor by description, then tag', async () => {
+        renderDashboard({ initialState: makeInitialState({ chartType: 'pair', selectedSensors: ['TAG1', 'TAG2', 'TAG3', 'TAG4'], visibleSensors: ['TAG1', 'TAG2', 'TAG3', 'TAG4'] }) });
+        await act(async () => { await Promise.resolve(); });
+        await act(async () => {
+            for (const cb of listenCallbacks['add-sensor-selection'] ?? []) {
+                cb({ payload: { workspaceId: 'ws1', operation: null, sensors: ['CALC1'], newMetadata: [{ tag: 'CALC1', description: 'Total flow', unit: '', component: '' }] } });
+            }
+        });
+        await waitFor(() => expect(mockMessage).toHaveBeenCalled());
+        expect(mockMessage.mock.calls[0][0]).toContain('so Total flow · CALC1 was added');
     });
 
     describe('chart header sampling badge', () => {

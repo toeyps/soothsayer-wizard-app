@@ -465,14 +465,14 @@ async function createFormula(name: string, formula: string, opts: { settle?: boo
 }
 async function deleteSensor(tag: string) {
     await goManage();
-    const btn = W().getByLabelText(`Delete ${tag}`) as HTMLButtonElement;
+    const btn = W().getByLabelText(new RegExp(`^Delete (.* · )?${tag}$`)) as HTMLButtonElement;
     if (btn.disabled) throw new Error(`Delete ${tag} is disabled`);
     await act(async () => { fireEvent.click(btn); });
     await flush();
 }
 async function openEditor(tag: string) {
     await goManage();
-    await act(async () => { fireEvent.click(W().getByLabelText(`Edit ${tag}`)); });
+    await act(async () => { fireEvent.click(W().getByLabelText(new RegExp(`^Edit (.* · )?${tag}$`))); });
     await flush();
 }
 async function setEditor(fields: { name?: string; formula?: string }) {
@@ -661,7 +661,7 @@ describe('1. A -> Back to Import -> B: nothing of A reaches B', () => {
         expect(W().queryByText('Alpha S1')).toBeNull();
         expect(W().getAllByText(/Beta S1/).length).toBeGreaterThan(0);
         expect(W().queryByText(/Alpha model/)).toBeNull();
-        expect((W().getByLabelText('Delete S2') as HTMLButtonElement).disabled).toBe(false);
+        expect((W().getByLabelText(/^Delete (.* · )?S2$/) as HTMLButtonElement).disabled).toBe(false);
         await openEditor('S1');
         expect(W().queryByTestId('edit-lock-banner')).toBeNull();
     });
@@ -836,7 +836,7 @@ describe('2c. A\'s still-alive window RE-POINTED to B (B\'s "Add special sensor"
         await goManage();
         expect(W().getAllByText(/Beta S2/).length).toBeGreaterThan(0);
         expect(W().queryByText(/Alpha/)).toBeNull();
-        expect((W().getByLabelText('Delete S2') as HTMLButtonElement).disabled).toBe(false);
+        expect((W().getByLabelText(/^Delete (.* · )?S2$/) as HTMLButtonElement).disabled).toBe(false);
         await expectSessionIs(RAW_B, B_RECIPES);
         expect(ws(B_ID).specialSensorRecipes).toEqual(B_RECIPES);
     });

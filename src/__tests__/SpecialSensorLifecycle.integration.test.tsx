@@ -162,7 +162,7 @@ vi.mock('../hooks/useDatasetTimeBounds', () => ({
 vi.mock('../hooks/useDataUpload', () => ({
     useDataUpload: () => ({
         selectedFiles: [], loadReport: null, isLoading: false, isStale: false, error: null,
-        selectFiles: () => {}, removeFile: () => {}, uploadDataset: () => {}, clearDataset: () => {},
+        selectFiles: () => {}, removeFile: () => {}, uploadDataset: () => {}, clearDataset: () => {}, abandonParse: () => {},
     }),
 }));
 vi.mock('../hooks/useMappingData', () => ({
@@ -405,7 +405,9 @@ async function goCreate() {
     await act(async () => { fireEvent.click(W().getByRole('tab', { name: /Create/ })); });
     await flush();
 }
-const deleteBtn = (tag: string) => W().getByLabelText(`Delete ${tag}`) as HTMLButtonElement;
+// A row's button: "<verb> description · tag", or "<verb> tag" with no description. Tags here hold regex characters.
+const rowButton = (verb: string, tag: string) => (label: string) => label === `${verb} ${tag}` || (label.startsWith(`${verb} `) && label.endsWith(` · ${tag}`));
+const deleteBtn = (tag: string) => W().getByLabelText(rowButton('Delete', tag)) as HTMLButtonElement;
 
 async function deleteSensor(tag: string) {
     await goManage();
@@ -417,7 +419,7 @@ async function deleteSensor(tag: string) {
 
 async function openEditor(tag: string) {
     await goManage();
-    await act(async () => { fireEvent.click(W().getByLabelText(`Edit ${tag}`)); });
+    await act(async () => { fireEvent.click(W().getByLabelText(rowButton('Edit', tag))); });
     await flush();
 }
 
@@ -606,7 +608,7 @@ describe('1b. create via operation, Sum vs Mean with a missing source, Pair Plot
         await openWindow();
         await createFormula('P5', '$TAG1 + 1');
         await goManage();
-        const row = W().getByLabelText('Delete P5').closest('div.rounded') as HTMLElement;
+        const row = W().getByLabelText(/^Delete (.* · )?P5$/).closest('div.rounded') as HTMLElement;
         expect(within(row).queryByText('on chart')).toBeNull();
     });
 
@@ -780,7 +782,7 @@ describe('2. delete then recreate the same name', () => {
         expect(rust.chartValues('X')).toEqual([2, 4, 6, 8]);
         expect(dashSelected()).toEqual(['X']);
         expect((await persistedRecipes()).map(r => r.tag)).toEqual(['X']);
-        expect(W().getByLabelText('Delete X')).toBeTruthy();
+        expect(W().getByLabelText(/^Delete (.* · )?X$/)).toBeTruthy();
     });
 
     it('closing the window mid-undo commits the delete end to end (column dropped, Dashboard drops the recipe)', async () => {
@@ -838,8 +840,8 @@ describe('2b. delete protection', () => {
         expect(rust.has('A')).toBe(true);
         expect(rust.cmds('remove_sensor_columns')).toHaveLength(0);
         expect((await persistedRecipes()).map(r => r.tag)).toEqual(['A']);
-        expect(W().getByLabelText('Delete A')).toBeTruthy();
-        expect(W().getByRole('alert').textContent).toMatch(/Didn't delete A: it is now used by/);
+        expect(W().getByLabelText(/^Delete (.* · )?A$/)).toBeTruthy();
+        expect(W().getByRole('alert').textContent).toMatch(/Didn't delete A desc · A: it is now used by/);
         await expectConsistent(await persistedRecipes());
     });
 
@@ -876,7 +878,7 @@ describe('2b. delete protection', () => {
         await typeFormula('${A} + $TAG3');
         await fillCreate('B');
         await clickAdd();
-        expect(backendError()).toMatch(/"A" is being deleted/);
+        expect(backendError()).toMatch(/"A desc · A" is being deleted/);
         expect(rust.cmds('evaluate_formula').filter(c => c.args.customName === 'B')).toHaveLength(0);
         await tick(8100);
         const recipes = await persistedRecipes();
@@ -1216,8 +1218,8 @@ describe('5. workspace reopen replay (real DataUploadPage -> real Dashboard -> r
         // Fix it in Manage.
         await openWindow();
         await goManage();
-        expect(W().getByLabelText('Edit BROKEN')).toBeTruthy();
-        expect(W().getByLabelText('Edit DEP')).toBeTruthy();
+        expect(W().getByLabelText(/^Edit (.* · )?BROKEN$/)).toBeTruthy();
+        expect(W().getByLabelText(/^Edit (.* · )?DEP$/)).toBeTruthy();
         await openEditor('BROKEN');
         await setEditor({ formula: '$TAG1 + 1' });
         await saveEditor();

@@ -285,11 +285,11 @@ export default function FilterPanel({
         onFiltersChange(draft);
     }, [draft, onFiltersChange]);
 
-    const clearAll = useCallback(() => {
-        const empty: FilterState = { timestampStart: '', timestampEnd: '', sensorFilters: [] };
-        setDraft(empty);
-        onFiltersChange(empty);
-    }, [onFiltersChange]);
+    // Conditions only: this panel is "Sensor filters", the time range belongs to the timebar.
+    const clearConditions = useCallback(() => {
+        setDraft(prev => ({ ...prev, sensorFilters: [] }));
+        onFiltersChange({ ...filters, sensorFilters: [] });
+    }, [filters, onFiltersChange]);
 
     const hasAny = draft.sensorFilters.length > 0;
 
@@ -342,8 +342,8 @@ export default function FilterPanel({
                     <Check size={12} /> Apply filter
                 </button>
                 {hasAny && (
-                    <button onClick={clearAll} className="filter-clear-btn">
-                        <X size={10} /> Clear
+                    <button onClick={clearConditions} className="filter-clear-btn">
+                        <X size={10} /> Clear conditions
                     </button>
                 )}
                 <span className="filter-panel-spacer" />

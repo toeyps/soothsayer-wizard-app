@@ -78,21 +78,23 @@ describe('FilterPanel', () => {
         expect(onFiltersChange.mock.calls[0][0].sensorFilters).toHaveLength(1);
     });
 
-    it('hides Clear when there are no filters, shows it once one is added', () => {
+    it('hides Clear conditions when there are no filters, shows it once one is added', () => {
         render(<FilterPanel filters={emptyFilters} onFiltersChange={vi.fn()} selectedSensors={['A']} />);
-        expect(screen.queryByText('Clear')).toBeNull();
+        expect(screen.queryByText('Clear conditions')).toBeNull();
         fireEvent.click(screen.getByText('Add condition').closest('button')!);
-        expect(screen.getByText('Clear')).toBeTruthy();
+        expect(screen.getByText('Clear conditions')).toBeTruthy();
     });
 
-    it('Clear resets the draft to empty and immediately calls onFiltersChange', () => {
+    it('Clear conditions empties the conditions and applies at once, and leaves the time range alone', () => {
         const onFiltersChange = vi.fn();
-        render(<FilterPanel filters={emptyFilters} onFiltersChange={onFiltersChange} selectedSensors={['A']} />);
+        const period = { timestampStart: '2026-01-01T00:00', timestampEnd: '2026-02-01T00:00' };
+        render(<FilterPanel filters={{ ...period, sensorFilters: [] }} onFiltersChange={onFiltersChange} selectedSensors={['A']} />);
         fireEvent.click(screen.getByText('Add condition').closest('button')!);
-        fireEvent.click(screen.getByText('Clear'));
+        fireEvent.click(screen.getByText('Clear conditions'));
 
         expect(screen.getByText('No sensor filters applied.')).toBeTruthy();
-        expect(onFiltersChange).toHaveBeenCalledWith(emptyFilters);
+        expect(onFiltersChange).toHaveBeenCalledWith({ ...period, sensorFilters: [] });
+        expect(screen.queryByText('Changes not applied yet')).toBeNull();
     });
 
     it('shows a "changes not applied yet" hint while dirty', () => {

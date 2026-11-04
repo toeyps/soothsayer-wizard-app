@@ -163,6 +163,7 @@ const makeDataUpload = (overrides: Partial<UseDataUploadReturn> = {}): UseDataUp
   removeFile: vi.fn(),
   uploadDataset: vi.fn(),
   clearDataset: vi.fn(),
+  abandonParse: vi.fn(),
   ...overrides,
 });
 
@@ -454,9 +455,8 @@ describe('B. File selection', () => {
     expect(screen.getByText('/path/to/run-01.csv')).toBeTruthy();
   });
 
-  // User request 2026-10-15: files are merged on the timestamp TEXT, so the program must say
-  // that every file writes the date/time the same way, with examples of what it reads.
-  it('B10b. two or more files: a note says every file must write the date/time the same way, with the supported shapes; one file: no note', () => {
+  // Files merge on the parsed instant, so the note must not ask for one way of writing the date.
+  it('B10b. two or more files: a note says they merge on the date and time, with the supported shapes; one file: no note', () => {
     useDataUploadMock.mockReturnValue(makeDataUpload({ selectedFiles: ['/x.csv'] }));
     const { unmount } = renderAtStep2();
     expect(screen.queryByTestId('timestamp-format-note')).toBeNull();
@@ -466,7 +466,9 @@ describe('B. File selection', () => {
     renderAtStep2();
     const note = screen.getByTestId('timestamp-format-note');
     expect(note.getAttribute('role')).toBe('note');
-    expect(note.textContent).toMatch(/Every file must write the date\/time the same way/);
+    expect(note.textContent).toMatch(/Files are merged on the date and time/);
+    expect(note.textContent).toMatch(/even when the files write it differently/);
+    expect(note.textContent).not.toMatch(/must write|same way|timestamp text/);
     const shapes = [...screen.getByTestId('supported-timestamps').querySelectorAll('span')].slice(1).map(x => x.textContent);
     expect(shapes.slice(0, -1)).toEqual([
       '2025-01-31 13:05:00', '1/31/2025 1:05 PM', '31/01/2025 13:05', '01-Jan-25 12:00 AM',
@@ -1481,6 +1483,48 @@ describe('F. Load workspace flow', () => {
       expect(stateArg.specialSensorRecipes.map((r: any) => r.tag)).toEqual(['BROKEN1', 'DEP1', 'CALC1']);
     });
 
+    describe('a special sensor that could not be restored', () => {
+      const openWithBroken = async (extra: Partial<WorkspaceState>) => {
+        const onDataReady = vi.fn();
+        mockGetRecent.mockResolvedValue(FAKE_WORKSPACES);
+        mockLoadWorkspace.mockResolvedValue({
+          ...baseLoadedWs,
+          specialSensorRecipes: [{ kind: 'formula', tag: 'BROKEN1', formula: '$sensor_a * 2' }],
+          ...extra,
+        });
+        mockInvoke.mockImplementation((cmd: string) => {
+          if (cmd === 'load_csv') return Promise.resolve(FAKE_REPORT);
+          if (cmd === 'evaluate_formula') return Promise.reject('Formula error');
+          return Promise.resolve(null);
+        });
+        render(<DataUploadPage onDataReady={onDataReady} />);
+        await waitFor(() => screen.getByText('Engine pressure run'));
+        fireEvent.click(screen.getByText('Engine pressure run'));
+        await waitFor(() => expect(onDataReady).toHaveBeenCalledTimes(1));
+        return onDataReady.mock.calls[0][1] as WorkspaceState;
+      };
+
+      it('leaves the filter too: Rust would ignore the condition and show every row as filtered', async () => {
+        const keep = { id: 'f1', sensor: 'sensor_a', operation: 'greater_than', value1: '1', value2: '' };
+        const gone = { id: 'f2', sensor: 'broken1', operation: 'less_than', value1: '2', value2: '' };
+        const stateArg = await openWithBroken({
+          filters: { timestampStart: '2025-01-01T00:00', timestampEnd: '', sensorFilters: [keep, gone] },
+        } as Partial<WorkspaceState>);
+        expect(stateArg.filters?.sensorFilters).toEqual([keep]);
+        expect(stateArg.filters?.timestampStart).toBe('2025-01-01T00:00');
+      });
+
+      it('keeps the data time zone found for this open', async () => {
+        const stateArg = await openWithBroken({ dataUtcOffsetMin: undefined });
+        expect(stateArg.dataUtcOffsetMin).toBe(420);
+      });
+
+      it('the toast names it by description, then tag', async () => {
+        await openWithBroken({ extraSensorMetadata: [{ tag: 'BROKEN1', description: 'Doubled flow', unit: '', component: '' }] });
+        expect(getErrors()[0].message).toContain("couldn't be restored: Doubled flow · BROKEN1");
+      });
+    });
+
     // Rust now refuses a formula with an unknown name/function at
     // compute time. A workspace saved earlier can hold one that used to be
     // accepted and silently produced an empty sensor (`$A * pi`).
@@ -1964,6 +2008,39 @@ describe('J. Onboarding flow', () => {
 //   -- never lets an older, slower load hand over or mix its dataset with a
 //   newer one's.
 // ═════════════════════════════════════════════════════════════════════════
+
+describe('K0. a parse from step 2 and an opening project', () => {
+  it('the parse is abandoned before the project loads its dataset', async () => {
+    const hook = makeDataUpload();
+    useDataUploadMock.mockReturnValue(hook);
+    mockGetRecent.mockResolvedValue(FAKE_WORKSPACES);
+    mockLoadWorkspace.mockResolvedValue(baseLoadedWs);
+    const order: string[] = [];
+    (hook.abandonParse as ReturnType<typeof vi.fn>).mockImplementation(() => { order.push('abandon'); });
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'load_csv') { order.push('load_csv'); return Promise.resolve(FAKE_REPORT); }
+      return Promise.resolve(null);
+    });
+    const onDataReady = vi.fn();
+    render(<DataUploadPage onDataReady={onDataReady} />);
+    await waitFor(() => screen.getByText('Engine pressure run'));
+    fireEvent.click(screen.getByText('Engine pressure run'));
+    await waitFor(() => expect(onDataReady).toHaveBeenCalledTimes(1));
+    expect(order).toEqual(['abandon', 'load_csv']);
+  });
+
+  it('a project that cannot be found leaves the parse alone: the dataset is not replaced', async () => {
+    const hook = makeDataUpload();
+    useDataUploadMock.mockReturnValue(hook);
+    mockGetRecent.mockResolvedValue(FAKE_WORKSPACES);
+    mockLoadWorkspace.mockResolvedValue(null);
+    render(<DataUploadPage onDataReady={vi.fn()} />);
+    await waitFor(() => screen.getByText('Engine pressure run'));
+    fireEvent.click(screen.getByText('Engine pressure run'));
+    await waitFor(() => expect(screen.getByText(/Workspace not found/)).toBeTruthy());
+    expect(hook.abandonParse).not.toHaveBeenCalled();
+  });
+});
 
 describe('K. dataset generation and latest-click-wins', () => {
   const STALE = 'STALE_SESSION: the dataset changed since this window was opened';

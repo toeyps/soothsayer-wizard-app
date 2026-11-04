@@ -48,9 +48,28 @@ function renderList(overrides: Partial<React.ComponentProps<typeof ManageSpecial
 }
 
 /** The row's own delete button, found by its accessible label. */
-const deleteButton = (tag: string) => screen.getByLabelText(`Delete ${tag}`) as HTMLButtonElement;
+const deleteButton = (tag: string) => screen.getByLabelText(new RegExp(`^Delete (.* · )?${tag}$`)) as HTMLButtonElement;
 
 describe('ManageSpecialSensors', () => {
+    it('names a sensor by description, then tag: on its buttons, in why Delete is off and in the expanded list', () => {
+        const refs = new Map([['special a', ['11PT1214A.PV']], ['dep', ['special A']]]);
+        const dep: SpecialSensorRecipe = { kind: 'formula', tag: 'dep', formula: '${special A} + 1' };
+        const depMeta: SensorMetadata = { tag: 'dep', description: 'Pressure plus one', unit: '', component: '' };
+        renderList({ recipes: [specialA, dep], sensorMetadata: [...metadata, depMeta], formulaRefs: refs });
+
+        expect(screen.getByLabelText(/^Edit (.* · )?Doubled pressure · special A$/).getAttribute('title')).toBe('Edit Doubled pressure · special A');
+        const del = screen.getByLabelText(/^Delete (.* · )?Doubled pressure · special A$/);
+        expect(del.getAttribute('title')).toContain('Used by Pressure plus one · dep');
+        fireEvent.click(screen.getByText('Used by 1 sensor'));
+        expect(screen.getByText(/Built on top of this:/).parentElement!.textContent).toContain('Pressure plus one · dep');
+        expect(screen.getByLabelText(/^Delete (.* · )?Pressure plus one · dep$/).getAttribute('title')).toBe('Delete Pressure plus one · dep');
+    });
+
+    it('a sensor with no description keeps the tag alone', () => {
+        renderList({ recipes: [totalFlow], sensorMetadata: [] });
+        expect(screen.getByLabelText(/^Edit (.* · )?Boiler total flow$/)).toBeTruthy();
+    });
+
     it('tells the user where special sensors come from when there are none', () => {
         renderList({ recipes: [] });
         expect(screen.getByText('No special sensors yet')).toBeTruthy();
@@ -148,12 +167,12 @@ describe('ManageSpecialSensors', () => {
 
     it('the pencil opens the sensor in the Formula editor (the window owns it), and marks the row being edited', () => {
         const { props, rerender } = renderList();
-        fireEvent.click(screen.getByLabelText('Edit special A'));
+        fireEvent.click(screen.getByLabelText(/^Edit (.* · )?special A$/));
         expect(props.onEdit).toHaveBeenCalledWith('special A');
         rerender(<ManageSpecialSensors {...props} editingTag="special A" />);
         // Clicking it again re-opens it (no toggle); no editor is expanded inside the list any more.
-        expect(screen.getByLabelText('Edit special A').getAttribute('aria-pressed')).toBe('true');
-        fireEvent.click(screen.getByLabelText('Edit special A'));
+        expect(screen.getByLabelText(/^Edit (.* · )?special A$/).getAttribute('aria-pressed')).toBe('true');
+        fireEvent.click(screen.getByLabelText(/^Edit (.* · )?special A$/));
         expect(props.onEdit).toHaveBeenLastCalledWith('special A');
         expect(screen.queryByLabelText('Formula')).toBeNull();
         expect(screen.queryByText('Save changes')).toBeNull();
@@ -174,7 +193,7 @@ describe('ManageSpecialSensors', () => {
 
     it('while a save is applied the pencils wait', () => {
         renderList({ savingEdit: true });
-        expect((screen.getByLabelText('Edit special A') as HTMLButtonElement).disabled).toBe(true);
+        expect((screen.getByLabelText(/^Edit (.* · )?special A$/) as HTMLButtonElement).disabled).toBe(true);
     });
 
     it('a sensor that cannot be deleted can still be edited — that is what the downstream recompute is for', () => {
@@ -183,7 +202,7 @@ describe('ManageSpecialSensors', () => {
             formulaRefs: new Map([['special a', ['11PT1214A.PV']], ['special b', ['special A']]]),
         });
         expect(deleteButton('special A').disabled).toBe(true);
-        expect((screen.getByLabelText('Edit special A') as HTMLButtonElement).disabled).toBe(false);
+        expect((screen.getByLabelText(/^Edit (.* · )?special A$/) as HTMLButtonElement).disabled).toBe(false);
     });
 
     it('filters the list by name, description or recipe', () => {
@@ -203,7 +222,7 @@ describe('ManageSpecialSensors -- edit lock (the expanded row)', () => {
     it('a sensor a model uses: the expanded row says the name and formula are locked, and why', () => {
         renderList({ models: [makeModel({ targetSensor: 'special A' })] });
         // The Edit button itself stays usable (description / unit / component are editable).
-        expect((screen.getByLabelText('Edit special A') as HTMLButtonElement).disabled).toBe(false);
+        expect((screen.getByLabelText(/^Edit (.* · )?special A$/) as HTMLButtonElement).disabled).toBe(false);
         fireEvent.click(screen.getByText('Used by 1 model'));
         expect(screen.getByTestId('edit-lock-special A').textContent)
             .toContain('Name and formula are locked: Used by 1 model: Boiler efficiency (Individual).');

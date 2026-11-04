@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect, useDeferredValue, useRef, forwardRef, use
 import { emit, UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import Split from 'split.js';
-import { saveWorkspaceFrom, updateWorkspaceData } from '../../workspaceManager';
+import { loadWorkspaceData, saveWorkspaceFrom, updateWorkspaceData } from '../../workspaceManager';
 import { withFailureGroupState, restoreDeletedModel } from '../../utils/failureGroupState';
 import { modelsOnlyIn, modelSensorKey, sensorCategory } from '../../utils/modelGrouping';
 import { seedHealthSetPoints } from '../../utils/healthSetPoints';
@@ -23,6 +23,7 @@ import { ALARM_LEVELS, alarmLevelColor } from '../../utils/alarmLevels';
 import FilterPanel, { FilterState, FilterSensorChange } from './FilterPanel';
 import SensorSelection from './SensorSelection';
 import UndoToastStack from './UndoToastStack';
+import Portal from '../Portal';
 import { UNDO_SECONDS } from './FailureGroupAssignSheet';
 import { kindModelName } from '../../utils/modelNames';
 import { defaultModelName } from './defaultModelName';
@@ -34,7 +35,7 @@ import HighlightsPanel from './HighlightsPanel';
 import { DateTime24Input } from '../windows/DateTime24Input';
 import ColourPicker from '../sensor/ColourPicker';
 import { SensorLabel, SensorSetProvider } from '../sensor/SensorLabel';
-import { SensorMetaContext, useLayeredSensorLookup } from '../sensor/sensorInfo';
+import { SensorMetaContext, buildSensorLookup, sensorPlainLabel, useLayeredSensorLookup } from '../sensor/sensorInfo';
 import AnchoredPopover, { type PopoverAnchorRect } from '../AnchoredPopover';
 import { useScatterSample, ScatterSampleFilter } from '../../hooks/useScatterSample';
 import { reportError } from '../../errorReporter';
@@ -125,6 +126,13 @@ const PAIR_MAX_POINTS = 10_000;
 // keystroke in a Filter value box, which has no debounce of its own)
 // triggered an immediate JSON.stringify + writeTextFile to $APPDATA.
 const AUTOSAVE_DEBOUNCE_MS = 250;
+/** A write that hangs must not keep the window open for ever: past this it counts as failed. */
+const CLOSE_SAVE_WAIT_MS = 10_000;
+const CLOSE_SAVE_FAILED_NOTICE = 'Could not save your latest changes to the project file. Close the window again to leave without them.';
+const FG_SAVE_FAILED_NOTICE = 'Could not save your last Failure Group change. The screen is back to what the project file holds.';
+const FG_SAVE_FAILED_UNREAD_NOTICE = 'Could not save your last Failure Group change, and the project file could not be read. What you see may not match the file.';
+const RENAME_MODELS_FAILED_NOTICE = 'Could not update the models that use the renamed sensor. In the project file they still use its old name: reopen the project and check them.';
+const REPAIR_DEMOTE_FAILED_NOTICE = 'Could not set the models that use the fixed sensor back to Incomplete. Its values changed, so train them again.';
 
 /** Workspace fields that are no longer read by anything.
  *  `highlightLineDisplay` ('band' | 'line') may still be carried by an old
@@ -372,6 +380,8 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     // Every sensor label / picker / tooltip in this window resolves through
     // this lookup (merged metadata + the ƒ / Σ badges of the special sensors).
     const sensorLookup = useLayeredSensorLookup(sensorMetadata, specialSensorRecipes);
+    const sensorLookupRef = useRef(sensorLookup);
+    sensorLookupRef.current = sensorLookup;
     const getSensorMeta = useCallback(
         (sensor: string) => sensorMetaMap.get(normalizeSensorTag(sensor)) ?? null,
         [sensorMetaMap]
@@ -412,6 +422,22 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         return rest;
     });
 
+    // Writes this window has in flight (autosave and failure-group): a close waits for them.
+    const writesRef = useRef(new Set<Promise<void>>());
+    const trackWrite = useCallback((write: Promise<unknown>) => {
+        const done: Promise<void> = write.then(() => undefined, () => undefined).then(() => { writesRef.current.delete(done); });
+        writesRef.current.add(done);
+        return done;
+    }, []);
+    const fgWriteFailedRef = useRef(false);
+    const [saveNotice, setSaveNotice] = useState<string | null>(null);
+    const adoptFgSlice = useCallback((slice: FailureGroupStateSlice) => {
+        const { groups, models, ...rest } = slice;
+        setFgGroups(groups);
+        setFgModels(models);
+        setFgExtra(rest);
+    }, []);
+
     // Core writer: `compute` receives the groups/models that are on DISK right
     // now (`prev` is a fresh read, not this window's possibly-stale mirror) and
     // returns the new ones. Everything else in `failureGroupState` — filters,
@@ -423,15 +449,17 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     // workspace Running condition's conditions as they should be after this
     // write (a special-sensor rename has to re-key them). Left out, the field is
     // carried through untouched like every other one.
+    //
+    // A failed write (or a missing file) must not leave the screen on a value that
+    // never reached the file: the mirror is reloaded from disk and the user is told.
     const persistFailureGroupStateFrom = useCallback((
         compute: (disk: { groups: FailureGroup[]; models: FailureModel[]; runningConditionFilters: WorkspaceSensorFilter[] }) => {
             groups: FailureGroup[]; models: FailureModel[]; runningConditionFilters?: WorkspaceSensorFilter[];
         },
-        /** Runs once the write is durable, with the models now on disk (deleting a model's files). */
-        onWritten?: (models: FailureModel[]) => void,
+        failure?: { notice?: string; onFailed?: () => void },
     ) => {
         if (!initialState) return;
-        updateWorkspaceData(initialState.id, prev => {
+        const write = updateWorkspaceData(initialState.id, prev => {
             const before = prev.failureGroupState;
             const result = compute({
                 groups: before?.groups ?? [],
@@ -456,27 +484,35 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                 // condition), same as the broadcast listener right below —
                 // otherwise the next FG write would compute the status dot
                 // against a stale running condition.
-                if (next?.failureGroupState) {
-                    const { groups, models, ...rest } = next.failureGroupState;
-                    setFgGroups(groups);
-                    setFgModels(models);
-                    setFgExtra(rest);
-                }
-                // Tell any open Build Model window (a separate OS window that
-                // otherwise only sees Dashboard's edits when it is next
-                // opened) — scoped to this workspace, and tagged so this
-                // window's own listener below skips its own echo.
-                if (next?.failureGroupState) {
+                if (!next) throw new Error('The project file is missing.');
+                if (next.failureGroupState) {
+                    adoptFgSlice(next.failureGroupState);
+                    // Tell any open Build Model window (a separate OS window that
+                    // otherwise only sees Dashboard's edits when it is next
+                    // opened) — scoped to this workspace, and tagged so this
+                    // window's own listener below skips its own echo.
                     emit('failure-group-state-changed', {
                         ...next.failureGroupState,
                         workspaceId: initialState.id,
                         origin: 'dashboard',
                     }).catch(e => console.warn('Failed to broadcast failure-group state:', e));
                 }
-                if (onWritten && next?.failureGroupState) onWritten(next.failureGroupState.models);
             })
-            .catch(e => console.error('Failed to persist failure-group assignment from Dashboard:', e));
-    }, [initialState]);
+            .catch(async (e) => {
+                console.error('Failed to persist failure-group assignment from Dashboard:', e);
+                fgWriteFailedRef.current = true;
+                failure?.onFailed?.();
+                let slice: FailureGroupStateSlice | undefined;
+                try {
+                    slice = (await loadWorkspaceData(initialState.id))?.failureGroupState;
+                } catch (readError) {
+                    console.warn('Could not reload the failure groups after a failed write:', readError);
+                }
+                if (slice) adoptFgSlice(slice);
+                setSaveNotice(failure?.notice ?? (slice ? FG_SAVE_FAILED_NOTICE : FG_SAVE_FAILED_UNREAD_NOTICE));
+            });
+        trackWrite(write);
+    }, [initialState, adoptFgSlice, trackWrite]);
 
     // EVERY FG writer (toggle, create/rename/edit/delete group, delete model,
     // tag rename) derives its result from disk via
@@ -619,10 +655,10 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                 captured: { model: existing! },
             }
             : null;
-        let announced = false;
+        let announced: FgUndoEntry | null = null;
         const announce = (e: FgUndoEntry) => {
             if (announced) return;
-            announced = true;
+            announced = e;
             setUndoToasts(prev => [...prev, e].slice(-MAX_UNDO_TOASTS));
         };
         if (entry) announce(entry);
@@ -650,6 +686,9 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                 dismissUndo(entry.id);
             }
             return { groups: disk.groups, models };
+        }, {
+            // Nothing was deleted: an Undo for it would be a lie.
+            onFailed: () => { if (announced) dismissUndo(announced.id); },
         });
     }, [fgModels, applyToggle, persistFailureGroupStateFrom, getSensorMeta, dismissUndo]);
 
@@ -1378,7 +1417,10 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                     .catch(e => console.warn('Failed to report the plotted sensors:', e));
 
                 if (blocked.length > 0) {
-                    const text = `Pair Plot supports at most ${MAX_PAIR_PLOT_SENSORS} sensors, so ${blocked.join(', ')} ${blocked.length === 1 ? 'was' : 'were'} added to the workspace but not plotted. Deselect a sensor first, or switch chart type.`;
+                    // The new sensor's own metadata is not in the lookup until the next render.
+                    const lookup = buildSensorLookup(sensorLookupRef.current, newMetadata);
+                    const names = blocked.map(tag => sensorPlainLabel(lookup(tag))).join(', ');
+                    const text = `Pair Plot supports at most ${MAX_PAIR_PLOT_SENSORS} sensors, so ${names} ${blocked.length === 1 ? 'was' : 'were'} added to the workspace but not plotted. Deselect a sensor first, or switch chart type.`;
                     void (async () => {
                         try {
                             await message(text, { title: 'Not plotted', kind: 'warning' });
@@ -1518,7 +1560,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                             { runningConditionFilters: disk.runningConditionFilters },
                             affectedTags,
                         ).models,
-                    }));
+                    }), { notice: REPAIR_DEMOTE_FAILED_NOTICE });
                 }
                 setDataRevision(n => n + 1);
             });
@@ -1596,7 +1638,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                     groups: disk.groups,
                     models: renameTagInModels(disk.models, oldTag, newTag),
                     runningConditionFilters: renameTagInRunningConditionFilters(disk.runningConditionFilters, oldTag, newTag),
-                }));
+                }), { notice: RENAME_MODELS_FAILED_NOTICE });
 
                 setDataRevision(n => n + 1);
             });
@@ -1937,12 +1979,6 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         valueHighlight, relativeAmount, relativeUnit,
     ]);
 
-    // What the close-flush effect below awaits before actually letting the
-    // window close. Always overwritten to the LATEST scheduled save on every
-    // effect rerun (a superseded save's promise is simply abandoned — nothing
-    // else ever holds a reference to it), so this always points at "the save
-    // that still needs to land on disk".
-    const pendingSaveRef = useRef<Promise<void> | null>(null);
     // The autosave below is a debounce whose timer its cleanup CLEARS -- on a
     // dependency change that is right (the next run re-arms it), but on UNMOUNT
     // ("Back to Import") it would drop whatever was changed in the last
@@ -1951,6 +1987,15 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     // `runAutosaveRef`, which is the very same routine the timer runs.
     const autosaveDirtyRef = useRef(false);
     const runAutosaveRef = useRef<(() => Promise<void>) | null>(null);
+    const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    /** The last autosave did not reach the file (it stays dirty and is retried). */
+    const autosaveFailedRef = useRef(false);
+    /** A failed save at close was reported: the next close leaves regardless. */
+    const closeToldRef = useRef(false);
+    /** Window.close() was called: its `close-requested` pass lets the window go. */
+    const leavingRef = useRef(false);
+    /** A close is waiting for the saves: a second X does not start another. */
+    const closingRef = useRef(false);
     // The first autosave after opening always writes: it moves the project to
     // the top of Recents even when nothing changed.
     const autosavedOnceRef = useRef(false);
@@ -1976,7 +2021,6 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     // processes.
     useEffect(() => {
         if (!initialState) return;
-        let timer: ReturnType<typeof setTimeout>;
         // The write itself: also what the unmount flush runs. Always for THIS
         // Dashboard's own workspace (`initialState.id`), built from this
         // render's state.
@@ -2012,7 +2056,13 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                 // autosave pending so the next change (or leaving) tries again.
                 console.warn('Autosave failed, nothing overwritten, adopted or broadcast:', e);
                 autosaveDirtyRef.current = true;
+                autosaveFailedRef.current = true;
                 return;
+            }
+            autosaveFailedRef.current = false;
+            if (closeToldRef.current) {
+                closeToldRef.current = false;
+                setSaveNotice(prev => (prev === CLOSE_SAVE_FAILED_NOTICE ? null : prev));
             }
             if (!next) return;
             autosavedOnceRef.current = true;
@@ -2042,19 +2092,13 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         };
         autosaveDirtyRef.current = true;
         runAutosaveRef.current = runAutosave;
-        pendingSaveRef.current = new Promise<void>((resolve) => {
-            timer = setTimeout(async () => {
-                autosaveDirtyRef.current = false;
-                try {
-                    await runAutosave();
-                } finally {
-                    pendingSaveRef.current = null;
-                    resolve();
-                }
-            }, AUTOSAVE_DEBOUNCE_MS);
-        });
+        const timer = setTimeout(() => {
+            autosaveDirtyRef.current = false;
+            void trackWrite(runAutosave());
+        }, AUTOSAVE_DEBOUNCE_MS);
+        autosaveTimerRef.current = timer;
         return () => clearTimeout(timer);
-    }, [buildWorkspaceState, initialState, fgGroups, fgModels, fgExtra]);
+    }, [buildWorkspaceState, initialState, fgGroups, fgModels, fgExtra, trackWrite]);
 
     // Leaving the Dashboard (Back to Import, closing the workspace, the key
     // changing for another one): write what the debounce had not written yet.
@@ -2068,26 +2112,63 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         if (run) void run().catch(e => console.warn('Autosave flush on leaving the Dashboard failed:', e));
     }, []);
 
-    // Flush a pending autosave before the window is actually allowed to
-    // close, so a change made in the last AUTOSAVE_DEBOUNCE_MS before quitting
-    // is not lost. `preventDefault()` on its own only BLOCKS the close; it's
-    // still on us to call `.close()` ourselves once the flush is done, or the
-    // window would become impossible to close at all. Only intercepts the
-    // close when there's actually something pending — an already-saved
-    // Dashboard closes with no added delay.
+    // Everything this window still owes the file, written now instead of waiting
+    // for the debounce. False when something did not land (or a write hung).
+    const saveAllBeforeClose = useCallback(async (): Promise<boolean> => {
+        fgWriteFailedRef.current = false;
+        const drained = (async () => {
+            // An edit made while waiting arms the debounce again: go round once more.
+            do {
+                if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
+                await Promise.all([...writesRef.current]);
+                if (autosaveDirtyRef.current) {
+                    autosaveDirtyRef.current = false;
+                    const run = runAutosaveRef.current;
+                    if (run) await trackWrite(run());
+                }
+                await Promise.all([...writesRef.current]);
+            } while (autosaveDirtyRef.current && !autosaveFailedRef.current);
+            return true;
+        })();
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const gaveUp = new Promise<boolean>((resolve) => { timer = setTimeout(() => resolve(false), CLOSE_SAVE_WAIT_MS); });
+        const finished = await Promise.race([drained, gaveUp]);
+        if (timer) clearTimeout(timer);
+        return finished && !autosaveFailedRef.current && !fgWriteFailedRef.current;
+    }, [trackWrite]);
+
+    // `preventDefault()` only BLOCKS the close, so once the saves are done we call
+    // `close()` ourselves. That comes back through this handler: `leavingRef` lets
+    // it pass, so the close can never loop. A save that failed keeps the window once,
+    // with a message; the next close leaves. Nothing pending = no delay at all.
     useEffect(() => {
         let disposed = false;
         let unlisten: (() => void) | undefined;
         const win = getCurrentWindow();
         Promise.resolve(win.onCloseRequested(async (event) => {
-            const pending = pendingSaveRef.current;
-            if (!pending) return;
+            if (leavingRef.current) return;
+            if (!autosaveDirtyRef.current && writesRef.current.size === 0) return;
             event.preventDefault();
-            await pending;
-            await win.close();
+            if (closingRef.current) return;
+            closingRef.current = true;
+            try {
+                const saved = await saveAllBeforeClose();
+                if (!saved && !closeToldRef.current) {
+                    closeToldRef.current = true;
+                    setSaveNotice(CLOSE_SAVE_FAILED_NOTICE);
+                    return;
+                }
+                leavingRef.current = true;
+                await win.close();
+            } catch (e) {
+                leavingRef.current = false;
+                console.warn('Could not close the window:', e);
+            } finally {
+                closingRef.current = false;
+            }
         })).then(fn => { if (disposed) fn(); else unlisten = fn; });
         return () => { disposed = true; if (unlisten) unlisten(); };
-    }, []);
+    }, [saveAllBeforeClose]);
 
     // ── Scatter / Pair-plot data path (bounded sample) ───────────────────
     // A 2 GB CSV is millions of rows; pushing every point to WebGL exhausts
@@ -2928,6 +3009,14 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                 onExpire={expireUndo}
                 durationMs={UNDO_SECONDS * 1000}
             />
+            {saveNotice && (
+                <Portal>
+                    <div className="dash-save-notice" role="alert" data-testid="save-failed-notice">
+                        <span>{saveNotice}</span>
+                        <button type="button" className="fg-undo-toast-btn" onClick={() => setSaveNotice(null)}>Dismiss</button>
+                    </div>
+                </Portal>
+            )}
             {/* Collapsed Tabs Sidebar */}
             {collapsedPanels.size > 0 && (
                 <div className="collapsed-tabs-sidebar">

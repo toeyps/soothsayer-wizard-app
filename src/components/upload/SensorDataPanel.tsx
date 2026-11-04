@@ -51,12 +51,7 @@ export const SUPPORTED_TIMESTAMPS = [
   'Fri, 31 Jan 2025 13:05:00 +0700', '20250131130500', '31 ม.ค. 2568 13:05', '45688.5451389',
 ];
 
-/**
- * Two or more files are merged row by row on the TEXT of their timestamps, so the same moment
- * written two ways ("2025-01-31 13:05:00" and "2025-01-31T13:05:00") becomes two rows. Real exports
- * from one system all use one shape; a file re-saved in Excel often does not. The user asked
- * (2026-10-15) for the program to say so, with examples, rather than to merge mixed shapes.
- */
+/** Two or more files are merged on the moment each timestamp means, whatever shape it is written in. */
 function TimestampFormatNote({ T }: { T: Tokens }) {
   const code = { fontFamily: mono, fontSize: 11, color: T.text, padding: '1px 6px', borderRadius: 5, background: T.bg, border: `1px solid ${T.border}` };
   return (
@@ -67,11 +62,8 @@ function TimestampFormatNote({ T }: { T: Tokens }) {
     >
       <Clock size={15} style={{ color: T.accentHi, flexShrink: 0, marginTop: 1 }} />
       <div style={{ minWidth: 0, color: T.textMuted, lineHeight: 1.5 }}>
-        <b style={{ color: T.text, fontWeight: 600 }}>Every file must write the date/time the same way</b>
-        <div>Files are merged on the timestamp text, so the same moment written in two shapes becomes two rows.</div>
-        <div style={{ marginTop: 6 }}>
-          Same in every file, e.g. <span style={code}>2025-01-31 13:05:00</span> — not <span style={code}>2025-01-31 13:05:00</span> in one and <span style={code}>2025-01-31T13:05</span> in another.
-        </div>
+        <b style={{ color: T.text, fontWeight: 600 }}>Files are merged on the date and time</b>
+        <div>The same moment in two files becomes one row, even when the files write it differently. A row whose date/time cannot be read is kept, but never merged.</div>
         <div style={{ marginTop: 6, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 5 }} data-testid="supported-timestamps">
           <span>Supported:</span>
           {SUPPORTED_TIMESTAMPS.map((f) => <span key={f} style={code}>{f}</span>)}

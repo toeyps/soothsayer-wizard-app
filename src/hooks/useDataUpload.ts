@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import type { CsvLoadReport } from '../types/dataUpload';
@@ -16,6 +16,9 @@ export interface UseDataUploadReturn {
   removeFile: (path: string) => void;
   uploadDataset: () => Promise<void>;
   clearDataset: () => void;
+  /** A project is about to replace the Rust dataset: forget the parse (running or
+   *  finished), so it cannot touch this screen. The file list stays. */
+  abandonParse: () => void;
 }
 
 export function useDataUpload(): UseDataUploadReturn {
@@ -27,6 +30,8 @@ export function useDataUpload(): UseDataUploadReturn {
   const [parsedFiles, setParsedFiles] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Only the newest parse may touch the screen.
+  const parseSeqRef = useRef(0);
 
   const selectFiles = useCallback(async () => {
     try {
@@ -58,6 +63,7 @@ export function useDataUpload(): UseDataUploadReturn {
       return;
     }
 
+    const seq = ++parseSeqRef.current;
     setIsLoading(true);
     setError(null);
 
@@ -69,18 +75,29 @@ export function useDataUpload(): UseDataUploadReturn {
       const report = await invoke<CsvLoadReport>('load_csv', {
         paths: snapshot,
       });
+      if (seq !== parseSeqRef.current) return;
       setLoadReport(report);
       setParsedFiles(snapshot);
     } catch (err) {
+      if (seq !== parseSeqRef.current) return;
       setError(err instanceof Error ? err.message : String(err));
       setLoadReport(null);
       setParsedFiles([]);
     } finally {
-      setIsLoading(false);
+      if (seq === parseSeqRef.current) setIsLoading(false);
     }
   }, [selectedFiles]);
 
+  const abandonParse = useCallback(() => {
+    parseSeqRef.current += 1;
+    setLoadReport(null);
+    setParsedFiles([]);
+    setError(null);
+    setIsLoading(false);
+  }, []);
+
   const clearDataset = useCallback(() => {
+    parseSeqRef.current += 1;
     setSelectedFiles([]);
     setLoadReport(null);
     setParsedFiles([]);
@@ -104,5 +121,6 @@ export function useDataUpload(): UseDataUploadReturn {
     removeFile,
     uploadDataset,
     clearDataset,
+    abandonParse,
   };
 }

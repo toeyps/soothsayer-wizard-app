@@ -33,6 +33,7 @@ import {
 } from "../../utils/staleSession";
 import type { Invoker } from "../../utils/specialSensorRecompute";
 import { SensorMetaProvider } from '../sensor/SensorLabel';
+import { buildSensorLookup, sensorPlainLabel } from '../sensor/sensorInfo';
 import { PaneResizeHandle, readSavedPaneWidth } from '../PaneResizeHandle';
 import {
     blockOperationConfig, editorStateFormula, editorStateToRecipe, type FormulaEditorState,
@@ -164,10 +165,10 @@ interface TaskCtx {
 }
 
 /** One short sentence: what still uses a sensor that was about to be deleted. */
-function describeUsage(usages: SpecialSensorUsage[]): string {
+function describeUsage(usages: SpecialSensorUsage[], nameOf: (tag: string) => string): string {
     const parts: string[] = [];
     for (const u of usages) {
-        if (u.dependentSensors.length > 0) parts.push(`${u.dependentSensors.join(', ')} (built on it)`);
+        if (u.dependentSensors.length > 0) parts.push(`${u.dependentSensors.map(nameOf).join(', ')} (built on it)`);
         if (u.modelReferences.length > 0) {
             parts.push(u.modelReferences.map(r => `${r.modelName || 'Untitled model'} (${r.field})`).join(', '));
         }
@@ -206,11 +207,11 @@ async function readUnrestored(
 /** Why a sensor whose replay failed can't be computed, in the backend's words
  *  where it has some: `validate_formula` runs the same gate the recompute does.
  *  Null when no specific reason can be given. */
-async function restoreReason(inv: Invoker, recipe: SpecialSensorRecipe, columns: string[]): Promise<string | null> {
+async function restoreReason(inv: Invoker, recipe: SpecialSensorRecipe, columns: string[], nameOf: (tag: string) => string): Promise<string | null> {
     if (recipe.kind === 'operation') {
         const have = new Set(columns.map(tagKey));
         const missing = (recipe.sourceSensors ?? []).filter(s => !have.has(tagKey(s)));
-        return missing.length > 0 ? `Sensor not found: ${missing.join(', ')}` : null;
+        return missing.length > 0 ? `Sensor not found: ${missing.map(nameOf).join(', ')}` : null;
     }
     try {
         const out = await inv('validate_formula', { formula: recipe.formula }) as { valid?: unknown; error?: unknown } | null;
@@ -224,13 +225,14 @@ async function restoreReason(inv: Invoker, recipe: SpecialSensorRecipe, columns:
 /** The toast after a successful repair: what came back, what still needs
  *  fixing (and why), and how many models must be trained again. */
 function describeRepair(
-    tag: string,
+    name: string,
     restoredDownstream: number,
     stillBroken: Array<{ tag: string; reason: string }>,
     retrainCount: number | null,
+    nameOf: (tag: string) => string,
 ): string {
-    const parts = [`Restored ${tag}${restoredDownstream > 0 ? ` and ${restoredDownstream} sensor(s) built on it` : ''}.`];
-    for (const b of stillBroken) parts.push(`${b.tag} still needs fixing: ${b.reason.replace(/[.\s]+$/, '')}.`);
+    const parts = [`Restored ${name}${restoredDownstream > 0 ? ` and ${restoredDownstream} sensor(s) built on it` : ''}.`];
+    for (const b of stillBroken) parts.push(`${nameOf(b.tag)} still needs fixing: ${b.reason.replace(/[.\s]+$/, '')}.`);
     if (retrainCount === null) parts.push('Models that use it are set back to Incomplete — train them again.');
     else if (retrainCount > 0) parts.push(`${retrainCount} model(s) set back to Incomplete — train them again.`);
     return parts.join(' ');
@@ -263,7 +265,9 @@ export default function AddSensorWindow() {
     // Plot's 4-sensor cap), and a guessed mirror showed a badge for a sensor
     // that was not on the chart.
     const [plottedSensors, setPlottedSensors] = useState<string[]>([]);
-    const [sensorMetadata, setSensorMetadata] = useRefState<SensorMetadata[] | null>(null);
+    const [sensorMetadata, setSensorMetadata, sensorMetadataRef] = useRefState<SensorMetadata[] | null>(null);
+    /** Description first, then tag: for toasts and errors, read when they are written. */
+    const nameOf = (tag: string) => sensorPlainLabel(buildSensorLookup(null, sensorMetadataRef.current)(tag));
     const [loading, setLoading] = useState(true);
     // The sensor's own fields (Create and Edit share them; Edit seeds them).
     const [name, setName] = useState('');
@@ -757,7 +761,7 @@ export default function AddSensorWindow() {
                 const reasons = new Map<string, string | null>();
                 for (const tag of failed) {
                     const recipe = recipes.find(r => sameTag(r.tag, tag));
-                    reasons.set(tagKey(tag), recipe ? await restoreReason(inv, recipe, read.columns) : null);
+                    reasons.set(tagKey(tag), recipe ? await restoreReason(inv, recipe, read.columns, nameOf) : null);
                     if (!stillHere()) return;
                 }
                 setUnrestored(reasons);
@@ -827,7 +831,7 @@ export default function AddSensorWindow() {
                 selectedSensors: [],
             });
             const used = tags.map(t => usageFor(usage, t)).filter((u): u is SpecialSensorUsage => !!u && !u.deletable);
-            if (used.length > 0) blocked = `it is now used by ${describeUsage(used)}`;
+            if (used.length > 0) blocked = `it is now used by ${describeUsage(used, nameOf)}`;
         } catch (err) {
             // Re-pointed / closed while re-reading: this deletion belongs to a
             // project that is not on screen any more -- never touch the session.
@@ -861,7 +865,7 @@ export default function AddSensorWindow() {
             if (isSessionLostError(err)) throw err;
             console.error('Failed to drop the deleted sensor column(s) from the session:', err);
             showToast(
-                `Removed ${tags.join(', ')} from the workspace, but couldn't free its data (${errorText(err)}). `
+                `Removed ${d.label} from the workspace, but couldn't free its data (${errorText(err)}). `
                 + 'Creating a sensor with the same name may fail until the app is restarted.',
                 'error',
             );
@@ -915,7 +919,7 @@ export default function AddSensorWindow() {
             deleteTimer.current = null;
             void scheduleCommit(previous);
         }
-        const d: Deletion = { tags: [tag], label: tag, cancelled: false, started: false, queued: false };
+        const d: Deletion = { tags: [tag], label: nameOf(tag), cancelled: false, started: false, queued: false };
         deletionsRef.current = [...deletionsRef.current, d];
         slotRef.current = d;
         setPendingDelete({ tags: d.tags, label: d.label });
@@ -1163,6 +1167,9 @@ export default function AddSensorWindow() {
                 await emit('update-special-sensor', payload);
             }
 
+            // The saved description, under the old or the new tag.
+            const savedName = (tag: string) => sensorPlainLabel(buildSensorLookup(null, [{ ...next.metadata, tag }])(tag));
+
             // LAST: everything above succeeded and the Dashboard now knows the
             // new name, so nothing refers to the old column any more. A failure
             // here is not a failed rename -- it only leaves an orphan column
@@ -1174,7 +1181,7 @@ export default function AddSensorWindow() {
                 } catch (err) {
                     if (isSessionLostError(err)) throw err;
                     console.error('Failed to drop the old column after a rename:', err);
-                    cleanupWarning = `Renamed "${oldTag}" to "${newTag}", but couldn't free the old data (${errorText(err)}). `
+                    cleanupWarning = `Renamed "${savedName(oldTag)}" to "${savedName(newTag)}", but couldn't free the old data (${errorText(err)}). `
                         + `Creating a sensor named "${oldTag}" may fail until the app is restarted.`;
                 }
             }
@@ -1186,12 +1193,12 @@ export default function AddSensorWindow() {
             } else {
                 showToast(
                     oldTag
-                        ? `Renamed "${oldTag}" to "${newTag}"${downstream.length > 0 ? ` — updated ${downstream.length} sensor(s) built on it` : ''}`
+                        ? `Renamed "${savedName(oldTag)}" to "${savedName(newTag)}"${downstream.length > 0 ? ` — updated ${downstream.length} sensor(s) built on it` : ''}`
                         : repairing
-                            ? describeRepair(next.recipe.tag, downstream.length - stillBroken.length, stillBroken, retrainCount)
+                            ? describeRepair(savedName(next.recipe.tag), downstream.length - stillBroken.length, stillBroken, retrainCount, nameOf)
                         : downstream.length > 0
-                            ? `Updated ${next.recipe.tag} — recomputed ${downstream.length} sensor(s) built on it`
-                            : `Updated ${next.recipe.tag}`,
+                            ? `Updated ${savedName(next.recipe.tag)} — recomputed ${downstream.length} sensor(s) built on it`
+                            : `Updated ${savedName(next.recipe.tag)}`,
                 );
             }
         } catch (err) {
@@ -1205,13 +1212,13 @@ export default function AddSensorWindow() {
             let message = errorText(err);
             if (err instanceof SpecialSensorEditError) {
                 if (err.inconsistent.length > 0) {
-                    message += ` The previous values of ${err.inconsistent.join(', ')} could not be restored, `
+                    message += ` The previous values of ${err.inconsistent.map(nameOf).join(', ')} could not be restored, `
                         + 'so they may show wrong numbers. Reopen the workspace to rebuild them.';
                 }
                 if (err.leftover.length > 0) {
                     // These had NO values before the edit -- there is nothing
                     // "previous" to restore, only values of the refused change.
-                    message += ` ${err.leftover.join(', ')} had no values before this change, and the values it produced `
+                    message += ` ${err.leftover.map(nameOf).join(', ')} had no values before this change, and the values it produced `
                         + 'could not be removed again, so they may show numbers from the refused change. Reopen the workspace to clear them.';
                 }
                 if (err.touched && isCurrent(ctx)) {
@@ -1389,7 +1396,7 @@ export default function AddSensorWindow() {
             }
             const hiddenSource = used.find(isHidden);
             if (hiddenSource !== undefined) {
-                throw new Error(`"${hiddenSource}" is being deleted. Undo that first, or pick another sensor.`);
+                throw new Error(`"${nameOf(hiddenSource)}" is being deleted. Undo that first, or pick another sensor.`);
             }
         }
 
@@ -1427,7 +1434,7 @@ export default function AddSensorWindow() {
             });
         } catch (err) {
             console.error('Failed to tell the dashboard about the new sensor:', err);
-            showToast(`Created ${createdName ?? 'the sensor'}, but couldn't tell the dashboard (${errorText(err)}). Reopen the workspace to see it.`, 'error');
+            showToast(`Created ${createdName ? sensorPlainLabel(buildSensorLookup(null, newMetadata)(createdName)) : 'the sensor'}, but couldn't tell the dashboard (${errorText(err)}). Reopen the workspace to see it.`, 'error');
         }
 
         showToast(createdName ? `Added: ${newMetadata[0].description || createdName}` : `Added ${plotSensors.length} sensor(s)`);

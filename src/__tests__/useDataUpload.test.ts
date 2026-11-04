@@ -42,6 +42,59 @@ describe('useDataUpload', () => {
     vi.clearAllMocks();
   });
 
+  describe('abandonParse (a project is opening)', () => {
+    const parsing = async () => {
+      mockOpen.mockResolvedValue(['/a.csv']);
+      const hook = renderHook(() => useDataUpload());
+      await act(async () => { await hook.result.current.selectFiles(); });
+      let settle!: { resolve: (r: CsvLoadReport) => void; reject: (e: Error) => void };
+      mockInvoke.mockImplementation(() => new Promise((resolve, reject) => { settle = { resolve, reject }; }));
+      let upload!: Promise<void>;
+      act(() => { upload = hook.result.current.uploadDataset(); });
+      expect(hook.result.current.isLoading).toBe(true);
+      return { hook, settle, upload };
+    };
+
+    it('a stale parse that lands later does not touch the screen', async () => {
+      const { hook, settle, upload } = await parsing();
+      act(() => { hook.result.current.abandonParse(); });
+      expect(hook.result.current.isLoading).toBe(false);
+      await act(async () => { settle.resolve(sampleReport); await upload; });
+      expect(hook.result.current.loadReport).toBeNull();
+      expect(hook.result.current.isLoading).toBe(false);
+      expect(hook.result.current.selectedFiles).toEqual(['/a.csv']);
+    });
+
+    it('a stale parse that fails later shows no error', async () => {
+      const { hook, settle, upload } = await parsing();
+      act(() => { hook.result.current.abandonParse(); });
+      await act(async () => { settle.reject(new Error('boom')); await upload; });
+      expect(hook.result.current.error).toBeNull();
+    });
+
+    it('a finished report is forgotten: it no longer describes the session', async () => {
+      const { hook, settle, upload } = await parsing();
+      await act(async () => { settle.resolve(sampleReport); await upload; });
+      expect(hook.result.current.loadReport).toEqual(sampleReport);
+      act(() => { hook.result.current.abandonParse(); });
+      expect(hook.result.current.loadReport).toBeNull();
+    });
+
+    it('a new parse after it works as usual, and the stale one cannot overwrite it', async () => {
+      const { hook, settle: stale, upload: staleUpload } = await parsing();
+      act(() => { hook.result.current.abandonParse(); });
+      let fresh!: { resolve: (r: CsvLoadReport) => void };
+      mockInvoke.mockImplementation(() => new Promise((resolve) => { fresh = { resolve }; }));
+      let upload!: Promise<void>;
+      act(() => { upload = hook.result.current.uploadDataset(); });
+      await act(async () => { stale.resolve({ ...sampleReport, total_rows: 1 }); await staleUpload; });
+      expect(hook.result.current.isLoading).toBe(true);
+      await act(async () => { fresh.resolve(sampleReport); await upload; });
+      expect(hook.result.current.loadReport).toEqual(sampleReport);
+      expect(hook.result.current.isLoading).toBe(false);
+    });
+  });
+
   it('has correct initial state', () => {
     const { result } = renderHook(() => useDataUpload());
 
