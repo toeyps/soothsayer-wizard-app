@@ -56,7 +56,7 @@ export interface ExportedLine {
 // The workspace status bar (variant C)
 // ---------------------------------------------------------------------------
 
-export function ExportBar({ counts, phase, progress, exported, filled, blockedWhy, onExport, onShowWhich, onShowRun, onOpenFolder }: {
+export function ExportBar({ counts, phase, progress, exported, filled, blockedWhy, unsavedWhy = null, onExport, onShowWhich, onShowRun, onOpenFolder }: {
     counts: ExportReadiness['counts'];
     phase: WorkspaceExportPhase;
     progress: WorkspaceExportProgressState | null;
@@ -65,6 +65,8 @@ export function ExportBar({ counts, phase, progress, exported, filled, blockedWh
     filled: boolean;
     /** Something outside the export stops it right now (a training run). */
     blockedWhy: string | null;
+    /** An edit is not saved yet, so the disk is not what the user sees: not ready. */
+    unsavedWhy?: string | null;
     onExport: () => void;
     onShowWhich: () => void;
     onShowRun: () => void;
@@ -108,6 +110,9 @@ export function ExportBar({ counts, phase, progress, exported, filled, blockedWh
         );
     } else if (total === 0) {
         state = <span className="exb-t">No models yet</span>;
+    } else if (allReady && unsavedWhy) {
+        tone = 'warn';
+        state = <span className="exb-t"><b className="exb-n">{allComplete(total)}</b></span>;
     } else if (allReady) {
         tone = 'ok';
         state = (
@@ -130,12 +135,13 @@ export function ExportBar({ counts, phase, progress, exported, filled, blockedWh
     const why = total === 0 ? 'No models to export yet'
         : running ? 'An export is running'
         : blockedWhy
+        ?? unsavedWhy
         ?? (allReady ? null : notReady > 0 ? `Every model must be Complete first · ${notReady} left` : 'Fill in the items in “Show which” first');
     return (
         <div className={`exb exb--${tone}`} data-testid="export-bar">
             <div className="exb-state" role="status">
                 {state}
-                {blockedWhy && !running && <span className="exb-why">· {blockedWhy}</span>}
+                {(blockedWhy ?? unsavedWhy) && !running && <span className="exb-why">· {blockedWhy ?? unsavedWhy}</span>}
             </div>
             <button
                 type="button"

@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef, type CSSProperties, type ReactNode } from "react";
+import { flushSync } from "react-dom";
 import { getFgGroupColor } from '../../utils/failureGroupColor';
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { emit } from "@tauri-apps/api/event";
@@ -44,7 +45,7 @@ import { NAME_TAIL_MAX, displayedName } from "../../utils/sensorNames";
 import { SensorMetaContext, fmtNumText, sensorHaystack, sensorPlainLabel, sensorTitle, useLayeredSensorLookup } from "../sensor/sensorInfo";
 import { useModalFocus } from "./useModalFocus";
 import SubModelsModal from "./SubModelsModal";
-import { useSubModelFits } from "./useSubModelFits";
+import { createEngineQueue, useSubModelFits } from "./useSubModelFits";
 import ModelFitPage from "./workbench/ModelFitPage";
 import { CLUSTER_COLORS as CLUSTER_PALETTE, TYPED_DECIMALS_MAX, fmtClusterBound, shortDecimals } from "./workbench/chartTheme";
 import HealthScorePage from "./workbench/HealthScorePage";
@@ -56,7 +57,7 @@ import { ExportBar, ExportModal, type ExportedLine } from "./workbench/ExportPar
 import { useWorkspaceExport, type UseWorkspaceExport } from "../../hooks/useWorkspaceExport";
 import { exportReadiness } from "../../utils/exportReadiness";
 import { revealExportFolder } from "../../utils/workspaceExport";
-import { CloseRunDialog, LockedSettingsHeader, QueuedCard, RunSetPointsBanner, RunStrip, SensorTrainButton, sensorTrainMenuCopy, TrainAllBar, TrainAllModal, type TrainGroupInfo, type TrainMenuItem, type TrainReasonTone, type TrainRowModel } from "./workbench/TrainQueueParts";
+import { CloseRunDialog, CloseUnsavedDialog, LockedSettingsHeader, QueuedCard, RunSetPointsBanner, RunStrip, SensorTrainButton, sensorTrainMenuCopy, TrainAllBar, TrainAllModal, type TrainGroupInfo, type TrainMenuItem, type TrainReasonTone, type TrainRowModel } from "./workbench/TrainQueueParts";
 import { useTrainQueue } from "../../hooks/useTrainQueue";
 import type { TrainCandidate, TrainFixTarget, TrainOutcome } from "../../types/trainQueue";
 import { classifyTrainPlan, countTrainPlans, formatTrainSeconds, isStaleTrainError, missingSettingsText, noRowsTrainError, preflightReason, REQUIRED_FIELDS_BLOCK_REASON, ROUGH_TRAIN_SECONDS, roughTrainSeconds, trainButtonsBlockedReason, TRAIN_NEEDS_RUNNING_CONDITION, TRAIN_STALE_MESSAGE } from "../../utils/trainQueue";
@@ -299,6 +300,9 @@ const PREVIEW_STALE_BLOCK_REASON = TRAIN_STALE_MESSAGE;
  *  further ("−" still works). */
 const MAX_CLUSTERS = 5;
 const MAX_CLUSTERS_REASON = `At most ${MAX_CLUSTERS} clusters`;
+/** Word for word what Export results says (`x_equals_y` in workspace_export.rs). */
+const X_EQUALS_Y_REASON = 'The X and Y sensors must be different';
+
 /** Stable empty list for `useSubModelFits` when the active model is not a Relationship. */
 const NO_PREDICTORS: string[] = [];
 /** Shown when a Train finds the dataset replaced since this window opened. */
@@ -681,8 +685,8 @@ export default function BuildModelWindow() {
     const [includeUpToDate, setIncludeUpToDate] = useState(false);
     /** The close-during-a-run dialog is open. */
     const [closeAsk, setCloseAsk] = useState(false);
-    /** The silent auto-recompute in flight (a run waits for it: one sidecar call at a time). */
-    const autoRecomputeRef = useRef<Promise<unknown> | null>(null);
+    /** Every engine call of this window (Train, a silent load, Compare) goes through this: one at a time. */
+    const [onEngine] = useState(createEngineQueue);
     /** The header's Train sensor button (every "Train sensor ↑" link focuses it). */
     const trainSensorBtnRef = useRef<HTMLButtonElement>(null);
     /** The ▾ of Train sensor: the "Marked complete" board points at its menu. */
@@ -694,9 +698,16 @@ export default function BuildModelWindow() {
     const activePageTabRef = useRef<HTMLButtonElement>(null);
     /** Id of the model whose "Save changes" was pressed (see the effect on `drafts`). */
     const saveFocusRef = useRef<string | null>(null);
-    /** Close WITHOUT the run dialog: the Dashboard said this workspace is closing
-     *  (`workspace-closing`), or "Stop after this model and close" gave up waiting. */
+    /** The Dashboard said this workspace is closing (`workspace-closing`): close without any question. */
     const closeBypassRef = useRef(false);
+    /** "Stop after this model and close" gave up waiting: the next close skips the run dialog. */
+    const runWaitGaveUpRef = useRef(false);
+    /** Window.close() was called: its `close-requested` pass lets the window go. */
+    const leavingRef = useRef(false);
+    /** The close-with-unsaved-edits dialog is open. */
+    const [unsavedAsk, setUnsavedAsk] = useState(false);
+    const unsavedAskRef = useRef(false);
+    unsavedAskRef.current = unsavedAsk;
     /** "Stop after this model and close" is already waiting (double-click guard). */
     const stopClosingRef = useRef(false);
     /** Mirror of `closeAsk` for the once-registered `workspace-closing` listener. */
@@ -715,6 +726,8 @@ export default function BuildModelWindow() {
 
     /** Unsaved edits, keyed by model id. */
     const [drafts, setDrafts] = useState<Record<string, ModelDraft>>({});
+    const draftsRef = useRef(drafts);
+    draftsRef.current = drafts;
     /** One-time "categories were made consistent" notice — STORED in the
      *  workspace (failureGroupState.categoryNormalisationNotice), not computed
      *  per render, so it survives whichever window writes the file first. */
@@ -733,6 +746,9 @@ export default function BuildModelWindow() {
      *  filter); the `criteriaStats` read further down is only non-null when
      *  that key matches what is selected NOW. */
     const [criteriaStatsEntry, setCriteriaStatsEntry] = useState<{ key: string; stats: SensorStats } | null>(null);
+    /** The stats request failed, for that key: the slider says so and offers Try again. */
+    const [criteriaStatsFailure, setCriteriaStatsFailure] = useState<{ key: string; message: string } | null>(null);
+    const [criteriaStatsTry, setCriteriaStatsTry] = useState(0);
     /** Cluster-range boundary being typed: `idx` = the boundary between cluster
      *  idx+1 and idx+2. `initial` is the text the box showed on focus (an unchanged box
      *  commits nothing, so a rounded readout of a dragged value is never written back). */
@@ -785,6 +801,8 @@ export default function BuildModelWindow() {
     // flight at once).
     const workspaceIdRef = useRef<string | null>(null);
     const loadSeq = useRef(0);
+    /** Counts broadcasts: a slice read from disk before the latest one is older than what is on screen. */
+    const fgBroadcastSeq = useRef(0);
     const recipeSeq = useRef(0);
 
     // The most recent in-flight `updateWorkspaceData` write from ANY persist path
@@ -1103,6 +1121,12 @@ export default function BuildModelWindow() {
                 setTrainAllView(null);
                 setIncludeUpToDate(false);
                 setCloseAsk(false);
+                setUnsavedAsk(false);
+                runWaitGaveUpRef.current = false;
+                leavingRef.current = false;
+                // Never left showing the old project's, should the new one fail to load.
+                setProjectInfo(null);
+                setSpecialRecipes(null);
             }
             // (The dataset bounds follow by themselves: `useDatasetTimeBounds` is keyed on
             // the workspace + this generation, so from this very render they are unknown
@@ -1111,8 +1135,11 @@ export default function BuildModelWindow() {
             setAllSensors(d.sensorHeaders);
             setSensorMetadata(d.sensorMetadata);
             const seq = ++loadSeq.current;
+            const fgAtRead = fgBroadcastSeq.current;
             try {
                 const ws = await loadWorkspaceData(d.workspaceId);
+                // Only a newer load supersedes this one (it also ends `loading`). A broadcast
+                // meanwhile is newer than the slice below, not than the rest of this read.
                 if (seq !== loadSeq.current || workspaceIdRef.current !== d.workspaceId) return;
                 setDashHighlights(ws?.timeHighlights ?? []);
                 projectSeq.current++;
@@ -1131,7 +1158,7 @@ export default function BuildModelWindow() {
                 const periodsMigrated = ws ? migratePeriods(ws, { dropLegacyKeys: true }) : ws;
                 const periodsChanged = periodsMigrated !== ws;
                 const migrated = periodsMigrated ? normalizeCategories(periodsMigrated) : periodsMigrated;
-                applyFg(migrated?.failureGroupState);
+                if (fgAtRead === fgBroadcastSeq.current) applyFg(migrated?.failureGroupState);
                 if (migrated && rcAutoOpenedFor.current !== d.workspaceId) {
                     rcAutoOpenedFor.current = d.workspaceId;
                     const headers = d.sensorHeaders.length ? d.sensorHeaders : null;
@@ -1164,8 +1191,8 @@ export default function BuildModelWindow() {
         const offChanged = subscribe<FailureGroupStateChangedPayload>('failure-group-state-changed', (event) => {
             if (event.payload.workspaceId !== workspaceIdRef.current) return;
             if (event.payload.origin === 'build-model') return;
-            // A load already in flight is now older than this broadcast.
-            loadSeq.current++;
+            // A load already in flight read an older slice than this.
+            fgBroadcastSeq.current++;
             applyFg(event.payload);
             // The Dashboard's autosave WROTE a special-sensor recipe change (`recipesChanged`):
             // re-read the recipes from disk -- never carried in a payload. Any other broadcast
@@ -1425,10 +1452,12 @@ export default function BuildModelWindow() {
         const retrain = runningConditionImpact(gateFgRef.current, d, { recipes: specialRecipesRef.current ?? undefined }).retrainIds;
         // The modal and its draft stay until the write has landed: a failed save leaves the
         // draft to try again, and the card and gate on what is on disk.
-        if (!(await persistRunningCondition({ filters: d.filters, combine: d.combine, periods: d.periods, allData: d.allData, testPeriods: d.testPeriods }))) return;
-        if (retrain.length > 0) setRcRetrainIds(prev => [...new Set([...prev, ...retrain])]);
-        closeRc();
-    }, [closeRc, persistRunningCondition]);
+        await trackPending((async () => {
+            if (!(await persistRunningCondition({ filters: d.filters, combine: d.combine, periods: d.periods, allData: d.allData, testPeriods: d.testPeriods }))) return;
+            if (retrain.length > 0) setRcRetrainIds(prev => [...new Set([...prev, ...retrain])]);
+            closeRc();
+        })());
+    }, [closeRc, persistRunningCondition, trackPending]);
 
     // ---- Model editing ----
     // Edits are kept as one DRAFT PER MODEL ID (not one global form), so
@@ -1707,6 +1736,8 @@ export default function BuildModelWindow() {
             : block.kind === 'no-rows' ? noTrainRowsReason('custom', !draftOf(m).customAllData)
             : block.reason;
 
+    const clusteringSameXY = (m: FailureModel, d: ModelDraft): boolean =>
+        m.kind === 'clustering' && !!d.y.trim() && d.y.trim() === (m.xSensor ?? '').trim();
     /** Why Save is disabled (category / required fields / the model's own lists), or
      *  null. `data` as in `customSaveBlockOf`: `true` only where saving (or training,
      *  which saves first) is the action. */
@@ -1722,6 +1753,7 @@ export default function BuildModelWindow() {
             && (!!d.criteria || d.numClusters <= 1)
         );
         if (!ok) return REQUIRED_FIELDS_BLOCK_REASON;
+        if (clusteringSameXY(m, d)) return X_EQUALS_Y_REASON;
         // A Custom model's own periods are saved with Save changes: whatever blocks
         // the workspace Apply blocks this save too (`customSaveBlockOf`).
         const own = customSaveBlockOf(m, data);
@@ -1762,6 +1794,7 @@ export default function BuildModelWindow() {
         if (m.kind === 'relationship' && d.predictors.length === 0) items.push('Add at least 1 predictor');
         if (m.kind === 'clustering') {
             if (!d.y) items.push('Pick a Y sensor');
+            if (clusteringSameXY(m, d)) items.push(X_EQUALS_Y_REASON);
             if (d.criteria && !d.ranges.every(r => r.min !== null && r.max !== null)) items.push('Fill in the cluster ranges');
             if (!d.criteria && d.numClusters > 1) items.push(CLUSTERS_NEED_CRITERIA);
         }
@@ -1834,18 +1867,26 @@ export default function BuildModelWindow() {
         if (modelBlockReason(m, true) !== null) return false;
         const d = draftOf(m);
         const fields = draftFields(m, d);
-        const ok = await persist((models, groups) => ({
-            groups,
-            models: models.map(x => x.id === m.id ? { ...x, ...fields } : x),
-        }));
-        if (!ok) return false;
-        setDrafts(prev => {
-            if (!(m.id in prev)) return prev;
-            const rest = { ...prev };
-            delete rest[m.id];
-            return rest;
-        });
-        return true;
+        // Tracked whole, so a close waiting for it sees the draft already gone.
+        const run = (async () => {
+            const ok = await persist((models, groups) => ({
+                groups,
+                models: models.map(x => x.id === m.id ? { ...x, ...fields } : x),
+            }));
+            if (!ok) return false;
+            // Edited while the write was running: that newer draft stays.
+            const without = (all: Record<string, ModelDraft>) => {
+                if (all[m.id] !== d) return all;
+                const rest = { ...all };
+                delete rest[m.id];
+                return rest;
+            };
+            draftsRef.current = without(draftsRef.current);
+            setDrafts(without);
+            return true;
+        })();
+        void trackPending(run.then(() => undefined));
+        return run;
     };
 
     /** The Custom running-condition editor's Workspace/Custom switch. Everything
@@ -1901,6 +1942,7 @@ export default function BuildModelWindow() {
         if (!workspaceId) return Promise.resolve(false);
         return savedOk((async () => {
             const next = await updateWorkspaceData(workspaceId, prev => withFailureGroupState(prev, { categoryNormalisationNotice: null }));
+            if (workspaceIdRef.current !== workspaceId) return;
             if (next?.failureGroupState) {
                 applyWritten(next);
                 await broadcastFailureGroups({ ...next.failureGroupState, workspaceId, origin: 'build-model' });
@@ -2215,8 +2257,8 @@ export default function BuildModelWindow() {
     const trainForQueue = async (id: string): Promise<TrainOutcome> => {
         // Captured BEFORE any await: a re-point while waiting abandons this model.
         const ws = workspaceIdRef.current;
-        // The silent auto-recompute may still be running: wait, never two sidecar calls at once.
-        if (autoRecomputeRef.current) await autoRecomputeRef.current.catch(() => undefined);
+        // A silent load or Compare may still be running: wait, never two engine calls at once.
+        await onEngine(async () => undefined);
         if (workspaceIdRef.current !== ws) return { ok: false, abandoned: true };
         const m = allModels.find(x => x.id === id);
         if (!m) return { ok: false, skip: 'the model no longer exists' };
@@ -2231,7 +2273,7 @@ export default function BuildModelWindow() {
         const merged = effectiveModelFor(m); // = m untouched when no draft is pending
         if (hasDraft && !(await commitModel(m))) return { ok: false, skip: SAVE_FAILED_NOTICE };
         if (workspaceIdRef.current !== ws) return { ok: false, abandoned: true };
-        return executeTrain(merged, computeTrainFingerprint(merged, gateFg), { persistMeta: true });
+        return onEngine(() => executeTrain(merged, computeTrainFingerprint(merged, gateFg), { persistMeta: true }));
     };
     queueTrainRef.current = trainForQueue;
 
@@ -2283,12 +2325,10 @@ export default function BuildModelWindow() {
         const fp = computeTrainFingerprint(m, gateFg);
         if (!m.lastTrainedAt || m.trainedFingerprint !== fp) return;
         const ws = workspaceIdRef.current;
-        const before = autoRecomputeRef.current;
         fitReloadingRef.current.add(id);
-        const p = (async (): Promise<TrainOutcome> => {
+        // A training run started meanwhile waits for it (`trainForQueue`).
+        void onEngine(async (): Promise<TrainOutcome> => {
             try {
-                // Another model's silent load may still be running: never two engine calls at once.
-                if (before) await before.catch(() => undefined);
                 if (workspaceIdRef.current !== ws || queueRef.current.isRunningNow()) return { ok: false, abandoned: true };
                 const out = await executeTrain(m, fp, { persistMeta: false });
                 // Loaded: should this fit be lost again later, it is re-fitted automatically once more.
@@ -2309,10 +2349,7 @@ export default function BuildModelWindow() {
             } finally {
                 fitReloadingRef.current.delete(id);
             }
-        })();
-        // A training run started meanwhile waits for it (`trainForQueue`).
-        autoRecomputeRef.current = p;
-        void p.finally(() => { if (autoRecomputeRef.current === p) autoRecomputeRef.current = null; });
+        });
     };
 
     // (`NOT_TRAINED_BLOCK_REASON` — the text shown, and the reason
@@ -2472,6 +2509,23 @@ export default function BuildModelWindow() {
         }
     };
 
+    /** Window.close() comes back through `onCloseRequested`: `leavingRef` lets that pass
+     *  through, so nothing asks or waits twice and the close can never loop. */
+    const leaveWindow = useCallback(async () => {
+        leavingRef.current = true;
+        try {
+            await getCurrentWindow().close();
+        } catch {
+            leavingRef.current = false;
+        }
+    }, []);
+    /** Model settings or Running condition edits that closing would drop (none when
+     *  the workspace is closing from the Dashboard). */
+    const unsavedEditsAtClose = useCallback((): boolean => {
+        if (closeBypassRef.current) return false;
+        const rc = rcDraftRef.current;
+        return Object.keys(draftsRef.current).length > 0 || (!!rc && !rcDraftEqual(rc, rcPersistedRef.current));
+    }, []);
     /** The close itself: `flushFocusedInput()` first (a half-typed period date
      *  settles on blur only), then flush every pending write (and wait for a
      *  running Mark complete, capped), then close. */
@@ -2480,20 +2534,24 @@ export default function BuildModelWindow() {
         await waitForExportBeforeClose();
         // `false` = a running save did not finish in time: the window stays open (notice shown).
         if (!(await flushAllPending())) return;
-        try {
-            await getCurrentWindow().close();
-        } catch {
-            // A second close of a window that is already closing: nothing to do.
-        }
+        await leaveWindow();
     };
     const closeNowRef = useRef(closeNow);
     closeNowRef.current = closeNow;
     /** A training run is active and nothing allows closing past it: ask first. */
-    const mustAskBeforeClose = (): boolean => queueRef.current.isRunningNow() && !closeBypassRef.current;
+    const mustAskBeforeClose = useCallback((): boolean => queueRef.current.isRunningNow() && !closeBypassRef.current && !runWaitGaveUpRef.current, []);
+    /** Past the run dialog: ask about unsaved edits, or close. */
+    const closeOrAskUnsaved = async () => {
+        flushSync(flushFocusedInput);
+        // A Save in flight decides whether its edit is still unsaved.
+        if (pendingSaveRef.current) await pendingSaveRef.current;
+        if (unsavedEditsAtClose()) { setUnsavedAsk(true); return; }
+        await closeNow();
+    };
     const handleClose = async () => {
         // In-window dialog, "Keep training" is the default.
         if (mustAskBeforeClose()) { setCloseAsk(true); return; }
-        await closeNow();
+        await closeOrAskUnsaved();
     };
     /** The close dialog's "Stop after this model and close": the run ends after the
      *  model in training (a sidecar call is never cut off), then the usual close.
@@ -2511,45 +2569,57 @@ export default function BuildModelWindow() {
             const finished = await Promise.race([idle, gaveUp]);
             if (timer) clearTimeout(timer);
             if (!finished) {
-                closeBypassRef.current = true;
+                runWaitGaveUpRef.current = true;
                 setCloseNotice(RUN_CLOSE_WAIT_NOTICE);
                 return;
             }
-            await closeNow();
+            await closeOrAskUnsaved();
         } finally {
             stopClosingRef.current = false;
         }
     };
 
     // A native close (the window's own X button, Alt+F4, or the OS closing the
-    // app) bypasses `handleClose` entirely. Only intercepts the close when this
-    // window has an in-flight write of its own.
+    // app) bypasses `handleClose` entirely. Intercepts the close when this
+    // window has a write in flight or unsaved edits to ask about.
     useEffect(() => {
         let disposed = false;
         let unlisten: (() => void) | undefined;
         const win = getCurrentWindow();
         Promise.resolve(win.onCloseRequested(async (event) => {
+            if (leavingRef.current) return;
             // A training run is active: keep the window and ask (in-window alertdialog) —
             // unless the workspace is closing or an earlier "stop and close" gave up.
-            if (queueRef.current.isRunningNow() && !closeBypassRef.current) {
+            if (mustAskBeforeClose()) {
                 event.preventDefault();
                 setCloseAsk(true);
                 return;
             }
-            flushFocusedInput();
+            flushSync(flushFocusedInput);
+            // A Save in flight decides whether its edit is still unsaved.
+            const saving = pendingSaveRef.current;
+            if (saving) {
+                event.preventDefault();
+                await saving;
+            }
+            if (unsavedEditsAtClose()) {
+                event.preventDefault();
+                setUnsavedAsk(true);
+                return;
+            }
             // A set-point draft typed but never blurred is a pending write too.
             if (!leaveUnsavedRef.current) void commitSetPointDrafts();
             const pending = pendingSaveRef.current;
             // A running "Mark complete" (export + save) counts as pending too, and so does
             // a running Export results.
-            if (!pending && markRunsRef.current.size === 0 && !exportRunRef.current) return;
+            if (!saving && !pending && markRunsRef.current.size === 0 && !exportRunRef.current) return;
             event.preventDefault();
             await waitForExportBeforeClose();
             if (!(await flushAllPending())) return;
-            await win.close();
+            await leaveWindow();
         })).then(fn => { if (disposed) fn(); else unlisten = fn; });
         return () => { disposed = true; if (unlisten) unlisten(); };
-    }, [flushAllPending, commitSetPointDrafts, waitForExportBeforeClose]);
+    }, [flushAllPending, commitSetPointDrafts, waitForExportBeforeClose, leaveWindow, mustAskBeforeClose, unsavedEditsAtClose]);
 
     // The Dashboard that opened this window is going away (Back to Import / another
     // project): it closes this window right after. A run would hold that close
@@ -2563,10 +2633,11 @@ export default function BuildModelWindow() {
             if (!workspaceIdRef.current || event.payload?.workspaceId !== workspaceIdRef.current) return;
             const g = event.payload?.generation;
             if (typeof g === 'number' && generationRef.current !== undefined && g !== generationRef.current) return;
-            const wasHeld = queueRef.current.isRunningNow() || closeAskRef.current;
+            const wasHeld = queueRef.current.isRunningNow() || closeAskRef.current || unsavedAskRef.current;
             closeBypassRef.current = true;
             queueReset();
             setCloseAsk(false);
+            setUnsavedAsk(false);
             // A close that already arrived was held by the dialog: close now.
             if (wasHeld) void closeNowRef.current();
         });
@@ -2692,9 +2763,23 @@ export default function BuildModelWindow() {
         // A training run owns the sidecar: two calls must never run at once. The
         // effect runs again when the run ends (`queue.isRunning` is a dependency).
         if (queue.isRunning) return;
-        const p = executeTrain(activeModel, fp, { persistMeta: false });
-        autoRecomputeRef.current = p;
-        void p.finally(() => { if (autoRecomputeRef.current === p) autoRecomputeRef.current = null; });
+        // Another engine call may be running: this one takes its turn, shown as loading until then.
+        const model = activeModel;
+        const ws = workspaceIdRef.current;
+        setTrainStatus(prev => ({ ...prev, [model.id]: 'loading' }));
+        void onEngine(async () => {
+            if (workspaceIdRef.current !== ws) return;
+            // Moved on while waiting: opening the model again (or the run's end) asks again.
+            if (activeModelIdRef.current !== model.id || queueRef.current.isRunningNow()) {
+                setTrainStatus(prev => {
+                    const rest = { ...prev };
+                    delete rest[model.id];
+                    return rest;
+                });
+                return;
+            }
+            await executeTrain(model, fp, { persistMeta: false });
+        });
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [activeModel?.id, activeModel?.trainedFingerprint, activeModel?.lastTrainedAt, activeModel?.status, activeModel?.category, runningConditionFilters, runningConditionCombine, runningConditionTimePeriods, runningConditionAllData, queue.isRunning, activeModel ? trainResults[activeModel.id]?.fingerprint : undefined, activeGuardHolds, activeNoData !== null]);
 
@@ -2833,7 +2918,9 @@ export default function BuildModelWindow() {
         // The last step is the model's own fit: reuse it while it is current.
         reusable: activeTrainEntry && activeTrainEntry.result.kind === 'relationship' && activeTrainEntry.fingerprint === activeFingerprint && !activeStale
             ? activeTrainEntry.result.result : null,
-        resetKey: `${activeModel?.id ?? ''}|${subLambda}|${JSON.stringify(subFilter)}`,
+        // Workspace and dataset too: another project can hold the same model id and scope.
+        resetKey: `${workspaceId ?? ''}|${generation ?? ''}|${activeModel?.id ?? ''}|${subLambda}|${JSON.stringify(subFilter)}`,
+        serialize: onEngine,
     });
     const openCompare = () => {
         setCompareOpen(true);
@@ -2874,6 +2961,7 @@ export default function BuildModelWindow() {
     const criteriaStats: SensorStats | null = (criteriaStatsEntry && criteriaStatsEntry.key === criteriaStatsKey)
         ? criteriaStatsEntry.stats
         : null;
+    const criteriaStatsError = criteriaStatsFailure?.key === criteriaStatsKey ? criteriaStatsFailure.message : null;
     useEffect(() => {
         // `criteriaStats` is ONE piece of state shared by every model (scoped to
         // whichever model is active). Reset unconditionally at the top, before
@@ -2881,6 +2969,7 @@ export default function BuildModelWindow() {
         // model/sensor change shows the loading state until its OWN stats
         // resolve — never the previous model's [min, max].
         setCriteriaStatsEntry(null);
+        setCriteriaStatsFailure(null);
         if (!activeModel || activeModel.kind !== 'clustering' || !criteriaSensorForActive) {
             return;
         }
@@ -2889,10 +2978,10 @@ export default function BuildModelWindow() {
         const filter = criteriaFilterKey ? JSON.parse(criteriaFilterKey) : null;
         invoke<SensorStats>('compute_sensor_stats', { sensor: criteriaSensorForActive, filter })
             .then(s => { if (!cancelled) setCriteriaStatsEntry({ key, stats: s }); })
-            .catch(() => { if (!cancelled) setCriteriaStatsEntry(null); });
+            .catch(e => { if (!cancelled) setCriteriaStatsFailure({ key, message: e instanceof Error ? e.message : String(e) }); });
         return () => { cancelled = true; };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [activeModel?.id, criteriaSensorForActive, criteriaFilterKey, criteriaStatsKey]);
+    }, [activeModel?.id, criteriaSensorForActive, criteriaFilterKey, criteriaStatsKey, criteriaStatsTry]);
 
     // ---- Clustering auto-divide --------------------------------------------
     // Divides `clusterRanges` equally across the criteria sensor's REAL
@@ -3012,7 +3101,7 @@ export default function BuildModelWindow() {
     }, [rcFilterOpen, customPanelOpen, refreshHighlights]);
 
     // Keyboard focus of the modal: the first field on open, Tab kept inside.
-    useModalFocus(rcDialogRef, rcFilterOpen, '[data-testid="rc-panel"]');
+    useModalFocus(rcDialogRef, rcFilterOpen && !unsavedAsk, '[data-testid="rc-panel"]');
 
     // Esc closes the Running condition modal — through the same dirty-draft
     // guard as X / backdrop. Registered in the CAPTURE phase and ignored while a
@@ -3023,7 +3112,7 @@ export default function BuildModelWindow() {
         if (!rcFilterOpen) return;
         const onKey = (e: KeyboardEvent) => {
             if (e.key !== 'Escape' || e.defaultPrevented) return;
-            if (isPickerSurfaceOpen()) return;
+            if (isPickerSurfaceOpen() || unsavedAskRef.current) return;
             requestCloseRc();
         };
         window.addEventListener('keydown', onKey, true);
@@ -3470,6 +3559,14 @@ export default function BuildModelWindow() {
                 </div>
             );
         }
+        if (!criteriaStats && criteriaStatsError !== null) {
+            return (
+                <div className="pm-cluster-slider pm-cluster-slider--empty" role="alert" data-testid="cluster-slider-failed">
+                    <span>Could not read the range of {sensorLabel(d.criteria)}: {criteriaStatsError}</span>
+                    {' '}<button type="button" className="rcx-btn rcx-btn--sm" data-testid="cluster-slider-retry" onClick={() => setCriteriaStatsTry(n => n + 1)}>Try again</button>
+                </div>
+            );
+        }
         if (!criteriaStats) {
             return (
                 <div className="pm-cluster-slider pm-cluster-slider--empty" data-testid="cluster-slider-loading">
@@ -3798,9 +3895,10 @@ export default function BuildModelWindow() {
                             onSelect={y => patchDraft(m, { y })}
                             noun="Y sensor"
                             placeholder="None selected"
-                            invalid={!d.y}
+                            invalid={!d.y || clusteringSameXY(m, d)}
                         />
                         {!d.y && <div className="f4-req-note">Required</div>}
+                        {clusteringSameXY(m, d) && <div className="f4-req-note" data-testid="y-equals-x">{X_EQUALS_Y_REASON}</div>}
                     </div>
                     <div className="f4-fld">
                         <span className="f4-lbl">Criteria sensor (optional)</span>
@@ -3844,7 +3942,7 @@ export default function BuildModelWindow() {
                     {seedNoteFor[m.id] && (
                         <div data-testid="pm-seed-note" className="rcx-line rc-seed">
                             <span>
-                                Copied <b>{seedNoteFor[m.id]!.periods} train period{seedNoteFor[m.id]!.periods === 1 ? '' : 's'}</b>, <b>{seedNoteFor[m.id]!.tests} scoring period{seedNoteFor[m.id]!.tests === 1 ? '' : 's'}</b> and the running condition from Workspace. Edits here affect only this model.
+                                Copied <b>{seedNoteFor[m.id]!.periods} train period{seedNoteFor[m.id]!.periods === 1 ? '' : 's'}</b>, <b>{seedNoteFor[m.id]!.tests} scoring period{seedNoteFor[m.id]!.tests === 1 ? '' : 's'}</b>{seedNoteFor[m.id]!.conditions > 0 ? ' and the running condition' : ''} from Workspace. Edits here affect only this model.
                             </span>
                             <button type="button" className="f4-x" aria-label="Dismiss" onClick={() => setSeedNoteFor(prev => ({ ...prev, [m.id]: null }))}><X size={12} /></button>
                         </div>
@@ -5096,6 +5194,10 @@ export default function BuildModelWindow() {
     // At most ONE filled button on screen: Export is filled only when nothing in the
     // detail pane / Step-1 card is (every model Complete, no draft, the condition set).
     const exportFilled = readiness.counts.allReady && rcStepState === 'set' && Object.keys(drafts).length === 0;
+    // What Export writes comes from the disk, so a pending edit would not be in it.
+    const exportUnsavedWhy = Object.keys(drafts).length > 0 ? 'Save the changes in Model settings first'
+        : Object.keys(spDrafts).length > 0 ? 'Set points are not saved yet'
+        : null;
     const exportApi: UseWorkspaceExport = { ...workspaceExport, plan: planExport, start: writeExport };
     /** Opens the Export dialog. `plan` = ask Rust for the dry run (a fresh look at the
      *  disk) — only once the checklist says everything is there; until then the
@@ -5103,7 +5205,7 @@ export default function BuildModelWindow() {
     const openExport = (plan: boolean) => {
         workspaceExport.show();
         setExportOpen(true);
-        if (plan && !exporting && readiness.counts.allReady) void planExport();
+        if (plan && !exporting && readiness.counts.allReady && exportUnsavedWhy === null) void planExport();
     };
 
     // ---- The one-time conversion of an old running condition ----
@@ -5392,6 +5494,7 @@ export default function BuildModelWindow() {
                     exported={exportedLine}
                     filled={exportFilled}
                     blockedWhy={queue.isRunning ? TRAIN_RUN_ACTIVE_REASON : null}
+                    unsavedWhy={exportUnsavedWhy}
                     onExport={() => openExport(true)}
                     onShowWhich={() => openExport(true)}
                     onShowRun={() => openExport(false)}
@@ -5578,7 +5681,15 @@ export default function BuildModelWindow() {
                     current={queue.run.currentId ? runRowsById.get(queue.run.currentId) : undefined}
                     onKeep={keepTraining}
                     onStopAndClose={() => { void stopRunAndClose(); }}
-                    onClose={() => { setCloseAsk(false); void closeNow(); }}
+                    onClose={() => { setCloseAsk(false); void closeOrAskUnsaved(); }}
+                />
+            )}
+            {unsavedAsk && (
+                <CloseUnsavedDialog
+                    models={allModels.filter(m => m.id in drafts).map(modelDisplayLabel)}
+                    runningCondition={!!rcDraft && !rcDraftEqual(rcDraft, rcPersisted)}
+                    onKeep={() => setUnsavedAsk(false)}
+                    onDiscard={() => { setUnsavedAsk(false); void closeNow(); }}
                 />
             )}
 

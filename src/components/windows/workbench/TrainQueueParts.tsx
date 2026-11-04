@@ -776,3 +776,37 @@ export function CloseRunDialog({ run, summary, current, onKeep, onStopAndClose, 
         </div>
     );
 }
+
+/** Close with edits that were never saved: "Keep editing" is the default. */
+export function CloseUnsavedDialog({ models, runningCondition, onKeep, onDiscard }: {
+    /** Models with unsaved Model settings. */
+    models: string[];
+    runningCondition: boolean;
+    onKeep: () => void;
+    onDiscard: () => void;
+}) {
+    const keepRef = useRef<HTMLButtonElement>(null);
+    const dialogRef = useRef<HTMLDivElement>(null);
+    useModalFocus(dialogRef, true);
+    useEffect(() => { keepRef.current?.focus(); }, []);
+    useEffect(() => {
+        const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.preventDefault(); onKeep(); } };
+        window.addEventListener('keydown', onKey, true);
+        return () => window.removeEventListener('keydown', onKey, true);
+    }, [onKeep]);
+    return (
+        <div className="bmw-modal-backdrop tq-close-back" role="presentation">
+            <div className="tq-confirm" ref={dialogRef} tabIndex={-1} role="alertdialog" aria-modal="true" aria-labelledby="tq-unsaved-title" aria-describedby="tq-unsaved-body" data-testid="close-unsaved-dialog">
+                <div className="tq-cb" id="tq-unsaved-body">
+                    <b className="tq-ct" id="tq-unsaved-title">Close without saving?</b>
+                    {models.length > 0 && <span data-testid="close-unsaved-models">Unsaved Model settings: {models.join(' · ')}.</span>}
+                    {runningCondition && <span data-testid="close-unsaved-rc">The Running condition has changes that were not applied.</span>}
+                </div>
+                <div className="tq-cf">
+                    <button type="button" className="rcx-btn tq-cancel tq-cf-left" data-testid="close-unsaved-discard" onClick={onDiscard}>Discard</button>
+                    <button type="button" ref={keepRef} className="rcx-btn rcx-btn--pri" data-testid="close-unsaved-keep" onClick={onKeep}>Keep editing</button>
+                </div>
+            </div>
+        </div>
+    );
+}

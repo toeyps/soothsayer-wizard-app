@@ -9,7 +9,7 @@ vi.mock('../components/charts/ResponsiveECharts', () => ({
 
 import SubModelsModal, { buildSubModelOption } from '../components/windows/SubModelsModal';
 import { getAxisNames } from '../utils/axisName';
-import { useSubModelFits, type SubModelFit, type SubModelFitsState } from '../components/windows/useSubModelFits';
+import { createEngineQueue, useSubModelFits, type SubModelFit, type SubModelFitsState } from '../components/windows/useSubModelFits';
 import type { RelationshipPreviewResult } from '../types/commands';
 import { HEALTH_DEFAULT_MAX_POINTS } from '../utils/healthRequest';
 import { SensorMetaContext, type SensorInfo } from '../components/sensor/sensorInfo';
@@ -282,23 +282,60 @@ describe('useSubModelFits', () => {
         expect(hook.current.error).toBeNull();
     });
 
-    it('a late-finishing older run can never overwrite a newer one', async () => {
+    it('a second run waits for the call in flight: the older run stops and its result is ignored', async () => {
         const gates: Array<() => void> = [];
         mockInvoke.mockImplementation((_c: string, args: any) => new Promise(res => {
             gates.push(() => res(result(3, args.predictors.length === 1 ? 0.11 : 0.22)));
         }));
-        const props = { ...base, predictors: ['A'] };
-        const { result: hook } = renderHook(() => useSubModelFits(props));
+        const { result: hook } = renderHook(() => useSubModelFits(base));
         let first!: Promise<void>;
         let second!: Promise<void>;
         act(() => { first = hook.current.run(); });
+        await act(async () => { await Promise.resolve(); });
         act(() => { second = hook.current.run(); });
-        await act(async () => { gates[1](); await second; }); // the NEWER run finishes first
-        const newer = hook.current.subModels;
-        expect(newer).not.toBeNull();
-        await act(async () => { gates[0](); await first; }); // the older one lands late: ignored
-        expect(hook.current.subModels).toBe(newer);
+        await act(async () => { await Promise.resolve(); });
+        expect(gates).toHaveLength(1); // never two engine calls at once
+        await act(async () => { gates[0](); await first; }); // the older run ends here, no step 2
+        await act(async () => { await Promise.resolve(); });
+        expect(hook.current.subModels).toBeNull();
+        for (let i = 1; i <= 3; i++) {
+            await waitFor(() => expect(gates).toHaveLength(i + 1));
+            await act(async () => { gates[i](); await Promise.resolve(); });
+        }
+        await act(async () => { await second; });
+        const steps = mockInvoke.mock.calls.map(c => (c[1] as any).predictors.length);
+        expect(steps).toEqual([1, 1, 2, 3]);
+        expect(hook.current.subModels).toHaveLength(3);
         expect(hook.current.loading).toBe(false);
+    });
+
+    it('a reset stops a run: no further engine calls for the old scope', async () => {
+        const gates: Array<() => void> = [];
+        mockInvoke.mockImplementation(() => new Promise(res => { gates.push(() => res(result(3))); }));
+        const { result: hook, rerender } = renderHook((p: typeof base) => useSubModelFits(p), { initialProps: base });
+        let run!: Promise<void>;
+        act(() => { run = hook.current.run(); });
+        await act(async () => { await Promise.resolve(); });
+        rerender({ ...base, resetKey: 'k2' });
+        await act(async () => { gates[0](); await run; });
+        expect(mockInvoke).toHaveBeenCalledTimes(1);
+        expect(hook.current.subModels).toBeNull();
+    });
+
+    it('createEngineQueue runs in order, one at a time, and a failure does not stop the next', async () => {
+        const q = createEngineQueue();
+        const log: string[] = [];
+        let release!: () => void;
+        const a = q(() => new Promise<void>(res => { log.push('a'); release = () => { log.push('a-end'); res(); }; }));
+        const b = q(async () => { log.push('b'); throw new Error('b failed'); });
+        const c = q(async () => { log.push('c'); return 3; });
+        await Promise.resolve(); await Promise.resolve();
+        expect(log).toEqual(['a']);
+        release();
+        await a;
+        await expect(b).rejects.toThrow('b failed');
+        await expect(c).resolves.toBe(3);
+        expect(log).toEqual(['a', 'a-end', 'b', 'c']);
     });
 });
 

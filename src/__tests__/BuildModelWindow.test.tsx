@@ -1970,7 +1970,7 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
                 expect(mockUpdateWorkspaceData).not.toHaveBeenCalled();
             });
 
-            it('(c) a native whole-window close with an UNAPPLIED draft just closes — nothing is pending, nothing is written', async () => {
+            it('(c) a native whole-window close with an UNAPPLIED draft asks first, and writes nothing', async () => {
                 render(<BuildModelWindow />);
                 await deliverWithPeriod();
                 fireEvent.click(screen.getByTestId('rc-card-open'));
@@ -1980,7 +1980,8 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
 
                 const preventDefault = vi.fn();
                 await act(async () => { await mockCloseRequestedHandler!({ preventDefault }); });
-                expect(preventDefault).not.toHaveBeenCalled(); // no pending write to wait for
+                expect(preventDefault).toHaveBeenCalledTimes(1);
+                expect(screen.getByTestId('close-unsaved-dialog')).toBeTruthy();
                 expect(mockUpdateWorkspaceData).not.toHaveBeenCalled();
             });
         });
@@ -5397,6 +5398,20 @@ describe('Workbench two pages — shell + Model fit page (health score 3b-1)', (
             fireEvent.click(screen.getByRole('tab', { name: /Individual/ }));
             expect(screen.queryByTestId('sub-models-modal')).toBeNull();
         });
+
+        it('results of an earlier dataset are not shown: the same model and scope on a new dataset generation fits again', async () => {
+            await mount([trainedRel()], {}, { metadata: { headers: ['timestamp', 'TAG1', 'TAG2', 'TAG3'], total_rows: 100, generation: 1 } });
+            await chartsReady();
+            fireEvent.click(screen.getByTestId('compare-predictors'));
+            await waitFor(() => expect(screen.getAllByTestId('sub-model-card')).toHaveLength(2));
+            fireEvent.keyDown(window, { key: 'Escape' });
+            await deliverData({ failureGroupState: { groups: [makeGroup()], models: [trainedRel()] } }, { metadata: { headers: ['timestamp', 'TAG1', 'TAG2', 'TAG3'], total_rows: 100, generation: 2 } });
+            await flush();
+            await chartsReady();
+            mockInvoke.mockClear();
+            fireEvent.click(screen.getByTestId('compare-predictors'));
+            await waitFor(() => expect(mockInvoke.mock.calls.filter(c => c[0] === 'preview_relationship_model').length).toBeGreaterThan(0));
+        });
     });
 
     describe('Relationship X predictor', () => {
@@ -5623,6 +5638,34 @@ describe('Health score page - draft set points and when they are persisted (heal
                 await closePromise;
             });
             expect(mockClose).toHaveBeenCalledTimes(1);
+        });
+
+        it('workspace closing with set points that cannot be saved: Window.close() does not loop', async () => {
+            const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+            await hsMount([HS_IND()]);
+            await openHealthPage();
+            await flush();
+            mockUpdateWorkspaceData.mockImplementation(() => Promise.reject(new Error('disk full')));
+            hsType('sp-upper', '13');
+            await act(async () => {
+                for (const cb of listenCallbacks['workspace-closing'] ?? []) cb({ payload: { workspaceId: 'ws1' } });
+                await Promise.resolve();
+            });
+            // Window.close() fires close-requested again, like the real window.
+            const passes: Array<ReturnType<typeof vi.fn>> = [];
+            mockClose.mockImplementation(async () => {
+                if (mockClose.mock.calls.length > 5) return;
+                const preventDefault = vi.fn();
+                passes.push(preventDefault);
+                await mockCloseRequestedHandler!({ preventDefault });
+            });
+            const first = vi.fn();
+            await act(async () => { await mockCloseRequestedHandler!({ preventDefault: first }); });
+            expect(first).toHaveBeenCalledTimes(1);
+            expect(mockClose).toHaveBeenCalledTimes(1);
+            expect(passes).toHaveLength(1);
+            expect(passes[0]).not.toHaveBeenCalled();
+            err.mockRestore();
         });
 
         it('a set point that cannot be saved: the window stays open with a notice, the draft stays, and the next close leaves', async () => {
@@ -6460,6 +6503,28 @@ describe('Health score - QA fixes 2026-10-04', () => {
                 const second = vi.fn();
                 await act(async () => { await mockCloseRequestedHandler!({ preventDefault: second }); });
                 expect(mockClose).toHaveBeenCalledTimes(1); // gave up waiting
+            } finally {
+                MARK_COMPLETE_CLOSE_WAIT.ms = wait;
+                finishExport?.();
+            }
+        });
+
+        it('a hung check after giving up: the close that follows does not loop on the still-running check', async () => {
+            const wait = MARK_COMPLETE_CLOSE_WAIT.ms;
+            MARK_COMPLETE_CLOSE_WAIT.ms = 20;
+            try {
+                await startMark();
+                await act(async () => { await mockCloseRequestedHandler!({ preventDefault: vi.fn() }); });
+                const passes: Array<ReturnType<typeof vi.fn>> = [];
+                mockClose.mockImplementation(async () => {
+                    if (mockClose.mock.calls.length > 5) return;
+                    const preventDefault = vi.fn();
+                    passes.push(preventDefault);
+                    await mockCloseRequestedHandler!({ preventDefault });
+                });
+                await act(async () => { await mockCloseRequestedHandler!({ preventDefault: vi.fn() }); });
+                expect(mockClose).toHaveBeenCalledTimes(1);
+                expect(passes[0]).not.toHaveBeenCalled();
             } finally {
                 MARK_COMPLETE_CLOSE_WAIT.ms = wait;
                 finishExport?.();
@@ -7565,6 +7630,24 @@ describe('train queue wiring — review fixes (phase 4)', () => {
         const preventDefault = vi.fn();
         await act(async () => { await mockCloseRequestedHandler!({ preventDefault }); });
         expect(preventDefault).not.toHaveBeenCalled();
+    });
+
+    it('a close during a run keeps its own dialog, even with unsaved Model settings; a stopped run then asks about them', async () => {
+        const release = hold('TAG2');
+        await mountModels([IND2(), IND3T()]);
+        await act(async () => { fireEvent.click(trainSensorBtn()); await Promise.resolve(); });
+        fireEvent.click(screen.getByText('TAG3'));
+        await flush();
+        openSettings();
+        fireEvent.change(document.querySelector('[data-testid="add-model-form"] input') as HTMLInputElement, { target: { value: 'Other edited' } });
+        await act(async () => { fireEvent.click(screen.getByTitle('Close')); await Promise.resolve(); });
+        expect(screen.getByTestId('close-run-dialog')).toBeTruthy();
+        expect(screen.queryByTestId('close-unsaved-dialog')).toBeNull();
+        fireEvent.click(screen.getByTestId('close-run-stop'));
+        await release();
+        await flush();
+        await waitFor(() => expect(screen.getByTestId('close-unsaved-dialog')).toBeTruthy());
+        expect(mockClose).not.toHaveBeenCalled();
     });
 
     // Split in two (was ONE test with a 30 ms real-time cap that then ran two more
@@ -10848,6 +10931,21 @@ describe('Export results (bottom bar + dialog, DESIGN_SYSTEM §4.2)', () => {
         expect(btn.title).toBe('Every model must be Complete first · 1 left');
     });
 
+    it('ready workspace with a pending Model settings edit: not ready, says why, nothing is planned', async () => {
+        render(<BuildModelWindow />);
+        await deliverData(READY_WS());
+        await flush();
+        expect(barText()).toContain('ready to export');
+        openSettings();
+        const name = document.querySelector('[data-testid="add-model-form"] input') as HTMLInputElement;
+        fireEvent.change(name, { target: { value: 'Edited name' } });
+        expect(barText()).not.toContain('ready to export');
+        expect(barText()).toContain('Save the changes in Model settings first');
+        const btn = screen.getByTestId('export-results') as HTMLButtonElement;
+        expect(btn.disabled).toBe(true);
+        expect(btn.title).toBe('Save the changes in Model settings first');
+    });
+
     it('ready workspace: the bar is green and Export results opens the dialog, which plans against the disk', async () => {
         render(<BuildModelWindow />);
         await deliverData(READY_WS());
@@ -11220,5 +11318,322 @@ describe('BuildModelWindow: long sensor names', () => {
             if (!screen.queryByPlaceholderText('Add predictors…')) fireEvent.click(screen.getByText('Model settings'));
             expect(extraTagsSeenByPicker[extraTagsSeenByPicker.length - 1]).toEqual(['TAG1']);
         });
+    });
+});
+
+describe('Build Model window fixes from the 2026-11-04 review', () => {
+    const fire = (event: string, payload: unknown) => act(async () => {
+        for (const cb of listenCallbacks[event] ?? []) cb({ payload });
+        await Promise.resolve(); await Promise.resolve();
+    });
+    const dataPayload = (workspaceId: string) => ({
+        workspaceId,
+        sensorHeaders: ['TAG1', 'TAG2', 'TAG3'],
+        sensorMetadata: [{ tag: 'TAG1', description: 'Pump Pressure', unit: 'bar', component: 'Pump' }, { tag: 'TAG2', description: 'Pump Temp', unit: 'C', component: 'Pump' }],
+        metadata: { headers: ['timestamp', 'TAG1', 'TAG2', 'TAG3'], total_rows: 100 },
+    });
+    const fgOf = (models: any[], extra: Record<string, any> = {}) => ({ groups: [makeGroup()], models, runningConditionFilters: [RC_ON], rcLegacyNotice: null, runningConditionTimePeriods: ALL_TIME_TRAIN, runningConditionTestPeriods: ONE_TEST, ...extra });
+    const editName = (to = 'Edited name') => {
+        openSettings();
+        fireEvent.change(document.querySelector('[data-testid="add-model-form"] input') as HTMLInputElement, { target: { value: to } });
+    };
+    /** Window.close() fires close-requested again, like the real window. */
+    const reenteringClose = () => {
+        const passes: Array<ReturnType<typeof vi.fn>> = [];
+        mockClose.mockImplementation(async () => {
+            if (mockClose.mock.calls.length > 5) return;
+            const preventDefault = vi.fn();
+            passes.push(preventDefault);
+            await mockCloseRequestedHandler!({ preventDefault });
+        });
+        return passes;
+    };
+
+    describe('closing with unsaved Model settings / Running condition', () => {
+        it('toolbar Close asks; Keep editing keeps the draft; Discard closes without writing', async () => {
+            render(<BuildModelWindow />);
+            await deliverData();
+            editName();
+            mockUpdateWorkspaceData.mockClear();
+            await act(async () => { fireEvent.click(screen.getByTitle('Close')); });
+            expect(screen.getByRole('alertdialog').textContent).toContain('Close without saving?');
+            expect(screen.getByTestId('close-unsaved-models').textContent).toContain('Model One');
+            expect(mockClose).not.toHaveBeenCalled();
+
+            fireEvent.click(screen.getByTestId('close-unsaved-keep'));
+            expect(screen.queryByTestId('close-unsaved-dialog')).toBeNull();
+            expect(screen.getByText('Save changes')).toBeTruthy();
+
+            await act(async () => { fireEvent.click(screen.getByTitle('Close')); });
+            await act(async () => { fireEvent.click(screen.getByTestId('close-unsaved-discard')); });
+            await flush();
+            expect(mockClose).toHaveBeenCalledTimes(1);
+            expect(mockUpdateWorkspaceData).not.toHaveBeenCalled();
+        });
+
+        it('native close asks; after Discard the pass from Window.close() neither asks nor loops', async () => {
+            render(<BuildModelWindow />);
+            await deliverData();
+            editName();
+            const preventDefault = vi.fn();
+            await act(async () => { await mockCloseRequestedHandler!({ preventDefault }); });
+            expect(preventDefault).toHaveBeenCalledTimes(1);
+            expect(screen.getByTestId('close-unsaved-dialog')).toBeTruthy();
+            expect(mockClose).not.toHaveBeenCalled();
+
+            const passes = reenteringClose();
+            await act(async () => { fireEvent.click(screen.getByTestId('close-unsaved-discard')); });
+            await flush();
+            expect(mockClose).toHaveBeenCalledTimes(1);
+            expect(passes).toHaveLength(1);
+            expect(passes[0]).not.toHaveBeenCalled();
+            expect(screen.queryByTestId('close-unsaved-dialog')).toBeNull();
+        });
+
+        it('Esc is Keep editing', async () => {
+            render(<BuildModelWindow />);
+            await deliverData();
+            editName();
+            await act(async () => { fireEvent.click(screen.getByTitle('Close')); });
+            fireEvent.keyDown(window, { key: 'Escape' });
+            expect(screen.queryByTestId('close-unsaved-dialog')).toBeNull();
+            expect(mockClose).not.toHaveBeenCalled();
+        });
+
+        it('an edited Running condition counts; Esc in the dialog leaves its modal and draft alone', async () => {
+            render(<BuildModelWindow />);
+            await deliverData();
+            fireEvent.click(screen.getByTestId('rc-card-open'));
+            setRcLine(null, '42');
+            const preventDefault = vi.fn();
+            await act(async () => { await mockCloseRequestedHandler!({ preventDefault }); });
+            expect(preventDefault).toHaveBeenCalledTimes(1);
+            expect(screen.getByTestId('close-unsaved-rc')).toBeTruthy();
+            expect(screen.queryByTestId('close-unsaved-models')).toBeNull();
+            fireEvent.keyDown(window, { key: 'Escape' });
+            expect(screen.queryByTestId('close-unsaved-dialog')).toBeNull();
+            expect(screen.queryByTestId('rc-discard-prompt')).toBeNull();
+            expect(rcValueInput().value).toBe('42');
+        });
+
+        it('a Running condition modal opened but not edited does not ask', async () => {
+            render(<BuildModelWindow />);
+            await deliverData();
+            fireEvent.click(screen.getByTestId('rc-card-open'));
+            const preventDefault = vi.fn();
+            await act(async () => { await mockCloseRequestedHandler!({ preventDefault }); });
+            expect(preventDefault).not.toHaveBeenCalled();
+        });
+
+        it('no question when the workspace is closing from the Dashboard, also with the dialog already open', async () => {
+            render(<BuildModelWindow />);
+            await deliverData();
+            editName();
+            await act(async () => { fireEvent.click(screen.getByTitle('Close')); });
+            expect(screen.getByTestId('close-unsaved-dialog')).toBeTruthy();
+            await fire('workspace-closing', { workspaceId: 'ws1' });
+            await flush();
+            expect(screen.queryByTestId('close-unsaved-dialog')).toBeNull();
+            expect(mockClose).toHaveBeenCalledTimes(1);
+            const preventDefault = vi.fn();
+            await act(async () => { await mockCloseRequestedHandler!({ preventDefault }); });
+            expect(preventDefault).not.toHaveBeenCalled();
+        });
+    });
+
+    it('a close with a Save that fails asks instead of dropping the edit', async () => {
+        const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+        render(<BuildModelWindow />);
+        await deliverData();
+        editName();
+        let failWrite!: (e: Error) => void;
+        mockUpdateWorkspaceData.mockImplementationOnce(() => new Promise((_res, rej) => { failWrite = rej; }));
+        fireEvent.click(screen.getByText('Save changes'));
+        const preventDefault = vi.fn();
+        let closing!: Promise<void>;
+        await act(async () => { closing = mockCloseRequestedHandler!({ preventDefault }) as Promise<void>; await Promise.resolve(); });
+        expect(preventDefault).toHaveBeenCalled();
+        await act(async () => { failWrite(new Error('disk full')); await closing; });
+        expect(screen.getByTestId('close-unsaved-dialog')).toBeTruthy();
+        expect(mockClose).not.toHaveBeenCalled();
+        err.mockRestore();
+    });
+
+    describe('a broadcast during hydrate', () => {
+        it('the first load still ends: the window is not left blank', async () => {
+            let resolveLoad!: (v: unknown) => void;
+            mockLoadWorkspaceData.mockImplementation(() => new Promise(res => { resolveLoad = res; }));
+            render(<BuildModelWindow />);
+            await flush();
+            await fire('build-model-data', dataPayload('ws1'));
+            await fire('failure-group-state-changed', { ...fgOf([makeModel({ name: 'From broadcast' })]), workspaceId: 'ws1', origin: 'dashboard' });
+            await act(async () => { resolveLoad({ id: 'ws1', name: 'P1', failureGroupState: fgOf([makeModel({ name: 'From disk' })]) }); await Promise.resolve(); await Promise.resolve(); });
+            await flush();
+            expect(screen.getByText('Build Model')).toBeTruthy();
+            openSettings();
+            // The broadcast is newer than what the load read.
+            expect(screen.getByDisplayValue('From broadcast')).toBeTruthy();
+            expect(screen.getByTestId('export-bar')).toBeTruthy();
+        });
+
+        it('a re-point does not stay on the old project details when a broadcast lands during the load', async () => {
+            render(<BuildModelWindow />);
+            await deliverData({ name: 'Old project' });
+            await flush();
+            expect(document.querySelector('[data-project-name]')?.getAttribute('data-project-name')).toBe('Old project');
+            let resolveLoad!: (v: unknown) => void;
+            mockLoadWorkspaceData.mockImplementation(() => new Promise(res => { resolveLoad = res; }));
+            await fire('build-model-data', dataPayload('ws2'));
+            await fire('failure-group-state-changed', { ...fgOf([makeModel()]), workspaceId: 'ws2', origin: 'dashboard' });
+            await act(async () => { resolveLoad({ id: 'ws2', name: 'New project', failureGroupState: fgOf([makeModel()]) }); await Promise.resolve(); await Promise.resolve(); });
+            await flush();
+            expect(document.querySelector('[data-project-name]')?.getAttribute('data-project-name')).toBe('New project');
+        });
+    });
+
+    it('Save keeps a draft edited while the write was running', async () => {
+        render(<BuildModelWindow />);
+        await deliverData();
+        editName('First');
+        let finishWrite!: (v: unknown) => void;
+        mockUpdateWorkspaceData.mockImplementationOnce(() => new Promise(res => { finishWrite = res; }));
+        await act(async () => { fireEvent.click(screen.getByText('Save changes')); await Promise.resolve(); });
+        fireEvent.change(document.querySelector('[data-testid="add-model-form"] input') as HTMLInputElement, { target: { value: 'Second' } });
+        await act(async () => {
+            finishWrite({ id: 'ws1', failureGroupState: fgOf([makeModel({ name: 'First' })]) });
+            await Promise.resolve(); await Promise.resolve();
+        });
+        await flush();
+        expect(screen.getByDisplayValue('Second')).toBeTruthy();
+        expect(screen.getByText('Save changes')).toBeTruthy();
+    });
+
+    it('a Save with no newer edit still drops the draft', async () => {
+        const models = [makeModel()];
+        statefulUpdateMock(models);
+        render(<BuildModelWindow />);
+        await deliverData({ failureGroupState: fgOf(models) });
+        editName('First');
+        await act(async () => { fireEvent.click(screen.getByText('Save changes')); await Promise.resolve(); await Promise.resolve(); });
+        await flush();
+        expect(screen.queryByText('Save changes')).toBeNull();
+    });
+
+    describe('criteria sensor stats', () => {
+        const clu = () => makeModel({
+            id: 'c1', kind: 'clustering', targetSensor: '', xSensor: 'TAG1', ySensor: 'TAG2', criteriaSensor: 'TAG1',
+            numClusters: 2, clusterRanges: [{ min: 0, max: 5 }, { min: 5, max: 10 }],
+        });
+        it('a failure shows instead of Loading, and Try again asks again', async () => {
+            let fails = true;
+            mockInvoke.mockImplementation((cmd: string, args?: any) => {
+                if (cmd === 'compute_sensor_stats' && fails) return Promise.reject(new Error('stats exploded'));
+                return defaultInvoke(cmd, args);
+            });
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: { groups: [makeGroup()], models: [clu()] } });
+            openSettings();
+            await flush();
+            expect(screen.queryByTestId('cluster-slider-loading')).toBeNull();
+            const failed = screen.getByTestId('cluster-slider-failed');
+            expect(failed.textContent).toContain('Pump Pressure');
+            expect(failed.textContent).toContain('stats exploded');
+            fails = false;
+            await act(async () => { fireEvent.click(screen.getByTestId('cluster-slider-retry')); await Promise.resolve(); await Promise.resolve(); });
+            await flush();
+            expect(screen.queryByTestId('cluster-slider-failed')).toBeNull();
+            expect(screen.getByTestId('cluster-slider')).toBeTruthy();
+        });
+    });
+
+    describe('Clustering Y = X', () => {
+        const clu = (y: string) => makeModel({ id: 'c1', kind: 'clustering', name: 'C', targetSensor: '', xSensor: 'TAG1', ySensor: y, criteriaSensor: '', numClusters: 1 });
+        it('is blocked in the form with the words Export uses, and picking another Y clears it', async () => {
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: { groups: [makeGroup()], models: [clu('TAG2')] } });
+            openSettings();
+            expect(screen.queryByTestId('y-equals-x')).toBeNull();
+            const yPicker = sensorPickerModalProps.filter(p => p.noun === 'Y sensor').pop();
+            await act(async () => { yPicker.onSelect('TAG1'); });
+            expect(screen.getByTestId('y-equals-x').textContent).toBe('The X and Y sensors must be different');
+            const save = screen.getByText('Save changes').closest('button') as HTMLButtonElement;
+            expect(save.disabled).toBe(true);
+            expect(save.title).toBe('The X and Y sensors must be different');
+            expect(trainSensorBtn().disabled).toBe(true);
+            await act(async () => { sensorPickerModalProps.filter(p => p.noun === 'Y sensor').pop().onSelect('TAG2'); });
+            expect(screen.queryByTestId('y-equals-x')).toBeNull();
+        });
+    });
+
+    it('dismissing the category notice does not touch the project the window was re-pointed at meanwhile', async () => {
+        render(<BuildModelWindow />);
+        await deliverData({
+            failureGroupState: {
+                groups: [makeGroup()],
+                models: [makeModel({ id: 'i1' }), makeModel({ id: 'r1', kind: 'relationship', predictorSensors: ['TAG2'] })],
+                categoryNormalisationNotice: [{ modelId: 'r1', kind: 'relationship', sensorKey: 'tag1', from: 'condition', to: 'performance' }],
+            },
+        });
+        let finishWrite!: (v: unknown) => void;
+        mockUpdateWorkspaceData.mockImplementationOnce(() => new Promise(res => { finishWrite = res; }));
+        await act(async () => { fireEvent.click(screen.getByText('Dismiss')); await Promise.resolve(); });
+        mockLoadWorkspaceData.mockResolvedValue({ id: 'ws2', failureGroupState: fgOf([makeModel({ id: 'w2', name: 'Second project', targetSensor: 'TAG2' })]) });
+        await fire('build-model-data', dataPayload('ws2'));
+        await flush();
+        mockEmit.mockClear();
+        await act(async () => {
+            finishWrite({ id: 'ws1', failureGroupState: fgOf([makeModel({ id: 'i1', name: 'First project' })]) });
+            await Promise.resolve(); await Promise.resolve();
+        });
+        await flush();
+        expect(mockEmit.mock.calls.filter(c => c[0] === 'failure-group-state-changed')).toHaveLength(0);
+        openSettings();
+        expect(screen.getByDisplayValue('Second project')).toBeTruthy();
+        expect(screen.queryByDisplayValue('First project')).toBeNull();
+    });
+
+    it('the seed note names the running condition only when one was copied', async () => {
+        const fg = fgOf([makeModel()], { runningConditionFilters: [], runningConditionNoneConfirmed: false });
+        render(<BuildModelWindow />);
+        await deliverData({ failureGroupState: fg });
+        await flush();
+        // Nothing to set here: the modal opened by itself for the unset condition.
+        if (screen.queryByTestId('rc-discard-keep') === null && screen.queryByRole('dialog', { name: 'Running condition' })) {
+            fireEvent.keyDown(window, { key: 'Escape' });
+        }
+        openSettings();
+        fireEvent.click(screen.getByRole('button', { name: 'Custom' }));
+        const note = screen.getByTestId('pm-seed-note').textContent ?? '';
+        expect(note).toMatch(/Copied 1 train period, 1 scoring period from Workspace\./);
+        expect(note).not.toContain('running condition');
+    });
+
+    it('engine calls never overlap: moving to another model while one loads waits for it', async () => {
+        const rel = (id: string, target: string, predictor: string) => makeModel({ id, name: id, kind: 'relationship', targetSensor: target, predictorSensors: [predictor] });
+        const a = rel('a', 'TAG1', 'TAG2');
+        const b = rel('b', 'TAG2', 'TAG3');
+        const fg = { models: [a, b], runningConditionCombine: 'and', runningConditionTimePeriods: ALL_TIME_TRAIN, runningConditionFilters: [RC_ON] };
+        const gates: Array<() => void> = [];
+        let inFlight = 0;
+        let most = 0;
+        mockInvoke.mockImplementation((cmd: string, args?: any) => {
+            if (cmd !== 'preview_relationship_model') return defaultInvoke(cmd, args);
+            inFlight++;
+            most = Math.max(most, inFlight);
+            return new Promise(res => { gates.push(() => { inFlight--; res(defaultInvoke(cmd, args)); }); });
+        });
+        render(<BuildModelWindow />);
+        await deliverData({ failureGroupState: { groups: [makeGroup()], models: [withTrained(a, fg), withTrained(b, fg)] } });
+        await flush();
+        expect(gates).toHaveLength(1);
+        fireEvent.click(screen.getByText('Pump Temp'));
+        await flush();
+        expect(gates).toHaveLength(1); // the other model's load has not started
+        await act(async () => { gates[0](); await Promise.resolve(); });
+        await flush();
+        expect(gates).toHaveLength(2);
+        await act(async () => { gates[1](); await Promise.resolve(); });
+        await flush();
+        expect(most).toBe(1);
     });
 });

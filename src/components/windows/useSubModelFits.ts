@@ -24,6 +24,18 @@ import { HEALTH_DEFAULT_MAX_POINTS } from '../../utils/healthRequest';
  * `src/hooks/`: it is presentation plumbing for this one modal.
  */
 
+/** Runs engine calls one at a time, in the order asked. */
+export type EngineQueue = <T>(fn: () => Promise<T>) => Promise<T>;
+
+export function createEngineQueue(): EngineQueue {
+    let tail: Promise<unknown> = Promise.resolve();
+    return <T,>(fn: () => Promise<T>): Promise<T> => {
+        const run = tail.then(fn);
+        tail = run.catch(() => undefined);
+        return run;
+    };
+}
+
 export interface SubModelFit {
     /** Cumulative predictor subset (length 1..N). */
     predictors: string[];
@@ -50,6 +62,8 @@ export interface SubModelFitsOptions {
      *  that is surfaced as `stale` instead, so the user chooses when to pay for
      *  the extra sidecar calls. */
     resetKey: string;
+    /** The caller's engine queue, so these calls also wait for its other engine calls. */
+    serialize?: EngineQueue;
 }
 
 export interface SubModelFitsState {
@@ -64,15 +78,16 @@ export interface SubModelFitsState {
 }
 
 export function useSubModelFits(opts: SubModelFitsOptions): SubModelFitsState {
-    const { targetSensor, predictors, lambda, filter, blocked = false, reusable, resetKey } = opts;
+    const { targetSensor, predictors, lambda, filter, blocked = false, reusable, resetKey, serialize } = opts;
+    const [ownQueue] = useState(createEngineQueue);
+    const enqueue = serialize ?? ownQueue;
     const [subModels, setSubModels] = useState<SubModelFit[] | null>(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [progress, setProgress] = useState({ current: 0, total: 0 });
     // Generation counter: each `run` claims one and only commits while it is
     // still current, so a late-finishing older call can never overwrite a
-    // newer one (two overlapping runs are possible when a background run is
-    // still going and the user re-clicks during it).
+    // newer one, and an older run stops asking the engine as soon as it is not current.
     const genRef = useRef(0);
 
     const stale = useMemo(() => {
@@ -104,6 +119,7 @@ export function useSubModelFits(opts: SubModelFitsOptions): SubModelFitsState {
         const results: SubModelFit[] = [];
         try {
             for (let i = 1; i <= total; i++) {
+                if (myGen !== genRef.current) return;
                 const subset = subsetPredictors.slice(0, i);
                 if (i === total && reusable) {
                     // The full-predictor fit already exists — reuse it verbatim so
@@ -112,7 +128,7 @@ export function useSubModelFits(opts: SubModelFitsOptions): SubModelFitsState {
                     setProgress({ current: i, total });
                     continue;
                 }
-                const r = await invoke<RelationshipPreviewResult>('preview_relationship_model', {
+                const r = await enqueue(async () => (myGen !== genRef.current ? null : invoke<RelationshipPreviewResult>('preview_relationship_model', {
                     predictors: subset,
                     target: targetSensor,
                     lambda,
@@ -121,7 +137,8 @@ export function useSubModelFits(opts: SubModelFitsOptions): SubModelFitsState {
                     // at most this many rows + the real count in `n_rows` — never
                     // every row of a 150k-row dataset.
                     max_points: HEALTH_DEFAULT_MAX_POINTS,
-                });
+                })));
+                if (!r) return;
                 if (r.error) throw new Error(r.error);
                 results.push({ predictors: subset, result: r });
                 setProgress({ current: i, total });
@@ -146,7 +163,7 @@ export function useSubModelFits(opts: SubModelFitsOptions): SubModelFitsState {
             // would otherwise clear a still-running newer call's flag.
             if (myGen === genRef.current) setLoading(false);
         }
-    }, [targetSensor, predictors, lambda, filter, blocked, reusable]);
+    }, [targetSensor, predictors, lambda, filter, blocked, reusable, enqueue]);
 
     return { subModels, loading, error, progress, stale, run };
 }
