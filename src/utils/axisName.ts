@@ -266,9 +266,11 @@ export function attachAxisNames(inst: any, spec: AxisNameSpec, option: any, meas
     };
     apply();
     let ro: ResizeObserver | null = null;
-    if (typeof ResizeObserver !== 'undefined') {
+    // A disposed chart has no DOM: observing null would throw and blank the whole window.
+    const dom = inst?.getDom?.();
+    if (dom && typeof ResizeObserver !== 'undefined') {
         ro = new ResizeObserver(() => { cancelAnimationFrame(raf); raf = requestAnimationFrame(apply); });
-        ro.observe(inst.getDom());
+        ro.observe(dom);
     }
     return () => { ro?.disconnect(); cancelAnimationFrame(raf); };
 }

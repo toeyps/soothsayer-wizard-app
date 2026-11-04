@@ -182,6 +182,17 @@ describe('attachAxisNames', () => {
     });
     afterEach(() => { vi.unstubAllGlobals(); });
 
+    it('a chart already disposed (no DOM) is left alone and does not throw', () => {
+        const observe = vi.fn((target: unknown) => {
+            if (!(target instanceof Element)) throw new TypeError("parameter 1 is not of type 'Element'.");
+        });
+        vi.stubGlobal('ResizeObserver', class { observe = observe; disconnect() {} });
+        const inst = { ...chart(), getDom: () => null, isDisposed: () => true };
+        expect(() => attachAxisNames(inst, { y: LONG }, option, measure)()).not.toThrow();
+        expect(observe).not.toHaveBeenCalled();
+        expect(inst.setOption).not.toHaveBeenCalled();
+    });
+
     it('titles that fit: no setOption, on attach or on a resize that still fits', () => {
         const inst = chart();
         attachAxisNames(inst, { x: X, y: LONG }, option, measure)();
