@@ -5,6 +5,8 @@ import type { CsvRecord } from '../../types';
 import { reportError } from '../../errorReporter';
 import { useCoalescedDraw } from '../../hooks/useCoalescedDraw';
 import { formatYearMonth } from '../../utils/dateFormat';
+import { textWidth } from '../../utils/textMeasure';
+import { sensorPlainLabel, useSensorLookup } from '../sensor/sensorInfo';
 import { CANVAS_BG, CANVAS_BG_HEX } from './pairPlotColors';
 
 /** WebGL can't read CSS custom properties, so the canvas clear colour is a
@@ -138,6 +140,16 @@ function makeTicks(min: number, max: number, count: number): number[] {
     return Array.from({ length: count }, (_, i) => min + (max - min) * i / (count - 1));
 }
 
+const LABEL_FONT = '10px Inter, system-ui';
+
+/** Cuts an SVG label to its room: SVG text neither wraps nor ellipsizes. */
+function fitLabel(text: string, room: number): string {
+    if (room <= 0 || textWidth(text, LABEL_FONT) <= room) return text;
+    let n = text.length;
+    while (n > 1 && textWidth(`${text.slice(0, n)}…`, LABEL_FONT) > room) n--;
+    return `${text.slice(0, n)}…`;
+}
+
 function PairPlotCell({
     data, headers, sensorY, sensorX, isTimeAxis,
     showXAxis, showYAxis, showXLabel, showYLabel,
@@ -145,6 +157,7 @@ function PairPlotCell({
     onZoomChange,
 }: PairPlotCellProps) {
     const cellId = useId();
+    const sensorLookup = useSensorLookup();
     const containerRef = useRef<HTMLDivElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
     /** scatter-point index → original CSV row index (skips rows with null values). */
@@ -183,6 +196,16 @@ function PairPlotCell({
         xMin: 0, xMax: 1, yMin: 0, yMax: 1,
     });
     const [sc, setSc] = useState<any>(null);
+    /** The instance alive right now: a resize destroys `sc` before the other effects of that commit run. */
+    const liveScRef = useRef<any>(null);
+    /** What the last data effect drew, to tell new data from a re-run with the same data. */
+    const drawnRef = useRef<{ sc: any; data: CsvRecord[]; x?: string; y: string; time: boolean; xLo: number; xHi: number; yLo: number; yHi: number } | null>(null);
+    /** The instance's handlers outlive renders (created once per size), so they read the latest props here. */
+    const latestRef = useRef({ data, headers, sensorX, sensorY, isTimeAxis, onLasso, onHover });
+    latestRef.current = { data, headers, sensorX, sensorY, isTimeAxis, onLasso, onHover };
+    /** The GPU dropped this cell's context: an overlay offers Retry, which rebuilds the instance. */
+    const [contextLost, setContextLost] = useState(false);
+    const [rebuildNonce, setRebuildNonce] = useState(0);
     /** WebGL init failure — same guard as ScatterChart: createScatterplot()
      *  throws synchronously when a context can't be created, and an escaped
      *  throw here would unmount the entire app (production black-screen).
@@ -274,7 +297,7 @@ function PairPlotCell({
                 const r = map[p];
                 if (r != null) rows.push(r);
             }
-            onLasso(rows);
+            latestRef.current.onLasso(rows);
             // Drop the lib's transient `select` state immediately — we
             // visualise clusters via our own category-colour pipeline, so
             // letting regl hold onto its own highlighted set would just
@@ -292,6 +315,7 @@ function PairPlotCell({
 
         // @ts-expect-error – lib type/runtime mismatch on event name
         inst.subscribe('pointover', (pointIdx: number) => {
+            const { data, headers, sensorX, sensorY, isTimeAxis, onHover } = latestRef.current;
             const rowIdx = pointToRowRef.current[pointIdx];
             if (rowIdx == null) return;
             const row = data[rowIdx];
@@ -322,32 +346,42 @@ function PairPlotCell({
         });
         // @ts-expect-error – lib type/runtime mismatch on event name
         inst.subscribe('pointout', () => {
-            onHover(null);
+            latestRef.current.onHover(null);
         });
 
+        // regl-scatterplot draws on its own hidden WebGL canvas and copies to `canvasRef`
+        // (a 2D canvas), so the context events fire only on the hidden one.
+        const glCanvas: HTMLCanvasElement | undefined = inst.get?.('renderer')?.canvas;
+        const onContextLost = (e: Event) => { e.preventDefault(); setContextLost(true); };
+        // A fresh instance, not the old one resumed: it re-uploads the current points.
+        const onContextRestored = () => { setContextLost(false); setRebuildNonce(n => n + 1); };
+        glCanvas?.addEventListener('webglcontextlost', onContextLost);
+        glCanvas?.addEventListener('webglcontextrestored', onContextRestored);
+
+        liveScRef.current = inst;
         setSc(inst);
 
         return () => {
+            glCanvas?.removeEventListener('webglcontextlost', onContextLost);
+            glCanvas?.removeEventListener('webglcontextrestored', onContextRestored);
             // Clear the draw queue FIRST: a draw interrupted by destroy() may
             // never settle, which would leave the queue stuck busy.
             resetDraw();
+            liveScRef.current = null;
             inst.destroy();
             setSc(null);
             // A rebuilt (or unmounted) instance starts at the default camera.
             reportZoomed(false);
         };
-        // We deliberately don't depend on the callback props — they may
-        // change identity every render and would force a costly recreate.
-        // The latest props are captured via the closures below in newer
-        // effects (selectedRows / tool sync).
+        // Props reach the handlers through `latestRef`: depending on them would rebuild the context.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [innerDims.width, innerDims.height]);
+    }, [innerDims.width, innerDims.height, rebuildNonce]);
 
     // Push fresh data whenever the source rows / chosen sensors / instance
     // changes. Also (re)builds the row↔point lookups used by the linked
     // highlight + hover handlers.
     useEffect(() => {
-        if (!sc) return;
+        if (!sc || liveScRef.current !== sc) return;
         const xIdxRaw = sensorX != null ? headers.indexOf(sensorX) : -1;
         const yIdx = headers.indexOf(sensorY);
         if (yIdx < 0) return;
@@ -423,7 +457,6 @@ function PairPlotCell({
             }
         }
         valueARef.current = valueA;
-        setVisibleBounds({ xMin: xLo, xMax: xHi, yMin: yLo, yMax: yHi });
 
         // set() before draw: it's synchronous instance config, so the queued
         // draw (which may run a tick later) picks it up either way.
@@ -433,6 +466,18 @@ function PairPlotCell({
             xScale: scaleLinear().domain([xLo, xHi]).range([-1, 1]),
             yScale: scaleLinear().domain([yLo, yHi]).range([-1, 1]),
         });
+        const was = drawnRef.current;
+        const sameInstance = was !== null && was.sc === sc;
+        const sameView = was !== null && sameInstance && was.data === data && was.x === sensorX && was.y === sensorY
+            && was.time === !!isTimeAxis && was.xLo === xLo && was.xHi === xHi && was.yLo === yLo && was.yHi === yHi;
+        if (!sameView) {
+            // The old camera means another region under the new mapping, so the ticks would lie.
+            // A brand-new instance already sits at the default camera.
+            if (sameInstance) sc.reset();
+            setVisibleBounds({ xMin: xLo, xMax: xHi, yMin: yLo, yMax: yHi });
+            reportZoomed(false);
+        }
+        drawnRef.current = { sc, data, x: sensorX, y: sensorY, time: !!isTimeAxis, xLo, xHi, yLo, yHi };
         requestDraw(sc, { x: xArr, y: yArr, valueA });
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [sc, data, sensorX, sensorY, isTimeAxis, headers]);
@@ -440,7 +485,7 @@ function PairPlotCell({
     // Cluster changes → rebuild valueA in-place + re-upload + bump palette.
     // No need to recompute x/y arrays since the data didn't change.
     useEffect(() => {
-        if (!sc) return;
+        if (!sc || liveScRef.current !== sc) return;
         const draw = drawDataRef.current;
         if (!draw) return;
         const rowToPoint = rowToPointRef.current;
@@ -463,7 +508,7 @@ function PairPlotCell({
 
     // Push tool changes (pan ↔ lasso) into the instance.
     useEffect(() => {
-        if (!sc) return;
+        if (!sc || liveScRef.current !== sc) return;
         sc.set({ mouseMode: tool === 'lasso' ? 'lasso' : 'panZoom' });
     }, [sc, tool]);
 
@@ -471,6 +516,8 @@ function PairPlotCell({
     // camera back to the full extent + clear any visible visible-bounds drift.
     useEffect(() => {
         if (!sc) return;
+        // Replaced in this commit: the new instance is already at the default camera.
+        if (liveScRef.current !== sc) { lastResetTickRef.current = resetTick; return; }
         if (resetTick > lastResetTickRef.current) {
             lastResetTickRef.current = resetTick;
             sc.reset();
@@ -512,6 +559,26 @@ function PairPlotCell({
                         WebGL unavailable
                     </div>
                 )}
+                {contextLost && (
+                    <div style={{
+                        position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column',
+                        alignItems: 'center', justifyContent: 'center', gap: 4,
+                        background: 'var(--card-bg)', color: 'var(--text-primary)',
+                        fontSize: 9, textAlign: 'center', padding: 4, zIndex: 5,
+                    }}>
+                        <span>Rendering paused</span>
+                        <button
+                            type="button"
+                            onClick={() => { setContextLost(false); setRebuildNonce(n => n + 1); }}
+                            style={{
+                                padding: '2px 8px', fontSize: 9, cursor: 'pointer', borderRadius: 6,
+                                border: '1px solid var(--border-strong)', background: 'var(--input-bg)', color: 'var(--text-primary)',
+                            }}
+                        >
+                            Retry
+                        </button>
+                    </div>
+                )}
             </div>
 
             <svg
@@ -533,7 +600,7 @@ function PairPlotCell({
                         fill="var(--text-primary)"
                         fontFamily="Inter, system-ui"
                     >
-                        {isTimeAxis ? 'Time' : sensorX}
+                        {isTimeAxis ? 'Time' : fitLabel(sensorPlainLabel(sensorLookup(sensorX ?? '')), innerDims.width)}
                     </text>
                 )}
                 {showYLabel && (
@@ -546,7 +613,7 @@ function PairPlotCell({
                         fill="var(--text-primary)"
                         fontFamily="Inter, system-ui"
                     >
-                        {sensorY}
+                        {fitLabel(sensorPlainLabel(sensorLookup(sensorY)), innerDims.height)}
                     </text>
                 )}
                 {/* X-axis ticks (bottom edge) */}

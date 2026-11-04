@@ -3,12 +3,17 @@ import { render, screen, act, cleanup } from '@testing-library/react';
 
 function makeMockInstance() {
     const subs: Record<string, (...args: any[]) => void> = {};
+    // Like the real library: the WebGL canvas is the renderer's own, and a destroyed instance throws.
+    const glCanvas = document.createElement('canvas');
+    let destroyed = false;
     return {
         subscribe: vi.fn((event: string, cb: (...args: any[]) => void) => { subs[event] = cb; }),
-        set: vi.fn(),
+        get: vi.fn((prop: string) => (prop === 'renderer' ? { canvas: glCanvas } : undefined)),
+        __glCanvas: glCanvas,
+        set: vi.fn((_props: any) => { if (destroyed) throw new Error('The instance was already destroyed'); }),
         reset: vi.fn(),
         deselect: vi.fn(),
-        destroy: vi.fn(),
+        destroy: vi.fn(() => { destroyed = true; }),
         draw: vi.fn(),
         getScreenPosition: vi.fn(() => [20, 20]),
         __subs: subs,
@@ -39,6 +44,7 @@ class MockResizeObserver {
 
 import PairPlotCell from '../components/charts/PairPlotCell';
 import type { Cluster } from '../components/charts/PairPlotCell';
+import { SensorMetaContext, plainSensorLookup } from '../components/sensor/sensorInfo';
 
 const headers = ['A', 'B'];
 const data = [
@@ -324,5 +330,184 @@ describe('PairPlotCell', () => {
         render(<PairPlotCell {...baseProps} showXLabel={false} showYLabel={false} />);
         expect(screen.queryByText('A')).toBeNull();
         expect(screen.queryByText('B')).toBeNull();
+    });
+});
+
+describe('PairPlotCell: handlers read the latest props', () => {
+    const newData = [
+        { timestamp: '2026-02-01T00:00:00Z', values: [7, 70] },
+        { timestamp: '2026-02-02T00:00:00Z', values: [8, 80] },
+    ] as any;
+
+    it('hover reports the values of the new data, on the same instance', () => {
+        const onHover = vi.fn();
+        const { rerender } = render(<PairPlotCell {...baseProps} onHover={onHover} />);
+        rerender(<PairPlotCell {...baseProps} data={newData} onHover={onHover} />);
+        expect(mockCreateScatterplot).toHaveBeenCalledTimes(1);
+        act(() => { lastInstance!.__subs['pointover'](0); });
+        expect(onHover).toHaveBeenLastCalledWith(expect.objectContaining({
+            xVal: 7, yVal: 70, timestamp: '2026-02-01T00:00:00Z',
+        }));
+    });
+
+    it('hover names the sensors the cell shows now, and calls the current onHover', () => {
+        const first = vi.fn();
+        const second = vi.fn();
+        const { rerender } = render(<PairPlotCell {...baseProps} onHover={first} />);
+        rerender(<PairPlotCell {...baseProps} sensorX="B" sensorY="A" onHover={second} />);
+        act(() => { lastInstance!.__subs['pointover'](0); });
+        expect(first).not.toHaveBeenCalled();
+        expect(second).toHaveBeenCalledWith(expect.objectContaining({ sensorX: 'B', sensorY: 'A', xVal: 10, yVal: 1 }));
+    });
+
+    it('a lasso reaches the current onLasso', () => {
+        const first = vi.fn();
+        const second = vi.fn();
+        const { rerender } = render(<PairPlotCell {...baseProps} onLasso={first} />);
+        rerender(<PairPlotCell {...baseProps} onLasso={second} />);
+        act(() => { lastInstance!.__subs['select']({ points: [1] }); });
+        expect(first).not.toHaveBeenCalled();
+        expect(second).toHaveBeenCalledWith([1]);
+    });
+});
+
+describe('PairPlotCell: WebGL context loss', () => {
+    const lose = (canvas: HTMLCanvasElement) => {
+        const event = new Event('webglcontextlost', { cancelable: true });
+        act(() => { canvas.dispatchEvent(event); });
+        return event;
+    };
+
+    it('listens on the renderer\'s WebGL canvas, not the visible 2D one', () => {
+        const { container } = render(<PairPlotCell {...baseProps} />);
+        lose(container.querySelector('canvas') as HTMLCanvasElement);
+        expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+
+        const event = lose(lastInstance!.__glCanvas);
+        expect(event.defaultPrevented).toBe(true);
+        expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy();
+    });
+
+    it('Retry builds a new instance and draws the current data on it', async () => {
+        render(<PairPlotCell {...baseProps} />);
+        const old = lastInstance!;
+        lose(old.__glCanvas);
+        await act(async () => { screen.getByRole('button', { name: 'Retry' }).click(); });
+        expect(old.destroy).toHaveBeenCalledTimes(1);
+        expect(mockCreateScatterplot).toHaveBeenCalledTimes(2);
+        expect(lastInstance).not.toBe(old);
+        expect(lastInstance!.draw).toHaveBeenCalled();
+        expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+    });
+
+    it('a restored context rebuilds without a click', () => {
+        render(<PairPlotCell {...baseProps} />);
+        const old = lastInstance!;
+        lose(old.__glCanvas);
+        act(() => { old.__glCanvas.dispatchEvent(new Event('webglcontextrestored')); });
+        expect(mockCreateScatterplot).toHaveBeenCalledTimes(2);
+        expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+    });
+
+    it('a destroyed instance\'s context no longer raises the overlay', () => {
+        vi.useFakeTimers();
+        render(<PairPlotCell {...baseProps} />);
+        const old = lastInstance!;
+        Object.defineProperty(HTMLElement.prototype, 'clientWidth', { configurable: true, value: 260 });
+        act(() => { lastResizeCallback!(); vi.advanceTimersByTime(150); });
+        expect(old.destroy).toHaveBeenCalledTimes(1);
+        lose(old.__glCanvas);
+        expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+    });
+});
+
+describe('PairPlotCell: a resize in the same commit as another change', () => {
+    it('does not touch the destroyed instance; the new one gets the new state', () => {
+        vi.useFakeTimers();
+        const { rerender } = render(<PairPlotCell {...baseProps} />);
+        const old = lastInstance!;
+        Object.defineProperty(HTMLElement.prototype, 'clientWidth', { configurable: true, value: 260 });
+        const newData = [{ timestamp: '2026-02-01T00:00:00Z', values: [7, 70] }] as any;
+        const clusters: Cluster[] = [{ id: 'c1', label: 'C1', color: [1, 0, 0, 1], rowIndices: new Set([0]) }];
+        // All in one act: React commits the new size, data, clusters, tool and tick together.
+        expect(() => act(() => {
+            lastResizeCallback!();
+            vi.advanceTimersByTime(150);
+            rerender(<PairPlotCell {...baseProps} data={newData} clusters={clusters} tool="lasso" resetTick={1} />);
+        })).not.toThrow();
+        expect(old.destroy).toHaveBeenCalledTimes(1);
+        expect(lastInstance).not.toBe(old);
+        expect(lastInstance!.set).toHaveBeenCalledWith(expect.objectContaining({ mouseMode: 'lasso' }));
+        expect(lastInstance!.set).toHaveBeenCalledWith(expect.objectContaining({ pointColor: [baseProps.pointColor, [1, 0, 0, 1]] }));
+        // A brand-new instance is at the default camera already.
+        expect(lastInstance!.reset).not.toHaveBeenCalled();
+    });
+});
+
+describe('PairPlotCell: the ticks follow new data', () => {
+    const view = (x: [number, number], y: [number, number]) => act(() => {
+        lastInstance!.__subs.view({ xScale: { domain: () => x }, yScale: { domain: () => y } });
+    });
+    const newData = [
+        { timestamp: '2026-02-01T00:00:00Z', values: [100, 500] },
+        { timestamp: '2026-02-02T00:00:00Z', values: [200, 900] },
+    ] as any;
+    const axisTexts = (container: HTMLElement) =>
+        Array.from(container.querySelectorAll('.pair-regl-cell-axes text')).map(t => t.textContent);
+
+    it('new data while zoomed resets the camera, so the ticks shown are really what the camera sees', () => {
+        const onZoomChange = vi.fn();
+        const { container, rerender } = render(<PairPlotCell {...baseProps} onZoomChange={onZoomChange} showXLabel={false} showYLabel={false} />);
+        view([1.5, 2.5], [10, 30]);
+        expect(onZoomChange).toHaveBeenLastCalledWith(expect.any(String), true);
+
+        rerender(<PairPlotCell {...baseProps} data={newData} onZoomChange={onZoomChange} showXLabel={false} showYLabel={false} />);
+        expect(lastInstance!.reset).toHaveBeenCalledTimes(1);
+        expect(onZoomChange).toHaveBeenLastCalledWith(expect.any(String), false);
+        expect(axisTexts(container)).toEqual(expect.arrayContaining(['100.0', '200.0', '500.0', '900.0']));
+    });
+
+    it('a new sensor on the same data does the same', () => {
+        const { rerender } = render(<PairPlotCell {...baseProps} />);
+        view([1.5, 2.5], [10, 30]);
+        rerender(<PairPlotCell {...baseProps} sensorX="B" sensorY="A" />);
+        expect(lastInstance!.reset).toHaveBeenCalledTimes(1);
+    });
+
+    it('the same data under a new headers array keeps the zoom and its ticks', () => {
+        const onZoomChange = vi.fn();
+        const { container, rerender } = render(<PairPlotCell {...baseProps} onZoomChange={onZoomChange} showXLabel={false} showYLabel={false} />);
+        view([1.5, 2.5], [10, 30]);
+        rerender(<PairPlotCell {...baseProps} headers={['A', 'B']} onZoomChange={onZoomChange} showXLabel={false} showYLabel={false} />);
+        expect(lastInstance!.reset).not.toHaveBeenCalled();
+        expect(onZoomChange).toHaveBeenLastCalledWith(expect.any(String), true);
+        expect(axisTexts(container)).toEqual(expect.arrayContaining(['1.5', '2.5']));
+    });
+});
+
+describe('PairPlotCell: sensor names on the enlarged view', () => {
+    const lookup = (tag: string) => ({ ...plainSensorLookup(tag), description: tag === 'A' ? 'Bearing temp' : tag === 'B' ? 'Motor current' : undefined });
+
+    it('shows description + tag on both axes, not the tag alone', () => {
+        render(<SensorMetaContext.Provider value={lookup}><PairPlotCell {...baseProps} /></SensorMetaContext.Provider>);
+        expect(screen.getByText('Bearing temp · A')).toBeTruthy();
+        expect(screen.getByText('Motor current · B')).toBeTruthy();
+    });
+
+    it('a name longer than the plot ends in an ellipsis instead of running off the cell', () => {
+        const long = 'Very long description '.repeat(10);
+        const longLookup = (tag: string) => ({ ...plainSensorLookup(tag), description: long });
+        const { container } = render(<SensorMetaContext.Provider value={longLookup}><PairPlotCell {...baseProps} /></SensorMetaContext.Provider>);
+        const labels = Array.from(container.querySelectorAll('.pair-regl-cell-axes text[font-size="10"]')).map(t => t.textContent ?? '');
+        expect(labels).toHaveLength(2);
+        for (const label of labels) {
+            expect(label.endsWith('…')).toBe(true);
+            expect(label.length).toBeLessThan(long.length);
+        }
+    });
+
+    it('the time axis stays "Time"', () => {
+        render(<SensorMetaContext.Provider value={lookup}><PairPlotCell {...baseProps} sensorX={undefined} isTimeAxis /></SensorMetaContext.Provider>);
+        expect(screen.getByText('Time')).toBeTruthy();
     });
 });

@@ -3,8 +3,14 @@ import { render, screen, fireEvent, act, cleanup, within } from '@testing-librar
 
 function makeMockInstance() {
     const subs: Record<string, (...args: any[]) => void> = {};
+    // Like the real library: the WebGL canvas is the renderer's own.
+    const glCanvas = document.createElement('canvas');
+    const cameraView = new Float32Array(16);
     return {
         subscribe: vi.fn((event: string, cb: (...args: any[]) => void) => { subs[event] = cb; }),
+        get: vi.fn((prop: string) => (prop === 'renderer' ? { canvas: glCanvas } : prop === 'cameraView' ? cameraView : undefined)),
+        __glCanvas: glCanvas,
+        __cameraView: cameraView,
         set: vi.fn(),
         reset: vi.fn(),
         destroy: vi.fn(),
@@ -372,21 +378,6 @@ describe('ScatterChart', () => {
 
         fireEvent.click(screen.getByText('Retry'));
         expect(mockCreateScatterplot).toHaveBeenCalledTimes(2);
-    });
-
-    it('shows a context-lost overlay on webglcontextlost and hides it on restore', () => {
-        render(<ScatterChart data={data} sensors={['A', 'B']} headers={headers} />);
-        // Must target the MAIN canvas specifically -- the halo canvas (see
-        // the halo-layer describe block below) is always present in the DOM
-        // ahead of it, even when unused, and never gets the context-loss
-        // listeners since no WebGL context is ever created on it in that case.
-        const canvas = screen.getByTestId('scatter-main-canvas');
-
-        act(() => { canvas.dispatchEvent(new Event('webglcontextlost', { cancelable: true })); });
-        expect(screen.getByText(/GPU dropped the canvas/)).toBeTruthy();
-
-        act(() => { canvas.dispatchEvent(new Event('webglcontextrestored')); });
-        expect(screen.queryByText(/GPU dropped the canvas/)).toBeNull();
     });
 
     it('Reset view calls sc.reset()', () => {
@@ -1066,5 +1057,143 @@ describe('ScatterChart: long sensor names', () => {
         act(() => { lastInstance!.__subs['pointover'](0); });
         fireEvent.click(screen.getByTestId('scatter-main-canvas'));
         expect(controls.classList.contains('scatter-regl-controls--tags')).toBe(true);
+    });
+});
+
+describe('ScatterChart: a renamed sensor keeps its axis', () => {
+    const threeHeaders = ['A', 'B', 'C'];
+    const threeRows = [{ timestamp: 't0', values: [1, 2, 3] }, { timestamp: 't1', values: [4, 5, 6] }] as any;
+
+    it('X stays on the renamed sensor instead of moving to the first one, and the parent is told the new name', () => {
+        const onScatterAxesChange = vi.fn();
+        const { rerender } = render(<ScatterChart data={threeRows} sensors={threeHeaders} headers={threeHeaders} scatterX="C" scatterY="B" onScatterAxesChange={onScatterAxesChange} />);
+        expect(axisTriggers().map(t => rowTag(t))).toEqual(['C', 'B']);
+
+        // What Dashboard's rename does: the sensors and the saved axes change in one commit.
+        const renamed = ['A', 'B', 'C2'];
+        rerender(<ScatterChart data={threeRows} sensors={renamed} headers={renamed} scatterX="C2" scatterY="B" onScatterAxesChange={onScatterAxesChange} />);
+        expect(axisTriggers().map(t => rowTag(t))).toEqual(['C2', 'B']);
+        expect(onScatterAxesChange).toHaveBeenLastCalledWith('C2', 'B');
+        expect(onScatterAxesChange).not.toHaveBeenCalledWith('A', 'B');
+    });
+
+    it('Y too', () => {
+        const { rerender } = render(<ScatterChart data={threeRows} sensors={threeHeaders} headers={threeHeaders} scatterX="B" scatterY="C" />);
+        const renamed = ['A', 'B', 'C2'];
+        rerender(<ScatterChart data={threeRows} sensors={renamed} headers={renamed} scatterX="B" scatterY="C2" />);
+        expect(axisTriggers().map(t => rowTag(t))).toEqual(['B', 'C2']);
+    });
+
+    it('a pin on the renamed sensor keeps applying', () => {
+        const pinsBefore = { x: { sensor: 'C', min: 0, max: 50 } };
+        const { rerender } = render(<ScatterChart data={threeRows} sensors={threeHeaders} headers={threeHeaders} scatterX="C" scatterY="B" scatterAxisPins={pinsBefore} />);
+        const renamed = ['A', 'B', 'C2'];
+        const pinsAfter = { x: { sensor: 'C2', min: 0, max: 50 } };
+        rerender(<ScatterChart data={threeRows} sensors={renamed} headers={renamed} scatterX="C2" scatterY="B" scatterAxisPins={pinsAfter} />);
+        const scaleSet = last(lastInstance!.set.mock.calls.filter((c: any) => c[0].xScale));
+        expect(scaleSet[0].xScale.domain()).toEqual([0, 50]);
+    });
+
+    it('the user\'s own pick survives the prop coming back with the same value', () => {
+        const onScatterAxesChange = vi.fn();
+        const { rerender } = render(<ScatterChart data={threeRows} sensors={threeHeaders} headers={threeHeaders} scatterX="A" scatterY="B" onScatterAxesChange={onScatterAxesChange} />);
+        pickSingle(axisTriggers()[0], 'C');
+        expect(onScatterAxesChange).toHaveBeenLastCalledWith('C', 'B');
+        rerender(<ScatterChart data={threeRows} sensors={threeHeaders} headers={threeHeaders} scatterX="C" scatterY="B" onScatterAxesChange={onScatterAxesChange} />);
+        expect(axisTriggers().map(t => rowTag(t))).toEqual(['C', 'B']);
+    });
+});
+
+describe('ScatterChart: a highlight keeps the zoom', () => {
+    const dataT = [
+        { timestamp: '2026-01-01T00:00:00Z', values: [1, 10] },
+        { timestamp: '2026-01-02T00:00:00Z', values: [2, 20] },
+        { timestamp: '2026-01-03T00:00:00Z', values: [3, 30] },
+    ] as any;
+    const highlight = { id: 'h1', label: 'H', start: '2026-01-01T00:00:00Z', end: '2026-01-02T00:00:00Z', color: '#ff0000', enabled: true } as any;
+    const zoom = (view = new Float32Array(16)) => act(() => {
+        const scale = (d: [number, number]) => ({ domain: () => d });
+        instances[0].__subs['view']({ xScale: scale([1.5, 2.5]), yScale: scale([15, 25]), view });
+    });
+    const tickTexts = (container: HTMLElement) => Array.from(container.querySelectorAll('.scatter-regl-axes text')).map(t => t.textContent);
+
+    it('a value highlight changes the colours, not the camera or the ticks', () => {
+        const { container, rerender } = render(<ScatterChart data={dataT} sensors={['A', 'B']} headers={headers} />);
+        zoom();
+        expect(tickTexts(container)).toContain('1.50');
+        instances[0].reset.mockClear();
+        instances[0].set.mockClear();
+
+        const valueHighlight = { sensor: 'A', ranges: [{ id: 'r1', min: 0, max: 2, color: '#ff0000', enabled: true }] } as any;
+        rerender(<ScatterChart data={dataT} sensors={['A', 'B']} headers={headers} valueHighlight={valueHighlight} />);
+        expect(instances[0].set).toHaveBeenCalledWith(expect.objectContaining({ colorBy: 'valueA' }));
+        expect(instances[0].reset).not.toHaveBeenCalled();
+        expect(tickTexts(container)).toContain('1.50');
+    });
+
+    it('a time highlight created while zoomed: no reset, and the new halo takes the camera', () => {
+        const { container, rerender } = render(<ScatterChart data={dataT} sensors={['A', 'B']} headers={headers} />);
+        zoom();
+        instances[0].reset.mockClear();
+        rerender(<ScatterChart data={dataT} sensors={['A', 'B']} headers={headers} timeHighlights={[highlight]} />);
+        expect(instances[0].reset).not.toHaveBeenCalled();
+        expect(tickTexts(container)).toContain('1.50');
+        expect(instances[1].set).toHaveBeenCalledWith(expect.objectContaining({ cameraView: instances[0].__cameraView }));
+    });
+
+    it('new data still resets the camera and the ticks', () => {
+        const { container, rerender } = render(<ScatterChart data={dataT} sensors={['A', 'B']} headers={headers} />);
+        zoom();
+        instances[0].reset.mockClear();
+        const newData = [{ timestamp: 't0', values: [100, 500] }, { timestamp: 't1', values: [200, 900] }] as any;
+        rerender(<ScatterChart data={newData} sensors={['A', 'B']} headers={headers} />);
+        expect(instances[0].reset).toHaveBeenCalledTimes(1);
+        expect(tickTexts(container)).toContain('100.00');
+    });
+
+    it('new data with the same extent is new data too', () => {
+        const { rerender } = render(<ScatterChart data={dataT} sensors={['A', 'B']} headers={headers} />);
+        zoom();
+        instances[0].reset.mockClear();
+        rerender(<ScatterChart data={[...dataT]} sensors={['A', 'B']} headers={headers} />);
+        expect(instances[0].reset).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe('ScatterChart: WebGL context loss', () => {
+    const lose = (canvas: HTMLCanvasElement) => {
+        const event = new Event('webglcontextlost', { cancelable: true });
+        act(() => { canvas.dispatchEvent(event); });
+        return event;
+    };
+
+    it('listens on the renderer\'s WebGL canvas, not the visible 2D one', () => {
+        render(<ScatterChart data={data} sensors={['A', 'B']} headers={headers} />);
+        lose(screen.getByTestId('scatter-main-canvas') as HTMLCanvasElement);
+        expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+
+        const event = lose(lastInstance!.__glCanvas);
+        expect(event.defaultPrevented).toBe(true);
+        expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy();
+    });
+
+    it('Retry builds a new instance and draws the current data on it', async () => {
+        render(<ScatterChart data={data} sensors={['A', 'B']} headers={headers} />);
+        const old = lastInstance!;
+        lose(old.__glCanvas);
+        await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Retry' })); });
+        expect(old.destroy).toHaveBeenCalledTimes(1);
+        expect(lastInstance).not.toBe(old);
+        expect(lastInstance!.draw).toHaveBeenCalled();
+        expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+    });
+
+    it('a restored context rebuilds without a click', () => {
+        render(<ScatterChart data={data} sensors={['A', 'B']} headers={headers} />);
+        const old = lastInstance!;
+        lose(old.__glCanvas);
+        act(() => { old.__glCanvas.dispatchEvent(new Event('webglcontextrestored')); });
+        expect(lastInstance).not.toBe(old);
+        expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
     });
 });

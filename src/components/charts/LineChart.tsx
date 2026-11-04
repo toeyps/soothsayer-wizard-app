@@ -207,24 +207,30 @@ function LineChart({
         [columnar, data],
     );
 
-    // Identifies "the data this chart currently represents" (not xData's
-    // array *identity*, which changes on every refetch even when the actual
-    // span is unchanged) — used below to reset dataZoom to the full view
-    // only when the chart's own reason for existing actually changed (a new
-    // Time Range / aggregation / dataset), not on every re-render (tagging a
-    // point, hovering, resizing a panel). ECharts preserves a dataZoom
-    // window across `setOption` calls by design — even under `notMerge:
-    // true` (ResponsiveECharts' default) — so ordinary interactions don't
-    // blow away the user's own pan/zoom. But that also means: zoom in to a
-    // narrow window, then widen the Time Range filter so the backend
-    // returns a much longer span, and the SAME start/end percentages would
-    // cover only a sliver of the new, larger range — without the reset the
-    // chart would silently keep showing a fraction of the data instead of
-    // the full new window.
+    // Identifies "the data this chart currently represents" (not xData's array identity, which
+    // changes on every refetch): a new span goes back to the full view, anything else keeps the
+    // user's zoom. Every rebuilt option replaces the chart (notMerge), which also re-creates the
+    // dataZoom component at 0-100, so `option` has to carry the window itself.
     const rangeId = xData.length > 0 ? `${xData[0]}|${xData[xData.length - 1]}|${xData.length}` : 'empty';
     const prevRangeIdRef = useRef(rangeId);
     const rangeChanged = rangeId !== prevRangeIdRef.current;
-    useEffect(() => { prevRangeIdRef.current = rangeId; });
+    const zoomWindowRef = useRef<Record<string, number> | null>(null);
+    useEffect(() => {
+        if (prevRangeIdRef.current !== rangeId) zoomWindowRef.current = null;
+        prevRangeIdRef.current = rangeId;
+    });
+    useEffect(() => {
+        if (!chartInstance?.on) return;
+        const onDataZoom = (event: any) => {
+            // Inside zoom and pan report under `batch`, the Horizontal Zoom action at the top level.
+            const z = event?.batch?.[0] ?? event;
+            zoomWindowRef.current = z?.startValue != null
+                ? { startValue: z.startValue, endValue: z.endValue }
+                : { start: z?.start, end: z?.end };
+        };
+        chartInstance.on('datazoom', onDataZoom);
+        return () => chartInstance.off?.('datazoom', onDataZoom);
+    }, [chartInstance]);
 
     // Refs so the zr click listener (attached once per chart instance, see
     // below) always reads the CURRENT tagMode/xData instead of whatever was
@@ -848,11 +854,8 @@ function LineChart({
                     // custom drag handler during the gesture, but the mouseup
                     // handler's own explicit startValue/endValue dispatch
                     // always sets the final, definitive view afterward.
-                    // Force back to the full view exactly when `rangeId`
-                    // (above) shows the underlying data actually changed —
-                    // omitted on every other re-render so ECharts keeps
-                    // whatever window the user is currently panned/zoomed to.
-                    ...(rangeChanged ? { start: 0, end: 100 } : {}),
+                    // Back to the full view when `rangeId` changed; otherwise the user's window.
+                    ...(rangeChanged ? { start: 0, end: 100 } : (zoomWindowRef.current ?? {})),
                 },
             ],
             xAxis: {

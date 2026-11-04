@@ -1005,3 +1005,97 @@ describe('PairPlotChart: long sensor names (rule 5)', () => {
         expect(tip.querySelector('.tt-val')).toBeTruthy();
     });
 });
+
+describe('PairPlotChart: clusters across a new sample', () => {
+    const lastClusters = () => cellCalls[cellCalls.length - 1].clusters;
+    const lasso = (rows: number[]) => act(() => { cellCalls[cellCalls.length - 1].onLasso(rows); });
+    const rows = (...stamps: string[]) => stamps.map((timestamp, i) => ({ timestamp, values: [i, i] })) as any;
+
+    it('a cluster keeps its rows by timestamp when the sample renumbers them', () => {
+        const before = rows('t0', 't1', 't2');
+        const { rerender } = render(<PairPlotChart data={before} sensors={['A', 'B']} headers={headers} />);
+        lasso([0, 2]); // t0 and t2
+
+        rerender(<PairPlotChart data={rows('tX', 't2', 't0', 't1')} sensors={['A', 'B']} headers={headers} />);
+        expect([...lastClusters()[0].rowIndices].sort()).toEqual([1, 2]);
+        expect(lastClusters()[0].label).toBe('Cluster 1');
+    });
+
+    it('no cell ever renders the new sample with the old row numbers', () => {
+        const before = rows('t0', 't1');
+        const { rerender } = render(<PairPlotChart data={before} sensors={['A', 'B']} headers={headers} />);
+        lasso([1]); // t1
+        cellCalls.length = 0;
+        const after = rows('tX', 'tY', 't1');
+        rerender(<PairPlotChart data={after} sensors={['A', 'B']} headers={headers} />);
+        expect(cellCalls.length).toBeGreaterThan(0);
+        for (const call of cellCalls) {
+            expect(call.data).toBe(after);
+            expect([...call.clusters[0].rowIndices]).toEqual([2]);
+        }
+    });
+
+    it('a row the new sample lost leaves its cluster; a cluster with no row left goes', () => {
+        const { rerender } = render(<PairPlotChart data={rows('t0', 't1', 't2')} sensors={['A', 'B']} headers={headers} />);
+        lasso([0, 1]);
+        lasso([2]);
+        rerender(<PairPlotChart data={rows('t1', 'tX')} sensors={['A', 'B']} headers={headers} />);
+        expect(lastClusters()).toHaveLength(1);
+        expect([...lastClusters()[0].rowIndices]).toEqual([0]);
+    });
+
+    it('a re-render with the same sample leaves the rows alone', () => {
+        const same = rows('t0', 't1');
+        const { rerender } = render(<PairPlotChart data={same} sensors={['A', 'B']} headers={headers} />);
+        lasso([1]);
+        const set = lastClusters()[0].rowIndices;
+        rerender(<PairPlotChart data={same} sensors={['A', 'B']} headers={['A', 'B']} />);
+        expect(lastClusters()[0].rowIndices).toBe(set);
+    });
+
+    it('a new sample clears a hover that describes the old one', () => {
+        const { container, rerender } = render(<PairPlotChart data={rows('t0', 't1')} sensors={['A', 'B']} headers={headers} />);
+        act(() => {
+            cellCalls[cellCalls.length - 1].onHover({
+                rowIdx: 0, xVal: 1, yVal: 2, sensorX: 'A', sensorY: 'B', isTimeAxis: false, timestamp: 't0', pageX: 0, pageY: 0,
+            });
+        });
+        expect(container.querySelector('.scatter-regl-tooltip')).toBeTruthy();
+        rerender(<PairPlotChart data={rows('t5')} sensors={['A', 'B']} headers={headers} />);
+        expect(container.querySelector('.scatter-regl-tooltip')).toBeNull();
+    });
+});
+
+describe('PairPlotChart: enlarged view names sensors by description + tag', () => {
+    const sensorMetadata = [
+        { tag: 'A', description: 'Bearing temp', unit: '', component: '' },
+        { tag: 'B', description: 'Motor current', unit: '', component: '' },
+    ] as any;
+    const openCell = (container: HTMLElement, index: number) => {
+        fireEvent.click(screen.getByTitle('Magnifier — click a cell to open an enlarged view'));
+        fireEvent.click(container.querySelectorAll('.pair-regl-inspect-overlay')[index]);
+        return container.querySelector('.pair-regl-expand-title')?.textContent;
+    };
+    const renderChart = () => render(<PairPlotChart data={data} sensors={['A', 'B']} headers={headers} sensorMetadata={sensorMetadata} />);
+
+    it('diagonal: title and the histogram header', () => {
+        const { container } = renderChart();
+        expect(openCell(container, 0)).toBe('Bearing temp · A — distribution');
+        expect(container.querySelector('.pair-regl-expand-body svg text')?.textContent).toBe('Bearing temp · A');
+    });
+
+    it('scatter: both sensors in the title', () => {
+        const { container } = renderChart();
+        expect(openCell(container, 1)).toBe('Motor current · B × Bearing temp · A');
+    });
+
+    it('time: the sensor in the title', () => {
+        const { container } = renderChart();
+        expect(openCell(container, 2)).toBe('Bearing temp · A × Time');
+    });
+
+    it('a sensor with no description keeps its tag', () => {
+        const { container } = render(<PairPlotChart data={data} sensors={['A', 'B']} headers={headers} />);
+        expect(openCell(container, 0)).toBe('A — distribution');
+    });
+});

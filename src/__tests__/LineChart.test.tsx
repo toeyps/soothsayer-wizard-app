@@ -35,7 +35,10 @@ const mockZr = {
     }),
     off: vi.fn(),
 };
+let chartZoomHandler: ((event: any) => void) | null = null;
 const mockChartInstance = {
+    on: vi.fn((evt: string, cb: (event: any) => void) => { if (evt === 'datazoom') chartZoomHandler = cb; }),
+    off: vi.fn(),
     getZr: () => mockZr,
     containPixel: mockContainPixel,
     convertFromPixel: mockConvertFromPixel,
@@ -405,7 +408,7 @@ describe('LineChart option building', () => {
         });
     });
 
-    describe('dataZoom resets to the full view when the underlying range actually changes (regression: ECharts preserves a dataZoom window across setOption by design, so zooming in then widening the Time Range filter left the chart stuck showing only a sliver of the new, larger dataset -- reported 2026-09-16)', () => {
+    describe('dataZoom resets to the full view when the underlying range actually changes (zooming in then widening the Time Range filter must not leave a sliver of the new, larger dataset)', () => {
         it('a rerender with the SAME time range (identical first/last timestamp and point count) does not force start/end -- an in-progress pan/zoom is left alone', () => {
             const columnar = columnarOf(['A'], 5);
             const { rerender } = render(<LineChart data={[]} columnar={columnar} sensors={['A']} headers={['A']} />);
@@ -1330,5 +1333,78 @@ describe('LineChart tooltip: long sensor names (rule 4)', () => {
         const html = hoverHtml();
         expect(html).not.toContain('tt-row--wrap');
         expect(html).toContain('<span class="tt-desc">GENERATOR POWER</span><span class="tt-tag">A</span>');
+    });
+});
+
+// Against the real echarts: a rebuilt option goes in with notMerge, which re-creates dataZoom at 0-100.
+describe('LineChart keeps the zoom across a rebuilt option', () => {
+    const columnar = columnarOf(['A'], 20);
+    const windowOf = (chart: echarts.ECharts) => {
+        const z = (chart.getOption() as any).dataZoom[0];
+        return { start: z.start, end: z.end, startValue: z.startValue, endValue: z.endValue };
+    };
+    function setup() {
+        const view = render(<LineChart data={[]} columnar={columnar} sensors={['A']} headers={['A']} />);
+        const host = document.createElement('div');
+        document.body.append(host);
+        const chart = echarts.init(host, undefined, { renderer: 'svg', width: 800, height: 400 });
+        chart.setOption(capturedOptions[capturedOptions.length - 1]);
+        // The real event payloads reach the component.
+        chart.on('datazoom', (e: any) => chartZoomHandler!(e));
+        const rebuild = () => {
+            view.rerender(<LineChart data={[]} columnar={columnar} sensors={['A']} headers={['A']} hideYSplitLine />);
+            chart.setOption(capturedOptions[capturedOptions.length - 1], { notMerge: true });
+        };
+        return { ...view, chart, rebuild };
+    }
+
+    it('without the window the real chart would go back to 0-100 (why the option carries it)', () => {
+        const { chart } = setup();
+        chart.dispatchAction({ type: 'dataZoom', start: 20, end: 40 });
+        chart.setOption({ ...capturedOptions[capturedOptions.length - 1], dataZoom: [{ type: 'inside', xAxisIndex: [0] }] }, { notMerge: true });
+        expect(windowOf(chart).start).toBe(0);
+    });
+
+    it('a Horizontal Zoom drag (startValue/endValue action) survives a rebuild', () => {
+        const { chart, rebuild } = setup();
+        const ms = (minute: number) => new Date(`2026-01-01T00:${String(minute).padStart(2, '0')}:00`).getTime();
+        chart.dispatchAction({ type: 'dataZoom', startValue: ms(5), endValue: ms(10) });
+        rebuild();
+        expect(windowOf(chart).startValue).toBe(ms(5));
+        expect(windowOf(chart).endValue).toBe(ms(10));
+    });
+
+    it('a scroll or pan (reported under `batch`) survives a rebuild', () => {
+        const { chart, rebuild } = setup();
+        chart.dispatchAction({ type: 'dataZoom', batch: [{ start: 20, end: 40 }] });
+        rebuild();
+        expect(windowOf(chart).start).toBe(20);
+        expect(windowOf(chart).end).toBe(40);
+    });
+
+    it('Zoom out is remembered too', () => {
+        const { chart, rebuild } = setup();
+        chart.dispatchAction({ type: 'dataZoom', start: 20, end: 40 });
+        chart.dispatchAction({ type: 'dataZoom', start: 0, end: 100 });
+        rebuild();
+        expect(windowOf(chart).start).toBe(0);
+        expect(windowOf(chart).end).toBe(100);
+    });
+
+    it('a new time range drops the remembered window', () => {
+        const { chart, rerender } = setup();
+        chart.dispatchAction({ type: 'dataZoom', start: 20, end: 40 });
+        const wider = columnarOf(['A'], 40);
+        rerender(<LineChart data={[]} columnar={wider} sensors={['A']} headers={['A']} />);
+        expect(capturedOptions[capturedOptions.length - 1].dataZoom[0].start).toBe(0);
+        rerender(<LineChart data={[]} columnar={wider} sensors={['A']} headers={['A']} hideYSplitLine />);
+        expect(capturedOptions[capturedOptions.length - 1].dataZoom[0].start).toBeUndefined();
+    });
+
+    it('removes its listener when the chart goes away', () => {
+        const { unmount } = render(<LineChart data={[]} columnar={columnar} sensors={['A']} headers={['A']} />);
+        const handler = chartZoomHandler;
+        unmount();
+        expect(mockChartInstance.off).toHaveBeenCalledWith('datazoom', handler);
     });
 });

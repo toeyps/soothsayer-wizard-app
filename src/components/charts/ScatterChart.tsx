@@ -160,6 +160,8 @@ function ScatterChart({
      *  resize-driven recreates — e.g. dragging the window across monitors
      *  with different DPI — can hit). */
     const prevScForResetRef = useRef<any>(null);
+    /** What the camera was last fitted to. A highlight change re-runs the draw effect without changing it. */
+    const fittedRef = useRef<{ data: unknown; x: string; y: string; xLo: number; xHi: number; yLo: number; yHi: number } | null>(null);
     /** The instance that is alive right now; `sc` state is the one of the last commit. The size effect below
      *  destroys and replaces the instance BEFORE the draw effect of the same commit runs, so a draw effect that
      *  also re-runs in that commit (a new sensor or any other dep) would hand a destroyed instance to `sc.set()`,
@@ -282,6 +284,16 @@ function ScatterChart({
      *  user looked at Line or Pair Plot and came back. */
     const [xPin, setXPin] = useState<{ sensor: string; min?: number; max?: number } | null>(() => persistedPins?.x ?? null);
     const [yPin, setYPin] = useState<{ sensor: string; min?: number; max?: number } | null>(() => persistedPins?.y ?? null);
+    // A rename in the Dashboard renames these props: follow them, or the effect below would see
+    // an unknown sensor and move the axis to the first one (and the pin would stop applying).
+    const [seenProps, setSeenProps] = useState({ x: persistedX, y: persistedY, pinX: persistedPins?.x, pinY: persistedPins?.y });
+    if (seenProps.x !== persistedX || seenProps.y !== persistedY || seenProps.pinX !== persistedPins?.x || seenProps.pinY !== persistedPins?.y) {
+        setSeenProps({ x: persistedX, y: persistedY, pinX: persistedPins?.x, pinY: persistedPins?.y });
+        if (persistedX && persistedX !== seenProps.x) setScatterX(persistedX);
+        if (persistedY && persistedY !== seenProps.y) setScatterY(persistedY);
+        if (persistedPins?.x !== seenProps.pinX) setXPin(persistedPins?.x ?? null);
+        if (persistedPins?.y !== seenProps.pinY) setYPin(persistedPins?.y ?? null);
+    }
     const [axisEditorOpen, setAxisEditorOpen] = useState(false);
     const [draftXMin, setDraftXMin] = useState('');
     const [draftXMax, setDraftXMax] = useState('');
@@ -522,14 +534,15 @@ function ScatterChart({
             if (view) haloScRef.current?.set({ cameraView: view });
         });
 
-        // WebGL context-loss recovery. Without `preventDefault` the browser
-        // never fires `webglcontextrestored`, leaving a permanently black
-        // canvas; we surface a Retry overlay instead of a silent black box.
+        // WebGL context-loss recovery. regl-scatterplot draws on its own hidden WebGL canvas and copies
+        // to `canvasRef` (a 2D canvas), so the context events fire only on the hidden one.
         const canvas = canvasRef.current;
+        const glCanvas: HTMLCanvasElement | undefined = inst.get?.('renderer')?.canvas;
         const onContextLost = (e: Event) => { e.preventDefault(); setContextLost(true); };
-        const onContextRestored = () => { setContextLost(false); };
-        canvas.addEventListener('webglcontextlost', onContextLost as EventListener);
-        canvas.addEventListener('webglcontextrestored', onContextRestored as EventListener);
+        // A fresh instance, not the old one resumed: it re-uploads the current points.
+        const onContextRestored = () => { setContextLost(false); setRebuildNonce(n => n + 1); };
+        glCanvas?.addEventListener('webglcontextlost', onContextLost);
+        glCanvas?.addEventListener('webglcontextrestored', onContextRestored);
 
         // Tag Point click — tied to this same canvas lifecycle (recreated
         // alongside the instance on resize) rather than a separate effect,
@@ -553,8 +566,8 @@ function ScatterChart({
         setSc(inst);
 
         return () => {
-            canvas.removeEventListener('webglcontextlost', onContextLost as EventListener);
-            canvas.removeEventListener('webglcontextrestored', onContextRestored as EventListener);
+            glCanvas?.removeEventListener('webglcontextlost', onContextLost);
+            glCanvas?.removeEventListener('webglcontextrestored', onContextRestored);
             canvas.removeEventListener('click', onCanvasClick);
             // Clear the draw queue FIRST: a draw interrupted by destroy() may
             // never settle, which would leave the queue stuck busy.
@@ -731,6 +744,8 @@ function ScatterChart({
                     // canvas is otherwise empty, so an unmatched point simply
                     // doesn't paint anything there.
                     pointColor: [[0, 0, 0, 0], ...enabledHighlights.map(h => hexToRgba(h.color, 0.85))],
+                    // A halo created while the chart is zoomed starts at the default camera.
+                    cameraView: sc.get?.('cameraView'),
                 });
                 requestHaloDraw(haloSc, { x: xArr, y: yArr, valueA: haloValueA });
             }
@@ -759,9 +774,15 @@ function ScatterChart({
 
         origIndicesRef.current = orig;
         dataBoundsRef.current = { xLo, xHi, yLo, yHi };
+        const fitted = fittedRef.current;
+        const sameInstance = prevScForResetRef.current === sc;
+        // Only colours changed (a highlight): the camera and the ticks stay where the user put them.
+        const sameFit = sameInstance && !!fitted && fitted.data === data && fitted.x === scatterX && fitted.y === scatterY
+            && fitted.xLo === xLo && fitted.xHi === xHi && fitted.yLo === yLo && fitted.yHi === yHi;
+        fittedRef.current = { data, x: scatterX, y: scatterY, xLo, xHi, yLo, yHi };
         // Fresh data → reset the visible window to the full extent. The next
         // `view` event (after a zoom or pan) will narrow it again.
-        setVisibleBounds({ xMin: xLo, xMax: xHi, yMin: yLo, yMax: yHi });
+        if (!sameFit) setVisibleBounds({ xMin: xLo, xMax: xHi, yMin: yLo, yMax: yHi });
         // Register d3 scales so the `view` event payload's xScale/yScale
         // expose the CURRENT visible domain in real data values. Without
         // this they stay `null` and the axis sync silently no-ops.
@@ -794,7 +815,7 @@ function ScatterChart({
         // e.g. after a resize) is already at its default camera state, so
         // resetting it again is both unnecessary and, per the crash this
         // guards against, unsafe.
-        if (prevScForResetRef.current === sc) {
+        if (sameInstance && !sameFit) {
             sc.reset();
         }
         prevScForResetRef.current = sc;

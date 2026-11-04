@@ -5,7 +5,7 @@ import AxisLabel from './AxisLabel';
 import ClusterLegend from './ClusterLegend';
 import { nextClusterColour, nextClusterName } from './pairPlotClusters';
 import { TooltipRowName } from '../sensor/SensorLabel';
-import { SensorMetaContext, fmtNum, ttRowClass, useLayeredSensorLookup } from '../sensor/sensorInfo';
+import { SensorMetaContext, fmtNum, sensorPlainLabel, ttRowClass, useLayeredSensorLookup, useSensorLookup } from '../sensor/sensorInfo';
 import { commonPrefix, displayedName, splitInSet } from '../../utils/sensorNames';
 import { monoFontFamily, textWidth } from '../../utils/textMeasure';
 import { tooltipDistinctEnds } from '../../utils/tooltipLayout';
@@ -41,6 +41,7 @@ function DiagonalHistogram({
      *  the "outer frame only" label scheme deliberately avoids. */
     isTopRow: boolean;
 }) {
+    const sensorLookup = useSensorLookup();
     const containerRef = useRef<HTMLDivElement>(null);
     const [dims, setDims] = useState({ width: 0, height: 0 });
 
@@ -94,7 +95,7 @@ function DiagonalHistogram({
                         fill="var(--text-primary)"
                         fontFamily="Inter, system-ui"
                     >
-                        {sensor}
+                        {sensorPlainLabel(sensorLookup(sensor))}
                     </text>
                 )}
                 {/* Horizontal bars: low value at bottom, high at top. Bar
@@ -203,6 +204,25 @@ function CorrelationCell({
 function sameForCells(a: Cluster[], b: Cluster[]): boolean {
     return a.length === b.length && a.every((c, i) =>
         c.id === b[i].id && c.color === b[i].color && c.rowIndices === b[i].rowIndices);
+}
+
+/** A new sample renumbers its rows, so each cluster follows its rows by timestamp. A row the
+ *  new sample no longer holds leaves its cluster; a cluster with no row left goes. */
+function clustersInNewSample(clusters: Cluster[], from: ChartProps['data'], to: ChartProps['data']): Cluster[] {
+    const rowsAt = new Map<string, number[]>();
+    to.forEach((row, i) => {
+        if (!row.timestamp) return;
+        const rows = rowsAt.get(row.timestamp);
+        if (rows) rows.push(i); else rowsAt.set(row.timestamp, [i]);
+    });
+    return clusters.flatMap(cluster => {
+        const rowIndices = new Set<number>();
+        for (const r of cluster.rowIndices) {
+            const timestamp = from[r]?.timestamp;
+            for (const next of (timestamp && rowsAt.get(timestamp)) || []) rowIndices.add(next);
+        }
+        return rowIndices.size > 0 ? [{ ...cluster, rowIndices }] : [];
+    });
 }
 
 /** Focus the first control of a toolbox (the legend's focus fallback). */
@@ -316,6 +336,13 @@ function PairPlotChart({ data, sensors, headers, sensorMetadata }: ChartProps) {
      *  the cells never read, so this keeps the previous array (same
      *  reference) unless an id, colour or row set changed — PairPlotCell is
      *  memoised, so renaming re-renders the legend and nothing else. */
+    const [sampleData, setSampleData] = useState(data);
+    if (sampleData !== data) {
+        // Adjusted while rendering, so no cell ever draws old row numbers on the new sample.
+        setSampleData(data);
+        setHover(null);
+        if (clusters.length > 0) setClusters(clustersInNewSample(clusters, sampleData, data));
+    }
     const [cellClusters, setCellClusters] = useState<Cluster[]>(clusters);
     if (cellClusters !== clusters && !sameForCells(cellClusters, clusters)) {
         // "Adjust state while rendering" (React docs): re-renders this
@@ -655,9 +682,9 @@ function PairPlotChart({ data, sensors, headers, sensorMetadata }: ChartProps) {
                     <div className="pair-regl-expand-modal" onClick={e => e.stopPropagation()}>
                         <div className="pair-regl-expand-header">
                             <div className="pair-regl-expand-title">
-                                {expanded.kind === 'diagonal' && `${expanded.sensorY} — distribution`}
-                                {expanded.kind === 'scatter' && `${expanded.sensorX} × ${expanded.sensorY}`}
-                                {expanded.kind === 'time' && `${expanded.sensorY} × Time`}
+                                {expanded.kind === 'diagonal' && `${sensorPlainLabel(sensorLookup(expanded.sensorY))} — distribution`}
+                                {expanded.kind === 'scatter' && `${sensorPlainLabel(sensorLookup(expanded.sensorX))} × ${sensorPlainLabel(sensorLookup(expanded.sensorY))}`}
+                                {expanded.kind === 'time' && `${sensorPlainLabel(sensorLookup(expanded.sensorY))} × Time`}
                             </div>
                             <div className="pair-regl-expand-toolbox" ref={expandToolboxRef}>
                                 {expanded.kind !== 'diagonal' && (
