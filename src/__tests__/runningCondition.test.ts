@@ -334,6 +334,16 @@ describe('seedCustomFromWorkspace (switch to Custom, SPEC rule 7)', () => {
         expect(seedCustomFromWorkspace({ customFilters: [], customPeriods: [], customTestPeriods: [] }, ws, ids).patch).not.toHaveProperty('customAllData');
         expect(seedCustomFromWorkspace({ customFilters: [f({ id: 'mf' })], customPeriods: TRAIN, customTestPeriods: [] }, { ...ws, allData: true }, ids).patch).not.toHaveProperty('customAllData');
     });
+    it('"Use all data" with no condition line is still copied, and counted so the note can say so', () => {
+        const allData = { filters: [], combine: 'and' as const, allData: true, periods: [], testPeriods: [] };
+        const r = seedCustomFromWorkspace({ customFilters: [], customPeriods: [], customTestPeriods: [] }, allData, ids);
+        expect(r.patch).toEqual({ customAllData: true });
+        expect(r.copied).toEqual({ conditions: 1, periods: 0, tests: 0 });
+        // A model with its own line keeps it: nothing copied, and the count says that too.
+        const own = seedCustomFromWorkspace({ customFilters: [f({ id: 'mf' })], customPeriods: [], customTestPeriods: [] }, allData, ids);
+        expect(own.patch).toEqual({});
+        expect(own.copied.conditions).toBe(0);
+    });
     it('nothing in the workspace -> nothing copied', () => {
         const r = seedCustomFromWorkspace({ customFilters: [], customPeriods: [], customTestPeriods: [] }, { filters: [], combine: 'and', periods: [], testPeriods: [] });
         expect(r.patch).toEqual({});

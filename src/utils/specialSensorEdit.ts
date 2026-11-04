@@ -308,21 +308,28 @@ export async function runSpecialSensorEdit(args: EditArgs): Promise<EditOutcome>
                 );
                 failure.rolledBack = originals.every(r => !!r);
                 if (!failure.rolledBack) failure.inconsistent = [identityTag];
-            } catch {
+            } catch (rollbackErr) {
+                // The session went away mid-rollback: its columns are not ours any more.
+                if (isSessionLostError(rollbackErr)) throw rollbackErr;
                 // The targeted rollback itself failed: rebuild EVERYTHING from the
                 // recipes (dependency-ordered, replace: true) as the last resort.
                 try {
                     const res = await replaySpecialSensorRecipes(recipes, invoker);
                     failure.inconsistent = [...res.failed, ...res.skipped].filter(t => touchedTags.has(key(t)));
                     failure.rolledBack = failure.inconsistent.length === 0;
-                } catch {
+                } catch (replayErr) {
+                    if (isSessionLostError(replayErr)) throw replayErr;
                     failure.inconsistent = [...touchedTags].map(k => recipes.find(r => key(r.tag) === k)?.tag ?? k);
                 }
             }
             // The renamed sensor's NEW column was created by the first write
             // and nothing will ever point at it now.
             if (removesOldColumn) {
-                try { await invoker('remove_sensor_columns', { names: [newTag] }); } catch { /* best effort */ }
+                try {
+                    await invoker('remove_sensor_columns', { names: [newTag] });
+                } catch (removeErr) {
+                    if (isSessionLostError(removeErr)) throw removeErr;
+                }
             }
         }
         throw failure;

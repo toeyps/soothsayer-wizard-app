@@ -489,11 +489,17 @@ export function seedCustomFromWorkspace(
     const filterId = ids.filter ?? newFilterId;
     const patch: CustomSeedResult['patch'] = {};
     const copied = { conditions: 0, periods: 0, tests: 0 };
-    if (current.customFilters.length === 0 && workspace.filters.length > 0) {
-        copied.conditions = workspace.filters.length;
-        patch.customFilters = workspace.filters.map(f => ({ ...f, id: filterId() }));
-        patch.customCombine = workspace.combine;
-        if (workspace.allData) patch.customAllData = true;
+    if (current.customFilters.length === 0) {
+        if (workspace.filters.length > 0) {
+            copied.conditions = workspace.filters.length;
+            patch.customFilters = workspace.filters.map(f => ({ ...f, id: filterId() }));
+            patch.customCombine = workspace.combine;
+        }
+        // On "Use all data" the line is usually empty: the choice itself is what is copied.
+        if (workspace.allData) {
+            patch.customAllData = true;
+            copied.conditions = Math.max(copied.conditions, 1);
+        }
     }
     if (current.customPeriods.length === 0 && workspace.periods.length > 0) {
         copied.periods = workspace.periods.length;

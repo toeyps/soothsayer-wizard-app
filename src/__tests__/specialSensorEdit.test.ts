@@ -3,6 +3,7 @@ import type { SpecialSensorRecipe } from '../types';
 import {
     runSpecialSensorEdit, SpecialSensorEditError, SpecialSensorLockedError, recipesEquivalent, type EditFailureState,
 } from '../utils/specialSensorEdit';
+import { StaleSessionError } from '../utils/staleSession';
 import { mk } from './helpers/failureModelFixture';
 import { createFakeRust } from './helpers/fakeRustSession';
 
@@ -163,6 +164,71 @@ describe('runSpecialSensorEdit -- rollback when a step fails part-way', () => {
         const err = await run(rust, { recipes: CHAIN, next: F('A', '$TAG1 * 3') }).catch(e => e) as SpecialSensorEditError;
         expect(err.rolledBack).toBe(false);
         expect(err.inconsistent).toEqual(expect.arrayContaining(['A', 'B', 'C']));
+    });
+
+    describe('the session goes away during the rollback', () => {
+        const isRollbackOfA = (cmd: string, a: Record<string, unknown>) => cmd === 'evaluate_formula' && a.customName === 'A' && a.formula === '$TAG1 * 2';
+        const failC = (rust: Awaited<ReturnType<typeof session>>) =>
+            rust.failOn('calculate_new_sensor', a => a.config.customName === 'C', 'injected');
+
+        it('in the targeted rollback: stops with the session error, no re-sync, no column removed', async () => {
+            const rust = await session(CHAIN);
+            failC(rust);
+            const err = await runSpecialSensorEdit({
+                recipes: CHAIN, next: F('A2', '$TAG1 * 3'), oldTag: 'A',
+                invoker: (cmd, a) => {
+                    if (isRollbackOfA(cmd, a)) throw new StaleSessionError();
+                    return rust.invoke(cmd, a);
+                },
+            }).catch(e => e);
+            expect(err).toBeInstanceOf(StaleSessionError);
+            expect(rust.cmds('remove_sensor_columns')).toHaveLength(0);
+            expect(rust.calls.filter(c => c.cmd === 'evaluate_formula' && c.args.customName === 'B' && !c.error)).toHaveLength(1); // only the edit's own write
+        });
+
+        it('in the full re-sync: stops with the session error instead of naming sensors as inconsistent', async () => {
+            const rust = await session(CHAIN);
+            failC(rust);
+            let rollbackTries = 0;
+            const err = await runSpecialSensorEdit({
+                recipes: CHAIN, next: F('A', '$TAG1 * 3'),
+                invoker: (cmd, a) => {
+                    if (isRollbackOfA(cmd, a)) {
+                        rollbackTries += 1;
+                        throw rollbackTries === 1 ? new Error('rollback hiccup') : new StaleSessionError();
+                    }
+                    return rust.invoke(cmd, a);
+                },
+            }).catch(e => e);
+            expect(rollbackTries).toBe(2);
+            expect(err).toBeInstanceOf(StaleSessionError);
+        });
+
+        it('when dropping a renamed column: stops with the session error', async () => {
+            const rust = await session(CHAIN);
+            failC(rust);
+            const err = await runSpecialSensorEdit({
+                recipes: CHAIN, next: F('A2', '$TAG1 * 3'), oldTag: 'A',
+                invoker: (cmd, a) => {
+                    if (cmd === 'remove_sensor_columns') throw new StaleSessionError();
+                    return rust.invoke(cmd, a);
+                },
+            }).catch(e => e);
+            expect(err).toBeInstanceOf(StaleSessionError);
+        });
+
+        it('another failure while dropping a renamed column stays best effort', async () => {
+            const rust = await session(CHAIN);
+            failC(rust);
+            const err = await runSpecialSensorEdit({
+                recipes: CHAIN, next: F('A2', '$TAG1 * 3'), oldTag: 'A',
+                invoker: (cmd, a) => {
+                    if (cmd === 'remove_sensor_columns') throw new Error('busy');
+                    return rust.invoke(cmd, a);
+                },
+            }).catch(e => e);
+            expect(err).toBeInstanceOf(SpecialSensorEditError);
+        });
     });
 
     it('the arguments are never mutated', async () => {

@@ -195,25 +195,24 @@ export function migrateSingleRunningCondition(state: WorkspaceState): WorkspaceS
     const customModels: RunningConditionConversion['customModels'] = [];
     let modelsChanged = false;
     const models = fg.models.map((m): FailureModel => {
+        const custom = m.runningConditionMode === 'custom';
+        // A Workspace-mode model's own list is converted too (it comes back on a
+        // switch to Custom), but it trains on the workspace's rows, so only those count.
+        const own = toSingle(m.customRunningConditionFilters ?? [], !!m.customRunningConditionNoneConfirmed, null);
         let next = m;
-        if (m.runningConditionMode === 'custom') {
-            const own = toSingle(m.customRunningConditionFilters ?? [], !!m.customRunningConditionNoneConfirmed, null);
-            if (!own.changed) return m;
+        if (own.changed) {
             next = {
                 ...m,
                 customRunningConditionFilters: own.filters,
                 customRunningConditionCombine: own.rowsChanged ? 'and' : (m.customRunningConditionCombine ?? 'and'),
                 customRunningConditionNoneConfirmed: false,
             };
-            if (own.rowsChanged) {
-                // Only a model whose rows change needs the user's attention.
-                customModels.push({ id: m.id, result: own.kept ? 'converted' : 'needs-set' });
-                if (m.status) incomplete.push(m.id);
-                next = demote(next);
-            }
-        } else if (ws.rowsChanged) {
+        }
+        if (custom ? own.rowsChanged : ws.rowsChanged) {
+            // Only a Custom model whose rows change needs its own line in the notice.
+            if (custom) customModels.push({ id: m.id, result: own.kept ? 'converted' : 'needs-set' });
             if (m.status) incomplete.push(m.id);
-            next = demote(m);
+            next = demote(next);
         }
         if (next !== m) modelsChanged = true;
         return next;

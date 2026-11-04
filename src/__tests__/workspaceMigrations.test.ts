@@ -338,6 +338,54 @@ describe('migrateSingleRunningCondition (ONE running condition, 2026-10-26)', ()
         expect(none.failureGroupState).toMatchObject({ runningConditionFilters: [], runningConditionNoneConfirmed: false, runningConditionConversion: null });
     });
 
+    describe('the old custom list of a Workspace-mode model', () => {
+        const oneShape = { runningConditionFilters: [above('SPEED', '1200')], runningConditionConversion: null };
+
+        it('is converted, but the model trains on the workspace rows: status, verdict and notice stay', () => {
+            const s = ws({
+                ...oneShape, runningConditionConversion: undefined,
+                models: [
+                    done('a', { customRunningConditionFilters: [below('T', '3'), above('LOAD', ' 7 ')], customRunningConditionCombine: 'or' }),
+                    done('b', { customRunningConditionFilters: [below('T', '3')], customRunningConditionNoneConfirmed: true }),
+                ],
+            });
+            const fg = migrateSingleRunningCondition(s).failureGroupState!;
+            expect(fg.models[0]).toMatchObject({
+                status: true, healthVerdict: 'valid', trainedFingerprint: 'fp',
+                customRunningConditionFilters: [above('LOAD', '7')], customRunningConditionCombine: 'and', customRunningConditionNoneConfirmed: false,
+            });
+            expect(fg.models[1]).toMatchObject({ status: true, customRunningConditionFilters: [], customRunningConditionNoneConfirmed: false });
+            expect(fg.runningConditionConversion).toBeNull();
+        });
+
+        it('does not change the model\'s train fingerprint', () => {
+            const base = ws({ ...oneShape, runningConditionTimePeriods: [] });
+            const model = done('a', { customRunningConditionFilters: [below('T', '3'), above('LOAD', '7')] });
+            const s = { ...base, failureGroupState: { ...base.failureGroupState!, models: [model] } };
+            const out = migrateSingleRunningCondition(s).failureGroupState!;
+            expect(computeTrainFingerprint(out.models[0], out)).toBe(computeTrainFingerprint(model, s.failureGroupState));
+        });
+
+        it('goes Incomplete only when the WORKSPACE rows change', () => {
+            const fg = migrateSingleRunningCondition(ws({
+                runningConditionFilters: [below('X', '1'), above('SPEED', '1200')], runningConditionConversion: null,
+                models: [done('a', { customRunningConditionFilters: [below('T', '3'), above('LOAD', '7')] })],
+            })).failureGroupState!;
+            expect(fg.models[0]).toMatchObject({ status: false, customRunningConditionFilters: [above('LOAD', '7')] });
+            expect(fg.models[0]).not.toHaveProperty('healthVerdict');
+        });
+
+        it('is idempotent, does not mutate, and an already-single list stays the same object', () => {
+            const s = ws({ ...oneShape, models: [done('a', { customRunningConditionFilters: [below('T', '3'), above('LOAD', '7')] })] });
+            const snap = JSON.stringify(s);
+            const once = migrateSingleRunningCondition(s);
+            expect(JSON.stringify(s)).toBe(snap);
+            expect(migrateSingleRunningCondition(once)).toBe(once);
+            const single = ws({ ...oneShape, models: [done('a', { customRunningConditionFilters: [above('LOAD', '7')] }), done('b')] });
+            expect(migrateSingleRunningCondition(single)).toBe(single);
+        });
+    });
+
     it('an existing (not yet dismissed) notice record is kept as it is when the old shape is normalised again', () => {
         const first = migrateSingleRunningCondition(ws({ runningConditionFilters: [below('T', '1'), above('SPEED', '1200')], models: [done('a')] }));
         const record = first.failureGroupState!.runningConditionConversion!;

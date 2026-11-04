@@ -1,5 +1,5 @@
 import { load } from '@tauri-apps/plugin-store';
-import { readTextFile, writeTextFile, exists, mkdir, remove as removeFile, rename, BaseDirectory } from '@tauri-apps/plugin-fs';
+import { readTextFile, writeTextFile, exists, mkdir, readDir, stat, remove as removeFile, rename, BaseDirectory } from '@tauri-apps/plugin-fs';
 import { WorkspaceState, WorkspaceMetadata, FailureModel, FailureSensorRow, FailureGroup, FailureGroupStateSlice, ModelKind, WorkspaceSensorFilter, TimePeriod } from './types';
 import { debugLog } from './utils/debugLog';
 import { migrateHealthSetPoints, migrateSingleRunningCondition } from './utils/workspaceMigrations';
@@ -27,15 +27,78 @@ async function getStore() {
     return storePromise;
 }
 
-export async function getRecentWorkspaces(): Promise<WorkspaceMetadata[]> {
+async function storedRecentList(): Promise<WorkspaceMetadata[]> {
+    const s = await getStore();
+    const workspaces = (await s.get('recent_workspaces')) as WorkspaceMetadata[];
+    return Array.isArray(workspaces) ? workspaces : [];
+}
+
+// The list as stored. Code already running inside the queue uses this one:
+// `getRecentWorkspaces` may enqueue, which would deadlock there.
+async function readRecentList(): Promise<WorkspaceMetadata[]> {
     try {
-        const s = await getStore();
-        const workspaces = (await s.get('recent_workspaces')) as WorkspaceMetadata[];
-        return Array.isArray(workspaces) ? workspaces : [];
+        return await storedRecentList();
     } catch (e) {
         console.error("Failed to get recent workspaces:", e);
         return [];
     }
+}
+
+/** The list entry of an unlisted workspace file, or null when it is not a usable project. */
+async function metaFromFile(id: string, filePath: string): Promise<WorkspaceMetadata | null> {
+    try {
+        const state = JSON.parse(await readTextFile(filePath, { baseDir: BaseDirectory.AppData })) as WorkspaceState;
+        if (state?.id !== id) return null;
+        let lastModified = 0;
+        try {
+            lastModified = (await stat(filePath, { baseDir: BaseDirectory.AppData })).mtime?.getTime() ?? 0;
+        } catch { /* no date known: it sorts last */ }
+        return {
+            id,
+            name: state.name ?? id,
+            description: state.description,
+            lastModified,
+            filePath,
+            ...failureGroupMetaFields(state.failureGroupState?.groups),
+        };
+    } catch (e) {
+        console.warn(`Skipped an unreadable workspace file (${filePath}):`, e);
+        return null;
+    }
+}
+
+// Puts back projects that fell off the list when it was capped at 10. Only the
+// files not on the list are parsed. Never throws: the list still reads as stored.
+async function recoverUnlistedWorkspaces(): Promise<void> {
+    try {
+        const entries = await readDir('workspaces', { baseDir: BaseDirectory.AppData });
+        const files = entries.filter(e => !e.isDirectory && e.name.endsWith('.json'));
+        if (files.length === 0) return;
+        const listed = new Set((await storedRecentList()).map(w => w.id));
+        const found: WorkspaceMetadata[] = [];
+        for (const file of files) {
+            const id = file.name.slice(0, -'.json'.length);
+            if (listed.has(id)) continue;
+            const meta = await metaFromFile(id, `workspaces/${file.name}`);
+            if (meta) found.push(meta);
+        }
+        if (found.length === 0) return;
+        // Read again: another window may have saved while the files were parsed.
+        const current = await storedRecentList();
+        const added = found.filter(m => !current.some(w => w.id === m.id));
+        await saveRecentWorkspaces([...current, ...added].sort((a, b) => b.lastModified - a.lastModified));
+    } catch (e) {
+        console.warn('Could not look for workspaces missing from the recent list:', e);
+    }
+}
+
+// Once per window: a project written after this always lists itself.
+let recovery: Promise<void> | null = null;
+
+export async function getRecentWorkspaces(): Promise<WorkspaceMetadata[]> {
+    recovery ??= enqueue(recoverUnlistedWorkspaces);
+    await recovery;
+    return readRecentList();
 }
 
 export async function saveRecentWorkspaces(workspaces: WorkspaceMetadata[]) {
@@ -140,7 +203,7 @@ async function writeWorkspaceFileOrThrow(state: WorkspaceState): Promise<void> {
     await writeWorkspaceJsonAtomically(filePath, json);
 
     // Update recent workspaces list
-    let recent = await getRecentWorkspaces();
+    const recent = await readRecentList();
     const meta: WorkspaceMetadata = {
         id: state.id,
         name: state.name,
@@ -173,10 +236,7 @@ async function writeWorkspaceFileOrThrow(state: WorkspaceState): Promise<void> {
         recent.unshift(meta);
     }
 
-    // Keep top 10, sort by most recent
-    recent = recent.sort((a, b) => b.lastModified - a.lastModified).slice(0, 10);
-
-    await saveRecentWorkspaces(recent);
+    await saveRecentWorkspaces(recent.sort((a, b) => b.lastModified - a.lastModified));
 
     debugLog("Workspace save successful.");
 }
@@ -211,20 +271,19 @@ export async function updateWorkspaceData(
     patch: (state: WorkspaceState) => WorkspaceState
 ): Promise<WorkspaceState | null> {
     return enqueue(async () => {
-        // `readWorkspaceFile`, NOT the exported `loadWorkspaceData` — that one
-        // is itself wrapped in `enqueue` now (see its own comment), and
-        // calling it from inside an already-running enqueued operation would
-        // queue a second operation that can only run once this one finishes,
-        // which this one is waiting on — a deadlock.
-        const current = await readWorkspaceFile(id);
-        if (!current) return null;
+        // Not the exported `loadWorkspaceData`: it enqueues too, and waiting for
+        // it from inside this queued operation would deadlock.
+        const read = await readWorkspaceFileAndText(id);
+        if (!read) return null;
         // "Incomplete immediately" — any write that
         // changes what a Complete model is trained on (its own inputs, or the
         // workspace running condition it follows) sets it back to Incomplete in
         // THIS same write, whichever window or writer made it. Compared against
-        // `current` (what is on disk), never a caller's possibly stale mirror.
-        const next = applyIncompleteRule(current, patch(current));
-        await writeWorkspaceFileOrThrow(next);
+        // what is on disk, never a caller's possibly stale mirror.
+        const next = applyIncompleteRule(read.state, patch(read.state));
+        // Same text as the file: no write (it narrows the cross-window race) and no
+        // Recents bump. A read-path migration differs from the file, so it still lands.
+        if (JSON.stringify(next) !== read.text) await writeWorkspaceFileOrThrow(next);
         return next;
     });
 }
@@ -484,8 +543,12 @@ const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 // `writeWorkspaceJsonAtomically`). Gives up with `WorkspaceReadError`,
 // never with `null`.
 async function readWorkspaceFile(id: string): Promise<WorkspaceState | null> {
+    return (await readWorkspaceFileAndText(id))?.state ?? null;
+}
+
+async function readWorkspaceFileAndText(id: string): Promise<{ state: WorkspaceState; text: string } | null> {
     debugLog("Loading Workspace Data for ID:", id);
-    const recent = await getRecentWorkspaces();
+    const recent = await readRecentList();
     const meta = recent.find(w => w.id === id);
     const filePath = meta ? meta.filePath : `workspaces/${id}.json`;
 
@@ -497,7 +560,7 @@ async function readWorkspaceFile(id: string): Promise<WorkspaceState | null> {
             if (!fileExists) return null;
             const content = await readTextFile(filePath, { baseDir: BaseDirectory.AppData });
             const parsed = JSON.parse(content) as WorkspaceState;
-            return migrateFailureGroupState(parsed);
+            return { state: migrateFailureGroupState(parsed), text: content };
         } catch (e) {
             lastError = e;
         }
@@ -555,9 +618,9 @@ async function removeWorkspaceFolder(id: string): Promise<void> {
 
 export async function deleteWorkspace(id: string) {
     try {
-        const recent = await getRecentWorkspaces();
+        const recent = await readRecentList();
         const meta = recent.find(w => w.id === id);
-        
+
         if (meta) {
             // Delete file if exists
             const fileExists = await exists(meta.filePath, { baseDir: BaseDirectory.AppData });
@@ -573,8 +636,7 @@ export async function deleteWorkspace(id: string) {
         console.error("Failed to delete workspace:", e);
     }
     // Model files the old "Mark complete" wrote (before 2026-10-20) live in
-    // their own folder; remove it too, independently of whether the workspace was still in the recent
-    // list (that list is capped, so its absence says nothing about the folder).
+    // their own folder; remove it too, whether or not the workspace was on the list.
     await removeWorkspaceFolder(id);
 }
 

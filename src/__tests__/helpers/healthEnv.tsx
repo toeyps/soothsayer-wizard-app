@@ -74,6 +74,10 @@ export const fsModule = () => ({
     },
     exists: async (p: string) => p === 'workspaces' || env.files.has(p) || hasPrefix(p),
     mkdir: async () => {},
+    readDir: async (dir: string) => [...env.files.keys()]
+        .filter(k => k.startsWith(dir + '/') && !k.slice(dir.length + 1).includes('/'))
+        .map(k => ({ name: k.slice(dir.length + 1), isFile: true, isDirectory: false, isSymlink: false })),
+    stat: async () => ({ mtime: new Date(0) }),
     remove: async (p: string, o?: { recursive?: boolean }) => {
         env.removed.push(p);
         env.files.delete(p);

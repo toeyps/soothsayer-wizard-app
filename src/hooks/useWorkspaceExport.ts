@@ -5,7 +5,7 @@ import type {
 } from '../types/export';
 import { WORKSPACE_EXPORT_PROGRESS } from '../types/export';
 import { getLastExportDir, loadWorkspaceData, setLastExportDir } from '../workspaceManager';
-import { buildWorkspaceExportRequest } from '../utils/exportReadiness';
+import { buildWorkspaceExportRequest, exportReadiness } from '../utils/exportReadiness';
 import { subscribe, type Unsubscribe } from '../utils/tauriEvents';
 import {
     cancelWorkspaceExport, exportFolderName, exportWorkspaceResults, parseExportError, planWorkspaceExport,
@@ -49,6 +49,17 @@ const newExportId = (): string => {
 };
 
 const NO_WORKSPACE: ParsedExportError = { code: null, message: 'The project could not be read — nothing was exported.' };
+
+/** Same text as Rust's, so a cancel before the command starts ends the same way. */
+const CANCELLED_TEXT = 'CANCELLED: the export was cancelled';
+const CANCEL_RETRY_MS = 50;
+const CANCEL_TRIES = 40;
+
+const notReadyError = (n: number): ParsedExportError => ({
+    code: 'NOT_READY',
+    message: `${n} model${n === 1 ? ' is' : 's are'} no longer ready to export — nothing was exported. Check the list and try again.`,
+    problems: n,
+});
 
 export interface UseWorkspaceExport {
     phase: WorkspaceExportPhase;
@@ -97,6 +108,10 @@ export function useWorkspaceExport(workspaceId: string | null, context: Workspac
     const seqRef = useRef(0);
     /** The export id of the running export (progress and cancel use it). */
     const exportIdRef = useRef<string | null>(null);
+    /** The export the user cancelled, seen by `start` before it calls Rust. */
+    const cancelAskedRef = useRef<string | null>(null);
+    /** Exports whose Rust command has been called and has not answered yet. */
+    const invokingRef = useRef(new Set<string>());
     const offRef = useRef<Unsubscribe | null>(null);
     const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -106,15 +121,24 @@ export function useWorkspaceExport(workspaceId: string | null, context: Workspac
         if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
     }, []);
 
+    // Rust answers false until the command has claimed its slot, which happens on a
+    // worker thread after the call: keep asking while that call is unanswered.
+    const askRustToCancel = useCallback(async (id: string) => {
+        for (let i = 0; i < CANCEL_TRIES && invokingRef.current.has(id); i++) {
+            if (await cancelWorkspaceExport(id)) return;
+            await new Promise(r => setTimeout(r, CANCEL_RETRY_MS));
+        }
+    }, []);
+
     const reset = useCallback(() => {
         seqRef.current++;
         const running = exportIdRef.current;
-        if (running) void cancelWorkspaceExport(running).catch(() => {});
+        if (running) void askRustToCancel(running).catch(() => {});
         exportIdRef.current = null;
         stopListening();
         setPhase('idle'); setPlan(null); setRequest(null); setResult(null); setError(null);
         setProgress(null); setShowProgress(false); setHidden(false);
-    }, [stopListening]);
+    }, [askRustToCancel, stopListening]);
 
     // A window re-pointed at another project starts clean.
     useEffect(() => { reset(); }, [workspaceId, reset]);
@@ -173,12 +197,24 @@ export function useWorkspaceExport(workspaceId: string | null, context: Workspac
         setPhase('running'); setError(null); setResult(null); setProgress(null); setShowProgress(false);
         const finish = () => {
             if (exportIdRef.current === exportId) exportIdRef.current = null;
+            invokingRef.current.delete(exportId);
             stopListening();
+        };
+        const stopIfCancelled = () => {
+            if (cancelAskedRef.current === exportId) throw new Error(CANCELLED_TEXT);
         };
         try {
             const fresh = await freshRequest(id);
             if (seq !== seqRef.current) { finish(); return null; }
             if (!fresh) { finish(); setError(NO_WORKSPACE); setPhase('failed'); return null; }
+            stopIfCancelled();
+            // The request carries no status, so Rust cannot refuse a model another
+            // window made Incomplete (or added) after this window last looked.
+            const c = ctxRef.current;
+            const notReady = exportReadiness({
+                workspace: fresh.ws, metadata: c.metadata, headers: c.headers, recipes: c.recipes, order: c.order,
+            }).rows.filter(r => !r.ready).length;
+            if (notReady > 0) { finish(); setError(notReadyError(notReady)); setPhase('failed'); return null; }
             setRequest(fresh.req);
             const off = subscribe<WorkspaceExportProgress>(WORKSPACE_EXPORT_PROGRESS, ev => {
                 const p = ev.payload;
@@ -189,10 +225,12 @@ export function useWorkspaceExport(workspaceId: string | null, context: Workspac
             await off.ready;
             // Reset / re-pointed / closed while the listener was being set up.
             if (seq !== seqRef.current) { off(); if (offRef.current === off) offRef.current = null; finish(); return null; }
+            stopIfCancelled();
             timerRef.current = setTimeout(() => {
                 if (exportIdRef.current === exportId) setShowProgress(true);
             }, EXPORT_PROGRESS_DELAY_MS);
             const folderName = exportFolderName(fresh.ws.name ?? '', fresh.ws.machine?.tag ?? '', at);
+            invokingRef.current.add(exportId);
             const res = await exportWorkspaceResults(fresh.req, destDir, folderName, exportId);
             finish();
             if (seq !== seqRef.current) return null;
@@ -216,12 +254,13 @@ export function useWorkspaceExport(workspaceId: string | null, context: Workspac
     const cancel = useCallback(async () => {
         const id = exportIdRef.current;
         if (!id) return;
+        cancelAskedRef.current = id;
         try {
-            await cancelWorkspaceExport(id);
+            await askRustToCancel(id);
         } catch (e) {
             console.warn('cancelWorkspaceExport failed', e);
         }
-    }, []);
+    }, [askRustToCancel]);
 
     const hide = useCallback(() => setHidden(true), []);
     const show = useCallback(() => setHidden(false), []);

@@ -35,7 +35,7 @@ const AT = new Date(2026, 9, 20, 14, 30);
 
 const makeWs = (name = 'Plant · M'): WorkspaceState => ({
     id: 'ws1', name, machine: { plant: 'Plant', name: 'M', tag: 'U-1', notes: '' }, dataUtcOffsetMin: 420,
-    failureGroupState: { groups: [], models: [mk({ id: 'i1', targetSensor: 'T', category: 'condition' })], runningConditionNoneConfirmed: true },
+    failureGroupState: { groups: [], models: [mk({ id: 'i1', targetSensor: 'T', category: 'condition', status: true })], runningConditionNoneConfirmed: true },
 } as unknown as WorkspaceState);
 
 /** A deferred promise for the export command, so a test can fire events while it "runs". */
@@ -156,6 +156,76 @@ describe('useWorkspaceExport', () => {
         await act(async () => { run.reject('CANCELLED: by the user'); await done; });
         expect(result.current.phase).toBe('cancelled');
         expect(mockSetDir).not.toHaveBeenCalled();
+    });
+
+    it('start(): a model no longer Complete on disk refuses the export, nothing is sent to Rust', async () => {
+        const ws = makeWs();
+        ws.failureGroupState!.models = [mk({ id: 'i1', targetSensor: 'T', category: 'condition', status: false })];
+        disk = ws;
+        mockInvoke.mockResolvedValue(RESULT);
+        const { result } = renderHook(() => useWorkspaceExport('ws1', CTX));
+        let out: unknown = 'unset';
+        await act(async () => { out = await result.current.start('D:/out', AT); });
+        expect(out).toBeNull();
+        expect(mockInvoke.mock.calls.filter(c => c[0] === 'export_workspace_results')).toHaveLength(0);
+        expect(result.current).toMatchObject({ phase: 'failed', error: { code: 'NOT_READY', problems: 1 } });
+        expect(mockSetDir).not.toHaveBeenCalled();
+        // once it is Complete again the same hook can export
+        disk = makeWs();
+        await act(async () => { await result.current.start('D:/out', AT); });
+        expect(result.current.phase).toBe('done');
+    });
+
+    it('cancel() before the command was called: the export never starts and ends as cancelled', async () => {
+        const gate = deferred<void>();
+        mockListen.mockImplementationOnce(async (event: string, cb: Handler) => {
+            await gate.promise;
+            if (!listeners.has(event)) listeners.set(event, new Set());
+            listeners.get(event)!.add(cb);
+            return () => { listeners.get(event)?.delete(cb); };
+        });
+        mockInvoke.mockResolvedValue(RESULT);
+        const { result } = renderHook(() => useWorkspaceExport('ws1', CTX));
+        let first!: Promise<unknown>;
+        await act(async () => { first = result.current.start('D:/out', AT); await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+        expect(mockListen).toHaveBeenCalledTimes(1);
+        await act(async () => { await result.current.cancel(); });
+        await act(async () => { gate.resolve(); await first; });
+        expect(mockInvoke.mock.calls.filter(c => c[0] === 'export_workspace_results')).toHaveLength(0);
+        expect(result.current.phase).toBe('cancelled');
+        expect(listeners.get(EVT)?.size ?? 0).toBe(0);
+        // the next export is not affected by the old cancel
+        await act(async () => { await result.current.start('D:/out', AT); });
+        expect(result.current.phase).toBe('done');
+    });
+
+    it('cancel() before Rust has claimed the export: asks again until Rust knows it', async () => {
+        const run = deferred<typeof RESULT>();
+        let answers = 0;
+        mockInvoke.mockImplementation((cmd: string) => {
+            if (cmd === 'export_workspace_results') return run.promise;
+            return Promise.resolve(++answers >= 2); // false, then true
+        });
+        const { result } = renderHook(() => useWorkspaceExport('ws1', CTX));
+        let done!: Promise<unknown>;
+        await act(async () => { done = result.current.start('D:/out', AT); await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+        expect(mockInvoke.mock.calls.filter(c => c[0] === 'export_workspace_results')).toHaveLength(1);
+        await act(async () => { await result.current.cancel(); });
+        expect(mockInvoke.mock.calls.filter(c => c[0] === 'cancel_workspace_export')).toHaveLength(2);
+        await act(async () => { run.reject('CANCELLED: the export was cancelled'); await done; });
+        expect(result.current.phase).toBe('cancelled');
+    });
+
+    it('cancel(): stops asking once the export has answered', async () => {
+        const run = deferred<typeof RESULT>();
+        mockInvoke.mockImplementation((cmd: string) => (cmd === 'export_workspace_results' ? run.promise : Promise.resolve(false)));
+        const { result } = renderHook(() => useWorkspaceExport('ws1', CTX));
+        let done!: Promise<unknown>;
+        await act(async () => { done = result.current.start('D:/out', AT); await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+        let cancelling!: Promise<void>;
+        await act(async () => { cancelling = result.current.cancel(); await Promise.resolve(); });
+        await act(async () => { run.resolve(RESULT); await done; await cancelling; });
+        expect(mockInvoke.mock.calls.filter(c => c[0] === 'cancel_workspace_export').length).toBeLessThan(5);
     });
 
     it('a failed export: phase failed with the parsed error; a second start is possible afterwards', async () => {

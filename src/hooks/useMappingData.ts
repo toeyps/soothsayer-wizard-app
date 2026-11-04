@@ -88,6 +88,8 @@ export function useMappingData(): UseMappingDataReturn {
   // Latest apply wins: the result decides whether the Import page may continue,
   // so one computed for an older dataset or file must never land late.
   const applySeqRef = useRef(0);
+  // Latest pick wins: "Remove" stays clickable while a file loads, and a new pick can follow it.
+  const fileSeqRef = useRef(0);
 
   const selectMappingFile = useCallback(async () => {
     try {
@@ -98,6 +100,7 @@ export function useMappingData(): UseMappingDataReturn {
 
       if (result && typeof result === 'string') {
         applySeqRef.current += 1;
+        const seq = ++fileSeqRef.current;
         setMappingFilePath(result);
         setIsLoading(true);
         setError(null);
@@ -108,13 +111,15 @@ export function useMappingData(): UseMappingDataReturn {
           const data = await invoke<MappingData>('load_mapping_csv', {
             path: result,
           });
-          setMappingData(data);
+          if (seq === fileSeqRef.current) setMappingData(data);
         } catch (err) {
-          setError(err instanceof Error ? err.message : String(err));
-          setMappingData(null);
-          setMappingFilePath(null);
+          if (seq === fileSeqRef.current) {
+            setError(err instanceof Error ? err.message : String(err));
+            setMappingData(null);
+            setMappingFilePath(null);
+          }
         } finally {
-          setIsLoading(false);
+          if (seq === fileSeqRef.current) setIsLoading(false);
         }
       }
     } catch (err) {
@@ -152,6 +157,7 @@ export function useMappingData(): UseMappingDataReturn {
 
   const clearMapping = useCallback(() => {
     applySeqRef.current += 1;
+    fileSeqRef.current += 1;
     setMappingData(null);
     setMappingFilePath(null);
     setKeyColumn(null);

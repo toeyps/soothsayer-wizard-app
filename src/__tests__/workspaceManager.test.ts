@@ -14,7 +14,11 @@ const mockExists = vi.fn();
 const mockMkdir = vi.fn().mockResolvedValue(undefined);
 const mockRemove = vi.fn().mockResolvedValue(undefined);
 const mockRename = vi.fn().mockResolvedValue(undefined);
+const mockReadDir = vi.fn().mockResolvedValue([]);
+const mockStat = vi.fn();
 vi.mock('@tauri-apps/plugin-fs', () => ({
+    readDir: (...args: unknown[]) => mockReadDir(...args),
+    stat: (...args: unknown[]) => mockStat(...args),
     readTextFile: (...args: unknown[]) => mockReadTextFile(...args),
     writeTextFile: (...args: unknown[]) => mockWriteTextFile(...args),
     exists: (...args: unknown[]) => mockExists(...args),
@@ -70,6 +74,8 @@ beforeEach(() => {
     mockMkdir.mockReset().mockResolvedValue(undefined);
     mockRemove.mockReset().mockResolvedValue(undefined);
     mockRename.mockReset().mockResolvedValue(undefined);
+    mockReadDir.mockReset().mockResolvedValue([]);
+    mockStat.mockReset().mockResolvedValue({ mtime: null });
     mockInvoke.mockReset().mockResolvedValue(undefined);
     vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -124,6 +130,117 @@ describe('getRecentWorkspaces / saveRecentWorkspaces', () => {
         mockStoreSet.mockRejectedValueOnce(new Error('disk full'));
         const { saveRecentWorkspaces } = await freshModule();
         await expect(saveRecentWorkspaces([])).resolves.toBeUndefined();
+    });
+});
+
+describe('getRecentWorkspaces: projects missing from the list come back', () => {
+    const entry = (id: string, lastModified = 1) => ({ id, name: id.toUpperCase(), description: '', lastModified, filePath: `workspaces/${id}.json` });
+    const file = (name: string, isDirectory = false) => ({ name, isDirectory, isFile: !isDirectory, isSymlink: false });
+    /** The store as a real one: `set` changes what `get` returns. */
+    const storeHolding = (list: unknown[]) => {
+        let held = list;
+        mockStoreGet.mockImplementation(async () => held);
+        mockStoreSet.mockImplementation(async (_k: string, v: unknown[]) => { held = v; });
+    };
+    const fileText = (id: string, extra: Record<string, unknown> = {}) => JSON.stringify({ id, name: `Plant · ${id}`, ...extra });
+
+    it('adds an unlisted workspace file, with its name, date and failure-group chip', async () => {
+        storeHolding([entry('a', 500)]);
+        mockReadDir.mockResolvedValue([file('a.json'), file('old.json')]);
+        mockReadTextFile.mockResolvedValue(fileText('old', { description: 'd', failureGroupState: { groups: [{ no: 0, name: 'x' }, { no: 2, name: 'y' }], models: [] } }));
+        mockStat.mockResolvedValue({ mtime: new Date(900) });
+        const { getRecentWorkspaces } = await freshModule();
+        const list = await getRecentWorkspaces();
+        expect(list.map(w => w.id)).toEqual(['old', 'a']); // newest first
+        expect(list[0]).toMatchObject({ name: 'Plant · old', description: 'd', lastModified: 900, filePath: 'workspaces/old.json', failureGroupCount: 1, failureGroupNos: [2] });
+        expect(mockReadDir).toHaveBeenCalledWith('workspaces', { baseDir: 'AppData' });
+        // Only the unlisted file was parsed.
+        expect(mockReadTextFile.mock.calls.map(c => c[0])).toEqual(['workspaces/old.json']);
+    });
+
+    it('runs once: later reads do not list the folder or parse anything again', async () => {
+        storeHolding([]);
+        mockReadDir.mockResolvedValue([file('bad.json')]);
+        mockReadTextFile.mockResolvedValue('{ not json');
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const { getRecentWorkspaces } = await freshModule();
+        await getRecentWorkspaces();
+        await getRecentWorkspaces();
+        expect(mockReadDir).toHaveBeenCalledTimes(1);
+        expect(mockReadTextFile).toHaveBeenCalledTimes(1);
+    });
+
+    it('a bad file is skipped, the good ones still come back and the read does not fail', async () => {
+        storeHolding([entry('a')]);
+        mockReadDir.mockResolvedValue([file('bad.json'), file('other-id.json'), file('good.json')]);
+        mockReadTextFile.mockImplementation(async (p: string) => {
+            if (p.includes('bad')) return '{ not json';
+            if (p.includes('other-id')) return fileText('not-this-file');
+            return fileText('good');
+        });
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const { getRecentWorkspaces } = await freshModule();
+        expect((await getRecentWorkspaces()).map(w => w.id).sort()).toEqual(['a', 'good']);
+    });
+
+    it('ignores temp files and folders, and writes nothing when nothing is missing', async () => {
+        storeHolding([entry('a')]);
+        mockReadDir.mockResolvedValue([file('a.json'), file('a.json.xyz.tmp'), file('a', true), file('dir.json', true)]);
+        const { getRecentWorkspaces } = await freshModule();
+        expect((await getRecentWorkspaces()).map(w => w.id)).toEqual(['a']);
+        expect(mockReadTextFile).not.toHaveBeenCalled();
+        expect(mockStoreSet).not.toHaveBeenCalled();
+    });
+
+    it('the list still reads when the folder cannot be listed, or a date cannot be read', async () => {
+        storeHolding([entry('a')]);
+        mockReadDir.mockRejectedValueOnce(new Error('forbidden path'));
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const first = await freshModule();
+        expect((await first.getRecentWorkspaces()).map(w => w.id)).toEqual(['a']);
+
+        mockReadDir.mockResolvedValue([file('old.json')]);
+        mockReadTextFile.mockResolvedValue(fileText('old'));
+        mockStat.mockRejectedValue(new Error('no stat'));
+        const second = await freshModule();
+        expect((await second.getRecentWorkspaces()).find(w => w.id === 'old')?.lastModified).toBe(0);
+    });
+
+    it('a store that cannot be read is not taken for an empty list', async () => {
+        mockStoreGet.mockRejectedValue(new Error('store boom'));
+        mockReadDir.mockResolvedValue([file('old.json')]);
+        const { getRecentWorkspaces } = await freshModule();
+        expect(await getRecentWorkspaces()).toEqual([]);
+        expect(mockReadTextFile).not.toHaveBeenCalled();
+        expect(mockStoreSet).not.toHaveBeenCalled();
+    });
+
+    it('a project that came back is seen by the duplicate Plant · Machine check, and can be deleted', async () => {
+        storeHolding([]);
+        mockReadDir.mockResolvedValue([file('old.json')]);
+        mockReadTextFile.mockResolvedValue(fileText('old'));
+        const { getRecentWorkspaces, deleteWorkspace } = await freshModule();
+        const { isDuplicatePlantMachine } = await import('../utils/projectDetails');
+        const list = await getRecentWorkspaces();
+        expect(isDuplicatePlantMachine({ plant: 'Plant', name: 'old', tag: 'T', notes: '' }, list)).toBe(true);
+        await deleteWorkspace('old');
+        expect(mockRemove).toHaveBeenCalledWith('workspaces/old.json', { baseDir: 'AppData' });
+        expect(await getRecentWorkspaces()).toEqual([]);
+    });
+
+    it('does not hold up or deadlock a save or load running in the queue', async () => {
+        storeHolding([]);
+        mockReadDir.mockResolvedValue([]);
+        mockReadTextFile.mockResolvedValue(JSON.stringify({ id: 'ws1', name: 'A' }));
+        const { getRecentWorkspaces, saveWorkspaceData, loadWorkspaceData, updateWorkspaceData } = await freshModule();
+        await Promise.all([
+            saveWorkspaceData({ id: 'ws1', name: 'A' } as any),
+            getRecentWorkspaces(),
+            loadWorkspaceData('ws1'),
+            updateWorkspaceData('ws1', s => ({ ...s, name: 'B' })),
+            getRecentWorkspaces(),
+        ]);
+        expect(savedFiles().length).toBeGreaterThanOrEqual(2);
     });
 });
 
@@ -196,7 +313,7 @@ describe('saveWorkspaceData', () => {
         expect(saved.find((w: any) => w.id === 'ws1').name).toBe('My Workspace');
     });
 
-    it('keeps only the 10 most recently modified workspaces', async () => {
+    it('keeps every project on the list, newest first (no limit)', async () => {
         const existing = Array.from({ length: 12 }, (_, i) => ({
             id: `old-${i}`, name: `Old ${i}`, description: '', lastModified: i, filePath: `workspaces/old-${i}.json`,
         }));
@@ -204,9 +321,9 @@ describe('saveWorkspaceData', () => {
         const { saveWorkspaceData } = await freshModule();
         await saveWorkspaceData(state);
         const saved = mockStoreSet.mock.calls[0][1];
-        expect(saved).toHaveLength(10);
-        // Newest entry (just-saved ws1) must survive the trim.
-        expect(saved.some((w: any) => w.id === 'ws1')).toBe(true);
+        expect(saved).toHaveLength(13);
+        expect(saved[0].id).toBe('ws1');
+        expect(saved[12].id).toBe('old-0');
     });
 
     it('does not throw when the write fails', async () => {
@@ -644,9 +761,55 @@ describe('updateWorkspaceData', () => {
         mockReadTextFile.mockResolvedValue(JSON.stringify({ id: 'ws1', name: 'A' }));
         mockWriteTextFile.mockRejectedValue(new Error('disk full'));
         const { updateWorkspaceData } = await freshModule();
-        await expect(updateWorkspaceData('ws1', s => s)).rejects.toThrow('disk full');
+        await expect(updateWorkspaceData('ws1', s => ({ ...s, name: 'B' }))).rejects.toThrow('disk full');
         mockWriteTextFile.mockReset();
         mockWriteTextFile.mockResolvedValue(undefined);
+    });
+
+    describe('an updater that changes nothing', () => {
+        const stored = { id: 'ws1', name: 'A', failureGroupState: { groups: [{ no: 1, name: 'G' }], models: [], runningConditionConversion: null } };
+        const listed = [{ id: 'ws1', name: 'A', description: '', lastModified: 123, filePath: 'workspaces/ws1.json' }];
+
+        it.each([
+            ['the same object', (s: any) => s],
+            ['an equal copy', (s: any) => JSON.parse(JSON.stringify(s))],
+            ['a copy with an undefined key', (s: any) => ({ ...s, description: undefined })],
+        ])('%s: no write, Recents untouched, the state is still returned', async (_name, patch) => {
+            mockStoreGet.mockResolvedValue(listed);
+            mockExists.mockResolvedValue(true);
+            mockReadTextFile.mockResolvedValue(JSON.stringify(stored));
+            const { updateWorkspaceData } = await freshModule();
+            await expect(updateWorkspaceData('ws1', patch)).resolves.toMatchObject({ id: 'ws1', name: 'A' });
+            expect(mockWriteTextFile).not.toHaveBeenCalled();
+            expect(mockRename).not.toHaveBeenCalled();
+            expect(mockStoreSet).not.toHaveBeenCalled();
+        });
+
+        it('a real change still writes and moves lastModified', async () => {
+            mockStoreGet.mockResolvedValue(listed);
+            mockExists.mockResolvedValue(true);
+            mockReadTextFile.mockResolvedValue(JSON.stringify(stored));
+            const { updateWorkspaceData } = await freshModule();
+            await updateWorkspaceData('ws1', s => ({ ...s, name: 'B' }));
+            expect(savedFiles()).toHaveLength(1);
+            expect(mockStoreSet.mock.calls[0][1][0].lastModified).toBeGreaterThan(123);
+        });
+
+        it('a file that needs a read-path migration is still written once, then no more', async () => {
+            const oldFile = JSON.stringify({ id: 'ws1', name: 'A', failureGroupState: { groups: [], models: [] } });
+            const files = new Map([['workspaces/ws1.json', oldFile]]);
+            mockStoreGet.mockResolvedValue(listed);
+            mockExists.mockResolvedValue(true);
+            mockReadTextFile.mockImplementation(async (p: string) => files.get(p) ?? '');
+            mockWriteTextFile.mockImplementation(async (p: string, c: string) => { files.set(p, c); });
+            mockRename.mockImplementation(async (a: string, b: string) => { files.set(b, files.get(a) ?? ''); files.delete(a); });
+            const { updateWorkspaceData } = await freshModule();
+            await updateWorkspaceData('ws1', s => s);
+            expect(JSON.parse(files.get('workspaces/ws1.json')!).failureGroupState.runningConditionConversion).toBeNull();
+            expect(mockRename).toHaveBeenCalledTimes(1);
+            await updateWorkspaceData('ws1', s => s);
+            expect(mockRename).toHaveBeenCalledTimes(1);
+        });
     });
 
     it('returns null without saving when the workspace does not exist', async () => {

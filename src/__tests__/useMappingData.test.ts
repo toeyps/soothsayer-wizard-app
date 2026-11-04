@@ -247,6 +247,71 @@ describe('useMappingData', () => {
     expect(result.current.isLoading).toBe(false);
   });
 
+  describe('an older file load answering late', () => {
+    function deferredLoad() {
+      let resolve!: (v: MappingData) => void;
+      let reject!: (e: unknown) => void;
+      const promise = new Promise<MappingData>((res, rej) => { resolve = res; reject = rej; });
+      return { promise, resolve, reject };
+    }
+    const newer: MappingData = { headers: ['tag'], rows: [['NEW']] };
+
+    /** Pick a.csv (still loading), press Remove, then pick b.csv. */
+    async function pickRemovePick() {
+      const a = deferredLoad();
+      const b = deferredLoad();
+      mockOpen.mockResolvedValueOnce('/a.csv').mockResolvedValueOnce('/b.csv');
+      mockInvoke.mockReturnValueOnce(a.promise).mockReturnValueOnce(b.promise);
+      const hook = renderHook(() => useMappingData());
+      let first!: Promise<void>;
+      await act(async () => { first = hook.result.current.selectMappingFile(); await Promise.resolve(); });
+      act(() => hook.result.current.clearMapping());
+      let second!: Promise<void>;
+      await act(async () => { second = hook.result.current.selectMappingFile(); await Promise.resolve(); });
+      return { ...hook, a, b, first, second };
+    }
+
+    it('does not replace the newer file', async () => {
+      const { result, a, b, first, second } = await pickRemovePick();
+      await act(async () => { b.resolve(newer); await second; });
+      await act(async () => { a.resolve(sampleMappingData); await first; });
+      expect(result.current.mappingData).toEqual(newer);
+      expect(result.current.mappingFilePath).toBe('/b.csv');
+    });
+
+    it('does not end the newer load\'s spinner', async () => {
+      const { result, a, b, first, second } = await pickRemovePick();
+      await act(async () => { a.resolve(sampleMappingData); await first; });
+      expect(result.current.mappingData).toBeNull();
+      expect(result.current.isLoading).toBe(true);
+      await act(async () => { b.resolve(newer); await second; });
+      expect(result.current.isLoading).toBe(false);
+    });
+
+    it('a late failure does not clear the newer file or show an error', async () => {
+      const { result, a, b, first, second } = await pickRemovePick();
+      await act(async () => { b.resolve(newer); await second; });
+      await act(async () => { a.reject('old file gone'); await first; });
+      expect(result.current.error).toBeNull();
+      expect(result.current.mappingFilePath).toBe('/b.csv');
+      expect(result.current.mappingData).toEqual(newer);
+    });
+
+    it('a load answering after Remove does not bring the file back', async () => {
+      const a = deferredLoad();
+      mockOpen.mockResolvedValueOnce('/a.csv');
+      mockInvoke.mockReturnValueOnce(a.promise);
+      const { result } = renderHook(() => useMappingData());
+      let first!: Promise<void>;
+      await act(async () => { first = result.current.selectMappingFile(); await Promise.resolve(); });
+      act(() => result.current.clearMapping());
+      await act(async () => { a.resolve(sampleMappingData); await first; });
+      expect(result.current.mappingData).toBeNull();
+      expect(result.current.mappingFilePath).toBeNull();
+      expect(result.current.isLoading).toBe(false);
+    });
+  });
+
   it('clearMapping resets all state', async () => {
     mockOpen.mockResolvedValue('/mapping.csv');
     mockInvoke.mockResolvedValue(sampleMappingData);
