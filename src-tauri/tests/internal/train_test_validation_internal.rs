@@ -1539,6 +1539,26 @@ fn block_on<F: Future>(f: F) -> F::Output {
 }
 
 #[test]
+fn a_dataset_replaced_during_the_engine_run_refuses_the_request_and_marks_no_failure() {
+    let (state, _d) = rel_state();
+    let serial = tauri::async_runtime::Mutex::new(());
+    let outdated = AtomicBool::new(false);
+    let calls = AtomicUsize::new(0);
+    let logged = AtomicUsize::new(0);
+    let req = rel_req(vec![]);
+    let log = |_: &str| {
+        logged.fetch_add(1, Ordering::SeqCst);
+    };
+    let refused = block_on(predict_rel_hours(&state, &req, &serial, &outdated, failing_runner(crate::STALE_SESSION_ERROR, &calls), &log));
+    assert_eq!(refused, Err(crate::STALE_SESSION_ERROR.to_string()));
+    assert_eq!(logged.load(Ordering::SeqCst), 0);
+    assert!(serial.try_lock().is_ok());
+    // Not remembered as a failure of this fit: the next preview runs again.
+    assert_eq!(block_on(predict_rel_hours(&state, &req, &serial, &outdated, good_runner(&calls), &|_| {})), Ok(None));
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+}
+
+#[test]
 fn the_training_hours_are_predicted_and_scored_without_any_scoring_period() {
     let (state, _d) = rel_state();
     let serial = tauri::async_runtime::Mutex::new(());
@@ -1951,15 +1971,15 @@ fn a_sidecar_timeout_fires_once_and_a_finished_run_cancels_it() {
     use std::time::Duration;
     // Fires: the callback (the kill) runs and the flag is set.
     let (tx, rx) = std::sync::mpsc::channel::<()>();
-    let (_done, fired) = crate::arm_timeout(Duration::from_millis(20), move || tx.send(()).unwrap());
+    let (_done, fired) = crate::arm_engine_stop(Duration::from_millis(20), || true, move || tx.send(()).unwrap());
     assert!(rx.recv_timeout(Duration::from_secs(5)).is_ok(), "the timeout callback ran");
-    assert!(fired.load(Ordering::SeqCst));
+    assert!(fired.timed_out.load(Ordering::SeqCst));
     // Cancelled: dropping the sender before the limit means no callback, no flag.
     let (tx, rx) = std::sync::mpsc::channel::<()>();
-    let (done, fired) = crate::arm_timeout(Duration::from_millis(300), move || tx.send(()).unwrap());
+    let (done, fired) = crate::arm_engine_stop(Duration::from_millis(300), || true, move || tx.send(()).unwrap());
     drop(done);
     assert!(rx.recv_timeout(Duration::from_millis(600)).is_err(), "never called after the run finished");
-    assert!(!fired.load(Ordering::SeqCst));
+    assert!(!fired.timed_out.load(Ordering::SeqCst));
     assert!(crate::ENGINE_RUN_TIMEOUT >= Duration::from_secs(300), "generous: only a hung engine hits it");
 }
 

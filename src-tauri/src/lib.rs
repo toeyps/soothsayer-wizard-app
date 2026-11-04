@@ -407,9 +407,12 @@ async fn get_all_sensors(app: tauri::AppHandle) -> Result<Vec<String>, String> {
 }
 
 #[tauri::command]
-fn load_metadata_command(path: String) -> Result<Vec<SensorMetadata>, String> {
-    validate_read_path(&path).map_err(|e| format!("invalid path '{}': {}", path, e))?;
-    load_metadata(&path)
+async fn load_metadata_command(path: String, app: tauri::AppHandle) -> Result<Vec<SensorMetadata>, String> {
+    on_blocking_pool(app, move |_| {
+        validate_read_path(&path).map_err(|e| format!("invalid path '{}': {}", path, e))?;
+        load_metadata(&path)
+    })
+    .await
 }
 
 #[derive(Debug, Serialize)]
@@ -1912,7 +1915,7 @@ async fn preview_relationship_model(
     let payload_line = signed_sidecar_line(&payload)?;
     drop(payload);
 
-    let run = run_engine(&app, payload_line).await?;
+    let run = run_engine(&app, payload_line, stamp.generation).await?;
     if run.timed_out {
         return Err(report_engine_failure(&app, engine_timed_out_failure(PREVIEW_ENGINE_STEP, &run.stderr)));
     }
@@ -5716,9 +5719,12 @@ fn convert_legacy_formula(formula: String) -> LegacyFormulaConversion {
 }
 
 #[tauri::command]
-fn load_mapping_csv(path: String) -> Result<MappingData, String> {
-    validate_read_path(&path).map_err(|e| format!("invalid path '{}': {}", path, e))?;
-    csv_processor::load_mapping_csv_data(&path)
+async fn load_mapping_csv(path: String, app: tauri::AppHandle) -> Result<MappingData, String> {
+    on_blocking_pool(app, move |_| {
+        validate_read_path(&path).map_err(|e| format!("invalid path '{}': {}", path, e))?;
+        csv_processor::load_mapping_csv_data(&path)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -6213,6 +6219,8 @@ where
                 // `apply_rel_extra` already answers this with `Err(NOT_FITTED)`.
                 ExtraStored::FitGone => return Err(health_preview::not_fitted(REL_EXTRA_FIT_GONE)),
             },
+            // The dataset was replaced while this waited or ran: not a failure of this fit.
+            Err(e) if e == STALE_SESSION_ERROR => return Err(e),
             Err(e) if e.starts_with("SIDECAR_OUTDATED") => Some(TestScoringError::new(Kind::Outdated, e)),
             Err(e) => Some(TestScoringError::new(Kind::EngineError, e)),
         };
@@ -6510,35 +6518,62 @@ const ENGINE_RUN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1
 /// After a kill, how long to wait for the end event before giving up on it.
 const ENGINE_KILL_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
 
-/// Run `on_timeout` on a helper thread once `limit` has passed, unless the
-/// returned `Sender` is dropped (or sent to) first - which also ends the thread
-/// at once. The flag says whether it fired.
-fn arm_timeout<F: FnOnce() + Send + 'static>(
-    limit: std::time::Duration,
-    on_timeout: F,
-) -> (
-    std::sync::mpsc::Sender<()>,
-    std::sync::Arc<std::sync::atomic::AtomicBool>,
-) {
-    let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
-    let fired = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let flag = fired.clone();
-    std::thread::spawn(move || {
-        if let Err(std::sync::mpsc::RecvTimeoutError::Timeout) = done_rx.recv_timeout(limit) {
-            flag.store(true, std::sync::atomic::Ordering::SeqCst);
-            on_timeout();
-        }
-    });
-    (done_tx, fired)
+/// How often a running engine checks that its caller still wants the answer.
+const ENGINE_WANTED_POLL: std::time::Duration = std::time::Duration::from_millis(250);
+
+/// Why [`arm_engine_stop`] stopped a run.
+#[derive(Default)]
+struct EngineStopFlags {
+    timed_out: std::sync::atomic::AtomicBool,
+    superseded: std::sync::atomic::AtomicBool,
 }
 
-/// What one engine run printed. `timed_out` = it was killed at the cap and its
-/// output is not an answer.
+/// Run `on_stop` on a helper thread once `limit` has passed or `still_wanted`
+/// turns false, unless the returned `Sender` is dropped first, which also ends
+/// the thread at once.
+fn arm_engine_stop<W, F>(
+    limit: std::time::Duration,
+    still_wanted: W,
+    on_stop: F,
+) -> (std::sync::mpsc::Sender<()>, std::sync::Arc<EngineStopFlags>)
+where
+    W: Fn() -> bool + Send + 'static,
+    F: FnOnce() + Send + 'static,
+{
+    use std::sync::atomic::Ordering::SeqCst;
+    use std::sync::mpsc::RecvTimeoutError::Timeout;
+    let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
+    let flags = std::sync::Arc::new(EngineStopFlags::default());
+    let thread_flags = flags.clone();
+    std::thread::spawn(move || {
+        let started = std::time::Instant::now();
+        loop {
+            let left = limit.saturating_sub(started.elapsed());
+            if !matches!(done_rx.recv_timeout(left.min(ENGINE_WANTED_POLL)), Err(Timeout)) {
+                return;
+            }
+            if started.elapsed() >= limit {
+                thread_flags.timed_out.store(true, SeqCst);
+                break;
+            }
+            if !still_wanted() {
+                thread_flags.superseded.store(true, SeqCst);
+                break;
+            }
+        }
+        on_stop();
+    });
+    (done_tx, flags)
+}
+
+/// What one engine run printed. `timed_out` = it was killed at the cap,
+/// `superseded` = killed because its dataset was replaced. Neither is an answer.
 #[derive(Debug, Default)]
 struct EngineOutput {
     stdout: String,
     stderr: String,
     timed_out: bool,
+    superseded: bool,
 }
 
 /// Kill the engine and everything it started. The one-file launcher runs the
@@ -6570,25 +6605,28 @@ fn kill_engine_tree(pid: u32) {
     }
 }
 
-/// Send the request and collect the output until the run ends. After `limit`
-/// `kill` runs, and after `grace` more the wait stops whether or not the end
-/// event came. The cap covers the write too: an engine stuck before reading
-/// stdin would block it. A failed write also kills, so nothing waits on stdin.
-async fn collect_engine_output<W, K>(
+/// Send the request and collect the output until the run ends. After `limit`,
+/// or once `still_wanted` turns false, `kill` runs, and after `grace` more the
+/// wait stops whether or not the end event came. The cap covers the write too:
+/// an engine stuck before reading stdin would block it. A failed write also
+/// kills, so nothing waits on stdin.
+async fn collect_engine_output<W, K, S>(
     mut rx: tauri::async_runtime::Receiver<CommandEvent>,
     write: W,
     kill: K,
+    still_wanted: S,
     limit: std::time::Duration,
     grace: std::time::Duration,
 ) -> EngineOutput
 where
     W: FnOnce() -> Result<(), String> + Send + 'static,
     K: Fn() + Send + Sync + 'static,
+    S: Fn() -> bool + Send + 'static,
 {
     let kill = std::sync::Arc::new(kill);
     let (give_up_tx, mut give_up_rx) = tauri::async_runtime::channel::<()>(1);
     let timer_kill = kill.clone();
-    let (done, timed_out) = arm_timeout(limit, move || {
+    let (done, stop) = arm_engine_stop(limit, still_wanted, move || {
         (*timer_kill)();
         std::thread::sleep(grace);
         let _ = give_up_tx.try_send(());
@@ -6622,27 +6660,168 @@ where
         }
     }
     drop(done); // ends the timer thread
-    out.timed_out = timed_out.load(std::sync::atomic::Ordering::SeqCst);
+    out.timed_out = stop.timed_out.load(std::sync::atomic::Ordering::SeqCst);
+    out.superseded = stop.superseded.load(std::sync::atomic::Ordering::SeqCst);
     if let Some(e) = write_error.lock().ok().and_then(|mut slot| slot.take()) {
         out.stderr.push_str(&format!("\nThe request could not be sent: {e}"));
     }
     out
 }
 
-/// One run of the engine with `line` on stdin, capped at [`ENGINE_RUN_TIMEOUT`].
-/// The child is dropped after the write, which closes stdin (the engine reads
-/// one line only).
-async fn run_engine(app: &tauri::AppHandle, line: String) -> Result<EngineOutput, String> {
-    let (rx, mut child) = spawn_sidecar(app)?;
-    let pid = child.pid();
-    Ok(collect_engine_output(
-        rx,
-        move || child.write(line.as_bytes()).map_err(|e| e.to_string()),
-        move || kill_engine_tree(pid),
-        ENGINE_RUN_TIMEOUT,
-        ENGINE_KILL_GRACE,
-    )
-    .await)
+/// One engine run at a time, in arrival order: Train, Compare predictors and the
+/// health score's hourly predictions. Fair, and a dropped waiter just leaves the line.
+static ENGINE_LOCK: tauri::async_runtime::Mutex<()> = tauri::async_runtime::Mutex::const_new(());
+
+/// Wait for the turn, then `run` while holding it. The wait can be minutes, so a
+/// caller whose dataset was replaced meanwhile is refused instead of running.
+async fn run_in_engine_turn<T, Fut>(
+    lock: &tauri::async_runtime::Mutex<()>,
+    still_wanted: &(dyn Fn() -> bool + Sync),
+    run: impl FnOnce() -> Fut,
+) -> Result<T, String>
+where
+    Fut: std::future::Future<Output = Result<T, String>>,
+{
+    let _turn = lock.lock().await;
+    if !still_wanted() {
+        return Err(STALE_SESSION_ERROR.to_string());
+    }
+    run().await
+}
+
+/// The engines running now, so the app can stop them when it exits.
+struct EngineRegistry {
+    closed: bool,
+    pids: Vec<u32>,
+}
+
+impl EngineRegistry {
+    const fn new() -> Self {
+        EngineRegistry { closed: false, pids: Vec::new() }
+    }
+}
+
+static LIVE_ENGINES: std::sync::Mutex<EngineRegistry> = std::sync::Mutex::new(EngineRegistry::new());
+
+/// How long the app's exit waits for the kills. Each kill is a separate process
+/// that finishes on its own, so this only has to get them started.
+const ENGINE_EXIT_WAIT: std::time::Duration = std::time::Duration::from_millis(300);
+
+fn lock_engine_registry(
+    registry: &std::sync::Mutex<EngineRegistry>,
+) -> std::sync::MutexGuard<'_, EngineRegistry> {
+    registry.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// A registered engine. Dropped before [`Self::finished`] (its caller's future
+/// was dropped), it kills the engine: nothing would read its answer, and the
+/// next run must not overlap it.
+struct TrackedEngine<'a> {
+    registry: &'a std::sync::Mutex<EngineRegistry>,
+    pid: u32,
+    kill: fn(u32),
+    finished: bool,
+}
+
+impl TrackedEngine<'_> {
+    fn finished(mut self) {
+        self.finished = true;
+    }
+}
+
+impl Drop for TrackedEngine<'_> {
+    fn drop(&mut self) {
+        let pid = self.pid;
+        lock_engine_registry(self.registry).pids.retain(|&p| p != pid);
+        if !self.finished {
+            let kill = self.kill;
+            std::thread::spawn(move || kill(pid));
+        }
+    }
+}
+
+/// Start an engine and record it as one step, so an exit cannot miss it. Refused
+/// once the app is exiting: a caller still in line must not start a new one.
+fn start_tracked_engine<'a, T>(
+    registry: &'a std::sync::Mutex<EngineRegistry>,
+    kill: fn(u32),
+    start: impl FnOnce() -> Result<(T, u32), String>,
+) -> Result<(T, TrackedEngine<'a>), String> {
+    let mut live = lock_engine_registry(registry);
+    if live.closed {
+        return Err("The app is closing.".to_string());
+    }
+    let (started, pid) = start()?;
+    live.pids.push(pid);
+    Ok((started, TrackedEngine { registry, pid, kill, finished: false }))
+}
+
+/// Kill every running engine and refuse new ones, waiting at most `wait`.
+fn stop_all_engines(
+    registry: &std::sync::Mutex<EngineRegistry>,
+    kill: fn(u32),
+    wait: std::time::Duration,
+) {
+    let pids = {
+        let mut live = lock_engine_registry(registry);
+        live.closed = true;
+        std::mem::take(&mut live.pids)
+    };
+    let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
+    for &pid in &pids {
+        let done = done_tx.clone();
+        std::thread::spawn(move || {
+            kill(pid);
+            let _ = done.send(());
+        });
+    }
+    let deadline = std::time::Instant::now() + wait;
+    for _ in &pids {
+        let left = deadline.saturating_duration_since(std::time::Instant::now());
+        if done_rx.recv_timeout(left).is_err() {
+            return;
+        }
+    }
+}
+
+/// One run of the engine with `line` on stdin, for the dataset `generation`. In
+/// line behind any other run; [`ENGINE_RUN_TIMEOUT`] counts the run only, not the
+/// wait. `STALE_SESSION` when that dataset is replaced during the wait or the run
+/// (a running engine is killed, so it does not keep the next caller waiting). The
+/// child is dropped after the write, which closes stdin (the engine reads one line only).
+async fn run_engine(app: &tauri::AppHandle, line: String, generation: u64) -> Result<EngineOutput, String> {
+    let still_wanted = {
+        let app = app.clone();
+        move || {
+            use tauri::Manager;
+            let state = app.state::<AppState>();
+            // Can't tell (poisoned lock): let the run finish, its result is stamp-checked.
+            session_generation(state.inner()).map_or(true, |current| current == Some(generation))
+        }
+    };
+    run_in_engine_turn(&ENGINE_LOCK, &still_wanted, || async {
+        let ((rx, mut child), engine) = start_tracked_engine(&LIVE_ENGINES, kill_engine_tree, || {
+            let (rx, child) = spawn_sidecar(app)?;
+            let pid = child.pid();
+            Ok(((rx, child), pid))
+        })?;
+        let pid = engine.pid;
+        let out = collect_engine_output(
+            rx,
+            move || child.write(line.as_bytes()).map_err(|e| e.to_string()),
+            move || kill_engine_tree(pid),
+            still_wanted.clone(),
+            ENGINE_RUN_TIMEOUT,
+            ENGINE_KILL_GRACE,
+        )
+        .await;
+        engine.finished();
+        if out.superseded {
+            return Err(STALE_SESSION_ERROR.to_string());
+        }
+        Ok(out)
+    })
+    .await
 }
 
 /// Run one request through the sidecar and return its JSON answer.
@@ -6656,9 +6835,10 @@ async fn run_engine(app: &tauri::AppHandle, line: String) -> Result<EngineOutput
 async fn run_sidecar_json(
     app: &tauri::AppHandle,
     payload: &serde_json::Value,
+    generation: u64,
 ) -> Result<serde_json::Value, String> {
     let line = signed_sidecar_line(payload)?;
-    let run = run_engine(app, line).await?;
+    let run = run_engine(app, line, generation).await?;
     if run.timed_out {
         return Err(format!(
             "The Relation model engine did not answer within {} s and was stopped.",
@@ -6720,7 +6900,7 @@ async fn run_predict_relationship(
             "smoothing": job.lambda,
         }
     });
-    let resp = run_sidecar_json(app, &payload).await?;
+    let resp = run_sidecar_json(app, &payload, job.stamp.generation).await?;
     parse_predicted_extra(&resp, job.points.len())
 }
 
@@ -7035,6 +7215,220 @@ mod engine_run_tests {
         })
     }
 
+    /// [`collect_engine_output`] for a caller that stays wanted.
+    async fn collect<W, K>(
+        rx: tauri::async_runtime::Receiver<CommandEvent>,
+        write: W,
+        kill: K,
+        limit: Duration,
+        grace: Duration,
+    ) -> EngineOutput
+    where
+        W: FnOnce() -> Result<(), String> + Send + 'static,
+        K: Fn() + Send + Sync + 'static,
+    {
+        collect_engine_output(rx, write, kill, || true, limit, grace).await
+    }
+
+    async fn wait_a_moment(ms: u64) {
+        let _ = tauri::async_runtime::spawn_blocking(move || std::thread::sleep(Duration::from_millis(ms))).await;
+    }
+
+    #[test]
+    fn engine_runs_never_overlap_and_keep_their_order() {
+        static LOCK: tauri::async_runtime::Mutex<()> = tauri::async_runtime::Mutex::const_new(());
+        let running = Arc::new(AtomicUsize::new(0));
+        let order = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let runs: Vec<_> = (0..3)
+            .map(|i| {
+                let running = running.clone();
+                let order = order.clone();
+                tauri::async_runtime::spawn(async move {
+                    wait_a_moment(30 * i).await; // arrive in order
+                    run_in_engine_turn(&LOCK, &|| true, || async move {
+                        assert_eq!(running.fetch_add(1, Ordering::SeqCst), 0, "two runs at once");
+                        wait_a_moment(100).await;
+                        order.lock().unwrap().push(i);
+                        running.fetch_sub(1, Ordering::SeqCst);
+                        Ok::<_, String>(())
+                    })
+                    .await
+                })
+            })
+            .collect();
+        tauri::async_runtime::block_on(async {
+            for run in runs {
+                run.await.unwrap().unwrap();
+            }
+        });
+        assert_eq!(*order.lock().unwrap(), vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn a_caller_whose_dataset_was_replaced_during_the_wait_does_not_run() {
+        static LOCK: tauri::async_runtime::Mutex<()> = tauri::async_runtime::Mutex::const_new(());
+        let ran = Arc::new(AtomicUsize::new(0));
+        let r = ran.clone();
+        let out = tauri::async_runtime::block_on(run_in_engine_turn(&LOCK, &|| false, || async move {
+            r.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }));
+        assert_eq!(out, Err(STALE_SESSION_ERROR.to_string()));
+        assert_eq!(ran.load(Ordering::SeqCst), 0);
+        // And it did not keep the turn.
+        assert!(LOCK.try_lock().is_ok());
+    }
+
+    #[test]
+    fn a_cancelled_caller_does_not_keep_the_turn() {
+        static LOCK: tauri::async_runtime::Mutex<()> = tauri::async_runtime::Mutex::const_new(());
+        tauri::async_runtime::block_on(async {
+            // Cancelled during its run.
+            let holder = tauri::async_runtime::spawn(run_in_engine_turn(&LOCK, &|| true, || async {
+                std::future::pending::<Result<(), String>>().await
+            }));
+            wait_a_moment(50).await;
+            assert!(LOCK.try_lock().is_err(), "it holds the turn while it runs");
+            // Cancelled while waiting in line behind that run.
+            let waiter = tauri::async_runtime::spawn(run_in_engine_turn(&LOCK, &|| true, || async { Ok(()) }));
+            wait_a_moment(50).await;
+            waiter.abort();
+            holder.abort();
+            let _ = holder.await;
+            run_in_engine_turn(&LOCK, &|| true, || async { Ok(()) }).await.unwrap();
+        });
+    }
+
+    #[test]
+    fn the_cap_does_not_count_the_wait_in_line() {
+        static LOCK: tauri::async_runtime::Mutex<()> = tauri::async_runtime::Mutex::const_new(());
+        let limit = Duration::from_millis(100);
+        let (kills, kill) = counter();
+        let out = tauri::async_runtime::block_on(async move {
+            let busy = tauri::async_runtime::spawn(run_in_engine_turn(&LOCK, &|| true, move || async move {
+                wait_a_moment(400).await;
+                Ok::<_, String>(())
+            }));
+            wait_a_moment(50).await;
+            let (tx, rx) = tauri::async_runtime::channel(8);
+            tx.send(ended()).await.unwrap();
+            let out = run_in_engine_turn(&LOCK, &|| true, || async move {
+                Ok::<_, String>(collect(rx, || Ok(()), kill, limit, limit).await)
+            })
+            .await
+            .unwrap();
+            busy.await.unwrap().unwrap();
+            out
+        });
+        assert!(!out.timed_out, "the wait was longer than the cap");
+        assert_eq!(kills.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn a_run_whose_dataset_is_replaced_is_killed_and_gives_up_its_turn() {
+        // `_tx` stays open: even with no end event the wait ends after the grace.
+        let (_tx, rx) = tauri::async_runtime::channel(8);
+        let (kills, kill) = counter();
+        let wanted = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let w = wanted.clone();
+        let flip = wanted.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(50));
+            flip.store(false, Ordering::SeqCst);
+        });
+        let out = tauri::async_runtime::block_on(collect_engine_output(
+            rx,
+            || Ok(()),
+            kill,
+            move || w.load(Ordering::SeqCst),
+            LONG,
+            Duration::from_millis(50),
+        ));
+        assert!(out.superseded);
+        assert!(!out.timed_out);
+        assert_eq!(kills.load(Ordering::SeqCst), 1);
+    }
+
+    fn registry() -> std::sync::Mutex<EngineRegistry> {
+        std::sync::Mutex::new(EngineRegistry::new())
+    }
+
+    fn no_kill(_: u32) {}
+
+    fn pids(r: &std::sync::Mutex<EngineRegistry>) -> Vec<u32> {
+        r.lock().unwrap().pids.clone()
+    }
+
+    #[test]
+    fn exit_kills_every_running_engine_and_refuses_new_ones() {
+        static KILLED: std::sync::Mutex<Vec<u32>> = std::sync::Mutex::new(Vec::new());
+        fn record(pid: u32) {
+            KILLED.lock().unwrap().push(pid);
+        }
+        let r = registry();
+        let (_, a) = start_tracked_engine(&r, no_kill, || Ok(((), 11))).unwrap();
+        let (_, b) = start_tracked_engine(&r, no_kill, || Ok(((), 22))).unwrap();
+        let (_, done) = start_tracked_engine(&r, no_kill, || Ok(((), 33))).unwrap();
+        done.finished();
+        assert_eq!(pids(&r), vec![11, 22], "an engine that ended is not tracked");
+        stop_all_engines(&r, record, LONG);
+        let mut killed = KILLED.lock().unwrap().clone();
+        killed.sort_unstable();
+        assert_eq!(killed, vec![11, 22]);
+        let refused = start_tracked_engine(&r, no_kill, || -> Result<((), u32), String> {
+            panic!("no engine may start once the app is exiting")
+        });
+        assert!(refused.is_err());
+        a.finished();
+        b.finished();
+    }
+
+    #[test]
+    fn exit_does_not_wait_long_for_a_slow_kill() {
+        fn slow(_: u32) {
+            std::thread::sleep(Duration::from_secs(30));
+        }
+        let r = registry();
+        let (_, engine) = start_tracked_engine(&r, no_kill, || Ok(((), 1))).unwrap();
+        let start = Instant::now();
+        stop_all_engines(&r, slow, Duration::from_millis(50));
+        assert!(start.elapsed() < Duration::from_secs(10));
+        engine.finished();
+    }
+
+    #[test]
+    fn a_failed_start_tracks_nothing() {
+        let r = registry();
+        assert!(start_tracked_engine::<()>(&r, no_kill, || Err("nope".to_string())).is_err());
+        assert!(pids(&r).is_empty());
+    }
+
+    #[test]
+    fn a_dropped_caller_kills_its_engine() {
+        static KILLED: AtomicUsize = AtomicUsize::new(0);
+        fn record(pid: u32) {
+            KILLED.store(pid as usize, Ordering::SeqCst);
+        }
+        let r = registry();
+        let (_, engine) = start_tracked_engine(&r, record, || Ok(((), 77))).unwrap();
+        drop(engine);
+        assert!(pids(&r).is_empty());
+        let start = Instant::now();
+        while KILLED.load(Ordering::SeqCst) != 77 {
+            assert!(start.elapsed() < Duration::from_secs(10), "the engine was not killed");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    /// Every engine goes through the line and the registry, and exit is wired.
+    #[test]
+    fn the_engine_is_started_in_one_place_and_stopped_at_exit() {
+        let src = include_str!("lib.rs");
+        assert_eq!(src.matches(concat!("spawn_sidecar", "(app)")).count(), 1);
+        assert_eq!(src.matches(concat!("run_in_engine_turn", "(&ENGINE_LOCK")).count(), 1);
+        assert!(src.contains(concat!("matches!(event, tauri::RunEvent::", "Exit)")));
+    }
+
     #[test]
     fn a_normal_run_returns_its_output_and_kills_nothing() {
         let (tx, rx) = tauri::async_runtime::channel(8);
@@ -7044,7 +7438,7 @@ mod engine_run_tests {
             tx.send(CommandEvent::Stderr(b"note".to_vec())).await.unwrap();
             tx.send(CommandEvent::Stdout(b"1}".to_vec())).await.unwrap();
             tx.send(ended()).await.unwrap();
-            collect_engine_output(rx, || Ok(()), kill, LONG, LONG).await
+            collect(rx, || Ok(()), kill, LONG, LONG).await
         });
         assert_eq!((out.stdout.as_str(), out.stderr.as_str(), out.timed_out), ("{\"r\":1}", "note", false));
         assert_eq!(kills.load(Ordering::SeqCst), 0);
@@ -7056,7 +7450,7 @@ mod engine_run_tests {
         let (_tx, rx) = tauri::async_runtime::channel(8);
         let (kills, kill) = counter();
         let start = Instant::now();
-        let out = tauri::async_runtime::block_on(collect_engine_output(
+        let out = tauri::async_runtime::block_on(collect(
             rx,
             || Ok(()),
             kill,
@@ -7075,7 +7469,7 @@ mod engine_run_tests {
             let _ = tx.try_send(ended());
         };
         let start = Instant::now();
-        let out = tauri::async_runtime::block_on(collect_engine_output(rx, || Ok(()), kill, Duration::from_millis(50), LONG));
+        let out = tauri::async_runtime::block_on(collect(rx, || Ok(()), kill, Duration::from_millis(50), LONG));
         assert!(out.timed_out);
         assert!(start.elapsed() < Duration::from_secs(10), "it did not sit out the grace period");
     }
@@ -7085,7 +7479,7 @@ mod engine_run_tests {
         let (_tx, rx) = tauri::async_runtime::channel(8);
         let (release, stuck) = std::sync::mpsc::channel::<()>();
         let (kills, kill) = counter();
-        let out = tauri::async_runtime::block_on(collect_engine_output(
+        let out = tauri::async_runtime::block_on(collect(
             rx,
             move || {
                 let _ = stuck.recv();
@@ -7109,7 +7503,7 @@ mod engine_run_tests {
             m.fetch_add(1, Ordering::SeqCst);
             let _ = tx.try_send(ended());
         };
-        let out = tauri::async_runtime::block_on(collect_engine_output(
+        let out = tauri::async_runtime::block_on(collect(
             rx,
             || Err("The pipe has been ended. (os error 109)".to_string()),
             kill,
@@ -7127,7 +7521,7 @@ mod engine_run_tests {
     #[test]
     fn a_run_after_a_timed_out_one_works() {
         let (_tx, rx) = tauri::async_runtime::channel(8);
-        let first = tauri::async_runtime::block_on(collect_engine_output(
+        let first = tauri::async_runtime::block_on(collect(
             rx,
             || Ok(()),
             || {},
@@ -7139,7 +7533,7 @@ mod engine_run_tests {
         let second = tauri::async_runtime::block_on(async move {
             tx.send(CommandEvent::Stdout(b"{}".to_vec())).await.unwrap();
             tx.send(ended()).await.unwrap();
-            collect_engine_output(rx, || Ok(()), || {}, LONG, LONG).await
+            collect(rx, || Ok(()), || {}, LONG, LONG).await
         });
         assert!(!second.timed_out);
         assert_eq!(second.stdout, "{}");
@@ -7182,6 +7576,8 @@ mod off_main_thread_tests {
         let src = include_str!("lib.rs");
         for (name, attr) in [
             ("get_session_generation", "#[tauri::command]"),
+            ("load_metadata_command", "#[tauri::command]"),
+            ("load_mapping_csv", "#[tauri::command]"),
             ("get_all_sensors", "#[tauri::command]"),
             ("compute_sensor_stats", "#[tauri::command]"),
             ("compute_clustering_preview", "#[tauri::command(rename_all = \"snake_case\")]"),
@@ -8120,6 +8516,10 @@ pub fn run() {
         // after the last window is gone), force-kill with `std::process::exit(0)`.
         .run(|app_handle, event| {
             use tauri::Manager;
+            // An engine left running would keep working with no app to answer.
+            if matches!(event, tauri::RunEvent::Exit) {
+                stop_all_engines(&LIVE_ENGINES, kill_engine_tree, ENGINE_EXIT_WAIT);
+            }
             if let tauri::RunEvent::WindowEvent {
                 event: tauri::WindowEvent::Destroyed,
                 label,
@@ -8151,6 +8551,7 @@ pub fn run() {
                     std::thread::spawn(|| {
                         std::thread::sleep(std::time::Duration::from_millis(500));
                         eprintln!("[exit-guard] app.exit(0) didn't terminate — forcing process exit.");
+                        stop_all_engines(&LIVE_ENGINES, kill_engine_tree, ENGINE_EXIT_WAIT);
                         std::process::exit(0);
                     });
                 }

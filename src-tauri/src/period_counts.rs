@@ -519,10 +519,7 @@ mod tests {
 
     #[test]
     fn unsorted_timestamps_count_the_same() {
-        // A load orders rows by timestamp TEXT, which is time order only when
-        // every timestamp is written the same way (mixed formats are not, see
-        // `csv_processor`'s `loaded_timestamps_are_in_text_order_...` test):
-        // the count never assumes sorted timestamps.
+        // The count never assumes sorted timestamps.
         let n = 2 * ROWS_PER_DAY;
         let order: Vec<usize> = (0..n).map(|i| (i * 37) % n).collect(); // a permutation (37 and 288 coprime)
         let d = ColumnarData::from_parts(

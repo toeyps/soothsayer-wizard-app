@@ -121,6 +121,26 @@ impl ColumnarData {
         }
     }
 
+    /// [`Self::from_parts`] for a caller that already parsed the instants with
+    /// [`file_instants`], so a big file is not parsed twice.
+    fn from_parsed_parts(
+        headers: Vec<String>,
+        timestamps: Vec<Option<String>>,
+        ts_parsed: Vec<i64>,
+        columns: Vec<Vec<f64>>,
+    ) -> Self {
+        use rayon::prelude::*;
+        debug_assert!(columns.iter().all(|c| c.len() == timestamps.len()));
+        debug_assert_eq!(ts_parsed.len(), timestamps.len());
+        ColumnarData {
+            headers,
+            timestamps: timestamps.into_par_iter().map(|t| t.map(normalize_buddhist_era)).collect(),
+            ts_parsed,
+            columns,
+            sample_interval: std::sync::OnceLock::new(),
+        }
+    }
+
     pub fn n_rows(&self) -> usize {
         self.timestamps.len()
     }
@@ -302,7 +322,7 @@ pub fn micros_to_naive(us: i64) -> Option<chrono::NaiveDateTime> {
 // `Mon, 01 Jan 2025 13:05:00 +0700` (RFC), `20250131130500` (compact),
 // `1 ม.ค. 2568 13:05 น.` (Thai), Excel serial numbers, Unix epochs … These are
 // read ONCE per file, right after the file is read and BEFORE the multi-file
-// merge (which keys rows by timestamp TEXT), and rewritten to
+// merge, and rewritten to
 // `YYYY-MM-DD HH:MM:SS[.f]` so every later step (merge order, `from_parts`'
 // one-time parse, the frontend's year-first `readWallClock`) sees ISO text.
 // Text already in a shape `parse_timestamp` reads ([`is_plain_iso`]) is
@@ -1873,9 +1893,8 @@ pub fn read_merge_csvs_with_progress(
     // Single file → skip the cross-file timestamp merge entirely. That merge
     // rebuilds every row through a single-threaded BTreeMap — pure overhead
     // when there's nothing to merge. `merge_single_file` follows the same
-    // rules (timestamp column first, null-timestamp rows dropped, duplicates
-    // merged) but orders by text, on indices + per-column gathers — and does its own
-    // Buddhist-Era detection, so skip the one below entirely on this path.
+    // rules on indices + per-column gathers, and does its own Buddhist-Era
+    // detection, so skip the one below entirely on this path.
     if results.len() == 1 {
         let mut merged = merge_single_file(results.pop().unwrap());
         // The merged dataset IS this one file (rows without a timestamp are
@@ -2060,11 +2079,12 @@ pub fn read_merge_csvs_with_progress(
 ///
 /// Timestamp column canonicalized to the front, a column written twice folded
 /// into one (first spelling kept, later non-null value wins), rows without a
-/// timestamp dropped, rows ordered by timestamp TEXT, identical timestamp texts
-/// merged (later non-null value wins). Works on row INDICES and per-column
-/// gathers instead of moving row payloads around. A clean, already-ordered
-/// file with unique timestamps (the common case for sensor logs) passes the
-/// parsed columns through without any copy at all.
+/// timestamp dropped, rows merged and ordered on the parsed instant (later
+/// non-null value wins), unreadable timestamps after them in file order and
+/// never merged. So the rows and their order match the same rows in several
+/// files. Works on row INDICES and per-column gathers. A clean file with
+/// strictly increasing timestamps (the common case) passes the parsed columns
+/// through without any copy.
 fn merge_single_file(result: ReadCsvResult) -> MergeResult {
     let is_timestamp =
         |h: &str| h.eq_ignore_ascii_case("timestamp") || h.eq_ignore_ascii_case("time");
@@ -2123,24 +2143,22 @@ fn merge_single_file(result: ReadCsvResult) -> MergeResult {
         }
     }
 
+    // The instants are parsed once, here: `from_parsed_parts` below reuses them.
+    let instants = file_instants(&ds.timestamps);
+    let instant_of = |r: u32| instants[r as usize];
+
     // Row selection & ordering, entirely on u32 indices (a 2 GB CSV tops out
-    // far below u32::MAX rows). Rows without a timestamp are dropped (the
-    // merge is keyed by timestamp), and the sort is skipped when the file is
-    // already ordered.
-    let mut order: Vec<u32> = (0..ds.n_rows() as u32)
+    // far below u32::MAX rows). Same rules as several files: rows without a
+    // timestamp dropped, readable rows in time order, unreadable ones after
+    // them in file order and never merged.
+    let (mut order, unreadable): (Vec<u32>, Vec<u32>) = (0..ds.n_rows() as u32)
         .filter(|&r| ds.timestamps[r as usize].is_some())
-        .collect();
-    let sorted_already = order
-        .windows(2)
-        .all(|w| ds.timestamps[w[0] as usize] <= ds.timestamps[w[1] as usize]);
-    if !sorted_already {
-        // Stable: keeps file order among equal timestamps so the duplicate
-        // merge below overwrites in file order (later row wins).
-        order.sort_by(|&a, &b| ds.timestamps[a as usize].cmp(&ds.timestamps[b as usize]));
-    }
-    let has_dups = order
-        .windows(2)
-        .any(|w| ds.timestamps[w[0] as usize] == ds.timestamps[w[1] as usize]);
+        .partition(|&r| instant_of(r) != TS_MISSING);
+    let strictly_increasing = order.windows(2).all(|w| instant_of(w[0]) < instant_of(w[1]));
+    let unreadable_last = match (order.last(), unreadable.first()) {
+        (Some(readable), Some(other)) => readable < other,
+        _ => true,
+    };
 
     let identity_headers = ds.headers.len() == g
         && ds
@@ -2149,30 +2167,40 @@ fn merge_single_file(result: ReadCsvResult) -> MergeResult {
             .zip(global_headers.iter())
             .all(|(a, b)| a == b);
 
-    // Fast path: ts-first headers, nothing dropped, already ordered, unique
-    // timestamps — reuse the parsed columns without a single gather.
-    if identity_headers && sorted_already && !has_dups && order.len() == ds.n_rows() {
+    // Fast path: ts-first headers, nothing dropped, nothing to move or merge.
+    if identity_headers
+        && strictly_increasing
+        && unreadable_last
+        && order.len() + unreadable.len() == ds.n_rows()
+    {
         return MergeResult {
-            data: ColumnarData::from_parts(global_headers, ds.timestamps, ds.columns),
-            warnings: be_warning.clone().into_iter().collect(),
+            data: ColumnarData::from_parsed_parts(global_headers, ds.timestamps, instants, ds.columns),
+            warnings: be_warning.into_iter().collect(),
             parse_fail_counts: global_fail_counts,
             files: Vec::new(),
         };
     }
 
-    // Group runs of equal timestamps: each group becomes one output row.
-    let mut groups: Vec<(u32, u32)> = Vec::new();
+    if !strictly_increasing {
+        // Stable: equal instants keep file order, so the merge below lets the
+        // later row win and the first row's text stay.
+        order.par_sort_by_key(|&r| instant_of(r));
+    }
+
+    // Runs of equal instants: each becomes one output row.
+    let readable = order.len();
+    let mut groups: Vec<(u32, u32)> = Vec::with_capacity(readable + unreadable.len());
     let mut i = 0usize;
-    while i < order.len() {
+    while i < readable {
         let mut j = i + 1;
-        while j < order.len()
-            && ds.timestamps[order[j] as usize] == ds.timestamps[order[i] as usize]
-        {
+        while j < readable && instant_of(order[j]) == instant_of(order[i]) {
             j += 1;
         }
         groups.push((i as u32, j as u32));
         i = j;
     }
+    order.extend(unreadable);
+    groups.extend((readable..order.len()).map(|i| (i as u32, i as u32 + 1)));
 
     // For each global column, the local columns feeding it, in file order.
     // Duplicate header names can map several locals to one slot; scanning
@@ -2212,8 +2240,10 @@ fn merge_single_file(result: ReadCsvResult) -> MergeResult {
         })
         .collect();
 
+    let out_instants: Vec<i64> = groups.iter().map(|&(s, _)| instant_of(order[s as usize])).collect();
+
     MergeResult {
-        data: ColumnarData::from_parts(global_headers, out_timestamps, out_columns),
+        data: ColumnarData::from_parsed_parts(global_headers, out_timestamps, out_instants, out_columns),
         warnings: be_warning.into_iter().collect(),
         parse_fail_counts: global_fail_counts,
         files: Vec::new(),
@@ -2247,10 +2277,9 @@ pub(crate) fn median_interval_runs() -> usize {
 }
 
 /// Median positive gap, in seconds, between consecutive valid timestamps of
-/// the merged dataset. A single file is ordered by timestamp TEXT, which equals
-/// chronological order for a uniform format — but mixed formats could differ,
-/// so an out-of-order `ts` is sorted first (a copy; the common case is already
-/// sorted and costs no allocation beyond the difference samples). With more
+/// the merged dataset. A load orders rows by time, but `ts` is not assumed
+/// sorted: an out-of-order one is sorted first (a copy; the common case costs
+/// no allocation beyond the difference samples). With more
 /// than [`MAX_INTERVAL_SAMPLES`] gaps a deterministic stride sample is used.
 /// Equal neighbours (gap 0) are ignored. Even sample count: mean of the two
 /// middle gaps. `None` if fewer than 2 valid timestamps / no positive gap.
@@ -3405,9 +3434,9 @@ mod tests {
         let m = single(
             vec!["timestamp", "A", "B"],
             vec![
-                (Some("t"), vec![None, Some(1.0), None]), // A=1
-                (Some("t"), vec![None, None, Some(2.0)]), // fills B, keeps A
-                (Some("t"), vec![None, Some(5.0), None]), // overwrites A
+                (Some("2024-01-01 00:00:00"), vec![None, Some(1.0), None]), // A=1
+                (Some("2024-01-01 00:00:00"), vec![None, None, Some(2.0)]), // fills B, keeps A
+                (Some("2024-01-01 00:00:00"), vec![None, Some(5.0), None]), // overwrites A
             ],
             vec![0, 0, 0],
         );
@@ -3470,7 +3499,7 @@ mod tests {
             vec![0, 0],
         );
         assert_eq!(m.data.ts_parsed.len(), 2);
-        // Sorted by STRING: "2020-..." < "not a timestamp".
+        // Readable rows first.
         let expected = ts_to_micros(parse_timestamp("2020-01-01T00:00:00").unwrap());
         assert_eq!(m.data.ts_parsed[0], expected);
         assert_eq!(m.data.ts_parsed[1], TS_MISSING);
@@ -3890,10 +3919,7 @@ mod tests {
     }
 
     #[test]
-    fn loaded_timestamps_are_in_text_order_which_is_time_order_for_one_format_only() {
-        // Documents WHEN `median_interval_seconds` takes its sorting branch.
-        // A single file is ordered by the timestamp TEXT, so a file whose rows
-        // are merely out of order is loaded in time order...
+    fn one_file_is_loaded_in_time_order_however_its_timestamps_are_written() {
         let shuffled = single(
             vec!["timestamp", "A"],
             vec![
@@ -3903,11 +3929,7 @@ mod tests {
             ],
             vec![0, 0],
         );
-        assert!(shuffled.data.ts_parsed.windows(2).all(|w| w[0] <= w[1]));
-        // ... and only timestamps written in MIXED ways within one dataset end
-        // up out of time order: here `T` and a space as the separator (a space
-        // sorts before `T`), likewise a mix of Buddhist-Era and Gregorian years
-        // (ordered by the text as written, converted afterwards).
+        // `T` and a space as the separator (text order would put every space first).
         let mixed = single(
             vec!["timestamp", "A"],
             vec![
@@ -3918,7 +3940,6 @@ mod tests {
             ],
             vec![0, 0],
         );
-        assert!(!mixed.data.ts_parsed.windows(2).all(|w| w[0] <= w[1]));
         let be_and_ce = single(
             vec!["timestamp", "A"],
             vec![
@@ -3928,10 +3949,113 @@ mod tests {
             ],
             vec![0, 0],
         );
-        assert!(!be_and_ce.data.ts_parsed.windows(2).all(|w| w[0] <= w[1]));
-        // The interval is right either way (and cached either way).
         for m in [&shuffled, &mixed, &be_and_ce] {
+            assert!(m.data.ts_parsed.windows(2).all(|w| w[0] < w[1]));
             assert_eq!(m.data.sample_interval_secs(), Some(60.0));
+            for (r, v) in m.data.columns[1].iter().enumerate() {
+                assert_eq!(*v, r as f64);
+            }
+        }
+    }
+
+    #[test]
+    fn one_file_merges_one_moment_written_two_ways() {
+        let m = single(
+            vec!["timestamp", "A", "B"],
+            vec![
+                (Some("2567-01-01 00:00:00"), vec![None, Some(1.0), Some(9.0)]),
+                (Some("2024-01-01T00:00:00"), vec![None, Some(5.0), None]),
+                (Some("2023-12-31 23:00:00"), vec![None, Some(0.0), None]),
+            ],
+            vec![0, 0, 0],
+        );
+        assert_eq!(m.data.n_rows(), 2);
+        assert_eq!(row_vals(&m.data, 1), vec![None, Some(5.0), Some(9.0)], "later non-null wins");
+        // The first row's text stays, corrected to the Gregorian year.
+        assert_eq!(m.data.timestamps[1].as_deref(), Some("2024-01-01 00:00:00"));
+    }
+
+    #[test]
+    fn one_file_keeps_unreadable_timestamps_after_the_readable_ones_unmerged() {
+        let m = single(
+            vec!["timestamp", "A"],
+            vec![
+                (Some("zzz"), vec![None, Some(1.0)]),
+                (Some("2024-01-01 00:01:00"), vec![None, Some(2.0)]),
+                (Some("aaa"), vec![None, Some(3.0)]),
+                (None, vec![None, Some(4.0)]),
+                (Some("zzz"), vec![None, Some(5.0)]),
+                (Some("2024-01-01 00:00:00"), vec![None, Some(6.0)]),
+            ],
+            vec![0, 0],
+        );
+        let texts: Vec<_> = m.data.timestamps.iter().map(|t| t.as_deref().unwrap()).collect();
+        assert_eq!(texts, ["2024-01-01 00:00:00", "2024-01-01 00:01:00", "zzz", "aaa", "zzz"]);
+        assert_eq!(m.data.columns[1], vec![6.0, 2.0, 1.0, 3.0, 5.0]);
+        assert_eq!(m.data.ts_parsed[2..], [TS_MISSING; 3]);
+    }
+
+    #[test]
+    fn a_clean_file_takes_the_no_copy_path_with_unreadable_rows_at_the_end() {
+        let rows: Vec<(Option<&str>, Vec<Option<f64>>)> = vec![
+            (Some("2024-01-01 00:00:00"), vec![None, Some(1.0)]),
+            (Some("2024-01-01 00:01:00"), vec![None, Some(2.0)]),
+            (Some("zzz"), vec![None, Some(3.0)]),
+        ];
+        let data = columnar(vec!["timestamp", "A"], rows);
+        let column = data.columns[1].as_ptr();
+        let m = merge_single_file(ReadCsvResult {
+            data,
+            parse_fail_counts: vec![0, 0],
+            size_bytes: 0,
+            ts_from_first_column: None,
+            short_rows: 0,
+            non_utf8_values: 0,
+        });
+        assert_eq!(m.data.columns[1].as_ptr(), column, "the column was not copied");
+    }
+
+    #[test]
+    fn stored_instants_match_what_from_parts_would_parse() {
+        let texts = ["2567-02-29 00:00:00+07:00", "2024-03-01T00:00:00", "2024-03-02 00:00", "nope"];
+        let m = single(
+            vec!["timestamp"],
+            texts.iter().map(|t| (Some(*t), vec![None])).collect(),
+            vec![0],
+        );
+        let again = ColumnarData::from_parts(vec!["timestamp".into()], m.data.timestamps.clone(), vec![vec![f64::NAN; 4]]);
+        assert_eq!(m.data.ts_parsed, again.ts_parsed);
+    }
+
+    /// The same rows give the same dataset as one file or split over two.
+    #[test]
+    fn one_file_and_two_files_load_the_same_rows_in_the_same_order() {
+        let rows = [
+            "2567-01-01 00:02:00,1,",
+            "2024-01-01T00:00:00,2,20",
+            "not a time,3,",
+            "2024-01-01 00:01:00,4,",
+            "2024-01-01 00:00:00,,50", // same moment as row 2
+            "not a time,6,",
+            "2024-01-01T00:01:00,7,70", // same moment as row 4
+            "2023-12-31 23:59:00,8,",
+        ];
+        let dir = std::env::temp_dir().join(format!("wizard_merge_parity_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let write = |name: &str, lines: &[&str]| {
+            let path = dir.join(name);
+            std::fs::write(&path, format!("timestamp,A,B\n{}\n", lines.join("\n"))).unwrap();
+            path.to_str().unwrap().to_string()
+        };
+        let one = read_merge_csvs_with_report(vec![write("all.csv", &rows)]).unwrap();
+        let two = read_merge_csvs_with_report(vec![write("a.csv", &rows[..4]), write("b.csv", &rows[4..])]).unwrap();
+        std::fs::remove_dir_all(&dir).ok();
+        assert_eq!(one.data.n_rows(), 6);
+        assert_eq!(one.data.timestamps, two.data.timestamps);
+        assert_eq!(one.data.ts_parsed, two.data.ts_parsed);
+        for c in 1..3 {
+            let bits = |d: &ColumnarData| d.columns[c].iter().map(|v| v.to_bits()).collect::<Vec<_>>();
+            assert_eq!(bits(&one.data), bits(&two.data), "column {c}");
         }
     }
 
