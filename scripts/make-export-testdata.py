@@ -247,10 +247,9 @@ vtr = [r for r in rows if r[0] and datetime(2026, 1, 1) <= datetime.strptime(r[0
 vlast = {}
 for r in vtr:
     vlast[r[0]] = r[6]
-vt, ve = [r[6] for r in vtr], list(vlast.values())
+ve = list(vlast.values())
 exp += ['', 'EXP-data.csv, VIB.X Individual (WFK-5): KW > 50, train period 2026-01-01 00:00 → 2026-01-20 23:50:',
-        f'  rows Train counts (both copies of the 3 repeated instants): {len(vt)} · mean {sig(statistics.mean(vt))} · SD (STDEV.S) {sig(statistics.stdev(vt))}',
-        f'  rows in VIB.X-I1.csv (last copy only): {len(ve)} · AVERAGE {sig(statistics.mean(ve))} · STDEV.S {sig(statistics.stdev(ve))}']
+        f'  rows Train counts and rows in VIB.X-I1.csv (repeated instants merged at import, last copy): {len(ve)} · AVERAGE {sig(statistics.mean(ve))} · STDEV.S {sig(statistics.stdev(ve))}']
 
 # ---------------------------------------------------------------------------
 # WFK: EXP-fleet.csv — a bigger machine for a 37-model project

@@ -6869,7 +6869,7 @@ _ผู้ใช้: วิศวกรที่ต้องรับรอง�
   - สร้าง Individual ของ `VIB.X` → Train → จดการ์ด Mean และ SD → Mark complete → Export
   - เปิด `VIB.X-I1.csv` ใน Excel → พิมพ์ `=COUNT(B:B)`, `=AVERAGE(B:B)`, `=STDEV.S(B:B)`
   - เทียบกับบรรทัด "rows in VIB.X-I1.csv" ใต้หัวข้อ "EXP-data.csv, VIB.X Individual" ใน `EXPECTED.txt`
-  - **คาดหวัง:** CSV มีเวลาละ 1 แถว: `=COUNT(B:B)` ได้ 2,592 · ค่าจาก Excel ตรงกับการ์ด Mean และ SD (ตามจำนวนทศนิยมที่การ์ดแสดง) และตรงกับบรรทัด "rows in VIB.X-I1.csv" · ไม่ต้องเทียบบรรทัด "rows Train counts" (2,595 แถว) ใน `EXPECTED.txt` — แถวเวลาซ้ำถูกรวมตั้งแต่ตอนอ่านไฟล์ ตอน Train จึงเหลือ 2,592 แถวเท่ากับไฟล์
+  - **คาดหวัง:** CSV มีเวลาละ 1 แถว: `=COUNT(B:B)` ได้ 2,592 · ค่าจาก Excel ตรงกับการ์ด Mean และ SD (ตามจำนวนทศนิยมที่การ์ดแสดง) และตรงกับบรรทัด "rows Train counts and rows in VIB.X-I1.csv" ใน `EXPECTED.txt`
 
 <!-- ── 2. แถวใน CSV ถูกทุกกติกา ── -->
 
