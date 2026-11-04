@@ -101,8 +101,8 @@ function trimmedMachine(m: MachineDetails): MachineDetails {
  * description included) in that same write, so no second write is needed —
  * then tells every window (`PROJECT_DETAILS_CHANGED`, with `workspaceId`).
  *
- * Returns the broadcast payload, or `null` when the workspace could not be
- * read (nothing written, nothing emitted).
+ * Returns the broadcast payload, or `null` when the project file does not
+ * exist (nothing written, nothing emitted). Rejects when it cannot be saved.
  */
 export async function saveProjectDetails(
     workspaceId: string,

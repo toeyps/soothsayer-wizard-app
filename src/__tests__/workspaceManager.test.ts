@@ -639,6 +639,16 @@ describe('saveWorkspaceFrom failures', () => {
 });
 
 describe('updateWorkspaceData', () => {
+    it('rejects when the write fails, so a caller never takes it for saved', async () => {
+        mockExists.mockResolvedValue(true);
+        mockReadTextFile.mockResolvedValue(JSON.stringify({ id: 'ws1', name: 'A' }));
+        mockWriteTextFile.mockRejectedValue(new Error('disk full'));
+        const { updateWorkspaceData } = await freshModule();
+        await expect(updateWorkspaceData('ws1', s => s)).rejects.toThrow('disk full');
+        mockWriteTextFile.mockReset();
+        mockWriteTextFile.mockResolvedValue(undefined);
+    });
+
     it('returns null without saving when the workspace does not exist', async () => {
         mockStoreGet.mockResolvedValue([]);
         mockExists.mockResolvedValue(false);
@@ -669,7 +679,7 @@ describe('updateWorkspaceData', () => {
         mockReadTextFile.mockResolvedValue('');
         const { updateWorkspaceData } = await freshModule();
         const patch = vi.fn();
-        expect(await updateWorkspaceData('ws1', patch)).toBeNull();
+        await expect(updateWorkspaceData('ws1', patch)).rejects.toThrow();
         expect(patch).not.toHaveBeenCalled();
         expect(mockWriteTextFile).not.toHaveBeenCalled();
         expect(mockRename).not.toHaveBeenCalled();

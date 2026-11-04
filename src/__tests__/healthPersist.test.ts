@@ -104,6 +104,34 @@ describe('commitSetPoints', () => {
 });
 
 describe('persistModelComplete', () => {
+    it('no project file: reports a reason, never Complete, no broadcast', async () => {
+        const wm = await import('../workspaceManager');
+        const spy = vi.spyOn(wm, 'updateWorkspaceData').mockResolvedValueOnce(null);
+        const { next, reason } = await persistModelComplete('ws1', 'i1', sp, null);
+        expect(next).toBeNull();
+        expect(reason).toMatch(/could not be found/);
+        expect(mockEmit).not.toHaveBeenCalled();
+        spy.mockRestore();
+    });
+
+    it('a failed broadcast after the write still counts as Complete', async () => {
+        setDisk([trained(ind())]);
+        mockEmit.mockRejectedValueOnce(new Error('ipc'));
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const { next, reason } = await persistModelComplete('ws1', 'i1', sp, null);
+        expect(reason).toBeNull();
+        expect(next!.failureGroupState!.models[0].status).toBe(true);
+        warn.mockRestore();
+    });
+
+    it('a failed write rejects, so the caller cannot report Complete', async () => {
+        const wm = await import('../workspaceManager');
+        const spy = vi.spyOn(wm, 'updateWorkspaceData').mockRejectedValueOnce(new Error('disk full'));
+        await expect(persistModelComplete('ws1', 'i1', sp, null)).rejects.toThrow('disk full');
+        expect(mockEmit).not.toHaveBeenCalled();
+        spy.mockRestore();
+    });
+
     it('marks the model Complete and stores the validated set points in ONE write, then broadcasts', async () => {
         setDisk([trained(ind())]);
         const { next, reason } = await persistModelComplete('ws1', 'i1', sp, null);

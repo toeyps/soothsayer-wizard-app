@@ -742,6 +742,45 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             expect(state.failureGroupState.models[0].runningConditionMode).toBe('custom');
         });
 
+        it('Save changes when the write fails: the edit stays as a draft and the window says it was not saved; a later save clears that', async () => {
+            const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+            render(<BuildModelWindow />);
+            await deliverData();
+            openSettings();
+            fireEvent.click(screen.getByRole('button', { name: 'Custom' }));
+            mockUpdateWorkspaceData.mockImplementationOnce(() => Promise.reject(new Error('disk full')));
+            await act(async () => {
+                fireEvent.click(screen.getByText('Save changes'));
+                await new Promise(r => setTimeout(r, 0));
+            });
+            expect(screen.getByTestId('save-failed-notice').textContent).toContain('could not be saved');
+            expect(screen.getByText('Save changes')).toBeTruthy();
+
+            await act(async () => {
+                fireEvent.click(screen.getByText('Save changes'));
+                await new Promise(r => setTimeout(r, 0));
+            });
+            expect(screen.queryByTestId('save-failed-notice')).toBeNull();
+            expect(screen.queryByText('Save changes')).toBeNull();
+            err.mockRestore();
+        });
+
+        it('Save changes when the project file is gone: not saved either, the draft stays', async () => {
+            const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+            render(<BuildModelWindow />);
+            await deliverData();
+            openSettings();
+            fireEvent.click(screen.getByRole('button', { name: 'Custom' }));
+            mockUpdateWorkspaceData.mockImplementationOnce(() => Promise.resolve(null));
+            await act(async () => {
+                fireEvent.click(screen.getByText('Save changes'));
+                await new Promise(r => setTimeout(r, 0));
+            });
+            expect(screen.getByTestId('save-failed-notice')).toBeTruthy();
+            expect(screen.getByText('Save changes')).toBeTruthy();
+            err.mockRestore();
+        });
+
         it('duplicate model name within one sensor shows the warning and blocks Save', async () => {
             render(<BuildModelWindow />);
             await deliverData({
@@ -1336,6 +1375,23 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             expect(noticeText()).not.toMatch(/Files saved/);
         });
 
+        it('"✓ Mark complete" when the write fails: not Complete, and the reason is on screen', async () => {
+            mockInvoke.mockImplementation(healthInvoke);
+            const model = withTrained(makeModel({ healthSetPoints: VALID_IND }));
+            statefulUpdateMock([model]);
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: { groups: [makeGroup()], models: [model] } });
+            await openHealthPage();
+            await waitFor(() => expect((screen.getByTestId('mark-complete') as HTMLButtonElement).disabled).toBe(false));
+            mockUpdateWorkspaceData.mockImplementation(() => Promise.reject(new Error('disk full')));
+            await act(async () => {
+                fireEvent.click(screen.getByTestId('mark-complete'));
+                await new Promise(r => setTimeout(r, 0));
+            });
+            await waitFor(() => expect(document.body.textContent).toContain('disk full'));
+            expect(tabStatus()).not.toBe('Complete');
+        });
+
         it('"✓ Mark complete" is blocked while the running-condition gate blocks the model: no button on Model fit, Health score cannot be opened', async () => {
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: { groups: [makeGroup()], models: [makeModel()], runningConditionNoneConfirmed: false } });
@@ -1837,6 +1893,33 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             // With the explicit Apply step the half-typed date's
             // fate is decided by the Apply click (or the discard prompt on X),
             // not by a silent write on close.
+            it('Apply when the write fails: the modal and its draft stay, and the window says it was not saved', async () => {
+                const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+                render(<BuildModelWindow />);
+                await deliverWithPeriod();
+                statefulUpdateMock([makeModel()], {
+                    runningConditionNoneConfirmed: false,
+                    runningConditionFilters: [{ id: 'f1', sensor: 'TAG1', operation: 'greater_than', value1: '5', value2: '' }],
+                    runningConditionTimePeriods: [seededPeriod],
+                });
+                fireEvent.click(screen.getByTestId('rc-card-open'));
+                const endField = screen.getByLabelText('P1 end') as HTMLInputElement;
+                endField.focus();
+                fireEvent.change(endField, { target: { value: '2024-02-15T12:00' } });
+                mockUpdateWorkspaceData.mockImplementationOnce(() => Promise.reject(new Error('disk full')));
+                fireEvent.click(screen.getByTestId('rc-apply'));
+                await flush();
+                expect(screen.getByRole('dialog', { name: 'Running condition' })).toBeTruthy();
+                expect(screen.getByTestId('save-failed-notice')).toBeTruthy();
+                expect((screen.getByLabelText('P1 end') as HTMLInputElement).value).toBe('2024/02/15 12:00');
+
+                fireEvent.click(screen.getByTestId('rc-apply'));
+                await flush();
+                expect(screen.queryByRole('dialog', { name: 'Running condition' })).toBeNull();
+                expect(screen.queryByTestId('save-failed-notice')).toBeNull();
+                err.mockRestore();
+            });
+
             it('(a) half-typed date + Apply click (real focus(), no manual blur) is committed, written once, and shown on reopen', async () => {
                 render(<BuildModelWindow />);
                 await deliverWithPeriod();
@@ -5540,6 +5623,32 @@ describe('Health score page - draft set points and when they are persisted (heal
                 await closePromise;
             });
             expect(mockClose).toHaveBeenCalledTimes(1);
+        });
+
+        it('a set point that cannot be saved: the window stays open with a notice, the draft stays, and the next close leaves', async () => {
+            const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+            await hsMount([HS_IND()]);
+            await openHealthPage();
+            await flush();
+            mockUpdateWorkspaceData.mockClear();
+            mockUpdateWorkspaceData.mockImplementation(() => Promise.reject(new Error('disk full')));
+            hsType('sp-upper', '13');
+
+            const first = vi.fn();
+            await act(async () => { await mockCloseRequestedHandler!({ preventDefault: first }); });
+            expect(first).toHaveBeenCalledTimes(1);
+            expect(mockClose).not.toHaveBeenCalled();
+            expect(screen.getByTestId('close-wait-notice').textContent).toContain('could not be saved');
+            expect(screen.getByTestId('save-failed-notice')).toBeTruthy();
+            expect((screen.getByTestId('sp-upper') as HTMLInputElement).value).toBe('13');
+            const writes = mockUpdateWorkspaceData.mock.calls.length;
+
+            // Window.close() and a second X both come back here: no new write, nothing held.
+            const second = vi.fn();
+            await act(async () => { await mockCloseRequestedHandler!({ preventDefault: second }); });
+            expect(second).not.toHaveBeenCalled();
+            expect(mockUpdateWorkspaceData.mock.calls.length).toBe(writes);
+            err.mockRestore();
         });
 
         it('the toolbar Close button does the same', async () => {

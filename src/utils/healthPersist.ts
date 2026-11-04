@@ -24,7 +24,12 @@ export type FailureGroupOrigin = 'dashboard' | 'build-model';
 
 async function broadcast(state: WorkspaceState | null, workspaceId: string, origin: FailureGroupOrigin): Promise<void> {
     if (!state?.failureGroupState) return;
-    await emit('failure-group-state-changed', { ...state.failureGroupState, workspaceId, origin });
+    // A failed broadcast is not a failed save: the write has already landed.
+    try {
+        await emit('failure-group-state-changed', { ...state.failureGroupState, workspaceId, origin });
+    } catch (e) {
+        console.warn('Failed to broadcast failure-group state:', e);
+    }
 }
 
 /** A copy of `m` without its saved verdict (it no longer describes the model). */
@@ -50,7 +55,7 @@ function withoutTestsChanged(m: FailureModel): FailureModel {
  * (`applyIncompleteRule`, set-point road), so any writer is covered. Never
  * touches `lastTrainedAt` / `trainedFingerprint`, and (set points are not part
  * of the train fingerprint) never makes a model stale. Returns the new
- * workspace state, or `null` when the workspace could not be read.
+ * workspace state, or `null` when the project file does not exist.
  */
 export async function commitSetPoints(
     workspaceId: string,
@@ -113,7 +118,7 @@ export const MARK_COMPLETE_CLOSE_WAIT = { ms: 90_000 };
 
 /** Outcome of `persistModelComplete`. */
 export interface PersistCompleteResult {
-    /** The state after the write (`null` when the workspace could not be read). */
+    /** The state after the write (`null` when the project file does not exist). */
     next: WorkspaceState | null;
     /** `null` = the model is now Complete. Otherwise why it was NOT marked
      *  (the gate's reason, or `NOT_TRAINED_BLOCK_REASON`); nothing changed. */
@@ -222,6 +227,8 @@ export async function persistModelComplete(
             }),
         });
     });
+    // No file: nothing was written, so nothing is Complete.
+    if (!next) return { next, reason: res.reason ?? 'The project file could not be found.' };
     if (res.reason === null) await broadcast(next, workspaceId, origin);
     return { next, reason: res.reason };
 }

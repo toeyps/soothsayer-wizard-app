@@ -204,6 +204,8 @@ export async function saveWorkspaceData(state: WorkspaceState): Promise<void> {
 // the same workspace file at the same time — each window's webview loads
 // its own independent copy of this module, so `queue` is not shared across
 // them. That cross-window race is a real, separate, still-open gap.
+// Returns null only when the file does not exist. Rejects when it cannot be read
+// (nothing is written) or the write fails, so a caller never takes that for saved.
 export async function updateWorkspaceData(
     id: string,
     patch: (state: WorkspaceState) => WorkspaceState
@@ -214,15 +216,7 @@ export async function updateWorkspaceData(
         // calling it from inside an already-running enqueued operation would
         // queue a second operation that can only run once this one finishes,
         // which this one is waiting on — a deadlock.
-        let current: WorkspaceState | null;
-        try {
-            current = await readWorkspaceFile(id);
-        } catch (e) {
-            // Unreadable file: write NOTHING (a patch computed against a missing
-            // `prev` would replace every field the patch does not mention).
-            console.error('updateWorkspaceData: skipping the write, the workspace file could not be read:', e);
-            return null;
-        }
+        const current = await readWorkspaceFile(id);
         if (!current) return null;
         // "Incomplete immediately" — any write that
         // changes what a Complete model is trained on (its own inputs, or the
@@ -230,7 +224,7 @@ export async function updateWorkspaceData(
         // THIS same write, whichever window or writer made it. Compared against
         // `current` (what is on disk), never a caller's possibly stale mirror.
         const next = applyIncompleteRule(current, patch(current));
-        await writeWorkspaceFile(next);
+        await writeWorkspaceFileOrThrow(next);
         return next;
     });
 }
@@ -272,7 +266,8 @@ export interface LegacyConversionNotice {
  * formula text and the demotion of every model trained on a converted sensor
  * (or one built on it), in ONE write, computed against what is on disk.
  * Nothing to convert = no write at all (returns null), so this is safe to
- * call on every open. Null too when the file could not be read.
+ * call on every open. Null too when the file does not exist; rejects when it
+ * cannot be read or written.
  */
 export async function saveLegacyFormulaConversion(
     id: string,

@@ -278,6 +278,22 @@ describe('ExportModal — the checklist', () => {
             expect((within(screen.getByTestId('ready-running-editor')).getByLabelText('Running above this value') as HTMLInputElement).value).toBe('1000');
         });
 
+        it('a save that fails: the editor stays, the reason shows, and the dry run does not run', async () => {
+            const exp = fakeExp({ phase: 'ready' });
+            renderModal({
+                exp,
+                readiness: readiness({ items: items({ running: running({ sensor: 'RUN', value: 1000 }) }) }),
+                onSaveRunningStatus: () => Promise.reject(new Error('Could not save')),
+            });
+            const before = vi.mocked(exp.plan).mock.calls.length;
+            fireEvent.click(screen.getByRole('button', { name: 'Show' }));
+            fireEvent.click(screen.getByTestId('ready-running-fix'));
+            await act(async () => { fireEvent.click(screen.getByTestId('ready-running-save')); });
+            expect(screen.getByTestId('ready-running-editor')).toBeTruthy();
+            expect(screen.getByTestId('running-save-error').textContent).toBe('Could not save');
+            expect(vi.mocked(exp.plan).mock.calls.length).toBe(before);
+        });
+
         it('a change while everything is ready runs the dry run again', async () => {
             const exp = fakeExp({ phase: 'ready' });
             renderModal({ exp, readiness: readiness({ items: items({ running: running({ sensor: 'RUN', value: 1000 }) }) }) });

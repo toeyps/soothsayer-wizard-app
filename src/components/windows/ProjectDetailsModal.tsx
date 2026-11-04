@@ -94,7 +94,7 @@ export function ProjectDetailsModal({ workspace, existing = [], firstTimestamp, 
         try {
             const payload = await saveProjectDetails(workspace.id, { machine, dataUtcOffsetMin: offset });
             if (!payload) {
-                setError('Could not save the project details — the project file could not be read.');
+                setError('Could not save the project details — the project file could not be found.');
                 return;
             }
             onSaved(payload);

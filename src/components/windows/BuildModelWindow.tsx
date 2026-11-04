@@ -305,6 +305,17 @@ const NO_PREDICTORS: string[] = [];
 const DATASET_CHANGED_MESSAGE = 'The dataset changed since this window was opened — close it and reopen Build Model from the Dashboard.';
 /** Export results is writing: Train, Mark complete, set points and model settings wait. */
 const EXPORT_BUSY_REASON = 'Available when the export finishes';
+const SAVE_FAILED_NOTICE = 'Your last change could not be saved. Try again; if it keeps failing, check the disk and that the project file is still there.';
+const SET_POINTS_UNSAVED_CLOSE_NOTICE = 'Some set points could not be saved — the window stays open so nothing is lost. Close it again to leave without them.';
+const NO_PROJECT_FILE = 'The project file could not be found.';
+/** A failed broadcast is not a failed save: the write has already landed. */
+async function broadcastFailureGroups(payload: FailureGroupStateChangedPayload): Promise<void> {
+    try {
+        await emit('failure-group-state-changed', payload);
+    } catch (e) {
+        console.warn('Failed to broadcast failure-group state:', e);
+    }
+}
 /** The close notice while a running export is finished first (capped like Mark complete). */
 const EXPORT_CLOSE_WAIT_NOTICE = 'Finishing the export first — the window closes by itself when it is done (at most 90 s).';
 /** Mark complete, Compare predictors and the Re-train buttons while a training
@@ -647,6 +658,7 @@ export default function BuildModelWindow() {
      *  close attempt does not wait for it again. */
     const closeWaitGivenUpRef = useRef(false);
     const [closeNotice, setCloseNotice] = useState<string | null>(null);
+    const [saveFailed, setSaveFailed] = useState(false);
     /** The running Export results (its `start` promise), so a window close can wait for it. */
     const exportRunRef = useRef<Promise<unknown> | null>(null);
     /** Cancels the running export (a close that gave up waiting). */
@@ -783,12 +795,28 @@ export default function BuildModelWindow() {
     // currently holds before actually letting the window close.
     const pendingSaveRef = useRef<Promise<void> | null>(null);
     const trackPending = useCallback((p: Promise<void>): Promise<void> => {
-        const tracked = p.finally(() => {
-            if (pendingSaveRef.current === tracked) pendingSaveRef.current = null;
+        // What a close waits for never rejects; the caller still sees the failure.
+        const settled: Promise<void> = p.catch(() => {}).then(() => {
+            if (pendingSaveRef.current === settled) pendingSaveRef.current = null;
         });
-        pendingSaveRef.current = tracked;
-        return tracked;
+        pendingSaveRef.current = settled;
+        return p;
     }, []);
+    /** A tracked write that answers whether it reached the disk, and says so on screen when not. */
+    const savedOk = useCallback((p: Promise<void>): Promise<boolean> => {
+        const ws = workspaceIdRef.current;
+        return trackPending(p).then(
+            () => {
+                if (workspaceIdRef.current === ws && Object.keys(spDraftsRef.current).length === 0) setSaveFailed(false);
+                return true;
+            },
+            (e) => {
+                console.error('Could not save to the project file:', e);
+                if (workspaceIdRef.current === ws) setSaveFailed(true);
+                return false;
+            },
+        );
+    }, [trackPending]);
     // Mirrors the whole slice into local state — used by every path that
     // receives a fresh copy (hydration, broadcasts, our own writes).
     const applyFg = useCallback((fg: FailureGroupStateSlice | undefined | null) => {
@@ -837,6 +865,8 @@ export default function BuildModelWindow() {
      *  a window close waits for it. A draft is dropped once its write landed,
      *  unless the user typed something newer meanwhile. No draft = no write. */
     const spInflightRef = useRef<{ drafts: Record<string, HealthSetPoints>; promise: Promise<void> } | null>(null);
+    /** Set points failed to save and the user was told: the next close leaves without them. */
+    const leaveUnsavedRef = useRef(false);
     const commitSetPointDrafts = useCallback((): Promise<void> => {
         const ws = workspaceIdRef.current;
         const drafts = spDraftsRef.current;
@@ -852,6 +882,7 @@ export default function BuildModelWindow() {
                 for (const id of ids) {
                     const sp = drafts[id];
                     const next = await commitSetPoints(ws, id, sp, 'build-model');
+                    if (!next) throw new Error(NO_PROJECT_FILE);
                     // The window may have been re-pointed at another workspace meanwhile:
                     // the remaining drafts still belong to `ws` and are still written
                     // there; only this window's own state is left alone.
@@ -863,6 +894,14 @@ export default function BuildModelWindow() {
                         writeSpDrafts(rest);
                     }
                 }
+                if (workspaceIdRef.current === ws) {
+                    setSaveFailed(false);
+                    leaveUnsavedRef.current = false;
+                }
+            } catch (e) {
+                // Not saved: what is not written stays as a draft and goes again on the next commit.
+                console.error('Could not save set points:', e);
+                if (workspaceIdRef.current === ws) setSaveFailed(true);
             } finally {
                 if (spInflightRef.current === entry) spInflightRef.current = null;
             }
@@ -876,7 +915,7 @@ export default function BuildModelWindow() {
      *  so no path off this window can drop an edit made just before closing. A set-point draft that was typed
      *  but never blurred is committed first, so it is part of what is awaited. */
     const flushAllPending = useCallback(async (): Promise<boolean> => {
-        void commitSetPointDrafts();
+        if (!leaveUnsavedRef.current) void commitSetPointDrafts();
         // A running "Mark complete" (export + save) is waited for, so files that were
         // written always end with the status saved or a clear refusal — but never
         // forever: a hung sidecar makes the close wait give up once, with a message.
@@ -895,6 +934,11 @@ export default function BuildModelWindow() {
             }
         }
         if (pendingSaveRef.current) await pendingSaveRef.current;
+        if (!leaveUnsavedRef.current && !closeBypassRef.current && Object.keys(spDraftsRef.current).length > 0) {
+            leaveUnsavedRef.current = true;
+            setCloseNotice(SET_POINTS_UNSAVED_CLOSE_NOTICE);
+            return false;
+        }
         return true;
     }, [commitSetPointDrafts]);
 
@@ -1048,6 +1092,8 @@ export default function BuildModelWindow() {
                 closeBypassRef.current = false;
                 stopClosingRef.current = false;
                 setCloseNotice(null);
+                setSaveFailed(false);
+                leaveUnsavedRef.current = false;
                 // The run belonged to the old workspace: drop it (a train still in
                 // flight finishes, but its result is ignored — see `executeTrain`).
                 queueReset();
@@ -1179,9 +1225,9 @@ export default function BuildModelWindow() {
     // window close can await it) rather than being fire-and-forget itself.
     const persist = useCallback((
         updater: (models: FailureModel[], groups: FailureGroup[]) => { models: FailureModel[]; groups: FailureGroup[] },
-    ): Promise<void> => {
-        if (!workspaceId) return Promise.resolve();
-        return trackPending((async () => {
+    ): Promise<boolean> => {
+        if (!workspaceId) return Promise.resolve(false);
+        return savedOk((async () => {
             const next = await updateWorkspaceData(workspaceId, prev => {
                 const groups = prev.failureGroupState?.groups ?? [];
                 const models = prev.failureGroupState?.models ?? [];
@@ -1192,15 +1238,16 @@ export default function BuildModelWindow() {
                 // write changed goes back to Incomplete in the SAME write.
                 return applyIncompleteRule(prev, withFailureGroupState(prev, { groups: result.groups, models: result.models }));
             });
+            if (!next) throw new Error(NO_PROJECT_FILE);
             // Re-pointed at another workspace meanwhile: the write landed in ITS
             // workspace; this window now shows another one — touch nothing here.
             if (workspaceIdRef.current !== workspaceId) return;
             if (next?.failureGroupState) {
                 applyWritten(next);
-                await emit('failure-group-state-changed', { ...next.failureGroupState, workspaceId, origin: 'build-model' });
+                await broadcastFailureGroups({ ...next.failureGroupState, workspaceId, origin: 'build-model' });
             }
         })());
-    }, [workspaceId, applyWritten, trackPending]);
+    }, [workspaceId, applyWritten, savedOk]);
 
     // The one path that actually changes the workspace-wide running
     // condition — edited entirely from the "Running Condition Filter" modal
@@ -1213,9 +1260,9 @@ export default function BuildModelWindow() {
         periods?: TimePeriod[];
         allData?: boolean;
         testPeriods?: TestPeriod[];
-    }): Promise<void> => {
-        if (!workspaceId) return Promise.resolve();
-        return trackPending((async () => {
+    }): Promise<boolean> => {
+        if (!workspaceId) return Promise.resolve(false);
+        return savedOk((async () => {
             const next = await updateWorkspaceData(workspaceId, prev => {
                 const applied = withFailureGroupState(prev, {
                     ...(patch.filters !== undefined ? { runningConditionFilters: patch.filters } : {}),
@@ -1245,16 +1292,17 @@ export default function BuildModelWindow() {
                     })
                     : applied);
             });
+            if (!next) throw new Error(NO_PROJECT_FILE);
             // Re-pointed at another workspace meanwhile (same guard as `persist`): the
             // write landed in ITS workspace; this window now shows another one — never
             // put the old workspace's slice into this state, never broadcast it from here.
             if (workspaceIdRef.current !== workspaceId) return;
             if (next?.failureGroupState) {
                 applyWritten(next);
-                await emit('failure-group-state-changed', { ...next.failureGroupState, workspaceId, origin: 'build-model' });
+                await broadcastFailureGroups({ ...next.failureGroupState, workspaceId, origin: 'build-model' });
             }
         })());
-    }, [workspaceId, applyWritten, trackPending]);
+    }, [workspaceId, applyWritten, savedOk]);
 
     // ---- Running Condition modal: local draft + explicit Apply ----
     // Every edit in the modal lands in `rcDraft` only. Nothing is written to
@@ -1343,7 +1391,7 @@ export default function BuildModelWindow() {
         closeRc();
     }, [closeRc]);
 
-    const applyRcDraft = useCallback(() => {
+    const applyRcDraft = useCallback(async () => {
         // The click may land before the focused period date's blur (sort, and the
         // commit of a date still pending) has re-rendered; this forces it, and the
         // ref picks it up at once.
@@ -1375,16 +1423,10 @@ export default function BuildModelWindow() {
         // line next to Apply showed): kept for the notice under the running-condition
         // line. Models an earlier Apply of this session already sent back stay listed.
         const retrain = runningConditionImpact(gateFgRef.current, d, { recipes: specialRecipesRef.current ?? undefined }).retrainIds;
+        // The modal and its draft stay until the write has landed: a failed save leaves the
+        // draft to try again, and the card and gate on what is on disk.
+        if (!(await persistRunningCondition({ filters: d.filters, combine: d.combine, periods: d.periods, allData: d.allData, testPeriods: d.testPeriods }))) return;
         if (retrain.length > 0) setRcRetrainIds(prev => [...new Set([...prev, ...retrain])]);
-        // Optimistic local mirror (the persisted state vars) so the Step-1 card and
-        // the gate are right the moment the modal closes; the write's own
-        // `applyFg` then confirms it from disk.
-        setRunningConditionFilters(d.filters);
-        setRunningConditionCombine(d.combine);
-        setRunningConditionTimePeriods(d.periods);
-        setRunningConditionAllData(d.allData);
-        setRunningConditionTestPeriods(d.testPeriods);
-        void persistRunningCondition({ filters: d.filters, combine: d.combine, periods: d.periods, allData: d.allData, testPeriods: d.testPeriods });
         closeRc();
     }, [closeRc, persistRunningCondition]);
 
@@ -1787,21 +1829,23 @@ export default function BuildModelWindow() {
         return { ...base, ySensor: d.y, criteriaSensor: d.criteria, clusterRanges: d.criteria ? d.ranges : [], numClusters: d.numClusters };
     };
 
-    const commitModel = async (m: FailureModel) => {
+    const commitModel = async (m: FailureModel): Promise<boolean> => {
         // Saving is an action: the draft's data guards apply.
-        if (modelBlockReason(m, true) !== null) return;
+        if (modelBlockReason(m, true) !== null) return false;
         const d = draftOf(m);
         const fields = draftFields(m, d);
-        await persist((models, groups) => ({
+        const ok = await persist((models, groups) => ({
             groups,
             models: models.map(x => x.id === m.id ? { ...x, ...fields } : x),
         }));
+        if (!ok) return false;
         setDrafts(prev => {
             if (!(m.id in prev)) return prev;
             const rest = { ...prev };
             delete rest[m.id];
             return rest;
         });
+        return true;
     };
 
     /** The Custom running-condition editor's Workspace/Custom switch. Everything
@@ -1847,19 +1891,19 @@ export default function BuildModelWindow() {
     const changeCategory = async (key: string, cat: ModelCategory) => {
         if (sensorCategory(allModels, key) === cat) return;
         const groupNos = [...new Set(allModels.filter(m => modelSensorKey(m) === key).flatMap(m => m.groupNos))].sort((a, b) => a - b);
-        await persist((models, groups) => ({ groups, models: setSensorCategory(models, key, cat) }));
+        if (!(await persist((models, groups) => ({ groups, models: setSensorCategory(models, key, cat) })))) return;
         setCategoryWarn(groupNos.length > 1
             ? { key, text: `Category applies to this sensor in every failure group: ${groupNos.map(n => n === 0 ? 'Not in Group' : `FG-${n}`).join(', ')}.` }
             : null);
     };
 
-    const dismissCategoryNotice = (): Promise<void> => {
-        if (!workspaceId) return Promise.resolve();
-        return trackPending((async () => {
+    const dismissCategoryNotice = (): Promise<boolean> => {
+        if (!workspaceId) return Promise.resolve(false);
+        return savedOk((async () => {
             const next = await updateWorkspaceData(workspaceId, prev => withFailureGroupState(prev, { categoryNormalisationNotice: null }));
             if (next?.failureGroupState) {
                 applyWritten(next);
-                await emit('failure-group-state-changed', { ...next.failureGroupState, workspaceId, origin: 'build-model' });
+                await broadcastFailureGroups({ ...next.failureGroupState, workspaceId, origin: 'build-model' });
             }
         })());
     };
@@ -2099,7 +2143,7 @@ export default function BuildModelWindow() {
                 // An explicit train: a later NOT_FITTED of this model may be re-fitted
                 // automatically again.
                 for (const k of [...refitTriedRef.current]) if (k.startsWith(`${id}::`)) refitTriedRef.current.delete(k);
-                await persist((models, groups) => ({
+                const metaSaved = await persist((models, groups) => ({
                     groups,
                     // `status: false` too: a (re-)train always lands the model in
                     // Incomplete/Trained — an old-data Complete model that was out of date
@@ -2114,6 +2158,7 @@ export default function BuildModelWindow() {
                         return { ...rest, status: false, lastTrainedAt: new Date().toISOString(), trainedFingerprint: fingerprint };
                     }),
                 }));
+                if (!metaSaved) throw new Error(SAVE_FAILED_NOTICE);
             }
             return { ok: true };
         } catch (e) {
@@ -2184,7 +2229,7 @@ export default function BuildModelWindow() {
         if (saveInfo[m.id]?.phase === 'error') dismissSaveInfo(m.id);
         const hasDraft = m.id in drafts;
         const merged = effectiveModelFor(m); // = m untouched when no draft is pending
-        if (hasDraft) await commitModel(m);
+        if (hasDraft && !(await commitModel(m))) return { ok: false, skip: SAVE_FAILED_NOTICE };
         if (workspaceIdRef.current !== ws) return { ok: false, abandoned: true };
         return executeTrain(merged, computeTrainFingerprint(merged, gateFg), { persistMeta: true });
     };
@@ -2365,7 +2410,7 @@ export default function BuildModelWindow() {
         };
         const exec = async (): Promise<string | null> => {
             try {
-                if (hasDraft) await commitModel(m);
+                if (hasDraft && !(await commitModel(m))) return fail(SAVE_FAILED_NOTICE);
                 const sp = setPointsOf(m);
                 const res = await checkModelForComplete({
                     model,
@@ -2493,7 +2538,7 @@ export default function BuildModelWindow() {
             }
             flushFocusedInput();
             // A set-point draft typed but never blurred is a pending write too.
-            void commitSetPointDrafts();
+            if (!leaveUnsavedRef.current) void commitSetPointDrafts();
             const pending = pendingSaveRef.current;
             // A running "Mark complete" (export + save) counts as pending too, and so does
             // a running Export results.
@@ -2742,7 +2787,7 @@ export default function BuildModelWindow() {
         // what is on disk (an unseeded Individual model previews its master prefill).
         if (!healthReady || healthPreview.loading || healthPreview.error || activeHasDraft) return;
         if (!sameSetPoints(activeModel.healthSetPoints, persistedSetPointsOf(activeModel))) return;
-        void trackPending((async () => {
+        void savedOk((async () => {
             const next = await commitHealthVerdict(ws, activeModel.id, verdictToPersist, 'build-model');
             if (workspaceIdRef.current === ws) applyWritten(next);
         })());
@@ -5083,12 +5128,12 @@ export default function BuildModelWindow() {
     const dismissConversion = () => {
         if (!workspaceId) return;
         setRcConversion(null);
-        void trackPending((async () => {
+        void savedOk((async () => {
             const next = await updateWorkspaceData(workspaceId, prev => withFailureGroupState(prev, { runningConditionConversion: null }));
             if (workspaceIdRef.current !== workspaceId) return;
             if (next?.failureGroupState) {
                 applyWritten(next);
-                await emit('failure-group-state-changed', { ...next.failureGroupState, workspaceId, origin: 'build-model' });
+                await broadcastFailureGroups({ ...next.failureGroupState, workspaceId, origin: 'build-model' });
             }
         })());
     };
@@ -5159,6 +5204,14 @@ export default function BuildModelWindow() {
                     <X size={14} />
                 </button>
             </div>
+
+            {saveFailed && (
+                <div className="wb2-stale" role="alert" data-testid="save-failed-notice" style={{ margin: '8px 16px 0', position: 'relative', zIndex: 2000 }}>
+                    <span>{SAVE_FAILED_NOTICE}</span>
+                    <span className="wb2-sp" />
+                    <button type="button" className="rcx-btn rcx-btn--sm" onClick={() => setSaveFailed(false)}>Dismiss</button>
+                </div>
+            )}
 
             {closeNotice && (
                 <div className="wb2-stale" role="alert" data-testid="close-wait-notice" style={{ margin: '8px 16px 0' }}>
@@ -5474,9 +5527,12 @@ export default function BuildModelWindow() {
                     onOpenRunningCondition={() => { setExportOpen(false); setRcFilterOpen(true); }}
                     sensors={allSensors}
                     getComponent={getComponent}
-                    onSaveRunningStatus={(sensor, value) => persistRunningCondition({
-                        filters: [{ id: runningConditionFilters[0]?.id ?? `rcf-${Date.now()}`, sensor, operation: 'greater_than', value1: value, value2: '' }],
-                    })}
+                    onSaveRunningStatus={async (sensor, value) => {
+                        const ok = await persistRunningCondition({
+                            filters: [{ id: runningConditionFilters[0]?.id ?? `rcf-${Date.now()}`, sensor, operation: 'greater_than', value1: value, value2: '' }],
+                        });
+                        if (!ok) throw new Error(SAVE_FAILED_NOTICE);
+                    }}
                 />
             )}
             {/* After the Export dialog, so it sits on top of it (Esc closes only this one). */}

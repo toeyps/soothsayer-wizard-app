@@ -1151,9 +1151,7 @@ impl ResolvedFilter {
             .value_filters
             .iter()
             .filter_map(|vf| {
-                headers
-                    .iter()
-                    .position(|h| h == &vf.sensor)
+                resolve_sensor(headers, &vf.sensor)
                     .map(|idx| ResolvedValueFilter {
                         sensor_idx: idx,
                         operation: vf.operation.clone(),
@@ -1310,6 +1308,25 @@ mod resolved_filter_tests {
         };
         let resolved = ResolvedFilter::resolve(Some(&filter), &data.headers).unwrap();
         assert!(resolved.keeps(&data, 3)); // A=4.0 > 0, no timestamp gate active
+    }
+
+    #[test]
+    fn value_filter_sensor_matches_ignoring_case_and_spaces_like_the_gate() {
+        let data = dataset();
+        let filter = PreviewFilter {
+            timestamp_start: None,
+            timestamp_end: None,
+            value_filters: vec![PreviewValueFilter {
+                sensor: " a ".into(),
+                operation: "greater_than".into(),
+                value1: Some(1000.0),
+                value2: None,
+            }],
+            ..Default::default()
+        };
+        let resolved = ResolvedFilter::resolve(Some(&filter), &data.headers).unwrap();
+        assert!(!resolved.is_noop());
+        assert!(!resolved.keeps(&data, 3)); // the condition applies: A=4.0 is not above 1000
     }
 
     #[test]

@@ -819,9 +819,15 @@ function RunningStatusLine({ it, unitOf, onOpenRunningCondition, sensors, getCom
     const unit = s ? unitOf(s.sensor) : '';
     const [changing, setChanging] = useState(false);
     const editing = !!it.allData && (!s || changing);
+    const [saveError, setSaveError] = useState<string | null>(null);
     const save = async (sensor: string, value: string) => {
-        await onSaveRunningStatus(sensor, value);
-        setChanging(false);
+        try {
+            await onSaveRunningStatus(sensor, value);
+            setSaveError(null);
+            setChanging(false);
+        } catch (e) {
+            setSaveError(e instanceof Error ? e.message : String(e));
+        }
     };
     const need = 'The customer\'s monitoring system needs one sensor and the value at or below which the machine counts as stopped.';
     return (
@@ -837,7 +843,12 @@ function RunningStatusLine({ it, unitOf, onOpenRunningCondition, sensors, getCom
             fix={!it.allData
                 ? { label: 'Open running condition', run: onOpenRunningCondition }
                 : s ? { label: changing ? 'Keep' : 'Change', run: () => setChanging(c => !c) } : undefined}
-            below={editing && <RunningStatusEditor status={s} sensors={sensors} getComponent={getComponent} unitOf={unitOf} onSave={save} />}
+            below={editing && (
+                <>
+                    <RunningStatusEditor status={s} sensors={sensors} getComponent={getComponent} unitOf={unitOf} onSave={save} />
+                    {saveError && <div role="alert" data-testid="running-save-error" className="wbx-msg-s">{saveError}</div>}
+                </>
+            )}
         />
     );
 }
