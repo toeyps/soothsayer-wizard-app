@@ -601,7 +601,7 @@ export default function MachineMorphCanvas({ variant = 'hero', className, style 
             pointerEvents: 'none',
           }}
         >
-          <b style={{ fontWeight: 500, color: INK_MUTED, marginRight: 6 }}>Works with any machine that has sensors</b>
+          <b style={{ fontWeight: 400, color: INK_MUTED, marginRight: 6 }}>Works with any machine that has sensors</b>
           {/* The bar lets a drag through to the canvas; only its controls take the pointer. */}
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, pointerEvents: 'auto' }}>
             <button type="button" className="machine-nav-btn" aria-label="Previous machine" title="Previous machine" onClick={() => stepMachine(-1)}>
@@ -647,7 +647,7 @@ export default function MachineMorphCanvas({ variant = 'hero', className, style 
             ))}
           </span>
           {/* --text-secondary so the required "simulated" label is legible. */}
-          <span style={{ marginLeft: 'auto', font: `10.5px ${FONT_MONO}`, color: INK_MUTED }}>Illustration · simulated readings</span>
+          <span style={{ marginLeft: 'auto', font: `12px ${FONT_MONO}`, color: INK_MUTED }}>Illustration · simulated readings</span>
         </div>
       )}
     </div>

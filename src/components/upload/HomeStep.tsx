@@ -250,8 +250,8 @@ export default function HomeStep({
           ) : null}
         </section>
 
-        <div style={{ marginTop: 16, display: 'flex', gap: 14, fontFamily: mono, fontSize: 11, color: T.textFaint }}>
-          {version && <span style={{ fontSize: 13, fontWeight: 600, color: T.textMuted }}>v{version}</span>}
+        <div data-testid="home-footer" style={{ marginTop: 16, display: 'flex', gap: 14, fontFamily: mono, fontSize: 12, color: T.textMuted }}>
+          {version && <span>v{version}</span>}
           <span>Data stays on this machine</span>
         </div>
       </div>
@@ -259,12 +259,12 @@ export default function HomeStep({
       {/* ---------------- Right: illustration ---------------- */}
       <div
         style={{
-          position: 'relative', minWidth: 0, minHeight: 0, padding: '28px 28px 22px 0',
+          position: 'relative', minWidth: 0, minHeight: 0, padding: '28px 28px 0 0',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           background: `radial-gradient(ellipse at 50% 42%, ${T.accentMuted}, transparent 66%)`,
         }}
       >
-        <div style={{ width: '100%', height: '100%', maxWidth: 940, maxHeight: 780, minHeight: 360, position: 'relative' }}>
+        <div style={{ width: '100%', height: '100%', maxWidth: 940, minHeight: 360, position: 'relative' }}>
           <MachineMorphCanvas variant="hero" />
         </div>
       </div>

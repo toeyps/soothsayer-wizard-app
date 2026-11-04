@@ -2195,7 +2195,10 @@ describe('L. Get started page (step 0)', () => {
     it('L2. footer shows the app version and the privacy line', async () => {
       renderPage();
       await waitFor(() => expect(screen.getByText('v9.8.7')).toBeTruthy());
-      expect(screen.getByText('v9.8.7').style.fontSize).toBe('13px');
+      // Both texts take size and colour from the one row, so they always match.
+      expect(screen.getByText('v9.8.7').getAttribute('style')).toBeNull();
+      expect(screen.getByText('Data stays on this machine').getAttribute('style')).toBeNull();
+      expect(screen.getByTestId('home-footer').style.fontSize).toBe('12px');
       expect(screen.getByText('Data stays on this machine')).toBeTruthy();
     });
 
