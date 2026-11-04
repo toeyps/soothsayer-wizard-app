@@ -355,19 +355,17 @@ fn files_whose_day_month_orders_differ_are_each_read_their_own_way() {
     assert_eq!(m.data.columns[2], vec![10.0, 20.0]);
 }
 
-/// Documented limitation (Import page note, 2026-10-15): files are merged on
-/// the timestamp TEXT. A non-ISO file is rewritten to `YYYY-MM-DD HH:MM:SS`,
-/// but an ISO file without seconds or with a `T` is left as written, so the
-/// same moment from the two files stays two rows. Pinned so a change is
-/// deliberate; see the QA report.
+/// Files merge on the parsed instant, so an ISO file without seconds meets a
+/// rewritten non-ISO file on one row.
 #[test]
-fn an_iso_file_without_seconds_and_a_rewritten_file_keep_the_same_moment_twice() {
+fn an_iso_file_without_seconds_and_a_rewritten_file_merge_the_same_moment() {
     let (m, _) = load(&[
         ("us.csv", "timestamp,A\n1/13/2026 0:00,1\n"),
         ("iso.csv", "timestamp,B\n2026-01-13 00:00,10\n"),
     ]);
-    assert_eq!(m.data.n_rows(), 2, "{:?}", texts(&m));
-    assert_eq!(m.data.ts_parsed[0], m.data.ts_parsed[1], "same instant, two rows");
+    assert_eq!(texts(&m), vec!["2026-01-13 00:00:00"]);
+    assert_eq!(m.data.columns[1], vec![1.0]);
+    assert_eq!(m.data.columns[2], vec![10.0]);
 }
 
 // ── Header clean-up: mapping and metadata CSVs ─────────────────────────────
@@ -465,13 +463,8 @@ fn an_impossible_iso_date_is_counted_like_any_unreadable_row() {
     assert!(unreadable_line(&r).is_some(), "{:?}", r.warnings);
 }
 
-/// Coordinator finding 2026-10-19: a column written twice INSIDE one file must
-/// be reported (csv_processor.rs's own comment: "A column that appears twice
-/// INSIDE one file is still reported"), but the check only runs for 2+ files
-/// (`if paths.len() > 1`), so a single-file import is silent and the dataset
-/// keeps two `FLOW_A` headers.
+/// A column written twice INSIDE one file is reported and kept as one column.
 #[test]
-#[ignore = "QA finding 2026-10-19: a duplicate column inside a SINGLE file gives no warning"]
 fn a_column_twice_in_a_single_file_is_reported() {
     let (m, r) = load(&[("one.csv", "Timestamp,FLOW_A,FLOW_A\n2026-01-01 00:00:00,1,2\n")]);
     assert_eq!(
