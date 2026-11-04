@@ -1,7 +1,7 @@
 import { FailureModel, SpecialSensorRecipe } from '../types';
 import {
     buildSpecialSensorUsage, cycleConflicts, dependentsToRecompute, describeEditLock,
-    EditLock, orderRecipesByDependency, usageFor,
+    EditLock, orderRecipesByDependency, SensorLabelOf, usageFor,
 } from './specialSensorDeps';
 import { recomputeCall, recomputeSpecialSensors, Invoker } from './specialSensorRecompute';
 import { renameTagInRecipes } from './specialSensorRename';
@@ -75,6 +75,9 @@ export interface EditArgs {
      * Never combined with a rename.
      */
     repair?: { missingBefore: string[] };
+    /** How error messages name a sensor. Include `next`'s own metadata, it may
+     *  be new. Default: the tag. */
+    labelOf?: SensorLabelOf;
 }
 
 export interface EditOutcome {
@@ -189,6 +192,7 @@ function nextRefsOrSources(recipe: SpecialSensorRecipe, refsByTag: Map<string, s
 
 export async function runSpecialSensorEdit(args: EditArgs): Promise<EditOutcome> {
     const { recipes, next, oldTag, invoker, failureState, repair } = args;
+    const labelOf: SensorLabelOf = args.labelOf ?? (tag => tag);
     if (repair && oldTag) throw new Error("A sensor that could not be restored can't be renamed while it is being fixed.");
     const newTag = next.tag;
     const identityTag = oldTag ?? next.tag;
@@ -246,11 +250,11 @@ export async function runSpecialSensorEdit(args: EditArgs): Promise<EditOutcome>
                 const what = renaming ? 'rename' : 'change the formula, operation or sources of';
                 const why = lock.unknown
                     ? `couldn't check whether a model uses it${failureState.reason ? ` (${failureState.reason})` : ''} — try again in a moment`
-                    : describeEditLock(lock);
+                    : describeEditLock(lock, labelOf);
                 throw new SpecialSensorLockedError(
                     lock.unknown
-                        ? `Can't ${what} "${originalEdited.tag}" right now: ${why}.`
-                        : `Can't ${what} "${originalEdited.tag}". ${why} (Its description, unit and component can still be edited.)`,
+                        ? `Can't ${what} "${labelOf(originalEdited.tag)}" right now: ${why}.`
+                        : `Can't ${what} "${labelOf(originalEdited.tag)}". ${why} (Its description, unit and component can still be edited.)`,
                     lock,
                 );
             }
@@ -268,7 +272,7 @@ export async function runSpecialSensorEdit(args: EditArgs): Promise<EditOutcome>
 
     const conflicts = cycleConflicts(recipes, usage, identityTag, nextInputs);
     if (conflicts.length > 0) {
-        throw new Error(`"${next.tag}" can't be built from ${conflicts.join(', ')} — that would make it depend on itself.`);
+        throw new Error(`"${labelOf(next.tag)}" can't be built from ${conflicts.map(c => labelOf(c)).join(', ')} — that would make it depend on itself.`);
     }
 
     // Build order, whatever order the stored list happens to be in.
@@ -285,9 +289,9 @@ export async function runSpecialSensorEdit(args: EditArgs): Promise<EditOutcome>
     let stillBroken: Array<{ tag: string; reason: string }> | undefined;
     try {
         if (repair) {
-            stillBroken = await recomputeForRepair(next, renamedDownstream, repair, inputsOfStored, invoker, r => done.push(r));
+            stillBroken = await recomputeForRepair(next, renamedDownstream, repair, inputsOfStored, invoker, r => done.push(r), labelOf);
         } else {
-            await recomputeSpecialSensors([next, ...renamedDownstream], invoker, r => done.push(r));
+            await recomputeSpecialSensors([next, ...renamedDownstream], invoker, r => done.push(r), labelOf);
         }
     } catch (err) {
         // The session is no longer this edit's (stale generation, or the window
@@ -383,15 +387,16 @@ async function recomputeForRepair(
     inputsOf: (r: SpecialSensorRecipe) => string[],
     invoker: Invoker,
     onRecomputed: (r: SpecialSensorRecipe) => void,
+    labelOf: SensorLabelOf,
 ): Promise<Array<{ tag: string; reason: string }>> {
-    await recomputeSpecialSensors([next], invoker, onRecomputed);
+    await recomputeSpecialSensors([next], invoker, onRecomputed, labelOf);
     const hadNoColumn = new Set(repair.missingBefore.map(key));
     const broken = new Map<string, string>(); // key -> tag as written
     const stillBroken: Array<{ tag: string; reason: string }> = [];
     for (const recipe of downstream) {
         const blockedBy = inputsOf(recipe).find(input => broken.has(key(input)));
         if (blockedBy !== undefined && hadNoColumn.has(key(recipe.tag))) {
-            stillBroken.push({ tag: recipe.tag, reason: `built on "${broken.get(key(blockedBy))}", which still needs fixing` });
+            stillBroken.push({ tag: recipe.tag, reason: `built on "${labelOf(broken.get(key(blockedBy)) ?? blockedBy)}", which still needs fixing` });
             broken.set(key(recipe.tag), recipe.tag);
             continue;
         }
@@ -402,7 +407,7 @@ async function recomputeForRepair(
         } catch (err) {
             if (isSessionLostError(err)) throw err;
             if (!hadNoColumn.has(key(recipe.tag))) {
-                const failure = new Error(`Could not recompute "${recipe.tag}": ${String(err)}`);
+                const failure = new Error(`Could not recompute "${labelOf(recipe.tag)}": ${String(err)}`);
                 (failure as Error & { cause?: unknown }).cause = err;
                 throw failure;
             }

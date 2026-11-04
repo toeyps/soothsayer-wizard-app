@@ -72,6 +72,12 @@ describe('recomputeSpecialSensors', () => {
         expect(invoker).toHaveBeenCalledTimes(1);
     });
 
+    it('names the failed sensor through labelOf, description first', async () => {
+        const invoker = vi.fn(async () => { throw 'boom'; });
+        await expect(recomputeSpecialSensors([formula], invoker, undefined, t => `Pump power · ${t}`))
+            .rejects.toThrow('Could not recompute "Pump power · CALC1": boom');
+    });
+
     it('does nothing for an empty list', async () => {
         const invoker = vi.fn();
         await recomputeSpecialSensors([], invoker);

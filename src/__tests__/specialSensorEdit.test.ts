@@ -494,3 +494,51 @@ describe('runSpecialSensorEdit -- repair mode', () => {
         expect(rust.calls.filter(c => c.args?.replace)).toHaveLength(0);
     });
 });
+
+describe('runSpecialSensorEdit -- messages name a sensor description first', () => {
+    const labelOf = (t: string) => `Desc ${t} · ${t}`;
+
+    it('a failed downstream recompute', async () => {
+        const rust = await session(CHAIN);
+        rust.failOn('calculate_new_sensor', a => a.config.customName === 'C', 'injected');
+        const err = await run(rust, { recipes: CHAIN, next: F('A', '$TAG1 * 3'), labelOf }).catch(e => e);
+        expect((err as Error).message).toMatch(/Could not recompute "Desc C · C"/);
+    });
+
+    it('a failed recompute in repair mode, and the sensor built on a still-broken one', async () => {
+        const badA = F('A', 'round($TAG1, 2)');
+        const badB = F('B', 'round(${A}, 2)');
+        const onB = F('C', '${B} + 1');
+        const repaired = await run(await session([]), {
+            recipes: [badA, badB, onB], next: F('A', '$TAG1 * 3'), repair: { missingBefore: ['A', 'B', 'C'] }, labelOf,
+        });
+        expect(repaired.stillBroken?.[1].reason).toBe('built on "Desc B · B", which still needs fixing');
+
+        // B had a column before the edit, so its failure is fatal.
+        const rust = await session([F('B', '$TAG3 + 1')]);
+        rust.failOn('evaluate_formula', a => a.customName === 'B', 'injected');
+        const err = await run(rust, {
+            recipes: [badA, F('B', '${A} + 1')], next: F('A', '$TAG1 * 3'), repair: { missingBefore: ['A'] }, labelOf,
+        }).catch(e => e);
+        expect((err as Error).message).toMatch(/Could not recompute "Desc B · B"/);
+    });
+
+    it('a refused edit of a locked sensor, including the sensor it is locked through', async () => {
+        const rust = await session(CHAIN);
+        const failureState: EditFailureState = {
+            known: true, runningConditionFilters: [],
+            models: [mk({ id: 'm1', name: 'Uses B', targetSensor: 'B' })],
+        };
+        const err = await run(rust, { recipes: CHAIN, next: F('A', '$TAG1 * 3'), failureState, labelOf }).catch(e => e);
+        expect(err).toBeInstanceOf(SpecialSensorLockedError);
+        expect((err as Error).message).toMatch(/Can't change the formula, operation or sources of "Desc A · A"\./);
+        expect((err as Error).message).toMatch(/Built on by "Desc B · B", which is used by/);
+    });
+
+    it('a refused cycle names both sides', async () => {
+        const recipes = [F('A', '$C * 2'), F('C', '$TAG3 + 1')];
+        const rust = await session([recipes[1], recipes[0]]);
+        await expect(run(rust, { recipes, next: F('C', '$A + 1'), labelOf }))
+            .rejects.toThrow('"Desc C · C" can\'t be built from Desc A · A — that would make it depend on itself.');
+    });
+});

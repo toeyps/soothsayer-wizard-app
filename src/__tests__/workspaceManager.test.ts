@@ -326,11 +326,23 @@ describe('saveWorkspaceData', () => {
         expect(saved[12].id).toBe('old-0');
     });
 
-    it('does not throw when the write fails', async () => {
+    it('rejects when the write fails, so a new project cannot look saved, and adds nothing to Recents', async () => {
         mockStoreGet.mockResolvedValue([]);
-        mockWriteTextFile.mockRejectedValueOnce(new Error('disk full'));
+        mockWriteTextFile.mockRejectedValue(new Error('disk full'));
         const { saveWorkspaceData } = await freshModule();
-        await expect(saveWorkspaceData(state)).resolves.toBeUndefined();
+        await expect(saveWorkspaceData(state)).rejects.toThrow('disk full');
+        expect(mockStoreSet).not.toHaveBeenCalled();
+    });
+
+    it('a failed save does not block the next queued save', async () => {
+        mockStoreGet.mockResolvedValue([]);
+        // Twice: the temp-file write, then its direct-write fallback.
+        mockWriteTextFile.mockRejectedValueOnce(new Error('disk full')).mockRejectedValueOnce(new Error('disk full'));
+        const { saveWorkspaceData } = await freshModule();
+        const first = saveWorkspaceData(state);
+        const second = saveWorkspaceData(state);
+        await expect(first).rejects.toThrow('disk full');
+        await expect(second).resolves.toBeUndefined();
     });
 
     it('serializes concurrent saves in strict FIFO order -- none dropped (regression: an earlier "single-slot queue" design coalesced concurrent saves down to just the last one, which was safe for saveWorkspaceData alone but caused real data loss once updateWorkspaceData started sharing the same queue for its read-modify-write -- see workspaceManager.ts\'s comment on `enqueue`)', async () => {
@@ -725,14 +737,11 @@ describe('saveWorkspaceFrom failures', () => {
         mockReadTextFile.mockResolvedValue(JSON.stringify({ id: 'ws1', name: 'A' }));
     };
 
-    it('rejects when the write fails (temp file and direct write), unlike saveWorkspaceData', async () => {
+    it('rejects when the write fails (temp file and direct write)', async () => {
         readable();
         mockWriteTextFile.mockRejectedValue(new Error('disk full'));
-        const { saveWorkspaceFrom, saveWorkspaceData } = await freshModule();
+        const { saveWorkspaceFrom } = await freshModule();
         await expect(saveWorkspaceFrom('ws1', d => d)).rejects.toThrow('disk full');
-        const err = vi.spyOn(console, 'error').mockImplementation(() => {});
-        await expect(saveWorkspaceData({ id: 'ws1' } as any)).resolves.toBeUndefined();
-        err.mockRestore();
         mockWriteTextFile.mockReset();
         mockWriteTextFile.mockResolvedValue(undefined);
     });
@@ -756,6 +765,36 @@ describe('saveWorkspaceFrom failures', () => {
 });
 
 describe('updateWorkspaceData', () => {
+    it('normalizeConditionSpelling as its patch: one write that also demotes the Complete model; a second run writes nothing', async () => {
+        const { normalizeConditionSpelling } = await import('../utils/workspaceMigrations');
+        const { computeTrainFingerprint } = await import('../utils/trainFingerprint');
+        const cond = { id: 'c', sensor: 'temp a', operation: 'greater_than' as const, value1: '5', value2: '' };
+        const fg: any = { runningConditionFilters: [cond], runningConditionTimePeriods: [{ id: 'p', start: '', end: '' }], runningConditionConversion: null };
+        const model: any = {
+            id: 'm', kind: 'individual', groupNos: [1], status: true, targetSensor: 'Flow', predictorSensors: [],
+            runningConditionMode: 'workspace', customRunningConditionFilters: [], lastTrainedAt: '2026-10-01T00:00:00Z',
+        };
+        model.trainedFingerprint = computeTrainFingerprint(model, fg);
+        const files = new Map<string, string>([['workspaces/ws1.json', JSON.stringify({ id: 'ws1', name: 'A', failureGroupState: { groups: [], models: [model], ...fg } })]]);
+        mockStoreGet.mockResolvedValue([]);
+        mockExists.mockImplementation(async (p: string) => files.has(p) || p === 'workspaces');
+        mockReadTextFile.mockImplementation(async (p: string) => files.get(p) ?? '');
+        mockWriteTextFile.mockImplementation(async (p: string, c: string) => { files.set(p, c); });
+        mockRename.mockImplementation(async (a: string, b: string) => { files.set(b, files.get(a) ?? ''); files.delete(a); });
+        const { updateWorkspaceData } = await freshModule();
+        const patch = (s: any) => normalizeConditionSpelling(s, ['timestamp', 'Temp A', 'Flow']);
+
+        await updateWorkspaceData('ws1', patch);
+        const onDisk = JSON.parse(files.get('workspaces/ws1.json')!);
+        expect(onDisk.failureGroupState.runningConditionFilters[0].sensor).toBe('Temp A');
+        expect(onDisk.failureGroupState.models[0].status).toBe(false);
+        expect(onDisk.failureGroupState.models[0].trainedFingerprint).toBe(model.trainedFingerprint);
+
+        mockRename.mockClear();
+        await updateWorkspaceData('ws1', patch);
+        expect(mockRename).not.toHaveBeenCalled();
+    });
+
     it('rejects when the write fails, so a caller never takes it for saved', async () => {
         mockExists.mockResolvedValue(true);
         mockReadTextFile.mockResolvedValue(JSON.stringify({ id: 'ws1', name: 'A' }));

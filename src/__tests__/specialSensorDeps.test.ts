@@ -556,6 +556,18 @@ describe('describeEditLock -- wording', () => {
         expect(msg).toMatch(/Used by 1 model: Untitled model \(Individual\) and the running condition\./);
         expect(msg).toMatch(/from those models and the running condition first/);
     });
+
+    it('names a downstream sensor through labelOf, description first, in both of its sentences', () => {
+        const usage = buildSpecialSensorUsage({
+            recipes: [A, formula('B', '${GENERATOR ACTIVE POWER} + 1')],
+            formulaRefs: new Map([['generator active power', ['RAW.PV']], ['b', ['GENERATOR ACTIVE POWER']]]),
+            models: [makeModel({ id: 'm1', name: 'Uses B', targetSensor: 'B' })],
+            selectedSensors: [],
+        });
+        const msg = describeEditLock(usage.get('generator active power')!.editLock, t => (t === 'B' ? 'Pump power · B' : t));
+        expect(msg).toContain('Built on by "Pump power · B", which is used by');
+        expect(msg).toContain('Remove "Pump power · B" from those models first');
+    });
 });
 
 // Which special sensors have no column in the session,

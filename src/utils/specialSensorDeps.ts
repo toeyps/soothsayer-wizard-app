@@ -283,6 +283,10 @@ function isUsed(src: EditLockSource): boolean {
     return src.models.length > 0 || src.runningCondition;
 }
 
+/** How a message prints a sensor: description first, then tag. A caller with
+ *  sensor metadata passes `tag => sensorPlainLabel(lookup(tag))`. */
+export type SensorLabelOf = (tag: string) => string;
+
 /** The kind names of the lock sentence — the app-wide ones ("Relation model"). */
 const KIND_LABEL = MODEL_KIND_LABEL;
 
@@ -319,7 +323,7 @@ function describeSource(src: EditLockSource): string {
  * shown in Manage and used as the refusal message of a refused edit.
  * Empty string when the sensor is not locked.
  */
-export function describeEditLock(lock: EditLock): string {
+export function describeEditLock(lock: EditLock, labelOf: SensorLabelOf = tag => tag): string {
     if (!lock.locked) return '';
     if (lock.unknown) {
         return 'Still checking what uses this sensor, so its name, formula and sources are held back for now.';
@@ -327,11 +331,11 @@ export function describeEditLock(lock: EditLock): string {
     const sentences: string[] = [];
     if (isUsed(lock.direct)) sentences.push(`Used by ${describeSource(lock.direct)}.`);
     for (const v of lock.via) {
-        sentences.push(`Built on by "${v.tag}", which is used by ${describeSource(v)}.`);
+        sentences.push(`Built on by "${labelOf(v.tag)}", which is used by ${describeSource(v)}.`);
     }
     const subjects: string[] = [];
     if (isUsed(lock.direct)) subjects.push('it');
-    for (const v of lock.via) subjects.push(`"${v.tag}"`);
+    for (const v of lock.via) subjects.push(`"${labelOf(v.tag)}"`);
     const all = [lock.direct, ...lock.via];
     const hasModels = all.some(s => s.models.length > 0);
     const hasRc = all.some(s => s.runningCondition);

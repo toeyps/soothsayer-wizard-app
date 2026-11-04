@@ -3,6 +3,7 @@ import { withFailureGroupState } from './failureGroupState';
 import { ensureHealthSetPoints } from './healthSetPoints';
 import { normalizeSensorCategories } from './modelGrouping';
 import { isCompleteCondition } from './runningCondition';
+import { normalizeSensorTag } from '../hooks/useSensorMetaMap';
 
 /*
  * Workspace migrations (`migrateHealthSetPoints` and `migrateSingleRunningCondition` are run by
@@ -250,6 +251,53 @@ export function migrateSingleRunningCondition(state: WorkspaceState): WorkspaceS
                 customModels,
             };
         }
+    }
+    return Object.keys(patch).length ? withFailureGroupState(state, patch) : state;
+}
+
+/**
+ * Rewrites running conditions to the exact header spelling, for models trained
+ * while Rust ignored a condition spelled differently (it used all rows). The
+ * train fingerprint holds the sensor text, so through `applyIncompleteRule` such
+ * a model reads as stale and a Complete one goes Incomplete. Matches like Rust's
+ * `resolve_sensor`: exact first, then the first trimmed, case-insensitive header.
+ * Needs the session's headers, so it cannot run on the read path. Idempotent;
+ * nothing to do returns the SAME state object.
+ */
+export function normalizeConditionSpelling(state: WorkspaceState, headers: readonly string[]): WorkspaceState {
+    const fg = state.failureGroupState;
+    if (!fg) return state;
+    const exact = new Set(headers);
+    const byKey = new Map<string, string>();
+    for (const h of headers) {
+        const k = normalizeSensorTag(h);
+        if (!byKey.has(k)) byKey.set(k, h);
+    }
+    const respell = <T extends WorkspaceSensorFilter[] | undefined>(filters: T): T => {
+        if (!Array.isArray(filters)) return filters;
+        let changed = false;
+        const out = filters.map((f) => {
+            if (typeof f?.sensor !== 'string' || !f.sensor.trim() || exact.has(f.sensor)) return f;
+            const header = byKey.get(normalizeSensorTag(f.sensor));
+            if (header === undefined) return f;
+            changed = true;
+            return { ...f, sensor: header };
+        });
+        return (changed ? out : filters) as T;
+    };
+
+    const patch: Partial<FailureGroupStateSlice> = {};
+    const workspace = respell(fg.runningConditionFilters);
+    if (workspace !== fg.runningConditionFilters) patch.runningConditionFilters = workspace;
+    if (Array.isArray(fg.models)) {
+        let modelsChanged = false;
+        const models = fg.models.map((m) => {
+            const own = respell(m.customRunningConditionFilters);
+            if (own === m.customRunningConditionFilters) return m;
+            modelsChanged = true;
+            return { ...m, customRunningConditionFilters: own };
+        });
+        if (modelsChanged) patch.models = models;
     }
     return Object.keys(patch).length ? withFailureGroupState(state, patch) : state;
 }

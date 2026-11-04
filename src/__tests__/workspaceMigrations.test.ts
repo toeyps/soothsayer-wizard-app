@@ -1,8 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import type { FailureGroupStateSlice, FailureModel, WorkspaceState } from '../types';
-import { migratePeriods, normalizeCategories, migrateHealthSetPoints, migrateSingleRunningCondition } from '../utils/workspaceMigrations';
+import { migratePeriods, normalizeCategories, migrateHealthSetPoints, migrateSingleRunningCondition, normalizeConditionSpelling } from '../utils/workspaceMigrations';
 import { computeTrainFingerprint } from '../utils/trainFingerprint';
-import { isModelComplete, modelDotState } from '../utils/modelStatus';
+import { isModelComplete, isModelStale, modelDotState } from '../utils/modelStatus';
+import { applyIncompleteRule } from '../utils/incompleteRule';
 import { mk as baseMk } from './helpers/failureModelFixture';
 
 /** A PRE-periods model: like the shared fixture, but with no `filterTimePeriods`
@@ -419,5 +420,114 @@ describe('migrateSingleRunningCondition (ONE running condition, 2026-10-26)', ()
         expect(migrateSingleRunningCondition(dismissed)).toBe(dismissed);
         const noFg = ws();
         expect(migrateSingleRunningCondition(noFg)).toBe(noFg);
+    });
+});
+
+describe('normalizeConditionSpelling', () => {
+    const HEADERS = ['timestamp', 'Temp A', 'Flow'];
+    const cond = (sensor: string) => ({ id: 'c', sensor, operation: 'greater_than' as const, value1: '5', value2: '' });
+    const PERIODS = [{ id: 'p', start: '', end: '' }];
+
+    /** Complete, trained under the spelling it has now: the fingerprint is the real one. */
+    function trained(over: Partial<FailureModel> & { id: string }, fg: Partial<FailureGroupStateSlice>): FailureModel {
+        const m = { ...baseMk({ targetSensor: 'Flow', ...over }), status: true, lastTrainedAt: '2026-10-01T00:00:00Z', healthVerdict: 'valid' as const };
+        return { ...m, trainedFingerprint: computeTrainFingerprint(m, fg) };
+    }
+
+    it('rewrites the workspace line and a model\'s own line to the header spelling, keeping the rest of the slice', () => {
+        const s = ws({
+            runningConditionFilters: [cond('temp a')],
+            runningConditionTimePeriods: PERIODS,
+            models: [baseMk({ id: 'm', customRunningConditionFilters: [cond('  FLOW ')] })],
+        });
+        const out = normalizeConditionSpelling(s, HEADERS);
+        expect(out.failureGroupState?.runningConditionFilters).toEqual([cond('Temp A')]);
+        expect(out.failureGroupState?.models[0].customRunningConditionFilters).toEqual([cond('Flow')]);
+        expect(out.failureGroupState?.runningConditionTimePeriods).toBe(PERIODS);
+    });
+
+    it('is idempotent, and nothing to do returns the same state object', () => {
+        const s = ws({ runningConditionFilters: [cond('temp a')], models: [baseMk({ id: 'm', customRunningConditionFilters: [cond('flow')] })] });
+        const once = normalizeConditionSpelling(s, HEADERS);
+        expect(once).not.toBe(s);
+        expect(normalizeConditionSpelling(once, HEADERS)).toBe(once);
+    });
+
+    it('leaves exact spellings, unknown sensors, blank rows and a state with no slice alone', () => {
+        const none = ws();
+        expect(normalizeConditionSpelling(none, HEADERS)).toBe(none);
+        const s = ws({
+            runningConditionFilters: [cond('Temp A')],
+            models: [
+                baseMk({ id: 'unknown', customRunningConditionFilters: [cond('Gone')] }),
+                // Rust does not match inner spaces either, so neither does this.
+                baseMk({ id: 'inner', customRunningConditionFilters: [cond('TempA')] }),
+                baseMk({ id: 'blank', customRunningConditionFilters: [cond('   ')] }),
+            ],
+        });
+        expect(normalizeConditionSpelling(s, HEADERS)).toBe(s);
+    });
+
+    it('an exact spelling wins over a header that differs in case; otherwise the first match, as in Rust', () => {
+        const exact = ws({ runningConditionFilters: [cond('temp')] });
+        expect(normalizeConditionSpelling(exact, ['Temp', 'temp'])).toBe(exact);
+        const first = normalizeConditionSpelling(ws({ runningConditionFilters: [cond('TEMP')] }), ['Temp', 'temp']);
+        expect(first.failureGroupState?.runningConditionFilters?.[0].sensor).toBe('Temp');
+    });
+
+    it('does not touch an unchanged model object', () => {
+        const same = baseMk({ id: 'same', customRunningConditionFilters: [cond('Flow')] });
+        const out = normalizeConditionSpelling(ws({ models: [same, baseMk({ id: 'm', customRunningConditionFilters: [cond('flow')] })] }), HEADERS);
+        expect(out.failureGroupState?.models[0]).toBe(same);
+    });
+
+    describe('through the real incomplete rule and fingerprint', () => {
+        const fgOld = { runningConditionFilters: [cond('temp a')], runningConditionTimePeriods: PERIODS };
+        const normalized = (s: WorkspaceState) => {
+            const out = applyIncompleteRule(s, normalizeConditionSpelling(s, HEADERS));
+            const fg = out.failureGroupState!;
+            return { fg, byId: (id: string) => fg.models.find(m => m.id === id)! };
+        };
+
+        it('a Complete Workspace-mode model trained under the dropped condition goes stale and Incomplete, keeping its train record', () => {
+            const m = trained({ id: 'm' }, fgOld);
+            const s = ws({ ...fgOld, models: [m] });
+            expect(isModelStale(m, fgOld)).toBe(false);
+            const { fg, byId } = normalized(s);
+            const after = byId('m');
+            expect(isModelStale(after, fg)).toBe(true);
+            expect(after.status).toBe(false);
+            expect(isModelComplete(after, fg)).toBe(false);
+            expect(after.lastTrainedAt).toBe(m.lastTrainedAt);
+            expect(after.trainedFingerprint).toBe(m.trainedFingerprint);
+            expect(after.healthVerdict).toBeUndefined();
+        });
+
+        it('a Complete Custom-mode model goes the same way on its own line', () => {
+            const own = { runningConditionMode: 'custom' as const, customRunningConditionFilters: [cond('FLOW')], filterTimePeriods: PERIODS };
+            const m = trained({ id: 'm', ...own }, {});
+            const { fg, byId } = normalized(ws({ models: [m] }));
+            expect(isModelStale(byId('m'), fg)).toBe(true);
+            expect(byId('m').status).toBe(false);
+        });
+
+        it('a model the rewrite does not train differently stays Complete: exact own line, an unused own line, or all data', () => {
+            const exactFg = { runningConditionFilters: [cond('Temp A')], runningConditionTimePeriods: PERIODS };
+            const dormant = trained({ id: 'dormant', customRunningConditionFilters: [cond('flow')] }, exactFg);
+            const custom = trained({
+                id: 'custom', runningConditionMode: 'custom', customRunningConditionFilters: [cond('Flow')], filterTimePeriods: PERIODS,
+            }, exactFg);
+            const a = normalized(ws({ ...exactFg, models: [dormant, custom] }));
+            expect(a.byId('dormant').customRunningConditionFilters).toEqual([cond('Flow')]);
+            expect(a.byId('dormant').status).toBe(true);
+            expect(isModelStale(a.byId('dormant'), a.fg)).toBe(false);
+            expect(a.byId('custom').status).toBe(true);
+
+            const allFg = { ...fgOld, runningConditionAllData: true };
+            const b = normalized(ws({ ...allFg, models: [trained({ id: 'all' }, allFg)] }));
+            expect(b.fg.runningConditionFilters).toEqual([cond('Temp A')]);
+            expect(b.byId('all').status).toBe(true);
+            expect(isModelStale(b.byId('all'), b.fg)).toBe(false);
+        });
     });
 });

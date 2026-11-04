@@ -1,5 +1,6 @@
 import { SpecialSensorRecipe } from '../types';
 import { isSessionLostError } from './staleSession';
+import type { SensorLabelOf } from './specialSensorDeps';
 
 /**
  * Re-running a special sensor's recipe against the loaded data.
@@ -55,6 +56,8 @@ export async function recomputeSpecialSensors(
      *  gets a rejection later knows exactly which columns were already changed
      *  (the edit flow rolls those back -- see `specialSensorEdit.ts`). */
     onRecomputed?: (recipe: SpecialSensorRecipe) => void,
+    /** How the error names the sensor. Default: the tag. */
+    labelOf: SensorLabelOf = tag => tag,
 ): Promise<void> {
     for (const recipe of recipes) {
         const { cmd, args } = recomputeCall(recipe);
@@ -66,7 +69,7 @@ export async function recomputeSpecialSensors(
             // re-pointed): pass it through unwrapped so the caller can stop
             // WITHOUT rolling back.
             if (isSessionLostError(err)) throw err;
-            const failure = new Error(`Could not recompute "${recipe.tag}": ${String(err)}`);
+            const failure = new Error(`Could not recompute "${labelOf(recipe.tag)}": ${String(err)}`);
             // Set rather than passed to the constructor: the project's TS lib
             // target predates `ErrorOptions`.
             (failure as Error & { cause?: unknown }).cause = err;

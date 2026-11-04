@@ -184,7 +184,7 @@ async function writeWorkspaceJsonAtomically(filePath: string, json: string): Pro
     }
 }
 
-async function writeWorkspaceFileOrThrow(state: WorkspaceState): Promise<void> {
+async function writeWorkspaceFile(state: WorkspaceState): Promise<void> {
     debugLog("Saving Workspace Data for:", state.id);
     const workspacesDir = 'workspaces';
 
@@ -241,14 +241,7 @@ async function writeWorkspaceFileOrThrow(state: WorkspaceState): Promise<void> {
     debugLog("Workspace save successful.");
 }
 
-async function writeWorkspaceFile(state: WorkspaceState): Promise<void> {
-    try {
-        await writeWorkspaceFileOrThrow(state);
-    } catch (e) {
-        console.error("CRITICAL: Failed to save workspace:", e);
-    }
-}
-
+/** Rejects when the write fails, so a caller never takes it for saved. */
 export async function saveWorkspaceData(state: WorkspaceState): Promise<void> {
     await enqueue(() => writeWorkspaceFile(state));
 }
@@ -283,7 +276,7 @@ export async function updateWorkspaceData(
         const next = applyIncompleteRule(read.state, patch(read.state));
         // Same text as the file: no write (it narrows the cross-window race) and no
         // Recents bump. A read-path migration differs from the file, so it still lands.
-        if (JSON.stringify(next) !== read.text) await writeWorkspaceFileOrThrow(next);
+        if (JSON.stringify(next) !== read.text) await writeWorkspaceFile(next);
         return next;
     });
 }
@@ -301,7 +294,7 @@ export async function saveWorkspaceFrom(
 ): Promise<WorkspaceState | null> {
     return enqueue(async () => {
         const next = compute(await readWorkspaceFile(id));
-        if (next) await writeWorkspaceFileOrThrow(next);
+        if (next) await writeWorkspaceFile(next);
         return next;
     });
 }
