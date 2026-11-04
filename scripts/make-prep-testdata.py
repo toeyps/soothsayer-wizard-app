@@ -280,7 +280,7 @@ note('multi-file/MF-samecol-1.csv + MF-samecol-2.csv', ['PREP-6', 'IMP-36', 'IMP
      [f'แต่ละไฟล์ {len(tt):,} แถว ช่วงเดียวกัน {fmt(tt[0])} → {fmt(tt[-1])}',
       'คอลัมน์ TI-101 อยู่ทั้ง 2 ไฟล์ (ค่าในไฟล์ 2 สูงกว่า 5) → ต้องไม่มีบรรทัด "Duplicate column" (มีเฉพาะคอลัมน์ซ้ำในไฟล์เดียว)',
       f'รวมกัน: Rows {len(tt):,} · Sensors 3 (TI-101, PI-201, FI-301) · ค่า TI-101 เป็นของไฟล์ 2 (ไฟล์หลังทับไฟล์แรก)',
-      f'เวลาซ้ำข้ามไฟล์ {len(tt):,} จุด → ต้องมี "{len(tt)} duplicate timestamp(s) found across files (values were merged/overwritten)"'])
+      f'เวลาซ้ำข้ามไฟล์ {len(tt):,} จุด → ต้องมี "{len(tt)} duplicate timestamp(s) found (values were merged/overwritten)"'])
 
 times_b = series(datetime(2024, 1, 1), 30 * 288)
 rnd = random.Random(7)
@@ -399,7 +399,7 @@ note('buddhist/BE-mixed-one-file.csv', ['IMP-136'], [
     f'วันที่ 2024/03/01 มีทั้งสองแบบ: แถวหลังชนะ ยกเว้นช่องว่าง → ที่ 2024/03/01 00:00:00 TI-101 = {round(at_mar1[0] + 5, 2)}, PI-201 = {at_mar1[1]}'])
 note('buddhist/BE-mixed-part1.csv + BE-mixed-part2.csv', ['IMP-136'], [
     'แถวเดียวกับ BE-mixed-one-file.csv แยกเป็น 2 ไฟล์ → Rows, Period และค่าทุกจุดต้องเท่ากับไฟล์เดียว',
-    f'เพิ่มบรรทัด "{len(set(mix_a) & set(mix_b))} duplicate timestamp(s) found across files (values were merged/overwritten)"'])
+    f'เพิ่มบรรทัด "{len(set(mix_a) & set(mix_b))} duplicate timestamp(s) found (values were merged/overwritten)"'])
 
 # ─────────────────────────────── odd/ ───────────────────────────────
 tt = series(datetime(2024, 5, 1), 2 * 288)

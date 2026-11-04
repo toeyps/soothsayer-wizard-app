@@ -1559,6 +1559,24 @@ fn a_dataset_replaced_during_the_engine_run_refuses_the_request_and_marks_no_fai
 }
 
 #[test]
+fn a_run_the_user_stopped_refuses_the_request_and_marks_no_failure() {
+    let (state, _d) = rel_state();
+    let serial = tauri::async_runtime::Mutex::new(());
+    let outdated = AtomicBool::new(false);
+    let calls = AtomicUsize::new(0);
+    let logged = AtomicUsize::new(0);
+    let req = rel_req(vec![]);
+    let log = |_: &str| {
+        logged.fetch_add(1, Ordering::SeqCst);
+    };
+    let refused = block_on(predict_rel_hours(&state, &req, &serial, &outdated, failing_runner(crate::ENGINE_STOPPED_ERROR, &calls), &log));
+    assert_eq!(refused, Err(crate::ENGINE_STOPPED_ERROR.to_string()));
+    assert_eq!(logged.load(Ordering::SeqCst), 0);
+    assert_eq!(block_on(predict_rel_hours(&state, &req, &serial, &outdated, good_runner(&calls), &|_| {})), Ok(None));
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+}
+
+#[test]
 fn the_training_hours_are_predicted_and_scored_without_any_scoring_period() {
     let (state, _d) = rel_state();
     let serial = tauri::async_runtime::Mutex::new(());

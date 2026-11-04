@@ -483,7 +483,7 @@ fn is_zone_token(s: &str) -> bool {
     if s.eq_ignore_ascii_case("z") || s.eq_ignore_ascii_case("utc") || s.eq_ignore_ascii_case("gmt") {
         return true;
     }
-    let tail = if s.len() > 3 && (s[..3].eq_ignore_ascii_case("utc") || s[..3].eq_ignore_ascii_case("gmt")) {
+    let tail = if s.len() > 3 && (s.get(..3).is_some_and(|p| p.eq_ignore_ascii_case("utc")) || s.get(..3).is_some_and(|p| p.eq_ignore_ascii_case("gmt"))) {
         &s[3..]
     } else {
         s
@@ -527,6 +527,87 @@ fn strip_glued_zone(t: &str) -> &str {
         }
     }
     t
+}
+
+/// Minutes of an offset [`is_offset`] accepts.
+fn offset_minutes(s: &str) -> Option<i16> {
+    let sign = if s.starts_with('-') { -1 } else { 1 };
+    let digits = s[1..].replace(':', "");
+    let (h, m) = digits.split_at(digits.len().min(2));
+    let h: i16 = h.parse().ok()?;
+    let m: i16 = if m.is_empty() { 0 } else { m.parse().ok()? };
+    Some(sign * (h * 60 + m))
+}
+
+/// The UTC offset a raw timestamp spells out, in minutes (`Z`, `UTC`, `GMT` = 0).
+/// Read from the raw text: the rewrite to ISO drops the zone.
+fn written_offset_minutes(raw: &str) -> Option<i16> {
+    let s = raw.trim();
+    if !s.is_ascii() {
+        return None;
+    }
+    let s = s.find('(').map_or(s, |i| s[..i].trim_end());
+    let last = s.rsplit(char::is_whitespace).next()?;
+    if is_zone_token(last) {
+        return match last.get(..3) {
+            Some(p) if p.eq_ignore_ascii_case("utc") || p.eq_ignore_ascii_case("gmt") => {
+                if last.len() == 3 { Some(0) } else { offset_minutes(&last[3..]) }
+            }
+            _ if last.eq_ignore_ascii_case("z") => Some(0),
+            _ => offset_minutes(last),
+        };
+    }
+    // Glued to a time. The time check keeps `2024-10-27` and `27-OCT-2025` out.
+    let has_time = |t: &str| t.contains(':') || t.as_bytes().windows(2).any(|w| w[0] == b'T' && w[1].is_ascii_digit());
+    if let Some(rest) = last.strip_suffix(['Z', 'z']) {
+        return has_time(rest).then_some(0);
+    }
+    let i = last.rfind(['+', '-'])?;
+    if i > 0 && is_offset(&last[i..]) && has_time(&last[..i]) {
+        offset_minutes(&last[i..])
+    } else {
+        None
+    }
+}
+
+/// Each row's written offset; empty when no row has one, so a clean file keeps nothing.
+fn written_offsets(timestamps: &[Option<String>]) -> Vec<Option<i16>> {
+    let offset = |t: &Option<String>| t.as_deref().and_then(written_offset_minutes);
+    if timestamps.par_iter().any(|t| offset(t).is_some()) {
+        timestamps.par_iter().map(offset).collect()
+    } else {
+        Vec::new()
+    }
+}
+
+/// Which output row a row lands on among the rows of one instant (`claims` =
+/// the offset of each output row so far, in order of first appearance). A
+/// different written offset is a different moment (a daylight-saving fall-back
+/// repeats the wall clock). A row without an offset joins the first output row.
+fn offset_slot(claims: &mut Vec<Option<i16>>, offset: Option<i16>) -> u32 {
+    let Some(first) = claims.first().copied() else {
+        claims.push(offset);
+        return 0;
+    };
+    if offset.is_none() {
+        return 0;
+    }
+    if let Some(slot) = claims.iter().position(|c| *c == offset) {
+        return slot as u32;
+    }
+    if first.is_none() {
+        claims[0] = offset;
+        return 0;
+    }
+    claims.push(offset);
+    claims.len() as u32 - 1
+}
+
+/// The load report's line for output rows built from several rows of one moment.
+fn merged_rows_warning(merged: usize) -> Option<String> {
+    (merged > 0).then(|| {
+        format!("{merged} duplicate timestamp(s) found (values were merged/overwritten)")
+    })
 }
 
 /// One time token → (h, mi, s, frac, frac_len). Shapes: `H:MM`, `H:MM:SS`,
@@ -1845,6 +1926,7 @@ pub fn read_merge_csvs_with_progress(
     let mut files: Vec<CsvFileInfo> = Vec::with_capacity(file_count);
     let mut date_warnings: Vec<String> = Vec::new();
     let mut instants_per_file: Vec<Vec<i64>> = Vec::with_capacity(file_count);
+    let mut offsets_per_file: Vec<Vec<Option<i16>>> = Vec::with_capacity(file_count);
     for (i, path) in paths.iter().enumerate() {
         let name = file_name_only(path);
         on_progress(CsvLoadProgress::reading(i, file_count, &name, false));
@@ -1866,6 +1948,7 @@ pub fn read_merge_csvs_with_progress(
                 r.non_utf8_values, name
             ));
         }
+        offsets_per_file.push(written_offsets(&r.data.timestamps));
         // Non-ISO shapes (`1/2/2026 0:05`, `2026/01/02 …`) → ISO text, per
         // file and before anything reads the time.
         date_warnings.extend(normalize_file_timestamps(&name, &mut r.data.timestamps));
@@ -1896,7 +1979,7 @@ pub fn read_merge_csvs_with_progress(
     // rules on indices + per-column gathers, and does its own Buddhist-Era
     // detection, so skip the one below entirely on this path.
     if results.len() == 1 {
-        let mut merged = merge_single_file(results.pop().unwrap());
+        let mut merged = merge_single_file(results.pop().unwrap(), &offsets_per_file[0]);
         // The merged dataset IS this one file (rows without a timestamp are
         // not parseable anyway), so its range is the dataset's range.
         let (lo, hi) = ts_min_max(&merged.data.ts_parsed).unzip();
@@ -1915,6 +1998,10 @@ pub fn read_merge_csvs_with_progress(
 
     warnings.extend(date_warnings);
 
+    // 2. A column shared by several files is normal (more of the same data) and
+    //    is not reported (user decision 2026-10-19); twice inside one file is.
+    warnings.extend(duplicate_warnings);
+
     // Buddhist-Era detection across every file's raw timestamps, before any
     // merge/parse step touches them — see `buddhist_era_warning`'s docstring.
     if let Some(w) = buddhist_era_warning(
@@ -1924,10 +2011,6 @@ pub fn read_merge_csvs_with_progress(
     ) {
         warnings.push(w);
     }
-
-    // 2. A column shared by several files is normal (more of the same data) and
-    //    is not reported (user decision 2026-10-19); twice inside one file is.
-    warnings.extend(duplicate_warnings);
     let is_timestamp =
         |h: &str| h.eq_ignore_ascii_case("timestamp") || h.eq_ignore_ascii_case("time");
 
@@ -1987,16 +2070,20 @@ pub fn read_merge_csvs_with_progress(
     // 5. Merge rows on the parsed instant, so any shape or era of one moment
     // lands on one row (later non-null wins). Readable rows come out in time
     // order; unreadable ones are never merged and follow them in file order.
+    // The key's second part: rows of one wall clock with different written
+    // offsets stay apart, in order of first appearance (`offset_slot`).
     struct MergedRow {
         text: String,
-        last_file: usize,
+        rows: u32,
         values: Vec<f64>,
     }
-    let mut by_instant: BTreeMap<i64, MergedRow> = BTreeMap::new();
+    let mut by_instant: BTreeMap<(i64, u32), MergedRow> = BTreeMap::new();
     let mut unreadable: Vec<(String, Vec<f64>)> = Vec::new();
-    let mut shared_instants: HashSet<i64> = HashSet::new();
+    let mut merged_rows = 0usize;
+    let any_offset = offsets_per_file.iter().any(|o| !o.is_empty());
+    let mut claims: HashMap<i64, Vec<Option<i16>>> = HashMap::new();
 
-    for (file_idx, (result, instants)) in results.iter().zip(&instants_per_file).enumerate() {
+    for ((result, instants), offsets) in results.iter().zip(&instants_per_file).zip(&offsets_per_file) {
         let ds = &result.data;
         let mut col_map: Vec<usize> = Vec::with_capacity(ds.headers.len());
         for h in &ds.headers {
@@ -2016,14 +2103,20 @@ pub fn read_merge_csvs_with_progress(
                 unreadable.push((ts.clone(), vec![f64::NAN; g]));
                 &mut unreadable.last_mut().unwrap().1
             } else {
-                let row = by_instant.entry(instant).or_insert_with(|| MergedRow {
+                let slot = if any_offset {
+                    let offset = offsets.get(r).copied().flatten();
+                    offset_slot(claims.entry(instant).or_default(), offset)
+                } else {
+                    0
+                };
+                let row = by_instant.entry((instant, slot)).or_insert_with(|| MergedRow {
                     text: ts.clone(),
-                    last_file: file_idx,
+                    rows: 0,
                     values: vec![f64::NAN; g],
                 });
-                if row.last_file != file_idx {
-                    row.last_file = file_idx;
-                    shared_instants.insert(instant);
+                row.rows += 1;
+                if row.rows == 2 {
+                    merged_rows += 1;
                 }
                 &mut row.values
             };
@@ -2038,13 +2131,8 @@ pub fn read_merge_csvs_with_progress(
         }
     }
 
-    // 6. Report moments that appear in more than one file.
-    if !shared_instants.is_empty() {
-        warnings.push(format!(
-            "{} duplicate timestamp(s) found across files (values were merged/overwritten)",
-            shared_instants.len()
-        ));
-    }
+    // 6. Report the rows that hold more than one row of the files.
+    warnings.extend(merged_rows_warning(merged_rows));
 
     // 7. Convert the merged rows into columnar storage.
     let n_out = by_instant.len() + unreadable.len();
@@ -2084,8 +2172,8 @@ pub fn read_merge_csvs_with_progress(
 /// never merged. So the rows and their order match the same rows in several
 /// files. Works on row INDICES and per-column gathers. A clean file with
 /// strictly increasing timestamps (the common case) passes the parsed columns
-/// through without any copy.
-fn merge_single_file(result: ReadCsvResult) -> MergeResult {
+/// through without any copy. `offsets` = [`written_offsets`] of the raw text.
+fn merge_single_file(result: ReadCsvResult, offsets: &[Option<i16>]) -> MergeResult {
     let is_timestamp =
         |h: &str| h.eq_ignore_ascii_case("timestamp") || h.eq_ignore_ascii_case("time");
 
@@ -2187,7 +2275,8 @@ fn merge_single_file(result: ReadCsvResult) -> MergeResult {
         order.par_sort_by_key(|&r| instant_of(r));
     }
 
-    // Runs of equal instants: each becomes one output row.
+    // Runs of equal instants: each becomes one output row, or one per written
+    // offset (`offset_slot`).
     let readable = order.len();
     let mut groups: Vec<(u32, u32)> = Vec::with_capacity(readable + unreadable.len());
     let mut i = 0usize;
@@ -2196,9 +2285,27 @@ fn merge_single_file(result: ReadCsvResult) -> MergeResult {
         while j < readable && instant_of(order[j]) == instant_of(order[i]) {
             j += 1;
         }
-        groups.push((i as u32, j as u32));
+        if j - i > 1 && !offsets.is_empty() {
+            let mut claims = Vec::new();
+            let mut slotted: Vec<(u32, u32)> = order[i..j]
+                .iter()
+                .map(|&r| (offset_slot(&mut claims, offsets[r as usize]), r))
+                .collect();
+            slotted.sort_by_key(|&(slot, _)| slot); // stable: file order inside a slot
+            let mut start = i;
+            for (k, &(slot, r)) in slotted.iter().enumerate() {
+                order[i + k] = r;
+                if slotted.get(k + 1).is_none_or(|next| next.0 != slot) {
+                    groups.push((start as u32, (i + k + 1) as u32));
+                    start = i + k + 1;
+                }
+            }
+        } else {
+            groups.push((i as u32, j as u32));
+        }
         i = j;
     }
+    let merged_rows = groups.iter().filter(|&&(s, e)| e - s > 1).count();
     order.extend(unreadable);
     groups.extend((readable..order.len()).map(|i| (i as u32, i as u32 + 1)));
 
@@ -2244,7 +2351,7 @@ fn merge_single_file(result: ReadCsvResult) -> MergeResult {
 
     MergeResult {
         data: ColumnarData::from_parsed_parts(global_headers, out_timestamps, out_instants, out_columns),
-        warnings: be_warning.into_iter().collect(),
+        warnings: be_warning.into_iter().chain(merged_rows_warning(merged_rows)).collect(),
         parse_fail_counts: global_fail_counts,
         files: Vec::new(),
     }
@@ -2578,6 +2685,12 @@ pub fn load_metadata(path: &str) -> Result<Vec<SensorMetadata>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_non_ascii_token_is_not_a_zone_and_does_not_panic() {
+        assert!(!is_zone_token("abé1"));
+    }
+
 
     #[test]
     fn side_csvs_over_10_mb_are_refused_and_small_ones_load() {
@@ -3364,14 +3477,19 @@ mod tests {
         rows: Vec<(Option<&str>, Vec<Option<f64>>)>,
         fails: Vec<usize>,
     ) -> MergeResult {
-        merge_single_file(ReadCsvResult {
-            data: columnar(headers, rows),
-            parse_fail_counts: fails,
-            size_bytes: 0,
-            ts_from_first_column: None,
-            short_rows: 0,
-            non_utf8_values: 0,
-        })
+        let data = columnar(headers, rows);
+        let offsets = written_offsets(&data.timestamps);
+        merge_single_file(
+            ReadCsvResult {
+                data,
+                parse_fail_counts: fails,
+                size_bytes: 0,
+                ts_from_first_column: None,
+                short_rows: 0,
+                non_utf8_values: 0,
+            },
+            &offsets,
+        )
     }
 
     /// One row's values in the legacy Option shape, for readable assertions.
@@ -4004,14 +4122,17 @@ mod tests {
         ];
         let data = columnar(vec!["timestamp", "A"], rows);
         let column = data.columns[1].as_ptr();
-        let m = merge_single_file(ReadCsvResult {
-            data,
-            parse_fail_counts: vec![0, 0],
-            size_bytes: 0,
-            ts_from_first_column: None,
-            short_rows: 0,
-            non_utf8_values: 0,
-        });
+        let m = merge_single_file(
+            ReadCsvResult {
+                data,
+                parse_fail_counts: vec![0, 0],
+                size_bytes: 0,
+                ts_from_first_column: None,
+                short_rows: 0,
+                non_utf8_values: 0,
+            },
+            &[],
+        );
         assert_eq!(m.data.columns[1].as_ptr(), column, "the column was not copied");
     }
 
@@ -4027,7 +4148,33 @@ mod tests {
         assert_eq!(m.data.ts_parsed, again.ts_parsed);
     }
 
-    /// The same rows give the same dataset as one file or split over two.
+    /// Load `rows` (`time,A,B`) as one file and split at `split` over two; both must
+    /// agree. The per-file "Dates in <file>" lines name a file, so they cannot match.
+    fn load_one_and_two(rows: &[&str], split: usize) -> MergeResult {
+        let dir = tempfile::tempdir().unwrap();
+        let write = |name: &str, lines: &[&str]| {
+            write_csv(&dir, name, &format!("timestamp,A,B
+{}
+", lines.join("
+")))
+        };
+        let one = read_merge_csvs_with_report(vec![write("all.csv", rows)]).unwrap();
+        let two = read_merge_csvs_with_report(vec![write("a.csv", &rows[..split]), write("b.csv", &rows[split..])])
+            .unwrap();
+        assert_eq!(one.data.timestamps, two.data.timestamps);
+        assert_eq!(one.data.ts_parsed, two.data.ts_parsed);
+        for c in 1..3 {
+            let bits = |d: &ColumnarData| d.columns[c].iter().map(|v| v.to_bits()).collect::<Vec<_>>();
+            assert_eq!(bits(&one.data), bits(&two.data), "column {c}");
+        }
+        let general = |m: &MergeResult| {
+            m.warnings.iter().filter(|w| !w.contains(".csv")).cloned().collect::<Vec<_>>()
+        };
+        assert_eq!(general(&one), general(&two));
+        one
+    }
+
+    /// The same rows give the same dataset and warnings as one file or split over two.
     #[test]
     fn one_file_and_two_files_load_the_same_rows_in_the_same_order() {
         let rows = [
@@ -4038,25 +4185,117 @@ mod tests {
             "2024-01-01 00:00:00,,50", // same moment as row 2
             "not a time,6,",
             "2024-01-01T00:01:00,7,70", // same moment as row 4
+            "2024-01-01 00:01:00.000,9,", // and once more: still one merged row
             "2023-12-31 23:59:00,8,",
         ];
-        let dir = std::env::temp_dir().join(format!("wizard_merge_parity_{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let write = |name: &str, lines: &[&str]| {
-            let path = dir.join(name);
-            std::fs::write(&path, format!("timestamp,A,B\n{}\n", lines.join("\n"))).unwrap();
-            path.to_str().unwrap().to_string()
-        };
-        let one = read_merge_csvs_with_report(vec![write("all.csv", &rows)]).unwrap();
-        let two = read_merge_csvs_with_report(vec![write("a.csv", &rows[..4]), write("b.csv", &rows[4..])]).unwrap();
-        std::fs::remove_dir_all(&dir).ok();
+        let one = load_one_and_two(&rows, 4);
         assert_eq!(one.data.n_rows(), 6);
-        assert_eq!(one.data.timestamps, two.data.timestamps);
-        assert_eq!(one.data.ts_parsed, two.data.ts_parsed);
-        for c in 1..3 {
-            let bits = |d: &ColumnarData| d.columns[c].iter().map(|v| v.to_bits()).collect::<Vec<_>>();
-            assert_eq!(bits(&one.data), bits(&two.data), "column {c}");
+        assert!(one.warnings.iter().any(|w| w.starts_with("2 duplicate timestamp(s)")), "{:?}", one.warnings);
+        assert!(one.warnings.iter().any(|w| w.contains("Buddhist-Era")), "{:?}", one.warnings);
+    }
+
+    #[test]
+    fn rows_repeated_inside_one_of_several_files_are_reported_too() {
+        let one = load_one_and_two(&["2024-01-01 00:00:00,1,", "2024-01-01 00:00:00,2,", "2024-01-01 00:01:00,3,"], 2);
+        assert_eq!(one.warnings, ["1 duplicate timestamp(s) found (values were merged/overwritten)"]);
+    }
+
+    #[test]
+    fn a_daylight_saving_fall_back_keeps_both_hours_in_one_file_and_in_two() {
+        let rows = [
+            "2024-10-27 02:30:00+02:00,1,",
+            "2024-10-27 02:45:00+02:00,2,",
+            "2024-10-27 02:30:00+01:00,3,", // the clock went back: an hour later
+            "2024-10-27 02:45:00+01:00,4,",
+            "2024-10-27 02:30:00+01:00,,40", // same offset: the same moment again
+        ];
+        let one = load_one_and_two(&rows, 2);
+        let texts: Vec<_> = one.data.timestamps.iter().map(|t| t.as_deref().unwrap()).collect();
+        assert_eq!(
+            texts,
+            [
+                "2024-10-27 02:30:00+02:00",
+                "2024-10-27 02:30:00+01:00",
+                "2024-10-27 02:45:00+02:00",
+                "2024-10-27 02:45:00+01:00",
+            ]
+        );
+        assert_eq!(one.data.columns[1], vec![1.0, 3.0, 2.0, 4.0]);
+        assert_eq!(one.data.value(2, 1), Some(40.0));
+        // `ts_parsed` stays the wall clock as written.
+        assert_eq!(one.data.ts_parsed[0], micros("2024-10-27 02:30:00"));
+        assert_eq!(one.data.ts_parsed[1], micros("2024-10-27 02:30:00"));
+        assert!(one.warnings.iter().any(|w| w.starts_with("1 duplicate timestamp(s)")), "{:?}", one.warnings);
+    }
+
+    #[test]
+    fn offsets_written_in_shapes_that_get_rewritten_still_keep_rows_apart() {
+        let rows = [
+            "\"Sun, 27 Oct 2024 02:30:00 +0200\",1,",
+            "\"Sun, 27 Oct 2024 02:30:00 +0100\",2,",
+            "\"Sun, 27 Oct 2024 02:30:00 +0100\",,20",
+        ];
+        let one = load_one_and_two(&rows, 1);
+        assert_eq!(one.data.n_rows(), 2);
+        assert_eq!(one.data.columns[1], vec![1.0, 2.0]);
+        assert_eq!(one.data.value(2, 1), Some(20.0));
+    }
+
+    #[test]
+    fn a_row_without_an_offset_still_merges_with_its_moment() {
+        let rows = [
+            "2024-10-27 02:30:00,1,",
+            "2024-10-27 02:30:00+02:00,,2",
+            "2024-10-27 02:30:00+01:00,3,",
+            "2024-10-27T02:30:00,,4",
+        ];
+        let one = load_one_and_two(&rows, 2);
+        assert_eq!(one.data.n_rows(), 2);
+        assert_eq!(one.data.timestamps[0].as_deref(), Some("2024-10-27 02:30:00"));
+        assert_eq!(one.data.value(1, 0), Some(1.0));
+        assert_eq!(one.data.value(2, 0), Some(4.0));
+        assert_eq!(one.data.value(1, 1), Some(3.0));
+    }
+
+    #[test]
+    fn one_clean_file_reports_no_merged_rows() {
+        let m = single(
+            vec!["timestamp", "A"],
+            vec![
+                (Some("2024-01-01 00:01:00"), vec![None, Some(1.0)]),
+                (Some("2024-01-01 00:00:00"), vec![None, Some(2.0)]),
+            ],
+            vec![0, 0],
+        );
+        assert!(m.warnings.is_empty(), "{:?}", m.warnings);
+    }
+
+    #[test]
+    fn written_offsets_are_read_from_every_shape_and_only_from_a_zone() {
+        for (raw, want) in [
+            ("2024-10-27 02:30:00+02:00", Some(120)),
+            ("2024-10-27T02:30:00.5-05:30", Some(-330)),
+            ("2025-01-31T13:05:00.250+0700", Some(420)),
+            ("2026-02-09T23:50:00Z", Some(0)),
+            ("2026-02-09 23:50:00 UTC", Some(0)),
+            ("Fri, 31 Jan 2025 13:05:00 +0700", Some(420)),
+            ("Fri Jan 31 2025 13:05:00 GMT+0700 (Indochina Time)", Some(420)),
+            ("1/2/2025 1:05 PM UTC+7", Some(420)),
+            ("20250131T130500+07", Some(420)),
+            ("2024-10-27 02:30:00", None),
+            ("2024-10-27", None),
+            ("27-OCT-2025", None),
+            ("31-01-2025", None),
+            ("1/2/2025 1:05 PM", None),
+            ("13:05 31-01-2025", None),
+            ("not a time", None),
+            ("", None),
+            ("๑๓:๐๕ น.", None),
+        ] {
+            assert_eq!(written_offset_minutes(raw), want, "{raw}");
         }
+        let plain = vec![Some("2024-10-27 02:30:00".to_string()), None];
+        assert!(written_offsets(&plain).is_empty());
     }
 
     #[test]

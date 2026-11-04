@@ -6219,8 +6219,8 @@ where
                 // `apply_rel_extra` already answers this with `Err(NOT_FITTED)`.
                 ExtraStored::FitGone => return Err(health_preview::not_fitted(REL_EXTRA_FIT_GONE)),
             },
-            // The dataset was replaced while this waited or ran: not a failure of this fit.
-            Err(e) if e == STALE_SESSION_ERROR => return Err(e),
+            // The dataset was replaced, or the user stopped the run: not a failure of this fit.
+            Err(e) if e == STALE_SESSION_ERROR || e == ENGINE_STOPPED_ERROR => return Err(e),
             Err(e) if e.starts_with("SIDECAR_OUTDATED") => Some(TestScoringError::new(Kind::Outdated, e)),
             Err(e) => Some(TestScoringError::new(Kind::EngineError, e)),
         };
@@ -6693,12 +6693,39 @@ where
 struct EngineRegistry {
     closed: bool,
     pids: Vec<u32>,
+    /// Bumped by each [`stop_running_engine`]. A run compares it with its value
+    /// at start, so a caller still in line is not stopped.
+    stops: u64,
 }
 
 impl EngineRegistry {
     const fn new() -> Self {
-        EngineRegistry { closed: false, pids: Vec::new() }
+        EngineRegistry { closed: false, pids: Vec::new(), stops: 0 }
     }
+}
+
+/// The caller of a run the user stopped reads this. One line, plain words: it is
+/// neither a failure of the run nor of the user's data.
+pub const ENGINE_STOPPED_ERROR: &str =
+    "This run was stopped before it finished. Your data and settings did not cause this.";
+
+fn request_engine_stop(registry: &std::sync::Mutex<EngineRegistry>) {
+    let mut live = lock_engine_registry(registry);
+    live.stops = live.stops.wrapping_add(1);
+}
+
+fn engine_stop_requested(registry: &std::sync::Mutex<EngineRegistry>, stops_at_start: u64) -> bool {
+    lock_engine_registry(registry).stops != stops_at_start
+}
+
+/// Stop the engine run holding the turn, if there is one. Its timer kills the
+/// tree within [`ENGINE_WANTED_POLL`], its caller gets [`ENGINE_STOPPED_ERROR`]
+/// and the next caller in line starts. Without this a run nobody is waiting for
+/// holds the turn up to [`ENGINE_RUN_TIMEOUT`].
+#[tauri::command]
+fn stop_running_engine() -> Result<(), String> {
+    request_engine_stop(&LIVE_ENGINES);
+    Ok(())
 }
 
 static LIVE_ENGINES: std::sync::Mutex<EngineRegistry> = std::sync::Mutex::new(EngineRegistry::new());
@@ -6721,11 +6748,25 @@ struct TrackedEngine<'a> {
     pid: u32,
     kill: fn(u32),
     finished: bool,
+    stops_at_start: u64,
 }
 
 impl TrackedEngine<'_> {
     fn finished(mut self) {
         self.finished = true;
+    }
+
+    /// What the run's caller gets, once the output is in.
+    fn outcome(self, out: EngineOutput) -> Result<EngineOutput, String> {
+        let stopped = engine_stop_requested(self.registry, self.stops_at_start);
+        self.finished();
+        if stopped {
+            return Err(ENGINE_STOPPED_ERROR.to_string());
+        }
+        if out.superseded {
+            return Err(STALE_SESSION_ERROR.to_string());
+        }
+        Ok(out)
     }
 }
 
@@ -6753,7 +6794,8 @@ fn start_tracked_engine<'a, T>(
     }
     let (started, pid) = start()?;
     live.pids.push(pid);
-    Ok((started, TrackedEngine { registry, pid, kill, finished: false }))
+    let stops_at_start = live.stops;
+    Ok((started, TrackedEngine { registry, pid, kill, finished: false, stops_at_start }))
 }
 
 /// Kill every running engine and refuse new ones, waiting at most `wait`.
@@ -6806,20 +6848,18 @@ async fn run_engine(app: &tauri::AppHandle, line: String, generation: u64) -> Re
             Ok(((rx, child), pid))
         })?;
         let pid = engine.pid;
+        let stops_at_start = engine.stops_at_start;
+        let dataset_current = still_wanted.clone();
         let out = collect_engine_output(
             rx,
             move || child.write(line.as_bytes()).map_err(|e| e.to_string()),
             move || kill_engine_tree(pid),
-            still_wanted.clone(),
+            move || dataset_current() && !engine_stop_requested(&LIVE_ENGINES, stops_at_start),
             ENGINE_RUN_TIMEOUT,
             ENGINE_KILL_GRACE,
         )
         .await;
-        engine.finished();
-        if out.superseded {
-            return Err(STALE_SESSION_ERROR.to_string());
-        }
-        Ok(out)
+        engine.outcome(out)
     })
     .await
 }
@@ -7424,9 +7464,87 @@ mod engine_run_tests {
     #[test]
     fn the_engine_is_started_in_one_place_and_stopped_at_exit() {
         let src = include_str!("lib.rs");
-        assert_eq!(src.matches(concat!("spawn_sidecar", "(app)")).count(), 1);
+        // Any spelling of a call or a reference: the definition plus one use.
+        assert_eq!(src.matches(concat!("spawn_", "sidecar")).count(), 2);
+        assert_eq!(src.matches(concat!("fn spawn_", "sidecar(")).count(), 1);
         assert_eq!(src.matches(concat!("run_in_engine_turn", "(&ENGINE_LOCK")).count(), 1);
         assert!(src.contains(concat!("matches!(event, tauri::RunEvent::", "Exit)")));
+    }
+
+    /// One run as `run_engine` does it, on a registry and a lock of the test's own.
+    /// `_tx` in the test stays open: a hung engine reports no end.
+    async fn tracked_run(
+        lock: &'static tauri::async_runtime::Mutex<()>,
+        registry: &'static std::sync::Mutex<EngineRegistry>,
+        rx: tauri::async_runtime::Receiver<CommandEvent>,
+        kill: impl Fn() + Send + Sync + 'static,
+    ) -> Result<EngineOutput, String> {
+        run_in_engine_turn(lock, &|| true, || async move {
+            let ((), engine) = start_tracked_engine(registry, no_kill, || Ok(((), 5)))?;
+            let stops_at_start = engine.stops_at_start;
+            let out = collect_engine_output(
+                rx,
+                || Ok(()),
+                kill,
+                move || !engine_stop_requested(registry, stops_at_start),
+                LONG,
+                Duration::from_millis(50),
+            )
+            .await;
+            engine.outcome(out)
+        })
+        .await
+    }
+
+    #[test]
+    fn a_stopped_run_is_killed_gets_its_own_error_and_frees_the_next_one() {
+        static LOCK: tauri::async_runtime::Mutex<()> = tauri::async_runtime::Mutex::const_new(());
+        static REGISTRY: std::sync::Mutex<EngineRegistry> = std::sync::Mutex::new(EngineRegistry::new());
+        let (hung_tx, hung_rx) = tauri::async_runtime::channel(8);
+        let (kills, kill) = counter();
+        let (next_kills, next_kill) = counter();
+        let (next_tx, next_rx) = tauri::async_runtime::channel(8);
+        let start = Instant::now();
+        tauri::async_runtime::block_on(async move {
+            let hung = tauri::async_runtime::spawn(tracked_run(&LOCK, &REGISTRY, hung_rx, kill));
+            wait_a_moment(50).await;
+            assert_eq!(pids(&REGISTRY), vec![5], "the hung run holds the turn");
+            let next = tauri::async_runtime::spawn(tracked_run(&LOCK, &REGISTRY, next_rx, next_kill));
+            wait_a_moment(50).await;
+            next_tx.send(ended()).await.unwrap();
+            request_engine_stop(&REGISTRY);
+            assert_eq!(hung.await.unwrap().unwrap_err(), ENGINE_STOPPED_ERROR);
+            drop(hung_tx);
+            // The one in line was not stopped: it ran and answered normally.
+            assert!(next.await.unwrap().is_ok());
+        });
+        assert_eq!(kills.load(Ordering::SeqCst), 1);
+        assert_eq!(next_kills.load(Ordering::SeqCst), 0);
+        assert!(start.elapsed() < Duration::from_secs(30), "well before the cap");
+        assert!(pids(&REGISTRY).is_empty());
+    }
+
+    #[test]
+    fn stopping_with_nothing_running_does_nothing_and_does_not_stop_a_later_run() {
+        static LOCK: tauri::async_runtime::Mutex<()> = tauri::async_runtime::Mutex::const_new(());
+        static REGISTRY: std::sync::Mutex<EngineRegistry> = std::sync::Mutex::new(EngineRegistry::new());
+        request_engine_stop(&REGISTRY);
+        let (tx, rx) = tauri::async_runtime::channel(8);
+        let (kills, kill) = counter();
+        let out = tauri::async_runtime::block_on(async move {
+            tx.send(ended()).await.unwrap();
+            tracked_run(&LOCK, &REGISTRY, rx, kill).await
+        });
+        assert!(out.is_ok());
+        assert_eq!(kills.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn the_stopped_sentence_does_not_read_like_a_failed_train() {
+        for word in ["fail", "error", "engine", "Relation", "sidecar", ":"] {
+            assert!(!ENGINE_STOPPED_ERROR.contains(word), "{word}");
+        }
+        assert!(!ENGINE_STOPPED_ERROR.contains('\n'));
     }
 
     #[test]
@@ -8492,7 +8610,8 @@ pub fn run() {
             reveal_export_folder,
             get_scatter_sample,
             log_frontend_error,
-            get_error_log_path
+            get_error_log_path,
+            stop_running_engine
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

@@ -340,7 +340,7 @@ fn three_files_in_three_shapes_merge_to_one_row_per_moment() {
     assert_eq!(m.data.columns[3], vec![100.0, 200.0]);
     assert_eq!(m.data.columns[1], vec![1.0, 2.0]);
     assert!(r.warnings.iter().any(|w| w.starts_with("Dates in de.csv read as day/month/year")));
-    assert!(r.warnings.iter().any(|w| w == "2 duplicate timestamp(s) found across files (values were merged/overwritten)"));
+    assert!(r.warnings.iter().any(|w| w == "2 duplicate timestamp(s) found (values were merged/overwritten)"));
 }
 
 #[test]

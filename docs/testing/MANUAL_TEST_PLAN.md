@@ -490,14 +490,14 @@ _ขั้น 0 = หน้าแรก "Get started" (สร้างโปร�
   - ทำอีกรอบกับไฟล์ที่ช่วงเวลาไม่ซ้อนกัน (ไฟล์ต่อกัน)
   - ทำอีกรอบกับไฟล์เดียว และกับชุดที่มีไฟล์หนึ่งอ่านเวลาไม่ได้เลย (ถ้ามี)
   - กด "Add more files" เพิ่มไฟล์
-  - **คาดหวัง:** Rows = จำนวนแถวหลังรวมตามเวลา (เวลาที่ซ้ำกันข้ามไฟล์ถูกรวมเป็นแถวเดียว และกล่อง "Fixed while reading" บอก "N duplicate timestamp(s) found across files (values were merged/overwritten)") · แถบ Time coverage มีแถบของแต่ละไฟล์บนแกนเวลาเดียวกัน แถบที่ซ้อนกันเห็นว่าซ้อนจริง พร้อมข้อความ "files overlap — merged on their timestamps" · ไม่ซ้อน = "files do not overlap" · ไฟล์เดียว = แถบเต็มความกว้างและ "one file" · ชี้แถบแล้วเห็น "เริ่ม → สิ้นสุด" ของไฟล์นั้น · วันที่บนแกนตรงกับช่วงของไฟล์ (มีเวลาด้วยเมื่อช่วงทั้งหมดสั้นกว่า 3 วัน) · ไฟล์ที่อ่านเวลาไม่ได้ไม่ถูกวาด และมีบรรทัด "1 file without a readable time range is not shown." · "Add more files" เพิ่มไฟล์ได้ (ต้องกด Parse files ใหม่)
+  - **คาดหวัง:** Rows = จำนวนแถวหลังรวมตามเวลา (เวลาที่ซ้ำกันข้ามไฟล์ถูกรวมเป็นแถวเดียว และกล่อง "Fixed while reading" บอก "N duplicate timestamp(s) found (values were merged/overwritten)") · แถบ Time coverage มีแถบของแต่ละไฟล์บนแกนเวลาเดียวกัน แถบที่ซ้อนกันเห็นว่าซ้อนจริง พร้อมข้อความ "files overlap — merged on their timestamps" · ไม่ซ้อน = "files do not overlap" · ไฟล์เดียว = แถบเต็มความกว้างและ "one file" · ชี้แถบแล้วเห็น "เริ่ม → สิ้นสุด" ของไฟล์นั้น · วันที่บนแกนตรงกับช่วงของไฟล์ (มีเวลาด้วยเมื่อช่วงทั้งหมดสั้นกว่า 3 วัน) · ไฟล์ที่อ่านเวลาไม่ได้ไม่ถูกวาด และมีบรรทัด "1 file without a readable time range is not shown." · "Add more files" เพิ่มไฟล์ได้ (ต้องกด Parse files ใหม่)
 
 - [ ] **IMP-135 — กล่องเหลือง: sensor ที่อยู่หลายไฟล์ไม่ถูกเตือน แต่คอลัมน์ซ้ำในไฟล์เดียวถูกเตือน** 🆕
   - เลือกไฟล์ `MF-samecol-1.csv` + `MF-samecol-2.csv` (ทั้ง 2 ไฟล์มีคอลัมน์ `TI-101` และเป็นช่วงเวลาเดียวกัน) → กด Parse files
   - เลือกไฟล์ Tag names `MF-samecol-tags.csv` → เลือกคอลัมน์ `tag` → อ่านกล่องสีเหลือง แล้วดูปุ่ม Continue
   - สร้างโปรเจกต์ใหม่ → เลือกไฟล์ `MF-adjacent-1.csv` → กด "Add more files" → เลือกไฟล์ `ODD-same-column-twice.csv` (ในไฟล์นี้มีคอลัมน์ `TI-101` 2 คอลัมน์) → กด Parse files
   - เลือกไฟล์ Tag names `MF-tags.csv` → เลือกคอลัมน์ `tag` → อ่านกล่องสีเหลือง แล้วดูปุ่ม Continue
-  - **คาดหวัง:** คู่แรก: กล่องสีเหลือง (ไม่ใช่สีแดงแบบ error) หัวข้อ "Fixed while reading" มีบรรทัด "2016 duplicate timestamp(s) found across files (values were merged/overwritten)" และไม่มีคำว่า "Duplicate column" เลย · Rows = 2,016 · Sensors = 3 · คู่ที่สอง: กล่องสีเหลืองมีบรรทัด "Duplicate column 'ti-101' found in file 2" (ชื่อคอลัมน์ในข้อความเป็นตัวพิมพ์เล็กทั้งหมด และบอกเลขไฟล์เดียว) · Rows = 4,320 · ทั้งสองคู่อ่านไฟล์สำเร็จ และกด Continue ต่อได้ปกติ
+  - **คาดหวัง:** คู่แรก: กล่องสีเหลือง (ไม่ใช่สีแดงแบบ error) หัวข้อ "Fixed while reading" มีบรรทัด "2016 duplicate timestamp(s) found (values were merged/overwritten)" และไม่มีคำว่า "Duplicate column" เลย · Rows = 2,016 · Sensors = 3 · คู่ที่สอง: กล่องสีเหลืองมีบรรทัด "Duplicate column 'ti-101' found in file 2" (ชื่อคอลัมน์ในข้อความเป็นตัวพิมพ์เล็กทั้งหมด และบอกเลขไฟล์เดียว) · Rows = 4,320 · ทั้งสองคู่อ่านไฟล์สำเร็จ และกด Continue ต่อได้ปกติ
 
 - [ ] **IMP-20 — ไฟล์ที่ใช้ปี พ.ศ. ถูกแปลงเป็น ค.ศ. อัตโนมัติ และข้อมูลวันที่ 29 ก.พ. ไม่หาย** 🆕
   - เลือกไฟล์ที่คอลัมน์เวลาเป็นปี พ.ศ. (เช่น `2566-05-13 01:00:00`) และมีข้อมูลคาบเกี่ยววันที่ 29 กุมภาพันธ์ของปีอธิกสุรทิน (เช่น พ.ศ. 2567) แล้วกด Parse files
@@ -841,7 +841,7 @@ _ขั้น 0 = หน้าแรก "Get started" (สร้างโปร�
   - โปรเจกต์ที่ 1: `M1_iso.csv` + `M1_us_ampm.csv` → กด Parse files → เลือก Tag names `M1-M2-tags.csv` และคอลัมน์ `tag` → เปิด Dashboard
   - โปรเจกต์ที่ 2: `M2_part1.csv` + `M2_part2.csv` → กด Parse files → เลือก Tag names `M1-M2-tags.csv` และคอลัมน์ `tag` → เปิด Dashboard
   - โปรเจกต์ที่ 3: `M3_column_twice.csv` → กด Parse files → เลือก Tag names `M3-tags.csv` และคอลัมน์ `tag` → เปิด Dashboard → ติ๊กเลือก `FLOW_A` → ชี้เมาส์ที่จุดแรกของกราฟ
-  - **คาดหวัง:** โปรเจกต์ 1: 288 แถว (ไม่ใช่ 576) ทุกแถวมีทั้ง `FLOW_A` และ `FLOW_B` (เวลาเดียวกันถูกรวมเป็นแถวเดียวแม้เขียนคนละแบบ) · กล่องเหลืองมี "Dates in M1_us_ampm.csv read as month/day/year (6/1/2026 → 2026-06-01) — … check the dates" และ "288 duplicate timestamp(s) found across files (values were merged/overwritten)" · โปรเจกต์ 2: 576 แถว ไม่มี "Duplicate column" · ข้อมูลต้องอยู่ช่วง 2026/06/02 → 2026/06/03 23:55 — ⚠ ข้อนี้อาจยังไม่ผ่าน — ให้บันทึกผลตามที่เห็นจริง: `M2_part2.csv` ทุกแถวเป็นวันเดียว `03/06/2026` (3 มิ.ย.) แอปเดาไม่ออกจึงอาจอ่านเป็น 6 มี.ค. พร้อมคำว่า "check the dates" — จดว่าเห็นวันไหน · โปรเจกต์ 3: มีบรรทัด "Duplicate column 'flow_a' found in file 1" · Dashboard มี `FLOW_A` ตัวเดียวและมีเส้นข้อมูลครบ · จุดแรก (2026/06/04 00:00) มีค่า 3.4 (ใช้ค่าของคอลัมน์ที่อยู่ทีหลัง)
+  - **คาดหวัง:** โปรเจกต์ 1: 288 แถว (ไม่ใช่ 576) ทุกแถวมีทั้ง `FLOW_A` และ `FLOW_B` (เวลาเดียวกันถูกรวมเป็นแถวเดียวแม้เขียนคนละแบบ) · กล่องเหลืองมี "Dates in M1_us_ampm.csv read as month/day/year (6/1/2026 → 2026-06-01) — … check the dates" และ "288 duplicate timestamp(s) found (values were merged/overwritten)" · โปรเจกต์ 2: 576 แถว ไม่มี "Duplicate column" · ข้อมูลต้องอยู่ช่วง 2026/06/02 → 2026/06/03 23:55 — ⚠ ข้อนี้อาจยังไม่ผ่าน — ให้บันทึกผลตามที่เห็นจริง: `M2_part2.csv` ทุกแถวเป็นวันเดียว `03/06/2026` (3 มิ.ย.) แอปเดาไม่ออกจึงอาจอ่านเป็น 6 มี.ค. พร้อมคำว่า "check the dates" — จดว่าเห็นวันไหน · โปรเจกต์ 3: มีบรรทัด "Duplicate column 'flow_a' found in file 1" · Dashboard มี `FLOW_A` ตัวเดียวและมีเส้นข้อมูลครบ · จุดแรก (2026/06/04 00:00) มีค่า 3.4 (ใช้ค่าของคอลัมน์ที่อยู่ทีหลัง)
 
 - [ ] **IMP-134 — 2 ไฟล์ช่วงเวลาเดียวกัน ไฟล์หนึ่งปี พ.ศ. อีกไฟล์ปี ค.ศ.: รวมเป็นแถวเดียวกัน** 🆕
   - คัดลอกไฟล์ `BE-2567-leap-day.csv` แล้วตั้งชื่อสำเนาว่า `CE-2024-leap-day.csv`
@@ -849,14 +849,14 @@ _ขั้น 0 = หน้าแรก "Get started" (สร้างโปร�
   - ที่หน้า Import เลือกทั้ง 2 ไฟล์ → กด Parse files → ดูการ์ดสรุปและกล่องสีเหลือง
   - เลือกไฟล์ Tag names `BE-2567-leap-day-tags.csv` → เลือกคอลัมน์ `tag` → กด Continue → เปิด Dashboard
   - ติ๊กเลือก `TI-101` แล้วซูมไปวันที่ 2024/02/29
-  - **คาดหวัง:** Rows = 864 (ไม่ใช่ 1,728) · Period 2024/02/28 00:00:00 → 2024/03/01 23:55:00 ไม่มีปี 2567 · กล่องเหลืองมี "864 duplicate timestamp(s) found across files (values were merged/overwritten)" และ "864 timestamp(s) used a Buddhist-Era year (พ.ศ.) — converted to Gregorian (ค.ศ.) …" · ไม่มี "Duplicate column" · วันที่ 29 ก.พ. 2024 มีครบ 288 จุด เส้นเดียว ไม่มีจุดซ้อน
+  - **คาดหวัง:** Rows = 864 (ไม่ใช่ 1,728) · Period 2024/02/28 00:00:00 → 2024/03/01 23:55:00 ไม่มีปี 2567 · กล่องเหลืองมี "864 duplicate timestamp(s) found (values were merged/overwritten)" และ "864 timestamp(s) used a Buddhist-Era year (พ.ศ.) — converted to Gregorian (ค.ศ.) …" · ไม่มี "Duplicate column" · วันที่ 29 ก.พ. 2024 มีครบ 288 จุด เส้นเดียว ไม่มีจุดซ้อน
 
 - [ ] **IMP-136 — ไฟล์เดียวที่ปนปี พ.ศ. กับ ค.ศ.: เรียงตามเวลาและรวมแถว เหมือนแยกเป็น 2 ไฟล์** 🆕
   - เลือกไฟล์ `BE-mixed-one-file.csv` (ครึ่งแรกของไฟล์เขียนปี 2567 ครึ่งหลังเขียนปี 2024 และวันที่ 1 มี.ค. 2024 มีทั้งสองแบบ) → กด Parse files → ดูการ์ดสรุปและกล่องสีเหลือง
   - เลือกไฟล์ Tag names `BE-2567-leap-day-tags.csv` → เลือกคอลัมน์ `tag` → กด Continue → กด "Skip for now"
   - ใน Dashboard ติ๊กเลือก `TI-101` และ `PI-201` → ชี้เมาส์ที่จุด 2024/03/01 00:00 แล้วดูค่า
   - สร้างโปรเจกต์ใหม่ → เลือกไฟล์ `BE-mixed-part1.csv` + `BE-mixed-part2.csv` (แถวเดียวกันทุกแถว แต่แยกเป็น 2 ไฟล์) แล้วทำซ้ำ 2 ขั้นตอนบน
-  - **คาดหวัง:** ทั้ง 2 โปรเจกต์: Rows = 1,152 (ไม่ใช่ 1,440) · Period 2024/02/28 00:00:00 → 2024/03/02 23:55:00 ไม่มีปี 2567 · กล่องสีเหลืองมี "864 timestamp(s) used a Buddhist-Era year (พ.ศ.) — converted to Gregorian (ค.ศ.) …" · กราฟเดินจากซ้ายไปขวาตามเวลา ไม่มีเส้นย้อนกลับ · ที่ 2024/03/01 00:00 มีจุดเดียว: `TI-101` = 68 (ค่าของแถวที่อยู่ทีหลัง) และ `PI-201` = 3.4 (แถวหลังช่องนี้ว่าง จึงใช้ค่าของแถวแรก) · ค่าทั้งสองโปรเจกต์เท่ากัน · โปรเจกต์ 2 ไฟล์มีบรรทัด "288 duplicate timestamp(s) found across files (values were merged/overwritten)" เพิ่ม (ไฟล์เดียวไม่มีบรรทัดนี้ ดู IMP-67)
+  - **คาดหวัง:** ทั้ง 2 โปรเจกต์: Rows = 1,152 (ไม่ใช่ 1,440) · Period 2024/02/28 00:00:00 → 2024/03/02 23:55:00 ไม่มีปี 2567 · กล่องสีเหลืองมี "864 timestamp(s) used a Buddhist-Era year (พ.ศ.) — converted to Gregorian (ค.ศ.) …" · กราฟเดินจากซ้ายไปขวาตามเวลา ไม่มีเส้นย้อนกลับ · ที่ 2024/03/01 00:00 มีจุดเดียว: `TI-101` = 68 (ค่าของแถวที่อยู่ทีหลัง) และ `PI-201` = 3.4 (แถวหลังช่องนี้ว่าง จึงใช้ค่าของแถวแรก) · ค่าทั้งสองโปรเจกต์เท่ากัน · โปรเจกต์ 2 ไฟล์มีบรรทัด "288 duplicate timestamp(s) found (values were merged/overwritten)" เพิ่ม (ไฟล์เดียวไม่มีบรรทัดนี้ ดู IMP-67)
 
 - [ ] **IMP-99 — ไฟล์ tag names ที่มีอักขระซ่อนอยู่หน้าสุดของไฟล์ (`TS-tags.csv`)** 🆕
   - สร้างโปรเจกต์ใหม่จากไฟล์ F01 (มี `TS_TEMP` / `TS_PRESS`) ที่การ์ด Tag names เลือกไฟล์ `TS-tags.csv` และคอลัมน์ `TAG`
@@ -5936,7 +5936,7 @@ _คุณเล่นเป็นวิศวกรดูแลปั๊ม P-1
   - กดเลือกไฟล์ (browse) แล้วเลือก `WF-A-process.csv`, `WF-B-bearing.csv`, `WF-C-cooling-BE.csv` พร้อมกัน → กด "Parse files"
   - ดูการ์ดสรุป (Rows / Sensors / Period / Interval), กล่อง "Fixed while reading" และแถบ Time coverage
   - ถ้า Rows ไม่ใช่ 52,128: จดตัวเลขที่เห็นไว้ (รายงานบั๊ก) แล้วกด Remove ที่ไฟล์ C → กด "Add more files" เลือก `WF-C-cooling-CE.csv` → กด "Parse files" ใหม่ เพื่อทำขั้นต่อไปได้
-  - **คาดหวัง:** ระหว่างอ่านเห็นข้อความ "Reading…" → "Merging…" → "Done" · Rows = **52,128** (ถ้าได้ประมาณ 104,256 แปลว่าแถวของไฟล์ พ.ศ. ไม่ถูกรวมกับแถวเวลาเดียวกันของไฟล์ ค.ศ.) · Sensors = 11 · Period 2025/01/01 → 2025/06/30 (เป็นปี ค.ศ. ไม่มีปี 2568) · Interval "5 min" · กล่อง "Fixed while reading" มีบรรทัด "52128 timestamp(s) used a Buddhist-Era year (พ.ศ.) — converted to Gregorian (ค.ศ.) for display and calculations" (อาจมีบรรทัด "… duplicate timestamp(s) found across files (values were merged/overwritten)" ด้วย เพราะไฟล์ A กับ B มีเวลาเดียวกัน — ถือว่าปกติ) · Time coverage มีแถบ 3 แถบซ้อนกันเต็มช่วงเดียวกัน และเขียนว่า "files overlap — merged on their timestamps"
+  - **คาดหวัง:** ระหว่างอ่านเห็นข้อความ "Reading…" → "Merging…" → "Done" · Rows = **52,128** (ถ้าได้ประมาณ 104,256 แปลว่าแถวของไฟล์ พ.ศ. ไม่ถูกรวมกับแถวเวลาเดียวกันของไฟล์ ค.ศ.) · Sensors = 11 · Period 2025/01/01 → 2025/06/30 (เป็นปี ค.ศ. ไม่มีปี 2568) · Interval "5 min" · กล่อง "Fixed while reading" มีบรรทัด "52128 timestamp(s) used a Buddhist-Era year (พ.ศ.) — converted to Gregorian (ค.ศ.) for display and calculations" (อาจมีบรรทัด "… duplicate timestamp(s) found (values were merged/overwritten)" ด้วย เพราะไฟล์ A กับ B มีเวลาเดียวกัน — ถือว่าปกติ) · Time coverage มีแถบ 3 แถบซ้อนกันเต็มช่วงเดียวกัน และเขียนว่า "files overlap — merged on their timestamps"
 
 - [ ] **WFA-4 — ใส่ไฟล์ Tag names แล้วชื่อ หน่วย component และค่า alarm เข้ามาครบ**
   - ที่การ์ด "Tag names" กด "Select tag-name CSV" → เลือก `WF-tags.csv`
@@ -6440,7 +6440,7 @@ _คุณเล่นเป็นวิศวกรใหม่ที่ยั�
   - เลือก CSV ที่ใหญ่เกิน 2 GB → กด "Parse files"
   - แบ่งไฟล์เป็น 2 ไฟล์ตามช่วงเวลา (หัวคอลัมน์เหมือนกันทั้งสองไฟล์ ให้ช่วงเวลาซ้อนกัน 1 วัน)
   - กด Remove ไฟล์ใหญ่ → เลือกทั้งสองไฟล์ที่แบ่ง → กด "Parse files"
-  - **คาดหวัง:** ไฟล์ใหญ่ขึ้นข้อความสีแดง "CSV file too large: X.X GB (max 2 GB). Pre-process or split the file." ทันที ไม่ค้าง ไม่ปิดตัวเอง · สองไฟล์ที่แบ่งรวมกันได้ จำนวนแถวรวมเท่ากับของเดิม และ "Time coverage" เห็นช่วงที่ซ้อนกัน · แถบเหลือง "Fixed while reading" บอก "N duplicate timestamp(s) found across files (values were merged/overwritten)" และไม่มีคำว่า "Duplicate column" · กด Continue ได้ ข้อมูลบนกราฟต่อเนื่องไม่ซ้ำ
+  - **คาดหวัง:** ไฟล์ใหญ่ขึ้นข้อความสีแดง "CSV file too large: X.X GB (max 2 GB). Pre-process or split the file." ทันที ไม่ค้าง ไม่ปิดตัวเอง · สองไฟล์ที่แบ่งรวมกันได้ จำนวนแถวรวมเท่ากับของเดิม และ "Time coverage" เห็นช่วงที่ซ้อนกัน · แถบเหลือง "Fixed while reading" บอก "N duplicate timestamp(s) found (values were merged/overwritten)" และไม่มีคำว่า "Duplicate column" · กด Continue ได้ ข้อมูลบนกราฟต่อเนื่องไม่ซ้ำ
 
 - [ ] **WFF-17 — ลืมเลือกไฟล์ Tag names ตอนสร้างโปรเจกต์: ไปต่อไม่ได้จนกว่าจะเลือก** 👀
   - สร้างโปรเจกต์ "Trial-F3" → ที่ขั้น 2 อ่าน `GEG-3.csv` แล้วลองกด "Continue" โดยไม่เลือก Tag names
