@@ -315,6 +315,20 @@ describe('NOT triggers: the model stays Complete', () => {
         expect(diskModel('i1').groupNos).toEqual([1, 2]);
         expect(diskModel('i1').status).toBe(true);
 
+        // Relationship scatter X selector writes scatterXSensor immediately, no demotion
+        selectKindTab('Relation model');
+        await waitForCharts();
+        expect(pill()).toBe('Complete');
+        const xs = within(bmw().getByTestId('fit-x-selector'));
+        // The compact single picker (anchored popover), not a type-ahead box.
+        pickSingle(xs.getByRole('button', { name: 'X sensor' }), 'TAG2');
+        await settle(100);
+        expect(diskModel('r1').scatterXSensor).toBe('TAG2');
+        expect(diskModel('r1').status).toBe(true);
+        // the preview now asks for the new X axis (no re-train, no demotion)
+        await settle(350);
+        expect(env.backend!.cmds('compute_health_preview').pop()!.args.request.x_predictor).toBe('TAG2');
+        expect(pill()).toBe('Complete');
         expect(['i1', 'r1', 'c1', 'u1'].map(id => diskModel(id).status)).toEqual([true, true, true, true]);
         openDashFgTab();
         expect(dashDot(1, 'tag1', 'individual')).toBe('complete');
