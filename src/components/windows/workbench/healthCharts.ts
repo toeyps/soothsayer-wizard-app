@@ -967,11 +967,9 @@ export function estimateRowsOutside3sd(h: HealthHistogram | null, stats: Individ
 /** "Fit": predictor (X) against the target — actual (blue) vs the Relation
  *  model's prediction (red). `yName` is the Y title (the unit, or description · unit when the target has
  *  none, then `yInfo` lets the title wrap); the X title is the predictor's description · unit, never its tag. */
-export function fitTooltipFormatter(xInfo: SensorInfo) {
-    return (p: { seriesName?: string; color?: string; value?: unknown }) => {
-        const [x, y] = (Array.isArray(p.value) ? p.value : []) as number[];
-        return lineRowHtml(p.seriesName ?? '', p.color ?? '', fmtNum(y)) + axisRowHtml('X', xInfo, fmtNum(x));
-    };
+export function fitTooltipFormatter(p: { seriesName?: string; color?: string; value?: unknown }) {
+    const y = Array.isArray(p.value) ? (p.value[1] as number) : NaN;
+    return lineRowHtml(p.seriesName ?? '', p.color ?? '', fmtNum(y));
 }
 
 export function buildFitScatterOption(fit: HealthFitScatter, yName: string, xInfo: SensorInfo, yInfo?: SensorInfo) {
@@ -993,7 +991,7 @@ export function buildFitScatterOption(fit: HealthFitScatter, yName: string, xInf
         textStyle: { fontFamily: FONT },
         animation: false,
         // The hover box says which colour is which (user decision 2026-11-03: no key row).
-        tooltip: { ...tooltipBase, trigger: 'item', formatter: fitTooltipFormatter(xInfo) },
+        tooltip: { ...tooltipBase, trigger: 'item', formatter: fitTooltipFormatter },
         legend: { show: false },
         grid: { left: 58, right: 18, top: 14, bottom: 40, containLabel: false },
         dataZoom: [{ type: 'inside', xAxisIndex: 0, filterMode: 'none' }, { type: 'inside', yAxisIndex: 0, filterMode: 'none' }],
