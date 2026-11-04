@@ -133,14 +133,14 @@ function transitiveDependents(usage: Map<string, SpecialSensorUsage>, tag: strin
 }
 
 /** The lock pill: "Used by 2 models and the running condition". */
-function shortLock(usage: SpecialSensorUsage): string {
+function shortLock(usage: SpecialSensorUsage, nameOf: (tag: string) => string): string {
     const lock = usage.editLock;
     if (lock.unknown) return 'Checking what uses it';
     const models = new Set(usage.modelReferences.map(r => r.modelId)).size;
     const parts = [
         models > 0 ? `${models} model${models === 1 ? '' : 's'}` : '',
         usage.runningCondition ? 'the running condition' : '',
-        lock.via.length > 0 ? lock.via.map(v => v.tag).join(', ') : '',
+        lock.via.length > 0 ? lock.via.map(v => nameOf(v.tag)).join(', ') : '',
     ].filter(Boolean);
     return parts.length > 0 ? `Used by ${parts.join(' and ')}` : 'Locked';
 }
@@ -1100,6 +1100,7 @@ export default function AddSensorWindow() {
                     // the known-bad originals.
                     failureState: repairing ? undefined : failureState,
                     repair: repairing ? { missingBefore } : undefined,
+                    labelOf: tag => sensorPlainLabel(buildSensorLookup(buildSensorLookup(null, sensorMetadataRef.current), [next.metadata])(tag)),
                 });
             assertCurrent(ctx);
             const { downstream, renamedDownstream, recipeOrder, applyEdit } = outcome;
@@ -1576,8 +1577,10 @@ export default function AddSensorWindow() {
     const lockedAfterEdit = !!editSession && lockNow && !repairing && draft.edited;
     const editNameLocked = !!editSession && (lockNow || repairing);
     const editorLock = useMemo<FormulaEditorLock | null>(
-        () => (editLocked && editUsage ? { short: shortLock(editUsage), detail: describeEditLock(editUsage.editLock) } : null),
-        [editLocked, editUsage],
+        () => (editLocked && editUsage ? { short: shortLock(editUsage, nameOf), detail: describeEditLock(editUsage.editLock, nameOf) } : null),
+        // nameOf reads the metadata through a ref.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+        [editLocked, editUsage, sensorMetadata],
     );
     // Repair: how many models go back to Incomplete (the real rule, on the models this window knows).
     const repairRetrain = useMemo(() => {
@@ -1607,7 +1610,7 @@ export default function AddSensorWindow() {
     // What blocks Save, most actionable first (the footer repeats it).
     const editBlock = !editSession ? null
         : lockedAfterEdit
-            ? `This sensor is now locked: ${editUsage ? describeEditLock(editUsage.editLock) : ''} Your change to its calculation can't be saved — Cancel edit to discard it.`
+            ? `This sensor is now locked: ${editUsage ? describeEditLock(editUsage.editLock, nameOf) : ''} Your change to its calculation can't be saved — Cancel edit to discard it.`
             // The stored calculation, untouched, never blocks a save (a description-only save of a
             // sensor whose recipe Rust refuses must go through).
             : !editLocked && draft.edited && !draft.state ? 'The formula is empty.'
@@ -1814,7 +1817,7 @@ export default function AddSensorWindow() {
                             name={name}
                             setName={setName}
                             nameLocked={editNameLocked}
-                            nameLockReason={repairing ? 'The name stays locked while the formula is being fixed.' : editUsage ? describeEditLock(editUsage.editLock) : undefined}
+                            nameLockReason={repairing ? 'The name stays locked while the formula is being fixed.' : editUsage ? describeEditLock(editUsage.editLock, nameOf) : undefined}
                             nameError={editSession ? editNameError : nameError}
                             description={description}
                             setDescription={setDescription}

@@ -714,6 +714,135 @@ describe('Dashboard', () => {
             expect(mockWindowClose).toHaveBeenCalledTimes(1);
         });
 
+        describe('autosave failing mid-session', () => {
+            const fail = () => mockSaveWorkspaceData.mockImplementation(async () => { throw new Error('disk full'); });
+            const work = () => mockSaveWorkspaceData.mockImplementation(async () => undefined);
+            const editAndSettle = async (button: string) => {
+                act(() => { fireEvent.click(screen.getByText(button)); });
+                await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+            };
+            let warn: ReturnType<typeof vi.spyOn>;
+            beforeEach(() => { warn = vi.spyOn(console, 'warn').mockImplementation(() => {}); });
+            afterEach(() => { warn.mockRestore(); work(); });
+
+            it('shows the notice, and a later successful save clears it', async () => {
+                await openAndEdit();
+                fail();
+                await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+                expect(screen.getByTestId('save-failed-notice').textContent).toMatch(/It will try again with your next change/);
+                expect(mockEmit.mock.calls.some(c => c[0] === 'failure-group-state-changed')).toBe(false);
+
+                work();
+                await editAndSettle('select-tag1');
+                expect(screen.queryByTestId('save-failed-notice')).toBeNull();
+            });
+
+            it('after Dismiss a retry that fails stays quiet, until a success happens in between', async () => {
+                await openAndEdit();
+                fail();
+                await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+                fireEvent.click(screen.getByText('Dismiss'));
+                expect(screen.queryByTestId('save-failed-notice')).toBeNull();
+
+                mockSaveWorkspaceData.mockClear();
+                await editAndSettle('select-tag1');
+                expect(mockSaveWorkspaceData).toHaveBeenCalledTimes(1);
+                expect(screen.queryByTestId('save-failed-notice')).toBeNull();
+
+                work();
+                await editAndSettle('select-none');
+                fail();
+                await editAndSettle('select-tag1');
+                expect(screen.getByTestId('save-failed-notice')).toBeTruthy();
+            });
+
+            it('the failed edit stays pending: the close writes it', async () => {
+                await openAndEdit();
+                fail();
+                await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+                work();
+                mockSaveWorkspaceData.mockClear();
+                const { preventDefault, closing } = await pressClose();
+                await act(async () => { await closing; });
+                expect(preventDefault).toHaveBeenCalledTimes(1);
+                expect(mockSaveWorkspaceData.mock.calls[0][0].selectedSensors).toEqual([]);
+                expect(mockWindowClose).toHaveBeenCalledTimes(1);
+            });
+        });
+
+        describe('child windows on the main window X', () => {
+            const children = () => {
+                const closeBuild = vi.fn().mockResolvedValue(undefined);
+                const closeAdd = vi.fn().mockResolvedValue(undefined);
+                mockGetByLabel.mockImplementation((label: string) => Promise.resolve(label === 'build-model' ? { close: closeBuild } : { close: closeAdd }));
+                return { closeBuild, closeAdd };
+            };
+            const closingEmits = () => mockEmit.mock.calls.filter(c => c[0] === 'workspace-closing');
+
+            it('nothing to save: both close and the window is let go, without holding it', async () => {
+                vi.useFakeTimers();
+                renderDashboard({ initialState: makeInitialState({ id: 'ws-A' }) });
+                await act(async () => { await vi.advanceTimersByTimeAsync(250); });
+                const { closeBuild, closeAdd } = children();
+                mockEmit.mockClear();
+                const { preventDefault, closing } = await pressClose();
+                await act(async () => { await closing; });
+                expect(preventDefault).not.toHaveBeenCalled();
+                expect(closingEmits().map(c => c[1].workspaceId)).toEqual(['ws-A']);
+                expect(closeBuild).toHaveBeenCalledTimes(1);
+                expect(closeAdd).toHaveBeenCalledTimes(1);
+                expect(mockWindowClose).not.toHaveBeenCalled();
+            });
+
+            it('the flush comes first, then the children, then this window; the re-entry closes nothing again', async () => {
+                await openAndEdit();
+                const { closeBuild, closeAdd } = children();
+                mockEmit.mockClear();
+                mockWindowClose.mockImplementation(async () => {
+                    const preventDefault = vi.fn();
+                    await mockCloseRequestedHandler!({ preventDefault });
+                    expect(preventDefault).not.toHaveBeenCalled();
+                });
+                const { closing } = await pressClose();
+                await act(async () => { await closing; });
+                expect(mockSaveWorkspaceData.mock.invocationCallOrder[0]).toBeLessThan(closeBuild.mock.invocationCallOrder[0]);
+                expect(closeAdd.mock.invocationCallOrder[0]).toBeLessThan(mockWindowClose.mock.invocationCallOrder[0]);
+                expect(closeBuild).toHaveBeenCalledTimes(1);
+                expect(closingEmits()).toHaveLength(1);
+                expect(mockWindowClose).toHaveBeenCalledTimes(1);
+                mockWindowClose.mockReset().mockResolvedValue(undefined);
+            });
+
+            it('a save that keeps the window open leaves the children open; the next X closes them', async () => {
+                await openAndEdit();
+                const { closeBuild } = children();
+                const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+                mockSaveWorkspaceData.mockImplementation(async () => { throw new Error('disk full'); });
+                const first = await pressClose();
+                await act(async () => { await first.closing; });
+                expect(closeBuild).not.toHaveBeenCalled();
+                const second = await pressClose();
+                await act(async () => { await second.closing; });
+                expect(closeBuild).toHaveBeenCalledTimes(1);
+                expect(mockWindowClose).toHaveBeenCalledTimes(1);
+                warn.mockRestore();
+            });
+
+            it('a child that never answers does not keep the main window open', async () => {
+                vi.useFakeTimers();
+                renderDashboard();
+                await act(async () => { await vi.advanceTimersByTimeAsync(250); });
+                mockGetByLabel.mockImplementation(() => new Promise(() => {}));
+                let done = false;
+                const { closing } = await pressClose();
+                void closing.then(() => { done = true; });
+                await act(async () => { await vi.advanceTimersByTimeAsync(1_999); });
+                expect(done).toBe(false);
+                await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+                expect(done).toBe(true);
+            });
+        });
+
         it('waits for a failure-group write still in flight', async () => {
             vi.useFakeTimers();
             const state = makeInitialState({ failureGroupState: { groups: [{ no: 1, name: 'Group A' }], models: [] } });
@@ -801,6 +930,20 @@ describe('Dashboard', () => {
             expect(mockEmit).not.toHaveBeenCalledWith('failure-group-state-changed', expect.anything());
             fireEvent.click(screen.getByText('Dismiss'));
             expect(screen.queryByTestId('save-failed-notice')).toBeNull();
+        });
+
+        it('an autosave that fails too does not replace the Failure Group notice', async () => {
+            const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+            await open();
+            mockUpdateWorkspaceData.mockImplementationOnce(async () => { throw new Error('disk full'); });
+            await act(async () => { last(fgPanelProps).onDeleteModel('m1'); });
+            mockSaveWorkspaceData.mockClear();
+            mockSaveWorkspaceData.mockImplementation(async () => { throw new Error('disk full'); });
+            await waitFor(() => expect(mockSaveWorkspaceData).toHaveBeenCalled());
+            await act(async () => { await Promise.resolve(); });
+            expect(screen.getByTestId('save-failed-notice').textContent).toMatch(/Could not save your last Failure Group change/);
+            mockSaveWorkspaceData.mockImplementation(async () => undefined);
+            warn.mockRestore();
         });
 
         it('deleting a group: the group comes back from the file', async () => {

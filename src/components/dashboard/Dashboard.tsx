@@ -129,6 +129,9 @@ const AUTOSAVE_DEBOUNCE_MS = 250;
 /** A write that hangs must not keep the window open for ever: past this it counts as failed. */
 const CLOSE_SAVE_WAIT_MS = 10_000;
 const CLOSE_SAVE_FAILED_NOTICE = 'Could not save your latest changes to the project file. Close the window again to leave without them.';
+const AUTOSAVE_FAILED_NOTICE = 'Could not save your latest changes to the project file. It will try again with your next change.';
+/** A child window that does not answer must not keep the main window open. */
+const CHILD_CLOSE_WAIT_MS = 2_000;
 const FG_SAVE_FAILED_NOTICE = 'Could not save your last Failure Group change. The screen is back to what the project file holds.';
 const FG_SAVE_FAILED_UNREAD_NOTICE = 'Could not save your last Failure Group change, and the project file could not be read. What you see may not match the file.';
 const RENAME_MODELS_FAILED_NOTICE = 'Could not update the models that use the renamed sensor. In the project file they still use its old name: reopen the project and check them.';
@@ -1774,22 +1777,19 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     // of waiting for the close. (3) Special-sensor commands are pinned to this
     // dataset's generation anyway (`expectedGeneration`), so a window that
     // survives both still cannot touch the next project's session.
-    useEffect(() => {
-        return () => {
-            const closing = { workspaceId: workspaceIdRef.current, generation: stateRef.current.metadata.generation };
+    const closeChildWindows = useCallback(async () => {
+        const closing = { workspaceId: workspaceIdRef.current, generation: stateRef.current.metadata.generation };
+        try {
+            Promise.resolve(emit('workspace-closing', closing)).catch(() => { /* best effort */ });
+        } catch { /* best effort */ }
+        for (const label of ['build-model', 'add-sensor']) {
             try {
-                Promise.resolve(emit('workspace-closing', closing)).catch(() => { /* best effort */ });
-            } catch { /* best effort */ }
-            void (async () => {
-                for (const label of ['build-model', 'add-sensor']) {
-                    try {
-                        const w = await WebviewWindow.getByLabel(label);
-                        await w?.close();
-                    } catch { /* ignore — window may already be gone */ }
-                }
-            })();
-        };
+                const w = await WebviewWindow.getByLabel(label);
+                await w?.close();
+            } catch { /* ignore — window may already be gone */ }
+        }
     }, []);
+    useEffect(() => () => { void closeChildWindows(); }, [closeChildWindows]);
 
     // Scatter / pair plots are meaningless with fewer than two sensors, so
     // below that the two buttons are disabled — and if the selection drops
@@ -1990,6 +1990,8 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     /** The last autosave did not reach the file (it stays dirty and is retried). */
     const autosaveFailedRef = useRef(false);
+    /** Failed autosaves were reported: says nothing more until one succeeds. */
+    const autosaveToldRef = useRef(false);
     /** A failed save at close was reported: the next close leaves regardless. */
     const closeToldRef = useRef(false);
     /** Window.close() was called: its `close-requested` pass lets the window go. */
@@ -2057,9 +2059,18 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                 console.warn('Autosave failed, nothing overwritten, adopted or broadcast:', e);
                 autosaveDirtyRef.current = true;
                 autosaveFailedRef.current = true;
+                if (!autosaveToldRef.current) {
+                    autosaveToldRef.current = true;
+                    // A notice already up (a Failure Group write) is more specific.
+                    setSaveNotice(prev => prev ?? AUTOSAVE_FAILED_NOTICE);
+                }
                 return;
             }
             autosaveFailedRef.current = false;
+            if (autosaveToldRef.current) {
+                autosaveToldRef.current = false;
+                setSaveNotice(prev => (prev === AUTOSAVE_FAILED_NOTICE ? null : prev));
+            }
             if (closeToldRef.current) {
                 closeToldRef.current = false;
                 setSaveNotice(prev => (prev === CLOSE_SAVE_FAILED_NOTICE ? null : prev));
@@ -2140,14 +2151,25 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     // `preventDefault()` only BLOCKS the close, so once the saves are done we call
     // `close()` ourselves. That comes back through this handler: `leavingRef` lets
     // it pass, so the close can never loop. A save that failed keeps the window once,
-    // with a message; the next close leaves. Nothing pending = no delay at all.
+    // with a message; the next close leaves. Child windows close after the saves and
+    // before this one goes (Tauri destroys it only once this handler has returned):
+    // a window destroyed here never unmounts, so the unmount effect would not run.
     useEffect(() => {
         let disposed = false;
         let unlisten: (() => void) | undefined;
         const win = getCurrentWindow();
+        const closeChildrenCapped = async () => {
+            let timer: ReturnType<typeof setTimeout> | undefined;
+            const gaveUp = new Promise<void>((resolve) => { timer = setTimeout(resolve, CHILD_CLOSE_WAIT_MS); });
+            await Promise.race([closeChildWindows(), gaveUp]);
+            if (timer) clearTimeout(timer);
+        };
         Promise.resolve(win.onCloseRequested(async (event) => {
             if (leavingRef.current) return;
-            if (!autosaveDirtyRef.current && writesRef.current.size === 0) return;
+            if (!autosaveDirtyRef.current && writesRef.current.size === 0) {
+                await closeChildrenCapped();
+                return;
+            }
             event.preventDefault();
             if (closingRef.current) return;
             closingRef.current = true;
@@ -2158,6 +2180,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                     setSaveNotice(CLOSE_SAVE_FAILED_NOTICE);
                     return;
                 }
+                await closeChildrenCapped();
                 leavingRef.current = true;
                 await win.close();
             } catch (e) {
@@ -2168,7 +2191,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
             }
         })).then(fn => { if (disposed) fn(); else unlisten = fn; });
         return () => { disposed = true; if (unlisten) unlisten(); };
-    }, [saveAllBeforeClose]);
+    }, [saveAllBeforeClose, closeChildWindows]);
 
     // ── Scatter / Pair-plot data path (bounded sample) ───────────────────
     // A 2 GB CSV is millions of rows; pushing every point to WebGL exhausts

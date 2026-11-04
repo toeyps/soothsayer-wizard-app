@@ -234,6 +234,17 @@ describe('ManageSpecialSensors -- edit lock (the expanded row)', () => {
         expect(screen.getByTestId('edit-lock-special A').textContent)
             .toContain('Built on by "special B", which is used by 1 model: Boiler efficiency (Individual).');
     });
+
+    it('the lock message names the downstream sensor description first', () => {
+        renderList({
+            ...chain,
+            sensorMetadata: [...metadata, { tag: 'special B', description: 'Pump power', unit: 'kW', component: 'Pump' }],
+            models: [makeModel({ targetSensor: 'special B' })],
+        });
+        fireEvent.click(screen.getByText('Used by 1 sensor'));
+        expect(screen.getByTestId('edit-lock-special A').textContent)
+            .toContain('Built on by "Pump power · special B", which is used by 1 model');
+    });
 });
 
 // A sensor whose recipe could not be rebuilt this

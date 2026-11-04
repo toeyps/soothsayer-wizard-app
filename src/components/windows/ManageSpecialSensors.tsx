@@ -154,7 +154,7 @@ export default function ManageSpecialSensors({
                     // Edit lock: why this sensor's name / formula / sources are
                     // frozen (a model uses it, or one built on it does). The
                     // description / unit / component stay editable.
-                    const lockMessage = info.editLock.locked ? describeEditLock(info.editLock) : null;
+                    const lockMessage = info.editLock.locked ? describeEditLock(info.editLock, nameOf) : null;
                     // Its recipe could not be rebuilt this session: it has no
                     // data until fixed, and the editor lets the formula be
                     // fixed even under a lock (the name stays locked).

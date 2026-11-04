@@ -1488,7 +1488,7 @@ describe('8. interleavings', () => {
         await openEditor('A');
         await setEditor({ formula: '$TAG1 * 3' });
         await saveEditor();
-        expect(editorError()).toMatch(/Could not recompute "C"/);
+        expect(editorError()).toMatch(/Could not recompute "C desc · C"/);
         await act(async () => { fireEvent.click(W().getByText('Cancel edit')); });
         await expectConsistent(await persistedRecipes());
     });
@@ -1623,7 +1623,7 @@ describe('9. edit lock: a sensor a model uses', () => {
         });
         const from = rust.calls.length;
         await openEditor('A'); // locked transitively through B
-        expect(banner()!.textContent).toContain('Built on by "B", which is used by 1 model: Pump model (Relation model).');
+        expect(banner()!.textContent).toContain('Built on by "B desc · B", which is used by 1 model: Pump model (Relation model).');
         await act(async () => { fireEvent.change(W().getByLabelText('Description'), { target: { value: 'Generator power' } }); });
         await act(async () => { fireEvent.change(W().getByLabelText('Unit'), { target: { value: 'kW' } }); });
         await saveEditor();
@@ -1646,7 +1646,7 @@ describe('9. edit lock: a sensor a model uses', () => {
         await writerPersistsThenBroadcasts([modelOn('A')], {}, 'build-model', { broadcast: false });
         const from = rust.calls.length;
         await saveEditor();
-        expect(editorError()).toMatch(/Can't rename "A"\. Used by 1 model: Pump model \(Relation model\)\./);
+        expect(editorError()).toMatch(/Can't rename "A desc · A"\. Used by 1 model: Pump model \(Relation model\)\./);
         expect(sessionWrites(from)).toHaveLength(0);
         expect(sentEvents(['rename-special-sensor', 'update-special-sensor'])).toHaveLength(0);
         expect(rust.chartValues('A')).toEqual([2, 4, 6, 8]);
@@ -1661,7 +1661,7 @@ describe('9. edit lock: a sensor a model uses', () => {
         await writerPersistsThenBroadcasts([modelOn('A')], {}, 'build-model', { broadcast: false });
         const from = rust.calls.length;
         await saveEditor();
-        expect(editorError()).toMatch(/Can't change the formula, operation or sources of "A"/);
+        expect(editorError()).toMatch(/Can't change the formula, operation or sources of "A desc · A"/);
         expect(sessionWrites(from)).toHaveLength(0);
         expect(rust.chartValues('A')).toEqual([2, 4, 6, 8]);
     });
@@ -1692,9 +1692,9 @@ describe('9. edit lock: a sensor a model uses', () => {
     it('TRANSITIVE through a chain: only C (built on B, built on A) is used by a model -> A and B are locked; an unrelated unused sensor stays editable', async () => {
         await openWorkspace([F('A', '$TAG1 * 2'), F('B', '${A} + 1'), F('C', '$B * 10'), F('Z', '$TAG3 + 1')], withModel(modelOn('C')));
         await openEditor('A');
-        expect(banner()!.textContent).toContain('Built on by "C", which is used by 1 model');
+        expect(banner()!.textContent).toContain('Built on by "C desc · C", which is used by 1 model');
         await openEditor('B');
-        expect(banner()!.textContent).toContain('Built on by "C"');
+        expect(banner()!.textContent).toContain('Built on by "C desc · C"');
         await openEditor('Z');
         expect(banner()).toBeNull();
         expect((W().getByLabelText('Name') as HTMLInputElement).readOnly).toBe(false);
@@ -1710,7 +1710,7 @@ describe('9. edit lock: a sensor a model uses', () => {
         const from = rust.calls.length;
         await saveEditor();
         h.disk.set(WS, real);
-        expect(editorError()).toMatch(/Can't rename "A" right now: couldn't check whether a model uses it/);
+        expect(editorError()).toMatch(/Can't rename "A desc · A" right now: couldn't check whether a model uses it/);
         expect(sessionWrites(from)).toHaveLength(0);
         expect(rust.has('A2')).toBe(false);
     });

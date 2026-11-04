@@ -80,11 +80,13 @@ const mockLoadWorkspace = vi.fn();
 const mockSaveWorkspace = vi.fn();
 const mockDeleteWorkspace = vi.fn();
 const mockSaveLegacyConversion = vi.fn();
+const mockUpdateWorkspace = vi.fn();
 
 vi.mock('../workspaceManager', () => ({
   getRecentWorkspaces: (...args: unknown[]) => mockGetRecent(...args),
   loadWorkspaceData: (...args: unknown[]) => mockLoadWorkspace(...args),
   saveWorkspaceData: (...args: unknown[]) => mockSaveWorkspace(...args),
+  updateWorkspaceData: (...args: unknown[]) => mockUpdateWorkspace(...args),
   deleteWorkspace: (...args: unknown[]) => mockDeleteWorkspace(...args),
   saveLegacyFormulaConversion: (...args: unknown[]) => mockSaveLegacyConversion(...args),
 }));
@@ -943,17 +945,26 @@ describe('S. Step 3 "Failure groups"', () => {
     expect(mockSaveWorkspace).toHaveBeenCalledTimes(1);
   });
 
-  it('S9. a failed save goes back to step 3 with the error and the typed groups kept', async () => {
-    mockSaveWorkspace.mockRejectedValue(new Error('disk full'));
+  it('S9. a failed save goes back to step 3 with a plain sentence and the typed groups kept; the next try clears it', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    mockSaveWorkspace.mockRejectedValueOnce(new Error('os error 112: disk full'));
     renderAtStep3();
     addGroup('Bearing overheating');
     fireEvent.click(openDashboardButton());
 
-    await waitFor(() => expect(screen.getByText('Error: disk full')).toBeTruthy());
+    const sentence = /Could not save the new project\. Check that the disk has free space, then try again\./;
+    await waitFor(() => expect(screen.getByText(sentence)).toBeTruthy());
+    expect(screen.queryByText(/os error 112/)).toBeNull();
     expect(screen.getByTestId('failure-groups-step')).toBeTruthy();
     expect((screen.getByLabelText('Name of FG-1') as HTMLInputElement).value).toBe('Bearing overheating');
     expect(onDataReady).not.toHaveBeenCalled();
     expect(openDashboardButton().disabled).toBe(false);
+
+    // Trying again takes the old error off at once and goes through.
+    fireEvent.click(openDashboardButton());
+    expect(screen.queryByText(sentence)).toBeNull();
+    await waitFor(() => expect(onDataReady).toHaveBeenCalledTimes(1), { timeout: 3000 });
+    warn.mockRestore();
   });
 
   it('S10. Back (or the rail) returns to step 2 and keeps the typed groups; a NEW project starts with none', () => {
@@ -1218,6 +1229,101 @@ describe('F. Load workspace flow', () => {
     });
     // Spinner is gone (loadingWorkspace cleared)
     expect(screen.queryByText('Loading workspace…')).toBeNull();
+  });
+
+  describe('running-condition spelling on open', () => {
+    const complete = { id: 'm1', status: true };
+    const other = { id: 'm2', status: false };
+    const onDisk = { ...baseLoadedWs, failureGroupState: { groups: [], models: [complete, other] } };
+    const respelled = (models: unknown[]) => ({ ...onDisk, name: 'not copied', failureGroupState: { groups: [], models, runningConditionFilters: [{ sensor: 'Temp A' }] } });
+    const open = async () => {
+      mockLoadWorkspace.mockResolvedValue(onDisk);
+      mockInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'load_csv') return Promise.resolve({ headers: ['timestamp', 'Temp A'], total_rows: 100 });
+        if (cmd === 'get_all_sensors') return Promise.resolve(['timestamp', 'Temp A', 'Special']);
+        return Promise.resolve(null);
+      });
+      render(<DataUploadPage onDataReady={onDataReady} />);
+      await waitFor(() => screen.getByText('Engine pressure run'));
+      fireEvent.click(screen.getByText('Engine pressure run'));
+      await waitFor(() => expect(onDataReady).toHaveBeenCalledTimes(1));
+    };
+
+    it('F-spell. corrects against the session headers before the time zone step, hands over only the slice, and says how many models went back', async () => {
+      const patches: Array<(s: WorkspaceState) => WorkspaceState> = [];
+      mockUpdateWorkspace.mockImplementation(async (_id: string, patch: (s: WorkspaceState) => WorkspaceState) => {
+        patches.push(patch);
+        patch(onDisk as unknown as WorkspaceState);
+        return respelled([{ ...complete, status: false }, other]);
+      });
+      await open();
+
+      expect(mockUpdateWorkspace.mock.calls[0][0]).toBe('ws_1');
+      expect(mockUpdateWorkspace.mock.invocationCallOrder[0]).toBeLessThan(mockEnsureOffset.mock.invocationCallOrder[0]);
+      const spelled = patches[0]({ ...baseLoadedWs, failureGroupState: { groups: [], models: [], runningConditionFilters: [{ id: 'r', sensor: 'TEMP A', operation: 'greater_than', value1: '1', value2: '' }] } } as unknown as WorkspaceState);
+      expect(spelled.failureGroupState?.runningConditionFilters?.[0].sensor).toBe('Temp A');
+
+      const handed = onDataReady.mock.calls[0][1] as WorkspaceState;
+      expect(handed.failureGroupState?.models?.[0].status).toBe(false);
+      expect(handed.name).toBe(baseLoadedWs.name);
+
+      await waitFor(() => expect(mockDialogMessage).toHaveBeenCalledTimes(1));
+      expect(mockDialogMessage).toHaveBeenCalledWith(
+        '1 Complete model went back to Incomplete. The running condition was not applied when it was trained, so it needs training again.',
+        { title: 'Running condition corrected', kind: 'info' },
+      );
+    });
+
+    it('F-spell-none. nothing went back: no notice', async () => {
+      mockUpdateWorkspace.mockImplementation(async (_id: string, patch: (s: WorkspaceState) => WorkspaceState) => {
+        patch(onDisk as unknown as WorkspaceState);
+        return onDisk;
+      });
+      await open();
+      await act(async () => { await Promise.resolve(); });
+      expect(mockDialogMessage).not.toHaveBeenCalled();
+    });
+
+    it('F-spell-fail. a failed correction does not stop the project opening', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      mockUpdateWorkspace.mockRejectedValue(new Error('disk full'));
+      await open();
+      expect((onDataReady.mock.calls[0][1] as WorkspaceState).failureGroupState).toEqual(onDisk.failureGroupState);
+      expect(warn).toHaveBeenCalledWith('Could not correct running-condition spelling:', expect.any(Error));
+      warn.mockRestore();
+    });
+
+    it('F-spell-both. with a rounding conversion too, one dialog carries both messages', async () => {
+      const original = { kind: 'formula' as const, tag: 'R', formula: 'round($sensor_a, 2)' };
+      const fixed = { kind: 'formula' as const, tag: 'R', formula: 'round($sensor_a * 100) / 100' };
+      mockLoadWorkspace.mockResolvedValue({ ...onDisk, specialSensorRecipes: [original] });
+      mockSaveLegacyConversion.mockResolvedValue({
+        state: { ...onDisk, specialSensorRecipes: [fixed] },
+        converted: [{ tag: 'R', from: original.formula, to: fixed.formula }],
+        retrainModelIds: [],
+        message: 'Rounding text.',
+      });
+      mockUpdateWorkspace.mockImplementation(async (_id: string, patch: (s: WorkspaceState) => WorkspaceState) => {
+        patch(onDisk as unknown as WorkspaceState);
+        return respelled([{ ...complete, status: false }, other]);
+      });
+      mockInvoke.mockImplementation((cmd: string, args?: any) => {
+        if (cmd === 'convert_legacy_formula') return Promise.resolve({ formula: fixed.formula, changed: true });
+        if (cmd === 'load_csv') return Promise.resolve({ headers: ['timestamp', 'sensor_a'], total_rows: 100 });
+        if (cmd === 'evaluate_formula') return Promise.resolve(args.customName);
+        if (cmd === 'get_all_sensors') return Promise.resolve(['timestamp', 'sensor_a', 'R']);
+        return Promise.resolve(null);
+      });
+      render(<DataUploadPage onDataReady={onDataReady} />);
+      await waitFor(() => screen.getByText('Engine pressure run'));
+      fireEvent.click(screen.getByText('Engine pressure run'));
+      await waitFor(() => expect(onDataReady).toHaveBeenCalledTimes(1));
+      expect((onDataReady.mock.calls[0][1] as WorkspaceState).specialSensorRecipes).toEqual([fixed]);
+      await waitFor(() => expect(mockDialogMessage).toHaveBeenCalledTimes(1));
+      const [text, opts] = mockDialogMessage.mock.calls[0];
+      expect(String(text)).toMatch(/^Rounding text\.\n\n1 Complete model went back to Incomplete/);
+      expect(opts).toEqual({ title: 'Project updated', kind: 'info' });
+    });
   });
 
   describe('special sensor recipe replay (2026-09-01: rebuilds "Add Special Sensor" columns in the Rust backend\'s in-memory session right after load_csv — see WorkspaceState.specialSensorRecipes)', () => {

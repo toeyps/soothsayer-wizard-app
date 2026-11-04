@@ -709,7 +709,7 @@ describe('AddSensorWindow', () => {
             await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
         });
 
-        expect(screen.getByRole('alert').textContent).toContain('Could not recompute "A"');
+        expect(screen.getByRole('alert').textContent).toContain('Could not recompute "A description · A"');
         expect(screen.getByText('Save changes')).toBeTruthy();
         expect(mockEmit).not.toHaveBeenCalledWith('update-special-sensor', expect.anything());
     });
@@ -2104,7 +2104,7 @@ describe('AddSensorWindow: one serial queue for create / edit / delete', () => {
         await goManage();
         rust.inner.failOn('evaluate_formula', a => a.customName === 'A' && a.replace === true, 'injected');
         await saveEdit('A', { formula: '$TAG1 * 5' });
-        expect(screen.getByRole('alert').textContent).toMatch(/Could not recompute "A"/);
+        expect(screen.getByRole('alert').textContent).toMatch(/Could not recompute "A description · A"/);
 
         await act(async () => { fireEvent.click(screen.getByText('Cancel edit')); });
         await act(async () => { fireEvent.click(screen.getByRole('tab', { name: /Create/ })); });
@@ -2384,7 +2384,7 @@ describe('AddSensorWindow: edit lock for sensors a model uses', () => {
         // queued task must find out on its own, from the file.
         disk.models = [usingA];
         await save();
-        expect(editorAlert()).toMatch(/Can't rename "A"\. Used by 1 model: Uses A \(Relation model\)\./);
+        expect(editorAlert()).toMatch(/Can't rename "Sensor A · A"\. Used by 1 model: Uses A \(Relation model\)\./);
         expect(writes(rust)).toHaveLength(0);
         expect(mockEmit.mock.calls.filter(c => c[0] === 'rename-special-sensor' || c[0] === 'update-special-sensor')).toHaveLength(0);
         expect(mockLoadWorkspace).toHaveBeenCalledWith('ws-1');
@@ -2399,7 +2399,7 @@ describe('AddSensorWindow: edit lock for sensors a model uses', () => {
         fireEvent.change(screen.getByLabelText('Component'), { target: { value: 'Uncategorized' } });
         disk.models = [usingA];
         await save();
-        expect(editorAlert()).toMatch(/Can't change the formula, operation or sources of "A"/);
+        expect(editorAlert()).toMatch(/Can't change the formula, operation or sources of "d · A"/);
         expect(writes(rust)).toHaveLength(0);
         // The window's own recipe list still says $TAG1 * 2.
         await act(async () => { fireEvent.click(screen.getByText('Cancel edit')); });
@@ -2426,6 +2426,21 @@ describe('AddSensorWindow: edit lock for sensors a model uses', () => {
         fireEvent.change(screen.getByLabelText('Description'), { target: { value: 'd2' } });
         await save();
         expect(writes(rust)).toHaveLength(0); // metadata-only
+    });
+
+    it('the banner and the lock pill name a downstream sensor description first', async () => {
+        const usingB = { ...usingA, id: 'm2', name: 'Uses B', kind: 'individual', targetSensor: 'B' };
+        disk.models = [usingB];
+        await open({
+            models: [usingB],
+            sensorMetadata: [
+                { tag: 'A', description: 'Sensor A', unit: 'bar', component: 'Uncategorized' },
+                { tag: 'B', description: 'Pump power', unit: 'kW', component: 'Uncategorized' },
+            ],
+        });
+        await edit('A');
+        expect(screen.getByTestId('edit-lock-banner').textContent).toMatch(/Built on by "Pump power · B", which is used by 1 model/);
+        expect(screen.getByTestId('formula-lock-pill').textContent).toContain('Pump power · B');
     });
 
     it('Manage\'s expanded row explains the lock (and the Delete reason) in one place', async () => {
@@ -2471,7 +2486,7 @@ describe('AddSensorWindow: edit lock for sensors a model uses', () => {
         fireEvent.change(screen.getByLabelText('Component'), { target: { value: 'Uncategorized' } });
         disk.failRead = true;
         await save();
-        expect(editorAlert()).toMatch(/Can't rename "A" right now: couldn't check whether a model uses it \(disk unavailable\)/);
+        expect(editorAlert()).toMatch(/Can't rename "Sensor A · A" right now: couldn't check whether a model uses it \(disk unavailable\)/);
         expect(writes(rust)).toHaveLength(0);
     });
 });
@@ -3092,7 +3107,7 @@ describe('AddSensorWindow: fixing a special sensor that could not be restored', 
             cmd === 'get_session_generation' ? g + 1 : rust.invoke(cmd, args)
         ));
         await save();
-        expect(screen.getAllByRole('alert').map(a => a.textContent).join(' ')).toMatch(/Can't change the formula, operation or sources of "A"/);
+        expect(screen.getAllByRole('alert').map(a => a.textContent).join(' ')).toMatch(/Can't change the formula, operation or sources of "Rounded · A"/);
         expect(rust.calls.filter(c => WRITES.includes(c.cmd))).toHaveLength(0);
         expect(mockEmit.mock.calls.some(c => c[0] === 'update-special-sensor')).toBe(false);
     });

@@ -9,6 +9,7 @@ import { useMappingData, buildSensorMetadataFromMapping } from "../../hooks/useM
 import type { CsvMetadata, MachineDetails, SensorMetadata, SpecialSensorRecipe, WorkspaceState, WorkspaceMetadata } from "../../types";
 import {
   saveWorkspaceData,
+  updateWorkspaceData,
   loadWorkspaceData,
   getRecentWorkspaces,
   deleteWorkspace,
@@ -22,6 +23,7 @@ import { buildSensorLookup, sensorPlainLabel } from "../sensor/sensorInfo";
 import { convertLegacyFormulaRecipes, legacyConversionMessage } from "../../utils/legacyFormulaConversion";
 import { bindToGeneration, StaleSessionError } from "../../utils/staleSession";
 import { withFailureGroupState } from "../../utils/failureGroupState";
+import { normalizeConditionSpelling } from "../../utils/workspaceMigrations";
 import { buildInitialFailureGroups } from "../dashboard/failureGroupOps";
 import { DARK, mono } from "./uploadTheme";
 import HomeStep from "./HomeStep";
@@ -310,6 +312,7 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
     // One save per click: a second click before the re-render must not create a second workspace.
     if (!report || continuingRef.current) return;
     continuingRef.current = true;
+    setWorkspaceError(null);
     // The rail stays on screen with step 4 current ("Opening the Dashboard…")
     // while the new workspace is saved. Saving a fresh workspace's JSON is
     // near-instant (<50ms), so without a floor the swap flickers past and
@@ -362,7 +365,8 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
       ]);
       onDataReady(metadata, state, mapping.sensorMetadata);
     } catch (err) {
-      setWorkspaceError(String(err));
+      console.warn("Could not save the new project:", err);
+      setWorkspaceError("Could not save the new project. Check that the disk has free space, then try again.");
       setGroupsSkipped(false);
       setStep(3);
       continuingRef.current = false;
@@ -495,6 +499,35 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
         };
       }
 
+      // A running condition spelled differently from its header: Rust ignored it,
+      // so a model trained on it used all rows. Copy only the slice: `opened` may
+      // hold converted recipes the file does not have yet.
+      let conditionNotice: { text: string; trace: string } | null = null;
+      try {
+        const headers = await invoke<string[]>("get_all_sensors"); // includes replayed special sensors
+        if (!isLatest()) return;
+        const wasComplete = new Set<string>();
+        const written = await updateWorkspaceData(id, s => {
+          for (const m of s.failureGroupState?.models ?? []) if (m.status) wasComplete.add(m.id);
+          return normalizeConditionSpelling(s, headers);
+        });
+        if (!isLatest()) return;
+        if (written) {
+          opened = { ...opened, failureGroupState: written.failureGroupState };
+          const retrain = (written.failureGroupState?.models ?? []).filter(m => wasComplete.has(m.id) && !m.status).length;
+          if (retrain > 0) {
+            conditionNotice = {
+              text: retrain === 1
+                ? "1 Complete model went back to Incomplete. The running condition was not applied when it was trained, so it needs training again."
+                : `${retrain} Complete models went back to Incomplete. The running condition was not applied when they were trained, so they need training again.`,
+              trace: `Running condition spelling corrected. Models set back to Incomplete: ${retrain}.`,
+            };
+          }
+        }
+      } catch (err) {
+        console.warn("Could not correct running-condition spelling:", err);
+      }
+
       // A project made before the data's time zone existed gets this PC's
       // offset, once -- the ONE caller of ensureDataUtcOffset. Only after the
       // data really loaded (a failed open leaves the file untouched), and
@@ -565,13 +598,15 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
       // long enough for another workspace to be clicked).
       if (!isLatest()) return;
       onDataReady(dataMetadata, stateForDashboard, sm);
-      if (roundingNotice) {
-        logToFile('special-sensor-rounding', roundingNotice.text, roundingNotice.trace);
-        // Not awaited: the Dashboard opens behind it.
-        const text = roundingNotice.text;
+      if (roundingNotice) logToFile('special-sensor-rounding', roundingNotice.text, roundingNotice.trace);
+      if (conditionNotice) logToFile('running-condition-spelling', conditionNotice.text, conditionNotice.trace);
+      if (roundingNotice || conditionNotice) {
+        // One dialog, not awaited: the Dashboard opens behind it.
+        const text = [roundingNotice?.text, conditionNotice?.text].filter(Boolean).join('\n\n');
+        const title = !conditionNotice ? 'Rounding updated' : !roundingNotice ? 'Running condition corrected' : 'Project updated';
         void Promise.resolve()
-          .then(() => message(text, { title: 'Rounding updated', kind: 'info' }))
-          .catch(e => console.warn('Could not show the rounding notice:', e));
+          .then(() => message(text, { title, kind: 'info' }))
+          .catch(e => console.warn('Could not show the notice:', e));
       }
     } catch (err) {
       // An older load's failure is not the user's concern any more.
