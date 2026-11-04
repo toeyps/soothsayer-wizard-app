@@ -19,6 +19,7 @@
 | [`release/`](release/) | `CHANGELOG.md` — section ใหม่ทุกครั้งที่ build installer · `Wizard_Release_Versions.txt` — สรุปทุกเวอร์ชันแบบเปิดด้วย Notepad (tag / commit / installer) | `release-agent` |
 | [`testing/`](testing/) | `MANUAL_TEST_PLAN.md` (ต้นฉบับ) → `manual-test-plan.html` (สร้างจาก .md ด้วย `scripts/build-manual-test-html.py`, เปิดในเบราว์เซอร์ได้เลย), `WRITING_GUIDE.md` (กติกาเขียนข้อทดสอบให้ BA อ่าน), `ID_HISTORY.md` (ประวัติเลขข้อ), `AUDIT_2026-10-14.md` (ผลตรวจแผนเทียบโค้ด + บั๊กที่สงสัย — แผนมี 2 ส่วน: ทีละฟังก์ชัน + workflow ผู้ใช้ WFA–WFJ ซึ่งใช้ข้อมูลจาก `scripts/make-wf-testdata.py`, `scripts/make-ts-testdata.py` และ `scripts/make-export-testdata.py`) | `qa-agent` / ผู้ทดสอบ |
 | [`design/`](design/) | `DESIGN_SYSTEM.md`, `APP_MAP.md` และ `handoff/` (สเปกที่ส่งจากทีมออกแบบให้ทีม dev ทีละงาน) | `ui-design-lead` |
+| [`security/`](security/README.md) | ความปลอดภัยของโปรแกรมแยกตามหมวด: ทำอะไรแล้ว แต่ละตัวทำงานอย่างไร และอะไรยังไม่ทำ (เขียนทับ) | ทุก session แก้เมื่อเรื่องนี้เปลี่ยน |
 | [`reference/`](reference/) | `tech-stack.html` (สรุป stack หน้าเดียว) | — |
 | [`onboarding/`](onboarding/) | คู่มือ + ตัวอย่างงานสำหรับน้องฝึกงาน BA/SA | — |
 | [`archive/`](archive/) | ประวัติที่ไม่ใช้แล้ว: `planning/` (requirements / task / contracts ของ Feature 1–4), `handover-overview-2026-08.md` (ภาพรวมฉบับเก่า) | ห้ามแก้ |
