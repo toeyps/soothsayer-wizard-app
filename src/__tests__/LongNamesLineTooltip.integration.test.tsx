@@ -18,7 +18,6 @@ vi.mock('../components/charts/ResponsiveECharts', () => ({
 import LineChart from '../components/charts/LineChart';
 import type { ColumnarSeries } from '../components/charts/ChartTypes';
 import { buildSubModelOption } from '../components/windows/SubModelsModal';
-import { buildFitScatterOption } from '../components/windows/workbench/healthCharts';
 import { attachAxisNames, getAxisNames } from '../utils/axisName';
 import { longName } from './helpers/nameGeometry';
 
@@ -144,11 +143,4 @@ describe('axis titles: the real option builders, the fitting and the real EChart
         expect(out.yAxis[0].name).toBe('Bearing temperature · DEGC');
     });
 
-    it('Fit: the X title is the description of the predictor · unit, never its tag, and a long one keeps its end', () => {
-        const fitData = { x_sensor: 'A', predictors: ['A'], x: [0, 1, 2], actual: [1, 2, 3], predicted: [1, 2, 3], total: 3 };
-        const out = fitted(buildFitScatterOption(fitData, 'mm/s', info('A')), 360, 240);
-        const x = String(out.xAxis[0].name);
-        expect(x).not.toBe('A');
-        expect(x.endsWith('avg · mm/s')).toBe(true);
-    });
 });

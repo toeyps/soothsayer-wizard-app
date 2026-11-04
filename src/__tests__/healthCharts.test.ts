@@ -10,6 +10,7 @@ import {
     clusterTooltipFormatter,
     buildDistributionOption,
     buildFitScatterOption,
+    fitTooltipFormatter,
     buildResidualOption,
     buildTargetVsPredictedOption,
     buildTimeSeriesOption,
@@ -541,7 +542,7 @@ describe('Individual charts', () => {
         expect(ts.xAxis.axisLabel.formatter(new Date(2026, 0, 1, 1, 0).getTime())).toBe('2026/01/01 01:00');
         const cat: any = buildTimeSeriesOption({ timestamps: ['a', 'b'], lines: [{ name: 'V', values: [1, 2], color: '#fff' }] });
         expect(cat.xAxis.axisLabel.formatter).toBeUndefined();
-        const fit: any = buildFitScatterOption(rel().fit_scatter!, '°C', { tag: 'A' });
+        const fit: any = buildFitScatterOption(rel().fit_scatter!, '°C');
         expect(fit.xAxis.axisLabel.formatter(noisy)).toBe('0.3');
         expect(fit.yAxis.axisLabel.formatter(noisy)).toBe('0.3');
         const c = clu();
@@ -602,15 +603,32 @@ describe('Individual charts', () => {
 });
 
 describe('Relationship charts', () => {
-    it('Fit: the Actual and Relation-model series against the chosen predictor, skipping missing predictions', () => {
-        const p = rel();
-        const fit = { ...p.fit_scatter!, predicted: [10, null, 12, 11, 10] as (number | null)[] };
-        const o: any = buildFitScatterOption(fit, '°C', { tag: 'A', description: 'BEARING TEMP', unit: 'DEGC' });
-        expect(o.series.map((s: any) => s.name)).toEqual(['Actual', 'Relation model']);
-        expect(o.series[0].data).toHaveLength(5);
-        expect(o.series[1].data).toHaveLength(4);
-        expect(o.xAxis.name).toBe('BEARING TEMP · DEGC'); // the predictor's description · unit, never the bare tag
-        expect(o.yAxis.name).toBe('°C');
+    it('Fit: actual (X) against predicted (Y) of the target, no predictor, skipping missing predictions', () => {
+        const fit = { x_sensor: 'P1', predictors: ['P1'], x: [100, 200, 300], actual: [10, 20, 30], predicted: [11, null, 29] as (number | null)[], total: 3 };
+        const o: any = buildFitScatterOption(fit as any, '°C');
+        expect(o.series).toHaveLength(1);
+        expect(o.series[0].data).toEqual([[10, 11], [30, 29]]);
+        expect(o.xAxis.name).toBe('Actual · °C');
+        expect(o.yAxis.name).toBe('Predicted · °C');
+    });
+
+    it('Fit: both axes share one range and the dashed line marks a perfect fit', () => {
+        const fit = { x_sensor: 'P1', predictors: ['P1'], x: [1, 2], actual: [10, 20], predicted: [12, 35], total: 2 };
+        const o: any = buildFitScatterOption(fit as any, '');
+        expect(o.xAxis.min).toBe(o.yAxis.min);
+        expect(o.xAxis.max).toBe(o.yAxis.max);
+        expect(o.xAxis.max).toBeGreaterThanOrEqual(35);
+        const [from, to] = o.series[0].markLine.data[0];
+        expect(from.coord).toEqual([o.xAxis.min, o.xAxis.min]);
+        expect(to.coord).toEqual([o.xAxis.max, o.xAxis.max]);
+        expect(o.xAxis.name).toBe('Actual'); // no unit: no separator
+    });
+
+    it('Fit: no plottable point still gives a valid chart', () => {
+        const fit = { x_sensor: 'P1', predictors: ['P1'], x: [1], actual: [10], predicted: [null], total: 1 };
+        const o: any = buildFitScatterOption(fit as any, '°C');
+        expect(o.series[0].data).toEqual([]);
+        expect(Number.isFinite(o.xAxis.min)).toBe(true);
     });
 
     it('Target vs predicted: Actual and Predicted lines over time', () => {
@@ -621,17 +639,12 @@ describe('Relationship charts', () => {
         expect(o.series[1].lineStyle.color).toBe(CHART.predicted);
     });
 
-    it('Fit: the hover box gives the point\'s colour and name, its value and its X sensor', () => {
-        const o: any = buildFitScatterOption({ x_sensor: 'X1', predictors: ['X1'], x: [1], actual: [2], predicted: [3], total: 1 } as any, '%', { tag: 'X1', description: 'Inlet flow', unit: 'm3/h' } as any);
+    it('Fit: the hover box gives the actual and the predicted value', () => {
         const box = document.createElement('div');
-        box.innerHTML = o.tooltip.formatter({ seriesName: 'Relation model', color: CHART.predicted, value: [12.5, 80.25] });
-        const [line, x] = [...box.querySelectorAll('.tt-row')];
-        expect(line.querySelector('.tt-desc')!.textContent).toBe('Relation model');
-        expect(line.querySelector('.tt-val')!.textContent).toBe('80.25');
-        expect(line.querySelector('.tt-sw')!.className).toMatch(/tt-c\d+/);
-        expect(x.querySelector('.tt-key')!.textContent).toBe('X');
-        expect(x.querySelector('.tt-desc')!.textContent).toBe('Inlet flow');
-        expect(x.querySelector('.tt-val')!.textContent).toBe('12.5');
+        box.innerHTML = fitTooltipFormatter({ value: [12.5, 80.25] });
+        const rows = [...box.querySelectorAll('.tt-row')];
+        expect(rows.map(r => r.querySelector('.tt-desc')!.textContent)).toEqual(['Actual', 'Predicted']);
+        expect(rows.map(r => r.querySelector('.tt-val')!.textContent)).toEqual(['12.5', '80.25']);
     });
 
     it('Target vs predicted: the hover box gives the time, then each line with its colour, name and value', () => {
@@ -665,7 +678,7 @@ describe('Relationship charts', () => {
     });
 
     it('Fit: the axis lines stay on the plot\'s edge (no stray line through zero when the data straddles it)', () => {
-        const o: any = buildFitScatterOption(rel().fit_scatter!, '°C', { tag: 'A' });
+        const o: any = buildFitScatterOption(rel().fit_scatter!, '°C');
         expect(o.xAxis.axisLine.onZero).toBe(false);
         expect(o.yAxis.axisLine.onZero).toBe(false);
         expect(o.xAxis.axisLine.lineStyle.color).toBe(CHART.gridLine);
@@ -964,23 +977,6 @@ describe('Clustering chart', () => {
 
 describe('long sensor names on the Workbench charts', () => {
     const LONG = (n: number) => `Crosshead (P-P Trend) - Vibration crosshead slide 11A - SegmentNo ${n} - avg`;
-
-    it('Fit: the X title is description · unit; a target with a unit needs no fitting, one without names the Y axis', () => {
-        const x = { tag: 'A', description: 'GENERATOR POWER', unit: 'MW' };
-        const withUnit: any = buildFitScatterOption(rel().fit_scatter!, '°C', x);
-        expect(withUnit.xAxis.name).toBe('GENERATOR POWER · MW');
-        expect(withUnit.yAxis.name).toBe('°C');
-        expect(getAxisNames(withUnit)).toEqual({ x });
-        const y = { tag: 'T', description: 'BEARING TEMP' };
-        const noUnit: any = buildFitScatterOption(rel().fit_scatter!, sensorAxisTitle(y), x, y);
-        expect(noUnit.yAxis.name).toBe('BEARING TEMP');
-        expect(getAxisNames(noUnit)).toEqual({ x, y });
-    });
-
-    it('Fit: a tag-only predictor prints its tag (it has nothing else)', () => {
-        const o: any = buildFitScatterOption(rel().fit_scatter!, '°C', { tag: 'A' });
-        expect(o.xAxis.name).toBe('A');
-    });
 
     it('Clusters: a grid with the key, the name and the value + unit; the sensors are marked for fitting', () => {
         const c = clu();
