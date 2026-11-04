@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, memo, useRef, useCallback, type CSSProperties } from 'react';
+import { destroyReleasingContext } from './releaseGlContext';
 import createScatterplot from 'regl-scatterplot';
 import { scaleLinear } from 'd3-scale';
 import { RotateCcw, Ruler, Tag, Trash2 } from 'lucide-react';
@@ -537,6 +538,8 @@ function ScatterChart({
         // WebGL context-loss recovery. regl-scatterplot draws on its own hidden WebGL canvas and copies
         // to `canvasRef` (a 2D canvas), so the context events fire only on the hidden one.
         const canvas = canvasRef.current;
+        // A rebuild after a resize is a healthy context: no overlay over it.
+        setContextLost(false);
         const glCanvas: HTMLCanvasElement | undefined = inst.get?.('renderer')?.canvas;
         const onContextLost = (e: Event) => { e.preventDefault(); setContextLost(true); };
         // A fresh instance, not the old one resumed: it re-uploads the current points.
@@ -573,7 +576,7 @@ function ScatterChart({
             // never settle, which would leave the queue stuck busy.
             resetDraw();
             liveScRef.current = null;
-            inst.destroy();
+            destroyReleasingContext(inst);
             setSc(null);
         };
     }, [innerDims.width, innerDims.height, rebuildNonce]);
@@ -630,7 +633,7 @@ function ScatterChart({
             // regl-scatterplot. Setting the ref here closes that gap.
             haloScRef.current = null;
             liveHaloScRef.current = null;
-            inst.destroy();
+            destroyReleasingContext(inst);
             setHaloSc(null);
             // `destroy()` tears down the WebGL context but does NOT clear
             // the canvas's own pixel buffer — the browser keeps showing

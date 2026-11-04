@@ -682,7 +682,7 @@ const ENGINE_UNREADABLE: &str =
 
 /// A run stopped at [`ENGINE_RUN_TIMEOUT`]. One line: the Train queue row shows
 /// only the first line of an error.
-const ENGINE_TIMED_OUT: &str = "Train did not finish: the Relation model ran for 10 minutes without an answer \
+const ENGINE_TIMED_OUT: &str = "The Relation model ran for 10 minutes without an answer \
      and was stopped. Try again, or use fewer rows or predictors.";
 
 // Byte budgets of one engine-failure log entry. Their worst-case sum (plus the
@@ -996,7 +996,7 @@ mod engine_wording_tests {
     #[test]
     fn a_timed_out_train_says_so_in_plain_words_and_logs_the_rest() {
         let f = engine_timed_out_failure("preview_relationship", &format!("  {NASTY_TRACE}\n"));
-        assert!(f.user.starts_with("Train did not finish"), "{}", f.user);
+        assert!(f.user.starts_with("The Relation model ran for 10 minutes"), "{}", f.user);
         assert!(f.user.contains("Relation model"));
         assert!(f.user.contains("10 minutes"));
         assert_eq!(ENGINE_RUN_TIMEOUT.as_secs(), 600, "the sentence names this cap");

@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useMemo, useId, useCallback, memo } from 'react';
+import { destroyReleasingContext } from './releaseGlContext';
 import createScatterplot from 'regl-scatterplot';
 import { scaleLinear } from 'd3-scale';
 import type { CsvRecord } from '../../types';
@@ -143,7 +144,7 @@ function makeTicks(min: number, max: number, count: number): number[] {
 const LABEL_FONT = '10px Inter, system-ui';
 
 /** Cuts an SVG label to its room: SVG text neither wraps nor ellipsizes. */
-function fitLabel(text: string, room: number): string {
+export function fitLabel(text: string, room: number): string {
     if (room <= 0 || textWidth(text, LABEL_FONT) <= room) return text;
     let n = text.length;
     while (n > 1 && textWidth(`${text.slice(0, n)}…`, LABEL_FONT) > room) n--;
@@ -360,6 +361,8 @@ function PairPlotCell({
 
         liveScRef.current = inst;
         setSc(inst);
+        // A rebuild after a resize is a healthy context: no overlay over it.
+        setContextLost(false);
 
         return () => {
             glCanvas?.removeEventListener('webglcontextlost', onContextLost);
@@ -368,7 +371,7 @@ function PairPlotCell({
             // never settle, which would leave the queue stuck busy.
             resetDraw();
             liveScRef.current = null;
-            inst.destroy();
+            destroyReleasingContext(inst);
             setSc(null);
             // A rebuilt (or unmounted) instance starts at the default camera.
             reportZoomed(false);

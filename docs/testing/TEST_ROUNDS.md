@@ -64,7 +64,8 @@
 ---
 
 ## ข้อที่ต้องทำมือเพิ่ม (ทำในรอบที่หมวดนั้นอยู่)
-- EDT-31, EDT-51, ERR-2, ERR-8, ERR-9: แก้ไฟล์โปรเจกต์ `ws_….json` ด้วย Notepad ตามขั้นตอนในข้อ
+- EDT-31, EDT-51, ERR-2, ERR-8, ERR-11, ERR-12: แก้ไฟล์โปรเจกต์ `ws_….json` ด้วย Notepad ตามขั้นตอนในข้อ
+- IMP-133, IMP-134: คัดลอกไฟล์ตัวอย่าง แล้วแก้สำเนาด้วย Notepad ตามขั้นตอนในข้อ
 - WFF-18 (เปิดไฟล์ค้างใน Excel), WFF-5, IMP-58, IMP-82, PER-19: ย้าย / ทับ / เปิดไฟล์ค้างตามที่ข้อสั่ง (ไฟล์สำหรับทับคือไฟล์ที่ชื่อมี `_without-…`, `_plus-1-day`, `_changed` ในชุด IMP)
 - หลังทับไฟล์แล้วอยากได้ไฟล์เดิมคืน: ขอไฟล์ชุดเดิมจากทีมพัฒนาอีกครั้ง
 
@@ -97,9 +98,9 @@
 0: PREP-7 PREP-6 PREP-1 PREP-2
 1: WFA WFB WFC WFD APP LAY SEN SEL FIL HL TIME LINE SCAT PAIR FG VIS PER ERR BMW WFH
 2: IMP SPC MNG EDT
-3: IMP-89..99 WFI
+3: IMP-89..97 IMP-99 IMP-131 WFI
 4: PREP-5 MULTI WFE WFF
-5: BMW-337 BMW-343..350 BMW-355 BMW-358..375 BMW-379 BMW-381..383 BMW-385 BMW-395 BMW-396 BMW-400..403 WFJ WFK
+5: BMW-337 BMW-343..350 BMW-355 BMW-358..375 BMW-379 BMW-381..383 BMW-385 BMW-395 BMW-396 BMW-400..403 BMW-419 WFJ WFK
 6: PERF WFG SPC-92 EDT-66 MULTI-10 WFF-2
 7: LN
 skip: PREP-3 PER-18 IMP-106 BMW-378 BMW-384 BMW-389..392 WFK-16 WFH-11 WFH-13

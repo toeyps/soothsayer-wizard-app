@@ -1,6 +1,6 @@
 import { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback, memo } from 'react';
 import { Lasso, Move, RotateCcw, X, Search } from 'lucide-react';
-import PairPlotCell, { HoverInfo, Cluster } from './PairPlotCell';
+import PairPlotCell, { HoverInfo, Cluster, fitLabel } from './PairPlotCell';
 import AxisLabel from './AxisLabel';
 import ClusterLegend from './ClusterLegend';
 import { nextClusterColour, nextClusterName } from './pairPlotClusters';
@@ -95,7 +95,7 @@ function DiagonalHistogram({
                         fill="var(--text-primary)"
                         fontFamily="Inter, system-ui"
                     >
-                        {sensorPlainLabel(sensorLookup(sensor))}
+                        {fitLabel(sensorPlainLabel(sensorLookup(sensor)), innerW)}
                     </text>
                 )}
                 {/* Horizontal bars: low value at bottom, high at top. Bar

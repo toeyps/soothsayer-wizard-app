@@ -24,6 +24,7 @@ vi.mock('../components/charts/PairPlotCell', async () => {
   // Mirrors the real cell's zoom contract: reports under its own per-instance
   // useId, and a bumped resetTick reports "not zoomed" under that same id.
   return {
+    fitLabel: (text: string) => text,
     default: React.memo((props: any) => {
         cellCalls.push(props);
         const id = React.useId();

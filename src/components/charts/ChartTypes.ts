@@ -3,9 +3,8 @@ import { CsvRecord, SensorMetadata, ScatterAxisPins, TimeHighlight, ValueHighlig
 /** Pair Plot renders one regl-scatterplot WebGL context per scatter cell
  *  AND per time-series cell — n(n-1)/2 + n contexts for n sensors. Chromium
  *  (WebView2 included) starts silently evicting the oldest context past
- *  ~16 simultaneous contexts (PairPlotCell doesn't listen for
- *  webglcontextlost the way the single-canvas ScatterChart does, so cells
- *  just go black with no error shown). 4 sensors = 10 contexts, comfortably
+ *  ~16 simultaneous contexts (a cell then shows its "Rendering paused" overlay
+ *  with Retry). 4 sensors = 10 contexts, comfortably
  *  under that ceiling; 5 would already be 15. Single source of truth for
  *  both Dashboard.tsx's tab-enabling logic and PairPlotChart.tsx's own
  *  defensive render guard. */

@@ -2570,6 +2570,8 @@ export default function BuildModelWindow() {
             if (timer) clearTimeout(timer);
             if (!finished) {
                 runWaitGaveUpRef.current = true;
+                // Only for this run: the next Train asks before closing again.
+                void idle.then(() => { runWaitGaveUpRef.current = false; });
                 setCloseNotice(RUN_CLOSE_WAIT_NOTICE);
                 return;
             }
