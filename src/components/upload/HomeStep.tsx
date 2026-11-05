@@ -4,6 +4,7 @@ import { getVersion } from '@tauri-apps/api/app';
 import type { WorkspaceMetadata } from '../../types';
 import { mono, type Tokens } from './uploadTheme';
 import MachineMorphCanvas from './MachineMorphCanvas';
+import wizardLogo from '../../assets/wizard-2A.svg';
 import RecentProjectCard from './RecentProjectCard';
 import {
   filterProjects,
@@ -86,19 +87,7 @@ export default function HomeStep({
     >
       <div style={{ display: 'flex', flexDirection: 'column', minHeight: 0, minWidth: 0, padding: '44px 36px 22px 56px', overflowY: 'auto' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 11 }}>
-          <span
-            aria-hidden="true"
-            style={{
-              width: 34, height: 34, borderRadius: 10, display: 'grid', placeItems: 'center', flexShrink: 0,
-              background: `radial-gradient(circle at 30% 25%, ${T.accentHi}, ${T.accent})`,
-              boxShadow: `0 0 0 1px rgba(255,255,255,0.12) inset, 0 8px 30px ${T.accentMuted}`,
-            }}
-          >
-            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke={T.bg} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M3 15c2-6 4-9 5-9s2 7 4 7 2-9 4-9 3 5 5 11" />
-              <circle cx="12" cy="13" r="1.4" fill={T.bg} />
-            </svg>
-          </span>
+          <img src={wizardLogo} alt="" width={34} height={34} data-testid="home-logo" style={{ flexShrink: 0 }} />
           <div style={{ lineHeight: 1.2 }}>
             <div style={{ fontSize: 15, fontWeight: 600, letterSpacing: '-0.01em', color: T.text }}>Wizard</div>
             <div style={{ fontFamily: mono, fontSize: 10.5, fontWeight: 500, letterSpacing: '0.04em', textTransform: 'uppercase', color: T.textFaint, marginTop: 1 }}>

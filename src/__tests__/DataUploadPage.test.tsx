@@ -1948,6 +1948,11 @@ describe('J. Onboarding flow', () => {
     renderPage();
 
     expect(screen.getByTestId('home-step')).toBeTruthy();
+    const logo = screen.getByTestId('home-logo') as HTMLImageElement;
+    expect(decodeURIComponent(logo.getAttribute('src') ?? '')).toContain('#51b4ec');
+    expect(logo.getAttribute('width')).toBe('34');
+    expect(screen.getByTestId('home-step').querySelector('path[d^="M3 15c2-6"]')).toBeNull();
+    expect(screen.getByText('Machine health studio')).toBeTruthy();
     expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Abnormal behaviour, found in your history.');
     expect(newProjectButton()).toBeTruthy();
     // Step 2's surface must not be mounted yet…
