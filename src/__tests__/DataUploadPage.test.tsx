@@ -2008,6 +2008,10 @@ describe('J. Onboarding flow', () => {
     expect(machineInput()).toBeTruthy();
     expect(tagInput()).toBeTruthy();
     expect(notesInput()).toBeTruthy();
+    const railLogo = screen.getByTestId('rail-logo') as HTMLImageElement;
+    expect(decodeURIComponent(railLogo.getAttribute('src') ?? '')).toContain('#51b4ec');
+    expect(railLogo.getAttribute('width')).toBe('28');
+    expect(screen.getByTestId('setup-rail').querySelector('path[d^="M3 15c2-6"]')).toBeNull();
     // The rail lists all four steps from step 1 onwards
     const rail = within(screen.getByTestId('setup-rail'));
     expect(rail.getByText('Which machine')).toBeTruthy();

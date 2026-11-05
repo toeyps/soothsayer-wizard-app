@@ -1,6 +1,7 @@
 import { Check, ChevronLeft } from 'lucide-react';
 import { mono, type Tokens } from './uploadTheme';
 import MachineMorphCanvas from './MachineMorphCanvas';
+import wizardLogo from '../../assets/wizard-2A.svg';
 
 /** 1 = Which machine, 2 = Add sensor data, 3 = Failure groups,
  *  4 = Explore in Dashboard (current only while the Dashboard opens). */
@@ -51,19 +52,7 @@ export default function SetupRail({
       }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, position: 'relative', zIndex: 1 }}>
-        <span
-          aria-hidden="true"
-          style={{
-            width: 28, height: 28, borderRadius: 8, display: 'grid', placeItems: 'center', flexShrink: 0,
-            background: `radial-gradient(circle at 30% 25%, ${T.accentHi}, ${T.accent})`,
-            boxShadow: '0 0 0 1px rgba(255,255,255,0.12) inset',
-          }}
-        >
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke={T.bg} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M3 15c2-6 4-9 5-9s2 7 4 7 2-9 4-9 3 5 5 11" />
-            <circle cx="12" cy="13" r="1.4" fill={T.bg} />
-          </svg>
-        </span>
+        <img src={wizardLogo} alt="" width={28} height={28} data-testid="rail-logo" style={{ flexShrink: 0 }} />
         <span style={{ fontSize: 13.5, fontWeight: 600, letterSpacing: '-0.01em', color: T.text }}>Wizard</span>
       </div>
 
