@@ -669,7 +669,7 @@ describe('2a. late events from A\'s still-alive windows are ignored by B\'s Dash
 
 describe('2b. A\'s still-alive window, NOT re-pointed, acting after B is loaded', () => {
     // A stale window's delayed delete must not drop B's own S2 column from the shared session.
-    it('A\'s window: delete S2 (undo window) -> Back (close lost) -> open B (own S2) -> 8 s later the commit drops B\'s S2 column from the session while B still lists/plots S2', async () => {
+    it('A\'s window: delete S2 (undo window) -> Back (close lost) -> open B (own S2) -> 8 s later B\'s S2 column, recipe and list entry are untouched', async () => {
         await switchWithWindowsLeftOpen(wsB(), async () => { await deleteSensor('S2'); });
         const from = rust.calls.length; // B is loaded and replayed
         await tick(9000);
@@ -680,7 +680,7 @@ describe('2b. A\'s still-alive window, NOT re-pointed, acting after B is loaded'
     });
 
     // A stale window's edit must not recompute B's S2 with A's formula.
-    it('A\'s window left open -> open B (own S2 = $TAG4 - 1) -> in A\'s window edit S2 to $TAG1 * 9 -> B\'s S2 column now holds A\'s formula values while B\'s recipe is unchanged', async () => {
+    it('A\'s window left open -> open B (own S2 = $TAG4 - 1) -> in A\'s window edit S2 to $TAG1 * 9 -> B\'s S2 column and recipe are untouched', async () => {
         await switchWithWindowsLeftOpen();
         await openEditor('S2');
         await setEditor({ formula: '$TAG1 * 9' });
@@ -690,7 +690,7 @@ describe('2b. A\'s still-alive window, NOT re-pointed, acting after B is loaded'
     });
 
     // A create in a stale window must not leave an orphan derived column in B's session.
-    it('A\'s window left open -> open B -> create S9 in A\'s window -> B\'s session gains an orphan derived column S9 that B does not list', async () => {
+    it('A\'s window left open -> open B -> create S9 in A\'s window -> B\'s session gains no S9 column and B does not list it', async () => {
         await switchWithWindowsLeftOpen();
         await createFormula('S9', '$TAG1 + 9');
         expect(dashListed()).not.toContain('S9');
@@ -698,7 +698,7 @@ describe('2b. A\'s still-alive window, NOT re-pointed, acting after B is loaded'
     });
 
     // A rename in a stale window must not touch B's own S2 column or add an orphan S3.
-    it('A\'s window left open -> open B (own S2) -> rename S2 -> S3 in A\'s window -> B\'s S2 column is removed and an orphan S3 appears in B\'s session', async () => {
+    it('A\'s window left open -> open B (own S2) -> rename S2 -> S3 in A\'s window -> B\'s session keeps S2 and gains no S3', async () => {
         await switchWithWindowsLeftOpen();
         await openEditor('S2');
         await setEditor({ name: 'S3' });
@@ -779,7 +779,7 @@ describe('2c. A\'s still-alive window RE-POINTED to B (B\'s "Add special sensor"
     });
 
     // The Create form must reset on re-point, not keep A's draft.
-    it('A\'s window: pick TAG1+TAG2, name "Draft", description "Alpha draft" (not added) -> switch to B, re-point the window -> the Create form still shows A\'s sources, name and description', async () => {
+    it('A\'s window: pick TAG1+TAG2, name "Draft", description "Alpha draft" (not added) -> switch to B, re-point the window -> the Create form is empty: none of A\'s sources, name or description', async () => {
         await switchWithWindowsLeftOpen(wsB(), async () => {
             await pick('TAG1', 'TAG2');
             await fillCreate('Draft', { description: 'Alpha draft' });
@@ -793,7 +793,7 @@ describe('2c. A\'s still-alive window RE-POINTED to B (B\'s "Add special sensor"
     });
 
     // An open editor draft must not survive the re-point into B's S2.
-    it('A\'s window: open the editor on S2 and type $TAG1 * 9 (not saved) -> switch to B (own S2), re-point the window -> the editor is still open with A\'s draft and Save writes it into B\'s S2', async () => {
+    it('A\'s window: open the editor on S2 and type $TAG1 * 9 (not saved) -> switch to B (own S2), re-point the window -> the editor is closed and B\'s S2 is untouched', async () => {
         await switchWithWindowsLeftOpen(wsB(), async () => {
             await openEditor('S2');
             await setEditor({ formula: '$TAG1 * 9' });
@@ -832,7 +832,7 @@ describe('2c. A\'s still-alive window RE-POINTED to B (B\'s "Add special sensor"
     });
 
     // A delete commit already re-reading A's file must not apply to B after the re-point.
-    it('A\'s window: delete S2 -> after 8 s its commit is re-reading A\'s file (slow) -> switch to B, re-point the window, the read completes -> B\'s own S2 is deleted from B\'s session AND from B\'s file', async () => {
+    it('A\'s window: delete S2 -> after 8 s its commit is re-reading A\'s file (slow) -> switch to B, re-point the window, the read completes -> B\'s own S2 stays in B\'s session and file', async () => {
         await switchWithWindowsLeftOpen(wsB(), async () => {
             await deleteSensor('S2');
             h.gateDisk(A_ID);
@@ -848,7 +848,7 @@ describe('2c. A\'s still-alive window RE-POINTED to B (B\'s "Add special sensor"
     });
 
     // An edit already past the click must not apply to B after the re-point.
-    it('A\'s window: save an edit of S2 to $TAG1 * 9 while the model re-read of A\'s file is slow -> switch to B, re-point, the read completes -> B\'s S2 recipe AND column become A\'s draft', async () => {
+    it('A\'s window: save an edit of S2 to $TAG1 * 9 while the model re-read of A\'s file is slow -> switch to B, re-point, the read completes -> B\'s S2 recipe and column are untouched', async () => {
         await switchWithWindowsLeftOpen(wsB(), async () => {
             await openEditor('S2');
             await setEditor({ formula: '$TAG1 * 9' });
@@ -865,7 +865,7 @@ describe('2c. A\'s still-alive window RE-POINTED to B (B\'s "Add special sensor"
 
     // Guards against: rename variant -- B's S2 is renamed to S3 in B's file (and
     // its old column removed) by a rename the user made in A.
-    it('A\'s window: rename S2 -> S3 while the model re-read of A\'s file is slow -> switch to B, re-point, the read completes -> B\'s own S2 is renamed to S3 in B\'s file and session', async () => {
+    it('A\'s window: rename S2 -> S3 while the model re-read of A\'s file is slow -> switch to B, re-point, the read completes -> B\'s own S2 keeps its name in B\'s file and session', async () => {
         await switchWithWindowsLeftOpen(wsB(), async () => {
             await openEditor('S2');
             await setEditor({ name: 'S3' });
@@ -881,7 +881,7 @@ describe('2c. A\'s still-alive window RE-POINTED to B (B\'s "Add special sensor"
     });
 
     // A models re-read started for A must not apply after the re-point.
-    it('A\'s window: A\'s Build Model broadcasts a change, the window\'s re-read of A\'s file is slow -> switch to B, re-point, the read completes -> B\'s Manage tab shows B\'s S1 as locked by A\'s "Alpha model"', async () => {
+    it('A\'s window: A\'s Build Model broadcasts a change, the window\'s re-read of A\'s file is slow -> switch to B, re-point, the read completes -> B\'s Manage tab does not lock B\'s S1 for A\'s "Alpha model"', async () => {
         await switchWithWindowsLeftOpen(wsB(), async () => {
             h.gateDisk(A_ID);
             await act(async () => { await h.emit('failure-group-state-changed', { ...ws(A_ID).failureGroupState, workspaceId: A_ID, origin: 'build-model' }); });
@@ -897,7 +897,7 @@ describe('2c. A\'s still-alive window RE-POINTED to B (B\'s "Add special sensor"
     });
 
     // A late sensors-data for A must not re-point the window back to A.
-    it('a `sensors-data` for A delivered late (after the window was re-pointed to B) re-points the window back to A -- it lists A\'s "Alpha" recipes while B is open', async () => {
+    it('a `sensors-data` for A delivered late (after the window was re-pointed to B) is ignored: the window keeps listing B\'s recipes', async () => {
         await start(wsB());
         await openRecent('Alpha');
         await clickAddSpecialSensor();
@@ -1103,7 +1103,7 @@ describe('6. B\'s load_csv fails or is slow', () => {
     });
 
     // A slow load plus a second click must not interleave two loads on the one Rust session: the last click wins.
-    it('import page: click Alpha (load_csv slow, > 2 s) -> window regains focus (overlay cleared) -> click Beta -> A\'s load_csv completes while B replays -> B\'s Dashboard is shown on A\'s raw data (S2 = $TAG4 - 1 computed from A\'s TAG4)', async () => {
+    it('import page: click Alpha (load_csv slow, > 2 s) -> window regains focus (overlay cleared) -> click Beta -> A\'s load_csv completes while B replays -> B\'s Dashboard shows B\'s own data and session', async () => {
         await start(wsB());
         const gA = rust.gate('load_csv', a => a.paths?.[0] === PATH_A);
         await openRecent('Alpha', { settle: false });
@@ -1134,7 +1134,7 @@ describe('6. B\'s load_csv fails or is slow', () => {
 
 describe('7. other state carried across a switch', () => {
     // A sensor created just before Back to Import is still saved.
-    it('A: create special sensor "Late" -> click Back to Import within 250 ms -> reopen A -> "Late" is gone (recipe and metadata never saved)', async () => {
+    it('A: create special sensor "Late" -> click Back to Import within 250 ms -> "Late" is saved in A\'s file (recipe and metadata)', async () => {
         await start(wsB());
         await openRecent('Alpha');
         await clickAddSpecialSensor();

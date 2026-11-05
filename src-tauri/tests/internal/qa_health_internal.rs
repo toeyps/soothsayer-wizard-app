@@ -571,37 +571,10 @@ fn c4_concurrent_reload_store_and_preview_never_mix_datasets() {
 }
 
 
-/// Joining predictor names with '+' makes one predictor "A+B" equal to the model [A, B]; '+' is legal in sensor names and not sanitised.
-#[test]
-fn d11_relationship_file_names_collide_for_a_predictor_named_with_plus() {
-    let a = vec!["A+B".to_string()].join("+");
-    let b = vec!["A".to_string(), "B".to_string()].join("+");
-    assert_eq!(a, b, "documenting the collision");
-}
-
-
-#[test]
-fn e3_error_codes_for_bad_requests_are_prefixed() {
-    let d = scope_data();
-    // Clustering with an unknown sensor / missing criteria and a bad scope: only checks that an error comes back; the codes are asserted in the next test.
-    let mut c = clu_req(vec![ClusterRange { min: None, max: Some(15.0) }, ClusterRange { min: Some(15.0), max: None }], 4.0, None);
-    c.first_sensor = Some("NOPE".into());
-    let e1 = clustering_preview(&d, &c).unwrap_err();
-    let mut c = clu_req(vec![ClusterRange { min: None, max: Some(15.0) }], 4.0, None);
-    c.n_clusters = Some(2);
-    let e2 = clustering_preview(&d, &c).unwrap_err();
-    let bad_filter = PreviewFilter { timestamp_ranges: vec![tr(Some(&ts_at(9)), Some(&ts_at(1)))], ..Default::default() };
-    let e3 = individual_preview(&d, &ind_req("S", None, Some(bad_filter))).unwrap_err();
-    eprintln!("uncoded errors seen: {e1:?} | {e2:?} | {e3:?}");
-    for e in [&e1, &e2, &e3] {
-        assert!(!e.is_empty());
-    }
-}
-
 /// `compute_health_preview` answers every bad request with a stable `CODE: ...` prefix (`BAD_REQUEST`, `NO_DATA`, ...)
 /// so the UI (`parseHealthError`) can classify it: unknown clustering sensor, ranges/n_clusters mismatch, missing criteria sensor, invalid scope filter.
 #[test]
-fn bug_e3_every_bad_request_error_is_coded() {
+fn e3_every_bad_request_error_is_coded() {
     let d = scope_data();
     let mut c = clu_req(vec![ClusterRange { min: None, max: Some(15.0) }, ClusterRange { min: Some(15.0), max: None }], 4.0, None);
     c.first_sensor = Some("NOPE".into());
