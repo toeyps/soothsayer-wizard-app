@@ -1950,7 +1950,7 @@ describe('J. Onboarding flow', () => {
     expect(screen.getByTestId('home-step')).toBeTruthy();
     const logo = screen.getByTestId('home-logo') as HTMLImageElement;
     expect(decodeURIComponent(logo.getAttribute('src') ?? '')).toContain('#51b4ec');
-    expect(logo.getAttribute('width')).toBe('34');
+    expect(logo.getAttribute('width')).toBe('52');
     expect(screen.getByTestId('home-step').querySelector('path[d^="M3 15c2-6"]')).toBeNull();
     expect(screen.getByText('Machine health studio')).toBeTruthy();
     expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Abnormal behaviour, found in your history.');

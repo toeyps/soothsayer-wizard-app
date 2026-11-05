@@ -82,21 +82,35 @@ export default function HomeStep({
       data-testid="home-step"
       style={{
         flex: 1, minHeight: 0, display: 'grid',
-        gridTemplateColumns: 'minmax(460px, 42%) minmax(0, 1fr)', background: T.bg,
+        gridTemplateColumns: 'minmax(500px, 44%) minmax(0, 1fr)', background: T.bg,
       }}
     >
-      <div style={{ display: 'flex', flexDirection: 'column', minHeight: 0, minWidth: 0, padding: '44px 36px 22px 56px', overflowY: 'auto' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 11 }}>
-          <img src={wizardLogo} alt="" width={34} height={34} data-testid="home-logo" style={{ flexShrink: 0 }} />
-          <div style={{ lineHeight: 1.2 }}>
-            <div style={{ fontSize: 15, fontWeight: 600, letterSpacing: '-0.01em', color: T.text }}>Wizard</div>
-            <div style={{ fontFamily: mono, fontSize: 10.5, fontWeight: 500, letterSpacing: '0.04em', textTransform: 'uppercase', color: T.textFaint, marginTop: 1 }}>
-              Machine health studio
-            </div>
+      {/* The bottom strip holds the version, so scrolled content can never run under it. */}
+      <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', minHeight: 0, minWidth: 0, paddingBottom: 56 }}>
+      {/* `safe center`: a short window scrolls from the top instead of cutting the logo off. */}
+      <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'safe center', flex: 1, minHeight: 0, padding: '40px 36px 0 56px', overflowY: 'auto' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 34, flexShrink: 0 }}>
+          <span style={{ position: 'relative', display: 'block', width: 52, height: 52, flexShrink: 0 }}>
+            <span
+              aria-hidden="true"
+              style={{ position: 'absolute', inset: -30, borderRadius: '50%', background: 'radial-gradient(circle, oklch(0.55 0.14 245 / 0.22), transparent 70%)', pointerEvents: 'none' }}
+            />
+            <img
+              src={wizardLogo}
+              alt=""
+              width={52}
+              height={52}
+              data-testid="home-logo"
+              style={{ position: 'relative', display: 'block', borderRadius: 12, boxShadow: '0 0 0 1px rgba(255,255,255,0.05), 0 12px 36px oklch(0.45 0.13 245 / 0.45)' }}
+            />
+          </span>
+          <div>
+            <div style={{ fontSize: 22, fontWeight: 650, letterSpacing: '-0.02em', lineHeight: 1.1, color: T.text }}>Wizard</div>
+            <div style={{ fontSize: 13, lineHeight: 1.2, color: T.textMuted, marginTop: 3 }}>Machine health studio</div>
           </div>
         </div>
 
-        <div style={{ marginTop: 48 }}>
+        <div style={{ flexShrink: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontFamily: mono, fontSize: 11, fontWeight: 500, letterSpacing: '0.14em', textTransform: 'uppercase', color: T.accentHi }}>
             <i
               aria-hidden="true"
@@ -156,7 +170,14 @@ export default function HomeStep({
           </div>
         )}
 
-        <section aria-label="Recent projects" style={{ marginTop: 40, display: 'flex', flexDirection: 'column', flex: 1, minHeight: 200 }}>
+        {/* A long project list shrinks and scrolls inside itself; the "no projects" panel keeps its height. */}
+        <section
+          aria-label="Recent projects"
+          style={{
+            marginTop: 40, display: 'flex', flexDirection: 'column',
+            flex: workspaces.length > 0 ? '0 1 auto' : '0 0 auto', minHeight: workspaces.length > 0 ? 140 : 0,
+          }}
+        >
           {loaded && workspaces.length === 0 ? (
             <>
               <div style={{ ...sectionLabel, marginBottom: 10 }}>Getting started</div>
@@ -226,10 +247,10 @@ export default function HomeStep({
             </>
           ) : null}
         </section>
-
-        {version && (
-          <div style={{ marginTop: 16, fontFamily: mono, fontSize: 12, color: T.textMuted }}>v{version}</div>
-        )}
+      </div>
+      {version && (
+        <div style={{ position: 'absolute', left: 56, bottom: 18, fontFamily: mono, fontSize: 12, color: T.textMuted }}>v{version}</div>
+      )}
       </div>
 
       <div
